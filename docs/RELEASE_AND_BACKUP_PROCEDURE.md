@@ -263,7 +263,7 @@ snapshot of the database even when the service is running and WAL mode is active
 The `.db-wal` and `.db-shm` sidecar files are NOT manually copied — the backup API
 merges any pending WAL pages into the destination automatically.
 
-Output example:
+Output example (from operator test run 2026-05-23):
 ```
 ============================================================
  Transport DB Daily Backup
@@ -273,18 +273,19 @@ Output example:
  Transport DB Backup  (SQLite online backup API)
 ============================================================
  Source : C:\transport-report\instance\transport.db
- Dest   : C:\transport-report-backups\daily\transport_20260523_020001.db
+ Dest   : C:\transport-report-backups\daily\transport_20260523_182423.db
 
- Source size :  5,242,880 bytes
+ Source size : 46,800,896 bytes
 
 Running SQLite online backup...
- Dest size   :  5,242,880 bytes
+ Dest size   : 46,800,896 bytes
 
 Running integrity check on destination database...
  Integrity check : ok
 
 SUCCESS: Backup written to:
-         C:\transport-report-backups\daily\transport_20260523_020001.db
+         C:\transport-report-backups\daily\transport_20260523_182423.db
+Backup completed successfully.
 ```
 
 The script:
@@ -353,6 +354,24 @@ schtasks /change /tn "TransportDBBackup" /st 03:00
 ```cmd
 schtasks /delete /tn "TransportDBBackup" /f
 ```
+
+---
+
+## Operator verification record (TASK-DEPLOY-004E, 2026-05-23)
+
+The full backup procedure was completed and verified by the operator on 2026-05-23.
+
+| Step | Command | Result |
+|---|---|---|
+| Syntax check | `py_compile backup_transport_db.py` | PASS — no output |
+| Manual backup | `backup_transport_db.bat` | SUCCESS — integrity check `ok`, wrapper: `Backup completed successfully.` |
+| Backup file | `transport_20260523_182423.db` in `C:\transport-report-backups\daily\` | 46,800,896 bytes |
+| Create task | `schtasks /create /tn "TransportDBBackup" ... /sc daily /st 02:00 /ru SYSTEM /f` | SUCCESS — next run 24.05.2026 2:00:00, state Ready |
+| Test task run | `schtasks /run /tn "TransportDBBackup"` | SUCCESS — new backup `transport_20260523_182603.db`, 46,800,896 bytes |
+| Git status | commits `428104a` and `10652e2` on `origin/main` | Working tree clean |
+
+The `TransportDBBackup` scheduled task is active. No further manual setup is required
+for the daily automated backup.
 
 ---
 
