@@ -533,11 +533,11 @@ Operator verification completed 2026-05-23 (TASK-DEPLOY-004E):
 - Task Scheduler task `TransportDBBackup` created and tested successfully.
 - GitHub up to date. Working tree clean.
 
-### TASK-DEPLOY-005 — Staging VPS deployment
+### TASK-DEPLOY-005 — Staging deployment
 
 Priority: P2  
 Depends on: TASK-DEPLOY-002, TASK-DEPLOY-003, TASK-DEPLOY-004  
-Status: **TASK-DEPLOY-005A and TASK-DEPLOY-005B completed 2026-05-23. Full deployment: planned — awaiting VPS.**
+Status: **TASK-DEPLOY-005A, 005B, 005D completed 2026-05-23. Staging is running on org server (srv-yoqsh). QA pending.**
 
 **TASK-DEPLOY-005A — VPS staging runbook (2026-05-23 — COMPLETED)**
 
@@ -551,6 +551,40 @@ with PAT, SECRET_KEY + FUEL_API_TOKEN via setx /M, DB transfer from production w
 check, install_service.bat usage, Windows Firewall rules, Nginx reverse proxy skeleton, daily
 backup Task Scheduler setup, QA smoke test checklist, Topaz staging policy, cutover plan,
 rollback plan, 15 open questions for operator, and 26-step exact operator command checklist.
+
+**TASK-DEPLOY-005D — Add --source support to backup tool for staging (2026-05-23 — COMPLETED)**
+
+Changes made:
+
+- `backup_transport_db.py`: `--source <path>` argument added. Default source remains
+  `C:\transport-report\instance\transport.db`. `source_path = args.source` replaces
+  the module-level constant. Docstring updated with staging usage example.
+- `backup_transport_db.bat`: unchanged — production default continues to apply.
+- `docs/ORG_WINDOWS_SERVER_STAGING_RUNBOOK.md` created: staging server facts,
+  DB counts, manual backup history, proper backup command, Task Scheduler setup
+  (TransportDBBackupStaging, 03:00 daily, SYSTEM), QA checklist, operator next steps,
+  production-vs-staging comparison, Topaz/Wialon staging policy.
+- `docs/AGENT_STATE.md` and `docs/TASKS.md` updated.
+- py_compile PASS. Functional test PASS (--source, integrity_check ok, 46,809,088 bytes).
+- No application code changed. No database changed. No service restarted. No migrations.
+
+Staging backup command (for operator to run on srv-yoqsh after pulling updated script):
+
+```cmd
+cd C:\transport-report-staging
+"C:\Program Files\Python314\python.exe" backup_transport_db.py ^
+  --source C:\transport-report-staging\instance\transport.db ^
+  --dest-dir D:\transport-report-backups\staging\daily ^
+  --suffix staging
+```
+
+Task Scheduler setup (run CMD as Administrator on srv-yoqsh):
+
+```cmd
+schtasks /create /tn "TransportDBBackupStaging" ^
+  /tr "\"C:\Program Files\Python314\python.exe\" C:\transport-report-staging\backup_transport_db.py --source C:\transport-report-staging\instance\transport.db --dest-dir D:\transport-report-backups\staging\daily --suffix staging" ^
+  /sc daily /st 03:00 /ru SYSTEM /f
+```
 
 **TASK-DEPLOY-005B — Fix VPS runbook order and stale deployment-plan backup wording (2026-05-23 — COMPLETED)**
 

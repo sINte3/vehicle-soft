@@ -1,11 +1,13 @@
 """
 backup_transport_db.py - SQLite online backup for Vehicle Soft production database.
 TASK-DEPLOY-004B: replaces raw file copy with sqlite3.Connection.backup().
+TASK-DEPLOY-005D: adds --source for staging support.
 
 Usage:
   python backup_transport_db.py
   python backup_transport_db.py --dest-dir C:\\my-backups\\dir
   python backup_transport_db.py --dest-dir C:\\my-backups\\before_update --suffix before_update
+  python backup_transport_db.py --source C:\\transport-report-staging\\instance\\transport.db --dest-dir D:\\transport-report-backups\\staging\\daily --suffix staging
 
 Exit codes: 0 = success, 1 = failure.
 stdlib only. No Flask imports. ASCII-only output.
@@ -26,6 +28,11 @@ def main():
         description="SQLite online backup for Vehicle Soft production database."
     )
     parser.add_argument(
+        "--source",
+        default=SOURCE_PATH,
+        help="Source database path (default: C:\\transport-report\\instance\\transport.db).",
+    )
+    parser.add_argument(
         "--dest-dir",
         default=DEFAULT_DEST_DIR,
         help="Destination directory for backup file (default: C:\\transport-report-backups\\daily).",
@@ -37,7 +44,7 @@ def main():
     )
     args = parser.parse_args()
 
-    source_path = SOURCE_PATH
+    source_path = args.source
     dest_dir = args.dest_dir
     suffix = args.suffix.strip()
 

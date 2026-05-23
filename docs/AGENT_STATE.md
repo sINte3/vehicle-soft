@@ -2,7 +2,7 @@
 
 ## State date
 
-2026-05-23 (TASK-DEPLOY-005B completed: runbook order fixed and stale raw-copy backup references corrected in docs/VPS_STAGING_RUNBOOK.md, docs/DEPLOYMENT_PLAN.md, docs/AGENT_STATE.md, docs/TASKS.md — documentation only, no code/database/service changes)
+2026-05-23 (TASK-DEPLOY-005D completed: --source parameter added to backup_transport_db.py; docs/ORG_WINDOWS_SERVER_STAGING_RUNBOOK.md created; staging server status and backup history recorded — no application code, no database, no service changes)
 
 ## Materials reviewed
 
@@ -172,15 +172,42 @@ Observed production SQLite counts (as of 2026-05-19):
 
 ## Current recommended next task
 
-**TASK-DEPLOY-005 — Staging VPS deployment**
-TASK-DEPLOY-005A runbook is complete. The full operator runbook is at `docs/VPS_STAGING_RUNBOOK.md`.
-Next step: operator rents a Windows Server 2022 VPS and follows the runbook.
-See `docs/DEPLOYMENT_PLAN.md` Section 6 Phase 2 for the broader deployment plan.
+**TASK-DEPLOY-005 — Org-server staging — QA pending**
+
+Staging is running at `http://10.103.25.14:5051` (srv-yoqsh, service `TransportReportStaging`).
+Operator next steps:
+1. Run manual staging backup with updated script (Section 1.1 of `docs/ORG_WINDOWS_SERVER_STAGING_RUNBOOK.md`).
+2. Create `TransportDBBackupStaging` Task Scheduler task (Section 2 of runbook).
+3. Complete staging QA checklist (Section 4 of runbook) — test all UI modules.
+4. After QA passes: proceed to TASK-DEPLOY-006 or cutover planning.
 
 TASK-OPS-002C remains open — operator must answer 5 confirmation questions in
 `docs/MIGRATION_BACKFILL_ANALYSIS.md` for the LIKELY_APPLIED migration scripts.
 
 **Recently completed**
+
+**TASK-DEPLOY-005D — Add --source support to backup tool for staging (2026-05-23 — COMPLETED)**
+
+- `backup_transport_db.py`: `--source <path>` argument added to argparse.
+  Default remains `C:\transport-report\instance\transport.db` (production unchanged).
+  `source_path` is now taken from `args.source` instead of the module-level constant.
+  Docstring updated with new usage example for staging.
+  Existing `--dest-dir` and `--suffix` arguments unchanged.
+- `backup_transport_db.bat`: unchanged — calls `backup_transport_db.py` with no
+  explicit `--source`, so production default source path continues to apply.
+- `docs/ORG_WINDOWS_SERVER_STAGING_RUNBOOK.md` created: records staging server facts
+  (srv-yoqsh, 10.103.25.14:5051, TransportReportStaging running); DB counts verified
+  (users=3, equipment=336, fuel_transactions2=391284, schema_migrations=10);
+  manual backup history recorded (integrity_check=ok, 46,809,088 bytes, 2026-05-23);
+  Section 1 gives proper backup command with --source/--dest-dir/--suffix; Section 2
+  gives Task Scheduler setup for TransportDBBackupStaging (03:00 daily, SYSTEM);
+  Section 4 QA checklist; Section 5 operator next steps; Section 6 production-vs-staging
+  comparison table; Section 7 Topaz/Wialon staging policy.
+- `docs/AGENT_STATE.md` and `docs/TASKS.md` updated.
+- py_compile PASS. Functional test PASS (--source with production DB, integrity_check ok,
+  dest 46,809,088 bytes).
+- No application code changed. No database changed. No service restarted. No migrations.
+- No git push.
 
 **TASK-DEPLOY-005B — Fix VPS runbook order and stale deployment-plan backup wording (2026-05-23 — COMPLETED)**
 
