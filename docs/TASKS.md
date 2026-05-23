@@ -347,7 +347,7 @@ Changes made:
 ### TASK-DEPLOY-002 — GitHub repository hygiene
 
 Priority: P1  
-Status: **TASK-DEPLOY-002A completed 2026-05-23. Remaining: GitHub repo creation and push.**
+Status: **completed 2026-05-23**
 
 **TASK-DEPLOY-002A — .gitignore created (2026-05-23 — COMPLETED)**
 
@@ -359,12 +359,21 @@ Changes made:
   orphaned root-level HTML files.
 - No Python changes. No database changes. No service restart.
 
-**TASK-DEPLOY-002 remaining scope (not yet started):**
+**TASK-DEPLOY-002B — GitHub repository creation and first push (2026-05-23 — COMPLETED)**
 
-- Create private GitHub repository.
-- `git init`, initial commit, push to `main` branch.
-- Tag first production release `v1.0-production-2026-05-23`.
-- Follow exact commands in `docs/SECRET_SCAN_REPORT.md` Step 4.
+Changes made:
+
+- Private GitHub repository created: https://github.com/sINte3/vehicle-soft
+- Repository visibility: Private. Local branch: `main`. Remote: `origin`.
+- `.gitignore` updated with two additional exclusions before first commit:
+  `/PROMPT.md` (root-level prompt file) and `*.docx` (binary user guide excluded).
+- `git init`, `git add .`, initial commit, remote added, pushed to `origin/main`.
+- Tag `v1.0-production-2026-05-23` created and pushed.
+- Final `git status`: branch main up to date with origin/main, working tree clean.
+- `PROMPT.md` and `Rukovodstvo_polzovatelya.docx` confirmed excluded from first commit.
+- Sensitive/runtime files confirmed excluded: `instance/`, `reports/`, `logs/`, `Archive/`,
+  `nssm.exe`, `wialon_import_v3.py`, `PROMPT_*.md`, `old_transport.db`, `.env`.
+- No application code changed. No database changed. No service restarted.
 
 ### TASK-DEPLOY-003 — .gitignore and secret scan
 
@@ -419,14 +428,92 @@ Acceptance criteria met:
 ### TASK-DEPLOY-004 — Release package and backup procedure
 
 Priority: P1  
-Status: planned.
+Status: **implemented 2026-05-23. Backup implementation fixed by TASK-DEPLOY-004B.**
 
-Scope:
+Files created (not yet executed):
 
-- Document step-by-step update procedure from GitHub to production server.
-- Create `update.bat` helper (stop service → git pull → start service, with migration warning).
-- Automate daily `transport.db` backup via Windows Task Scheduler.
-- Document rollback procedure.
+- `docs/RELEASE_AND_BACKUP_PROCEDURE.md` — full procedure document (purpose, pre-update
+  checklist, update procedure, migration rule, rollback, manual backup, Task Scheduler
+  setup, backup verification, restore procedure, QA checklist, risks, operator commands).
+- `update.bat` — production update helper: pre-update backup (via backup_transport_db.py),
+  service stop, git pull --ff-only, syntax check, import check, migration warning with
+  pause, service start. Exits immediately on any failure with clear next-steps message.
+- `backup_transport_db.bat` — daily backup script: calls backup_transport_db.py (SQLite
+  online backup API). ASCII-only output. Exits non-zero on any failure.
+
+### TASK-DEPLOY-004D — Fix backup_transport_db.bat wrapper
+
+Priority: P1  
+Status: **completed 2026-05-23**
+
+Problem fixed: TASK-DEPLOY-004B replaced the raw `copy /Y` logic in `backup_transport_db.bat`
+with a call to `backup_transport_db.py`, but the wrapper exited with bare `exit /b %ERRORLEVEL%`
+and printed no success or failure messages of its own.
+
+Changes made:
+
+- `backup_transport_db.bat` fully replaced with the correct wrapper:
+  - No raw `copy /Y`. No SOURCE/DEST_FILE variables. No PowerShell timestamp block.
+  - Calls `"C:\Program Files\Python314\python.exe" "%~dp0backup_transport_db.py"`.
+  - On failure (`errorlevel 1`): prints "Backup FAILED. See backup_transport_db.py output above."
+    and exits with code 1.
+  - On success: prints "Backup completed successfully." and exits with code 0.
+  - Comment block updated: removed stale "Updated by TASK-DEPLOY-004B" reference.
+- `backup_transport_db.py` unchanged. py_compile PASS.
+- `docs/AGENT_STATE.md` and `docs/TASKS.md` updated.
+- No application code changed. No database changed. No service restarted. No migrations.
+
+### TASK-DEPLOY-004C — Fix update.bat pre-update backup failure message
+
+Priority: P1  
+Status: **completed 2026-05-23**
+
+Problem fixed: TASK-DEPLOY-004B left the STEP 1 failure block in `update.bat` saying only
+"Check disk space and permissions." Missing: "and backup_transport_db.py output."
+
+Changes made:
+
+- `update.bat` STEP 1 failure block: error message corrected to read
+  "Check disk space, permissions, and backup_transport_db.py output."
+- All other 004B changes confirmed present: no raw `copy /Y`, no `BACKUP_FILE` variable,
+  no PowerShell TIMESTAMP block; rollback echoes reference `%BACKUP_DIR%`;
+  final success message references `%BACKUP_DIR%`.
+- `docs/AGENT_STATE.md` and `docs/TASKS.md` updated.
+- py_compile on `backup_transport_db.py` PASS.
+- No application code changed. No database changed. No service restarted. No migrations.
+
+### TASK-DEPLOY-004B — Safe SQLite backup via online backup API
+
+Priority: P1  
+Status: **implemented 2026-05-23 — pending operator test. Failure message corrected by TASK-DEPLOY-004C.**
+
+Problem fixed: TASK-DEPLOY-004 used raw `copy /Y transport.db` while the service was
+running. In WAL mode with uncheckpointed pages, a raw copy of `.db` produces an
+inconsistent backup. The `.db-wal` and `.db-shm` files were not copied.
+
+Changes made:
+
+- `backup_transport_db.py` created: stdlib only, no Flask imports. Uses
+  `sqlite3.Connection.backup()` for a consistent online backup. Accepts `--dest-dir`
+  and `--suffix` CLI arguments. Prints source/dest path and sizes. Performs
+  `PRAGMA integrity_check` on the destination (requires result `ok`). Exits non-zero
+  on any failure (source missing, backup error, dest missing, dest 0 bytes, bad integrity).
+- `backup_transport_db.bat` updated: removed raw `copy /Y`; now calls
+  `backup_transport_db.py` and propagates exit code.
+- `update.bat` updated: STEP 1 now calls `backup_transport_db.py --dest-dir
+  C:\transport-report-backups\before_update --suffix before_update`. Rollback echo
+  messages updated to reference the backup directory rather than a `%BACKUP_FILE%` var.
+- `docs/RELEASE_AND_BACKUP_PROCEDURE.md` updated: removed incorrect WAL safety claim;
+  documented SQLite online backup API; updated output example and known risks table.
+- No application code changed. No database changed. No service restarted. No migrations.
+
+Operator next steps:
+
+1. Review `docs/RELEASE_AND_BACKUP_PROCEDURE.md`.
+2. Create the Task Scheduler task for daily backup (command in the document).
+3. Run `backup_transport_db.bat` once manually to verify it works and prints
+   `Integrity check : ok` and `SUCCESS`.
+4. Next update from GitHub: run `update.bat` instead of copying files manually.
 
 ### TASK-DEPLOY-005 — Staging VPS deployment
 

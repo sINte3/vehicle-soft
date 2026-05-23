@@ -2,7 +2,7 @@
 
 ## State date
 
-2026-05-23 (TASK-DEPLOY-003C completed; .gitignore root-only patterns anchored; documentation wording clarified)
+2026-05-23 (TASK-DEPLOY-004D completed: backup_transport_db.bat wrapper corrected — previous version called backup_transport_db.py but used bare exit /b %ERRORLEVEL% with no success/failure messages; replaced with explicit if errorlevel 1 failure block and "Backup completed successfully." on success; docs updated)
 
 ## Materials reviewed
 
@@ -48,6 +48,36 @@ Observed production SQLite counts (as of 2026-05-19):
 - `spare_part_requests`: 1
 
 ### Recently completed
+
+**TASK-DEPLOY-004D — Fix backup_transport_db.bat wrapper (2026-05-23 — COMPLETED)**
+
+- `backup_transport_db.bat` corrected: previous wrapper called `backup_transport_db.py` correctly
+  but exited with bare `exit /b %ERRORLEVEL%` and printed no success or failure messages of its own.
+- Replaced with explicit `if errorlevel 1` failure block: prints "Backup FAILED. See
+  backup_transport_db.py output above." and exits with code 1.
+- On success: prints "Backup completed successfully." and exits with code 0.
+- Comment block updated: removed stale "Updated by TASK-DEPLOY-004B" reference; now reads
+  "Daily backup wrapper for the production SQLite database. Uses backup_transport_db.py
+  with sqlite3.Connection.backup()."
+- No raw `copy /Y` logic anywhere in the file. No SOURCE/DEST_FILE variables. No PowerShell
+  timestamp. `backup_transport_db.bat` now actually calls `backup_transport_db.py` AND
+  surfaces its exit code with clear human-readable messages.
+- `backup_transport_db.py` unchanged (py_compile PASS — see Test Results).
+- No application code changed. No database changed. No service restarted. No migrations.
+
+**TASK-DEPLOY-004C — Fix update.bat pre-update backup failure message (2026-05-23 — COMPLETED)**
+
+- `update.bat` STEP 1 failure block corrected: error message now reads
+  "Check disk space, permissions, and backup_transport_db.py output." (previously
+  omitted the backup_transport_db.py output hint).
+- No other changes to `update.bat`; all other 004B changes confirmed present:
+  no raw `copy /Y`, no `BACKUP_FILE` variable, no PowerShell TIMESTAMP block;
+  rollback echoes reference `%BACKUP_DIR%`; final message references `%BACKUP_DIR%`.
+- `update.bat` confirmed to use SQLite online backup API via `backup_transport_db.py`
+  for the pre-update backup step — no raw file copy logic remains anywhere in the file.
+- `docs/AGENT_STATE.md` and `docs/TASKS.md` updated.
+- No application code changed. No database changed. No service restarted. No migrations.
+- py_compile on `backup_transport_db.py` PASS (see Test Results).
 
 **TASK-FUEL-001 — Standardize Topaz API path (2026-05-22 — COMPLETED)**
 
@@ -142,17 +172,66 @@ Observed production SQLite counts (as of 2026-05-19):
 
 ## Current recommended next task
 
-**TASK-DEPLOY-002 (remainder) — GitHub repository creation and first push**
-`.gitignore` is created and all secret scan artifacts are redacted (003A + 003B done).
-Remaining: `git init`, initial commit, create private GitHub repository, push to `main`,
-tag `v1.0-production-2026-05-23`. See `docs/SECRET_SCAN_REPORT.md` Step 4 for exact commands.
-Before pushing, verify with `git status` that `wialon_import_v3.py` and `PROMPT_*.md`
-files do not appear in the staged file list.
+**TASK-DEPLOY-005 — Staging VPS deployment**
+TASK-DEPLOY-004, TASK-DEPLOY-004B, TASK-DEPLOY-004C, and TASK-DEPLOY-004D are complete.
+`backup_transport_db.bat` now calls `backup_transport_db.py` and explicitly prints success or
+failure. The operator should review `docs/RELEASE_AND_BACKUP_PROCEDURE.md`, set up the Task
+Scheduler backup task, and run `backup_transport_db.bat` once manually to verify it
+(the Python script will print integrity check results; the bat wrapper will then print
+"Backup completed successfully.").
+Next major step: deploy to a Windows VPS (see `docs/DEPLOYMENT_PLAN.md` Section 6 Phase 2).
 
 TASK-OPS-002C remains open — operator must answer 5 confirmation questions in
 `docs/MIGRATION_BACKFILL_ANALYSIS.md` for the LIKELY_APPLIED migration scripts.
 
 **Recently completed**
+
+**TASK-DEPLOY-004B — Safe SQLite backup via online backup API (2026-05-23 — IMPLEMENTED, pending operator test; update.bat failure message corrected by TASK-DEPLOY-004C)**
+
+- `backup_transport_db.py` created (stdlib only, no Flask imports): uses `sqlite3.Connection.backup()`
+  for a consistent online backup even when WAL mode is active and the service is running.
+  Accepts `--dest-dir` and `--suffix` arguments. Prints source path, dest path, source size,
+  dest size, integrity check result. Exits non-zero on any failure.
+  Performs `PRAGMA integrity_check` on destination; requires result `ok`.
+- `backup_transport_db.bat` updated: removed raw `copy /Y` of `transport.db`; now calls
+  `backup_transport_db.py` and propagates its exit code.
+- `update.bat` updated: removed raw `copy /Y` pre-update backup block; now calls
+  `backup_transport_db.py --dest-dir ... --suffix before_update`. Rollback echo messages
+  updated to reference the backup directory instead of a stale `%BACKUP_FILE%` variable.
+- `docs/RELEASE_AND_BACKUP_PROCEDURE.md` updated: removed claim that WAL mode makes raw
+  `.db` copy safe; documented SQLite online backup API; updated output example; fixed known
+  risks table row.
+- No application code changed. No database changed. No service restarted. No migrations.
+
+**TASK-DEPLOY-004 — Release package and backup procedure (2026-05-23 — SUPERSEDED by 004B for backup logic)**
+
+- `docs/RELEASE_AND_BACKUP_PROCEDURE.md` created: purpose, pre-update checklist, automated
+  and manual update procedures, migration handling rule, rollback procedure, manual backup,
+  Task Scheduler daily backup setup, backup verification, restore procedure, post-update QA
+  checklist, known risks, and operator quick-reference commands.
+- `update.bat` created (not executed): pre-update DB backup → service stop → git pull
+  --ff-only → syntax check → import check → migration warning with pause → service start.
+  Fails fast at any step with clear next-action message. Service stays stopped on failure.
+- `backup_transport_db.bat` created (not executed): locale-independent timestamped copy of
+  `instance/transport.db` to `C:\transport-report-backups\daily\`. ASCII-only output.
+  Creates destination folder if missing. Exits non-zero on source missing or copy failure.
+- Note: raw file copy replaced by TASK-DEPLOY-004B.
+- No application code changed. No database changed. No service restarted.
+
+**TASK-DEPLOY-002 — GitHub repository creation and first push (2026-05-23 — COMPLETED)**
+
+- Private GitHub repository created: https://github.com/sINte3/vehicle-soft
+- Repository visibility: Private.
+- Local branch: `main`. Remote: `origin`.
+- Initial source push to `origin/main` completed successfully.
+- Tag created and pushed: `v1.0-production-2026-05-23`.
+- Final `git status`: branch main up to date with origin/main, working tree clean.
+- `.gitignore` updated with two additional exclusions before first commit:
+  `/PROMPT.md` (root-level Claude prompt file) and `*.docx` (binary user guide excluded).
+- `PROMPT.md` and `Rukovodstvo_polzovatelya.docx` were excluded from the first commit.
+- Sensitive/runtime files confirmed excluded: `instance/`, `reports/`, `logs/`, `Archive/`,
+  `nssm.exe`, `wialon_import_v3.py`, `PROMPT_*.md`, `old_transport.db`, `.env`.
+- No application code changed. No database changed. No service restarted.
 
 **TASK-DEPLOY-003C — .gitignore root-only pattern anchoring (2026-05-23 — COMPLETED)**
 
