@@ -2,7 +2,7 @@
 
 ## State date
 
-2026-05-23 (TASK-DEPLOY-004D completed: backup_transport_db.bat wrapper corrected — previous version called backup_transport_db.py but used bare exit /b %ERRORLEVEL% with no success/failure messages; replaced with explicit if errorlevel 1 failure block and "Backup completed successfully." on success; docs updated)
+2026-05-23 (TASK-DEPLOY-005B completed: runbook order fixed and stale raw-copy backup references corrected in docs/VPS_STAGING_RUNBOOK.md, docs/DEPLOYMENT_PLAN.md, docs/AGENT_STATE.md, docs/TASKS.md — documentation only, no code/database/service changes)
 
 ## Materials reviewed
 
@@ -173,20 +173,73 @@ Observed production SQLite counts (as of 2026-05-19):
 ## Current recommended next task
 
 **TASK-DEPLOY-005 — Staging VPS deployment**
-TASK-DEPLOY-004, TASK-DEPLOY-004B, TASK-DEPLOY-004C, and TASK-DEPLOY-004D are complete.
-`backup_transport_db.bat` now calls `backup_transport_db.py` and explicitly prints success or
-failure. The operator should review `docs/RELEASE_AND_BACKUP_PROCEDURE.md`, set up the Task
-Scheduler backup task, and run `backup_transport_db.bat` once manually to verify it
-(the Python script will print integrity check results; the bat wrapper will then print
-"Backup completed successfully.").
-Next major step: deploy to a Windows VPS (see `docs/DEPLOYMENT_PLAN.md` Section 6 Phase 2).
+TASK-DEPLOY-005A runbook is complete. The full operator runbook is at `docs/VPS_STAGING_RUNBOOK.md`.
+Next step: operator rents a Windows Server 2022 VPS and follows the runbook.
+See `docs/DEPLOYMENT_PLAN.md` Section 6 Phase 2 for the broader deployment plan.
 
 TASK-OPS-002C remains open — operator must answer 5 confirmation questions in
 `docs/MIGRATION_BACKFILL_ANALYSIS.md` for the LIKELY_APPLIED migration scripts.
 
 **Recently completed**
 
-**TASK-DEPLOY-004B — Safe SQLite backup via online backup API (2026-05-23 — IMPLEMENTED, pending operator test; update.bat failure message corrected by TASK-DEPLOY-004C)**
+**TASK-DEPLOY-005B — Fix VPS runbook order and stale deployment-plan backup wording (2026-05-23 — COMPLETED)**
+
+- `docs/VPS_STAGING_RUNBOOK.md` reordered: primary path is now Git → Python → empty
+  `C:\transport-report` git clone → copy `nssm.exe` into the cloned folder → setx env
+  vars → firewall → production backup → transfer → create `instance\` → copy DB → verify
+  DB → install dependencies → syntax/import checks → `install_service.bat` → service/QA.
+  Earlier sections (3.3 NSSM, 6.3 instance dir) updated to say "after clone". Section 16
+  numbered checklist rewritten to clone first; "Alternative if folder already exists" kept
+  only as a troubleshooting note at the end of Section 16, not as the primary path.
+- `docs/DEPLOYMENT_PLAN.md` Sections 7 and 8: stale raw `copy "...transport.db..." "D:\backups\..."`
+  examples replaced with the verified procedure (`cd C:\transport-report && backup_transport_db.bat`)
+  that calls `backup_transport_db.py` via the SQLite online backup API with
+  `PRAGMA integrity_check`. Backup destination corrected to
+  `C:\transport-report-backups\daily\` and verified Task Scheduler task `TransportDBBackup`
+  (daily 02:00, SYSTEM) referenced explicitly. TASK-DEPLOY-004 scope rewritten to describe
+  the completed implementation (`docs/RELEASE_AND_BACKUP_PROCEDURE.md`, `update.bat`,
+  `backup_transport_db.py`, `backup_transport_db.bat`, Task Scheduler task verified by
+  operator). Unsupported retention automation moved to future improvement, not completed.
+- `docs/AGENT_STATE.md`: duplicate TASK-OPS-002C paragraph in "Current recommended next task"
+  removed; one copy kept.
+- `docs/TASKS.md`: TASK-DEPLOY-005B entry added (completed). TASK-DEPLOY-005 remains planned
+  awaiting VPS; TASK-DEPLOY-006 remains planned; TASK-OPS-002C remains pending.
+- No application code changed. No database changed. No service restarted. No migrations.
+- No git commit. No git push.
+
+**TASK-DEPLOY-005A — VPS staging deployment runbook (2026-05-23 — COMPLETED)**
+
+- `docs/VPS_STAGING_RUNBOOK.md` created: 16-section runbook covering VPS prerequisites,
+  software installation, GitHub clone with PAT authentication, environment variables setup
+  (SECRET_KEY and FUEL_API_TOKEN via setx /M), production database transfer and integrity
+  verification, Python environment and dependency setup, NSSM service installation via
+  install_service.bat, Windows Firewall rules for staging (port 5050 restricted to office IP),
+  Nginx reverse proxy skeleton, automated daily backup via Task Scheduler, QA smoke test
+  checklist, Topaz/Wialon staging policy (no Topaz agent change until staging QA passes),
+  cutover plan draft, rollback plan, open questions for operator, and exact operator command
+  checklist with 26 numbered steps.
+- `docs/AGENT_STATE.md`, `docs/TASKS.md`, `docs/DEPLOYMENT_PLAN.md` updated with task status.
+- No application code changed. No database changed. No service restarted. No migrations.
+- No git commit. No git push.
+
+**TASK-DEPLOY-004E — Close release/backup procedure after successful operator test (2026-05-23 — COMPLETED)**
+
+- `backup_transport_db.py` syntax check: `py_compile` PASS (no output).
+- `backup_transport_db.bat` manual run: SUCCESS.
+  - SQLite online backup API used.
+  - Backup created: `C:\transport-report-backups\daily\transport_20260523_182423.db`
+  - Source size: 46,800,896 bytes. Destination size: 46,800,896 bytes.
+  - Integrity check: `ok`. Wrapper printed: `Backup completed successfully.`
+- Directory verification: `transport_20260523_182423.db` confirmed present at 46,800,896 bytes.
+- Windows Task Scheduler daily backup task created:
+  - Command: `schtasks /create /tn "TransportDBBackup" /tr "C:\transport-report\backup_transport_db.bat" /sc daily /st 02:00 /ru SYSTEM /f`
+  - Result: SUCCESS. Task name: `TransportDBBackup`. Next run: 24.05.2026 2:00:00. State: Ready.
+- Scheduled task manual run: `schtasks /run /tn "TransportDBBackup"` — SUCCESS.
+  - New backup: `C:\transport-report-backups\daily\transport_20260523_182603.db`, 46,800,896 bytes.
+- Git commits `428104a` and `10652e2` pushed to `origin/main`. Working tree clean.
+- Documentation only. No application code changed. No database changed. No service restarted. No migrations.
+
+**TASK-DEPLOY-004B — Safe SQLite backup via online backup API (2026-05-23 — COMPLETED and verified by operator 2026-05-23)**
 
 - `backup_transport_db.py` created (stdlib only, no Flask imports): uses `sqlite3.Connection.backup()`
   for a consistent online backup even when WAL mode is active and the service is running.

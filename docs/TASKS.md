@@ -428,7 +428,7 @@ Acceptance criteria met:
 ### TASK-DEPLOY-004 — Release package and backup procedure
 
 Priority: P1  
-Status: **implemented 2026-05-23. Backup implementation fixed by TASK-DEPLOY-004B.**
+Status: **completed and verified 2026-05-23** (004 → 004B → 004C → 004D → 004E all done)
 
 Files created (not yet executed):
 
@@ -482,10 +482,30 @@ Changes made:
 - py_compile on `backup_transport_db.py` PASS.
 - No application code changed. No database changed. No service restarted. No migrations.
 
+### TASK-DEPLOY-004E — Close release/backup procedure after successful operator test
+
+Priority: P1  
+Status: **completed 2026-05-23**
+
+Facts recorded:
+
+- `py_compile backup_transport_db.py` — PASS (no output).
+- `backup_transport_db.bat` manual run — SUCCESS.
+  Backup: `C:\transport-report-backups\daily\transport_20260523_182423.db`
+  Source size: 46,800,896 bytes. Destination size: 46,800,896 bytes.
+  Integrity check: `ok`. Wrapper: `Backup completed successfully.`
+- Directory verification: file confirmed present at 46,800,896 bytes.
+- Task Scheduler task `TransportDBBackup` created: daily 02:00, SYSTEM, `/f`. Result: SUCCESS.
+  Next run: 24.05.2026 2:00:00. State: Ready.
+- Scheduled task manual run `schtasks /run /tn "TransportDBBackup"` — SUCCESS.
+  New backup: `C:\transport-report-backups\daily\transport_20260523_182603.db`, 46,800,896 bytes.
+- Commits `428104a` and `10652e2` pushed to `origin/main`. Working tree clean.
+- Documentation only. No code, no database, no migrations, no service restart.
+
 ### TASK-DEPLOY-004B — Safe SQLite backup via online backup API
 
 Priority: P1  
-Status: **implemented 2026-05-23 — pending operator test. Failure message corrected by TASK-DEPLOY-004C.**
+Status: **completed and verified 2026-05-23**
 
 Problem fixed: TASK-DEPLOY-004 used raw `copy /Y transport.db` while the service was
 running. In WAL mode with uncheckpointed pages, a raw copy of `.db` produces an
@@ -507,26 +527,90 @@ Changes made:
   documented SQLite online backup API; updated output example and known risks table.
 - No application code changed. No database changed. No service restarted. No migrations.
 
-Operator next steps:
+Operator verification completed 2026-05-23 (TASK-DEPLOY-004E):
 
-1. Review `docs/RELEASE_AND_BACKUP_PROCEDURE.md`.
-2. Create the Task Scheduler task for daily backup (command in the document).
-3. Run `backup_transport_db.bat` once manually to verify it works and prints
-   `Integrity check : ok` and `SUCCESS`.
-4. Next update from GitHub: run `update.bat` instead of copying files manually.
+- Manual test: PASS — backup created, integrity check ok, wrapper printed success.
+- Task Scheduler task `TransportDBBackup` created and tested successfully.
+- GitHub up to date. Working tree clean.
 
 ### TASK-DEPLOY-005 — Staging VPS deployment
 
 Priority: P2  
 Depends on: TASK-DEPLOY-002, TASK-DEPLOY-003, TASK-DEPLOY-004  
-Status: planned.
+Status: **TASK-DEPLOY-005A and TASK-DEPLOY-005B completed 2026-05-23. Full deployment: planned — awaiting VPS.**
 
-Scope:
+**TASK-DEPLOY-005A — VPS staging runbook (2026-05-23 — COMPLETED)**
+
+Changes made:
+
+- `docs/VPS_STAGING_RUNBOOK.md` created: 16-section operator runbook with exact commands.
+- Documentation only. No code, database, or service changes.
+
+Runbook covers: VPS prerequisites, Git + Python 3.14 + NSSM install, GitHub private repo clone
+with PAT, SECRET_KEY + FUEL_API_TOKEN via setx /M, DB transfer from production with integrity
+check, install_service.bat usage, Windows Firewall rules, Nginx reverse proxy skeleton, daily
+backup Task Scheduler setup, QA smoke test checklist, Topaz staging policy, cutover plan,
+rollback plan, 15 open questions for operator, and 26-step exact operator command checklist.
+
+**TASK-DEPLOY-005B — Fix VPS runbook order and stale deployment-plan backup wording (2026-05-23 — COMPLETED)**
+
+Problem fixed: review of TASK-DEPLOY-005A surfaced three documentation issues:
+
+1. `docs/VPS_STAGING_RUNBOOK.md` told the operator to copy `nssm.exe` into
+   `C:\transport-report\` and create `C:\transport-report\instance\` before `git clone`,
+   which makes the later `git clone ... C:\transport-report` fail because the target is
+   non-empty. The workaround was buried in a note instead of the primary path being clean.
+2. `docs/DEPLOYMENT_PLAN.md` Sections 7 and 8 still showed raw
+   `copy "...transport.db..." "D:\backups\..."` examples and a "keep last 7 days; delete
+   older files" retention claim. These were obsolete after TASK-DEPLOY-004B/004E replaced
+   the raw copy with `backup_transport_db.py` (SQLite online backup API). The TASK-DEPLOY-004
+   scope in the same file still described the planned-but-not-built design instead of the
+   completed implementation.
+3. `docs/AGENT_STATE.md` had a duplicated TASK-OPS-002C paragraph in "Current recommended
+   next task".
+
+Changes made:
+
+- `docs/VPS_STAGING_RUNBOOK.md`:
+  - Section 3.3 (NSSM) rewritten: do not pre-create `C:\transport-report\`; copy
+    `nssm.exe` into the folder only after `git clone` (or place at `C:\nssm\nssm.exe`).
+  - Section 6.3 (instance dir) clarified: runs after `git clone`, inside the cloned folder.
+  - Section 8.1 prerequisites listed in deployment order.
+  - Section 16 numbered checklist rewritten so the primary path is rent VPS → RDP → Git →
+    Python 3.14 → `git clone` into empty `C:\transport-report` → drop `nssm.exe` into it →
+    setx env vars → firewall → backup production → transfer → create `instance\` → copy DB
+    → verify DB → install dependencies → syntax/import checks → `install_service.bat` →
+    verify service → QA → backups.
+  - "Alternative if `C:\transport-report` already exists" kept as a troubleshooting note
+    at the end of Section 16 (rename folder and re-clone, or `git init`+`fetch`+`checkout`
+    if the operator understands the implications). Not the primary path.
+- `docs/DEPLOYMENT_PLAN.md`:
+  - Section 7: raw `copy` example replaced with verified
+    `cd C:\transport-report && backup_transport_db.bat`. Method documented as SQLite
+    online backup API with `PRAGMA integrity_check`. Task `TransportDBBackup` (daily 02:00,
+    SYSTEM, target `C:\transport-report-backups\daily\`) referenced. Automated retention
+    moved from "required discipline" to "not currently automated — future improvement".
+  - Section 8 "Backups": same raw-copy example replaced with `backup_transport_db.bat`
+    description and verified Task Scheduler setup. Wrong `D:\backups\` / `C:\backups\`
+    paths corrected to `C:\transport-report-backups\daily\`.
+  - TASK-DEPLOY-004 scope rewritten to describe the completed implementation
+    (`docs/RELEASE_AND_BACKUP_PROCEDURE.md`, `update.bat`, `backup_transport_db.py`,
+    `backup_transport_db.bat`, Task Scheduler task `TransportDBBackup` verified by operator).
+    Acceptance criteria marked met. Unsupported retention and offsite sync listed under
+    "Not implemented (deferred — future improvement)".
+- `docs/AGENT_STATE.md`: duplicate TASK-OPS-002C paragraph removed; one copy kept.
+- `docs/TASKS.md`: this TASK-DEPLOY-005B entry added.
+- Documentation only. No application code changed. No database changed. No service
+  restarted. No migrations. No git commit. No git push.
+
+Allowed safe read-only checks run during fix: file reads only.
+
+**Remaining TASK-DEPLOY-005 scope (not started — operator must rent VPS first):**
 
 - Rent Windows Server 2022 VPS.
-- Deploy from GitHub repository with NSSM service.
-- Configure firewall, Nginx reverse proxy, HTTPS.
-- Update Topaz agent to new server URL.
+- Follow `docs/VPS_STAGING_RUNBOOK.md` step by step.
+- Configure firewall, optional Nginx reverse proxy, HTTPS (Phase 3).
+- Update Topaz agent to new server URL (after staging QA passes).
 - Full QA checklist pass on VPS.
 - Set up automated backups and UptimeRobot monitoring.
 
