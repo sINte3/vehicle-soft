@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Ҳисобот') }}{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <h1>{{ t('Ҳисобот') }}</h1>
+</div>
+
+<div class="card" style="margin-bottom:24px;">
+    <div class="card-header">📊 {{ t('Ҳисобот параметрлари') }}</div>
+    <div class="card-body">
+        <form method="post" action="{{ url_for('report') }}" id="reportForm">
+
+            {# Org + Category multiselects #}
+            <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px;">
+                <div>
+                    <label style="font-size:12px; font-weight:600; color:var(--text2);
+                                  display:block; margin-bottom:4px;">{{ t('ТАШКИЛОТ') }}</label>
+                    <div class="ms-wrap" id="ms-orgs-rep">
+                        <button type="button" class="ms-trigger"></button>
+                        <div class="ms-dropdown">
+                            <label class="ms-item ms-select-all">
+                                <input type="checkbox" class="ms-all" checked> {{ t('Барчаси') }}
+                            </label>
+                            {% for org in organizations %}
+                            <label class="ms-item">
+                                <input type="checkbox" name="org_ids" value="{{ org.id }}" checked>
+                                {{ org.name }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <label style="font-size:12px; font-weight:600; color:var(--text2);
+                                  display:block; margin-bottom:4px;">{{ t('КАТЕГОРИЯ') }}</label>
+                    <div class="ms-wrap" id="ms-cats-rep">
+                        <button type="button" class="ms-trigger"></button>
+                        <div class="ms-dropdown">
+                            <label class="ms-item ms-select-all">
+                                <input type="checkbox" class="ms-all" checked> {{ t('Барчаси') }}
+                            </label>
+                            {% for code, name in categories.items() %}
+                            <label class="ms-item">
+                                <input type="checkbox" name="cat_codes" value="{{ code }}" checked>
+                                {{ name }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {# Period mode tabs #}
+            <div style="margin-bottom:16px;">
+                <label style="font-size:12px; font-weight:600; color:var(--text2);
+                              display:block; margin-bottom:6px;">{{ t('ДАВР') }}</label>
+                <div class="toggle-group">
+                    {% for m, label in [('day', t('Бугун')),('week', t('Ҳафта')),
+                                         ('month', t('Ой')),('range', t('Ихтиёрий'))] %}
+                    <label {% if mode == m %}style="background:var(--accent);color:#fff;"{% endif %}>
+                        <input type="radio" name="mode" value="{{ m }}"
+                               {% if mode == m %}checked{% endif %}
+                               onchange="onModeChange(this.value)">
+                        {{ label }}
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div id="dayField" style="{% if mode != 'day' %}display:none;{% endif %} margin-bottom:16px;">
+                <label style="font-size:12px; font-weight:600; color:var(--text2);
+                              display:block; margin-bottom:4px;">{{ t('САНА') }}</label>
+                <input type="date" name="report_date"
+                       value="{{ d_from.isoformat() }}" style="width:180px;"
+                       onchange="updatePreview()">
+            </div>
+            <div id="rangeField" style="{% if mode != 'range' %}display:none;{% endif %}
+                                         margin-bottom:16px; display:flex; gap:12px; align-items:center;">
+                <div>
+                    <label style="font-size:12px; font-weight:600; color:var(--text2);
+                                  display:block; margin-bottom:4px;">{{ t('ДАН') }}</label>
+                    <input type="date" name="date_from" value="{{ d_from.isoformat() }}"
+                           onchange="updatePreview()">
+                </div>
+                <div>
+                    <label style="font-size:12px; font-weight:600; color:var(--text2);
+                                  display:block; margin-bottom:4px;">{{ t('ГАЧА') }}</label>
+                    <input type="date" name="date_to" value="{{ d_to.isoformat() }}"
+                           onchange="updatePreview()">
+                </div>
+            </div>
+
+            {# Report type #}
+            <div style="margin-bottom:20px;">
+                <label style="font-size:12px; font-weight:600; color:var(--text2);
+                              display:block; margin-bottom:6px;">{{ t('ҲИСОБОТ ТУРИ') }}</label>
+                <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                    <label style="display:flex; align-items:center; gap:8px;
+                                  padding:10px 16px; border:2px solid var(--accent);
+                                  border-radius:var(--radius); cursor:pointer;
+                                  background:var(--accent-light);" id="lbl-main">
+                        <input type="radio" name="report_type" value="main"
+                               checked style="width:auto;"
+                               onchange="styleReportType()">
+                        <div>
+                            <div style="font-weight:600; font-size:13px;">📋 {{ t('Асосий ҳисобот') }}</div>
+                            <div class="text-muted text-sm">{{ t('8 лист: ОБШИЙ, СВОД, ИЧИ') }}</div>
+                        </div>
+                    </label>
+                    <label style="display:flex; align-items:center; gap:8px;
+                                  padding:10px 16px; border:2px solid var(--border);
+                                  border-radius:var(--radius); cursor:pointer;" id="lbl-activity">
+                        <input type="radio" name="report_type" value="daily_activity"
+                               style="width:auto;" onchange="styleReportType()">
+                        <div>
+                            <div style="font-weight:600; font-size:13px;">📊 {{ t('Кунлик иш билан банд') }}</div>
+                            <div class="text-muted text-sm">{{ t('2 жадвал: техника + юк транспорт') }}</div>
+                        </div>
+                    </label>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-lg">{{ t('📥 Юклаш') }}</button>
+        </form>
+    </div>
+</div>
+
+{# Preview stats #}
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-header">
+        {{ t('Кўриш') }}
+        <span class="text-muted text-sm" style="margin-left:8px;">
+            {{ d_from.strftime('%d.%m.%Y') }}{% if d_from != d_to %} — {{ d_to.strftime('%d.%m.%Y') }}{% endif %}
+            {% if selected_org_id %}
+            · {% for org in organizations %}{% if org.id == selected_org_id %}{{ org.name }}{% endif %}{% endfor %}
+            {% endif %}
+        </span>
+    </div>
+    <div class="card-body" style="padding:16px;">
+        <div class="stats-grid" style="margin-bottom:0;">
+            <div class="stat-card">
+                <div class="label">{{ t('Жами сумма') }}</div>
+                <div class="value">{{ preview.total|fmt_sum }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">{{ t('Нақд') }}</div>
+                <div class="value cash">{{ preview.cash|fmt_sum }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">{{ t('Пул кўчириш') }}</div>
+                <div class="value transfer">{{ preview.transfer|fmt_sum }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">{{ t('Тизим корхонасида ишлади') }}</div>
+                <div class="value internal">{{ preview.internal|fmt_sum }}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">{{ t('Бошқа') }}</div>
+                <div class="value">{{ preview.other|fmt_sum }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function onModeChange(val) {
+    document.getElementById('dayField').style.display   = val==='day'   ? '' : 'none';
+    var rf = document.getElementById('rangeField');
+    rf.style.display = val==='range' ? 'flex' : 'none';
+}
+
+function styleReportType() {
+    var main = document.getElementById('lbl-main');
+    var act  = document.getElementById('lbl-activity');
+    var mainR = main.querySelector('input');
+    main.style.borderColor = mainR.checked ? 'var(--accent)' : 'var(--border)';
+    main.style.background  = mainR.checked ? 'var(--accent-light)' : '';
+    act.style.borderColor  = !mainR.checked ? 'var(--accent)' : 'var(--border)';
+    act.style.background   = !mainR.checked ? 'var(--accent-light)' : '';
+}
+
+// Navigate to GET for preview update (not submit the POST form)
+function updatePreview() {
+    var mode = document.querySelector('input[name="mode"]:checked').value;
+    var params = new URLSearchParams({mode: mode});
+    if (mode === 'day') {
+        var d = document.querySelector('input[name="report_date"]');
+        if (d) params.set('date', d.value);
+    } else if (mode === 'range') {
+        var df = document.querySelector('input[name="date_from"]');
+        var dt = document.querySelector('input[name="date_to"]');
+        if (df) params.set('date_from', df.value);
+        if (dt) params.set('date_to',   dt.value);
+    }
+    window.location.href = '{{ url_for("report") }}?' + params.toString();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    if (document.getElementById('ms-orgs-rep')) initMultiselect('ms-orgs-rep', '{{ t("Ташкилот") }}');
+    if (document.getElementById('ms-cats-rep')) initMultiselect('ms-cats-rep', '{{ t("Категория") }}');
+});
+</script>
+{% endblock %}

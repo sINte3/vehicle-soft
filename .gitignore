@@ -1,0 +1,66 @@
+# Database — NEVER commit production data
+instance/transport.db
+instance/transport.db.backup*
+instance/old_transport.db
+old_transport.db
+
+# Generated reports
+reports/*.xlsx
+reports/*.xls
+
+# Logs
+logs/*.log
+logs/*.txt
+
+# Historical release archives (replaced by git history)
+Archive/
+
+# Environment variables and secrets
+.env
+
+# Python runtime artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Binary tools — download separately from https://nssm.cc/download
+nssm.exe
+
+# Windows desktop artifacts
+Thumbs.db
+Desktop.ini
+
+# IDE project files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code agent session and memory files (not project source)
+.claude/
+
+# One-time migration and fix script log output (runtime artifacts, not source)
+migration_log_*.csv
+fix_names_log_*.csv
+patch2_log_*.csv
+
+# Root-level binary reference import file (not version-controlled source)
+/Agroklastr_Tehnika_Konsolidaciya.xlsx
+/Агрокластер_Техника_Консолидация.xlsx
+
+# Old backup copies of modules no longer in active use.
+# wialon_import_v3.py is excluded because it contains a stale hardcoded API token
+# (real value redacted; see docs/SECRET_SCAN_REPORT.md) from before TASK-SEC-002.
+# The active module is wialon_import.py.
+/wialon_import_v3.py
+
+# Root-level orphaned HTML files (old copies; active templates are in templates/)
+/wialon.html
+/wialon_auto_match.html
+/wialon_report_v2.html
+
+# Local Claude/ChatGPT handoff prompts (working artifacts, not source)
+/PROMPT_*.md
+/PROMPT.md
+*.docx

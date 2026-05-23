@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Юклама ҳисобот') }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>{{ t('Юклама ҳисобот') }}</h1>
+    <div style="display:flex; gap:8px;">
+        {% if orgs_data %}
+        <a href="{{ url_for('wialon_report_export',
+                   date=d_from.isoformat(), date_to=d_to.isoformat(),
+                   org_id=selected_org_id or '') }}"
+           class="btn btn-primary">📥 Excel</a>
+        {% endif %}
+        <a href="{{ url_for('wialon_index') }}" class="btn btn-secondary">← Импорт</a>
+    </div>
+</div>
+
+{# ── Filters ── #}
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-body">
+        <form method="get" id="filterForm">
+            <div class="form-inline" style="gap:16px; flex-wrap:wrap; align-items:flex-end;">
+
+                {# Period mode #}
+                <div>
+                    <label style="font-size:12px; font-weight:600; color:var(--text2);
+                                  display:block; margin-bottom:4px;">{{ t('ДАВР') }}</label>
+                    <div class="toggle-group">
+                        {% for m, lbl in [('day', t('Бугун')),('week', t('Ҳафта')),
+                                           ('month', t('Ой')),('range', t('Ихтиёрий'))] %}
+                        <label {% if mode==m %}style="background:var(--accent);color:#fff;"{% endif %}>
+                            <input type="radio" name="mode" value="{{ m }}"
+                                   {% if mode==m %}checked{% endif %}
+                                   onchange="onMode(this.value)"> {{ lbl }}
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                {# Day #}
+                <div id="f-day" style="{% if mode!='day' %}display:none;{% endif %}">
+                    <label style="font-size:12px; font-weight:600; color:var(--text2);
+                                  display:block; margin-bottom:4px;">{{ t('САНА') }}</label>
+                    <input type="date" name="date" value="{{ d_from.isoformat() }}"
+                           onchange="this.form.submit()" style="width:160px;">
+                </div>
+
+                {# Range #}
+                <div id="f-range" style="{% if mode!='range' %}display:none;{% endif %}
+                                          display:flex; gap:10px; align-items:flex-end;">
+                    <div>
+                        <label style="font-size:12px; font-weight:600; color:var(--text2);
+                                      display:block; margin-bottom:4px;">{{ t('ДАН') }}</label>
+                        <input type="date" name="date_from" value="{{ d_from.isoformat() }}"
+                               style="width:155px;">
+                    </div>
+                    <div>
+                        <label style="font-size:12px; font-weight:600; color:var(--text2);
+                                      display:block; margin-bottom:4px;">{{ t('ГАЧА') }}</label>
+                        <input type="date" name="date_to" value="{{ d_to.isoformat() }}"
+                               style="width:155px;">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm">{{ t('Кўрсатиш') }}</button>
+                </div>
+
+                {# Auto label for week/month #}
+                <div id="f-auto" style="{% if mode not in ('week','month') %}display:none;{% endif %}">
+                    <label style="font-size:12px; font-weight:600; color:var(--text2);
+                                  display:block; margin-bottom:4px;">{{ t('ДАВР') }}</label>
+                    <span class="text-muted" style="font-size:13px;">
+                        {{ d_from.strftime('%d.%m.%Y') }} — {{ d_to.strftime('%d.%m.%Y') }}
+                    </span>
+                </div>
+
+                {# Org filter #}
+                <div style="min-width:220px;">
+                    <label style="font-size:12px; font-weight:600; color:var(--text2);
+                                  display:block; margin-bottom:4px;">{{ t('ТАШКИЛОТ') }}</label>
+                    <select name="org_id" onchange="this.form.submit()">
+                        <option value="">{{ t('— Барча ташкилотлар —') }}</option>
+                        {% for org in organizations %}
+                        <option value="{{ org.id }}"
+                            {% if selected_org_id==org.id %}selected{% endif %}>
+                            {{ org.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+{# ── Summary ── #}
+{% if orgs_data %}
+{% set ns = namespace(total=0, cnt=0) %}
+{% for od in orgs_data %}
+  {% set ns.total = ns.total + od.total_hours %}
+  {% set ns.cnt = ns.cnt + od.records|length %}
+{% endfor %}
+
+<div class="stats-grid" style="margin-bottom:20px;">
+    <div class="stat-card">
+        <div class="label">Жами мотосоат</div>
+        <div class="value" style="color:var(--accent);">{{ ns.total|round|int }} соат</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Техника сони</div>
+        <div class="value">{{ ns.cnt }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Ташкилот сони</div>
+        <div class="value">{{ orgs_data|length }}</div>
+    </div>
+    {% if d_from != d_to %}
+    <div class="stat-card">
+        <div class="label">Кун сони</div>
+        <div class="value">{{ (d_to - d_from).days + 1 }}</div>
+    </div>
+    {% endif %}
+</div>
+
+{% for od in orgs_data %}
+<div class="org-section" style="margin-bottom:16px;">
+    <div class="org-section-header" style="justify-content:space-between;">
+        <span>{{ od.org.name }}</span>
+        <span style="font-size:13px; color:rgba(255,255,255,0.8);">
+            Жами: <strong>{{ od.total_hours|round|int }} соат</strong>
+        </span>
+    </div>
+    <div class="org-section-body">
+    <table>
+        <thead>
+            <tr>
+                <th style="width:44px;">№</th>
+                <th>Техника (Давлат рақами)</th>
+                <th class="text-center" style="width:130px;">Мотосоат</th>
+                <th class="text-center" style="width:130px;">Меъёр (8 соат)</th>
+                <th class="text-center" style="width:110px;">Юклама</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for r in od.records %}
+        {% set norm = 8.0 * ((d_to - d_from).days + 1) %}
+        {% set pct  = r.engine_hours / norm if norm else 0 %}
+        {% set dev  = r.engine_hours - norm %}
+        <tr>
+            <td class="text-center text-muted text-sm">{{ loop.index }}</td>
+            <td style="font-weight:600;">
+                {{ r.equipment.name }}
+                {% if r.equipment.plate %}
+                <span class="text-muted" style="font-weight:400; font-size:12px;">
+                    / {{ r.equipment.plate }}
+                </span>
+                {% endif %}
+            </td>
+            <td class="text-center" style="font-weight:700; font-size:15px;
+                color:{% if pct>=0.9 %}var(--accent){% elif pct>=0.7 %}var(--warn){% else %}var(--danger){% endif %};">
+                {{ r.engine_hours|round|int }} соат
+            </td>
+            <td class="text-center text-sm"
+                style="color:{% if dev>=0 %}var(--accent){% else %}var(--danger){% endif %};">
+                {{ '%+d'|format(dev|round|int) }} соат
+            </td>
+            <td class="text-center" style="min-width:100px;">
+                {% set w = [pct*100,100]|min|int %}
+                <div style="background:var(--border); border-radius:4px;
+                            height:12px; position:relative; overflow:hidden;">
+                    <div style="width:{{ w }}%; height:100%; border-radius:4px;
+                         background:{% if pct>=0.9 %}var(--accent){% elif pct>=0.7 %}var(--warn){% else %}var(--danger){% endif %};"></div>
+                </div>
+                <span class="text-sm" style="font-weight:600;">{{ (pct*100)|round|int }}%</span>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr style="background:var(--accent-light);">
+                <td></td>
+                <td style="font-weight:700;">Жами {{ od.org.short_name }}:</td>
+                <td class="text-center" style="font-weight:700; font-size:15px;">
+                    {{ od.total_hours|round|int }} соат
+                </td>
+                <td colspan="2"></td>
+            </tr>
+        </tfoot>
+    </table>
+    </div>
+</div>
+{% endfor %}
+
+<div class="card" style="margin-top:8px;">
+    <div class="card-body" style="display:flex; justify-content:space-between;
+         align-items:center; padding:16px 24px;">
+        <span style="font-size:16px; font-weight:700;">ЖАМИ БАРЧА ТАШКИЛОТЛАР:</span>
+        <span style="font-size:24px; font-weight:700; color:var(--accent);">
+            {{ ns.total|round|int }} соат
+        </span>
+    </div>
+</div>
+
+{% else %}
+<div class="card">
+    <div class="card-body" style="text-align:center; padding:60px;">
+        <div style="font-size:48px; margin-bottom:16px;">📭</div>
+        <h3>{{ d_from.strftime('%d.%m.%Y') }}{% if d_from!=d_to %} — {{ d_to.strftime('%d.%m.%Y') }}{% endif %} учун маълумот йўқ</h3>
+        <a href="{{ url_for('wialon_index') }}" class="btn btn-primary" style="margin-top:16px;">
+            📥 Файл юклаш →
+        </a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function onMode(val) {
+    document.getElementById('f-day').style.display   = val==='day'   ? '' : 'none';
+    var rf = document.getElementById('f-range');
+    rf.style.display   = val==='range'  ? 'flex' : 'none';
+    document.getElementById('f-auto').style.display  = (val==='week'||val==='month') ? '' : 'none';
+    if (val !== 'range') document.getElementById('filterForm').submit();
+}
+</script>
+{% endblock %}

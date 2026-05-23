@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Профиль') }}{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ t('Профиль') }}</h1>
+</div>
+
+<div class="card" style="max-width:500px;">
+    <div class="card-body">
+        <form method="post">
+            <div class="form-group">
+                <label>{{ t('Логин') }}</label>
+                <input type="text" value="{{ current_user.username }}" disabled style="background:var(--surface2);">
+            </div>
+            <div class="form-group">
+                <label>{{ t('Роль') }}</label>
+                <input type="text" value="{{ current_user.role_display }}" disabled style="background:var(--surface2);">
+            </div>
+            <div class="form-group">
+                <label>{{ t('Тўлиқ исм') }}</label>
+                <input type="text" name="full_name" value="{{ current_user.full_name }}">
+            </div>
+            <hr style="margin:20px 0; border:none; border-top:1px solid var(--border);">
+            <div class="form-group">
+                <label>{{ t('Янги парол') }} <span class="text-muted text-sm">({{ t('Парол ўзгартириш (ихтиёрий)') }})</span></label>
+                <input type="password" name="new_password" placeholder="••••••">
+            </div>
+            <div class="form-group">
+                <label>{{ t('Паролни тасдиқланг') }}</label>
+                <input type="password" name="confirm_password" placeholder="••••••">
+            </div>
+            <button type="submit" class="btn btn-primary">{{ t('💾 Сақлаш') }}</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

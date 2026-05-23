@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Ёқилғи келиши{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>⛽ Ёқилғи келишини киритиш</h1>
+    <a href="{{ url_for('fuel_dashboard') }}" class="btn btn-secondary">← Дашборд</a>
+</div>
+
+<div class="card" style="margin-bottom:24px;">
+    <div class="card-header">Янги келиш киритиш</div>
+    <div class="card-body">
+        <form method="post" action="{{ url_for('fuel_receipts') }}">
+            <div class="form-inline" style="gap:16px; flex-wrap:wrap; align-items:flex-end;">
+                <div class="form-group" style="margin-bottom:0; min-width:220px;">
+                    <label>АЗС</label>
+                    <select name="station_id" required style="width:100%;">
+                        <option value="">— танланг —</option>
+                        {% for st in stations %}
+                        <option value="{{ st.id }}">{{ st.pos_name }} ({{ st.pos_code }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom:0;">
+                    <label>Сана</label>
+                    <input type="date" name="receipt_date" value="{{ today }}" required>
+                </div>
+                <div class="form-group" style="margin-bottom:0; min-width:140px;">
+                    <label>Ёқилғи тури</label>
+                    <input type="text" name="fuel_name" placeholder="АИ-92" required style="width:120px;">
+                </div>
+                <div class="form-group" style="margin-bottom:0;">
+                    <label>Миқдор (л)</label>
+                    <input type="number" name="volume" step="1" min="0"
+                           required style="width:120px;" onwheel="this.blur()">
+                </div>
+                <div class="form-group" style="margin-bottom:0; min-width:160px;">
+                    <label>Таъминотчи</label>
+                    <input type="text" name="supplier" style="width:100%;">
+                </div>
+                <div class="form-group" style="margin-bottom:0; flex:1; min-width:140px;">
+                    <label>Изоҳ</label>
+                    <input type="text" name="note">
+                </div>
+                <button type="submit" class="btn btn-primary">💾 Сақлаш</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">Келишлар тарихи</div>
+    {% if receipts %}
+    <table>
+        <thead>
+            <tr>
+                <th>Сана</th>
+                <th>АЗС</th>
+                <th>Ёқилғи</th>
+                <th class="text-right">Миқдор (л)</th>
+                <th>Таъминотчи</th>
+                <th>Изоҳ</th>
+                <th class="text-center">Ўчириш</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for r in receipts %}
+        <tr>
+            <td style="font-weight:600;">{{ r.receipt_date.strftime('%d.%m.%Y') }}</td>
+            <td>{{ r.station.pos_name }}</td>
+            <td>{{ r.fuel_name }}</td>
+            <td class="text-right" style="font-weight:600; color:var(--accent);">
+                {{ r.volume|int }}
+            </td>
+            <td class="text-sm">{{ r.supplier or '—' }}</td>
+            <td class="text-muted text-sm">{{ r.note or '—' }}</td>
+            <td class="text-center">
+                <form method="post"
+                      action="{{ url_for('fuel_receipt_delete', rid=r.id) }}"
+                      onsubmit="return confirm('Ўчиришни тасдиқлайсизми?');">
+                    <button type="submit" class="btn btn-danger btn-sm">✕</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="card-body" style="text-align:center; padding:40px;">
+        <p class="text-muted">Ҳали келиш маълумоти киритилмаган.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

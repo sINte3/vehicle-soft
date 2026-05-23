@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Хатолик {{ code }}{% endblock %}
+{% block content %}
+<div style="text-align:center; padding:60px 20px;">
+    <div style="font-size:72px; font-weight:700; color:var(--border-strong); margin-bottom:8px;">{{ code }}</div>
+    <h2 style="margin-bottom:12px;">{{ message }}</h2>
+    <a href="{{ url_for('index') }}" class="btn btn-secondary">← Бош саҳифага</a>
+</div>
+{% endblock %}

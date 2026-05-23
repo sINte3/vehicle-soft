@@ -1,0 +1,380 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Бош саҳифа') }}{% endblock %}
+{% block content %}
+
+{# ─── DATE RANGE SELECTOR ─── #}
+<div class="page-header">
+    <h1>{{ t('Кунлик ҳисобот') }}</h1>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-body">
+        <form method="post" action="{{ url_for('index') }}" id="dateForm">
+            <div class="date-mode-tabs">
+                <button type="button" class="mode-btn {% if mode == 'day' %}active{% endif %}"
+                        onclick="setMode('day')">{{ t('Бугун') }}</button>
+                <button type="button" class="mode-btn {% if mode == 'week' %}active{% endif %}"
+                        onclick="setMode('week')">{{ t('Ҳафта') }}</button>
+                <button type="button" class="mode-btn {% if mode == 'month' %}active{% endif %}"
+                        onclick="setMode('month')">{{ t('Ой') }}</button>
+                <button type="button" class="mode-btn {% if mode == 'range' %}active{% endif %}"
+                        onclick="setMode('range')">{{ t('Ихтиёрий') }}</button>
+            </div>
+            <input type="hidden" name="mode" id="modeInput" value="{{ mode }}">
+
+            <div class="date-fields" style="margin-top:12px;">
+                <div id="dayFields" style="{% if mode != 'day' %}display:none;{% endif %}">
+                    <input type="date" name="date" value="{{ d_from.isoformat() }}"
+                           onchange="document.getElementById('dateForm').submit()">
+                </div>
+                <div id="rangeFields" style="{% if mode != 'range' %}display:none;{% endif %} display:flex; gap:10px; align-items:center;">
+                    <label style="font-size:13px; color:var(--text2);">{{ t('Дан:') }}</label>
+                    <input type="date" name="date_from" value="{{ d_from.isoformat() }}">
+                    <label style="font-size:13px; color:var(--text2);">{{ t('Гача:') }}</label>
+                    <input type="date" name="date_to" value="{{ d_to.isoformat() }}">
+                </div>
+                <div id="autoFields" style="{% if mode not in ('week', 'month') %}display:none;{% endif %}">
+                    <span class="text-muted" style="font-size:13px;">
+                        {{ d_from.strftime('%d.%m.%Y') }} — {{ d_to.strftime('%d.%m.%Y') }}
+                        ({{ num_days }} {{ t('кун') }})
+                    </span>
+                </div>
+            </div>
+
+            <div style="margin-top:12px; display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
+                <div>
+                    <label style="font-size:12px; font-weight:600; color:var(--text2); display:block; margin-bottom:4px;">{{ t('Ташкилот') }}</label>
+                    <div class="ms-wrap" id="ms-orgs-idx">
+                        <button type="button" class="ms-trigger"></button>
+                        <div class="ms-dropdown">
+                            <label class="ms-item ms-select-all">
+                                <input type="checkbox" class="ms-all"
+                                       {% if not selected_org_ids %}checked{% endif %}> {{ t('Барчаси') }}
+                            </label>
+                            {% for org in organizations %}
+                            <label class="ms-item">
+                                <input type="checkbox" name="org_ids" value="{{ org.id }}"
+                                       {% if not selected_org_ids or org.id in selected_org_ids %}checked{% endif %}>
+                                {{ org.name }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <label style="font-size:12px; font-weight:600; color:var(--text2); display:block; margin-bottom:4px;">{{ t('Категория') }}</label>
+                    <div class="ms-wrap" id="ms-cats-idx">
+                        <button type="button" class="ms-trigger"></button>
+                        <div class="ms-dropdown">
+                            <label class="ms-item ms-select-all">
+                                <input type="checkbox" class="ms-all"
+                                       {% if not selected_cats %}checked{% endif %}> {{ t('Барчаси') }}
+                            </label>
+                            {% for code, name in CATEGORIES.items() %}
+                            <label class="ms-item">
+                                <input type="checkbox" name="cat_codes" value="{{ code }}"
+                                       {% if not selected_cats or code in selected_cats %}checked{% endif %}>
+                                {{ name }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <label style="font-size:12px; font-weight:600; color:var(--text2); display:block; margin-bottom:4px;">{{ t('Иш тури') }}</label>
+                    <div class="ms-wrap" id="ms-wtypes-idx">
+                        <button type="button" class="ms-trigger"></button>
+                        <div class="ms-dropdown">
+                            <label class="ms-item ms-select-all">
+                                <input type="checkbox" class="ms-all"
+                                       {% if not selected_work_types %}checked{% endif %}> {{ t('Барчаси') }}
+                            </label>
+                            {% for wt in all_work_types %}
+                            <label class="ms-item">
+                                <input type="checkbox" name="work_types" value="{{ wt }}"
+                                       {% if not selected_work_types or wt in selected_work_types %}checked{% endif %}>
+                                {{ wt }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm">{{ t('Кўрсатиш') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{# ─── SUMMARY CARDS ─── #}
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="label">{{ t('Жами сумма') }}</div>
+        <div class="value">{{ total|fmt_sum }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">{{ t('Нақд') }}</div>
+        <div class="value cash">{{ total_cash|fmt_sum }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">{{ t('Пул кўчириш') }}</div>
+        <div class="value transfer">{{ total_transfer|fmt_sum }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">{{ t('Тизим корхонасида ишлади') }}</div>
+        <div class="value internal">{{ total_internal|fmt_sum }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">{{ t('Бошқа') }}</div>
+        <div class="value">{{ total_other|fmt_sum }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">{{ t('Ишлаган техника') }}</div>
+        <div class="value">{{ working_count }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">{{ t('Бўш техника') }}</div>
+        <div class="value text-muted">{{ idle_count }}</div>
+    </div>
+</div>
+
+{% if is_range %}
+<div style="margin-bottom:16px; color:var(--text2); font-size:13px;">
+    {{ t('Давр:') }} <strong>{{ d_from.strftime('%d.%m.%Y') }} — {{ d_to.strftime('%d.%m.%Y') }}</strong> ({{ num_days }} {{ t('кун') }})
+    {% if deficiencies_count > 0 %} | {{ t('Камчиликлар:') }} <strong>{{ deficiencies_count }}</strong>{% endif %}
+</div>
+{% elif deficiencies_count > 0 %}
+<div style="margin-bottom:16px; color:var(--text2); font-size:13px;">
+    {{ t('Камчиликлар:') }} <strong>{{ deficiencies_count }}</strong>
+</div>
+{% endif %}
+
+{# ─── ACCORDION TABLE ─── #}
+{% if orgs_data %}
+<div class="card">
+    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>
+            {% if is_range %}
+            {{ t('Ташкилотлар бўйича') }}: {{ d_from.strftime('%d.%m.%Y') }} — {{ d_to.strftime('%d.%m.%Y') }}
+            {% else %}
+            {{ t('Ташкилотлар бўйича') }}: {{ d_from.strftime('%d.%m.%Y') }}
+            {% endif %}
+        </span>
+        <span>
+            <button class="btn btn-secondary btn-sm" onclick="toggleAllOrgs(true)">{{ t('Барчасини очиш') }}</button>
+            <button class="btn btn-secondary btn-sm" onclick="toggleAllOrgs(false)">{{ t('Барчасини ёпиш') }}</button>
+        </span>
+    </div>
+    <table class="accordion-table">
+        <thead>
+            <tr>
+                <th style="width:36px;"></th>
+                <th>{{ t('Ташкилот / Техника') }}</th>
+                <th class="text-center" style="width:60px;">{{ t('Ишл.') }}</th>
+                <th class="text-center" style="width:60px;">{{ t('Бўш') }}</th>
+                <th class="text-right">{{ t('Нақд') }}</th>
+                <th class="text-right">{{ t('Пул кўч.') }}</th>
+                <th class="text-right">{{ t('Тизим') }}</th>
+                <th class="text-right">{{ t('Бошқа') }}</th>
+                <th class="text-right">{{ t('Жами') }}</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for od in orgs_data %}
+        {# ─── Level 1: Organization row ─── #}
+        <tr class="org-row level1" onclick="toggleOrg({{ od.org.id }})" style="cursor:pointer;">
+            <td class="text-center">
+                <span class="toggle-icon" id="icon-org-{{ od.org.id }}">▶</span>
+            </td>
+            <td style="font-weight:700;">{{ od.org.name }}</td>
+            <td class="text-center">{{ od.working_count }}</td>
+            <td class="text-center text-muted">{{ od.idle_count }}</td>
+            <td class="text-right">{{ od.cash|fmt_sum }}</td>
+            <td class="text-right">{{ od.transfer|fmt_sum }}</td>
+            <td class="text-right">{{ od.internal|fmt_sum }}</td>
+            <td class="text-right">{{ od.other|fmt_sum }}</td>
+            <td class="text-right" style="font-weight:700;">{{ od.total|fmt_sum }}</td>
+        </tr>
+
+        {# ─── Level 2: Equipment rows (hidden by default) ─── #}
+        {% for eqid, ed in od.equipment.items() %}
+        <tr class="eq-row level2 org-{{ od.org.id }}-eq" style="display:none;" onclick="toggleEq({{ od.org.id }}, {{ eqid }}); event.stopPropagation();">
+            <td class="text-center">
+                {% if ed.records|length > 0 %}
+                <span class="toggle-icon toggle-sm" id="icon-eq-{{ od.org.id }}-{{ eqid }}">▶</span>
+                {% endif %}
+            </td>
+            <td style="padding-left:30px;">
+                <span style="font-weight:500;">{{ ed.eq.name }}</span>
+                {% if ed.eq.plate %}<span class="text-sm text-muted"> {{ ed.eq.plate }}</span>{% endif %}
+            </td>
+            <td class="text-center">
+                {% if is_range %}
+                    {% if ed.working_days > 0 %}
+                    <span class="text-sm">{{ ed.working_days }} {{ t('кун') }}</span>
+                    {% endif %}
+                {% else %}
+                    {% if ed.working_days > 0 %}
+                    <span class="working-badge" style="font-size:11px;">{{ t('Ишлаган') }}</span>
+                    {% endif %}
+                {% endif %}
+            </td>
+            <td class="text-center text-muted">
+                {% if is_range %}
+                    {% if ed.idle_days > 0 %}
+                    <span class="text-sm">{{ ed.idle_days }} {{ t('кун') }}</span>
+                    {% endif %}
+                {% else %}
+                    {% if ed.idle_days > 0 and ed.working_days == 0 %}
+                    <span class="idle-badge" style="font-size:11px;">{{ t('Бўш') }}</span>
+                    {% endif %}
+                {% endif %}
+            </td>
+            <td class="text-right text-sm">{{ ed.cash|fmt_sum }}</td>
+            <td class="text-right text-sm">{{ ed.transfer|fmt_sum }}</td>
+            <td class="text-right text-sm">{{ ed.internal|fmt_sum }}</td>
+            <td class="text-right text-sm">{{ ed.other|fmt_sum }}</td>
+            <td class="text-right" style="font-weight:600;">{{ ed.total|fmt_sum }}</td>
+        </tr>
+
+        {# ─── Level 3: Record detail rows (hidden by default) ─── #}
+        {% for r in ed.records %}
+        <tr class="rec-row level3 eq-{{ od.org.id }}-{{ eqid }}-rec" style="display:none;">
+            <td></td>
+            <td style="padding-left:55px;">
+                {% if is_range %}
+                <span class="text-sm text-muted">{{ r.work_date.strftime('%d.%m') }}</span>
+                {% endif %}
+                {% if r.status == 'working' %}
+                    <span class="working-badge" style="font-size:10px;">{{ r.work_type }}</span>
+                    <span class="text-sm text-muted">{{ r.customer }}</span>
+                {% else %}
+                    <span class="idle-badge" style="font-size:10px;">{{ r.idle_reason or t('Бўш') }}</span>
+                {% endif %}
+            </td>
+            <td colspan="2" class="text-center text-sm">
+                {% if r.status == 'working' and r.quantity %}
+                    {{ r.quantity }} {{ r.unit }} &times; {{ r.price|fmt_sum }}
+                {% endif %}
+            </td>
+            <td class="text-right text-sm">{% if r.amount_cash %}{{ r.amount_cash|fmt_sum }}{% endif %}</td>
+            <td class="text-right text-sm">{% if r.amount_transfer %}{{ r.amount_transfer|fmt_sum }}{% endif %}</td>
+            <td class="text-right text-sm">{% if r.amount_internal %}{{ r.amount_internal|fmt_sum }}{% endif %}</td>
+            <td class="text-right text-sm">{% if r.amount_other %}{{ r.amount_other|fmt_sum }}{% endif %}</td>
+            <td class="text-right text-sm" style="font-weight:500;">{{ r.total_amount|fmt_sum }}</td>
+        </tr>
+        {% endfor %}
+        {% endfor %}
+        {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr class="total-row">
+                <td></td>
+                <td style="font-weight:700;">{{ t('ЖАМИ') }}</td>
+                <td class="text-center">{{ working_count }}</td>
+                <td class="text-center">{{ idle_count }}</td>
+                <td class="text-right">{{ total_cash|fmt_sum }}</td>
+                <td class="text-right">{{ total_transfer|fmt_sum }}</td>
+                <td class="text-right">{{ total_internal|fmt_sum }}</td>
+                <td class="text-right">{{ total_other|fmt_sum }}</td>
+                <td class="text-right">{{ total|fmt_sum }}</td>
+            </tr>
+        </tfoot>
+    </table>
+</div>
+
+{% else %}
+<div class="card">
+    <div class="card-body" style="text-align:center; padding:60px;">
+        <div style="font-size:48px; margin-bottom:16px;">📋</div>
+        <h3 style="margin-bottom:8px;">
+            {% if is_range %}
+            {{ d_from.strftime('%d.%m.%Y') }} — {{ d_to.strftime('%d.%m.%Y') }} {{ t('учун маълумот йўқ') }}
+            {% else %}
+            {{ d_from.strftime('%d.%m.%Y') }} {{ t('учун маълумот йўқ') }}
+            {% endif %}
+        </h3>
+        <p class="text-muted" style="margin-bottom:20px;">{{ t('Маълумот киритишни бошланг') }}</p>
+        <a href="{{ url_for('daily_entry', date=d_from.isoformat()) }}" class="btn btn-primary btn-lg">
+            {{ t('Маълумот киритиш →') }}
+        </a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<style>
+.date-mode-tabs { display:flex; gap:4px; }
+.mode-btn { padding:8px 16px; border:1px solid var(--border); border-radius:6px;
+            background:var(--surface); font-size:13px; cursor:pointer; transition:all 0.15s; }
+.mode-btn:hover { background:var(--surface2); }
+.mode-btn.active { background:var(--accent); color:white; border-color:var(--accent); }
+.accordion-table { width:100%; border-collapse:collapse; }
+.accordion-table th { font-size:12px; color:var(--text2); padding:8px 10px; border-bottom:2px solid var(--border); }
+.accordion-table td { padding:8px 10px; border-bottom:1px solid var(--border); font-size:13px; }
+.org-row { background:var(--surface2); }
+.org-row:hover { background:var(--surface); }
+.eq-row { background:var(--bg); }
+.eq-row:hover { background:var(--surface); cursor:pointer; }
+.rec-row { background:var(--bg); }
+.rec-row td { font-size:12px; color:var(--text2); }
+.total-row td { font-weight:700; font-size:14px; background:var(--surface2); border-top:2px solid var(--border); padding:12px 10px; }
+.toggle-icon { font-size:10px; color:var(--text2); display:inline-block; transition:transform 0.15s; }
+.toggle-icon.open { transform:rotate(90deg); }
+.toggle-sm { font-size:8px; }
+</style>
+<script>
+function setMode(mode) {
+    document.getElementById('modeInput').value = mode;
+    document.getElementById('dayFields').style.display = mode === 'day' ? '' : 'none';
+    document.getElementById('rangeFields').style.display = mode === 'range' ? 'flex' : 'none';
+    document.getElementById('autoFields').style.display = (mode === 'week' || mode === 'month') ? '' : 'none';
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+    if (mode !== 'range') {
+        document.getElementById('dateForm').submit();
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    if (document.getElementById('ms-orgs-idx')) initMultiselect('ms-orgs-idx', '{{ t("Ташкилот") }}');
+    if (document.getElementById('ms-cats-idx')) initMultiselect('ms-cats-idx', '{{ t("Категория") }}');
+    if (document.getElementById('ms-wtypes-idx')) initMultiselect('ms-wtypes-idx', '{{ t("Иш тури") }}');
+});
+
+function toggleOrg(orgId) {
+    const rows = document.querySelectorAll('.org-' + orgId + '-eq');
+    const icon = document.getElementById('icon-org-' + orgId);
+    const isOpen = icon.classList.contains('open');
+
+    rows.forEach(r => r.style.display = isOpen ? 'none' : '');
+    icon.classList.toggle('open');
+
+    // If closing org, also close all its equipment
+    if (isOpen) {
+        document.querySelectorAll('[class*="eq-' + orgId + '-"][class*="-rec"]').forEach(r => r.style.display = 'none');
+        document.querySelectorAll('[id^="icon-eq-' + orgId + '-"]').forEach(i => i.classList.remove('open'));
+    }
+}
+
+function toggleEq(orgId, eqId) {
+    const rows = document.querySelectorAll('.eq-' + orgId + '-' + eqId + '-rec');
+    const icon = document.getElementById('icon-eq-' + orgId + '-' + eqId);
+    if (!icon) return;
+    const isOpen = icon.classList.contains('open');
+    rows.forEach(r => r.style.display = isOpen ? 'none' : '');
+    icon.classList.toggle('open');
+}
+
+function toggleAllOrgs(open) {
+    document.querySelectorAll('.level2').forEach(r => r.style.display = open ? '' : 'none');
+    document.querySelectorAll('[id^="icon-org-"]').forEach(i => {
+        if (open) i.classList.add('open'); else i.classList.remove('open');
+    });
+    if (!open) {
+        document.querySelectorAll('.level3').forEach(r => r.style.display = 'none');
+        document.querySelectorAll('[id^="icon-eq-"]').forEach(i => i.classList.remove('open'));
+    }
+}
+</script>
+{% endblock %}

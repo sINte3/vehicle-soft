@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Иш турлари') }}{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <h1>{{ t('Иш турлари') }}</h1>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-header">{{ t('Иш турлари') }}</div>
+    <div class="card-body">
+        <form method="post" action="{{ url_for('save_work_type') }}" class="form-inline">
+            <div class="form-group" style="flex:1;"><label>{{ t('Иш тури номи') }}</label>
+                <input type="text" name="name" placeholder="Шудгор / Чигит экиш / Борона мола..." required>
+            </div>
+            <div class="form-group"><label>{{ t('Дефолт ўлчов') }}</label>
+                <input type="text" name="default_unit" placeholder="га / соат / м-соат / Рейс" style="width:120px;">
+            </div>
+            <div class="form-group"><label>{{ t('Дефолт нарх') }}</label>
+                <input type="number" name="default_price" placeholder="0" style="width:140px;">
+            </div>
+            <div class="form-group"><label>&nbsp;</label>
+                <button type="submit" class="btn btn-primary">+ {{ t('Қўшиш') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">Жами: {{ work_types|length }} та</div>
+    <div class="card-body" style="padding:0;">
+        <table>
+            <thead>
+                <tr>
+                    <th>{{ t('Иш тури') }}</th>
+                    <th>{{ t('Ўлчов бирлиги') }}</th>
+                    <th class="text-right">{{ t('Нарх') }}</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for wt in work_types %}
+                <tr id="wt-row-{{ wt.id }}">
+                    <td><strong>{{ wt.name }}</strong></td>
+                    <td>{{ wt.default_unit }}</td>
+                    <td class="text-right">{{ wt.default_price|fmt_sum }}</td>
+                    <td>
+                        <button class="btn btn-secondary btn-sm" onclick="editWt({{ wt.id }})">✏</button>
+                        <form method="post" action="{{ url_for('delete_work_type', wid=wt.id) }}" style="display:inline;"
+                              onsubmit="return confirm('Ўчирасизми?')">
+                            <button class="btn btn-danger btn-sm" type="submit">🗑</button>
+                        </form>
+                    </td>
+                </tr>
+                <tr id="wt-edit-{{ wt.id }}" style="display:none;">
+                    <td colspan="4">
+                        <form method="post" action="{{ url_for('save_work_type') }}" class="form-inline">
+                            <input type="hidden" name="id" value="{{ wt.id }}">
+                            <div class="form-group" style="flex:1;"><label>{{ t('Иш тури номи') }}</label>
+                                <input type="text" name="name" value="{{ wt.name }}" required>
+                            </div>
+                            <div class="form-group"><label>{{ t('Дефолт ўлчов') }}</label>
+                                <input type="text" name="default_unit" value="{{ wt.default_unit }}" style="width:120px;">
+                            </div>
+                            <div class="form-group"><label>{{ t('Дефолт нарх') }}</label>
+                                <input type="number" name="default_price" value="{{ wt.default_price|int if wt.default_price else 0 }}" style="width:140px;">
+                            </div>
+                            <div class="form-group"><label>&nbsp;</label>
+                                <button type="submit" class="btn btn-primary btn-sm">{{ t('Сақлаш') }}</button>
+                                <button type="button" class="btn btn-secondary btn-sm" onclick="cancelWtEdit({{ wt.id }})">{{ t('Бекор қилиш') }}</button>
+                            </div>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+function editWt(id) {
+    document.getElementById('wt-row-' + id).style.display = 'none';
+    document.getElementById('wt-edit-' + id).style.display = '';
+}
+function cancelWtEdit(id) {
+    document.getElementById('wt-row-' + id).style.display = '';
+    document.getElementById('wt-edit-' + id).style.display = 'none';
+}
+</script>
+{% endblock %}

@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+{% block title %}Авто-маппинг Виалон{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Виалон — Авто-маппинг</h1>
+    <a href="{{ url_for('wialon_index') }}" class="btn btn-secondary">← Импорт</a>
+</div>
+
+{# ── Stats banner ── #}
+<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:20px;">
+    <div class="stat-card" style="border-left:4px solid var(--accent);">
+        <div class="label">✅ Аниқ мос топилди</div>
+        <div class="value" style="color:var(--accent);">{{ stats.high }}</div>
+    </div>
+    <div class="stat-card" style="border-left:4px solid var(--warn);">
+        <div class="label">⚠ Тахминий мос</div>
+        <div class="value" style="color:var(--warn);">{{ stats.medium }}</div>
+    </div>
+    <div class="stat-card" style="border-left:4px solid var(--danger);">
+        <div class="label">❌ Мос топилмади</div>
+        <div class="value" style="color:var(--danger);">{{ stats.no_match }}</div>
+    </div>
+</div>
+
+<div class="flash flash-info" style="margin-bottom:16px;">
+    💡 <strong>Қандай ишлайди:</strong>
+    Алгоритм госномерлар бўйича мосликни автоматик топди.
+    Яшил қаторлар — аниқ мос, сариқ — тахминий.
+    Фақат нотўғри мосликларни тузатинг, сўнг пастдаги
+    <strong>«Барчасини сақлаш»</strong> тугмасини босинг — бир марта, ҳаммаси.
+</div>
+
+<form method="post" action="{{ url_for('wialon_auto_match_save') }}" id="bulkForm">
+
+{# ── High confidence ── #}
+{% set high_rows = suggestions | selectattr('confidence', 'equalto', 'high') | list %}
+{% if high_rows %}
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header" style="background:#e8f5ed; color:var(--accent);">
+        ✅ Аниқ мос топилди — {{ high_rows|length }} та
+        <span class="text-sm" style="margin-left:8px; font-weight:400;">
+            (госномер бўйича аниқланди, сақланади)
+        </span>
+        <button type="button" class="btn btn-secondary btn-sm"
+                style="margin-left:auto;"
+                onclick="toggleSection('high')">Кўрсатиш/Яшириш</button>
+    </div>
+    <div id="sec-high">
+    <table>
+        <thead>
+            <tr>
+                <th style="width:36%;">Виалон номи</th>
+                <th style="width:42%;">Бизнинг техника</th>
+                <th class="text-center" style="width:12%;">Тизимда йўқ</th>
+                <th class="text-center" style="width:10%;">Усул</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for s in high_rows %}
+        <tr style="background:#f0faf3;">
+            <td style="font-size:12px;">
+                <input type="hidden" name="vialon_name" value="{{ s.vialon_name }}">
+                {{ s.vialon_name }}
+            </td>
+            <td>
+                <select name="equipment_id" style="width:100%; font-size:12px;">
+                    <option value="">— танланг —</option>
+                    {% set prev_org = namespace(id=None) %}
+                    {% for eq in all_equipment %}
+                        {% if eq.organization.id != prev_org.id %}
+                            {% if prev_org.id is not none %}</optgroup>{% endif %}
+                            <optgroup label="{{ eq.organization.name }}">
+                            {% set prev_org.id = eq.organization.id %}
+                        {% endif %}
+                        <option value="{{ eq.id }}"
+                            {% if s.equipment and s.equipment.id == eq.id %}selected{% endif %}>
+                            {{ eq.name }}{% if eq.plate %} / {{ eq.plate }}{% endif %}
+                        </option>
+                    {% endfor %}
+                    </optgroup>
+                </select>
+            </td>
+            <td class="text-center">
+                <input type="checkbox" name="skip_name" value="{{ s.vialon_name }}"
+                       style="width:auto; cursor:pointer;"
+                       title="Тизимда йўқ — доим ўтказиб юбор">
+            </td>
+            <td class="text-center">
+                <span class="working-badge" style="font-size:10px;">
+                    {{ s.method | replace('_',' ') }}
+                </span>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+
+{# ── Medium confidence ── #}
+{% set med_rows = suggestions | selectattr('confidence', 'equalto', 'medium') | list %}
+{% if med_rows %}
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header" style="background:var(--warn-light); color:#8B6914;">
+        ⚠ Тахминий мос — {{ med_rows|length }} та
+        <span class="text-sm" style="margin-left:8px; font-weight:400;">
+            (текширинг)
+        </span>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th style="width:36%;">Виалон номи</th>
+                <th style="width:42%;">Бизнинг техника</th>
+                <th class="text-center" style="width:12%;">Тизимда йўқ</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for s in med_rows %}
+        <tr style="background:#fffbf0;">
+            <td style="font-size:12px;">
+                <input type="hidden" name="vialon_name" value="{{ s.vialon_name }}">
+                {{ s.vialon_name }}
+            </td>
+            <td>
+                <select name="equipment_id" style="width:100%; font-size:12px;
+                        border:2px solid var(--warn);">
+                    <option value="">— танланг —</option>
+                    {% set prev_org = namespace(id=None) %}
+                    {% for eq in all_equipment %}
+                        {% if eq.organization.id != prev_org.id %}
+                            {% if prev_org.id is not none %}</optgroup>{% endif %}
+                            <optgroup label="{{ eq.organization.name }}">
+                            {% set prev_org.id = eq.organization.id %}
+                        {% endif %}
+                        <option value="{{ eq.id }}"
+                            {% if s.equipment and s.equipment.id == eq.id %}selected{% endif %}>
+                            {{ eq.name }}{% if eq.plate %} / {{ eq.plate }}{% endif %}
+                        </option>
+                    {% endfor %}
+                    </optgroup>
+                </select>
+            </td>
+            <td class="text-center">
+                <input type="checkbox" name="skip_name" value="{{ s.vialon_name }}"
+                       style="width:auto; cursor:pointer;">
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{# ── No match ── #}
+{% set none_rows = suggestions | selectattr('confidence', 'equalto', 'none') | list %}
+{% if none_rows %}
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header" style="background:var(--danger-light); color:var(--danger);">
+        ❌ Мос топилмади — {{ none_rows|length }} та
+        <span class="text-sm" style="margin-left:8px; font-weight:400;">
+            (ёки техника танланг, ёки «Тизимда йўқ» белгиланг)
+        </span>
+        <button type="button" class="btn btn-secondary btn-sm"
+                style="margin-left:auto;" onclick="markAllSkip()">
+            Барчасини «Тизимда йўқ» деб белгилаш
+        </button>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th style="width:36%;">Виалон номи</th>
+                <th style="width:42%;">Техника (агар тизимда бўлса)</th>
+                <th class="text-center" style="width:12%;">Тизимда йўқ ✓</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for s in none_rows %}
+        <tr class="none-row">
+            <td style="font-size:12px; color:var(--text2);">
+                <input type="hidden" name="vialon_name" value="{{ s.vialon_name }}">
+                {{ s.vialon_name }}
+            </td>
+            <td>
+                <select name="equipment_id" style="width:100%; font-size:12px;">
+                    <option value="">— танланг —</option>
+                    {% set prev_org = namespace(id=None) %}
+                    {% for eq in all_equipment %}
+                        {% if eq.organization.id != prev_org.id %}
+                            {% if prev_org.id is not none %}</optgroup>{% endif %}
+                            <optgroup label="{{ eq.organization.name }}">
+                            {% set prev_org.id = eq.organization.id %}
+                        {% endif %}
+                        <option value="{{ eq.id }}">
+                            {{ eq.name }}{% if eq.plate %} / {{ eq.plate }}{% endif %}
+                        </option>
+                    {% endfor %}
+                    </optgroup>
+                </select>
+            </td>
+            <td class="text-center">
+                <input type="checkbox" name="skip_name" value="{{ s.vialon_name }}"
+                       class="skip-cb" style="width:auto; cursor:pointer;">
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{# ── Save button ── #}
+<div style="position:sticky; bottom:0; background:var(--surface);
+            padding:16px; border-top:2px solid var(--accent);
+            display:flex; gap:12px; align-items:center;
+            box-shadow:0 -4px 12px rgba(0,0,0,0.08);">
+    <button type="submit" class="btn btn-primary btn-lg"
+            style="font-size:16px; padding:14px 32px;">
+        💾 Барчасини сақлаш — бир тугма билан
+    </button>
+    <span class="text-muted text-sm">
+        Ҳамма маппинглар бир вақтда сақланади. Тасдиқлаш сўралмайди.
+    </span>
+    <a href="{{ url_for('wialon_index') }}" class="btn btn-secondary"
+       style="margin-left:auto;">Бекор қилиш</a>
+</div>
+
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleSection(id) {
+    var el = document.getElementById('sec-' + id);
+    if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+function markAllSkip() {
+    document.querySelectorAll('.none-row .skip-cb').forEach(function(cb) {
+        cb.checked = true;
+    });
+}
+
+// When "Тизимда йўқ" is checked, clear the equipment select
+document.addEventListener('change', function(e) {
+    if (e.target.name === 'skip_name' && e.target.checked) {
+        var row = e.target.closest('tr');
+        if (row) {
+            var sel = row.querySelector('select[name="equipment_id"]');
+            if (sel) sel.value = '';
+        }
+    }
+});
+</script>
+{% endblock %}

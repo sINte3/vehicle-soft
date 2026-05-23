@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}АЗС — {{ t('Ёқилғи беришлар (Топаздан)') }}{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <h1>{{ t('Ёқилғи беришлар (Топаздан)') }}</h1>
+    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ t('← Дашборд') }}</a>
+</div>
+
+{# Filter #}
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-body" style="padding:12px 20px;">
+        <form method="get" class="form-inline">
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ t('Дан') }}</label>
+                <input type="date" name="date_from" value="{{ d_from.isoformat() }}">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ t('Гача') }}</label>
+                <input type="date" name="date_to" value="{{ d_to.isoformat() }}">
+            </div>
+            <div class="form-group" style="margin-bottom:0; flex:1;">
+                <label>{{ t('Омбор') }}</label>
+                <select name="warehouse_id">
+                    <option value="">{{ t('— Барчаси —') }}</option>
+                    {% for wh in warehouses %}
+                    <option value="{{ wh.id }}" {% if selected_wh_id == wh.id %}selected{% endif %}>
+                        {{ wh.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>&nbsp;</label>
+                <button type="submit" class="btn btn-primary btn-sm">{{ t('Кўрсатиш') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin-bottom:16px;">
+    <div class="stat-card">
+        <div class="label">{{ t('Беришлар сони') }}</div>
+        <div class="value">{{ items|length }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">{{ t('Жами литр') }}</div>
+        <div class="value" style="color:var(--danger);">{{ '%.0f'|format(total_qty) }} л</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">{{ t('Сумма') }}</div>
+        <div class="value text-sm">{{ '{:,.0f}'.format(total_amount|int).replace(',', ' ') }}</div>
+    </div>
+</div>
+
+{# Transactions table #}
+<div class="card" style="margin-bottom:24px;">
+    <div class="card-header">{{ t('Транзакциялар (макс. 500)') }}</div>
+    <div style="overflow-x:auto;">
+    <table>
+        <thead>
+            <tr>
+                <th>{{ t('Сана/вақт') }}</th>
+                <th>АЗС</th>
+                <th>{{ t('Омбор') }}</th>
+                <th>{{ t('Ёқилғи') }}</th>
+                <th class="text-right">{{ t('Литр') }}</th>
+                <th class="text-right">{{ t('Нарх') }}</th>
+                <th class="text-right">{{ t('Сумма') }}</th>
+                <th>{{ t('Карта') }}</th>
+                <th class="text-muted text-sm">Topaz ID</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for txn in items %}
+        <tr>
+            <td class="text-sm">{{ txn.txn_datetime.strftime('%d.%m.%Y %H:%M') }}</td>
+            <td>{{ txn.station.name }}</td>
+            <td class="text-muted text-sm">{{ txn.station.warehouse_name }}</td>
+            <td><span style="font-size:11px; padding:1px 6px; background:var(--info-light);
+                             color:var(--info); border-radius:2px;">{{ txn.fuel_type }}</span></td>
+            <td class="text-right" style="font-weight:600; color:var(--danger);">
+                {{ '%.2f'|format(txn.quantity) }}
+            </td>
+            <td class="text-right text-sm">
+                {% if txn.price_per_liter %}{{ '{:,.0f}'.format(txn.price_per_liter|int).replace(',', ' ') }}{% endif %}
+            </td>
+            <td class="text-right text-sm">
+                {% if txn.amount %}{{ '{:,.0f}'.format(txn.amount|int).replace(',', ' ') }}{% endif %}
+            </td>
+            <td class="text-sm text-muted">{{ txn.card_number or '—' }}</td>
+            <td class="text-muted" style="font-size:10px;">{{ txn.topaz_txn_id or '' }}</td>
+        </tr>
+        {% else %}
+        <tr>
+            <td colspan="9" class="text-center text-muted" style="padding:60px;">
+                <div style="font-size:36px; margin-bottom:12px;">⛽</div>
+                {{ t('Танланган давр учун ёқилғи беришлар йўқ.') }}<br>
+                <small>{{ t('Топаз агенти созланганига ва ишлаётганига ишонинг.') }}</small>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+{# Sync log #}
+{% if sync_logs %}
+<div class="card">
+    <div class="card-header">{{ t('Синхронизация тарихи (охирги 10)') }}</div>
+    <table>
+        <thead>
+            <tr>
+                <th>{{ t('Вақт') }}</th>
+                <th>{{ t('Агент IP') }}</th>
+                <th class="text-right">{{ t('Қабул қилинди') }}</th>
+                <th class="text-right">{{ t('Янги') }}</th>
+                <th class="text-right">{{ t('Такрор') }}</th>
+                <th class="text-right">{{ t('Номаълум АЗС') }}</th>
+                <th>{{ t('Ҳолат') }}</th>
+                <th>{{ t('Хато') }}</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for log in sync_logs %}
+        <tr>
+            <td class="text-sm">{{ log.synced_at.strftime('%d.%m.%Y %H:%M:%S') }}</td>
+            <td class="text-sm text-muted">{{ log.agent_ip }}</td>
+            <td class="text-right">{{ log.transactions_received }}</td>
+            <td class="text-right" style="font-weight:600; color:var(--accent);">{{ log.transactions_new }}</td>
+            <td class="text-right text-muted">{{ log.transactions_dup }}</td>
+            <td class="text-right {% if log.unknown_stations > 0 %}text-muted{% endif %}">
+                {{ log.unknown_stations }}
+            </td>
+            <td>
+                {% if log.status == 'ok' %}
+                <span class="working-badge">OK</span>
+                {% else %}
+                <span class="idle-badge">{{ log.status }}</span>
+                {% endif %}
+            </td>
+            <td class="text-sm text-muted" style="max-width:200px; overflow:hidden; text-overflow:ellipsis;">
+                {{ log.error_msg or '' }}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% endblock %}

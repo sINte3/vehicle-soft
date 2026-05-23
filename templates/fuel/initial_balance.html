@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}АЗС — {{ t('Ёқилғи бошланғич қолдиқлари') }}{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <h1>{{ t('Ёқилғи бошланғич қолдиқлари') }}</h1>
+    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ t('← Дашборд') }}</a>
+</div>
+
+<div class="card" style="margin-bottom:16px; border-left:3px solid var(--info);">
+    <div class="card-body" style="padding:12px 16px; font-size:13px; color:var(--info);">
+        {{ t('Бошланғич қолдиқ — ҳар бир омбор ва ёқилғи тури учун ҳисоблаш бошланадиган нуқта.') }}
+        {{ t('У белгилангандан кейин қолдиқ автоматик ҳисобланади:') }}
+        <strong>{{ t('Бошланғич қолдиқ, л') }} + {{ t('Киримлар') }} − {{ t('Ёқилғи беришлар тарихи') }}</strong>.
+        {{ t('Бошланғич қолдиқ ўзгариши бутун балансни қайта ҳисоблайди.') }}
+    </div>
+</div>
+
+{# Form to add/update initial balance #}
+<div class="card" style="margin-bottom:24px;">
+    <div class="card-header">{{ t('Бошланғич қолдиқни белгилаш') }}</div>
+    <div class="card-body">
+        <form method="post" action="{{ url_for('fuel.save_initial_balance') }}" class="form-inline">
+            <div class="form-group" style="margin-bottom:0; flex:2;">
+                <label>{{ t('Омбор') }}</label>
+                <select name="warehouse_id" required>
+                    <option value="">{{ t('— танланг —') }}</option>
+                    {% for wh in warehouses %}
+                    <option value="{{ wh.id }}">{{ wh.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ t('Ёқилғи тури') }}</label>
+                <select name="fuel_type" required>
+                    {% for ft in fuel_types %}
+                    <option value="{{ ft }}" {% if ft == 'ДТ' %}selected{% endif %}>{{ ft }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ t('Қолдиқ, литр') }}</label>
+                <input type="number" name="quantity" step="0.1" min="0" required style="width:120px;">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ t('Қолдиқ санаси') }}</label>
+                <input type="date" name="balance_date" value="{{ today.isoformat() }}" required>
+            </div>
+            <div class="form-group" style="margin-bottom:0; flex:1;">
+                <label>{{ t('Изоҳ') }}</label>
+                <input type="text" name="note" placeholder="">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>&nbsp;</label>
+                <button type="submit" class="btn btn-primary">{{ t('Сақлаш') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{# Current initial balances #}
+<div class="card">
+    <div class="card-header">{{ t('Жорий бошланғич қолдиқлар') }}</div>
+    <table>
+        <thead>
+            <tr>
+                <th>{{ t('Омбор') }}</th>
+                <th>{{ t('Ёқилғи тури') }}</th>
+                <th class="text-right">{{ t('Бошланғич қолдиқ, л') }}</th>
+                <th>{{ t('Сана') }}</th>
+                <th class="text-muted text-sm">{{ t('Изоҳ') }}</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for wh in warehouses %}
+            {% set ibs = existing.get(wh.id, {}) %}
+            {% if ibs %}
+                {% for ft, ib in ibs.items() %}
+                <tr>
+                    {% if loop.first %}
+                    <td rowspan="{{ ibs|length }}" style="font-weight:600; vertical-align:top; padding-top:10px;">
+                        {{ wh.name }}
+                    </td>
+                    {% endif %}
+                    <td><span style="font-size:11px; padding:1px 6px; background:var(--info-light);
+                                     color:var(--info); border-radius:2px;">{{ ft }}</span></td>
+                    <td class="text-right" style="font-weight:600;">{{ '%.0f'|format(ib.quantity) }}</td>
+                    <td class="text-sm">{{ ib.balance_date.strftime('%d.%m.%Y') }}</td>
+                    <td class="text-muted text-sm">{{ ib.note or '' }}</td>
+                </tr>
+                {% endfor %}
+            {% else %}
+            <tr>
+                <td style="font-weight:600;">{{ wh.name }}</td>
+                <td colspan="4" class="text-muted text-sm" style="color:var(--danger);">
+                    ⚠ {{ t('Бошланғич қолдиқ белгиланмаган') }}
+                </td>
+            </tr>
+            {% endif %}
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% endblock %}

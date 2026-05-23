@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Модул ҳуқуқлари') }}{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ t('Модул ҳуқуқлари') }}</h1>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <form method="post" action="{{ url_for('admin_permissions_save') }}">
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>{{ t('Фойдаланувчилар') }}</th>
+                            <th>{{ t('Роль') }}</th>
+                            {% for module in modules %}
+                            <th class="text-center" style="min-width:110px;">
+                                {% if lang == 'ru' %}{{ module.name_ru }}{% else %}{{ module.name_uz }}{% endif %}
+                            </th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for user in users %}
+                        <tr>
+                            <td style="font-weight:600;">{{ user.username }}</td>
+                            <td>
+                                <span class="role-badge role-{{ user.role }}"
+                                      style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;text-transform:uppercase;
+                                      {% if user.role == 'admin' %}background:#e74c3c;color:#fff;{% elif user.role == 'operator' %}background:#27ae60;color:#fff;{% else %}background:#2980b9;color:#fff;{% endif %}">
+                                    {{ user.role_display }}
+                                </span>
+                            </td>
+                            {% for module in modules %}
+                            <td class="text-center">
+                                <input type="checkbox" name="perm_{{ user.id }}_{{ module.code }}"
+                                       {% if perms.get((user.id, module.code), True) %}checked{% endif %}
+                                       style="width:auto; cursor:pointer;">
+                            </td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div style="margin-top:20px;">
+                <button type="submit" class="btn btn-primary">{{ t('Сақлаш') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

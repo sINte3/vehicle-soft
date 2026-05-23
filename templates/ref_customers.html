@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Буюртмачилар') }}{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ t('Буюртмачилар') }}</h1>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-header">{{ t('Буюртмачилар') }}</div>
+    <div class="card-body">
+        <form method="post" action="{{ url_for('save_customer') }}" class="form-inline">
+            <div class="form-group" style="margin-bottom:0; flex:1;">
+                <label>{{ t('Буюртмачи номи') }}</label>
+                <input type="text" name="name" required placeholder="Фермер хўжалиги номи">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ t('Тури') }}</label>
+                <select name="customer_type" style="width:150px;">
+                    <option value="external">{{ t('Ташқи') }}</option>
+                    <option value="internal">{{ t('Ички') }}</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary">{{ t('Қўшиш') }}</button>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <table>
+        <thead><tr><th>№</th><th>{{ t('Буюртмачи номи') }}</th><th>{{ t('Тури') }}</th><th></th></tr></thead>
+        <tbody>
+        {% for c in customers %}
+        <tr>
+            <td>{{ loop.index }}</td>
+            <td>
+                <form method="post" action="{{ url_for('save_customer') }}" class="form-inline" style="gap:6px;">
+                    <input type="hidden" name="id" value="{{ c.id }}">
+                    <input type="text" name="name" value="{{ c.name }}" style="width:300px;">
+                    <select name="customer_type" style="width:130px;">
+                        <option value="external" {% if c.customer_type == 'external' %}selected{% endif %}>{{ t('Ташқи') }}</option>
+                        <option value="internal" {% if c.customer_type == 'internal' %}selected{% endif %}>{{ t('Ички') }}</option>
+                    </select>
+                    <button type="submit" class="btn btn-sm btn-secondary">💾</button>
+                </form>
+            </td>
+            <td></td>
+            <td>
+                <form method="post" action="{{ url_for('delete_customer', cid=c.id) }}" style="display:inline;"
+                      onsubmit="return confirm('Ўчиришни тасдиқлайсизми?')">
+                    <button type="submit" class="btn btn-sm btn-danger">🗑</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

@@ -1,0 +1,400 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Маълумот киритиш') }}{% endblock %}
+{% block content %}
+
+{# ─── MACROS ─── #}
+{% macro render_line(eq, idx, rec) %}
+<div class="line-row" id="eq-{{ eq.id }}-line-{{ idx }}" data-line-idx="{{ idx }}">
+    <div class="form-group" style="margin-bottom:0">
+        <label>{{ t('Иш тури') }}</label>
+        <select name="eq_{{ eq.id }}_line_{{ idx }}_work_type"
+                onchange="onWorkTypeChange(this, {{ eq.id }}, {{ idx }})">
+            <option value="">—</option>
+            {% for wt in work_types %}
+            <option value="{{ wt.name }}"
+                    data-unit="{{ wt.default_unit }}" data-price="{{ wt.default_price }}"
+                    {% if rec and rec.work_type == wt.name %}selected{% endif %}>
+                {{ wt.name }}
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+        <label>{{ t('Буюртмачи') }}</label>
+        <input type="text" name="eq_{{ eq.id }}_line_{{ idx }}_customer" list="customers-list"
+               value="{{ rec.customer if rec else '' }}" placeholder="Исм/Номи">
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+        <label>{{ t('Ўлчов') }}</label>
+        <input type="text" name="eq_{{ eq.id }}_line_{{ idx }}_unit"
+               value="{{ rec.unit if rec else eq.default_unit }}"
+               placeholder="га" style="width:70px;"
+               id="eq-{{ eq.id }}-line-{{ idx }}-unit">
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+        <label>{{ t('Миқдор') }}</label>
+        <input type="number" step="0.1" name="eq_{{ eq.id }}_line_{{ idx }}_quantity"
+               value="{{ rec.quantity if rec and rec.quantity else '' }}"
+               oninput="calcAmount({{ eq.id }})" onwheel="this.blur()"
+               id="eq-{{ eq.id }}-line-{{ idx }}-qty">
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+        <label>{{ t('Нарх') }}</label>
+        <input type="number" step="1" name="eq_{{ eq.id }}_line_{{ idx }}_price"
+               value="{{ rec.price|int if rec and rec.price else (eq.default_price|int if eq.default_price else '') }}"
+               oninput="calcAmount({{ eq.id }})" onwheel="this.blur()"
+               id="eq-{{ eq.id }}-line-{{ idx }}-price">
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+        <label>{{ t('Тўлов тури') }}</label>
+        <select name="eq_{{ eq.id }}_line_{{ idx }}_payment_type">
+            <option value="internal" {% if not rec or rec.payment_type == 'internal' %}selected{% endif %}>{{ t('Тизим') }}</option>
+            <option value="transfer" {% if rec and rec.payment_type == 'transfer' %}selected{% endif %}>{{ t('Пул кўч.') }}</option>
+            <option value="cash" {% if rec and rec.payment_type == 'cash' %}selected{% endif %}>{{ t('Нақд') }}</option>
+            <option value="other" {% if rec and rec.payment_type == 'other' %}selected{% endif %}>{{ t('Бошқа') }}</option>
+        </select>
+    </div>
+    <div class="form-group" style="margin-bottom:0; flex:1;">
+        <label>{{ t('Изоҳ') }}</label>
+        <input type="text" name="eq_{{ eq.id }}_line_{{ idx }}_note"
+               value="{{ rec.note if rec else '' }}" placeholder="">
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+        <label>&nbsp;</label>
+        <button type="button" class="btn btn-danger btn-sm"
+                onclick="removeLine({{ eq.id }}, {{ idx }})"
+                title="Бу қаторни ўчириш"
+                style="padding:6px 10px;">✕</button>
+    </div>
+</div>
+{% endmacro %}
+
+{% macro render_eq_card(eq) %}
+{% set recs = existing.get(eq.id, []) %}
+{% set rec = recs[0] if recs else None %}
+{% set is_working = rec.status == 'working' if rec else False %}
+<div class="eq-card {{ 'working' if is_working else 'idle' }}" id="eq-card-{{ eq.id }}">
+    <div class="eq-card-header" onclick="toggleCard({{ eq.id }})">
+        <div>
+            {% if is_working %}<span class="working-badge">{{ t('Ишлаган') }}</span>
+            {% else %}<span class="idle-badge">{{ t('Бўш') }}</span>{% endif %}
+        </div>
+        <div class="eq-name">{{ eq.name }}</div>
+        <div class="eq-plate">{{ eq.plate }}</div>
+        <div class="eq-type text-sm text-muted">{{ eq.eq_type }}</div>
+        <span id="eq-amount-{{ eq.id }}" class="amount-display" style="min-width:120px; text-align:right;">
+            {% if is_working %}
+                {% set ns = namespace(total=0) %}
+                {% for r in recs %}{% set ns.total = ns.total + r.total_amount %}{% endfor %}
+                {{ ns.total|fmt_sum }} сўм
+            {% endif %}
+        </span>
+    </div>
+    <div class="eq-card-body" id="eq-body-{{ eq.id }}" style="{% if not is_working and not rec %}display:none;{% endif %}">
+        <div style="display:flex; align-items:center; gap:16px; margin-bottom:12px;">
+            <label style="font-weight:600; font-size:12px; color:var(--text2);">{{ t('ҲОЛАТ:') }}</label>
+            <div class="toggle-group">
+                <label {% if is_working %}style="background:var(--accent);color:#fff;"{% endif %}>
+                    <input type="radio" name="eq_{{ eq.id }}_status" value="working"
+                           {% if is_working %}checked{% endif %}
+                           onchange="onStatusChange({{ eq.id }}, 'working')"> {{ t('Ишлаган') }}
+                </label>
+                <label {% if not is_working %}style="background:var(--warn);color:#fff;"{% endif %}>
+                    <input type="radio" name="eq_{{ eq.id }}_status" value="idle"
+                           {% if not is_working %}checked{% endif %}
+                           onchange="onStatusChange({{ eq.id }}, 'idle')"> {{ t('Бўш') }}
+                </label>
+            </div>
+        </div>
+        <div id="eq-idle-{{ eq.id }}" style="{% if is_working %}display:none;{% endif %}">
+            <div class="form-group">
+                <label>{{ t('Сабаб') }}</label>
+                <input type="text" name="eq_{{ eq.id }}_idle_reason"
+                       value="{{ rec.idle_reason if rec and not is_working else t('Вақтинча бўш') }}"
+                       placeholder="{{ t('Вақтинча бўш') }}" style="width:300px;">
+            </div>
+        </div>
+        <div id="eq-working-{{ eq.id }}" style="{% if not is_working %}display:none;{% endif %}">
+            <input type="hidden" name="eq_{{ eq.id }}_valid_lines" id="eq-{{ eq.id }}-valid-lines"
+                   value="{% if is_working %}{% for r in recs %}{{ loop.index0 }}{% if not loop.last %},{% endif %}{% endfor %}{% else %}0{% endif %}">
+            <input type="hidden" name="eq_{{ eq.id }}_next_line" id="eq-{{ eq.id }}-next-line"
+                   value="{{ recs|length if is_working else 1 }}">
+            <div id="eq-lines-{{ eq.id }}">
+            {% if is_working %}
+                {% for r in recs %}{{ render_line(eq, loop.index0, r) }}{% endfor %}
+            {% else %}
+                {{ render_line(eq, 0, None) }}
+            {% endif %}
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="addLine({{ eq.id }})" style="margin-top:4px;">
+                {{ t('Қўшимча иш қўшиш') }}
+            </button>
+        </div>
+    </div>
+</div>
+{% endmacro %}
+
+{# ─── PAGE ─── #}
+<div class="page-header">
+    <h1>{{ t('Маълумот киритиш') }}</h1>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-body">
+        <form class="form-inline" method="get" action="{{ url_for('daily_entry') }}" id="filterForm">
+            <div class="form-group" style="margin-bottom:0">
+                <label>{{ t('Сана') }}</label>
+                <input type="date" name="date" id="filterDate"
+                       value="{{ selected_date.isoformat() }}"
+                       onchange="confirmFilterChange(this, 'date')">
+            </div>
+            <div class="form-group" style="margin-bottom:0; flex:1; min-width:200px;">
+                <label>{{ t('Ташкилот') }}</label>
+                <select name="org_id" id="filterOrg"
+                        onchange="confirmFilterChange(this, 'org')">
+                    <option value="">{{ t('— Ташкилотни танланг —') }}</option>
+                    {% for org in organizations %}
+                    <option value="{{ org.id }}" {% if selected_org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </form>
+        {% if selected_org_id %}
+        <p class="text-muted text-sm" style="margin-top:6px; margin-bottom:0;">
+            ⚠ Санани ёки ташкилотни ўзгартирсангиз, <strong>киритилган маълумотлар йўқолади</strong>.
+            Аввал сақланг!
+        </p>
+        {% endif %}
+    </div>
+</div>
+
+{% if selected_org_id and equipment_list %}
+<form method="post" action="{{ url_for('save_entry') }}" id="entryForm">
+    <input type="hidden" name="work_date" value="{{ selected_date.isoformat() }}">
+    <input type="hidden" name="org_id" value="{{ selected_org_id }}">
+
+    <div style="display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; align-items:center;">
+        <button type="submit" class="btn btn-primary btn-lg">{{ t('💾 Сақлаш') }}</button>
+        <button type="button" class="btn btn-secondary" onclick="setAllIdle()">{{ t('Ҳаммасини «бўш» қилиш') }}</button>
+        <div style="flex:1;"></div>
+        <span class="text-muted text-sm">{{ t('Техника сони:') }} <strong>{{ equipment_list|length }}</strong></span>
+    </div>
+
+    {% set ALL_CATS = [
+        ('yukori',        '1. Юқори унумли техникалар'),
+        ('mtz',           '2. Чопиқ тракторлар'),
+        ('qatnov',        '3. Қатнов тракторлар'),
+        ('mini',          '4. Мини тракторлар'),
+        ('combine',       '5. Комбайнлар'),
+        ('special',       '6. Махсус техникалар'),
+        ('yuk_transport', '7. Юк ташувчи техникалар'),
+        ('motorcycle',    '8. Мотоцикл'),
+        ('passenger',     '9. Йўловчи ташиш техникаси'),
+    ] %}
+
+    {% for cat_code, cat_name in ALL_CATS %}
+        {% set cat_eqs = equipment_list|selectattr('category', 'equalto', cat_code)|list %}
+        {% if cat_eqs %}
+        <div class="org-section">
+            <div class="org-section-header">
+                <span>{{ t(cat_name) }} ({{ cat_eqs|length }})</span>
+            </div>
+            <div class="org-section-body">
+                {% for eq in cat_eqs %}{{ render_eq_card(eq) }}{% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    {% endfor %}
+
+    <div style="margin-top:20px;">
+        <button type="submit" class="btn btn-primary btn-lg">{{ t('💾 Сақлаш') }}</button>
+    </div>
+</form>
+
+{% elif selected_org_id %}
+<div class="card">
+    <div class="card-body" style="text-align:center; padding:40px;">
+        <p class="text-muted">{{ t('Бу ташкилотда техника топилмади.') }}</p>
+        <a href="{{ url_for('ref_equipment', org_id=selected_org_id) }}" class="btn btn-secondary" style="margin-top:12px;">{{ t('Техника қўшиш →') }}</a>
+    </div>
+</div>
+{% else %}
+<div class="card">
+    <div class="card-body" style="text-align:center; padding:60px;">
+        <div style="font-size:48px; margin-bottom:16px;">🚜</div>
+        <h3 style="margin-bottom:8px;">{{ t('Ташкилотни танланг') }}</h3>
+        <p class="text-muted">{{ t('Юқоридан ташкилотни танлаб, маълумот киритишни бошланг') }}</p>
+    </div>
+</div>
+{% endif %}
+
+<datalist id="customers-list">
+    {% for c in customers %}<option value="{{ c.name }}">{% endfor %}
+</datalist>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Prevent mouse wheel from changing number input values (global safety)
+document.addEventListener('wheel', function(e) {
+    if (document.activeElement && document.activeElement.type === 'number') {
+        document.activeElement.blur();
+    }
+}, { passive: true });
+
+function toggleCard(eqId) {
+    const body = document.getElementById('eq-body-' + eqId);
+    body.style.display = body.style.display === 'none' ? 'block' : 'none';
+}
+
+function onStatusChange(eqId, status) {
+    const card = document.getElementById('eq-card-' + eqId);
+    const idle = document.getElementById('eq-idle-' + eqId);
+    const working = document.getElementById('eq-working-' + eqId);
+    const body = document.getElementById('eq-body-' + eqId);
+    body.style.display = 'block';
+    card.className = 'eq-card ' + status;
+    if (status === 'working') { idle.style.display = 'none'; working.style.display = 'block'; }
+    else { idle.style.display = 'block'; working.style.display = 'none'; document.getElementById('eq-amount-' + eqId).textContent = ''; }
+    const badge = card.querySelector('.working-badge, .idle-badge');
+    if (badge) { badge.className = status === 'working' ? 'working-badge' : 'idle-badge'; badge.textContent = status === 'working' ? '{{ t("Ишлаган") }}' : '{{ t("Бўш") }}'; }
+    const labels = card.querySelectorAll('.toggle-group label');
+    labels.forEach(l => { l.style.background = ''; l.style.color = ''; });
+    if (status === 'working') { labels[0].style.background = 'var(--accent)'; labels[0].style.color = '#fff'; }
+    else { labels[1].style.background = 'var(--warn)'; labels[1].style.color = '#fff'; }
+}
+
+function onWorkTypeChange(sel, eqId, lineIdx) {
+    const opt = sel.selectedOptions[0];
+    if (opt && opt.dataset.unit) document.getElementById('eq-' + eqId + '-line-' + lineIdx + '-unit').value = opt.dataset.unit;
+    if (opt && opt.dataset.price && opt.dataset.price !== '0') document.getElementById('eq-' + eqId + '-line-' + lineIdx + '-price').value = parseInt(opt.dataset.price);
+    calcAmount(eqId);
+}
+
+function getValidLines(eqId) {
+    const v = document.getElementById('eq-' + eqId + '-valid-lines').value;
+    return v ? v.split(',').map(s => parseInt(s)).filter(n => !isNaN(n)) : [];
+}
+
+function setValidLines(eqId, lines) {
+    document.getElementById('eq-' + eqId + '-valid-lines').value = lines.join(',');
+}
+
+function calcAmount(eqId) {
+    const lines = getValidLines(eqId);
+    let total = 0;
+    for (const i of lines) {
+        const qEl = document.getElementById('eq-' + eqId + '-line-' + i + '-qty');
+        const pEl = document.getElementById('eq-' + eqId + '-line-' + i + '-price');
+        if (qEl && pEl) {
+            total += (parseFloat(qEl.value) || 0) * (parseFloat(pEl.value) || 0);
+        }
+    }
+    document.getElementById('eq-amount-' + eqId).textContent =
+        total > 0 ? new Intl.NumberFormat('uz').format(Math.round(total)) + ' сўм' : '';
+}
+
+function addLine(eqId) {
+    const nextEl = document.getElementById('eq-' + eqId + '-next-line');
+    const idx = parseInt(nextEl.value);
+    nextEl.value = idx + 1;
+
+    const lines = getValidLines(eqId);
+    lines.push(idx);
+    setValidLines(eqId, lines);
+
+    const container = document.getElementById('eq-lines-' + eqId);
+    const html = `<div class="line-row" id="eq-${eqId}-line-${idx}" data-line-idx="${idx}">
+        <div class="form-group" style="margin-bottom:0"><label>{{ t('Иш тури') }}</label>
+            <select name="eq_${eqId}_line_${idx}_work_type" onchange="onWorkTypeChange(this, ${eqId}, ${idx})">
+                <option value="">—</option>
+                {% for wt in work_types %}<option value="{{ wt.name }}" data-unit="{{ wt.default_unit }}" data-price="{{ wt.default_price }}">{{ wt.name }}</option>{% endfor %}
+            </select></div>
+        <div class="form-group" style="margin-bottom:0"><label>{{ t('Буюртмачи') }}</label><input type="text" name="eq_${eqId}_line_${idx}_customer" list="customers-list" placeholder="Исм/Номи"></div>
+        <div class="form-group" style="margin-bottom:0"><label>{{ t('Ўлчов') }}</label><input type="text" name="eq_${eqId}_line_${idx}_unit" placeholder="га" style="width:70px;" id="eq-${eqId}-line-${idx}-unit"></div>
+        <div class="form-group" style="margin-bottom:0"><label>{{ t('Миқдор') }}</label><input type="number" step="0.1" name="eq_${eqId}_line_${idx}_quantity" oninput="calcAmount(${eqId})" onwheel="this.blur()" id="eq-${eqId}-line-${idx}-qty"></div>
+        <div class="form-group" style="margin-bottom:0"><label>{{ t('Нарх') }}</label><input type="number" step="1" name="eq_${eqId}_line_${idx}_price" oninput="calcAmount(${eqId})" onwheel="this.blur()" id="eq-${eqId}-line-${idx}-price"></div>
+        <div class="form-group" style="margin-bottom:0"><label>{{ t('Тўлов тури') }}</label><select name="eq_${eqId}_line_${idx}_payment_type"><option value="internal">{{ t('Тизим') }}</option><option value="transfer">{{ t('Пул кўч.') }}</option><option value="cash">{{ t('Нақд') }}</option><option value="other">{{ t('Бошқа') }}</option></select></div>
+        <div class="form-group" style="margin-bottom:0; flex:1;"><label>{{ t('Изоҳ') }}</label><input type="text" name="eq_${eqId}_line_${idx}_note"></div>
+        <div class="form-group" style="margin-bottom:0"><label>&nbsp;</label><button type="button" class="btn btn-danger btn-sm" onclick="removeLine(${eqId}, ${idx})" style="padding:6px 10px;">✕</button></div>
+    </div>`;
+    container.insertAdjacentHTML('beforeend', html);
+}
+
+function removeLine(eqId, idx) {
+    const lines = getValidLines(eqId);
+    if (lines.length <= 1) {
+        // Don't allow deleting the last line — clear it instead
+        const lineEl = document.getElementById('eq-' + eqId + '-line-' + idx);
+        if (lineEl) {
+            lineEl.querySelectorAll('input, select').forEach(el => {
+                if (el.type === 'number' || el.type === 'text') el.value = '';
+                else if (el.tagName === 'SELECT') el.selectedIndex = 0;
+            });
+        }
+        calcAmount(eqId);
+        return;
+    }
+    if (!confirm('Бу қаторни ўчиришни тасдиқлайсизми?')) return;
+
+    const lineEl = document.getElementById('eq-' + eqId + '-line-' + idx);
+    if (lineEl) lineEl.remove();
+
+    const newLines = lines.filter(n => n !== idx);
+    setValidLines(eqId, newLines);
+    calcAmount(eqId);
+}
+
+// ─── Баг-фикс А+Б: предупреждение при смене даты/организации ───────────
+var _prevDate = document.getElementById('filterDate') ? document.getElementById('filterDate').value : '';
+var _prevOrg  = document.getElementById('filterOrg')  ? document.getElementById('filterOrg').value  : '';
+
+function hasUnsavedData() {
+    // Check if any working-status equipment has filled fields
+    var selects = document.querySelectorAll('[name$="_status"][value="working"]');
+    for (var i = 0; i < selects.length; i++) {
+        if (selects[i].checked) {
+            var m = selects[i].name.match(/eq_(\d+)_status/);
+            if (m) {
+                var lines = getValidLines(parseInt(m[1]));
+                for (var j = 0; j < lines.length; j++) {
+                    var qEl = document.getElementById('eq-' + m[1] + '-line-' + lines[j] + '-qty');
+                    if (qEl && parseFloat(qEl.value) > 0) return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+function confirmFilterChange(el, type) {
+    if (!hasUnsavedData()) {
+        document.getElementById('filterForm').submit();
+        return;
+    }
+    var msg = (type === 'date')
+        ? 'Сана ўзгартирилмоқда!\n\nКиритилган маълумотлар сақланмаган — йўқолади.\n\nДавом этасизми?'
+        : 'Ташкилот ўзгартирилмоқда!\n\nКиритилган маълумотлар сақланмаган — йўқолади.\n\nДавом этасизми?';
+    if (window.confirm(msg)) {
+        document.getElementById('filterForm').submit();
+    } else {
+        // Restore previous value
+        if (type === 'date' && document.getElementById('filterDate')) {
+            document.getElementById('filterDate').value = _prevDate;
+        }
+        if (type === 'org' && document.getElementById('filterOrg')) {
+            document.getElementById('filterOrg').value = _prevOrg;
+        }
+    }
+}
+
+function setAllIdle() {
+    if (!confirm('Барча техникани "бўш" холатига ўтказиш?')) return;
+    document.querySelectorAll('[name$="_status"][value="idle"]').forEach(r => {
+        r.checked = true;
+        const m = r.name.match(/eq_(\d+)_status/);
+        if (m) onStatusChange(parseInt(m[1]), 'idle');
+    });
+}
+</script>
+{% endblock %}

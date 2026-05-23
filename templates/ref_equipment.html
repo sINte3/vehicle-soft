@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Техникалар') }}{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <h1>{{ t('Техникалар') }}</h1>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-body">
+        <form method="get" action="{{ url_for('ref_equipment') }}" class="form-inline" style="flex-wrap:wrap; gap:12px; align-items:flex-end;">
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ t('Ташкилот') }}</label>
+                <select name="org_id" style="min-width:180px;">
+                    <option value="">{{ t('— Барчаси —') }}</option>
+                    {% for org in organizations %}
+                    <option value="{{ org.id }}" {% if selected_org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ t('Категория') }}</label>
+                <div class="ms-wrap" id="ms-cats-eq">
+                    <button type="button" class="ms-trigger"></button>
+                    <div class="ms-dropdown">
+                        <label class="ms-item ms-select-all">
+                            <input type="checkbox" class="ms-all"
+                                   {% if not selected_cats %}checked{% endif %}> {{ t('Барчаси') }}
+                        </label>
+                        {% for code, name in CATEGORIES.items() %}
+                        <label class="ms-item">
+                            <input type="checkbox" name="cat_codes" value="{{ code }}"
+                                   {% if not selected_cats or code in selected_cats %}checked{% endif %}>
+                            {{ t(name) }}
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ t('Тури') }}</label>
+                <div class="ms-wrap" id="ms-eqtypes">
+                    <button type="button" class="ms-trigger"></button>
+                    <div class="ms-dropdown">
+                        <label class="ms-item ms-select-all">
+                            <input type="checkbox" class="ms-all"
+                                   {% if not selected_eq_types %}checked{% endif %}> {{ t('Барчаси') }}
+                        </label>
+                        {% for et in eq_types %}
+                        <label class="ms-item">
+                            <input type="checkbox" name="eq_types" value="{{ et }}"
+                                   {% if not selected_eq_types or et in selected_eq_types %}checked{% endif %}>
+                            {{ et }}
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm">{{ t('Қидириш') }}</button>
+        </form>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-header">{{ t('Техника номи') }}</div>
+    <div class="card-body">
+        <form method="post" action="{{ url_for('save_equipment') }}">
+            <div class="form-inline">
+                <div class="form-group"><label>{{ t('Ташкилот') }}</label>
+                    <select name="organization_id" required>
+                        {% for org in organizations %}
+                        <option value="{{ org.id }}" {% if selected_org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group"><label>{{ t('Категория') }}</label>
+                    <select name="category" required>
+                        {% for code, name in CATEGORIES.items() %}
+                        <option value="{{ code }}">{{ t(name) }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group"><label>{{ t('Тури') }}</label>
+                    <input type="text" name="eq_type" placeholder="Трактор МТЗ / Самосвал / Экскаватор...">
+                </div>
+                <div class="form-group"><label>{{ t('Техника номи') }}</label>
+                    <input type="text" name="name" placeholder="МТЗ 261 EA" required>
+                </div>
+                <div class="form-group"><label>{{ t('Давлат рақами') }}</label>
+                    <input type="text" name="plate" placeholder="80 561 EA">
+                </div>
+                <div class="form-group"><label>{{ t('Ўлчов (дефолт)') }}</label>
+                    <input type="text" name="default_unit" placeholder="га" style="width:80px;">
+                </div>
+                <div class="form-group"><label>{{ t('Нарх (дефолт)') }}</label>
+                    <input type="number" name="default_price" placeholder="0" style="width:120px;">
+                </div>
+                <div class="form-group"><label>&nbsp;</label>
+                    <button type="submit" class="btn btn-primary">+ {{ t('Қўшиш') }}</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span>{{ t('Жами') }}: <strong>{{ total_count }}</strong> {{ t('та') }}</span>
+            <a href="{{ url_for('export_equipment', org_id=selected_org_id or '', cat_codes=selected_cats, eq_types=selected_eq_types) }}"
+               class="btn btn-secondary btn-sm">📥 Excel</a>
+        </div>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width:40px;">№</th>
+                    <th>{{ t('Ташкилот') }}</th>
+                    <th>{{ t('Категория') }}</th>
+                    <th>{{ t('Тури') }}</th>
+                    <th>{{ t('Техника номи') }}</th>
+                    <th>{{ t('Давлат рақами') }}</th>
+                    <th>{{ t('Ўлчов (дефолт)') }}</th>
+                    <th class="text-right">{{ t('Нарх (дефолт)') }}</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for eq in equipment %}
+                <tr id="eq-row-{{ eq.id }}">
+                    <td class="text-center text-sm">{{ loop.index }}</td>
+                    <td class="text-sm">{{ eq.organization.short_name or eq.organization.name }}</td>
+                    <td><span class="text-sm">{{ eq.category_display }}</span></td>
+                    <td class="text-sm text-muted">{{ eq.eq_type }}</td>
+                    <td><strong>{{ eq.name }}</strong></td>
+                    <td class="text-sm">{{ eq.plate }}</td>
+                    <td class="text-sm">{{ eq.default_unit }}</td>
+                    <td class="text-right text-sm">{{ eq.default_price|fmt_sum }}</td>
+                    <td>
+                        <button class="btn btn-secondary btn-sm" onclick="editEq({{ eq.id }})">✏</button>
+                        <form method="post" action="{{ url_for('delete_equipment', eid=eq.id) }}" style="display:inline;"
+                              onsubmit="return confirm('Ўчирасизми?')">
+                            <button class="btn btn-danger btn-sm" type="submit">🗑</button>
+                        </form>
+                    </td>
+                </tr>
+                <tr id="eq-edit-{{ eq.id }}" style="display:none;">
+                    <td colspan="9">
+                        <form method="post" action="{{ url_for('save_equipment') }}" class="form-inline">
+                            <input type="hidden" name="id" value="{{ eq.id }}">
+                            <div class="form-group"><label>{{ t('Ташкилот') }}</label>
+                                <select name="organization_id" required>
+                                    {% for org in organizations %}
+                                    <option value="{{ org.id }}" {% if eq.organization_id == org.id %}selected{% endif %}>{{ org.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="form-group"><label>{{ t('Категория') }}</label>
+                                <select name="category" required>
+                                    {% for code, name in CATEGORIES.items() %}
+                                    <option value="{{ code }}" {% if eq.category == code %}selected{% endif %}>{{ name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="form-group"><label>{{ t('Тури') }}</label>
+                                <input type="text" name="eq_type" value="{{ eq.eq_type }}">
+                            </div>
+                            <div class="form-group"><label>{{ t('Номи') }}</label>
+                                <input type="text" name="name" value="{{ eq.name }}" required>
+                            </div>
+                            <div class="form-group"><label>{{ t('Рақам') }}</label>
+                                <input type="text" name="plate" value="{{ eq.plate }}">
+                            </div>
+                            <div class="form-group"><label>{{ t('Ўлчов') }}</label>
+                                <input type="text" name="default_unit" value="{{ eq.default_unit }}" style="width:80px;">
+                            </div>
+                            <div class="form-group"><label>{{ t('Нарх') }}</label>
+                                <input type="number" name="default_price" value="{{ eq.default_price|int if eq.default_price else 0 }}" style="width:120px;">
+                            </div>
+                            <div class="form-group"><label>&nbsp;</label>
+                                <button type="submit" class="btn btn-primary btn-sm">{{ t('Сақлаш') }}</button>
+                                <button type="button" class="btn btn-secondary btn-sm" onclick="cancelEqEdit({{ eq.id }})">{{ t('Бекор қилиш') }}</button>
+                            </div>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+function editEq(id) {
+    document.getElementById('eq-row-' + id).style.display = 'none';
+    document.getElementById('eq-edit-' + id).style.display = '';
+}
+function cancelEqEdit(id) {
+    document.getElementById('eq-row-' + id).style.display = '';
+    document.getElementById('eq-edit-' + id).style.display = 'none';
+}
+document.addEventListener('DOMContentLoaded', function() {
+    if (document.getElementById('ms-cats-eq')) initMultiselect('ms-cats-eq', '{{ t("Категория") }}');
+    if (document.getElementById('ms-eqtypes')) initMultiselect('ms-eqtypes', '{{ t("Тури") }}');
+});
+</script>
+{% endblock %}

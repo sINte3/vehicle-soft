@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}АЗС — {{ t('АЗС — Маълумотнома') }}{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <h1>{{ t('АЗС — Маълумотнома') }}</h1>
+    <a href="{{ url_for('fuel.warehouses') }}" class="btn btn-secondary">{{ t('← Омборлар') }}</a>
+</div>
+
+{# Add/Edit form #}
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-header">{{ t('АЗС қўшиш / таҳрирлаш') }}</div>
+    <div class="card-body">
+        <form method="post" action="{{ url_for('fuel.save_station') }}" class="form-inline">
+            <input type="hidden" name="id" id="stId" value="">
+            <div class="form-group" style="margin-bottom:0; flex:2;">
+                <label>{{ t('АЗС номи') }}</label>
+                <input type="text" name="name" id="stName" placeholder="Мехнат Рохат" required>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>Topaz ID</label>
+                <input type="number" name="topaz_id" id="stTopazId" placeholder="812001" required style="width:130px;">
+            </div>
+            <div class="form-group" style="margin-bottom:0; flex:2;">
+                <label>{{ t('Омбор') }}</label>
+                <select name="warehouse_id" id="stWarehouse" required>
+                    <option value="">{{ t('— танланг —') }}</option>
+                    {% for wh in warehouses %}
+                    <option value="{{ wh.id }}">{{ wh.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ t('Фаол') }}</label>
+                <label style="border:none; padding:0; gap:6px; font-weight:normal; font-size:13px;">
+                    <input type="checkbox" name="is_active" id="stActive" checked style="width:auto;">
+                    ✓
+                </label>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>&nbsp;</label>
+                <button type="submit" class="btn btn-primary">{{ t('Сақлаш') }}</button>
+                <button type="button" class="btn btn-secondary" onclick="clearStForm()">{{ t('Тозалаш') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{# Stations table #}
+<div class="card">
+    <div class="card-header">{{ t('Барча АЗС') }} ({{ stations|length }})</div>
+    <table>
+        <thead>
+            <tr>
+                <th>{{ t('АЗС номи') }}</th>
+                <th>Topaz ID</th>
+                <th>{{ t('Омбор') }}</th>
+                <th class="text-center">{{ t('Ҳолат') }}</th>
+                <th class="text-right">{{ t('Транзакциялар') }}</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for st in stations %}
+        <tr>
+            <td style="font-weight:500;">{{ st.name }}</td>
+            <td><code>{{ st.topaz_id }}</code></td>
+            <td>{{ st.warehouse.name if st.warehouse else '—' }}</td>
+            <td class="text-center">
+                {% if st.is_active %}
+                <span class="working-badge">{{ t('Фаол') }}</span>
+                {% else %}
+                <span class="idle-badge">{{ t('Ўч.') }}</span>
+                {% endif %}
+            </td>
+            <td class="text-right text-muted text-sm">{{ st.transactions.count() }}</td>
+            <td style="white-space:nowrap;">
+                <button class="btn btn-secondary btn-sm"
+                        onclick="editSt({{ st.id }}, '{{ st.name }}', {{ st.topaz_id }},
+                                        {{ st.warehouse_id }}, {{ st.is_active|lower }})">
+                    {{ t('Ўзг.') }}
+                </button>
+                <form method="post" action="{{ url_for('fuel.delete_station', sid=st.id) }}"
+                      style="display:inline;"
+                      onsubmit="return confirm('{{ t('Ўчириш') }}: {{ st.name }}?')">
+                    <button type="submit" class="btn btn-danger btn-sm">✕</button>
+                </form>
+            </td>
+        </tr>
+        {% else %}
+        <tr>
+            <td colspan="6" class="text-center text-muted" style="padding:40px;">
+                {{ t('АЗС қўшилмаган. migrate_fuel_v2.py ни ишга туширинг ёки қўлда қўшинг.') }}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+function editSt(id, name, topazId, whId, isActive) {
+    document.getElementById('stId').value = id;
+    document.getElementById('stName').value = name;
+    document.getElementById('stTopazId').value = topazId;
+    document.getElementById('stActive').checked = isActive;
+    const sel = document.getElementById('stWarehouse');
+    for (let i = 0; i < sel.options.length; i++) {
+        sel.options[i].selected = (sel.options[i].value == whId);
+    }
+    window.scrollTo(0, 0);
+}
+function clearStForm() {
+    document.getElementById('stId').value = '';
+    document.getElementById('stName').value = '';
+    document.getElementById('stTopazId').value = '';
+    document.getElementById('stWarehouse').selectedIndex = 0;
+    document.getElementById('stActive').checked = true;
+}
+</script>
+{% endblock %}

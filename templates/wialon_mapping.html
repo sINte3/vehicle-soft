@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}Виалон — Маппинг{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Виалон — Маппинг текшируви</h1>
+    <div class="text-muted text-sm">Сана: <strong>{{ work_date.strftime('%d.%m.%Y') }}</strong></div>
+</div>
+
+<form method="post" action="{{ url_for('wialon_save') }}">
+    <input type="hidden" name="work_date" value="{{ work_date.isoformat() }}">
+    <input type="hidden" name="filename" value="{{ filename }}">
+
+    {# ── Already mapped (auto-processed) ── #}
+    {% if mapped %}
+    <div class="card" style="margin-bottom:20px;">
+        <div class="card-header" style="background:var(--accent-light);">
+            ✅ Автоматик аниқланган: <strong>{{ mapped|length }} та техника</strong>
+            <span class="text-muted text-sm" style="margin-left:8px;">— маппинг жадвалидан топилди, сақланади</span>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Виалон номи</th>
+                    <th>Бизнинг тизим (техника)</th>
+                    <th>Ташкилот</th>
+                    <th class="text-right">Мотосоат</th>
+                    <th class="text-right">Ҳаракатда</th>
+                    <th class="text-right">Холостой</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for item in mapped %}
+            {# Hidden fields for already-mapped rows #}
+            <input type="hidden" name="mapped_vialon_name" value="{{ item.vialon_name }}">
+            <input type="hidden" name="mapped_eq_id"       value="{{ item.equipment.id }}">
+            <input type="hidden" name="mapped_engine_hours" value="{{ item.engine_hours }}">
+            <input type="hidden" name="mapped_hours_moving" value="{{ item.hours_moving }}">
+            <input type="hidden" name="mapped_hours_idle"   value="{{ item.hours_idle }}">
+            <tr>
+                <td class="text-sm text-muted">{{ item.vialon_name }}</td>
+                <td style="font-weight:600;">{{ item.equipment.name }}</td>
+                <td class="text-sm">{{ item.equipment.organization.name }}</td>
+                <td class="text-right" style="font-weight:600; color:var(--accent);">
+                    {{ '%.2f' | format(item.engine_hours) }} соат
+                </td>
+                <td class="text-right text-sm">{{ '%.2f' | format(item.hours_moving) }} соат</td>
+                <td class="text-right text-sm">{{ '%.2f' | format(item.hours_idle) }} соат</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {# ── Unmapped: operator must decide ── #}
+    {% if unmapped %}
+    <div class="card" style="margin-bottom:20px;">
+        <div class="card-header" style="background:var(--warn-light); color:var(--warn);">
+            ⚠ Белгиланмаган техника: <strong>{{ unmapped|length }} та</strong>
+            <span class="text-muted text-sm" style="margin-left:8px;">— ҳар бири учун қарор қабул қилинг</span>
+        </div>
+        <div class="card-body" style="padding:0;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Виалон номи</th>
+                    <th class="text-right">Мотосоат</th>
+                    <th style="min-width:300px;">Бизнинг тизимда (танланг)</th>
+                    <th class="text-center">Ўтказиб юбориш</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for item in unmapped %}
+            <input type="hidden" name="vialon_name"    value="{{ item.vialon_name }}">
+            <input type="hidden" name="engine_hours"   value="{{ item.engine_hours }}">
+            <input type="hidden" name="hours_moving"   value="{{ item.hours_moving }}">
+            <input type="hidden" name="hours_idle"     value="{{ item.hours_idle }}">
+            <tr>
+                <td style="font-size:13px;">{{ item.vialon_name }}</td>
+                <td class="text-right" style="font-weight:600;">
+                    {{ '%.2f' | format(item.engine_hours) }} соат
+                </td>
+                <td>
+                    <select name="eq_choice" onchange="onChoiceChange(this)"
+                            style="width:100%; font-size:13px;"
+                            data-skip-col="{{ loop.index0 }}">
+                        <option value="">— танланг —</option>
+                        <option value="ignore">🔸 Кейин (сақламаслик)</option>
+                        <option value="skip">🚫 Бизнинг технологиямизда йўқ</option>
+                        {% set prev_org = namespace(id=None) %}
+                        {% for eq in all_equipment %}
+                            {% if eq.organization.id != prev_org.id %}
+                                {% if prev_org.id is not none %}</optgroup>{% endif %}
+                                <optgroup label="— {{ eq.organization.name }} —">
+                                {% set prev_org.id = eq.organization.id %}
+                            {% endif %}
+                            <option value="{{ eq.id }}">{{ eq.name }}{% if eq.plate %} / {{ eq.plate }}{% endif %}</option>
+                        {% endfor %}
+                        </optgroup>
+                    </select>
+                </td>
+                <td class="text-center">
+                    <input type="checkbox" id="skip-{{ loop.index0 }}"
+                           onclick="setSkip({{ loop.index0 }}, this.checked)"
+                           title="Тизимда йўқ техника — доим ўтказиб юбориш">
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {# ── Skipped ── #}
+    {% if skipped %}
+    <div class="card" style="margin-bottom:20px;">
+        <div class="card-header">
+            ⏭ Ўтказиб юборилади: <strong>{{ skipped|length }} та</strong>
+            <span class="text-muted text-sm"> — «тизимда йўқ» деб белгиланган</span>
+        </div>
+        <div class="card-body">
+        <div style="display:flex; flex-wrap:wrap; gap:6px;">
+            {% for item in skipped %}
+            <span class="text-sm text-muted" style="background:var(--surface2);
+                  padding:3px 8px; border-radius:4px; border:1px solid var(--border);">
+                {{ item.vialon_name }}
+            </span>
+            {% endfor %}
+        </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# ── Action buttons ── #}
+    <div style="display:flex; gap:12px; margin-top:16px;">
+        <button type="submit" class="btn btn-primary btn-lg">
+            💾 Сақлаш ва импортни якунлаш
+        </button>
+        <a href="{{ url_for('wialon_index') }}" class="btn btn-secondary">Бекор қилиш</a>
+        <span class="text-muted text-sm" style="align-self:center;">
+            Белгиланмаган техника учун «Кейин» танланса — бу импортда сақланмайди.
+            Кейинги импортда яна кўрсатилади.
+        </span>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function onChoiceChange(sel) {
+    const idx = sel.dataset.skipCol;
+    const skipCb = document.getElementById('skip-' + idx);
+    if (sel.value === 'skip') {
+        if (skipCb) skipCb.checked = true;
+        sel.value = 'skip';
+    } else if (skipCb) {
+        skipCb.checked = false;
+    }
+}
+
+function setSkip(idx, checked) {
+    // Find the select in same row — iterate rows
+    const rows = document.querySelectorAll('select[name="eq_choice"]');
+    // idx is loop.index0 = position in unmapped list
+    let cnt = 0;
+    for (const sel of rows) {
+        if (parseInt(sel.dataset.skipCol) === idx) {
+            sel.value = checked ? 'skip' : '';
+            break;
+        }
+    }
+}
+</script>
+{% endblock %}

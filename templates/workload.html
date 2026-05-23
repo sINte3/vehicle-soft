@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Юклама ҳисобот') }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>{{ t('Юклама ҳисобот') }} <span style="font-size:14px; font-weight:400; color:var(--text2);">{{ t('Мотосоатлар бўйича') }}</span></h1>
+</div>
+
+{# ─── FILTER PANEL ─── #}
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-body">
+        <form method="get" id="filterForm">
+            <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:flex-end;">
+
+                {# Date mode tabs #}
+                <div>
+                    <div style="font-size:12px; font-weight:600; color:var(--text2); margin-bottom:4px;">{{ t('ДАВР') }}</div>
+                    <div class="date-mode-tabs">
+                        <button type="button" class="mode-btn {% if mode=='day' %}active{% endif %}" onclick="setMode('day')">{{ t('Бугун') }}</button>
+                        <button type="button" class="mode-btn {% if mode=='week' %}active{% endif %}" onclick="setMode('week')">{{ t('Ҳафта') }}</button>
+                        <button type="button" class="mode-btn {% if mode=='month' %}active{% endif %}" onclick="setMode('month')">{{ t('Ой') }}</button>
+                        <button type="button" class="mode-btn {% if mode=='range' %}active{% endif %}" onclick="setMode('range')">{{ t('Ихтиёрий') }}</button>
+                    </div>
+                    <input type="hidden" name="mode" id="modeInput" value="{{ mode }}">
+                </div>
+
+                {# Date fields #}
+                <div style="display:flex; gap:10px; align-items:flex-end;">
+                    <div id="dayFields" style="{% if mode!='day' %}display:none;{% endif %}">
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label>{{ t('Сана') }}</label>
+                            <input type="date" name="date" value="{{ d_from.isoformat() }}"
+                                   onchange="document.getElementById('filterForm').submit()">
+                        </div>
+                    </div>
+                    <div id="rangeFields" style="{% if mode!='range' %}display:none;{% endif %} display:flex; gap:8px; align-items:flex-end;">
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label>{{ t('Дан:') }}</label>
+                            <input type="date" name="date_from" value="{{ d_from.isoformat() }}">
+                        </div>
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label>{{ t('Гача:') }}</label>
+                            <input type="date" name="date_to" value="{{ d_to.isoformat() }}">
+                        </div>
+                    </div>
+                    <div id="autoFields" style="{% if mode not in ('week','month') %}display:none;{% endif %}">
+                        <span class="text-muted" style="font-size:13px;">
+                            {{ d_from.strftime('%d.%m.%Y') }} — {{ d_to.strftime('%d.%m.%Y') }}
+                            ({{ calendar_days }} {{ t('кун') }})
+                        </span>
+                    </div>
+                </div>
+
+                {# Org filter #}
+                <div class="form-group" style="margin-bottom:0; min-width:200px;">
+                    <label>{{ t('Ташкилот') }}</label>
+                    <select name="org_id" onchange="document.getElementById('filterForm').submit()">
+                        <option value="">{{ t('— Барча ташкилотлар —') }}</option>
+                        {% for org in user_orgs %}
+                        <option value="{{ org.id }}" {% if selected_org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div style="display:flex; gap:8px; align-items:flex-end;">
+                    <button type="submit" class="btn btn-secondary">{{ t('Кўрсатиш') }}</button>
+                    <a href="{{ url_for('wialon_workload_export', mode=mode, date=d_from.isoformat(),
+                                        date_from=d_from.isoformat(), date_to=d_to.isoformat(),
+                                        org_id=selected_org_id or '') }}"
+                       class="btn btn-primary">
+                        {{ t('📥 Excel юклаш') }}
+                    </a>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+{# ─── SUMMARY CARDS ─── #}
+<div class="stats-grid" style="margin-bottom:20px;">
+    <div class="stat-card">
+        <div class="label">{{ t('КАЛЕНДАР КУНЛАР') }}</div>
+        <div class="value">{{ calendar_days }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">{{ t('НОРМА (МОТОСОАТ)') }}</div>
+        <div class="value">{{ norm_hours|int }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">{{ t('ЖАМИ ТЕХНИКА') }}</div>
+        <div class="value">{{ total_eq }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">{{ t('МАЪЛУМОТ ЙЎҚ (0 МС)') }}</div>
+        <div class="value" style="color:var(--danger);">{{ zero_eq }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">{{ t('ЎРТАЧА ЮКЛАМА') }}</div>
+        <div class="value">{{ avg_pct }}</div>
+    </div>
+</div>
+
+{# ─── DATA TABLE ─── #}
+{% if orgs_data %}
+<div class="card">
+    <div class="card-header">
+        {{ t('Юклама таҳлили:') }} {{ d_from.strftime('%d.%m.%Y') }}{% if d_from != d_to %} — {{ d_to.strftime('%d.%m.%Y') }}{% endif %}
+        <span class="text-muted text-sm">{{ t('Виалон мотосоатлар асосида') }}</span>
+    </div>
+    <div style="overflow-x:auto;">
+    <table class="workload-table">
+        <thead>
+            <tr>
+                <th rowspan="2" style="width:36px;">№</th>
+                <th rowspan="2" style="min-width:150px;">{{ t('Техника русуми') }}</th>
+                <th rowspan="2">{{ t('Давлат рақами') }}</th>
+                <th colspan="2" style="text-align:center;">{{ t('МОТОСОАТЛАР') }}</th>
+                <th rowspan="2" style="text-align:center;">{{ t('БАЖАРИШ,\n%') | replace('\n', '<br>') | safe }}</th>
+                <th colspan="2" style="text-align:center;">{{ t('КУН ТАҲЛИЛИ') }}</th>
+                <th rowspan="2" style="text-align:center;">{{ t('НОРМА\nКУНЛАРИ') | replace('\n', '<br>') | safe }}</th>
+                <th rowspan="2" style="text-align:center;">{{ t('ЮКЛАМА,\n%') | replace('\n', '<br>') | safe }}</th>
+                <th rowspan="2" style="min-width:100px;">{{ t('ИЗОҲ') }}</th>
+            </tr>
+            <tr>
+                <th style="text-align:center;">{{ t('Норма') }}</th>
+                <th style="text-align:center;">{{ t('Факт') }}</th>
+                <th style="text-align:center;">{{ t('ИШ\nКУНЛАРИ') | replace('\n', '<br>') | safe }}</th>
+                <th style="text-align:center;">{{ t('ИШЛАМАГАН\nКУНЛАР') | replace('\n', '<br>') | safe }}</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% set ns = namespace(num=1) %}
+        {% for od in orgs_data %}
+        {# Org header row #}
+        <tr class="org-header-row">
+            <td colspan="11" style="font-weight:700; font-size:13px; background:var(--text); color:#fff; padding:8px 12px;">
+                {{ od.org.name }}
+            </td>
+        </tr>
+        {% for r in od.rows %}
+        <tr class="{% if r.fact == 0 %}zero-row{% endif %}">
+            <td class="text-center">{{ ns.num }}</td>
+            <td>{{ r.eq.name }}</td>
+            <td class="text-center">{{ r.eq.plate or '—' }}</td>
+            <td class="text-center">{{ r.norm|int }}</td>
+            <td class="text-center {% if r.fact > 0 %}fact-cell{% endif %}">
+                {{ '%.1f'|format(r.fact) if r.fact else '0' }}
+            </td>
+            <td class="text-center pct-cell">
+                {% if r.exec_pct > 0 %}
+                    <span class="pct-bar-wrap">
+                        <span class="pct-bar" style="width:{{ [r.exec_pct * 100, 100]|min }}%;
+                              background: {% if r.exec_pct >= 0.8 %}var(--accent){% elif r.exec_pct >= 0.5 %}var(--warn){% else %}var(--danger){% endif %};">
+                        </span>
+                        <span class="pct-label">{{ '%.1f'|format(r.exec_pct * 100) }}%</span>
+                    </span>
+                {% else %}
+                    <span style="color:var(--danger);">—</span>
+                {% endif %}
+            </td>
+            <td class="text-center">{{ r.work_days }}</td>
+            <td class="text-center {% if r.idle_days > 0 %}idle-days{% endif %}">{{ r.idle_days }}</td>
+            <td class="text-center">{{ r.calendar_days }}</td>
+            <td class="text-center pct-cell">
+                {% if r.exec_pct > 0 %}
+                    {{ '%.1f'|format(r.exec_pct * 100) }}%
+                {% else %}
+                    <span style="color:var(--danger);">0%</span>
+                {% endif %}
+            </td>
+            <td class="text-muted text-sm">{{ r.note or '' }}</td>
+        </tr>
+        {% set ns.num = ns.num + 1 %}
+        {% endfor %}
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+{% else %}
+<div class="card">
+    <div class="card-body" style="text-align:center; padding:60px;">
+        <div style="font-size:48px; margin-bottom:16px;">📊</div>
+        <h3 style="margin-bottom:8px;">{{ t('Маълумот топилмади') }}</h3>
+        <p class="text-muted">
+            {{ t('Танланган давр учун Виалон мотосоатлари мавжуд эмас.') }}<br>
+            {{ t('Аввал Виалон ZIP файлини импорт қилинг.') }}
+        </p>
+        <a href="{{ url_for('wialon_import') }}" class="btn btn-secondary" style="margin-top:16px;">
+            {{ t('Виалон импорти →') }}
+        </a>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<style>
+.date-mode-tabs { display:flex; gap:4px; }
+.mode-btn { padding:7px 14px; border:1px solid var(--border); border-radius:6px;
+            background:var(--surface); font-size:13px; cursor:pointer; transition:all 0.15s; font-family:inherit; }
+.mode-btn:hover  { background:var(--surface2); }
+.mode-btn.active { background:var(--accent); color:white; border-color:var(--accent); }
+
+.workload-table { width:100%; border-collapse:collapse; font-size:13px; }
+.workload-table th {
+    background:var(--surface2); font-weight:600; font-size:11px;
+    text-transform:uppercase; letter-spacing:0.3px; color:var(--text2);
+    padding:8px 10px; border:1px solid var(--border);
+    white-space:nowrap; vertical-align:middle;
+}
+.workload-table td {
+    padding:7px 10px; border:1px solid var(--border); vertical-align:middle;
+}
+.workload-table th[colspan],
+.workload-table th[rowspan] { text-align:center; }
+
+.org-header-row td { padding:8px 12px; }
+
+.zero-row td     { background:#fff5f5 !important; }
+.zero-row:hover td { background:#ffe8e8 !important; }
+.workload-table tbody tr:hover td { background:var(--surface2); }
+.zero-row td { color:#c0392b; }
+
+.fact-cell { font-weight:600; }
+.idle-days { color:var(--warn); font-weight:600; }
+
+.pct-cell { min-width:90px; }
+.pct-bar-wrap {
+    position:relative; display:flex; align-items:center;
+    height:20px; background:#f0f0f0; border-radius:3px; overflow:hidden;
+}
+.pct-bar {
+    position:absolute; left:0; top:0; height:100%;
+    opacity:0.25; transition:width 0.3s;
+}
+.pct-label {
+    position:relative; z-index:1; font-size:12px; font-weight:600;
+    width:100%; text-align:center;
+}
+</style>
+<script>
+function setMode(mode) {
+    document.getElementById('modeInput').value = mode;
+    document.getElementById('dayFields').style.display   = mode === 'day'   ? '' : 'none';
+    document.getElementById('rangeFields').style.display = mode === 'range' ? 'flex' : 'none';
+    document.getElementById('autoFields').style.display  = (mode === 'week' || mode === 'month') ? '' : 'none';
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+    if (mode !== 'range') {
+        document.getElementById('filterForm').submit();
+    }
+}
+</script>
+{% endblock %}

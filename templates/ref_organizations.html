@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Ташкилотлар') }}{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ t('Ташкилотлар') }}</h1>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-header">{{ t('Янги ташкилот') }}</div>
+    <div class="card-body">
+        <form method="post" action="{{ url_for('save_organization') }}" class="form-inline">
+            <div class="form-group" style="margin-bottom:0; flex:1;">
+                <label>{{ t('Ташкилот номи') }}</label>
+                <input type="text" name="name" required placeholder="Когон ПТЗ">
+            </div>
+            <button type="submit" class="btn btn-primary">{{ t('Қўшиш') }}</button>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <table>
+        <thead><tr><th>№</th><th>{{ t('Ташкилот номи') }}</th><th>{{ t('Техника сони:') }}</th><th></th></tr></thead>
+        <tbody>
+        {% for org in organizations %}
+        <tr>
+            <td>{{ loop.index }}</td>
+            <td>
+                <form method="post" action="{{ url_for('save_organization') }}" class="form-inline" style="gap:6px;">
+                    <input type="hidden" name="id" value="{{ org.id }}">
+                    <input type="text" name="name" value="{{ org.name }}" style="width:280px;">
+                    <button type="submit" class="btn btn-sm btn-secondary">💾</button>
+                </form>
+            </td>
+            <td>{{ org.equipment.count() }}</td>
+            <td>
+                <form method="post" action="{{ url_for('delete_organization', oid=org.id) }}" style="display:inline;"
+                      onsubmit="return confirm('Ўчиришни тасдиқлайсизми?')">
+                    <button type="submit" class="btn btn-sm btn-danger">🗑</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

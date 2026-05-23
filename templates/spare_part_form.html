@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Эҳтиёт қисмлар') }} — {{ t('Қўшиш') }}{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ t('Эҳтиёт қисмлар сўрови') }}</h1>
+    <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ t('← Рўйхат') }}</a>
+</div>
+
+<form method="post" action="{{ url_for('spare_parts.save_request') }}" id="spForm">
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header">{{ t('Асосий маълумот') }}</div>
+    <div class="card-body">
+        <div class="form-inline">
+            <div class="form-group">
+                <label>{{ t('Сана') }}</label>
+                <input type="date" name="request_date" value="{{ today }}" required style="width:160px;">
+            </div>
+            <div class="form-group" style="flex:1; min-width:200px;">
+                <label>{{ t('Ташкилот') }}</label>
+                <select name="organization_id" id="orgSelect" required onchange="filterEquipment()">
+                    <option value="">— танланг —</option>
+                    {% for org in organizations %}
+                    <option value="{{ org.id }}">{{ org.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="flex:1; min-width:200px;">
+                <label>{{ t('Техника') }} (ихтиёрий)</label>
+                <select name="equipment_id" id="eqSelect">
+                    <option value="">— танланг —</option>
+                    {% for eq in all_equipment %}
+                    <option value="{{ eq.id }}" data-org="{{ eq.organization_id }}">{{ eq.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>{{ t('Изоҳ') }}</label>
+            <textarea name="note" rows="2" placeholder="Изоҳ..."></textarea>
+        </div>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>{{ t('Позициялар') }}</span>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="addRow()">{{ t('+ Қўшиш') }}</button>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <table id="itemsTable" style="width:100%;">
+            <thead>
+                <tr>
+                    <th style="min-width:200px;">{{ t('Номи') }}</th>
+                    <th style="width:130px;">{{ t('Арт. рақами') }}</th>
+                    <th style="width:80px;">{{ t('Миқдор') }}</th>
+                    <th style="width:80px;">{{ t('Ўлчов бирлиги') }}</th>
+                    <th style="width:150px;">{{ t('Изоҳ') }}</th>
+                    <th style="width:40px;"></th>
+                </tr>
+            </thead>
+            <tbody id="itemsBody">
+                <tr class="item-row">
+                    <td><input type="text" name="item_name" placeholder="Деталь номи" required style="width:100%;"></td>
+                    <td><input type="text" name="item_part_number" placeholder="000-000" style="width:100%;"></td>
+                    <td><input type="number" name="item_quantity" value="1" min="0.001" step="0.001" style="width:100%;"></td>
+                    <td><input type="text" name="item_unit" value="dona" style="width:100%;"></td>
+                    <td><input type="text" name="item_note" placeholder="" style="width:100%;"></td>
+                    <td></td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div style="display:flex; gap:10px;">
+    <button type="submit" name="action" value="draft" class="btn btn-secondary">
+        💾 {{ t('Чорнов') }}
+    </button>
+    <button type="submit" name="action" value="submit" class="btn btn-primary">
+        📤 {{ t('Юборилган') }}
+    </button>
+</div>
+</form>
+
+{% endblock %}
+{% block scripts %}
+<script>
+function filterEquipment() {
+    const orgId = document.getElementById('orgSelect').value;
+    const eqSel = document.getElementById('eqSelect');
+    Array.from(eqSel.options).forEach(opt => {
+        if (!opt.value) return;
+        opt.style.display = (!orgId || opt.dataset.org === orgId) ? '' : 'none';
+    });
+    if (eqSel.selectedOptions[0] && eqSel.selectedOptions[0].style.display === 'none') {
+        eqSel.value = '';
+    }
+}
+
+function addRow() {
+    const tbody = document.getElementById('itemsBody');
+    const row = document.createElement('tr');
+    row.className = 'item-row';
+    row.innerHTML = `
+        <td><input type="text" name="item_name" placeholder="Деталь номи" style="width:100%;"></td>
+        <td><input type="text" name="item_part_number" placeholder="000-000" style="width:100%;"></td>
+        <td><input type="number" name="item_quantity" value="1" min="0.001" step="0.001" style="width:100%;"></td>
+        <td><input type="text" name="item_unit" value="dona" style="width:100%;"></td>
+        <td><input type="text" name="item_note" placeholder="" style="width:100%;"></td>
+        <td><button type="button" onclick="removeRow(this)" class="btn btn-danger btn-sm" style="padding:4px 8px;">✕</button></td>
+    `;
+    tbody.appendChild(row);
+}
+
+function removeRow(btn) {
+    const rows = document.querySelectorAll('#itemsBody .item-row');
+    if (rows.length <= 1) return;
+    btn.closest('tr').remove();
+}
+</script>
+{% endblock %}

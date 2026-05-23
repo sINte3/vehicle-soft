@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}АЗС — {{ t('Омборлар') }}{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <h1>{{ t('Омборлар ва АЗС') }}</h1>
+    <div style="display:flex; gap:8px;">
+        <a href="{{ url_for('fuel.stations') }}" class="btn btn-secondary">{{ t('АЗС рўйхати') }}</a>
+        <a href="{{ url_for('fuel.initial_balance') }}" class="btn btn-secondary">{{ t('Бошл. қолдиқлар') }}</a>
+        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ t('← Дашборд') }}</a>
+    </div>
+</div>
+
+{# Add/Edit Warehouse #}
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-header">{{ t('Омбор қўшиш') }}</div>
+    <div class="card-body">
+        <form method="post" action="{{ url_for('fuel.save_warehouse') }}" class="form-inline">
+            <input type="hidden" name="id" id="whId" value="">
+            <div class="form-group" style="margin-bottom:0; flex:2;">
+                <label>{{ t('Омбор номи') }}</label>
+                <input type="text" name="name" id="whName" placeholder="Заминлари" required>
+            </div>
+            <div class="form-group" style="margin-bottom:0; flex:2;">
+                <label>{{ t('Ташкилот') }}</label>
+                <select name="organization_id" id="whOrg">
+                    <option value="">{{ t('— боғланмаган —') }}</option>
+                    {% for org in organizations %}
+                    <option value="{{ org.id }}">{{ org.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0; flex:2;">
+                <label>{{ t('Изоҳ') }}</label>
+                <input type="text" name="notes" id="whNotes" placeholder="">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>&nbsp;</label>
+                <button type="submit" class="btn btn-primary">{{ t('Сақлаш') }}</button>
+                <button type="button" class="btn btn-secondary" onclick="clearWhForm()">{{ t('Тозалаш') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{# Warehouse list #}
+{% for wh in warehouses %}
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header" style="background:var(--surface2);">
+        <span style="font-weight:700;">{{ wh.name }}</span>
+        {% if wh.organization %}
+        <span class="text-muted text-sm" style="margin-left:12px;">{{ wh.organization.name }}</span>
+        {% endif %}
+        <div style="display:flex; gap:6px;">
+            <button class="btn btn-secondary btn-sm"
+                    onclick="editWh({{ wh.id }}, '{{ wh.name }}',
+                                    '{{ wh.organization_id or '' }}',
+                                    '{{ wh.notes or '' }}')">
+                {{ t('Таҳрирлаш') }}
+            </button>
+            <form method="post" action="{{ url_for('fuel.delete_warehouse', wid=wh.id) }}"
+                  style="display:inline;"
+                  onsubmit="return confirm('{{ t('Ўчириш') }}: {{ wh.name }}?')">
+                <button type="submit" class="btn btn-danger btn-sm">{{ t('Ўчириш') }}</button>
+            </form>
+        </div>
+    </div>
+    <div class="card-body" style="padding:0;">
+        <table>
+            <thead>
+                <tr>
+                    <th>АЗС</th>
+                    <th>Topaz ID</th>
+                    <th>{{ t('Ҳолат') }}</th>
+                    <th>{{ t('Беришлар сони') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% set stations = wh.stations.all() %}
+            {% if stations %}
+                {% for st in stations %}
+                <tr>
+                    <td>{{ st.name }}</td>
+                    <td><code>{{ st.topaz_id }}</code></td>
+                    <td>
+                        {% if st.is_active %}
+                        <span class="working-badge">{{ t('Фаол') }}</span>
+                        {% else %}
+                        <span class="idle-badge">{{ t('Ўчирилган') }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-muted text-sm">{{ st.transactions.count() }}</td>
+                </tr>
+                {% endfor %}
+            {% else %}
+            <tr>
+                <td colspan="4" class="text-muted text-sm" style="padding:16px;">
+                    {{ t('АЗС қўшилмаган. Қўшиш →') }}
+                    <a href="{{ url_for('fuel.stations') }}">→</a>
+                </td>
+            </tr>
+            {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="card">
+    <div class="card-body" style="text-align:center; padding:60px;">
+        <p class="text-muted">{{ t('Омборлар яратилмаган. Юқорида биринчи омборни қўшинг.') }}</p>
+    </div>
+</div>
+{% endfor %}
+
+{% endblock %}
+{% block scripts %}
+<script>
+function editWh(id, name, orgId, notes) {
+    document.getElementById('whId').value = id;
+    document.getElementById('whName').value = name;
+    document.getElementById('whNotes').value = notes;
+    const sel = document.getElementById('whOrg');
+    for (let i = 0; i < sel.options.length; i++) {
+        sel.options[i].selected = (sel.options[i].value == orgId);
+    }
+    window.scrollTo(0, 0);
+}
+function clearWhForm() {
+    document.getElementById('whId').value = '';
+    document.getElementById('whName').value = '';
+    document.getElementById('whNotes').value = '';
+    document.getElementById('whOrg').selectedIndex = 0;
+}
+</script>
+{% endblock %}

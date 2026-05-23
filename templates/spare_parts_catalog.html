@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Эҳтиёт қисмлар') }} — Каталог{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ t('Эҳтиёт қисмлар каталоги') }}</h1>
+    <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ t('← Рўйхат') }}</a>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-header">{{ t('Янги қисм қўшиш') }}</div>
+    <div class="card-body">
+        <form method="post" action="{{ url_for('spare_parts.catalog_save') }}" class="form-inline">
+            <input type="hidden" name="id" id="editId" value="">
+            <div class="form-group" style="flex:2; min-width:200px;">
+                <label>{{ t('Номи') }}</label>
+                <input type="text" name="name" id="editName" placeholder="Деталь номи" required>
+            </div>
+            <div class="form-group" style="flex:1;">
+                <label>{{ t('Арт. рақами') }}</label>
+                <input type="text" name="part_number" id="editPartNum" placeholder="000-000">
+            </div>
+            <div class="form-group" style="width:100px;">
+                <label>{{ t('Ўлчов бирлиги') }}</label>
+                <input type="text" name="unit" id="editUnit" value="dona" style="width:80px;">
+            </div>
+            <div class="form-group" style="flex:1;">
+                <label>{{ t('Категория') }}</label>
+                <input type="text" name="category" id="editCategory" placeholder="Двигатель / Тормоз...">
+            </div>
+            <div class="form-group">
+                <label>&nbsp;</label>
+                <button type="submit" class="btn btn-primary">{{ t('Сақлаш') }}</button>
+                <button type="button" class="btn btn-secondary" onclick="resetForm()">{{ t('Бекор қилиш') }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">{{ t('Жами:') }} {{ parts|length }} {{ t('та') }}</div>
+    <table>
+        <thead>
+            <tr>
+                <th>№</th>
+                <th>{{ t('Номи') }}</th>
+                <th>{{ t('Арт. рақами') }}</th>
+                <th>{{ t('Ўлчов бирлиги') }}</th>
+                <th>{{ t('Категория') }}</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for part in parts %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><strong>{{ part.name }}</strong></td>
+                <td class="text-sm text-muted">{{ part.part_number or '—' }}</td>
+                <td>{{ part.unit }}</td>
+                <td class="text-sm text-muted">{{ part.category or '—' }}</td>
+                <td>
+                    <button class="btn btn-sm btn-secondary"
+                            onclick="editPart({{ part.id }}, '{{ part.name|replace("'","\'") }}', '{{ part.part_number }}', '{{ part.unit }}', '{{ part.category }}')">✏</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function editPart(id, name, partNum, unit, cat) {
+    document.getElementById('editId').value = id;
+    document.getElementById('editName').value = name;
+    document.getElementById('editPartNum').value = partNum;
+    document.getElementById('editUnit').value = unit;
+    document.getElementById('editCategory').value = cat;
+    document.getElementById('editName').focus();
+}
+function resetForm() {
+    document.getElementById('editId').value = '';
+    document.getElementById('editName').value = '';
+    document.getElementById('editPartNum').value = '';
+    document.getElementById('editUnit').value = 'dona';
+    document.getElementById('editCategory').value = '';
+}
+</script>
+{% endblock %}

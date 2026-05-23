@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Кириш — Бухоро Агрокластер</title>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:'IBM Plex Sans',sans-serif; background:#2c2a25; min-height:100vh; display:flex; align-items:center; justify-content:center; }
+        .login-box { background:#fff; border-radius:8px; box-shadow:0 8px 32px rgba(0,0,0,0.3); width:380px; overflow:hidden; }
+        .login-header { background:#1a6b3c; color:#fff; padding:32px 32px 24px; text-align:center; }
+        .login-header h1 { font-size:20px; font-weight:700; margin-bottom:4px; }
+        .login-header p { font-size:13px; opacity:0.8; }
+        .login-body { padding:32px; }
+        .form-group { margin-bottom:18px; }
+        .form-group label { display:block; font-size:12px; font-weight:600; color:#6b6860; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px; }
+        input { font-family:inherit; font-size:14px; padding:10px 12px; border:1px solid #e0ddd5; border-radius:6px; width:100%; transition:border-color .15s; }
+        input:focus { outline:none; border-color:#1a6b3c; box-shadow:0 0 0 3px rgba(26,107,60,0.15); }
+        .btn { display:block; width:100%; padding:12px; font-family:inherit; font-size:14px; font-weight:700; border:none; border-radius:6px; cursor:pointer; background:#1a6b3c; color:#fff; transition:background .15s; }
+        .btn:hover { background:#155a31; }
+        .flash { padding:10px 14px; border-radius:6px; margin-bottom:16px; font-size:13px; font-weight:500; }
+        .flash-warning { background:#fef9e7; color:#8B6914; }
+        .flash-info { background:#eaf2f8; color:#2471a3; }
+        .flash-success { background:#e8f5ed; color:#1a6b3c; }
+        .footer { text-align:center; padding:16px; font-size:11px; color:#6b6860; border-top:1px solid #e0ddd5; }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <div class="login-header">
+            <h1>Бухоро Агрокластер</h1>
+            <p>Транспорт ҳисоботи тизими</p>
+        </div>
+        <div class="login-body">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, msg in messages %}
+            <div class="flash flash-{{ category }}">{{ msg }}</div>
+            {% endfor %}
+            {% endwith %}
+
+            <form method="post">
+                <div class="form-group">
+                    <label>Логин</label>
+                    <input type="text" name="username" required autofocus placeholder="admin">
+                </div>
+                <div class="form-group">
+                    <label>Парол</label>
+                    <input type="password" name="password" required placeholder="••••••">
+                </div>
+                <button type="submit" class="btn">Кириш</button>
+            </form>
+        </div>
+        <div class="footer">
+            «Бухоро Агрокластер» МЧЖ &middot; 2026
+        </div>
+    </div>
+</body>
+</html>

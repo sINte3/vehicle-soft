@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Фойдаланувчилар') }}{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ t('Фойдаланувчилар бошқаруви') }}</h1>
+</div>
+
+<!-- Add/Edit User Form -->
+<div class="card" style="margin-bottom:20px;" id="user-form">
+    <div class="card-header">{{ t('Янги фойдаланувчи қўшиш') }}</div>
+    <div class="card-body">
+        <form method="post" action="{{ url_for('admin_save_user') }}">
+            <input type="hidden" name="id" id="form-user-id" value="">
+            <div class="form-inline" style="margin-bottom:16px;">
+                <div class="form-group" style="margin-bottom:0;">
+                    <label>{{ t('Логин') }}</label>
+                    <input type="text" name="username" id="form-username" required placeholder="operator1" style="width:160px;">
+                </div>
+                <div class="form-group" style="margin-bottom:0;">
+                    <label>{{ t('Тўлиқ исм') }}</label>
+                    <input type="text" name="full_name" id="form-fullname" placeholder="Ахмедов Умид" style="width:200px;">
+                </div>
+                <div class="form-group" style="margin-bottom:0;">
+                    <label>{{ t('Парол (таҳрирда бўш = ўзгармайди)') }}</label>
+                    <input type="password" name="password" id="form-password" placeholder="••••••" style="width:150px;">
+                </div>
+                <div class="form-group" style="margin-bottom:0;">
+                    <label>{{ t('Роль') }}</label>
+                    <select name="role" id="form-role" style="width:160px;" onchange="toggleOrgSection(this.value)">
+                        <option value="operator">{{ t('Оператор') }}</option>
+                        <option value="viewer">{{ t('Наблюдатель') }}</option>
+                        <option value="admin">{{ t('Администратор') }}</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom:0;">
+                    <label>&nbsp;</label>
+                    <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                        <input type="checkbox" name="is_active" checked style="width:auto;"> {{ t('Фаол') }}
+                    </label>
+                </div>
+            </div>
+
+            <!-- Organization assignment (not shown for admin) -->
+            <div id="org-assignment">
+                <div class="form-group">
+                    <label>{{ t('Ташкилотлар (фойдаланувчи бошқара оладиган)') }}</label>
+                    <div class="checkbox-grid">
+                        {% for org in organizations %}
+                        <label>
+                            <input type="checkbox" name="org_ids" value="{{ org.id }}">
+                            {{ org.name }}
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary">💾 {{ t('Сақлаш') }}</button>
+            <button type="button" class="btn btn-secondary" onclick="resetForm()">{{ t('Бекор қилиш') }}</button>
+        </form>
+    </div>
+</div>
+
+<!-- Users table -->
+<div class="card">
+    <div class="card-header">
+        {{ t('Фойдаланувчилар рўйхати') }}
+        <span class="text-sm text-muted">{{ t('Жами') }}: {{ users|length }}</span>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>{{ t('ЛОГИН') }}</th>
+                <th>{{ t('ТЎЛИҚ ИСМ') }}</th>
+                <th>{{ t('РОЛЬ') }}</th>
+                <th>{{ t('ТАШКИЛОТЛАР') }}</th>
+                <th>{{ t('ҲОЛАТ') }}</th>
+                <th>{{ t('ОХИРГИ КИРИШ') }}</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for u in users %}
+        <tr>
+            <td style="font-weight:600;">{{ u.username }}</td>
+            <td>{{ u.full_name }}</td>
+            <td>
+                <span class="role-badge role-{{ u.role }}"
+                      style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;text-transform:uppercase;
+                      {% if u.role == 'admin' %}background:#e74c3c;color:#fff;{% elif u.role == 'operator' %}background:#27ae60;color:#fff;{% else %}background:#2980b9;color:#fff;{% endif %}">
+                    {{ u.role_display }}
+                </span>
+            </td>
+            <td class="text-sm">
+                {% if u.is_admin %}
+                    <em class="text-muted">{{ t('Барча ташкилотлар') }}</em>
+                {% else %}
+                    {{ u.organizations|map(attribute='short_name')|join(', ') or '—' }}
+                {% endif %}
+            </td>
+            <td>
+                {% if u.is_active %}
+                    <span class="working-badge">{{ t('Фаол') }}</span>
+                {% else %}
+                    <span class="idle-badge">{{ t('Блокланган') }}</span>
+                {% endif %}
+            </td>
+            <td class="text-sm text-muted">
+                {{ u.last_login.strftime('%d.%m.%Y %H:%M') if u.last_login else '—' }}
+            </td>
+            <td>
+                <button class="btn btn-sm btn-secondary"
+                        onclick="editUser({{ u.id }}, '{{ u.username }}', '{{ u.full_name }}', '{{ u.role }}', {{ 'true' if u.is_active else 'false' }}, [{{ u.organizations|map(attribute='id')|join(',') }}])">
+                    ✏️
+                </button>
+                {% if u.id != current_user.id %}
+                <form method="post" action="{{ url_for('admin_delete_user', uid=u.id) }}" style="display:inline;"
+                      onsubmit="return confirm('«{{ u.username }}» ни ўчиришни тасдиқлайсизми?')">
+                    <button type="submit" class="btn btn-sm btn-danger">🗑</button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleOrgSection(role) {
+    document.getElementById('org-assignment').style.display = role === 'admin' ? 'none' : 'block';
+}
+
+function editUser(id, username, fullname, role, active, orgIds) {
+    document.getElementById('form-user-id').value = id;
+    document.getElementById('form-username').value = username;
+    document.getElementById('form-fullname').value = fullname;
+    document.getElementById('form-role').value = role;
+    document.getElementById('form-password').value = '';
+    // Active checkbox
+    const activeCheckbox = document.querySelector('[name=is_active]');
+    activeCheckbox.checked = active;
+    // Org checkboxes
+    document.querySelectorAll('[name=org_ids]').forEach(cb => {
+        cb.checked = orgIds.includes(parseInt(cb.value));
+    });
+    toggleOrgSection(role);
+    document.getElementById('user-form').scrollIntoView({behavior:'smooth'});
+}
+
+function resetForm() {
+    document.getElementById('form-user-id').value = '';
+    document.getElementById('form-username').value = '';
+    document.getElementById('form-fullname').value = '';
+    document.getElementById('form-role').value = 'operator';
+    document.getElementById('form-password').value = '';
+    document.querySelector('[name=is_active]').checked = true;
+    document.querySelectorAll('[name=org_ids]').forEach(cb => cb.checked = false);
+    toggleOrgSection('operator');
+}
+</script>
+{% endblock %}

@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Виалон') }} импорт{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <h1>{{ t('Виалон — Моточасы импорти') }}</h1>
+    <div style="display:flex; gap:8px;">
+        {% if current_user.is_admin %}
+        {% if pending_count > 0 %}
+        <a href="{{ url_for('wialon_auto_match') }}"
+           class="btn btn-primary"
+           style="background:var(--warn); border:none;">
+            🤖 Авто-маппинг ({{ pending_count }} та)
+        </a>
+        {% endif %}
+        <a href="{{ url_for('wialon_mapping_list') }}" class="btn btn-secondary">
+            ⚙ {{ t('Маппинг') }} ({{ mapping_count }} {{ t('та боғланган') }})
+        </a>
+        {% endif %}
+        <a href="{{ url_for('wialon_report') }}" class="btn btn-secondary">📊 {{ t('Ҳисобот') }}</a>
+    </div>
+</div>
+
+{# ── Notification ── #}
+{% if pending_count > 0 and current_user.is_admin %}
+<div style="background:var(--warn-light); border:1px solid var(--warn);
+            border-radius:var(--radius); padding:14px 20px; margin-bottom:20px;
+            display:flex; align-items:center; justify-content:space-between; gap:12px;">
+    <span style="font-size:14px;">
+        ⚠ <strong>{{ pending_count }} та техника</strong> маппингда белгиланмаган —
+        улар импортда автоматик ўтказиб юборилади.
+    </span>
+    <a href="{{ url_for('wialon_auto_match') }}"
+       class="btn btn-primary btn-lg"
+       style="white-space:nowrap; background:var(--warn); border:none; font-size:14px;">
+        🤖 Авто-маппингни очиш →
+    </a>
+</div>
+{% endif %}
+
+{# ── Upload form with period selector (Task 2) ── #}
+<div class="card" style="margin-bottom:24px;">
+    <div class="card-header">📤 {{ t('Виалон файлини юклаш') }}</div>
+    <div class="card-body">
+        <form method="post" action="{{ url_for('wialon_upload') }}"
+              enctype="multipart/form-data" id="wialonForm">
+
+            {# Period mode tabs #}
+            <div style="margin-bottom:14px;">
+                <label style="font-size:12px; font-weight:600; color:var(--text2);
+                              display:block; margin-bottom:6px;">{{ t('ДАВР (ПЕРИОД)') }}</label>
+                <div class="toggle-group" id="modeTabs">
+                    <label id="lbl-day">
+                        <input type="radio" name="wialon_mode" value="day"
+                               checked onchange="onWialonMode('day')"> {{ t('Кунлик') }}
+                    </label>
+                    <label id="lbl-week">
+                        <input type="radio" name="wialon_mode" value="week"
+                               onchange="onWialonMode('week')"> {{ t('Жорий ҳафта') }}
+                    </label>
+                    <label id="lbl-month">
+                        <input type="radio" name="wialon_mode" value="month"
+                               onchange="onWialonMode('month')"> {{ t('Жорий ой') }}
+                    </label>
+                    <label id="lbl-range">
+                        <input type="radio" name="wialon_mode" value="range"
+                               onchange="onWialonMode('range')"> {{ t('Ихтиёрий') }}
+                    </label>
+                </div>
+            </div>
+
+            {# Date fields #}
+            <div id="field-day" style="margin-bottom:14px;">
+                <label style="font-size:12px; font-weight:600; color:var(--text2);
+                              display:block; margin-bottom:4px;">{{ t('САНА') }}</label>
+                <input type="date" name="report_date" id="singleDate"
+                       value="{{ yesterday }}" style="width:180px;">
+            </div>
+
+            <div id="field-range" style="display:none; margin-bottom:14px;
+                                         gap:12px; align-items:center; flex-wrap:wrap;">
+                <div>
+                    <label style="font-size:12px; font-weight:600; color:var(--text2);
+                                  display:block; margin-bottom:4px;">{{ t('ДАН') }}</label>
+                    <input type="date" name="date_from" id="dateFrom"
+                           value="{{ yesterday }}" style="width:160px;">
+                </div>
+                <div>
+                    <label style="font-size:12px; font-weight:600; color:var(--text2);
+                                  display:block; margin-bottom:4px;">{{ t('ГАЧА') }}</label>
+                    <input type="date" name="date_to" id="dateTo"
+                           value="{{ yesterday }}" style="width:160px;">
+                </div>
+            </div>
+
+            <div id="field-auto" style="display:none; margin-bottom:14px;">
+                <span class="text-muted" style="font-size:13px;" id="autoLabel"></span>
+            </div>
+
+            {# File input #}
+            <div style="margin-bottom:14px;">
+                <label style="font-size:12px; font-weight:600; color:var(--text2);
+                              display:block; margin-bottom:4px;">
+                    {{ t('ZIP ЕКИ CSV ФАЙЛ (Виалон — Поездки гурух ҳисоботи)') }}
+                </label>
+                <input type="file" name="wialon_file" accept=".zip,.csv"
+                       required style="width:100%;">
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-lg">{{ t('📤 Юклаш') }}</button>
+
+            <p class="text-muted text-sm" style="margin-top:10px; margin-bottom:0;">
+                {{ t('Импорт автоматик — маппинг жадвалидаги техника дарҳол сақланади.') }}
+            </p>
+        </form>
+    </div>
+</div>
+
+{# ── Import history ── #}
+<div class="card">
+    <div class="card-header">📋 {{ t('Импорт тарихи') }}</div>
+    {% if imports %}
+    <table>
+        <thead>
+            <tr>
+                <th>{{ t('САНА') }}</th>
+                <th>{{ t('ФАЙЛ') }}</th>
+                <th class="text-center">{{ t('ФАЙЛДА') }}</th>
+                <th class="text-center" style="color:var(--accent);">{{ t('САҚЛАНДИ') }}</th>
+                <th class="text-center">{{ t('ЎТКАЗ.') }}</th>
+                <th class="text-center" style="color:var(--danger);">{{ t('НОМАЪЛУМ') }}</th>
+                <th class="text-center">{{ t('ВАҚТИ') }}</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for imp in imports %}
+        <tr>
+            <td style="font-weight:700;">{{ imp.import_date.strftime('%d.%m.%Y') }}</td>
+            <td class="text-muted text-sm">{{ imp.filename | truncate(45) }}</td>
+            <td class="text-center">{{ imp.vehicles_in_file }}</td>
+            <td class="text-center" style="font-weight:700; color:var(--accent);">
+                {{ imp.vehicles_saved }}
+            </td>
+            <td class="text-center text-sm text-muted">{{ imp.vehicles_skipped }}</td>
+            <td class="text-center">
+                {% if imp.vehicles_unknown > 0 %}
+                <span style="color:var(--danger); font-weight:600;">
+                    {{ imp.vehicles_unknown }}
+                </span>
+                {% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            <td class="text-center text-sm text-muted">
+                {{ imp.created_at.strftime('%d.%m %H:%M') }}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="card-body" style="text-align:center; padding:40px;">
+        <p class="text-muted">{{ t('Ҳали импорт амалга оширилмаган.') }}</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Set yesterday as default
+(function() {
+    var d = new Date();
+    d.setDate(d.getDate() - 1);
+    var yest = d.toISOString().slice(0, 10);
+    var sd = document.getElementById('singleDate');
+    if (sd && !sd.value) sd.value = yest;
+    var df = document.getElementById('dateFrom');
+    var dt = document.getElementById('dateTo');
+    if (df && !df.value) df.value = yest;
+    if (dt && !dt.value) dt.value = yest;
+})();
+
+function onWialonMode(mode) {
+    // Hide all
+    document.getElementById('field-day').style.display   = 'none';
+    document.getElementById('field-range').style.display = 'none';
+    document.getElementById('field-auto').style.display  = 'none';
+
+    var today = new Date();
+    var lbl = document.getElementById('autoLabel');
+
+    if (mode === 'day') {
+        document.getElementById('field-day').style.display = '';
+    } else if (mode === 'range') {
+        document.getElementById('field-range').style.display = 'flex';
+    } else if (mode === 'week') {
+        var mon = new Date(today);
+        mon.setDate(today.getDate() - today.getDay() + 1);
+        var sun = new Date(mon);
+        sun.setDate(mon.getDate() + 6);
+        document.getElementById('dateFrom').value = mon.toISOString().slice(0,10);
+        document.getElementById('dateTo').value   = sun.toISOString().slice(0,10);
+        lbl.textContent = fmt(mon) + ' — ' + fmt(sun);
+        document.getElementById('field-auto').style.display = '';
+    } else if (mode === 'month') {
+        var first = new Date(today.getFullYear(), today.getMonth(), 1);
+        var last  = new Date(today.getFullYear(), today.getMonth()+1, 0);
+        document.getElementById('dateFrom').value = first.toISOString().slice(0,10);
+        document.getElementById('dateTo').value   = last.toISOString().slice(0,10);
+        lbl.textContent = fmt(first) + ' — ' + fmt(last);
+        document.getElementById('field-auto').style.display = '';
+    }
+}
+
+function fmt(d) {
+    return d.getDate().toString().padStart(2,'0') + '.' +
+           (d.getMonth()+1).toString().padStart(2,'0') + '.' +
+           d.getFullYear();
+}
+</script>
+{% endblock %}

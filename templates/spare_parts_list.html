@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Эҳтиёт қисмлар') }}{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ t('Эҳтиёт қисмлар') }}</h1>
+    <div style="display:flex; gap:8px;">
+        {% if current_user.can_edit %}
+        <a href="{{ url_for('spare_parts.new_request') }}" class="btn btn-primary">+ {{ t('Қўшиш') }}</a>
+        {% endif %}
+        {% if current_user.is_admin %}
+        <a href="{{ url_for('spare_parts.catalog') }}" class="btn btn-secondary">{{ t('Каталог') }}</a>
+        {% endif %}
+    </div>
+</div>
+
+{# Status tabs #}
+<div style="display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap;">
+    <a href="{{ url_for('spare_parts.index') }}"
+       class="btn btn-sm {% if not status_filter %}btn-primary{% else %}btn-secondary{% endif %}">
+       {{ t('Барчаси') }} <span style="margin-left:4px; font-size:11px; opacity:0.8;">({{ counts.all }})</span>
+    </a>
+    {% for s, labels in status_labels.items() %}
+    <a href="{{ url_for('spare_parts.index', status=s) }}"
+       class="btn btn-sm {% if status_filter == s %}btn-primary{% else %}btn-secondary{% endif %}"
+       style="{% if status_filter == s %}{% else %}color:{{ status_colors[s] }};{% endif %}">
+        {{ labels[lang] }}
+        <span style="margin-left:4px; font-size:11px; opacity:0.8;">({{ counts[s] }})</span>
+    </a>
+    {% endfor %}
+</div>
+
+{# Filters #}
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-body" style="padding:12px 16px;">
+        <form method="get" action="{{ url_for('spare_parts.index') }}" class="form-inline">
+            {% if status_filter %}<input type="hidden" name="status" value="{{ status_filter }}">{% endif %}
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ t('Ташкилот') }}</label>
+                <select name="org_id" onchange="this.form.submit()" style="min-width:180px;">
+                    <option value="">{{ t('— Барчаси —') }}</option>
+                    {% for org in organizations %}
+                    <option value="{{ org.id }}" {% if org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ t('Сана') }} {{ t('дан') }}</label>
+                <input type="date" name="date_from" value="{{ date_from_s }}" style="width:150px;">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ t('гача') }}</label>
+                <input type="date" name="date_to" value="{{ date_to_s }}" style="width:150px;">
+            </div>
+            <button type="submit" class="btn btn-secondary btn-sm">{{ t('Кўрсатиш') }}</button>
+        </form>
+    </div>
+</div>
+
+{# List #}
+<div class="card">
+    <div class="card-header">
+        {{ t('Сўровлар') }}
+        <span class="text-muted text-sm">{{ t('Жами') }}: {{ requests_list|length }}</span>
+    </div>
+    {% if requests_list %}
+    <table>
+        <thead>
+            <tr>
+                <th>№</th>
+                <th>{{ t('Сана') }}</th>
+                <th>{{ t('Ташкилот') }}</th>
+                <th>{{ t('Техника') }}</th>
+                <th>{{ t('Позициялар') }}</th>
+                <th>{{ t('Ҳолат') }}</th>
+                <th>{{ t('Яратилган') }}</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for req in requests_list %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ req.request_date.strftime('%d.%m.%Y') }}</td>
+                <td>{{ req.organization.short_name or req.organization.name }}</td>
+                <td class="text-sm text-muted">{{ req.equipment.name if req.equipment else '—' }}</td>
+                <td class="text-center">{{ req.items|length }}</td>
+                <td>
+                    <span style="color:{{ status_colors[req.status] }}; font-weight:600;">
+                        {{ status_labels[req.status][lang] }}
+                    </span>
+                </td>
+                <td class="text-sm text-muted">
+                    {{ req.creator.username if req.creator else '—' }}<br>
+                    <span style="font-size:11px;">{{ req.created_at.strftime('%d.%m.%Y %H:%M') }}</span>
+                </td>
+                <td>
+                    <a href="{{ url_for('spare_parts.detail', rid=req.id) }}" class="btn btn-sm btn-secondary">{{ t('Кўриш') }}</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="card-body" style="text-align:center; padding:40px; color:var(--text2);">
+        {{ t('Сўров йўқ') }}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

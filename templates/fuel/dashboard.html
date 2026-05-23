@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}АЗС — {{ t('Ёқилғи қолдиқлари') }}{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <h1>{{ t('АЗС — Ёқилғи қолдиқлари') }}</h1>
+    <div style="display:flex; gap:8px; align-items:center;">
+        {% if last_sync %}
+        <span class="text-muted text-sm">
+            {{ t('Охирги синхр.:') }} {{ last_sync.synced_at.strftime('%d.%m.%Y %H:%M') }}
+            (+{{ last_sync.transactions_new }})
+        </span>
+        {% else %}
+        <span class="text-muted text-sm" style="color:var(--danger);">{{ t('Синхронизация йўқ') }}</span>
+        {% endif %}
+        <a href="{{ url_for('fuel.transactions') }}" class="btn btn-secondary btn-sm">{{ t('Ёқилғи беришлар тарихи') }}</a>
+        <a href="{{ url_for('fuel.receipts') }}" class="btn btn-secondary btn-sm">{{ t('Киримлар') }}</a>
+        {% if current_user.is_admin %}
+        <a href="{{ url_for('fuel.warehouses') }}" class="btn btn-secondary btn-sm">{{ t('Омборлар') }}</a>
+        <a href="{{ url_for('fuel.initial_balance') }}" class="btn btn-secondary btn-sm">{{ t('Бошл. қолдиқлар') }}</a>
+        {% endif %}
+    </div>
+</div>
+
+{# Today stat #}
+<div class="stats-grid" style="grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); margin-bottom:20px;">
+    <div class="stat-card">
+        <div class="label">{{ t('Бугун берилди') }}</div>
+        <div class="value" style="color:var(--danger);">{{ '%.0f'|format(today_total) }} л</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">{{ t('Омборлар сони') }}</div>
+        <div class="value">{{ balance_rows|length }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">{{ t('Фаол АЗС') }}</div>
+        <div class="value">{{ balance_rows|sum(attribute='stations') }}</div>
+    </div>
+</div>
+
+{# Balance table #}
+<div class="card" style="margin-bottom:24px;">
+    <div class="card-header">{{ t('Омборлар бўйича қолдиқлар') }}</div>
+    <table>
+        <thead>
+            <tr>
+                <th>{{ t('Омбор') }}</th>
+                <th class="text-center">{{ t('АЗС') }}</th>
+                <th class="text-center">{{ t('Ёқилғи тури') }}</th>
+                <th class="text-right">{{ t('Қолдиқ, л') }}</th>
+                <th class="text-right">{{ t('Бугун берилди, л') }}</th>
+                <th class="text-muted text-sm">{{ t('Охирги бериш') }}</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in balance_rows %}
+            {% set balances = row.balances %}
+            {% if balances %}
+                {% for ft, qty in balances.items() %}
+                <tr>
+                    {% if loop.first %}
+                    <td rowspan="{{ balances|length }}" style="font-weight:600; vertical-align:top; padding-top:12px;">
+                        {{ row.warehouse.name }}
+                    </td>
+                    <td rowspan="{{ balances|length }}" class="text-center" style="vertical-align:top; padding-top:12px;">
+                        {{ row.stations }}
+                    </td>
+                    {% endif %}
+                    <td class="text-center">
+                        <span style="display:inline-block; padding:2px 10px; background:var(--info-light);
+                                     color:var(--info); border-radius:3px; font-size:12px; font-weight:600;">
+                            {{ ft }}
+                        </span>
+                    </td>
+                    <td class="text-right" style="font-weight:700; font-size:16px;">
+                        {% if qty is none %}
+                        <span class="text-muted" style="font-size:12px;">{{ t('Бошланғич қолдиқ белгиланмаган') }}</span>
+                        {% elif qty < 0 %}
+                        <span style="color:var(--danger);">{{ '%.0f'|format(qty) }} л</span>
+                        {% elif qty < 500 %}
+                        <span style="color:var(--warn);">{{ '%.0f'|format(qty) }} л</span>
+                        {% else %}
+                        {{ '%.0f'|format(qty) }} л
+                        {% endif %}
+                    </td>
+                    {% if loop.first %}
+                    <td rowspan="{{ balances|length }}" class="text-right" style="vertical-align:top; padding-top:12px;">
+                        {% if row.today_expense > 0 %}
+                        <span style="color:var(--danger);">-{{ '%.0f'|format(row.today_expense) }}</span>
+                        {% endif %}
+                    </td>
+                    <td rowspan="{{ balances|length }}" class="text-muted text-sm" style="vertical-align:top; padding-top:12px;">
+                        {% if row.last_txn %}
+                        {{ row.last_txn.txn_datetime.strftime('%d.%m %H:%M') }}<br>
+                        <small>{{ row.last_txn.station.name }}</small>
+                        {% endif %}
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            {% else %}
+            <tr>
+                <td style="font-weight:600;">{{ row.warehouse.name }}</td>
+                <td class="text-center">{{ row.stations }}</td>
+                <td colspan="4" class="text-muted text-sm" style="padding-left:20px;">
+                    ⚠ {{ t('Бошланғич қолдиқ белгиланмаган') }}
+                    {% if current_user.is_admin %}
+                    — <a href="{{ url_for('fuel.initial_balance') }}">{{ t('Белгилаш') }}</a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endif %}
+        {% else %}
+        <tr>
+            <td colspan="6" class="text-center text-muted" style="padding:40px;">
+                {{ t('Омборлар созланмаган.') }}
+                {% if current_user.is_admin %}
+                <a href="{{ url_for('fuel.warehouses') }}">{{ t('Маълумотномани очиш') }}</a>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{# Recent transactions #}
+{% if recent_txns %}
+<div class="card">
+    <div class="card-header" style="justify-content:space-between;">
+        <span>{{ t('Охирги беришлар (30)') }}</span>
+        <a href="{{ url_for('fuel.transactions') }}" class="btn btn-secondary btn-sm">{{ t('Барчаси →') }}</a>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>{{ t('Сана/вақт') }}</th>
+                <th>{{ t('АЗС') }}</th>
+                <th>{{ t('Омбор') }}</th>
+                <th>{{ t('Ёқилғи') }}</th>
+                <th class="text-right">{{ t('Миқдор, л') }}</th>
+                <th>{{ t('Карта') }}</th>
+                <th class="text-right">{{ t('Сумма') }}</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for t_ in recent_txns %}
+        <tr>
+            <td class="text-sm">{{ t_.txn_datetime.strftime('%d.%m.%Y %H:%M') }}</td>
+            <td>{{ t_.station.name }}</td>
+            <td class="text-muted text-sm">{{ t_.station.warehouse_name }}</td>
+            <td><span style="font-size:11px; padding:1px 6px; background:var(--info-light);
+                             color:var(--info); border-radius:2px;">{{ t_.fuel_type }}</span></td>
+            <td class="text-right" style="font-weight:600; color:var(--danger);">
+                {{ '%.1f'|format(t_.quantity) }}
+            </td>
+            <td class="text-sm text-muted">{{ t_.card_number or '—' }}</td>
+            <td class="text-right text-sm">
+                {% if t_.amount %}{{ '{:,.0f}'.format(t_.amount).replace(',', ' ') }}{% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% endblock %}

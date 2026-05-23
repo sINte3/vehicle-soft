@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}{{ t('Эҳтиёт қисмлар') }} — Сўров #{{ req.id }}{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Сўров #{{ req.id }}</h1>
+    <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ t('← Рўйхат') }}</a>
+</div>
+
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>{{ t('Маълумот') }}</span>
+        <span style="color:{{ status_colors[req.status] }}; font-weight:700; font-size:15px;">
+            {{ status_labels[req.status][lang] }}
+        </span>
+    </div>
+    <div class="card-body">
+        <div class="form-inline" style="gap:24px; flex-wrap:wrap;">
+            <div>
+                <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ t('Сана') }}</div>
+                <div>{{ req.request_date.strftime('%d.%m.%Y') }}</div>
+            </div>
+            <div>
+                <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ t('Ташкилот') }}</div>
+                <div>{{ req.organization.name }}</div>
+            </div>
+            <div>
+                <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ t('Техника') }}</div>
+                <div>{{ req.equipment.name if req.equipment else '—' }}</div>
+            </div>
+            <div>
+                <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ t('Яратди') }}</div>
+                <div>{{ req.creator.full_name or req.creator.username if req.creator else '—' }}</div>
+                <div class="text-sm text-muted">{{ req.created_at.strftime('%d.%m.%Y %H:%M') }}</div>
+            </div>
+        </div>
+        {% if req.note %}
+        <div style="margin-top:12px;">
+            <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ t('Изоҳ') }}</div>
+            <div>{{ req.note }}</div>
+        </div>
+        {% endif %}
+        {% if req.reviewer %}
+        <div style="margin-top:12px; padding:10px; background:var(--surface2); border-radius:var(--radius);">
+            <div style="font-size:11px; color:var(--text2); font-weight:600; margin-bottom:4px;">
+                {{ status_labels[req.status][lang] }} — {{ req.reviewer.username }}
+                {% if req.reviewed_at %} ({{ req.reviewed_at.strftime('%d.%m.%Y %H:%M') }}){% endif %}
+            </div>
+            {% if req.review_comment %}
+            <div>{{ req.review_comment }}</div>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header">{{ t('Позициялар') }} ({{ req.items|length }})</div>
+    <table>
+        <thead>
+            <tr>
+                <th>№</th>
+                <th>{{ t('Номи') }}</th>
+                <th>{{ t('Арт. рақами') }}</th>
+                <th class="text-right">{{ t('Миқдор') }}</th>
+                <th>{{ t('Ўлчов бирлиги') }}</th>
+                <th>{{ t('Изоҳ') }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in req.items %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><strong>{{ item.name }}</strong></td>
+                <td class="text-sm text-muted">{{ item.part_number or '—' }}</td>
+                <td class="text-right">{{ item.quantity }}</td>
+                <td>{{ item.unit }}</td>
+                <td class="text-sm text-muted">{{ item.note or '' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{# Actions #}
+{% if req.status == 'draft' and current_user.id == req.created_by %}
+<div style="display:flex; gap:10px; margin-bottom:16px;">
+    <form method="post" action="{{ url_for('spare_parts.submit_request', rid=req.id) }}">
+        <button type="submit" class="btn btn-primary">📤 {{ t('Юборилган') }}</button>
+    </form>
+</div>
+{% endif %}
+
+{% if req.status == 'submitted' and current_user.can_edit %}
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header">{{ t('Кўриб чиқиш') }}</div>
+    <div class="card-body">
+        <div class="form-group">
+            <label>{{ t('Изоҳ') }}</label>
+            <textarea id="reviewComment" rows="2" placeholder="Изоҳ (ихтиёрий)..."></textarea>
+        </div>
+        <div style="display:flex; gap:10px;">
+            <form method="post" action="{{ url_for('spare_parts.approve_request', rid=req.id) }}" onsubmit="setComment(this)">
+                <input type="hidden" name="review_comment">
+                <button type="submit" class="btn btn-primary">✅ {{ t('Тасдиқланган') }}</button>
+            </form>
+            <form method="post" action="{{ url_for('spare_parts.reject_request', rid=req.id) }}" onsubmit="setComment(this)">
+                <input type="hidden" name="review_comment">
+                <button type="submit" class="btn btn-danger">❌ {{ t('Рад этилган') }}</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
+{% block scripts %}
+<script>
+function setComment(form) {
+    form.querySelector('[name=review_comment]').value =
+        document.getElementById('reviewComment').value;
+}
+</script>
+{% endblock %}
