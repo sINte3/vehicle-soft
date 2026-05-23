@@ -658,11 +658,24 @@ Acceptance criteria (met):
 
 ---
 
-### TASK-DEPLOY-005 — Staging VPS deployment
+### TASK-DEPLOY-005 — Staging deployment (organization server)
 
 Priority: P2  
 Depends on: TASK-DEPLOY-002, TASK-DEPLOY-003, TASK-DEPLOY-004  
-**Runbook**: see `docs/VPS_STAGING_RUNBOOK.md` (TASK-DEPLOY-005A, created 2026-05-23)
+**Status: Staging QA PASSED 2026-05-23. Production cutover planned — not yet executed.**
+
+Organization server staging (`srv-yoqsh`, `10.103.25.14`) is verified:
+
+- Staging URL: `http://10.103.25.14:5051` — RUNNING.
+- Staging QA: operator confirmed admin/operator/Excel/Wialon/Fuel/log — all OK.
+- Automated backup `TransportDBBackupStaging` (03:00 daily) — verified.
+- Topaz: still pointed at production (`10.103.25.200:5050`) — not changed until cutover.
+
+**Cutover runbook**: see `docs/ORG_WINDOWS_SERVER_CUTOVER_RUNBOOK.md` (TASK-DEPLOY-005E, created 2026-05-23)
+
+Operator next step: follow the cutover runbook during a maintenance window.
+
+**Staging runbook**: see `docs/VPS_STAGING_RUNBOOK.md` (TASK-DEPLOY-005A, created 2026-05-23)
 
 Scope:
 1. Rent a Windows Server 2022 VPS (recommended: Timeweb, Hetzner, Contabo).

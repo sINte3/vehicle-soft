@@ -537,7 +537,25 @@ Operator verification completed 2026-05-23 (TASK-DEPLOY-004E):
 
 Priority: P2  
 Depends on: TASK-DEPLOY-002, TASK-DEPLOY-003, TASK-DEPLOY-004  
-Status: **TASK-DEPLOY-005A, 005B, 005D completed 2026-05-23. Staging is running on org server (srv-yoqsh). QA pending.**
+Status: **TASK-DEPLOY-005A, 005B, 005D, 005E completed 2026-05-23. Staging QA PASSED. Production cutover planned — not yet executed.**
+
+**TASK-DEPLOY-005E — Record staging QA and prepare production cutover plan (2026-05-23 — COMPLETED)**
+
+Changes made:
+
+- `docs/ORG_WINDOWS_SERVER_STAGING_RUNBOOK.md`: staging QA marked PASSED; backup history updated
+  with `--source` manual test file (`transport_20260523_225240_staging.db`) and Task Scheduler
+  test run file (`transport_20260523_225344_staging.db`), both 46,809,088 bytes, integrity ok.
+  Section 4 QA checklist: all items [x]. Section 5 operator next steps updated to point to cutover runbook.
+- `docs/ORG_WINDOWS_SERVER_CUTOVER_RUNBOOK.md` created: full production cutover runbook covering
+  preconditions, recommended production paths on new server, pre-cutover checklist on workstation
+  (git status, final backup, service stop, cold copy), DB transfer, environment variables (placeholder
+  commands only), dependency install, DB copy, syntax/import checks, DB count verification, production
+  backup wrapper + Task Scheduler, NSSM service install, Windows Firewall, production QA checklist,
+  Topaz switch procedure, user communication, rollback plan (before and after Topaz switch), anti
+  split-brain warning, cutover completion record, and post-cutover tasks.
+- `docs/AGENT_STATE.md` and `docs/TASKS.md` updated.
+- Documentation only. No application code changed. No database changed. No service restarted. No migrations.
 
 **TASK-DEPLOY-005A — VPS staging runbook (2026-05-23 — COMPLETED)**
 

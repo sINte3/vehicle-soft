@@ -2,7 +2,7 @@
 
 ## State date
 
-2026-05-23 (TASK-DEPLOY-005D completed: --source parameter added to backup_transport_db.py; docs/ORG_WINDOWS_SERVER_STAGING_RUNBOOK.md created; staging server status and backup history recorded — no application code, no database, no service changes)
+2026-05-23 (TASK-DEPLOY-005E completed: staging QA recorded as PASSED; docs/ORG_WINDOWS_SERVER_CUTOVER_RUNBOOK.md created; docs/ORG_WINDOWS_SERVER_STAGING_RUNBOOK.md updated with QA results and backup history — no application code, no database, no service changes)
 
 ## Materials reviewed
 
@@ -172,19 +172,41 @@ Observed production SQLite counts (as of 2026-05-19):
 
 ## Current recommended next task
 
-**TASK-DEPLOY-005 — Org-server staging — QA pending**
+**TASK-DEPLOY-005 — Production cutover — staging QA PASSED, cutover not yet executed**
 
-Staging is running at `http://10.103.25.14:5051` (srv-yoqsh, service `TransportReportStaging`).
-Operator next steps:
-1. Run manual staging backup with updated script (Section 1.1 of `docs/ORG_WINDOWS_SERVER_STAGING_RUNBOOK.md`).
-2. Create `TransportDBBackupStaging` Task Scheduler task (Section 2 of runbook).
-3. Complete staging QA checklist (Section 4 of runbook) — test all UI modules.
-4. After QA passes: proceed to TASK-DEPLOY-006 or cutover planning.
+Staging QA passed on 2026-05-23. All staging setup is complete.
+
+Operator next step: follow `docs/ORG_WINDOWS_SERVER_CUTOVER_RUNBOOK.md` during a maintenance window
+to move production from `10.103.25.200:5050` to `10.103.25.14:5050`.
+
+Before starting the cutover, verify all preconditions in Section B of that runbook.
 
 TASK-OPS-002C remains open — operator must answer 5 confirmation questions in
 `docs/MIGRATION_BACKFILL_ANALYSIS.md` for the LIKELY_APPLIED migration scripts.
 
 **Recently completed**
+
+**TASK-DEPLOY-005E — Record staging QA and prepare production cutover plan (2026-05-23 — COMPLETED)**
+
+- `docs/ORG_WINDOWS_SERVER_STAGING_RUNBOOK.md` updated:
+  - Staging QA PASSED recorded (operator confirmed admin/operator/Excel/Wialon/Fuel/log — all OK).
+  - Backup history updated: manual `--source` test backup (`transport_20260523_225240_staging.db`,
+    46,809,088 bytes, integrity ok) and Task Scheduler test run (`transport_20260523_225344_staging.db`,
+    46,809,088 bytes, integrity ok) both recorded.
+  - `TransportDBBackupStaging` task state: Ready, next run 24.05.2026 03:00:00.
+  - Section 4 QA checklist: all items marked [x] with operator confirmation.
+  - Section 5 operator next steps updated to reflect completion; directs operator to cutover runbook.
+- `docs/ORG_WINDOWS_SERVER_CUTOVER_RUNBOOK.md` created (new file):
+  - Sections A–R: purpose/scope, preconditions, recommended paths, pre-cutover checklist on old
+    workstation (git status, final backup, service stop, cold copy), DB transfer to new server,
+    environment variables (placeholder commands only — no real secrets), dependency install, DB copy,
+    syntax/import checks, read-only DB count verification, production backup wrapper
+    (`backup_production_db.bat`) + Task Scheduler task (`TransportDBBackupProduction`, 02:00 daily),
+    NSSM `TransportReport` service install, Windows Firewall rule, full production QA checklist,
+    Topaz switch procedure (only after QA passes), user communication, rollback plan (before and
+    after Topaz switch), anti split-brain warning, cutover completion record, post-cutover tasks.
+- `docs/AGENT_STATE.md` and `docs/TASKS.md` updated.
+- No application code changed. No database changed. No service restarted. No migrations. No git push.
 
 **TASK-DEPLOY-005D — Add --source support to backup tool for staging (2026-05-23 — COMPLETED)**
 

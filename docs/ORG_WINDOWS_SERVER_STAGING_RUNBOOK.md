@@ -33,7 +33,9 @@ Applies to: Organization Windows Server staging (`srv-yoqsh`, IP `10.103.25.14`)
 | fuel_transactions2 | 391,284 |
 | schema_migrations | 10 |
 
-- Manual staging backup integrity check: `ok` (46,809,088 bytes). See Section 3.
+- Manual staging backup with `--source` tested successfully: `ok` (46,809,088 bytes). See Section 3.
+- Task Scheduler task `TransportDBBackupStaging` created and tested successfully. See Section 3.
+- **Staging QA PASSED 2026-05-23** — operator confirmed no errors in all UI modules. See Section 4.
 
 ---
 
@@ -88,6 +90,13 @@ Python command (before `--source` support was added to the script). Result:
 The `--source` option added in TASK-DEPLOY-005D enables the same operation via
 `backup_transport_db.py` without any one-off Python commands.
 
+After `--source` support was confirmed, a second manual backup was tested using
+`backup_transport_db.py --source`:
+
+- Destination: `D:\transport-report-backups\staging\daily\transport_20260523_225240_staging.db`
+- Integrity check: `ok`
+- File size: 46,809,088 bytes
+
 ---
 
 ## Section 2 — Automated staging backup via Task Scheduler
@@ -128,38 +137,49 @@ Then confirm a new file appears in `D:\transport-report-backups\staging\daily\`.
 
 | Date | Type | File | Size | Integrity |
 |---|---|---|---|---|
-| 2026-05-23 | Manual (one-off Python command) | `transport_staging_20260523_223133.db` | 46,809,088 bytes | ok |
+| 2026-05-23 | Manual (one-off Python command, pre-005D) | `transport_staging_20260523_223133.db` | 46,809,088 bytes | ok |
+| 2026-05-23 | Manual (`backup_transport_db.py --source`, TASK-DEPLOY-005E test) | `transport_20260523_225240_staging.db` | 46,809,088 bytes | ok |
+| 2026-05-23 | Task Scheduler test run (`TransportDBBackupStaging`) | `transport_20260523_225344_staging.db` | 46,809,088 bytes | ok |
 
-After the `TransportDBBackupStaging` Task Scheduler task is created, future backups
-will use `backup_transport_db.py --source ... --suffix staging` (see Section 2).
+`TransportDBBackupStaging` Task Scheduler task state: **Ready** — next run: 24.05.2026 03:00:00.
+
+Future automated backups will use `backup_transport_db.py --source ... --suffix staging` (see Section 2).
 
 ---
 
 ## Section 4 — Staging QA checklist
 
-After confirming the staging service is running, verify these manually:
+**QA STATUS: PASSED — 2026-05-23**
+Operator confirmed no errors in all checks below.
 
-- [ ] `http://10.103.25.14:5051` — login page loads.
-- [ ] Log in as admin — dashboard loads.
-- [ ] `/entry` — daily entry page loads with all 9 equipment categories.
-- [ ] `/report` — report page loads; generate a one-day report.
-- [ ] `/wialon` — Wialon import page loads.
-- [ ] `/fuel/` — fuel dashboard loads.
-- [ ] `/ref/equipment` — equipment reference loads.
-- [ ] Switch language UZ/RU — labels change.
-- [ ] Module permissions: non-admin user cannot access a disabled module.
-- [ ] `D:\transport-report-backups\staging\daily\` — backup file exists after task run.
+- [x] `http://10.103.25.14:5051` — login page loads. **OK**
+- [x] Log in as admin — dashboard loads. **OK**
+- [x] `/entry` — daily entry page loads with all 9 equipment categories. **OK**
+- [x] `/report` — report page loads; generate a one-day report; Excel export. **OK**
+- [x] `/wialon` — Wialon import page loads. **OK**
+- [x] `/fuel/` — fuel dashboard loads. **OK**
+- [x] `/ref/equipment` — equipment reference loads. **OK**
+- [x] Switch language UZ/RU — labels change. **OK**
+- [x] Module permissions: non-admin user cannot access a disabled module. **OK**
+- [x] `D:\transport-report-backups\staging\daily\` — backup file exists after task run. **OK**
+- [x] Logs — no errors reported after QA session. **OK**
 
 ---
 
 ## Section 5 — Operator next steps
 
-1. Run Section 1.1 manual backup command at least once to confirm `--source` support works
-   on `srv-yoqsh` with the updated `backup_transport_db.py`.
-2. Create the `TransportDBBackupStaging` Task Scheduler task (Section 2).
-3. Complete the QA checklist (Section 4) — test all UI modules on staging.
-4. After staging QA passes, proceed to TASK-DEPLOY-006 planning
-   (PostgreSQL migration research) or cutover planning.
+All staging setup steps are complete as of 2026-05-23:
+
+1. [DONE] Manual staging backup with `--source` tested — integrity check `ok` (Section 1.2).
+2. [DONE] `TransportDBBackupStaging` Task Scheduler task created and tested (Section 3).
+3. [DONE] Staging QA checklist completed — all items PASSED (Section 4).
+
+**Current next step: production cutover.**
+
+Follow `docs/ORG_WINDOWS_SERVER_CUTOVER_RUNBOOK.md` during a maintenance window to move
+production from `10.103.25.200:5050` to `10.103.25.14:5050`.
+
+Do not switch Topaz agent until production cutover is complete (Section 7 policy still applies).
 
 ---
 
