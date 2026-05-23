@@ -316,21 +316,27 @@ PG_PASS = os.environ.get('PG_PASS')  # no fallback — fail safe
 
 This is a Phase 4 action (TASK-DEPLOY-006). Not required now.
 
-### Step 4 — Proceed to TASK-DEPLOY-002 (GitHub repository creation)
+### Step 4 — TASK-DEPLOY-002 (GitHub repository creation) — COMPLETED 2026-05-23
 
-1. Create a **private** GitHub repository named `transport-report` (or similar).
-2. In `C:\transport-report\`, run:
-   ```cmd
-   git init
-   git add .
-   git status
-   ```
-   Verify that excluded files do not appear.
-3. Continue with:
-   ```cmd
-   git commit -m "Initial commit: Vehicle Soft production v1.0"
-   git remote add origin https://github.com/YOUR_ORG/transport-report.git
-   git push -u origin main
-   git tag v1.0-production-2026-05-23
-   git push --tags
-   ```
+Private repository created: https://github.com/sINte3/vehicle-soft (Private).
+
+Before the first commit, `.gitignore` was updated with two additional exclusions:
+- `/PROMPT.md` — root-level Claude prompt file.
+- `*.docx` — binary user guide (`Rukovodstvo_polzovatelya.docx`).
+
+Commands executed:
+```cmd
+git init
+git add .
+git status
+git commit -m "Initial commit: Vehicle Soft production v1.0"
+git remote add origin https://github.com/sINte3/vehicle-soft.git
+git push -u origin main
+git tag v1.0-production-2026-05-23
+git push --tags
+```
+
+Result: branch main up to date with origin/main, working tree clean.
+`wialon_import_v3.py`, `PROMPT_*.md`, and all other excluded files were NOT in the staged list.
+
+**Status: TASK-DEPLOY-002 COMPLETED. Repository is live. Next: TASK-DEPLOY-004.**
