@@ -27,10 +27,13 @@ Follow this document any time you deploy a code change to the production server.
 | GitHub repository | https://github.com/sINte3/vehicle-soft (private) |
 | First production tag | `v1.0-production-2026-05-23` |
 | Default branch | `main` |
+| Production server | `srv-yoqsh` (10.103.25.14) |
 | Production server path | `C:\transport-report\` |
-| Application URL | `http://10.103.25.200:5050` |
+| Application URL | `http://10.103.25.14:5050` |
 | Database | `C:\transport-report\instance\transport.db` |
-| Daily backup location | `C:\transport-report-backups\daily\` |
+| Daily backup location | `D:\transport-report-backups\production\daily\` |
+| Daily backup wrapper | `C:\transport-report\backup_production_db.bat` |
+| Scheduled task | `TransportDBBackupProduction`, daily 02:00, SYSTEM |
 | Pre-update backup location | `C:\transport-report-backups\before_update\` |
 
 ---
@@ -44,7 +47,7 @@ Before running any update, complete this checklist:
       If yes, read `docs\MIGRATIONS.md` before continuing.
 - [ ] Confirm `SECRET_KEY` and `FUEL_API_TOKEN` are set on this server.
       (See `docs\DEPLOYMENT_SECURITY.md`.)
-- [ ] Confirm a recent daily backup exists in `C:\transport-report-backups\daily\`.
+- [ ] Confirm a recent daily backup exists in `D:\transport-report-backups\production\daily\`.
       The pre-update script also creates a backup, but a recent daily backup is a second safety net.
 - [ ] Notify users that a brief downtime is coming (service will be stopped during update).
 - [ ] Close any open Excel reports downloaded from the application.
@@ -92,7 +95,7 @@ cd C:\transport-report
 #### Step 1: Create a manual backup
 
 ```cmd
-backup_transport_db.bat
+backup_production_db.bat
 ```
 
 Confirm that the output says `SUCCESS` and shows the backup file path.
@@ -158,7 +161,7 @@ net start TransportReport
 
 #### Step 8: Smoke test
 
-Open `http://10.103.25.200:5050` in a browser and run through the smoke test below.
+Open `http://10.103.25.14:5050` in a browser and run through the smoke test below.
 
 ---
 
@@ -243,21 +246,21 @@ Copy the specific files that were updated.
 
 ### Step 6: Verify
 
-Open `http://10.103.25.200:5050` and confirm login works and the dashboard loads.
+Open `http://10.103.25.14:5050` and confirm login works and the dashboard loads.
 Check `logs\error.log` for startup errors.
 
 ---
 
 ## Manual backup procedure
 
-Run `backup_transport_db.bat` at any time to create a timestamped backup:
+Run `backup_production_db.bat` at any time to create a timestamped backup in the production backup folder:
 
 ```cmd
 cd C:\transport-report
-backup_transport_db.bat
+backup_production_db.bat
 ```
 
-`backup_transport_db.bat` delegates to `backup_transport_db.py`, which uses the
+`backup_production_db.bat` delegates to `backup_transport_db.py`, which uses the
 SQLite online backup API (`sqlite3.Connection.backup()`). This produces a consistent
 snapshot of the database even when the service is running and WAL mode is active.
 The `.db-wal` and `.db-shm` sidecar files are NOT manually copied — the backup API
@@ -273,7 +276,7 @@ Output example (from operator test run 2026-05-23):
  Transport DB Backup  (SQLite online backup API)
 ============================================================
  Source : C:\transport-report\instance\transport.db
- Dest   : C:\transport-report-backups\daily\transport_20260523_182423.db
+ Dest   : D:\transport-report-backups\production\daily\transport_20260523_182423.db
 
  Source size : 46,800,896 bytes
 
@@ -284,7 +287,7 @@ Running integrity check on destination database...
  Integrity check : ok
 
 SUCCESS: Backup written to:
-         C:\transport-report-backups\daily\transport_20260523_182423.db
+         D:\transport-report-backups\production\daily\transport_20260523_182423.db
 Backup completed successfully.
 ```
 
@@ -305,61 +308,82 @@ You can also call `backup_transport_db.py` directly with custom arguments:
 
 ## Automated daily backup via Windows Task Scheduler
 
-### Command-line setup (run CMD as Administrator):
+The production daily backup task `TransportDBBackupProduction` is already active on `srv-yoqsh`.
+It runs `backup_production_db.bat` daily at 02:00 as SYSTEM and writes to
+`D:\transport-report-backups\production\daily\`.
+
+Use the commands below to inspect, test, or recreate the task if ever needed.
+
+### Verify the task exists and is active:
 
 ```cmd
-schtasks /create /tn "TransportDBBackup" /tr "C:\transport-report\backup_transport_db.bat" /sc daily /st 02:00 /ru SYSTEM /f
-```
-
-Parameters explained:
-- `/tn "TransportDBBackup"` — task name.
-- `/tr "C:\transport-report\backup_transport_db.bat"` — what to run.
-- `/sc daily /st 02:00` — run every day at 02:00 (2 AM).
-- `/ru SYSTEM` — run as SYSTEM account (has full local access).
-- `/f` — overwrite if the task already exists.
-
-### GUI setup (alternative):
-
-1. Press `Win + R`, type `taskschd.msc`, press Enter.
-2. Click **Create Basic Task...** in the right panel.
-3. Name: `TransportDBBackup`. Click Next.
-4. Trigger: **Daily**. Click Next. Set Start time: `02:00:00`. Click Next.
-5. Action: **Start a program**. Click Next.
-6. Program/script: `C:\transport-report\backup_transport_db.bat`
-7. Start in: `C:\transport-report`
-8. Click Next → Finish.
-
-### Verify the task was created:
-
-```cmd
-schtasks /query /tn "TransportDBBackup" /fo LIST
+schtasks /query /tn "TransportDBBackupProduction" /fo LIST
 ```
 
 ### Run the task immediately to test it:
 
 ```cmd
-schtasks /run /tn "TransportDBBackup"
+schtasks /run /tn "TransportDBBackupProduction"
 ```
 
-Then check that a new file appears in `C:\transport-report-backups\daily\`.
+Then check that a new file appears in `D:\transport-report-backups\production\daily\`.
+
+### Recreate the task (if deleted or on a fresh server):
+
+```cmd
+schtasks /create /tn "TransportDBBackupProduction" /tr "C:\transport-report\backup_production_db.bat" /sc daily /st 02:00 /ru SYSTEM /f
+```
+
+Parameters:
+- `/tn "TransportDBBackupProduction"` — task name.
+- `/tr "C:\transport-report\backup_production_db.bat"` — wrapper that writes to `D:\transport-report-backups\production\daily\`.
+- `/sc daily /st 02:00` — every day at 02:00 (2 AM).
+- `/ru SYSTEM` — runs as SYSTEM account (full local access, including D: drive).
+- `/f` — overwrite if the task already exists.
 
 ### Modify the schedule (example: change to 03:00):
 
 ```cmd
-schtasks /change /tn "TransportDBBackup" /st 03:00
+schtasks /change /tn "TransportDBBackupProduction" /st 03:00
 ```
 
 ### Delete the task (if needed):
 
 ```cmd
-schtasks /delete /tn "TransportDBBackup" /f
+schtasks /delete /tn "TransportDBBackupProduction" /f
 ```
 
 ---
 
-## Operator verification record (TASK-DEPLOY-004E, 2026-05-23)
+## Cutover history — production backup setup (TASK-DEPLOY-005F, 2026-05-24)
 
-The full backup procedure was completed and verified by the operator on 2026-05-23.
+When production was cut over to `srv-yoqsh` (`10.103.25.14`) on 2026-05-24, the production backup
+wrapper and scheduled task were created on the new server:
+
+| Item | Value |
+|---|---|
+| Backup wrapper | `C:\transport-report\backup_production_db.bat` |
+| Scheduled task | `TransportDBBackupProduction` |
+| Schedule | Daily 02:00, run as SYSTEM |
+| Backup destination | `D:\transport-report-backups\production\daily\` |
+| First test backup | `transport_20260523_235432.db`, 46,809,088 bytes, integrity ok |
+| Task state | Ready / next run 24.05.2026 02:00 |
+
+The wrapper calls `backup_transport_db.py` with `--source C:\transport-report\instance\transport.db`
+and `--dest-dir D:\transport-report-backups\production\daily`. The same SQLite online backup API
+and integrity check as the workstation backup apply.
+
+The old workstation (`10.103.25.200`) backup task (`TransportDBBackup`, target
+`C:\transport-report-backups\daily\`) remains on the workstation in standby. It is inactive
+because the service is stopped and will not run unless a rollback to the old workstation occurs.
+
+---
+
+## Operator verification record (TASK-DEPLOY-004E, 2026-05-23) — old workstation
+
+The full backup procedure was completed and verified on the old workstation (`10.103.25.200`)
+on 2026-05-23. Production has since moved to `srv-yoqsh` (`10.103.25.14`); this record is
+retained for history only.
 
 | Step | Command | Result |
 |---|---|---|
@@ -370,8 +394,8 @@ The full backup procedure was completed and verified by the operator on 2026-05-
 | Test task run | `schtasks /run /tn "TransportDBBackup"` | SUCCESS — new backup `transport_20260523_182603.db`, 46,800,896 bytes |
 | Git status | commits `428104a` and `10652e2` on `origin/main` | Working tree clean |
 
-The `TransportDBBackup` scheduled task is active. No further manual setup is required
-for the daily automated backup.
+The `TransportDBBackup` scheduled task was active on the old workstation at the time of this
+record. The current production task is `TransportDBBackupProduction` on `srv-yoqsh`.
 
 ---
 
@@ -380,7 +404,7 @@ for the daily automated backup.
 After the task runs, verify a backup file was created:
 
 ```cmd
-dir C:\transport-report-backups\daily\
+dir D:\transport-report-backups\production\daily\
 ```
 
 Look for a file named `transport_YYYYMMDD_HHMMSS.db` with today's date.
@@ -389,7 +413,7 @@ Check the file size is similar to the live database:
 
 ```cmd
 dir C:\transport-report\instance\transport.db
-dir C:\transport-report-backups\daily\
+dir D:\transport-report-backups\production\daily\
 ```
 
 Both files should be approximately the same size. The backup uses the SQLite online
@@ -419,7 +443,7 @@ cd C:\transport-report
 Replace the filename with the actual backup you want to restore:
 
 ```cmd
-copy /Y "C:\transport-report-backups\daily\transport_20260523_020001.db" "C:\transport-report\instance\transport.db"
+copy /Y "D:\transport-report-backups\production\daily\transport_YYYYMMDD_HHMMSS.db" "C:\transport-report\instance\transport.db"
 ```
 
 Confirm: `1 file(s) copied.`
@@ -440,7 +464,7 @@ This prints the list of tables. If you see the expected tables (`users`, `equipm
 
 ### Step 5: Open the application and verify
 
-Open `http://10.103.25.200:5050`. Log in, check that the dashboard shows data
+Open `http://10.103.25.14:5050`. Log in, check that the dashboard shows data
 from the period covered by the backup.
 
 ---
@@ -471,8 +495,8 @@ Full checklist: `docs\QA_CHECKLIST.md`.
 |---|---|---|
 | `git pull --ff-only` fails due to diverged history | Medium | `update.bat` stops and prints instructions. Investigate with `git status` and `git log`. |
 | Migration script forgotten — service starts without migrating | High | `update.bat` migration warning with manual pause. Read release notes before updating. |
-| Database backup fails silently | Medium | `backup_transport_db.bat` exits with code 1 on failure. Task Scheduler can send email alerts (configure in task properties). |
-| Backup disk runs out of space | Medium | Keep only the last 30 daily backups. Review `C:\transport-report-backups\daily\` monthly. |
+| Database backup fails silently | Medium | `backup_production_db.bat` exits with code 1 on failure. Task Scheduler can send email alerts (configure in task properties). |
+| Backup disk runs out of space | Medium | Keep only the last 30 daily backups. Review `D:\transport-report-backups\production\daily\` monthly. |
 | Service refuses to start after update | Medium | Check `logs\error.log`. Most common cause: `SECRET_KEY` not set. See `docs\DEPLOYMENT_SECURITY.md`. |
 | Live-copy consistency risk | Low | Backups use the SQLite online backup API (`backup_transport_db.py`). WAL and SHM sidecar files are not manually copied — the API merges pending WAL pages into the destination automatically, producing a consistent snapshot. Raw `copy` of `.db` while WAL has uncheckpointed data is NOT used. |
 | Rollback loses data entered since last backup | Medium | Pre-update backup is taken immediately before every update. Communicate downtime to users before updating during business hours. |
@@ -492,7 +516,7 @@ update.bat
 
 ```cmd
 cd C:\transport-report
-backup_transport_db.bat
+backup_production_db.bat
 ```
 
 ### Stop the service
@@ -528,7 +552,7 @@ type C:\transport-report\logs\error.log
 ### List daily backups
 
 ```cmd
-dir C:\transport-report-backups\daily\
+dir D:\transport-report-backups\production\daily\
 ```
 
 ### Syntax check all main modules

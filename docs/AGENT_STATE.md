@@ -2,7 +2,7 @@
 
 ## State date
 
-2026-05-23 (TASK-DEPLOY-005E completed: staging QA recorded as PASSED; docs/ORG_WINDOWS_SERVER_CUTOVER_RUNBOOK.md created; docs/ORG_WINDOWS_SERVER_STAGING_RUNBOOK.md updated with QA results and backup history — no application code, no database, no service changes)
+2026-05-24 (TASK-DEPLOY-005F completed: production cutover from `10.103.25.200` to `srv-yoqsh` (`10.103.25.14`) recorded as COMPLETED; docs/ORG_WINDOWS_SERVER_CUTOVER_RUNBOOK.md updated with cutover completion record; docs/AGENT_STATE.md, docs/TASKS.md, docs/DEPLOYMENT_PLAN.md, docs/RELEASE_AND_BACKUP_PROCEDURE.md updated — no application code, no database, no service changes)
 
 ## Materials reviewed
 
@@ -48,6 +48,17 @@ Observed production SQLite counts (as of 2026-05-19):
 - `spare_part_requests`: 1
 
 ### Recently completed
+
+**TASK-DEPLOY-005F — Record organization-server production cutover completion (2026-05-24 — COMPLETED)**
+
+- `docs/ORG_WINDOWS_SERVER_CUTOVER_RUNBOOK.md`: cutover completion record section added at the top
+  (status COMPLETED, old production facts, new production facts, final backup/cold copy, DB counts,
+  backup task, Topaz switch facts, anti split-brain instruction, rollback status).
+  Section Q (cutover completion table) filled in with verified operator facts.
+- `docs/AGENT_STATE.md`, `docs/TASKS.md`, `docs/DEPLOYMENT_PLAN.md`,
+  `docs/RELEASE_AND_BACKUP_PROCEDURE.md` updated.
+- No application code changed. No database changed. No service restarted. No migrations.
+  No git pull. No git push.
 
 **TASK-DEPLOY-004D — Fix backup_transport_db.bat wrapper (2026-05-23 — COMPLETED)**
 
@@ -170,19 +181,38 @@ Observed production SQLite counts (as of 2026-05-19):
 6. `wialon_import.py` is large; split deferred until current work stabilizes.
 7. No CSRF protection on POST forms.
 
+## Current production state
+
+| Item | Value |
+|---|---|
+| Production server | `srv-yoqsh` (`10.103.25.14`) |
+| Production URL | `http://10.103.25.14:5050` |
+| Production service | `TransportReport` — RUNNING |
+| Old workstation | `10.103.25.200` — `TransportReport` STOPPED (rollback standby only) |
+| Staging | `http://10.103.25.14:5051` — `TransportReportStaging` RUNNING |
+| Production backup task | `TransportDBBackupProduction` — daily 02:00, SYSTEM |
+| Production backup dest | `D:\transport-report-backups\production\daily\` |
+| Staging backup task | `TransportDBBackupStaging` — daily 03:00, SYSTEM |
+| Staging backup dest | `D:\transport-report-backups\staging\daily\` |
+| Topaz agent | `C:\topaz_agent.py` (task: `TopazFuelAgent`) — points to `http://10.103.25.14:5050` |
+| Topaz test | ping OK, auth OK, sync OK (no 401/500/traceback) |
+
 ## Current recommended next task
 
-**TASK-DEPLOY-005 — Production cutover — staging QA PASSED, cutover not yet executed**
+**TASK-DEPLOY-005G — Post-cutover monitoring and cleanup (planned)**
 
-Staging QA passed on 2026-05-23. All staging setup is complete.
-
-Operator next step: follow `docs/ORG_WINDOWS_SERVER_CUTOVER_RUNBOOK.md` during a maintenance window
-to move production from `10.103.25.200:5050` to `10.103.25.14:5050`.
-
-Before starting the cutover, verify all preconditions in Section B of that runbook.
+- Monitor production logs and backup files daily for 3–5 business days.
+- Confirm `D:\transport-report-backups\production\daily\` has fresh files each morning.
+- Keep old workstation `TransportReport` STOPPED as rollback standby.
+- Remove or disable the old service on `10.103.25.200` only after owner approval (not before).
+- Document exact Topaz agent location/task (`C:\topaz_agent.py`, task: `TopazFuelAgent`) in a
+  dedicated ops note once confirmed stable.
+- Optionally add a small "old server disabled" landing page if users accidentally try the old URL.
 
 TASK-OPS-002C remains open — operator must answer 5 confirmation questions in
 `docs/MIGRATION_BACKFILL_ANALYSIS.md` for the LIKELY_APPLIED migration scripts.
+
+TASK-DEPLOY-006 remains planned (PostgreSQL migration research — not urgent).
 
 **Recently completed**
 

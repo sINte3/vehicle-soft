@@ -6,6 +6,70 @@ Prerequisite: Staging QA at `http://10.103.25.14:5051` PASSED (see `docs/ORG_WIN
 
 ---
 
+## CUTOVER COMPLETION RECORD — 2026-05-24
+
+**Status: COMPLETED**
+
+### Old production (stopped)
+
+| Item | Value |
+|---|---|
+| Server | `10.103.25.200` (old workstation) |
+| URL | `http://10.103.25.200:5050` |
+| `TransportReport` service state | **STOPPED** |
+| Final online backup | `C:\transport-report-backups\daily\transport_20260523_233516.db` |
+| Backup source size | 46,809,088 bytes |
+| Backup dest size | 46,809,088 bytes |
+| Backup integrity check | ok |
+| Cold copy (post-stop snapshot) | `C:\transport-report\instance\transport.db.backup_final_before_server_cutover` |
+
+### New production (active)
+
+| Item | Value |
+|---|---|
+| Server | `srv-yoqsh` (`10.103.25.14`) |
+| URL | `http://10.103.25.14:5050` |
+| `TransportReport` service state | **RUNNING** |
+| DB copied from | `C:\temp\transport_final_cutover.db` |
+| DB file size | 46,809,088 bytes |
+| DB `users` count | 2 |
+| DB `equipment` count | 336 |
+| DB `fuel_transactions2` count | 391,284 |
+| DB `schema_migrations` count | 10 |
+| Production backup wrapper | `C:\transport-report\backup_production_db.bat` |
+| Backup task | `TransportDBBackupProduction` — daily 02:00, SYSTEM, state: Ready |
+| Backup destination | `D:\transport-report-backups\production\daily\` |
+| First backup on new server | `transport_20260523_235432.db`, 46,809,088 bytes, integrity ok |
+| Firewall rule | `VehicleSoft-Production-5050-LAN` — TCP 5050, remoteip 10.103.0.0/16 |
+| Production QA result | **PASS** — admin, operator, Excel, Wialon, Fuel/АЗС all OK; no log errors |
+
+### Topaz switch (completed)
+
+| Item | Value |
+|---|---|
+| Topaz agent file | `C:\topaz_agent.py` (task name: `TopazFuelAgent`) |
+| `API_URL` | `http://10.103.25.14:5050/fuel/api/fuel_sync` |
+| `API_PING` | `http://10.103.25.14:5050/fuel/api/fuel_ping` |
+| Ping test | Status 200 — OK |
+| Auth test | Status 200 |
+| First sync | Firebird connected OK — no new transactions — done |
+| 401 / 500 / Traceback | None reported |
+| New server logs after switch | No visible errors |
+
+### Anti split-brain instruction
+
+**CRITICAL: Do NOT restart `TransportReport` on old workstation (`10.103.25.200`) unless a rollback is explicitly required and authorized.**
+
+Starting the old service while users are on the new server will create split-brain data. Data entered on both systems simultaneously cannot be merged automatically — manual DB reconciliation by the project maintainer is required.
+
+### Rollback status
+
+- Old workstation (`10.103.25.200`) is rollback standby only — `TransportReport` service is STOPPED.
+- If any manual entries or Topaz syncs were made on the new server after cutover, rollback requires an explicit DB reconciliation decision before starting the old service.
+- Do not merge DBs automatically. Contact the project maintainer before any database changes.
+
+---
+
 ## A. Purpose and scope
 
 Move production from:
@@ -499,18 +563,18 @@ Fill in after the cutover is complete:
 
 | Item | Value |
 |---|---|
-| Date/time of cutover | |
-| Operator who performed cutover | |
-| Final DB backup file used for transfer | |
-| users count on new server | |
-| equipment count on new server | |
-| fuel_transactions2 count on new server | |
-| schema_migrations count on new server | |
-| `http://10.103.25.14:5050` QA result | PASS / FAIL |
-| Topaz first sync confirmed | YES / NO |
-| Topaz first sync date/time | |
-| Old workstation service state | STOPPED |
-| Notes | |
+| Date/time of cutover | 2026-05-23 (maintenance window); recorded 2026-05-24 |
+| Operator who performed cutover | Умид Байбутаев |
+| Final DB backup file used for transfer | `transport_20260523_233516.db` (46,809,088 bytes, integrity ok) |
+| users count on new server | 2 |
+| equipment count on new server | 336 |
+| fuel_transactions2 count on new server | 391,284 |
+| schema_migrations count on new server | 10 |
+| `http://10.103.25.14:5050` QA result | **PASS** |
+| Topaz first sync confirmed | **YES** |
+| Topaz first sync date/time | 2026-05-23 (after Topaz agent pointed to new server) |
+| Old workstation service state | **STOPPED** (rollback standby — do not restart without authorization) |
+| Notes | FUEL_API_TOKEN transferred; backup task TransportDBBackupProduction active; no 401/500/errors reported |
 
 ---
 

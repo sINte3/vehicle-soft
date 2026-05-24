@@ -23,7 +23,7 @@ Completed: 2026-05-23 (planning and audit only — no code, database, or service
 | Config | `config.py` — `SqliteProductionConfig` is the production default |
 | Required env vars | `SECRET_KEY` (fail-fast without it), `FUEL_API_TOKEN` (required for Topaz sync) |
 | Optional env vars | `FLASK_ENV` (default: `sqlite_prod`), `HOST`, `PORT` |
-| Application URL | `http://10.103.25.200:5050` (LAN only) |
+| Application URL | `http://10.103.25.14:5050` (organization server `srv-yoqsh`, LAN only) |
 | Install scripts | `install_service.bat` (NSSM installer), `start.bat` (dev/test) |
 | Secret template | `.env.example` (exists; contains only placeholders, no real secrets) |
 | Python dependencies | 6 packages: flask, flask-sqlalchemy, flask-login, openpyxl, waitress, werkzeug |
@@ -658,45 +658,36 @@ Acceptance criteria (met):
 
 ---
 
-### TASK-DEPLOY-005 — Staging deployment (organization server)
+### TASK-DEPLOY-005 — Organization server production cutover
 
 Priority: P2  
 Depends on: TASK-DEPLOY-002, TASK-DEPLOY-003, TASK-DEPLOY-004  
-**Status: Staging QA PASSED 2026-05-23. Production cutover planned — not yet executed.**
+**Status: COMPLETED 2026-05-24 — organization Windows Server production cutover completed.**
 
-Organization server staging (`srv-yoqsh`, `10.103.25.14`) is verified:
+**Note: Cloud/VPS route paused — organization Windows Server path was taken and is complete.**
 
-- Staging URL: `http://10.103.25.14:5051` — RUNNING.
-- Staging QA: operator confirmed admin/operator/Excel/Wialon/Fuel/log — all OK.
-- Automated backup `TransportDBBackupStaging` (03:00 daily) — verified.
-- Topaz: still pointed at production (`10.103.25.200:5050`) — not changed until cutover.
+Current production state:
 
-**Cutover runbook**: see `docs/ORG_WINDOWS_SERVER_CUTOVER_RUNBOOK.md` (TASK-DEPLOY-005E, created 2026-05-23)
+| Item | Value |
+|---|---|
+| Production URL | `http://10.103.25.14:5050` (organization server `srv-yoqsh`) |
+| Old workstation | `http://10.103.25.200:5050` — service STOPPED, rollback standby only |
+| Staging URL | `http://10.103.25.14:5051` — RUNNING |
+| Production backups | `D:\transport-report-backups\production\daily\` (task `TransportDBBackupProduction`, daily 02:00) |
+| Staging backups | `D:\transport-report-backups\staging\daily\` (task `TransportDBBackupStaging`, daily 03:00) |
 
-Operator next step: follow the cutover runbook during a maintenance window.
+Completed sub-tasks: 005A (VPS staging runbook), 005B (runbook order fix), 005D (--source backup support),
+005E (staging QA + cutover runbook), 005F (cutover completion record).
 
-**Staging runbook**: see `docs/VPS_STAGING_RUNBOOK.md` (TASK-DEPLOY-005A, created 2026-05-23)
+Cutover acceptance evidence:
 
-Scope:
-1. Rent a Windows Server 2022 VPS (recommended: Timeweb, Hetzner, Contabo).
-2. Install Python 3.14 on VPS.
-3. Clone private GitHub repository to `C:\transport-report\`.
-4. Set `SECRET_KEY` and `FUEL_API_TOKEN` via `setx /M`.
-5. Copy current production `instance\transport.db` to VPS (one-time initial migration).
-6. Run `install_service.bat` to configure NSSM.
-7. Configure Windows Firewall: allow 80/443 from all; block 5050 from internet.
-8. Install Nginx for Windows as reverse proxy; configure HTTPS.
-9. Update Topaz agent config with new server URL.
-10. Test all modules end-to-end (use `docs\QA_CHECKLIST.md`).
-11. Set up automated daily backup task.
-12. Set up UptimeRobot monitoring.
-13. Announce new URL to users; redirect old LAN URL if needed.
+- Old `TransportReport` on workstation (`10.103.25.200`) STOPPED.
+- New `TransportReport` on `srv-yoqsh` RUNNING; production QA PASS.
+- `TransportDBBackupProduction` (daily 02:00, SYSTEM) created and tested — backup integrity ok.
+- Topaz agent pointed to `http://10.103.25.14:5050`; ping/auth/sync all OK.
+- No 401 / 500 / Traceback reported.
 
-Acceptance criteria:
-- Full `QA_CHECKLIST.md` smoke test passes on VPS.
-- Topaz sync arriving on new server (verified in `logs\service.log`).
-- HTTPS certificate valid; HTTP redirects to HTTPS.
-- Automated daily backup confirmed running.
+Follow-up: TASK-DEPLOY-005G (post-cutover monitoring and cleanup — planned).
 
 ---
 

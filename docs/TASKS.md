@@ -533,11 +533,39 @@ Operator verification completed 2026-05-23 (TASK-DEPLOY-004E):
 - Task Scheduler task `TransportDBBackup` created and tested successfully.
 - GitHub up to date. Working tree clean.
 
-### TASK-DEPLOY-005 — Staging deployment
+### TASK-DEPLOY-005 — Organization server production cutover
 
 Priority: P2  
 Depends on: TASK-DEPLOY-002, TASK-DEPLOY-003, TASK-DEPLOY-004  
-Status: **TASK-DEPLOY-005A, 005B, 005D, 005E completed 2026-05-23. Staging QA PASSED. Production cutover planned — not yet executed.**
+Status: **COMPLETED 2026-05-24 — organization Windows Server production cutover completed. TASK-DEPLOY-005A, 005B, 005D, 005E, 005F all done.**
+
+Acceptance evidence:
+
+- Old `TransportReport` on workstation (`10.103.25.200`) STOPPED.
+- New `TransportReport` on `srv-yoqsh` (`10.103.25.14`) RUNNING at `http://10.103.25.14:5050`.
+- Production QA passed: admin, operator, Excel, Wialon, Fuel/АЗС all OK.
+- Production backup task `TransportDBBackupProduction` (daily 02:00) created and tested.
+- Topaz agent ping/auth/sync OK — no 401/500/traceback reported.
+- DB counts verified: users=2, equipment=336, fuel_transactions2=391,284, schema_migrations=10.
+- No errors in `service.log` or `error.log` after startup.
+
+**TASK-DEPLOY-005F — Record organization-server production cutover completion (2026-05-24 — COMPLETED)**
+
+Changes made:
+
+- `docs/ORG_WINDOWS_SERVER_CUTOVER_RUNBOOK.md`: "CUTOVER COMPLETION RECORD — 2026-05-24" section
+  added at the top with full cutover facts (old/new server state, backup/cold copy facts, DB counts,
+  backup task, Topaz switch, anti split-brain instruction, rollback status). Section Q table
+  filled in with all verified values.
+- `docs/AGENT_STATE.md`: state date updated; current production state table added; recommended
+  next tasks updated to TASK-DEPLOY-005G; TASK-DEPLOY-005F added to recently completed list.
+- `docs/TASKS.md`: TASK-DEPLOY-005 overall status marked COMPLETED; TASK-DEPLOY-005F entry added;
+  TASK-DEPLOY-005G added as planned.
+- `docs/DEPLOYMENT_PLAN.md`: TASK-DEPLOY-005 status updated to COMPLETED; current production URL
+  and endpoints updated.
+- `docs/RELEASE_AND_BACKUP_PROCEDURE.md`: note added for production backup on new server.
+- No application code changed. No database changed. No service restarted. No migrations.
+  No git pull. No git push.
 
 **TASK-DEPLOY-005E — Record staging QA and prepare production cutover plan (2026-05-23 — COMPLETED)**
 
@@ -657,14 +685,29 @@ Changes made:
 
 Allowed safe read-only checks run during fix: file reads only.
 
-**Remaining TASK-DEPLOY-005 scope (not started — operator must rent VPS first):**
+### TASK-DEPLOY-005G — Post-cutover monitoring and cleanup
 
-- Rent Windows Server 2022 VPS.
-- Follow `docs/VPS_STAGING_RUNBOOK.md` step by step.
-- Configure firewall, optional Nginx reverse proxy, HTTPS (Phase 3).
-- Update Topaz agent to new server URL (after staging QA passes).
-- Full QA checklist pass on VPS.
-- Set up automated backups and UptimeRobot monitoring.
+Priority: P2  
+Depends on: TASK-DEPLOY-005F  
+Status: **planned**
+
+Scope:
+
+- Monitor `D:\transport-report-backups\production\daily\` daily for 3–5 business days;
+  confirm a new backup file appears each morning.
+- Monitor `C:\transport-report\logs\service.log` and `error.log` for unexpected errors.
+- Keep old workstation `TransportReport` service STOPPED as rollback standby.
+- Remove or disable the old service on `10.103.25.200` only after explicit owner approval.
+- Document Topaz agent exact location and task name in a dedicated ops note
+  (`C:\topaz_agent.py`, task: `TopazFuelAgent`) once confirmed stable over multiple days.
+- Optionally add a small "old server disabled" landing note if users accidentally try
+  the old URL `http://10.103.25.200:5050`.
+
+Acceptance criteria:
+
+- 5 consecutive days of successful production backups confirmed.
+- No recurring errors in logs.
+- Owner has been notified and has confirmed the old workstation can remain stopped.
 
 ### TASK-DEPLOY-006 — PostgreSQL migration research
 
