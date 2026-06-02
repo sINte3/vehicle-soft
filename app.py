@@ -31,6 +31,12 @@ from fuel_routes import fuel_bp, _perform_fuel_sync  # noqa: F401 (registered be
 from excel_daily_activity import generate_daily_activity
 from translations import TRANS
 from spare_parts import spare_parts_bp
+from sec003a_ext import (
+    log_audit, get_user_extra, must_change_password, is_locked,
+    record_failed_login, record_successful_login, clear_must_change_password,
+    require_temp_password_change, password_is_strong_enough,
+)
+from sqlalchemy import text
 
 
 def create_app():
@@ -76,6 +82,22 @@ def create_app():
             g.lang = getattr(current_user, 'language', 'uz') or 'uz'
         else:
             g.lang = 'uz'
+
+    @app.before_request
+    def enforce_temp_password_change():
+        if not current_user.is_authenticated:
+            return None
+        if not must_change_password(db, current_user.id):
+            return None
+        allowed = {
+            'sec003a_change_temp_password', 'logout', 'static',
+            'set_language_route'
+        }
+        if request.endpoint in allowed:
+            return None
+        if request.path.startswith('/static/'):
+            return None
+        return redirect(url_for('sec003a_change_temp_password'))
 
     @app.context_processor
     def inject_translation():
@@ -154,44 +176,104 @@ def create_app():
     @app.route('/login', methods=['GET', 'POST'])
     def login():
         if current_user.is_authenticated:
+            if must_change_password(db, current_user.id):
+                return redirect(url_for('sec003a_change_temp_password'))
             return redirect(url_for('index'))
         if request.method == 'POST':
-            username = request.form.get('username', '').strip()
+            username = request.form.get('username', '').strip().lower()
             password = request.form.get('password', '')
             user = User.query.filter_by(username=username).first()
+            if user and is_locked(db, user.id):
+                log_audit(db, 'login_locked', entity_type='user', entity_id=user.id,
+                          entity_label=user.username, module='auth', status='blocked',
+                          description='Account temporarily locked', actor_user=user)
+                db.session.commit()
+                flash('Аккаунт вақтинча блокланган. 15 дақиқадан кейин қайта уриниб кўринг.', 'warning')
+                return render_template('login.html')
             if user and user.check_password(password) and user.is_active:
                 user.last_login = datetime.utcnow()
+                record_successful_login(db, user)
                 db.session.commit()
                 login_user(user, remember=True)
+                log_audit(db, 'login_success', entity_type='user', entity_id=user.id,
+                          entity_label=user.username, module='auth', description='Successful login', actor_user=user)
+                db.session.commit()
                 next_page = request.args.get('next')
                 flash(f'Хуш келибсиз, {user.full_name or user.username}!', 'success')
+                if must_change_password(db, user.id):
+                    return redirect(url_for('sec003a_change_temp_password'))
                 return redirect(next_page or url_for('index'))
             else:
+                if user:
+                    record_failed_login(db, user)
+                    log_audit(db, 'login_failed', entity_type='user', entity_id=user.id,
+                              entity_label=user.username, module='auth', status='failed',
+                              description='Invalid password or inactive account', actor_user=user)
+                    db.session.commit()
                 flash('Логин ёки парол нотўғри', 'warning')
         return render_template('login.html')
 
     @app.route('/logout')
     @login_required
     def logout():
+        log_audit(db, 'logout', entity_type='user', entity_id=current_user.id,
+                  entity_label=current_user.username, module='auth', description='User logout')
+        db.session.commit()
         logout_user()
         return redirect(url_for('login'))
+
+    @app.route('/change-temporary-password', methods=['GET', 'POST'])
+    @login_required
+    def sec003a_change_temp_password():
+        if request.method == 'POST':
+            new_pass = request.form.get('new_password', '').strip()
+            confirm = request.form.get('confirm_password', '').strip()
+            if new_pass != confirm:
+                flash('Пароллар мос келмади', 'warning')
+                return redirect(url_for('sec003a_change_temp_password'))
+            ok, msg = password_is_strong_enough(current_user.username, new_pass)
+            if not ok:
+                flash(msg, 'warning')
+                return redirect(url_for('sec003a_change_temp_password'))
+            if current_user.check_password(new_pass):
+                flash('Янги парол вақтинчалик паролдан фарқ қилиши керак', 'warning')
+                return redirect(url_for('sec003a_change_temp_password'))
+            current_user.set_password(new_pass)
+            clear_must_change_password(db, current_user.id)
+            log_audit(db, 'password_changed', entity_type='user', entity_id=current_user.id,
+                      entity_label=current_user.username, module='auth', description='Temporary password changed')
+            db.session.commit()
+            flash('Парол ўзгартирилди. Энди дастурдан фойдаланишингиз мумкин.', 'success')
+            return redirect(url_for('index'))
+        return render_template('change_temporary_password.html')
 
     @app.route('/profile', methods=['GET', 'POST'])
     @login_required
     def profile():
         if request.method == 'POST':
             full_name = request.form.get('full_name', '').strip()
+            current_pass = request.form.get('current_password', '')
             new_pass = request.form.get('new_password', '').strip()
             confirm = request.form.get('confirm_password', '').strip()
             current_user.full_name = full_name
             if new_pass:
+                if not current_user.check_password(current_pass):
+                    flash('Жорий парол нотўғри', 'warning')
+                    return redirect(url_for('profile'))
                 if new_pass != confirm:
                     flash('Пароллар мос келмади', 'warning')
                     return redirect(url_for('profile'))
-                if len(new_pass) < 4:
-                    flash('Парол камида 4 белгидан иборат бўлиши керак', 'warning')
+                ok, msg = password_is_strong_enough(current_user.username, new_pass)
+                if not ok:
+                    flash(msg, 'warning')
+                    return redirect(url_for('profile'))
+                if current_user.check_password(new_pass):
+                    flash('Янги парол эски паролдан фарқ қилиши керак', 'warning')
                     return redirect(url_for('profile'))
                 current_user.set_password(new_pass)
+                clear_must_change_password(db, current_user.id)
+                log_audit(db, 'password_changed', entity_type='user', entity_id=current_user.id,
+                          entity_label=current_user.username, module='auth', description='Password changed from profile')
                 flash('Парол ўзгартирилди', 'success')
             db.session.commit()
             flash('Профиль сақланди', 'success')
@@ -657,12 +739,19 @@ def create_app():
             user = User.query.get(uid)
             if not user:
                 abort(404)
+            before = {'username': user.username, 'full_name': user.full_name, 'role': user.role, 'is_active': user.is_active_user}
             user.username = username
             user.full_name = full_name
             user.role = role
             user.is_active_user = is_active
+            action = 'user_updated'
             if password:
+                ok, msg = password_is_strong_enough(username, password)
+                if not ok:
+                    flash(msg, 'warning')
+                    return redirect(url_for('admin_users'))
                 user.set_password(password)
+                action = 'user_password_reset'
         else:
             if User.query.filter_by(username=username).first():
                 flash(f'"{username}" фойдаланувчиси мавжуд', 'warning')
@@ -670,17 +759,34 @@ def create_app():
             if not password:
                 flash('Парол киритинг', 'warning')
                 return redirect(url_for('admin_users'))
+            ok, msg = password_is_strong_enough(username, password)
+            if not ok:
+                flash(msg, 'warning')
+                return redirect(url_for('admin_users'))
             user = User(username=username, full_name=full_name, role=role,
                         is_active_user=is_active)
             user.set_password(password)
             db.session.add(user)
+            db.session.flush()
+            before = None
+            action = 'user_created'
 
         if role != ROLE_ADMIN:
             user.organizations = Organization.query.filter(Organization.id.in_(org_ids)).all()
         else:
             user.organizations = []
+        db.session.flush()
+        if password:
+            require_temp_password_change(db, user.id)
+        after = {'username': user.username, 'full_name': user.full_name, 'role': user.role, 'is_active': user.is_active_user,
+                 'org_ids': [o.id for o in user.organizations], 'temporary_password_required': bool(password)}
+        log_audit(db, action, entity_type='user', entity_id=user.id, entity_label=user.username,
+                  module='admin', before=before, after=after, description='Admin saved user account')
         db.session.commit()
-        flash(f'Фойдаланувчи "{username}" сақланди', 'success')
+        if password:
+            flash(f'Фойдаланувчи "{username}" сақланди. Биринчи киришда паролни алмаштириши шарт.', 'success')
+        else:
+            flash(f'Фойдаланувчи "{username}" сақланди', 'success')
         return redirect(url_for('admin_users'))
 
     @app.route('/admin/users/delete/<int:uid>', methods=['POST'])
@@ -688,11 +794,14 @@ def create_app():
     def admin_delete_user(uid):
         user = User.query.get_or_404(uid)
         if user.id == current_user.id:
-            flash('Ўзингизни ўчира олмайсиз', 'warning')
+            flash('Ўзингизни блоклай олмайсиз', 'warning')
             return redirect(url_for('admin_users'))
-        db.session.delete(user)
+        before = {'username': user.username, 'is_active': user.is_active_user}
+        user.is_active_user = False
+        log_audit(db, 'user_blocked', entity_type='user', entity_id=user.id, entity_label=user.username,
+                  module='admin', before=before, after={'is_active': False}, description='User blocked instead of deleted')
         db.session.commit()
-        flash(f'Фойдаланувчи "{user.username}" ўчирилди', 'warning')
+        flash(f'Фойдаланувчи "{user.username}" блокланди', 'warning')
         return redirect(url_for('admin_users'))
 
     @app.route('/admin/permissions')
@@ -722,9 +831,46 @@ def create_app():
                     perm = UserModulePermission(
                         user_id=user.id, module_code=module.code, has_access=has_access)
                     db.session.add(perm)
+        log_audit(db, 'module_permissions_updated', entity_type='permissions', module='admin',
+                  description='Module permissions updated')
         db.session.commit()
         flash('Ҳуқуқлар сақланди', 'success')
         return redirect(url_for('admin_permissions'))
+
+
+    @app.route('/admin/audit')
+    @admin_required
+    def admin_audit_logs():
+        date_from = request.args.get('date_from', '')
+        date_to = request.args.get('date_to', '')
+        user_id = request.args.get('user_id', type=int)
+        action = request.args.get('action', '').strip()
+        module = request.args.get('module', '').strip()
+        q = 'SELECT * FROM audit_logs WHERE 1=1'
+        params = {}
+        if date_from:
+            q += ' AND created_at >= :date_from'
+            params['date_from'] = date_from + 'T00:00:00'
+        if date_to:
+            q += ' AND created_at <= :date_to'
+            params['date_to'] = date_to + 'T23:59:59'
+        if user_id:
+            q += ' AND user_id = :user_id'
+            params['user_id'] = user_id
+        if action:
+            q += ' AND action = :action'
+            params['action'] = action
+        if module:
+            q += ' AND module = :module'
+            params['module'] = module
+        q += ' ORDER BY created_at DESC LIMIT 300'
+        logs = db.session.execute(text(q), params).mappings().all()
+        users = User.query.order_by(User.username).all()
+        actions = [r[0] for r in db.session.execute(text('SELECT DISTINCT action FROM audit_logs ORDER BY action')).all()]
+        modules = [r[0] for r in db.session.execute(text('SELECT DISTINCT module FROM audit_logs WHERE module IS NOT NULL AND module != "" ORDER BY module')).all()]
+        return render_template('audit_logs.html', logs=logs, users=users, actions=actions, modules=modules,
+                               date_from=date_from, date_to=date_to, selected_user_id=user_id,
+                               selected_action=action, selected_module=module)
 
     # в”Ђв”Ђв”Ђ REFERENCES в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     @app.route('/ref/organizations')
