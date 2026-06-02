@@ -158,3 +158,29 @@ def log_audit(db, action, entity_type='', entity_id=None, entity_label='', modul
     names = ', '.join(data.keys())
     vals = ', '.join(':' + k for k in data.keys())
     db.session.execute(text(f'INSERT INTO audit_logs ({names}) VALUES ({vals})'), data)
+
+
+def model_snapshot(obj, fields):
+    if obj is None:
+        return None
+    data = {}
+    for field in fields:
+        try:
+            data[field] = getattr(obj, field)
+        except Exception:
+            data[field] = None
+    return data
+
+
+def diff_dict(before, after):
+    before = before or {}
+    after = after or {}
+    changes = {}
+    for key in sorted(set(before.keys()) | set(after.keys())):
+        if before.get(key) != after.get(key):
+            changes[key] = {'before': before.get(key), 'after': after.get(key)}
+    return changes
+
+
+def audit_action_name(base, object_id):
+    return base + ('_updated' if object_id else '_created')

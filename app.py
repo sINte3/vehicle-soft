@@ -1,4 +1,4 @@
-﻿"""
+"""
 Р’СѓС…РѕСЂРѕ РђРіСЂРѕРєР»Р°СЃС‚РµСЂ вЂ” РўСЂР°РЅСЃРїРѕСЂС‚ ТіРёСЃРѕР±РѕС‚Рё v4.5
 """
 
@@ -35,6 +35,7 @@ from sec003a_ext import (
     log_audit, get_user_extra, must_change_password, is_locked,
     record_failed_login, record_successful_login, clear_must_change_password,
     require_temp_password_change, password_is_strong_enough,
+    model_snapshot, diff_dict, audit_action_name,
 )
 from sqlalchemy import text
 
@@ -480,6 +481,13 @@ def create_app():
                 except (ValueError, IndexError):
                     pass
 
+        daily_fields = ['id', 'work_date', 'equipment_id', 'line_index', 'status', 'work_type', 'customer', 'unit', 'quantity', 'price', 'payment_type', 'idle_reason', 'note', 'amount_cash', 'amount_transfer', 'amount_internal', 'amount_other']
+        before_records = []
+        if eq_ids:
+            before_records = [model_snapshot(r, daily_fields) for r in DailyRecord.query.filter(
+                DailyRecord.work_date == sel, DailyRecord.equipment_id.in_(list(eq_ids))
+            ).order_by(DailyRecord.equipment_id, DailyRecord.line_index).all()]
+
         saved = 0
         for eq_id in eq_ids:
             eq = Equipment.query.get(eq_id)
@@ -540,6 +548,18 @@ def create_app():
                     line_pos += 1
                 saved += 1
 
+        db.session.flush()
+        after_records = []
+        if eq_ids:
+            after_records = [model_snapshot(r, daily_fields) for r in DailyRecord.query.filter(
+                DailyRecord.work_date == sel, DailyRecord.equipment_id.in_(list(eq_ids))
+            ).order_by(DailyRecord.equipment_id, DailyRecord.line_index).all()]
+        log_audit(
+            db, 'daily_records_saved', entity_type='daily_records', entity_label=f'{sel.isoformat()} org_id={org_id}',
+            module='daily_entry', before=before_records, after=after_records,
+            changes={'saved_equipment_count': saved, 'equipment_ids': sorted(eq_ids)},
+            description=f'Daily entry saved for {saved} equipment items on {sel.isoformat()}'
+        )
         db.session.commit()
         flash(f'{saved} та техника маълумотлари сақланди', 'success')
         return redirect(url_for('daily_entry', date=sel.isoformat(), org_id=org_id))
@@ -564,6 +584,12 @@ def create_app():
                                   created_by=current_user.id)
                 db.session.add(new)
                 copied += 1
+        log_audit(
+            db, 'daily_records_copied_previous_day', entity_type='daily_records',
+            entity_label=f'{prev.isoformat()} -> {sel.isoformat()} org_id={org_id}', module='daily_entry',
+            after={'copied': copied, 'from_date': prev.isoformat(), 'to_date': sel.isoformat(), 'org_id': org_id},
+            description=f'Copied {copied} idle daily records from previous day'
+        )
         db.session.commit()
         flash(f'{copied} та техника олдинги кундан кўчирилди', 'info')
         return redirect(url_for('daily_entry', date=sel.isoformat(), org_id=org_id))
@@ -608,10 +634,13 @@ def create_app():
             flash('Матн киритинг', 'warning')
             return redirect(url_for('deficiencies_list', date=sel.isoformat()))
 
+        deficiency_fields = ['id', 'work_date', 'text', 'organization_id', 'sort_order']
+        before = None
         if did:
             d = Deficiency.query.get(did)
             if not d:
                 abort(404)
+            before = model_snapshot(d, deficiency_fields)
             d.text = text
             d.organization_id = org_id if org_id else None
             d.sort_order = sort_order
@@ -623,6 +652,12 @@ def create_app():
                 sort_order=sort_order, created_by=current_user.id
             )
             db.session.add(d)
+        db.session.flush()
+        after = model_snapshot(d, deficiency_fields)
+        log_audit(db, audit_action_name('deficiency', did), entity_type='deficiency', entity_id=d.id,
+                  entity_label=(text[:120] if text else str(d.id)), module='deficiencies',
+                  before=before, after=after, changes=diff_dict(before, after),
+                  description='Deficiency saved')
         db.session.commit()
         flash('Камчилик сақланди', 'success')
         return redirect(url_for('deficiencies_list', date=sel.isoformat()))
@@ -633,7 +668,11 @@ def create_app():
     def delete_deficiency(did):
         d = Deficiency.query.get_or_404(did)
         sel = d.work_date
+        before = model_snapshot(d, ['id', 'work_date', 'text', 'organization_id', 'sort_order'])
         db.session.delete(d)
+        log_audit(db, 'deficiency_deleted', entity_type='deficiency', entity_id=did,
+                  entity_label=(before.get('text') or '')[:120], module='deficiencies',
+                  before=before, description='Deficiency deleted')
         db.session.commit()
         flash('Камчилик ўчирилди', 'warning')
         return redirect(url_for('deficiencies_list', date=sel.isoformat()))
@@ -864,7 +903,20 @@ def create_app():
             q += ' AND module = :module'
             params['module'] = module
         q += ' ORDER BY created_at DESC LIMIT 300'
-        logs = db.session.execute(text(q), params).mappings().all()
+        raw_logs = db.session.execute(text(q), params).mappings().all()
+
+        # Audit timestamps are stored in UTC. Display them in Uzbekistan local time (UTC+5).
+        logs = []
+        for row in raw_logs:
+            item = dict(row)
+            raw_created_at = item.get('created_at')
+            try:
+                dt = datetime.fromisoformat(str(raw_created_at).replace('Z', ''))
+                item['created_at_local'] = (dt + timedelta(hours=5)).strftime('%Y-%m-%d %H:%M:%S')
+            except Exception:
+                item['created_at_local'] = raw_created_at
+            logs.append(item)
+
         users = User.query.order_by(User.username).all()
         actions = [r[0] for r in db.session.execute(text('SELECT DISTINCT action FROM audit_logs ORDER BY action')).all()]
         modules = [r[0] for r in db.session.execute(text('SELECT DISTINCT module FROM audit_logs WHERE module IS NOT NULL AND module != "" ORDER BY module')).all()]
@@ -888,14 +940,23 @@ def create_app():
         oid = request.form.get('id', type=int)
         name = request.form.get('name', '').strip()
         short = request.form.get('short_name', '').strip()
+        org_fields = ['id', 'name', 'short_name', 'sort_order']
+        before = None
         if oid:
             o = Organization.query.get(oid)
+            before = model_snapshot(o, org_fields)
             sort = o.sort_order
             o.name, o.short_name, o.sort_order = name, short, sort
         else:
             max_sort = db.session.query(db.func.max(Organization.sort_order)).scalar() or 0
             sort = max_sort + 1
-            db.session.add(Organization(name=name, short_name=short, sort_order=sort))
+            o = Organization(name=name, short_name=short, sort_order=sort)
+            db.session.add(o)
+        db.session.flush()
+        after = model_snapshot(o, org_fields)
+        log_audit(db, audit_action_name('organization', oid), entity_type='organization', entity_id=o.id,
+                  entity_label=o.name, module='references', before=before, after=after,
+                  changes=diff_dict(before, after), description='Organization saved')
         db.session.commit()
         flash('Сақланди', 'success')
         return redirect(url_for('ref_organizations'))
@@ -903,7 +964,12 @@ def create_app():
     @app.route('/ref/organizations/delete/<int:oid>', methods=['POST'])
     @admin_required
     def delete_organization(oid):
-        db.session.delete(Organization.query.get_or_404(oid))
+        o = Organization.query.get_or_404(oid)
+        before = model_snapshot(o, ['id', 'name', 'short_name', 'sort_order'])
+        db.session.delete(o)
+        log_audit(db, 'organization_deleted', entity_type='organization', entity_id=oid,
+                  entity_label=before.get('name', ''), module='references', before=before,
+                  description='Organization deleted')
         db.session.commit()
         flash('Ўчирилди', 'warning')
         return redirect(url_for('ref_organizations'))
@@ -1047,13 +1113,23 @@ def create_app():
                   organization_id=org_id,
                   default_price=request.form.get('default_price', type=float) or 0,
                   default_unit=request.form.get('default_unit','').strip())
+        eq_fields = ['id', 'name', 'plate', 'category', 'eq_type', 'organization_id', 'default_price', 'default_unit', 'is_active']
+        before = None
         if eid:
             eq = Equipment.query.get(eid)
             check_org_access(eq.organization_id)
+            before = model_snapshot(eq, eq_fields)
             for k, v in kw.items():
                 setattr(eq, k, v)
         else:
-            db.session.add(Equipment(**kw))
+            eq = Equipment(**kw)
+            db.session.add(eq)
+        db.session.flush()
+        after = model_snapshot(eq, eq_fields)
+        log_audit(db, audit_action_name('equipment', eid), entity_type='equipment', entity_id=eq.id,
+                  entity_label=f'{eq.name} {eq.plate}'.strip(), module='references',
+                  before=before, after=after, changes=diff_dict(before, after),
+                  description='Equipment saved')
         db.session.commit()
         flash('Сақланди', 'success')
         return redirect(url_for('ref_equipment', org_id=org_id))
@@ -1064,7 +1140,11 @@ def create_app():
         eq = Equipment.query.get_or_404(eid)
         check_org_access(eq.organization_id)
         oid = eq.organization_id
+        before = model_snapshot(eq, ['id', 'name', 'plate', 'category', 'eq_type', 'organization_id', 'default_price', 'default_unit', 'is_active'])
         db.session.delete(eq)
+        log_audit(db, 'equipment_deleted', entity_type='equipment', entity_id=eid,
+                  entity_label=f"{before.get('name', '')} {before.get('plate', '')}".strip(),
+                  module='references', before=before, description='Equipment deleted')
         db.session.commit()
         flash('Ўчирилди', 'warning')
         return redirect(url_for('ref_equipment', org_id=oid))
@@ -1082,11 +1162,20 @@ def create_app():
         name = request.form.get('name','').strip()
         unit = request.form.get('default_unit','').strip()
         price = request.form.get('default_price', type=float) or 0
+        wt_fields = ['id', 'name', 'default_unit', 'default_price']
+        before = None
         if wid:
             w = WorkType.query.get(wid)
+            before = model_snapshot(w, wt_fields)
             w.name, w.default_unit, w.default_price = name, unit, price
         else:
-            db.session.add(WorkType(name=name, default_unit=unit, default_price=price))
+            w = WorkType(name=name, default_unit=unit, default_price=price)
+            db.session.add(w)
+        db.session.flush()
+        after = model_snapshot(w, wt_fields)
+        log_audit(db, audit_action_name('work_type', wid), entity_type='work_type', entity_id=w.id,
+                  entity_label=w.name, module='references', before=before, after=after,
+                  changes=diff_dict(before, after), description='Work type saved')
         db.session.commit()
         flash('Сақланди', 'success')
         return redirect(url_for('ref_work_types'))
@@ -1094,7 +1183,12 @@ def create_app():
     @app.route('/ref/work_types/delete/<int:wid>', methods=['POST'])
     @admin_required
     def delete_work_type(wid):
-        db.session.delete(WorkType.query.get_or_404(wid))
+        w = WorkType.query.get_or_404(wid)
+        before = model_snapshot(w, ['id', 'name', 'default_unit', 'default_price'])
+        db.session.delete(w)
+        log_audit(db, 'work_type_deleted', entity_type='work_type', entity_id=wid,
+                  entity_label=before.get('name', ''), module='references', before=before,
+                  description='Work type deleted')
         db.session.commit()
         flash('Ўчирилди', 'warning')
         return redirect(url_for('ref_work_types'))
@@ -1111,11 +1205,20 @@ def create_app():
         cid = request.form.get('id', type=int)
         name = request.form.get('name','').strip()
         ctype = request.form.get('customer_type','external')
+        customer_fields = ['id', 'name', 'customer_type']
+        before = None
         if cid:
             c = Customer.query.get(cid)
+            before = model_snapshot(c, customer_fields)
             c.name, c.customer_type = name, ctype
         else:
-            db.session.add(Customer(name=name, customer_type=ctype))
+            c = Customer(name=name, customer_type=ctype)
+            db.session.add(c)
+        db.session.flush()
+        after = model_snapshot(c, customer_fields)
+        log_audit(db, audit_action_name('customer', cid), entity_type='customer', entity_id=c.id,
+                  entity_label=c.name, module='references', before=before, after=after,
+                  changes=diff_dict(before, after), description='Customer saved')
         db.session.commit()
         flash('Сақланди', 'success')
         return redirect(url_for('ref_customers'))
@@ -1123,7 +1226,12 @@ def create_app():
     @app.route('/ref/customers/delete/<int:cid>', methods=['POST'])
     @admin_required
     def delete_customer(cid):
-        db.session.delete(Customer.query.get_or_404(cid))
+        c = Customer.query.get_or_404(cid)
+        before = model_snapshot(c, ['id', 'name', 'customer_type'])
+        db.session.delete(c)
+        log_audit(db, 'customer_deleted', entity_type='customer', entity_id=cid,
+                  entity_label=before.get('name', ''), module='references', before=before,
+                  description='Customer deleted')
         db.session.commit()
         flash('Ўчирилди', 'warning')
         return redirect(url_for('ref_customers'))
