@@ -731,3 +731,14 @@ Scope:
 - File rollback backup: D:\transport-report-backups\production\sec003a_code_backups\sec003a_prod_file_backup_20260526_100813.
 - Verified: temporary password, forced password change, admin audit log page, audit events user_created/login_success/password_changed/logout.
 - Rule: old shared operator account must be blocked only after all named operators confirm access; do not delete it.
+
+## TASK-SEC-003B Phase 1 production completion record
+
+- Status: COMPLETED on production.
+- Production date: 2026-06-02.
+- GitHub commit: 4c48c97 Add business action audit logging.
+- Scope: business action audit logging for daily records and reference directories.
+- Verified: daily_records_saved, customer_created, customer_deleted.
+- Audit log time display fixed to local Uzbekistan time UTC+5.
+- Pre-release DB backup: D:\transport-report-backups\before_sec003b_phase1\transport_before_sec003b_phase1_20260602_212510.db.
+- File rollback backup: D:\transport-report-backups\production\sec003b_phase1_code_backups\sec003b_phase1_prod_file_backup_20260602_212510.
