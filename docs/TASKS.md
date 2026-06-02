@@ -720,3 +720,14 @@ Scope:
 - Write and test SQLite → PostgreSQL bulk migration script.
 - Verify `fuel_transactions2` (~391 K rows) migrates correctly.
 - Document cutover procedure.
+
+## TASK-SEC-003A production completion record
+
+- Status: COMPLETED on production.
+- Production date: 2026-05-26.
+- GitHub commit: f51aac2 Add personal users password workflow and audit log.
+- Post-release documentation date: 2026-06-02.
+- Post-release DB backup: D:\transport-report-backups\production\daily\transport_20260602_165046.db.
+- File rollback backup: D:\transport-report-backups\production\sec003a_code_backups\sec003a_prod_file_backup_20260526_100813.
+- Verified: temporary password, forced password change, admin audit log page, audit events user_created/login_success/password_changed/logout.
+- Rule: old shared operator account must be blocked only after all named operators confirm access; do not delete it.

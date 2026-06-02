@@ -519,3 +519,14 @@ TASK-DEPLOY-006 remains planned (PostgreSQL migration research — not urgent).
 - `docs/AGENT_STATE.md`: corrected stale note about migrate_000 production status.
 - `docs/TASKS.md`: TASK-OPS-002 updated to reflect analysis phase completion.
 - No database writes. No code changes. No service restarts. Analysis only.
+
+## TASK-SEC-003A production completion record
+
+- Status: COMPLETED on production.
+- Production date: 2026-05-26.
+- GitHub commit: f51aac2 Add personal users password workflow and audit log.
+- Post-release documentation date: 2026-06-02.
+- Post-release DB backup: D:\transport-report-backups\production\daily\transport_20260602_165046.db.
+- File rollback backup: D:\transport-report-backups\production\sec003a_code_backups\sec003a_prod_file_backup_20260526_100813.
+- Verified: temporary password, forced password change, admin audit log page, audit events user_created/login_success/password_changed/logout.
+- Rule: old shared operator account must be blocked only after all named operators confirm access; do not delete it.
