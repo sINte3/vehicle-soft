@@ -13,6 +13,24 @@
 
 ## Recently completed / appears completed
 
+### TASK-SEC-003C-2 - Fuel audit log
+
+Priority: P0
+Status: **completed 2026-06-03**
+
+Changes made:
+
+- Added audit logging for Fuel warehouses create/update/delete.
+- Added audit logging for Fuel stations create/update/delete.
+- Added audit logging for Fuel initial balance save.
+- Added audit logging for Fuel receipts create/update/delete.
+- Added audit logging for Topaz sync completed/failed events.
+- Improved warehouse edit UX: edit form opens inline inside the selected warehouse card.
+- Verified /admin/audit on production for Fuel actions.
+- No database migration required.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260603_081631.db, integrity_check ok.
+
+
 ### TASK-SEC-003C-1 - Wialon audit log
 
 Priority: P0

@@ -1,3 +1,16 @@
+## 2026-06-03 - TASK-SEC-003C-2 completed on production
+
+- Production URL: http://10.103.25.14:5050.
+- Files changed: fuel_routes.py, templates/fuel/warehouses.html.
+- Added Fuel audit actions: fuel_warehouse_created, fuel_warehouse_updated, fuel_warehouse_deleted, fuel_station_created, fuel_station_updated, fuel_station_deleted, fuel_initial_balance_saved, fuel_receipt_created, fuel_receipt_updated, fuel_receipt_deleted, fuel_topaz_sync_completed, fuel_topaz_sync_failed.
+- Improved warehouse edit UX: edit form opens inline inside the selected warehouse card instead of the top of the page.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260603_081631.db, integrity_check ok.
+- py_compile passed.
+- App import check passed: APP IMPORT OK.
+- TransportReport service restarted and running.
+- /admin/audit verified manually for Fuel actions.
+- No database migration required.
+
 ## 2026-06-03 - TASK-SEC-003C-1 completed on production
 
 - Production URL: http://10.103.25.14:5050.

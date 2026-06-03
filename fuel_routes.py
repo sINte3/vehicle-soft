@@ -14,6 +14,7 @@ from flask import (Blueprint, render_template, request, redirect,
 from flask_login import login_required, current_user
 from datetime import datetime, date, timedelta
 from sqlalchemy import func
+from types import SimpleNamespace
 
 from models import (
     db, Organization,
@@ -22,13 +23,108 @@ from models import (
     module_required,
 )
 
+from sec003a_ext import log_audit
+
 fuel_bp = Blueprint('fuel', __name__, url_prefix='/fuel')
 
 
 def fuel_t(uz, ru):
-    # [REASON]: Local flash-message helper — reads g.lang set by app before_request.
-    # Avoids importing the template context processor into route code.
-    return ru if getattr(g, 'lang', 'uz') == 'ru' else uz
+    # [REASON]: Local flash-message helper for route-level flash() messages.
+    # Prefer the persisted user language because POST redirects can otherwise
+    # be confusing during module-level UI tests. Fall back to g.lang.
+    lang = getattr(g, 'lang', 'uz') or 'uz'
+    try:
+        if current_user.is_authenticated:
+            lang = getattr(current_user, 'language', lang) or lang
+    except Exception:
+        pass
+    return ru if lang == 'ru' else uz
+
+
+
+TOPAZ_AUDIT_ACTOR = SimpleNamespace(
+    id=None,
+    username='system/topaz_agent',
+    full_name='Topaz Fuel Agent',
+    role='system',
+)
+
+
+def _iso_date(value):
+    return value.isoformat() if value else None
+
+
+def _fuel_warehouse_snapshot(warehouse):
+    if not warehouse:
+        return None
+    return {
+        'id': getattr(warehouse, 'id', None),
+        'name': getattr(warehouse, 'name', '') or '',
+        'organization_id': getattr(warehouse, 'organization_id', None),
+        'notes': getattr(warehouse, 'notes', '') or '',
+    }
+
+
+def _fuel_station_snapshot(station):
+    if not station:
+        return None
+    return {
+        'id': getattr(station, 'id', None),
+        'name': getattr(station, 'name', '') or '',
+        'topaz_id': getattr(station, 'topaz_id', None),
+        'warehouse_id': getattr(station, 'warehouse_id', None),
+        'is_active': bool(getattr(station, 'is_active', False)),
+    }
+
+
+def _fuel_initial_balance_snapshot(balance):
+    if not balance:
+        return None
+    return {
+        'id': getattr(balance, 'id', None),
+        'warehouse_id': getattr(balance, 'warehouse_id', None),
+        'fuel_type': getattr(balance, 'fuel_type', '') or '',
+        'quantity': getattr(balance, 'quantity', 0) or 0,
+        'balance_date': _iso_date(getattr(balance, 'balance_date', None)),
+        'note': getattr(balance, 'note', '') or '',
+    }
+
+
+def _fuel_receipt_snapshot(receipt):
+    if not receipt:
+        return None
+    quantity = getattr(receipt, 'quantity', 0) or 0
+    price = getattr(receipt, 'price_per_liter', 0) or 0
+    return {
+        'id': getattr(receipt, 'id', None),
+        'warehouse_id': getattr(receipt, 'warehouse_id', None),
+        'receipt_date': _iso_date(getattr(receipt, 'receipt_date', None)),
+        'fuel_type': getattr(receipt, 'fuel_type', '') or '',
+        'quantity': quantity,
+        'price_per_liter': price,
+        'amount': quantity * price,
+        'supplier': getattr(receipt, 'supplier', '') or '',
+        'doc_number': getattr(receipt, 'doc_number', '') or '',
+        'note': getattr(receipt, 'note', '') or '',
+    }
+
+
+def _audit_fuel(action, entity_type='', entity_id=None, entity_label='', before=None,
+                after=None, changes=None, status='ok', description='', actor_user=None):
+    log_audit(
+        db,
+        action=action,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        entity_label=entity_label,
+        module='fuel',
+        before=before,
+        after=after,
+        changes=changes,
+        status=status,
+        description=description,
+        actor_user=actor_user,
+    )
 
 
 # [REASON]: Token is no longer hardcoded; read per-request from app config which
@@ -164,8 +260,13 @@ def warehouses():
            .outerjoin(Organization)
            .order_by(FuelWarehouse.name).all())
     orgs = Organization.query.order_by(Organization.sort_order).all()
+    edit_id = request.args.get('edit_id', type=int)
+    edit_warehouse = None
+    if edit_id:
+        edit_warehouse = FuelWarehouse.query.get(edit_id)
     return render_template('fuel/warehouses.html', warehouses=whs,
-                           organizations=orgs, fuel_types=FUEL_TYPES)
+                           organizations=orgs, fuel_types=FUEL_TYPES,
+                           edit_warehouse=edit_warehouse)
 
 
 @fuel_bp.route('/warehouses/save', methods=['POST'])
@@ -181,14 +282,30 @@ def save_warehouse():
         flash(fuel_t('Омбор номини киритинг', 'Введите название склада'), 'warning')
         return redirect(url_for('fuel.warehouses'))
 
+    created = False
+    before = None
     if wid:
         wh = FuelWarehouse.query.get_or_404(wid)
+        before = _fuel_warehouse_snapshot(wh)
         wh.name = name
         wh.organization_id = org_id or None
         wh.notes = notes
     else:
         wh = FuelWarehouse(name=name, organization_id=org_id or None, notes=notes)
         db.session.add(wh)
+        created = True
+
+    db.session.flush()
+    after = _fuel_warehouse_snapshot(wh)
+    _audit_fuel(
+        'fuel_warehouse_created' if created else 'fuel_warehouse_updated',
+        entity_type='fuel_warehouse',
+        entity_id=wh.id,
+        entity_label=wh.name,
+        before=before,
+        after=after,
+        description='Fuel warehouse saved',
+    )
     db.session.commit()
     flash(fuel_t('Омбор сақланди', 'Склад сохранён'), 'success')
     return redirect(url_for('fuel.warehouses'))
@@ -199,6 +316,16 @@ def save_warehouse():
 @admin_required_fuel
 def delete_warehouse(wid):
     wh = FuelWarehouse.query.get_or_404(wid)
+    before = _fuel_warehouse_snapshot(wh)
+    label = wh.name
+    _audit_fuel(
+        'fuel_warehouse_deleted',
+        entity_type='fuel_warehouse',
+        entity_id=wh.id,
+        entity_label=label,
+        before=before,
+        description='Fuel warehouse deleted',
+    )
     db.session.delete(wh)
     db.session.commit()
     flash(fuel_t('Омбор ўчирилди', 'Склад удалён'), 'warning')
@@ -242,15 +369,32 @@ def save_initial_balance():
 
     existing = (FuelInitialBalance.query
                 .filter_by(warehouse_id=warehouse_id, fuel_type=fuel_type).first())
+    created = False
+    before = _fuel_initial_balance_snapshot(existing)
     if existing:
-        existing.quantity = quantity
-        existing.balance_date = balance_date
-        existing.note = note
+        ib = existing
+        ib.quantity = quantity
+        ib.balance_date = balance_date
+        ib.note = note
     else:
         ib = FuelInitialBalance(warehouse_id=warehouse_id, fuel_type=fuel_type,
                                 quantity=quantity, balance_date=balance_date,
                                 note=note, created_by=current_user.id)
         db.session.add(ib)
+        created = True
+
+    db.session.flush()
+    after = _fuel_initial_balance_snapshot(ib)
+    _audit_fuel(
+        'fuel_initial_balance_saved',
+        entity_type='fuel_initial_balance',
+        entity_id=ib.id,
+        entity_label=f'{fuel_type} / warehouse {warehouse_id}',
+        before=before,
+        after=after,
+        changes={'created': created},
+        description='Fuel initial balance saved',
+    )
     db.session.commit()
     flash(fuel_t('Бошланғич қолдиқ сақланди', 'Начальный остаток сохранён'), 'success')
     return redirect(url_for('fuel.initial_balance'))
@@ -316,8 +460,11 @@ def save_receipt():
         flash(fuel_t('Мажбурий майдонларни тўлдиринг', 'Заполните обязательные поля'), 'warning')
         return redirect(url_for('fuel.receipts'))
 
+    created = False
+    before = None
     if rid:
         r = FuelReceipt2.query.get_or_404(rid)
+        before = _fuel_receipt_snapshot(r)
         r.warehouse_id = warehouse_id
         r.fuel_type = fuel_type
         r.quantity = quantity
@@ -333,6 +480,19 @@ def save_receipt():
             note=note, receipt_date=receipt_date, created_by=current_user.id,
         )
         db.session.add(r)
+        created = True
+
+    db.session.flush()
+    after = _fuel_receipt_snapshot(r)
+    _audit_fuel(
+        'fuel_receipt_created' if created else 'fuel_receipt_updated',
+        entity_type='fuel_receipt',
+        entity_id=r.id,
+        entity_label=r.doc_number or f'{r.fuel_type} {r.quantity}',
+        before=before,
+        after=after,
+        description='Fuel receipt saved',
+    )
     db.session.commit()
     flash(fuel_t('Кирим сақланди', 'Приход сохранён'), 'success')
     return redirect(url_for('fuel.receipts'))
@@ -344,6 +504,16 @@ def delete_receipt(rid):
     if not current_user.can_edit:
         abort(403)
     r = FuelReceipt2.query.get_or_404(rid)
+    before = _fuel_receipt_snapshot(r)
+    label = r.doc_number or f'{r.fuel_type} {r.quantity}'
+    _audit_fuel(
+        'fuel_receipt_deleted',
+        entity_type='fuel_receipt',
+        entity_id=r.id,
+        entity_label=label,
+        before=before,
+        description='Fuel receipt deleted',
+    )
     db.session.delete(r)
     db.session.commit()
     flash(fuel_t('Кирим ўчирилди', 'Приход удалён'), 'warning')
@@ -425,8 +595,11 @@ def save_station():
         flash(fuel_t('Барча майдонларни тўлдиринг', 'Заполните все поля'), 'warning')
         return redirect(url_for('fuel.stations'))
 
+    created = False
+    before = None
     if sid:
         st = FuelStation2.query.get_or_404(sid)
+        before = _fuel_station_snapshot(st)
         st.name = name
         st.topaz_id = topaz_id
         st.warehouse_id = warehouse_id
@@ -439,6 +612,19 @@ def save_station():
         st = FuelStation2(name=name, topaz_id=topaz_id,
                           warehouse_id=warehouse_id, is_active=is_active)
         db.session.add(st)
+        created = True
+
+    db.session.flush()
+    after = _fuel_station_snapshot(st)
+    _audit_fuel(
+        'fuel_station_created' if created else 'fuel_station_updated',
+        entity_type='fuel_station',
+        entity_id=st.id,
+        entity_label=st.name,
+        before=before,
+        after=after,
+        description='Fuel station saved',
+    )
     db.session.commit()
     flash(fuel_t('АЗС сақланди', 'АЗС сохранена'), 'success')
     return redirect(url_for('fuel.stations'))
@@ -449,6 +635,16 @@ def save_station():
 @admin_required_fuel
 def delete_station(sid):
     st = FuelStation2.query.get_or_404(sid)
+    before = _fuel_station_snapshot(st)
+    label = st.name
+    _audit_fuel(
+        'fuel_station_deleted',
+        entity_type='fuel_station',
+        entity_id=st.id,
+        entity_label=label,
+        before=before,
+        description='Fuel station deleted',
+    )
     db.session.delete(st)
     db.session.commit()
     flash(fuel_t('АЗС ўчирилди', 'АЗС удалена'), 'warning')
@@ -535,6 +731,28 @@ def _perform_fuel_sync():
         db.session.commit()
     except Exception as e:
         db.session.rollback()
+        summary = {
+            'agent_ip': agent_ip,
+            'transactions_received': len(transactions),
+            'transactions_new': new_count,
+            'transactions_dup': dup_count,
+            'unknown_stations': unknown_count,
+            'errors_count': len(errors),
+            'db_error': str(e),
+        }
+        try:
+            _audit_fuel(
+                'fuel_topaz_sync_failed',
+                entity_type='fuel_sync',
+                entity_label='topaz_agent',
+                after=summary,
+                status='error',
+                description='Topaz fuel sync failed during transaction commit',
+                actor_user=TOPAZ_AUDIT_ACTOR,
+            )
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
         return jsonify(error=str(e)), 500
 
     # Лог
@@ -548,6 +766,27 @@ def _perform_fuel_sync():
         error_msg='; '.join(errors[:5]),
     )
     db.session.add(log)
+    db.session.flush()
+    summary = {
+        'sync_log_id': log.id,
+        'agent_ip': agent_ip,
+        'transactions_received': len(transactions),
+        'transactions_new': new_count,
+        'transactions_dup': dup_count,
+        'unknown_stations': unknown_count,
+        'errors_count': len(errors),
+        'status': log.status,
+    }
+    _audit_fuel(
+        'fuel_topaz_sync_completed',
+        entity_type='fuel_sync',
+        entity_id=log.id,
+        entity_label='topaz_agent',
+        after=summary,
+        status='ok' if not errors else 'partial',
+        description='Topaz fuel sync completed',
+        actor_user=TOPAZ_AUDIT_ACTOR,
+    )
     db.session.commit()
 
     return jsonify(

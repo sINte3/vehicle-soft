@@ -2,6 +2,24 @@
 {% block title %}АЗС — {{ t('Омборлар') }}{% endblock %}
 {% block content %}
 
+{% set L_add = 'Добавить склад' if lang == 'ru' else 'Омбор қўшиш' %}
+{% set L_edit = 'Редактирование склада' if lang == 'ru' else 'Омборни таҳрирлаш' %}
+{% set L_name = 'Название склада' if lang == 'ru' else 'Омбор номи' %}
+{% set L_org = 'Организация' if lang == 'ru' else 'Ташкилот' %}
+{% set L_notes = 'Примечание' if lang == 'ru' else 'Изоҳ' %}
+{% set L_save = 'Сохранить' if lang == 'ru' else 'Сақлаш' %}
+{% set L_reset = 'Отменить редактирование' if lang == 'ru' else 'Таҳрирлашни бекор қилиш' %}
+{% set L_edit_btn = 'Редактировать' if lang == 'ru' else 'Таҳрирлаш' %}
+{% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
+{% set L_unlinked = '— не связано —' if lang == 'ru' else '— боғланмаган —' %}
+{% set L_status = 'Статус' if lang == 'ru' else 'Ҳолат' %}
+{% set L_count = 'Кол-во выдач' if lang == 'ru' else 'Беришлар сони' %}
+{% set L_active = 'Активен' if lang == 'ru' else 'Фаол' %}
+{% set L_disabled = 'Отключена' if lang == 'ru' else 'Ўчирилган' %}
+{% set L_no_stations = 'АЗС не добавлены. Добавить:' if lang == 'ru' else 'АЗС қўшилмаган. Қўшиш:' %}
+{% set L_empty = 'Склады не созданы. Добавьте первый склад выше.' if lang == 'ru' else 'Омборлар яратилмаган. Юқорида биринчи омборни қўшинг.' %}
+{% set L_add_title = 'Новый склад' if lang == 'ru' else 'Янги омбор' %}
+
 <div class="page-header">
     <h1>{{ t('Омборлар ва АЗС') }}</h1>
     <div style="display:flex; gap:8px;">
@@ -11,68 +29,98 @@
     </div>
 </div>
 
-{# Add/Edit Warehouse #}
+{% if not edit_warehouse %}
 <div class="card" style="margin-bottom:20px;">
-    <div class="card-header">{{ t('Омбор қўшиш') }}</div>
+    <div class="card-header">{{ L_add_title }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('fuel.save_warehouse') }}" class="form-inline">
-            <input type="hidden" name="id" id="whId" value="">
+            <input type="hidden" name="id" value="">
             <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ t('Омбор номи') }}</label>
-                <input type="text" name="name" id="whName" placeholder="Заминлари" required>
+                <label>{{ L_name }}</label>
+                <input type="text" name="name" placeholder="Заминлари" required>
             </div>
             <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ t('Ташкилот') }}</label>
-                <select name="organization_id" id="whOrg">
-                    <option value="">{{ t('— боғланмаган —') }}</option>
+                <label>{{ L_org }}</label>
+                <select name="organization_id">
+                    <option value="">{{ L_unlinked }}</option>
                     {% for org in organizations %}
                     <option value="{{ org.id }}">{{ org.name }}</option>
                     {% endfor %}
                 </select>
             </div>
             <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ t('Изоҳ') }}</label>
-                <input type="text" name="notes" id="whNotes" placeholder="">
+                <label>{{ L_notes }}</label>
+                <input type="text" name="notes" placeholder="">
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>&nbsp;</label>
-                <button type="submit" class="btn btn-primary">{{ t('Сақлаш') }}</button>
-                <button type="button" class="btn btn-secondary" onclick="clearWhForm()">{{ t('Тозалаш') }}</button>
+                <button type="submit" class="btn btn-primary">{{ L_save }}</button>
             </div>
         </form>
     </div>
 </div>
+{% endif %}
 
-{# Warehouse list #}
 {% for wh in warehouses %}
-<div class="card" style="margin-bottom:16px;">
+<div class="card" style="margin-bottom:16px; {% if edit_warehouse and edit_warehouse.id == wh.id %}border:2px solid var(--primary);{% endif %}">
     <div class="card-header" style="background:var(--surface2);">
-        <span style="font-weight:700;">{{ wh.name }}</span>
-        {% if wh.organization %}
-        <span class="text-muted text-sm" style="margin-left:12px;">{{ wh.organization.name }}</span>
-        {% endif %}
+        <div>
+            <span style="font-weight:700;">{{ wh.name }}</span>
+            {% if wh.organization %}
+            <span class="text-muted text-sm" style="margin-left:12px;">{{ wh.organization.name }}</span>
+            {% endif %}
+        </div>
         <div style="display:flex; gap:6px;">
-            <button class="btn btn-secondary btn-sm"
-                    onclick="editWh({{ wh.id }}, '{{ wh.name }}',
-                                    '{{ wh.organization_id or '' }}',
-                                    '{{ wh.notes or '' }}')">
-                {{ t('Таҳрирлаш') }}
-            </button>
+            <a class="btn btn-secondary btn-sm" href="{{ url_for('fuel.warehouses', edit_id=wh.id) }}#warehouse-{{ wh.id }}">
+                {{ L_edit_btn }}
+            </a>
             <form method="post" action="{{ url_for('fuel.delete_warehouse', wid=wh.id) }}"
                   style="display:inline;"
-                  onsubmit="return confirm('{{ t('Ўчириш') }}: {{ wh.name }}?')">
-                <button type="submit" class="btn btn-danger btn-sm">{{ t('Ўчириш') }}</button>
+                  onsubmit="return confirm('{{ L_delete }}: {{ wh.name }}?')">
+                <button type="submit" class="btn btn-danger btn-sm">{{ L_delete }}</button>
             </form>
         </div>
     </div>
-    <div class="card-body" style="padding:0;">
+
+    {% if edit_warehouse and edit_warehouse.id == wh.id %}
+    <div id="warehouse-{{ wh.id }}" class="card-body" style="background:var(--surface); border-bottom:1px solid var(--border);">
+        <div style="font-weight:700; margin-bottom:12px;">{{ L_edit }}: {{ wh.name }}</div>
+        <form method="post" action="{{ url_for('fuel.save_warehouse') }}" class="form-inline">
+            <input type="hidden" name="id" value="{{ wh.id }}">
+            <div class="form-group" style="margin-bottom:0; flex:2;">
+                <label>{{ L_name }}</label>
+                <input type="text" name="name" required value="{{ wh.name }}">
+            </div>
+            <div class="form-group" style="margin-bottom:0; flex:2;">
+                <label>{{ L_org }}</label>
+                <select name="organization_id">
+                    <option value="">{{ L_unlinked }}</option>
+                    {% for org in organizations %}
+                    <option value="{{ org.id }}" {% if wh.organization_id == org.id %}selected{% endif %}>{{ org.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0; flex:2;">
+                <label>{{ L_notes }}</label>
+                <input type="text" name="notes" value="{{ wh.notes or '' }}">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>&nbsp;</label>
+                <button type="submit" class="btn btn-primary">{{ L_save }}</button>
+                <a href="{{ url_for('fuel.warehouses') }}#warehouse-{{ wh.id }}" class="btn btn-secondary">{{ L_reset }}</a>
+            </div>
+        </form>
+    </div>
+    {% endif %}
+
+    <div id="warehouse-{{ wh.id }}" class="card-body" style="padding:0;">
         <table>
             <thead>
                 <tr>
                     <th>АЗС</th>
                     <th>Topaz ID</th>
-                    <th>{{ t('Ҳолат') }}</th>
-                    <th>{{ t('Беришлар сони') }}</th>
+                    <th>{{ L_status }}</th>
+                    <th>{{ L_count }}</th>
                 </tr>
             </thead>
             <tbody>
@@ -84,9 +132,9 @@
                     <td><code>{{ st.topaz_id }}</code></td>
                     <td>
                         {% if st.is_active %}
-                        <span class="working-badge">{{ t('Фаол') }}</span>
+                        <span class="working-badge">{{ L_active }}</span>
                         {% else %}
-                        <span class="idle-badge">{{ t('Ўчирилган') }}</span>
+                        <span class="idle-badge">{{ L_disabled }}</span>
                         {% endif %}
                     </td>
                     <td class="text-muted text-sm">{{ st.transactions.count() }}</td>
@@ -95,8 +143,7 @@
             {% else %}
             <tr>
                 <td colspan="4" class="text-muted text-sm" style="padding:16px;">
-                    {{ t('АЗС қўшилмаган. Қўшиш →') }}
-                    <a href="{{ url_for('fuel.stations') }}">→</a>
+                    {{ L_no_stations }} <a href="{{ url_for('fuel.stations') }}">→</a>
                 </td>
             </tr>
             {% endif %}
@@ -107,29 +154,9 @@
 {% else %}
 <div class="card">
     <div class="card-body" style="text-align:center; padding:60px;">
-        <p class="text-muted">{{ t('Омборлар яратилмаган. Юқорида биринчи омборни қўшинг.') }}</p>
+        <p class="text-muted">{{ L_empty }}</p>
     </div>
 </div>
 {% endfor %}
 
-{% endblock %}
-{% block scripts %}
-<script>
-function editWh(id, name, orgId, notes) {
-    document.getElementById('whId').value = id;
-    document.getElementById('whName').value = name;
-    document.getElementById('whNotes').value = notes;
-    const sel = document.getElementById('whOrg');
-    for (let i = 0; i < sel.options.length; i++) {
-        sel.options[i].selected = (sel.options[i].value == orgId);
-    }
-    window.scrollTo(0, 0);
-}
-function clearWhForm() {
-    document.getElementById('whId').value = '';
-    document.getElementById('whName').value = '';
-    document.getElementById('whNotes').value = '';
-    document.getElementById('whOrg').selectedIndex = 0;
-}
-</script>
 {% endblock %}
