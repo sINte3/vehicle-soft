@@ -44,6 +44,7 @@
     <div class="card-body">
         <form method="post" action="{{ url_for('wialon_upload') }}"
               enctype="multipart/form-data" id="wialonForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
             {# Period mode tabs #}
             <div style="margin-bottom:14px;">

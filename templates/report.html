@@ -10,6 +10,7 @@
     <div class="card-header">📊 {{ t('Ҳисобот параметрлари') }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('report') }}" id="reportForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
             {# Org + Category multiselects #}
             <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px;">

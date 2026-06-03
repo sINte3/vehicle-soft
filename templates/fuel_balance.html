@@ -17,6 +17,7 @@
     <div class="card-header">Янги қолдиқ киритиш</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('fuel_balance') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-inline" style="gap:16px; flex-wrap:wrap; align-items:flex-end;">
                 <div class="form-group" style="margin-bottom:0; min-width:220px;">
                     <label>АЗС</label>
@@ -79,6 +80,7 @@
                 <form method="post"
                       action="{{ url_for('fuel_balance_delete', bid=b.id) }}"
                       onsubmit="return confirm('Ўчиришни тасдиқлайсизми?');">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-danger btn-sm">✕</button>
                 </form>
             </td>

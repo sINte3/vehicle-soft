@@ -11,6 +11,7 @@
     <div class="card-header">{{ 'Добавить новую запчасть' if is_ru else 'Янги қисм қўшиш' }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('spare_parts.catalog_save') }}" class="form-inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="editId" value="">
             <div class="form-group" style="flex:2; min-width:200px;">
                 <label>{{ 'Название' if is_ru else 'Номи' }}</label>

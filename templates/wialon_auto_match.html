@@ -32,6 +32,7 @@
 </div>
 
 <form method="post" action="{{ url_for('wialon_auto_match_save') }}" id="bulkForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
 {# ── High confidence ── #}
 {% set high_rows = suggestions | selectattr('confidence', 'equalto', 'high') | list %}

@@ -215,6 +215,7 @@
         {% endif %}
         <div class="spacer"></div>
         <form method="post" action="{{ url_for('set_language_route') }}" style="display:inline;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button name="lang" value="uz" class="lang-btn {% if lang=='uz' %}active{% endif %}">УЗ</button>
             <button name="lang" value="ru" class="lang-btn {% if lang=='ru' %}active{% endif %}">РУ</button>
         </form>

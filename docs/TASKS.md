@@ -13,6 +13,23 @@
 
 ## Recently completed / appears completed
 
+### TASK-SEC-003D - CSRF protection
+
+Priority: P0
+Status: **completed 2026-06-03**
+
+Changes made:
+
+- Added server-side CSRF token generation.
+- Added server-side CSRF validation for browser POST forms.
+- Added csrf_token hidden fields to browser forms.
+- Excluded Topaz token-auth API endpoints from CSRF: /fuel/api/fuel_sync and /api/fuel_sync.
+- Verified Topaz ping on production after deployment.
+- Verified production smoke test: login/logout, daily report, references, Wialon mapping, Fuel warehouse, spare parts request, and admin audit.
+- No database migration required.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260603_095235.db, integrity_check ok.
+
+
 ### TASK-SEC-003C-3 - Spare parts audit log
 
 Priority: P0

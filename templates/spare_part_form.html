@@ -8,6 +8,7 @@
 </div>
 
 <form method="post" action="{{ url_for('spare_parts.save_request') }}" id="spForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <div class="card" style="margin-bottom:16px;">
     <div class="card-header">{{ 'Основные данные' if is_ru else 'Асосий маълумот' }}</div>
     <div class="card-body">

@@ -9,6 +9,7 @@
     <div class="card-header">{{ t('Буюртмачилар') }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('save_customer') }}" class="form-inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group" style="margin-bottom:0; flex:1;">
                 <label>{{ t('Буюртмачи номи') }}</label>
                 <input type="text" name="name" required placeholder="Фермер хўжалиги номи">
@@ -34,6 +35,7 @@
             <td>{{ loop.index }}</td>
             <td>
                 <form method="post" action="{{ url_for('save_customer') }}" class="form-inline" style="gap:6px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="id" value="{{ c.id }}">
                     <input type="text" name="name" value="{{ c.name }}" style="width:300px;">
                     <select name="customer_type" style="width:130px;">
@@ -47,6 +49,7 @@
             <td>
                 <form method="post" action="{{ url_for('delete_customer', cid=c.id) }}" style="display:inline;"
                       onsubmit="return confirm('Ўчиришни тасдиқлайсизми?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-sm btn-danger">🗑</button>
                 </form>
             </td>

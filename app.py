@@ -3,12 +3,14 @@
 """
 
 import os
+import hmac
+import secrets
 from functools import wraps
 from datetime import datetime, date, timedelta
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    flash, jsonify, send_file, abort, g
+    flash, jsonify, send_file, abort, g, session
 )
 from flask_login import (
     LoginManager, login_user, logout_user, login_required, current_user
@@ -76,6 +78,38 @@ def create_app():
     app.jinja_env.globals['CAT_YUK_TRANSPORT'] = CAT_YUK_TRANSPORT
     app.jinja_env.globals['CAT_MOTORCYCLE'] = CAT_MOTORCYCLE
     app.jinja_env.globals['CAT_PASSENGER'] = CAT_PASSENGER
+
+    def get_csrf_token():
+        token = session.get('_csrf_token')
+        if not token:
+            token = secrets.token_urlsafe(32)
+            session['_csrf_token'] = token
+        return token
+
+    app.jinja_env.globals['csrf_token'] = get_csrf_token
+
+    def is_csrf_exempt():
+        # Topaz agent API endpoints are protected by FUEL_API_TOKEN and must not
+        # require browser-session CSRF tokens.
+        if request.path in ('/fuel/api/fuel_sync', '/api/fuel_sync'):
+            return True
+        return False
+
+    @app.before_request
+    def enforce_csrf_protection():
+        if request.method != 'POST':
+            return None
+        if is_csrf_exempt():
+            return None
+        expected = session.get('_csrf_token')
+        submitted = (
+            request.form.get('csrf_token')
+            or request.headers.get('X-CSRF-Token')
+            or request.headers.get('X-CSRFToken')
+        )
+        if not expected or not submitted or not hmac.compare_digest(expected, submitted):
+            abort(400)
+        return None
 
     @app.before_request
     def set_language():
@@ -1265,6 +1299,11 @@ def create_app():
     app.register_blueprint(spare_parts_bp)
 
     # в”Ђв”Ђв”Ђ ERRORS в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+    @app.errorhandler(400)
+    def bad_request(e):
+        return render_template('error.html', code=400,
+                               message='Сўров хавфсизлик текширувидан ўтмади'), 400
+
     @app.errorhandler(403)
     def forbidden(e):
         return render_template('error.html', code=403,

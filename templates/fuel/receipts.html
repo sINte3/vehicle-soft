@@ -12,6 +12,7 @@
     <div class="card-header">{{ t('Кирим қўшиш') }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('fuel.save_receipt') }}" id="receiptForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="rId" value="">
             <div class="form-inline">
                 <div class="form-group" style="margin-bottom:0;">
@@ -160,6 +161,7 @@
                 <form method="post" action="{{ url_for('fuel.delete_receipt', rid=r.id) }}"
                       style="display:inline;"
                       onsubmit="return confirm('{{ t('Ўчириш') }}?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-danger btn-sm">✕</button>
                 </form>
             </td>

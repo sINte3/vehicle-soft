@@ -37,6 +37,7 @@
             <td>
                 <form method="post" action="{{ url_for('wialon_mapping_save') }}"
                       id="pform-{{ loop.index }}" style="display:flex; gap:6px; align-items:center;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="vialon_name" value="{{ item.vialon_name }}">
                     <input type="hidden" name="skip" id="pskip-{{ loop.index }}" value="0">
                     <select name="equipment_id" style="flex:1; font-size:13px;"
@@ -103,6 +104,7 @@
     <div id="addForm" style="display:none; padding:16px;
          border-bottom:1px solid var(--border); background:var(--surface2);">
         <form method="post" action="{{ url_for('wialon_mapping_save') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-inline" style="gap:10px;">
                 <div class="form-group" style="margin-bottom:0; min-width:280px;">
                     <label>Виалон номи (тўлиқ)</label>
@@ -199,6 +201,7 @@
                     </select>
                     <form method="post" action="{{ url_for('wialon_mapping_save') }}"
                           id="eform-{{ m.id }}" style="display:inline;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="id" value="{{ m.id }}">
                         <input type="hidden" name="equipment_id"
                                id="ehid-{{ m.id }}" value="{{ m.equipment_id or '' }}">
@@ -211,6 +214,7 @@
                           action="{{ url_for('wialon_mapping_delete', mid=m.id) }}"
                           onsubmit="return confirm('Ўчиришни тасдиқлайсизми?');"
                           style="display:inline;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-danger btn-sm">✕</button>
                     </form>
                 </div>

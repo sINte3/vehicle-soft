@@ -11,6 +11,7 @@
     <div class="card-header">{{ t('Янги камчилик қўшиш') }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('save_deficiency') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="work_date" value="{{ selected_date.isoformat() }}">
             <div class="form-group">
                 <label>{{ t('Сана') }}</label>
@@ -114,6 +115,7 @@
                         <button class="btn btn-secondary btn-sm" onclick="editDef({{ d.id }})">✏ {{ t('Таҳрирлаш') }}</button>
                         <form method="post" action="{{ url_for('delete_deficiency', did=d.id) }}" style="display:inline;"
                               onsubmit="return confirm('Ўчиришни тасдиқлайсизми?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button class="btn btn-danger btn-sm" type="submit">🗑</button>
                         </form>
                     </td>
@@ -121,6 +123,7 @@
                 <tr id="def-edit-{{ d.id }}" style="display:none;">
                     <td colspan="{% if d_from != d_to %}5{% else %}4{% endif %}">
                         <form method="post" action="{{ url_for('save_deficiency') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="id" value="{{ d.id }}">
                             <input type="hidden" name="work_date" value="{{ d.work_date.isoformat() }}">
                             <div class="form-group">

@@ -170,6 +170,7 @@
 
 {% if selected_org_id and equipment_list %}
 <form method="post" action="{{ url_for('save_entry') }}" id="entryForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="work_date" value="{{ selected_date.isoformat() }}">
     <input type="hidden" name="org_id" value="{{ selected_org_id }}">
 

@@ -34,6 +34,7 @@
     <div class="card-header">{{ L_add_title }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('fuel.save_warehouse') }}" class="form-inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" value="">
             <div class="form-group" style="margin-bottom:0; flex:2;">
                 <label>{{ L_name }}</label>
@@ -77,6 +78,7 @@
             <form method="post" action="{{ url_for('fuel.delete_warehouse', wid=wh.id) }}"
                   style="display:inline;"
                   onsubmit="return confirm('{{ L_delete }}: {{ wh.name }}?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-danger btn-sm">{{ L_delete }}</button>
             </form>
         </div>
@@ -86,6 +88,7 @@
     <div id="warehouse-{{ wh.id }}" class="card-body" style="background:var(--surface); border-bottom:1px solid var(--border);">
         <div style="font-weight:700; margin-bottom:12px;">{{ L_edit }}: {{ wh.name }}</div>
         <form method="post" action="{{ url_for('fuel.save_warehouse') }}" class="form-inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" value="{{ wh.id }}">
             <div class="form-group" style="margin-bottom:0; flex:2;">
                 <label>{{ L_name }}</label>

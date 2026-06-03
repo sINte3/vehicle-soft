@@ -10,6 +10,7 @@
     <div class="card-header">{{ t('Янги фойдаланувчи қўшиш') }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('admin_save_user') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="form-user-id" value="">
             <div class="form-inline" style="margin-bottom:16px;">
                 <div class="form-group" style="margin-bottom:0;">
@@ -116,6 +117,7 @@
                 {% if u.id != current_user.id %}
                 <form method="post" action="{{ url_for('admin_delete_user', uid=u.id) }}" style="display:inline;"
                       onsubmit="return confirm('«{{ u.username }}» ни блоклашни тасдиқлайсизми?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-sm btn-danger">🚫</button>
                 </form>
                 {% endif %}

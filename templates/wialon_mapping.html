@@ -7,6 +7,7 @@
 </div>
 
 <form method="post" action="{{ url_for('wialon_save') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="work_date" value="{{ work_date.isoformat() }}">
     <input type="hidden" name="filename" value="{{ filename }}">
 

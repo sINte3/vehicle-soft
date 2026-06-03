@@ -10,6 +10,7 @@
 <div class="card" style="margin-bottom:20px;">
     <div class="card-body">
         <form method="post" action="{{ url_for('index') }}" id="dateForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="date-mode-tabs">
                 <button type="button" class="mode-btn {% if mode == 'day' %}active{% endif %}"
                         onclick="setMode('day')">{{ t('Бугун') }}</button>

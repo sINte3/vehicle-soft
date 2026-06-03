@@ -65,6 +65,7 @@
     <div class="card-header">{{ t('Техника номи') }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('save_equipment') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-inline">
                 <div class="form-group"><label>{{ t('Ташкилот') }}</label>
                     <select name="organization_id" required>
@@ -141,6 +142,7 @@
                         <button class="btn btn-secondary btn-sm" onclick="editEq({{ eq.id }})">✏</button>
                         <form method="post" action="{{ url_for('delete_equipment', eid=eq.id) }}" style="display:inline;"
                               onsubmit="return confirm('Ўчирасизми?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button class="btn btn-danger btn-sm" type="submit">🗑</button>
                         </form>
                     </td>
@@ -148,6 +150,7 @@
                 <tr id="eq-edit-{{ eq.id }}" style="display:none;">
                     <td colspan="9">
                         <form method="post" action="{{ url_for('save_equipment') }}" class="form-inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="id" value="{{ eq.id }}">
                             <div class="form-group"><label>{{ t('Ташкилот') }}</label>
                                 <select name="organization_id" required>

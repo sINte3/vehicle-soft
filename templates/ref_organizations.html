@@ -9,6 +9,7 @@
     <div class="card-header">{{ t('Янги ташкилот') }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('save_organization') }}" class="form-inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group" style="margin-bottom:0; flex:1;">
                 <label>{{ t('Ташкилот номи') }}</label>
                 <input type="text" name="name" required placeholder="Когон ПТЗ">
@@ -27,6 +28,7 @@
             <td>{{ loop.index }}</td>
             <td>
                 <form method="post" action="{{ url_for('save_organization') }}" class="form-inline" style="gap:6px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="id" value="{{ org.id }}">
                     <input type="text" name="name" value="{{ org.name }}" style="width:280px;">
                     <button type="submit" class="btn btn-sm btn-secondary">💾</button>
@@ -36,6 +38,7 @@
             <td>
                 <form method="post" action="{{ url_for('delete_organization', oid=org.id) }}" style="display:inline;"
                       onsubmit="return confirm('Ўчиришни тасдиқлайсизми?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-sm btn-danger">🗑</button>
                 </form>
             </td>

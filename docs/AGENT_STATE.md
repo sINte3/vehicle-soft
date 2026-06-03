@@ -1,3 +1,17 @@
+## 2026-06-03 - TASK-SEC-003D completed on production
+
+- Production URL: http://10.103.25.14:5050.
+- Added CSRF protection for browser POST forms.
+- Added csrf_token() Jinja global and hidden csrf_token fields in templates.
+- Topaz token-auth API endpoints remain excluded from CSRF: /fuel/api/fuel_sync and /api/fuel_sync.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260603_095235.db, integrity_check ok.
+- py_compile passed.
+- App import check passed: APP IMPORT OK.
+- TransportReport service restarted and running.
+- Topaz ping verified on production: /fuel/api/fuel_ping returned ok.
+- Production CSRF smoke test passed: login/logout, daily report save, reference save, Wialon mapping save, Fuel warehouse save, spare parts request creation, and admin audit page.
+- No database migration required.
+
 ## 2026-06-03 - TASK-SEC-003C-3 completed on production
 
 - Production URL: http://10.103.25.14:5050.

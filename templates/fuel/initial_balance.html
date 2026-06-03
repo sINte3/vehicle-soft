@@ -21,6 +21,7 @@
     <div class="card-header">{{ t('Бошланғич қолдиқни белгилаш') }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('fuel.save_initial_balance') }}" class="form-inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group" style="margin-bottom:0; flex:2;">
                 <label>{{ t('Омбор') }}</label>
                 <select name="warehouse_id" required>

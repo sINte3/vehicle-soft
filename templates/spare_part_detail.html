@@ -86,6 +86,7 @@
 {% if req.status == 'draft' and current_user.id == req.created_by %}
 <div style="display:flex; gap:10px; margin-bottom:16px;">
     <form method="post" action="{{ url_for('spare_parts.submit_request', rid=req.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="btn btn-primary">📤 {{ 'Отправить' if is_ru else 'Юбориш' }}</button>
     </form>
 </div>
@@ -101,10 +102,12 @@
         </div>
         <div style="display:flex; gap:10px;">
             <form method="post" action="{{ url_for('spare_parts.approve_request', rid=req.id) }}" onsubmit="setComment(this)">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="review_comment">
                 <button type="submit" class="btn btn-primary">✅ {{ 'Утвердить' if is_ru else 'Тасдиқлаш' }}</button>
             </form>
             <form method="post" action="{{ url_for('spare_parts.reject_request', rid=req.id) }}" onsubmit="setComment(this)">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="review_comment">
                 <button type="submit" class="btn btn-danger">❌ {{ 'Отклонить' if is_ru else 'Рад этиш' }}</button>
             </form>

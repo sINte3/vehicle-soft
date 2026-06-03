@@ -10,6 +10,7 @@
     <div class="card-header">{{ t('Иш турлари') }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('save_work_type') }}" class="form-inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group" style="flex:1;"><label>{{ t('Иш тури номи') }}</label>
                 <input type="text" name="name" placeholder="Шудгор / Чигит экиш / Борона мола..." required>
             </div>
@@ -48,6 +49,7 @@
                         <button class="btn btn-secondary btn-sm" onclick="editWt({{ wt.id }})">✏</button>
                         <form method="post" action="{{ url_for('delete_work_type', wid=wt.id) }}" style="display:inline;"
                               onsubmit="return confirm('Ўчирасизми?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button class="btn btn-danger btn-sm" type="submit">🗑</button>
                         </form>
                     </td>
@@ -55,6 +57,7 @@
                 <tr id="wt-edit-{{ wt.id }}" style="display:none;">
                     <td colspan="4">
                         <form method="post" action="{{ url_for('save_work_type') }}" class="form-inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="id" value="{{ wt.id }}">
                             <div class="form-group" style="flex:1;"><label>{{ t('Иш тури номи') }}</label>
                                 <input type="text" name="name" value="{{ wt.name }}" required>
