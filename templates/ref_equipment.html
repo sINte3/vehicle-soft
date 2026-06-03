@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ t('Техникалар') }}{% endblock %}
 {% block content %}
+{% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
+{% set L_deactivate = 'Отключить' if lang == 'ru' else 'Фаол эмас қилиш' %}
+{% set L_disabled = 'Отключена' if lang == 'ru' else 'Фаол эмас' %}
+{% set L_enable = 'Включить' if lang == 'ru' else 'Фаол қилиш' %}
+{% set L_linked_tip = 'Есть связанные записи. Физическое удаление заблокировано.' if lang == 'ru' else 'Боғланган ёзувлар мавжуд. Жисмоний ўчириш блокланган.' %}
 
 <div class="page-header">
     <h1>{{ t('Техникалар') }}</h1>
@@ -140,11 +145,28 @@
                     <td class="text-right text-sm">{{ eq.default_price|fmt_sum }}</td>
                     <td>
                         <button class="btn btn-secondary btn-sm" onclick="editEq({{ eq.id }})">✏</button>
+                        {% set del_info = equipment_delete_info.get(eq.id) %}
+                        {% if del_info and del_info.can_delete %}
                         <form method="post" action="{{ url_for('delete_equipment', eid=eq.id) }}" style="display:inline;"
-                              onsubmit="return confirm('Ўчирасизми?')">
+                              onsubmit="return confirm('{{ L_delete }}: {{ eq.name }} {{ eq.plate }}?')">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button class="btn btn-danger btn-sm" type="submit">🗑</button>
+                            <button class="btn btn-danger btn-sm" type="submit" title="{{ L_delete }}">🗑</button>
                         </form>
+                        {% elif del_info and del_info.can_deactivate %}
+                        <form method="post" action="{{ url_for('delete_equipment', eid=eq.id) }}" style="display:inline;"
+                              onsubmit="return confirm('{{ L_deactivate }}: {{ eq.name }} {{ eq.plate }}?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-secondary btn-sm" type="submit" title="{{ L_linked_tip }}">{{ L_deactivate }}</button>
+                        </form>
+                        {% elif del_info and del_info.is_disabled %}
+                        <form method="post" action="{{ url_for('enable_equipment', eid=eq.id) }}" style="display:inline;"
+                              onsubmit="return confirm('{{ L_enable }}: {{ eq.name }} {{ eq.plate }}?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-primary btn-sm" type="submit" title="{{ L_linked_tip }}">{{ L_enable }}</button>
+                        </form>
+                        {% else %}
+                        <span class="idle-badge" title="{{ L_linked_tip }}">{{ L_disabled }}</span>
+                        {% endif %}
                     </td>
                 </tr>
                 <tr id="eq-edit-{{ eq.id }}" style="display:none;">

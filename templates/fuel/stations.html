@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block title %}АЗС — {{ t('АЗС — Маълумотнома') }}{% endblock %}
 {% block content %}
+{% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
+{% set L_deactivate = 'Отключить' if lang == 'ru' else 'Фаол эмас қилиш' %}
+{% set L_disabled = 'Отключена' if lang == 'ru' else 'Ўчирилган' %}
+{% set L_enable = 'Включить' if lang == 'ru' else 'Фаоллаштириш' %}
+{% set L_linked_tip = 'Есть Topaz-транзакции. Физическое удаление заблокировано.' if lang == 'ru' else 'Topaz транзакциялар мавжуд. Жисмоний ўчириш блокланган.' %}
 
 <div class="page-header">
     <h1>{{ t('АЗС — Маълумотнома') }}</h1>
@@ -81,12 +86,31 @@
                                         {{ st.warehouse_id }}, {{ st.is_active|lower }})">
                     {{ t('Ўзг.') }}
                 </button>
+                {% set del_info = station_delete_info.get(st.id) %}
+                {% if del_info and del_info.can_delete %}
                 <form method="post" action="{{ url_for('fuel.delete_station', sid=st.id) }}"
                       style="display:inline;"
-                      onsubmit="return confirm('{{ t('Ўчириш') }}: {{ st.name }}?')">
+                      onsubmit="return confirm('{{ L_delete }}: {{ st.name }}?')">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-danger btn-sm">✕</button>
+                    <button type="submit" class="btn btn-danger btn-sm" title="{{ L_delete }}">✕</button>
                 </form>
+                {% elif not st.is_active %}
+                <form method="post" action="{{ url_for('fuel.enable_station', sid=st.id) }}"
+                      style="display:inline;"
+                      onsubmit="return confirm('{{ L_enable }}: {{ st.name }}?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-primary btn-sm">{{ L_enable }}</button>
+                </form>
+                {% elif del_info and del_info.can_deactivate %}
+                <form method="post" action="{{ url_for('fuel.delete_station', sid=st.id) }}"
+                      style="display:inline;"
+                      onsubmit="return confirm('{{ L_deactivate }}: {{ st.name }}?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-secondary btn-sm" title="{{ L_linked_tip }}">{{ L_deactivate }}</button>
+                </form>
+                {% else %}
+                <span class="idle-badge" title="{{ L_linked_tip }}">{{ L_disabled }}</span>
+                {% endif %}
             </td>
         </tr>
         {% else %}

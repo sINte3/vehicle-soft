@@ -264,9 +264,22 @@ def warehouses():
     edit_warehouse = None
     if edit_id:
         edit_warehouse = FuelWarehouse.query.get(edit_id)
+    warehouse_delete_info = {}
+    for wh in whs:
+        linked = {
+            'stations_count': FuelStation2.query.filter_by(warehouse_id=wh.id).count(),
+            'receipts_count': FuelReceipt2.query.filter_by(warehouse_id=wh.id).count(),
+            'initial_balances_count': FuelInitialBalance.query.filter_by(warehouse_id=wh.id).count(),
+        }
+        warehouse_delete_info[wh.id] = {
+            'can_delete': not any(linked.values()),
+            'linked_total': sum(linked.values()),
+            'linked': linked,
+        }
     return render_template('fuel/warehouses.html', warehouses=whs,
                            organizations=orgs, fuel_types=FUEL_TYPES,
-                           edit_warehouse=edit_warehouse)
+                           edit_warehouse=edit_warehouse,
+                           warehouse_delete_info=warehouse_delete_info)
 
 
 @fuel_bp.route('/warehouses/save', methods=['POST'])
@@ -318,6 +331,25 @@ def delete_warehouse(wid):
     wh = FuelWarehouse.query.get_or_404(wid)
     before = _fuel_warehouse_snapshot(wh)
     label = wh.name
+    linked = {
+        'stations_count': FuelStation2.query.filter_by(warehouse_id=wid).count(),
+        'receipts_count': FuelReceipt2.query.filter_by(warehouse_id=wid).count(),
+        'initial_balances_count': FuelInitialBalance.query.filter_by(warehouse_id=wid).count(),
+    }
+    if any(linked.values()):
+        _audit_fuel(
+            'fuel_warehouse_delete_blocked',
+            entity_type='fuel_warehouse',
+            entity_id=wh.id,
+            entity_label=label,
+            before=before,
+            after=linked,
+            description='Fuel warehouse delete blocked because linked records exist',
+        )
+        db.session.commit()
+        flash(fuel_t('Омбор ўчирилмади: боғланган маълумотлар мавжуд',
+                     'Склад не удалён: есть связанные данные'), 'warning')
+        return redirect(url_for('fuel.warehouses'))
     _audit_fuel(
         'fuel_warehouse_deleted',
         entity_type='fuel_warehouse',
@@ -577,8 +609,18 @@ def stations():
                     .join(FuelWarehouse)
                     .order_by(FuelWarehouse.name, FuelStation2.name).all())
     warehouses = FuelWarehouse.query.order_by(FuelWarehouse.name).all()
+    station_delete_info = {}
+    for st in all_stations:
+        tx_count = FuelTransaction2.query.filter_by(station_id=st.id).count()
+        station_delete_info[st.id] = {
+            'can_delete': tx_count == 0,
+            'can_deactivate': tx_count > 0 and bool(st.is_active),
+            'is_disabled': tx_count > 0 and not bool(st.is_active),
+            'transactions_count': tx_count,
+        }
     return render_template('fuel/stations.html',
-                           stations=all_stations, warehouses=warehouses)
+                           stations=all_stations, warehouses=warehouses,
+                           station_delete_info=station_delete_info)
 
 
 @fuel_bp.route('/stations/save', methods=['POST'])
@@ -630,6 +672,32 @@ def save_station():
     return redirect(url_for('fuel.stations'))
 
 
+@fuel_bp.route('/stations/enable/<int:sid>', methods=['POST'])
+@module_required('fuel')
+@admin_required_fuel
+def enable_station(sid):
+    st = FuelStation2.query.get_or_404(sid)
+    before = _fuel_station_snapshot(st)
+    if st.is_active:
+        flash(fuel_t('АЗС аллақачон фаол', 'АЗС уже активна'), 'info')
+        return redirect(url_for('fuel.stations'))
+    st.is_active = True
+    db.session.flush()
+    after = _fuel_station_snapshot(st)
+    _audit_fuel(
+        'fuel_station_reactivated',
+        entity_type='fuel_station',
+        entity_id=st.id,
+        entity_label=st.name,
+        before=before,
+        after=after,
+        description='Fuel station reactivated',
+    )
+    db.session.commit()
+    flash(fuel_t('АЗС қайта фаоллаштирилди', 'АЗС включена'), 'success')
+    return redirect(url_for('fuel.stations'))
+
+
 @fuel_bp.route('/stations/delete/<int:sid>', methods=['POST'])
 @module_required('fuel')
 @admin_required_fuel
@@ -637,6 +705,32 @@ def delete_station(sid):
     st = FuelStation2.query.get_or_404(sid)
     before = _fuel_station_snapshot(st)
     label = st.name
+    transactions_count = FuelTransaction2.query.filter_by(station_id=sid).count()
+    if transactions_count:
+        if st.is_active:
+            st.is_active = False
+            db.session.flush()
+            after = _fuel_station_snapshot(st)
+            after['transactions_count'] = transactions_count
+            action = 'fuel_station_delete_blocked_deactivated'
+            description = 'Fuel station delete blocked; station was deactivated because transactions exist'
+        else:
+            after = {'transactions_count': transactions_count}
+            action = 'fuel_station_delete_blocked'
+            description = 'Fuel station delete blocked because transactions exist'
+        _audit_fuel(
+            action,
+            entity_type='fuel_station',
+            entity_id=st.id,
+            entity_label=label,
+            before=before,
+            after=after,
+            description=description,
+        )
+        db.session.commit()
+        flash(fuel_t('АЗС ўчирилмади: транзакциялар мавжуд. АЗС ўчириб қўйилди.',
+                     'АЗС не удалена: есть транзакции. АЗС отключена.'), 'warning')
+        return redirect(url_for('fuel.stations'))
     _audit_fuel(
         'fuel_station_deleted',
         entity_type='fuel_station',

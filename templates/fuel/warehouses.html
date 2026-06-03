@@ -11,6 +11,8 @@
 {% set L_reset = 'Отменить редактирование' if lang == 'ru' else 'Таҳрирлашни бекор қилиш' %}
 {% set L_edit_btn = 'Редактировать' if lang == 'ru' else 'Таҳрирлаш' %}
 {% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
+{% set L_used = 'Используется' if lang == 'ru' else 'Ишлатилган' %}
+{% set L_linked_tip = 'Есть АЗС, приходы или начальные остатки. Удаление заблокировано для сохранения истории.' if lang == 'ru' else 'АЗС, киримлар ёки бошланғич қолдиқлар мавжуд. Тарихни сақлаш учун ўчириш блокланган.' %}
 {% set L_unlinked = '— не связано —' if lang == 'ru' else '— боғланмаган —' %}
 {% set L_status = 'Статус' if lang == 'ru' else 'Ҳолат' %}
 {% set L_count = 'Кол-во выдач' if lang == 'ru' else 'Беришлар сони' %}
@@ -75,12 +77,17 @@
             <a class="btn btn-secondary btn-sm" href="{{ url_for('fuel.warehouses', edit_id=wh.id) }}#warehouse-{{ wh.id }}">
                 {{ L_edit_btn }}
             </a>
+            {% set del_info = warehouse_delete_info.get(wh.id) %}
+            {% if del_info and del_info.can_delete %}
             <form method="post" action="{{ url_for('fuel.delete_warehouse', wid=wh.id) }}"
                   style="display:inline;"
                   onsubmit="return confirm('{{ L_delete }}: {{ wh.name }}?')">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-danger btn-sm">{{ L_delete }}</button>
             </form>
+            {% else %}
+            <span class="idle-badge" title="{{ L_linked_tip }}">🔒 {{ L_used }}</span>
+            {% endif %}
         </div>
     </div>
 

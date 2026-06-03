@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}{{ t('Ташкилотлар') }}{% endblock %}
 {% block content %}
+{% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
+{% set L_used = 'Используется' if lang == 'ru' else 'Ишлатилган' %}
+{% set L_linked_tip = 'Есть связанные данные. Удаление заблокировано для сохранения истории.' if lang == 'ru' else 'Боғланган маълумотлар мавжуд. Тарихни сақлаш учун ўчириш блокланган.' %}
 <div class="page-header">
     <h1>{{ t('Ташкилотлар') }}</h1>
 </div>
@@ -36,11 +39,16 @@
             </td>
             <td>{{ org.equipment.count() }}</td>
             <td>
+                {% set del_info = org_delete_info.get(org.id) %}
+                {% if del_info and del_info.can_delete %}
                 <form method="post" action="{{ url_for('delete_organization', oid=org.id) }}" style="display:inline;"
-                      onsubmit="return confirm('Ўчиришни тасдиқлайсизми?')">
+                      onsubmit="return confirm('{{ L_delete }}: {{ org.name }}?')">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-sm btn-danger">🗑</button>
+                    <button type="submit" class="btn btn-sm btn-danger" title="{{ L_delete }}">🗑</button>
                 </form>
+                {% else %}
+                <span class="idle-badge" title="{{ L_linked_tip }}">🔒 {{ L_used }}</span>
+                {% endif %}
             </td>
         </tr>
         {% endfor %}

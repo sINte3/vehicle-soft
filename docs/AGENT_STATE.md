@@ -1,3 +1,19 @@
+## 2026-06-03 - TASK-SEC-003E completed on production
+
+- Production URL: http://10.103.25.14:5050.
+- Files changed: app.py, fuel_routes.py, templates/ref_organizations.html, templates/ref_equipment.html, templates/ref_work_types.html, templates/ref_customers.html, templates/fuel/warehouses.html, templates/fuel/stations.html.
+- Added dangerous delete protection for organizations, equipment, work types, customers, fuel warehouses, and fuel stations.
+- Linked active equipment and linked active fuel stations are deactivated instead of physically deleted.
+- Added equipment_reactivated and fuel_station_reactivated actions.
+- UI now shows Used/Deactivate/Enable states instead of misleading delete buttons for linked records.
+- Added audit logging for blocked delete, deactivation, and reactivation actions.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260603_111926.db, integrity_check ok.
+- py_compile passed.
+- App import check passed: APP IMPORT OK.
+- TransportReport service restarted and running.
+- SEC003E production smoke test passed.
+- No database migration required.
+
 ## 2026-06-03 - TASK-SEC-003D completed on production
 
 - Production URL: http://10.103.25.14:5050.

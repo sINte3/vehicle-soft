@@ -20,6 +20,8 @@ from models import (
     db, User, Organization, Equipment, WorkType, Customer, DailyRecord,
     Deficiency, VialonMapping, VialonImport, EngineHoursRecord,
     FuelStation, FuelTank, FuelSnapshot, FuelTransaction, FuelSyncLog,
+    FuelWarehouse, FuelStation2, FuelInitialBalance, FuelReceipt2, FuelTransaction2,
+    SparePartRequest,
     ROLE_ADMIN, ROLE_OPERATOR, ROLE_VIEWER, ROLES,
     CAT_YUKORI, CAT_MTZ, CAT_QATNOV, CAT_MINI, CAT_COMBINE,
     CAT_SPECIAL, CAT_YUK_TRANSPORT, CAT_MOTORCYCLE, CAT_PASSENGER,
@@ -140,6 +142,11 @@ def create_app():
         def t(key):
             return TRANS.get(lang, {}).get(key, key)
         return dict(t=t, lang=lang)
+
+    def ui_t(uz, ru):
+        # [REASON]: Small route-level helper for bilingual flash messages in
+        # safety guards where templates are not involved.
+        return ru if getattr(g, 'lang', 'uz') == 'ru' else uz
 
     def admin_required(f):
         @wraps(f)
@@ -966,7 +973,22 @@ def create_app():
             orgs = Organization.query.order_by(Organization.sort_order).all()
         else:
             orgs = get_user_orgs()
-        return render_template('ref_organizations.html', organizations=orgs)
+        org_delete_info = {}
+        for org in orgs:
+            linked = {
+                'equipment_count': Equipment.query.filter_by(organization_id=org.id).count(),
+                'fuel_warehouse_count': FuelWarehouse.query.filter_by(organization_id=org.id).count(),
+                'spare_part_request_count': SparePartRequest.query.filter_by(organization_id=org.id).count(),
+                'deficiency_count': Deficiency.query.filter_by(organization_id=org.id).count(),
+                'user_count': org.users.count() if hasattr(org, 'users') else 0,
+            }
+            org_delete_info[org.id] = {
+                'can_delete': not any(linked.values()),
+                'linked_total': sum(linked.values()),
+                'linked': linked,
+            }
+        return render_template('ref_organizations.html', organizations=orgs,
+                               org_delete_info=org_delete_info)
 
     @app.route('/ref/organizations/save', methods=['POST'])
     @admin_required
@@ -1000,6 +1022,21 @@ def create_app():
     def delete_organization(oid):
         o = Organization.query.get_or_404(oid)
         before = model_snapshot(o, ['id', 'name', 'short_name', 'sort_order'])
+        linked = {
+            'equipment_count': Equipment.query.filter_by(organization_id=oid).count(),
+            'fuel_warehouse_count': FuelWarehouse.query.filter_by(organization_id=oid).count(),
+            'spare_part_request_count': SparePartRequest.query.filter_by(organization_id=oid).count(),
+            'deficiency_count': Deficiency.query.filter_by(organization_id=oid).count(),
+            'user_count': o.users.count() if hasattr(o, 'users') else 0,
+        }
+        if any(linked.values()):
+            log_audit(db, 'organization_delete_blocked', entity_type='organization', entity_id=oid,
+                      entity_label=before.get('name', ''), module='references', before=before,
+                      after=linked, description='Organization delete blocked because linked records exist')
+            db.session.commit()
+            flash(ui_t('Ташкилот ўчирилмади: боғланган маълумотлар мавжуд',
+                       'Организация не удалена: есть связанные данные'), 'warning')
+            return redirect(url_for('ref_organizations'))
         db.session.delete(o)
         log_audit(db, 'organization_deleted', entity_type='organization', entity_id=oid,
                   entity_label=before.get('name', ''), module='references', before=before,
@@ -1041,11 +1078,29 @@ def create_app():
             if e[0]
         ))
 
+        equipment_delete_info = {}
+        for eq in equipment:
+            linked = {
+                'daily_records_count': DailyRecord.query.filter_by(equipment_id=eq.id).count(),
+                'engine_hours_count': EngineHoursRecord.query.filter_by(equipment_id=eq.id).count(),
+                'wialon_mapping_count': VialonMapping.query.filter_by(equipment_id=eq.id).count(),
+                'spare_part_request_count': SparePartRequest.query.filter_by(equipment_id=eq.id).count(),
+            }
+            linked_total = sum(linked.values())
+            equipment_delete_info[eq.id] = {
+                'can_delete': linked_total == 0,
+                'can_deactivate': linked_total > 0 and bool(eq.is_active),
+                'is_disabled': linked_total > 0 and not bool(eq.is_active),
+                'linked_total': linked_total,
+                'linked': linked,
+            }
+
         return render_template('ref_equipment.html',
             equipment=equipment, organizations=orgs,
             selected_org_id=org_id, categories=CATEGORIES,
             selected_cats=cat_codes, eq_types=all_eq_types,
-            selected_eq_types=eq_types, total_count=total_count)
+            selected_eq_types=eq_types, total_count=total_count,
+            equipment_delete_info=equipment_delete_info)
 
     @app.route('/ref/equipment/export')
     @login_required
@@ -1174,20 +1229,78 @@ def create_app():
         eq = Equipment.query.get_or_404(eid)
         check_org_access(eq.organization_id)
         oid = eq.organization_id
-        before = model_snapshot(eq, ['id', 'name', 'plate', 'category', 'eq_type', 'organization_id', 'default_price', 'default_unit', 'is_active'])
+        fields = ['id', 'name', 'plate', 'category', 'eq_type', 'organization_id', 'default_price', 'default_unit', 'is_active']
+        before = model_snapshot(eq, fields)
+        linked = {
+            'daily_records_count': DailyRecord.query.filter_by(equipment_id=eid).count(),
+            'engine_hours_count': EngineHoursRecord.query.filter_by(equipment_id=eid).count(),
+            'wialon_mapping_count': VialonMapping.query.filter_by(equipment_id=eid).count(),
+            'spare_part_request_count': SparePartRequest.query.filter_by(equipment_id=eid).count(),
+        }
+        label = f"{before.get('name', '')} {before.get('plate', '')}".strip()
+        if any(linked.values()):
+            if eq.is_active:
+                eq.is_active = False
+                db.session.flush()
+                after = model_snapshot(eq, fields)
+                after.update(linked)
+                action = 'equipment_delete_blocked_deactivated'
+                description = 'Equipment delete blocked; equipment was deactivated because linked records exist'
+            else:
+                after = dict(linked)
+                action = 'equipment_delete_blocked'
+                description = 'Equipment delete blocked because linked records exist'
+            log_audit(db, action, entity_type='equipment', entity_id=eid,
+                      entity_label=label, module='references', before=before, after=after,
+                      description=description)
+            db.session.commit()
+            flash(ui_t('Техника ўчирилмади: боғланган маълумотлар мавжуд. Техника фаол эмас қилинди.',
+                       'Техника не удалена: есть связанные данные. Техника отключена.'), 'warning')
+            return redirect(url_for('ref_equipment', org_id=oid))
         db.session.delete(eq)
         log_audit(db, 'equipment_deleted', entity_type='equipment', entity_id=eid,
-                  entity_label=f"{before.get('name', '')} {before.get('plate', '')}".strip(),
-                  module='references', before=before, description='Equipment deleted')
+                  entity_label=label, module='references', before=before, description='Equipment deleted')
         db.session.commit()
         flash('Ўчирилди', 'warning')
         return redirect(url_for('ref_equipment', org_id=oid))
 
+    @app.route('/ref/equipment/enable/<int:eid>', methods=['POST'])
+    @editor_required
+    def enable_equipment(eid):
+        eq = Equipment.query.get_or_404(eid)
+        check_org_access(eq.organization_id)
+        fields = ['id', 'name', 'plate', 'category', 'eq_type', 'organization_id', 'default_price', 'default_unit', 'is_active']
+        before = model_snapshot(eq, fields)
+        label = f"{before.get('name', '')} {before.get('plate', '')}".strip()
+        if not eq.is_active:
+            eq.is_active = True
+            db.session.flush()
+        linked = {
+            'daily_records_count': DailyRecord.query.filter_by(equipment_id=eid).count(),
+            'engine_hours_count': EngineHoursRecord.query.filter_by(equipment_id=eid).count(),
+            'wialon_mapping_count': VialonMapping.query.filter_by(equipment_id=eid).count(),
+            'spare_part_request_count': SparePartRequest.query.filter_by(equipment_id=eid).count(),
+        }
+        after = model_snapshot(eq, fields)
+        after.update(linked)
+        log_audit(db, 'equipment_reactivated', entity_type='equipment', entity_id=eid,
+                  entity_label=label, module='references', before=before, after=after,
+                  changes=diff_dict(before, after), description='Equipment reactivated')
+        db.session.commit()
+        flash(ui_t('Техника қайта фаол қилинди.', 'Техника включена.'), 'success')
+        return redirect(url_for('ref_equipment', org_id=eq.organization_id))
+
     @app.route('/ref/work_types')
     @login_required
     def ref_work_types():
+        work_types = WorkType.query.order_by(WorkType.name).all()
+        work_type_usage = {
+            wt.id: DailyRecord.query.filter(DailyRecord.work_type == wt.name).count()
+            for wt in work_types
+        }
         return render_template('ref_work_types.html',
-                               work_types=WorkType.query.order_by(WorkType.name).all())
+                               work_types=work_types,
+                               work_type_usage=work_type_usage)
 
     @app.route('/ref/work_types/save', methods=['POST'])
     @editor_required
@@ -1219,6 +1332,16 @@ def create_app():
     def delete_work_type(wid):
         w = WorkType.query.get_or_404(wid)
         before = model_snapshot(w, ['id', 'name', 'default_unit', 'default_price'])
+        used_count = DailyRecord.query.filter(DailyRecord.work_type == w.name).count()
+        if used_count:
+            after = {'daily_records_count': used_count}
+            log_audit(db, 'work_type_delete_blocked', entity_type='work_type', entity_id=wid,
+                      entity_label=before.get('name', ''), module='references', before=before,
+                      after=after, description='Work type delete blocked because it is used in daily records')
+            db.session.commit()
+            flash(ui_t('Иш тури ўчирилмади: ҳисоботларда ишлатилган',
+                       'Вид работ не удалён: используется в отчётах'), 'warning')
+            return redirect(url_for('ref_work_types'))
         db.session.delete(w)
         log_audit(db, 'work_type_deleted', entity_type='work_type', entity_id=wid,
                   entity_label=before.get('name', ''), module='references', before=before,
@@ -1230,8 +1353,14 @@ def create_app():
     @app.route('/ref/customers')
     @login_required
     def ref_customers():
+        customers = Customer.query.order_by(Customer.name).all()
+        customer_usage = {
+            customer.id: DailyRecord.query.filter(DailyRecord.customer == customer.name).count()
+            for customer in customers
+        }
         return render_template('ref_customers.html',
-                               customers=Customer.query.order_by(Customer.name).all())
+                               customers=customers,
+                               customer_usage=customer_usage)
 
     @app.route('/ref/customers/save', methods=['POST'])
     @editor_required
@@ -1262,6 +1391,16 @@ def create_app():
     def delete_customer(cid):
         c = Customer.query.get_or_404(cid)
         before = model_snapshot(c, ['id', 'name', 'customer_type'])
+        used_count = DailyRecord.query.filter(DailyRecord.customer == c.name).count()
+        if used_count:
+            after = {'daily_records_count': used_count}
+            log_audit(db, 'customer_delete_blocked', entity_type='customer', entity_id=cid,
+                      entity_label=before.get('name', ''), module='references', before=before,
+                      after=after, description='Customer delete blocked because it is used in daily records')
+            db.session.commit()
+            flash(ui_t('Буюртмачи ўчирилмади: ҳисоботларда ишлатилган',
+                       'Заказчик не удалён: используется в отчётах'), 'warning')
+            return redirect(url_for('ref_customers'))
         db.session.delete(c)
         log_audit(db, 'customer_deleted', entity_type='customer', entity_id=cid,
                   entity_label=before.get('name', ''), module='references', before=before,

@@ -13,6 +13,26 @@
 
 ## Recently completed / appears completed
 
+### TASK-SEC-003E - Dangerous delete protection
+
+Priority: P0
+Status: **completed 2026-06-03**
+
+Changes made:
+
+- Blocked deletion of organizations with linked records.
+- Protected equipment deletion: linked active equipment is deactivated instead of physically deleted.
+- Added equipment reactivation from the equipment reference UI.
+- Blocked deletion of used work types and customers.
+- Blocked deletion of fuel warehouses with linked stations, receipts, or initial balances.
+- Protected fuel station deletion: stations with Topaz transactions are deactivated instead of physically deleted.
+- Added fuel station reactivation from the fuel station UI.
+- Added audit logging for blocked delete/deactivation/reactivation actions.
+- Updated UI so linked records show Used/Deactivate/Enable instead of misleading delete buttons.
+- No database migration required.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260603_111926.db, integrity_check ok.
+
+
 ### TASK-SEC-003D - CSRF protection
 
 Priority: P0
