@@ -1,3 +1,16 @@
+## 2026-06-03 - TASK-SEC-003C-1 completed on production
+
+- Production URL: http://10.103.25.14:5050.
+- File changed: wialon_import.py.
+- Added Wialon audit actions: wialon_import_uploaded, wialon_auto_match_saved, wialon_mapping_created, wialon_mapping_updated, wialon_mapping_deleted, wialon_engine_hours_exported, wialon_workload_exported.
+- Production backup completed before final verification: D:\transport-report-backups\production\daily\transport_20260602_221500.db, integrity_check ok.
+- py_compile passed.
+- App import check passed: APP IMPORT OK.
+- TransportReport service restarted and running.
+- /admin/audit verified manually; wialon_mapping_updated appears after saving a Wialon mapping.
+- module_required(wialon) decorators were checked and restored before commit; no Wialon module-permission regression remains in final diff.
+- No database migration required.
+
 # AGENT_STATE.md — Current Project State
 
 ## State date

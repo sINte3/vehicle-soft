@@ -13,6 +13,23 @@
 
 ## Recently completed / appears completed
 
+### TASK-SEC-003C-1 - Wialon audit log
+
+Priority: P0
+Status: **completed 2026-06-03**
+
+Changes made:
+
+- Added audit logging for Wialon import upload.
+- Added audit logging for Wialon auto-match bulk save.
+- Added audit logging for Wialon mapping create/update/delete.
+- Added audit logging for Wialon engine-hours export.
+- Added audit logging for Wialon workload export.
+- Verified /admin/audit on production: wialon_mapping_updated appears after saving a mapping.
+- No database migration required.
+- Production backup completed before final verification: D:\\transport-report-backups\\production\\daily\\transport_20260602_221500.db, integrity_check ok.
+
+
 ### TASK-FUEL-001 — Standardize Topaz API path
 
 Priority: P1  

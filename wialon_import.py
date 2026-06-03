@@ -19,6 +19,42 @@ from flask_login import current_user
 
 from models import db, Equipment, Organization, VialonMapping, VialonImport, EngineHoursRecord, module_required
 from workload_report import get_workload_data, generate_workload_excel
+from sec003a_ext import log_audit, model_snapshot
+
+
+
+def _safe_int(value):
+    try:
+        return int(value) if value not in (None, '') else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _mapping_snapshot(mapping):
+    if not mapping:
+        return None
+    return {
+        'id': getattr(mapping, 'id', None),
+        'vialon_name': getattr(mapping, 'vialon_name', ''),
+        'equipment_id': getattr(mapping, 'equipment_id', None),
+        'skip': bool(getattr(mapping, 'skip', False)),
+    }
+
+
+def _audit_wialon(action, entity_type='', entity_id=None, entity_label='', after=None,
+                  before=None, changes=None, description=''):
+    log_audit(
+        db,
+        action=action,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        entity_label=entity_label,
+        module='wialon',
+        before=before,
+        after=after,
+        changes=changes,
+        description=description,
+    )
 
 
 # ─── Plate-based auto-matcher ─────────────────────────────────────────────────
@@ -409,6 +445,23 @@ def register_wialon_routes(app, editor_required, admin_required):
             total_saved = saved
             current_date += td(days=1)
 
+        _audit_wialon(
+            'wialon_import_uploaded',
+            entity_type='vialon_import',
+            entity_label=csv_name,
+            after={
+                'filename': csv_name,
+                'date_from': d_from.isoformat(),
+                'date_to': d_to.isoformat(),
+                'days': num_days,
+                'vehicles_in_file': len(parsed),
+                'vehicles_matched': len(matched),
+                'vehicles_saved': total_saved,
+                'vehicles_skipped': len(skipped),
+                'vehicles_unknown': len(unknown),
+            },
+            description='Wialon engine-hours import completed'
+        )
         db.session.commit()
 
         num_days = (d_to - d_from).days + 1
@@ -508,6 +561,17 @@ def register_wialon_routes(app, editor_required, admin_required):
                 db.session.add(m)
             saved_mappings += 1
 
+        _audit_wialon(
+            'wialon_auto_match_saved',
+            entity_type='vialon_mapping',
+            entity_label='auto_match_bulk',
+            after={
+                'saved_mappings': saved_mappings,
+                'total_rows': len(vnames),
+                'skip_count': len(skips),
+            },
+            description='Wialon auto-match mappings saved'
+        )
         db.session.commit()
         flash('{} та маппинг сақланди. '
               'Энди файлни қайта юкланг — импорт автоматик ишлайди.'.format(saved_mappings),
@@ -535,8 +599,11 @@ def register_wialon_routes(app, editor_required, admin_required):
         eq_id = request.form.get('equipment_id', type=int)
         skip  = request.form.get('skip') == '1'
         vname = request.form.get('vialon_name', '').strip()
+        created = False
+        before = None
         if mid:
             m = VialonMapping.query.get_or_404(mid)
+            before = _mapping_snapshot(m)
             m.equipment_id = eq_id if not skip else None
             m.skip = skip
         else:
@@ -547,8 +614,22 @@ def register_wialon_routes(app, editor_required, admin_required):
             if not m:
                 m = VialonMapping(vialon_name=vname, created_by=current_user.id)
                 db.session.add(m)
+                created = True
+            else:
+                before = _mapping_snapshot(m)
             m.equipment_id = eq_id if not skip else None
             m.skip = skip
+        db.session.flush()
+        after = _mapping_snapshot(m)
+        _audit_wialon(
+            'wialon_mapping_created' if created else 'wialon_mapping_updated',
+            entity_type='vialon_mapping',
+            entity_id=m.id,
+            entity_label=m.vialon_name,
+            before=before,
+            after=after,
+            description='Wialon mapping saved'
+        )
         db.session.commit()
         flash('Маппинг сақланди', 'success')
         return redirect(url_for('wialon_mapping_list'))
@@ -557,7 +638,18 @@ def register_wialon_routes(app, editor_required, admin_required):
     @module_required('wialon')
     @admin_required
     def wialon_mapping_delete(mid):
-        db.session.delete(VialonMapping.query.get_or_404(mid))
+        m = VialonMapping.query.get_or_404(mid)
+        before = _mapping_snapshot(m)
+        label = m.vialon_name
+        _audit_wialon(
+            'wialon_mapping_deleted',
+            entity_type='vialon_mapping',
+            entity_id=m.id,
+            entity_label=label,
+            before=before,
+            description='Wialon mapping deleted'
+        )
+        db.session.delete(m)
         db.session.commit()
         flash('Маппинг ўчирилди', 'warning')
         return redirect(url_for('wialon_mapping_list'))
@@ -820,6 +912,19 @@ def register_wialon_routes(app, editor_required, admin_required):
 
         from flask import send_file as _sf
         fname = u'Motochaslar_{}.xlsx'.format(sel_date.strftime('%d_%m_%Y'))
+        _audit_wialon(
+            'wialon_engine_hours_exported',
+            entity_type='wialon_report',
+            entity_label=fname,
+            after={
+                'date': sel_date.isoformat(),
+                'org_id': org_id,
+                'records_count': len(records),
+                'filename': fname,
+            },
+            description='Wialon engine-hours report exported'
+        )
+        db.session.commit()
         return _sf(buf, as_attachment=True,
                    download_name=fname,
                    mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -928,4 +1033,17 @@ def register_wialon_routes(app, editor_required, admin_required):
             filter_org_ids = [selected_org_id]
         output_dir = current_app.config.get('REPORTS_DIR', 'reports')
         fpath = generate_workload_excel(d_from, d_to, output_dir, filter_org_ids)
+        _audit_wialon(
+            'wialon_workload_exported',
+            entity_type='wialon_workload',
+            entity_label=os.path.basename(fpath),
+            after={
+                'date_from': d_from.isoformat(),
+                'date_to': d_to.isoformat(),
+                'org_id': selected_org_id,
+                'filename': os.path.basename(fpath),
+            },
+            description='Wialon workload report exported'
+        )
+        db.session.commit()
         return send_file(fpath, as_attachment=True, download_name=os.path.basename(fpath))
