@@ -1,66 +1,72 @@
 {% extends "base.html" %}
-{% block title %}{{ t('Эҳтиёт қисмлар') }} — {{ t('Қўшиш') }}{% endblock %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Запчасти — новая заявка' if is_ru else 'Эҳтиёт қисмлар — янги сўров' }}{% endblock %}
 {% block content %}
 <div class="page-header">
-    <h1>{{ t('Эҳтиёт қисмлар сўрови') }}</h1>
-    <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ t('← Рўйхат') }}</a>
+    <h1>{{ 'Заявка на запчасти' if is_ru else 'Эҳтиёт қисмлар сўрови' }}</h1>
+    <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ '← Список' if is_ru else '← Рўйхат' }}</a>
 </div>
 
 <form method="post" action="{{ url_for('spare_parts.save_request') }}" id="spForm">
 <div class="card" style="margin-bottom:16px;">
-    <div class="card-header">{{ t('Асосий маълумот') }}</div>
+    <div class="card-header">{{ 'Основные данные' if is_ru else 'Асосий маълумот' }}</div>
     <div class="card-body">
         <div class="form-inline">
             <div class="form-group">
-                <label>{{ t('Сана') }}</label>
+                <label>{{ 'Дата' if is_ru else 'Сана' }}</label>
                 <input type="date" name="request_date" value="{{ today }}" required style="width:160px;">
             </div>
-            <div class="form-group" style="flex:1; min-width:200px;">
-                <label>{{ t('Ташкилот') }}</label>
+            <div class="form-group" style="flex:1; min-width:240px;">
+                <label>{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
                 <select name="organization_id" id="orgSelect" required onchange="filterEquipment()">
-                    <option value="">— танланг —</option>
+                    <option value="">{{ '— выберите —' if is_ru else '— танланг —' }}</option>
                     {% for org in organizations %}
                     <option value="{{ org.id }}">{{ org.name }}</option>
                     {% endfor %}
                 </select>
             </div>
-            <div class="form-group" style="flex:1; min-width:200px;">
-                <label>{{ t('Техника') }} (ихтиёрий)</label>
+            <div class="form-group" style="flex:2; min-width:360px;">
+                <label>{{ 'Техника (необязательно)' if is_ru else 'Техника (ихтиёрий)' }}</label>
                 <select name="equipment_id" id="eqSelect">
-                    <option value="">— танланг —</option>
+                    <option value="">{{ '— сначала выберите организацию —' if is_ru else '— аввал ташкилотни танланг —' }}</option>
                     {% for eq in all_equipment %}
-                    <option value="{{ eq.id }}" data-org="{{ eq.organization_id }}">{{ eq.name }}</option>
+                    {% set org_label = (eq.organization.short_name or eq.organization.name) if eq.organization else '' %}
+                    {% set eq_label = eq.name ~ ((' — ' ~ eq.plate) if eq.plate else '') ~ ((' — ' ~ org_label) if org_label else '') %}
+                    <option value="{{ eq.id }}" data-org="{{ eq.organization_id }}">{{ eq_label }}</option>
                     {% endfor %}
                 </select>
+                <div class="text-sm text-muted" style="margin-top:4px;">
+                    {{ 'В списке показаны модель, госномер и организация, чтобы отличать одинаковую технику.' if is_ru else 'Рўйхатда бир хил техникани ажратиш учун модел, давлат рақами ва ташкилот кўрсатилган.' }}
+                </div>
             </div>
         </div>
         <div class="form-group">
-            <label>{{ t('Изоҳ') }}</label>
-            <textarea name="note" rows="2" placeholder="Изоҳ..."></textarea>
+            <label>{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+            <textarea name="note" rows="2" placeholder="{{ 'Примечание...' if is_ru else 'Изоҳ...' }}"></textarea>
         </div>
     </div>
 </div>
 
 <div class="card" style="margin-bottom:16px;">
     <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
-        <span>{{ t('Позициялар') }}</span>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="addRow()">{{ t('+ Қўшиш') }}</button>
+        <span>{{ 'Позиции' if is_ru else 'Позициялар' }}</span>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="addRow()">{{ '+ Добавить' if is_ru else '+ Қўшиш' }}</button>
     </div>
     <div class="card-body" style="padding:0;">
         <table id="itemsTable" style="width:100%;">
             <thead>
                 <tr>
-                    <th style="min-width:200px;">{{ t('Номи') }}</th>
-                    <th style="width:130px;">{{ t('Арт. рақами') }}</th>
-                    <th style="width:80px;">{{ t('Миқдор') }}</th>
-                    <th style="width:80px;">{{ t('Ўлчов бирлиги') }}</th>
-                    <th style="width:150px;">{{ t('Изоҳ') }}</th>
+                    <th style="min-width:200px;">{{ 'Название' if is_ru else 'Номи' }}</th>
+                    <th style="width:130px;">{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</th>
+                    <th style="width:80px;">{{ 'Количество' if is_ru else 'Миқдор' }}</th>
+                    <th style="width:80px;">{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
+                    <th style="width:150px;">{{ 'Примечание' if is_ru else 'Изоҳ' }}</th>
                     <th style="width:40px;"></th>
                 </tr>
             </thead>
             <tbody id="itemsBody">
                 <tr class="item-row">
-                    <td><input type="text" name="item_name" placeholder="Деталь номи" required style="width:100%;"></td>
+                    <td><input type="text" name="item_name" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" required style="width:100%;"></td>
                     <td><input type="text" name="item_part_number" placeholder="000-000" style="width:100%;"></td>
                     <td><input type="number" name="item_quantity" value="1" min="0.001" step="0.001" style="width:100%;"></td>
                     <td><input type="text" name="item_unit" value="dona" style="width:100%;"></td>
@@ -74,10 +80,10 @@
 
 <div style="display:flex; gap:10px;">
     <button type="submit" name="action" value="draft" class="btn btn-secondary">
-        💾 {{ t('Чорнов') }}
+        💾 {{ 'Черновик' if is_ru else 'Чорнов' }}
     </button>
     <button type="submit" name="action" value="submit" class="btn btn-primary">
-        📤 {{ t('Юборилган') }}
+        📤 {{ 'Отправить' if is_ru else 'Юбориш' }}
     </button>
 </div>
 </form>
@@ -90,7 +96,7 @@ function filterEquipment() {
     const eqSel = document.getElementById('eqSelect');
     Array.from(eqSel.options).forEach(opt => {
         if (!opt.value) return;
-        opt.style.display = (!orgId || opt.dataset.org === orgId) ? '' : 'none';
+        opt.style.display = (orgId && opt.dataset.org === orgId) ? '' : 'none';
     });
     if (eqSel.selectedOptions[0] && eqSel.selectedOptions[0].style.display === 'none') {
         eqSel.value = '';
@@ -102,7 +108,7 @@ function addRow() {
     const row = document.createElement('tr');
     row.className = 'item-row';
     row.innerHTML = `
-        <td><input type="text" name="item_name" placeholder="Деталь номи" style="width:100%;"></td>
+        <td><input type="text" name="item_name" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" style="width:100%;"></td>
         <td><input type="text" name="item_part_number" placeholder="000-000" style="width:100%;"></td>
         <td><input type="number" name="item_quantity" value="1" min="0.001" step="0.001" style="width:100%;"></td>
         <td><input type="text" name="item_unit" value="dona" style="width:100%;"></td>
@@ -117,5 +123,7 @@ function removeRow(btn) {
     if (rows.length <= 1) return;
     btn.closest('tr').remove();
 }
+
+document.addEventListener('DOMContentLoaded', filterEquipment);
 </script>
 {% endblock %}

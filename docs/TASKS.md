@@ -13,6 +13,24 @@
 
 ## Recently completed / appears completed
 
+### TASK-SEC-003C-3 - Spare parts audit log
+
+Priority: P0
+Status: **completed 2026-06-03**
+
+Changes made:
+
+- Added audit logging for spare parts request creation.
+- Added audit logging for spare parts request item creation.
+- Added audit logging for spare parts status changes.
+- Added audit logging for spare parts catalog create/update.
+- Improved spare parts equipment selector: model, plate number, and organization are shown.
+- Improved Russian UI labels in spare parts pages.
+- Verified /admin/audit on production for spare parts actions.
+- No database migration required.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260603_084842.db, integrity_check ok.
+
+
 ### TASK-SEC-003C-2 - Fuel audit log
 
 Priority: P0

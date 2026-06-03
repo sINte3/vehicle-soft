@@ -3,6 +3,7 @@ from flask_login import login_required, current_user
 from datetime import datetime, date
 
 from models import db, SparePart, SparePartRequest, SparePartRequestItem, Organization, Equipment, module_required
+from sec003a_ext import log_audit, diff_dict
 
 spare_parts_bp = Blueprint('spare_parts', __name__, url_prefix='/spare-parts')
 
@@ -18,6 +19,88 @@ STATUS_COLORS = {
     'approved':  'var(--accent)',
     'rejected':  'var(--danger)',
 }
+
+
+def _spare_lang():
+    lang = getattr(g, 'lang', None)
+    if not lang and getattr(current_user, 'is_authenticated', False):
+        lang = getattr(current_user, 'language', None)
+    return 'ru' if lang == 'ru' else 'uz'
+
+
+def _spare_t(uz_text, ru_text):
+    return ru_text if _spare_lang() == 'ru' else uz_text
+
+
+def _date_iso(value):
+    if not value:
+        return None
+    try:
+        return value.isoformat()
+    except Exception:
+        return str(value)
+
+
+def _request_snapshot(req):
+    if not req:
+        return None
+    return {
+        'id': getattr(req, 'id', None),
+        'request_date': _date_iso(getattr(req, 'request_date', None)),
+        'organization_id': getattr(req, 'organization_id', None),
+        'equipment_id': getattr(req, 'equipment_id', None),
+        'status': getattr(req, 'status', ''),
+        'note': getattr(req, 'note', ''),
+        'created_by': getattr(req, 'created_by', None),
+        'reviewed_by': getattr(req, 'reviewed_by', None),
+        'reviewed_at': _date_iso(getattr(req, 'reviewed_at', None)),
+        'review_comment': getattr(req, 'review_comment', ''),
+        'items_count': len(getattr(req, 'items', []) or []),
+    }
+
+
+def _item_snapshot(item):
+    if not item:
+        return None
+    return {
+        'id': getattr(item, 'id', None),
+        'request_id': getattr(item, 'request_id', None),
+        'spare_part_id': getattr(item, 'spare_part_id', None),
+        'name': getattr(item, 'name', ''),
+        'part_number': getattr(item, 'part_number', ''),
+        'quantity': getattr(item, 'quantity', None),
+        'unit': getattr(item, 'unit', ''),
+        'note': getattr(item, 'note', ''),
+    }
+
+
+def _catalog_snapshot(part):
+    if not part:
+        return None
+    return {
+        'id': getattr(part, 'id', None),
+        'name': getattr(part, 'name', ''),
+        'part_number': getattr(part, 'part_number', ''),
+        'unit': getattr(part, 'unit', ''),
+        'category': getattr(part, 'category', ''),
+        'created_at': _date_iso(getattr(part, 'created_at', None)),
+    }
+
+
+def _audit_spare(action, entity_type='', entity_id=None, entity_label='', before=None,
+                 after=None, changes=None, description=''):
+    log_audit(
+        db,
+        action=action,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        entity_label=entity_label,
+        module='spare_parts',
+        before=before,
+        after=after,
+        changes=changes,
+        description=description,
+    )
 
 
 @spare_parts_bp.route('/')
@@ -70,15 +153,19 @@ def index():
 @module_required('spare_parts')
 def new_request():
     if not current_user.can_edit:
-        flash('Сизда ҳуқуқ йўқ', 'warning')
+        flash(_spare_t('Сизда ҳуқуқ йўқ', 'У вас нет прав'), 'warning')
         return redirect(url_for('spare_parts.index'))
     organizations = Organization.query.order_by(Organization.sort_order).all()
-    all_equipment = Equipment.query.filter_by(is_active=True).order_by(Equipment.name).all()
+    all_equipment = (Equipment.query
+                     .filter_by(is_active=True)
+                     .order_by(Equipment.organization_id, Equipment.name, Equipment.plate)
+                     .all())
     return render_template('spare_part_form.html',
                            req=None,
                            today=date.today().isoformat(),
                            organizations=organizations,
-                           all_equipment=all_equipment)
+                           all_equipment=all_equipment,
+                           lang=_spare_lang())
 
 
 @spare_parts_bp.route('/save', methods=['POST'])
@@ -116,6 +203,7 @@ def save_request():
     units = request.form.getlist('item_unit')
     notes = request.form.getlist('item_note')
 
+    created_items = []
     for i, name in enumerate(names):
         name = name.strip()
         if not name:
@@ -133,12 +221,31 @@ def save_request():
             note=notes[i].strip() if i < len(notes) else '',
         )
         db.session.add(item)
+        created_items.append(item)
 
+    db.session.flush()
+    _audit_spare(
+        'spare_part_request_created',
+        entity_type='spare_part_request',
+        entity_id=spr.id,
+        entity_label='Request #{}'.format(spr.id),
+        after=_request_snapshot(spr),
+        description='Spare part request created'
+    )
+    for item in created_items:
+        _audit_spare(
+            'spare_part_item_created',
+            entity_type='spare_part_request_item',
+            entity_id=item.id,
+            entity_label=item.name,
+            after=_item_snapshot(item),
+            description='Spare part request item created'
+        )
     db.session.commit()
     if status == 'submitted':
-        flash('Сўров юборилди', 'success')
+        flash(_spare_t('Сўров юборилди', 'Заявка отправлена'), 'success')
     else:
-        flash('Чорнов сақланди', 'info')
+        flash(_spare_t('Чорнов сақланди', 'Черновик сохранён'), 'info')
     return redirect(url_for('spare_parts.detail', rid=spr.id))
 
 
@@ -160,9 +267,22 @@ def submit_request(rid):
     spr = SparePartRequest.query.get_or_404(rid)
     if spr.status != 'draft' or spr.created_by != current_user.id:
         abort(403)
+    before = _request_snapshot(spr)
+    old_status = spr.status
     spr.status = 'submitted'
+    after = _request_snapshot(spr)
+    _audit_spare(
+        'spare_part_request_status_changed',
+        entity_type='spare_part_request',
+        entity_id=spr.id,
+        entity_label='Request #{}'.format(spr.id),
+        before=before,
+        after=after,
+        changes={'status': {'before': old_status, 'after': spr.status}},
+        description='Spare part request submitted'
+    )
     db.session.commit()
-    flash('Сўров юборилди', 'success')
+    flash(_spare_t('Сўров юборилди', 'Заявка отправлена'), 'success')
     return redirect(url_for('spare_parts.detail', rid=rid))
 
 
@@ -174,12 +294,25 @@ def approve_request(rid):
     spr = SparePartRequest.query.get_or_404(rid)
     if spr.status != 'submitted':
         abort(400)
+    before = _request_snapshot(spr)
+    old_status = spr.status
     spr.status = 'approved'
     spr.reviewed_by = current_user.id
     spr.reviewed_at = datetime.utcnow()
     spr.review_comment = request.form.get('review_comment', '').strip()
+    after = _request_snapshot(spr)
+    _audit_spare(
+        'spare_part_request_status_changed',
+        entity_type='spare_part_request',
+        entity_id=spr.id,
+        entity_label='Request #{}'.format(spr.id),
+        before=before,
+        after=after,
+        changes=diff_dict(before, after),
+        description='Spare part request approved; status {} -> {}'.format(old_status, spr.status)
+    )
     db.session.commit()
-    flash('Сўров тасдиқланди', 'success')
+    flash(_spare_t('Сўров тасдиқланди', 'Заявка утверждена'), 'success')
     return redirect(url_for('spare_parts.detail', rid=rid))
 
 
@@ -191,12 +324,25 @@ def reject_request(rid):
     spr = SparePartRequest.query.get_or_404(rid)
     if spr.status != 'submitted':
         abort(400)
+    before = _request_snapshot(spr)
+    old_status = spr.status
     spr.status = 'rejected'
     spr.reviewed_by = current_user.id
     spr.reviewed_at = datetime.utcnow()
     spr.review_comment = request.form.get('review_comment', '').strip()
+    after = _request_snapshot(spr)
+    _audit_spare(
+        'spare_part_request_status_changed',
+        entity_type='spare_part_request',
+        entity_id=spr.id,
+        entity_label='Request #{}'.format(spr.id),
+        before=before,
+        after=after,
+        changes=diff_dict(before, after),
+        description='Spare part request rejected; status {} -> {}'.format(old_status, spr.status)
+    )
     db.session.commit()
-    flash('Сўров рад этилди', 'warning')
+    flash(_spare_t('Сўров рад этилди', 'Заявка отклонена'), 'warning')
     return redirect(url_for('spare_parts.detail', rid=rid))
 
 
@@ -206,7 +352,7 @@ def catalog():
     if not current_user.is_admin:
         abort(403)
     parts = SparePart.query.order_by(SparePart.name).all()
-    return render_template('spare_parts_catalog.html', parts=parts)
+    return render_template('spare_parts_catalog.html', parts=parts, lang=_spare_lang())
 
 
 @spare_parts_bp.route('/catalog/save', methods=['POST'])
@@ -221,11 +367,14 @@ def catalog_save():
     category = request.form.get('category', '').strip()
 
     if not name:
-        flash('Номини киритинг', 'warning')
+        flash(_spare_t('Номини киритинг', 'Введите название'), 'warning')
         return redirect(url_for('spare_parts.catalog'))
 
+    created = False
+    before = None
     if pid:
         part = SparePart.query.get_or_404(pid)
+        before = _catalog_snapshot(part)
         part.name = name
         part.part_number = part_number
         part.unit = unit
@@ -233,6 +382,19 @@ def catalog_save():
     else:
         part = SparePart(name=name, part_number=part_number, unit=unit, category=category)
         db.session.add(part)
+        created = True
+    db.session.flush()
+    after = _catalog_snapshot(part)
+    _audit_spare(
+        'spare_part_catalog_created' if created else 'spare_part_catalog_updated',
+        entity_type='spare_part_catalog',
+        entity_id=part.id,
+        entity_label=part.name,
+        before=before,
+        after=after,
+        changes=diff_dict(before, after),
+        description='Spare part catalog saved'
+    )
     db.session.commit()
-    flash('Сақланди', 'success')
+    flash(_spare_t('Сақланди', 'Сохранено'), 'success')
     return redirect(url_for('spare_parts.catalog'))

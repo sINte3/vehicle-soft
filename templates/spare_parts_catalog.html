@@ -1,51 +1,52 @@
 {% extends "base.html" %}
-{% block title %}{{ t('Эҳтиёт қисмлар') }} — Каталог{% endblock %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Запчасти — каталог' if is_ru else 'Эҳтиёт қисмлар — каталог' }}{% endblock %}
 {% block content %}
 <div class="page-header">
-    <h1>{{ t('Эҳтиёт қисмлар каталоги') }}</h1>
-    <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ t('← Рўйхат') }}</a>
+    <h1>{{ 'Каталог запчастей' if is_ru else 'Эҳтиёт қисмлар каталоги' }}</h1>
+    <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ '← Список' if is_ru else '← Рўйхат' }}</a>
 </div>
 
 <div class="card" style="margin-bottom:20px;">
-    <div class="card-header">{{ t('Янги қисм қўшиш') }}</div>
+    <div class="card-header">{{ 'Добавить новую запчасть' if is_ru else 'Янги қисм қўшиш' }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('spare_parts.catalog_save') }}" class="form-inline">
             <input type="hidden" name="id" id="editId" value="">
             <div class="form-group" style="flex:2; min-width:200px;">
-                <label>{{ t('Номи') }}</label>
-                <input type="text" name="name" id="editName" placeholder="Деталь номи" required>
+                <label>{{ 'Название' if is_ru else 'Номи' }}</label>
+                <input type="text" name="name" id="editName" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" required>
             </div>
             <div class="form-group" style="flex:1;">
-                <label>{{ t('Арт. рақами') }}</label>
+                <label>{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</label>
                 <input type="text" name="part_number" id="editPartNum" placeholder="000-000">
             </div>
             <div class="form-group" style="width:100px;">
-                <label>{{ t('Ўлчов бирлиги') }}</label>
+                <label>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</label>
                 <input type="text" name="unit" id="editUnit" value="dona" style="width:80px;">
             </div>
             <div class="form-group" style="flex:1;">
-                <label>{{ t('Категория') }}</label>
+                <label>{{ 'Категория' if is_ru else 'Категория' }}</label>
                 <input type="text" name="category" id="editCategory" placeholder="Двигатель / Тормоз...">
             </div>
             <div class="form-group">
                 <label>&nbsp;</label>
-                <button type="submit" class="btn btn-primary">{{ t('Сақлаш') }}</button>
-                <button type="button" class="btn btn-secondary" onclick="resetForm()">{{ t('Бекор қилиш') }}</button>
+                <button type="submit" class="btn btn-primary">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+                <button type="button" class="btn btn-secondary" onclick="resetForm()">{{ 'Отмена' if is_ru else 'Бекор қилиш' }}</button>
             </div>
         </form>
     </div>
 </div>
 
 <div class="card">
-    <div class="card-header">{{ t('Жами:') }} {{ parts|length }} {{ t('та') }}</div>
+    <div class="card-header">{{ 'Всего:' if is_ru else 'Жами:' }} {{ parts|length }}</div>
     <table>
         <thead>
             <tr>
                 <th>№</th>
-                <th>{{ t('Номи') }}</th>
-                <th>{{ t('Арт. рақами') }}</th>
-                <th>{{ t('Ўлчов бирлиги') }}</th>
-                <th>{{ t('Категория') }}</th>
+                <th>{{ 'Название' if is_ru else 'Номи' }}</th>
+                <th>{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</th>
+                <th>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
+                <th>{{ 'Категория' if is_ru else 'Категория' }}</th>
                 <th></th>
             </tr>
         </thead>
@@ -59,7 +60,7 @@
                 <td class="text-sm text-muted">{{ part.category or '—' }}</td>
                 <td>
                     <button class="btn btn-sm btn-secondary"
-                            onclick="editPart({{ part.id }}, '{{ part.name|replace("'","\'") }}', '{{ part.part_number }}', '{{ part.unit }}', '{{ part.category }}')">✏</button>
+                            onclick='editPart({{ part.id }}, {{ part.name|tojson }}, {{ (part.part_number or "")|tojson }}, {{ (part.unit or "")|tojson }}, {{ (part.category or "")|tojson }})'>✏</button>
                 </td>
             </tr>
             {% endfor %}

@@ -1,14 +1,16 @@
 {% extends "base.html" %}
-{% block title %}{{ t('Эҳтиёт қисмлар') }} — Сўров #{{ req.id }}{% endblock %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Запчасти' if is_ru else 'Эҳтиёт қисмлар' }} — {{ 'Заявка' if is_ru else 'Сўров' }} #{{ req.id }}{% endblock %}
 {% block content %}
+{% set eq_label = req.equipment.name ~ ((' — ' ~ req.equipment.plate) if req.equipment and req.equipment.plate else '') if req.equipment else '—' %}
 <div class="page-header">
-    <h1>Сўров #{{ req.id }}</h1>
-    <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ t('← Рўйхат') }}</a>
+    <h1>{{ 'Заявка' if is_ru else 'Сўров' }} #{{ req.id }}</h1>
+    <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ '← Список' if is_ru else '← Рўйхат' }}</a>
 </div>
 
 <div class="card" style="margin-bottom:16px;">
     <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
-        <span>{{ t('Маълумот') }}</span>
+        <span>{{ 'Сведения' if is_ru else 'Маълумот' }}</span>
         <span style="color:{{ status_colors[req.status] }}; font-weight:700; font-size:15px;">
             {{ status_labels[req.status][lang] }}
         </span>
@@ -16,26 +18,26 @@
     <div class="card-body">
         <div class="form-inline" style="gap:24px; flex-wrap:wrap;">
             <div>
-                <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ t('Сана') }}</div>
+                <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ 'Дата' if is_ru else 'Сана' }}</div>
                 <div>{{ req.request_date.strftime('%d.%m.%Y') }}</div>
             </div>
             <div>
-                <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ t('Ташкилот') }}</div>
+                <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ 'Организация' if is_ru else 'Ташкилот' }}</div>
                 <div>{{ req.organization.name }}</div>
             </div>
             <div>
-                <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ t('Техника') }}</div>
-                <div>{{ req.equipment.name if req.equipment else '—' }}</div>
+                <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ 'Техника' if is_ru else 'Техника' }}</div>
+                <div>{{ eq_label }}</div>
             </div>
             <div>
-                <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ t('Яратди') }}</div>
+                <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ 'Создал' if is_ru else 'Яратди' }}</div>
                 <div>{{ req.creator.full_name or req.creator.username if req.creator else '—' }}</div>
                 <div class="text-sm text-muted">{{ req.created_at.strftime('%d.%m.%Y %H:%M') }}</div>
             </div>
         </div>
         {% if req.note %}
         <div style="margin-top:12px;">
-            <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ t('Изоҳ') }}</div>
+            <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ 'Примечание' if is_ru else 'Изоҳ' }}</div>
             <div>{{ req.note }}</div>
         </div>
         {% endif %}
@@ -54,16 +56,16 @@
 </div>
 
 <div class="card" style="margin-bottom:16px;">
-    <div class="card-header">{{ t('Позициялар') }} ({{ req.items|length }})</div>
+    <div class="card-header">{{ 'Позиции' if is_ru else 'Позициялар' }} ({{ req.items|length }})</div>
     <table>
         <thead>
             <tr>
                 <th>№</th>
-                <th>{{ t('Номи') }}</th>
-                <th>{{ t('Арт. рақами') }}</th>
-                <th class="text-right">{{ t('Миқдор') }}</th>
-                <th>{{ t('Ўлчов бирлиги') }}</th>
-                <th>{{ t('Изоҳ') }}</th>
+                <th>{{ 'Название' if is_ru else 'Номи' }}</th>
+                <th>{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</th>
+                <th class="text-right">{{ 'Количество' if is_ru else 'Миқдор' }}</th>
+                <th>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
+                <th>{{ 'Примечание' if is_ru else 'Изоҳ' }}</th>
             </tr>
         </thead>
         <tbody>
@@ -81,31 +83,30 @@
     </table>
 </div>
 
-{# Actions #}
 {% if req.status == 'draft' and current_user.id == req.created_by %}
 <div style="display:flex; gap:10px; margin-bottom:16px;">
     <form method="post" action="{{ url_for('spare_parts.submit_request', rid=req.id) }}">
-        <button type="submit" class="btn btn-primary">📤 {{ t('Юборилган') }}</button>
+        <button type="submit" class="btn btn-primary">📤 {{ 'Отправить' if is_ru else 'Юбориш' }}</button>
     </form>
 </div>
 {% endif %}
 
 {% if req.status == 'submitted' and current_user.can_edit %}
 <div class="card" style="margin-bottom:16px;">
-    <div class="card-header">{{ t('Кўриб чиқиш') }}</div>
+    <div class="card-header">{{ 'Рассмотрение' if is_ru else 'Кўриб чиқиш' }}</div>
     <div class="card-body">
         <div class="form-group">
-            <label>{{ t('Изоҳ') }}</label>
-            <textarea id="reviewComment" rows="2" placeholder="Изоҳ (ихтиёрий)..."></textarea>
+            <label>{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+            <textarea id="reviewComment" rows="2" placeholder="{{ 'Примечание (необязательно)...' if is_ru else 'Изоҳ (ихтиёрий)...' }}"></textarea>
         </div>
         <div style="display:flex; gap:10px;">
             <form method="post" action="{{ url_for('spare_parts.approve_request', rid=req.id) }}" onsubmit="setComment(this)">
                 <input type="hidden" name="review_comment">
-                <button type="submit" class="btn btn-primary">✅ {{ t('Тасдиқланган') }}</button>
+                <button type="submit" class="btn btn-primary">✅ {{ 'Утвердить' if is_ru else 'Тасдиқлаш' }}</button>
             </form>
             <form method="post" action="{{ url_for('spare_parts.reject_request', rid=req.id) }}" onsubmit="setComment(this)">
                 <input type="hidden" name="review_comment">
-                <button type="submit" class="btn btn-danger">❌ {{ t('Рад этилган') }}</button>
+                <button type="submit" class="btn btn-danger">❌ {{ 'Отклонить' if is_ru else 'Рад этиш' }}</button>
             </form>
         </div>
     </div>

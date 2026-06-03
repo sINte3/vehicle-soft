@@ -82,7 +82,7 @@
                 <td>{{ loop.index }}</td>
                 <td>{{ req.request_date.strftime('%d.%m.%Y') }}</td>
                 <td>{{ req.organization.short_name or req.organization.name }}</td>
-                <td class="text-sm text-muted">{{ req.equipment.name if req.equipment else '—' }}</td>
+                <td class="text-sm text-muted">{{ req.equipment.name ~ ((' — ' ~ req.equipment.plate) if req.equipment and req.equipment.plate else '') if req.equipment else '—' }}</td>
                 <td class="text-center">{{ req.items|length }}</td>
                 <td>
                     <span style="color:{{ status_colors[req.status] }}; font-weight:600;">

@@ -1,3 +1,17 @@
+## 2026-06-03 - TASK-SEC-003C-3 completed on production
+
+- Production URL: http://10.103.25.14:5050.
+- Files changed: spare_parts.py, templates/spare_part_form.html, templates/spare_part_detail.html, templates/spare_parts_list.html, templates/spare_parts_catalog.html.
+- Added spare parts audit actions: spare_part_request_created, spare_part_item_created, spare_part_request_status_changed, spare_part_catalog_created, spare_part_catalog_updated.
+- Improved spare parts equipment selector: model, plate number, and organization are shown.
+- Improved Russian UI labels in spare parts pages.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260603_084842.db, integrity_check ok.
+- py_compile passed.
+- App import check passed: APP IMPORT OK.
+- TransportReport service restarted and running.
+- /admin/audit verified manually for spare parts actions.
+- No database migration required.
+
 ## 2026-06-03 - TASK-SEC-003C-2 completed on production
 
 - Production URL: http://10.103.25.14:5050.
