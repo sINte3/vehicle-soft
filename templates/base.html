@@ -90,7 +90,12 @@
         .flash { padding:12px 16px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; font-weight:500; }
         .flash-success { background:var(--accent-light); color:var(--accent); }
         .flash-warning { background:var(--warn-light); color:#8B6914; }
+        .flash-danger { background:var(--danger-light); color:var(--danger); }
         .flash-info { background:var(--info-light); color:var(--info); }
+        .flash-title { font-weight:700; margin-bottom:6px; }
+        .flash-list { margin:4px 0 0 18px; padding:0; }
+        .flash-list li { margin:2px 0; }
+        .field-help { margin-top:4px; font-size:11px; color:var(--text2); }
 
         .eq-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); margin-bottom:8px; overflow:hidden; }
         .eq-card-header { display:flex; align-items:center; gap:12px; padding:10px 16px; background:var(--surface2); border-bottom:1px solid var(--border); cursor:pointer; }
@@ -236,7 +241,19 @@
     <div class="container">
         {% with messages = get_flashed_messages(with_categories=true) %}
         {% for category, msg in messages %}
-        <div class="flash flash-{{ category }}">{{ msg }}</div>
+        <div class="flash flash-{{ category }}">
+            {% set lines = msg.splitlines() %}
+            {% if lines|length > 1 %}
+                <div class="flash-title">{{ lines[0] }}</div>
+                <ul class="flash-list">
+                {% for line in lines[1:] %}
+                    {% if line %}<li>{{ line[2:] if line.startswith('- ') else line }}</li>{% endif %}
+                {% endfor %}
+                </ul>
+            {% else %}
+                {{ msg }}
+            {% endif %}
+        </div>
         {% endfor %}
         {% endwith %}
         {% block content %}{% endblock %}

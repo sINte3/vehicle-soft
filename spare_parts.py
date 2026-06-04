@@ -32,6 +32,28 @@ def _spare_t(uz_text, ru_text):
     return ru_text if _spare_lang() == 'ru' else uz_text
 
 
+def _spare_format_errors(errors, title_uz=None, title_ru=None):
+    unique = []
+    seen = set()
+    for err in errors or []:
+        text = str(err).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        unique.append(text)
+    if not unique:
+        return ''
+    title = _spare_t(title_uz or 'Заявка сақланмади. Хатоларни тузатинг:',
+                     title_ru or 'Заявка не сохранена. Исправьте ошибки:')
+    return title + '\n' + '\n'.join('- ' + item for item in unique)
+
+
+def _spare_flash_errors(errors, title_uz=None, title_ru=None):
+    msg = _spare_format_errors(errors, title_uz, title_ru)
+    if msg:
+        flash(msg, 'warning')
+
+
 def _date_iso(value):
     if not value:
         return None
@@ -259,7 +281,9 @@ def save_request():
     notes = request.form.getlist('item_note')
 
     prepared_items = []
+    validation_errors = []
     for i, raw_name in enumerate(names):
+        row_no = i + 1
         name = raw_name.strip()
         qty_raw = qtys[i].strip() if i < len(qtys) else ''
         part_number = parts[i].strip() if i < len(parts) else ''
@@ -269,13 +293,13 @@ def save_request():
         if not name and not qty_raw and not part_number and not item_note:
             continue
         if not name:
-            flash(_spare_t('Запчасть номини киритинг', 'Введите название запчасти'), 'warning')
-            return redirect(url_for('spare_parts.new_request'))
+            validation_errors.append(_spare_t('{}. қатор: запчасть номини киритинг', '{} строка: введите название запчасти').format(row_no))
+            continue
         try:
             qty = _parse_spare_positive_qty(qty_raw)
         except ValueError:
-            flash(_spare_t('Миқдор мусбат бўлиши керак', 'Количество должно быть больше нуля'), 'warning')
-            return redirect(url_for('spare_parts.new_request'))
+            validation_errors.append(_spare_t('{}. қатор: миқдор мусбат бўлиши керак', '{} строка: количество должно быть больше нуля').format(row_no))
+            continue
 
         prepared_items.append({
             'name': name,
@@ -285,8 +309,12 @@ def save_request():
             'note': item_note,
         })
 
+    if validation_errors:
+        _spare_flash_errors(validation_errors)
+        return redirect(url_for('spare_parts.new_request'))
+
     if not prepared_items:
-        flash(_spare_t('Камида битта позиция киритинг', 'Добавьте хотя бы одну позицию'), 'warning')
+        _spare_flash_errors([_spare_t('Камида битта позиция киритинг', 'Добавьте хотя бы одну позицию')])
         return redirect(url_for('spare_parts.new_request'))
 
     spr = SparePartRequest(

@@ -41,6 +41,28 @@ def fuel_t(uz, ru):
     return ru if lang == 'ru' else uz
 
 
+def fuel_format_errors(errors, title_uz=None, title_ru=None):
+    unique = []
+    seen = set()
+    for err in errors or []:
+        text = str(err).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        unique.append(text)
+    if not unique:
+        return ''
+    title = fuel_t(title_uz or 'Маълумот сақланмади. Хатоларни тузатинг:',
+                   title_ru or 'Данные не сохранены. Исправьте ошибки:')
+    return title + '\n' + '\n'.join('- ' + item for item in unique)
+
+
+def fuel_flash_errors(errors, title_uz=None, title_ru=None):
+    msg = fuel_format_errors(errors, title_uz, title_ru)
+    if msg:
+        flash(msg, 'warning')
+
+
 def _parse_fuel_date(value, field_label):
     try:
         if not value:
@@ -428,18 +450,23 @@ def save_initial_balance():
     balance_date_s = request.form.get('balance_date', '')
     note = request.form.get('note', '').strip()
 
+    errors = []
     if not warehouse_id or not FuelWarehouse.query.get(warehouse_id):
-        flash(fuel_t('Омборни танланг', 'Выберите склад'), 'warning')
-        return redirect(url_for('fuel.initial_balance'))
+        errors.append(fuel_t('Омборни танланг', 'Выберите склад'))
     if fuel_type not in FUEL_TYPES:
-        flash(fuel_t('Ёқилғи тури нотўғри', 'Некорректный тип топлива'), 'warning')
-        return redirect(url_for('fuel.initial_balance'))
+        errors.append(fuel_t('Ёқилғи тури нотўғри', 'Некорректный тип топлива'))
     try:
         quantity = _parse_float_required(request.form.get('quantity'), 'quantity')
+    except ValueError:
+        quantity = None
+        errors.append(fuel_t('Миқдор сон бўлиши керак', 'Количество должно быть числом'))
+    try:
         balance_date = _parse_fuel_date(balance_date_s, 'balance_date')
     except ValueError:
-        flash(fuel_t('Миқдор сон бўлиши ва сана тўғри бўлиши керак',
-                     'Количество должно быть числом, дата должна быть корректной'), 'warning')
+        balance_date = None
+        errors.append(fuel_t('Сана тўғри бўлиши керак', 'Дата должна быть корректной'))
+    if errors:
+        fuel_flash_errors(errors)
         return redirect(url_for('fuel.initial_balance'))
 
     existing = (FuelInitialBalance.query
@@ -525,19 +552,24 @@ def save_receipt():
     note = request.form.get('note', '').strip()
     date_s = request.form.get('receipt_date', '')
 
+    errors = []
     if not warehouse_id or not FuelWarehouse.query.get(warehouse_id):
-        flash(fuel_t('Омборни танланг', 'Выберите склад'), 'warning')
-        return redirect(url_for('fuel.receipts'))
+        errors.append(fuel_t('Омборни танланг', 'Выберите склад'))
     if fuel_type not in FUEL_TYPES:
-        flash(fuel_t('Ёқилғи тури нотўғри', 'Некорректный тип топлива'), 'warning')
-        return redirect(url_for('fuel.receipts'))
+        errors.append(fuel_t('Ёқилғи тури нотўғри', 'Некорректный тип топлива'))
     try:
         quantity = _parse_positive(request.form.get('quantity'), 'quantity')
-        price = 0
+    except ValueError:
+        quantity = None
+        errors.append(fuel_t('Миқдор мусбат бўлиши керак', 'Количество должно быть больше нуля'))
+    price = 0
+    try:
         receipt_date = _parse_fuel_date(date_s, 'receipt_date')
     except ValueError:
-        flash(fuel_t('Миқдор мусбат бўлиши ва сана тўғри бўлиши керак',
-                     'Количество должно быть больше нуля, дата должна быть корректной'), 'warning')
+        receipt_date = None
+        errors.append(fuel_t('Сана тўғри бўлиши керак', 'Дата должна быть корректной'))
+    if errors:
+        fuel_flash_errors(errors)
         return redirect(url_for('fuel.receipts'))
 
     created = False

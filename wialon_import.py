@@ -14,7 +14,7 @@ import re
 import zipfile
 from datetime import datetime, date
 
-from flask import render_template, request, redirect, url_for, flash, jsonify
+from flask import render_template, request, redirect, url_for, flash, jsonify, g
 from flask_login import current_user
 
 from models import db, Equipment, Organization, VialonMapping, VialonImport, EngineHoursRecord, module_required
@@ -34,6 +34,39 @@ def _normalize_wialon_name(value):
     return re.sub(r'\s+', ' ', (value or '').strip())
 
 
+def _wialon_lang():
+    lang = getattr(g, 'lang', None)
+    if not lang and getattr(current_user, 'is_authenticated', False):
+        lang = getattr(current_user, 'language', None)
+    return 'ru' if lang == 'ru' else 'uz'
+
+
+def _wialon_t(uz_text, ru_text):
+    return ru_text if _wialon_lang() == 'ru' else uz_text
+
+
+def _wialon_format_errors(errors, title_uz=None, title_ru=None):
+    unique = []
+    seen = set()
+    for err in errors or []:
+        text = str(err).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        unique.append(text)
+    if not unique:
+        return ''
+    title = _wialon_t(title_uz or 'Маппинг сақланмади. Хатоларни тузатинг:',
+                      title_ru or 'Маппинг не сохранён. Исправьте ошибки:')
+    return title + '\n' + '\n'.join('- ' + item for item in unique)
+
+
+def _wialon_flash_errors(errors, title_uz=None, title_ru=None):
+    msg = _wialon_format_errors(errors, title_uz, title_ru)
+    if msg:
+        flash(msg, 'warning')
+
+
 def _equipment_label(eq):
     if not eq:
         return ''
@@ -49,12 +82,12 @@ def _validate_mapping_decision(eq_id, skip, current_mapping_id=None):
     if skip:
         return None, None
     if not eq_id:
-        return None, 'Техникани танланг ёки “Тизимда йўқ” белгисини қўйинг'
+        return None, _wialon_t('Техникани танланг ёки “Тизимда йўқ” белгисини қўйинг', 'Выберите технику или отметьте “Нет в системе”')
     eq = Equipment.query.get(eq_id)
     if not eq:
-        return None, 'Техника топилмади'
+        return None, _wialon_t('Техника топилмади', 'Техника не найдена')
     if not getattr(eq, 'is_active', True):
-        return None, 'Отключённую технику нельзя привязать к Wialon'
+        return None, _wialon_t('Фаол бўлмаган техникани Wialonга боғлаб бўлмайди', 'Отключённую технику нельзя привязать к Wialon')
     q = VialonMapping.query.filter(
         VialonMapping.equipment_id == eq_id,
         VialonMapping.skip == False
@@ -63,7 +96,7 @@ def _validate_mapping_decision(eq_id, skip, current_mapping_id=None):
         q = q.filter(VialonMapping.id != current_mapping_id)
     existing = q.first()
     if existing:
-        return None, 'Бу техника бошқа Wialon объектига бириктирилган: {}'.format(existing.vialon_name)
+        return None, _wialon_t('Бу техника бошқа Wialon объектига бириктирилган: {}', 'Эта техника уже привязана к другому Wialon объекту: {}').format(existing.vialon_name)
     return eq_id, None
 
 
@@ -581,7 +614,7 @@ def register_wialon_routes(app, editor_required, admin_required):
                 continue
             vkey = vname.casefold()
             if vkey in seen_vnames:
-                validation_errors.append('Wialon номлари такрорланган: {}'.format(vname))
+                validation_errors.append(_wialon_t('Wialon номи такрорланган: {}', 'Повторяется Wialon объект: {}').format(vname))
                 continue
             seen_vnames.add(vkey)
 
@@ -605,14 +638,18 @@ def register_wialon_routes(app, editor_required, admin_required):
                 continue
             if eq_id:
                 if eq_id in seen_eq_ids and seen_eq_ids[eq_id] != vname:
-                    validation_errors.append('Бир техника бир нечта Wialon объектига танланган: {} / {}'.format(
+                    validation_errors.append(_wialon_t('Бир техника бир нечта Wialon объектига танланган: {} / {}', 'Одна техника выбрана для нескольких Wialon объектов: {} / {}').format(
                         seen_eq_ids[eq_id], vname))
                     continue
                 seen_eq_ids[eq_id] = vname
             decisions.append((vname, eq_id, skip))
 
         if validation_errors:
-            flash(validation_errors[0], 'warning')
+            _wialon_flash_errors(
+                validation_errors,
+                'Авто-маппинг сақланмади. Қуйидаги хатоларни тузатинг:',
+                'Авто-маппинг не сохранён. Исправьте следующие ошибки:'
+            )
             return redirect(url_for('wialon_index'))
 
         saved_mappings = 0
@@ -676,7 +713,7 @@ def register_wialon_routes(app, editor_required, admin_required):
                 vname = m.vialon_name
         else:
             if not vname:
-                flash('Виалон номини киритинг', 'warning')
+                flash(_wialon_t('Wialon номини киритинг', 'Введите название Wialon объекта'), 'warning')
                 return redirect(url_for('wialon_mapping_list'))
             m = VialonMapping.query.filter_by(vialon_name=vname).first()
             if not m:
@@ -687,7 +724,7 @@ def register_wialon_routes(app, editor_required, admin_required):
                 before = _mapping_snapshot(m)
 
         if not vname or len(vname) < 2:
-            flash('Wialon номи жуда қисқа', 'warning')
+            flash(_wialon_t('Wialon номи жуда қисқа', 'Название Wialon объекта слишком короткое'), 'warning')
             return redirect(url_for('wialon_mapping_list'))
 
         duplicate_name = VialonMapping.query.filter(
@@ -695,12 +732,12 @@ def register_wialon_routes(app, editor_required, admin_required):
             VialonMapping.id != getattr(m, 'id', 0)
         ).first()
         if duplicate_name:
-            flash('Бундай Wialon номи аллақачон мавжуд', 'warning')
+            flash(_wialon_t('Бундай Wialon номи аллақачон мавжуд', 'Такой Wialon объект уже существует'), 'warning')
             return redirect(url_for('wialon_mapping_list'))
 
         eq_id, error = _validate_mapping_decision(eq_id, skip, current_mapping_id=getattr(m, 'id', None))
         if error:
-            flash(error, 'warning')
+            _wialon_flash_errors([error], 'Маппинг сақланмади:', 'Маппинг не сохранён:')
             return redirect(url_for('wialon_mapping_list'))
 
         m.vialon_name = vname
@@ -719,7 +756,7 @@ def register_wialon_routes(app, editor_required, admin_required):
             description='Wialon mapping saved'
         )
         db.session.commit()
-        flash('Маппинг сақланди', 'success')
+        flash(_wialon_t('Маппинг сақланди', 'Маппинг сохранён'), 'success')
         return redirect(url_for('wialon_mapping_list'))
 
     @app.route('/wialon/mapping/delete/<int:mid>', methods=['POST'])

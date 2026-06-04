@@ -13,6 +13,24 @@
 
 ## Recently completed / appears completed
 
+### DATA001-3 - Validation UX improvements
+
+Priority: P1
+Status: **completed 2026-06-04**
+
+Changes made:
+
+- Added multi-error flash message rendering.
+- Improved daily entry validation messages with equipment context.
+- Improved Fuel validation messages for initial balance and receipt forms.
+- Improved spare parts validation messages with row-level item details.
+- Improved Wialon mapping and auto-match validation messages.
+- Updated base template to display validation errors as readable lists.
+- Verified production smoke test for valid and invalid scenarios.
+- No database migration required.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260604_104248.db
+
+
 ### DATA001-2 - References and Wialon validation
 
 Priority: P0

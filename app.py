@@ -149,6 +149,31 @@ def create_app():
         # safety guards where templates are not involved.
         return ru if getattr(g, 'lang', 'uz') == 'ru' else uz
 
+    def format_validation_errors(errors, title_uz=None, title_ru=None):
+        # [REASON]: Present several validation problems at once so operators
+        # can fix the whole form in one pass instead of resubmitting repeatedly.
+        unique = []
+        seen = set()
+        for err in errors or []:
+            text = str(err).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            unique.append(text)
+        if not unique:
+            return ''
+        if len(unique) == 1 and not title_uz and not title_ru:
+            return unique[0]
+        title = ui_t(title_uz or 'Маълумот сақланмади', title_ru or 'Данные не сохранены')
+        if len(unique) == 1:
+            return title + '\n- ' + unique[0]
+        return title + '\n' + '\n'.join('- ' + item for item in unique)
+
+    def flash_validation_errors(errors, title_uz=None, title_ru=None):
+        msg = format_validation_errors(errors, title_uz, title_ru)
+        if msg:
+            flash(msg, 'warning')
+
     def admin_required(f):
         @wraps(f)
         @login_required
@@ -601,13 +626,13 @@ def create_app():
         for eq_id in eq_ids:
             eq = Equipment.query.get(eq_id)
             if not eq or eq.organization_id != org_id or not eq.is_active:
-                validation_errors.append(ui_t('Техника нотўғри танланган', 'Некорректно выбрана техника'))
+                validation_errors.append(ui_t('Техника нотўғри танланган', 'Некорректно выбрана техника') + f' ID={eq_id}')
                 continue
 
             p = f'eq_{eq_id}_'
             status = data.get(f'{p}status', 'idle')
             if status not in {'idle', 'working'}:
-                validation_errors.append(ui_t('Техника ҳолати нотўғри', 'Некорректный статус техники'))
+                validation_errors.append(f'{eq.name} {eq.plate}: ' + ui_t('техника ҳолати нотўғри', 'некорректный статус техники'))
                 continue
 
             if status == 'idle':
@@ -636,18 +661,18 @@ def create_app():
                     continue
 
                 if not work_type:
-                    validation_errors.append(ui_t('Иш турини танланг', 'Выберите вид работ'))
+                    validation_errors.append(f'{eq.name} {eq.plate}: ' + ui_t('иш турини танланг', 'выберите вид работ'))
                     continue
                 if payment not in valid_payments:
-                    validation_errors.append(ui_t('Тўлов тури нотўғри', 'Некорректный тип оплаты'))
+                    validation_errors.append(f'{eq.name} {eq.plate}: ' + ui_t('тўлов тури нотўғри', 'некорректный тип оплаты'))
                     continue
 
                 try:
                     qty = parse_positive_float(qty_s, 'quantity')
                     price = parse_non_negative_float(price_s, 'price', allow_empty=True)
                 except ValueError:
-                    validation_errors.append(ui_t('Миқдор мусбат, нарх эса манфий бўлмаслиги керак',
-                                                  'Количество должно быть больше нуля, цена не может быть отрицательной'))
+                    validation_errors.append(f'{eq.name} {eq.plate}: ' + ui_t('миқдор мусбат, нарх эса манфий бўлмаслиги керак',
+                                                  'количество должно быть больше нуля, цена не может быть отрицательной'))
                     continue
 
                 price = price if price is not None else 0
@@ -662,14 +687,18 @@ def create_app():
                 })
 
             if not lines_to_save:
-                validation_errors.append(ui_t('Ишлайдиган техника учун камида битта иш сатри керак',
-                                              'Для работающей техники нужна хотя бы одна строка работы'))
+                validation_errors.append(f'{eq.name} {eq.plate}: ' + ui_t('ишлайдиган техника учун камида битта иш сатри керак',
+                                              'для работающей техники нужна хотя бы одна строка работы'))
                 continue
 
             prepared[eq_id] = {'status': 'working', 'lines': lines_to_save}
 
         if validation_errors:
-            flash(validation_errors[0], 'warning')
+            flash_validation_errors(
+                validation_errors,
+                'Ҳисобот сақланмади. Қуйидаги хатоларни тузатинг:',
+                'Отчёт не сохранён. Исправьте следующие ошибки:'
+            )
             return redirect(url_for('daily_entry', date=sel.isoformat(), org_id=org_id))
 
         daily_fields = ['id', 'work_date', 'equipment_id', 'line_index', 'status', 'work_type', 'customer', 'unit', 'quantity', 'price', 'payment_type', 'idle_reason', 'note', 'amount_cash', 'amount_transfer', 'amount_internal', 'amount_other']
