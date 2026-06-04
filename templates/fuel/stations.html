@@ -1,149 +1,159 @@
 {% extends "base.html" %}
-{% block title %}АЗС — {{ t('АЗС — Маълумотнома') }}{% endblock %}
+{% block title %}АЗС — {{ 'Справочник АЗС' if lang == 'ru' else 'АЗС маълумотномаси' }}{% endblock %}
 {% block content %}
+
+{% set L_title = 'Справочник АЗС' if lang == 'ru' else 'АЗС маълумотномаси' %}
+{% set L_subtitle = 'Каждая АЗС привязывается к складу и Topaz ID. Выдачи ДТ приходят из Topaz.' if lang == 'ru' else 'Ҳар бир АЗС омбор ва Topaz ID га боғланади. ДТ беришлари Topazдан келади.' %}
+{% set L_back = '← Склады' if lang == 'ru' else '← Омборлар' %}
 {% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
 {% set L_deactivate = 'Отключить' if lang == 'ru' else 'Фаол эмас қилиш' %}
 {% set L_disabled = 'Отключена' if lang == 'ru' else 'Ўчирилган' %}
 {% set L_enable = 'Включить' if lang == 'ru' else 'Фаоллаштириш' %}
 {% set L_linked_tip = 'Есть Topaz-транзакции. Физическое удаление заблокировано.' if lang == 'ru' else 'Topaz транзакциялар мавжуд. Жисмоний ўчириш блокланган.' %}
+{% set L_form = 'Добавить / редактировать АЗС' if lang == 'ru' else 'АЗС қўшиш / таҳрирлаш' %}
+{% set L_name = 'Название АЗС' if lang == 'ru' else 'АЗС номи' %}
+{% set L_wh = 'Склад' if lang == 'ru' else 'Омбор' %}
+{% set L_select = '— выберите —' if lang == 'ru' else '— танланг —' %}
+{% set L_active = 'Активна' if lang == 'ru' else 'Фаол' %}
+{% set L_save = 'Сохранить' if lang == 'ru' else 'Сақлаш' %}
+{% set L_clear = 'Очистить' if lang == 'ru' else 'Тозалаш' %}
+{% set L_all = 'Все АЗС' if lang == 'ru' else 'Барча АЗС' %}
+{% set L_status = 'Статус' if lang == 'ru' else 'Ҳолат' %}
+{% set L_tx = 'Транзакций' if lang == 'ru' else 'Транзакциялар' %}
+{% set L_edit = 'Изменить' if lang == 'ru' else 'Ўзг.' %}
+{% set L_search = 'Поиск по АЗС, складу или Topaz ID' if lang == 'ru' else 'АЗС, омбор ёки Topaz ID бўйича қидириш' %}
+{% set L_filter_all = 'Все статусы' if lang == 'ru' else 'Барча ҳолатлар' %}
+{% set L_filter_active = 'Активные' if lang == 'ru' else 'Фаоллар' %}
+{% set L_filter_disabled = 'Отключённые' if lang == 'ru' else 'Ўчирилганлар' %}
+{% set L_no_data = 'АЗС не добавлены. Добавьте вручную.' if lang == 'ru' else 'АЗС қўшилмаган. Қўлда қўшинг.' %}
+{% set L_confirm_enable = 'Включить АЗС' if lang == 'ru' else 'АЗС фаоллаштирилсинми' %}
+{% set L_confirm_deactivate = 'Отключить АЗС' if lang == 'ru' else 'АЗС фаол эмас қилинсинми' %}
+{% set L_confirm_delete = 'Удалить АЗС' if lang == 'ru' else 'АЗС ўчирилсинми' %}
+
+<style>
+.fuel-help { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
+.fuel-toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
+.fuel-toolbar input[type="text"] { min-width:280px; flex:1; }
+.station-row.is-hidden { display:none; }
+.invalid-client { border-color:var(--danger) !important; box-shadow:0 0 0 2px rgba(220,38,38,.12); }
+</style>
 
 <div class="page-header">
-    <h1>{{ t('АЗС — Маълумотнома') }}</h1>
-    <a href="{{ url_for('fuel.warehouses') }}" class="btn btn-secondary">{{ t('← Омборлар') }}</a>
+    <div><h1>{{ L_title }}</h1><div class="text-muted text-sm">{{ L_subtitle }}</div></div>
+    <a href="{{ url_for('fuel.warehouses') }}" class="btn btn-secondary">{{ L_back }}</a>
 </div>
 
-{# Add/Edit form #}
+<div class="fuel-help"><strong>Topaz ID.</strong> {{ L_subtitle }}</div>
+
 <div class="card" style="margin-bottom:20px;">
-    <div class="card-header">{{ t('АЗС қўшиш / таҳрирлаш') }}</div>
+    <div class="card-header"><span id="stationFormTitle">{{ L_form }}</span></div>
     <div class="card-body">
-        <form method="post" action="{{ url_for('fuel.save_station') }}" class="form-inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <form method="post" action="{{ url_for('fuel.save_station') }}" class="form-inline" id="stationForm" onsubmit="return validateStationBeforeSubmit()">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="stId" value="">
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_name }}</label><input type="text" name="name" id="stName" required></div>
+            <div class="form-group" style="margin-bottom:0;"><label>Topaz ID</label><input type="number" name="topaz_id" id="stTopazId" required min="1" style="width:130px;"></div>
             <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ t('АЗС номи') }}</label>
-                <input type="text" name="name" id="stName" placeholder="Мехнат Рохат" required>
+                <label>{{ L_wh }}</label>
+                <select name="warehouse_id" id="stWarehouse" required><option value="">{{ L_select }}</option>{% for wh in warehouses %}<option value="{{ wh.id }}">{{ wh.name }}</option>{% endfor %}</select>
             </div>
             <div class="form-group" style="margin-bottom:0;">
-                <label>Topaz ID</label>
-                <input type="number" name="topaz_id" id="stTopazId" placeholder="812001" required style="width:130px;">
+                <label>{{ L_active }}</label>
+                <label style="border:none; padding:0; gap:6px; font-weight:normal; font-size:13px;"><input type="checkbox" name="is_active" id="stActive" checked style="width:auto;"> ✓</label>
             </div>
-            <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ t('Омбор') }}</label>
-                <select name="warehouse_id" id="stWarehouse" required>
-                    <option value="">{{ t('— танланг —') }}</option>
-                    {% for wh in warehouses %}
-                    <option value="{{ wh.id }}">{{ wh.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>{{ t('Фаол') }}</label>
-                <label style="border:none; padding:0; gap:6px; font-weight:normal; font-size:13px;">
-                    <input type="checkbox" name="is_active" id="stActive" checked style="width:auto;">
-                    ✓
-                </label>
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>&nbsp;</label>
-                <button type="submit" class="btn btn-primary">{{ t('Сақлаш') }}</button>
-                <button type="button" class="btn btn-secondary" onclick="clearStForm()">{{ t('Тозалаш') }}</button>
-            </div>
+            <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button type="submit" class="btn btn-primary">{{ L_save }}</button><button type="button" class="btn btn-secondary" onclick="clearStForm()">{{ L_clear }}</button></div>
         </form>
     </div>
 </div>
 
-{# Stations table #}
+<div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin-bottom:16px;">
+    <div class="stat-card"><div class="label">{{ L_all }}</div><div class="value">{{ stations|length }}</div></div>
+    <div class="stat-card"><div class="label">{{ L_filter_active }}</div><div class="value">{{ stations|selectattr('is_active')|list|length }}</div></div>
+    <div class="stat-card"><div class="label">{{ L_filter_disabled }}</div><div class="value">{{ stations|rejectattr('is_active')|list|length }}</div></div>
+</div>
+
+<div class="fuel-toolbar">
+    <input type="text" id="stationSearch" placeholder="{{ L_search }}" oninput="filterStations()">
+    <select id="stationStatusFilter" onchange="filterStations()" style="max-width:200px;"><option value="all">{{ L_filter_all }}</option><option value="active">{{ L_filter_active }}</option><option value="disabled">{{ L_filter_disabled }}</option></select>
+    <span class="text-muted text-sm" id="stationVisibleCount"></span>
+</div>
+
 <div class="card">
-    <div class="card-header">{{ t('Барча АЗС') }} ({{ stations|length }})</div>
+    <div class="card-header">{{ L_all }} ({{ stations|length }})</div>
+    <div style="overflow-x:auto;">
     <table>
-        <thead>
-            <tr>
-                <th>{{ t('АЗС номи') }}</th>
-                <th>Topaz ID</th>
-                <th>{{ t('Омбор') }}</th>
-                <th class="text-center">{{ t('Ҳолат') }}</th>
-                <th class="text-right">{{ t('Транзакциялар') }}</th>
-                <th></th>
-            </tr>
-        </thead>
+        <thead><tr><th>{{ L_name }}</th><th>Topaz ID</th><th>{{ L_wh }}</th><th class="text-center">{{ L_status }}</th><th class="text-right">{{ L_tx }}</th><th></th></tr></thead>
         <tbody>
         {% for st in stations %}
-        <tr>
-            <td style="font-weight:500;">{{ st.name }}</td>
+        <tr class="station-row" data-status="{{ 'active' if st.is_active else 'disabled' }}" data-search="{{ (st.name ~ ' ' ~ (st.warehouse.name if st.warehouse else '') ~ ' ' ~ st.topaz_id|string)|lower }}">
+            <td style="font-weight:600;">{{ st.name }}</td>
             <td><code>{{ st.topaz_id }}</code></td>
             <td>{{ st.warehouse.name if st.warehouse else '—' }}</td>
-            <td class="text-center">
-                {% if st.is_active %}
-                <span class="working-badge">{{ t('Фаол') }}</span>
-                {% else %}
-                <span class="idle-badge">{{ t('Ўч.') }}</span>
-                {% endif %}
-            </td>
+            <td class="text-center">{% if st.is_active %}<span class="working-badge">{{ L_active }}</span>{% else %}<span class="idle-badge">{{ L_disabled }}</span>{% endif %}</td>
             <td class="text-right text-muted text-sm">{{ st.transactions.count() }}</td>
             <td style="white-space:nowrap;">
-                <button class="btn btn-secondary btn-sm"
-                        onclick="editSt({{ st.id }}, '{{ st.name }}', {{ st.topaz_id }},
-                                        {{ st.warehouse_id }}, {{ st.is_active|lower }})">
-                    {{ t('Ўзг.') }}
-                </button>
+                <button class="btn btn-secondary btn-sm" onclick='editSt({{ st.id }}, {{ st.name|tojson }}, {{ st.topaz_id }}, {{ st.warehouse_id }}, {{ st.is_active|lower }})'>{{ L_edit }}</button>
                 {% set del_info = station_delete_info.get(st.id) %}
                 {% if del_info and del_info.can_delete %}
-                <form method="post" action="{{ url_for('fuel.delete_station', sid=st.id) }}"
-                      style="display:inline;"
-                      onsubmit="return confirm('{{ L_delete }}: {{ st.name }}?')">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-danger btn-sm" title="{{ L_delete }}">✕</button>
-                </form>
+                <form method="post" action="{{ url_for('fuel.delete_station', sid=st.id) }}" style="display:inline;" onsubmit="return confirm('{{ L_confirm_delete }}: {{ st.name }}?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-danger btn-sm" title="{{ L_delete }}">✕</button></form>
                 {% elif not st.is_active %}
-                <form method="post" action="{{ url_for('fuel.enable_station', sid=st.id) }}"
-                      style="display:inline;"
-                      onsubmit="return confirm('{{ L_enable }}: {{ st.name }}?')">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-primary btn-sm">{{ L_enable }}</button>
-                </form>
+                <form method="post" action="{{ url_for('fuel.enable_station', sid=st.id) }}" style="display:inline;" onsubmit="return confirm('{{ L_confirm_enable }}: {{ st.name }}?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-primary btn-sm">{{ L_enable }}</button></form>
                 {% elif del_info and del_info.can_deactivate %}
-                <form method="post" action="{{ url_for('fuel.delete_station', sid=st.id) }}"
-                      style="display:inline;"
-                      onsubmit="return confirm('{{ L_deactivate }}: {{ st.name }}?')">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-secondary btn-sm" title="{{ L_linked_tip }}">{{ L_deactivate }}</button>
-                </form>
-                {% else %}
-                <span class="idle-badge" title="{{ L_linked_tip }}">{{ L_disabled }}</span>
-                {% endif %}
+                <form method="post" action="{{ url_for('fuel.delete_station', sid=st.id) }}" style="display:inline;" onsubmit="return confirm('{{ L_confirm_deactivate }}: {{ st.name }}?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-secondary btn-sm" title="{{ L_linked_tip }}">{{ L_deactivate }}</button></form>
+                {% else %}<span class="idle-badge" title="{{ L_linked_tip }}">{{ L_disabled }}</span>{% endif %}
             </td>
         </tr>
         {% else %}
-        <tr>
-            <td colspan="6" class="text-center text-muted" style="padding:40px;">
-                {{ t('АЗС қўшилмаган. migrate_fuel_v2.py ни ишга туширинг ёки қўлда қўшинг.') }}
-            </td>
-        </tr>
+        <tr><td colspan="6" class="text-center text-muted" style="padding:40px;">{{ L_no_data }}</td></tr>
         {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 
 {% endblock %}
 {% block scripts %}
 <script>
+const LForm = {{ L_form|tojson }};
 function editSt(id, name, topazId, whId, isActive) {
+    document.getElementById('stationFormTitle').textContent = LForm + ' #' + id;
     document.getElementById('stId').value = id;
     document.getElementById('stName').value = name;
     document.getElementById('stTopazId').value = topazId;
     document.getElementById('stActive').checked = isActive;
     const sel = document.getElementById('stWarehouse');
-    for (let i = 0; i < sel.options.length; i++) {
-        sel.options[i].selected = (sel.options[i].value == whId);
-    }
+    for (let i = 0; i < sel.options.length; i++) sel.options[i].selected = (sel.options[i].value == whId);
     window.scrollTo(0, 0);
 }
 function clearStForm() {
+    document.getElementById('stationFormTitle').textContent = LForm;
     document.getElementById('stId').value = '';
     document.getElementById('stName').value = '';
     document.getElementById('stTopazId').value = '';
     document.getElementById('stWarehouse').selectedIndex = 0;
     document.getElementById('stActive').checked = true;
+    document.querySelectorAll('.invalid-client').forEach(el => el.classList.remove('invalid-client'));
 }
+function validateStationBeforeSubmit() {
+    let ok = true;
+    const form = document.getElementById('stationForm');
+    form.querySelectorAll('.invalid-client').forEach(el => el.classList.remove('invalid-client'));
+    ['stName','stTopazId','stWarehouse'].forEach(id => { const el = document.getElementById(id); if (!el.value || (id === 'stTopazId' && parseInt(el.value,10) <= 0)) { el.classList.add('invalid-client'); ok = false; }});
+    return ok;
+}
+function filterStations() {
+    const q = (document.getElementById('stationSearch').value || '').toLowerCase().trim();
+    const status = document.getElementById('stationStatusFilter').value;
+    let visible = 0;
+    document.querySelectorAll('.station-row').forEach(row => {
+        const byText = !q || row.dataset.search.indexOf(q) !== -1;
+        const byStatus = status === 'all' || row.dataset.status === status;
+        const show = byText && byStatus;
+        row.classList.toggle('is-hidden', !show);
+        if (show) visible++;
+    });
+    document.getElementById('stationVisibleCount').textContent = visible + ' / ' + document.querySelectorAll('.station-row').length;
+}
+document.addEventListener('DOMContentLoaded', filterStations);
 </script>
 {% endblock %}

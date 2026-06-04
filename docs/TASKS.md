@@ -13,6 +13,24 @@
 
 ## Recently completed / appears completed
 
+### UX001C - Fuel module UX
+
+Priority: P1
+Status: **completed 2026-06-04**
+
+Changes made:
+
+- Improved Fuel dashboard, Topaz transactions, receipts, initial balances, warehouses, and stations screens.
+- Removed price/sum visual logic from Fuel operator UI.
+- Added clearer DT-only and liters-focused operator guidance.
+- Added search/filter UX for receipts, initial balances, warehouses, and stations.
+- Added clearer station active/disabled and warehouse used/delete states.
+- Verified staging fuel data freshness issue was caused by stale staging DB; staging DB was refreshed from production backup.
+- Verified production smoke test for dashboard, transactions, receipts, initial balances, warehouses, stations, and RU/UZ UI.
+- No database migration required.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260604_120114.db
+
+
 ### UX001B - Wialon mapping UX
 
 Priority: P1

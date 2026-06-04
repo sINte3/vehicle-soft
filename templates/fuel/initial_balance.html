@@ -1,103 +1,144 @@
 {% extends "base.html" %}
-{% block title %}АЗС — {{ t('Ёқилғи бошланғич қолдиқлари') }}{% endblock %}
+{% block title %}АЗС — {{ 'Начальные остатки топлива' if lang == 'ru' else 'Ёқилғи бошланғич қолдиқлари' }}{% endblock %}
 {% block content %}
 
+{% set L_title = 'Начальные остатки топлива' if lang == 'ru' else 'Ёқилғи бошланғич қолдиқлари' %}
+{% set L_back = '← Дашборд' if lang == 'ru' else '← Дашборд' %}
+{% set L_rule1 = 'Начальный остаток — точка отсчёта баланса по складу.' if lang == 'ru' else 'Бошланғич қолдиқ — омбор бўйича баланснинг бошланиш нуқтаси.' %}
+{% set L_rule2 = 'Отрицательное значение допускается как корректировка.' if lang == 'ru' else 'Манфий қиймат корректировка сифатида рухсат этилади.' %}
+{% set L_formula = 'Формула: начальный остаток + приход − выдачи Topaz.' if lang == 'ru' else 'Формула: бошланғич қолдиқ + кирим − Topaz беришлари.' %}
+{% set L_set = 'Установить начальный остаток' if lang == 'ru' else 'Бошланғич қолдиқни белгилаш' %}
+{% set L_wh = 'Склад' if lang == 'ru' else 'Омбор' %}
+{% set L_select = '— выберите —' if lang == 'ru' else '— танланг —' %}
+{% set L_fuel = 'Топливо' if lang == 'ru' else 'Ёқилғи тури' %}
+{% set L_qty = 'Остаток, литры' if lang == 'ru' else 'Қолдиқ, литр' %}
+{% set L_date = 'Дата остатка' if lang == 'ru' else 'Қолдиқ санаси' %}
+{% set L_note = 'Примечание' if lang == 'ru' else 'Изоҳ' %}
+{% set L_save = 'Сохранить' if lang == 'ru' else 'Сақлаш' %}
+{% set L_current = 'Текущие начальные остатки' if lang == 'ru' else 'Жорий бошланғич қолдиқлар' %}
+{% set L_missing = 'Начальный остаток не задан' if lang == 'ru' else 'Бошланғич қолдиқ белгиланмаган' %}
+{% set L_negative = 'Корректировка / отрицательный остаток' if lang == 'ru' else 'Корректировка / манфий қолдиқ' %}
+{% set L_search = 'Поиск по складу или примечанию' if lang == 'ru' else 'Омбор ёки изоҳ бўйича қидириш' %}
+{% set L_hint_qty = 'Можно указать отрицательное значение, если это корректировка.' if lang == 'ru' else 'Агар корректировка бўлса, манфий қиймат киритиш мумкин.' %}
+
+<style>
+.fuel-help { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
+.fuel-pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700; background:var(--info-light); color:var(--info); }
+.fuel-toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
+.fuel-toolbar input[type="text"] { min-width:280px; flex:1; }
+.invalid-client { border-color:var(--danger) !important; box-shadow:0 0 0 2px rgba(220,38,38,.12); }
+</style>
+
 <div class="page-header">
-    <h1>{{ t('Ёқилғи бошланғич қолдиқлари') }}</h1>
-    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ t('← Дашборд') }}</a>
+    <div><h1>{{ L_title }}</h1><div class="text-muted text-sm">{{ L_formula }}</div></div>
+    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ L_back }}</a>
 </div>
 
-<div class="card" style="margin-bottom:16px; border-left:3px solid var(--info);">
-    <div class="card-body" style="padding:12px 16px; font-size:13px; color:var(--info);">
-        {{ t('Бошланғич қолдиқ — ҳар бир омбор ва ёқилғи тури учун ҳисоблаш бошланадиган нуқта.') }}
-        {{ t('У белгилангандан кейин қолдиқ автоматик ҳисобланади:') }}
-        <strong>{{ t('Бошланғич қолдиқ, л') }} + {{ t('Киримлар') }} − {{ t('Ёқилғи беришлар тарихи') }}</strong>.
-        {{ t('Бошланғич қолдиқ ўзгариши бутун балансни қайта ҳисоблайди.') }}
-    </div>
-</div>
+<div class="fuel-help"><strong>ДТ.</strong> {{ L_rule1 }} {{ L_rule2 }}</div>
 
-{# Form to add/update initial balance #}
 <div class="card" style="margin-bottom:24px;">
-    <div class="card-header">{{ t('Бошланғич қолдиқни белгилаш') }}</div>
+    <div class="card-header">{{ L_set }}</div>
     <div class="card-body">
-        <form method="post" action="{{ url_for('fuel.save_initial_balance') }}" class="form-inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <form method="post" action="{{ url_for('fuel.save_initial_balance') }}" class="form-inline" id="initialBalanceForm" onsubmit="return validateInitialBalanceBeforeSubmit()">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ t('Омбор') }}</label>
+                <label>{{ L_wh }}</label>
                 <select name="warehouse_id" required>
-                    <option value="">{{ t('— танланг —') }}</option>
-                    {% for wh in warehouses %}
-                    <option value="{{ wh.id }}">{{ wh.name }}</option>
-                    {% endfor %}
+                    <option value="">{{ L_select }}</option>
+                    {% for wh in warehouses %}<option value="{{ wh.id }}">{{ wh.name }}</option>{% endfor %}
                 </select>
             </div>
             <input type="hidden" name="fuel_type" value="ДТ">
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ t('Ёқилғи тури') }}</label>
-                <div style="padding:8px 12px; background:var(--info-light); color:var(--info); border-radius:4px; font-weight:600;">ДТ</div>
+                <label>{{ L_fuel }}</label>
+                <div class="fuel-pill">ДТ</div>
             </div>
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ t('Қолдиқ, литр') }}</label>
-                <input type="number" name="quantity" step="0.1" required style="width:120px;">
+                <label>{{ L_qty }}</label>
+                <input type="number" name="quantity" step="0.1" required style="width:140px;" title="{{ L_hint_qty }}">
+                <small class="text-muted">{{ L_hint_qty }}</small>
             </div>
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ t('Қолдиқ санаси') }}</label>
+                <label>{{ L_date }}</label>
                 <input type="date" name="balance_date" value="{{ today.isoformat() }}" required>
             </div>
             <div class="form-group" style="margin-bottom:0; flex:1;">
-                <label>{{ t('Изоҳ') }}</label>
+                <label>{{ L_note }}</label>
                 <input type="text" name="note" placeholder="">
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>&nbsp;</label>
-                <button type="submit" class="btn btn-primary">{{ t('Сақлаш') }}</button>
+                <button type="submit" class="btn btn-primary">{{ L_save }}</button>
             </div>
         </form>
     </div>
 </div>
 
-{# Current initial balances #}
+<div class="fuel-toolbar">
+    <input type="text" id="initialSearch" placeholder="{{ L_search }}" oninput="filterInitialBalances()">
+    <span class="text-muted text-sm" id="initialVisibleCount"></span>
+</div>
+
 <div class="card">
-    <div class="card-header">{{ t('Жорий бошланғич қолдиқлар') }}</div>
+    <div class="card-header">{{ L_current }}</div>
+    <div style="overflow-x:auto;">
     <table>
         <thead>
-            <tr>
-                <th>{{ t('Омбор') }}</th>
-                <th>{{ t('Ёқилғи тури') }}</th>
-                <th class="text-right">{{ t('Бошланғич қолдиқ, л') }}</th>
-                <th>{{ t('Сана') }}</th>
-                <th class="text-muted text-sm">{{ t('Изоҳ') }}</th>
-            </tr>
+            <tr><th>{{ L_wh }}</th><th>{{ L_fuel }}</th><th class="text-right">{{ L_qty }}</th><th>{{ L_date }}</th><th class="text-muted text-sm">{{ L_note }}</th></tr>
         </thead>
         <tbody>
         {% for wh in warehouses %}
             {% set ibs = existing.get(wh.id, {}) %}
             {% if ibs %}
                 {% for ft, ib in ibs.items() %}
-                <tr>
-                    {% if loop.first %}
-                    <td rowspan="{{ ibs|length }}" style="font-weight:600; vertical-align:top; padding-top:10px;">
-                        {{ wh.name }}
+                <tr class="initial-row" data-search="{{ (wh.name ~ ' ' ~ (ib.note or ''))|lower }}">
+                    {% if loop.first %}<td rowspan="{{ ibs|length }}" style="font-weight:700; vertical-align:top; padding-top:10px;">{{ wh.name }}</td>{% endif %}
+                    <td><span class="fuel-pill">{{ ft }}</span></td>
+                    <td class="text-right" style="font-weight:700; {% if ib.quantity < 0 %}color:var(--danger);{% endif %}">
+                        {{ '%.1f'|format(ib.quantity) }}
+                        {% if ib.quantity < 0 %}<div class="text-muted text-sm">{{ L_negative }}</div>{% endif %}
                     </td>
-                    {% endif %}
-                    <td><span style="font-size:11px; padding:1px 6px; background:var(--info-light);
-                                     color:var(--info); border-radius:2px;">{{ ft }}</span></td>
-                    <td class="text-right" style="font-weight:600;">{{ '%.0f'|format(ib.quantity) }}</td>
                     <td class="text-sm">{{ ib.balance_date.strftime('%d.%m.%Y') }}</td>
                     <td class="text-muted text-sm">{{ ib.note or '' }}</td>
                 </tr>
                 {% endfor %}
             {% else %}
-            <tr>
-                <td style="font-weight:600;">{{ wh.name }}</td>
-                <td colspan="4" class="text-muted text-sm" style="color:var(--danger);">
-                    ⚠ {{ t('Бошланғич қолдиқ белгиланмаган') }}
-                </td>
+            <tr class="initial-row" data-search="{{ wh.name|lower }}">
+                <td style="font-weight:700;">{{ wh.name }}</td>
+                <td colspan="4" class="text-muted text-sm" style="color:var(--danger);">⚠ {{ L_missing }}</td>
             </tr>
             {% endif %}
         {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 
+{% endblock %}
+{% block scripts %}
+<script>
+function validateInitialBalanceBeforeSubmit() {
+    let ok = true;
+    const form = document.getElementById('initialBalanceForm');
+    form.querySelectorAll('.invalid-client').forEach(el => el.classList.remove('invalid-client'));
+    const wh = form.querySelector('[name=warehouse_id]');
+    const qty = form.querySelector('[name=quantity]');
+    const dt = form.querySelector('[name=balance_date]');
+    if (!wh.value) { wh.classList.add('invalid-client'); ok = false; }
+    if (!qty.value || isNaN(parseFloat(qty.value))) { qty.classList.add('invalid-client'); ok = false; }
+    if (!dt.value) { dt.classList.add('invalid-client'); ok = false; }
+    return ok;
+}
+function filterInitialBalances() {
+    const q = (document.getElementById('initialSearch').value || '').toLowerCase().trim();
+    let visible = 0;
+    document.querySelectorAll('.initial-row').forEach(row => {
+        const show = !q || row.dataset.search.indexOf(q) !== -1;
+        row.style.display = show ? '' : 'none';
+        if (show) visible++;
+    });
+    document.getElementById('initialVisibleCount').textContent = visible + ' / ' + document.querySelectorAll('.initial-row').length;
+}
+document.addEventListener('DOMContentLoaded', filterInitialBalances);
+</script>
 {% endblock %}

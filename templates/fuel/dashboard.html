@@ -1,55 +1,102 @@
 {% extends "base.html" %}
-{% block title %}АЗС — {{ t('Ёқилғи қолдиқлари') }}{% endblock %}
+{% block title %}АЗС — {{ 'Остатки топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари' }}{% endblock %}
 {% block content %}
 
-<div class="page-header">
-    <h1>{{ t('АЗС — Ёқилғи қолдиқлари') }}</h1>
-    <div style="display:flex; gap:8px; align-items:center;">
-        {% if last_sync %}
-        <span class="text-muted text-sm">
-            {{ t('Охирги синхр.:') }} {{ last_sync.synced_at.strftime('%d.%m.%Y %H:%M') }}
-            (+{{ last_sync.transactions_new }})
-        </span>
-        {% else %}
-        <span class="text-muted text-sm" style="color:var(--danger);">{{ t('Синхронизация йўқ') }}</span>
-        {% endif %}
-        <a href="{{ url_for('fuel.transactions') }}" class="btn btn-secondary btn-sm">{{ t('Ёқилғи беришлар тарихи') }}</a>
-        <a href="{{ url_for('fuel.receipts') }}" class="btn btn-secondary btn-sm">{{ t('Киримлар') }}</a>
+{% set L_title = 'Остатки топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари' %}
+{% set L_subtitle = 'Внутренний учёт ДТ по складам, АЗС, приходам и выдачам из Topaz.' if lang == 'ru' else 'Омборлар, АЗС, киримлар ва Topaz беришлари бўйича ДТ ички ҳисоби.' %}
+{% set L_dt_rule = 'Топливо учитывается только как ДТ. Цены и суммы в модуле не используются.' if lang == 'ru' else 'Ёқилғи фақат ДТ сифатида ҳисобга олинади. Модулда нарх ва сумма ишлатилмайди.' %}
+{% set L_last_sync = 'Последняя синхронизация:' if lang == 'ru' else 'Охирги синхр.:' %}
+{% set L_no_sync = 'Синхронизаций пока нет' if lang == 'ru' else 'Синхронизация ҳали йўқ' %}
+{% set L_transactions = 'История выдач' if lang == 'ru' else 'Ёқилғи беришлар тарихи' %}
+{% set L_receipts = 'Приходы' if lang == 'ru' else 'Киримлар' %}
+{% set L_stations = 'АЗС' if lang == 'ru' else 'АЗС' %}
+{% set L_warehouses = 'Склады' if lang == 'ru' else 'Омборлар' %}
+{% set L_initial = 'Начальные остатки' if lang == 'ru' else 'Бошл. қолдиқлар' %}
+{% set L_today = 'Выдано сегодня' if lang == 'ru' else 'Бугун берилди' %}
+{% set L_warehouse_count = 'Складов' if lang == 'ru' else 'Омборлар сони' %}
+{% set L_active_stations = 'Активных АЗС' if lang == 'ru' else 'Фаол АЗС' %}
+{% set L_balances = 'Остатки по складам' if lang == 'ru' else 'Омборлар бўйича қолдиқлар' %}
+{% set L_wh = 'Склад' if lang == 'ru' else 'Омбор' %}
+{% set L_fuel = 'Топливо' if lang == 'ru' else 'Ёқилғи' %}
+{% set L_balance = 'Остаток, л' if lang == 'ru' else 'Қолдиқ, л' %}
+{% set L_today_issued = 'Сегодня выдано, л' if lang == 'ru' else 'Бугун берилди, л' %}
+{% set L_last_issue = 'Последняя выдача' if lang == 'ru' else 'Охирги бериш' %}
+{% set L_initial_missing = 'Начальный остаток не задан' if lang == 'ru' else 'Бошланғич қолдиқ белгиланмаган' %}
+{% set L_set = 'Задать' if lang == 'ru' else 'Белгилаш' %}
+{% set L_not_configured = 'Склады не настроены.' if lang == 'ru' else 'Омборлар созланмаган.' %}
+{% set L_open_ref = 'Открыть справочник' if lang == 'ru' else 'Маълумотномани очиш' %}
+{% set L_recent = 'Последние выдачи из Topaz' if lang == 'ru' else 'Topaz бўйича охирги беришлар' %}
+{% set L_all = 'Все' if lang == 'ru' else 'Барчаси' %}
+{% set L_datetime = 'Дата/время' if lang == 'ru' else 'Сана/вақт' %}
+{% set L_quantity = 'Литры' if lang == 'ru' else 'Литр' %}
+{% set L_card = 'Карта' if lang == 'ru' else 'Карта' %}
+{% set L_no_rows = 'Нет данных для отображения.' if lang == 'ru' else 'Кўрсатиш учун маълумот йўқ.' %}
+{% set L_negative = 'Отрицательный остаток' if lang == 'ru' else 'Манфий қолдиқ' %}
+{% set L_low = 'Низкий остаток' if lang == 'ru' else 'Кам қолдиқ' %}
+{% set L_ok = 'Норма' if lang == 'ru' else 'Норма' %}
+
+<style>
+.fuel-hero { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:16px; }
+.fuel-hero h1 { margin-bottom:6px; }
+.fuel-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+.fuel-note { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
+.fuel-pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700; background:var(--info-light); color:var(--info); }
+.fuel-balance-status { display:block; margin-top:4px; font-size:11px; font-weight:600; color:var(--text2); }
+@media (max-width:768px) { .fuel-hero { flex-direction:column; } .fuel-actions { justify-content:flex-start; } }
+</style>
+
+<div class="fuel-hero">
+    <div>
+        <h1>{{ L_title }}</h1>
+        <div class="text-muted text-sm">{{ L_subtitle }}</div>
+    </div>
+    <div class="fuel-actions">
+        <a href="{{ url_for('fuel.transactions') }}" class="btn btn-secondary btn-sm">{{ L_transactions }}</a>
+        <a href="{{ url_for('fuel.receipts') }}" class="btn btn-secondary btn-sm">{{ L_receipts }}</a>
         {% if current_user.is_admin %}
-        <a href="{{ url_for('fuel.warehouses') }}" class="btn btn-secondary btn-sm">{{ t('Омборлар') }}</a>
-        <a href="{{ url_for('fuel.initial_balance') }}" class="btn btn-secondary btn-sm">{{ t('Бошл. қолдиқлар') }}</a>
+        <a href="{{ url_for('fuel.stations') }}" class="btn btn-secondary btn-sm">{{ L_stations }}</a>
+        <a href="{{ url_for('fuel.warehouses') }}" class="btn btn-secondary btn-sm">{{ L_warehouses }}</a>
+        <a href="{{ url_for('fuel.initial_balance') }}" class="btn btn-secondary btn-sm">{{ L_initial }}</a>
         {% endif %}
     </div>
 </div>
 
-{# Today stat #}
-<div class="stats-grid" style="grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); margin-bottom:20px;">
+<div class="fuel-note">
+    <strong>ДТ.</strong> {{ L_dt_rule }}
+    {% if last_sync %}
+    <span style="margin-left:14px;">{{ L_last_sync }} {{ last_sync.synced_at.strftime('%d.%m.%Y %H:%M') }} (+{{ last_sync.transactions_new }})</span>
+    {% else %}
+    <span style="margin-left:14px; color:var(--danger);">{{ L_no_sync }}</span>
+    {% endif %}
+</div>
+
+<div class="stats-grid" style="grid-template-columns: repeat(auto-fit,minmax(170px,1fr)); margin-bottom:20px;">
     <div class="stat-card">
-        <div class="label">{{ t('Бугун берилди') }}</div>
+        <div class="label">{{ L_today }}</div>
         <div class="value" style="color:var(--danger);">{{ '%.0f'|format(today_total) }} л</div>
     </div>
     <div class="stat-card">
-        <div class="label">{{ t('Омборлар сони') }}</div>
+        <div class="label">{{ L_warehouse_count }}</div>
         <div class="value">{{ balance_rows|length }}</div>
     </div>
     <div class="stat-card">
-        <div class="label">{{ t('Фаол АЗС') }}</div>
+        <div class="label">{{ L_active_stations }}</div>
         <div class="value">{{ balance_rows|sum(attribute='stations') }}</div>
     </div>
 </div>
 
-{# Balance table #}
 <div class="card" style="margin-bottom:24px;">
-    <div class="card-header">{{ t('Омборлар бўйича қолдиқлар') }}</div>
+    <div class="card-header">{{ L_balances }}</div>
+    <div style="overflow-x:auto;">
     <table>
         <thead>
             <tr>
-                <th>{{ t('Омбор') }}</th>
-                <th class="text-center">{{ t('АЗС') }}</th>
-                <th class="text-center">{{ t('Ёқилғи тури') }}</th>
-                <th class="text-right">{{ t('Қолдиқ, л') }}</th>
-                <th class="text-right">{{ t('Бугун берилди, л') }}</th>
-                <th class="text-muted text-sm">{{ t('Охирги бериш') }}</th>
+                <th>{{ L_wh }}</th>
+                <th class="text-center">{{ L_stations }}</th>
+                <th class="text-center">{{ L_fuel }}</th>
+                <th class="text-right">{{ L_balance }}</th>
+                <th class="text-right">{{ L_today_issued }}</th>
+                <th class="text-muted text-sm">{{ L_last_issue }}</th>
             </tr>
         </thead>
         <tbody>
@@ -59,88 +106,80 @@
                 {% for ft, qty in balances.items() %}
                 <tr>
                     {% if loop.first %}
-                    <td rowspan="{{ balances|length }}" style="font-weight:600; vertical-align:top; padding-top:12px;">
+                    <td rowspan="{{ balances|length }}" style="font-weight:700; vertical-align:top; padding-top:12px;">
                         {{ row.warehouse.name }}
                     </td>
                     <td rowspan="{{ balances|length }}" class="text-center" style="vertical-align:top; padding-top:12px;">
                         {{ row.stations }}
                     </td>
                     {% endif %}
-                    <td class="text-center">
-                        <span style="display:inline-block; padding:2px 10px; background:var(--info-light);
-                                     color:var(--info); border-radius:3px; font-size:12px; font-weight:600;">
-                            {{ ft }}
-                        </span>
-                    </td>
+                    <td class="text-center"><span class="fuel-pill">{{ ft }}</span></td>
                     <td class="text-right" style="font-weight:700; font-size:16px;">
                         {% if qty is none %}
-                        <span class="text-muted" style="font-size:12px;">{{ t('Бошланғич қолдиқ белгиланмаган') }}</span>
+                        <span class="text-muted" style="font-size:12px;">{{ L_initial_missing }}</span>
                         {% elif qty < 0 %}
                         <span style="color:var(--danger);">{{ '%.0f'|format(qty) }} л</span>
+                        <span class="fuel-balance-status">{{ L_negative }}</span>
                         {% elif qty < 500 %}
                         <span style="color:var(--warn);">{{ '%.0f'|format(qty) }} л</span>
+                        <span class="fuel-balance-status">{{ L_low }}</span>
                         {% else %}
                         {{ '%.0f'|format(qty) }} л
+                        <span class="fuel-balance-status">{{ L_ok }}</span>
                         {% endif %}
                     </td>
                     {% if loop.first %}
                     <td rowspan="{{ balances|length }}" class="text-right" style="vertical-align:top; padding-top:12px;">
-                        {% if row.today_expense > 0 %}
-                        <span style="color:var(--danger);">-{{ '%.0f'|format(row.today_expense) }}</span>
-                        {% endif %}
+                        {% if row.today_expense > 0 %}<span style="color:var(--danger);">-{{ '%.0f'|format(row.today_expense) }} л</span>{% else %}<span class="text-muted">—</span>{% endif %}
                     </td>
                     <td rowspan="{{ balances|length }}" class="text-muted text-sm" style="vertical-align:top; padding-top:12px;">
                         {% if row.last_txn %}
                         {{ row.last_txn.txn_datetime.strftime('%d.%m %H:%M') }}<br>
                         <small>{{ row.last_txn.station.name }}</small>
-                        {% endif %}
+                        {% else %}—{% endif %}
                     </td>
                     {% endif %}
                 </tr>
                 {% endfor %}
             {% else %}
             <tr>
-                <td style="font-weight:600;">{{ row.warehouse.name }}</td>
+                <td style="font-weight:700;">{{ row.warehouse.name }}</td>
                 <td class="text-center">{{ row.stations }}</td>
                 <td colspan="4" class="text-muted text-sm" style="padding-left:20px;">
-                    ⚠ {{ t('Бошланғич қолдиқ белгиланмаган') }}
-                    {% if current_user.is_admin %}
-                    — <a href="{{ url_for('fuel.initial_balance') }}">{{ t('Белгилаш') }}</a>
-                    {% endif %}
+                    ⚠ {{ L_initial_missing }}
+                    {% if current_user.is_admin %} — <a href="{{ url_for('fuel.initial_balance') }}">{{ L_set }}</a>{% endif %}
                 </td>
             </tr>
             {% endif %}
         {% else %}
         <tr>
             <td colspan="6" class="text-center text-muted" style="padding:40px;">
-                {{ t('Омборлар созланмаган.') }}
-                {% if current_user.is_admin %}
-                <a href="{{ url_for('fuel.warehouses') }}">{{ t('Маълумотномани очиш') }}</a>
-                {% endif %}
+                {{ L_not_configured }}
+                {% if current_user.is_admin %}<a href="{{ url_for('fuel.warehouses') }}">{{ L_open_ref }}</a>{% endif %}
             </td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 
-{# Recent transactions #}
 {% if recent_txns %}
 <div class="card">
     <div class="card-header" style="justify-content:space-between;">
-        <span>{{ t('Охирги беришлар (30)') }}</span>
-        <a href="{{ url_for('fuel.transactions') }}" class="btn btn-secondary btn-sm">{{ t('Барчаси →') }}</a>
+        <span>{{ L_recent }} ({{ recent_txns|length }})</span>
+        <a href="{{ url_for('fuel.transactions') }}" class="btn btn-secondary btn-sm">{{ L_all }} →</a>
     </div>
+    <div style="overflow-x:auto;">
     <table>
         <thead>
             <tr>
-                <th>{{ t('Сана/вақт') }}</th>
-                <th>{{ t('АЗС') }}</th>
-                <th>{{ t('Омбор') }}</th>
-                <th>{{ t('Ёқилғи') }}</th>
-                <th class="text-right">{{ t('Миқдор, л') }}</th>
-                <th>{{ t('Карта') }}</th>
-                <th class="text-right">{{ t('Сумма') }}</th>
+                <th>{{ L_datetime }}</th>
+                <th>{{ L_stations }}</th>
+                <th>{{ L_wh }}</th>
+                <th>{{ L_fuel }}</th>
+                <th class="text-right">{{ L_quantity }}</th>
+                <th>{{ L_card }}</th>
             </tr>
         </thead>
         <tbody>
@@ -149,19 +188,14 @@
             <td class="text-sm">{{ t_.txn_datetime.strftime('%d.%m.%Y %H:%M') }}</td>
             <td>{{ t_.station.name }}</td>
             <td class="text-muted text-sm">{{ t_.station.warehouse_name }}</td>
-            <td><span style="font-size:11px; padding:1px 6px; background:var(--info-light);
-                             color:var(--info); border-radius:2px;">{{ t_.fuel_type }}</span></td>
-            <td class="text-right" style="font-weight:600; color:var(--danger);">
-                {{ '%.1f'|format(t_.quantity) }}
-            </td>
+            <td><span class="fuel-pill">{{ t_.fuel_type }}</span></td>
+            <td class="text-right" style="font-weight:700; color:var(--danger);">{{ '%.1f'|format(t_.quantity) }}</td>
             <td class="text-sm text-muted">{{ t_.card_number or '—' }}</td>
-            <td class="text-right text-sm">
-                {% if t_.amount %}{{ '{:,.0f}'.format(t_.amount).replace(',', ' ') }}{% endif %}
-            </td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 {% endif %}
 

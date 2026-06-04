@@ -1,8 +1,10 @@
 {% extends "base.html" %}
-{% block title %}АЗС — {{ t('Омборлар') }}{% endblock %}
+{% block title %}АЗС — {{ 'Склады и АЗС' if lang == 'ru' else 'Омборлар ва АЗС' }}{% endblock %}
 {% block content %}
 
-{% set L_add = 'Добавить склад' if lang == 'ru' else 'Омбор қўшиш' %}
+{% set L_title = 'Склады и АЗС' if lang == 'ru' else 'Омборлар ва АЗС' %}
+{% set L_subtitle = 'Склад — точка учёта ДТ. К складу привязываются АЗС, приходы и начальные остатки.' if lang == 'ru' else 'Омбор — ДТ ҳисоби нуқтаси. Омборга АЗС, киримлар ва бошланғич қолдиқлар боғланади.' %}
+{% set L_add = 'Новый склад' if lang == 'ru' else 'Янги омбор' %}
 {% set L_edit = 'Редактирование склада' if lang == 'ru' else 'Омборни таҳрирлаш' %}
 {% set L_name = 'Название склада' if lang == 'ru' else 'Омбор номи' %}
 {% set L_org = 'Организация' if lang == 'ru' else 'Ташкилот' %}
@@ -11,83 +13,86 @@
 {% set L_reset = 'Отменить редактирование' if lang == 'ru' else 'Таҳрирлашни бекор қилиш' %}
 {% set L_edit_btn = 'Редактировать' if lang == 'ru' else 'Таҳрирлаш' %}
 {% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
-{% set L_used = 'Используется' if lang == 'ru' else 'Ишлатилган' %}
+{% set L_used = 'Используется' if lang == 'ru' else 'Ишлатилмоқда' %}
 {% set L_linked_tip = 'Есть АЗС, приходы или начальные остатки. Удаление заблокировано для сохранения истории.' if lang == 'ru' else 'АЗС, киримлар ёки бошланғич қолдиқлар мавжуд. Тарихни сақлаш учун ўчириш блокланган.' %}
 {% set L_unlinked = '— не связано —' if lang == 'ru' else '— боғланмаган —' %}
 {% set L_status = 'Статус' if lang == 'ru' else 'Ҳолат' %}
 {% set L_count = 'Кол-во выдач' if lang == 'ru' else 'Беришлар сони' %}
-{% set L_active = 'Активен' if lang == 'ru' else 'Фаол' %}
+{% set L_active = 'Активна' if lang == 'ru' else 'Фаол' %}
 {% set L_disabled = 'Отключена' if lang == 'ru' else 'Ўчирилган' %}
-{% set L_no_stations = 'АЗС не добавлены. Добавить:' if lang == 'ru' else 'АЗС қўшилмаган. Қўшиш:' %}
+{% set L_no_stations = 'АЗС не добавлены.' if lang == 'ru' else 'АЗС қўшилмаган.' %}
 {% set L_empty = 'Склады не созданы. Добавьте первый склад выше.' if lang == 'ru' else 'Омборлар яратилмаган. Юқорида биринчи омборни қўшинг.' %}
-{% set L_add_title = 'Новый склад' if lang == 'ru' else 'Янги омбор' %}
+{% set L_stations = 'АЗС' if lang == 'ru' else 'АЗС' %}
+{% set L_initial = 'Начальные остатки' if lang == 'ru' else 'Бошл. қолдиқлар' %}
+{% set L_dashboard = '← Дашборд' if lang == 'ru' else '← Дашборд' %}
+{% set L_total_wh = 'Всего складов' if lang == 'ru' else 'Жами омборлар' %}
+{% set L_total_st = 'Всего АЗС' if lang == 'ru' else 'Жами АЗС' %}
+{% set L_search = 'Поиск по складу, организации или АЗС' if lang == 'ru' else 'Омбор, ташкилот ёки АЗС бўйича қидириш' %}
+{% set L_add_station = 'Добавить АЗС' if lang == 'ru' else 'АЗС қўшиш' %}
+
+<style>
+.fuel-help { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
+.fuel-toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
+.fuel-toolbar input[type="text"] { min-width:280px; flex:1; }
+.wh-card.is-hidden { display:none; }
+</style>
 
 <div class="page-header">
-    <h1>{{ t('Омборлар ва АЗС') }}</h1>
-    <div style="display:flex; gap:8px;">
-        <a href="{{ url_for('fuel.stations') }}" class="btn btn-secondary">{{ t('АЗС рўйхати') }}</a>
-        <a href="{{ url_for('fuel.initial_balance') }}" class="btn btn-secondary">{{ t('Бошл. қолдиқлар') }}</a>
-        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ t('← Дашборд') }}</a>
+    <div><h1>{{ L_title }}</h1><div class="text-muted text-sm">{{ L_subtitle }}</div></div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <a href="{{ url_for('fuel.stations') }}" class="btn btn-secondary">{{ L_stations }}</a>
+        <a href="{{ url_for('fuel.initial_balance') }}" class="btn btn-secondary">{{ L_initial }}</a>
+        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ L_dashboard }}</a>
     </div>
+</div>
+
+<div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); margin-bottom:16px;">
+    <div class="stat-card"><div class="label">{{ L_total_wh }}</div><div class="value">{{ warehouses|length }}</div></div>
+    <div class="stat-card"><div class="label">{{ L_total_st }}</div><div class="value">{% set ns = namespace(total=0) %}{% for wh in warehouses %}{% set ns.total = ns.total + wh.stations.count() %}{% endfor %}{{ ns.total }}</div></div>
+    <div class="stat-card"><div class="label">{{ L_fuel if L_fuel is defined else 'ДТ' }}</div><div class="value text-sm">ДТ</div></div>
 </div>
 
 {% if not edit_warehouse %}
 <div class="card" style="margin-bottom:20px;">
-    <div class="card-header">{{ L_add_title }}</div>
+    <div class="card-header">{{ L_add }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('fuel.save_warehouse') }}" class="form-inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" value="">
-            <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ L_name }}</label>
-                <input type="text" name="name" placeholder="Заминлари" required>
-            </div>
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_name }}</label><input type="text" name="name" required></div>
             <div class="form-group" style="margin-bottom:0; flex:2;">
                 <label>{{ L_org }}</label>
-                <select name="organization_id">
-                    <option value="">{{ L_unlinked }}</option>
-                    {% for org in organizations %}
-                    <option value="{{ org.id }}">{{ org.name }}</option>
-                    {% endfor %}
-                </select>
+                <select name="organization_id"><option value="">{{ L_unlinked }}</option>{% for org in organizations %}<option value="{{ org.id }}">{{ org.name }}</option>{% endfor %}</select>
             </div>
-            <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ L_notes }}</label>
-                <input type="text" name="notes" placeholder="">
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>&nbsp;</label>
-                <button type="submit" class="btn btn-primary">{{ L_save }}</button>
-            </div>
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_notes }}</label><input type="text" name="notes"></div>
+            <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button type="submit" class="btn btn-primary">{{ L_save }}</button></div>
         </form>
     </div>
 </div>
 {% endif %}
 
+<div class="fuel-toolbar">
+    <input type="text" id="warehouseSearch" placeholder="{{ L_search }}" oninput="filterWarehouses()">
+    <span class="text-muted text-sm" id="warehouseVisibleCount"></span>
+</div>
+
 {% for wh in warehouses %}
-<div class="card" style="margin-bottom:16px; {% if edit_warehouse and edit_warehouse.id == wh.id %}border:2px solid var(--primary);{% endif %}">
+{% set stations = wh.stations.all() %}
+<div class="card wh-card" data-search="{{ (wh.name ~ ' ' ~ (wh.organization.name if wh.organization else '') ~ ' ' ~ (stations|map(attribute='name')|join(' ')))|lower }}" style="margin-bottom:16px; {% if edit_warehouse and edit_warehouse.id == wh.id %}border:2px solid var(--primary);{% endif %}">
     <div class="card-header" style="background:var(--surface2);">
         <div>
             <span style="font-weight:700;">{{ wh.name }}</span>
-            {% if wh.organization %}
-            <span class="text-muted text-sm" style="margin-left:12px;">{{ wh.organization.name }}</span>
-            {% endif %}
+            {% if wh.organization %}<span class="text-muted text-sm" style="margin-left:12px;">{{ wh.organization.name }}</span>{% endif %}
+            <div class="text-muted text-sm">{{ stations|length }} {{ L_stations }}</div>
         </div>
-        <div style="display:flex; gap:6px;">
-            <a class="btn btn-secondary btn-sm" href="{{ url_for('fuel.warehouses', edit_id=wh.id) }}#warehouse-{{ wh.id }}">
-                {{ L_edit_btn }}
-            </a>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <a class="btn btn-secondary btn-sm" href="{{ url_for('fuel.warehouses', edit_id=wh.id) }}#warehouse-{{ wh.id }}">{{ L_edit_btn }}</a>
             {% set del_info = warehouse_delete_info.get(wh.id) %}
             {% if del_info and del_info.can_delete %}
-            <form method="post" action="{{ url_for('fuel.delete_warehouse', wid=wh.id) }}"
-                  style="display:inline;"
-                  onsubmit="return confirm('{{ L_delete }}: {{ wh.name }}?')">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-danger btn-sm">{{ L_delete }}</button>
+            <form method="post" action="{{ url_for('fuel.delete_warehouse', wid=wh.id) }}" style="display:inline;" onsubmit="return confirm('{{ L_delete }}: {{ wh.name }}?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-danger btn-sm">{{ L_delete }}</button>
             </form>
-            {% else %}
-            <span class="idle-badge" title="{{ L_linked_tip }}">🔒 {{ L_used }}</span>
-            {% endif %}
+            {% else %}<span class="idle-badge" title="{{ L_linked_tip }}">🔒 {{ L_used }}</span>{% endif %}
         </div>
     </div>
 
@@ -95,78 +100,47 @@
     <div id="warehouse-{{ wh.id }}" class="card-body" style="background:var(--surface); border-bottom:1px solid var(--border);">
         <div style="font-weight:700; margin-bottom:12px;">{{ L_edit }}: {{ wh.name }}</div>
         <form method="post" action="{{ url_for('fuel.save_warehouse') }}" class="form-inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="id" value="{{ wh.id }}">
-            <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ L_name }}</label>
-                <input type="text" name="name" required value="{{ wh.name }}">
-            </div>
-            <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ L_org }}</label>
-                <select name="organization_id">
-                    <option value="">{{ L_unlinked }}</option>
-                    {% for org in organizations %}
-                    <option value="{{ org.id }}" {% if wh.organization_id == org.id %}selected{% endif %}>{{ org.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ L_notes }}</label>
-                <input type="text" name="notes" value="{{ wh.notes or '' }}">
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>&nbsp;</label>
-                <button type="submit" class="btn btn-primary">{{ L_save }}</button>
-                <a href="{{ url_for('fuel.warehouses') }}#warehouse-{{ wh.id }}" class="btn btn-secondary">{{ L_reset }}</a>
-            </div>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="id" value="{{ wh.id }}">
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_name }}</label><input type="text" name="name" required value="{{ wh.name }}"></div>
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_org }}</label><select name="organization_id"><option value="">{{ L_unlinked }}</option>{% for org in organizations %}<option value="{{ org.id }}" {% if wh.organization_id == org.id %}selected{% endif %}>{{ org.name }}</option>{% endfor %}</select></div>
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_notes }}</label><input type="text" name="notes" value="{{ wh.notes or '' }}"></div>
+            <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button type="submit" class="btn btn-primary">{{ L_save }}</button><a href="{{ url_for('fuel.warehouses') }}#warehouse-{{ wh.id }}" class="btn btn-secondary">{{ L_reset }}</a></div>
         </form>
     </div>
     {% endif %}
 
-    <div id="warehouse-{{ wh.id }}" class="card-body" style="padding:0;">
+    <div class="card-body" style="padding:0;">
         <table>
-            <thead>
-                <tr>
-                    <th>АЗС</th>
-                    <th>Topaz ID</th>
-                    <th>{{ L_status }}</th>
-                    <th>{{ L_count }}</th>
-                </tr>
-            </thead>
+            <thead><tr><th>{{ L_stations }}</th><th>Topaz ID</th><th>{{ L_status }}</th><th>{{ L_count }}</th></tr></thead>
             <tbody>
-            {% set stations = wh.stations.all() %}
             {% if stations %}
                 {% for st in stations %}
-                <tr>
-                    <td>{{ st.name }}</td>
-                    <td><code>{{ st.topaz_id }}</code></td>
-                    <td>
-                        {% if st.is_active %}
-                        <span class="working-badge">{{ L_active }}</span>
-                        {% else %}
-                        <span class="idle-badge">{{ L_disabled }}</span>
-                        {% endif %}
-                    </td>
-                    <td class="text-muted text-sm">{{ st.transactions.count() }}</td>
-                </tr>
+                <tr><td>{{ st.name }}</td><td><code>{{ st.topaz_id }}</code></td><td>{% if st.is_active %}<span class="working-badge">{{ L_active }}</span>{% else %}<span class="idle-badge">{{ L_disabled }}</span>{% endif %}</td><td class="text-muted text-sm">{{ st.transactions.count() }}</td></tr>
                 {% endfor %}
             {% else %}
-            <tr>
-                <td colspan="4" class="text-muted text-sm" style="padding:16px;">
-                    {{ L_no_stations }} <a href="{{ url_for('fuel.stations') }}">→</a>
-                </td>
-            </tr>
+            <tr><td colspan="4" class="text-muted text-sm" style="padding:16px;">{{ L_no_stations }} <a href="{{ url_for('fuel.stations') }}">{{ L_add_station }} →</a></td></tr>
             {% endif %}
             </tbody>
         </table>
     </div>
 </div>
 {% else %}
-<div class="card">
-    <div class="card-body" style="text-align:center; padding:60px;">
-        <p class="text-muted">{{ L_empty }}</p>
-    </div>
-</div>
+<div class="card"><div class="card-body" style="text-align:center; padding:60px;"><p class="text-muted">{{ L_empty }}</p></div></div>
 {% endfor %}
 
+{% endblock %}
+{% block scripts %}
+<script>
+function filterWarehouses() {
+    const q = (document.getElementById('warehouseSearch').value || '').toLowerCase().trim();
+    let visible = 0;
+    document.querySelectorAll('.wh-card').forEach(card => {
+        const show = !q || card.dataset.search.indexOf(q) !== -1;
+        card.classList.toggle('is-hidden', !show);
+        if (show) visible++;
+    });
+    document.getElementById('warehouseVisibleCount').textContent = visible + ' / ' + document.querySelectorAll('.wh-card').length;
+}
+document.addEventListener('DOMContentLoaded', filterWarehouses);
+</script>
 {% endblock %}

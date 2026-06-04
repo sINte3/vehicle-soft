@@ -1,178 +1,208 @@
 {% extends "base.html" %}
-{% block title %}АЗС — {{ t('Киримлар') }}{% endblock %}
+{% block title %}АЗС — {{ 'Приходы топлива' if lang == 'ru' else 'Ёқилғи киримлари' }}{% endblock %}
 {% block content %}
 
+{% set L_title = 'Приходы топлива' if lang == 'ru' else 'Ёқилғи киримлари' %}
+{% set L_back = '← Дашборд' if lang == 'ru' else '← Дашборд' %}
+{% set L_rule = 'Приход — это внутреннее поступление ДТ на склад. Цена и сумма не заполняются.' if lang == 'ru' else 'Кирим — омборга ДТ ички тушуми. Нарх ва сумма тўлдирилмайди.' %}
+{% set L_add = 'Добавить приход' if lang == 'ru' else 'Кирим қўшиш' %}
+{% set L_editing = 'Редактирование прихода' if lang == 'ru' else 'Киримни таҳрирлаш' %}
+{% set L_date = 'Дата' if lang == 'ru' else 'Сана' %}
+{% set L_wh = 'Склад' if lang == 'ru' else 'Омбор' %}
+{% set L_select = '— выберите —' if lang == 'ru' else '— танланг —' %}
+{% set L_fuel = 'Топливо' if lang == 'ru' else 'Ёқилғи' %}
+{% set L_qty = 'Количество, л' if lang == 'ru' else 'Миқдор, л' %}
+{% set L_supplier = 'Поставщик' if lang == 'ru' else 'Таъминотчи' %}
+{% set L_doc = 'Документ №' if lang == 'ru' else 'Ҳужжат №' %}
+{% set L_note = 'Примечание' if lang == 'ru' else 'Изоҳ' %}
+{% set L_save = 'Сохранить' if lang == 'ru' else 'Сақлаш' %}
+{% set L_clear = 'Очистить' if lang == 'ru' else 'Тозалаш' %}
+{% set L_from = 'С' if lang == 'ru' else 'Дан' %}
+{% set L_to = 'По' if lang == 'ru' else 'Гача' %}
+{% set L_all = '— все —' if lang == 'ru' else '— барчаси —' %}
+{% set L_show = 'Показать' if lang == 'ru' else 'Кўрсатиш' %}
+{% set L_search = 'Поиск по складу, поставщику, документу или примечанию' if lang == 'ru' else 'Омбор, таъминотчи, ҳужжат ёки изоҳ бўйича қидириш' %}
+{% set L_total = 'Итого' if lang == 'ru' else 'Жами' %}
+{% set L_edit = 'Изменить' if lang == 'ru' else 'Ўзг.' %}
+{% set L_delete = 'Удалить приход?' if lang == 'ru' else 'Кирим ўчирилсинми?' %}
+{% set L_empty = 'За выбранный период приходов нет.' if lang == 'ru' else 'Танланган давр учун кирим йўқ.' %}
+{% set L_qty_hint = 'Введите литры. Значение должно быть больше 0.' if lang == 'ru' else 'Литрни киритинг. Қиймат 0 дан катта бўлиши керак.' %}
+
+<style>
+.fuel-toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
+.fuel-toolbar input[type="text"] { min-width:280px; flex:1; }
+.fuel-help { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:10px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
+.fuel-pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700; background:var(--info-light); color:var(--info); }
+.invalid-client { border-color:var(--danger) !important; box-shadow:0 0 0 2px rgba(220,38,38,.12); }
+</style>
+
 <div class="page-header">
-    <h1>{{ t('Ёқилғи киримлари') }}</h1>
-    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ t('← Дашборд') }}</a>
+    <div><h1>{{ L_title }}</h1><div class="text-muted text-sm">{{ L_rule }}</div></div>
+    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ L_back }}</a>
 </div>
 
-{# Add receipt #}
+<div class="fuel-help"><strong>ДТ.</strong> {{ L_rule }}</div>
+
 <div class="card" style="margin-bottom:20px;">
-    <div class="card-header">{{ t('Кирим қўшиш') }}</div>
+    <div class="card-header"><span id="receiptFormTitle">{{ L_add }}</span></div>
     <div class="card-body">
-        <form method="post" action="{{ url_for('fuel.save_receipt') }}" id="receiptForm">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <form method="post" action="{{ url_for('fuel.save_receipt') }}" id="receiptForm" onsubmit="return validateReceiptBeforeSubmit()">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="rId" value="">
             <div class="form-inline">
                 <div class="form-group" style="margin-bottom:0;">
-                    <label>{{ t('Сана') }}</label>
+                    <label>{{ L_date }}</label>
                     <input type="date" name="receipt_date" value="{{ today.isoformat() }}" required>
                 </div>
                 <div class="form-group" style="margin-bottom:0; flex:2;">
-                    <label>{{ t('Омбор') }}</label>
+                    <label>{{ L_wh }}</label>
                     <select name="warehouse_id" required>
-                        <option value="">{{ t('— танланг —') }}</option>
+                        <option value="">{{ L_select }}</option>
                         {% for wh in warehouses %}
-                        <option value="{{ wh.id }}"
-                            {% if selected_wh_id == wh.id %}selected{% endif %}>
-                            {{ wh.name }}
-                        </option>
+                        <option value="{{ wh.id }}" {% if selected_wh_id == wh.id %}selected{% endif %}>{{ wh.name }}</option>
                         {% endfor %}
                     </select>
                 </div>
                 <input type="hidden" name="fuel_type" value="ДТ">
                 <div class="form-group" style="margin-bottom:0;">
-                    <label>{{ t('Ёқилғи') }}</label>
-                    <div style="padding:8px 12px; background:var(--accent-light); color:var(--accent); border-radius:4px; font-weight:600;">ДТ</div>
+                    <label>{{ L_fuel }}</label>
+                    <div class="fuel-pill">ДТ</div>
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
-                    <label>{{ t('Миқдор, л') }}</label>
-                    <input type="number" name="quantity" step="0.1" min="0.1" required
-                           style="width:120px;">
+                    <label>{{ L_qty }}</label>
+                    <input type="number" name="quantity" step="0.1" min="0.1" required style="width:130px;" title="{{ L_qty_hint }}">
+                    <small class="text-muted">{{ L_qty_hint }}</small>
                 </div>
             </div>
             <div class="form-inline" style="margin-top:10px;">
                 <div class="form-group" style="margin-bottom:0; flex:2;">
-                    <label>{{ t('Таъминотчи') }}</label>
+                    <label>{{ L_supplier }}</label>
                     <input type="text" name="supplier" id="rSupplier" placeholder="">
                 </div>
                 <div class="form-group" style="margin-bottom:0; flex:1;">
-                    <label>{{ t('Ҳужжат №') }}</label>
+                    <label>{{ L_doc }}</label>
                     <input type="text" name="doc_number" id="rDoc" placeholder="">
                 </div>
                 <div class="form-group" style="margin-bottom:0; flex:2;">
-                    <label>{{ t('Изоҳ') }}</label>
+                    <label>{{ L_note }}</label>
                     <input type="text" name="note" id="rNote">
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
                     <label>&nbsp;</label>
-                    <button type="submit" class="btn btn-primary">{{ t('Сақлаш') }}</button>
-                    <button type="button" class="btn btn-secondary" onclick="clearRForm()">{{ t('Тозалаш') }}</button>
+                    <button type="submit" class="btn btn-primary">{{ L_save }}</button>
+                    <button type="button" class="btn btn-secondary" onclick="clearRForm()">{{ L_clear }}</button>
                 </div>
             </div>
         </form>
     </div>
 </div>
 
-{# Filter #}
 <div class="card" style="margin-bottom:16px;">
     <div class="card-body" style="padding:12px 20px;">
         <form method="get" class="form-inline">
-            <div class="form-group" style="margin-bottom:0;">
-                <label>{{ t('Дан') }}</label>
-                <input type="date" name="date_from" value="{{ d_from.isoformat() }}">
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>{{ t('Гача') }}</label>
-                <input type="date" name="date_to" value="{{ d_to.isoformat() }}">
-            </div>
+            <div class="form-group" style="margin-bottom:0;"><label>{{ L_from }}</label><input type="date" name="date_from" value="{{ d_from.isoformat() }}"></div>
+            <div class="form-group" style="margin-bottom:0;"><label>{{ L_to }}</label><input type="date" name="date_to" value="{{ d_to.isoformat() }}"></div>
             <div class="form-group" style="margin-bottom:0; flex:1;">
-                <label>{{ t('Омбор') }}</label>
+                <label>{{ L_wh }}</label>
                 <select name="warehouse_id">
-                    <option value="">{{ t('— Барчаси —') }}</option>
-                    {% for wh in warehouses %}
-                    <option value="{{ wh.id }}" {% if selected_wh_id == wh.id %}selected{% endif %}>
-                        {{ wh.name }}
-                    </option>
-                    {% endfor %}
+                    <option value="">{{ L_all }}</option>
+                    {% for wh in warehouses %}<option value="{{ wh.id }}" {% if selected_wh_id == wh.id %}selected{% endif %}>{{ wh.name }}</option>{% endfor %}
                 </select>
             </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>&nbsp;</label>
-                <button type="submit" class="btn btn-primary btn-sm">{{ t('Кўрсатиш') }}</button>
-            </div>
+            <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button type="submit" class="btn btn-primary btn-sm">{{ L_show }}</button></div>
         </form>
     </div>
 </div>
 
-{# Receipts table #}
+<div class="fuel-toolbar">
+    <input type="text" id="receiptSearch" placeholder="{{ L_search }}" oninput="filterReceipts()">
+    <span class="text-muted text-sm" id="receiptVisibleCount"></span>
+</div>
+
 <div class="card">
     <div class="card-header" style="justify-content:space-between;">
-        <span>{{ t('Киримлар') }} ({{ items|length }})</span>
-        <span style="font-weight:700; color:var(--accent);">{{ t('Жами:') }} {{ '%.0f'|format(total_qty) }} л</span>
+        <span>{{ L_title }} ({{ items|length }})</span>
+        <span style="font-weight:700; color:var(--accent);">{{ L_total }}: {{ '%.0f'|format(total_qty) }} л</span>
     </div>
+    <div style="overflow-x:auto;">
     <table>
         <thead>
             <tr>
-                <th>{{ t('Сана') }}</th>
-                <th>{{ t('Омбор') }}</th>
-                <th>{{ t('Ёқилғи') }}</th>
-                <th class="text-right">{{ t('Миқдор, л') }}</th>
-                <th>{{ t('Таъминотчи') }}</th>
-                <th>{{ t('Ҳужжат №') }}</th>
-                <th>{{ t('Изоҳ') }}</th>
-                <th></th>
+                <th>{{ L_date }}</th><th>{{ L_wh }}</th><th>{{ L_fuel }}</th><th class="text-right">{{ L_qty }}</th><th>{{ L_supplier }}</th><th>{{ L_doc }}</th><th>{{ L_note }}</th><th></th>
             </tr>
         </thead>
         <tbody>
         {% for r in items %}
-        <tr>
+        <tr class="receipt-row" data-search="{{ (r.receipt_date.strftime('%d.%m.%Y') ~ ' ' ~ r.warehouse.name ~ ' ' ~ (r.supplier or '') ~ ' ' ~ (r.doc_number or '') ~ ' ' ~ (r.note or ''))|lower }}">
             <td class="text-sm">{{ r.receipt_date.strftime('%d.%m.%Y') }}</td>
             <td>{{ r.warehouse.name }}</td>
-            <td><span style="font-size:11px; padding:1px 6px; background:var(--accent-light);
-                             color:var(--accent); border-radius:2px;">{{ r.fuel_type }}</span></td>
-            <td class="text-right" style="font-weight:600;">{{ '%.1f'|format(r.quantity) }}</td>
+            <td><span class="fuel-pill">{{ r.fuel_type }}</span></td>
+            <td class="text-right" style="font-weight:700;">{{ '%.1f'|format(r.quantity) }}</td>
             <td class="text-sm">{{ r.supplier or '—' }}</td>
             <td class="text-sm text-muted">{{ r.doc_number or '' }}</td>
             <td class="text-sm text-muted">{{ r.note or '' }}</td>
             <td style="white-space:nowrap;">
-                <button class="btn btn-secondary btn-sm"
-                        onclick="editR({{ r.id }}, '{{ r.receipt_date.isoformat() }}',
-                                       {{ r.warehouse_id }}, '{{ r.fuel_type }}',
-                                       {{ r.quantity }},
-                                       '{{ r.supplier or '' }}', '{{ r.doc_number or '' }}',
-                                       '{{ r.note or '' }}')">
-                    {{ t('Ўзг.') }}
-                </button>
-                <form method="post" action="{{ url_for('fuel.delete_receipt', rid=r.id) }}"
-                      style="display:inline;"
-                      onsubmit="return confirm('{{ t('Ўчириш') }}?')">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-secondary btn-sm" onclick='editR({{ r.id }}, {{ r.receipt_date.isoformat()|tojson }}, {{ r.warehouse_id }}, {{ r.quantity }}, {{ (r.supplier or "")|tojson }}, {{ (r.doc_number or "")|tojson }}, {{ (r.note or "")|tojson }})'>{{ L_edit }}</button>
+                <form method="post" action="{{ url_for('fuel.delete_receipt', rid=r.id) }}" style="display:inline;" onsubmit="return confirm('{{ L_delete }}')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-danger btn-sm">✕</button>
                 </form>
             </td>
         </tr>
         {% else %}
-        <tr>
-            <td colspan="8" class="text-center text-muted" style="padding:40px;">
-                {{ t('Танланган давр учун кирим йўқ.') }}
-            </td>
-        </tr>
+        <tr><td colspan="8" class="text-center text-muted" style="padding:40px;">{{ L_empty }}</td></tr>
         {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 
 {% endblock %}
 {% block scripts %}
 <script>
-function editR(id, dt, whId, ft, qty, supplier, doc, note) {
+const LAdd = {{ L_add|tojson }};
+const LEditing = {{ L_editing|tojson }};
+function editR(id, dt, whId, qty, supplier, doc, note) {
     document.getElementById('rId').value = id;
+    document.getElementById('receiptFormTitle').textContent = LEditing + ' #' + id;
     document.querySelector('[name=receipt_date]').value = dt;
     document.querySelector('[name=quantity]').value = qty;
     document.getElementById('rSupplier').value = supplier;
     document.getElementById('rDoc').value = doc;
     document.getElementById('rNote').value = note;
     const whSel = document.querySelector('[name=warehouse_id]');
-    for (let i = 0; i < whSel.options.length; i++) {
-        whSel.options[i].selected = (whSel.options[i].value == whId);
-    }
+    for (let i = 0; i < whSel.options.length; i++) whSel.options[i].selected = (whSel.options[i].value == whId);
     window.scrollTo(0, 0);
 }
 function clearRForm() {
     document.getElementById('rId').value = '';
+    document.getElementById('receiptFormTitle').textContent = LAdd;
     document.getElementById('receiptForm').reset();
+    document.querySelector('[name=receipt_date]').value = {{ today.isoformat()|tojson }};
+    document.querySelectorAll('.invalid-client').forEach(el => el.classList.remove('invalid-client'));
 }
+function validateReceiptBeforeSubmit() {
+    let ok = true;
+    const form = document.getElementById('receiptForm');
+    form.querySelectorAll('.invalid-client').forEach(el => el.classList.remove('invalid-client'));
+    const wh = form.querySelector('[name=warehouse_id]');
+    const qty = form.querySelector('[name=quantity]');
+    const dt = form.querySelector('[name=receipt_date]');
+    if (!dt.value) { dt.classList.add('invalid-client'); ok = false; }
+    if (!wh.value) { wh.classList.add('invalid-client'); ok = false; }
+    if (!qty.value || parseFloat(qty.value) <= 0) { qty.classList.add('invalid-client'); ok = false; }
+    return ok;
+}
+function filterReceipts() {
+    const q = (document.getElementById('receiptSearch').value || '').toLowerCase().trim();
+    let visible = 0;
+    document.querySelectorAll('.receipt-row').forEach(row => {
+        const show = !q || row.dataset.search.indexOf(q) !== -1;
+        row.style.display = show ? '' : 'none';
+        if (show) visible++;
+    });
+    document.getElementById('receiptVisibleCount').textContent = visible + ' / ' + document.querySelectorAll('.receipt-row').length;
+}
+document.addEventListener('DOMContentLoaded', filterReceipts);
 </script>
 {% endblock %}

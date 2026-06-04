@@ -1,3 +1,19 @@
+## 2026-06-04 - UX001C completed on production
+
+- Production URL: http://10.103.25.14:5050.
+- Files changed: templates/fuel/dashboard.html, templates/fuel/transactions.html, templates/fuel/receipts.html, templates/fuel/initial_balance.html, templates/fuel/warehouses.html, templates/fuel/stations.html.
+- Improved Fuel dashboard and operator screens.
+- Removed price/sum visual logic from Fuel UI; DT-only and liters-focused workflow is now clearer.
+- Added search/filter UX for receipts, initial balances, warehouses, and stations.
+- Staging Topaz transaction date issue was diagnosed as stale staging DB; production had current transactions through 2026-06-04.
+- Staging DB was refreshed from current production backup before production deployment continued.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260604_120114.db
+- py_compile passed.
+- App import check passed: APP IMPORT OK.
+- TransportReport service restarted and running.
+- UX001C production smoke test passed.
+- No database migration required.
+
 ## 2026-06-04 - UX001B completed on production
 
 - Production URL: http://10.103.25.14:5050.
