@@ -10,9 +10,10 @@ Flask Blueprint: /fuel/* и /api/fuel_*
 """
 
 from flask import (Blueprint, render_template, request, redirect,
-                   url_for, flash, jsonify, abort, current_app, g)
+                   url_for, flash, jsonify, abort, current_app, g, send_file)
 from flask_login import login_required, current_user
 from datetime import datetime, date, timedelta
+from io import BytesIO
 from sqlalchemy import func
 from types import SimpleNamespace
 
@@ -277,6 +278,372 @@ def get_all_balances():
             'stations': wh.stations.filter_by(is_active=True).count(),
         })
     return rows
+
+
+
+
+# ─── Fuel management report ─────────────────────────────────────────
+
+def _fuel_report_lang():
+    lang = getattr(g, 'lang', 'uz') or 'uz'
+    try:
+        if current_user.is_authenticated:
+            lang = getattr(current_user, 'language', lang) or lang
+    except Exception:
+        pass
+    return 'ru' if lang == 'ru' else 'uz'
+
+
+def _fuel_report_label(ru, uz):
+    return ru if _fuel_report_lang() == 'ru' else uz
+
+
+def _parse_report_date(value, default):
+    try:
+        return datetime.strptime(value or '', '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        return default
+
+
+def _sum_receipts_for_period(warehouse_id, start_date, end_date):
+    return float(db.session.query(func.coalesce(func.sum(FuelReceipt2.quantity), 0))
+                 .filter(FuelReceipt2.warehouse_id == warehouse_id,
+                         FuelReceipt2.receipt_date >= start_date,
+                         FuelReceipt2.receipt_date <= end_date)
+                 .scalar() or 0)
+
+
+def _sum_issues_for_period(warehouse_id, start_dt, end_dt, station_id=None):
+    q = (db.session.query(func.coalesce(func.sum(FuelTransaction2.quantity), 0))
+         .join(FuelStation2)
+         .filter(FuelStation2.warehouse_id == warehouse_id,
+                 FuelTransaction2.txn_datetime >= start_dt,
+                 FuelTransaction2.txn_datetime <= end_dt))
+    if station_id:
+        q = q.filter(FuelTransaction2.station_id == station_id)
+    return float(q.scalar() or 0)
+
+
+def _fuel_opening_balance(warehouse_id, d_from):
+    ib = (FuelInitialBalance.query
+          .filter_by(warehouse_id=warehouse_id, fuel_type='ДТ')
+          .first())
+    if not ib:
+        return None, None
+    start_date = ib.balance_date
+    if d_from <= start_date:
+        return float(ib.quantity or 0), ib
+    before_date = d_from - timedelta(days=1)
+    receipts_before = _sum_receipts_for_period(warehouse_id, start_date, before_date)
+    issues_before = _sum_issues_for_period(
+        warehouse_id,
+        datetime.combine(start_date, datetime.min.time()),
+        datetime.combine(before_date, datetime.max.time()),
+    )
+    return round(float(ib.quantity or 0) + receipts_before - issues_before, 2), ib
+
+
+def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
+    d_from_dt = datetime.combine(d_from, datetime.min.time())
+    d_to_dt = datetime.combine(d_to, datetime.max.time())
+
+    selected_station = None
+    if station_id:
+        selected_station = FuelStation2.query.get(station_id)
+        if selected_station:
+            warehouse_id = selected_station.warehouse_id
+        else:
+            station_id = None
+
+    wh_query = FuelWarehouse.query.order_by(FuelWarehouse.name)
+    if warehouse_id:
+        wh_query = wh_query.filter(FuelWarehouse.id == warehouse_id)
+    warehouses = wh_query.all()
+
+    warehouse_rows = []
+    totals = {
+        'opening': 0.0,
+        'receipts': 0.0,
+        'issued': 0.0,
+        'ending': 0.0,
+        'warehouses': len(warehouses),
+        'stations': 0,
+        'transactions': 0,
+        'negative_balances': 0,
+        'missing_initial': 0,
+    }
+
+    for wh in warehouses:
+        opening, initial_balance = _fuel_opening_balance(wh.id, d_from)
+        receipts = _sum_receipts_for_period(wh.id, d_from, d_to)
+        issued = _sum_issues_for_period(wh.id, d_from_dt, d_to_dt, station_id=station_id)
+        tx_count_q = (db.session.query(func.count(FuelTransaction2.id))
+                      .join(FuelStation2)
+                      .filter(FuelStation2.warehouse_id == wh.id,
+                              FuelTransaction2.txn_datetime >= d_from_dt,
+                              FuelTransaction2.txn_datetime <= d_to_dt))
+        if station_id:
+            tx_count_q = tx_count_q.filter(FuelTransaction2.station_id == station_id)
+        tx_count = int(tx_count_q.scalar() or 0)
+        stations_count = wh.stations.count()
+        last_txn_q = (FuelTransaction2.query
+                      .join(FuelStation2)
+                      .filter(FuelStation2.warehouse_id == wh.id,
+                              FuelTransaction2.txn_datetime >= d_from_dt,
+                              FuelTransaction2.txn_datetime <= d_to_dt))
+        if station_id:
+            last_txn_q = last_txn_q.filter(FuelTransaction2.station_id == station_id)
+        last_txn = last_txn_q.order_by(FuelTransaction2.txn_datetime.desc()).first()
+        ending = None if opening is None else round(opening + receipts - issued, 2)
+
+        if opening is None:
+            totals['missing_initial'] += 1
+        else:
+            totals['opening'] += opening
+            totals['ending'] += ending or 0
+            if ending is not None and ending < 0:
+                totals['negative_balances'] += 1
+        totals['receipts'] += receipts
+        totals['issued'] += issued
+        totals['transactions'] += tx_count
+        totals['stations'] += stations_count
+
+        warehouse_rows.append({
+            'warehouse': wh,
+            'opening': opening,
+            'receipts': receipts,
+            'issued': issued,
+            'ending': ending,
+            'initial_balance': initial_balance,
+            'stations_count': stations_count,
+            'tx_count': tx_count,
+            'last_txn': last_txn,
+        })
+
+    station_query = (db.session.query(
+            FuelStation2.id,
+            FuelStation2.name,
+            FuelStation2.topaz_id,
+            FuelStation2.is_active,
+            FuelWarehouse.name.label('warehouse_name'),
+            func.coalesce(func.sum(FuelTransaction2.quantity), 0).label('issued'),
+            func.count(FuelTransaction2.id).label('tx_count'),
+            func.max(FuelTransaction2.txn_datetime).label('last_txn'),
+        )
+        .join(FuelWarehouse, FuelWarehouse.id == FuelStation2.warehouse_id)
+        .outerjoin(FuelTransaction2,
+                   (FuelTransaction2.station_id == FuelStation2.id) &
+                   (FuelTransaction2.txn_datetime >= d_from_dt) &
+                   (FuelTransaction2.txn_datetime <= d_to_dt)))
+    if warehouse_id:
+        station_query = station_query.filter(FuelStation2.warehouse_id == warehouse_id)
+    if station_id:
+        station_query = station_query.filter(FuelStation2.id == station_id)
+    station_rows = station_query.group_by(
+        FuelStation2.id, FuelStation2.name, FuelStation2.topaz_id,
+        FuelStation2.is_active, FuelWarehouse.name,
+    ).order_by(func.coalesce(func.sum(FuelTransaction2.quantity), 0).desc(), FuelStation2.name).all()
+
+    recent_txns_q = (FuelTransaction2.query
+                     .join(FuelStation2)
+                     .filter(FuelTransaction2.txn_datetime >= d_from_dt,
+                             FuelTransaction2.txn_datetime <= d_to_dt))
+    if warehouse_id:
+        recent_txns_q = recent_txns_q.filter(FuelStation2.warehouse_id == warehouse_id)
+    if station_id:
+        recent_txns_q = recent_txns_q.filter(FuelTransaction2.station_id == station_id)
+    recent_txns = recent_txns_q.order_by(FuelTransaction2.txn_datetime.desc()).limit(200).all()
+
+    sync_logs = (FuelSyncLog2.query
+                 .filter(FuelSyncLog2.synced_at >= d_from_dt,
+                         FuelSyncLog2.synced_at <= d_to_dt)
+                 .order_by(FuelSyncLog2.synced_at.desc())
+                 .limit(100).all())
+    sync_summary = {
+        'logs': len(sync_logs),
+        'received': sum((l.transactions_received or 0) for l in sync_logs),
+        'new': sum((l.transactions_new or 0) for l in sync_logs),
+        'dup': sum((l.transactions_dup or 0) for l in sync_logs),
+        'unknown': sum((l.unknown_stations or 0) for l in sync_logs),
+        'last': sync_logs[0] if sync_logs else None,
+    }
+
+    totals = {k: round(v, 2) if isinstance(v, float) else v for k, v in totals.items()}
+    return {
+        'd_from': d_from,
+        'd_to': d_to,
+        'd_from_dt': d_from_dt,
+        'd_to_dt': d_to_dt,
+        'warehouse_rows': warehouse_rows,
+        'station_rows': station_rows,
+        'recent_txns': recent_txns,
+        'sync_logs': sync_logs,
+        'sync_summary': sync_summary,
+        'totals': totals,
+        'selected_warehouse_id': warehouse_id,
+        'selected_station_id': station_id,
+        'selected_station': selected_station,
+    }
+
+
+def _safe_ws_title(title, used):
+    bad = '[]:*?/\\'
+    cleaned = ''.join('_' if c in bad else c for c in str(title or 'Sheet')).strip()[:31]
+    cleaned = cleaned or 'Sheet'
+    base = cleaned
+    idx = 2
+    while cleaned in used:
+        suffix = f' {idx}'
+        cleaned = (base[:31-len(suffix)] + suffix).strip()
+        idx += 1
+    used.add(cleaned)
+    return cleaned
+
+
+def _fuel_report_workbook(data, lang='uz'):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    used = set()
+    header_fill = PatternFill('solid', fgColor='D9EAD3')
+    title_fill = PatternFill('solid', fgColor='1A6B3C')
+    title_font = Font(bold=True, color='FFFFFF', size=12)
+    header_font = Font(bold=True)
+    thin = Side(style='thin', color='D9D9D9')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def style_table(ws, header_row=1):
+        ws.freeze_panes = f'A{header_row + 1}'
+        ws.sheet_view.showGridLines = False
+        max_col = ws.max_column
+        max_row = ws.max_row
+        if max_row >= header_row and max_col:
+            ws.auto_filter.ref = f'A{header_row}:{get_column_letter(max_col)}{max_row}'
+        for cell in ws[header_row]:
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        for row in ws.iter_rows(min_row=1, max_row=max_row, max_col=max_col):
+            for cell in row:
+                cell.border = border
+                cell.alignment = Alignment(vertical='center', wrap_text=True)
+        for col in range(1, max_col + 1):
+            letter = get_column_letter(col)
+            width = 10
+            for cell in ws[letter]:
+                val = '' if cell.value is None else str(cell.value)
+                width = max(width, min(len(val) + 2, 38))
+            ws.column_dimensions[letter].width = width
+        ws.page_setup.orientation = 'landscape'
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_margins.left = 0.3
+        ws.page_margins.right = 0.3
+        ws.page_margins.top = 0.5
+        ws.page_margins.bottom = 0.5
+
+    ws = wb.create_sheet(_safe_ws_title(L('Сводка', 'Сводка'), used))
+    ws.append([L('Отчёт по топливу', 'Ёқилғи ҳисоботи')])
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
+    ws['A1'].font = title_font
+    ws['A1'].fill = title_fill
+    ws.append([L('Период', 'Давр'), data['d_from'].strftime('%d.%m.%Y'), data['d_to'].strftime('%d.%m.%Y'), 'ДТ'])
+    ws.append([])
+    ws.append([L('Показатель', 'Кўрсаткич'), L('Значение', 'Қиймат')])
+    summary_rows = [
+        (L('Начальный остаток, л', 'Бошланғич қолдиқ, л'), data['totals']['opening']),
+        (L('Приход, л', 'Кирим, л'), data['totals']['receipts']),
+        (L('Выдача Topaz, л', 'Topaz бериш, л'), data['totals']['issued']),
+        (L('Расчётный остаток, л', 'Ҳисобий қолдиқ, л'), data['totals']['ending']),
+        (L('Склады', 'Омборлар'), data['totals']['warehouses']),
+        (L('АЗС', 'АЗС'), data['totals']['stations']),
+        (L('Транзакции', 'Транзакциялар'), data['totals']['transactions']),
+        (L('Складов без начального остатка', 'Бошланғич қолдиқсиз омборлар'), data['totals']['missing_initial']),
+        (L('Отрицательных остатков', 'Манфий қолдиқлар'), data['totals']['negative_balances']),
+        (L('Неизвестных АЗС в sync logs', 'Sync logларда номаълум АЗС'), data['sync_summary']['unknown']),
+    ]
+    for label, value in summary_rows:
+        ws.append([label, value])
+    style_table(ws, header_row=4)
+
+    ws = wb.create_sheet(_safe_ws_title(L('Склады', 'Омборлар'), used))
+    ws.append([L('Склад', 'Омбор'), L('АЗС', 'АЗС'), L('Начальный остаток', 'Бошланғич қолдиқ'), L('Приход', 'Кирим'), L('Выдача', 'Бериш'), L('Расчётный остаток', 'Ҳисобий қолдиқ'), L('Транзакций', 'Транзакциялар'), L('Последняя выдача', 'Охирги бериш')])
+    for r in data['warehouse_rows']:
+        last = r['last_txn'].txn_datetime.strftime('%d.%m.%Y %H:%M') if r['last_txn'] else ''
+        ws.append([r['warehouse'].name, r['stations_count'], r['opening'], r['receipts'], r['issued'], r['ending'], r['tx_count'], last])
+    style_table(ws)
+
+    ws = wb.create_sheet(_safe_ws_title(L('АЗС', 'АЗС'), used))
+    ws.append([L('АЗС', 'АЗС'), 'Topaz ID', L('Склад', 'Омбор'), L('Активна', 'Фаол'), L('Выдано, л', 'Берилди, л'), L('Транзакций', 'Транзакциялар'), L('Последняя выдача', 'Охирги бериш')])
+    for r in data['station_rows']:
+        last = r.last_txn.strftime('%d.%m.%Y %H:%M') if r.last_txn else ''
+        ws.append([r.name, r.topaz_id, r.warehouse_name, L('Да', 'Ҳа') if r.is_active else L('Нет', 'Йўқ'), float(r.issued or 0), int(r.tx_count or 0), last])
+    style_table(ws)
+
+    ws = wb.create_sheet(_safe_ws_title(L('Транзакции', 'Транзакциялар'), used))
+    ws.append([L('Дата/время', 'Сана/вақт'), L('АЗС', 'АЗС'), L('Склад', 'Омбор'), L('Карта', 'Карта'), L('Топливо', 'Ёқилғи'), L('Литры', 'Литр'), 'Topaz ID'])
+    for t in data['recent_txns']:
+        ws.append([t.txn_datetime.strftime('%d.%m.%Y %H:%M'), t.station.name, t.station.warehouse_name, t.card_number or '', t.fuel_type or 'ДТ', t.quantity or 0, t.topaz_txn_id or ''])
+    style_table(ws)
+
+    ws = wb.create_sheet(_safe_ws_title(L('Синхронизация', 'Синхронизация'), used))
+    ws.append([L('Время', 'Вақт'), L('Агент IP', 'Агент IP'), L('Получено', 'Қабул қилинди'), L('Новых', 'Янги'), L('Дублей', 'Такрор'), L('Неизвестных АЗС', 'Номаълум АЗС'), L('Статус', 'Ҳолат'), L('Ошибка', 'Хато')])
+    for l in data['sync_logs']:
+        ws.append([l.synced_at.strftime('%d.%m.%Y %H:%M:%S'), l.agent_ip or '', l.transactions_received or 0, l.transactions_new or 0, l.transactions_dup or 0, l.unknown_stations or 0, l.status or '', l.error_msg or ''])
+    style_table(ws)
+
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, (int, float)):
+                    cell.number_format = '#,##0.00'
+    return wb
+
+
+@fuel_bp.route('/report')
+@module_required('fuel')
+def fuel_report():
+    today = date.today()
+    default_from = today.replace(day=1)
+    d_from = _parse_report_date(request.args.get('date_from'), default_from)
+    d_to = _parse_report_date(request.args.get('date_to'), today)
+    if d_from > d_to:
+        d_from, d_to = d_to, d_from
+
+    warehouse_id = request.args.get('warehouse_id', type=int)
+    station_id = request.args.get('station_id', type=int)
+    data = _collect_fuel_report_data(d_from, d_to, warehouse_id=warehouse_id, station_id=station_id)
+
+    if request.args.get('export') == '1':
+        wb = _fuel_report_workbook(data, lang=_fuel_report_lang())
+        buffer = BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+        prefix = 'Fuel_report' if _fuel_report_lang() == 'ru' else 'Yoqilgi_hisoboti'
+        fname = f"{prefix}_{d_from.strftime('%d_%m_%Y')}_{d_to.strftime('%d_%m_%Y')}.xlsx"
+        return send_file(
+            buffer,
+            as_attachment=True,
+            download_name=fname,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+
+    warehouses = FuelWarehouse.query.order_by(FuelWarehouse.name).all()
+    stations = (FuelStation2.query
+                .join(FuelWarehouse)
+                .order_by(FuelWarehouse.name, FuelStation2.name).all())
+    return render_template('fuel/report.html',
+                           warehouses=warehouses,
+                           stations=stations,
+                           fuel_types=FUEL_TYPES,
+                           **data)
 
 
 # ─── Dashboard ────────────────────────────────────────────────────────

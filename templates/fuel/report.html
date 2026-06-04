@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+{% block title %}АЗС — {{ 'Отчёт по топливу' if lang == 'ru' else 'Ёқилғи ҳисоботи' }}{% endblock %}
+{% block content %}
+
+{% set L_title = 'Отчёт по топливу' if lang == 'ru' else 'Ёқилғи ҳисоботи' %}
+{% set L_subtitle = 'Сводка по ДТ: начальные остатки, приходы, выдачи Topaz, расчётные остатки и синхронизация.' if lang == 'ru' else 'ДТ бўйича сводка: бошланғич қолдиқ, киримлар, Topaz беришлари, ҳисобий қолдиқлар ва синхронизация.' %}
+{% set L_back = '← Дашборд' if lang == 'ru' else '← Дашборд' %}
+{% set L_from = 'С' if lang == 'ru' else 'Дан' %}
+{% set L_to = 'По' if lang == 'ru' else 'Гача' %}
+{% set L_wh = 'Склад' if lang == 'ru' else 'Омбор' %}
+{% set L_station = 'АЗС' if lang == 'ru' else 'АЗС' %}
+{% set L_all = '— все —' if lang == 'ru' else '— барчаси —' %}
+{% set L_show = 'Показать' if lang == 'ru' else 'Кўрсатиш' %}
+{% set L_export = 'Excel' if lang == 'ru' else 'Excel' %}
+{% set L_opening = 'Начальный остаток' if lang == 'ru' else 'Бошланғич қолдиқ' %}
+{% set L_receipts = 'Приход' if lang == 'ru' else 'Кирим' %}
+{% set L_issued = 'Выдача Topaz' if lang == 'ru' else 'Topaz бериш' %}
+{% set L_ending = 'Расчётный остаток' if lang == 'ru' else 'Ҳисобий қолдиқ' %}
+{% set L_tx = 'Транзакции' if lang == 'ru' else 'Транзакциялар' %}
+{% set L_sync_unknown = 'Неизвестные АЗС' if lang == 'ru' else 'Номаълум АЗС' %}
+{% set L_warehouses = 'По складам' if lang == 'ru' else 'Омборлар бўйича' %}
+{% set L_stations = 'По АЗС' if lang == 'ru' else 'АЗС бўйича' %}
+{% set L_recent = 'Последние транзакции периода' if lang == 'ru' else 'Даврдаги охирги транзакциялар' %}
+{% set L_sync = 'Синхронизация Topaz' if lang == 'ru' else 'Topaz синхронизацияси' %}
+{% set L_fuel = 'Топливо' if lang == 'ru' else 'Ёқилғи' %}
+{% set L_liters = 'Литры' if lang == 'ru' else 'Литр' %}
+{% set L_card = 'Карта' if lang == 'ru' else 'Карта' %}
+{% set L_datetime = 'Дата/время' if lang == 'ru' else 'Сана/вақт' %}
+{% set L_last = 'Последняя выдача' if lang == 'ru' else 'Охирги бериш' %}
+{% set L_missing = 'Нет начального остатка' if lang == 'ru' else 'Бошланғич қолдиқ йўқ' %}
+{% set L_negative = 'Отрицательный остаток' if lang == 'ru' else 'Манфий қолдиқ' %}
+{% set L_active = 'Активна' if lang == 'ru' else 'Фаол' %}
+{% set L_yes = 'Да' if lang == 'ru' else 'Ҳа' %}
+{% set L_no = 'Нет' if lang == 'ru' else 'Йўқ' %}
+{% set L_time = 'Время' if lang == 'ru' else 'Вақт' %}
+{% set L_received = 'Получено' if lang == 'ru' else 'Қабул қилинди' %}
+{% set L_new = 'Новых' if lang == 'ru' else 'Янги' %}
+{% set L_dup = 'Дублей' if lang == 'ru' else 'Такрор' %}
+{% set L_status = 'Статус' if lang == 'ru' else 'Ҳолат' %}
+{% set L_error = 'Ошибка' if lang == 'ru' else 'Хато' %}
+{% set L_search = 'Поиск по складу, АЗС, карте или Topaz ID' if lang == 'ru' else 'Омбор, АЗС, карта ёки Topaz ID бўйича қидириш' %}
+{% set L_rule = 'Формула: остаток на начало периода + приход − выдачи Topaz. Цены и суммы не используются.' if lang == 'ru' else 'Формула: давр бошидаги қолдиқ + кирим − Topaz беришлари. Нарх ва сумма ишлатилмайди.' %}
+
+<style>
+.fuel-report-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
+.fuel-report-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+.fuel-report-note { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
+.fuel-report-filter { display:grid; grid-template-columns:repeat(5,minmax(150px,1fr)); gap:12px; align-items:end; }
+.fuel-report-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin:16px 0; }
+.fuel-report-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+.fuel-report-toolbar input { min-width:280px; flex:1; }
+.fuel-status { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; }
+.fuel-status.ok { background:var(--accent-light); color:var(--accent); }
+.fuel-status.warn { background:var(--warn-light); color:var(--warn); }
+.fuel-status.danger { background:var(--danger-light); color:var(--danger); }
+.fuel-pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700; background:var(--info-light); color:var(--info); }
+@media (max-width:1000px) { .fuel-report-filter { grid-template-columns:repeat(2,minmax(150px,1fr)); } }
+@media (max-width:700px) { .fuel-report-hero { flex-direction:column; } .fuel-report-filter { grid-template-columns:1fr; } .fuel-report-actions { justify-content:flex-start; } }
+</style>
+
+<div class="fuel-report-hero">
+    <div>
+        <h1>{{ L_title }}</h1>
+        <div class="text-muted text-sm">{{ L_subtitle }}</div>
+    </div>
+    <div class="fuel-report-actions">
+        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">{{ L_back }}</a>
+        <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat(), warehouse_id=selected_warehouse_id or '', station_id=selected_station_id or '', export=1) }}" class="btn btn-primary btn-sm">{{ L_export }}</a>
+    </div>
+</div>
+
+<div class="fuel-report-note"><strong>ДТ.</strong> {{ L_rule }}</div>
+
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-body">
+        <form method="get" class="fuel-report-filter" id="fuelReportForm">
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ L_from }}</label>
+                <input type="date" name="date_from" value="{{ d_from.isoformat() }}">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ L_to }}</label>
+                <input type="date" name="date_to" value="{{ d_to.isoformat() }}">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ L_wh }}</label>
+                <select name="warehouse_id" id="warehouseFilter" onchange="filterStationsByWarehouse()">
+                    <option value="">{{ L_all }}</option>
+                    {% for wh in warehouses %}<option value="{{ wh.id }}" {% if selected_warehouse_id == wh.id %}selected{% endif %}>{{ wh.name }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ L_station }}</label>
+                <select name="station_id" id="stationFilter">
+                    <option value="">{{ L_all }}</option>
+                    {% for st in stations %}<option value="{{ st.id }}" data-wh="{{ st.warehouse_id }}" {% if selected_station_id == st.id %}selected{% endif %}>{{ st.name }} — {{ st.warehouse_name }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>&nbsp;</label>
+                <button type="submit" class="btn btn-primary">{{ L_show }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="fuel-report-stats">
+    <div class="stat-card"><div class="label">{{ L_opening }}</div><div class="value">{{ '%.0f'|format(totals.opening) }} л</div></div>
+    <div class="stat-card"><div class="label">{{ L_receipts }}</div><div class="value" style="color:var(--accent);">+{{ '%.0f'|format(totals.receipts) }} л</div></div>
+    <div class="stat-card"><div class="label">{{ L_issued }}</div><div class="value" style="color:var(--danger);">-{{ '%.0f'|format(totals.issued) }} л</div></div>
+    <div class="stat-card"><div class="label">{{ L_ending }}</div><div class="value">{{ '%.0f'|format(totals.ending) }} л</div></div>
+    <div class="stat-card"><div class="label">{{ L_tx }}</div><div class="value">{{ totals.transactions }}</div></div>
+    <div class="stat-card"><div class="label">{{ L_sync_unknown }}</div><div class="value" {% if sync_summary.unknown %}style="color:var(--danger);"{% endif %}>{{ sync_summary.unknown }}</div></div>
+</div>
+
+<div class="fuel-report-toolbar">
+    <input type="text" id="fuelReportSearch" placeholder="{{ L_search }}" oninput="filterFuelReportTables()">
+    <span class="text-muted text-sm" id="fuelReportVisibleCount"></span>
+</div>
+
+<div class="card" style="margin-bottom:24px;">
+    <div class="card-header">{{ L_warehouses }} ({{ warehouse_rows|length }})</div>
+    <div style="overflow-x:auto;">
+    <table id="warehouseReportTable">
+        <thead>
+            <tr>
+                <th>{{ L_wh }}</th><th class="text-center">{{ L_station }}</th><th class="text-right">{{ L_opening }}</th><th class="text-right">{{ L_receipts }}</th><th class="text-right">{{ L_issued }}</th><th class="text-right">{{ L_ending }}</th><th class="text-right">{{ L_tx }}</th><th>{{ L_status }}</th><th>{{ L_last }}</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for r in warehouse_rows %}
+        <tr class="fuel-report-row" data-search="{{ (r.warehouse.name ~ ' ' ~ (r.last_txn.station.name if r.last_txn else ''))|lower }}">
+            <td style="font-weight:700;">{{ r.warehouse.name }}</td>
+            <td class="text-center">{{ r.stations_count }}</td>
+            <td class="text-right">{% if r.opening is none %}<span class="fuel-status warn">{{ L_missing }}</span>{% else %}{{ '%.2f'|format(r.opening) }}{% endif %}</td>
+            <td class="text-right" style="color:var(--accent);">{{ '%.2f'|format(r.receipts) }}</td>
+            <td class="text-right" style="color:var(--danger);">{{ '%.2f'|format(r.issued) }}</td>
+            <td class="text-right" style="font-weight:700;">{% if r.ending is none %}—{% else %}{{ '%.2f'|format(r.ending) }}{% endif %}</td>
+            <td class="text-right">{{ r.tx_count }}</td>
+            <td>{% if r.ending is none %}<span class="fuel-status warn">{{ L_missing }}</span>{% elif r.ending < 0 %}<span class="fuel-status danger">{{ L_negative }}</span>{% else %}<span class="fuel-status ok">OK</span>{% endif %}</td>
+            <td class="text-sm text-muted">{% if r.last_txn %}{{ r.last_txn.txn_datetime.strftime('%d.%m.%Y %H:%M') }}<br>{{ r.last_txn.station.name }}{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:24px;">
+    <div class="card-header">{{ L_stations }} ({{ station_rows|length }})</div>
+    <div style="overflow-x:auto;">
+    <table id="stationReportTable">
+        <thead><tr><th>{{ L_station }}</th><th>Topaz ID</th><th>{{ L_wh }}</th><th>{{ L_active }}</th><th class="text-right">{{ L_issued }}</th><th class="text-right">{{ L_tx }}</th><th>{{ L_last }}</th></tr></thead>
+        <tbody>
+        {% for st in station_rows %}
+        <tr class="fuel-report-row" data-search="{{ (st.name ~ ' ' ~ st.warehouse_name ~ ' ' ~ st.topaz_id)|lower }}">
+            <td style="font-weight:700;">{{ st.name }}</td>
+            <td class="text-muted text-sm">{{ st.topaz_id }}</td>
+            <td>{{ st.warehouse_name }}</td>
+            <td>{% if st.is_active %}<span class="fuel-status ok">{{ L_yes }}</span>{% else %}<span class="fuel-status warn">{{ L_no }}</span>{% endif %}</td>
+            <td class="text-right" style="font-weight:700; color:var(--danger);">{{ '%.2f'|format(st.issued or 0) }}</td>
+            <td class="text-right">{{ st.tx_count or 0 }}</td>
+            <td class="text-sm text-muted">{% if st.last_txn %}{{ st.last_txn.strftime('%d.%m.%Y %H:%M') }}{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:24px;">
+    <div class="card-header">{{ L_recent }} ({{ recent_txns|length }})</div>
+    <div style="overflow-x:auto;">
+    <table id="recentFuelTxTable">
+        <thead><tr><th>{{ L_datetime }}</th><th>{{ L_station }}</th><th>{{ L_wh }}</th><th>{{ L_fuel }}</th><th class="text-right">{{ L_liters }}</th><th>{{ L_card }}</th><th>Topaz ID</th></tr></thead>
+        <tbody>
+        {% for txn in recent_txns %}
+        <tr class="fuel-report-row" data-search="{{ (txn.station.name ~ ' ' ~ txn.station.warehouse_name ~ ' ' ~ (txn.card_number or '') ~ ' ' ~ (txn.topaz_txn_id or ''))|lower }}">
+            <td class="text-sm">{{ txn.txn_datetime.strftime('%d.%m.%Y %H:%M') }}</td>
+            <td>{{ txn.station.name }}</td>
+            <td class="text-muted text-sm">{{ txn.station.warehouse_name }}</td>
+            <td><span class="fuel-pill">{{ txn.fuel_type or 'ДТ' }}</span></td>
+            <td class="text-right" style="font-weight:700; color:var(--danger);">{{ '%.2f'|format(txn.quantity) }}</td>
+            <td class="text-sm text-muted">{{ txn.card_number or '—' }}</td>
+            <td class="text-muted text-sm">{{ txn.topaz_txn_id or '' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="text-center text-muted" style="padding:36px;">{{ 'За выбранный период выдач нет.' if lang == 'ru' else 'Танланган даврда беришлар йўқ.' }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">{{ L_sync }} ({{ sync_logs|length }})</div>
+    <div style="overflow-x:auto;">
+    <table>
+        <thead><tr><th>{{ L_time }}</th><th>IP</th><th class="text-right">{{ L_received }}</th><th class="text-right">{{ L_new }}</th><th class="text-right">{{ L_dup }}</th><th class="text-right">{{ L_sync_unknown }}</th><th>{{ L_status }}</th><th>{{ L_error }}</th></tr></thead>
+        <tbody>
+        {% for log in sync_logs %}
+        <tr>
+            <td class="text-sm">{{ log.synced_at.strftime('%d.%m.%Y %H:%M:%S') }}</td>
+            <td>{{ log.agent_ip }}</td>
+            <td class="text-right">{{ log.transactions_received }}</td>
+            <td class="text-right" style="color:var(--accent); font-weight:700;">{{ log.transactions_new }}</td>
+            <td class="text-right text-muted">{{ log.transactions_dup }}</td>
+            <td class="text-right" {% if log.unknown_stations %}style="color:var(--danger); font-weight:700;"{% endif %}>{{ log.unknown_stations }}</td>
+            <td>{% if log.status == 'ok' %}<span class="fuel-status ok">OK</span>{% else %}<span class="fuel-status danger">{{ log.status }}</span>{% endif %}</td>
+            <td class="text-sm text-muted">{{ log.error_msg or '' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="text-center text-muted" style="padding:28px;">{{ 'За выбранный период синхронизаций нет.' if lang == 'ru' else 'Танланган даврда синхронизация йўқ.' }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+function filterStationsByWarehouse() {
+    const wh = document.getElementById('warehouseFilter').value;
+    const st = document.getElementById('stationFilter');
+    Array.from(st.options).forEach(opt => {
+        if (!opt.value) { opt.hidden = false; return; }
+        opt.hidden = !!wh && opt.dataset.wh !== wh;
+        if (opt.hidden && opt.selected) st.value = '';
+    });
+}
+function filterFuelReportTables() {
+    const q = (document.getElementById('fuelReportSearch').value || '').toLowerCase().trim();
+    let visible = 0;
+    let total = 0;
+    document.querySelectorAll('.fuel-report-row').forEach(row => {
+        total++;
+        const show = !q || row.dataset.search.indexOf(q) !== -1;
+        row.style.display = show ? '' : 'none';
+        if (show) visible++;
+    });
+    document.getElementById('fuelReportVisibleCount').textContent = visible + ' / ' + total;
+}
+document.addEventListener('DOMContentLoaded', function() { filterStationsByWarehouse(); filterFuelReportTables(); });
+</script>
+{% endblock %}

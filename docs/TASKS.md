@@ -1032,3 +1032,20 @@ Scope:
 - Audit log time display fixed to local Uzbekistan time UTC+5.
 - Pre-release DB backup: D:\transport-report-backups\before_sec003b_phase1\transport_before_sec003b_phase1_20260602_212510.db.
 - File rollback backup: D:\transport-report-backups\production\sec003b_phase1_code_backups\sec003b_phase1_prod_file_backup_20260602_212510.
+
+## REPORT001C — Fuel report and analytics
+
+Status: COMPLETED  
+Date: 2026-06-04  
+Commit: pending at documentation generation time
+
+Completed:
+- Added Fuel report screen.
+- Added period, warehouse, and station filters.
+- Added fuel summary cards.
+- Added warehouse and station breakdowns.
+- Added recent transactions and synchronization history.
+- Added Excel export.
+- Added dashboard navigation link.
+- Verified staging and production smoke tests.
+
