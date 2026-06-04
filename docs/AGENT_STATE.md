@@ -667,3 +667,19 @@ TASK-DEPLOY-006 remains planned (PostgreSQL migration research — not urgent).
 - Audit log time display fixed to local Uzbekistan time UTC+5.
 - Pre-release DB backup: D:\transport-report-backups\before_sec003b_phase1\transport_before_sec003b_phase1_20260602_212510.db.
 - File rollback backup: D:\transport-report-backups\production\sec003b_phase1_code_backups\sec003b_phase1_prod_file_backup_20260602_212510.
+
+
+## 2026-06-04 - QA001 + BACKUP001 completed
+
+- Created docs/QA_CHECKLIST.md with mandatory staging/production release smoke checks.
+- Created docs/BACKUP_RESTORE_TEST_20260604.md with real restore-test evidence.
+- Created docs/RELEASE_QA_BACKUP_20260604.md.
+- Restore test folder: C:\transport-report-restore-test.
+- Restored backup: D:\transport-report-backups\production\daily\transport_20260604_104248.db.
+- Restored database path: C:\transport-report-restore-test\instance\transport.db.
+- Restored DB size: 51,245,056 bytes.
+- SQLite integrity_check: ok.
+- Restored DB table count: 32.
+- Restore app import check passed: RESTORE APP IMPORT OK.
+- Production was not modified during the restore test.
+- No database migration required.

@@ -13,6 +13,24 @@
 
 ## Recently completed / appears completed
 
+### QA001 + BACKUP001 - QA checklist and backup restore test
+
+Priority: P0
+Status: **completed 2026-06-04**
+
+Changes made:
+
+- Created formal release QA checklist: docs/QA_CHECKLIST.md.
+- Executed isolated production backup restore test in C:\transport-report-restore-test.
+- Restored backup: D:\transport-report-backups\production\daily\transport_20260604_104248.db.
+- Verified restored SQLite database integrity_check: ok.
+- Verified restored database table count: 32.
+- Verified application import on restored code/database set: RESTORE APP IMPORT OK.
+- Documented restore test: docs/BACKUP_RESTORE_TEST_20260604.md.
+- No application code changes.
+- No database migration required.
+
+
 ### DATA001-3 - Validation UX improvements
 
 Priority: P1

@@ -1,151 +1,165 @@
-# QA_CHECKLIST.md — Vehicle Soft Quality Checklist
+# QA_CHECKLIST - Vehicle Soft release verification
 
-## Before changing code
+Purpose: mandatory smoke-test checklist for every staging and production release.
 
-- Read project docs.
-- Identify affected files.
-- Identify whether DB schema or reference data changes.
-- Decide whether service stop is required.
-- Create backup instructions if production data is touched.
+## 1. Pre-release code checks
 
-## Python syntax checks
+Run before every service restart:
 
-Run:
+- cd /d C:\transport-report
+- git status --short
+- git log --oneline -5
+- py_compile for app.py, models.py, sec003a_ext.py, migrate_sec003a_real.py, wialon_import.py, workload_report.py, fuel_routes.py, spare_parts.py, translations.py, config.py, run_server.py
+- APP IMPORT OK check
+- TransportReport service status check
 
-```cmd
-cd C:\transport-report
-"C:\Program Files\Python314\python.exe" -m py_compile app.py models.py excel_export.py wialon_import.py workload_report.py fuel_routes.py spare_parts.py translations.py excel_daily_activity.py config.py run_server.py
-```
+Expected result:
 
-For migration scripts, compile the exact script:
+- git status is clean before starting a new release, except temporary source zip/txt files.
+- py_compile completes without output or errors.
+- APP IMPORT OK is printed.
+- TransportReport service is RUNNING before and after release.
 
-```cmd
-"C:\Program Files\Python314\python.exe" -m py_compile migrate_name.py
-```
+## 2. Backup before production deployment
 
-## Database safety
+Run before every production deployment that changes code or templates:
 
-Before schema/reference migration:
+- cd /d C:\transport-report
+- backup_production_db.bat
 
-```cmd
-cd C:\transport-report
-.\nssm.exe stop TransportReport
-copy instance\transport.db instance\transport.db.backup_before_update
-```
+Expected result:
 
-After migration:
+- SUCCESS is printed.
+- integrity_check: ok.
+- Backup file is written to D:\transport-report-backups\production\daily.
 
-- Check migration output.
-- Check row counts if relevant.
-- Start service only after sanity checks.
+## 3. Login/Auth smoke test
 
-## Smoke test after service start
+Verify:
 
-Open:
+- Login works for admin.
+- Logout works.
+- Forced temporary password workflow opens when required.
+- User profile/language change works.
+- Invalid credentials do not log in.
 
-- `/login`
-- `/`
-- `/entry`
-- `/report`
-- `/wialon`
-- `/wialon/workload`
-- `/fuel/`
-- `/ref/equipment`
-- `/admin/users` as admin
+## 4. Module permissions smoke test
 
-## Daily entry checklist
+Verify:
 
-- Select date.
-- Select organization.
-- Confirm all 9 equipment categories display when that organization has equipment.
-- Mark equipment as working.
-- Add multiple work lines.
-- Save.
-- Reopen same date/org and confirm records persisted.
-- Change date/org only after saving.
+- Admin opens all modules.
+- Operator with transport=1 can open transport pages.
+- Operator with fuel=0 receives 403 on /fuel.
+- Operator with wialon=0 receives 403 on /wialon.
+- Operator with spare_parts=0 receives 403 on /spare-parts.
+- Zero-module test user receives expected 403 responses.
 
-## Main Excel report checklist
+## 5. Transport module smoke test
 
-- Generate one-day report.
-- Generate date range report.
-- Test organization filter.
-- Test category filter if changed.
-- Verify:
-  - totals match web dashboard;
-  - deficiencies sheet exists;
-  - category sheets are correct;
-  - file opens in Excel;
-  - sheet names are under Excel limit.
+Verify:
 
-## Wialon import checklist
+- / opens.
+- /entry opens.
+- Daily entry with valid data saves.
+- Daily entry rejects quantity <= 0.
+- Daily entry rejects working equipment without work rows.
+- /report opens.
+- Excel/report export works if changed by release.
 
-- Import a ZIP with `Моточасы.csv`.
-- Test duration values:
-  - `17:01:00`;
-  - `1 день 17:36:07`;
-  - `2 дня 16:51:41`.
-- Check unknown vehicles list.
-- Check mapped vehicles saved to `engine_hours_records`.
-- Check skipped vehicles are not saved.
-- Check duplicate behavior for existing date/equipment.
+## 6. Reference directories smoke test
 
-## Workload report checklist
+Verify:
 
-- Open `/wialon/workload`.
-- Test day/week/month/range modes.
-- Test organization filter.
-- Export Excel.
-- Verify:
-  - norm = calendar days × 8;
-  - fact = sum of engine hours;
-  - zero-hour equipment is red;
-  - organizations separated by empty row;
-  - no unexpected subtotal rows if approved format says none.
+- Organization save works with valid data.
+- Duplicate organization name is rejected.
+- Equipment save works with valid organization/name/plate.
+- Equipment without plate is rejected.
+- Duplicate equipment plate is rejected.
+- Work type save works.
+- Duplicate work type is rejected.
+- Customer save works.
+- Duplicate customer is rejected.
+- Dangerous delete protections work: used records show Used/Deactivate/Enable states.
 
-## Fuel module checklist
+## 7. Wialon smoke test
 
-- Open `/fuel/`.
-- Check warehouse list.
-- Check station mapping.
-- Check initial balances.
-- Check receipts.
-- Check transactions.
-- Test sync endpoint with known-safe sample data in a test copy first.
-- Verify API URL used by Topaz agent.
+Verify:
 
-## Authorization checklist
+- /wialon opens for authorized user.
+- Wialon mapping list opens.
+- Valid mapping saves.
+- Mapping without equipment and without Not in system is rejected.
+- One equipment cannot be linked to multiple Wialon objects.
+- Inactive equipment is not selectable.
+- Auto-match bulk save rejects duplicate Wialon names and duplicate equipment selections.
 
-- Admin can access all modules.
-- Operator can access only assigned organizations.
-- Viewer cannot edit.
-- User without module permission cannot open module route directly after TASK-SEC-001.
+## 8. Fuel smoke test
 
-## Migration checklist (TASK-OPS-001+)
+Verify:
 
-Before running any migration script:
+- /fuel opens for authorized user.
+- Warehouses page opens.
+- Warehouse edit/save works.
+- Initial balance saves with positive value.
+- Initial balance allows negative adjustment value.
+- Receipts save with quantity > 0.
+- Receipts reject quantity <= 0.
+- Receipt form has no price field.
+- Fuel type is fixed as DT.
+- Fuel station edit/save works.
+- Disabled fuel station can be reactivated.
+- /fuel/api/fuel_ping returns ok.
 
-- [ ] Service stopped (`.\nssm.exe stop TransportReport` or `net stop TransportReport`).
-- [ ] Database backup taken and named with date (`transport.db.backup_YYYYMMDD`).
-- [ ] Script syntax-checked: `py_compile migrate_NNN_name.py`.
-- [ ] Script reviewed: idempotent body, no business table drops, rollback comment present.
+## 9. Spare parts smoke test
 
-Running the migration:
+Verify:
 
-- [ ] Run one script at a time.
-- [ ] Check output — no ERROR lines.
-- [ ] Verify registry after running:
-  ```cmd
-  "C:\Program Files\Python314\python.exe" -c "import sqlite3; c=sqlite3.connect('instance/transport.db'); [print(r) for r in c.execute('SELECT id, name, applied_at FROM schema_migrations ORDER BY id')]; c.close()"
-  ```
-- [ ] Start service only after output looks correct.
+- /spare-parts opens for authorized user.
+- Valid request with at least one item saves.
+- Request without items is rejected.
+- Item with empty name is rejected.
+- Item with quantity <= 0 is rejected.
+- Non-admin cannot approve/reject.
+- Admin can approve/reject submitted request.
+- User cannot open request from inaccessible organization.
 
-## Release package checklist
+## 10. Deficiencies smoke test
 
-Every release must include:
+Verify:
 
-- Changed files.
-- Migration scripts if needed.
-- README/update instructions.
-- Rollback instructions.
-- Syntax check result.
-- Manual test checklist.
+- /deficiencies opens for authorized user.
+- Valid deficiency saves.
+- User cannot create/edit/delete deficiency for inaccessible organization.
+
+## 11. Audit log smoke test
+
+Verify:
+
+- /admin/audit opens for admin.
+- Recent tested actions appear in audit log where audit is expected.
+- Blocked dangerous delete actions appear in audit log.
+
+## 12. Validation UX smoke test
+
+Verify:
+
+- Multiple validation errors are displayed as a readable list.
+- Russian UI shows Russian validation messages.
+- Uzbek UI shows Uzbek validation messages where implemented.
+- Error messages explain what operator must fix.
+
+## 13. Post-release Git checks
+
+After commit:
+
+- git status --short
+- git push origin main
+
+Expected result:
+
+- git status is clean after commit.
+- push to origin/main succeeds.
+
+## 14. Rollback rule
+
+Old production server 10.103.25.200 remains rollback-standby only and must not be started unless rollback is explicitly authorized.
