@@ -33,7 +33,7 @@
                 <form method="post" action="{{ url_for('save_organization') }}" class="form-inline" style="gap:6px;">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="id" value="{{ org.id }}">
-                    <input type="text" name="name" value="{{ org.name }}" style="width:280px;">
+                    <input type="text" name="name" value="{{ org.name }}" required style="width:280px;">
                     <button type="submit" class="btn btn-sm btn-secondary">💾</button>
                 </form>
             </td>

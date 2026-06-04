@@ -13,6 +13,23 @@
 
 ## Recently completed / appears completed
 
+### DATA001-2 - References and Wialon validation
+
+Priority: P0
+Status: **completed 2026-06-04**
+
+Changes made:
+
+- Added duplicate and required-field validation for organizations, equipment, work types, and customers.
+- Added equipment plate normalization and duplicate protection.
+- Added Wialon mapping validation: non-empty Wialon name, active equipment only, no duplicate links.
+- Added Wialon auto-match validation to prevent duplicate Wialon names and duplicate equipment selections.
+- Updated reference and Wialon forms with required/min constraints where applicable.
+- Verified production smoke test for valid and invalid reference/Wialon scenarios.
+- No database migration required.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260604_102724.db
+
+
 ### DATA001-1 - Input validation phase 1
 
 Priority: P0

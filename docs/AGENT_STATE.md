@@ -1,3 +1,17 @@
+## 2026-06-04 - DATA001-2 completed on production
+
+- Production URL: http://10.103.25.14:5050.
+- Files changed: app.py, wialon_import.py, templates/ref_organizations.html, templates/ref_equipment.html, templates/ref_work_types.html, templates/ref_customers.html, templates/wialon_mapping_list.html.
+- Added reference validation for duplicates, required fields, normalized names, equipment plate numbers, and non-negative default prices.
+- Added Wialon mapping validation for duplicate Wialon names, active equipment only, and one-to-one equipment mapping.
+- Added Wialon auto-match bulk validation to avoid partial saves on invalid data.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260604_102724.db
+- py_compile passed.
+- App import check passed: APP IMPORT OK.
+- TransportReport service restarted and running.
+- DATA001-2 production smoke test passed.
+- No database migration required.
+
 ## 2026-06-04 - DATA001-1 completed on production
 
 - Production URL: http://10.103.25.14:5050.

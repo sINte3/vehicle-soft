@@ -40,7 +40,7 @@
                 <form method="post" action="{{ url_for('save_customer') }}" class="form-inline" style="gap:6px;">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="id" value="{{ c.id }}">
-                    <input type="text" name="name" value="{{ c.name }}" style="width:300px;">
+                    <input type="text" name="name" value="{{ c.name }}" required style="width:300px;">
                     <select name="customer_type" style="width:130px;">
                         <option value="external" {% if c.customer_type == 'external' %}selected{% endif %}>{{ t('Ташқи') }}</option>
                         <option value="internal" {% if c.customer_type == 'internal' %}selected{% endif %}>{{ t('Ички') }}</option>

@@ -21,7 +21,7 @@
                 <input type="text" name="default_unit" placeholder="га / соат / м-соат / Рейс" style="width:120px;">
             </div>
             <div class="form-group"><label>{{ t('Дефолт нарх') }}</label>
-                <input type="number" name="default_price" placeholder="0" style="width:140px;">
+                <input type="number" name="default_price" placeholder="0" min="0" step="0.01" style="width:140px;">
             </div>
             <div class="form-group"><label>&nbsp;</label>
                 <button type="submit" class="btn btn-primary">+ {{ t('Қўшиш') }}</button>
@@ -74,7 +74,7 @@
                                 <input type="text" name="default_unit" value="{{ wt.default_unit }}" style="width:120px;">
                             </div>
                             <div class="form-group"><label>{{ t('Дефолт нарх') }}</label>
-                                <input type="number" name="default_price" value="{{ wt.default_price|int if wt.default_price else 0 }}" style="width:140px;">
+                                <input type="number" name="default_price" value="{{ wt.default_price|int if wt.default_price else 0 }}" min="0" step="0.01" style="width:140px;">
                             </div>
                             <div class="form-group"><label>&nbsp;</label>
                                 <button type="submit" class="btn btn-primary btn-sm">{{ t('Сақлаш') }}</button>

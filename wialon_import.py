@@ -30,6 +30,43 @@ def _safe_int(value):
         return None
 
 
+def _normalize_wialon_name(value):
+    return re.sub(r'\s+', ' ', (value or '').strip())
+
+
+def _equipment_label(eq):
+    if not eq:
+        return ''
+    parts = [eq.name or '']
+    if eq.plate:
+        parts.append(eq.plate)
+    if getattr(eq, 'organization', None):
+        parts.append(eq.organization.short_name or eq.organization.name or '')
+    return ' / '.join([p for p in parts if p])
+
+
+def _validate_mapping_decision(eq_id, skip, current_mapping_id=None):
+    if skip:
+        return None, None
+    if not eq_id:
+        return None, 'Техникани танланг ёки “Тизимда йўқ” белгисини қўйинг'
+    eq = Equipment.query.get(eq_id)
+    if not eq:
+        return None, 'Техника топилмади'
+    if not getattr(eq, 'is_active', True):
+        return None, 'Отключённую технику нельзя привязать к Wialon'
+    q = VialonMapping.query.filter(
+        VialonMapping.equipment_id == eq_id,
+        VialonMapping.skip == False
+    )
+    if current_mapping_id:
+        q = q.filter(VialonMapping.id != current_mapping_id)
+    existing = q.first()
+    if existing:
+        return None, 'Бу техника бошқа Wialon объектига бириктирилган: {}'.format(existing.vialon_name)
+    return eq_id, None
+
+
 def _mapping_snapshot(mapping):
     if not mapping:
         return None
@@ -503,6 +540,7 @@ def register_wialon_routes(app, editor_required, admin_required):
 
         all_equipment = (Equipment.query
                          .join(Organization)
+                         .filter(Equipment.is_active == True)
                          .order_by(Organization.sort_order,
                                    Equipment.category,
                                    Equipment.name).all())
@@ -528,29 +566,57 @@ def register_wialon_routes(app, editor_required, admin_required):
     @admin_required
     def wialon_auto_match_save():
         """Save ALL mapping decisions at once. No individual confirmations."""
-        vnames   = request.form.getlist('vialon_name')
-        eq_ids   = request.form.getlist('equipment_id')
-        skips    = set(request.form.getlist('skip_name'))
+        vnames = request.form.getlist('vialon_name')
+        eq_ids = request.form.getlist('equipment_id')
+        skips = set(request.form.getlist('skip_name'))
 
-        saved_mappings = 0
-        for i, vname in enumerate(vnames):
+        decisions = []
+        seen_vnames = set()
+        seen_eq_ids = {}
+        validation_errors = []
+
+        for i, raw_vname in enumerate(vnames):
+            vname = _normalize_wialon_name(raw_vname)
             if not vname:
                 continue
-            # Determine decision
-            if vname in skips:
+            vkey = vname.casefold()
+            if vkey in seen_vnames:
+                validation_errors.append('Wialon номлари такрорланган: {}'.format(vname))
+                continue
+            seen_vnames.add(vkey)
+
+            skip = vname in skips or raw_vname in skips
+            if skip:
                 eq_id = None
-                skip  = True
             else:
                 try:
                     eq_id = int(eq_ids[i]) if i < len(eq_ids) and eq_ids[i] else None
-                except ValueError:
+                except (TypeError, ValueError):
                     eq_id = None
-                skip = False
 
             if eq_id is None and not skip:
-                continue  # user left "— танланг —" → ignore this row
+                continue  # user left row empty; ignore it
 
-            # Upsert mapping
+            existing_mapping = VialonMapping.query.filter_by(vialon_name=vname).first()
+            current_id = existing_mapping.id if existing_mapping else None
+            eq_id, error = _validate_mapping_decision(eq_id, skip, current_mapping_id=current_id)
+            if error:
+                validation_errors.append('{}: {}'.format(vname, error))
+                continue
+            if eq_id:
+                if eq_id in seen_eq_ids and seen_eq_ids[eq_id] != vname:
+                    validation_errors.append('Бир техника бир нечта Wialon объектига танланган: {} / {}'.format(
+                        seen_eq_ids[eq_id], vname))
+                    continue
+                seen_eq_ids[eq_id] = vname
+            decisions.append((vname, eq_id, skip))
+
+        if validation_errors:
+            flash(validation_errors[0], 'warning')
+            return redirect(url_for('wialon_index'))
+
+        saved_mappings = 0
+        for vname, eq_id, skip in decisions:
             m = VialonMapping.query.filter_by(vialon_name=vname).first()
             if m:
                 m.equipment_id = eq_id
@@ -585,6 +651,7 @@ def register_wialon_routes(app, editor_required, admin_required):
     def wialon_mapping_list():
         mappings = VialonMapping.query.order_by(VialonMapping.vialon_name).all()
         all_equipment = (Equipment.query.join(Organization)
+                         .filter(Equipment.is_active == True)
                          .order_by(Organization.sort_order,
                                    Equipment.category, Equipment.name).all())
         return render_template('wialon_mapping_list.html',
@@ -595,17 +662,18 @@ def register_wialon_routes(app, editor_required, admin_required):
     @module_required('wialon')
     @admin_required
     def wialon_mapping_save():
-        mid   = request.form.get('id', type=int)
+        mid = request.form.get('id', type=int)
         eq_id = request.form.get('equipment_id', type=int)
-        skip  = request.form.get('skip') == '1'
-        vname = request.form.get('vialon_name', '').strip()
+        skip = request.form.get('skip') == '1'
+        vname = _normalize_wialon_name(request.form.get('vialon_name', ''))
         created = False
         before = None
+
         if mid:
             m = VialonMapping.query.get_or_404(mid)
             before = _mapping_snapshot(m)
-            m.equipment_id = eq_id if not skip else None
-            m.skip = skip
+            if not vname:
+                vname = m.vialon_name
         else:
             if not vname:
                 flash('Виалон номини киритинг', 'warning')
@@ -617,8 +685,28 @@ def register_wialon_routes(app, editor_required, admin_required):
                 created = True
             else:
                 before = _mapping_snapshot(m)
-            m.equipment_id = eq_id if not skip else None
-            m.skip = skip
+
+        if not vname or len(vname) < 2:
+            flash('Wialon номи жуда қисқа', 'warning')
+            return redirect(url_for('wialon_mapping_list'))
+
+        duplicate_name = VialonMapping.query.filter(
+            VialonMapping.vialon_name == vname,
+            VialonMapping.id != getattr(m, 'id', 0)
+        ).first()
+        if duplicate_name:
+            flash('Бундай Wialon номи аллақачон мавжуд', 'warning')
+            return redirect(url_for('wialon_mapping_list'))
+
+        eq_id, error = _validate_mapping_decision(eq_id, skip, current_mapping_id=getattr(m, 'id', None))
+        if error:
+            flash(error, 'warning')
+            return redirect(url_for('wialon_mapping_list'))
+
+        m.vialon_name = vname
+        m.equipment_id = eq_id if not skip else None
+        m.skip = skip
+
         db.session.flush()
         after = _mapping_snapshot(m)
         _audit_wialon(

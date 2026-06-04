@@ -5,6 +5,7 @@
 import os
 import hmac
 import secrets
+import re
 from functools import wraps
 from datetime import datetime, date, timedelta
 
@@ -240,6 +241,38 @@ def create_app():
         if result <= 0:
             raise ValueError(f'{field_label}: must be greater than zero')
         return result
+
+    def normalize_ref_text(value):
+        return re.sub(r'\s+', ' ', (value or '').strip())
+
+    def normalize_plate(value):
+        return normalize_ref_text(value).upper()
+
+    def ref_duplicate_exists(model, field_name, normalized_value, exclude_id=None, org_id=None):
+        if not normalized_value:
+            return False
+        rows = model.query.all()
+        target = normalize_ref_text(normalized_value).casefold()
+        for row in rows:
+            if exclude_id and getattr(row, 'id', None) == exclude_id:
+                continue
+            if org_id is not None and getattr(row, 'organization_id', None) != org_id:
+                continue
+            current = normalize_ref_text(getattr(row, field_name, '')).casefold()
+            if current == target:
+                return True
+        return False
+
+    def equipment_plate_duplicate_exists(plate_value, exclude_id=None):
+        target = normalize_plate(plate_value)
+        if not target:
+            return False
+        for row in Equipment.query.all():
+            if exclude_id and row.id == exclude_id:
+                continue
+            if normalize_plate(row.plate) == target:
+                return True
+        return False
 
 
     # в”Ђв”Ђв”Ђ AUTH в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
@@ -1098,12 +1131,21 @@ def create_app():
     @admin_required
     def save_organization():
         oid = request.form.get('id', type=int)
-        name = request.form.get('name', '').strip()
-        short = request.form.get('short_name', '').strip()
+        name = normalize_ref_text(request.form.get('name', ''))
+        short = normalize_ref_text(request.form.get('short_name', ''))
+
+        if not name or len(name) < 2:
+            flash(ui_t('Ташкилот номини тўлиқ киритинг', 'Введите корректное название организации'), 'warning')
+            return redirect(url_for('ref_organizations'))
+
+        if ref_duplicate_exists(Organization, 'name', name, exclude_id=oid):
+            flash(ui_t('Бундай ташкилот мавжуд', 'Такая организация уже существует'), 'warning')
+            return redirect(url_for('ref_organizations'))
+
         org_fields = ['id', 'name', 'short_name', 'sort_order']
         before = None
         if oid:
-            o = Organization.query.get(oid)
+            o = Organization.query.get_or_404(oid)
             before = model_snapshot(o, org_fields)
             sort = o.sort_order
             o.name, o.short_name, o.sort_order = name, short, sort
@@ -1307,9 +1349,23 @@ def create_app():
             return redirect(url_for('ref_equipment'))
         check_org_access(org_id)
 
-        name = request.form.get('name','').strip()
+        name = normalize_ref_text(request.form.get('name',''))
+        plate = normalize_plate(request.form.get('plate',''))
+        eq_type = normalize_ref_text(request.form.get('eq_type',''))
+        default_unit = normalize_ref_text(request.form.get('default_unit',''))
+        category = request.form.get('category','mtz')
+
         if not name:
             flash(ui_t('Техника номини киритинг', 'Введите название техники'), 'warning')
+            return redirect(url_for('ref_equipment', org_id=org_id))
+        if not plate:
+            flash(ui_t('Давлат рақамини киритинг', 'Введите государственный номер техники'), 'warning')
+            return redirect(url_for('ref_equipment', org_id=org_id))
+        if equipment_plate_duplicate_exists(plate, exclude_id=eid):
+            flash(ui_t('Бу давлат рақами бошқа техникага бириктирилган', 'Этот госномер уже привязан к другой технике'), 'warning')
+            return redirect(url_for('ref_equipment', org_id=org_id))
+        if category not in CATEGORIES:
+            flash(ui_t('Категория нотўғри танланган', 'Некорректно выбрана категория'), 'warning')
             return redirect(url_for('ref_equipment', org_id=org_id))
         try:
             default_price = parse_non_negative_float(request.form.get('default_price'), 'default_price', allow_empty=True)
@@ -1317,16 +1373,16 @@ def create_app():
             flash(ui_t('Нарх манфий бўлмаслиги керак', 'Цена не может быть отрицательной'), 'warning')
             return redirect(url_for('ref_equipment', org_id=org_id))
         kw = dict(name=name,
-                  plate=request.form.get('plate','').strip(),
-                  category=request.form.get('category','mtz'),
-                  eq_type=request.form.get('eq_type','').strip(),
+                  plate=plate,
+                  category=category,
+                  eq_type=eq_type,
                   organization_id=org_id,
                   default_price=default_price or 0,
-                  default_unit=request.form.get('default_unit','').strip())
+                  default_unit=default_unit)
         eq_fields = ['id', 'name', 'plate', 'category', 'eq_type', 'organization_id', 'default_price', 'default_unit', 'is_active']
         before = None
         if eid:
-            eq = Equipment.query.get(eid)
+            eq = Equipment.query.get_or_404(eid)
             check_org_access(eq.organization_id)
             before = model_snapshot(eq, eq_fields)
             for k, v in kw.items():
@@ -1431,10 +1487,13 @@ def create_app():
     @editor_required
     def save_work_type():
         wid = request.form.get('id', type=int)
-        name = request.form.get('name','').strip()
-        unit = request.form.get('default_unit','').strip()
+        name = normalize_ref_text(request.form.get('name',''))
+        unit = normalize_ref_text(request.form.get('default_unit',''))
         if not name:
             flash(ui_t('Иш тури номини киритинг', 'Введите название вида работ'), 'warning')
+            return redirect(url_for('ref_work_types'))
+        if ref_duplicate_exists(WorkType, 'name', name, exclude_id=wid):
+            flash(ui_t('Бундай иш тури мавжуд', 'Такой вид работ уже существует'), 'warning')
             return redirect(url_for('ref_work_types'))
         try:
             price = parse_non_negative_float(request.form.get('default_price'), 'default_price', allow_empty=True) or 0
@@ -1444,7 +1503,7 @@ def create_app():
         wt_fields = ['id', 'name', 'default_unit', 'default_price']
         before = None
         if wid:
-            w = WorkType.query.get(wid)
+            w = WorkType.query.get_or_404(wid)
             before = model_snapshot(w, wt_fields)
             w.name, w.default_unit, w.default_price = name, unit, price
         else:
@@ -1501,17 +1560,20 @@ def create_app():
     @editor_required
     def save_customer():
         cid = request.form.get('id', type=int)
-        name = request.form.get('name','').strip()
+        name = normalize_ref_text(request.form.get('name',''))
         ctype = request.form.get('customer_type','external')
         if not name:
             flash(ui_t('Буюртмачи номини киритинг', 'Введите название заказчика'), 'warning')
+            return redirect(url_for('ref_customers'))
+        if ref_duplicate_exists(Customer, 'name', name, exclude_id=cid):
+            flash(ui_t('Бундай буюртмачи мавжуд', 'Такой заказчик уже существует'), 'warning')
             return redirect(url_for('ref_customers'))
         if ctype not in {'external', 'internal'}:
             ctype = 'external'
         customer_fields = ['id', 'name', 'customer_type']
         before = None
         if cid:
-            c = Customer.query.get(cid)
+            c = Customer.query.get_or_404(cid)
             before = model_snapshot(c, customer_fields)
             c.name, c.customer_type = name, ctype
         else:
