@@ -31,23 +31,15 @@
                         {% endfor %}
                     </select>
                 </div>
+                <input type="hidden" name="fuel_type" value="ДТ">
                 <div class="form-group" style="margin-bottom:0;">
                     <label>{{ t('Ёқилғи') }}</label>
-                    <select name="fuel_type">
-                        {% for ft in fuel_types %}
-                        <option value="{{ ft }}" {% if ft == 'ДТ' %}selected{% endif %}>{{ ft }}</option>
-                        {% endfor %}
-                    </select>
+                    <div style="padding:8px 12px; background:var(--accent-light); color:var(--accent); border-radius:4px; font-weight:600;">ДТ</div>
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
                     <label>{{ t('Миқдор, л') }}</label>
                     <input type="number" name="quantity" step="0.1" min="0.1" required
-                           style="width:120px;" oninput="calcTotal()">
-                </div>
-                <div class="form-group" style="margin-bottom:0;">
-                    <label>{{ t('Нарх, сум/л') }}</label>
-                    <input type="number" name="price_per_liter" step="1" min="0"
-                           style="width:120px;" id="rPrice" oninput="calcTotal()">
+                           style="width:120px;">
                 </div>
             </div>
             <div class="form-inline" style="margin-top:10px;">
@@ -62,11 +54,6 @@
                 <div class="form-group" style="margin-bottom:0; flex:2;">
                     <label>{{ t('Изоҳ') }}</label>
                     <input type="text" name="note" id="rNote">
-                </div>
-                <div class="form-group" style="margin-bottom:0;">
-                    <label>&nbsp;</label>
-                    <span id="totalDisplay" style="font-weight:700; color:var(--accent); font-size:14px;
-                                                    padding:8px 0; min-width:120px; display:inline-block;"></span>
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
                     <label>&nbsp;</label>
@@ -122,8 +109,6 @@
                 <th>{{ t('Омбор') }}</th>
                 <th>{{ t('Ёқилғи') }}</th>
                 <th class="text-right">{{ t('Миқдор, л') }}</th>
-                <th class="text-right">{{ t('Нарх, сум/л') }}</th>
-                <th class="text-right">{{ t('Сумма') }}</th>
                 <th>{{ t('Таъминотчи') }}</th>
                 <th>{{ t('Ҳужжат №') }}</th>
                 <th>{{ t('Изоҳ') }}</th>
@@ -138,14 +123,6 @@
             <td><span style="font-size:11px; padding:1px 6px; background:var(--accent-light);
                              color:var(--accent); border-radius:2px;">{{ r.fuel_type }}</span></td>
             <td class="text-right" style="font-weight:600;">{{ '%.1f'|format(r.quantity) }}</td>
-            <td class="text-right text-sm">
-                {% if r.price_per_liter %}{{ '{:,.0f}'.format(r.price_per_liter).replace(',', ' ') }}{% endif %}
-            </td>
-            <td class="text-right text-sm">
-                {% if r.price_per_liter and r.quantity %}
-                {{ '{:,.0f}'.format(r.price_per_liter * r.quantity).replace(',', ' ') }}
-                {% endif %}
-            </td>
             <td class="text-sm">{{ r.supplier or '—' }}</td>
             <td class="text-sm text-muted">{{ r.doc_number or '' }}</td>
             <td class="text-sm text-muted">{{ r.note or '' }}</td>
@@ -153,7 +130,7 @@
                 <button class="btn btn-secondary btn-sm"
                         onclick="editR({{ r.id }}, '{{ r.receipt_date.isoformat() }}',
                                        {{ r.warehouse_id }}, '{{ r.fuel_type }}',
-                                       {{ r.quantity }}, {{ r.price_per_liter or 0 }},
+                                       {{ r.quantity }},
                                        '{{ r.supplier or '' }}', '{{ r.doc_number or '' }}',
                                        '{{ r.note or '' }}')">
                     {{ t('Ўзг.') }}
@@ -168,7 +145,7 @@
         </tr>
         {% else %}
         <tr>
-            <td colspan="10" class="text-center text-muted" style="padding:40px;">
+            <td colspan="8" class="text-center text-muted" style="padding:40px;">
                 {{ t('Танланган давр учун кирим йўқ.') }}
             </td>
         </tr>
@@ -180,18 +157,10 @@
 {% endblock %}
 {% block scripts %}
 <script>
-function calcTotal() {
-    const qty = parseFloat(document.querySelector('[name=quantity]').value) || 0;
-    const price = parseFloat(document.getElementById('rPrice').value) || 0;
-    const total = qty * price;
-    const el = document.getElementById('totalDisplay');
-    el.textContent = total > 0 ? new Intl.NumberFormat('ru').format(Math.round(total)) + ' сум' : '';
-}
-function editR(id, dt, whId, ft, qty, price, supplier, doc, note) {
+function editR(id, dt, whId, ft, qty, supplier, doc, note) {
     document.getElementById('rId').value = id;
     document.querySelector('[name=receipt_date]').value = dt;
     document.querySelector('[name=quantity]').value = qty;
-    document.getElementById('rPrice').value = price;
     document.getElementById('rSupplier').value = supplier;
     document.getElementById('rDoc').value = doc;
     document.getElementById('rNote').value = note;
@@ -199,17 +168,11 @@ function editR(id, dt, whId, ft, qty, price, supplier, doc, note) {
     for (let i = 0; i < whSel.options.length; i++) {
         whSel.options[i].selected = (whSel.options[i].value == whId);
     }
-    const ftSel = document.querySelector('[name=fuel_type]');
-    for (let i = 0; i < ftSel.options.length; i++) {
-        ftSel.options[i].selected = (ftSel.options[i].value == ft);
-    }
-    calcTotal();
     window.scrollTo(0, 0);
 }
 function clearRForm() {
     document.getElementById('rId').value = '';
     document.getElementById('receiptForm').reset();
-    document.getElementById('totalDisplay').textContent = '';
 }
 </script>
 {% endblock %}

@@ -13,6 +13,23 @@
 
 ## Recently completed / appears completed
 
+### DATA001-1 - Input validation phase 1
+
+Priority: P0
+Status: **completed 2026-06-04**
+
+Changes made:
+
+- Added backend validation for daily entry save.
+- Added backend validation for Fuel initial balances and receipts.
+- Updated Fuel business rules: fuel type fixed as DT, prices removed, negative initial balances allowed.
+- Added backend validation for spare parts requests and items.
+- Added basic backend validation for organizations, equipment, work types, and customers.
+- Verified production smoke test for valid and invalid scenarios.
+- No database migration required.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260604_100121.db
+
+
 ### TASK-SEC-003F - Roles and access control hardening
 
 Priority: P0

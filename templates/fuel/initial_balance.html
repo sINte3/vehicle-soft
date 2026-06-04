@@ -31,17 +31,14 @@
                     {% endfor %}
                 </select>
             </div>
+            <input type="hidden" name="fuel_type" value="ДТ">
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ t('Ёқилғи тури') }}</label>
-                <select name="fuel_type" required>
-                    {% for ft in fuel_types %}
-                    <option value="{{ ft }}" {% if ft == 'ДТ' %}selected{% endif %}>{{ ft }}</option>
-                    {% endfor %}
-                </select>
+                <div style="padding:8px 12px; background:var(--info-light); color:var(--info); border-radius:4px; font-weight:600;">ДТ</div>
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ t('Қолдиқ, литр') }}</label>
-                <input type="number" name="quantity" step="0.1" min="0" required style="width:120px;">
+                <input type="number" name="quantity" step="0.1" required style="width:120px;">
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ t('Қолдиқ санаси') }}</label>

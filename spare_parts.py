@@ -55,6 +55,25 @@ def _spare_check_request_access(req):
         abort(403)
 
 
+def _parse_spare_date(value):
+    try:
+        if not value:
+            raise ValueError()
+        return datetime.strptime(value, '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        raise ValueError('request_date')
+
+
+def _parse_spare_positive_qty(value):
+    try:
+        result = float(str(value).replace(',', '.'))
+    except (TypeError, ValueError):
+        raise ValueError('quantity')
+    if result <= 0:
+        raise ValueError('quantity')
+    return result
+
+
 def _request_snapshot(req):
     if not req:
         return None
@@ -209,23 +228,66 @@ def save_request():
     if not current_user.can_edit:
         abort(403)
     action = request.form.get('action', 'draft')
+    if action not in {'draft', 'submit'}:
+        abort(400)
     status = 'submitted' if action == 'submit' else 'draft'
 
     req_date_s = request.form.get('request_date', date.today().isoformat())
     try:
-        req_date = datetime.strptime(req_date_s, '%Y-%m-%d').date()
+        req_date = _parse_spare_date(req_date_s)
     except ValueError:
-        req_date = date.today()
+        flash(_spare_t('Сана нотўғри', 'Некорректная дата'), 'warning')
+        return redirect(url_for('spare_parts.new_request'))
 
     org_id = request.form.get('organization_id', type=int)
     eq_id = request.form.get('equipment_id', type=int) or None
     note = request.form.get('note', '').strip()
 
+    if not org_id:
+        flash(_spare_t('Ташкилотни танланг', 'Выберите организацию'), 'warning')
+        return redirect(url_for('spare_parts.new_request'))
     _spare_check_org_access(org_id)
     if eq_id:
         eq = Equipment.query.get_or_404(eq_id)
-        if eq.organization_id != org_id or not current_user.can_access_org(eq.organization_id):
+        if eq.organization_id != org_id or not eq.is_active or not current_user.can_access_org(eq.organization_id):
             abort(403)
+
+    names = request.form.getlist('item_name')
+    parts = request.form.getlist('item_part_number')
+    qtys = request.form.getlist('item_quantity')
+    units = request.form.getlist('item_unit')
+    notes = request.form.getlist('item_note')
+
+    prepared_items = []
+    for i, raw_name in enumerate(names):
+        name = raw_name.strip()
+        qty_raw = qtys[i].strip() if i < len(qtys) else ''
+        part_number = parts[i].strip() if i < len(parts) else ''
+        unit = units[i].strip() if i < len(units) else 'dona'
+        item_note = notes[i].strip() if i < len(notes) else ''
+
+        if not name and not qty_raw and not part_number and not item_note:
+            continue
+        if not name:
+            flash(_spare_t('Запчасть номини киритинг', 'Введите название запчасти'), 'warning')
+            return redirect(url_for('spare_parts.new_request'))
+        try:
+            qty = _parse_spare_positive_qty(qty_raw)
+        except ValueError:
+            flash(_spare_t('Миқдор мусбат бўлиши керак', 'Количество должно быть больше нуля'), 'warning')
+            return redirect(url_for('spare_parts.new_request'))
+
+        prepared_items.append({
+            'name': name,
+            'part_number': part_number,
+            'quantity': qty,
+            'unit': unit or 'dona',
+            'note': item_note,
+        })
+
+    if not prepared_items:
+        flash(_spare_t('Камида битта позиция киритинг', 'Добавьте хотя бы одну позицию'), 'warning')
+        return redirect(url_for('spare_parts.new_request'))
 
     spr = SparePartRequest(
         request_date=req_date,
@@ -238,28 +300,15 @@ def save_request():
     db.session.add(spr)
     db.session.flush()
 
-    names = request.form.getlist('item_name')
-    parts = request.form.getlist('item_part_number')
-    qtys = request.form.getlist('item_quantity')
-    units = request.form.getlist('item_unit')
-    notes = request.form.getlist('item_note')
-
     created_items = []
-    for i, name in enumerate(names):
-        name = name.strip()
-        if not name:
-            continue
-        try:
-            qty = float(qtys[i]) if i < len(qtys) and qtys[i] else 1
-        except ValueError:
-            qty = 1
+    for prepared in prepared_items:
         item = SparePartRequestItem(
             request_id=spr.id,
-            name=name,
-            part_number=parts[i].strip() if i < len(parts) else '',
-            quantity=qty,
-            unit=units[i].strip() if i < len(units) else 'dona',
-            note=notes[i].strip() if i < len(notes) else '',
+            name=prepared['name'],
+            part_number=prepared['part_number'],
+            quantity=prepared['quantity'],
+            unit=prepared['unit'],
+            note=prepared['note'],
         )
         db.session.add(item)
         created_items.append(item)

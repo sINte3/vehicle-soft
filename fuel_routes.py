@@ -41,6 +41,45 @@ def fuel_t(uz, ru):
     return ru if lang == 'ru' else uz
 
 
+def _parse_fuel_date(value, field_label):
+    try:
+        if not value:
+            raise ValueError()
+        return datetime.strptime(value, '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        raise ValueError(field_label)
+
+
+def _parse_non_negative(value, field_label, allow_empty=True):
+    if value is None or str(value).strip() == '':
+        if allow_empty:
+            return None
+        raise ValueError(field_label)
+    try:
+        result = float(str(value).replace(',', '.'))
+    except (TypeError, ValueError):
+        raise ValueError(field_label)
+    if result < 0:
+        raise ValueError(field_label)
+    return result
+
+
+def _parse_float_required(value, field_label):
+    if value is None or str(value).strip() == '':
+        raise ValueError(field_label)
+    try:
+        return float(str(value).replace(',', '.'))
+    except (TypeError, ValueError):
+        raise ValueError(field_label)
+
+
+def _parse_positive(value, field_label):
+    result = _parse_non_negative(value, field_label, allow_empty=False)
+    if result <= 0:
+        raise ValueError(field_label)
+    return result
+
+
 
 TOPAZ_AUDIT_ACTOR = SimpleNamespace(
     id=None,
@@ -130,7 +169,7 @@ def _audit_fuel(action, entity_type='', entity_id=None, entity_label='', before=
 # [REASON]: Token is no longer hardcoded; read per-request from app config which
 # reads FUEL_API_TOKEN from the environment. If not configured, all sync requests
 # are rejected (deny-all safe default). See docs/DEPLOYMENT_SECURITY.md.
-FUEL_TYPES = ['ДТ', 'АИ-80', 'АИ-91', 'АИ-92', 'АИ-95', 'Бензин']
+FUEL_TYPES = ['ДТ']
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────
@@ -385,19 +424,23 @@ def initial_balance():
 @admin_required_fuel
 def save_initial_balance():
     warehouse_id = request.form.get('warehouse_id', type=int)
-    fuel_type = request.form.get('fuel_type', 'ДТ').strip()
-    quantity = request.form.get('quantity', type=float)
+    fuel_type = 'ДТ'
     balance_date_s = request.form.get('balance_date', '')
     note = request.form.get('note', '').strip()
 
-    if not warehouse_id or quantity is None:
-        flash(fuel_t('Барча майдонларни тўлдиринг', 'Заполните все поля'), 'warning')
+    if not warehouse_id or not FuelWarehouse.query.get(warehouse_id):
+        flash(fuel_t('Омборни танланг', 'Выберите склад'), 'warning')
         return redirect(url_for('fuel.initial_balance'))
-
+    if fuel_type not in FUEL_TYPES:
+        flash(fuel_t('Ёқилғи тури нотўғри', 'Некорректный тип топлива'), 'warning')
+        return redirect(url_for('fuel.initial_balance'))
     try:
-        balance_date = datetime.strptime(balance_date_s, '%Y-%m-%d').date()
+        quantity = _parse_float_required(request.form.get('quantity'), 'quantity')
+        balance_date = _parse_fuel_date(balance_date_s, 'balance_date')
     except ValueError:
-        balance_date = date.today()
+        flash(fuel_t('Миқдор сон бўлиши ва сана тўғри бўлиши керак',
+                     'Количество должно быть числом, дата должна быть корректной'), 'warning')
+        return redirect(url_for('fuel.initial_balance'))
 
     existing = (FuelInitialBalance.query
                 .filter_by(warehouse_id=warehouse_id, fuel_type=fuel_type).first())
@@ -476,20 +519,25 @@ def save_receipt():
         abort(403)
     rid = request.form.get('id', type=int)
     warehouse_id = request.form.get('warehouse_id', type=int)
-    fuel_type = request.form.get('fuel_type', 'ДТ').strip()
-    quantity = request.form.get('quantity', type=float)
-    price = request.form.get('price_per_liter', type=float) or 0
+    fuel_type = 'ДТ'
     supplier = request.form.get('supplier', '').strip()
     doc_number = request.form.get('doc_number', '').strip()
     note = request.form.get('note', '').strip()
     date_s = request.form.get('receipt_date', '')
-    try:
-        receipt_date = datetime.strptime(date_s, '%Y-%m-%d').date()
-    except ValueError:
-        receipt_date = date.today()
 
-    if not warehouse_id or not quantity:
-        flash(fuel_t('Мажбурий майдонларни тўлдиринг', 'Заполните обязательные поля'), 'warning')
+    if not warehouse_id or not FuelWarehouse.query.get(warehouse_id):
+        flash(fuel_t('Омборни танланг', 'Выберите склад'), 'warning')
+        return redirect(url_for('fuel.receipts'))
+    if fuel_type not in FUEL_TYPES:
+        flash(fuel_t('Ёқилғи тури нотўғри', 'Некорректный тип топлива'), 'warning')
+        return redirect(url_for('fuel.receipts'))
+    try:
+        quantity = _parse_positive(request.form.get('quantity'), 'quantity')
+        price = 0
+        receipt_date = _parse_fuel_date(date_s, 'receipt_date')
+    except ValueError:
+        flash(fuel_t('Миқдор мусбат бўлиши ва сана тўғри бўлиши керак',
+                     'Количество должно быть больше нуля, дата должна быть корректной'), 'warning')
         return redirect(url_for('fuel.receipts'))
 
     created = False
@@ -633,8 +681,16 @@ def save_station():
     warehouse_id = request.form.get('warehouse_id', type=int)
     is_active = request.form.get('is_active') == 'on'
 
-    if not name or not topaz_id or not warehouse_id:
+    if not name or not topaz_id or topaz_id <= 0 or not warehouse_id:
         flash(fuel_t('Барча майдонларни тўлдиринг', 'Заполните все поля'), 'warning')
+        return redirect(url_for('fuel.stations'))
+    if not FuelWarehouse.query.get(warehouse_id):
+        flash(fuel_t('Омборни танланг', 'Выберите склад'), 'warning')
+        return redirect(url_for('fuel.stations'))
+    existing_topaz = FuelStation2.query.filter_by(topaz_id=topaz_id).first()
+    if existing_topaz and (not sid or existing_topaz.id != sid):
+        flash(fuel_t(f'Topaz ID {topaz_id} бўлган АЗС аллақачон мавжуд',
+                     f'АЗС с Topaz ID {topaz_id} уже существует'), 'warning')
         return redirect(url_for('fuel.stations'))
 
     created = False
@@ -647,10 +703,6 @@ def save_station():
         st.warehouse_id = warehouse_id
         st.is_active = is_active
     else:
-        existing = FuelStation2.query.filter_by(topaz_id=topaz_id).first()
-        if existing:
-            flash(fuel_t(f'Topaz ID {topaz_id} бўлган АЗС аллақачон мавжуд', f'АЗС с Topaz ID {topaz_id} уже существует'), 'warning')
-            return redirect(url_for('fuel.stations'))
         st = FuelStation2(name=name, topaz_id=topaz_id,
                           warehouse_id=warehouse_id, is_active=is_active)
         db.session.add(st)
@@ -810,9 +862,9 @@ def _perform_fuel_sync():
                 topaz_col_id=col_id,
                 txn_datetime=txn_dt,
                 card_number=str(txn.get('card_number', '') or ''),
-                fuel_type=str(txn.get('fuel_type', 'ДТ') or 'ДТ'),
+                fuel_type='ДТ',
                 quantity=float(txn.get('quantity', 0) or 0),
-                price_per_liter=float(txn.get('price_per_liter', 0) or 0),
+                price_per_liter=0,
                 amount=float(txn.get('amount', 0) or 0),
             )
             db.session.add(t)

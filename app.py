@@ -214,6 +214,34 @@ def create_app():
 
         return mode, d_from, d_to
 
+    def parse_form_date_required(value, field_label):
+        try:
+            if not value:
+                raise ValueError()
+            return datetime.strptime(value, '%Y-%m-%d').date()
+        except (TypeError, ValueError):
+            raise ValueError(f'{field_label}: invalid date')
+
+    def parse_non_negative_float(value, field_label, allow_empty=True):
+        if value is None or str(value).strip() == '':
+            if allow_empty:
+                return None
+            raise ValueError(f'{field_label}: required')
+        try:
+            result = float(str(value).replace(',', '.'))
+        except (TypeError, ValueError):
+            raise ValueError(f'{field_label}: invalid number')
+        if result < 0:
+            raise ValueError(f'{field_label}: must be non-negative')
+        return result
+
+    def parse_positive_float(value, field_label):
+        result = parse_non_negative_float(value, field_label, allow_empty=False)
+        if result <= 0:
+            raise ValueError(f'{field_label}: must be greater than zero')
+        return result
+
+
     # в”Ђв”Ђв”Ђ AUTH в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     @app.route('/login', methods=['GET', 'POST'])
     def login():
@@ -512,11 +540,19 @@ def create_app():
     @module_required('transport')
     @editor_required
     def save_entry():
-        sel = parse_date(request.form.get('work_date'))
+        data = request.form
         org_id = request.form.get('org_id', type=int)
+        if not org_id:
+            flash(ui_t('Ташкилотни танланг', 'Выберите организацию'), 'warning')
+            return redirect(url_for('daily_entry'))
         check_org_access(org_id)
 
-        data = request.form
+        try:
+            sel = parse_form_date_required(request.form.get('work_date'), 'work_date')
+        except ValueError:
+            flash(ui_t('Нотўғри сана', 'Некорректная дата'), 'warning')
+            return redirect(url_for('daily_entry', org_id=org_id))
+
         eq_ids = set()
         for key in data.keys():
             if key.startswith('eq_') and '_status' in key:
@@ -525,83 +561,129 @@ def create_app():
                 except (ValueError, IndexError):
                     pass
 
-        daily_fields = ['id', 'work_date', 'equipment_id', 'line_index', 'status', 'work_type', 'customer', 'unit', 'quantity', 'price', 'payment_type', 'idle_reason', 'note', 'amount_cash', 'amount_transfer', 'amount_internal', 'amount_other']
-        before_records = []
-        if eq_ids:
-            before_records = [model_snapshot(r, daily_fields) for r in DailyRecord.query.filter(
-                DailyRecord.work_date == sel, DailyRecord.equipment_id.in_(list(eq_ids))
-            ).order_by(DailyRecord.equipment_id, DailyRecord.line_index).all()]
+        valid_payments = {'internal', 'cash', 'transfer', 'other'}
+        validation_errors = []
+        prepared = {}
 
-        saved = 0
         for eq_id in eq_ids:
             eq = Equipment.query.get(eq_id)
-            if not eq or eq.organization_id != org_id:
+            if not eq or eq.organization_id != org_id or not eq.is_active:
+                validation_errors.append(ui_t('Техника нотўғри танланган', 'Некорректно выбрана техника'))
                 continue
 
             p = f'eq_{eq_id}_'
             status = data.get(f'{p}status', 'idle')
-
-            DailyRecord.query.filter_by(work_date=sel, equipment_id=eq_id).delete()
+            if status not in {'idle', 'working'}:
+                validation_errors.append(ui_t('Техника ҳолати нотўғри', 'Некорректный статус техники'))
+                continue
 
             if status == 'idle':
-                idle_reason = data.get(f'{p}idle_reason', 'Р’Р°Т›С‚РёРЅС‡Р° Р±СћС€').strip() or 'Р’Р°Т›С‚РёРЅС‡Р° Р±СћС€'
+                idle_reason = data.get(f'{p}idle_reason', '').strip() or ui_t('Вақтинча бўш', 'Временно свободен')
+                prepared[eq_id] = {'status': 'idle', 'idle_reason': idle_reason, 'lines': []}
+                continue
+
+            valid_lines_str = data.get(f'{p}valid_lines', '')
+            if valid_lines_str:
+                valid_lines = [int(x) for x in valid_lines_str.split(',') if x.strip().isdigit()]
+            else:
+                valid_lines = [0]
+
+            lines_to_save = []
+            for li in valid_lines:
+                lp = f'{p}line_{li}_'
+                work_type = data.get(f'{lp}work_type', '').strip()
+                customer = data.get(f'{lp}customer', '').strip()
+                unit = data.get(f'{lp}unit', '').strip()
+                qty_s = data.get(f'{lp}quantity', '').strip()
+                price_s = data.get(f'{lp}price', '').strip()
+                payment = data.get(f'{lp}payment_type', 'internal')
+                note = data.get(f'{lp}note', '').strip()
+
+                if not work_type and not qty_s and not price_s and not customer and not unit and not note:
+                    continue
+
+                if not work_type:
+                    validation_errors.append(ui_t('Иш турини танланг', 'Выберите вид работ'))
+                    continue
+                if payment not in valid_payments:
+                    validation_errors.append(ui_t('Тўлов тури нотўғри', 'Некорректный тип оплаты'))
+                    continue
+
+                try:
+                    qty = parse_positive_float(qty_s, 'quantity')
+                    price = parse_non_negative_float(price_s, 'price', allow_empty=True)
+                except ValueError:
+                    validation_errors.append(ui_t('Миқдор мусбат, нарх эса манфий бўлмаслиги керак',
+                                                  'Количество должно быть больше нуля, цена не может быть отрицательной'))
+                    continue
+
+                price = price if price is not None else 0
+                lines_to_save.append({
+                    'work_type': work_type,
+                    'customer': customer,
+                    'unit': unit,
+                    'quantity': qty,
+                    'price': price,
+                    'payment_type': payment,
+                    'note': note,
+                })
+
+            if not lines_to_save:
+                validation_errors.append(ui_t('Ишлайдиган техника учун камида битта иш сатри керак',
+                                              'Для работающей техники нужна хотя бы одна строка работы'))
+                continue
+
+            prepared[eq_id] = {'status': 'working', 'lines': lines_to_save}
+
+        if validation_errors:
+            flash(validation_errors[0], 'warning')
+            return redirect(url_for('daily_entry', date=sel.isoformat(), org_id=org_id))
+
+        daily_fields = ['id', 'work_date', 'equipment_id', 'line_index', 'status', 'work_type', 'customer', 'unit', 'quantity', 'price', 'payment_type', 'idle_reason', 'note', 'amount_cash', 'amount_transfer', 'amount_internal', 'amount_other']
+        before_records = []
+        if prepared:
+            before_records = [model_snapshot(r, daily_fields) for r in DailyRecord.query.filter(
+                DailyRecord.work_date == sel, DailyRecord.equipment_id.in_(list(prepared.keys()))
+            ).order_by(DailyRecord.equipment_id, DailyRecord.line_index).all()]
+
+        saved = 0
+        for eq_id, item in prepared.items():
+            DailyRecord.query.filter_by(work_date=sel, equipment_id=eq_id).delete()
+
+            if item['status'] == 'idle':
                 rec = DailyRecord(work_date=sel, equipment_id=eq_id, status='idle',
-                                  idle_reason=idle_reason, line_index=0,
+                                  idle_reason=item['idle_reason'], line_index=0,
                                   created_by=current_user.id)
                 db.session.add(rec)
                 saved += 1
-            else:
-                # Get list of valid line indices (not deleted client-side)
-                valid_lines_str = data.get(f'{p}valid_lines', '')
-                if valid_lines_str:
-                    valid_lines = [int(x) for x in valid_lines_str.split(',') if x.strip().isdigit()]
-                else:
-                    valid_lines = [0]
+                continue
 
-                line_pos = 0
-                for li in valid_lines:
-                    lp = f'{p}line_{li}_'
-                    work_type = data.get(f'{lp}work_type', '').strip()
-                    customer = data.get(f'{lp}customer', '').strip()
-                    unit = data.get(f'{lp}unit', '').strip()
-                    qty_s = data.get(f'{lp}quantity', '').strip()
-                    price_s = data.get(f'{lp}price', '').strip()
-                    payment = data.get(f'{lp}payment_type', 'internal')
-                    note = data.get(f'{lp}note', '').strip()
-
-                    # Skip empty lines
-                    if not work_type and not qty_s and not price_s:
-                        continue
-
-                    qty = float(qty_s) if qty_s else None
-                    price = float(price_s) if price_s else None
-                    amount = round((qty or 0) * (price or 0), 2)
-
-                    rec = DailyRecord(
-                        work_date=sel, equipment_id=eq_id, status='working',
-                        work_type=work_type, customer=customer, unit=unit,
-                        quantity=qty, price=price,
-                        amount_cash=amount if payment == 'cash' else 0,
-                        amount_transfer=amount if payment == 'transfer' else 0,
-                        amount_internal=amount if payment == 'internal' else 0,
-                        amount_other=amount if payment == 'other' else 0,
-                        payment_type=payment, note=note, line_index=line_pos,
-                        created_by=current_user.id,
-                    )
-                    db.session.add(rec)
-                    line_pos += 1
-                saved += 1
+            for line_pos, line in enumerate(item['lines']):
+                amount = round((line['quantity'] or 0) * (line['price'] or 0), 2)
+                rec = DailyRecord(
+                    work_date=sel, equipment_id=eq_id, status='working',
+                    work_type=line['work_type'], customer=line['customer'], unit=line['unit'],
+                    quantity=line['quantity'], price=line['price'],
+                    amount_cash=amount if line['payment_type'] == 'cash' else 0,
+                    amount_transfer=amount if line['payment_type'] == 'transfer' else 0,
+                    amount_internal=amount if line['payment_type'] == 'internal' else 0,
+                    amount_other=amount if line['payment_type'] == 'other' else 0,
+                    payment_type=line['payment_type'], note=line['note'], line_index=line_pos,
+                    created_by=current_user.id,
+                )
+                db.session.add(rec)
+            saved += 1
 
         db.session.flush()
         after_records = []
-        if eq_ids:
+        if prepared:
             after_records = [model_snapshot(r, daily_fields) for r in DailyRecord.query.filter(
-                DailyRecord.work_date == sel, DailyRecord.equipment_id.in_(list(eq_ids))
+                DailyRecord.work_date == sel, DailyRecord.equipment_id.in_(list(prepared.keys()))
             ).order_by(DailyRecord.equipment_id, DailyRecord.line_index).all()]
         log_audit(
             db, 'daily_records_saved', entity_type='daily_records', entity_label=f'{sel.isoformat()} org_id={org_id}',
             module='daily_entry', before=before_records, after=after_records,
-            changes={'saved_equipment_count': saved, 'equipment_ids': sorted(eq_ids)},
+            changes={'saved_equipment_count': saved, 'equipment_ids': sorted(prepared.keys())},
             description=f'Daily entry saved for {saved} equipment items on {sel.isoformat()}'
         )
         db.session.commit()
@@ -1220,13 +1302,26 @@ def create_app():
     def save_equipment():
         eid = request.form.get('id', type=int)
         org_id = request.form.get('organization_id', type=int)
+        if not org_id:
+            flash(ui_t('Ташкилотни танланг', 'Выберите организацию'), 'warning')
+            return redirect(url_for('ref_equipment'))
         check_org_access(org_id)
-        kw = dict(name=request.form.get('name','').strip(),
+
+        name = request.form.get('name','').strip()
+        if not name:
+            flash(ui_t('Техника номини киритинг', 'Введите название техники'), 'warning')
+            return redirect(url_for('ref_equipment', org_id=org_id))
+        try:
+            default_price = parse_non_negative_float(request.form.get('default_price'), 'default_price', allow_empty=True)
+        except ValueError:
+            flash(ui_t('Нарх манфий бўлмаслиги керак', 'Цена не может быть отрицательной'), 'warning')
+            return redirect(url_for('ref_equipment', org_id=org_id))
+        kw = dict(name=name,
                   plate=request.form.get('plate','').strip(),
                   category=request.form.get('category','mtz'),
                   eq_type=request.form.get('eq_type','').strip(),
                   organization_id=org_id,
-                  default_price=request.form.get('default_price', type=float) or 0,
+                  default_price=default_price or 0,
                   default_unit=request.form.get('default_unit','').strip())
         eq_fields = ['id', 'name', 'plate', 'category', 'eq_type', 'organization_id', 'default_price', 'default_unit', 'is_active']
         before = None
@@ -1338,7 +1433,14 @@ def create_app():
         wid = request.form.get('id', type=int)
         name = request.form.get('name','').strip()
         unit = request.form.get('default_unit','').strip()
-        price = request.form.get('default_price', type=float) or 0
+        if not name:
+            flash(ui_t('Иш тури номини киритинг', 'Введите название вида работ'), 'warning')
+            return redirect(url_for('ref_work_types'))
+        try:
+            price = parse_non_negative_float(request.form.get('default_price'), 'default_price', allow_empty=True) or 0
+        except ValueError:
+            flash(ui_t('Нарх манфий бўлмаслиги керак', 'Цена не может быть отрицательной'), 'warning')
+            return redirect(url_for('ref_work_types'))
         wt_fields = ['id', 'name', 'default_unit', 'default_price']
         before = None
         if wid:
@@ -1401,6 +1503,11 @@ def create_app():
         cid = request.form.get('id', type=int)
         name = request.form.get('name','').strip()
         ctype = request.form.get('customer_type','external')
+        if not name:
+            flash(ui_t('Буюртмачи номини киритинг', 'Введите название заказчика'), 'warning')
+            return redirect(url_for('ref_customers'))
+        if ctype not in {'external', 'internal'}:
+            ctype = 'external'
         customer_fields = ['id', 'name', 'customer_type']
         before = None
         if cid:
