@@ -13,6 +13,26 @@
 
 ## Recently completed / appears completed
 
+### TASK-SEC-003F - Roles and access control hardening
+
+Priority: P0
+Status: **completed 2026-06-03**
+
+Changes made:
+
+- Added transport module permission checks to core transport routes.
+- Protected daily entry, report, and transport reference routes with module_required(transport).
+- Hardened spare parts organization access for non-admin users.
+- Restricted spare parts list, creation, detail view, submit, approve/reject access by organization and role.
+- Made spare parts approve/reject actions admin-only.
+- Updated spare parts detail UI so approve/reject controls are shown only to admins.
+- Verified admin access on production.
+- Verified operator module restrictions on production.
+- Verified zero-module test user receives expected 403 responses.
+- No database migration required.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260603_120118.db, integrity_check ok.
+
+
 ### TASK-SEC-003E - Dangerous delete protection
 
 Priority: P0

@@ -41,6 +41,20 @@ def _date_iso(value):
         return str(value)
 
 
+def _spare_user_org_ids():
+    return current_user.get_org_ids() if not current_user.is_admin else None
+
+
+def _spare_check_org_access(org_id):
+    if not org_id or not current_user.can_access_org(org_id):
+        abort(403)
+
+
+def _spare_check_request_access(req):
+    if not current_user.is_admin and not current_user.can_access_org(req.organization_id):
+        abort(403)
+
+
 def _request_snapshot(req):
     if not req:
         return None
@@ -113,9 +127,14 @@ def index():
     date_to_s = request.args.get('date_to', '')
 
     q = SparePartRequest.query
+    user_org_ids = _spare_user_org_ids()
+    if user_org_ids is not None:
+        q = q.filter(SparePartRequest.organization_id.in_(user_org_ids))
     if status_filter:
         q = q.filter(SparePartRequest.status == status_filter)
     if org_id:
+        if not current_user.can_access_org(org_id):
+            abort(403)
         q = q.filter(SparePartRequest.organization_id == org_id)
     if date_from_s:
         try:
@@ -131,11 +150,19 @@ def index():
     requests_list = q.order_by(SparePartRequest.created_at.desc()).all()
 
     counts = {}
+    count_base = SparePartRequest.query
+    if user_org_ids is not None:
+        count_base = count_base.filter(SparePartRequest.organization_id.in_(user_org_ids))
     for s in STATUS_LABELS:
-        counts[s] = SparePartRequest.query.filter_by(status=s).count()
-    counts['all'] = SparePartRequest.query.count()
+        counts[s] = count_base.filter(SparePartRequest.status == s).count()
+    counts['all'] = count_base.count()
 
-    organizations = Organization.query.order_by(Organization.sort_order).all()
+    if user_org_ids is None:
+        organizations = Organization.query.order_by(Organization.sort_order).all()
+    else:
+        organizations = (Organization.query
+                         .filter(Organization.id.in_(user_org_ids))
+                         .order_by(Organization.sort_order).all())
     return render_template('spare_parts_list.html',
                            requests_list=requests_list,
                            status_filter=status_filter,
@@ -155,9 +182,17 @@ def new_request():
     if not current_user.can_edit:
         flash(_spare_t('Сизда ҳуқуқ йўқ', 'У вас нет прав'), 'warning')
         return redirect(url_for('spare_parts.index'))
-    organizations = Organization.query.order_by(Organization.sort_order).all()
-    all_equipment = (Equipment.query
-                     .filter_by(is_active=True)
+    user_org_ids = _spare_user_org_ids()
+    if user_org_ids is None:
+        organizations = Organization.query.order_by(Organization.sort_order).all()
+        equipment_query = Equipment.query.filter_by(is_active=True)
+    else:
+        organizations = (Organization.query
+                         .filter(Organization.id.in_(user_org_ids))
+                         .order_by(Organization.sort_order).all())
+        equipment_query = Equipment.query.filter(Equipment.is_active == True,
+                                                 Equipment.organization_id.in_(user_org_ids))
+    all_equipment = (equipment_query
                      .order_by(Equipment.organization_id, Equipment.name, Equipment.plate)
                      .all())
     return render_template('spare_part_form.html',
@@ -185,6 +220,12 @@ def save_request():
     org_id = request.form.get('organization_id', type=int)
     eq_id = request.form.get('equipment_id', type=int) or None
     note = request.form.get('note', '').strip()
+
+    _spare_check_org_access(org_id)
+    if eq_id:
+        eq = Equipment.query.get_or_404(eq_id)
+        if eq.organization_id != org_id or not current_user.can_access_org(eq.organization_id):
+            abort(403)
 
     spr = SparePartRequest(
         request_date=req_date,
@@ -254,6 +295,7 @@ def save_request():
 def detail(rid):
     lang = getattr(g, 'lang', 'uz')
     spr = SparePartRequest.query.get_or_404(rid)
+    _spare_check_request_access(spr)
     return render_template('spare_part_detail.html',
                            req=spr,
                            status_labels=STATUS_LABELS,
@@ -265,6 +307,7 @@ def detail(rid):
 @module_required('spare_parts')
 def submit_request(rid):
     spr = SparePartRequest.query.get_or_404(rid)
+    _spare_check_request_access(spr)
     if spr.status != 'draft' or spr.created_by != current_user.id:
         abort(403)
     before = _request_snapshot(spr)
@@ -289,9 +332,10 @@ def submit_request(rid):
 @spare_parts_bp.route('/<int:rid>/approve', methods=['POST'])
 @module_required('spare_parts')
 def approve_request(rid):
-    if not current_user.can_edit:
+    if not current_user.is_admin:
         abort(403)
     spr = SparePartRequest.query.get_or_404(rid)
+    _spare_check_request_access(spr)
     if spr.status != 'submitted':
         abort(400)
     before = _request_snapshot(spr)
@@ -319,9 +363,10 @@ def approve_request(rid):
 @spare_parts_bp.route('/<int:rid>/reject', methods=['POST'])
 @module_required('spare_parts')
 def reject_request(rid):
-    if not current_user.can_edit:
+    if not current_user.is_admin:
         abort(403)
     spr = SparePartRequest.query.get_or_404(rid)
+    _spare_check_request_access(spr)
     if spr.status != 'submitted':
         abort(400)
     before = _request_snapshot(spr)

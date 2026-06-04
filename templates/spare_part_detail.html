@@ -92,7 +92,7 @@
 </div>
 {% endif %}
 
-{% if req.status == 'submitted' and current_user.can_edit %}
+{% if req.status == 'submitted' and current_user.is_admin %}
 <div class="card" style="margin-bottom:16px;">
     <div class="card-header">{{ 'Рассмотрение' if is_ru else 'Кўриб чиқиш' }}</div>
     <div class="card-body">

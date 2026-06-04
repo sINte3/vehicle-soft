@@ -1,3 +1,18 @@
+## 2026-06-03 - TASK-SEC-003F completed on production
+
+- Production URL: http://10.103.25.14:5050.
+- Files changed: app.py, spare_parts.py, templates/spare_part_detail.html.
+- Added transport module permission checks to core transport routes.
+- Hardened spare parts organization access for non-admin users.
+- Non-admin spare parts users are restricted to accessible organizations and equipment.
+- Spare parts approve/reject actions are admin-only.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260603_120118.db, integrity_check ok.
+- py_compile passed.
+- App import check passed: APP IMPORT OK.
+- TransportReport service restarted and running.
+- SEC003F production smoke test passed.
+- No database migration required.
+
 ## 2026-06-03 - TASK-SEC-003E completed on production
 
 - Production URL: http://10.103.25.14:5050.

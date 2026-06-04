@@ -333,6 +333,7 @@ def create_app():
 
     # в”Ђв”Ђв”Ђ DASHBOARD в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     @app.route('/', methods=['GET', 'POST'])
+    @module_required('transport')
     @login_required
     def index():
         if request.method == 'POST':
@@ -472,6 +473,7 @@ def create_app():
 
     # в”Ђв”Ђв”Ђ DAILY ENTRY в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     @app.route('/entry')
+    @module_required('transport')
     @login_required
     def daily_entry():
         if not current_user.can_edit:
@@ -507,6 +509,7 @@ def create_app():
                                work_types=work_types, customers=customers)
 
     @app.route('/entry/save', methods=['POST'])
+    @module_required('transport')
     @editor_required
     def save_entry():
         sel = parse_date(request.form.get('work_date'))
@@ -606,6 +609,7 @@ def create_app():
         return redirect(url_for('daily_entry', date=sel.isoformat(), org_id=org_id))
 
     @app.route('/entry/copy_prev', methods=['POST'])
+    @module_required('transport')
     @editor_required
     def copy_previous_day():
         sel = parse_date(request.form.get('work_date'))
@@ -675,12 +679,23 @@ def create_app():
             flash('Матн киритинг', 'warning')
             return redirect(url_for('deficiencies_list', date=sel.isoformat()))
 
+        if not current_user.is_admin:
+            if not org_id:
+                abort(403)
+            check_org_access(org_id)
+        elif org_id:
+            check_org_access(org_id)
+
         deficiency_fields = ['id', 'work_date', 'text', 'organization_id', 'sort_order']
         before = None
         if did:
             d = Deficiency.query.get(did)
             if not d:
                 abort(404)
+            if d.organization_id:
+                check_org_access(d.organization_id)
+            elif not current_user.is_admin:
+                abort(403)
             before = model_snapshot(d, deficiency_fields)
             d.text = text
             d.organization_id = org_id if org_id else None
@@ -708,6 +723,10 @@ def create_app():
     @editor_required
     def delete_deficiency(did):
         d = Deficiency.query.get_or_404(did)
+        if d.organization_id:
+            check_org_access(d.organization_id)
+        elif not current_user.is_admin:
+            abort(403)
         sel = d.work_date
         before = model_snapshot(d, ['id', 'work_date', 'text', 'organization_id', 'sort_order'])
         db.session.delete(d)
@@ -720,6 +739,7 @@ def create_app():
 
     # в”Ђв”Ђв”Ђ REPORT в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     @app.route('/report', methods=['GET', 'POST'])
+    @module_required('transport')
     @login_required
     def report():
         if request.method == 'POST':
@@ -967,6 +987,7 @@ def create_app():
 
     # в”Ђв”Ђв”Ђ REFERENCES в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     @app.route('/ref/organizations')
+    @module_required('transport')
     @login_required
     def ref_organizations():
         if current_user.is_admin:
@@ -991,6 +1012,7 @@ def create_app():
                                org_delete_info=org_delete_info)
 
     @app.route('/ref/organizations/save', methods=['POST'])
+    @module_required('transport')
     @admin_required
     def save_organization():
         oid = request.form.get('id', type=int)
@@ -1018,6 +1040,7 @@ def create_app():
         return redirect(url_for('ref_organizations'))
 
     @app.route('/ref/organizations/delete/<int:oid>', methods=['POST'])
+    @module_required('transport')
     @admin_required
     def delete_organization(oid):
         o = Organization.query.get_or_404(oid)
@@ -1046,6 +1069,7 @@ def create_app():
         return redirect(url_for('ref_organizations'))
 
     @app.route('/ref/equipment')
+    @module_required('transport')
     @login_required
     def ref_equipment():
         org_id    = request.args.get('org_id', type=int)
@@ -1103,6 +1127,7 @@ def create_app():
             equipment_delete_info=equipment_delete_info)
 
     @app.route('/ref/equipment/export')
+    @module_required('transport')
     @login_required
     def export_equipment():
         import io
@@ -1190,6 +1215,7 @@ def create_app():
                          mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
     @app.route('/ref/equipment/save', methods=['POST'])
+    @module_required('transport')
     @editor_required
     def save_equipment():
         eid = request.form.get('id', type=int)
@@ -1224,6 +1250,7 @@ def create_app():
         return redirect(url_for('ref_equipment', org_id=org_id))
 
     @app.route('/ref/equipment/delete/<int:eid>', methods=['POST'])
+    @module_required('transport')
     @editor_required
     def delete_equipment(eid):
         eq = Equipment.query.get_or_404(eid)
@@ -1265,6 +1292,7 @@ def create_app():
         return redirect(url_for('ref_equipment', org_id=oid))
 
     @app.route('/ref/equipment/enable/<int:eid>', methods=['POST'])
+    @module_required('transport')
     @editor_required
     def enable_equipment(eid):
         eq = Equipment.query.get_or_404(eid)
@@ -1291,6 +1319,7 @@ def create_app():
         return redirect(url_for('ref_equipment', org_id=eq.organization_id))
 
     @app.route('/ref/work_types')
+    @module_required('transport')
     @login_required
     def ref_work_types():
         work_types = WorkType.query.order_by(WorkType.name).all()
@@ -1303,6 +1332,7 @@ def create_app():
                                work_type_usage=work_type_usage)
 
     @app.route('/ref/work_types/save', methods=['POST'])
+    @module_required('transport')
     @editor_required
     def save_work_type():
         wid = request.form.get('id', type=int)
@@ -1328,6 +1358,7 @@ def create_app():
         return redirect(url_for('ref_work_types'))
 
     @app.route('/ref/work_types/delete/<int:wid>', methods=['POST'])
+    @module_required('transport')
     @admin_required
     def delete_work_type(wid):
         w = WorkType.query.get_or_404(wid)
@@ -1351,6 +1382,7 @@ def create_app():
         return redirect(url_for('ref_work_types'))
 
     @app.route('/ref/customers')
+    @module_required('transport')
     @login_required
     def ref_customers():
         customers = Customer.query.order_by(Customer.name).all()
@@ -1363,6 +1395,7 @@ def create_app():
                                customer_usage=customer_usage)
 
     @app.route('/ref/customers/save', methods=['POST'])
+    @module_required('transport')
     @editor_required
     def save_customer():
         cid = request.form.get('id', type=int)
@@ -1387,6 +1420,7 @@ def create_app():
         return redirect(url_for('ref_customers'))
 
     @app.route('/ref/customers/delete/<int:cid>', methods=['POST'])
+    @module_required('transport')
     @admin_required
     def delete_customer(cid):
         c = Customer.query.get_or_404(cid)
@@ -1411,6 +1445,7 @@ def create_app():
 
     # в”Ђв”Ђв”Ђ API в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     @app.route('/api/work_type_defaults/<int:wid>')
+    @module_required('transport')
     @login_required
     def api_work_type_defaults(wid):
         wt = WorkType.query.get_or_404(wid)
