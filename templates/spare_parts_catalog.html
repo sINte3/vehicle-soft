@@ -2,45 +2,68 @@
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти — каталог' if is_ru else 'Эҳтиёт қисмлар — каталог' }}{% endblock %}
 {% block content %}
-<div class="page-header">
-    <h1>{{ 'Каталог запчастей' if is_ru else 'Эҳтиёт қисмлар каталоги' }}</h1>
-    <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ '← Список' if is_ru else '← Рўйхат' }}</a>
+<style>
+.catalog-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
+.catalog-note { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
+.catalog-toolbar { display:flex; gap:10px; align-items:end; flex-wrap:wrap; margin-bottom:16px; }
+.catalog-toolbar .search { min-width:260px; flex:1; }
+.catalog-form-error { border-color:var(--danger) !important; box-shadow:0 0 0 2px rgba(220,53,69,.12); }
+@media (max-width:768px) { .catalog-hero { flex-direction:column; } .catalog-toolbar .search { min-width:100%; } }
+</style>
+
+<div class="catalog-hero">
+    <div>
+        <h1>{{ 'Каталог запчастей' if is_ru else 'Эҳтиёт қисмлар каталоги' }}</h1>
+        <div class="text-muted text-sm">{{ 'Справочник часто используемых запчастей для быстрого заполнения заявок.' if is_ru else 'Сўровларни тез тўлдириш учун кўп ишлатиладиган запчастлар маълумотномаси.' }}</div>
+    </div>
+    <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ '← Заявки' if is_ru else '← Сўровлар' }}</a>
 </div>
 
+<div class="catalog-note">{{ 'Минимально обязательное поле — название. Артикул, единица измерения и категория помогают быстрее находить нужную деталь.' if is_ru else 'Камида номини киритиш мажбурий. Артикул, ўлчов бирлиги ва категория керакли детални тез топишга ёрдам беради.' }}</div>
+
 <div class="card" style="margin-bottom:20px;">
-    <div class="card-header">{{ 'Добавить новую запчасть' if is_ru else 'Янги қисм қўшиш' }}</div>
+    <div class="card-header" id="catalogFormTitle">{{ 'Добавить новую запчасть' if is_ru else 'Янги қисм қўшиш' }}</div>
     <div class="card-body">
-        <form method="post" action="{{ url_for('spare_parts.catalog_save') }}" class="form-inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <form method="post" action="{{ url_for('spare_parts.catalog_save') }}" class="form-inline" id="catalogForm" onsubmit="return validateCatalogBeforeSubmit()">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="editId" value="">
-            <div class="form-group" style="flex:2; min-width:200px;">
+            <div class="form-group" style="flex:2; min-width:220px;">
                 <label>{{ 'Название' if is_ru else 'Номи' }}</label>
                 <input type="text" name="name" id="editName" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" required>
             </div>
-            <div class="form-group" style="flex:1;">
+            <div class="form-group" style="flex:1; min-width:150px;">
                 <label>{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</label>
                 <input type="text" name="part_number" id="editPartNum" placeholder="000-000">
             </div>
-            <div class="form-group" style="width:100px;">
+            <div class="form-group" style="width:120px;">
                 <label>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</label>
-                <input type="text" name="unit" id="editUnit" value="dona" style="width:80px;">
+                <input type="text" name="unit" id="editUnit" value="dona" style="width:100%;">
             </div>
-            <div class="form-group" style="flex:1;">
+            <div class="form-group" style="flex:1; min-width:170px;">
                 <label>{{ 'Категория' if is_ru else 'Категория' }}</label>
-                <input type="text" name="category" id="editCategory" placeholder="Двигатель / Тормоз...">
+                <input type="text" name="category" id="editCategory" placeholder="{{ 'Двигатель / тормоз / фильтр...' if is_ru else 'Двигатель / тормоз / фильтр...' }}">
             </div>
             <div class="form-group">
                 <label>&nbsp;</label>
                 <button type="submit" class="btn btn-primary">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
-                <button type="button" class="btn btn-secondary" onclick="resetForm()">{{ 'Отмена' if is_ru else 'Бекор қилиш' }}</button>
+                <button type="button" class="btn btn-secondary" onclick="resetForm()">{{ 'Сбросить' if is_ru else 'Тозалаш' }}</button>
             </div>
         </form>
     </div>
 </div>
 
+<div class="catalog-toolbar">
+    <div class="form-group search" style="margin-bottom:0;">
+        <label>{{ 'Поиск' if is_ru else 'Қидириш' }}</label>
+        <input type="text" id="catalogSearch" placeholder="{{ 'Поиск по названию, артикулу, категории' if is_ru else 'Ном, артикул, категория бўйича қидириш' }}" oninput="filterCatalog()">
+    </div>
+    <div class="text-muted text-sm" id="catalogCounter">{{ 'Показано' if is_ru else 'Кўрсатилган' }}: {{ parts|length }}</div>
+</div>
+
 <div class="card">
-    <div class="card-header">{{ 'Всего:' if is_ru else 'Жами:' }} {{ parts|length }}</div>
-    <table>
+    <div class="card-header">{{ 'Всего в каталоге' if is_ru else 'Каталогда жами' }}: {{ parts|length }}</div>
+    <div style="overflow-x:auto;">
+    <table style="min-width:760px;">
         <thead>
             <tr>
                 <th>№</th>
@@ -53,30 +76,38 @@
         </thead>
         <tbody>
             {% for part in parts %}
-            <tr>
+            <tr class="catalog-row" data-search="{{ (part.name ~ ' ' ~ (part.part_number or '') ~ ' ' ~ (part.unit or '') ~ ' ' ~ (part.category or ''))|lower }}">
                 <td>{{ loop.index }}</td>
                 <td><strong>{{ part.name }}</strong></td>
                 <td class="text-sm text-muted">{{ part.part_number or '—' }}</td>
-                <td>{{ part.unit }}</td>
+                <td>{{ part.unit or 'dona' }}</td>
                 <td class="text-sm text-muted">{{ part.category or '—' }}</td>
                 <td>
-                    <button class="btn btn-sm btn-secondary"
+                    <button class="btn btn-sm btn-secondary" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
                             onclick='editPart({{ part.id }}, {{ part.name|tojson }}, {{ (part.part_number or "")|tojson }}, {{ (part.unit or "")|tojson }}, {{ (part.category or "")|tojson }})'>✏</button>
                 </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
+const CATALOG_TEXT = {
+    addTitle: {{ ('Добавить новую запчасть' if is_ru else 'Янги қисм қўшиш')|tojson }},
+    editTitle: {{ ('Редактирование запчасти' if is_ru else 'Запчастни таҳрирлаш')|tojson }},
+    requiredName: {{ ('Введите название запчасти.' if is_ru else 'Запчасть номини киритинг.')|tojson }},
+    shown: {{ ('Показано' if is_ru else 'Кўрсатилган')|tojson }}
+};
 function editPart(id, name, partNum, unit, cat) {
     document.getElementById('editId').value = id;
     document.getElementById('editName').value = name;
     document.getElementById('editPartNum').value = partNum;
-    document.getElementById('editUnit').value = unit;
+    document.getElementById('editUnit').value = unit || 'dona';
     document.getElementById('editCategory').value = cat;
+    document.getElementById('catalogFormTitle').textContent = CATALOG_TEXT.editTitle;
     document.getElementById('editName').focus();
 }
 function resetForm() {
@@ -85,6 +116,30 @@ function resetForm() {
     document.getElementById('editPartNum').value = '';
     document.getElementById('editUnit').value = 'dona';
     document.getElementById('editCategory').value = '';
+    document.getElementById('catalogFormTitle').textContent = CATALOG_TEXT.addTitle;
+    document.getElementById('editName').classList.remove('catalog-form-error');
 }
+function validateCatalogBeforeSubmit() {
+    const name = document.getElementById('editName');
+    name.classList.remove('catalog-form-error');
+    if (!(name.value || '').trim()) {
+        name.classList.add('catalog-form-error');
+        alert(CATALOG_TEXT.requiredName);
+        name.focus();
+        return false;
+    }
+    return true;
+}
+function filterCatalog() {
+    const q = (document.getElementById('catalogSearch').value || '').toLowerCase().trim();
+    let visible = 0;
+    document.querySelectorAll('.catalog-row').forEach(row => {
+        const show = !q || (row.dataset.search || '').includes(q);
+        row.style.display = show ? '' : 'none';
+        if (show) visible += 1;
+    });
+    document.getElementById('catalogCounter').textContent = CATALOG_TEXT.shown + ': ' + visible;
+}
+document.addEventListener('DOMContentLoaded', filterCatalog);
 </script>
 {% endblock %}

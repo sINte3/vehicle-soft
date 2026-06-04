@@ -1,3 +1,18 @@
+## 2026-06-04 - UX001D completed on production
+
+- Production URL: http://10.103.25.14:5050.
+- Files changed: templates/spare_parts_list.html, templates/spare_part_form.html, templates/spare_part_detail.html, templates/spare_parts_catalog.html.
+- Improved spare parts request list with status counters, search, and status filter.
+- Improved spare parts request form with sticky action panel, item counter, empty-row cleanup, and client-side validation.
+- Improved spare part request detail page with summary cards and clearer admin/operator actions.
+- Improved spare parts catalog with search and client-side validation.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260604_124931.db
+- py_compile passed.
+- App import check passed: APP IMPORT OK.
+- TransportReport service restarted and running.
+- UX001D production smoke test passed.
+- No database migration required.
+
 ## 2026-06-04 - UX001C completed on production
 
 - Production URL: http://10.103.25.14:5050.

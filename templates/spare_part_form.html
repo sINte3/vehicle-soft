@@ -2,106 +2,170 @@
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти — новая заявка' if is_ru else 'Эҳтиёт қисмлар — янги сўров' }}{% endblock %}
 {% block content %}
-<div class="page-header">
-    <h1>{{ 'Заявка на запчасти' if is_ru else 'Эҳтиёт қисмлар сўрови' }}</h1>
-    <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ '← Список' if is_ru else '← Рўйхат' }}</a>
+<style>
+.spare-form-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
+.spare-form-note { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
+.spare-form-toolbar { position:sticky; top:56px; z-index:40; display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:16px; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); }
+.spare-form-toolbar .stat { font-size:12px; color:var(--text2); background:var(--surface2); border-radius:var(--radius); padding:6px 10px; }
+.spare-form-error { border-color:var(--danger) !important; box-shadow:0 0 0 2px rgba(220,53,69,.12); }
+.spare-client-errors { display:none; margin-bottom:16px; border-left:4px solid var(--danger); background:var(--danger-light); color:var(--danger); padding:12px 14px; border-radius:var(--radius); }
+.spare-client-errors ul { margin:6px 0 0 18px; padding:0; }
+.spare-items-table input { min-width:0; }
+.spare-row-actions { white-space:nowrap; }
+@media (max-width:768px) { .spare-form-hero { flex-direction:column; } .spare-form-toolbar { top:0; } }
+</style>
+
+<div class="spare-form-hero">
+    <div>
+        <h1>{{ 'Новая заявка на запчасти' if is_ru else 'Эҳтиёт қисмлар учун янги сўров' }}</h1>
+        <div class="text-muted text-sm">
+            {{ 'Заполните организацию, при необходимости выберите технику и добавьте минимум одну позицию.' if is_ru else 'Ташкилотни тўлдиринг, керак бўлса техникани танланг ва камида битта позиция қўшинг.' }}
+        </div>
+    </div>
+    <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ '← Список заявок' if is_ru else '← Сўровлар рўйхати' }}</a>
 </div>
 
-<form method="post" action="{{ url_for('spare_parts.save_request') }}" id="spForm">
+<div class="spare-form-note">
+    {{ 'Правило: черновик можно сохранить для доработки, а отправленная заявка уходит администратору на рассмотрение.' if is_ru else 'Қоида: чорнов кейин тўлдириш учун сақланади, юборилган сўров эса администратор кўришига ўтади.' }}
+</div>
+
+<div id="clientErrors" class="spare-client-errors">
+    <strong>{{ 'Заявка не готова к сохранению' if is_ru else 'Сўров сақлашга тайёр эмас' }}</strong>
+    <ul id="clientErrorList"></ul>
+</div>
+
+<form method="post" action="{{ url_for('spare_parts.save_request') }}" id="spForm" onsubmit="return validateSpareRequestBeforeSubmit(event)">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-<div class="card" style="margin-bottom:16px;">
-    <div class="card-header">{{ 'Основные данные' if is_ru else 'Асосий маълумот' }}</div>
-    <div class="card-body">
-        <div class="form-inline">
-            <div class="form-group">
-                <label>{{ 'Дата' if is_ru else 'Сана' }}</label>
-                <input type="date" name="request_date" value="{{ today }}" required style="width:160px;">
-            </div>
-            <div class="form-group" style="flex:1; min-width:240px;">
-                <label>{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
-                <select name="organization_id" id="orgSelect" required onchange="filterEquipment()">
-                    <option value="">{{ '— выберите —' if is_ru else '— танланг —' }}</option>
-                    {% for org in organizations %}
-                    <option value="{{ org.id }}">{{ org.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="form-group" style="flex:2; min-width:360px;">
-                <label>{{ 'Техника (необязательно)' if is_ru else 'Техника (ихтиёрий)' }}</label>
-                <select name="equipment_id" id="eqSelect">
-                    <option value="">{{ '— сначала выберите организацию —' if is_ru else '— аввал ташкилотни танланг —' }}</option>
-                    {% for eq in all_equipment %}
-                    {% set org_label = (eq.organization.short_name or eq.organization.name) if eq.organization else '' %}
-                    {% set eq_label = eq.name ~ ((' — ' ~ eq.plate) if eq.plate else '') ~ ((' — ' ~ org_label) if org_label else '') %}
-                    <option value="{{ eq.id }}" data-org="{{ eq.organization_id }}">{{ eq_label }}</option>
-                    {% endfor %}
-                </select>
-                <div class="text-sm text-muted" style="margin-top:4px;">
-                    {{ 'В списке показаны модель, госномер и организация, чтобы отличать одинаковую технику.' if is_ru else 'Рўйхатда бир хил техникани ажратиш учун модел, давлат рақами ва ташкилот кўрсатилган.' }}
+
+    <div class="spare-form-toolbar">
+        <button type="submit" name="action" value="draft" class="btn btn-secondary">💾 {{ 'Сохранить черновик' if is_ru else 'Чорновни сақлаш' }}</button>
+        <button type="submit" name="action" value="submit" class="btn btn-primary">📤 {{ 'Отправить на рассмотрение' if is_ru else 'Кўриб чиқишга юбориш' }}</button>
+        <button type="button" class="btn btn-secondary" onclick="addRow()">+ {{ 'Добавить позицию' if is_ru else 'Позиция қўшиш' }}</button>
+        <button type="button" class="btn btn-secondary" onclick="clearEmptyRows()">{{ 'Убрать пустые строки' if is_ru else 'Бўш қаторларни олиб ташлаш' }}</button>
+        <span class="stat" id="itemsCounter">{{ 'Позиций' if is_ru else 'Позициялар' }}: 1</span>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+        <div class="card-header">{{ 'Основные данные' if is_ru else 'Асосий маълумот' }}</div>
+        <div class="card-body">
+            <div class="form-inline">
+                <div class="form-group">
+                    <label>{{ 'Дата заявки' if is_ru else 'Сўров санаси' }}</label>
+                    <input type="date" name="request_date" id="requestDate" value="{{ today }}" required style="width:160px;">
+                </div>
+                <div class="form-group" style="flex:1; min-width:240px;">
+                    <label>{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
+                    <select name="organization_id" id="orgSelect" required onchange="filterEquipment()">
+                        <option value="">{{ '— выберите организацию —' if is_ru else '— ташкилотни танланг —' }}</option>
+                        {% for org in organizations %}
+                        <option value="{{ org.id }}">{{ org.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="text-sm text-muted" style="margin-top:4px;">{{ 'Обязательное поле.' if is_ru else 'Мажбурий майдон.' }}</div>
+                </div>
+                <div class="form-group" style="flex:2; min-width:360px;">
+                    <label>{{ 'Техника' if is_ru else 'Техника' }}</label>
+                    <select name="equipment_id" id="eqSelect">
+                        <option value="">{{ '— сначала выберите организацию —' if is_ru else '— аввал ташкилотни танланг —' }}</option>
+                        {% for eq in all_equipment %}
+                        {% set org_label = (eq.organization.short_name or eq.organization.name) if eq.organization else '' %}
+                        {% set eq_label = eq.name ~ ((' — ' ~ eq.plate) if eq.plate else '') ~ ((' — ' ~ org_label) if org_label else '') %}
+                        <option value="{{ eq.id }}" data-org="{{ eq.organization_id }}">{{ eq_label }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="text-sm text-muted" style="margin-top:4px;">
+                        {{ 'Если заявка относится к конкретной технике, выберите её. В списке показаны модель, госномер и организация.' if is_ru else 'Сўров аниқ техникага тегишли бўлса, уни танланг. Рўйхатда модел, давлат рақами ва ташкилот кўрсатилган.' }}
+                    </div>
                 </div>
             </div>
+            <div class="form-group">
+                <label>{{ 'Примечание к заявке' if is_ru else 'Сўров изоҳи' }}</label>
+                <textarea name="note" rows="2" placeholder="{{ 'Например: срочно, причина замены, место установки...' if is_ru else 'Масалан: шошилинч, алмаштириш сабаби, ўрнатиш жойи...' }}"></textarea>
+            </div>
         </div>
-        <div class="form-group">
-            <label>{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
-            <textarea name="note" rows="2" placeholder="{{ 'Примечание...' if is_ru else 'Изоҳ...' }}"></textarea>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+            <span>{{ 'Позиции заявки' if is_ru else 'Сўров позициялари' }}</span>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="addRow()">+ {{ 'Добавить' if is_ru else 'Қўшиш' }}</button>
+        </div>
+        <div class="card-body" style="padding:0; overflow-x:auto;">
+            <table id="itemsTable" class="spare-items-table" style="width:100%; min-width:850px;">
+                <thead>
+                    <tr>
+                        <th style="width:40px;">№</th>
+                        <th style="min-width:220px;">{{ 'Название запчасти' if is_ru else 'Запчасть номи' }}</th>
+                        <th style="width:150px;">{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</th>
+                        <th style="width:120px;">{{ 'Количество' if is_ru else 'Миқдор' }}</th>
+                        <th style="width:110px;">{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
+                        <th style="min-width:180px;">{{ 'Примечание' if is_ru else 'Изоҳ' }}</th>
+                        <th style="width:70px;"></th>
+                    </tr>
+                </thead>
+                <tbody id="itemsBody">
+                    <tr class="item-row">
+                        <td class="row-no">1</td>
+                        <td><input type="text" name="item_name" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" required style="width:100%;"></td>
+                        <td><input type="text" name="item_part_number" placeholder="000-000" style="width:100%;"></td>
+                        <td><input type="number" name="item_quantity" value="1" min="0.001" step="0.001" style="width:100%;"></td>
+                        <td><input type="text" name="item_unit" value="dona" style="width:100%;"></td>
+                        <td><input type="text" name="item_note" placeholder="{{ 'Комментарий' if is_ru else 'Изоҳ' }}" style="width:100%;"></td>
+                        <td class="spare-row-actions"><button type="button" onclick="removeRow(this)" class="btn btn-secondary btn-sm" style="padding:4px 8px;">✕</button></td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
     </div>
-</div>
-
-<div class="card" style="margin-bottom:16px;">
-    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
-        <span>{{ 'Позиции' if is_ru else 'Позициялар' }}</span>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="addRow()">{{ '+ Добавить' if is_ru else '+ Қўшиш' }}</button>
-    </div>
-    <div class="card-body" style="padding:0;">
-        <table id="itemsTable" style="width:100%;">
-            <thead>
-                <tr>
-                    <th style="min-width:200px;">{{ 'Название' if is_ru else 'Номи' }}</th>
-                    <th style="width:130px;">{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</th>
-                    <th style="width:80px;">{{ 'Количество' if is_ru else 'Миқдор' }}</th>
-                    <th style="width:80px;">{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
-                    <th style="width:150px;">{{ 'Примечание' if is_ru else 'Изоҳ' }}</th>
-                    <th style="width:40px;"></th>
-                </tr>
-            </thead>
-            <tbody id="itemsBody">
-                <tr class="item-row">
-                    <td><input type="text" name="item_name" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" required style="width:100%;"></td>
-                    <td><input type="text" name="item_part_number" placeholder="000-000" style="width:100%;"></td>
-                    <td><input type="number" name="item_quantity" value="1" min="0.001" step="0.001" style="width:100%;"></td>
-                    <td><input type="text" name="item_unit" value="dona" style="width:100%;"></td>
-                    <td><input type="text" name="item_note" placeholder="" style="width:100%;"></td>
-                    <td></td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
-</div>
-
-<div style="display:flex; gap:10px;">
-    <button type="submit" name="action" value="draft" class="btn btn-secondary">
-        💾 {{ 'Черновик' if is_ru else 'Чорнов' }}
-    </button>
-    <button type="submit" name="action" value="submit" class="btn btn-primary">
-        📤 {{ 'Отправить' if is_ru else 'Юбориш' }}
-    </button>
-</div>
 </form>
 
 {% endblock %}
 {% block scripts %}
 <script>
+const TEXT = {
+    positions: {{ ('Позиций' if is_ru else 'Позициялар')|tojson }},
+    selectOrg: {{ ('Выберите организацию.' if is_ru else 'Ташкилотни танланг.')|tojson }},
+    selectDate: {{ ('Укажите дату заявки.' if is_ru else 'Сўров санасини кўрсатинг.')|tojson }},
+    oneItem: {{ ('Добавьте хотя бы одну позицию.' if is_ru else 'Камида битта позиция қўшинг.')|tojson }},
+    itemName: {{ ('строка: введите название запчасти.' if is_ru else 'қатор: запчасть номини киритинг.')|tojson }},
+    itemQty: {{ ('строка: количество должно быть больше нуля.' if is_ru else 'қатор: миқдор нолдан катта бўлиши керак.')|tojson }},
+    confirmSubmit: {{ ('Отправить заявку на рассмотрение?' if is_ru else 'Сўровни кўриб чиқишга юборишни тасдиқлайсизми?')|tojson }}
+};
+
 function filterEquipment() {
     const orgId = document.getElementById('orgSelect').value;
     const eqSel = document.getElementById('eqSelect');
+    let visible = 0;
     Array.from(eqSel.options).forEach(opt => {
         if (!opt.value) return;
-        opt.style.display = (orgId && opt.dataset.org === orgId) ? '' : 'none';
+        const show = orgId && opt.dataset.org === orgId;
+        opt.style.display = show ? '' : 'none';
+        if (show) visible += 1;
     });
     if (eqSel.selectedOptions[0] && eqSel.selectedOptions[0].style.display === 'none') {
         eqSel.value = '';
     }
+    if (!orgId) eqSel.value = '';
+}
+
+function renumberRows() {
+    document.querySelectorAll('#itemsBody .item-row').forEach((row, idx) => {
+        const no = row.querySelector('.row-no');
+        if (no) no.textContent = idx + 1;
+    });
+    updateItemsCounter();
+}
+
+function updateItemsCounter() {
+    let filled = 0;
+    document.querySelectorAll('#itemsBody .item-row').forEach(row => {
+        const name = (row.querySelector('[name=item_name]').value || '').trim();
+        const qty = (row.querySelector('[name=item_quantity]').value || '').trim();
+        const part = (row.querySelector('[name=item_part_number]').value || '').trim();
+        const note = (row.querySelector('[name=item_note]').value || '').trim();
+        if (name || qty || part || note) filled += 1;
+    });
+    document.getElementById('itemsCounter').textContent = TEXT.positions + ': ' + filled;
 }
 
 function addRow() {
@@ -109,22 +173,84 @@ function addRow() {
     const row = document.createElement('tr');
     row.className = 'item-row';
     row.innerHTML = `
+        <td class="row-no"></td>
         <td><input type="text" name="item_name" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" style="width:100%;"></td>
         <td><input type="text" name="item_part_number" placeholder="000-000" style="width:100%;"></td>
         <td><input type="number" name="item_quantity" value="1" min="0.001" step="0.001" style="width:100%;"></td>
         <td><input type="text" name="item_unit" value="dona" style="width:100%;"></td>
-        <td><input type="text" name="item_note" placeholder="" style="width:100%;"></td>
-        <td><button type="button" onclick="removeRow(this)" class="btn btn-danger btn-sm" style="padding:4px 8px;">✕</button></td>
+        <td><input type="text" name="item_note" placeholder="{{ 'Комментарий' if is_ru else 'Изоҳ' }}" style="width:100%;"></td>
+        <td class="spare-row-actions"><button type="button" onclick="removeRow(this)" class="btn btn-danger btn-sm" style="padding:4px 8px;">✕</button></td>
     `;
     tbody.appendChild(row);
+    row.querySelector('[name=item_name]').focus();
+    renumberRows();
 }
 
 function removeRow(btn) {
     const rows = document.querySelectorAll('#itemsBody .item-row');
     if (rows.length <= 1) return;
     btn.closest('tr').remove();
+    renumberRows();
 }
 
-document.addEventListener('DOMContentLoaded', filterEquipment);
+function clearEmptyRows() {
+    const rows = Array.from(document.querySelectorAll('#itemsBody .item-row'));
+    rows.forEach(row => {
+        const name = (row.querySelector('[name=item_name]').value || '').trim();
+        const qty = (row.querySelector('[name=item_quantity]').value || '').trim();
+        const part = (row.querySelector('[name=item_part_number]').value || '').trim();
+        const note = (row.querySelector('[name=item_note]').value || '').trim();
+        if (!name && !qty && !part && !note && rows.length > 1) row.remove();
+    });
+    renumberRows();
+}
+
+function showClientErrors(errors) {
+    const box = document.getElementById('clientErrors');
+    const list = document.getElementById('clientErrorList');
+    list.innerHTML = '';
+    errors.forEach(err => {
+        const li = document.createElement('li');
+        li.textContent = err;
+        list.appendChild(li);
+    });
+    box.style.display = errors.length ? 'block' : 'none';
+    if (errors.length) box.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function validateSpareRequestBeforeSubmit(event) {
+    document.querySelectorAll('.spare-form-error').forEach(el => el.classList.remove('spare-form-error'));
+    const errors = [];
+    const requestDate = document.getElementById('requestDate');
+    const org = document.getElementById('orgSelect');
+    if (!requestDate.value) { errors.push(TEXT.selectDate); requestDate.classList.add('spare-form-error'); }
+    if (!org.value) { errors.push(TEXT.selectOrg); org.classList.add('spare-form-error'); }
+
+    let validItems = 0;
+    document.querySelectorAll('#itemsBody .item-row').forEach((row, idx) => {
+        const nameInput = row.querySelector('[name=item_name]');
+        const qtyInput = row.querySelector('[name=item_quantity]');
+        const partInput = row.querySelector('[name=item_part_number]');
+        const noteInput = row.querySelector('[name=item_note]');
+        const name = (nameInput.value || '').trim();
+        const qtyRaw = (qtyInput.value || '').trim();
+        const hasAnything = name || qtyRaw || (partInput.value || '').trim() || (noteInput.value || '').trim();
+        if (!hasAnything) return;
+        if (!name) { errors.push((idx + 1) + ' ' + TEXT.itemName); nameInput.classList.add('spare-form-error'); return; }
+        const qty = parseFloat(qtyRaw.replace(',', '.'));
+        if (!Number.isFinite(qty) || qty <= 0) { errors.push((idx + 1) + ' ' + TEXT.itemQty); qtyInput.classList.add('spare-form-error'); return; }
+        validItems += 1;
+    });
+    if (validItems === 0) errors.push(TEXT.oneItem);
+    if (errors.length) { showClientErrors(errors); return false; }
+    showClientErrors([]);
+    if (event && event.submitter && event.submitter.value === 'submit') return confirm(TEXT.confirmSubmit);
+    return true;
+}
+
+document.addEventListener('input', function(e) {
+    if (e.target.closest('#itemsBody')) updateItemsCounter();
+});
+document.addEventListener('DOMContentLoaded', function() { filterEquipment(); renumberRows(); });
 </script>
 {% endblock %}

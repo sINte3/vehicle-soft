@@ -1,100 +1,137 @@
 {% extends "base.html" %}
-{% block title %}{{ t('Эҳтиёт қисмлар') }}{% endblock %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Запчасти — заявки' if is_ru else 'Эҳтиёт қисмлар — сўровлар' }}{% endblock %}
 {% block content %}
-<div class="page-header">
-    <h1>{{ t('Эҳтиёт қисмлар') }}</h1>
-    <div style="display:flex; gap:8px;">
+<style>
+.spare-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
+.spare-hero h1 { margin-bottom:6px; }
+.spare-note { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
+.spare-stats { display:grid; grid-template-columns:repeat(5,minmax(120px,1fr)); gap:10px; margin-bottom:16px; }
+.spare-stat { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:12px; box-shadow:var(--shadow); }
+.spare-stat .value { font-size:22px; font-weight:700; margin-top:2px; }
+.spare-stat .label { color:var(--text2); font-size:12px; }
+.spare-toolbar { display:flex; gap:10px; align-items:end; flex-wrap:wrap; margin-bottom:16px; }
+.spare-toolbar .search { min-width:260px; flex:1; }
+.spare-status-pill { display:inline-flex; align-items:center; border-radius:999px; padding:4px 9px; font-size:12px; font-weight:700; background:var(--surface2); white-space:nowrap; }
+.spare-row-muted { color:var(--text2); font-size:12px; }
+@media (max-width:900px) { .spare-stats { grid-template-columns:repeat(2,minmax(120px,1fr)); } .spare-hero { flex-direction:column; } }
+@media (max-width:600px) { .spare-stats { grid-template-columns:1fr; } .spare-toolbar .search { min-width:100%; } }
+</style>
+
+<div class="spare-hero">
+    <div>
+        <h1>{{ 'Заявки на запчасти' if is_ru else 'Эҳтиёт қисмлар сўровлари' }}</h1>
+        <div class="text-muted text-sm">
+            {{ 'Создание, отправка и рассмотрение заявок на запасные части.' if is_ru else 'Эҳтиёт қисмларга сўров яратиш, юбориш ва кўриб чиқиш.' }}
+        </div>
+    </div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
         {% if current_user.can_edit %}
-        <a href="{{ url_for('spare_parts.new_request') }}" class="btn btn-primary">+ {{ t('Қўшиш') }}</a>
+        <a href="{{ url_for('spare_parts.new_request') }}" class="btn btn-primary">+ {{ 'Новая заявка' if is_ru else 'Янги сўров' }}</a>
         {% endif %}
         {% if current_user.is_admin %}
-        <a href="{{ url_for('spare_parts.catalog') }}" class="btn btn-secondary">{{ t('Каталог') }}</a>
+        <a href="{{ url_for('spare_parts.catalog') }}" class="btn btn-secondary">{{ 'Каталог запчастей' if is_ru else 'Эҳтиёт қисмлар каталоги' }}</a>
         {% endif %}
     </div>
 </div>
 
-{# Status tabs #}
-<div style="display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap;">
-    <a href="{{ url_for('spare_parts.index') }}"
-       class="btn btn-sm {% if not status_filter %}btn-primary{% else %}btn-secondary{% endif %}">
-       {{ t('Барчаси') }} <span style="margin-left:4px; font-size:11px; opacity:0.8;">({{ counts.all }})</span>
-    </a>
+<div class="spare-note">
+    {{ 'Правило: оператор создаёт и отправляет заявку; утверждение или отклонение выполняет только администратор.' if is_ru else 'Қоида: оператор сўров яратади ва юборади; тасдиқлаш ёки рад этишни фақат администратор бажаради.' }}
+</div>
+
+<div class="spare-stats">
+    <div class="spare-stat"><div class="label">{{ 'Всего' if is_ru else 'Жами' }}</div><div class="value">{{ counts.all }}</div></div>
     {% for s, labels in status_labels.items() %}
-    <a href="{{ url_for('spare_parts.index', status=s) }}"
-       class="btn btn-sm {% if status_filter == s %}btn-primary{% else %}btn-secondary{% endif %}"
-       style="{% if status_filter == s %}{% else %}color:{{ status_colors[s] }};{% endif %}">
-        {{ labels[lang] }}
-        <span style="margin-left:4px; font-size:11px; opacity:0.8;">({{ counts[s] }})</span>
-    </a>
+    <div class="spare-stat">
+        <div class="label">{{ labels[lang] }}</div>
+        <div class="value" style="color:{{ status_colors[s] }};">{{ counts[s] }}</div>
+    </div>
     {% endfor %}
 </div>
 
-{# Filters #}
 <div class="card" style="margin-bottom:16px;">
     <div class="card-body" style="padding:12px 16px;">
         <form method="get" action="{{ url_for('spare_parts.index') }}" class="form-inline">
             {% if status_filter %}<input type="hidden" name="status" value="{{ status_filter }}">{% endif %}
-            <div class="form-group" style="margin-bottom:0;">
-                <label>{{ t('Ташкилот') }}</label>
-                <select name="org_id" onchange="this.form.submit()" style="min-width:180px;">
-                    <option value="">{{ t('— Барчаси —') }}</option>
+            <div class="form-group" style="margin-bottom:0; min-width:220px;">
+                <label>{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
+                <select name="org_id" onchange="this.form.submit()">
+                    <option value="">{{ '— все организации —' if is_ru else '— барча ташкилотлар —' }}</option>
                     {% for org in organizations %}
                     <option value="{{ org.id }}" {% if org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
                     {% endfor %}
                 </select>
             </div>
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ t('Сана') }} {{ t('дан') }}</label>
+                <label>{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
                 <input type="date" name="date_from" value="{{ date_from_s }}" style="width:150px;">
             </div>
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ t('гача') }}</label>
+                <label>{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
                 <input type="date" name="date_to" value="{{ date_to_s }}" style="width:150px;">
             </div>
-            <button type="submit" class="btn btn-secondary btn-sm">{{ t('Кўрсатиш') }}</button>
+            <button type="submit" class="btn btn-secondary btn-sm">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
         </form>
     </div>
 </div>
 
-{# List #}
+<div class="spare-toolbar">
+    <div class="form-group search" style="margin-bottom:0;">
+        <label>{{ 'Поиск' if is_ru else 'Қидириш' }}</label>
+        <input type="text" id="spareRequestSearch" placeholder="{{ 'Поиск по номеру, организации, технике, автору' if is_ru else 'Рақам, ташкилот, техника, муаллиф бўйича қидириш' }}" oninput="filterSpareRequests()">
+    </div>
+    <div class="form-group" style="margin-bottom:0; min-width:190px;">
+        <label>{{ 'Статус' if is_ru else 'Ҳолат' }}</label>
+        <select id="clientStatusFilter" onchange="filterSpareRequests()">
+            <option value="all">{{ 'Все статусы' if is_ru else 'Барча ҳолатлар' }}</option>
+            {% for s, labels in status_labels.items() %}
+            <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ labels[lang] }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="spare-row-muted" id="visibleCounter">{{ 'Показано' if is_ru else 'Кўрсатилган' }}: {{ requests_list|length }}</div>
+</div>
+
 <div class="card">
-    <div class="card-header">
-        {{ t('Сўровлар') }}
-        <span class="text-muted text-sm">{{ t('Жами') }}: {{ requests_list|length }}</span>
+    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+        <span>{{ 'Список заявок' if is_ru else 'Сўровлар рўйхати' }}</span>
+        <span class="text-muted text-sm">{{ 'На странице' if is_ru else 'Саҳифада' }}: {{ requests_list|length }}</span>
     </div>
     {% if requests_list %}
     <table>
         <thead>
             <tr>
                 <th>№</th>
-                <th>{{ t('Сана') }}</th>
-                <th>{{ t('Ташкилот') }}</th>
-                <th>{{ t('Техника') }}</th>
-                <th>{{ t('Позициялар') }}</th>
-                <th>{{ t('Ҳолат') }}</th>
-                <th>{{ t('Яратилган') }}</th>
+                <th>{{ 'Дата' if is_ru else 'Сана' }}</th>
+                <th>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
+                <th>{{ 'Техника' if is_ru else 'Техника' }}</th>
+                <th class="text-center">{{ 'Позиций' if is_ru else 'Позициялар' }}</th>
+                <th>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
+                <th>{{ 'Создал' if is_ru else 'Яратди' }}</th>
                 <th></th>
             </tr>
         </thead>
         <tbody>
             {% for req in requests_list %}
-            <tr>
-                <td>{{ loop.index }}</td>
+            {% set eq_label = req.equipment.name ~ ((' — ' ~ req.equipment.plate) if req.equipment and req.equipment.plate else '') if req.equipment else '—' %}
+            {% set org_label = req.organization.short_name or req.organization.name %}
+            <tr class="spare-request-row" data-status="{{ req.status }}" data-search="{{ (req.id|string ~ ' ' ~ org_label ~ ' ' ~ eq_label ~ ' ' ~ (req.creator.username if req.creator else ''))|lower }}">
+                <td><strong>#{{ req.id }}</strong></td>
                 <td>{{ req.request_date.strftime('%d.%m.%Y') }}</td>
-                <td>{{ req.organization.short_name or req.organization.name }}</td>
-                <td class="text-sm text-muted">{{ req.equipment.name ~ ((' — ' ~ req.equipment.plate) if req.equipment and req.equipment.plate else '') if req.equipment else '—' }}</td>
-                <td class="text-center">{{ req.items|length }}</td>
+                <td>{{ org_label }}</td>
+                <td class="spare-row-muted">{{ eq_label }}</td>
+                <td class="text-center"><strong>{{ req.items|length }}</strong></td>
                 <td>
-                    <span style="color:{{ status_colors[req.status] }}; font-weight:600;">
+                    <span class="spare-status-pill" style="color:{{ status_colors[req.status] }};">
                         {{ status_labels[req.status][lang] }}
                     </span>
                 </td>
-                <td class="text-sm text-muted">
+                <td class="spare-row-muted">
                     {{ req.creator.username if req.creator else '—' }}<br>
                     <span style="font-size:11px;">{{ req.created_at.strftime('%d.%m.%Y %H:%M') }}</span>
                 </td>
                 <td>
-                    <a href="{{ url_for('spare_parts.detail', rid=req.id) }}" class="btn btn-sm btn-secondary">{{ t('Кўриш') }}</a>
+                    <a href="{{ url_for('spare_parts.detail', rid=req.id) }}" class="btn btn-sm btn-secondary">{{ 'Открыть' if is_ru else 'Очиш' }}</a>
                 </td>
             </tr>
             {% endfor %}
@@ -102,8 +139,29 @@
     </table>
     {% else %}
     <div class="card-body" style="text-align:center; padding:40px; color:var(--text2);">
-        {{ t('Сўров йўқ') }}
+        {{ 'Заявок нет' if is_ru else 'Сўров йўқ' }}
     </div>
     {% endif %}
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+function filterSpareRequests() {
+    const q = (document.getElementById('spareRequestSearch').value || '').toLowerCase().trim();
+    const status = document.getElementById('clientStatusFilter').value;
+    let visible = 0;
+    document.querySelectorAll('.spare-request-row').forEach(row => {
+        const text = row.dataset.search || '';
+        const rowStatus = row.dataset.status || '';
+        const okText = !q || text.includes(q);
+        const okStatus = status === 'all' || rowStatus === status;
+        const show = okText && okStatus;
+        row.style.display = show ? '' : 'none';
+        if (show) visible += 1;
+    });
+    const counter = document.getElementById('visibleCounter');
+    if (counter) counter.textContent = '{{ 'Показано' if is_ru else 'Кўрсатилган' }}: ' + visible;
+}
+document.addEventListener('DOMContentLoaded', filterSpareRequests);
+</script>
 {% endblock %}

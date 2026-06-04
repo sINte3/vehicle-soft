@@ -13,6 +13,22 @@
 
 ## Recently completed / appears completed
 
+### UX001D - Spare parts module UX
+
+Priority: P1
+Status: **completed 2026-06-04**
+
+Changes made:
+
+- Improved spare parts request list UX with counters, search, and status filter.
+- Improved spare part request form UX with sticky actions, item counter, empty-row cleanup, and client-side validation.
+- Improved request detail page with summary cards and clearer submit/approve/reject actions.
+- Improved spare parts catalog UX with search and required-name validation.
+- Verified production smoke test for list, form, detail, catalog, Russian UI, and Uzbek UI.
+- No database migration required.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260604_124931.db
+
+
 ### UX001C - Fuel module UX
 
 Priority: P1

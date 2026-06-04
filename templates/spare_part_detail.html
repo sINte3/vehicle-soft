@@ -3,61 +3,65 @@
 {% block title %}{{ 'Запчасти' if is_ru else 'Эҳтиёт қисмлар' }} — {{ 'Заявка' if is_ru else 'Сўров' }} #{{ req.id }}{% endblock %}
 {% block content %}
 {% set eq_label = req.equipment.name ~ ((' — ' ~ req.equipment.plate) if req.equipment and req.equipment.plate else '') if req.equipment else '—' %}
-<div class="page-header">
-    <h1>{{ 'Заявка' if is_ru else 'Сўров' }} #{{ req.id }}</h1>
-    <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ '← Список' if is_ru else '← Рўйхат' }}</a>
+<style>
+.spare-detail-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
+.spare-status-pill { display:inline-flex; align-items:center; border-radius:999px; padding:6px 12px; font-size:13px; font-weight:700; background:var(--surface2); }
+.spare-detail-grid { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:12px; margin-bottom:16px; }
+.spare-detail-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:12px; box-shadow:var(--shadow); }
+.spare-detail-card .label { color:var(--text2); font-size:11px; text-transform:uppercase; font-weight:700; margin-bottom:4px; }
+.spare-review-box { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); border-radius:var(--radius); padding:12px 14px; margin-bottom:16px; }
+.spare-action-bar { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px; }
+@media (max-width:900px) { .spare-detail-grid { grid-template-columns:repeat(2,minmax(160px,1fr)); } .spare-detail-hero { flex-direction:column; } }
+@media (max-width:600px) { .spare-detail-grid { grid-template-columns:1fr; } }
+</style>
+
+<div class="spare-detail-hero">
+    <div>
+        <h1>{{ 'Заявка' if is_ru else 'Сўров' }} #{{ req.id }}</h1>
+        <div class="text-muted text-sm">
+            {{ 'Просмотр состава заявки и статуса рассмотрения.' if is_ru else 'Сўров таркиби ва кўриб чиқиш ҳолатини кўриш.' }}
+        </div>
+    </div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+        <span class="spare-status-pill" style="color:{{ status_colors[req.status] }};">{{ status_labels[req.status][lang] }}</span>
+        <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ '← Список' if is_ru else '← Рўйхат' }}</a>
+    </div>
 </div>
 
+{% if req.status == 'draft' %}
+<div class="spare-review-box">{{ 'Черновик ещё не отправлен администратору. Его можно отправить на рассмотрение.' if is_ru else 'Чорнов ҳали администраторга юборилмаган. Уни кўриб чиқишга юбориш мумкин.' }}</div>
+{% elif req.status == 'submitted' %}
+<div class="spare-review-box">{{ 'Заявка отправлена и ожидает решения администратора.' if is_ru else 'Сўров юборилган ва администратор қарорини кутмоқда.' }}</div>
+{% elif req.status == 'approved' %}
+<div class="spare-review-box">{{ 'Заявка утверждена.' if is_ru else 'Сўров тасдиқланган.' }}</div>
+{% elif req.status == 'rejected' %}
+<div class="spare-review-box">{{ 'Заявка отклонена. Смотрите комментарий рассмотрения, если он указан.' if is_ru else 'Сўров рад этилган. Агар изоҳ берилган бўлса, кўриб чиқиш изоҳини кўринг.' }}</div>
+{% endif %}
+
+<div class="spare-detail-grid">
+    <div class="spare-detail-card"><div class="label">{{ 'Дата' if is_ru else 'Сана' }}</div><div>{{ req.request_date.strftime('%d.%m.%Y') }}</div></div>
+    <div class="spare-detail-card"><div class="label">{{ 'Организация' if is_ru else 'Ташкилот' }}</div><div>{{ req.organization.name }}</div></div>
+    <div class="spare-detail-card"><div class="label">{{ 'Техника' if is_ru else 'Техника' }}</div><div>{{ eq_label }}</div></div>
+    <div class="spare-detail-card"><div class="label">{{ 'Позиции' if is_ru else 'Позициялар' }}</div><div><strong>{{ req.items|length }}</strong></div></div>
+    <div class="spare-detail-card"><div class="label">{{ 'Создал' if is_ru else 'Яратди' }}</div><div>{{ req.creator.full_name or req.creator.username if req.creator else '—' }}<br><span class="text-muted text-sm">{{ req.created_at.strftime('%d.%m.%Y %H:%M') }}</span></div></div>
+    <div class="spare-detail-card"><div class="label">{{ 'Рассмотрел' if is_ru else 'Кўриб чиқди' }}</div><div>{{ req.reviewer.username if req.reviewer else '—' }}{% if req.reviewed_at %}<br><span class="text-muted text-sm">{{ req.reviewed_at.strftime('%d.%m.%Y %H:%M') }}</span>{% endif %}</div></div>
+    <div class="spare-detail-card" style="grid-column:span 2;"><div class="label">{{ 'Примечание' if is_ru else 'Изоҳ' }}</div><div>{{ req.note or '—' }}</div></div>
+</div>
+
+{% if req.reviewer or req.review_comment %}
 <div class="card" style="margin-bottom:16px;">
-    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
-        <span>{{ 'Сведения' if is_ru else 'Маълумот' }}</span>
-        <span style="color:{{ status_colors[req.status] }}; font-weight:700; font-size:15px;">
-            {{ status_labels[req.status][lang] }}
-        </span>
-    </div>
+    <div class="card-header">{{ 'Результат рассмотрения' if is_ru else 'Кўриб чиқиш натижаси' }}</div>
     <div class="card-body">
-        <div class="form-inline" style="gap:24px; flex-wrap:wrap;">
-            <div>
-                <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ 'Дата' if is_ru else 'Сана' }}</div>
-                <div>{{ req.request_date.strftime('%d.%m.%Y') }}</div>
-            </div>
-            <div>
-                <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ 'Организация' if is_ru else 'Ташкилот' }}</div>
-                <div>{{ req.organization.name }}</div>
-            </div>
-            <div>
-                <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ 'Техника' if is_ru else 'Техника' }}</div>
-                <div>{{ eq_label }}</div>
-            </div>
-            <div>
-                <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ 'Создал' if is_ru else 'Яратди' }}</div>
-                <div>{{ req.creator.full_name or req.creator.username if req.creator else '—' }}</div>
-                <div class="text-sm text-muted">{{ req.created_at.strftime('%d.%m.%Y %H:%M') }}</div>
-            </div>
-        </div>
-        {% if req.note %}
-        <div style="margin-top:12px;">
-            <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:2px;">{{ 'Примечание' if is_ru else 'Изоҳ' }}</div>
-            <div>{{ req.note }}</div>
-        </div>
-        {% endif %}
-        {% if req.reviewer %}
-        <div style="margin-top:12px; padding:10px; background:var(--surface2); border-radius:var(--radius);">
-            <div style="font-size:11px; color:var(--text2); font-weight:600; margin-bottom:4px;">
-                {{ status_labels[req.status][lang] }} — {{ req.reviewer.username }}
-                {% if req.reviewed_at %} ({{ req.reviewed_at.strftime('%d.%m.%Y %H:%M') }}){% endif %}
-            </div>
-            {% if req.review_comment %}
-            <div>{{ req.review_comment }}</div>
-            {% endif %}
-        </div>
-        {% endif %}
+        <div><strong>{{ status_labels[req.status][lang] }}</strong>{% if req.reviewer %} — {{ req.reviewer.username }}{% endif %}{% if req.reviewed_at %} ({{ req.reviewed_at.strftime('%d.%m.%Y %H:%M') }}){% endif %}</div>
+        {% if req.review_comment %}<div style="margin-top:8px;">{{ req.review_comment }}</div>{% endif %}
     </div>
 </div>
+{% endif %}
 
 <div class="card" style="margin-bottom:16px;">
-    <div class="card-header">{{ 'Позиции' if is_ru else 'Позициялар' }} ({{ req.items|length }})</div>
-    <table>
+    <div class="card-header">{{ 'Позиции заявки' if is_ru else 'Сўров позициялари' }} ({{ req.items|length }})</div>
+    <div style="overflow-x:auto;">
+    <table style="min-width:760px;">
         <thead>
             <tr>
                 <th>№</th>
@@ -74,42 +78,43 @@
                 <td>{{ loop.index }}</td>
                 <td><strong>{{ item.name }}</strong></td>
                 <td class="text-sm text-muted">{{ item.part_number or '—' }}</td>
-                <td class="text-right">{{ item.quantity }}</td>
-                <td>{{ item.unit }}</td>
-                <td class="text-sm text-muted">{{ item.note or '' }}</td>
+                <td class="text-right"><strong>{{ item.quantity }}</strong></td>
+                <td>{{ item.unit or 'dona' }}</td>
+                <td class="text-sm text-muted">{{ item.note or '—' }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 
 {% if req.status == 'draft' and current_user.id == req.created_by %}
-<div style="display:flex; gap:10px; margin-bottom:16px;">
-    <form method="post" action="{{ url_for('spare_parts.submit_request', rid=req.id) }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-primary">📤 {{ 'Отправить' if is_ru else 'Юбориш' }}</button>
+<div class="spare-action-bar">
+    <form method="post" action="{{ url_for('spare_parts.submit_request', rid=req.id) }}" onsubmit="return confirm({{ ('Отправить заявку администратору?' if is_ru else 'Сўровни администраторга юборишни тасдиқлайсизми?')|tojson }})">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-primary">📤 {{ 'Отправить на рассмотрение' if is_ru else 'Кўриб чиқишга юбориш' }}</button>
     </form>
 </div>
 {% endif %}
 
 {% if req.status == 'submitted' and current_user.is_admin %}
 <div class="card" style="margin-bottom:16px;">
-    <div class="card-header">{{ 'Рассмотрение' if is_ru else 'Кўриб чиқиш' }}</div>
+    <div class="card-header">{{ 'Рассмотрение администратором' if is_ru else 'Администратор кўриб чиқиши' }}</div>
     <div class="card-body">
         <div class="form-group">
-            <label>{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
-            <textarea id="reviewComment" rows="2" placeholder="{{ 'Примечание (необязательно)...' if is_ru else 'Изоҳ (ихтиёрий)...' }}"></textarea>
+            <label>{{ 'Комментарий к решению' if is_ru else 'Қарор изоҳи' }}</label>
+            <textarea id="reviewComment" rows="3" placeholder="{{ 'Например: утвердить закупку, заменить аналогом, отклонить по причине...' if is_ru else 'Масалан: харидни тасдиқлаш, аналог билан алмаштириш, сабаб билан рад этиш...' }}"></textarea>
         </div>
-        <div style="display:flex; gap:10px;">
-            <form method="post" action="{{ url_for('spare_parts.approve_request', rid=req.id) }}" onsubmit="setComment(this)">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <form method="post" action="{{ url_for('spare_parts.approve_request', rid=req.id) }}" onsubmit="return setCommentAndConfirm(this, true)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="review_comment">
-                <button type="submit" class="btn btn-primary">✅ {{ 'Утвердить' if is_ru else 'Тасдиқлаш' }}</button>
+                <button type="submit" class="btn btn-primary">✅ {{ 'Утвердить заявку' if is_ru else 'Сўровни тасдиқлаш' }}</button>
             </form>
-            <form method="post" action="{{ url_for('spare_parts.reject_request', rid=req.id) }}" onsubmit="setComment(this)">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <form method="post" action="{{ url_for('spare_parts.reject_request', rid=req.id) }}" onsubmit="return setCommentAndConfirm(this, false)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="review_comment">
-                <button type="submit" class="btn btn-danger">❌ {{ 'Отклонить' if is_ru else 'Рад этиш' }}</button>
+                <button type="submit" class="btn btn-danger">❌ {{ 'Отклонить заявку' if is_ru else 'Сўровни рад этиш' }}</button>
             </form>
         </div>
     </div>
@@ -119,9 +124,12 @@
 {% endblock %}
 {% block scripts %}
 <script>
-function setComment(form) {
-    form.querySelector('[name=review_comment]').value =
-        document.getElementById('reviewComment').value;
+function setCommentAndConfirm(form, approve) {
+    form.querySelector('[name=review_comment]').value = document.getElementById('reviewComment').value;
+    const msg = approve
+        ? {{ ('Утвердить эту заявку?' if is_ru else 'Ушбу сўровни тасдиқлайсизми?')|tojson }}
+        : {{ ('Отклонить эту заявку?' if is_ru else 'Ушбу сўровни рад этасизми?')|tojson }};
+    return confirm(msg);
 }
 </script>
 {% endblock %}
