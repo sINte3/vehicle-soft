@@ -650,7 +650,7 @@ def register_wialon_routes(app, editor_required, admin_required):
                 'Авто-маппинг сақланмади. Қуйидаги хатоларни тузатинг:',
                 'Авто-маппинг не сохранён. Исправьте следующие ошибки:'
             )
-            return redirect(url_for('wialon_index'))
+            return redirect(url_for('wialon_auto_match'))
 
         saved_mappings = 0
         for vname, eq_id, skip in decisions:
@@ -676,10 +676,8 @@ def register_wialon_routes(app, editor_required, admin_required):
             description='Wialon auto-match mappings saved'
         )
         db.session.commit()
-        flash('{} та маппинг сақланди. '
-              'Энди файлни қайта юкланг — импорт автоматик ишлайди.'.format(saved_mappings),
-              'success')
-        return redirect(url_for('wialon_index'))
+        flash(_wialon_t('{} та маппинг сақланди. Энди файлни қайта юкланг — импорт автоматик ишлайди.', '{} маппингов сохранено. Теперь загрузите файл повторно — импорт будет работать автоматически.').format(saved_mappings), 'success')
+        return redirect(url_for('wialon_mapping_list'))
 
     # ── Mapping list (admin, simple edit/delete) ──────────────────────────
     @app.route('/wialon/mapping')
@@ -687,12 +685,28 @@ def register_wialon_routes(app, editor_required, admin_required):
     @admin_required
     def wialon_mapping_list():
         mappings = VialonMapping.query.order_by(VialonMapping.vialon_name).all()
+        mapped_names = {m.vialon_name for m in mappings}
+        pending = []
+        seen_pending = set()
+        for imp in (VialonImport.query.order_by(VialonImport.created_at.desc()).all()):
+            try:
+                names = json.loads(imp.unknown_vehicles_json or '[]')
+            except (ValueError, TypeError):
+                names = []
+            for raw_name in names:
+                vname = _normalize_wialon_name(raw_name)
+                if not vname or vname in mapped_names or vname in seen_pending:
+                    continue
+                seen_pending.add(vname)
+                pending.append({'vialon_name': vname, 'import_date': imp.import_date})
+
         all_equipment = (Equipment.query.join(Organization)
                          .filter(Equipment.is_active == True)
                          .order_by(Organization.sort_order,
                                    Equipment.category, Equipment.name).all())
         return render_template('wialon_mapping_list.html',
                                mappings=mappings,
+                               pending=pending,
                                all_equipment=all_equipment)
 
     @app.route('/wialon/mapping/save', methods=['POST'])
@@ -776,7 +790,7 @@ def register_wialon_routes(app, editor_required, admin_required):
         )
         db.session.delete(m)
         db.session.commit()
-        flash('Маппинг ўчирилди', 'warning')
+        flash(_wialon_t('Маппинг ўчирилди', 'Маппинг удалён'), 'warning')
         return redirect(url_for('wialon_mapping_list'))
 
     # ── Engine hours report ────────────────────────────────────────────────

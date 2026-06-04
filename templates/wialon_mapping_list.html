@@ -1,48 +1,95 @@
 {% extends "base.html" %}
-{% block title %}Виалон маппинг{% endblock %}
+{% block title %}{{ t('Wialon mapping') }}{% endblock %}
 {% block content %}
 
+<style>
+.wialon-summary { display:grid; grid-template-columns:repeat(4,minmax(140px,1fr)); gap:12px; margin-bottom:16px; }
+.wialon-summary .stat-card { min-height:72px; }
+.wialon-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); box-shadow:var(--shadow); margin-bottom:16px; }
+.wialon-toolbar input[type="text"] { min-width:260px; max-width:420px; flex:1; }
+.wialon-status { display:inline-flex; align-items:center; gap:4px; border-radius:999px; padding:4px 9px; font-size:12px; font-weight:700; white-space:nowrap; }
+.wialon-status-ok { background:var(--accent-light); color:var(--accent); }
+.wialon-status-skip { background:var(--warn-light); color:#8B6914; }
+.wialon-status-unknown { background:var(--danger-light); color:var(--danger); }
+.wialon-name { font-family:monospace; font-size:12px; word-break:break-word; }
+.wialon-eq-label { font-weight:700; }
+.wialon-hint { font-size:12px; color:var(--text2); margin-top:4px; }
+.wialon-row-hidden { display:none; }
+.wialon-pending-row { background:#fffaf0; }
+.wialon-inline-form { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+.wialon-inline-form select { min-width:240px; flex:1; }
+.wialon-actions { display:flex; gap:6px; justify-content:center; align-items:center; flex-wrap:wrap; }
+@media (max-width:900px) { .wialon-summary { grid-template-columns:repeat(2,minmax(140px,1fr)); } }
+@media (max-width:600px) { .wialon-summary { grid-template-columns:1fr; } .wialon-toolbar input[type="text"] { min-width:100%; } }
+</style>
+
 <div class="page-header">
-    <h1>Виалон — Маппинг жадвали</h1>
-    <a href="{{ url_for('wialon_index') }}" class="btn btn-secondary">{{ t('← Импорт') }}</a>
+    <div>
+        <h1>{{ t('Wialon mapping') }}</h1>
+        <div class="text-muted text-sm">{{ t('Связка объектов Wialon с техникой предприятия') }}</div>
+    </div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <a href="{{ url_for('wialon_index') }}" class="btn btn-secondary">{{ t('← Импорт') }}</a>
+        <a href="{{ url_for('wialon_auto_match') }}" class="btn btn-primary">{{ t('🤖 Авто-маппинг') }}</a>
+    </div>
 </div>
 
-{# ═══════════════════════════════════════════════════════════════════
-   SECTION 1: Pending unknowns from imports (admin maps them here)
-════════════════════════════════════════════════════════════════════ #}
-{% if pending %}
-<div class="card" style="margin-bottom:24px; border-color:var(--warn);">
-    <div class="card-header" style="background:var(--warn-light); color:#8B6914;">
-        ⚠ Маппингда белгиланмаган техника: <strong>{{ pending|length }} та</strong>
-        <span class="text-sm" style="margin-left:8px; font-weight:400;">
-            — импортда автоматик ўтказиб юборилаётган техника.
-            Ҳар бири учун мос техникани танланг ёки «Тизимда йўқ» деб белгиланг.
-        </span>
+{% set connected_count = mappings|selectattr('equipment_id')|list|length %}
+{% set skipped_count = mappings|selectattr('skip')|list|length %}
+{% set pending_count = pending|length if pending is defined and pending else 0 %}
+{% set total_count = mappings|length %}
+
+<div class="wialon-summary">
+    <div class="stat-card">
+        <div class="label">{{ t('Всего маппингов') }}</div>
+        <div class="value">{{ total_count }}</div>
     </div>
-    <div style="padding:0;">
+    <div class="stat-card" style="border-left:4px solid var(--accent);">
+        <div class="label">{{ t('Привязано') }}</div>
+        <div class="value" style="color:var(--accent);">{{ connected_count }}</div>
+    </div>
+    <div class="stat-card" style="border-left:4px solid var(--warn);">
+        <div class="label">{{ t('Нет в системе') }}</div>
+        <div class="value" style="color:var(--warn);">{{ skipped_count }}</div>
+    </div>
+    <div class="stat-card" style="border-left:4px solid var(--danger);">
+        <div class="label">{{ t('Ожидают решения') }}</div>
+        <div class="value" style="color:var(--danger);">{{ pending_count }}</div>
+    </div>
+</div>
+
+<div class="flash flash-info" style="margin-bottom:16px;">
+    💡 {{ t('Wialon mapping rule') }}
+</div>
+
+{% if pending_count > 0 %}
+<div class="card" style="margin-bottom:24px; border-color:var(--warn);">
+    <div class="card-header" style="background:var(--warn-light); color:#8B6914; display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
+        <span>⚠ {{ t('Новые объекты Wialon без решения') }}: <strong>{{ pending_count }}</strong></span>
+        <span class="text-sm" style="font-weight:400;">{{ t('Выберите технику или отметьте объект как отсутствующий в системе.') }}</span>
+    </div>
+    <div style="padding:0; overflow-x:auto;">
     <table>
         <thead>
             <tr>
-                <th>Виалон номи</th>
-                <th>Охирги импорт санаси</th>
-                <th style="min-width:320px;">Бизнинг тизимдаги техника</th>
-                <th class="text-center" style="width:140px;">Амал</th>
+                <th>{{ t('Wialon объект') }}</th>
+                <th>{{ t('Последний импорт') }}</th>
+                <th style="min-width:340px;">{{ t('Техника в системе') }}</th>
+                <th class="text-center" style="width:180px;">{{ t('Действие') }}</th>
             </tr>
         </thead>
         <tbody>
         {% for item in pending %}
-        <tr>
-            <td style="font-family:monospace; font-size:13px;">{{ item.vialon_name }}</td>
-            <td class="text-sm text-muted">{{ item.import_date.strftime('%d.%m.%Y') }}</td>
+        <tr class="wialon-pending-row">
+            <td><div class="wialon-name">{{ item.vialon_name }}</div></td>
+            <td class="text-sm text-muted">{{ item.import_date.strftime('%d.%m.%Y') if item.import_date else '—' }}</td>
             <td>
-                <form method="post" action="{{ url_for('wialon_mapping_save') }}"
-                      id="pform-{{ loop.index }}" style="display:flex; gap:6px; align-items:center;">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <form method="post" action="{{ url_for('wialon_mapping_save') }}" id="pform-{{ loop.index }}" class="wialon-inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="vialon_name" value="{{ item.vialon_name }}">
                     <input type="hidden" name="skip" id="pskip-{{ loop.index }}" value="0">
-                    <select name="equipment_id" style="flex:1; font-size:13px;"
-                            id="psel-{{ loop.index }}">
-                        <option value="">— техника танланг —</option>
+                    <select name="equipment_id" id="psel-{{ loop.index }}">
+                        <option value="">{{ t('— выберите технику —') }}</option>
                         {% set prev_org = namespace(id=None) %}
                         {% for eq in all_equipment %}
                             {% if eq.organization.id != prev_org.id %}
@@ -50,24 +97,15 @@
                                 <optgroup label="{{ eq.organization.name }}">
                                 {% set prev_org.id = eq.organization.id %}
                             {% endif %}
-                            <option value="{{ eq.id }}">
-                                {{ eq.name }}{% if eq.plate %} / {{ eq.plate }}{% endif %}
-                            </option>
+                            <option value="{{ eq.id }}">{{ eq.name }}{% if eq.plate %} / {{ eq.plate }}{% endif %} / {{ eq.organization.short_name or eq.organization.name }}</option>
                         {% endfor %}
-                        </optgroup>
+                        {% if all_equipment %}</optgroup>{% endif %}
                     </select>
             </td>
             <td class="text-center">
-                    <div style="display:flex; gap:4px; justify-content:center;">
-                        <button type="button" class="btn btn-primary btn-sm"
-                                onclick="savePending({{ loop.index }})">
-                            💾 Сақлаш
-                        </button>
-                        <button type="button" class="btn btn-secondary btn-sm"
-                                onclick="skipPending({{ loop.index }})"
-                                title="Тизимда йўқ — доим ўтказиб юбориш">
-                            🚫 Йўқ
-                        </button>
+                    <div class="wialon-actions">
+                        <button type="button" class="btn btn-primary btn-sm" onclick="savePending({{ loop.index }})">💾 {{ t('Сохранить') }}</button>
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="skipPending({{ loop.index }})" title="{{ t('Отметить как отсутствующий в системе') }}">🚫 {{ t('Нет') }}</button>
                     </div>
                 </form>
             </td>
@@ -79,64 +117,56 @@
 </div>
 {% else %}
 <div class="flash flash-success" style="margin-bottom:24px;">
-    ✅ {{ t('Барча техника маппингда белгиланган — импорт тўлиқ автоматик ишлайди.') }}
+    ✅ {{ t('Все найденные объекты Wialon уже имеют решение.') }}
 </div>
 {% endif %}
 
-{# ═══════════════════════════════════════════════════════════════════
-   SECTION 2: All existing mappings
-════════════════════════════════════════════════════════════════════ #}
+<div class="wialon-toolbar">
+    <button class="btn btn-secondary btn-sm" onclick="toggleAddForm()" type="button">{{ t('+ Добавить') }}</button>
+    <input type="text" id="mappingSearch" placeholder="{{ t('Поиск по Wialon, технике, госномеру или организации') }}" oninput="filterMappings()">
+    <select id="statusFilter" onchange="filterMappings()" style="max-width:220px;">
+        <option value="all">{{ t('Все статусы') }}</option>
+        <option value="linked">{{ t('Привязано') }}</option>
+        <option value="skip">{{ t('Нет в системе') }}</option>
+        <option value="unknown">{{ t('Без решения') }}</option>
+    </select>
+    <span class="entry-stat" id="mappingVisibleCount">{{ t('Показано') }}: {{ total_count }}/{{ total_count }}</span>
+</div>
+
 <div class="card">
-    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
-        <span>
-            {{ t('Барча маппинглар') }}
-            <span class="text-muted text-sm" style="margin-left:6px;">
-                ({{ t('боғланган') }}: {{ mappings|selectattr('equipment_id')|list|length }} та,
-                 {{ t('Ўтказиб юборилган') }}: {{ mappings|selectattr('skip')|list|length }} та)
-            </span>
-        </span>
-        <button class="btn btn-secondary btn-sm" onclick="toggleAddForm()">
-            {{ t('+ Қўшиш') }}
-        </button>
+    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+        <span>{{ t('Все маппинги') }}</span>
+        <span class="text-muted text-sm">{{ t('Изменения сохраняются по каждой строке отдельно.') }}</span>
     </div>
 
-    {# Add new mapping manually #}
-    <div id="addForm" style="display:none; padding:16px;
-         border-bottom:1px solid var(--border); background:var(--surface2);">
-        <form method="post" action="{{ url_for('wialon_mapping_save') }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <div class="form-inline" style="gap:10px;">
-                <div class="form-group" style="margin-bottom:0; min-width:280px;">
-                    <label>Виалон номи (тўлиқ)</label>
-                    <input type="text" name="vialon_name" required
-                           placeholder="Arion-630C 073 HA">
-                </div>
-                <div class="form-group" style="margin-bottom:0; flex:1; min-width:260px;">
-                    <label>Бизнинг техника</label>
-                    <select name="equipment_id" style="width:100%;">
-                        <option value="">— танланг —</option>
-                        {% set prev_org = namespace(id=None) %}
-                        {% for eq in all_equipment %}
-                            {% if eq.organization.id != prev_org.id %}
-                                {% if prev_org.id is not none %}</optgroup>{% endif %}
-                                <optgroup label="{{ eq.organization.name }}">
-                                {% set prev_org.id = eq.organization.id %}
-                            {% endif %}
-                            <option value="{{ eq.id }}">
-                                {{ eq.name }}{% if eq.plate %} / {{ eq.plate }}{% endif %}
-                            </option>
-                        {% endfor %}
-                        </optgroup>
-                    </select>
-                </div>
-                <div class="form-group" style="margin-bottom:0;">
-                    <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                        <input type="checkbox" name="skip" value="1" style="width:auto;">
-                        Тизимда йўқ
-                    </label>
-                </div>
-                <button type="submit" class="btn btn-primary">Сақлаш</button>
+    <div id="addForm" style="display:none; padding:16px; border-bottom:1px solid var(--border); background:var(--surface2);">
+        <form method="post" action="{{ url_for('wialon_mapping_save') }}" class="wialon-inline-form" onsubmit="return validateManualAdd(this)">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group" style="margin-bottom:0; min-width:280px; flex:1;">
+                <label>{{ t('Wialon объект') }}</label>
+                <input type="text" name="vialon_name" required placeholder="Arion-630C 073 HA">
+                <div class="wialon-hint">{{ t('Введите точное имя объекта из Wialon.') }}</div>
             </div>
+            <div class="form-group" style="margin-bottom:0; min-width:320px; flex:1;">
+                <label>{{ t('Техника в системе') }}</label>
+                <select name="equipment_id" style="width:100%;">
+                    <option value="">{{ t('— выберите технику —') }}</option>
+                    {% set prev_org = namespace(id=None) %}
+                    {% for eq in all_equipment %}
+                        {% if eq.organization.id != prev_org.id %}
+                            {% if prev_org.id is not none %}</optgroup>{% endif %}
+                            <optgroup label="{{ eq.organization.name }}">
+                            {% set prev_org.id = eq.organization.id %}
+                        {% endif %}
+                        <option value="{{ eq.id }}">{{ eq.name }}{% if eq.plate %} / {{ eq.plate }}{% endif %} / {{ eq.organization.short_name or eq.organization.name }}</option>
+                    {% endfor %}
+                    {% if all_equipment %}</optgroup>{% endif %}
+                </select>
+            </div>
+            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; margin-top:20px; white-space:nowrap;">
+                <input type="checkbox" name="skip" value="1" style="width:auto;"> {{ t('Нет в системе') }}
+            </label>
+            <button type="submit" class="btn btn-primary" style="margin-top:20px;">{{ t('Сохранить') }}</button>
         </form>
     </div>
 
@@ -145,46 +175,43 @@
     <table>
         <thead>
             <tr>
-                <th>{{ t('ВИАЛОН НОМИ') }}</th>
-                <th>{{ t('БИЗНИНГ ТЕХНИКА') }}</th>
-                <th>{{ t('ТАШКИЛОТ') }}</th>
-                <th class="text-center">{{ t('ҲОЛАТ') }}</th>
-                <th class="text-center" style="width:200px;">{{ t('ЎЗГАРТИРИШ') }}</th>
+                <th>{{ t('Wialon объект') }}</th>
+                <th>{{ t('Техника') }}</th>
+                <th>{{ t('Организация') }}</th>
+                <th class="text-center">{{ t('Статус') }}</th>
+                <th class="text-center" style="width:260px;">{{ t('Изменить') }}</th>
             </tr>
         </thead>
         <tbody>
         {% for m in mappings %}
-        <tr>
-            <td style="font-family:monospace; font-size:12px; max-width:280px;
-                       word-break:break-all;">{{ m.vialon_name }}</td>
+        {% set row_status = 'skip' if m.skip else ('linked' if m.equipment else 'unknown') %}
+        {% set search_text = (m.vialon_name ~ ' ' ~ (m.equipment.name if m.equipment else '') ~ ' ' ~ (m.equipment.plate if m.equipment and m.equipment.plate else '') ~ ' ' ~ (m.equipment.organization.name if m.equipment else '') ~ ' ' ~ (m.equipment.organization.short_name if m.equipment and m.equipment.organization.short_name else ''))|lower %}
+        <tr class="mapping-row" data-status="{{ row_status }}" data-search="{{ search_text }}">
+            <td><div class="wialon-name">{{ m.vialon_name }}</div></td>
             <td>
                 {% if m.equipment %}
-                <span style="font-weight:600;">{{ m.equipment.name }}</span>
-                {% if m.equipment.plate %}
-                <span class="text-sm text-muted"> / {{ m.equipment.plate }}</span>
-                {% endif %}
+                    <div class="wialon-eq-label">{{ m.equipment.name }}</div>
+                    {% if m.equipment.plate %}<div class="text-sm text-muted">{{ m.equipment.plate }}</div>{% endif %}
                 {% elif m.skip %}
-                <span class="text-muted text-sm">—</span>
+                    <span class="text-muted text-sm">—</span>
                 {% else %}
-                <span style="color:var(--danger); font-weight:600; font-size:12px;">❓</span>
+                    <span style="color:var(--danger); font-weight:700;">{{ t('Не выбрано') }}</span>
                 {% endif %}
             </td>
-            <td class="text-sm text-muted">
-                {% if m.equipment %}{{ m.equipment.organization.short_name }}{% endif %}
-            </td>
+            <td class="text-sm text-muted">{% if m.equipment %}{{ m.equipment.organization.short_name or m.equipment.organization.name }}{% else %}—{% endif %}</td>
             <td class="text-center">
                 {% if m.skip %}
-                <span class="idle-badge">{{ t('Ўтказиб юбор.') }}</span>
+                    <span class="wialon-status wialon-status-skip">🚫 {{ t('Нет в системе') }}</span>
                 {% elif m.equipment %}
-                <span class="working-badge">✅ {{ t('Боғланган') }}</span>
+                    <span class="wialon-status wialon-status-ok">✅ {{ t('Привязано') }}</span>
                 {% else %}
-                <span class="idle-badge" style="background:var(--danger-light); color:var(--danger);">❓</span>
+                    <span class="wialon-status wialon-status-unknown">⚠ {{ t('Без решения') }}</span>
                 {% endif %}
             </td>
             <td>
-                <div style="display:flex; gap:4px; justify-content:center; align-items:center;">
-                    <select id="sel-{{ m.id }}" style="font-size:11px; width:160px;">
-                        <option value="">—</option>
+                <div class="wialon-actions">
+                    <select id="sel-{{ m.id }}" style="font-size:12px; width:190px;">
+                        <option value="">{{ t('— выберите —') }}</option>
                         {% set prev_org = namespace(id=None) %}
                         {% for eq in all_equipment %}
                             {% if eq.organization.id != prev_org.id %}
@@ -192,30 +219,21 @@
                                 <optgroup label="{{ eq.organization.name }}">
                                 {% set prev_org.id = eq.organization.id %}
                             {% endif %}
-                            <option value="{{ eq.id }}"
-                                {% if m.equipment_id == eq.id %}selected{% endif %}>
-                                {{ eq.name }}{% if eq.plate %} / {{ eq.plate }}{% endif %}
-                            </option>
+                            <option value="{{ eq.id }}" {% if m.equipment_id == eq.id %}selected{% endif %}>{{ eq.name }}{% if eq.plate %} / {{ eq.plate }}{% endif %}</option>
                         {% endfor %}
-                        </optgroup>
+                        {% if all_equipment %}</optgroup>{% endif %}
                     </select>
-                    <form method="post" action="{{ url_for('wialon_mapping_save') }}"
-                          id="eform-{{ m.id }}" style="display:inline;">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <form method="post" action="{{ url_for('wialon_mapping_save') }}" id="eform-{{ m.id }}" style="display:inline;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="id" value="{{ m.id }}">
-                        <input type="hidden" name="equipment_id"
-                               id="ehid-{{ m.id }}" value="{{ m.equipment_id or '' }}">
-                        <input type="hidden" name="skip"
-                               id="eskip-{{ m.id }}" value="{{ '1' if m.skip else '0' }}">
-                        <button type="button" class="btn btn-secondary btn-sm"
-                                onclick="saveRow({{ m.id }})">💾</button>
+                        <input type="hidden" name="equipment_id" id="ehid-{{ m.id }}" value="{{ m.equipment_id or '' }}">
+                        <input type="hidden" name="skip" id="eskip-{{ m.id }}" value="{{ '1' if m.skip else '0' }}">
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="saveRow({{ m.id }})" title="{{ t('Сохранить изменение') }}">💾</button>
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="markRowSkip({{ m.id }})" title="{{ t('Отметить как отсутствующий в системе') }}">🚫</button>
                     </form>
-                    <form method="post"
-                          action="{{ url_for('wialon_mapping_delete', mid=m.id) }}"
-                          onsubmit="return confirm('Ўчиришни тасдиқлайсизми?');"
-                          style="display:inline;">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-danger btn-sm">✕</button>
+                    <form method="post" action="{{ url_for('wialon_mapping_delete', mid=m.id) }}" onsubmit="return confirm('{{ t('Удалить этот mapping?') }}');" style="display:inline;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-danger btn-sm" title="{{ t('Удалить') }}">✕</button>
                     </form>
                 </div>
             </td>
@@ -226,10 +244,8 @@
     </div>
     {% else %}
     <div class="card-body" style="text-align:center; padding:40px;">
-        <p class="text-muted">Маппинг жадвали бўш.</p>
-        <p class="text-sm text-muted" style="margin-top:8px;">
-            Виалондан файл юкланганда номаълум техникалар юқорида кўрсатилади.
-        </p>
+        <p class="text-muted">{{ t('Маппинг пока пуст.') }}</p>
+        <p class="text-sm text-muted" style="margin-top:8px;">{{ t('После импорта неизвестные Wialon объекты появятся здесь.') }}</p>
     </div>
     {% endif %}
 </div>
@@ -239,35 +255,75 @@
 <script>
 function toggleAddForm() {
     var f = document.getElementById('addForm');
-    f.style.display = f.style.display === 'none' ? 'block' : 'none';
+    if (f) f.style.display = f.style.display === 'none' ? 'block' : 'none';
 }
 
-// Save existing row
 function saveRow(mid) {
     var sel = document.getElementById('sel-' + mid);
-    document.getElementById('ehid-' + mid).value = sel.value;
+    document.getElementById('ehid-' + mid).value = sel ? sel.value : '';
+    document.getElementById('eskip-' + mid).value = '0';
     document.getElementById('eform-' + mid).submit();
 }
 
-// Save pending (unknown) vehicle
+function markRowSkip(mid) {
+    if (!confirm('{{ t('Отметить объект как отсутствующий в системе?') }}')) return;
+    var sel = document.getElementById('sel-' + mid);
+    if (sel) sel.value = '';
+    document.getElementById('ehid-' + mid).value = '';
+    document.getElementById('eskip-' + mid).value = '1';
+    document.getElementById('eform-' + mid).submit();
+}
+
 function savePending(idx) {
     var sel = document.getElementById('psel-' + idx);
-    if (!sel.value) {
-        alert('Техникани танланг!');
+    if (!sel || !sel.value) {
+        alert('{{ t('Выберите технику') }}');
+        if (sel) sel.focus();
         return;
     }
     document.getElementById('pskip-' + idx).value = '0';
     document.getElementById('pform-' + idx).submit();
 }
 
-// Mark pending vehicle as "not in our system"
 function skipPending(idx) {
-    if (!confirm('Бу техника тизимда йўқ деб белгиланадими?\nКейинги импортларда у доим ўтказиб юборилади.')) return;
+    if (!confirm('{{ t('Отметить этот Wialon объект как отсутствующий в системе?') }}')) return;
     document.getElementById('pskip-' + idx).value = '1';
-    // Clear equipment selection
     var sel = document.getElementById('psel-' + idx);
     if (sel) sel.value = '';
     document.getElementById('pform-' + idx).submit();
+}
+
+function validateManualAdd(form) {
+    var vname = form.querySelector('input[name="vialon_name"]');
+    var eq = form.querySelector('select[name="equipment_id"]');
+    var skip = form.querySelector('input[name="skip"]');
+    if (!vname.value.trim()) {
+        alert('{{ t('Введите название Wialon объекта') }}');
+        vname.focus();
+        return false;
+    }
+    if (!skip.checked && !eq.value) {
+        alert('{{ t('Выберите технику или отметьте «Нет в системе»') }}');
+        eq.focus();
+        return false;
+    }
+    return true;
+}
+
+function filterMappings() {
+    var q = (document.getElementById('mappingSearch').value || '').toLowerCase().trim();
+    var status = document.getElementById('statusFilter').value;
+    var rows = document.querySelectorAll('.mapping-row');
+    var visible = 0;
+    rows.forEach(function(row) {
+        var okText = !q || (row.dataset.search || '').indexOf(q) !== -1;
+        var okStatus = status === 'all' || row.dataset.status === status;
+        var show = okText && okStatus;
+        row.classList.toggle('wialon-row-hidden', !show);
+        if (show) visible += 1;
+    });
+    var counter = document.getElementById('mappingVisibleCount');
+    if (counter) counter.textContent = '{{ t('Показано') }}: ' + visible + '/' + rows.length;
 }
 </script>
 {% endblock %}

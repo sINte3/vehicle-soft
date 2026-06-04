@@ -1,3 +1,17 @@
+## 2026-06-04 - UX001B completed on production
+
+- Production URL: http://10.103.25.14:5050.
+- Files changed: wialon_import.py, translations.py, templates/wialon_mapping_list.html, templates/wialon_auto_match.html.
+- Improved Wialon mapping list UX with counters, search, status filters, pending objects area, and clearer actions.
+- Improved Wialon auto-match UX with toolbar, filters, expand/collapse controls, visible-row skip action, and duplicate-selection validation.
+- Added RU/UZ translations for new Wialon mapping and auto-match UI elements.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260604_112928.db.
+- py_compile passed.
+- App import check passed: APP IMPORT OK.
+- TransportReport service restarted and running.
+- UX001B production smoke test passed.
+- No database migration required.
+
 ## 2026-06-04 - UX001A completed on production
 
 - Production URL: http://10.103.25.14:5050.

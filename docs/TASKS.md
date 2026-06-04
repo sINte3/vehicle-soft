@@ -13,6 +13,25 @@
 
 ## Recently completed / appears completed
 
+### UX001B - Wialon mapping UX
+
+Priority: P1
+Status: **completed 2026-06-04**
+
+Changes made:
+
+- Improved Wialon mapping list with counters, search, and status filters.
+- Added clearer mapping statuses: linked, not in system, pending decision.
+- Added separate pending Wialon objects area.
+- Improved manual mapping actions and not-in-system workflow.
+- Improved Wialon auto-match toolbar with search, filter, expand/collapse, and visible-row skip action.
+- Added client-side duplicate equipment selection validation for auto-match bulk save.
+- Added RU/UZ translations for new Wialon mapping and auto-match UI elements.
+- Verified production smoke test for mapping list and auto-match workflows.
+- No database migration required.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260604_112928.db
+
+
 ### UX001A - Daily entry UX improvements
 
 Priority: P1
