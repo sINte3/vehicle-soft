@@ -66,6 +66,211 @@ def style_cell(cell, font=None, fill=None, align=None, border=BORDER, num_fmt=No
     if num_fmt: cell.number_format = num_fmt
 
 
+# ─── Language and final Excel polish helpers ───────────────────────────────
+RU_CATEGORY_LABELS = {
+    'yukori': '1. Высокопроизводительная техника',
+    'mtz': '2. Пропашные тракторы',
+    'qatnov': '3. Разъездные тракторы',
+    'mini': '4. Мини-тракторы',
+    'combine': '5. Комбайны',
+    'special': '6. Спецтехника',
+    'yuk_transport': '7. Грузовой транспорт',
+    'motorcycle': '8. Мотоциклы',
+    'passenger': '9. Пассажирский транспорт',
+}
+
+RU_TEXT_EXACT = {
+    'Сана': 'Дата',
+    'Техника русуми ва \nдавлат рақам белгиси': 'Модель техники и\nгос. номер',
+    'Иш тури': 'Вид работы',
+    'Буюртмачи \nноми ': 'Заказчик',
+    'Буюртмачи номи': 'Заказчик',
+    'Ўлчов бирлиги': 'Ед. изм.',
+    'Микдори': 'Количество',
+    'Нархи, сум': 'Цена, сум',
+    'Юқори\nунумли': 'Высоко-\nпроизв.',
+    'Чопиқ\nтрактор': 'Пропашной\nтрактор',
+    'Қатнов\nтрактор': 'Разъездной\nтрактор',
+    'Мини\nтрактор': 'Мини-\nтрактор',
+    'Махсус\nтехника': 'Спец-\nтехника',
+    'Йўловчи\nташиш': 'Пассаж.\nтранспорт',
+    'Ташкилот номи': 'Наименование организации',
+    'Корхона номи': 'Наименование организации',
+    'Корхоналар кесимида иш хажми суммаси миқдори': 'Сумма работ в разрезе организаций',
+    'Накд': 'Наличные',
+    'Нақд': 'Наличные',
+    'Пул кўчириш': 'Перечисление',
+    'Пул кучириш': 'Перечисление',
+    'Тизим корхонасида ишлади': 'Внутренние работы',
+    'Бошқа': 'Прочее',
+    'Сумма:': 'Сумма:',
+    'ЖАМИ СУММА:': 'ИТОГО СУММА:',
+    'ЖАМИ сумма:\n(Нақд/Пул кучириш/Тизим/Бошқа)': 'Итого сумма:\n(Наличные/Перечисление/Внутренние/Прочее)',
+    'ХАММАСИ \n(Нақд/Пул кучириш/Тизим/Бошқа):': 'ВСЕГО \n(Наличные/Перечисление/Внутренние/Прочее):',
+    'ХАММАСИ \n(Накд, Пул кучириш, Тизим, Бошқа):': 'ВСЕГО \n(Наличные, Перечисление, Внутренние, Прочее):',
+    'ХАММАСИ (Накд, Пул кучириш, Тизим, Бошқа):': 'ВСЕГО (Наличные, Перечисление, Внутренние, Прочее):',
+    'Аникланган камчиликлар:': 'Выявленные недостатки:',
+    '(Камчиликлар киритилмаган)': '(Недостатки не внесены)',
+    'БАЖАРИЛГАН ИШ СУММАСИ': 'СУММА ВЫПОЛНЕННЫХ РАБОТ',
+    'Вақтинча бўш': 'Простой / без работы',
+    'Жами :': 'Итого:',
+    'ШУНДАН': 'ИЗ НИХ',
+    'ИШ БИЛАН БАНД': 'РАБОТАЕТ',
+    'ИШГА ЧИҚМАГАН': 'НЕ РАБОТАЕТ',
+    'ИШ БИЛАН\nБАНД': 'РАБОТАЕТ',
+    'ИШГА\nЧИҚМАГАН': 'НЕ РАБОТАЕТ',
+    'Жами\nқиш.хўж-ги\nтехника': 'Всего\nс/х\nтехники',
+    'Жами\nтехника': 'Всего\nтехники',
+    'Сана:': 'Дата:',
+}
+RU_TEXT_REPLACE = [
+    ('"Бухоро Агрокластер" МЧЖ тизимдаги ташкилотларга тегишли барча ',
+     'СВЕДЕНИЯ\nо занятости '),
+    (' иш билан бандлиги тўғрисида МАЪЛУМОТ',
+     ' предприятий системы ООО "Бухоро Агрокластер"'),
+    ('12:00 дан - 12:00 гача', 'с 12:00 до 12:00'),
+    ('"Бухоро Агрокластер" МЧЖ тизимидаги барча корхоналарда мавжуд техникалар иштирокида амалга оширилган\nишлар суммаси ва тўлов турлари тугрисида МАЪЛУМОТИ',
+     'СВЕДЕНИЯ\nо суммах выполненных работ и видах оплаты по технике предприятий системы ООО "Бухоро Агрокластер"'),
+    ('Бажарилган ишлар суммаси МАЪЛУМОТИ', 'СВЕДЕНИЯ О СУММЕ ВЫПОЛНЕННЫХ РАБОТ'),
+    ('техникаларнинг бажарилган ишлар тугрисида МАЪЛУМОТИ', 'техники о выполненных работах'),
+    ('юқори унумли ва махсус техникаларнинг', 'высокопроизводительной и специальной техники'),
+    ('чопиқ тракторларнинг', 'пропашных тракторов'),
+    ('қатнов тракторларнинг', 'разъездных тракторов'),
+    ('мини тракторларнинг', 'мини-тракторов'),
+    ('комбайнларнинг', 'комбайнов'),
+    ('махсус техникаларнинг', 'спецтехники'),
+    ('юк ташувчи техникаларнинг', 'грузового транспорта'),
+    ('мотоцикл техникаларнинг', 'мотоциклов'),
+    ('йўловчи ташиш техникаларнинг', 'пассажирского транспорта'),
+    ('Жами ', 'Итого '),
+    ('Накд', 'Наличные'),
+    ('Нақд', 'Наличные'),
+    ('Пул кўчириш', 'Перечисление'),
+    ('Пул кучириш', 'Перечисление'),
+    ('Тизим корхонасида ишлади', 'Внутренние работы'),
+    ('Бошқа', 'Прочее'),
+    ('Сана:', 'Дата:'),
+    ('"Бухоро Агрокластер" МЧЖ таркибидаги корхоналарда мавжуд қишлоқ хўжалиги техникалари кунлик харакати бўйича МАЪЛУМОТ',
+     'СВЕДЕНИЯ\nо ежедневном движении сельскохозяйственной техники предприятий ООО "Бухоро Агрокластер"'),
+    ('"Бухоро Агрокластер" МЧЖ таркибидаги корхоналарда мавжуд юк транспортлари кунлик харакати бўйича МАЪЛУМОТ',
+     'СВЕДЕНИЯ\nо ежедневном движении грузового транспорта предприятий ООО "Бухоро Агрокластер"'),
+]
+
+RU_SHEET_REPLACE = [
+    ('ОБШИЙ КАМЧИЛИК', 'ОБЩИЕ НЕДОСТАТКИ'),
+    ('ОБШИЙ', 'ОБЩИЙ'),
+    ('Ичи', 'Детально'),
+    ('Юқори унумли', 'Высокопроизв.'),
+    ('Юқори унумл', 'Высокопроизв.'),
+    ('Чопиқ трактор', 'Пропашные'),
+    ('Чопиқ тракт', 'Пропашные'),
+    ('Қатнов трактор', 'Разъездные'),
+    ('Қатнов трак', 'Разъездные'),
+    ('Мини трактор', 'Мини'),
+    ('Комбайнлар', 'Комбайны'),
+    ('Махсус техника', 'Спецтехника'),
+    ('Махсус техни', 'Спецтехника'),
+    ('Юк ташувчи транспорт', 'Грузовой'),
+    ('Юк ташувчи т', 'Грузовой'),
+    ('Мотоцикл', 'Мотоциклы'),
+    ('Йўловчи ташиш', 'Пассажирский'),
+    ('Йўловчи таши', 'Пассажирский'),
+]
+
+
+def _translate_text_ru(value):
+    if not isinstance(value, str):
+        return value
+    if value in RU_TEXT_EXACT:
+        return RU_TEXT_EXACT[value]
+    out = value
+    for old, new in RU_TEXT_REPLACE:
+        out = out.replace(old, new)
+    for code, ru in RU_CATEGORY_LABELS.items():
+        uz = CATEGORIES.get(code)
+        if uz:
+            out = out.replace(uz, ru)
+    return out
+
+
+def _translate_sheet_title_ru(title, seen):
+    out = title
+    for old, new in RU_SHEET_REPLACE:
+        out = out.replace(old, new)
+    for code, ru in RU_CATEGORY_LABELS.items():
+        uz = CATEGORIES.get(code)
+        if uz:
+            out = out.replace(uz, ru)
+    out = out[:31]
+    base = out or 'Sheet'
+    suffix = 1
+    while out in seen:
+        tail = f' {suffix}'
+        out = (base[:31 - len(tail)] + tail)[:31]
+        suffix += 1
+    seen.add(out)
+    return out
+
+
+def translate_workbook_to_ru(wb):
+    """Translate generated Uzbek workbook labels to Russian without changing sheet count/order."""
+    seen = set()
+    for ws in wb.worksheets:
+        ws.title = _translate_sheet_title_ru(ws.title, seen)
+        for row in ws.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, str):
+                    cell.value = _translate_text_ru(cell.value)
+
+
+def polish_report_workbook(wb):
+    """Improve readability/print settings while preserving all existing sheets and structure."""
+    for idx, ws in enumerate(wb.worksheets):
+        ws.sheet_view.showGridLines = False
+        ws.sheet_view.zoomScale = 90
+        ws.sheet_view.zoomScaleNormal = 90
+        ws.page_setup.orientation = 'landscape'
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+        ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+        ws.page_margins = PageMargins(left=0.15, right=0.15, top=0.25, bottom=0.25, header=0.1, footer=0.1)
+        ws.print_options.horizontalCentered = True
+        ws.freeze_panes = 'A5' if ws.max_row >= 5 else 'A2'
+        ws.sheet_properties.tabColor = ['1F4E79', 'C00000', '70AD47', '8064A2'][min(idx, 3) % 4]
+
+        title_upper = (ws.title or '').upper()
+        if ws.max_column >= 30:
+            ws.column_dimensions['A'].width = max(ws.column_dimensions['A'].width or 0, 6)
+            ws.column_dimensions['B'].width = max(ws.column_dimensions['B'].width or 0, 34)
+            ws.column_dimensions['C'].width = max(ws.column_dimensions['C'].width or 0, 22)
+            for col_idx in range(4, ws.max_column + 1):
+                letter = get_column_letter(col_idx)
+                ws.column_dimensions[letter].width = max(ws.column_dimensions[letter].width or 0, 14)
+        elif 'КАМЧИЛИК' in title_upper or 'НЕДОСТАТ' in title_upper:
+            ws.freeze_panes = 'A2'
+            ws.column_dimensions['A'].width = max(ws.column_dimensions['A'].width or 0, 8)
+            for col_idx in range(2, min(ws.max_column, 9) + 1):
+                ws.column_dimensions[get_column_letter(col_idx)].width = max(ws.column_dimensions[get_column_letter(col_idx)].width or 0, 28)
+        elif 'ИЧИ' in title_upper or 'ДЕТАЛ' in title_upper:
+            widths = {'A': 6, 'B': 13, 'C': 28, 'D': 36, 'E': 30, 'F': 32,
+                      'G': 13, 'H': 12, 'I': 16, 'J': 18, 'K': 18, 'L': 20, 'M': 18}
+            for col, width in widths.items():
+                ws.column_dimensions[col].width = max(ws.column_dimensions[col].width or 0, width)
+        else:
+            widths = {'A': 8, 'B': 40, 'C': 22, 'D': 22, 'E': 28, 'F': 22}
+            for col, width in widths.items():
+                if ws.max_column >= ws[col + '1'].column:
+                    ws.column_dimensions[col].width = max(ws.column_dimensions[col].width or 0, width)
+
+        for row_idx in range(1, min(ws.max_row, 4) + 1):
+            ws.row_dimensions[row_idx].height = max(ws.row_dimensions[row_idx].height or 0, 24)
+        for row_idx in range(5, ws.max_row + 1):
+            current = ws.row_dimensions[row_idx].height or 0
+            if current < 24:
+                ws.row_dimensions[row_idx].height = 24
+
+
 # ─── Data Loading ─────────────────────────────────────────────────────
 def load_data(d_from, d_to, org_ids=None):
     """Load all org/records for report date range. Returns dict."""
@@ -662,7 +867,7 @@ def build_svod_ichi(wb, orgs, data, rd, nd, category, sheet_title, cat_label):
 
 
 # ─── Main Generator ──────────────────────────────────────────────────
-def generate_report(d_from, d_to, output_dir, org_ids=None, cat_filter=None):
+def generate_report(d_from, d_to, output_dir, org_ids=None, cat_filter=None, lang='uz'):
     """
     cat_filter: list of category codes e.g. ['mtz', 'yukori', 'qatnov']
                 None means all 9 categories
@@ -716,6 +921,10 @@ def generate_report(d_from, d_to, output_dir, org_ids=None, cat_filter=None):
         filename = f'Hisobot_{rd.strftime("%d_%m_%Y")}.xlsx'
     else:
         filename = f'Hisobot_{rd.strftime("%d_%m_%Y")}_{nd.strftime("%d_%m_%Y")}.xlsx'
+    if lang == 'ru':
+        translate_workbook_to_ru(wb)
+    polish_report_workbook(wb)
+
     filepath = os.path.join(output_dir, filename)
     wb.save(filepath)
     return filepath

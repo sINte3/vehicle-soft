@@ -920,15 +920,23 @@ def create_app():
             cat_filter = [c for c in cat_filter_form if c in CATEGORIES] if cat_filter_form else None
 
             report_type = request.form.get('report_type', 'main')
+            export_lang = getattr(current_user, 'language', 'uz') or 'uz'
+            if export_lang not in ('uz', 'ru'):
+                export_lang = 'uz'
+
             if report_type == 'daily_activity':
-                filepath = generate_daily_activity(d_from, app.config['REPORTS_DIR'], org_ids)
-                fname = f'Kunlik_ish_{d_from.strftime("%d_%m_%Y")}.xlsx'
-            else:
-                filepath = generate_report(d_from, d_to, app.config['REPORTS_DIR'], org_ids, cat_filter)
-                if d_from == d_to:
-                    fname = f'Hisobot_{d_from.strftime("%d_%m_%Y")}.xlsx'
+                filepath = generate_daily_activity(d_from, app.config['REPORTS_DIR'], org_ids, lang=export_lang)
+                if export_lang == 'ru':
+                    fname = f'Dnevnaya_zanyatost_{d_from.strftime("%d_%m_%Y")}.xlsx'
                 else:
-                    fname = f'Hisobot_{d_from.strftime("%d_%m_%Y")}_{d_to.strftime("%d_%m_%Y")}.xlsx'
+                    fname = f'Kunlik_ish_{d_from.strftime("%d_%m_%Y")}.xlsx'
+            else:
+                filepath = generate_report(d_from, d_to, app.config['REPORTS_DIR'], org_ids, cat_filter, lang=export_lang)
+                prefix = 'Otchet' if export_lang == 'ru' else 'Hisobot'
+                if d_from == d_to:
+                    fname = f'{prefix}_{d_from.strftime("%d_%m_%Y")}.xlsx'
+                else:
+                    fname = f'{prefix}_{d_from.strftime("%d_%m_%Y")}_{d_to.strftime("%d_%m_%Y")}.xlsx'
             return send_file(filepath, as_attachment=True, download_name=fname)
 
         # GET: show summary and a limited preview table for selected range.
@@ -968,10 +976,10 @@ def create_app():
             'transfer': sum(r.amount_transfer or 0 for r in records),
             'internal': sum(r.amount_internal or 0 for r in records),
             'other': sum(r.amount_other or 0 for r in records),
-            'total_quantity': sum((r.quantity or 0) for r in records if r.status == 'worked'),
+            'total_quantity': sum((r.quantity or 0) for r in records if r.status == 'working'),
             'records_count': len(records),
-            'worked_count': sum(1 for r in records if r.status == 'worked'),
-            'idle_count': sum(1 for r in records if r.status != 'worked'),
+            'worked_count': sum(1 for r in records if r.status == 'working'),
+            'idle_count': sum(1 for r in records if r.status != 'working'),
             'equipment_count': len({r.equipment_id for r in records}),
         }
         preview['total'] = preview['cash'] + preview['transfer'] + preview['internal'] + preview['other']
@@ -993,12 +1001,12 @@ def create_app():
                     'equipment_ids': set(),
                 })
                 item['amount'] += amount
-                if r.status == 'worked':
+                if r.status == 'working':
                     item['quantity'] += qty
                 item['records_count'] += 1
                 item['equipment_ids'].add(r.equipment_id)
 
-            if r.status == 'worked':
+            if r.status == 'working':
                 wt_name = (r.work_type or '').strip() or '—'
                 wt = work_type_summary_map.setdefault(wt_name, {
                     'name': wt_name,

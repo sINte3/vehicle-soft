@@ -1,3 +1,19 @@
+## 2026-06-04 - REPORT001B completed
+
+- Completed REPORT001B: Excel export improvements for main report and daily activity report.
+- Production backup before deployment: D:\transport-report-backups\production\daily\transport_20260604_142115.db.
+- Changed files: app.py, excel_export.py, excel_daily_activity.py.
+- Fixed /report preview logic: working status is handled as working, not worked.
+- Fixed top work types and working/downtime row counts on /report.
+- Main Excel report now follows user interface language: RU exports Russian workbook, UZ exports Uzbek workbook.
+- Daily activity Excel report now follows user interface language: RU exports Russian workbook, UZ exports Uzbek workbook.
+- Russian Детально sheet headers were translated.
+- Russian agricultural machinery categories in daily activity report were translated.
+- Existing Excel sheet structure and order were preserved; no new sheets were added.
+- Workbook readability/print layout was improved.
+- No database migration required.
+- Production smoke test passed.
+
 ## 2026-06-04 - REPORT001A completed on production
 
 - Production URL: http://10.103.25.14:5050.

@@ -13,6 +13,24 @@
 
 ## Recently completed / appears completed
 
+### REPORT001B - Excel export improvements
+
+Priority: P1
+Status: **completed 2026-06-04**
+
+Changes made:
+
+- Fixed working-row calculation in the main report preview.
+- Fixed top work types and totals on /report.
+- Improved existing Excel exports without changing sheet structure.
+- Main report export is now language-aware: RU interface -> Russian Excel, UZ interface -> Uzbek Excel.
+- Daily activity export is now language-aware: RU interface -> Russian Excel, UZ interface -> Uzbek Excel.
+- Translated Russian headers in Детально sheets.
+- Translated agricultural machinery categories in Russian daily activity export.
+- Improved workbook readability and print layout while preserving existing sheet order and report structure.
+- No database migration required.
+
+
 ### REPORT001A - Main report UX improvements
 
 Priority: P1

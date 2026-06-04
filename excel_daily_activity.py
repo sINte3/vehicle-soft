@@ -16,6 +16,7 @@ from excel_export import (
     FONT_TITLE, FONT_HEADER, FONT_HEADER_SM, FONT_DATA,
     FONT_TOTAL, FILL_YELLOW, FILL_GREEN, FILL_BLUE,
     ALIGN_CENTER, ALIGN_LEFT, BORDER, set_print, style_cell, NUM_FMT,
+    translate_workbook_to_ru, polish_report_workbook,
 )
 
 AGR_CATS = ['yukori', 'mtz', 'qatnov', 'mini', 'combine', 'special', 'motorcycle', 'passenger']
@@ -108,7 +109,7 @@ def _sc(ws, row, col, value=None, font=None, fill=None, align=ALIGN_CENTER, bord
     return cell
 
 
-def generate_daily_activity(report_date, output_dir, org_ids=None):
+def generate_daily_activity(report_date, output_dir, org_ids=None, lang='uz'):
     """Generate two-table daily activity Excel report. Returns saved file path."""
     orgs, data = load_activity_data(report_date, org_ids)
     date_str = report_date.strftime('%d.%m.%Y')
@@ -420,7 +421,12 @@ def generate_daily_activity(report_date, output_dir, org_ids=None):
 
     ws.print_area = 'A1:AA{}'.format(row)
 
-    fname = 'Kunlik_{}.xlsx'.format(report_date.strftime('%d_%m_%Y'))
+    if lang == 'ru':
+        translate_workbook_to_ru(wb)
+    polish_report_workbook(wb)
+
+    prefix = 'Dnevnaya_zanyatost' if lang == 'ru' else 'Kunlik'
+    fname = '{}_{}.xlsx'.format(prefix, report_date.strftime('%d_%m_%Y'))
     fpath = os.path.join(output_dir, fname)
     wb.save(fpath)
     return fpath
