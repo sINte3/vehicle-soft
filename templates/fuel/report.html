@@ -40,6 +40,14 @@
 {% set L_error = 'Ошибка' if lang == 'ru' else 'Хато' %}
 {% set L_search = 'Поиск по складу, АЗС, карте или Topaz ID' if lang == 'ru' else 'Омбор, АЗС, карта ёки Topaz ID бўйича қидириш' %}
 {% set L_rule = 'Формула: остаток на начало периода + приход − выдачи Topaz. Цены и суммы не используются.' if lang == 'ru' else 'Формула: давр бошидаги қолдиқ + кирим − Topaz беришлари. Нарх ва сумма ишлатилмайди.' %}
+{% set L_warnings = 'Проблемы и предупреждения' if lang == 'ru' else 'Муаммолар ва огоҳлантиришлар' %}
+{% set L_no_warnings = 'Критических проблем по выбранному периоду не найдено.' if lang == 'ru' else 'Танланган давр бўйича критик муаммолар топилмади.' %}
+{% set L_warning_rule = 'Проверяются отрицательные остатки, отсутствующие начальные остатки, проблемы синхронизации, отключённые АЗС с выдачами и крупные выдачи.' if lang == 'ru' else 'Манфий қолдиқлар, бошланғич қолдиқсиз омборлар, синхронизация муаммолари, ўчирилган АЗСдаги беришлар ва йирик беришлар текширилади.' %}
+{% set L_level = 'Уровень' if lang == 'ru' else 'Даража' %}
+{% set L_problem = 'Проблема' if lang == 'ru' else 'Муаммо' %}
+{% set L_details = 'Описание' if lang == 'ru' else 'Изоҳ' %}
+{% set L_value = 'Значение' if lang == 'ru' else 'Қиймат' %}
+{% set L_warn_count = 'Предупреждения' if lang == 'ru' else 'Огоҳлантиришлар' %}
 
 <style>
 .fuel-report-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
@@ -54,6 +62,13 @@
 .fuel-status.warn { background:var(--warn-light); color:var(--warn); }
 .fuel-status.danger { background:var(--danger-light); color:var(--danger); }
 .fuel-pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700; background:var(--info-light); color:var(--info); }
+.fuel-warning-card { border-left:4px solid var(--warn); background:var(--warn-light); padding:12px 14px; border-radius:var(--radius); margin-bottom:10px; }
+.fuel-warning-card.danger { border-left-color:var(--danger); background:var(--danger-light); }
+.fuel-warning-card.info { border-left-color:var(--info); background:var(--info-light); }
+.fuel-warning-title { font-weight:700; margin-bottom:4px; }
+.fuel-warning-card.danger .fuel-warning-title { color:var(--danger); }
+.fuel-warning-card.warning .fuel-warning-title { color:var(--warn); }
+.fuel-warning-card.info .fuel-warning-title { color:var(--info); }
 @media (max-width:1000px) { .fuel-report-filter { grid-template-columns:repeat(2,minmax(150px,1fr)); } }
 @media (max-width:700px) { .fuel-report-hero { flex-direction:column; } .fuel-report-filter { grid-template-columns:1fr; } .fuel-report-actions { justify-content:flex-start; } }
 </style>
@@ -111,6 +126,27 @@
     <div class="stat-card"><div class="label">{{ L_ending }}</div><div class="value">{{ '%.0f'|format(totals.ending) }} л</div></div>
     <div class="stat-card"><div class="label">{{ L_tx }}</div><div class="value">{{ totals.transactions }}</div></div>
     <div class="stat-card"><div class="label">{{ L_sync_unknown }}</div><div class="value" {% if sync_summary.unknown %}style="color:var(--danger);"{% endif %}>{{ sync_summary.unknown }}</div></div>
+    <div class="stat-card"><div class="label">{{ L_warn_count }}</div><div class="value" {% if warnings_summary.danger %}style="color:var(--danger);"{% elif warnings_summary.warning %}style="color:var(--warn);"{% endif %}>{{ warnings_summary.total }}</div></div>
+</div>
+
+<div class="card" style="margin-bottom:24px;">
+    <div class="card-header">{{ L_warnings }} ({{ warnings_summary.total }})</div>
+    <div class="card-body">
+        <div class="text-muted text-sm" style="margin-bottom:12px;">{{ L_warning_rule }}</div>
+        {% if warnings %}
+            {% for w in warnings[:25] %}
+            {% set w_title = w.title_ru if lang == 'ru' else w.title_uz %}
+            {% set w_details = w.details_ru if lang == 'ru' else w.details_uz %}
+            <div class="fuel-warning-card {{ w.severity }} fuel-report-row" data-search="{{ (w_title ~ ' ' ~ w_details ~ ' ' ~ (w.value|string))|lower }}">
+                <div class="fuel-warning-title">{{ w_title }}</div>
+                <div class="text-sm">{{ w_details }}</div>
+            </div>
+            {% endfor %}
+            {% if warnings|length > 25 %}<div class="text-muted text-sm">{{ 'Показаны первые 25 предупреждений. Полный список доступен в Excel.' if lang == 'ru' else 'Биринчи 25 та огоҳлантириш кўрсатилди. Тўлиқ рўйхат Excelда.' }}</div>{% endif %}
+        {% else %}
+            <div class="fuel-warning-card info"><div class="fuel-warning-title">OK</div><div class="text-sm">{{ L_no_warnings }}</div></div>
+        {% endif %}
+    </div>
 </div>
 
 <div class="fuel-report-toolbar">

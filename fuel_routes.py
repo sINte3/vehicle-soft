@@ -343,6 +343,38 @@ def _fuel_opening_balance(warehouse_id, d_from):
     return round(float(ib.quantity or 0) + receipts_before - issues_before, 2), ib
 
 
+FUEL_LARGE_TXN_THRESHOLD = 500.0
+FUEL_SYNC_STALE_HOURS = 12
+
+
+def _fuel_warning(code, severity, title_ru, title_uz, details_ru='', details_uz='', value=None):
+    return {
+        'code': code,
+        'severity': severity,
+        'title_ru': title_ru,
+        'title_uz': title_uz,
+        'details_ru': details_ru,
+        'details_uz': details_uz,
+        'value': value,
+    }
+
+
+def _fuel_report_warning_text(warning, lang='uz'):
+    title = warning.get('title_ru') if lang == 'ru' else warning.get('title_uz')
+    details = warning.get('details_ru') if lang == 'ru' else warning.get('details_uz')
+    return title or '', details or ''
+
+
+def _fuel_report_warning_summary(warnings):
+    warnings = warnings or []
+    return {
+        'total': len(warnings),
+        'danger': sum(1 for w in warnings if w.get('severity') == 'danger'),
+        'warning': sum(1 for w in warnings if w.get('severity') == 'warning'),
+        'info': sum(1 for w in warnings if w.get('severity') == 'info'),
+    }
+
+
 def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
     d_from_dt = datetime.combine(d_from, datetime.min.time())
     d_to_dt = datetime.combine(d_to, datetime.max.time())
@@ -468,7 +500,128 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         'last': sync_logs[0] if sync_logs else None,
     }
 
+    warnings = []
+    for row in warehouse_rows:
+        wh_name = row['warehouse'].name
+        if row['opening'] is None:
+            warnings.append(_fuel_warning(
+                'missing_initial', 'warning',
+                f'Склад «{wh_name}» без начального остатка',
+                f'«{wh_name}» омборида бошланғич қолдиқ йўқ',
+                'Расчётный остаток по этому складу нельзя считать надёжным.',
+                'Бу омбор бўйича ҳисобий қолдиқни ишончли ҳисоблаб бўлмайди.',
+                wh_name,
+            ))
+        elif row['ending'] is not None and row['ending'] < 0:
+            warnings.append(_fuel_warning(
+                'negative_balance', 'danger',
+                f'Отрицательный расчётный остаток: {wh_name}',
+                f'Манфий ҳисобий қолдиқ: {wh_name}',
+                f'Расчётный остаток {row["ending"]:.2f} л. Проверьте начальный остаток, приходы и выдачи.',
+                f'Ҳисобий қолдиқ {row["ending"]:.2f} л. Бошланғич қолдиқ, кирим ва беришларни текширинг.',
+                row['ending'],
+            ))
+
+    stations_without_warehouse = FuelStation2.query.filter(FuelStation2.warehouse_id.is_(None)).order_by(FuelStation2.name).all()
+    for st in stations_without_warehouse:
+        warnings.append(_fuel_warning(
+            'station_without_warehouse', 'danger',
+            f'АЗС «{st.name}» не привязана к складу',
+            f'«{st.name}» АЗС омборга боғланмаган',
+            'Выдачи по такой АЗС не могут корректно списываться со склада.',
+            'Бундай АЗС бўйича берилган ёқилғи омбордан тўғри чиқим қилинмайди.',
+            st.topaz_id,
+        ))
+
+    for st in station_rows:
+        if not st.is_active and (st.tx_count or 0) > 0:
+            warnings.append(_fuel_warning(
+                'inactive_station_with_tx', 'warning',
+                f'Отключённая АЗС имеет выдачи: {st.name}',
+                f'Ўчирилган АЗСда беришлар бор: {st.name}',
+                f'За период: {float(st.issued or 0):.2f} л, транзакций: {int(st.tx_count or 0)}.',
+                f'Давр бўйича: {float(st.issued or 0):.2f} л, транзакциялар: {int(st.tx_count or 0)}.',
+                float(st.issued or 0),
+            ))
+
+    sync_issue_logs = [l for l in sync_logs if (l.unknown_stations or 0) > 0 or (l.status or '') != 'ok']
+    for log in sync_issue_logs[:10]:
+        warnings.append(_fuel_warning(
+            'sync_issue', 'danger' if (log.unknown_stations or 0) else 'warning',
+            f'Проблема синхронизации Topaz: {log.synced_at.strftime("%d.%m.%Y %H:%M")}',
+            f'Topaz синхронизациясида муаммо: {log.synced_at.strftime("%d.%m.%Y %H:%M")}',
+            f'Статус: {log.status or ""}; неизвестных АЗС: {log.unknown_stations or 0}; ошибка: {log.error_msg or "—"}.',
+            f'Ҳолат: {log.status or ""}; номаълум АЗС: {log.unknown_stations or 0}; хато: {log.error_msg or "—"}.',
+            log.unknown_stations or 0,
+        ))
+
+    latest_sync = FuelSyncLog2.query.order_by(FuelSyncLog2.synced_at.desc()).first()
+    if latest_sync and latest_sync.synced_at:
+        age_hours = (datetime.utcnow() - latest_sync.synced_at).total_seconds() / 3600
+        if age_hours > FUEL_SYNC_STALE_HOURS:
+            warnings.append(_fuel_warning(
+                'stale_sync', 'danger',
+                'Давно не было синхронизации Topaz',
+                'Topaz синхронизацияси узоқ вақт бўлмади',
+                f'Последняя синхронизация: {latest_sync.synced_at.strftime("%d.%m.%Y %H:%M")}; прошло примерно {age_hours:.1f} ч.',
+                f'Охирги синхронизация: {latest_sync.synced_at.strftime("%d.%m.%Y %H:%M")}; тахминан {age_hours:.1f} соат ўтди.',
+                round(age_hours, 1),
+            ))
+    else:
+        warnings.append(_fuel_warning(
+            'no_sync', 'danger',
+            'Нет журналов синхронизации Topaz',
+            'Topaz синхронизация журналлари йўқ',
+            'Система не видит ни одной записи синхронизации.',
+            'Тизимда синхронизация бўйича бирорта ёзув йўқ.',
+        ))
+
+    large_txn_q = (FuelTransaction2.query
+                   .join(FuelStation2)
+                   .filter(FuelTransaction2.txn_datetime >= d_from_dt,
+                           FuelTransaction2.txn_datetime <= d_to_dt,
+                           FuelTransaction2.quantity >= FUEL_LARGE_TXN_THRESHOLD))
+    if warehouse_id:
+        large_txn_q = large_txn_q.filter(FuelStation2.warehouse_id == warehouse_id)
+    if station_id:
+        large_txn_q = large_txn_q.filter(FuelTransaction2.station_id == station_id)
+    large_txns = large_txn_q.order_by(FuelTransaction2.quantity.desc()).limit(20).all()
+    for txn in large_txns:
+        station_name = txn.station.name if txn.station else ''
+        warnings.append(_fuel_warning(
+            'large_transaction', 'warning',
+            f'Крупная выдача топлива: {txn.quantity:.2f} л',
+            f'Йирик ёқилғи бериш: {txn.quantity:.2f} л',
+            f'{txn.txn_datetime.strftime("%d.%m.%Y %H:%M")}; АЗС: {station_name}; карта: {txn.card_number or "—"}; Topaz ID: {txn.topaz_txn_id or "—"}.',
+            f'{txn.txn_datetime.strftime("%d.%m.%Y %H:%M")}; АЗС: {station_name}; карта: {txn.card_number or "—"}; Topaz ID: {txn.topaz_txn_id or "—"}.',
+            txn.quantity,
+        ))
+
+    bad_qty_q = (FuelTransaction2.query
+                 .join(FuelStation2)
+                 .filter(FuelTransaction2.txn_datetime >= d_from_dt,
+                         FuelTransaction2.txn_datetime <= d_to_dt)
+                 .filter((FuelTransaction2.quantity == None) | (FuelTransaction2.quantity <= 0)))
+    if warehouse_id:
+        bad_qty_q = bad_qty_q.filter(FuelStation2.warehouse_id == warehouse_id)
+    if station_id:
+        bad_qty_q = bad_qty_q.filter(FuelTransaction2.station_id == station_id)
+    bad_qty_txns = bad_qty_q.order_by(FuelTransaction2.txn_datetime.desc()).limit(20).all()
+    for txn in bad_qty_txns:
+        warnings.append(_fuel_warning(
+            'bad_quantity', 'danger',
+            'Транзакция с нулевым или отрицательным количеством',
+            'Ноль ёки манфий миқдорли транзакция',
+            f'{txn.txn_datetime.strftime("%d.%m.%Y %H:%M")}; АЗС: {txn.station.name if txn.station else ""}; количество: {txn.quantity}.',
+            f'{txn.txn_datetime.strftime("%d.%m.%Y %H:%M")}; АЗС: {txn.station.name if txn.station else ""}; миқдор: {txn.quantity}.',
+            txn.quantity,
+        ))
+
+    warnings_summary = _fuel_report_warning_summary(warnings)
     totals = {k: round(v, 2) if isinstance(v, float) else v for k, v in totals.items()}
+    totals['warnings'] = warnings_summary['total']
+    totals['danger_warnings'] = warnings_summary['danger']
+    totals['large_txn_threshold'] = FUEL_LARGE_TXN_THRESHOLD
     return {
         'd_from': d_from,
         'd_to': d_to,
@@ -479,6 +632,9 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         'recent_txns': recent_txns,
         'sync_logs': sync_logs,
         'sync_summary': sync_summary,
+        'warnings': warnings,
+        'warnings_summary': warnings_summary,
+        'large_txn_threshold': FUEL_LARGE_TXN_THRESHOLD,
         'totals': totals,
         'selected_warehouse_id': warehouse_id,
         'selected_station_id': station_id,
@@ -568,10 +724,26 @@ def _fuel_report_workbook(data, lang='uz'):
         (L('Складов без начального остатка', 'Бошланғич қолдиқсиз омборлар'), data['totals']['missing_initial']),
         (L('Отрицательных остатков', 'Манфий қолдиқлар'), data['totals']['negative_balances']),
         (L('Неизвестных АЗС в sync logs', 'Sync logларда номаълум АЗС'), data['sync_summary']['unknown']),
+        (L('Предупреждений', 'Огоҳлантиришлар'), data.get('warnings_summary', {}).get('total', 0)),
+        (L('Критических предупреждений', 'Критик огоҳлантиришлар'), data.get('warnings_summary', {}).get('danger', 0)),
     ]
     for label, value in summary_rows:
         ws.append([label, value])
     style_table(ws, header_row=4)
+
+    ws = wb.create_sheet(_safe_ws_title(L('Предупреждения', 'Огоҳлантиришлар'), used))
+    ws.append([L('Уровень', 'Даража'), L('Проблема', 'Муаммо'), L('Описание', 'Изоҳ'), L('Значение', 'Қиймат')])
+    for warning in data.get('warnings', []):
+        title, details = _fuel_report_warning_text(warning, lang=lang)
+        severity_label = {
+            'danger': L('Критично', 'Критик'),
+            'warning': L('Предупреждение', 'Огоҳлантириш'),
+            'info': L('Информация', 'Маълумот'),
+        }.get(warning.get('severity'), warning.get('severity') or '')
+        ws.append([severity_label, title, details, warning.get('value')])
+    if not data.get('warnings'):
+        ws.append([L('OK', 'OK'), L('Критических проблем не найдено', 'Критик муаммолар топилмади'), '', ''])
+    style_table(ws)
 
     ws = wb.create_sheet(_safe_ws_title(L('Склады', 'Омборлар'), used))
     ws.append([L('Склад', 'Омбор'), L('АЗС', 'АЗС'), L('Начальный остаток', 'Бошланғич қолдиқ'), L('Приход', 'Кирим'), L('Выдача', 'Бериш'), L('Расчётный остаток', 'Ҳисобий қолдиқ'), L('Транзакций', 'Транзакциялар'), L('Последняя выдача', 'Охирги бериш')])

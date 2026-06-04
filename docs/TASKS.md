@@ -1049,3 +1049,14 @@ Completed:
 - Added dashboard navigation link.
 - Verified staging and production smoke tests.
 
+
+## REPORT001D — Fuel anomalies and warnings — COMPLETED 2026-06-04
+
+Статус: completed / production released.
+
+Результат:
+- добавлен блок проблем и предупреждений в `/fuel/report`;
+- добавлены проверки отрицательных расчётных остатков, складов без начального остатка, АЗС без склада, отключённых АЗС с выдачами, неизвестных Topaz ID, давности синхронизации, крупных выдач и некорректных транзакций;
+- добавлен лист предупреждений в Excel Fuel report;
+- production smoke test passed;
+- миграция БД не требовалась.

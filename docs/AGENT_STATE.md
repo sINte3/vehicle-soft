@@ -796,3 +796,23 @@ Changed files:
 - docs/TASKS.md
 - docs/AGENT_STATE.md
 
+
+## 2026-06-04 — REPORT001D completed
+
+REPORT001D — Fuel anomalies and warnings завершён и установлен на production.
+
+Production:
+- URL: http://10.103.25.14:5050/fuel/report
+- Backup before deployment: `D:\transport-report-backups\production\daily\transport_20260604_145915.db`
+- DB migration: not required
+- Production smoke test: passed
+
+Files changed:
+- `fuel_routes.py`
+- `templates/fuel/report.html`
+- `docs/RELEASE_REPORT001D_FUEL_ANOMALIES_20260604.md`
+- `docs/TASKS.md`
+- `docs/AGENT_STATE.md`
+
+Next recommended stage:
+- REPORT001E or ERP-DASH001: management dashboard combining transport work, fuel, Wialon and spare-parts indicators.
