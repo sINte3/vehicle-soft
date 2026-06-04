@@ -13,6 +13,27 @@
 
 ## Recently completed / appears completed
 
+### REPORT001A - Main report UX improvements
+
+Priority: P1
+Status: **completed 2026-06-04**
+
+Changes made:
+
+- Improved `/report` page with analysis-oriented layout.
+- Added summary metrics: total amount, total quantity, rows, equipment count, working rows, idle/no-work rows.
+- Added payment-type summary.
+- Added organization summary.
+- Added top work types summary.
+- Added detail preview with client-side search.
+- Improved period, organization, and category filters.
+- Preserved Excel export behaviour.
+- Verified `/report` test client returned STATUS=200.
+- Verified production smoke test.
+- No database migration required.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260604_131327.db
+
+
 ### UX001D - Spare parts module UX
 
 Priority: P1

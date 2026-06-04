@@ -1,3 +1,19 @@
+## 2026-06-04 - REPORT001A completed on production
+
+- Production URL: http://10.103.25.14:5050.
+- Files changed: app.py, templates/report.html.
+- Improved the main transport work report page.
+- Added report summaries, organization summaries, work type summaries, and detail preview.
+- Added client-side table search and improved period/organization/category filters.
+- Preserved Excel export behaviour.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260604_131327.db.
+- py_compile passed.
+- App import check passed: APP IMPORT OK.
+- `/report` test client returned STATUS=200.
+- TransportReport service restarted and running.
+- REPORT001A production smoke test passed.
+- No database migration required.
+
 ## 2026-06-04 - UX001D completed on production
 
 - Production URL: http://10.103.25.14:5050.

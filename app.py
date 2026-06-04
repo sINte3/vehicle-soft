@@ -917,7 +917,7 @@ def create_app():
             else:
                 org_ids = all_org_ids
 
-            cat_filter = cat_filter_form if cat_filter_form else None
+            cat_filter = [c for c in cat_filter_form if c in CATEGORIES] if cat_filter_form else None
 
             report_type = request.form.get('report_type', 'main')
             if report_type == 'daily_activity':
@@ -931,33 +931,128 @@ def create_app():
                     fname = f'Hisobot_{d_from.strftime("%d_%m_%Y")}_{d_to.strftime("%d_%m_%Y")}.xlsx'
             return send_file(filepath, as_attachment=True, download_name=fname)
 
-        # GET: show summary for selected range
+        # GET: show summary and a limited preview table for selected range.
         mode, d_from, d_to = parse_date_range(request.args)
         user_org_ids = current_user.get_org_ids()
-        filter_org_id_r = request.args.get('org_id', type=int)
-        active_org_ids_r = [filter_org_id_r] if filter_org_id_r and filter_org_id_r in user_org_ids else user_org_ids
-        if filter_org_id_r not in (user_org_ids if filter_org_id_r else []):
-            filter_org_id_r = None
+        selected_org_ids_r = [
+            oid for oid in request.args.getlist('org_ids', type=int)
+            if oid in user_org_ids
+        ]
+        legacy_org_id = request.args.get('org_id', type=int)
+        if not selected_org_ids_r and legacy_org_id and legacy_org_id in user_org_ids:
+            selected_org_ids_r = [legacy_org_id]
+        active_org_ids_r = selected_org_ids_r or user_org_ids
+
+        selected_cat_codes = [
+            code for code in request.args.getlist('cat_codes')
+            if code in CATEGORIES
+        ]
+
         organizations = get_user_orgs()
-        records = (DailyRecord.query
-                   .filter(DailyRecord.work_date >= d_from,
-                           DailyRecord.work_date <= d_to)
-                   .join(Equipment).join(Organization)
-                   .filter(Organization.id.in_(active_org_ids_r))
+        q = (DailyRecord.query
+             .filter(DailyRecord.work_date >= d_from,
+                     DailyRecord.work_date <= d_to)
+             .join(Equipment).join(Organization)
+             .filter(Organization.id.in_(active_org_ids_r)))
+        if selected_cat_codes:
+            q = q.filter(Equipment.category.in_(selected_cat_codes))
+
+        records = (q.order_by(DailyRecord.work_date.desc(),
+                              Organization.sort_order,
+                              Equipment.name,
+                              DailyRecord.line_index)
                    .all())
+
         preview = {
             'cash': sum(r.amount_cash or 0 for r in records),
             'transfer': sum(r.amount_transfer or 0 for r in records),
             'internal': sum(r.amount_internal or 0 for r in records),
             'other': sum(r.amount_other or 0 for r in records),
+            'total_quantity': sum((r.quantity or 0) for r in records if r.status == 'worked'),
+            'records_count': len(records),
+            'worked_count': sum(1 for r in records if r.status == 'worked'),
+            'idle_count': sum(1 for r in records if r.status != 'worked'),
+            'equipment_count': len({r.equipment_id for r in records}),
         }
         preview['total'] = preview['cash'] + preview['transfer'] + preview['internal'] + preview['other']
+
+        org_summary_map = {}
+        work_type_summary_map = {}
+        for r in records:
+            eq = r.equipment
+            org = eq.organization if eq else None
+            amount = r.total_amount or 0
+            qty = r.quantity or 0
+
+            if org:
+                item = org_summary_map.setdefault(org.id, {
+                    'name': org.name,
+                    'amount': 0,
+                    'quantity': 0,
+                    'records_count': 0,
+                    'equipment_ids': set(),
+                })
+                item['amount'] += amount
+                if r.status == 'worked':
+                    item['quantity'] += qty
+                item['records_count'] += 1
+                item['equipment_ids'].add(r.equipment_id)
+
+            if r.status == 'worked':
+                wt_name = (r.work_type or '').strip() or '—'
+                wt = work_type_summary_map.setdefault(wt_name, {
+                    'name': wt_name,
+                    'amount': 0,
+                    'quantity': 0,
+                    'records_count': 0,
+                })
+                wt['amount'] += amount
+                wt['quantity'] += qty
+                wt['records_count'] += 1
+
+        org_summary = []
+        for item in org_summary_map.values():
+            item = dict(item)
+            item['equipment_count'] = len(item.pop('equipment_ids'))
+            org_summary.append(item)
+        org_summary.sort(key=lambda x: x['amount'], reverse=True)
+
+        work_type_summary = sorted(
+            work_type_summary_map.values(),
+            key=lambda x: x['amount'],
+            reverse=True
+        )[:12]
+
+        preview_rows = []
+        for r in records[:300]:
+            eq = r.equipment
+            org = eq.organization if eq else None
+            preview_rows.append({
+                'date': r.work_date,
+                'organization': org.name if org else '',
+                'equipment': eq.name if eq else '',
+                'plate': eq.plate if eq else '',
+                'category': CATEGORIES.get(eq.category, eq.category) if eq else '',
+                'status': r.status,
+                'work_type': r.work_type or '',
+                'customer': r.customer or '',
+                'quantity': r.quantity,
+                'unit': r.unit or '',
+                'payment_type': r.payment_type or '',
+                'total': r.total_amount or 0,
+                'note': r.note or r.idle_reason or '',
+            })
 
         return render_template('report.html',
                                mode=mode, d_from=d_from, d_to=d_to,
                                organizations=organizations,
-                               selected_org_id=filter_org_id_r,
+                               selected_org_ids=selected_org_ids_r or user_org_ids,
+                               selected_cat_codes=selected_cat_codes,
                                preview=preview,
+                               org_summary=org_summary,
+                               work_type_summary=work_type_summary,
+                               preview_rows=preview_rows,
+                               hidden_rows_count=max(0, len(records) - len(preview_rows)),
                                categories=CATEGORIES)
 
     # в”Ђв”Ђв”Ђ ADMIN: Users в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
