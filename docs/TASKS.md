@@ -13,6 +13,24 @@
 
 ## Recently completed / appears completed
 
+### UX001A - Daily entry UX improvements
+
+Priority: P1
+Status: **completed 2026-06-04**
+
+Changes made:
+
+- Improved daily entry form header and operator workflow.
+- Added toolbar actions: save, mark all idle, expand all, collapse all, search, and counters.
+- Improved equipment cards with model, plate number, type, unit, and per-equipment total.
+- Added client-side validation and invalid-field highlighting before submit.
+- Added RU/UZ translations for new daily entry UI elements.
+- Fixed Uzbek text appearing in Russian interface for new UX elements.
+- Verified production smoke test for valid save, search/filter, expand/collapse, and invalid input blocking.
+- No database migration required.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260604_111225.db
+
+
 ### QA001 + BACKUP001 - QA checklist and backup restore test
 
 Priority: P0

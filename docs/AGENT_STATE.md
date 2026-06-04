@@ -1,3 +1,18 @@
+## 2026-06-04 - UX001A completed on production
+
+- Production URL: http://10.103.25.14:5050.
+- Files changed: templates/daily_entry.html, translations.py.
+- Improved daily entry operator form with clearer selected date/organization/equipment summary.
+- Added daily entry toolbar with save, mark-all-idle, expand/collapse, search, and counters.
+- Added client-side validation and invalid-field highlighting before submit.
+- Added and corrected RU/UZ translations for new daily entry UX elements.
+- Production backup completed before deployment: D:\transport-report-backups\production\daily\transport_20260604_111225.db
+- py_compile passed.
+- App import check passed: APP IMPORT OK.
+- TransportReport service restarted and running.
+- UX001A production smoke test passed.
+- No database migration required.
+
 ## 2026-06-04 - DATA001-3 completed on production
 
 - Production URL: http://10.103.25.14:5050.
