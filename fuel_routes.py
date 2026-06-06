@@ -13,6 +13,7 @@ from flask import (Blueprint, render_template, request, redirect,
                    url_for, flash, jsonify, abort, current_app, g, send_file)
 from flask_login import login_required, current_user
 from datetime import datetime, date, timedelta
+import hashlib
 from io import BytesIO
 from sqlalchemy import func
 from types import SimpleNamespace
@@ -20,7 +21,7 @@ from types import SimpleNamespace
 from models import (
     db, Organization,
     FuelWarehouse, FuelStation2, FuelInitialBalance,
-    FuelReceipt2, FuelTransaction2, FuelSyncLog2,
+    FuelReceipt2, FuelTransaction2, FuelSyncLog2, FuelWarningReview,
     module_required,
 )
 
@@ -347,8 +348,22 @@ FUEL_LARGE_TXN_THRESHOLD = 500.0
 FUEL_SYNC_STALE_HOURS = 12
 
 
-def _fuel_warning(code, severity, title_ru, title_uz, details_ru='', details_uz='', value=None):
+def _fuel_warning_key(code, entity_type='', entity_id=None, value=None):
+    raw = '|'.join([
+        str(code or ''),
+        str(entity_type or ''),
+        str(entity_id or ''),
+        str(value if value is not None else ''),
+    ])
+    return hashlib.sha1(raw.encode('utf-8')).hexdigest()
+
+
+def _fuel_warning(code, severity, title_ru, title_uz, details_ru='', details_uz='', value=None,
+                  entity_type='', entity_id=None, key_value=None):
+    key_seed = value if key_value is None else key_value
+    warning_key = _fuel_warning_key(code, entity_type, entity_id, key_seed)
     return {
+        'key': warning_key,
         'code': code,
         'severity': severity,
         'title_ru': title_ru,
@@ -356,6 +371,13 @@ def _fuel_warning(code, severity, title_ru, title_uz, details_ru='', details_uz=
         'details_ru': details_ru,
         'details_uz': details_uz,
         'value': value,
+        'entity_type': entity_type or '',
+        'entity_id': entity_id,
+        'review_status': 'new',
+        'review_comment': '',
+        'review_updated_at': None,
+        'reviewer_name': '',
+        'is_current': True,
     }
 
 
@@ -372,6 +394,86 @@ def _fuel_report_warning_summary(warnings):
         'danger': sum(1 for w in warnings if w.get('severity') == 'danger'),
         'warning': sum(1 for w in warnings if w.get('severity') == 'warning'),
         'info': sum(1 for w in warnings if w.get('severity') == 'info'),
+    }
+
+
+FUEL_WARNING_STATUSES = {
+    'new': ('Новое', 'Янги'),
+    'in_progress': ('В работе', 'Ишда'),
+    'resolved': ('Проверено', 'Текширилди'),
+    'rejected': ('Отклонено', 'Рад этилди'),
+}
+
+
+def _fuel_warning_status_label(status, lang='uz'):
+    ru, uz = FUEL_WARNING_STATUSES.get(status or 'new', FUEL_WARNING_STATUSES['new'])
+    return ru if lang == 'ru' else uz
+
+
+def _fuel_warning_severity_label(severity, lang='uz'):
+    labels = {
+        'danger': ('Критично', 'Критик'),
+        'warning': ('Предупреждение', 'Огоҳлантириш'),
+        'info': ('Информация', 'Маълумот'),
+    }
+    ru, uz = labels.get(severity or 'warning', labels['warning'])
+    return ru if lang == 'ru' else uz
+
+
+def _fuel_warning_reviews_by_key(keys):
+    keys = [k for k in (keys or []) if k]
+    if not keys:
+        return {}
+    rows = FuelWarningReview.query.filter(FuelWarningReview.warning_key.in_(keys)).all()
+    return {r.warning_key: r for r in rows}
+
+
+def _apply_fuel_warning_reviews(warnings):
+    reviews = _fuel_warning_reviews_by_key([w.get('key') for w in warnings])
+    for warning in warnings:
+        review = reviews.get(warning.get('key'))
+        if not review:
+            continue
+        warning['review_id'] = review.id
+        warning['review_status'] = review.status or 'new'
+        warning['review_comment'] = review.comment or ''
+        warning['review_updated_at'] = review.updated_at
+        warning['reviewer_name'] = (review.reviewer.full_name or review.reviewer.username) if review.reviewer else ''
+    return warnings
+
+
+def _fuel_warning_snapshot(warning, lang='uz'):
+    title, details = _fuel_report_warning_text(warning, lang='ru')
+    return {
+        'warning_key': warning.get('key') or '',
+        'warning_code': warning.get('code') or '',
+        'severity': warning.get('severity') or 'warning',
+        'entity_type': warning.get('entity_type') or '',
+        'entity_id': warning.get('entity_id'),
+        'title_snapshot': title or warning.get('title_ru') or warning.get('title_uz') or '',
+        'details_snapshot': details or warning.get('details_ru') or warning.get('details_uz') or '',
+        'value_snapshot': str(warning.get('value') if warning.get('value') is not None else ''),
+    }
+
+
+def _fuel_warning_from_review(review):
+    return {
+        'key': review.warning_key,
+        'code': review.warning_code,
+        'severity': review.severity or 'warning',
+        'title_ru': review.title_snapshot or review.warning_code,
+        'title_uz': review.title_snapshot or review.warning_code,
+        'details_ru': review.details_snapshot or '',
+        'details_uz': review.details_snapshot or '',
+        'value': review.value_snapshot or '',
+        'entity_type': review.entity_type or '',
+        'entity_id': review.entity_id,
+        'review_id': review.id,
+        'review_status': review.status or 'new',
+        'review_comment': review.comment or '',
+        'review_updated_at': review.updated_at,
+        'reviewer_name': (review.reviewer.full_name or review.reviewer.username) if review.reviewer else '',
+        'is_current': False,
     }
 
 
@@ -511,6 +613,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
                 'Расчётный остаток по этому складу нельзя считать надёжным.',
                 'Бу омбор бўйича ҳисобий қолдиқни ишончли ҳисоблаб бўлмайди.',
                 wh_name,
+                entity_type='fuel_warehouse', entity_id=wh.id, key_value=wh.id,
             ))
         elif row['ending'] is not None and row['ending'] < 0:
             warnings.append(_fuel_warning(
@@ -520,6 +623,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
                 f'Расчётный остаток {row["ending"]:.2f} л. Проверьте начальный остаток, приходы и выдачи.',
                 f'Ҳисобий қолдиқ {row["ending"]:.2f} л. Бошланғич қолдиқ, кирим ва беришларни текширинг.',
                 row['ending'],
+                entity_type='fuel_warehouse', entity_id=wh.id, key_value=wh.id,
             ))
 
     stations_without_warehouse = FuelStation2.query.filter(FuelStation2.warehouse_id.is_(None)).order_by(FuelStation2.name).all()
@@ -531,6 +635,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             'Выдачи по такой АЗС не могут корректно списываться со склада.',
             'Бундай АЗС бўйича берилган ёқилғи омбордан тўғри чиқим қилинмайди.',
             st.topaz_id,
+            entity_type='fuel_station', entity_id=st.id, key_value=st.id,
         ))
 
     for st in station_rows:
@@ -542,6 +647,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
                 f'За период: {float(st.issued or 0):.2f} л, транзакций: {int(st.tx_count or 0)}.',
                 f'Давр бўйича: {float(st.issued or 0):.2f} л, транзакциялар: {int(st.tx_count or 0)}.',
                 float(st.issued or 0),
+                entity_type='fuel_station', entity_id=st.id, key_value=st.id,
             ))
 
     sync_issue_logs = [l for l in sync_logs if (l.unknown_stations or 0) > 0 or (l.status or '') != 'ok']
@@ -553,6 +659,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             f'Статус: {log.status or ""}; неизвестных АЗС: {log.unknown_stations or 0}; ошибка: {log.error_msg or "—"}.',
             f'Ҳолат: {log.status or ""}; номаълум АЗС: {log.unknown_stations or 0}; хато: {log.error_msg or "—"}.',
             log.unknown_stations or 0,
+            entity_type='fuel_sync_log', entity_id=log.id, key_value=log.id,
         ))
 
     latest_sync = FuelSyncLog2.query.order_by(FuelSyncLog2.synced_at.desc()).first()
@@ -566,6 +673,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
                 f'Последняя синхронизация: {latest_sync.synced_at.strftime("%d.%m.%Y %H:%M")}; прошло примерно {age_hours:.1f} ч.',
                 f'Охирги синхронизация: {latest_sync.synced_at.strftime("%d.%m.%Y %H:%M")}; тахминан {age_hours:.1f} соат ўтди.',
                 round(age_hours, 1),
+                entity_type='fuel_sync_log', entity_id=latest_sync.id, key_value=latest_sync.id,
             ))
     else:
         warnings.append(_fuel_warning(
@@ -574,6 +682,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             'Topaz синхронизация журналлари йўқ',
             'Система не видит ни одной записи синхронизации.',
             'Тизимда синхронизация бўйича бирорта ёзув йўқ.',
+            entity_type='fuel_sync_log', entity_id=None, key_value='no_sync',
         ))
 
     large_txn_q = (FuelTransaction2.query
@@ -595,6 +704,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             f'{txn.txn_datetime.strftime("%d.%m.%Y %H:%M")}; АЗС: {station_name}; карта: {txn.card_number or "—"}; Topaz ID: {txn.topaz_txn_id or "—"}.',
             f'{txn.txn_datetime.strftime("%d.%m.%Y %H:%M")}; АЗС: {station_name}; карта: {txn.card_number or "—"}; Topaz ID: {txn.topaz_txn_id or "—"}.',
             txn.quantity,
+            entity_type='fuel_transaction', entity_id=txn.id, key_value=txn.id,
         ))
 
     bad_qty_q = (FuelTransaction2.query
@@ -615,8 +725,10 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             f'{txn.txn_datetime.strftime("%d.%m.%Y %H:%M")}; АЗС: {txn.station.name if txn.station else ""}; количество: {txn.quantity}.',
             f'{txn.txn_datetime.strftime("%d.%m.%Y %H:%M")}; АЗС: {txn.station.name if txn.station else ""}; миқдор: {txn.quantity}.',
             txn.quantity,
+            entity_type='fuel_transaction', entity_id=txn.id, key_value=txn.id,
         ))
 
+    warnings = _apply_fuel_warning_reviews(warnings)
     warnings_summary = _fuel_report_warning_summary(warnings)
     totals = {k: round(v, 2) if isinstance(v, float) else v for k, v in totals.items()}
     totals['warnings'] = warnings_summary['total']
@@ -777,6 +889,146 @@ def _fuel_report_workbook(data, lang='uz'):
                 if isinstance(cell.value, (int, float)):
                     cell.number_format = '#,##0.00'
     return wb
+
+
+@fuel_bp.route('/warnings')
+@module_required('fuel')
+def fuel_warnings():
+    today = date.today()
+    default_from = today.replace(day=1)
+    d_from = _parse_report_date(request.args.get('date_from'), default_from)
+    d_to = _parse_report_date(request.args.get('date_to'), today)
+    if d_from > d_to:
+        d_from, d_to = d_to, d_from
+
+    status_filter = (request.args.get('status') or '').strip()
+    severity_filter = (request.args.get('severity') or '').strip()
+    code_filter = (request.args.get('code') or '').strip()
+    q = (request.args.get('q') or '').strip().lower()
+
+    data = _collect_fuel_report_data(d_from, d_to)
+    warnings = list(data.get('warnings') or [])
+    current_keys = {w.get('key') for w in warnings if w.get('key')}
+
+    saved_reviews = (FuelWarningReview.query
+                     .order_by(FuelWarningReview.last_seen_at.desc(), FuelWarningReview.updated_at.desc())
+                     .limit(300).all())
+    for review in saved_reviews:
+        if review.warning_key not in current_keys:
+            warnings.append(_fuel_warning_from_review(review))
+
+    status_options = ['new', 'in_progress', 'resolved', 'rejected']
+    severity_options = ['danger', 'warning', 'info']
+    code_options = sorted({w.get('code') for w in warnings if w.get('code')})
+
+    def matches(w):
+        if status_filter and (w.get('review_status') or 'new') != status_filter:
+            return False
+        if severity_filter and (w.get('severity') or '') != severity_filter:
+            return False
+        if code_filter and (w.get('code') or '') != code_filter:
+            return False
+        if q:
+            hay = ' '.join(str(x or '') for x in [
+                w.get('code'), w.get('severity'), w.get('title_ru'), w.get('title_uz'),
+                w.get('details_ru'), w.get('details_uz'), w.get('value'),
+                w.get('review_comment'), w.get('review_status'),
+            ]).lower()
+            if q not in hay:
+                return False
+        return True
+
+    filtered_warnings = [w for w in warnings if matches(w)]
+    counts = {
+        'total': len(warnings),
+        'filtered': len(filtered_warnings),
+        'current': sum(1 for w in warnings if w.get('is_current')),
+        'danger': sum(1 for w in warnings if w.get('severity') == 'danger'),
+        'in_progress': sum(1 for w in warnings if w.get('review_status') == 'in_progress'),
+        'resolved': sum(1 for w in warnings if w.get('review_status') == 'resolved'),
+    }
+    return render_template(
+        'fuel/warnings.html',
+        warnings=filtered_warnings,
+        counts=counts,
+        d_from=d_from,
+        d_to=d_to,
+        status_filter=status_filter,
+        severity_filter=severity_filter,
+        code_filter=code_filter,
+        q=request.args.get('q') or '',
+        status_options=status_options,
+        severity_options=severity_options,
+        code_options=code_options,
+        status_label=_fuel_warning_status_label,
+        severity_label=_fuel_warning_severity_label,
+        warning_text=_fuel_report_warning_text,
+    )
+
+
+@fuel_bp.route('/warnings/<warning_key>/update', methods=['POST'])
+@module_required('fuel')
+def fuel_warning_update(warning_key):
+    if not current_user.can_edit:
+        abort(403)
+    allowed_statuses = {'new', 'in_progress', 'resolved', 'rejected'}
+    status = (request.form.get('status') or 'new').strip()
+    if status not in allowed_statuses:
+        status = 'new'
+    comment = (request.form.get('comment') or '').strip()[:4000]
+
+    review = FuelWarningReview.query.filter_by(warning_key=warning_key).first()
+    before = None
+    created = False
+    if review:
+        before = {
+            'status': review.status,
+            'comment': review.comment,
+            'updated_by': review.updated_by,
+            'resolved_at': review.resolved_at,
+        }
+    else:
+        review = FuelWarningReview(warning_key=warning_key)
+        db.session.add(review)
+        created = True
+
+    review.warning_code = (request.form.get('warning_code') or review.warning_code or '').strip()[:80]
+    review.severity = (request.form.get('severity') or review.severity or 'warning').strip()[:20]
+    review.entity_type = (request.form.get('entity_type') or review.entity_type or '').strip()[:80]
+    try:
+        review.entity_id = int(request.form.get('entity_id') or review.entity_id or 0) or None
+    except (TypeError, ValueError):
+        review.entity_id = review.entity_id or None
+    review.title_snapshot = (request.form.get('title_snapshot') or review.title_snapshot or '').strip()[:500]
+    review.details_snapshot = (request.form.get('details_snapshot') or review.details_snapshot or '').strip()
+    review.value_snapshot = (request.form.get('value_snapshot') or review.value_snapshot or '').strip()[:200]
+    review.status = status
+    review.comment = comment
+    review.last_seen_at = datetime.utcnow()
+    review.updated_by = current_user.id
+    review.updated_at = datetime.utcnow()
+    review.resolved_at = datetime.utcnow() if status in ('resolved', 'rejected') else None
+
+    db.session.flush()
+    after = {
+        'status': review.status,
+        'comment': review.comment,
+        'updated_by': review.updated_by,
+        'resolved_at': review.resolved_at,
+    }
+    _audit_fuel(
+        'fuel_warning_review_created' if created else 'fuel_warning_review_updated',
+        entity_type='fuel_warning_review',
+        entity_id=review.id,
+        entity_label=review.warning_code or warning_key,
+        before=before,
+        after=after,
+        status='ok',
+        description='Fuel warning review status updated',
+    )
+    db.session.commit()
+    flash(fuel_t('Огоҳлантириш ҳолати сақланди', 'Статус предупреждения сохранён'), 'success')
+    return redirect(request.form.get('return_url') or url_for('fuel.fuel_warnings'))
 
 
 @fuel_bp.route('/report')

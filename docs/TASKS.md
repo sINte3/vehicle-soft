@@ -1060,3 +1060,22 @@ Completed:
 - добавлен лист предупреждений в Excel Fuel report;
 - production smoke test passed;
 - миграция БД не требовалась.
+
+## REPORT001E-1 — Fuel warning registry — COMPLETED 2026-06-05
+
+Status: completed in production.
+
+Result:
+- added managed Fuel warning registry;
+- added `fuel_warning_reviews` table;
+- added `/fuel/warnings` page;
+- added warning status/comment workflow;
+- added warning filters and search;
+- added audit events for warning review actions;
+- integrated warning status into `/fuel/report`.
+
+Production backup:
+- D:\transport-report-backups\production\daily\transport_20260605_115535.db
+
+Release note:
+- docs/RELEASE_REPORT001E_WARNING_REGISTRY_20260605.md

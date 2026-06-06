@@ -490,6 +490,34 @@ class FuelSyncLog2(db.Model):
     error_msg             = db.Column(db.Text, default='')
 
 
+class FuelWarningReview(db.Model):
+    """Persistent review state for calculated Fuel report warnings."""
+    __tablename__ = 'fuel_warning_reviews'
+    id              = db.Column(db.Integer, primary_key=True)
+    warning_key     = db.Column(db.String(80), unique=True, nullable=False, index=True)
+    warning_code    = db.Column(db.String(80), nullable=False, index=True)
+    severity        = db.Column(db.String(20), default='warning', index=True)
+    entity_type     = db.Column(db.String(80), default='', index=True)
+    entity_id       = db.Column(db.Integer, nullable=True, index=True)
+    title_snapshot  = db.Column(db.String(500), default='')
+    details_snapshot = db.Column(db.Text, default='')
+    value_snapshot  = db.Column(db.String(200), default='')
+    status          = db.Column(db.String(20), default='new', index=True)
+    comment         = db.Column(db.Text, default='')
+    first_seen_at   = db.Column(db.DateTime, default=datetime.utcnow)
+    last_seen_at    = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    updated_by      = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    updated_at      = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    resolved_at     = db.Column(db.DateTime, nullable=True)
+
+    reviewer        = db.relationship('User', foreign_keys=[updated_by])
+
+    __table_args__ = (
+        db.Index('ix_fuel_warning_reviews_status_code', 'status', 'warning_code'),
+    )
+
+
+
 # ─── Task 3: Module Permissions ───────────────────────────────────────────────
 
 class AppModule(db.Model):

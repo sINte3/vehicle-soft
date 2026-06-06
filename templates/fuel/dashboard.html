@@ -53,6 +53,7 @@
     <div class="fuel-actions">
         <a href="{{ url_for('fuel.transactions') }}" class="btn btn-secondary btn-sm">{{ L_transactions }}</a>
         <a href="{{ url_for('fuel.fuel_report') }}" class="btn btn-secondary btn-sm">{{ 'Отчёт' if lang == 'ru' else 'Ҳисобот' }}</a>
+        <a href="{{ url_for('fuel.fuel_warnings') }}" class="btn btn-secondary btn-sm">{{ 'Предупреждения' if lang == 'ru' else 'Огоҳлантиришлар' }}</a>
         <a href="{{ url_for('fuel.receipts') }}" class="btn btn-secondary btn-sm">{{ L_receipts }}</a>
         {% if current_user.is_admin %}
         <a href="{{ url_for('fuel.stations') }}" class="btn btn-secondary btn-sm">{{ L_stations }}</a>

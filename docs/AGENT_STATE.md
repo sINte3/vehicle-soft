@@ -816,3 +816,20 @@ Files changed:
 
 Next recommended stage:
 - REPORT001E or ERP-DASH001: management dashboard combining transport work, fuel, Wialon and spare-parts indicators.
+
+## State update — 2026-06-05 — REPORT001E-1 completed
+
+Latest completed release: REPORT001E-1 — Fuel warning registry.
+
+Production state:
+- commit pending at documentation step;
+- database migration completed;
+- `fuel_warning_reviews` table exists;
+- production smoke test passed;
+- repository expected to be clean after commit and cleanup.
+
+Key production backup:
+- D:\transport-report-backups\production\daily\transport_20260605_115535.db
+
+Next planned stage:
+- DASH001 — management dashboard for the main page.

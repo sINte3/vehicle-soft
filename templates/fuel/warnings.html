@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}АЗС — {{ 'Реестр предупреждений' if lang == 'ru' else 'Огоҳлантиришлар реестри' }}{% endblock %}
+{% block content %}
+
+{% set L_title = 'Реестр топливных предупреждений' if lang == 'ru' else 'Ёқилғи огоҳлантиришлари реестри' %}
+{% set L_subtitle = 'Здесь фиксируется проверка предупреждений: статус, ответственный и комментарий.' if lang == 'ru' else 'Бу ерда огоҳлантиришлар текшируви: ҳолат, масъул ва изоҳ қайд этилади.' %}
+{% set L_back = '← Отчёт по топливу' if lang == 'ru' else '← Ёқилғи ҳисоботи' %}
+{% set L_dashboard = 'Дашборд' if lang == 'ru' else 'Дашборд' %}
+{% set L_from = 'С' if lang == 'ru' else 'Дан' %}
+{% set L_to = 'По' if lang == 'ru' else 'Гача' %}
+{% set L_status = 'Статус' if lang == 'ru' else 'Ҳолат' %}
+{% set L_severity = 'Критичность' if lang == 'ru' else 'Муҳимлик' %}
+{% set L_type = 'Тип' if lang == 'ru' else 'Тури' %}
+{% set L_search = 'Поиск по предупреждению, комментарию или значению' if lang == 'ru' else 'Огоҳлантириш, изоҳ ёки қиймат бўйича қидириш' %}
+{% set L_all = '— все —' if lang == 'ru' else '— барчаси —' %}
+{% set L_show = 'Показать' if lang == 'ru' else 'Кўрсатиш' %}
+{% set L_current = 'Активно сейчас' if lang == 'ru' else 'Ҳозир фаол' %}
+{% set L_archive = 'Нет в текущем периоде' if lang == 'ru' else 'Жорий даврда йўқ' %}
+{% set L_comment = 'Комментарий ответственного' if lang == 'ru' else 'Масъул изоҳи' %}
+{% set L_save = 'Сохранить' if lang == 'ru' else 'Сақлаш' %}
+{% set L_value = 'Значение' if lang == 'ru' else 'Қиймат' %}
+{% set L_reviewer = 'Проверил' if lang == 'ru' else 'Текширган' %}
+{% set L_updated = 'Обновлено' if lang == 'ru' else 'Янгиланди' %}
+{% set L_no_rows = 'Предупреждения по выбранным фильтрам не найдены.' if lang == 'ru' else 'Танланган фильтрлар бўйича огоҳлантиришлар топилмади.' %}
+{% set L_hint = 'Важно: расчёт предупреждений остаётся автоматическим. Этот реестр хранит только результат ручной проверки и комментарий.' if lang == 'ru' else 'Муҳим: огоҳлантиришлар автоматик ҳисобланади. Бу реестр фақат қўлда текшириш натижаси ва изоҳни сақлайди.' %}
+
+<style>
+.warning-hero { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:16px; }
+.warning-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+.warning-filter { display:grid; grid-template-columns:repeat(6,minmax(130px,1fr)); gap:12px; align-items:end; }
+.warning-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:16px 0; }
+.warning-note { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
+.warning-card { border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin-bottom:12px; background:var(--surface); box-shadow:var(--shadow); }
+.warning-card.danger { border-left:4px solid var(--danger); }
+.warning-card.warning { border-left:4px solid var(--warn); }
+.warning-card.info { border-left:4px solid var(--info); }
+.warning-title { font-weight:700; margin-bottom:4px; }
+.warning-meta { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }
+.warning-pill { display:inline-block; padding:3px 9px; border-radius:999px; font-size:11px; font-weight:700; background:var(--info-light); color:var(--info); }
+.warning-pill.danger { background:var(--danger-light); color:var(--danger); }
+.warning-pill.warning { background:var(--warn-light); color:var(--warn); }
+.warning-pill.resolved { background:var(--accent-light); color:var(--accent); }
+.warning-pill.in_progress { background:var(--info-light); color:var(--info); }
+.warning-pill.rejected { background:var(--danger-light); color:var(--danger); }
+.warning-form { display:grid; grid-template-columns:minmax(160px,220px) 1fr auto; gap:10px; align-items:end; margin-top:12px; }
+.warning-form textarea { min-height:40px; }
+@media (max-width:1050px) { .warning-filter { grid-template-columns:repeat(2,minmax(130px,1fr)); } .warning-form { grid-template-columns:1fr; } }
+@media (max-width:700px) { .warning-hero { flex-direction:column; } .warning-actions { justify-content:flex-start; } .warning-filter { grid-template-columns:1fr; } }
+</style>
+
+<div class="warning-hero">
+    <div>
+        <h1>{{ L_title }}</h1>
+        <div class="text-muted text-sm">{{ L_subtitle }}</div>
+    </div>
+    <div class="warning-actions">
+        <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="btn btn-secondary btn-sm">{{ L_back }}</a>
+        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">{{ L_dashboard }}</a>
+    </div>
+</div>
+
+<div class="warning-note">{{ L_hint }}</div>
+
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-body">
+        <form method="get" class="warning-filter">
+            <div class="form-group" style="margin-bottom:0;"><label>{{ L_from }}</label><input type="date" name="date_from" value="{{ d_from.isoformat() }}"></div>
+            <div class="form-group" style="margin-bottom:0;"><label>{{ L_to }}</label><input type="date" name="date_to" value="{{ d_to.isoformat() }}"></div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ L_status }}</label>
+                <select name="status">
+                    <option value="">{{ L_all }}</option>
+                    {% for st in status_options %}<option value="{{ st }}" {% if status_filter == st %}selected{% endif %}>{{ status_label(st, lang) }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ L_severity }}</label>
+                <select name="severity">
+                    <option value="">{{ L_all }}</option>
+                    {% for sev in severity_options %}<option value="{{ sev }}" {% if severity_filter == sev %}selected{% endif %}>{{ severity_label(sev, lang) }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ L_type }}</label>
+                <select name="code">
+                    <option value="">{{ L_all }}</option>
+                    {% for code in code_options %}<option value="{{ code }}" {% if code_filter == code %}selected{% endif %}>{{ code }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button type="submit" class="btn btn-primary">{{ L_show }}</button></div>
+            <div class="form-group" style="grid-column:1/-1; margin-bottom:0;"><input type="text" name="q" value="{{ q }}" placeholder="{{ L_search }}"></div>
+        </form>
+    </div>
+</div>
+
+<div class="warning-stats">
+    <div class="stat-card"><div class="label">{{ 'Всего' if lang == 'ru' else 'Жами' }}</div><div class="value">{{ counts.total }}</div></div>
+    <div class="stat-card"><div class="label">{{ 'Показано' if lang == 'ru' else 'Кўрсатилди' }}</div><div class="value">{{ counts.filtered }}</div></div>
+    <div class="stat-card"><div class="label">{{ 'Активных' if lang == 'ru' else 'Фаол' }}</div><div class="value">{{ counts.current }}</div></div>
+    <div class="stat-card"><div class="label">{{ 'Критичных' if lang == 'ru' else 'Критик' }}</div><div class="value" style="color:var(--danger);">{{ counts.danger }}</div></div>
+    <div class="stat-card"><div class="label">{{ 'В работе' if lang == 'ru' else 'Ишда' }}</div><div class="value">{{ counts.in_progress }}</div></div>
+    <div class="stat-card"><div class="label">{{ 'Проверено' if lang == 'ru' else 'Текширилди' }}</div><div class="value" style="color:var(--accent);">{{ counts.resolved }}</div></div>
+</div>
+
+{% for w in warnings %}
+{% set wt = warning_text(w, lang) %}
+{% set w_title = wt[0] %}
+{% set w_details = wt[1] %}
+<div class="warning-card {{ w.severity }}">
+    <div class="warning-title">{{ w_title }}</div>
+    <div class="text-sm text-muted">{{ w_details }}</div>
+    <div class="warning-meta">
+        <span class="warning-pill {{ w.severity }}">{{ severity_label(w.severity, lang) }}</span>
+        <span class="warning-pill {{ w.review_status }}">{{ status_label(w.review_status, lang) }}</span>
+        <span class="warning-pill">{{ w.code }}</span>
+        {% if w.is_current %}<span class="warning-pill resolved">{{ L_current }}</span>{% else %}<span class="warning-pill rejected">{{ L_archive }}</span>{% endif %}
+        {% if w.value is not none and w.value|string %}<span class="warning-pill">{{ L_value }}: {{ w.value }}</span>{% endif %}
+    </div>
+    {% if w.review_comment %}<div class="text-sm" style="margin-top:6px;"><strong>{{ L_comment }}:</strong> {{ w.review_comment }}</div>{% endif %}
+    {% if w.reviewer_name or w.review_updated_at %}
+    <div class="text-xs text-muted" style="margin-top:4px;">{{ L_reviewer }}: {{ w.reviewer_name or '—' }}{% if w.review_updated_at %}; {{ L_updated }}: {{ w.review_updated_at.strftime('%d.%m.%Y %H:%M') }}{% endif %}</div>
+    {% endif %}
+    <form method="post" action="{{ url_for('fuel.fuel_warning_update', warning_key=w.key) }}" class="warning-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="return_url" value="{{ request.full_path }}">
+        <input type="hidden" name="warning_code" value="{{ w.code }}">
+        <input type="hidden" name="severity" value="{{ w.severity }}">
+        <input type="hidden" name="entity_type" value="{{ w.entity_type }}">
+        <input type="hidden" name="entity_id" value="{{ w.entity_id or '' }}">
+        <input type="hidden" name="title_snapshot" value="{{ w.title_ru }}">
+        <input type="hidden" name="details_snapshot" value="{{ w.details_ru }}">
+        <input type="hidden" name="value_snapshot" value="{{ w.value if w.value is not none else '' }}">
+        <div class="form-group" style="margin-bottom:0;">
+            <label>{{ L_status }}</label>
+            <select name="status">
+                {% for st in status_options %}<option value="{{ st }}" {% if w.review_status == st %}selected{% endif %}>{{ status_label(st, lang) }}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+            <label>{{ L_comment }}</label>
+            <textarea name="comment" placeholder="{{ L_comment }}">{{ w.review_comment }}</textarea>
+        </div>
+        <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button class="btn btn-primary btn-sm" type="submit">{{ L_save }}</button></div>
+    </form>
+</div>
+{% else %}
+<div class="card"><div class="card-body text-center text-muted" style="padding:36px;">{{ L_no_rows }}</div></div>
+{% endfor %}
+
+{% endblock %}

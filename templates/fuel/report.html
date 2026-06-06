@@ -80,6 +80,7 @@
     </div>
     <div class="fuel-report-actions">
         <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">{{ L_back }}</a>
+        <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="btn btn-secondary btn-sm">{{ L_warnings }}</a>
         <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat(), warehouse_id=selected_warehouse_id or '', station_id=selected_station_id or '', export=1) }}" class="btn btn-primary btn-sm">{{ L_export }}</a>
     </div>
 </div>
@@ -137,9 +138,10 @@
             {% for w in warnings[:25] %}
             {% set w_title = w.title_ru if lang == 'ru' else w.title_uz %}
             {% set w_details = w.details_ru if lang == 'ru' else w.details_uz %}
-            <div class="fuel-warning-card {{ w.severity }} fuel-report-row" data-search="{{ (w_title ~ ' ' ~ w_details ~ ' ' ~ (w.value|string))|lower }}">
+            <div class="fuel-warning-card {{ w.severity }} fuel-report-row" data-search="{{ (w_title ~ ' ' ~ w_details ~ ' ' ~ (w.value|string) ~ ' ' ~ (w.review_status or ''))|lower }}">
                 <div class="fuel-warning-title">{{ w_title }}</div>
                 <div class="text-sm">{{ w_details }}</div>
+                <div class="text-xs text-muted" style="margin-top:6px;">{{ 'Статус' if lang == 'ru' else 'Ҳолат' }}: {{ 'Новое' if w.review_status == 'new' and lang == 'ru' else 'Янги' if w.review_status == 'new' else 'В работе' if w.review_status == 'in_progress' and lang == 'ru' else 'Ишда' if w.review_status == 'in_progress' else 'Проверено' if w.review_status == 'resolved' and lang == 'ru' else 'Текширилди' if w.review_status == 'resolved' else 'Отклонено' if lang == 'ru' else 'Рад этилди' }}</div>
             </div>
             {% endfor %}
             {% if warnings|length > 25 %}<div class="text-muted text-sm">{{ 'Показаны первые 25 предупреждений. Полный список доступен в Excel.' if lang == 'ru' else 'Биринчи 25 та огоҳлантириш кўрсатилди. Тўлиқ рўйхат Excelда.' }}</div>{% endif %}
