@@ -833,3 +833,19 @@ Key production backup:
 
 Next planned stage:
 - DASH001 — management dashboard for the main page.
+
+## State update — 2026-06-06 — DASH001 completed
+
+Latest completed release: DASH001 — Management dashboard for main page.
+
+Production state:
+- main page includes management dashboard;
+- database migration was not required;
+- production smoke test passed;
+- repository expected to be clean after commit and cleanup.
+
+Key production backup:
+- D:\transport-report-backups\production\daily\transport_20260606_093202.db
+
+Recommended next stage:
+- DASH002 — dashboard drill-down links, severity highlighting, and role-aware dashboard polish.

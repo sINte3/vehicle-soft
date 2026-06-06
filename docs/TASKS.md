@@ -1079,3 +1079,24 @@ Production backup:
 
 Release note:
 - docs/RELEASE_REPORT001E_WARNING_REGISTRY_20260605.md
+
+## DASH001 — Management dashboard for main page — COMPLETED 2026-06-06
+
+Status: completed in production.
+
+Result:
+- added management dashboard to the main page;
+- added transport work KPIs;
+- added Fuel and Topaz KPIs;
+- added Fuel warning KPIs;
+- added spare part request KPIs;
+- added Wialon mapping KPIs;
+- added system status and recent audit block;
+- added quick links to operational sections;
+- preserved existing daily work report and filters.
+
+Production backup:
+- D:\transport-report-backups\production\daily\transport_20260606_093202.db
+
+Release note:
+- docs/RELEASE_DASH001_MAIN_DASHBOARD_20260606.md

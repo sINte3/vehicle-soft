@@ -22,6 +22,7 @@ from models import (
     Deficiency, VialonMapping, VialonImport, EngineHoursRecord,
     FuelStation, FuelTank, FuelSnapshot, FuelTransaction, FuelSyncLog,
     FuelWarehouse, FuelStation2, FuelInitialBalance, FuelReceipt2, FuelTransaction2,
+    FuelSyncLog2, FuelWarningReview,
     SparePartRequest,
     ROLE_ADMIN, ROLE_OPERATOR, ROLE_VIEWER, ROLES,
     CAT_YUKORI, CAT_MTZ, CAT_QATNOV, CAT_MINI, CAT_COMBINE,
@@ -32,7 +33,7 @@ from models import (
 )
 from excel_export import generate_report
 from wialon_import import register_wialon_routes
-from fuel_routes import fuel_bp, _perform_fuel_sync  # noqa: F401 (registered below)
+from fuel_routes import fuel_bp, _perform_fuel_sync, _collect_fuel_report_data  # noqa: F401 (registered below)
 from excel_daily_activity import generate_daily_activity
 from translations import TRANS
 from spare_parts import spare_parts_bp
@@ -417,6 +418,182 @@ def create_app():
             db.session.commit()
         return redirect(request.referrer or url_for('index'))
 
+
+    def _format_dashboard_dt(value):
+        if not value:
+            return ''
+        try:
+            return value.strftime('%d.%m.%Y %H:%M')
+        except Exception:
+            return str(value)
+
+    def _safe_scalar(query, default=0):
+        try:
+            value = query.scalar()
+            return default if value is None else value
+        except Exception:
+            return default
+
+    def _latest_backup_info():
+        backup_dir = r'D:\transport-report-backups\production\daily'
+        info = {'path': '', 'name': '', 'mtime': None, 'status': 'unknown'}
+        try:
+            if not os.path.isdir(backup_dir):
+                return info
+            files = [
+                os.path.join(backup_dir, name)
+                for name in os.listdir(backup_dir)
+                if name.lower().endswith('.db')
+            ]
+            if not files:
+                return info
+            latest = max(files, key=os.path.getmtime)
+            mtime = datetime.fromtimestamp(os.path.getmtime(latest))
+            age_hours = (datetime.now() - mtime).total_seconds() / 3600
+            info.update({
+                'path': latest,
+                'name': os.path.basename(latest),
+                'mtime': mtime,
+                'age_hours': round(age_hours, 1),
+                'status': 'ok' if age_hours <= 36 else 'warning',
+            })
+        except Exception:
+            pass
+        return info
+
+    def _build_dashboard_context(d_from, d_to, filter_org_ids, records, totals):
+        d_from_dt = datetime.combine(d_from, datetime.min.time())
+        d_to_dt = datetime.combine(d_to, datetime.max.time())
+        now = datetime.now()
+
+        working_rows = [r for r in records if r.status == 'working']
+        idle_rows = [r for r in records if r.status != 'working']
+        transport = {
+            'records': len(records),
+            'working_rows': len(working_rows),
+            'idle_rows': len(idle_rows),
+            'quantity': round(sum((r.quantity or 0) for r in working_rows), 2),
+            'amount': totals.get('total', 0),
+            'equipment_working': len({r.equipment_id for r in working_rows}),
+            'equipment_idle': len({r.equipment_id for r in idle_rows} - {r.equipment_id for r in working_rows}),
+        }
+
+        module_access = {
+            'transport': True,
+            'fuel': current_user.has_module_access('fuel'),
+            'spare_parts': current_user.has_module_access('spare_parts'),
+            'wialon': current_user.has_module_access('wialon'),
+            'admin': current_user.is_admin,
+        }
+
+        fuel = {
+            'available': module_access['fuel'],
+            'issued': 0.0,
+            'transactions': 0,
+            'warnings': 0,
+            'danger_warnings': 0,
+            'latest_sync': None,
+            'latest_sync_text': '',
+            'sync_age_hours': None,
+            'review_new': 0,
+            'review_in_progress': 0,
+            'review_resolved': 0,
+        }
+        if module_access['fuel']:
+            try:
+                fuel_report = _collect_fuel_report_data(d_from, d_to)
+                fuel_totals = fuel_report.get('totals', {})
+                fuel_warning_summary = fuel_report.get('warnings_summary', {})
+                fuel['issued'] = fuel_totals.get('issued', 0) or 0
+                fuel['transactions'] = fuel_totals.get('transactions', 0) or 0
+                fuel['warnings'] = fuel_warning_summary.get('total', 0) or 0
+                fuel['danger_warnings'] = fuel_warning_summary.get('danger', 0) or 0
+            except Exception:
+                pass
+
+            latest_sync = FuelSyncLog2.query.order_by(FuelSyncLog2.synced_at.desc()).first()
+            fuel['latest_sync'] = latest_sync
+            fuel['latest_sync_text'] = _format_dashboard_dt(getattr(latest_sync, 'synced_at', None))
+            if latest_sync and latest_sync.synced_at:
+                fuel['sync_age_hours'] = round((now - latest_sync.synced_at).total_seconds() / 3600, 1)
+
+            try:
+                review_rows = (db.session.query(FuelWarningReview.status, db.func.count(FuelWarningReview.id))
+                               .group_by(FuelWarningReview.status).all())
+                review_counts = {status or 'new': int(cnt or 0) for status, cnt in review_rows}
+                fuel['review_new'] = review_counts.get('new', 0)
+                fuel['review_in_progress'] = review_counts.get('in_progress', 0)
+                fuel['review_resolved'] = review_counts.get('resolved', 0)
+            except Exception:
+                pass
+
+        wialon = {
+            'available': module_access['wialon'],
+            'total': 0,
+            'linked': 0,
+            'skipped': 0,
+            'unmapped': 0,
+        }
+        if module_access['wialon']:
+            try:
+                total_mappings = VialonMapping.query.count()
+                linked = VialonMapping.query.filter(VialonMapping.equipment_id.isnot(None), VialonMapping.skip.is_(False)).count()
+                skipped = VialonMapping.query.filter(VialonMapping.skip.is_(True)).count()
+                wialon.update({
+                    'total': total_mappings,
+                    'linked': linked,
+                    'skipped': skipped,
+                    'unmapped': max(0, total_mappings - linked - skipped),
+                })
+            except Exception:
+                pass
+
+        spare = {
+            'available': module_access['spare_parts'],
+            'draft': 0,
+            'submitted': 0,
+            'approved': 0,
+            'rejected': 0,
+            'open': 0,
+        }
+        if module_access['spare_parts']:
+            try:
+                q = db.session.query(SparePartRequest.status, db.func.count(SparePartRequest.id))
+                if not current_user.is_admin and filter_org_ids:
+                    q = q.filter(SparePartRequest.organization_id.in_(filter_org_ids))
+                spare_counts = {status or 'draft': int(cnt or 0) for status, cnt in q.group_by(SparePartRequest.status).all()}
+                spare.update({
+                    'draft': spare_counts.get('draft', 0),
+                    'submitted': spare_counts.get('submitted', 0),
+                    'approved': spare_counts.get('approved', 0),
+                    'rejected': spare_counts.get('rejected', 0),
+                })
+                spare['open'] = spare['draft'] + spare['submitted']
+            except Exception:
+                pass
+
+        audit = []
+        try:
+            audit = db.session.execute(text("""
+                SELECT id, created_at, username_snapshot, action, module, status, description
+                FROM audit_logs
+                ORDER BY id DESC
+                LIMIT 8
+            """)).mappings().all()
+        except Exception:
+            audit = []
+
+        return {
+            'transport': transport,
+            'fuel': fuel,
+            'wialon': wialon,
+            'spare': spare,
+            'audit': audit,
+            'backup': _latest_backup_info(),
+            'module_access': module_access,
+        }
+
+
     # в”Ђв”Ђв”Ђ DASHBOARD в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     @app.route('/', methods=['GET', 'POST'])
     @module_required('transport')
@@ -541,7 +718,16 @@ def create_app():
                               .filter(Deficiency.work_date >= d_from,
                                       Deficiency.work_date <= d_to).count())
 
+        dashboard = _build_dashboard_context(d_from, d_to, filter_org_ids, records, {
+            'total': total,
+            'cash': total_cash,
+            'transfer': total_transfer,
+            'internal': total_internal,
+            'other': total_other,
+        })
+
         return render_template('index.html',
+                               dashboard=dashboard,
                                mode=mode, d_from=d_from, d_to=d_to,
                                is_range=is_range, num_days=num_days,
                                orgs_data=orgs_data,
