@@ -159,6 +159,8 @@
 
 {% endblock %}
 {% block scripts %}
+{% set L_add = 'Добавить приход' if lang == 'ru' else 'Кирим қўшиш' %}
+{% set L_editing = 'Редактирование прихода' if lang == 'ru' else 'Киримни таҳрирлаш' %}
 <script>
 const LAdd = {{ L_add|tojson }};
 const LEditing = {{ L_editing|tojson }};
