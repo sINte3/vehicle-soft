@@ -1,0 +1,257 @@
+BOT001A PRODUCTION NOTES (CORRECTED)
+======================================
+Project: Vehicle Soft / Transport Report - Bukhoro Agrocluster
+Patch:   BOT001A Telegram Foundation (corrected)
+Date:    2026-06-06
+
+READ-ONLY REFERENCE. Not an automatic deployment script.
+Every step requires manual review and approval before execution.
+
+Production URL:  http://10.103.25.14:5050 (service: TransportReport)
+Production path: C:\transport-report
+Production DB:   C:\transport-report\instance\transport.db
+Python:          C:\Program Files\Python314\python.exe
+
+=========================================
+PREREQUISITES
+=========================================
+
+[ ] BOT001A fully tested on staging (http://10.103.25.14:5051)
+[ ] test_bot001_readonly.py   => BOT001_READONLY_TEST_OK     (no failures)
+[ ] test_bot001_staging_api.py => BOT001_STAGING_API_TEST_OK (no failures)
+[ ] All AST syntax checks passed on staging
+[ ] Staging has been running for at least 24 hours without errors after BOT001A
+[ ] This checklist has been reviewed by the team lead
+
+=========================================
+STEP 1: BACKUP PRODUCTION DATABASE
+=========================================
+
+IMPORTANT: Do NOT use a simple copy of a live production SQLite database
+as the main production backup.  SQLite may have unflushed WAL pages
+while the service is running.  Use the project-provided backup script:
+
+  cd /d C:\transport-report
+  backup_production_db.bat
+
+This script stops writes, performs a safe SQLite backup (or VACUUM INTO),
+and stores the result with a timestamp.
+
+Confirm the backup file exists and is non-zero before continuing.
+If backup_production_db.bat is missing, create it first (see Appendix).
+
+=========================================
+STEP 2: STOP PRODUCTION SERVICE
+=========================================
+
+  C:\transport-report\nssm.exe stop TransportReport
+
+Wait for the service to stop completely. Confirm in Task Manager
+(python.exe process for port 5050 must be gone).
+
+=========================================
+STEP 3: BACKUP FILES THAT WILL CHANGE
+=========================================
+
+  cd /d C:\transport-report
+  copy app.py             app.py.backup_before_bot001a
+  copy models.py          models.py.backup_before_bot001a
+  copy templates\admin_users.html  templates\admin_users.html.backup_before_bot001a
+
+=========================================
+STEP 4: COPY NEW FILES FROM STAGING
+=========================================
+
+New files (copy from staging, do not overwrite existing unrelated files):
+
+  copy C:\transport-report-staging\bot_security.py                          C:\transport-report\bot_security.py
+  copy C:\transport-report-staging\bot_api.py                               C:\transport-report\bot_api.py
+  copy C:\transport-report-staging\migrate_bot001_telegram_foundation.py    C:\transport-report\migrate_bot001_telegram_foundation.py
+  copy C:\transport-report-staging\test_bot001_readonly.py                  C:\transport-report\test_bot001_readonly.py
+  copy C:\transport-report-staging\test_bot001_staging_api.py               C:\transport-report\test_bot001_staging_api.py
+
+Modified files (review diff before replacing):
+
+  copy /Y C:\transport-report-staging\app.py                                    C:\transport-report\app.py
+  copy /Y C:\transport-report-staging\models.py                                 C:\transport-report\models.py
+  copy /Y C:\transport-report-staging\templates\admin_users.html                C:\transport-report\templates\admin_users.html
+
+=========================================
+STEP 5: SYNTAX CHECK (before migration)
+=========================================
+
+  cd /d C:\transport-report
+  "C:\Program Files\Python314\python.exe" -c "
+import ast, sys
+files = ['bot_security.py','bot_api.py','migrate_bot001_telegram_foundation.py','models.py','app.py']
+errs = []
+for f in files:
+    try:
+        ast.parse(open(f,encoding='utf-8').read(), f); print('OK: '+f)
+    except SyntaxError as e:
+        print('FAIL: '+f+' -- '+str(e)); errs.append(f)
+sys.exit(1 if errs else 0)
+"
+
+If ANY file fails -- STOP, restore backups, restart service.
+
+=========================================
+STEP 6: RUN MIGRATION ON PRODUCTION DATABASE
+=========================================
+
+  "C:\Program Files\Python314\python.exe" migrate_bot001_telegram_foundation.py
+
+Expected output (key lines):
+  [1/8] PRAGMA integrity_check (before)...
+        integrity_check: OK
+  [2/8] Adding Telegram columns to 'users' table...
+        Added users.telegram_id  (INTEGER)
+  [6/8] Creating indexes...
+        Created UNIQUE partial index idx_users_telegram_id.
+  [8/8] PRAGMA integrity_check (after)...
+        integrity_check: OK
+  BOT001A migration complete.
+
+If "[SKIP] Migration already recorded" appears -- migration was already run.
+  That is fine (idempotent). Indexes will still be verified.
+
+If integrity_check (after) is NOT "ok" -- STOP, restore backup, investigate.
+
+=========================================
+STEP 7: DIRECT PRAGMA integrity_check
+=========================================
+
+  "C:\Program Files\Python314\python.exe" -c "
+import sqlite3
+c = sqlite3.connect('instance/transport.db')
+r = c.execute('PRAGMA integrity_check').fetchall()
+c.close()
+print('DB integrity:', r)
+assert r == [('ok',)], 'INTEGRITY FAILED: ' + str(r)
+print('PRAGMA_INTEGRITY_CHECK_OK')
+"
+
+If NOT PRAGMA_INTEGRITY_CHECK_OK -- do not start service, restore backup.
+
+=========================================
+STEP 8: APP IMPORT CHECK (after migration)
+=========================================
+
+NOTE: Run AFTER migration so db.create_all() sees the new columns/tables.
+
+  "C:\Program Files\Python314\python.exe" -c "
+import os, sys
+os.environ['FLASK_ENV'] = 'sqlite_prod'
+os.environ['SECRET_KEY'] = 'tmp-check'
+sys.path.insert(0, '.')
+from app import app
+print('APP_IMPORT_OK')
+rules = [str(r) for r in app.url_map.iter_rules()]
+required = ['/api/bot/health','/api/bot/me','/api/bot/requests','/api/bot/equipment','/api/bot/catalog']
+for route in required:
+    assert route in rules, 'MISSING: ' + route
+    print('  FOUND: ' + route)
+print('ALL_BOT_ROUTES_OK')
+"
+
+Expected: APP_IMPORT_OK then ALL_BOT_ROUTES_OK
+
+=========================================
+STEP 9: READ-ONLY TEST
+=========================================
+
+  "C:\Program Files\Python314\python.exe" test_bot001_readonly.py
+
+Expected: BOT001_READONLY_TEST_OK (all checks, no failures)
+
+=========================================
+STEP 10: START PRODUCTION SERVICE
+=========================================
+
+  C:\transport-report\nssm.exe start TransportReport
+
+Wait 15 seconds. Check NSSM log for errors.
+
+=========================================
+STEP 11: BROWSER SMOKE TEST
+=========================================
+
+- http://10.103.25.14:5050/api/bot/health
+  Expected: {"module":"bot_api","ok":true,"version":"BOT001"}
+
+- http://10.103.25.14:5050/admin/users
+  Expected: Telegram column visible with link buttons
+
+- http://10.103.25.14:5050/
+  Expected: App works normally (login or dashboard, no 500 error)
+
+=========================================
+STEP 12: GIT COMMIT (after successful deployment)
+=========================================
+
+  cd /d C:\transport-report
+  git add app.py models.py bot_api.py bot_security.py
+  git add migrate_bot001_telegram_foundation.py
+  git add templates\admin_users.html
+  git add test_bot001_readonly.py test_bot001_staging_api.py
+  git commit -m "BOT001A: Telegram foundation corrected - link codes, API blueprint, new tables"
+  git push
+
+=========================================
+ROLLBACK PROCEDURE
+=========================================
+
+1. Stop production service:
+   C:\transport-report\nssm.exe stop TransportReport
+
+2. Restore DB from backup_production_db.bat output:
+   (Use the timestamped backup created in Step 1)
+
+3. Restore file backups:
+   copy /Y app.py.backup_before_bot001a              app.py
+   copy /Y models.py.backup_before_bot001a           models.py
+   copy /Y templates\admin_users.html.backup_before_bot001a  templates\admin_users.html
+
+4. Start production service:
+   C:\transport-report\nssm.exe start TransportReport
+
+5. Verify: http://10.103.25.14:5050/
+
+=========================================
+APPENDIX: backup_production_db.bat (if missing)
+=========================================
+
+If backup_production_db.bat does not exist in C:\transport-report, create it:
+
+--- content of backup_production_db.bat ---
+@echo off
+setlocal
+set BACKUP_DIR=C:\transport-report\backups
+if not exist "%BACKUP_DIR%" mkdir "%BACKUP_DIR%"
+set TIMESTAMP=%date:~-4,4%%date:~-7,2%%date:~0,2%_%time:~0,2%%time:~3,2%%time:~6,2%
+set TIMESTAMP=%TIMESTAMP: =0%
+set DEST=%BACKUP_DIR%\transport.db.%TIMESTAMP%
+"C:\Program Files\Python314\python.exe" -c "import sqlite3, sys; src=sys.argv[1]; dst=sys.argv[2]; con=sqlite3.connect(src); bk=sqlite3.connect(dst); con.backup(bk); bk.close(); con.close(); print('Backup OK: '+dst)" instance\transport.db "%DEST%"
+echo Backup saved to %DEST%
+endlocal
+--- end of content ---
+
+=========================================
+WHAT IS NOT IN BOT001A (future patches)
+=========================================
+
+Feature                         | Planned Patch
+--------------------------------|---------------
+bot.py (Telegram bot runner)    | BOT002
+Telegram bot NSSM service       | BOT002
+Creating requests via bot       | BOT002
+Status changes via bot          | BOT003
+Push notifications              | BOT002
+Cloudflare Tunnel               | Deployment phase
+Daily digest / anomaly reports  | BOT004
+Mini App (WebApp)               | Not in current scope
+Login via Telegram (username+pw)| EXPLICITLY PROHIBITED
+
+=========================================
+END OF BOT001A PRODUCTION NOTES
+=========================================

@@ -70,6 +70,16 @@ class User(UserMixin, db.Model):
     last_login     = db.Column(db.DateTime, nullable=True)
     language       = db.Column(db.String(5), default='uz')
 
+    # BOT001: Telegram integration fields
+    # [REASON]: Added via migrate_bot001_telegram_foundation.py for existing DBs.
+    # SQLAlchemy model kept in sync so db.create_all() works for fresh installs.
+    telegram_id             = db.Column(db.Integer, unique=True, nullable=True)
+    tg_notifications        = db.Column(db.Integer, nullable=False, default=1)
+    tg_quiet_hours          = db.Column(db.String(20), nullable=True)
+    tg_link_code_hash       = db.Column(db.String(128), nullable=True)   # SHA-256 of one-time code
+    tg_link_code_expires_at = db.Column(db.DateTime, nullable=True)
+    tg_link_code_created_at = db.Column(db.DateTime, nullable=True)
+
     organizations = db.relationship('Organization', secondary='user_organizations',
                                     backref=db.backref('users', lazy='dynamic'))
 
@@ -582,6 +592,79 @@ class SparePartRequestItem(db.Model):
     unit          = db.Column(db.String(30), default='dona')
     note          = db.Column(db.String(300), default='')
     spare_part    = db.relationship('SparePart')
+
+
+# ─── BOT001: Spare Part Status History ───────────────────────────────────────
+
+class SparePartStatusHistory(db.Model):
+    """Audit trail of spare part request status changes.
+
+    Created by migrate_bot001_telegram_foundation.py (BOT001).
+    Populated in BOT002/BOT003 when status transitions are implemented.
+    """
+    __tablename__ = 'spare_part_status_history'
+    id         = db.Column(db.Integer, primary_key=True)
+    request_id = db.Column(db.Integer, db.ForeignKey('spare_part_requests.id'), nullable=False)
+    old_status = db.Column(db.String(30), nullable=True)
+    new_status = db.Column(db.String(30), nullable=False)
+    comment    = db.Column(db.Text, nullable=False, default='')
+    changed_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    changed_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.Index('idx_spare_part_status_history_request_id', 'request_id'),
+    )
+
+
+# ─── BOT001: Bot API Sessions ─────────────────────────────────────────────────
+
+class BotApiSession(db.Model):
+    """Long-lived API session tokens for the Telegram bot.
+
+    The raw token is never stored -- only its SHA-256 hash.
+    Created by migrate_bot001_telegram_foundation.py (BOT001).
+    """
+    __tablename__ = 'bot_api_sessions'
+    id           = db.Column(db.Integer, primary_key=True)
+    user_id      = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    telegram_id  = db.Column(db.Integer, nullable=False)
+    token_hash   = db.Column(db.String(128), nullable=False, unique=True)
+    expires_at   = db.Column(db.DateTime, nullable=False)
+    created_at   = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    last_used_at = db.Column(db.DateTime, nullable=True)
+    revoked_at   = db.Column(db.DateTime, nullable=True)
+
+    __table_args__ = (
+        db.Index('idx_bot_api_sessions_token_hash', 'token_hash'),
+        db.Index('idx_bot_api_sessions_user_id', 'user_id'),
+    )
+
+
+# ─── BOT001: Bot Notification Queue ───────────────────────────────────────────
+
+class BotNotificationQueue(db.Model):
+    """Outgoing Telegram notification queue.
+
+    Populated in future BOT002/BOT003 patches.
+    Created by migrate_bot001_telegram_foundation.py (BOT001).
+    """
+    __tablename__ = 'bot_notification_queue'
+    id           = db.Column(db.Integer, primary_key=True)
+    telegram_id  = db.Column(db.Integer, nullable=False)
+    user_id      = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    request_id   = db.Column(db.Integer, db.ForeignKey('spare_part_requests.id'), nullable=True)
+    event_type   = db.Column(db.String(80), nullable=False)
+    payload_json = db.Column(db.Text, nullable=False, default='{}')
+    status       = db.Column(db.String(30), nullable=False, default='pending')
+    attempts     = db.Column(db.Integer, nullable=False, default=0)
+    last_error   = db.Column(db.Text, nullable=False, default='')
+    created_at   = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    sent_at      = db.Column(db.DateTime, nullable=True)
+
+    __table_args__ = (
+        db.Index('idx_bot_notification_queue_status', 'status'),
+        db.Index('idx_bot_notification_queue_telegram_id', 'telegram_id'),
+    )
 
 
 # ─── Migration Registry ───────────────────────────────────────────────────────

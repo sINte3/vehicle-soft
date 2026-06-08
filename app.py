@@ -29,6 +29,8 @@ from models import (
     CAT_SPECIAL, CAT_YUK_TRANSPORT, CAT_MOTORCYCLE, CAT_PASSENGER,
     CATEGORIES, REPORT_GROUPS,
     AppModule, UserModulePermission,
+    # BOT001: new models
+    SparePartStatusHistory, BotApiSession, BotNotificationQueue,
     module_required,
 )
 from excel_export import generate_report
@@ -37,6 +39,9 @@ from fuel_routes import fuel_bp, _perform_fuel_sync, _collect_fuel_report_data  
 from excel_daily_activity import generate_daily_activity
 from translations import TRANS
 from spare_parts import spare_parts_bp
+# BOT001: Telegram foundation blueprint
+from bot_api import bot_api_bp
+from bot_security import generate_link_code, hash_secret, utcnow
 from sec003a_ext import (
     log_audit, get_user_extra, must_change_password, is_locked,
     record_failed_login, record_successful_login, clear_must_change_password,
@@ -96,6 +101,9 @@ def create_app():
         # Topaz agent API endpoints are protected by FUEL_API_TOKEN and must not
         # require browser-session CSRF tokens.
         if request.path in ('/fuel/api/fuel_sync', '/api/fuel_sync'):
+            return True
+        # BOT001: Bot API endpoints use Bearer token auth, not browser sessions.
+        if request.path.startswith('/api/bot/'):
             return True
         return False
 
@@ -1337,6 +1345,34 @@ def create_app():
         flash(f'Фойдаланувчи "{user.username}" блокланди', 'warning')
         return redirect(url_for('admin_users'))
 
+    @app.route('/admin/users/<int:uid>/telegram-link-code', methods=['POST'])
+    @admin_required
+    def admin_telegram_link_code(uid):
+        user = User.query.get_or_404(uid)
+        # BOT001B: Do not generate link code for inactive users.
+        # [REASON]: Inactive users are blocked and must not receive Telegram link codes.
+        if not user.is_active:
+            flash('Telegram code cannot be created for inactive user.', 'warning')
+            return redirect(url_for('admin_users'))
+        code = generate_link_code(6)
+        code_hash = hash_secret(code)
+        now = utcnow()
+        expires = now + timedelta(minutes=10)
+        user.tg_link_code_hash = code_hash
+        user.tg_link_code_expires_at = expires
+        user.tg_link_code_created_at = now
+        db.session.commit()
+        log_audit(db, 'telegram_link_code_generated', entity_type='user', entity_id=user.id,
+                  entity_label=user.username, module='admin',
+                  description='Admin generated Telegram link code for user (code NOT logged)')
+        db.session.commit()
+        tg_info = ''
+        if getattr(user, 'telegram_id', None):
+            tg_info = ' (already linked: tg_id={})'.format(user.telegram_id)
+        flash('Telegram код ("{}") фойдаланувчи "{}" учун 10 дақиқа амал қилади{}.'.format(
+            code, user.username, tg_info), 'success')
+        return redirect(url_for('admin_users'))
+
     @app.route('/admin/permissions')
     @admin_required
     def admin_permissions():
@@ -1370,7 +1406,6 @@ def create_app():
         flash('Ҳуқуқлар сақланди', 'success')
         return redirect(url_for('admin_permissions'))
 
-
     @app.route('/admin/audit')
     @admin_required
     def admin_audit_logs():
@@ -1398,8 +1433,6 @@ def create_app():
             params['module'] = module
         q += ' ORDER BY created_at DESC LIMIT 300'
         raw_logs = db.session.execute(text(q), params).mappings().all()
-
-        # Audit timestamps are stored in UTC. Display them in Uzbekistan local time (UTC+5).
         logs = []
         for row in raw_logs:
             item = dict(row)
@@ -1410,7 +1443,6 @@ def create_app():
             except Exception:
                 item['created_at_local'] = raw_created_at
             logs.append(item)
-
         users = User.query.order_by(User.username).all()
         actions = [r[0] for r in db.session.execute(text('SELECT DISTINCT action FROM audit_logs ORDER BY action')).all()]
         modules = [r[0] for r in db.session.execute(text('SELECT DISTINCT module FROM audit_logs WHERE module IS NOT NULL AND module != "" ORDER BY module')).all()]
@@ -1418,7 +1450,6 @@ def create_app():
                                date_from=date_from, date_to=date_to, selected_user_id=user_id,
                                selected_action=action, selected_module=module)
 
-    # в”Ђв”Ђв”Ђ REFERENCES в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     @app.route('/ref/organizations')
     @module_required('transport')
     @login_required
@@ -1451,15 +1482,12 @@ def create_app():
         oid = request.form.get('id', type=int)
         name = normalize_ref_text(request.form.get('name', ''))
         short = normalize_ref_text(request.form.get('short_name', ''))
-
         if not name or len(name) < 2:
             flash(ui_t('Ташкилот номини тўлиқ киритинг', 'Введите корректное название организации'), 'warning')
             return redirect(url_for('ref_organizations'))
-
         if ref_duplicate_exists(Organization, 'name', name, exclude_id=oid):
             flash(ui_t('Бундай ташкилот мавжуд', 'Такая организация уже существует'), 'warning')
             return redirect(url_for('ref_organizations'))
-
         org_fields = ['id', 'name', 'short_name', 'sort_order']
         before = None
         if oid:
@@ -1519,31 +1547,24 @@ def create_app():
         eq_types  = request.args.getlist('eq_types')
         orgs      = get_user_orgs()
         user_org_ids = [o.id for o in orgs]
-
         q = (Equipment.query.join(Organization)
              .filter(Organization.id.in_(user_org_ids))
              .order_by(Organization.sort_order, Equipment.category, Equipment.name))
-
         if org_id:
             check_org_access(org_id)
             q = q.filter(Equipment.organization_id == org_id)
-
         if cat_codes:
             q = q.filter(Equipment.category.in_(cat_codes))
-
         if eq_types:
             q = q.filter(Equipment.eq_type.in_(eq_types))
-
         equipment = q.all()
         total_count = len(equipment)
-
         all_eq_types = sorted(set(
             e[0] for e in Equipment.query
             .filter(Equipment.organization_id.in_(user_org_ids))
             .with_entities(Equipment.eq_type).all()
             if e[0]
         ))
-
         equipment_delete_info = {}
         for eq in equipment:
             linked = {
@@ -1560,7 +1581,6 @@ def create_app():
                 'linked_total': linked_total,
                 'linked': linked,
             }
-
         return render_template('ref_equipment.html',
             equipment=equipment, organizations=orgs,
             selected_org_id=org_id, categories=CATEGORIES,
@@ -1575,13 +1595,11 @@ def create_app():
         import io
         from openpyxl import Workbook
         from openpyxl.styles import Font, Alignment, PatternFill
-
         org_id    = request.args.get('org_id', type=int)
         cat_codes = request.args.getlist('cat_codes')
         eq_types  = request.args.getlist('eq_types')
         orgs      = get_user_orgs()
         user_org_ids = [o.id for o in orgs]
-
         q = (Equipment.query.join(Organization)
              .filter(Organization.id.in_(user_org_ids))
              .order_by(Organization.sort_order, Equipment.category, Equipment.name))
@@ -1592,13 +1610,10 @@ def create_app():
             q = q.filter(Equipment.category.in_(cat_codes))
         if eq_types:
             q = q.filter(Equipment.eq_type.in_(eq_types))
-
         equipment = q.all()
-
         wb = Workbook()
         ws = wb.active
         ws.title = 'Texnika'
-
         filter_info = []
         if org_id:
             org = Organization.query.get(org_id)
@@ -1609,22 +1624,18 @@ def create_app():
             filter_info.append('Turlar: ' + ', '.join(eq_types))
         if not filter_info:
             filter_info.append('Barcha texnika')
-
         ws.merge_cells('A1:G1')
-        ws['A1'].value = '"Buxoro Agroklastr" MChJ вЂ” Texnika royxati'
+        ws['A1'].value = '"Buxoro Agroklastr" MChJ — Texnika ro‘yxati'
         ws['A1'].font = Font(name='Times New Roman', size=14, bold=True)
         ws['A1'].alignment = Alignment(horizontal='center')
-
         ws.merge_cells('A2:G2')
         ws['A2'].value = ' | '.join(filter_info) + f' | Sana: {date.today().strftime("%d.%m.%Y")}'
         ws['A2'].font = Font(name='Times New Roman', size=11)
         ws['A2'].alignment = Alignment(horizontal='center')
-
         ws.merge_cells('A3:G3')
         ws['A3'].value = f'Jami: {len(equipment)} ta texnika'
         ws['A3'].font = Font(name='Times New Roman', size=11, bold=True)
         ws['A3'].alignment = Alignment(horizontal='left')
-
         yellow = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
         headers = ['N', 'Tashkilot', 'Kategoriya', 'Turi', 'Texnika nomi', 'Davlat raqami', 'Faol']
         widths  = [5,   25,          28,            20,     30,              15,               8]
@@ -1634,21 +1645,18 @@ def create_app():
             c.fill = yellow
             c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
             ws.column_dimensions[c.column_letter].width = w
-
         for i, eq in enumerate(equipment, 1):
             row = 4 + i
             vals = [i, eq.organization.name, CATEGORIES.get(eq.category, eq.category),
-                    eq.eq_type, eq.name, eq.plate, 'Ha' if eq.is_active else 'Yoq']
+                    eq.eq_type, eq.name, eq.plate, 'Ha' if eq.is_active else 'Yo‘q']
             for col, val in enumerate(vals, 1):
                 c = ws.cell(row=row, column=col, value=val)
                 c.font = Font(name='Times New Roman', size=10)
                 c.alignment = Alignment(vertical='center', wrap_text=True)
             ws.row_dimensions[row].height = 18
-
         ws.page_setup.orientation = 'landscape'
         ws.page_setup.paperSize = 9
         ws.page_setup.fitToWidth = 1
-
         buf = io.BytesIO()
         wb.save(buf)
         buf.seek(0)
@@ -1666,13 +1674,11 @@ def create_app():
             flash(ui_t('Ташкилотни танланг', 'Выберите организацию'), 'warning')
             return redirect(url_for('ref_equipment'))
         check_org_access(org_id)
-
         name = normalize_ref_text(request.form.get('name',''))
         plate = normalize_plate(request.form.get('plate',''))
         eq_type = normalize_ref_text(request.form.get('eq_type',''))
         default_unit = normalize_ref_text(request.form.get('default_unit',''))
         category = request.form.get('category','mtz')
-
         if not name:
             flash(ui_t('Техника номини киритинг', 'Введите название техники'), 'warning')
             return redirect(url_for('ref_equipment', org_id=org_id))
@@ -1958,6 +1964,11 @@ def create_app():
 
     # в”Ђв”Ђв”Ђ SPARE PARTS в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     app.register_blueprint(spare_parts_bp)
+
+    # ─── BOT001: Telegram Bot API ─────────────────────────────────────────────
+    # [REASON]: bot_api_bp provides /api/bot/* endpoints. Registered after spare_parts_bp.
+    # CSRF is already exempted for /api/bot/* in is_csrf_exempt() above.
+    app.register_blueprint(bot_api_bp)
 
     # в”Ђв”Ђв”Ђ ERRORS в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     @app.errorhandler(400)

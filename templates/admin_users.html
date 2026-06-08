@@ -76,6 +76,7 @@
                 <th>{{ t('РОЛЬ') }}</th>
                 <th>{{ t('ТАШКИЛОТЛАР') }}</th>
                 <th>{{ t('ҲОЛАТ') }}</th>
+                <th>{{ t('TELEGRAM') }}</th>
                 <th>{{ t('ОХИРГИ КИРИШ') }}</th>
                 <th></th>
             </tr>
@@ -104,6 +105,34 @@
                     <span class="working-badge">{{ t('Фаол') }}</span>
                 {% else %}
                     <span class="idle-badge">{{ t('Блокланган') }}</span>
+                {% endif %}
+            </td>
+            <td class="text-sm">
+                {% if not u.is_active %}
+                    <button type="button" class="btn btn-sm btn-secondary"
+                            style="font-size:10px;padding:2px 6px;opacity:0.45;cursor:not-allowed;"
+                            disabled
+                            title="Пользователь заблокирован">🔗</button>
+                {% elif u.telegram_id %}
+                    <span style="color:var(--accent);font-weight:600;" title="Telegram ID: {{ u.telegram_id }}">✅ {{ u.telegram_id }}</span>
+                    <form method="post"
+                          action="{{ url_for('admin_telegram_link_code', uid=u.id) }}"
+                          style="display:inline;margin-left:4px;"
+                          title="Telegram боглаш учун 6 рақамли код яратиш">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-secondary"
+                                style="font-size:10px;padding:2px 6px;">🔗</button>
+                    </form>
+                {% else %}
+                    <span class="text-muted">—</span>
+                    <form method="post"
+                          action="{{ url_for('admin_telegram_link_code', uid=u.id) }}"
+                          style="display:inline;margin-left:4px;"
+                          title="Telegram боглаш учун 6 рақамли код яратиш">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-secondary"
+                                style="font-size:10px;padding:2px 6px;">🔗</button>
+                    </form>
                 {% endif %}
             </td>
             <td class="text-sm text-muted">
