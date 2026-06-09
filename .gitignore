@@ -64,3 +64,11 @@ patch2_log_*.csv
 /PROMPT_*.md
 /PROMPT.md
 *.docx
+# Local runtime data
+instance/
+logs/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.pyc

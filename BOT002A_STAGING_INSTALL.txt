@@ -1,0 +1,297 @@
+BOT002A STAGING INSTALL PROCEDURE
+Vehicle Soft / Transport Report -- Bukhoro Agrocluster
+Date: 2026-06-08
+Package: BOT002A_TELEGRAM_RUNNER_20260608.zip
+Staging server: srv-yoqsh / 10.103.25.14
+Staging path: C:\transport-report-staging
+Staging service: TransportReportStaging (port 5051)
+Python: C:\Program Files\Python314\python.exe
+
+IMPORTANT: This procedure is for STAGING ONLY.
+           Do NOT run on production (C:\transport-report, port 5050).
+           Production notes are in BOT002A_PRODUCTION_NOTES.txt.
+           Do NOT store TG_BOT_TOKEN in files -- environment variable only.
+
+==========================================================================
+SECTION 0: PREREQUISITES
+==========================================================================
+
+- All BOT001A and BOT001B steps have been applied and verified.
+- /api/bot/health returns 200 on staging (port 5051).
+- /api/bot/link/verify works.
+- /api/bot/me works with Bearer token.
+- You are running commands from: C:\transport-report-staging
+- You have administrator access to manage the NSSM service.
+
+==========================================================================
+SECTION 1: BACKUP
+==========================================================================
+
+Step 1.1: Backup staging database
+
+  cd /d C:\transport-report-staging
+  "C:\Program Files\Python314\python.exe" backup_transport_db.py
+
+Step 1.2: Backup current bot_api.py
+
+  copy /Y C:\transport-report-staging\bot_api.py C:\transport-report-staging\bot_api_bot001_backup.py
+  copy /Y C:\transport-report-staging\bot_api.py "C:\transport-report-staging\bot_api_backup_before_bot002a_%DATE:~-4%-%DATE:~3,2%-%DATE:~0,2%.py"
+
+==========================================================================
+SECTION 2: COPY BOT002A FILES
+==========================================================================
+
+All files in BOT002A_TELEGRAM_RUNNER_20260608.zip must be extracted to
+C:\transport-report-staging\ (for Python source files) and
+C:\transport-report-staging\docs\ (for docs/BOT002_TELEGRAM_RUNNER.md).
+
+Step 2.1: Extract ZIP
+
+  Unzip BOT002A_TELEGRAM_RUNNER_20260608.zip to a temporary directory,
+  for example C:\temp\bot002a_install\
+
+  Then copy each file:
+
+  copy /Y C:\temp\bot002a_install\bot.py                    C:\transport-report-staging\bot.py
+  copy /Y C:\temp\bot002a_install\bot_config.py             C:\transport-report-staging\bot_config.py
+  copy /Y C:\temp\bot002a_install\bot_state.py              C:\transport-report-staging\bot_state.py
+  copy /Y C:\temp\bot002a_install\bot_http_client.py        C:\transport-report-staging\bot_http_client.py
+  copy /Y C:\temp\bot002a_install\bot_formatters.py         C:\transport-report-staging\bot_formatters.py
+  copy /Y C:\temp\bot002a_install\bot_api.py            C:\transport-report-staging\bot_api.py
+  copy /Y C:\temp\bot002a_install\test_bot002_import.py     C:\transport-report-staging\test_bot002_import.py
+  copy /Y C:\temp\bot002a_install\test_bot002_state.py      C:\transport-report-staging\test_bot002_state.py
+  copy /Y C:\temp\bot002a_install\test_bot002_http_client.py C:\transport-report-staging\test_bot002_http_client.py
+  copy /Y C:\temp\bot002a_install\test_bot002_formatters.py C:\transport-report-staging\test_bot002_formatters.py
+  copy /Y C:\temp\bot002a_install\test_bot002_api_contract.py C:\transport-report-staging\test_bot002_api_contract.py
+  copy /Y C:\temp\bot002a_install\test_bot002_logout_client.py C:\transport-report-staging\test_bot002_logout_client.py
+  copy /Y C:\temp\bot002a_install\requirements_bot002.txt   C:\transport-report-staging\requirements_bot002.txt
+  copy /Y "C:\temp\bot002a_install\docs\BOT002_TELEGRAM_RUNNER.md" "C:\transport-report-staging\docs\BOT002_TELEGRAM_RUNNER.md"
+
+  NOTE: bot_api.py contains the BOT002A updated bot_api.py content.
+        It must be applied to bot_api.py during the service stop window (Section 3).
+
+==========================================================================
+SECTION 3: STOP SERVICE, APPLY BOT_API UPDATE, RESTART
+==========================================================================
+
+The bot_api.py file is loaded by the running service. It must be updated
+while the service is stopped to avoid Windows file lock issues.
+
+Step 3.1: Stop TransportReportStaging
+
+  From an elevated command prompt (Run as Administrator):
+
+  C:\transport-report-staging\nssm.exe stop TransportReportStaging
+  sc stop TransportReportStaging
+
+  Wait until the service is fully stopped:
+  sc query TransportReportStaging
+  (State should show STOPPED)
+
+Step 3.2: Apply bot_api update
+
+  copy /Y C:\transport-report-staging\bot_api.py C:\transport-report-staging\bot_api.py
+
+  Verify the file was updated:
+  findstr /C:"/logout" C:\transport-report-staging\bot_api.py
+
+  Expected output should contain a line with:
+    @bot_api_bp.route("/logout", methods=["POST"])
+
+Step 3.3: Verify py_compile after copy
+
+  "C:\Program Files\Python314\python.exe" -m py_compile bot_api.py
+  echo py_compile OK
+
+Step 3.4: Restart TransportReportStaging
+
+  C:\transport-report-staging\nssm.exe start TransportReportStaging
+
+  Wait 5 seconds, then verify:
+  "C:\Program Files\Python314\python.exe" -c "import urllib.request; r=urllib.request.urlopen('http://10.103.25.14:5051/api/bot/health',timeout=10); print(r.read().decode())"
+
+  Expected: {"ok":true,"module":"bot_api","version":"BOT002A"}
+
+==========================================================================
+SECTION 4: PY_COMPILE VERIFICATION
+==========================================================================
+
+Run after service restart to verify all files compile:
+
+  cd /d C:\transport-report-staging
+  "C:\Program Files\Python314\python.exe" -m py_compile bot_api.py
+  "C:\Program Files\Python314\python.exe" -m py_compile bot.py
+  "C:\Program Files\Python314\python.exe" -m py_compile bot_config.py
+  "C:\Program Files\Python314\python.exe" -m py_compile bot_state.py
+  "C:\Program Files\Python314\python.exe" -m py_compile bot_http_client.py
+  "C:\Program Files\Python314\python.exe" -m py_compile bot_formatters.py
+  echo All py_compile OK
+
+==========================================================================
+SECTION 5: APP IMPORT CHECK
+==========================================================================
+
+  "C:\Program Files\Python314\python.exe" -c "import app; print('APP IMPORT OK')"
+
+==========================================================================
+SECTION 6: RUN TESTS
+==========================================================================
+
+Run in this exact order:
+
+Step 6.1: BOT001 readonly tests (regression check)
+  "C:\Program Files\Python314\python.exe" test_bot001_readonly.py
+
+Step 6.2: BOT001 staging API tests (regression check)
+  "C:\Program Files\Python314\python.exe" test_bot001_staging_api.py
+
+Step 6.3: BOT002A import / syntax tests
+  "C:\Program Files\Python314\python.exe" test_bot002_import.py
+
+Step 6.4: BOT002A offline state DB tests
+  "C:\Program Files\Python314\python.exe" test_bot002_state.py
+
+Step 6.5: BOT002A offline HTTP client tests
+  "C:\Program Files\Python314\python.exe" test_bot002_http_client.py
+
+Step 6.6: BOT002A offline formatter tests
+  "C:\Program Files\Python314\python.exe" test_bot002_formatters.py
+
+Step 6.7: BOT002A staging API contract tests
+  "C:\Program Files\Python314\python.exe" test_bot002_api_contract.py
+
+  This test REQUIRES the staging service to be running with the updated
+  bot_api.py (Section 3). If /api/bot/logout returns 404, the service
+  has not been updated -- re-apply Section 3.
+
+Step 6.8: BOT002A logout client test (against staging DB)
+  "C:\Program Files\Python314\python.exe" test_bot002_logout_client.py
+
+  This test creates and cleans a temporary test user. It verifies:
+  - /api/bot/logout returns 200 with valid token
+  - telegram_id is cleared from users table
+  - bot_api_sessions row has revoked_at set
+  - /api/bot/me with revoked token returns 401
+  - /api/bot/logout without token returns 401
+
+All tests must output their respective _TEST_OK line.
+
+==========================================================================
+SECTION 7: HTTP SMOKE CHECK
+==========================================================================
+
+  "C:\Program Files\Python314\python.exe" -c "import urllib.request,json; r=urllib.request.urlopen('http://10.103.25.14:5051/api/bot/health'); print(json.loads(r.read()))"
+
+  Expected: {'ok': True, 'module': 'bot_api', 'version': 'BOT002A'}
+
+  Also verify:
+  "C:\Program Files\Python314\python.exe" -c "import urllib.request,json; req=urllib.request.Request('http://10.103.25.14:5051/api/bot/logout',data=b'{}',method='POST',headers={'Content-Type':'application/json'}); [r,e]=[None,None]; exec('try:\n r=urllib.request.urlopen(req,timeout=10)\nexcept urllib.request.urllib.error.HTTPError as ex:\n e=ex'); print('logout status:', e.code if e else r.status)"
+
+  Expected: logout status: 401
+
+==========================================================================
+SECTION 8: INSTALL PYTHON-TELEGRAM-BOT (WHEN READY TO RUN THE BOT)
+==========================================================================
+
+NOTE: This step is OPTIONAL at this stage. BOT002A is focused on the
+      Flask API endpoint. The actual bot.py runner is included but requires
+      python-telegram-bot to run. Install it only when you are ready to
+      start the bot runner service.
+
+  "C:\Program Files\Python314\python.exe" -m pip install -r requirements_bot002.txt
+
+  This installs:
+  - python-telegram-bot==20.7
+
+==========================================================================
+SECTION 9: ENVIRONMENT SETUP FOR BOT RUNNER SERVICE (FUTURE)
+==========================================================================
+
+When ready to run the Telegram bot runner (bot.py), set these environment
+variables in the NSSM service configuration:
+
+  TG_BOT_TOKEN=<your-bot-token-from-botfather>
+  BOT_API_BASE_URL=http://127.0.0.1:5051
+  BOT_STATE_DB=C:\transport-report-staging\instance\bot_state.db
+  BOT_LOG_DIR=C:\transport-report-staging\logs
+
+NEVER store TG_BOT_TOKEN in code, config files, or git. Set it only via
+NSSM environment variables or the Windows service environment.
+
+==========================================================================
+SECTION 10: NSSM BOT RUNNER SERVICE (FUTURE)
+==========================================================================
+
+Service name: TransportBotStaging
+Logs:
+  C:\transport-report-staging\logs\bot.log
+  C:\transport-report-staging\logs\bot_error.log
+
+NSSM commands (run from elevated cmd, ASCII only):
+
+  cd /d C:\transport-report-staging
+
+  nssm.exe install TransportBotStaging "C:\Program Files\Python314\python.exe"
+  nssm.exe set TransportBotStaging AppParameters bot.py
+  nssm.exe set TransportBotStaging AppDirectory C:\transport-report-staging
+  nssm.exe set TransportBotStaging AppEnvironmentExtra TG_BOT_TOKEN=<your-token>
+  nssm.exe set TransportBotStaging AppEnvironmentExtra BOT_API_BASE_URL=http://127.0.0.1:5051
+  nssm.exe set TransportBotStaging AppEnvironmentExtra BOT_STATE_DB=C:\transport-report-staging\instance\bot_state.db
+  nssm.exe set TransportBotStaging AppEnvironmentExtra BOT_LOG_DIR=C:\transport-report-staging\logs
+  nssm.exe set TransportBotStaging AppStdout C:\transport-report-staging\logs\bot.log
+  nssm.exe set TransportBotStaging AppStderr C:\transport-report-staging\logs\bot_error.log
+  nssm.exe set TransportBotStaging AppRotateFiles 1
+  nssm.exe set TransportBotStaging AppRotateOnline 1
+  nssm.exe set TransportBotStaging AppRotateBytes 10485760
+  nssm.exe start TransportBotStaging
+
+==========================================================================
+SECTION 11: BOT SMOKE TEST (FUTURE -- AFTER BOT RUNNER IS RUNNING)
+==========================================================================
+
+Open Telegram and message your bot:
+
+  /start
+  --> Expected: welcome message or prompt to /link if not yet linked
+
+  /link 123456
+  --> Replace 123456 with a real 6-digit code from the admin panel
+  --> Expected: success message with your profile and menu
+
+  /status
+  --> Expected: list of recent spare part requests (or empty message)
+
+  /pending
+  --> Expected: pending requests (admin only) or access denied message
+
+  /logout
+  --> Expected: account unlinked confirmation
+
+==========================================================================
+SECTION 12: ROLLBACK
+==========================================================================
+
+If any step fails:
+
+  Step 12.1: Stop TransportReportStaging (if running with bad files)
+    nssm.exe stop TransportReportStaging
+
+  Step 12.2: Restore bot_api.py from backup
+    copy /Y C:\transport-report-staging\bot_api_bot001_backup.py C:\transport-report-staging\bot_api.py
+
+  Step 12.3: Restart TransportReportStaging
+    nssm.exe start TransportReportStaging
+
+  Step 12.4: Verify health
+    "C:\Program Files\Python314\python.exe" -c "import urllib.request; print(urllib.request.urlopen('http://10.103.25.14:5051/api/bot/health').read())"
+
+  The staging DB is unaffected by this rollback (bot_api.py only).
+  If DB changes are needed, restore from the backup made in Section 1.
+
+==========================================================================
+NOTE: Previous BOT002 Package
+==========================================================================
+
+The previous BOT002 package was rejected due to a missing file referenced in
+the report and a test that accepted HTTP 404 for the logout endpoint as OK.
+BOT002A corrects both issues. The updated bot_api content is in bot_api.py.

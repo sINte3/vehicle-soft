@@ -1,9 +1,10 @@
 """
-bot_api.py -- BOT001 Telegram Foundation
+bot_api.py -- BOT001/BOT001 Telegram Foundation
 Flask Blueprint: /api/bot/*
 
 BOT001 scope: read-only endpoints + one-time link verification.
 BOT001B: inactive-user guard added to link_verify.
+BOT001: POST /api/bot/logout endpoint added.
 BOT002/BOT003 will add request creation and status changes.
 
 Security notes:
@@ -520,3 +521,48 @@ def catalog():
         })
 
     return jsonify({"ok": True, "catalog": results, "total": len(results)}), 200
+
+
+# ---------------------------------------------------------------------------
+# POST /api/bot/logout  (BOT001)
+# ---------------------------------------------------------------------------
+
+@bot_api_bp.route("/logout", methods=["POST"])
+def logout():
+    """Revoke the current bot API session and unlink Telegram account.
+
+    Requires: Authorization: Bearer <token>
+
+    Missing or invalid token => HTTP 401
+    Expired or revoked token  => HTTP 401
+    Valid token               => HTTP 200 + unlink performed
+
+    Actions on success:
+    - Sets revoked_at on the BotApiSession row.
+    - Clears user.telegram_id.
+    - Clears user.tg_link_code_hash, tg_link_code_expires_at, tg_link_code_created_at.
+
+    No DB migration required: all fields already exist from BOT001.
+    Never logs or returns the raw api_token.
+    """
+    session, user = _resolve_bearer_token()
+    if user is None:
+        return _json_error("Unauthorized: valid Bearer token required", 401)
+
+    now = utcnow()
+    try:
+        # Revoke the session
+        session.revoked_at = now
+
+        # Unlink Telegram from the user
+        user.telegram_id = None
+        user.tg_link_code_hash = None
+        user.tg_link_code_expires_at = None
+        user.tg_link_code_created_at = None
+
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return _json_error("Server error during logout", 500)
+
+    return jsonify({"ok": True, "message": "Telegram account unlinked."}), 200
