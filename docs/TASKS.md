@@ -1080,6 +1080,28 @@ Production backup:
 Release note:
 - docs/RELEASE_REPORT001E_WARNING_REGISTRY_20260605.md
 
+
+
+## BOT002B — Telegram bot runner for spare parts — COMPLETED 2026-06-09
+
+Status: completed in production.
+
+Result:
+- created and deployed Telegram bot runner for spare parts requests;
+- added bot_state.db for session persistence;
+- added Telegram bot routes (/api/bot/health, /api/bot/logout);
+- added Telegram commands: /start, /link, /status, /pending, /logout;
+- added Telegram account linking workflow;
+- all smoke tests passed (7 bot files, app import, bot routes, DB integrity, all Telegram commands).
+
+Production backup:
+- D:\transport-report-backups\production\daily\transport_20260609_143144.db
+
+Production server:
+- srv-yoqsh (10.103.25.14)
+- TransportBot service created and running
+- No DB migration required
+
 ## DASH001 — Management dashboard for main page — COMPLETED 2026-06-06
 
 Status: completed in production.

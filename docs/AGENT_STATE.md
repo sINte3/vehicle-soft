@@ -1,3 +1,37 @@
+## 2026-06-09 — BOT002B completed (Telegram bot runner)
+
+- BOT002B (Telegram bot runner for spare parts) deployed to production on 2026-06-09.
+- Production server: `srv-yoqsh` / `10.103.25.14`.
+- Production path: `C:\\transport-report`.
+- Production service `TransportBot` created and running.
+- Commit: `c576624` — "Add Telegram bot runner for spare parts".
+- DB backup before deployment: `D:\\transport-report-backups\\production\\daily\\transport_20260609_143144.db`.
+- No DB migration was required.
+- All smoke tests passed.
+
+### Smoke test results
+
+- `git pull --ff-only`: commit `c576624` applied successfully.
+- `py_compile`: ALL PASS (7 bot files).
+- `APP IMPORT OK`.
+- `BOT ROUTES OK` — 7 routes including `/api/bot/logout`.
+- `TransportReport`: RUNNING.
+- `TransportBot`: RUNNING.
+- `/api/bot/health`: ok.
+- `bot.log`: "Application started", no errors.
+- `bot_error.log`: empty.
+- `TOKEN_PATTERN_COUNT=0` — no token in logs.
+- `bot_state.db`: created (12288 bytes).
+- DB integrity: ok.
+- `/admin/users`: working, Telegram column visible, code generation working.
+- Telegram `/start`: working.
+- Telegram `/link`: account linked as Administrator.
+- Telegram `/status`: 5 real requests shown.
+- Telegram `/pending`: admin access working.
+- Telegram `/logout`: session revoked correctly.
+- `ACTIVE_BOT_SESSIONS` after logout: 0.
+- `TOTAL_BOT_SESSIONS`: 1.
+
 ## 2026-06-04 - REPORT001B completed
 
 - Completed REPORT001B: Excel export improvements for main report and daily activity report.
