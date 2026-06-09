@@ -5,6 +5,18 @@ from datetime import datetime, date
 from models import db, SparePart, SparePartRequest, SparePartRequestItem, Organization, Equipment, module_required
 from sec003a_ext import log_audit, diff_dict
 
+# [REASON]: BOT003 — Best-effort Telegram notifications. Import is guarded so that
+# missing module does not crash spare parts. The actual enqueue functions catch all
+# exceptions internally and never raise.
+try:
+    from bot003_notifications import (
+        enqueue_spare_request_submitted_best_effort,
+        enqueue_spare_request_status_best_effort,
+    )
+    _BOT003_AVAILABLE = True
+except ImportError:
+    _BOT003_AVAILABLE = False
+
 spare_parts_bp = Blueprint('spare_parts', __name__, url_prefix='/spare-parts')
 
 STATUS_LABELS = {
@@ -362,6 +374,9 @@ def save_request():
     db.session.commit()
     if status == 'submitted':
         flash(_spare_t('Сўров юборилди', 'Заявка отправлена'), 'success')
+        # [REASON]: BOT003 — Post-commit best-effort notification, never raises.
+        if _BOT003_AVAILABLE:
+            enqueue_spare_request_submitted_best_effort(spr.id)
     else:
         flash(_spare_t('Чорнов сақланди', 'Черновик сохранён'), 'info')
     return redirect(url_for('spare_parts.detail', rid=spr.id))
@@ -403,6 +418,9 @@ def submit_request(rid):
     )
     db.session.commit()
     flash(_spare_t('Сўров юборилди', 'Заявка отправлена'), 'success')
+    # [REASON]: BOT003 — Post-commit best-effort notification, never raises.
+    if _BOT003_AVAILABLE:
+        enqueue_spare_request_submitted_best_effort(spr.id)
     return redirect(url_for('spare_parts.detail', rid=rid))
 
 
@@ -434,6 +452,9 @@ def approve_request(rid):
     )
     db.session.commit()
     flash(_spare_t('Сўров тасдиқланди', 'Заявка утверждена'), 'success')
+    # [REASON]: BOT003 — Post-commit best-effort notification, never raises.
+    if _BOT003_AVAILABLE:
+        enqueue_spare_request_status_best_effort(spr.id, 'spare_request_approved')
     return redirect(url_for('spare_parts.detail', rid=rid))
 
 
@@ -465,6 +486,9 @@ def reject_request(rid):
     )
     db.session.commit()
     flash(_spare_t('Сўров рад этилди', 'Заявка отклонена'), 'warning')
+    # [REASON]: BOT003 — Post-commit best-effort notification, never raises.
+    if _BOT003_AVAILABLE:
+        enqueue_spare_request_status_best_effort(spr.id, 'spare_request_rejected')
     return redirect(url_for('spare_parts.detail', rid=rid))
 
 
