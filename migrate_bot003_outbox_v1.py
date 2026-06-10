@@ -1,5 +1,5 @@
 """
-migrate_bot003_outbox_v1.py — Create bot003_notification_outbox table.
+migrate_bot003_outbox_v1.py - Create bot003_notification_outbox table.
 
 This migration creates the isolated notification outbox table for BOT003
 Telegram push notifications using the safe outbox pattern.
@@ -198,9 +198,9 @@ def run_migration():
     conn.close()
 
     if success:
-        print("\nRESULT: MIGRATION COMPLETE — bot003_notification_outbox is ready.")
+        print("\nRESULT: MIGRATION COMPLETE - bot003_notification_outbox is ready.")
     else:
-        print("\nRESULT: MIGRATION COMPLETED WITH WARNINGS — review output above.")
+        print("\nRESULT: MIGRATION COMPLETED WITH WARNINGS - review output above.")
     return success
 
 

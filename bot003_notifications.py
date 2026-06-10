@@ -1,5 +1,5 @@
 """
-bot003_notifications.py — BOT003 Best-Effort Notification Enqueue Module
+bot003_notifications.py - BOT003 Best-Effort Notification Enqueue Module
 
 Isolated notification outbox enqueue for spare part request events.
 This module is designed to NEVER poison the main SQLAlchemy session.
@@ -24,7 +24,7 @@ logger = logging.getLogger("bot003_notifications")
 def _get_db_path(app=None):
     """Resolve the SQLite database path from Flask app config or default path.
 
-    Uses a separate sqlite3 connection — never the Flask-SQLAlchemy session.
+    Uses a separate sqlite3 connection - never the Flask-SQLAlchemy session.
     """
     if app:
         try:
@@ -104,7 +104,7 @@ def _build_notification_payload(event_type, request_id, extra=None):
         "request_id": request_id,
     }
     if extra:
-        # Only include known safe fields — avoid leaking sensitive data
+        # Only include known safe fields - avoid leaking sensitive data
         allowed_keys = [
             "request_number", "organization_name", "equipment_name",
             "created_by_name", "status", "created_at", "updated_at",
@@ -153,7 +153,7 @@ def _build_payload_for_request(cursor, event_type, request_id):
             if row[6]:
                 payload["equipment_name"] = row[6]
     except Exception:
-        # Best-effort for payload enrichment — use basic payload if query fails
+        # Best-effort for payload enrichment - use basic payload if query fails
         pass
 
     return json.dumps(payload, ensure_ascii=False, default=str)
@@ -161,7 +161,7 @@ def _build_payload_for_request(cursor, event_type, request_id):
 
 def _enqueue_best_effort(event_type, request_id, target_user_id, target_telegram_id,
                           payload_json, app=None):
-    """Core enqueue function — inserts a row into bot003_notification_outbox.
+    """Core enqueue function - inserts a row into bot003_notification_outbox.
 
     This function:
     - Opens its own sqlite3 connection
@@ -187,7 +187,7 @@ def _enqueue_best_effort(event_type, request_id, target_user_id, target_telegram
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        # Check if table exists — if not, this is a non-fatal warning
+        # Check if table exists - if not, this is a non-fatal warning
         if not _outbox_table_exists(cursor):
             logger.warning(
                 "bot003_notification_outbox table does not exist. "
@@ -198,14 +198,14 @@ def _enqueue_best_effort(event_type, request_id, target_user_id, target_telegram
             conn.close()
             return False
 
-        # Check for duplicate dedupe_key — ignore safely
+        # Check for duplicate dedupe_key - ignore safely
         cursor.execute(
             "SELECT id FROM bot003_notification_outbox WHERE dedupe_key = ?",
             (dedupe_key,)
         )
         if cursor.fetchone():
             logger.info(
-                "Duplicate dedupe_key for event_type=%s request_id=%s target=%s — skipping.",
+                "Duplicate dedupe_key for event_type=%s request_id=%s target=%s - skipping.",
                 event_type, request_id, target_user_id or target_telegram_id
             )
             conn.close()
@@ -281,7 +281,7 @@ def enqueue_spare_request_submitted_best_effort(request_id: int, app=None) -> No
 
     This function:
     - Runs entirely in its own sqlite3 connection.
-    - Never raises — all errors are caught and logged.
+    - Never raises - all errors are caught and logged.
     - Does not touch the main Flask-SQLAlchemy session.
 
     Args:
@@ -301,7 +301,7 @@ def enqueue_spare_request_submitted_best_effort(request_id: int, app=None) -> No
         # Check table exists
         if not _outbox_table_exists(cursor):
             logger.warning(
-                "bot003_notification_outbox missing — cannot enqueue "
+                "bot003_notification_outbox missing - cannot enqueue "
                 "spare_request_submitted for request_id=%s", request_id
             )
             conn.close()
@@ -311,7 +311,7 @@ def enqueue_spare_request_submitted_best_effort(request_id: int, app=None) -> No
         admin_recipients = _get_admin_telegram_ids(cursor)
         if not admin_recipients:
             logger.info(
-                "No admin users with telegram_id found — "
+                "No admin users with telegram_id found - "
                 "skipping notification for spare_request_submitted request_id=%s",
                 request_id
             )
@@ -350,7 +350,7 @@ def enqueue_spare_request_status_best_effort(request_id: int, event_type: str,
 
     This function:
     - Runs entirely in its own sqlite3 connection.
-    - Never raises — all errors are caught and logged.
+    - Never raises - all errors are caught and logged.
     - Does not touch the main Flask-SQLAlchemy session.
 
     Args:
@@ -369,7 +369,7 @@ def enqueue_spare_request_status_best_effort(request_id: int, event_type: str,
     }
     if event_type not in valid_event_types:
         logger.warning(
-            "Unknown event_type=%s for request_id=%s — skipping.",
+            "Unknown event_type=%s for request_id=%s - skipping.",
             event_type, request_id
         )
         return
@@ -383,7 +383,7 @@ def enqueue_spare_request_status_best_effort(request_id: int, event_type: str,
         # Check table exists
         if not _outbox_table_exists(cursor):
             logger.warning(
-                "bot003_notification_outbox missing — cannot enqueue "
+                "bot003_notification_outbox missing - cannot enqueue "
                 "%s for request_id=%s", event_type, request_id
             )
             conn.close()
@@ -397,7 +397,7 @@ def enqueue_spare_request_status_best_effort(request_id: int, event_type: str,
         row = cursor.fetchone()
         if not row or not row[0]:
             logger.info(
-                "No creator found for request_id=%s — "
+                "No creator found for request_id=%s - "
                 "skipping %s notification", request_id, event_type
             )
             conn.close()
@@ -409,7 +409,7 @@ def enqueue_spare_request_status_best_effort(request_id: int, event_type: str,
         recipient = _get_user_telegram_id(cursor, creator_id)
         if not recipient:
             logger.info(
-                "Creator (user_id=%s) has no telegram_id — "
+                "Creator (user_id=%s) has no telegram_id - "
                 "skipping %s notification for request_id=%s",
                 creator_id, event_type, request_id
             )

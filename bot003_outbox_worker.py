@@ -1,5 +1,5 @@
 """
-bot003_outbox_worker.py — BOT003 Outbox Worker for Telegram Notifications
+bot003_outbox_worker.py - BOT003 Outbox Worker for Telegram Notifications
 
 Reads pending rows from bot003_notification_outbox and sends them via the
 existing Telegram bot infrastructure. This module is designed to:
@@ -10,18 +10,21 @@ existing Telegram bot infrastructure. This module is designed to:
 
 Usage (standalone):
     "C:\\Program Files\\Python314\\python.exe" bot003_outbox_worker.py
+    "C:\\Program Files\\Python314\\python.exe" bot003_outbox_worker.py --help
+    "C:\\Program Files\\Python314\\python.exe" bot003_outbox_worker.py --once --dry-run
 
 Usage (called from bot.py polling loop, future integration):
     from bot003_outbox_worker import process_outbox
     process_outbox(bot_app, app)
 """
 
+import argparse
 import json
 import logging
 import os
 import sqlite3
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger("bot003_outbox_worker")
 
@@ -44,44 +47,60 @@ def _outbox_table_exists(cursor):
     return cursor.fetchone() is not None
 
 
-def _read_pending_rows(cursor, batch_size=20):
+def _read_pending_rows(cursor, batch_size=20, dry_run=False):
     """Read pending notification rows that are available to send.
 
     Uses row-level locking via locked_at to prevent duplicate processing
-    in a concurrent worker scenario.
+    in a concurrent worker scenario. In dry-run mode, does a simple SELECT
+    without locking any rows.
 
     Args:
         cursor: sqlite3 cursor.
         batch_size: Maximum number of rows to fetch.
+        dry_run: If True, read-only SELECT without row locking.
 
     Returns:
         List of dicts with notification data.
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
-    # Lock rows atomically
-    cursor.execute("""
-        UPDATE bot003_notification_outbox
-        SET locked_at = ?
-        WHERE id IN (
-            SELECT id FROM bot003_notification_outbox
+    if dry_run:
+        # Pure SELECT — no writes, no locking
+        cursor.execute("""
+            SELECT id, event_type, request_id, target_user_id, target_telegram_id,
+                   payload_json, attempts, max_attempts
+            FROM bot003_notification_outbox
             WHERE status = 'pending'
               AND attempts < max_attempts
               AND available_at <= ?
               AND (locked_at IS NULL OR locked_at < ?)
             ORDER BY created_at ASC
             LIMIT ?
-        )
-    """, (now, now, now, batch_size))
+        """, (now, now, batch_size))
+    else:
+        # Lock rows atomically
+        cursor.execute("""
+            UPDATE bot003_notification_outbox
+            SET locked_at = ?
+            WHERE id IN (
+                SELECT id FROM bot003_notification_outbox
+                WHERE status = 'pending'
+                  AND attempts < max_attempts
+                  AND available_at <= ?
+                  AND (locked_at IS NULL OR locked_at < ?)
+                ORDER BY created_at ASC
+                LIMIT ?
+            )
+        """, (now, now, now, batch_size))
 
-    # Fetch locked rows
-    cursor.execute("""
-        SELECT id, event_type, request_id, target_user_id, target_telegram_id,
-               payload_json, attempts, max_attempts
-        FROM bot003_notification_outbox
-        WHERE locked_at = ?
-        ORDER BY id ASC
-    """, (now,))
+        # Fetch locked rows
+        cursor.execute("""
+            SELECT id, event_type, request_id, target_user_id, target_telegram_id,
+                   payload_json, attempts, max_attempts
+            FROM bot003_notification_outbox
+            WHERE locked_at = ?
+            ORDER BY id ASC
+        """, (now,))
 
     rows = cursor.fetchall()
     return [
@@ -101,7 +120,7 @@ def _read_pending_rows(cursor, batch_size=20):
 
 def _mark_sent(cursor, notification_id):
     """Mark a notification as successfully sent."""
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     cursor.execute("""
         UPDATE bot003_notification_outbox
         SET status = 'sent',
@@ -124,7 +143,7 @@ def _mark_failed(cursor, notification_id, error_message, increment_attempts=True
         permanent: If True, mark as 'failed' (exhausted retries). Otherwise
                    mark as 'pending' again with a retry delay.
     """
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     if permanent:
         cursor.execute("""
             UPDATE bot003_notification_outbox
@@ -147,14 +166,14 @@ def _mark_failed(cursor, notification_id, error_message, increment_attempts=True
         max_attempts = row[1] if row else 5
 
         if current_attempts >= max_attempts:
-            # Exhausted retries — mark as failed permanently
+            # Exhausted retries - mark as failed permanently
             _mark_failed(cursor, notification_id, error_message,
                          increment_attempts=False, permanent=True)
             return
 
         delay_idx = min(current_attempts - 1, len(retry_delays) - 1)
         delay_seconds = retry_delays[delay_idx]
-        next_available = (datetime.utcnow() + timedelta(seconds=delay_seconds)).isoformat()
+        next_available = (datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)).isoformat()
 
         cursor.execute("""
             UPDATE bot003_notification_outbox
@@ -246,9 +265,9 @@ def _build_notification_text(payload):
     if event_type == "spare_request_submitted":
         header = "\U0001F4E8 Yangi ehtiyot qism so'rovi"
     elif event_type == "spare_request_approved":
-        header = "✅ So'rov tasdiqlandi"
+        header = "\U00002705 So'rov tasdiqlandi"
     elif event_type == "spare_request_rejected":
-        header = "❌ So'rov rad etildi"
+        header = "\U0000274C So'rov rad etildi"
     elif event_type == "spare_request_revision_requested":
         header = "\U0001F504 So'rov qayta ko'rishga yuborildi"
     else:
@@ -278,7 +297,7 @@ def _build_notification_text(payload):
     return "\n".join(lines)
 
 
-def process_outbox(bot_token=None, app=None, batch_size=20):
+def process_outbox(bot_token=None, app=None, batch_size=20, dry_run=False):
     """Process pending notifications from the outbox table.
 
     This is the main entry point for the worker. It:
@@ -291,16 +310,17 @@ def process_outbox(bot_token=None, app=None, batch_size=20):
         bot_token: Telegram Bot API token. If None, reads from TG_BOT_TOKEN env var.
         app: Optional Flask app (unused, kept for API compatibility).
         batch_size: Maximum notifications to process per call.
+        dry_run: If True, reads and reports pending rows without sending or updating any row.
 
     Returns:
         Dict with counts: {'processed': int, 'sent': int, 'failed': int,
-                           'skipped': int, 'error': str or None}
+                           'skipped': int, 'error': str or None, 'dry_run': bool}
     """
-    result = {"processed": 0, "sent": 0, "failed": 0, "skipped": 0, "error": None}
+    result = {"processed": 0, "sent": 0, "failed": 0, "skipped": 0, "error": None, "dry_run": dry_run}
 
     if not bot_token:
         bot_token = os.environ.get("TG_BOT_TOKEN", "")
-    if not bot_token:
+    if not bot_token and not dry_run:
         msg = "TG_BOT_TOKEN not configured"
         logger.warning(msg)
         result["error"] = msg
@@ -321,21 +341,35 @@ def process_outbox(bot_token=None, app=None, batch_size=20):
         # Check if outbox table exists
         if not _outbox_table_exists(cursor):
             msg = "bot003_notification_outbox table does not exist"
-            logger.info("BOT003: %s — skipping outbox processing", msg)
+            logger.info("BOT003: %s - skipping outbox processing", msg)
             result["error"] = msg
             conn.close()
             return result
 
-        # Read pending rows
-        rows = _read_pending_rows(cursor, batch_size)
+        # Read pending rows (read-only in dry-run mode)
+        rows = _read_pending_rows(cursor, batch_size, dry_run=dry_run)
         if not rows:
             logger.info("BOT003: No pending notifications to process")
-            conn.commit()
+            if not dry_run:
+                conn.commit()
             conn.close()
             return result
 
         result["processed"] = len(rows)
         logger.info("BOT003: Processing %d pending notifications", len(rows))
+
+        if dry_run:
+            logger.info(
+                "BOT003: DRY RUN - found %d pending notifications, no messages sent",
+                len(rows)
+            )
+            for row in rows:
+                logger.info(
+                    "BOT003: DRY RUN - would send notification %d event=%s to telegram_id=%s",
+                    row["id"], row["event_type"], row["target_telegram_id"]
+                )
+            conn.close()
+            return result
 
         for row in rows:
             notification_id = row["id"]
@@ -344,7 +378,7 @@ def process_outbox(bot_token=None, app=None, batch_size=20):
 
             if not telegram_id:
                 logger.info(
-                    "BOT003: Skipping notification %d — no target_telegram_id",
+                    "BOT003: Skipping notification %d - no target_telegram_id",
                     notification_id
                 )
                 _mark_failed(cursor, notification_id, "No target_telegram_id",
@@ -393,7 +427,7 @@ def process_outbox(bot_token=None, app=None, batch_size=20):
 
         conn.close()
         logger.info(
-            "BOT003: Outbox processing complete — sent=%d, failed=%d, skipped=%d",
+            "BOT003: Outbox processing complete - sent=%d, failed=%d, skipped=%d",
             result["sent"], result["failed"], result["skipped"]
         )
 
@@ -409,13 +443,14 @@ def process_outbox(bot_token=None, app=None, batch_size=20):
     return result
 
 
-def main_loop(bot_token=None, interval_seconds=30, max_iterations=None):
+def main_loop(bot_token=None, interval_seconds=30, max_iterations=None, dry_run=False):
     """Run the outbox worker in a continuous loop.
 
     Args:
         bot_token: Telegram Bot API token.
         interval_seconds: Seconds to sleep between iterations.
         max_iterations: Maximum number of iterations (None = run forever).
+        dry_run: If True, read only - no messages sent, no rows updated.
     """
     import time
 
@@ -425,7 +460,8 @@ def main_loop(bot_token=None, interval_seconds=30, max_iterations=None):
         print("ERROR: TG_BOT_TOKEN not set. Set the environment variable or pass bot_token.")
         sys.exit(1)
 
-    print("BOT003 Outbox Worker started.")
+    mode = "DRY RUN (read only)" if dry_run else "live"
+    print("BOT003 Outbox Worker started ({}).".format(mode))
     print("Polling interval: {}s".format(interval_seconds))
     if max_iterations:
         print("Max iterations: {}".format(max_iterations))
@@ -436,17 +472,20 @@ def main_loop(bot_token=None, interval_seconds=30, max_iterations=None):
     try:
         while max_iterations is None or iteration < max_iterations:
             iteration += 1
-            timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-            print("[{}] Iteration {} — processing outbox...".format(timestamp, iteration))
+            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            print("[{}] Iteration {} - processing outbox...".format(timestamp, iteration))
 
-            result = process_outbox(bot_token=bot_token)
+            result = process_outbox(bot_token=bot_token, dry_run=dry_run)
 
-            print(
-                "  Processed: {}, Sent: {}, Failed: {}, Skipped: {}".format(
-                    result["processed"], result["sent"],
-                    result["failed"], result["skipped"]
-                )
-            )
+            parts = [
+                "  Processed: {}".format(result["processed"]),
+                "Sent: {}".format(result["sent"]),
+                "Failed: {}".format(result["failed"]),
+                "Skipped: {}".format(result["skipped"]),
+            ]
+            if result["dry_run"]:
+                parts.append("DRY_RUN: True")
+            print(" | ".join(parts))
             if result["error"]:
                 print("  Note: {}".format(result["error"]))
 
@@ -462,20 +501,97 @@ def main_loop(bot_token=None, interval_seconds=30, max_iterations=None):
         print("\nFATAL ERROR: See logs for details.")
 
 
+def parse_args(argv=None):
+    """Parse command-line arguments for standalone usage.
+
+    Args:
+        argv: Argument list (defaults to sys.argv[1:]).
+
+    Returns:
+        argparse.Namespace with parsed arguments.
+    """
+    parser = argparse.ArgumentParser(
+        prog="bot003_outbox_worker",
+        description="BOT003 Outbox Worker - process pending Telegram notifications.",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        default=False,
+        help="Process pending notifications once and exit (no polling loop).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Read only - report pending notifications without sending or updating rows.",
+    )
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=None,
+        help="Polling interval in seconds (default: BOT003_POLL_INTERVAL env or 30).",
+    )
+    parser.add_argument(
+        "--token",
+        type=str,
+        default=None,
+        help="Telegram Bot API token (default: TG_BOT_TOKEN env var).",
+    )
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=None,
+        help="Maximum polling iterations (default: run forever).",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=20,
+        help="Maximum notifications to process per iteration (default: 20).",
+    )
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
     # Configure logging for standalone use
     log_dir = os.environ.get("BOT_LOG_DIR", "logs")
     os.makedirs(log_dir, exist_ok=True)
 
     log_file = os.path.join(log_dir, "bot003_outbox_worker.log")
+    handlers = [logging.StreamHandler(sys.stdout)]
+
+    class _SafeFileHandler(logging.FileHandler):
+        """FileHandler that degrades gracefully when file cannot be opened."""
+        def __init__(self, filename, mode="a", encoding=None, delay=False):
+            try:
+                super().__init__(filename, mode=mode, encoding=encoding, delay=delay)
+            except (PermissionError, OSError):
+                self.stream = None
+
+        def emit(self, record):
+            if self.stream is None:
+                return
+            super().emit(record)
+
+        def close(self):
+            if self.stream is not None:
+                super().close()
+
+    safe_fh = _SafeFileHandler(log_file, encoding="utf-8", delay=True, mode="a")
+    handlers.append(safe_fh)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, encoding="utf-8"),
-            logging.StreamHandler(sys.stdout),
-        ],
+        handlers=handlers,
     )
 
-    interval = int(os.environ.get("BOT003_POLL_INTERVAL", "30"))
-    main_loop(interval_seconds=interval)
+    args = parse_args()
+    interval = args.interval if args.interval is not None else int(os.environ.get("BOT003_POLL_INTERVAL", "30"))
+    token = args.token or None
+
+    if args.once:
+        result = process_outbox(bot_token=token, batch_size=args.batch_size, dry_run=args.dry_run)
+        print("process_outbox result: {}".format(json.dumps(result, ensure_ascii=False)))
+    else:
+        main_loop(bot_token=token, interval_seconds=interval, max_iterations=args.max_iterations, dry_run=args.dry_run)

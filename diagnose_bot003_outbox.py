@@ -1,5 +1,5 @@
 """
-diagnose_bot003_outbox.py — BOT003 Read-Only Diagnostic Script
+diagnose_bot003_outbox.py - BOT003 Read-Only Diagnostic Script
 
 Checks the state of the bot003_notification_outbox table without modifying
 any data. Use this to verify the outbox setup before and after migration.
@@ -214,7 +214,7 @@ def main():
     else:
         print("  RESULT: bot003_notification_outbox does not exist.")
         print("  The migration has NOT been run yet.")
-        print("  BOT003 code is safe without this table — notifications will be skipped.")
+        print("  BOT003 code is safe without this table - notifications will be skipped.")
         print()
         print("  To create the table, run:")
         print('    "C:\\Program Files\\Python314\\python.exe" migrate_bot003_outbox_v1.py')
@@ -232,14 +232,14 @@ def main():
         if migrations:
             print("  Applied migrations:")
             for name, applied_at, desc in migrations:
-                print("    {} — {} ({})".format(name, desc, applied_at))
+                print("    {} - {} ({})".format(name, desc, applied_at))
             bot003_applied = any("bot003" in m[0].lower() for m in migrations)
             if bot003_applied:
                 print()
                 print("  BOT003 migration IS registered in schema_migrations.")
             else:
                 print()
-                print("  (No BOT003 migration found — not yet applied.)")
+                print("  (No BOT003 migration found - not yet applied.)")
         else:
             print("  No migrations registered.")
     except Exception as e:
