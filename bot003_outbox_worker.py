@@ -443,7 +443,7 @@ def process_outbox(bot_token=None, app=None, batch_size=20, dry_run=False):
     return result
 
 
-def main_loop(bot_token=None, interval_seconds=30, max_iterations=None, dry_run=False):
+def main_loop(bot_token=None, interval_seconds=30, max_iterations=None, dry_run=False, batch_size=20):
     """Run the outbox worker in a continuous loop.
 
     Args:
@@ -456,7 +456,7 @@ def main_loop(bot_token=None, interval_seconds=30, max_iterations=None, dry_run=
 
     if not bot_token:
         bot_token = os.environ.get("TG_BOT_TOKEN", "")
-    if not bot_token:
+    if not bot_token and not dry_run:
         print("ERROR: TG_BOT_TOKEN not set. Set the environment variable or pass bot_token.")
         sys.exit(1)
 
@@ -475,7 +475,7 @@ def main_loop(bot_token=None, interval_seconds=30, max_iterations=None, dry_run=
             timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             print("[{}] Iteration {} - processing outbox...".format(timestamp, iteration))
 
-            result = process_outbox(bot_token=bot_token, dry_run=dry_run)
+            result = process_outbox(bot_token=bot_token, batch_size=batch_size, dry_run=dry_run)
 
             parts = [
                 "  Processed: {}".format(result["processed"]),
@@ -594,4 +594,4 @@ if __name__ == "__main__":
         result = process_outbox(bot_token=token, batch_size=args.batch_size, dry_run=args.dry_run)
         print("process_outbox result: {}".format(json.dumps(result, ensure_ascii=False)))
     else:
-        main_loop(bot_token=token, interval_seconds=interval, max_iterations=args.max_iterations, dry_run=args.dry_run)
+        main_loop(bot_token=token, interval_seconds=interval, max_iterations=args.max_iterations, dry_run=args.dry_run, batch_size=args.batch_size)
