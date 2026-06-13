@@ -25,6 +25,7 @@ import logging
 import os
 import sqlite3
 import sys
+from sqlite_runtime import open_connection
 from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger("bot003_outbox_worker")
@@ -359,7 +360,7 @@ def process_outbox(bot_token=None, app=None, batch_size=20, dry_run=False):
 
     conn = None
     try:
-        conn = sqlite3.connect(db_path)
+        conn = open_connection(db_path)
         cursor = conn.cursor()
 
         # Check if outbox table exists

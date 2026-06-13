@@ -28,6 +28,15 @@ class DevelopmentConfig(Config):
     DEBUG = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///' + os.path.join(BASE_DIR, 'instance', 'transport.db')
 
+    # [REASON]: FIX002 - SQLite engine options for multi-process safety.
+    # connect_args timeout=30 gives sqlite3 30s before SQLITE_BUSY.
+    # pool_size=5 and pool_pre_ping=True help with concurrent access.
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'connect_args': {'timeout': 30},
+        'pool_size': 5,
+        'pool_pre_ping': True,
+    }
+
     # [REASON]: Dev-only fallback so local dev works without setting env vars.
     # This value must never be used on the production server.
     SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-only-insecure-key-do-not-use-in-production')
@@ -54,6 +63,14 @@ class SqliteProductionConfig(Config):
     """SQLite в продакшен-режиме — если PostgreSQL ещё не установлен."""
     DEBUG = False
     SQLALCHEMY_DATABASE_URI = 'sqlite:///' + os.path.join(BASE_DIR, 'instance', 'transport.db')
+    # [REASON]: FIX002 - SQLite engine options for multi-process safety.
+    # connect_args timeout=30 gives sqlite3 30s before SQLITE_BUSY.
+    # pool_size=5 and pool_pre_ping=True help with concurrent access.
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'connect_args': {'timeout': 30},
+        'pool_size': 5,
+        'pool_pre_ping': True,
+    }
 
 
 # ─── Выбор конфигурации ─────────────────────────────────────────────

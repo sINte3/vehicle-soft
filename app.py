@@ -49,6 +49,7 @@ from sec003a_ext import (
     model_snapshot, diff_dict, audit_action_name,
 )
 from sqlalchemy import text
+from sqlite_runtime import enable_sqlite_wal
 
 
 def create_app():
@@ -1987,6 +1988,22 @@ def create_app():
                                message='Саҳифа топилмади'), 404
 
     with app.app_context():
+        # [REASON]: FIX002 - Enable WAL mode for multi-process SQLite access.
+        # Safe to call on every startup - PRAGMA journal_mode=WAL is idempotent.
+        db_path = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+        if db_path.startswith('sqlite:///'):
+            _wal_path = db_path[len('sqlite:///'):]
+            enable_sqlite_wal(_wal_path)
+
+        # [REASON]: FIX002 - Register SQLite runtime PRAGMAs event listener.
+        # Registered inside app_context so db.engine is resolved correctly.
+        @db.event.listens_for(db.engine, 'connect')
+        def set_sqlite_pragmas(dbapi_connection, connection_record):
+            import sqlite3
+            from sqlite_runtime import configure_sqlite_connection
+            if isinstance(dbapi_connection, sqlite3.Connection):
+                configure_sqlite_connection(dbapi_connection)
+
         db.create_all()
         if AppModule.query.count() == 0:
             for code, name_uz, name_ru in [

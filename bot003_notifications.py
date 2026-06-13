@@ -16,6 +16,7 @@ import json
 import logging
 import sqlite3
 import os
+from sqlite_runtime import open_connection
 from datetime import datetime
 
 logger = logging.getLogger("bot003_notifications")
@@ -184,7 +185,7 @@ def _enqueue_best_effort(event_type, request_id, target_user_id, target_telegram
     dedupe_key = _make_dedupe_key(event_type, request_id, target_user_id, target_telegram_id)
 
     try:
-        conn = sqlite3.connect(db_path)
+        conn = open_connection(db_path)
         cursor = conn.cursor()
 
         # Check if table exists - if not, this is a non-fatal warning
@@ -264,7 +265,7 @@ def is_bot003_outbox_ready(app=None) -> bool:
         db_path = _get_db_path(app)
         if not os.path.exists(db_path):
             return False
-        conn = sqlite3.connect(db_path)
+        conn = open_connection(db_path)
         cursor = conn.cursor()
         exists = _outbox_table_exists(cursor)
         conn.close()
@@ -295,7 +296,7 @@ def enqueue_spare_request_submitted_best_effort(request_id: int, app=None) -> No
     db_path = _get_db_path(app)
 
     try:
-        conn = sqlite3.connect(db_path)
+        conn = open_connection(db_path)
         cursor = conn.cursor()
 
         # Check table exists
@@ -377,7 +378,7 @@ def enqueue_spare_request_status_best_effort(request_id: int, event_type: str,
     db_path = _get_db_path(app)
 
     try:
-        conn = sqlite3.connect(db_path)
+        conn = open_connection(db_path)
         cursor = conn.cursor()
 
         # Check table exists
