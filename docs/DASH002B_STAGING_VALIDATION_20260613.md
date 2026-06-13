@@ -56,3 +56,13 @@ Next step after owner browser check:
 - sync to production with source backup
 - restart only TransportReport web service
 - verify `/` render and production services
+
+## Follow-up fix
+
+A follow-up staging fix corrected the placement of the warning drill-down links:
+
+- `Реестр`
+- `Новые`
+- `Критические`
+
+They are now placed in the warning card, not in the fuel summary card.

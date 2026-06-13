@@ -73,11 +73,6 @@
             <div><b>{{ dashboard.fuel.warnings }}</b><span>{{ L_warnings|lower }}</span></div>
             <div><b>{{ dashboard.fuel.danger_warnings }}</b><span>{{ 'критические' if lang == 'ru' else 'критик' }}</span></div>
                     <div class="dash-quick-links">
-                        <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Реестр' if lang == 'ru' else 'Реестр' }}</a>
-                        <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat(), status='new') }}">{{ 'Новые' if lang == 'ru' else 'Янги' }}</a>
-                        <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat(), severity='danger') }}">{{ 'Критические' if lang == 'ru' else 'Критик' }}</a>
-                    </div>
-                    <div class="dash-quick-links">
                         <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Отчёт' if lang == 'ru' else 'Ҳисобот' }}</a>
                         <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Предупреждения' if lang == 'ru' else 'Огоҳлантиришлар' }}</a>
                         <a href="{{ url_for('fuel.transactions') }}">{{ 'Транзакции' if lang == 'ru' else 'Транзакциялар' }}</a>
@@ -110,6 +105,12 @@
             <div><b>{{ dashboard.fuel.review_in_progress }}</b><span>{{ 'в работе' if lang == 'ru' else 'ишда' }}</span></div>
             <div><b>{{ dashboard.fuel.review_resolved }}</b><span>{{ 'проверено' if lang == 'ru' else 'текширилди' }}</span></div>
             <div><b>{{ dashboard.fuel.danger_warnings }}</b><span>{{ 'критические' if lang == 'ru' else 'критик' }}</span></div>
+                    <!-- DASH002B_WARNING_LINKS_FIXED -->
+                    <div class="dash-quick-links">
+                        <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Реестр' if lang == 'ru' else 'Реестр' }}</a>
+                        <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat(), status='new') }}">{{ 'Новые' if lang == 'ru' else 'Янги' }}</a>
+                        <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat(), severity='danger') }}">{{ 'Критические' if lang == 'ru' else 'Критик' }}</a>
+                    </div>
         </div>
         {% else %}
         <div class="dash-no-access">{{ L_no_access }}</div>
