@@ -71,7 +71,7 @@ Passed:
   - `report-export-card`
   - `report-filter-form`
 - date range renders with dash:
-  - `01.06.2026  13.06.2026`
+  - `01.06.2026 — 13.06.2026`
 
 ## Manual browser validation
 
