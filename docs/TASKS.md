@@ -1289,3 +1289,34 @@ Reports:
 
 - `docs/TASK_REF_001A_STAGING_VALIDATION_20260613.md`
 - `docs/TASK_REF_001A_PRODUCTION_ROLLOUT_20260613.md`
+
+## 2026-06-13  TASK-REF-001B production complete
+
+Status: COMPLETE.
+
+Production commit:
+
+- `be30d1d Improve reference pages filters and diagnostics`
+
+Completed:
+
+- Improved `/ref/organizations` with search, statistics, short-name field, and linked-record visibility.
+- Improved `/ref/work_types` with search, usage filter, statistics, diagnostics, and usage counts.
+- Improved `/ref/customers` with search, type filter, usage filter, statistics, diagnostics, and usage counts.
+- Preserved existing delete blocking and edit behavior.
+- No schema changes.
+- No data migrations.
+- No automatic cleanup or normalization.
+- Production validation passed.
+- Manual browser validation confirmed by screenshots.
+
+Production services after rollout:
+
+- `TransportReport`: RUNNING
+- `TransportBot`: RUNNING
+- `TransportBot003`: RUNNING
+
+Related docs:
+
+- `docs/TASK_REF_001B_STAGING_VALIDATION_20260613.md`
+- `docs/TASK_REF_001B_PRODUCTION_ROLLOUT_20260613.md`

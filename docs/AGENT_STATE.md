@@ -1077,3 +1077,35 @@ Recommended next stage:
 1. TASK-REF-001B - continue reference improvements for work types/customers/organizations.
 2. TASK-REPORT-001 - multi-select report filters.
 3. UX003 - continued interface cleanup based on operator feedback.
+
+## 2026-06-13  Current state after TASK-REF-001B
+
+Current Git state after production rollout:
+
+- Staging/prod/origin main target commit: `be30d1d`
+- Latest completed feature: `TASK-REF-001B`
+- Production rollout completed and manually confirmed by browser screenshots.
+- Production service state:
+  - `TransportReport`: RUNNING
+  - `TransportBot`: RUNNING
+  - `TransportBot003`: RUNNING
+
+TASK-REF-001B changed only reference-page UI/controller diagnostics:
+
+- `/ref/organizations`
+- `/ref/work_types`
+- `/ref/customers`
+
+Important safety notes:
+
+- No DB schema changes.
+- No migrations.
+- No reference data cleanup yet.
+- Duplicate work-type names are only diagnosed, not merged.
+- Customer values used in daily reports but missing from `customers` are only diagnosed, not normalized.
+- Existing historical daily report values remain untouched.
+
+Next recommended direction:
+
+- Continue with reference/data-quality improvements only after deciding manual vs controlled migration strategy for customers and work types.
+- Avoid automatic customer normalization until business rules are defined.
