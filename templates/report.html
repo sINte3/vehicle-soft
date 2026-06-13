@@ -61,11 +61,210 @@
     .report-filter-grid, .report-summary-grid, .report-type-grid { grid-template-columns:1fr; }
     .report-toolbar input[type="text"] { min-width:100%; }
 }
+
+/* REPORT002A_MARKER: full report UX refresh, template-only. */
+.report-page-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+
+.report-page-header h1 {
+  margin-bottom: 6px;
+}
+
+.report-header-subtitle {
+  color: var(--ux-muted, #667085);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.report-active-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.report-filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--ux-border-soft, #edf1f6);
+  background: var(--ux-surface, #fff);
+  color: var(--ux-text, #1f2937);
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: var(--ux-shadow-soft, 0 3px 10px rgba(15, 23, 42, 0.05));
+}
+
+.report-filter-pill strong {
+  color: var(--ux-primary, #2563eb);
+}
+
+.report-export-card {
+  border-left: 4px solid var(--ux-primary, #2563eb);
+}
+
+.report-export-card .card-header {
+  font-weight: 800;
+}
+
+.report-form-section {
+  display: grid;
+  gap: 16px;
+}
+
+.report-form-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.report-option-card {
+  background: var(--ux-surface-soft, #f8fafc);
+  border: 1px solid var(--ux-border-soft, #edf1f6);
+  border-radius: var(--ux-radius, 14px);
+  padding: 10px 12px;
+}
+
+.report-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+.report-action-hint {
+  color: var(--ux-muted, #667085);
+  font-size: 13px;
+}
+
+.report-kpi-grid .stat-card {
+  min-height: 92px;
+}
+
+.report-kpi-grid .value {
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.report-summary-card .card-header,
+.report-preview-card .card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.report-table {
+  font-size: 13px;
+}
+
+.report-table th {
+  white-space: nowrap;
+}
+
+.report-table td {
+  vertical-align: top;
+}
+
+.report-table .text-muted {
+  font-size: 12px;
+}
+
+.report-truncate {
+  max-width: 280px;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.report-limited-note {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--ux-radius-sm, 9px);
+  background: var(--ux-warning-soft, #fffbeb);
+  color: var(--ux-warning, #b45309);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  .report-page-header {
+    display: block;
+  }
+
+  .report-form-row,
+  .report-action-row {
+    display: block;
+  }
+
+  .report-action-row .btn,
+  .report-action-row button {
+    width: 100%;
+    margin-top: 8px;
+  }
+}
+/* REPORT002A_END */
+
 </style>
 
 <div class="report-hero">
     <div>
-        <h1>{{ L_title }}</h1>
+        <div class="page-header report-page-header REPORT002A_MARKER">
+  <div>
+    <h1>{{ L_title }}</h1>
+    <div class="report-header-subtitle">
+      {{ t('Сводный просмотр транспортных работ и подготовка Excel-отчёта по выбранному периоду, организациям и категориям техники.') }}
+    </div>
+
+    <div class="report-active-filter-bar">
+      <span class="report-filter-pill">
+        {{ t('Период') }}:
+        <strong>{{ d_from.strftime('%d.%m.%Y') }}{% if d_from != d_to %}  {{ d_to.strftime('%d.%m.%Y') }}{% endif %}</strong>
+      </span>
+
+      <span class="report-filter-pill">
+        {{ t('Организации') }}:
+        <strong>
+          {% if selected_org_ids|length == organizations|length %}
+            {{ t('Все') }}
+          {% else %}
+            {{ selected_org_ids|length }}
+          {% endif %}
+        </strong>
+      </span>
+
+      <span class="report-filter-pill">
+        {{ t('Категории') }}:
+        <strong>
+          {% if selected_cat_codes %}
+            {{ selected_cat_codes|length }}
+          {% else %}
+            {{ t('Все') }}
+          {% endif %}
+        </strong>
+      </span>
+
+      <span class="report-filter-pill">
+        {{ t('Записей') }}:
+        <strong>{{ preview.records_count }}</strong>
+      </span>
+
+      <span class="report-filter-pill">
+        {{ t('Техники') }}:
+        <strong>{{ preview.equipment_count }}</strong>
+      </span>
+    </div>
+  </div>
+</div>
         <div class="text-muted">{{ L_subtitle }}</div>
     </div>
     <div class="report-actions">
@@ -75,10 +274,10 @@
 
 <div class="report-note">{{ L_rule }}</div>
 
-<div class="card" style="margin-bottom:18px;">
+<div class="card report-export-card" style="margin-bottom:18px;">
     <div class="card-header">📊 {{ L_filters }}</div>
     <div class="card-body">
-        <form method="post" action="{{ url_for('report') }}" id="reportForm" onsubmit="return validateReportSelection()">
+        <form method="post" action="{{ url_for('report') }}" id="reportForm" onsubmit="return validateReportSelection()" class="report-filter-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
             <div class="report-filter-grid">
@@ -190,7 +389,7 @@
             <div class="stat-card"><div class="label">{{ L_idle }}</div><div class="value">{{ preview.idle_count }}</div></div>
         </div>
 
-        <div class="stats-grid" style="margin-bottom:16px;">
+        <div class="stats-grid report-kpi-grid" style="margin-bottom:16px;">
             <div class="stat-card"><div class="label">{{ t('Нақд') }}</div><div class="value cash">{{ preview.cash|fmt_sum }}</div></div>
             <div class="stat-card"><div class="label">{{ t('Пул кўчириш') }}</div><div class="value transfer">{{ preview.transfer|fmt_sum }}</div></div>
             <div class="stat-card"><div class="label">{{ t('Тизим корхонасида ишлади') }}</div><div class="value internal">{{ preview.internal|fmt_sum }}</div></div>
