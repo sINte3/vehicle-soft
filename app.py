@@ -1455,11 +1455,25 @@ def create_app():
     @module_required('transport')
     @login_required
     def ref_organizations():
+        # TASK_REF_001B_MARKER: reference diagnostics for organizations/work types/customers.
+        search_q = normalize_ref_text(request.args.get('q', ''))
         if current_user.is_admin:
-            orgs = Organization.query.order_by(Organization.sort_order).all()
+            base_orgs = Organization.query.order_by(Organization.sort_order).all()
         else:
-            orgs = get_user_orgs()
+            base_orgs = get_user_orgs()
+
+        orgs = list(base_orgs)
+        if search_q:
+            needle = search_q.casefold()
+            orgs = [
+                o for o in orgs
+                if needle in (o.name or '').casefold()
+                or needle in (o.short_name or '').casefold()
+            ]
+
         org_delete_info = {}
+        orgs_with_equipment = 0
+        orgs_without_equipment = 0
         for org in orgs:
             linked = {
                 'equipment_count': Equipment.query.filter_by(organization_id=org.id).count(),
@@ -1468,13 +1482,25 @@ def create_app():
                 'deficiency_count': Deficiency.query.filter_by(organization_id=org.id).count(),
                 'user_count': org.users.count() if hasattr(org, 'users') else 0,
             }
+            if linked['equipment_count']:
+                orgs_with_equipment += 1
+            else:
+                orgs_without_equipment += 1
             org_delete_info[org.id] = {
                 'can_delete': not any(linked.values()),
                 'linked_total': sum(linked.values()),
                 'linked': linked,
             }
+
+        org_stats = {
+            'total': len(base_orgs),
+            'filtered': len(orgs),
+            'with_equipment': orgs_with_equipment,
+            'without_equipment': orgs_without_equipment,
+        }
         return render_template('ref_organizations.html', organizations=orgs,
-                               org_delete_info=org_delete_info)
+                               org_delete_info=org_delete_info,
+                               org_stats=org_stats, search_q=search_q)
 
     @app.route('/ref/organizations/save', methods=['POST'])
     @module_required('transport')
@@ -1877,14 +1903,76 @@ def create_app():
     @module_required('transport')
     @login_required
     def ref_work_types():
-        work_types = WorkType.query.order_by(WorkType.name).all()
-        work_type_usage = {
+        search_q = normalize_ref_text(request.args.get('q', ''))
+        usage_filter = request.args.get('usage', 'all')
+
+        all_work_types = WorkType.query.order_by(WorkType.name).all()
+        all_usage = {
             wt.id: DailyRecord.query.filter(DailyRecord.work_type == wt.name).count()
-            for wt in work_types
+            for wt in all_work_types
         }
+
+        work_types = list(all_work_types)
+        if search_q:
+            needle = search_q.casefold()
+            work_types = [
+                wt for wt in work_types
+                if needle in (wt.name or '').casefold()
+                or needle in (wt.default_unit or '').casefold()
+            ]
+
+        if usage_filter == 'used':
+            work_types = [wt for wt in work_types if all_usage.get(wt.id, 0) > 0]
+        elif usage_filter == 'unused':
+            work_types = [wt for wt in work_types if all_usage.get(wt.id, 0) == 0]
+        else:
+            usage_filter = 'all'
+
+        name_groups = {}
+        for wt in all_work_types:
+            key = (wt.name or '').strip().casefold()
+            if key:
+                name_groups.setdefault(key, []).append(wt)
+
+        duplicate_examples = []
+        for key, rows in sorted(name_groups.items()):
+            if len(rows) > 1:
+                duplicate_examples.append({
+                    'name': rows[0].name,
+                    'count': len(rows),
+                    'labels': [
+                        f"id={x.id} / {x.default_unit or ''} / {x.default_price or 0:g}"
+                        for x in rows[:5]
+                    ],
+                })
+
+        wt_ref = {(wt.name or '').strip() for wt in all_work_types if (wt.name or '').strip()}
+        wt_used = {
+            (x[0] or '').strip()
+            for x in db.session.query(DailyRecord.work_type).distinct().all()
+            if (x[0] or '').strip()
+        }
+        missing_from_ref = sorted(wt_used - wt_ref)
+
+        work_type_stats = {
+            'total': len(all_work_types),
+            'filtered': len(work_types),
+            'used': sum(1 for wt in all_work_types if all_usage.get(wt.id, 0) > 0),
+            'unused': sum(1 for wt in all_work_types if all_usage.get(wt.id, 0) == 0),
+            'empty_unit': sum(1 for wt in all_work_types if not (wt.default_unit or '').strip()),
+            'zero_price': sum(1 for wt in all_work_types if (wt.default_price or 0) == 0),
+            'duplicate_name_groups': len(duplicate_examples),
+            'duplicate_examples': duplicate_examples[:8],
+            'missing_from_ref_count': len(missing_from_ref),
+            'missing_from_ref_examples': missing_from_ref[:10],
+        }
+
         return render_template('ref_work_types.html',
                                work_types=work_types,
-                               work_type_usage=work_type_usage)
+                               work_type_usage=all_usage,
+                               work_type_stats=work_type_stats,
+                               selected_usage=usage_filter,
+                               search_q=search_q)
 
     @app.route('/ref/work_types/save', methods=['POST'])
     @module_required('transport')
@@ -1950,14 +2038,60 @@ def create_app():
     @module_required('transport')
     @login_required
     def ref_customers():
-        customers = Customer.query.order_by(Customer.name).all()
-        customer_usage = {
+        search_q = normalize_ref_text(request.args.get('q', ''))
+        type_filter = request.args.get('customer_type', 'all')
+        usage_filter = request.args.get('usage', 'all')
+
+        all_customers = Customer.query.order_by(Customer.name).all()
+        all_usage = {
             customer.id: DailyRecord.query.filter(DailyRecord.customer == customer.name).count()
-            for customer in customers
+            for customer in all_customers
         }
+
+        customers = list(all_customers)
+        if type_filter in {'internal', 'external'}:
+            customers = [c for c in customers if c.customer_type == type_filter]
+        else:
+            type_filter = 'all'
+
+        if search_q:
+            needle = search_q.casefold()
+            customers = [c for c in customers if needle in (c.name or '').casefold()]
+
+        if usage_filter == 'used':
+            customers = [c for c in customers if all_usage.get(c.id, 0) > 0]
+        elif usage_filter == 'unused':
+            customers = [c for c in customers if all_usage.get(c.id, 0) == 0]
+        else:
+            usage_filter = 'all'
+
+        cust_ref = {(c.name or '').strip() for c in all_customers if (c.name or '').strip()}
+        cust_used = {
+            (x[0] or '').strip()
+            for x in db.session.query(DailyRecord.customer).distinct().all()
+            if (x[0] or '').strip()
+        }
+        missing_from_ref = sorted(cust_used - cust_ref)
+
+        customer_stats = {
+            'total': len(all_customers),
+            'filtered': len(customers),
+            'internal': sum(1 for c in all_customers if c.customer_type == 'internal'),
+            'external': sum(1 for c in all_customers if c.customer_type == 'external'),
+            'used': sum(1 for c in all_customers if all_usage.get(c.id, 0) > 0),
+            'unused': sum(1 for c in all_customers if all_usage.get(c.id, 0) == 0),
+            'daily_distinct': len(cust_used),
+            'missing_from_ref_count': len(missing_from_ref),
+            'missing_from_ref_examples': missing_from_ref[:15],
+        }
+
         return render_template('ref_customers.html',
                                customers=customers,
-                               customer_usage=customer_usage)
+                               customer_usage=all_usage,
+                               customer_stats=customer_stats,
+                               selected_customer_type=type_filter,
+                               selected_usage=usage_filter,
+                               search_q=search_q)
 
     @app.route('/ref/customers/save', methods=['POST'])
     @module_required('transport')

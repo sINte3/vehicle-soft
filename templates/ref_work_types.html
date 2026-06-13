@@ -9,11 +9,84 @@
     <h1>{{ t('Иш турлари') }}</h1>
 </div>
 
+<style>
+/* TASK_REF_001B_WORK_TYPES_TEMPLATE_MARKER */
+.ref-filter-card{margin-bottom:14px}
+.ref-stats-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.ref-stat-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow);padding:12px 14px}
+.ref-stat-card .label{color:var(--text2);font-size:12px;margin-bottom:4px}
+.ref-stat-card .value{font-size:22px;font-weight:800}
+.ref-quality-card{border-left:4px solid var(--warn);margin-bottom:14px}
+.ref-quality-list{margin:8px 0 0;padding-left:18px;color:var(--text2);font-size:13px}
+@media(max-width:1000px){.ref-stats-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:640px){.ref-stats-grid{grid-template-columns:1fr}}
+</style>
+
+<div class="card ref-filter-card">
+    <div class="card-body">
+        <form method="get" action="{{ url_for('ref_work_types') }}" class="form-inline" style="gap:12px; align-items:flex-end;">
+            <div class="form-group" style="margin-bottom:0; flex:1; min-width:240px;">
+                <label>{{ 'Поиск' if lang == 'ru' else 'Қидириш' }}</label>
+                <input type="text" name="q" value="{{ search_q or '' }}" placeholder="{{ 'название или единица' if lang == 'ru' else 'номи ёки ўлчов бирлиги' }}">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ 'Использование' if lang == 'ru' else 'Ишлатилиши' }}</label>
+                <select name="usage" style="min-width:150px;">
+                    <option value="all" {% if selected_usage == 'all' %}selected{% endif %}>{{ 'Все' if lang == 'ru' else 'Барчаси' }}</option>
+                    <option value="used" {% if selected_usage == 'used' %}selected{% endif %}>{{ 'Используемые' if lang == 'ru' else 'Ишлатилган' }}</option>
+                    <option value="unused" {% if selected_usage == 'unused' %}selected{% endif %}>{{ 'Неиспользуемые' if lang == 'ru' else 'Ишлатилмаган' }}</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm">{{ 'Искать' if lang == 'ru' else 'Қидириш' }}</button>
+            <a href="{{ url_for('ref_work_types') }}" class="btn btn-secondary btn-sm">{{ 'Сбросить' if lang == 'ru' else 'Тозалаш' }}</a>
+        </form>
+    </div>
+</div>
+
+<div class="ref-stats-grid">
+    <div class="ref-stat-card">
+        <div class="label">{{ 'Всего видов работ' if lang == 'ru' else 'Жами иш турлари' }}</div>
+        <div class="value">{{ work_type_stats.total }}</div>
+    </div>
+    <div class="ref-stat-card">
+        <div class="label">{{ 'Показано / используется' if lang == 'ru' else 'Кўрсатилди / ишлатилган' }}</div>
+        <div class="value">{{ work_type_stats.filtered }} / {{ work_type_stats.used }}</div>
+    </div>
+    <div class="ref-stat-card">
+        <div class="label">{{ 'Пустая ед. / нулевая цена' if lang == 'ru' else 'Бўш ўлчов / ноль нарх' }}</div>
+        <div class="value">{{ work_type_stats.empty_unit }} / {{ work_type_stats.zero_price }}</div>
+    </div>
+    <div class="ref-stat-card">
+        <div class="label">{{ 'Дубли / нет в справочнике' if lang == 'ru' else 'Дубликат / справочникда йўқ' }}</div>
+        <div class="value">{{ work_type_stats.duplicate_name_groups }} / {{ work_type_stats.missing_from_ref_count }}</div>
+    </div>
+</div>
+
+{% if work_type_stats.duplicate_name_groups or work_type_stats.missing_from_ref_count or work_type_stats.empty_unit or work_type_stats.zero_price %}
+<div class="card ref-quality-card">
+    <div class="card-body">
+        <strong>{{ 'Диагностика видов работ' if lang == 'ru' else 'Иш турлари диагностикаси' }}</strong>
+        <ul class="ref-quality-list">
+            <li>{{ 'Пустой default unit' if lang == 'ru' else 'Бўш default unit' }}: {{ work_type_stats.empty_unit }}</li>
+            <li>{{ 'Нулевая цена' if lang == 'ru' else 'Ноль нарх' }}: {{ work_type_stats.zero_price }}</li>
+            <li>{{ 'Дубли названий' if lang == 'ru' else 'Ном дубликатлари' }}: {{ work_type_stats.duplicate_name_groups }}</li>
+            {% for item in work_type_stats.duplicate_examples %}
+            <li><strong>{{ item.name }}</strong>: {{ item.count }}  {{ item.labels|join('; ') }}</li>
+            {% endfor %}
+            <li>{{ 'Значения в отчётах, отсутствующие в справочнике' if lang == 'ru' else 'Ҳисоботларда бор, справочникда йўқ қийматлар' }}: {{ work_type_stats.missing_from_ref_count }}</li>
+            {% for item in work_type_stats.missing_from_ref_examples %}
+            <li>{{ item }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>
+{% endif %}
+
 <div class="card" style="margin-bottom:20px;">
     <div class="card-header">{{ t('Иш турлари') }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('save_work_type') }}" class="form-inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group" style="flex:1;"><label>{{ t('Иш тури номи') }}</label>
                 <input type="text" name="name" placeholder="Шудгор / Чигит экиш / Борона мола..." required>
             </div>
@@ -31,7 +104,7 @@
 </div>
 
 <div class="card">
-    <div class="card-header">Жами: {{ work_types|length }} та</div>
+    <div class="card-header">Жами: {{ work_type_stats.filtered }} та</div>
     <div class="card-body" style="padding:0;">
         <table>
             <thead>
@@ -39,39 +112,41 @@
                     <th>{{ t('Иш тури') }}</th>
                     <th>{{ t('Ўлчов бирлиги') }}</th>
                     <th class="text-right">{{ t('Нарх') }}</th>
+                    <th>{{ 'Использование' if lang == 'ru' else 'Ишлатилиши' }}</th>
                     <th></th>
                 </tr>
             </thead>
             <tbody>
                 {% for wt in work_types %}
+                {% set usage_count = work_type_usage.get(wt.id, 0) %}
                 <tr id="wt-row-{{ wt.id }}">
                     <td><strong>{{ wt.name }}</strong></td>
-                    <td>{{ wt.default_unit }}</td>
+                    <td>{{ wt.default_unit or '' }}</td>
                     <td class="text-right">{{ wt.default_price|fmt_sum }}</td>
+                    <td>{{ usage_count }}</td>
                     <td>
-                        <button class="btn btn-secondary btn-sm" onclick="editWt({{ wt.id }})">✏</button>
-                        {% set usage_count = work_type_usage.get(wt.id, 0) %}
+                        <button class="btn btn-secondary btn-sm" onclick="editWt({{ wt.id }})">{{ "Изм." if lang == "ru" else "Ўзг." }}</button>
                         {% if usage_count %}
-                        <span class="idle-badge" title="{{ L_linked_tip }}">🔒 {{ L_used }} ({{ usage_count }})</span>
+                        <span class="idle-badge" title="{{ L_linked_tip }}">{{ L_used }} ({{ usage_count }})</span>
                         {% else %}
                         <form method="post" action="{{ url_for('delete_work_type', wid=wt.id) }}" style="display:inline;"
                               onsubmit="return confirm('{{ L_delete }}: {{ wt.name }}?')">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button class="btn btn-danger btn-sm" type="submit" title="{{ L_delete }}">🗑</button>
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-danger btn-sm" type="submit" title="{{ L_delete }}">{{ L_delete }}</button>
                         </form>
                         {% endif %}
                     </td>
                 </tr>
                 <tr id="wt-edit-{{ wt.id }}" style="display:none;">
-                    <td colspan="4">
+                    <td colspan="5">
                         <form method="post" action="{{ url_for('save_work_type') }}" class="form-inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="id" value="{{ wt.id }}">
                             <div class="form-group" style="flex:1;"><label>{{ t('Иш тури номи') }}</label>
                                 <input type="text" name="name" value="{{ wt.name }}" required>
                             </div>
                             <div class="form-group"><label>{{ t('Дефолт ўлчов') }}</label>
-                                <input type="text" name="default_unit" value="{{ wt.default_unit }}" style="width:120px;">
+                                <input type="text" name="default_unit" value="{{ wt.default_unit or '' }}" style="width:120px;">
                             </div>
                             <div class="form-group"><label>{{ t('Дефолт нарх') }}</label>
                                 <input type="number" name="default_price" value="{{ wt.default_price|int if wt.default_price else 0 }}" min="0" step="0.01" style="width:140px;">

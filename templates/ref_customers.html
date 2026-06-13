@@ -4,15 +4,92 @@
 {% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
 {% set L_used = 'Используется' if lang == 'ru' else 'Ишлатилган' %}
 {% set L_linked_tip = 'Используется в ежедневных отчётах. Удаление заблокировано для сохранения истории.' if lang == 'ru' else 'Кунлик ҳисоботларда ишлатилган. Тарихни сақлаш учун ўчириш блокланган.' %}
+
 <div class="page-header">
     <h1>{{ t('Буюртмачилар') }}</h1>
 </div>
+
+<style>
+/* TASK_REF_001B_CUSTOMERS_TEMPLATE_MARKER */
+.ref-filter-card{margin-bottom:14px}
+.ref-stats-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.ref-stat-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow);padding:12px 14px}
+.ref-stat-card .label{color:var(--text2);font-size:12px;margin-bottom:4px}
+.ref-stat-card .value{font-size:22px;font-weight:800}
+.ref-quality-card{border-left:4px solid var(--warn);margin-bottom:14px}
+.ref-quality-list{margin:8px 0 0;padding-left:18px;color:var(--text2);font-size:13px;max-height:220px;overflow:auto}
+@media(max-width:1000px){.ref-stats-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:640px){.ref-stats-grid{grid-template-columns:1fr}}
+</style>
+
+<div class="card ref-filter-card">
+    <div class="card-body">
+        <form method="get" action="{{ url_for('ref_customers') }}" class="form-inline" style="gap:12px; align-items:flex-end;">
+            <div class="form-group" style="margin-bottom:0; flex:1; min-width:240px;">
+                <label>{{ 'Поиск' if lang == 'ru' else 'Қидириш' }}</label>
+                <input type="text" name="q" value="{{ search_q or '' }}" placeholder="{{ 'название заказчика' if lang == 'ru' else 'буюртмачи номи' }}">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ t('Тури') }}</label>
+                <select name="customer_type" style="min-width:140px;">
+                    <option value="all" {% if selected_customer_type == 'all' %}selected{% endif %}>{{ 'Все' if lang == 'ru' else 'Барчаси' }}</option>
+                    <option value="external" {% if selected_customer_type == 'external' %}selected{% endif %}>{{ t('Ташқи') }}</option>
+                    <option value="internal" {% if selected_customer_type == 'internal' %}selected{% endif %}>{{ t('Ички') }}</option>
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ 'Использование' if lang == 'ru' else 'Ишлатилиши' }}</label>
+                <select name="usage" style="min-width:150px;">
+                    <option value="all" {% if selected_usage == 'all' %}selected{% endif %}>{{ 'Все' if lang == 'ru' else 'Барчаси' }}</option>
+                    <option value="used" {% if selected_usage == 'used' %}selected{% endif %}>{{ 'Используемые' if lang == 'ru' else 'Ишлатилган' }}</option>
+                    <option value="unused" {% if selected_usage == 'unused' %}selected{% endif %}>{{ 'Неиспользуемые' if lang == 'ru' else 'Ишлатилмаган' }}</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm">{{ 'Искать' if lang == 'ru' else 'Қидириш' }}</button>
+            <a href="{{ url_for('ref_customers') }}" class="btn btn-secondary btn-sm">{{ 'Сбросить' if lang == 'ru' else 'Тозалаш' }}</a>
+        </form>
+    </div>
+</div>
+
+<div class="ref-stats-grid">
+    <div class="ref-stat-card">
+        <div class="label">{{ 'В справочнике' if lang == 'ru' else 'Справочникда' }}</div>
+        <div class="value">{{ customer_stats.total }}</div>
+    </div>
+    <div class="ref-stat-card">
+        <div class="label">{{ 'Показано / используется' if lang == 'ru' else 'Кўрсатилди / ишлатилган' }}</div>
+        <div class="value">{{ customer_stats.filtered }} / {{ customer_stats.used }}</div>
+    </div>
+    <div class="ref-stat-card">
+        <div class="label">{{ 'Внутр. / внешн.' if lang == 'ru' else 'Ички / ташқи' }}</div>
+        <div class="value">{{ customer_stats.internal }} / {{ customer_stats.external }}</div>
+    </div>
+    <div class="ref-stat-card">
+        <div class="label">{{ 'В отчётах / нет в справочнике' if lang == 'ru' else 'Ҳисоботда / справочникда йўқ' }}</div>
+        <div class="value">{{ customer_stats.daily_distinct }} / {{ customer_stats.missing_from_ref_count }}</div>
+    </div>
+</div>
+
+{% if customer_stats.missing_from_ref_count %}
+<div class="card ref-quality-card">
+    <div class="card-body">
+        <strong>{{ 'Диагностика заказчиков' if lang == 'ru' else 'Буюртмачилар диагностикаси' }}</strong>
+        <ul class="ref-quality-list">
+            <li>{{ 'Уникальных customer-значений в отчётах' if lang == 'ru' else 'Ҳисоботлардаги unique customer қийматлари' }}: {{ customer_stats.daily_distinct }}</li>
+            <li>{{ 'Отсутствуют в справочнике' if lang == 'ru' else 'Справочникда йўқ' }}: {{ customer_stats.missing_from_ref_count }}</li>
+            {% for item in customer_stats.missing_from_ref_examples %}
+            <li>{{ item }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>
+{% endif %}
 
 <div class="card" style="margin-bottom:20px;">
     <div class="card-header">{{ t('Буюртмачилар') }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('save_customer') }}" class="form-inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group" style="margin-bottom:0; flex:1;">
                 <label>{{ t('Буюртмачи номи') }}</label>
                 <input type="text" name="name" required placeholder="Фермер хўжалиги номи">
@@ -30,34 +107,44 @@
 </div>
 
 <div class="card">
+    <div class="card-header">Жами: {{ customer_stats.filtered }} та</div>
     <table>
-        <thead><tr><th>№</th><th>{{ t('Буюртмачи номи') }}</th><th>{{ t('Тури') }}</th><th></th></tr></thead>
+        <thead>
+            <tr>
+                <th></th>
+                <th>{{ t('Буюртмачи номи') }}</th>
+                <th>{{ t('Тури') }}</th>
+                <th>{{ 'Использование' if lang == 'ru' else 'Ишлатилиши' }}</th>
+                <th></th>
+            </tr>
+        </thead>
         <tbody>
         {% for c in customers %}
+        {% set usage_count = customer_usage.get(c.id, 0) %}
         <tr>
             <td>{{ loop.index }}</td>
             <td>
                 <form method="post" action="{{ url_for('save_customer') }}" class="form-inline" style="gap:6px;">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="id" value="{{ c.id }}">
                     <input type="text" name="name" value="{{ c.name }}" required style="width:300px;">
                     <select name="customer_type" style="width:130px;">
                         <option value="external" {% if c.customer_type == 'external' %}selected{% endif %}>{{ t('Ташқи') }}</option>
                         <option value="internal" {% if c.customer_type == 'internal' %}selected{% endif %}>{{ t('Ички') }}</option>
                     </select>
-                    <button type="submit" class="btn btn-sm btn-secondary">💾</button>
+                    <button type="submit" class="btn btn-sm btn-secondary">{{ 'Сохранить' if lang == 'ru' else 'Сақлаш' }}</button>
                 </form>
             </td>
-            <td></td>
+            <td>{{ t('Ички') if c.customer_type == 'internal' else t('Ташқи') }}</td>
+            <td>{{ usage_count }}</td>
             <td>
-                {% set usage_count = customer_usage.get(c.id, 0) %}
                 {% if usage_count %}
-                <span class="idle-badge" title="{{ L_linked_tip }}">🔒 {{ L_used }} ({{ usage_count }})</span>
+                <span class="idle-badge" title="{{ L_linked_tip }}">{{ L_used }} ({{ usage_count }})</span>
                 {% else %}
                 <form method="post" action="{{ url_for('delete_customer', cid=c.id) }}" style="display:inline;"
                       onsubmit="return confirm('{{ L_delete }}: {{ c.name }}?')">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-sm btn-danger" title="{{ L_delete }}">🗑</button>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-danger" title="{{ L_delete }}">{{ L_delete }}</button>
                 </form>
                 {% endif %}
             </td>

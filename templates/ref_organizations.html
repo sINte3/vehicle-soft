@@ -4,18 +4,67 @@
 {% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
 {% set L_used = 'Используется' if lang == 'ru' else 'Ишлатилган' %}
 {% set L_linked_tip = 'Есть связанные данные. Удаление заблокировано для сохранения истории.' if lang == 'ru' else 'Боғланган маълумотлар мавжуд. Тарихни сақлаш учун ўчириш блокланган.' %}
+
 <div class="page-header">
     <h1>{{ t('Ташкилотлар') }}</h1>
+</div>
+
+<style>
+/* TASK_REF_001B_ORG_TEMPLATE_MARKER */
+.ref-filter-card{margin-bottom:14px}
+.ref-stats-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.ref-stat-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow);padding:12px 14px}
+.ref-stat-card .label{color:var(--text2);font-size:12px;margin-bottom:4px}
+.ref-stat-card .value{font-size:22px;font-weight:800}
+.ref-linked-count{color:var(--text2);font-size:12px;margin-top:4px}
+@media(max-width:1000px){.ref-stats-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:640px){.ref-stats-grid{grid-template-columns:1fr}}
+</style>
+
+<div class="card ref-filter-card">
+    <div class="card-body">
+        <form method="get" action="{{ url_for('ref_organizations') }}" class="form-inline" style="gap:12px; align-items:flex-end;">
+            <div class="form-group" style="margin-bottom:0; flex:1; min-width:240px;">
+                <label>{{ 'Поиск' if lang == 'ru' else 'Қидириш' }}</label>
+                <input type="text" name="q" value="{{ search_q or '' }}" placeholder="{{ 'название или короткое имя' if lang == 'ru' else 'номи ёки қисқа номи' }}">
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm">{{ 'Искать' if lang == 'ru' else 'Қидириш' }}</button>
+            <a href="{{ url_for('ref_organizations') }}" class="btn btn-secondary btn-sm">{{ 'Сбросить' if lang == 'ru' else 'Тозалаш' }}</a>
+        </form>
+    </div>
+</div>
+
+<div class="ref-stats-grid">
+    <div class="ref-stat-card">
+        <div class="label">{{ 'Всего организаций' if lang == 'ru' else 'Жами ташкилотлар' }}</div>
+        <div class="value">{{ org_stats.total }}</div>
+    </div>
+    <div class="ref-stat-card">
+        <div class="label">{{ 'Показано по фильтру' if lang == 'ru' else 'Фильтр бўйича' }}</div>
+        <div class="value">{{ org_stats.filtered }}</div>
+    </div>
+    <div class="ref-stat-card">
+        <div class="label">{{ 'С техникой' if lang == 'ru' else 'Техника бор' }}</div>
+        <div class="value">{{ org_stats.with_equipment }}</div>
+    </div>
+    <div class="ref-stat-card">
+        <div class="label">{{ 'Без техники' if lang == 'ru' else 'Техника йўқ' }}</div>
+        <div class="value">{{ org_stats.without_equipment }}</div>
+    </div>
 </div>
 
 <div class="card" style="margin-bottom:20px;">
     <div class="card-header">{{ t('Янги ташкилот') }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('save_organization') }}" class="form-inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <div class="form-group" style="margin-bottom:0; flex:1;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group" style="margin-bottom:0; flex:1; min-width:260px;">
                 <label>{{ t('Ташкилот номи') }}</label>
                 <input type="text" name="name" required placeholder="Когон ПТЗ">
+            </div>
+            <div class="form-group" style="margin-bottom:0; min-width:180px;">
+                <label>{{ 'Короткое имя' if lang == 'ru' else 'Қисқа номи' }}</label>
+                <input type="text" name="short_name" placeholder="Когон">
             </div>
             <button type="submit" class="btn btn-primary">{{ t('Қўшиш') }}</button>
         </form>
@@ -24,30 +73,42 @@
 
 <div class="card">
     <table>
-        <thead><tr><th>№</th><th>{{ t('Ташкилот номи') }}</th><th>{{ t('Техника сони:') }}</th><th></th></tr></thead>
+        <thead>
+            <tr>
+                <th></th>
+                <th>{{ t('Ташкилот номи') }}</th>
+                <th>{{ 'Короткое имя' if lang == 'ru' else 'Қисқа номи' }}</th>
+                <th>{{ t('Техника сони:') }}</th>
+                <th>{{ 'Связи' if lang == 'ru' else 'Боғланишлар' }}</th>
+                <th></th>
+            </tr>
+        </thead>
         <tbody>
         {% for org in organizations %}
+        {% set del_info = org_delete_info.get(org.id) %}
         <tr>
             <td>{{ loop.index }}</td>
-            <td>
+            <td colspan="2">
                 <form method="post" action="{{ url_for('save_organization') }}" class="form-inline" style="gap:6px;">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="id" value="{{ org.id }}">
-                    <input type="text" name="name" value="{{ org.name }}" required style="width:280px;">
-                    <button type="submit" class="btn btn-sm btn-secondary">💾</button>
+                    <input type="text" name="name" value="{{ org.name }}" required style="width:260px;">
+                    <input type="text" name="short_name" value="{{ org.short_name or '' }}" placeholder="{{ 'Короткое имя' if lang == 'ru' else 'Қисқа номи' }}" style="width:160px;">
+                    <button type="submit" class="btn btn-sm btn-secondary">{{ 'Сохранить' if lang == 'ru' else 'Сақлаш' }}</button>
                 </form>
             </td>
-            <td>{{ org.equipment.count() }}</td>
+            <td>{{ del_info.linked.equipment_count if del_info else org.equipment.count() }}</td>
+            <td>{{ del_info.linked_total if del_info else 0 }}</td>
             <td>
-                {% set del_info = org_delete_info.get(org.id) %}
                 {% if del_info and del_info.can_delete %}
                 <form method="post" action="{{ url_for('delete_organization', oid=org.id) }}" style="display:inline;"
                       onsubmit="return confirm('{{ L_delete }}: {{ org.name }}?')">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-sm btn-danger" title="{{ L_delete }}">🗑</button>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-danger" title="{{ L_delete }}">{{ L_delete }}</button>
                 </form>
                 {% else %}
-                <span class="idle-badge" title="{{ L_linked_tip }}">🔒 {{ L_used }}</span>
+                <span class="idle-badge" title="{{ L_linked_tip }}">{{ L_used }}</span>
+                {% if del_info and del_info.linked_total %}<div class="ref-linked-count">{{ del_info.linked_total }}</div>{% endif %}
                 {% endif %}
             </td>
         </tr>
