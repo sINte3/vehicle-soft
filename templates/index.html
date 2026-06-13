@@ -51,6 +51,9 @@
             <div><b>{{ dashboard.transport.idle_rows }}</b><span>{{ 'простой/без работ' if lang == 'ru' else 'бекор/ишсиз' }}</span></div>
             <div><b>{{ dashboard.transport.equipment_working }}</b><span>{{ 'техника работала' if lang == 'ru' else 'техника ишлади' }}</span></div>
             <div><b>{{ dashboard.transport.amount|fmt_sum or '0' }}</b><span>{{ 'сумма' if lang == 'ru' else 'сумма' }}</span></div>
+                    <div class="dash-quick-links">
+                        <a href="{{ url_for('report') }}">{{ 'Основной отчёт' if lang == 'ru' else 'Асосий ҳисобот' }}</a>
+                    </div>
         </div>
     </div>
 
@@ -69,6 +72,16 @@
             <div><b>{{ dashboard.fuel.latest_sync_text or '—' }}</b><span>{{ 'последняя синхронизация' if lang == 'ru' else 'охирги синхронизация' }}</span></div>
             <div><b>{{ dashboard.fuel.warnings }}</b><span>{{ L_warnings|lower }}</span></div>
             <div><b>{{ dashboard.fuel.danger_warnings }}</b><span>{{ 'критические' if lang == 'ru' else 'критик' }}</span></div>
+                    <div class="dash-quick-links">
+                        <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Реестр' if lang == 'ru' else 'Реестр' }}</a>
+                        <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat(), status='new') }}">{{ 'Новые' if lang == 'ru' else 'Янги' }}</a>
+                        <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat(), severity='danger') }}">{{ 'Критические' if lang == 'ru' else 'Критик' }}</a>
+                    </div>
+                    <div class="dash-quick-links">
+                        <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Отчёт' if lang == 'ru' else 'Ҳисобот' }}</a>
+                        <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Предупреждения' if lang == 'ru' else 'Огоҳлантиришлар' }}</a>
+                        <a href="{{ url_for('fuel.transactions') }}">{{ 'Транзакции' if lang == 'ru' else 'Транзакциялар' }}</a>
+                    </div>
         </div>
         {% else %}
         <div class="dash-no-access">{{ L_no_access }}</div>
@@ -83,7 +96,14 @@
             {% endif %}
         </div>
         {% if dashboard.module_access.fuel %}
-        <div class="dash-main-value">{{ dashboard.fuel.warnings }}</div>
+        {% if dashboard.fuel.danger_warnings %}
+                <div class="dash-severity-banner danger">{{ 'Есть критические предупреждения  требуется проверка' if lang == 'ru' else 'Критик огоҳлантиришлар бор  текшириш керак' }}</div>
+                {% elif dashboard.fuel.warnings %}
+                <div class="dash-severity-banner warning">{{ 'Есть предупреждения  проверьте реестр' if lang == 'ru' else 'Огоҳлантиришлар бор  реестрни текширинг' }}</div>
+                {% else %}
+                <div class="dash-severity-banner ok">{{ 'Критических предупреждений нет' if lang == 'ru' else 'Критик огоҳлантиришлар йўқ' }}</div>
+                {% endif %}
+                <div class="dash-main-value">{{ dashboard.fuel.warnings }}</div>
         <div class="dash-main-label">{{ 'активных предупреждений по расчёту' if lang == 'ru' else 'ҳисобланган фаол огоҳлантиришлар' }}</div>
         <div class="dash-metrics">
             <div><b>{{ dashboard.fuel.review_new }}</b><span>{{ 'новые' if lang == 'ru' else 'янги' }}</span></div>
@@ -109,6 +129,11 @@
             <div><b>{{ dashboard.spare.submitted }}</b><span>{{ 'отправлено' if lang == 'ru' else 'юборилган' }}</span></div>
             <div><b>{{ dashboard.spare.approved }}</b><span>{{ 'утверждено' if lang == 'ru' else 'тасдиқланган' }}</span></div>
             <div><b>{{ dashboard.spare.rejected }}</b><span>{{ 'отклонено' if lang == 'ru' else 'рад этилган' }}</span></div>
+                    <div class="dash-quick-links">
+                        <a href="{{ url_for('spare_parts.index') }}">{{ 'Все заявки' if lang == 'ru' else 'Барча сўровлар' }}</a>
+                        <a href="{{ url_for('spare_parts.index', status='submitted') }}">{{ 'На рассмотрении' if lang == 'ru' else 'Кўриб чиқишда' }}</a>
+                        <a href="{{ url_for('spare_parts.new_request') }}">{{ 'Новая заявка' if lang == 'ru' else 'Янги сўров' }}</a>
+                    </div>
         </div>
         {% else %}
         <div class="dash-no-access">{{ L_no_access }}</div>
@@ -126,6 +151,11 @@
             <div><b>{{ dashboard.wialon.unmapped }}</b><span>{{ 'не связано' if lang == 'ru' else 'боғланмаган' }}</span></div>
             <div><b>{{ dashboard.wialon.skipped }}</b><span>{{ 'нет в системе' if lang == 'ru' else 'тизимда йўқ' }}</span></div>
             <div><b>{{ dashboard.wialon.total }}</b><span>{{ 'всего' if lang == 'ru' else 'жами' }}</span></div>
+                    <div class="dash-quick-links">
+                        <a href="{{ url_for('wialon_mapping_list') }}">{{ 'Mapping' if lang == 'ru' else 'Mapping' }}</a>
+                        <a href="{{ url_for('wialon_auto_match') }}">{{ 'Авто-маппинг' if lang == 'ru' else 'Авто-маппинг' }}</a>
+                        <a href="{{ url_for('wialon_report') }}">{{ 'Отчёт' if lang == 'ru' else 'Ҳисобот' }}</a>
+                    </div>
         </div>
         {% else %}
         <div class="dash-no-access">{{ L_no_access }}</div>
@@ -492,6 +522,62 @@
 .dash-audit-row strong { display:block; font-size:13px; }
 .dash-audit-row span { display:block; color:var(--text2); font-size:12px; margin-top:2px; }
 .dash-audit-meta { color:var(--text2); font-size:11px; white-space:nowrap; text-align:right; }
+
+/* DASH002B_MARKER: dashboard drill-down links and severity polish */
+.dash-quick-links {
+    grid-column:1 / -1;
+    display:flex;
+    gap:6px;
+    flex-wrap:wrap;
+    margin-top:2px;
+}
+.dash-metrics .dash-quick-links {
+    background:transparent;
+    border:0;
+    padding:0;
+}
+.dash-quick-links a {
+    display:inline-flex;
+    align-items:center;
+    gap:4px;
+    padding:5px 8px;
+    border:1px solid var(--border);
+    border-radius:999px;
+    background:var(--surface);
+    color:var(--accent);
+    text-decoration:none;
+    font-size:11px;
+    font-weight:700;
+    white-space:nowrap;
+}
+.dash-quick-links a:hover {
+    border-color:var(--accent);
+    background:var(--accent-light);
+}
+.dash-severity-banner {
+    grid-column:1 / -1;
+    border-radius:var(--radius);
+    padding:8px 10px;
+    margin-bottom:8px;
+    font-size:12px;
+    font-weight:700;
+}
+.dash-severity-banner.danger {
+    background:var(--danger-light);
+    color:var(--danger);
+    border:1px solid rgba(220,53,69,.25);
+}
+.dash-severity-banner.warning {
+    background:var(--warn-light);
+    color:var(--warn);
+    border:1px solid rgba(255,193,7,.35);
+}
+.dash-severity-banner.ok {
+    background:var(--accent-light);
+    color:var(--accent);
+    border:1px solid rgba(40,167,69,.25);
+}
+
 @media (max-width:1000px) { .dash-grid, .dash-grid.secondary { grid-template-columns:1fr; } .dash-hero { flex-direction:column; } .dash-actions { justify-content:flex-start; } .dash-audit-row { flex-direction:column; } .dash-audit-meta { text-align:left; white-space:normal; } }
 .date-mode-tabs { display:flex; gap:4px; }
 .mode-btn { padding:8px 16px; border:1px solid var(--border); border-radius:6px;
