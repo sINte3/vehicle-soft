@@ -11,6 +11,22 @@
     <h1>{{ t('Техникалар') }}</h1>
 </div>
 
+<style>
+/* TASK_REF_001A_TEMPLATE_MARKER */
+.ref-stats-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.ref-stat-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow);padding:12px 14px}
+.ref-stat-card .label{color:var(--text2);font-size:12px;margin-bottom:4px}
+.ref-stat-card .value{font-size:22px;font-weight:800}
+.ref-quality-card{border-left:4px solid var(--warn);margin-bottom:14px}
+.ref-quality-list{margin:8px 0 0;padding-left:18px;color:var(--text2);font-size:13px}
+.ref-eq-inactive{opacity:.68;background:var(--surface2)}
+.ref-badge{display:inline-flex;border-radius:999px;padding:2px 7px;font-size:11px;font-weight:700;margin-top:3px}
+.ref-badge.disabled{background:var(--danger-light);color:var(--danger)}
+.ref-link-count{color:var(--text2);font-size:11px;margin-bottom:4px}
+@media(max-width:1000px){.ref-stats-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:640px){.ref-stats-grid{grid-template-columns:1fr}}
+</style>
+
 <div class="card" style="margin-bottom:20px;">
     <div class="card-body">
         <form method="get" action="{{ url_for('ref_equipment') }}" class="form-inline" style="flex-wrap:wrap; gap:12px; align-items:flex-end;">
@@ -61,10 +77,45 @@
                     </div>
                 </div>
             </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ 'Статус' if lang == 'ru' else 'Ҳолат' }}</label>
+                <select name="status" style="min-width:150px;">
+                    <option value="all" {% if selected_status == 'all' %}selected{% endif %}>{{ 'Все' if lang == 'ru' else 'Барчаси' }}</option>
+                    <option value="active" {% if selected_status == 'active' %}selected{% endif %}>{{ 'Активные' if lang == 'ru' else 'Фаол' }}</option>
+                    <option value="inactive" {% if selected_status == 'inactive' %}selected{% endif %}>{{ 'Отключённые' if lang == 'ru' else 'Фаол эмас' }}</option>
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0; min-width:220px; flex:1;">
+                <label>{{ 'Поиск' if lang == 'ru' else 'Қидириш' }}</label>
+                <input type="text" name="q" value="{{ search_q or '' }}" placeholder="{{ 'модель, госномер, тип, организация' if lang == 'ru' else 'модел, давлат рақами, тури, ташкилот' }}">
+            </div>
             <button type="submit" class="btn btn-primary btn-sm">{{ t('Қидириш') }}</button>
+            <a href="{{ url_for('ref_equipment') }}" class="btn btn-secondary btn-sm">{{ 'Сбросить' if lang == 'ru' else 'Тозалаш' }}</a>
         </form>
     </div>
 </div>
+
+<div class="ref-stats-grid">
+    <div class="ref-stat-card"><div class="label">{{ 'Всего в доступных организациях' if lang == 'ru' else 'Рухсатли ташкилотларда жами' }}</div><div class="value">{{ equipment_stats.total }}</div></div>
+    <div class="ref-stat-card"><div class="label">{{ 'Активные / отключённые' if lang == 'ru' else 'Фаол / фаол эмас' }}</div><div class="value">{{ equipment_stats.active }} / {{ equipment_stats.inactive }}</div></div>
+    <div class="ref-stat-card"><div class="label">{{ 'Показано по фильтру' if lang == 'ru' else 'Фильтр бўйича кўрсатилди' }}</div><div class="value">{{ equipment_stats.filtered }}</div></div>
+    <div class="ref-stat-card"><div class="label">{{ 'Пустой default unit' if lang == 'ru' else 'Бўш default unit' }}</div><div class="value">{{ equipment_stats.default_unit_empty }}</div></div>
+</div>
+
+{% if equipment_stats.duplicate_plate_groups or equipment_stats.default_price_zero %}
+<div class="card ref-quality-card">
+    <div class="card-body">
+        <strong>{{ 'Диагностика справочника' if lang == 'ru' else 'Справочник диагностикаси' }}</strong>
+        <ul class="ref-quality-list">
+            <li>{{ 'Нулевой default price' if lang == 'ru' else 'Ноль default price' }}: {{ equipment_stats.default_price_zero }}</li>
+            <li>{{ 'Группы повторяющихся госномеров после нормализации' if lang == 'ru' else 'Нормаллаштирилгандан кейин такрорий давлат рақамлари гуруҳлари' }}: {{ equipment_stats.duplicate_plate_groups }}</li>
+            {% for item in equipment_stats.duplicate_plate_examples %}
+            <li><strong>{{ item.plate_norm }}</strong>: {{ item.count }}  {{ item.labels|join('; ') }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>
+{% endif %}
 
 <div class="card" style="margin-bottom:20px;">
     <div class="card-header">{{ t('Техника номи') }}</div>
@@ -113,7 +164,7 @@
     <div class="card-header">
         <div style="display:flex; justify-content:space-between; align-items:center;">
             <span>{{ t('Жами') }}: <strong>{{ total_count }}</strong> {{ t('та') }}</span>
-            <a href="{{ url_for('export_equipment', org_id=selected_org_id or '', cat_codes=selected_cats, eq_types=selected_eq_types) }}"
+            <a href="{{ url_for('export_equipment', org_id=selected_org_id or '', cat_codes=selected_cats, eq_types=selected_eq_types, status=selected_status, q=search_q) }}"
                class="btn btn-secondary btn-sm">📥 Excel</a>
         </div>
     </div>
@@ -134,18 +185,19 @@
             </thead>
             <tbody>
                 {% for eq in equipment %}
-                <tr id="eq-row-{{ eq.id }}">
+                <tr id="eq-row-{{ eq.id }}" class="{% if not eq.is_active %}ref-eq-inactive{% endif %}">
                     <td class="text-center text-sm">{{ loop.index }}</td>
                     <td class="text-sm">{{ eq.organization.short_name or eq.organization.name }}</td>
                     <td><span class="text-sm">{{ eq.category_display }}</span></td>
                     <td class="text-sm text-muted">{{ eq.eq_type }}</td>
-                    <td><strong>{{ eq.name }}</strong></td>
+                    <td><strong>{{ eq.name }}</strong>{% if not eq.is_active %}<div><span class="ref-badge disabled">{{ L_disabled }}</span></div>{% endif %}</td>
                     <td class="text-sm">{{ eq.plate }}</td>
-                    <td class="text-sm">{{ eq.default_unit }}</td>
+                    <td class="text-sm">{{ eq.default_unit or '' }}</td>
                     <td class="text-right text-sm">{{ eq.default_price|fmt_sum }}</td>
                     <td>
                         <button class="btn btn-secondary btn-sm" onclick="editEq({{ eq.id }})">✏</button>
                         {% set del_info = equipment_delete_info.get(eq.id) %}
+                        {% if del_info and del_info.linked_total %}<div class="ref-link-count"> {{ del_info.linked_total }}</div>{% endif %}
                         {% if del_info and del_info.can_delete %}
                         <form method="post" action="{{ url_for('delete_equipment', eid=eq.id) }}" style="display:inline;"
                               onsubmit="return confirm('{{ L_delete }}: {{ eq.name }} {{ eq.plate }}?')">

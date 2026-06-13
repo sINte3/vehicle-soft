@@ -48,7 +48,7 @@ from sec003a_ext import (
     require_temp_password_change, password_is_strong_enough,
     model_snapshot, diff_dict, audit_action_name,
 )
-from sqlalchemy import text
+from sqlalchemy import text, or_
 from sqlite_runtime import enable_sqlite_wal
 
 
@@ -1546,6 +1546,8 @@ def create_app():
         org_id    = request.args.get('org_id', type=int)
         cat_codes = request.args.getlist('cat_codes')
         eq_types  = request.args.getlist('eq_types')
+        status_filter = request.args.get('status', 'all')
+        search_q = normalize_ref_text(request.args.get('q', ''))
         orgs      = get_user_orgs()
         user_org_ids = [o.id for o in orgs]
         q = (Equipment.query.join(Organization)
@@ -1558,8 +1560,60 @@ def create_app():
             q = q.filter(Equipment.category.in_(cat_codes))
         if eq_types:
             q = q.filter(Equipment.eq_type.in_(eq_types))
+        # TASK_REF_001A_MARKER: reference equipment search/status filters and diagnostics.
+        if status_filter == 'active':
+            q = q.filter(Equipment.is_active.is_(True))
+        elif status_filter == 'inactive':
+            q = q.filter(Equipment.is_active.is_(False))
+        else:
+            status_filter = 'all'
+        if search_q:
+            like = f"%{search_q}%"
+            q = q.filter(or_(
+                Equipment.name.ilike(like),
+                Equipment.plate.ilike(like),
+                Equipment.eq_type.ilike(like),
+                Organization.name.ilike(like),
+                Organization.short_name.ilike(like),
+            ))
         equipment = q.all()
         total_count = len(equipment)
+
+        scoped_equipment = Equipment.query.filter(Equipment.organization_id.in_(user_org_ids)).all()
+
+        def _plate_norm(value):
+            return (value or '').strip().replace(' ', '').replace('-', '').upper()
+
+        plate_groups = {}
+        for item in scoped_equipment:
+            norm = _plate_norm(item.plate)
+            if norm:
+                plate_groups.setdefault(norm, []).append(item)
+
+        duplicate_plate_examples = []
+        for norm, items in sorted(plate_groups.items()):
+            if len(items) <= 1:
+                continue
+            duplicate_plate_examples.append({
+                'plate_norm': norm,
+                'count': len(items),
+                'labels': [
+                    f"{x.name} / {x.plate} / {(x.organization.short_name or x.organization.name) if x.organization else ''}"
+                    for x in items[:5]
+                ],
+            })
+
+        equipment_stats = {
+            'total': len(scoped_equipment),
+            'active': sum(1 for x in scoped_equipment if bool(x.is_active)),
+            'inactive': sum(1 for x in scoped_equipment if not bool(x.is_active)),
+            'filtered': total_count,
+            'default_unit_empty': sum(1 for x in scoped_equipment if not (x.default_unit or '').strip()),
+            'default_price_zero': sum(1 for x in scoped_equipment if (x.default_price or 0) == 0),
+            'duplicate_plate_groups': len(duplicate_plate_examples),
+            'duplicate_plate_examples': duplicate_plate_examples[:5],
+        }
+
         all_eq_types = sorted(set(
             e[0] for e in Equipment.query
             .filter(Equipment.organization_id.in_(user_org_ids))
@@ -1587,6 +1641,8 @@ def create_app():
             selected_org_id=org_id, categories=CATEGORIES,
             selected_cats=cat_codes, eq_types=all_eq_types,
             selected_eq_types=eq_types, total_count=total_count,
+            selected_status=status_filter, search_q=search_q,
+            equipment_stats=equipment_stats,
             equipment_delete_info=equipment_delete_info)
 
     @app.route('/ref/equipment/export')
@@ -1599,6 +1655,8 @@ def create_app():
         org_id    = request.args.get('org_id', type=int)
         cat_codes = request.args.getlist('cat_codes')
         eq_types  = request.args.getlist('eq_types')
+        status_filter = request.args.get('status', 'all')
+        search_q = normalize_ref_text(request.args.get('q', ''))
         orgs      = get_user_orgs()
         user_org_ids = [o.id for o in orgs]
         q = (Equipment.query.join(Organization)
@@ -1611,6 +1669,21 @@ def create_app():
             q = q.filter(Equipment.category.in_(cat_codes))
         if eq_types:
             q = q.filter(Equipment.eq_type.in_(eq_types))
+        if status_filter == 'active':
+            q = q.filter(Equipment.is_active.is_(True))
+        elif status_filter == 'inactive':
+            q = q.filter(Equipment.is_active.is_(False))
+        else:
+            status_filter = 'all'
+        if search_q:
+            like = f"%{search_q}%"
+            q = q.filter(or_(
+                Equipment.name.ilike(like),
+                Equipment.plate.ilike(like),
+                Equipment.eq_type.ilike(like),
+                Organization.name.ilike(like),
+                Organization.short_name.ilike(like),
+            ))
         equipment = q.all()
         wb = Workbook()
         ws = wb.active
@@ -1623,6 +1696,12 @@ def create_app():
             filter_info.append('Kategoriyalar: ' + ', '.join(CATEGORIES.get(c, c) for c in cat_codes))
         if eq_types:
             filter_info.append('Turlar: ' + ', '.join(eq_types))
+        if status_filter == 'active':
+            filter_info.append('Status: faqat faol')
+        elif status_filter == 'inactive':
+            filter_info.append('Status: faqat faol emas')
+        if search_q:
+            filter_info.append(f'Qidiruv: {search_q}')
         if not filter_info:
             filter_info.append('Barcha texnika')
         ws.merge_cells('A1:G1')
