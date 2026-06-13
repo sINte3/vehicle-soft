@@ -4,7 +4,7 @@
 
 {# ─── DATE RANGE SELECTOR ─── #}
 <div class="page-header">
-    <h1>{{ t('Кунлик ҳисобот') }}</h1>
+    <h1>{{ 'Главная панель' if lang == 'ru' else 'Бошқарув панели' }}</h1>
 </div>
 
 {% set L_dashboard_title = 'Управленческий dashboard' if lang == 'ru' else 'Бошқарув dashboard' %}
@@ -197,7 +197,21 @@
 {% endif %}
 
 
-<div class="card" style="margin-bottom:20px;">
+<!-- DASH002C_MARKER: legacy daily report section separator -->
+<div class="legacy-report-section">
+    <div class="legacy-report-head">
+        <div>
+            <h2>{{ 'Дневной отчёт и ввод данных' if lang == 'ru' else 'Кунлик ҳисобот ва маълумот киритиш' }}</h2>
+            <p>{{ 'Фильтры, итоги и строки работ за выбранный период' if lang == 'ru' else 'Танланган давр бўйича фильтрлар, якунлар ва иш қаторлари' }}</p>
+        </div>
+        <div class="legacy-report-actions">
+            <a href="{{ url_for('daily_entry', date=d_from.isoformat()) }}" class="btn btn-secondary btn-sm">{{ 'Ввод данных' if lang == 'ru' else 'Маълумот киритиш' }}</a>
+            <a href="{{ url_for('report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="btn btn-secondary btn-sm">{{ 'Открыть полный отчёт' if lang == 'ru' else 'Тўлиқ ҳисоботни очиш' }}</a>
+        </div>
+    </div>
+</div>
+
+<div class="card legacy-filter-card" style="margin-bottom:20px;">
     <div class="card-body">
         <form method="post" action="{{ url_for('index') }}" id="dateForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -579,7 +593,44 @@
     border:1px solid rgba(40,167,69,.25);
 }
 
-@media (max-width:1000px) { .dash-grid, .dash-grid.secondary { grid-template-columns:1fr; } .dash-hero { flex-direction:column; } .dash-actions { justify-content:flex-start; } .dash-audit-row { flex-direction:column; } .dash-audit-meta { text-align:left; white-space:normal; } }
+
+/* DASH002C_MARKER: dashboard/report separation polish */
+.legacy-report-section {
+    margin:24px 0 12px;
+    padding-top:4px;
+}
+.legacy-report-head {
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:16px;
+    padding:16px 18px;
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    background:var(--surface);
+    box-shadow:var(--shadow);
+}
+.legacy-report-head h2 {
+    margin:0 0 4px;
+    font-size:18px;
+    line-height:1.2;
+}
+.legacy-report-head p {
+    margin:0;
+    color:var(--text2);
+    font-size:13px;
+}
+.legacy-report-actions {
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap;
+    justify-content:flex-end;
+}
+.legacy-filter-card {
+    border-top:3px solid var(--accent);
+}
+
+@media (max-width:1000px) { .dash-grid, .dash-grid.secondary { grid-template-columns:1fr; } .dash-hero { flex-direction:column; } .dash-actions { justify-content:flex-start; } .dash-audit-row { flex-direction:column; } .dash-audit-meta { text-align:left; white-space:normal; } .legacy-report-head { flex-direction:column; } .legacy-report-actions { justify-content:flex-start; } }
 .date-mode-tabs { display:flex; gap:4px; }
 .mode-btn { padding:8px 16px; border:1px solid var(--border); border-radius:6px;
             background:var(--surface); font-size:13px; cursor:pointer; transition:all 0.15s; }
