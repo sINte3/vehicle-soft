@@ -1134,3 +1134,38 @@ Important discovered numbers:
 Related doc:
 
 - `docs/TASK_REF_001C_DISCOVERY_AND_STRATEGY_20260613.md`
+
+## 2026-06-13  Current state after TASK-REF-001D
+
+TASK-REF-001D was completed on production.
+
+Current Git target:
+
+- `34acb33 Add reference cleanup diagnostic exports`
+
+Production service state:
+
+- `TransportReport`: RUNNING
+- `TransportBot`: RUNNING
+- `TransportBot003`: RUNNING
+
+Implemented read-only export routes:
+
+- `/ref/work_types/export_diagnostics`
+- `/ref/customers/export_diagnostics`
+
+Important safety notes:
+
+- No DB schema changes.
+- No migrations.
+- No data modifications.
+- No automatic normalization.
+- Export files are diagnostic/manual-cleanup planning tools only.
+
+Next recommended step:
+
+- `TASK-REF-001E`: safe work type reference fixes after business approval:
+  - fill empty default unit for `Шудгор (нақд ёқилғисиз)`
+  - fill zero prices for `Хар хил иш (рейс)` and `Шоли ташиш`
+  - decide whether to add missing reference rows
+  - do not alter historical `daily_records` yet

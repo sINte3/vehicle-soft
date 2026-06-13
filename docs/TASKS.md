@@ -1352,3 +1352,34 @@ Decision:
 Related doc:
 
 - `docs/TASK_REF_001C_DISCOVERY_AND_STRATEGY_20260613.md`
+
+## 2026-06-13  TASK-REF-001D production complete
+
+Status: COMPLETE.
+
+Production commit:
+
+- `34acb33 Add reference cleanup diagnostic exports`
+
+Completed:
+
+- Added `/ref/work_types/export_diagnostics`.
+- Added `/ref/customers/export_diagnostics`.
+- Added `Excel диагностика` button to `/ref/work_types`.
+- Added `Excel диагностика` button to `/ref/customers`.
+- Work type export includes Summary, Reference, Duplicate names, Missing from reference, Quality issues.
+- Customer export includes Summary, Reference, Missing from reference, Similarity groups, Pattern groups.
+- Production validation passed.
+- Manual production browser validation confirmed.
+
+Safety:
+
+- No schema changes.
+- No migrations.
+- No data modifications.
+- Read-only diagnostic exports only.
+
+Related docs:
+
+- `docs/TASK_REF_001D_STAGING_VALIDATION_20260613.md`
+- `docs/TASK_REF_001D_PRODUCTION_ROLLOUT_20260613.md`
