@@ -71,7 +71,7 @@ def _get_admin_telegram_ids(cursor):
     Returns a list of dicts with user_id and telegram_id.
     """
     cursor.execute(
-        "SELECT id, telegram_id FROM users WHERE telegram_id IS NOT NULL AND is_active_user = 1 AND role = 'admin'"
+        "SELECT id, telegram_id FROM users WHERE telegram_id IS NOT NULL AND is_active_user = 1 AND role = 'admin' AND tg_notifications = 1"
     )
     rows = cursor.fetchall()
     return [{"user_id": row[0], "telegram_id": str(row[1])} for row in rows]
@@ -80,7 +80,7 @@ def _get_admin_telegram_ids(cursor):
 def _get_user_telegram_id(cursor, user_id):
     """Get telegram_id for a specific user, or None."""
     cursor.execute(
-        "SELECT telegram_id FROM users WHERE id = ? AND is_active_user = 1",
+        "SELECT telegram_id FROM users WHERE id = ? AND is_active_user = 1 AND tg_notifications = 1",
         (user_id,)
     )
     row = cursor.fetchone()

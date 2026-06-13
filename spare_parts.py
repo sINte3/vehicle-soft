@@ -2,7 +2,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required, current_user
 from datetime import datetime, date
 
-from models import db, SparePart, SparePartRequest, SparePartRequestItem, Organization, Equipment, module_required
+from models import db, SparePart, SparePartRequest, SparePartRequestItem, SparePartStatusHistory, Organization, Equipment, module_required
 from sec003a_ext import log_audit, diff_dict
 
 # [REASON]: BOT003 — Best-effort Telegram notifications. Import is guarded so that
@@ -64,6 +64,23 @@ def _spare_flash_errors(errors, title_uz=None, title_ru=None):
     msg = _spare_format_errors(errors, title_uz, title_ru)
     if msg:
         flash(msg, 'warning')
+
+
+
+def _add_status_history(request_id, old_status, new_status, comment="", changed_by=None):
+    """Insert a SparePartStatusHistory row for a status transition.
+
+    Called before db.session.commit() in status-changing routes.
+    Does not flush or commit -- caller is responsible for the final commit.
+    """
+    history = SparePartStatusHistory(
+        request_id=request_id,
+        old_status=old_status,
+        new_status=new_status,
+        comment=comment or "",
+        changed_by=changed_by,
+    )
+    db.session.add(history)
 
 
 def _date_iso(value):
@@ -371,6 +388,9 @@ def save_request():
             after=_item_snapshot(item),
             description='Spare part request item created'
         )
+    # [REASON]: FIX003A — Record status history before commit.
+    if status == 'submitted':
+        _add_status_history(spr.id, None, 'submitted', changed_by=current_user.id)
     db.session.commit()
     if status == 'submitted':
         flash(_spare_t('Сўров юборилди', 'Заявка отправлена'), 'success')
@@ -416,6 +436,8 @@ def submit_request(rid):
         changes={'status': {'before': old_status, 'after': spr.status}},
         description='Spare part request submitted'
     )
+    # [REASON]: FIX003A — Record status history before commit.
+    _add_status_history(spr.id, old_status, 'submitted', changed_by=current_user.id)
     db.session.commit()
     flash(_spare_t('Сўров юборилди', 'Заявка отправлена'), 'success')
     # [REASON]: BOT003 — Post-commit best-effort notification, never raises.
@@ -450,6 +472,8 @@ def approve_request(rid):
         changes=diff_dict(before, after),
         description='Spare part request approved; status {} -> {}'.format(old_status, spr.status)
     )
+    # [REASON]: FIX003A — Record status history before commit.
+    _add_status_history(spr.id, old_status, 'approved', comment=spr.review_comment or '', changed_by=current_user.id)
     db.session.commit()
     flash(_spare_t('Сўров тасдиқланди', 'Заявка утверждена'), 'success')
     # [REASON]: BOT003 — Post-commit best-effort notification, never raises.
@@ -484,6 +508,8 @@ def reject_request(rid):
         changes=diff_dict(before, after),
         description='Spare part request rejected; status {} -> {}'.format(old_status, spr.status)
     )
+    # [REASON]: FIX003A — Record status history before commit.
+    _add_status_history(spr.id, old_status, 'rejected', comment=spr.review_comment or '', changed_by=current_user.id)
     db.session.commit()
     flash(_spare_t('Сўров рад этилди', 'Заявка отклонена'), 'warning')
     # [REASON]: BOT003 — Post-commit best-effort notification, never raises.
