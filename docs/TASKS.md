@@ -1187,3 +1187,45 @@ Reports:
 
 - `docs/DASH002B_STAGING_VALIDATION_20260613.md`
 - `docs/DASH002B_PRODUCTION_ROLLOUT_20260613.md`
+
+## 2026-06-13 - DASH002C dashboard legacy report separation polish
+
+Status: completed and deployed to production.
+
+Completed:
+
+- Top page header changed from daily report wording to main panel wording.
+- Main dashboard remains at `/`.
+- Legacy daily report/filter block remains visible.
+- Added visual separator before the legacy daily report section.
+- Added section title: daily report and data entry.
+- Added quick actions:
+  - data entry
+  - full report
+- Existing dashboard cards and quick links preserved.
+- No database schema changes.
+- No data migrations.
+- No route changes.
+- No business logic changes.
+
+Validation:
+
+- Staging authenticated `/` render: 200.
+- Production authenticated `/` render: 200.
+- `py_compile`: passed.
+- Production `/login`: 200.
+- Production `/`: 302 for unauthenticated users, expected redirect to login.
+- `TransportReport`: running.
+- `TransportBot`: running.
+- `TransportBot003`: running.
+- BOT003 dry-run: error null.
+
+Commits:
+
+- `db191cd` - Polish dashboard legacy report separation.
+- `2152d32` - Document DASH002C production rollout.
+
+Reports:
+
+- `docs/DASH002C_STAGING_VALIDATION_20260613.md`
+- `docs/DASH002C_PRODUCTION_ROLLOUT_20260613.md`
