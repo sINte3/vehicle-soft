@@ -1205,3 +1205,46 @@ Next recommended step:
   - cleaner table wrapping/density
   - export/action area
   - no business logic changes in first pass
+
+## 2026-06-13  Current state after REPORT002A
+
+REPORT002A was completed on production.
+
+Current Git target:
+
+- `e2282d7 Fix REPORT002A date dash consistency`
+
+Production service state:
+
+- `TransportReport`: RUNNING
+- `TransportBot`: RUNNING
+- `TransportBot003`: RUNNING
+
+Implemented:
+
+- `/report` UX refresh
+- report page header
+- visible active filter summary
+- report filter pills
+- export/filter card styling
+- report form CSS hook
+- report KPI grid hook
+- report table styling hook
+
+Important safety notes:
+
+- No DB schema changes.
+- No migrations.
+- No route changes.
+- No business logic changes.
+- No Excel generation logic changes.
+- No bot logic changes.
+
+Next recommended step:
+
+- `UX002C / ENTRY002A`: improve daily entry page UX:
+  - clearer entry header and context
+  - better field grouping
+  - clearer save/copy action area
+  - safer visual hints for empty/idle/working rows
+  - template-first approach without changing save logic

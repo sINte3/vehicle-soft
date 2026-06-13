@@ -1411,3 +1411,36 @@ Related docs:
 
 - `docs/UX002A_STAGING_VALIDATION_20260613.md`
 - `docs/UX002A_PRODUCTION_ROLLOUT_20260613.md`
+
+## 2026-06-13  REPORT002A production complete
+
+Status: COMPLETE.
+
+Production commits:
+
+- `afd583e Improve transport report UX`
+- `e2282d7 Fix REPORT002A date dash consistency`
+
+Completed:
+
+- Improved `/report` page header.
+- Added visible active filter summary.
+- Improved report filter pills.
+- Improved export/filter card styling.
+- Added report form, KPI grid, and table CSS hooks.
+- Production validation passed.
+- Manual production browser validation confirmed.
+
+Safety:
+
+- No schema changes.
+- No migrations.
+- No route changes.
+- No business logic changes.
+- No Excel generation logic changes.
+- No bot logic changes.
+
+Related docs:
+
+- `docs/REPORT002A_STAGING_VALIDATION_20260613.md`
+- `docs/REPORT002A_PRODUCTION_ROLLOUT_20260613.md`
