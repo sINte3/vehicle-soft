@@ -1320,3 +1320,35 @@ Related docs:
 
 - `docs/TASK_REF_001B_STAGING_VALIDATION_20260613.md`
 - `docs/TASK_REF_001B_PRODUCTION_ROLLOUT_20260613.md`
+
+## 2026-06-13  TASK-REF-001C discovery complete
+
+Status: DISCOVERY COMPLETE.
+
+Scope:
+
+- Read-only production data audit.
+- No data changes.
+- No migrations.
+- No service restart.
+
+Main findings:
+
+- `work_types = 104`
+- `customers = 9`
+- `daily_records = 15946`
+- duplicate work type name groups: 3
+- work type values used in reports but missing from reference table: 5
+- customer values used in reports but missing from reference table: 2020
+- customer field is currently mixed free text, not a strict reference.
+
+Decision:
+
+- No automatic cleanup.
+- No automatic customer normalization.
+- Prepare export/diagnostic tools first.
+- Only simple defaults may be fixed after business approval.
+
+Related doc:
+
+- `docs/TASK_REF_001C_DISCOVERY_AND_STRATEGY_20260613.md`

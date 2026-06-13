@@ -1109,3 +1109,28 @@ Next recommended direction:
 
 - Continue with reference/data-quality improvements only after deciding manual vs controlled migration strategy for customers and work types.
 - Avoid automatic customer normalization until business rules are defined.
+
+## 2026-06-13  Current state after TASK-REF-001C discovery
+
+TASK-REF-001C was completed as a read-only production data quality discovery.
+
+Current decision:
+
+- Do not normalize customers automatically.
+- Do not merge duplicate work types automatically.
+- Do not change historical `daily_records.work_type` or `daily_records.customer` without a controlled migration plan.
+- Next recommended step is `TASK-REF-001D`: diagnostic/export tools for manual cleanup planning.
+
+Important discovered numbers:
+
+- `work_types = 104`
+- `customers = 9`
+- `daily_records = 15946`
+- duplicate work type name groups: 3
+- missing work type exact values: 5
+- distinct customer values in reports: 2028
+- customer values missing from reference table: 2020
+
+Related doc:
+
+- `docs/TASK_REF_001C_DISCOVERY_AND_STRATEGY_20260613.md`
