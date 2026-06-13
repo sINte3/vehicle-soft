@@ -1229,3 +1229,63 @@ Reports:
 
 - `docs/DASH002C_STAGING_VALIDATION_20260613.md`
 - `docs/DASH002C_PRODUCTION_ROLLOUT_20260613.md`
+
+## 2026-06-13 - TASK-REF-001A equipment reference filters and diagnostics
+
+Status: completed and deployed to production.
+
+Completed:
+
+- Improved `/ref/equipment`.
+- Added equipment search by:
+  - equipment name
+  - plate number
+  - equipment type
+  - organization name
+  - organization short name
+- Added status filter:
+  - all
+  - active
+  - inactive
+- Added equipment statistics cards:
+  - total equipment in accessible organizations
+  - active / inactive equipment
+  - filtered result count
+  - empty default unit count
+- Added diagnostics block:
+  - zero default price count
+  - normalized duplicate plate groups
+  - first duplicate plate examples
+- Added inactive-equipment visual marker.
+- Added linked-record count marker near delete/disable actions.
+- Excel export now respects search and status filters.
+
+Safety scope:
+
+- No database schema changes.
+- No data migrations.
+- No automatic equipment merge.
+- No automatic duplicate cleanup.
+- No changes to `equipment_id` relationships.
+- No changes to daily report, Wialon import, fuel, or spare-parts business logic.
+
+Validation:
+
+- Staging route checks passed.
+- Production route checks passed.
+- `py_compile`: passed.
+- Production backup integrity: ok.
+- `TransportReport`: running.
+- `TransportBot`: running.
+- `TransportBot003`: running.
+- BOT003 dry-run: error null.
+
+Commits:
+
+- `a7865f1` - Improve equipment reference filters and diagnostics.
+- `79655e2` - Document TASK-REF-001A production rollout.
+
+Reports:
+
+- `docs/TASK_REF_001A_STAGING_VALIDATION_20260613.md`
+- `docs/TASK_REF_001A_PRODUCTION_ROLLOUT_20260613.md`

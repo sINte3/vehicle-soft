@@ -1016,3 +1016,64 @@ Recommended next stage:
 1. TASK-REF-001 - equipment/reference improvements.
 2. TASK-REPORT-001 - multi-select report filters.
 3. UX003 - continued interface cleanup based on operator feedback.
+
+## State update - 2026-06-13 - TASK-REF-001A completed
+
+Latest completed product stage:
+
+- TASK-REF-001A equipment reference filters and diagnostics completed and deployed to production.
+- Production HEAD after rollout report sync: `79655e2`.
+
+Implemented:
+
+- `/ref/equipment` now supports search by equipment name, plate, type, organization name, and organization short name.
+- Added status filter: all / active / inactive.
+- Added statistics cards for equipment reference quality overview.
+- Added diagnostics for:
+  - empty default unit
+  - zero default price
+  - duplicate normalized plate groups
+- Added inactive equipment visual marker.
+- Added linked-record count near delete/disable actions.
+- Excel export respects search and status filters.
+
+Safety boundaries:
+
+- No database schema changes.
+- No migration scripts.
+- No automatic deduplication.
+- No merge of existing equipment records.
+- No changes to existing `equipment_id` links.
+- No changes to daily report, Wialon, fuel, spare-parts, Telegram bot, or BOT003 business logic.
+
+Production validation:
+
+- Source backups created:
+  - `D:\transport-report-backups\production\source\app_before_task_ref_001a_20260613_165401.py`
+  - `D:\transport-report-backups\production\source\ref_equipment_before_task_ref_001a_20260613_165401.html`
+- DB backup created:
+  - `D:\transport-report-backups\production\daily\transport_task_ref_001a_before_20260613_165401.db`
+- Backup integrity: ok.
+- `py_compile`: passed.
+- App import: ok.
+- Template load: ok.
+- Authenticated `/ref/equipment`: 200.
+- Filtered `/ref/equipment` checks: 200.
+- Export `/ref/equipment/export?status=active&q=MTZ`: 200.
+- `/login`: 200.
+- Anonymous protected routes redirect to login as expected.
+- `TransportReport`: running.
+- `TransportBot`: running.
+- `TransportBot003`: running.
+- BOT003 dry-run: error null.
+
+Key commits:
+
+- `a7865f1` - Improve equipment reference filters and diagnostics.
+- `79655e2` - Document TASK-REF-001A production rollout.
+
+Recommended next stage:
+
+1. TASK-REF-001B - continue reference improvements for work types/customers/organizations.
+2. TASK-REPORT-001 - multi-select report filters.
+3. UX003 - continued interface cleanup based on operator feedback.
