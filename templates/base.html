@@ -161,7 +161,342 @@
         .ms-item:hover { background:var(--accent-light); color:var(--accent); }
         .ms-item input[type=checkbox] { width:auto; cursor:pointer; flex-shrink:0; }
         .ms-select-all { border-bottom:1px solid var(--border); font-weight:600; background:var(--surface2); }
-    </style>
+    
+
+/* UX002A_DESIGN_SYSTEM_MARKER: shared visual foundation for Vehicle Soft. */
+:root {
+  --ux-bg: #f4f7fb;
+  --ux-surface: #ffffff;
+  --ux-surface-soft: #f8fafc;
+  --ux-border: #d8e0ea;
+  --ux-border-soft: #edf1f6;
+  --ux-text: #1f2937;
+  --ux-muted: #667085;
+  --ux-primary: #2563eb;
+  --ux-primary-dark: #1d4ed8;
+  --ux-primary-soft: #eff6ff;
+  --ux-success: #15803d;
+  --ux-success-soft: #ecfdf3;
+  --ux-warning: #b45309;
+  --ux-warning-soft: #fffbeb;
+  --ux-danger: #b91c1c;
+  --ux-danger-soft: #fef2f2;
+  --ux-radius: 14px;
+  --ux-radius-sm: 9px;
+  --ux-shadow: 0 8px 22px rgba(15, 23, 42, 0.07);
+  --ux-shadow-soft: 0 3px 10px rgba(15, 23, 42, 0.05);
+}
+
+body {
+  background: var(--ux-bg);
+  color: var(--ux-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+main,
+.container,
+.content,
+.page-content {
+  max-width: 1480px;
+}
+
+h1 {
+  letter-spacing: -0.02em;
+}
+
+.page-header {
+  background: linear-gradient(135deg, var(--ux-surface), var(--ux-surface-soft));
+  border: 1px solid var(--ux-border-soft);
+  border-radius: var(--ux-radius);
+  box-shadow: var(--ux-shadow-soft);
+  padding: 18px 20px;
+  margin-bottom: 18px;
+}
+
+.page-header h1,
+.page-header h2 {
+  margin-bottom: 4px;
+}
+
+.page-header .text-muted,
+.page-header p {
+  color: var(--ux-muted);
+}
+
+.card,
+.dash-card,
+.stat-card,
+.ref-stat-card,
+.ref-quality-card,
+.spare-detail-card,
+.entry-stat,
+.fuel-status,
+.fuel-pill,
+.warning-pill {
+  border: 1px solid var(--ux-border-soft);
+  border-radius: var(--ux-radius);
+  background: var(--ux-surface);
+  box-shadow: var(--ux-shadow-soft);
+}
+
+.card {
+  overflow: hidden;
+}
+
+.card-header,
+.dash-card-head,
+.legacy-report-head {
+  background: var(--ux-surface-soft);
+  border-bottom: 1px solid var(--ux-border-soft);
+}
+
+.card-body {
+  padding: 16px;
+}
+
+.stats-grid,
+.ref-stats-grid,
+.dash-metrics,
+.dash-quick-links,
+.legacy-report-actions,
+.fuel-toolbar {
+  gap: 12px;
+}
+
+.btn,
+button,
+input[type="submit"],
+input[type="button"] {
+  border-radius: var(--ux-radius-sm);
+  border: 1px solid transparent;
+  font-weight: 600;
+  line-height: 1.2;
+  transition: background-color .12s ease, border-color .12s ease, color .12s ease, box-shadow .12s ease, transform .05s ease;
+}
+
+.btn:hover,
+button:hover,
+input[type="submit"]:hover,
+input[type="button"]:hover {
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.10);
+}
+
+.btn:active,
+button:active,
+input[type="submit"]:active,
+input[type="button"]:active {
+  transform: translateY(1px);
+}
+
+.btn-primary,
+.btn.primary,
+button.primary,
+input[type="submit"].primary {
+  background: var(--ux-primary);
+  border-color: var(--ux-primary);
+  color: #fff;
+}
+
+.btn-primary:hover,
+.btn.primary:hover,
+button.primary:hover,
+input[type="submit"].primary:hover {
+  background: var(--ux-primary-dark);
+  border-color: var(--ux-primary-dark);
+}
+
+.btn-secondary,
+.btn.secondary,
+.secondary {
+  background: var(--ux-surface);
+  border-color: var(--ux-border);
+  color: var(--ux-text);
+}
+
+.btn-danger,
+.btn.danger,
+.danger {
+  background: var(--ux-danger);
+  border-color: var(--ux-danger);
+  color: #fff;
+}
+
+.btn-sm {
+  border-radius: 8px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.form-group label,
+.label {
+  color: #344054;
+  font-weight: 600;
+}
+
+input,
+select,
+textarea,
+.form-control {
+  border: 1px solid var(--ux-border);
+  border-radius: var(--ux-radius-sm);
+  background: #fff;
+}
+
+input:focus,
+select:focus,
+textarea:focus,
+.form-control:focus {
+  outline: none;
+  border-color: var(--ux-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .13);
+}
+
+.field-help,
+.text-muted,
+.report-muted {
+  color: var(--ux-muted);
+}
+
+.ref-filter-card,
+.filter-card,
+.legacy-filter-card,
+form.card,
+form.filter,
+form.filters {
+  border: 1px solid var(--ux-border-soft);
+  border-radius: var(--ux-radius);
+  background: var(--ux-surface);
+  box-shadow: var(--ux-shadow-soft);
+}
+
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  background: var(--ux-surface);
+  border: 1px solid var(--ux-border-soft);
+  border-radius: var(--ux-radius);
+  overflow: hidden;
+}
+
+thead th,
+table th {
+  background: #f1f5f9;
+  color: #344054;
+  font-weight: 700;
+  border-bottom: 1px solid var(--ux-border);
+}
+
+table td,
+table th {
+  border-color: var(--ux-border-soft);
+}
+
+tbody tr:hover {
+  background: #f8fbff;
+}
+
+.flash,
+.alert,
+.flash-info,
+.flash-success,
+.flash-warning,
+.flash-danger {
+  border-radius: var(--ux-radius-sm);
+  border: 1px solid var(--ux-border-soft);
+  box-shadow: var(--ux-shadow-soft);
+}
+
+.badge,
+.role-badge,
+.idle-badge,
+.working-badge,
+.eq-pill,
+.warning-pill,
+.fuel-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  font-weight: 700;
+}
+
+.ok,
+.success {
+  color: var(--ux-success);
+}
+
+.warning {
+  color: var(--ux-warning);
+}
+
+.text-right {
+  text-align: right;
+}
+
+.text-center {
+  text-align: center;
+}
+
+.text-sm {
+  font-size: .875rem;
+}
+
+@media (max-width: 900px) {
+  main,
+  .container,
+  .content,
+  .page-content {
+    max-width: 100%;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .page-header {
+    padding: 14px;
+  }
+
+  .stats-grid,
+  .ref-stats-grid,
+  .dash-metrics,
+  .dash-quick-links,
+  .legacy-report-actions,
+  .fuel-toolbar {
+    grid-template-columns: 1fr !important;
+  }
+
+  .form-inline,
+  .filters,
+  .filter-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  table {
+    font-size: .9rem;
+  }
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+
+  .btn,
+  button,
+  nav,
+  .no-print {
+    display: none !important;
+  }
+
+  .card,
+  table {
+    box-shadow: none;
+  }
+}
+/* UX002A_DESIGN_SYSTEM_END */
+
+</style>
 </head>
 <body>
     <nav>
