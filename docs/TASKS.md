@@ -1148,3 +1148,42 @@ Current confirmed state:
 - origin/main after OPS002C closure: `fe0b991`
 - production services: `TransportReport`, `TransportBot`, `TransportBot003` running
 - BOT003 dry-run: error null
+
+## 2026-06-13 - DASH002B main dashboard drill-down links
+
+Status: completed and deployed to production.
+
+Completed:
+
+- Main dashboard `/` improved with quick drill-down links.
+- Transport card: link to main report.
+- Fuel card: links to fuel report, warnings, transactions.
+- Warnings card: severity banner plus links to registry, new warnings, critical warnings.
+- Spare parts card: links to all requests, submitted requests, new request.
+- Wialon card: links to mapping, auto-mapping, report.
+- Role-aware access behavior preserved through existing module access checks.
+- No database schema changes.
+- No data migrations.
+
+Validation:
+
+- Staging authenticated `/` render: 200.
+- Production authenticated `/` render: 200.
+- `py_compile`: passed.
+- Production `/login`: 200.
+- Production `/`: 302 for unauthenticated users, expected redirect to login.
+- `TransportReport`: running.
+- `TransportBot`: running.
+- `TransportBot003`: running.
+- BOT003 dry-run: error null.
+
+Commits:
+
+- `6d3fd4c` - Improve main dashboard drill-down links.
+- `d05b673` - Fix dashboard warning quick links placement.
+- `30aeecf` - Document DASH002B production rollout.
+
+Reports:
+
+- `docs/DASH002B_STAGING_VALIDATION_20260613.md`
+- `docs/DASH002B_PRODUCTION_ROLLOUT_20260613.md`

@@ -924,3 +924,49 @@ Recommended next stage:
 1. `DASH002` - dashboard drill-down links, severity highlighting, role-aware polish.
 2. `TASK-REF-001` - equipment reference improvements.
 3. `TASK-REPORT-001` - multi-select report filters.
+
+## State update - 2026-06-13 - DASH002B completed
+
+Latest completed product stage:
+
+- DASH002B main dashboard drill-down links completed and deployed to production.
+- Main dashboard route remains `/`.
+- There is no separate `/dashboard` route.
+- Production HEAD after documentation sync: `30aeecf`.
+
+Implemented:
+
+- Quick drill-down links in dashboard cards.
+- Warning severity banner.
+- Warning links placement corrected to the warning card.
+- Role-aware module access preserved.
+- Template-only change in `templates/index.html`.
+
+Production validation:
+
+- Source backup created:
+  - `D:\transport-report-backups\production\source\index_before_dash002b_20260613_160341.html`
+- DB backup created:
+  - `D:\transport-report-backups\production\daily\transport_dash002b_before_20260613_160341.db`
+- Backup integrity: ok.
+- `py_compile`: passed.
+- App import: ok.
+- Authenticated `/`: 200.
+- `/login`: 200.
+- Anonymous `/`: 302 to login, expected.
+- `TransportReport`: running.
+- `TransportBot`: running.
+- `TransportBot003`: running.
+- BOT003 dry-run: error null.
+
+Key commits:
+
+- `6d3fd4c` - Improve main dashboard drill-down links.
+- `d05b673` - Fix dashboard warning quick links placement.
+- `30aeecf` - Document DASH002B production rollout.
+
+Recommended next stage:
+
+1. DASH002C - small dashboard cleanup/polish after production user feedback.
+2. TASK-REF-001 - equipment/reference improvements.
+3. TASK-REPORT-001 - multi-select report filters.
