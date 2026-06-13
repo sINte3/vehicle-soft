@@ -62,7 +62,7 @@ def create_app():
     login_manager = LoginManager()
     login_manager.init_app(app)
     login_manager.login_view = 'login'
-    login_manager.login_message = 'РўРёР·РёРјРіР° РєРёСЂРёРЅРі'
+    login_manager.login_message = 'Tizimga kiring'
     login_manager.login_message_category = 'info'
 
     @login_manager.user_loader
@@ -961,7 +961,7 @@ def create_app():
         for pr in prev_recs:
             if not DailyRecord.query.filter_by(work_date=sel, equipment_id=pr.equipment_id).first():
                 new = DailyRecord(work_date=sel, equipment_id=pr.equipment_id,
-                                  status='idle', idle_reason='Р’Р°Т›С‚РёРЅС‡Р° Р±СћС€',
+                                  status='idle', idle_reason='Вақтинча бўш',
                                   unit=pr.unit, price=pr.price,
                                   payment_type=pr.payment_type, line_index=0,
                                   created_by=current_user.id)
@@ -1990,11 +1990,11 @@ def create_app():
         db.create_all()
         if AppModule.query.count() == 0:
             for code, name_uz, name_ru in [
-                ('transport', 'РўСЂР°РЅСЃРїРѕСЂС‚ ТіРёСЃРѕР±РѕС‚Рё', 'РўСЂР°РЅСЃРїРѕСЂС‚РЅС‹Р№ РѕС‚С‡С’С‚'),
-                ('wialon', 'Р’РёР°Р»РѕРЅ', 'Р’РёР°Р»РѕРЅ GPS'),
-                ('fuel', 'РђР—РЎ РјРѕРґСѓР»Рё', 'РњРѕРґСѓР»СЊ РђР—РЎ'),
-                ('deficiencies', 'РљР°РјС‡РёР»РёРєР»Р°СЂ', 'РќРµРґРѕСЃС‚Р°С‚РєРё'),
-                ('spare_parts', 'Р­ТіС‚РёС’С‚ Т›РёСЃРјР»Р°СЂ', 'Р—Р°РїС‡Р°СЃС‚Рё'),
+                ('transport', 'Транспорт ҳисоботи', 'Транспортный отчёт'),
+                ('wialon', 'Виалон', 'Виалон GPS'),
+                ('fuel', 'Ёқилғи модули', 'Модуль ГСМ'),
+                ('deficiencies', 'Камчиликлар', 'Недостатки'),
+                ('spare_parts', 'Эҳтиёт қисмлар', 'Запчасти'),
             ]:
                 db.session.add(AppModule(code=code, name_uz=name_uz, name_ru=name_ru))
             db.session.commit()

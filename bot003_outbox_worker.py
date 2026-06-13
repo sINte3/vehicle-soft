@@ -19,6 +19,7 @@ Usage (called from bot.py polling loop, future integration):
 """
 
 import argparse
+import html         # [REASON]: HTML-escape user-facing text before Telegram parse_mode=HTML
 import json
 import logging
 import os
@@ -30,6 +31,20 @@ logger = logging.getLogger("bot003_outbox_worker")
 
 # Module-level flag: set by the caller if the BotNotificationQueue table exists
 _BOT003_OUTBOX_AVAILABLE = False
+
+
+def get_public_base_url():
+    """Return the public-facing base URL for deep links in notifications.
+
+    Reads APP_PUBLIC_BASE_URL from environment so staging can override.
+    Defaults to the production value http://10.103.25.14:5050.
+    Strips trailing slash for consistent URL construction.
+
+    [REASON]: FIX001 — BOT003 deep link was hardcoded to staging port 5051.
+    Production messages must point to 5050; staging overrides via env var.
+    """
+    return (os.environ.get("APP_PUBLIC_BASE_URL", "http://10.103.25.14:5050")
+            .rstrip("/"))
 
 
 def _get_db_path():
@@ -261,6 +276,13 @@ def _build_notification_text(payload):
     created_by_name = payload.get("created_by_name", "")
     status = payload.get("status", "")
 
+    # [REASON]: FIX001 — HTML-escape all user-derived fields because
+    # parse_mode=HTML is used. Unescaped < or & would break Telegram rendering.
+    organization_name = html.escape(organization_name)
+    equipment_name = html.escape(equipment_name)
+    created_by_name = html.escape(created_by_name)
+    status = html.escape(status)
+
     # Header based on event type
     if event_type == "spare_request_submitted":
         header = "\U0001F4E8 Yangi ehtiyot qism so'rovi"
@@ -272,6 +294,8 @@ def _build_notification_text(payload):
         header = "\U0001F504 So'rov qayta ko'rishga yuborildi"
     else:
         header = "\U0001F514 Ehtiyot qism so'rovi yangilanishi"
+
+    base_url = get_public_base_url()
 
     lines = [header]
     lines.append("")
@@ -290,8 +314,8 @@ def _build_notification_text(payload):
         lines.append("\U0001F4C4 Holat: {}".format(status))
 
     lines.append("")
-    lines.append("\U0001F517 <a href='http://10.103.25.14:5051/spare-parts/{}'>So'rovni ochish</a>".format(
-        request_id or ""
+    lines.append("\U0001F517 <a href='{}/spare-parts/{}'>So'rovni ochish</a>".format(
+        base_url, request_id or ""
     ))
 
     return "\n".join(lines)
