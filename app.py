@@ -1899,6 +1899,340 @@ def create_app():
         flash(ui_t('Техника қайта фаол қилинди.', 'Техника включена.'), 'success')
         return redirect(url_for('ref_equipment', org_id=eq.organization_id))
 
+    
+
+    # TASK_REF_001D_MARKER: reference cleanup diagnostic XLSX exports.
+    def _task_ref_001d_norm(value):
+        import re
+        return re.sub(r"\s+", " ", (value or "").strip()).casefold()
+
+
+    def _task_ref_001d_display(value, limit=32000):
+        import re
+        value = (value or "").replace("\n", " ").replace("\r", " ").replace("\t", " ")
+        value = re.sub(r"\s+", " ", value).strip()
+        return value[:limit]
+
+
+    def _task_ref_001d_style_sheet(ws):
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+
+        header_fill = PatternFill("solid", fgColor="D9EAF7")
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        for row in ws.iter_rows():
+            for cell in row:
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+        for col in ws.columns:
+            max_len = 0
+            col_letter = get_column_letter(col[0].column)
+            for cell in col[:80]:
+                value = "" if cell.value is None else str(cell.value)
+                max_len = max(max_len, min(len(value), 60))
+            ws.column_dimensions[col_letter].width = max(12, min(max_len + 2, 70))
+
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
+
+
+    def _task_ref_001d_add_sheet(wb, title, headers, rows):
+        ws = wb.create_sheet(title=title[:31])
+        ws.append(headers)
+        for row in rows:
+            ws.append(row)
+        _task_ref_001d_style_sheet(ws)
+        return ws
+
+
+    @app.route('/ref/work_types/export_diagnostics')
+    @module_required('transport')
+    @login_required
+    def export_work_types_diagnostics():
+        from collections import Counter, defaultdict
+        from datetime import datetime
+        from io import BytesIO
+        from flask import send_file
+        from openpyxl import Workbook
+
+        all_work_types = WorkType.query.order_by(WorkType.name, WorkType.id).all()
+
+        used_counter = Counter()
+        for (work_type,) in db.session.query(DailyRecord.work_type).all():
+            value = (work_type or '').strip()
+            if value:
+                used_counter[value] += 1
+
+        ref_exact = {(wt.name or '').strip() for wt in all_work_types if (wt.name or '').strip()}
+        ref_norm = {_task_ref_001d_norm(wt.name): wt.name for wt in all_work_types if (wt.name or '').strip()}
+
+        name_groups = defaultdict(list)
+        for wt in all_work_types:
+            key = _task_ref_001d_norm(wt.name)
+            if key:
+                name_groups[key].append(wt)
+
+        wb = Workbook()
+        wb.remove(wb.active)
+
+        summary_rows = [
+            ["generated_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+            ["work_types_total", len(all_work_types)],
+            ["daily_distinct_work_type", len(used_counter)],
+            ["missing_from_reference_exact", sum(1 for name in used_counter if name not in ref_exact)],
+            ["duplicate_name_groups", sum(1 for rows in name_groups.values() if len(rows) > 1)],
+            ["empty_default_unit", sum(1 for wt in all_work_types if not (wt.default_unit or '').strip())],
+            ["zero_default_price", sum(1 for wt in all_work_types if (wt.default_price or 0) == 0)],
+            ["safety_note", "Read-only diagnostic export. No data was modified."],
+        ]
+        _task_ref_001d_add_sheet(wb, "Summary", ["metric", "value"], summary_rows)
+
+        ref_rows = []
+        for wt in all_work_types:
+            usage = used_counter.get((wt.name or '').strip(), 0)
+            ref_rows.append([
+                wt.id,
+                wt.name,
+                wt.default_unit,
+                wt.default_price,
+                usage,
+                "YES" if usage else "NO",
+                "YES" if not (wt.default_unit or '').strip() else "NO",
+                "YES" if (wt.default_price or 0) == 0 else "NO",
+            ])
+        _task_ref_001d_add_sheet(
+            wb,
+            "Reference",
+            ["id", "name", "default_unit", "default_price", "usage_by_text", "used", "empty_unit", "zero_price"],
+            ref_rows,
+        )
+
+        duplicate_rows = []
+        for key, rows in sorted(name_groups.items()):
+            if len(rows) <= 1:
+                continue
+            for wt in rows:
+                duplicate_rows.append([
+                    key,
+                    len(rows),
+                    wt.id,
+                    wt.name,
+                    wt.default_unit,
+                    wt.default_price,
+                    used_counter.get((wt.name or '').strip(), 0),
+                ])
+        _task_ref_001d_add_sheet(
+            wb,
+            "Duplicate names",
+            ["normalized_name", "group_size", "id", "name", "default_unit", "default_price", "usage_by_text"],
+            duplicate_rows,
+        )
+
+        missing_rows = []
+        for name, count in sorted(used_counter.items(), key=lambda x: (-x[1], x[0])):
+            if name in ref_exact:
+                continue
+            missing_rows.append([
+                name,
+                count,
+                _task_ref_001d_norm(name),
+                ref_norm.get(_task_ref_001d_norm(name), ""),
+                "YES" if ref_norm.get(_task_ref_001d_norm(name)) else "NO",
+            ])
+        _task_ref_001d_add_sheet(
+            wb,
+            "Missing from reference",
+            ["daily_records_work_type_value", "usage_count", "normalized_value", "normalized_reference_match", "case_or_spacing_match"],
+            missing_rows,
+        )
+
+        quality_rows = []
+        for wt in all_work_types:
+            issues = []
+            if not (wt.default_unit or '').strip():
+                issues.append("empty_default_unit")
+            if (wt.default_price or 0) == 0:
+                issues.append("zero_default_price")
+            if len(name_groups.get(_task_ref_001d_norm(wt.name), [])) > 1:
+                issues.append("duplicate_name")
+            if issues:
+                quality_rows.append([
+                    wt.id,
+                    wt.name,
+                    wt.default_unit,
+                    wt.default_price,
+                    used_counter.get((wt.name or '').strip(), 0),
+                    ", ".join(issues),
+                ])
+        _task_ref_001d_add_sheet(
+            wb,
+            "Quality issues",
+            ["id", "name", "default_unit", "default_price", "usage_by_text", "issues"],
+            quality_rows,
+        )
+
+        bio = BytesIO()
+        wb.save(bio)
+        bio.seek(0)
+        filename = f"work_types_diagnostics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        return send_file(
+            bio,
+            as_attachment=True,
+            download_name=filename,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+
+    @app.route('/ref/customers/export_diagnostics')
+    @module_required('transport')
+    @login_required
+    def export_customers_diagnostics():
+        from collections import Counter, defaultdict
+        from datetime import datetime
+        from io import BytesIO
+        import re
+        from flask import send_file
+        from openpyxl import Workbook
+
+        all_customers = Customer.query.order_by(Customer.name, Customer.id).all()
+
+        used_counter = Counter()
+        for (customer,) in db.session.query(DailyRecord.customer).all():
+            value = (customer or '').strip()
+            if value:
+                used_counter[value] += 1
+
+        ref_exact = {(c.name or '').strip() for c in all_customers if (c.name or '').strip()}
+        ref_norm = {_task_ref_001d_norm(c.name): c.name for c in all_customers if (c.name or '').strip()}
+
+        missing = [(name, count) for name, count in used_counter.items() if name not in ref_exact]
+        missing.sort(key=lambda x: (-x[1], x[0]))
+
+        def simple_key(value):
+            value = _task_ref_001d_norm(value)
+            value = re.sub(r"[\-_,.;:()\"'`]+", " ", value)
+            value = re.sub(r"\bери\b|\bери\W|\bфх\b|\bф/х\b|\bмчж\b", " ", value)
+            value = re.sub(r"\s+", " ", value).strip()
+            return value
+
+        key_groups = defaultdict(list)
+        for name, count in missing:
+            key = simple_key(name)
+            if key:
+                key_groups[key].append((name, count))
+
+        similarity_groups = []
+        for key, rows in key_groups.items():
+            if len(rows) >= 2:
+                similarity_groups.append((key, rows, sum(count for _, count in rows)))
+        similarity_groups.sort(key=lambda x: (-x[2], -len(x[1]), x[0]))
+
+        pattern_rules = [
+            ("contains_кластер", lambda x: "кластер" in _task_ref_001d_norm(x)),
+            ("contains_булинма_or_булим", lambda x: "булинма" in _task_ref_001d_norm(x) or "булим" in _task_ref_001d_norm(x)),
+            ("contains_птз", lambda x: "птз" in _task_ref_001d_norm(x)),
+            ("contains_сервис_or_service", lambda x: "сервис" in _task_ref_001d_norm(x) or "service" in _task_ref_001d_norm(x)),
+            ("starts_with_number", lambda x: bool(re.match(r"^\s*\d+", x or ""))),
+            ("looks_like_phone", lambda x: bool(re.search(r"\b\d{2}\)?\s?\d{3}[- ]?\d{2}[- ]?\d{2}\b", x or ""))),
+            ("very_long_100_plus", lambda x: len(x or "") > 100),
+            ("has_tab_or_quotes", lambda x: "\t" in (x or "") or '"' in (x or "")),
+        ]
+
+        wb = Workbook()
+        wb.remove(wb.active)
+
+        summary_rows = [
+            ["generated_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+            ["customers_reference_total", len(all_customers)],
+            ["daily_distinct_customer", len(used_counter)],
+            ["missing_from_reference_exact", len(missing)],
+            ["similarity_candidate_groups", len(similarity_groups)],
+            ["safety_note", "Read-only diagnostic export. No data was modified."],
+        ]
+        for label, fn in pattern_rules:
+            rows = [(name, count) for name, count in missing if fn(name)]
+            summary_rows.append([label + "_distinct", len(rows)])
+            summary_rows.append([label + "_usage_total", sum(count for _, count in rows)])
+
+        _task_ref_001d_add_sheet(wb, "Summary", ["metric", "value"], summary_rows)
+
+        ref_rows = []
+        for c in all_customers:
+            usage = used_counter.get((c.name or '').strip(), 0)
+            ref_rows.append([c.id, c.name, c.customer_type, usage, "YES" if usage else "NO"])
+        _task_ref_001d_add_sheet(
+            wb,
+            "Reference",
+            ["id", "name", "customer_type", "usage_by_text", "used"],
+            ref_rows,
+        )
+
+        missing_rows = []
+        for name, count in missing:
+            missing_rows.append([
+                _task_ref_001d_display(name),
+                count,
+                _task_ref_001d_norm(name),
+                ref_norm.get(_task_ref_001d_norm(name), ""),
+                "YES" if ref_norm.get(_task_ref_001d_norm(name)) else "NO",
+                "YES" if len(name) > 100 else "NO",
+                "YES" if "\t" in name or '"' in name else "NO",
+            ])
+        _task_ref_001d_add_sheet(
+            wb,
+            "Missing from reference",
+            ["daily_records_customer_value", "usage_count", "normalized_value", "normalized_reference_match", "case_or_spacing_match", "very_long", "has_tab_or_quotes"],
+            missing_rows,
+        )
+
+        similarity_rows = []
+        group_no = 0
+        for key, rows, total in similarity_groups:
+            group_no += 1
+            for name, count in sorted(rows, key=lambda x: (-x[1], x[0])):
+                similarity_rows.append([
+                    group_no,
+                    key,
+                    total,
+                    len(rows),
+                    _task_ref_001d_display(name),
+                    count,
+                ])
+        _task_ref_001d_add_sheet(
+            wb,
+            "Similarity groups",
+            ["group_no", "similarity_key", "group_usage_total", "variant_count", "customer_value", "usage_count"],
+            similarity_rows,
+        )
+
+        pattern_rows = []
+        for label, fn in pattern_rules:
+            rows = [(name, count) for name, count in missing if fn(name)]
+            for name, count in sorted(rows, key=lambda x: (-x[1], x[0])):
+                pattern_rows.append([label, _task_ref_001d_display(name), count])
+        _task_ref_001d_add_sheet(
+            wb,
+            "Pattern groups",
+            ["pattern", "customer_value", "usage_count"],
+            pattern_rows,
+        )
+
+        bio = BytesIO()
+        wb.save(bio)
+        bio.seek(0)
+        filename = f"customers_diagnostics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        return send_file(
+            bio,
+            as_attachment=True,
+            download_name=filename,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+
     @app.route('/ref/work_types')
     @module_required('transport')
     @login_required

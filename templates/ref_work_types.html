@@ -7,6 +7,11 @@
 
 <div class="page-header">
     <h1>{{ t('Иш турлари') }}</h1>
+<div class="ref-export-actions TASK_REF_001D_WORK_TYPES_EXPORT_BUTTON">
+  <a class="btn secondary" href="{{ url_for('export_work_types_diagnostics') }}">
+    {{ 'Excel диагностика' if lang == 'ru' else 'Excel диагностика' }}
+  </a>
+</div>
 </div>
 
 <style>
