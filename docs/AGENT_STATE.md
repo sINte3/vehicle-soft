@@ -1169,3 +1169,39 @@ Next recommended step:
   - fill zero prices for `Хар хил иш (рейс)` and `Шоли ташиш`
   - decide whether to add missing reference rows
   - do not alter historical `daily_records` yet
+
+## 2026-06-13  Current state after UX002A
+
+UX002A was completed on production.
+
+Current Git target:
+
+- `1d0488c Add shared UX design system baseline`
+
+Production service state:
+
+- `TransportReport`: RUNNING
+- `TransportBot`: RUNNING
+- `TransportBot003`: RUNNING
+
+Implemented:
+
+- shared UX design system baseline in `templates/base.html`
+- common styling for page headers, cards, filters, buttons, forms, tables, badges, flash blocks, responsive layout, and print layout
+
+Important safety notes:
+
+- No DB schema changes.
+- No migrations.
+- No route changes.
+- No business logic changes.
+- No bot logic changes.
+
+Next recommended step:
+
+- `UX002B / REPORT002A`: improve full report UX:
+  - clearer report header and filter block
+  - better summary cards
+  - cleaner table wrapping/density
+  - export/action area
+  - no business logic changes in first pass

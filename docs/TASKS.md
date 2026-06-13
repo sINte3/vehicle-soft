@@ -1383,3 +1383,31 @@ Related docs:
 
 - `docs/TASK_REF_001D_STAGING_VALIDATION_20260613.md`
 - `docs/TASK_REF_001D_PRODUCTION_ROLLOUT_20260613.md`
+
+## 2026-06-13  UX002A production complete
+
+Status: COMPLETE.
+
+Production commit:
+
+- `1d0488c Add shared UX design system baseline`
+
+Completed:
+
+- Added shared UX design system baseline to `templates/base.html`.
+- Added common visual rules for page headers, cards, filters, buttons, forms, tables, badges, flash blocks, responsive layout, and print layout.
+- Production validation passed.
+- Manual production browser validation confirmed.
+
+Safety:
+
+- No schema changes.
+- No migrations.
+- No route changes.
+- No business logic changes.
+- No bot logic changes.
+
+Related docs:
+
+- `docs/UX002A_STAGING_VALIDATION_20260613.md`
+- `docs/UX002A_PRODUCTION_ROLLOUT_20260613.md`
