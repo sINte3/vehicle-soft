@@ -883,3 +883,44 @@ Key production backup:
 
 Recommended next stage:
 - DASH002 — dashboard drill-down links, severity highlighting, and role-aware dashboard polish.
+
+## State update - 2026-06-13 - EXTAUDIT001, QA003, OPS002C closed
+
+Latest completed stage:
+
+- EXTAUDIT001 critical remediation closed.
+- QA003 post-FIX003A regression audit completed: PASS WITH NOTES.
+- OPS002C closed with owner-confirmed safe decision.
+- No additional historical data-only migrations were recorded.
+- No database changes were made for OPS002C closure.
+
+Key commits:
+
+- `c76ae42` - Document EXTAUDIT001 closure.
+- `99611b8` - Document QA003 post-FIX003A regression audit.
+- `32c13b7` - Document OPS002C pending migration confirmation.
+- `fe0b991` - Document OPS002C closure.
+
+Current production state:
+
+- production HEAD: `fe0b991`
+- staging HEAD: `fe0b991`
+- origin/main: `fe0b991`
+- production git status: clean
+- staging git status: clean
+- production services running: `TransportReport`, `TransportBot`, `TransportBot003`
+- BOT003 dry-run: error null
+
+OPS002C final decision:
+
+- `migrate.py`: NO / NOT SURE - not recorded.
+- `migrate_equipment.py`: NO / NOT SURE - not recorded.
+- `migrate_worktypes.py`: NO / NOT SURE - not recorded.
+- `migrate_categories_v9.py`: NO / NOT SURE - not recorded.
+- `migrate_v42.py`: SKIP.
+
+Recommended next stage:
+
+1. `DASH002` - dashboard drill-down links, severity highlighting, role-aware polish.
+2. `TASK-REF-001` - equipment reference improvements.
+3. `TASK-REPORT-001` - multi-select report filters.

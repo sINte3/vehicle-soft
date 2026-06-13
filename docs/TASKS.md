@@ -566,7 +566,7 @@ Operator action:
 ### TASK-OPS-002 — Backfill migration registry for historical migrations
 
 Priority: P1  
-Status: **TASK-OPS-002A and TASK-OPS-002B COMPLETED 2026-05-23. TASK-OPS-002C pending operator confirmation.**
+Status: **completed 2026-06-13 - OPS002C closed with owner-confirmed safe decision; no additional historical data-only migrations recorded.**
 
 **TASK-OPS-002A — Analysis (completed 2026-05-23)**
 
@@ -1122,3 +1122,29 @@ Production backup:
 
 Release note:
 - docs/RELEASE_DASH001_MAIN_DASHBOARD_20260606.md
+
+## 2026-06-13 - EXTAUDIT001 / QA003 / OPS002C closure
+
+Status: completed.
+
+Completed and documented:
+
+- EXTAUDIT001 closure report: `docs/EXTAUDIT001_CLOSURE_REPORT_20260613.md`.
+- QA003 post-FIX003A regression audit: `docs/QA003_POST_FIX003A_REGRESSION_20260613.md`.
+- OPS002C pending migration confirmation: `docs/OPS002C_PENDING_MIGRATIONS_CONFIRMATION_20260613.md`.
+- OPS002C closure report: `docs/OPS002C_CLOSURE_REPORT_20260613.md`.
+
+Final OPS002C owner decision:
+
+- No additional historical data-only migrations were recorded.
+- `migrate.py`, `migrate_equipment.py`, `migrate_worktypes.py`, and `migrate_categories_v9.py` remain unrecorded due to no reliable proof and missing `old_transport.db`.
+- `migrate_v42.py` was skipped because its key effect overlaps with already-recorded `migrate_to_v45`.
+- No database changes were made during OPS002C closure.
+
+Current confirmed state:
+
+- staging HEAD after OPS002C closure: `fe0b991`
+- production HEAD after OPS002C closure: `fe0b991`
+- origin/main after OPS002C closure: `fe0b991`
+- production services: `TransportReport`, `TransportBot`, `TransportBot003` running
+- BOT003 dry-run: error null
