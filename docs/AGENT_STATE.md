@@ -1384,3 +1384,44 @@ Next recommended step:
   - better filter/action layout
   - better receipt table readability
   - no route or business logic changes in the first patch
+
+## 2026-06-14  Current state after FUEL002A receipts
+
+FUEL002A receipts was completed on production.
+
+Current Git target before docs-only production sync:
+
+- `ed8955d Improve fuel receipts UX`
+
+Production service state:
+
+- `TransportReport`: RUNNING
+- `TransportBot`: RUNNING
+- `TransportBot003`: RUNNING
+
+Implemented:
+
+- Improved `/fuel/receipts` UX.
+- Added summary/context strip.
+- Added guidance panel.
+- Improved form, filter and table readability.
+- Confirmed `/fuel/receipts` opens and visual layout is accepted on production.
+
+Important safety notes:
+
+- No DB schema changes.
+- No migrations.
+- No route changes.
+- No `fuel_routes.py` changes.
+- No `save_receipt` changes.
+- No `delete_receipt` changes.
+- No BOT003 outbox logic changes.
+- No bot logic changes.
+
+Next recommended step:
+
+- Continue FUEL UX phase with one of:
+  - `FUEL002B`: improve `/fuel/transactions`
+  - `FUEL002C`: improve `/fuel/warehouses`
+  - `FUEL002D`: improve `/fuel/report`
+  - `FUEL002E`: improve `/fuel/warnings`

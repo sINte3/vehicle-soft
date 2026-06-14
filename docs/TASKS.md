@@ -1561,3 +1561,39 @@ Related docs:
 
 - `docs/FUELST001_STAGING_VALIDATION_20260614.md`
 - `docs/FUELST001_PRODUCTION_ROLLOUT_20260614.md`
+
+## 2026-06-14  FUEL002A receipts production complete
+
+Status: COMPLETE.
+
+Production commit:
+
+- `ed8955d Improve fuel receipts UX`
+
+Completed:
+
+- Improved `/fuel/receipts` UX.
+- Added page header, subtitle, summary pills and guidance panel.
+- Improved receipt form grouping.
+- Improved filter form grouping.
+- Improved table readability and horizontal wrapper.
+- Added visual-only required-field hints.
+- Production validation passed.
+- Manual production browser validation confirmed.
+
+Safety:
+
+- No schema changes.
+- No migrations.
+- No route changes.
+- No fuel_routes.py changes.
+- No save_receipt changes.
+- No delete_receipt changes.
+- No station logic changes.
+- No BOT003 outbox logic changes.
+- No bot logic changes.
+
+Related docs:
+
+- `docs/FUEL002A_RECEIPTS_STAGING_VALIDATION_20260614.md`
+- `docs/FUEL002A_RECEIPTS_PRODUCTION_ROLLOUT_20260614.md`
