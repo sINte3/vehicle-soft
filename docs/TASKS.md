@@ -1651,3 +1651,15 @@ Completed on production:
 - Production commit: `81a1782`
 - Production URL: `/fuel/warehouses`
 - Final verification: passed
+
+
+## FUEL002D_REPORT_PRODUCTION_DONE
+
+Status: completed.
+
+Completed on production:
+
+- FUEL002D report UX
+- Production commit: `47bb0f2`
+- Production URL: `/fuel/report`
+- Final verification: passed

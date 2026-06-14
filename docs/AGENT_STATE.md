@@ -1487,3 +1487,19 @@ Current completed milestone:
   - `TransportBot003`
 - BOT003 dry-run passed.
 - Next recommended UX sequence: continue fuel admin pages after warehouses, or move to next queued module after user confirmation.
+
+
+## FUEL002D_REPORT_AGENT_STATE
+
+Current completed milestone:
+
+- FUEL002D report UX is deployed to production.
+- Latest production HEAD before docs-only close: `47bb0f29beff020fffb0de42eaeb58c22cd53d8e`
+- `HEAD == origin/main`
+- `git status` clean
+- Production services running:
+  - `TransportReport`
+  - `TransportBot`
+  - `TransportBot003`
+- BOT003 dry-run passed.
+- Next recommended UX sequence: continue fuel admin/report pages after user confirmation.
