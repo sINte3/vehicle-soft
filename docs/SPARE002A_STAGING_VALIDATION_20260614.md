@@ -116,3 +116,19 @@ Validated:
 ## Status
 
 SPARE002A staging validation passed.
+
+## Button layout correction
+
+After initial production browser review, the top buttons on `/spare-parts/` were found visually incorrect when placed vertically.
+
+A follow-up staging fix was applied and manually confirmed:
+
+- added `SPARE002A_BUTTONS_FIX_V2_MARKER`
+- added `spare002a-header-actions`
+- restored `New request` and `Catalog` actions into a single horizontal header row
+- no route changes
+- no `spare_parts.py` changes
+- no save/submit/approve/reject logic changes
+- no BOT003 outbox logic changes
+
+Status: staging button layout fix confirmed.

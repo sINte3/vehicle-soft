@@ -196,6 +196,55 @@
     margin-top: 8px;
   }
 }
+
+/* SPARE002A_BUTTONS_FIX_V2_MARKER: explicit horizontal header action row. */
+.spare002a-page-header {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: start !important;
+  column-gap: 16px !important;
+}
+
+.spare002a-header-actions {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 8px !important;
+  margin-left: auto !important;
+  white-space: nowrap !important;
+}
+
+.spare002a-header-actions .btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: auto !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+  white-space: nowrap !important;
+  flex: 0 0 auto !important;
+}
+
+@media (max-width: 900px) {
+  .spare002a-page-header {
+    grid-template-columns: 1fr !important;
+  }
+
+  .spare002a-header-actions {
+    justify-content: flex-start !important;
+    margin-left: 0 !important;
+    margin-top: 10px !important;
+    flex-wrap: wrap !important;
+  }
+
+  .spare002a-header-actions .btn {
+    width: auto !important;
+  }
+}
+/* SPARE002A_BUTTONS_FIX_V2_END */
+
 /* SPARE002A_END */
 
 </style>
@@ -238,6 +287,18 @@
       </span>
     </div>
   </div>
+
+<div class="spare002a-header-actions">
+  <a href="{{ url_for('spare_parts.new_request') }}" class="btn btn-primary">
+    + {{ 'Новая заявка' if is_ru else 'Янги сўров' }}
+  </a>
+  {% if current_user.is_admin %}
+    <a href="{{ url_for('spare_parts.catalog') }}" class="btn btn-secondary">
+      {{ 'Каталог запчастей' if is_ru else 'Эҳтиёт қисмлар каталоги' }}
+    </a>
+  {% endif %}
+</div>
+
 </div>
 
 <div class="spare002a-guidance-panel">
@@ -260,11 +321,9 @@
     </div>
     <div style="display:flex; gap:8px; flex-wrap:wrap;">
         {% if current_user.can_edit %}
-        <a href="{{ url_for('spare_parts.new_request') }}" class="btn btn-primary">+ {{ 'Новая заявка' if is_ru else 'Янги сўров' }}</a>
-        {% endif %}
+{% endif %}
         {% if current_user.is_admin %}
-        <a href="{{ url_for('spare_parts.catalog') }}" class="btn btn-secondary">{{ 'Каталог запчастей' if is_ru else 'Эҳтиёт қисмлар каталоги' }}</a>
-        {% endif %}
+{% endif %}
     </div>
 </div>
 
