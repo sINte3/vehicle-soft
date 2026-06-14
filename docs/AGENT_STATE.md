@@ -1471,3 +1471,19 @@ Next recommended step:
   - `FUEL002C`: improve `/fuel/warehouses`
   - `FUEL002D`: improve `/fuel/report`
   - `FUEL002E`: improve `/fuel/warnings`
+
+
+## FUEL002C_WAREHOUSES_AGENT_STATE
+
+Current completed milestone:
+
+- FUEL002C warehouses UX and localization hotfix are deployed to production.
+- Latest production HEAD: `81a1782e37f8f0317b0989e92d837245c35a2f1f`
+- `HEAD == origin/main`
+- `git status` clean
+- Production services running:
+  - `TransportReport`
+  - `TransportBot`
+  - `TransportBot003`
+- BOT003 dry-run passed.
+- Next recommended UX sequence: continue fuel admin pages after warehouses, or move to next queued module after user confirmation.

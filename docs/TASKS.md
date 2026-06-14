@@ -1638,3 +1638,16 @@ Related docs:
 
 - `docs/FUEL002B_TRANSACTIONS_STAGING_VALIDATION_20260614.md`
 - `docs/FUEL002B_TRANSACTIONS_PRODUCTION_ROLLOUT_20260614.md`
+
+
+## FUEL002C_WAREHOUSES_PRODUCTION_DONE
+
+Status: completed.
+
+Completed on production:
+
+- FUEL002C warehouses UX
+- FUEL002C warehouses localization hotfix
+- Production commit: `81a1782`
+- Production URL: `/fuel/warehouses`
+- Final verification: passed
