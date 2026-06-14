@@ -133,3 +133,27 @@ Validated:
 ## Status
 
 FUEL002C warehouses staging validation passed.
+
+## Localization hotfix
+
+After staging visual review, user reported that newly added central UX blocks were still displayed in Russian while Uzbek interface was selected.
+
+Fixed:
+
+- Converted new FUEL002C UX strings in `templates/fuel/warehouses.html` to `t(...)`.
+- Added FUEL002C localization keys to `translations.py`.
+- Verified Uzbek interface no longer shows the newly added Russian guidance text.
+- Verified Russian interface still shows the correct Russian text.
+
+Localization marker:
+
+- `FUEL002C_L10N_TRANSLATIONS_MARKER`
+
+Safety:
+
+- No route changes.
+- No database changes.
+- No warehouse save/delete logic changes.
+- No station/receipt/transaction logic changes.
+- No Topaz sync changes.
+- No BOT003 outbox logic changes.

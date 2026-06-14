@@ -227,37 +227,38 @@ form.fuel002c-save-form textarea {
     <div class="card-header">{{ L_add }}</div>
     <div class="card-body">
         
+<div class="fuel002c-subtitle FUEL002C_L10N_SUBTITLE_MARKER">{{ t('Ёқилғи омборларини бошқариш: ташкилотлар, АЗС, киримлар ва бошланғич қолдиқлар билан боғланиш.') }}</div>
 <div class="fuel002c-context-strip FUEL002C_MARKER">
   <div class="fuel002c-pill">
-    <span>Складов</span>
+    <span>{{ t('Омборлар') }}</span>
     <strong>{{ warehouses|length }}</strong>
   </div>
   <div class="fuel002c-pill">
-    <span>Организаций</span>
+    <span>{{ t('Ташкилотлар') }}</span>
     <strong>{{ organizations|length }}</strong>
   </div>
   <div class="fuel002c-pill">
-    <span>Режим</span>
-    <strong>{% if edit_warehouse %}Редактирование{% else %}Создание{% endif %}</strong>
+    <span>{{ t('Режим') }}</span>
+    <strong>{% if edit_warehouse %}{{ t('Таҳрирлаш') }}{% else %}{{ t('Яратиш') }}{% endif %}</strong>
   </div>
   <div class="fuel002c-pill">
-    <span>Удаление</span>
-    <strong>С защитой связей</strong>
+    <span>{{ t('Ўчириш') }}</span>
+    <strong>{{ t('Боғланишлар ҳимояси билан') }}</strong>
   </div>
 </div>
 
 <div class="fuel002c-guidance-panel">
   <div class="fuel002c-guidance-card">
-    <strong>1. Создайте или выберите склад</strong>
-    <span>Склад связывает АЗС, приходы топлива и начальные остатки.</span>
+    <strong>{{ t('1. Омбор яратинг ёки танланг') }}</strong>
+    <span>{{ t('Омбор АЗС, ёқилғи киримлари ва бошланғич қолдиқларни боғлайди.') }}</span>
   </div>
   <div class="fuel002c-guidance-card">
-    <strong>2. Укажите организацию</strong>
-    <span>Организация помогает разделять топливо по подразделениям.</span>
+    <strong>{{ t('2. Ташкилотни кўрсатинг') }}</strong>
+    <span>{{ t('Ташкилот ёқилғини бўлинмалар бўйича ажратишга ёрдам беради.') }}</span>
   </div>
   <div class="fuel002c-guidance-card">
-    <strong>3. Удаление защищено</strong>
-    <span>Склад со связанными АЗС, приходами или остатками не удаляется.</span>
+    <strong>{{ t('3. Ўчириш ҳимояланган') }}</strong>
+    <span>{{ t('Боғланган АЗС, киримлар ёки қолдиқларга эга омбор ўчирилмайди.') }}</span>
   </div>
 </div>
 
