@@ -1597,3 +1597,44 @@ Related docs:
 
 - `docs/FUEL002A_RECEIPTS_STAGING_VALIDATION_20260614.md`
 - `docs/FUEL002A_RECEIPTS_PRODUCTION_ROLLOUT_20260614.md`
+
+## 2026-06-14  FUEL002B transactions production complete
+
+Status: COMPLETE.
+
+Production commit:
+
+- `44a706f Apply actual fuel transactions template UX`
+
+Important note:
+
+- `135ff40` and `3956887` were incomplete documentation/correction commits.
+- The real template change is in `44a706f`.
+
+Completed:
+
+- Improved `/fuel/transactions` UX.
+- Added page header, subtitle, summary pills and guidance panel.
+- Improved date/warehouse filter grouping.
+- Improved transactions table wrapper and readability.
+- Improved sync logs table wrapper and readability.
+- Production validation passed.
+- Manual production browser validation confirmed.
+
+Safety:
+
+- No schema changes.
+- No migrations.
+- No route changes.
+- No fuel_routes.py changes.
+- No transaction query changes.
+- No Topaz sync changes.
+- No receipt logic changes.
+- No station logic changes.
+- No BOT003 outbox logic changes.
+- No bot logic changes.
+
+Related docs:
+
+- `docs/FUEL002B_TRANSACTIONS_STAGING_VALIDATION_20260614.md`
+- `docs/FUEL002B_TRANSACTIONS_PRODUCTION_ROLLOUT_20260614.md`

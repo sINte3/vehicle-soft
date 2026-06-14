@@ -1425,3 +1425,49 @@ Next recommended step:
   - `FUEL002C`: improve `/fuel/warehouses`
   - `FUEL002D`: improve `/fuel/report`
   - `FUEL002E`: improve `/fuel/warnings`
+
+## 2026-06-14  Current state after FUEL002B transactions
+
+FUEL002B transactions was completed on production.
+
+Current Git target before docs-only production sync:
+
+- `44a706f Apply actual fuel transactions template UX`
+
+Important note:
+
+- `135ff40` and `3956887` did not contain the actual template change.
+- The actual validated template change is `44a706f`.
+
+Production service state:
+
+- `TransportReport`: RUNNING
+- `TransportBot`: RUNNING
+- `TransportBot003`: RUNNING
+
+Implemented:
+
+- Improved `/fuel/transactions` UX.
+- Added summary/context strip.
+- Added guidance panel.
+- Improved filter and dense table readability.
+- Improved transaction table and sync logs table wrappers.
+- Confirmed `/fuel/transactions` opens and visual layout is accepted on production.
+
+Important safety notes:
+
+- No DB schema changes.
+- No migrations.
+- No route changes.
+- No `fuel_routes.py` changes.
+- No transaction query changes.
+- No Topaz sync changes.
+- No BOT003 outbox logic changes.
+- No bot logic changes.
+
+Next recommended step:
+
+- Continue FUEL UX phase with one of:
+  - `FUEL002C`: improve `/fuel/warehouses`
+  - `FUEL002D`: improve `/fuel/report`
+  - `FUEL002E`: improve `/fuel/warnings`
