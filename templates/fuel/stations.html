@@ -114,7 +114,8 @@
 {% endblock %}
 {% block scripts %}
 <script>
-const LForm = {{ L_form|tojson }};
+// FUELST001_STATIONS_500_FIX_MARKER: avoid 500 when L_form is not passed by the route.
+const LForm = {{ (L_form if L_form is defined else {})|tojson }};
 function editSt(id, name, topazId, whId, isActive) {
     document.getElementById('stationFormTitle').textContent = LForm + ' #' + id;
     document.getElementById('stId').value = id;
