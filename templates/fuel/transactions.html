@@ -2,6 +2,163 @@
 {% block title %}АЗС — {{ 'Выдачи топлива из Topaz' if lang == 'ru' else 'Topazдан ёқилғи беришлар' }}{% endblock %}
 {% block content %}
 
+<style>
+/* FUEL002B_MARKER: fuel transactions UX refresh, template-only. */
+.fuel002b-page-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.fuel002b-page-header h1 {
+  margin-bottom: 6px;
+}
+
+.fuel002b-subtitle {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+  margin-top: 2px;
+}
+
+.fuel002b-context-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 0 0 14px 0;
+}
+
+.fuel002b-pill {
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow-sm);
+}
+
+.fuel002b-pill span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 4px;
+}
+
+.fuel002b-pill strong {
+  display: block;
+  font-size: 15px;
+  color: var(--text-main);
+}
+
+.fuel002b-guidance-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.fuel002b-guidance-card {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 11px 13px;
+  box-shadow: var(--shadow-sm);
+}
+
+.fuel002b-guidance-card strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.fuel002b-guidance-card span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.fuel002b-filter-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-sm);
+}
+
+.fuel002b-filter-form input,
+.fuel002b-filter-form select {
+  min-height: 36px;
+}
+
+.fuel002b-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 16px;
+}
+
+.fuel002b-table-wrap .table {
+  margin-bottom: 0;
+}
+
+.fuel002b-transaction-table {
+  min-width: 980px;
+}
+
+.fuel002b-sync-table {
+  min-width: 900px;
+}
+
+.fuel002b-transaction-table th,
+.fuel002b-sync-table th {
+  white-space: nowrap;
+  font-size: 12px;
+  background: var(--bg-soft);
+}
+
+.fuel002b-transaction-table td,
+.fuel002b-sync-table td {
+  vertical-align: middle;
+}
+
+@media (max-width: 1100px) {
+  .fuel002b-context-strip,
+  .fuel002b-guidance-panel {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .fuel002b-page-header,
+  .fuel002b-context-strip,
+  .fuel002b-guidance-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .fuel002b-filter-form {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+}
+/* FUEL002B_END */
+</style>
+
+
+
 {% set L_title = 'Выдачи топлива из Topaz' if lang == 'ru' else 'Topazдан ёқилғи беришлар' %}
 {% set L_note = 'Это история фактических выдач ДТ с подведомственных АЗС. Цены и суммы не используются.' if lang == 'ru' else 'Бу подведомственный АЗСлардан ДТ беришлар тарихи. Нарх ва сумма ишлатилмайди.' %}
 {% set L_back = '← Дашборд' if lang == 'ru' else '← Дашборд' %}
@@ -29,7 +186,7 @@
 {% set L_status = 'Статус' if lang == 'ru' else 'Ҳолат' %}
 {% set L_error = 'Ошибка' if lang == 'ru' else 'Хато' %}
 
-<div class="page-header">
+<div class="page-header fuel002b-page-header">
     <div>
         <h1>{{ L_title }}</h1>
         <div class="text-muted text-sm">{{ L_note }}</div>
@@ -39,7 +196,42 @@
 
 <div class="card" style="margin-bottom:16px;">
     <div class="card-body" style="padding:12px 20px;">
-        <form method="get" class="form-inline">
+        
+<div class="fuel002b-context-strip FUEL002B_MARKER">
+  <div class="fuel002b-pill">
+    <span>Период</span>
+    <strong>{{ d_from.strftime('%d.%m.%Y') if d_from else '' }}  {{ d_to.strftime('%d.%m.%Y') if d_to else '' }}</strong>
+  </div>
+  <div class="fuel002b-pill">
+    <span>Строк на экране</span>
+    <strong>{{ items|length }} / 500</strong>
+  </div>
+  <div class="fuel002b-pill">
+    <span>Итого литров</span>
+    <strong>{{ '%.0f'|format(total_qty or 0) }} л</strong>
+  </div>
+  <div class="fuel002b-pill">
+    <span>Sync-логи</span>
+    <strong>{{ sync_logs|length }}</strong>
+  </div>
+</div>
+
+<div class="fuel002b-guidance-panel">
+  <div class="fuel002b-guidance-card">
+    <strong>1. Выберите период</strong>
+    <span>По умолчанию показывается текущий день. Для сверки задайте нужный диапазон.</span>
+  </div>
+  <div class="fuel002b-guidance-card">
+    <strong>2. Сузьте по складу</strong>
+    <span>Фильтр по складу помогает быстро найти выдачи конкретного подразделения.</span>
+  </div>
+  <div class="fuel002b-guidance-card">
+    <strong>3. Проверяйте лимит</strong>
+    <span>На странице выводится до 500 последних транзакций по выбранному фильтру.</span>
+  </div>
+</div>
+
+<form method="get" class="form-inline fuel002b-filter-form">
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ L_from }}</label>
                 <input type="date" name="date_from" value="{{ d_from.isoformat() }}">
@@ -74,7 +266,8 @@
 <div class="card" style="margin-bottom:24px;">
     <div class="card-header">{{ L_transactions }} ({{ items|length }})</div>
     <div style="overflow-x:auto;">
-    <table>
+    <div class="fuel002b-table-wrap FUEL002B_TX_TABLE_WRAP_MARKER">
+<table class="fuel002b-transaction-table">
         <thead>
             <tr>
                 <th>{{ L_datetime }}</th>
@@ -107,13 +300,15 @@
         {% endfor %}
         </tbody>
     </table>
+</div>
     </div>
 </div>
 
 {% if sync_logs %}
 <div class="card">
     <div class="card-header">{{ L_sync }} (10)</div>
-    <table>
+    <div class="fuel002b-table-wrap FUEL002B_SYNC_TABLE_WRAP_MARKER">
+<table class="fuel002b-sync-table">
         <thead>
             <tr>
                 <th>{{ L_time }}</th>
@@ -142,6 +337,24 @@
         </tbody>
     </table>
 </div>
+</div>
 {% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+
+<script>
+// FUEL002B_JS_MARKER: visual-only page helper, no data changes.
+(function () {
+  const filter = document.querySelector('.fuel002b-filter-form');
+  if (!filter) return;
+  filter.querySelectorAll('input, select').forEach(function (field) {
+    field.addEventListener('change', function () {
+      field.classList.add('fuel002b-filter-touched');
+    });
+  });
+})();
+</script>
 
 {% endblock %}
