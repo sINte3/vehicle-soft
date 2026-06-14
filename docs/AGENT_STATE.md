@@ -1248,3 +1248,49 @@ Next recommended step:
   - clearer save/copy action area
   - safer visual hints for empty/idle/working rows
   - template-first approach without changing save logic
+
+## 2026-06-14  Current state after ENTRY002A
+
+ENTRY002A was completed on production.
+
+Current Git target before docs-only production sync:
+
+- `253beac Fix ENTRY002A staging doc markers`
+
+Production service state:
+
+- `TransportReport`: RUNNING
+- `TransportBot`: RUNNING
+- `TransportBot003`: RUNNING
+
+Implemented:
+
+- `/entry` UX refresh
+- entry page header
+- date and context summary pills
+- guidance panel
+- filter card styling
+- filter form CSS hook
+- save form CSS hook
+- organization/equipment card visual styling
+- working vs idle visual grouping
+- sticky bottom save area styling
+- non-blocking visual hints for incomplete working rows
+
+Important safety notes:
+
+- No DB schema changes.
+- No migrations.
+- No route changes.
+- No `save_entry` changes.
+- No `copy_previous_day` changes.
+- No Excel/report logic changes.
+- No bot logic changes.
+
+Next recommended step:
+
+- `UX002D / SPARE002A`: improve spare parts request/list UX:
+  - clearer spare request header and status context
+  - better filter/action layout
+  - clearer request cards/table density
+  - template-first approach without changing spare request business logic

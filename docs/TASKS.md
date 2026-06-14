@@ -1444,3 +1444,41 @@ Related docs:
 
 - `docs/REPORT002A_STAGING_VALIDATION_20260613.md`
 - `docs/REPORT002A_PRODUCTION_ROLLOUT_20260613.md`
+
+## 2026-06-14  ENTRY002A production complete
+
+Status: COMPLETE.
+
+Production commits:
+
+- `7cc64f4 Improve daily entry UX`
+- `253beac Fix ENTRY002A staging doc markers`
+
+Completed:
+
+- Improved `/entry` page header.
+- Added date and context summary pills.
+- Added short guidance panel.
+- Improved filter card styling.
+- Added filter form and save form CSS hooks.
+- Improved organization/equipment card visual styling.
+- Added working vs idle visual grouping.
+- Added sticky bottom save area styling.
+- Added non-blocking visual hints for incomplete working rows.
+- Production validation passed.
+- Manual production browser validation confirmed.
+
+Safety:
+
+- No schema changes.
+- No migrations.
+- No route changes.
+- No save_entry changes.
+- No copy_previous_day changes.
+- No Excel/report logic changes.
+- No bot logic changes.
+
+Related docs:
+
+- `docs/ENTRY002A_STAGING_VALIDATION_20260614.md`
+- `docs/ENTRY002A_PRODUCTION_ROLLOUT_20260614.md`
