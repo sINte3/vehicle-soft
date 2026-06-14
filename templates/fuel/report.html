@@ -2,6 +2,163 @@
 {% block title %}АЗС — {{ 'Отчёт по топливу' if lang == 'ru' else 'Ёқилғи ҳисоботи' }}{% endblock %}
 {% block content %}
 
+<style>
+/* FUEL002D_MARKER: fuel report UX refresh, template/localization only. */
+.fuel002d-page-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.fuel002d-page-header h1 {
+  margin-bottom: 6px;
+}
+
+.fuel002d-subtitle {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.fuel002d-context-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 0 0 14px 0;
+}
+
+.fuel002d-pill {
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow-sm);
+}
+
+.fuel002d-pill span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 4px;
+}
+
+.fuel002d-pill strong {
+  display: block;
+  font-size: 15px;
+  color: var(--text-main);
+}
+
+.fuel002d-guidance-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(190px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.fuel002d-guidance-card {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 11px 13px;
+  box-shadow: var(--shadow-sm);
+}
+
+.fuel002d-guidance-card strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.fuel002d-guidance-card span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.fuel002d-filter-card {
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 16px;
+}
+
+.fuel002d-filter-card form,
+form.fuel002d-filter-form {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.fuel002d-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 16px;
+}
+
+.fuel002d-table-wrap .table {
+  margin-bottom: 0;
+}
+
+.fuel002d-report-table {
+  min-width: 980px;
+}
+
+.fuel002d-report-table th {
+  white-space: nowrap;
+  font-size: 12px;
+  background: var(--bg-soft);
+}
+
+.fuel002d-report-table td {
+  vertical-align: middle;
+}
+
+.fuel002d-section-note {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: -4px 0 10px 0;
+}
+
+@media (max-width: 1200px) {
+  .fuel002d-context-strip,
+  .fuel002d-guidance-panel {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .fuel002d-filter-card form,
+  form.fuel002d-filter-form {
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .fuel002d-page-header,
+  .fuel002d-context-strip,
+  .fuel002d-guidance-panel,
+  .fuel002d-filter-card form,
+  form.fuel002d-filter-form {
+    grid-template-columns: 1fr;
+  }
+}
+/* FUEL002D_END */
+</style>
+
+
+
 {% set L_title = 'Отчёт по топливу' if lang == 'ru' else 'Ёқилғи ҳисоботи' %}
 {% set L_subtitle = 'Сводка по ДТ: начальные остатки, приходы, выдачи Topaz, расчётные остатки и синхронизация.' if lang == 'ru' else 'ДТ бўйича сводка: бошланғич қолдиқ, киримлар, Topaz беришлари, ҳисобий қолдиқлар ва синхронизация.' %}
 {% set L_back = '← Дашборд' if lang == 'ru' else '← Дашборд' %}
@@ -75,7 +232,15 @@
 
 <div class="fuel-report-hero">
     <div>
-        <h1>{{ L_title }}</h1>
+        
+<div class="fuel002d-page-header FUEL002D_MARKER">
+  <div>
+    <h1>{{ L_title }}</h1>
+    <div class="fuel002d-subtitle">{{ t('Ёқилғи ҳисоботи: омборлар, АЗС, кирим, чиқим ва синхронлаш ҳолати бўйича умумий назорат.') }}</div>
+  </div>
+  <div class="fuel002d-section-note">{{ t('Фильтрларни танланг ва ҳисоботни янгиланг.') }}</div>
+</div>
+
         <div class="text-muted text-sm">{{ L_subtitle }}</div>
     </div>
     <div class="fuel-report-actions">
@@ -89,7 +254,43 @@
 
 <div class="card" style="margin-bottom:16px;">
     <div class="card-body">
-        <form method="get" class="fuel-report-filter" id="fuelReportForm">
+        
+<div class="fuel002d-context-strip">
+  <div class="fuel002d-pill">
+    <span>{{ t('Омборлар') }}</span>
+    <strong>{{ warehouses|length }}</strong>
+  </div>
+  <div class="fuel002d-pill">
+    <span>{{ t('АЗСлар') }}</span>
+    <strong>{{ stations|length }}</strong>
+  </div>
+  <div class="fuel002d-pill">
+    <span>{{ t('Ёқилғи турлари') }}</span>
+    <strong>{{ fuel_types|length }}</strong>
+  </div>
+  <div class="fuel002d-pill">
+    <span>{{ t('Экспорт') }}</span>
+    <strong>XLSX</strong>
+  </div>
+</div>
+
+<div class="fuel002d-guidance-panel">
+  <div class="fuel002d-guidance-card">
+    <strong>{{ t('1. Даврни танланг') }}</strong>
+    <span>{{ t('Ҳисобот танланган саналар оралиғи бўйича шаклланади.') }}</span>
+  </div>
+  <div class="fuel002d-guidance-card">
+    <strong>{{ t('2. Омбор ёки АЗСни фильтрланг') }}</strong>
+    <span>{{ t('Керак бўлса, маълумотларни битта омбор ёки АЗС бўйича чекланг.') }}</span>
+  </div>
+  <div class="fuel002d-guidance-card">
+    <strong>{{ t('3. Жадвалларни текширинг') }}</strong>
+    <span>{{ t('Итоглар, АЗСлар, транзакциялар ва синхронлаш ҳолатини бир жойда кўринг.') }}</span>
+  </div>
+</div>
+
+<div class="fuel002d-filter-card FUEL002D_FILTER_CARD_MARKER">
+<form method="get" class="fuel-report-filter fuel002d-filter-form" id="fuelReportForm">
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ L_from }}</label>
                 <input type="date" name="date_from" value="{{ d_from.isoformat() }}">
@@ -117,6 +318,7 @@
                 <button type="submit" class="btn btn-primary">{{ L_show }}</button>
             </div>
         </form>
+</div>
     </div>
 </div>
 
@@ -159,7 +361,8 @@
 <div class="card" style="margin-bottom:24px;">
     <div class="card-header">{{ L_warehouses }} ({{ warehouse_rows|length }})</div>
     <div style="overflow-x:auto;">
-    <table id="warehouseReportTable">
+    <div class="fuel002d-table-wrap FUEL002D_TABLE_WRAP_MARKER_1">
+<table id="warehouseReportTable" class="fuel002d-report-table">
         <thead>
             <tr>
                 <th>{{ L_wh }}</th><th class="text-center">{{ L_station }}</th><th class="text-right">{{ L_opening }}</th><th class="text-right">{{ L_receipts }}</th><th class="text-right">{{ L_issued }}</th><th class="text-right">{{ L_ending }}</th><th class="text-right">{{ L_tx }}</th><th>{{ L_status }}</th><th>{{ L_last }}</th>
@@ -181,13 +384,15 @@
         {% endfor %}
         </tbody>
     </table>
+</div>
     </div>
 </div>
 
 <div class="card" style="margin-bottom:24px;">
     <div class="card-header">{{ L_stations }} ({{ station_rows|length }})</div>
     <div style="overflow-x:auto;">
-    <table id="stationReportTable">
+    <div class="fuel002d-table-wrap FUEL002D_TABLE_WRAP_MARKER_2">
+<table id="stationReportTable" class="fuel002d-report-table">
         <thead><tr><th>{{ L_station }}</th><th>Topaz ID</th><th>{{ L_wh }}</th><th>{{ L_active }}</th><th class="text-right">{{ L_issued }}</th><th class="text-right">{{ L_tx }}</th><th>{{ L_last }}</th></tr></thead>
         <tbody>
         {% for st in station_rows %}
@@ -203,13 +408,15 @@
         {% endfor %}
         </tbody>
     </table>
+</div>
     </div>
 </div>
 
 <div class="card" style="margin-bottom:24px;">
     <div class="card-header">{{ L_recent }} ({{ recent_txns|length }})</div>
     <div style="overflow-x:auto;">
-    <table id="recentFuelTxTable">
+    <div class="fuel002d-table-wrap FUEL002D_TABLE_WRAP_MARKER_3">
+<table id="recentFuelTxTable" class="fuel002d-report-table">
         <thead><tr><th>{{ L_datetime }}</th><th>{{ L_station }}</th><th>{{ L_wh }}</th><th>{{ L_fuel }}</th><th class="text-right">{{ L_liters }}</th><th>{{ L_card }}</th><th>Topaz ID</th></tr></thead>
         <tbody>
         {% for txn in recent_txns %}
@@ -227,13 +434,15 @@
         {% endfor %}
         </tbody>
     </table>
+</div>
     </div>
 </div>
 
 <div class="card">
     <div class="card-header">{{ L_sync }} ({{ sync_logs|length }})</div>
     <div style="overflow-x:auto;">
-    <table>
+    <div class="fuel002d-table-wrap FUEL002D_TABLE_WRAP_MARKER_4">
+<table class="fuel002d-report-table">
         <thead><tr><th>{{ L_time }}</th><th>IP</th><th class="text-right">{{ L_received }}</th><th class="text-right">{{ L_new }}</th><th class="text-right">{{ L_dup }}</th><th class="text-right">{{ L_sync_unknown }}</th><th>{{ L_status }}</th><th>{{ L_error }}</th></tr></thead>
         <tbody>
         {% for log in sync_logs %}
@@ -252,6 +461,7 @@
         {% endfor %}
         </tbody>
     </table>
+</div>
     </div>
 </div>
 
