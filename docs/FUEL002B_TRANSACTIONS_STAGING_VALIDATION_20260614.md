@@ -114,3 +114,7 @@ Checked staging page:
 ## Status
 
 FUEL002B transactions staging validation passed.
+
+## Correction note
+
+Initial commit `135ff40 Improve fuel transactions UX` created the staging validation document but did not include the template changes. The template changes were applied after this correction note and must be validated again before production rollout.
