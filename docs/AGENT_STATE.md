@@ -1344,3 +1344,43 @@ Next recommended step:
   - better filter/action layout
   - table density/readability
   - no route or business logic changes in the first patch
+
+## 2026-06-14  Current state after FUELST001
+
+FUELST001 was completed on production.
+
+Current Git target before docs-only production sync:
+
+- `4aee239 Fix FUELST001 staging doc markers`
+
+Production service state:
+
+- `TransportReport`: RUNNING
+- `TransportBot`: RUNNING
+- `TransportBot003`: RUNNING
+
+Implemented:
+
+- Fixed `/fuel/stations` 500 error.
+- Added template fallback for missing `L_form`.
+- Confirmed `/fuel/stations` opens on production.
+
+Important safety notes:
+
+- No DB schema changes.
+- No migrations.
+- No route changes.
+- No `fuel_routes.py` changes.
+- No `save_station` changes.
+- No `delete_station` changes.
+- No `enable_station` changes.
+- No BOT003 outbox logic changes.
+- No bot logic changes.
+
+Next recommended step:
+
+- Resume `FUEL002A`: improve `/fuel/receipts` UX using template-first approach:
+  - clearer header and summary pills
+  - better filter/action layout
+  - better receipt table readability
+  - no route or business logic changes in the first patch
