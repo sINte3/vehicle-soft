@@ -29,6 +29,201 @@
 .entry-bottom-save { display:flex; gap:10px; align-items:center; margin-top:20px; padding:14px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); }
 .entry-empty-state { text-align:center; padding:60px 20px; }
 @media (max-width:768px) { .entry-toolbar { top:0; } .entry-toolbar .entry-search { max-width:none; width:100%; } }
+
+/* ENTRY002A_MARKER: daily entry UX refresh, template-only/non-blocking JS. */
+.entry002a-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.entry002a-page-header h1 {
+  margin-bottom: 6px;
+}
+
+.entry002a-subtitle {
+  color: var(--ux-muted, #667085);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.entry002a-context-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.entry002a-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--ux-border-soft, #edf1f6);
+  background: var(--ux-surface, #fff);
+  color: var(--ux-text, #1f2937);
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: var(--ux-shadow-soft, 0 3px 10px rgba(15, 23, 42, 0.05));
+}
+
+.entry002a-pill strong {
+  color: var(--ux-primary, #2563eb);
+}
+
+.entry002a-guidance-panel {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 12px;
+  margin: 0 0 16px;
+}
+
+.entry002a-guidance-card {
+  border: 1px solid var(--ux-border-soft, #edf1f6);
+  background: var(--ux-surface, #fff);
+  border-radius: var(--ux-radius, 14px);
+  padding: 12px 14px;
+  box-shadow: var(--ux-shadow-soft, 0 3px 10px rgba(15, 23, 42, 0.05));
+}
+
+.entry002a-guidance-title {
+  font-weight: 900;
+  margin-bottom: 5px;
+}
+
+.entry002a-guidance-text {
+  color: var(--ux-muted, #667085);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.entry002a-filter-card {
+  border-left: 4px solid var(--ux-primary, #2563eb);
+}
+
+.entry002a-filter-form {
+  gap: 12px;
+}
+
+.entry002a-save-form {
+  margin-top: 8px;
+}
+
+.entry002a-save-form .org-section {
+  border: 1px solid var(--ux-border-soft, #edf1f6);
+  border-radius: var(--ux-radius, 14px);
+  overflow: hidden;
+  margin-bottom: 14px;
+  background: var(--ux-surface, #fff);
+  box-shadow: var(--ux-shadow-soft, 0 3px 10px rgba(15, 23, 42, 0.04));
+}
+
+.entry002a-save-form .org-section-header {
+  background: var(--ux-surface-soft, #f8fafc);
+  border-bottom: 1px solid var(--ux-border-soft, #edf1f6);
+  padding: 11px 14px;
+  font-weight: 900;
+}
+
+.entry002a-save-form .org-section-body {
+  padding: 10px;
+}
+
+.entry002a-save-form .eq-card {
+  border: 1px solid var(--ux-border-soft, #edf1f6);
+  border-radius: var(--ux-radius, 14px);
+  overflow: hidden;
+  margin-bottom: 10px;
+  background: var(--ux-surface, #fff);
+}
+
+.entry002a-save-form .eq-card.working,
+.entry002a-save-form .eq-card.entry002a-working {
+  border-left: 4px solid var(--ux-success, #16a34a);
+}
+
+.entry002a-save-form .eq-card.idle,
+.entry002a-save-form .eq-card.entry002a-idle {
+  border-left: 4px solid var(--ux-muted, #667085);
+}
+
+.entry002a-save-form .eq-card-header {
+  background: var(--ux-surface-soft, #f8fafc);
+}
+
+.entry002a-save-form .line-row,
+.entry002a-save-form .work-line-row {
+  border-radius: var(--ux-radius-sm, 9px);
+  padding: 8px;
+}
+
+.entry002a-save-form .entry002a-line-incomplete {
+  outline: 1px dashed var(--ux-warning, #b45309);
+  background: var(--ux-warning-soft, #fffbeb);
+}
+
+.entry002a-save-form .entry002a-line-incomplete::after {
+  content: "Проверьте вид работы, количество и цену";
+  display: block;
+  grid-column: 1 / -1;
+  color: var(--ux-warning, #b45309);
+  font-size: 12px;
+  font-weight: 800;
+  margin-top: 4px;
+}
+
+.entry002a-save-form input,
+.entry002a-save-form select,
+.entry002a-save-form textarea {
+  min-height: 36px;
+}
+
+.entry002a-save-form .amount-display {
+  font-weight: 900;
+  color: var(--ux-primary, #2563eb);
+}
+
+.entry002a-save-form .entry-bottom-save {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  background: rgba(255,255,255,0.96);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--ux-border-soft, #edf1f6);
+  border-radius: var(--ux-radius, 14px);
+  padding: 12px;
+  box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.08);
+}
+
+@media (max-width: 900px) {
+  .entry002a-page-header {
+    display: block;
+  }
+
+  .entry002a-guidance-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .entry002a-filter-form {
+    display: block;
+  }
+
+  .entry002a-filter-form .form-group,
+  .entry002a-filter-form .btn {
+    width: 100%;
+    margin-top: 8px;
+  }
+
+  .entry002a-save-form .line-row,
+  .entry002a-save-form .work-line-row {
+    display: block;
+  }
+}
+/* ENTRY002A_END */
+
 </style>
 
 
@@ -180,13 +375,46 @@
 
 {# ─── PAGE ─── #}
 {% set selected_org = (organizations|selectattr('id', 'equalto', selected_org_id)|list|first) if selected_org_id else None %}
-<div class="page-header">
+<div class="page-header entry002a-page-header ENTRY002A_MARKER">
+  <div>
     <h1>{{ t('Маълумот киритиш') }}</h1>
+    <div class="entry002a-subtitle">
+      {{ t('Ежедневный ввод работы техники: выберите дату и организацию, затем отметьте технику как работающую или свободную.') }}
+    </div>
+
+    <div class="entry002a-context-strip">
+      <span class="entry002a-pill">
+        {{ t('Сана') }}:
+        <strong>{{ selected_date.strftime('%d.%m.%Y') }}</strong>
+      </span>
+
+      <span class="entry002a-pill">
+        {{ t('Ташкилот') }}:
+        <strong>
+          {% if selected_org_id %}
+            {{ t('танланган') }}
+          {% else %}
+            {{ t('танланмаган') }}
+          {% endif %}
+        </strong>
+      </span>
+
+      <span class="entry002a-pill">
+        {{ t('Техника') }}:
+        <strong>{{ equipment_list|length if selected_org_id else 0 }}</strong>
+      </span>
+
+      <span class="entry002a-pill">
+        {{ t('Иш турлари') }}:
+        <strong>{{ work_types|length }}</strong>
+      </span>
+    </div>
+  </div>
 </div>
 
-<div class="card" style="margin-bottom:20px;">
+<div class="card entry002a-filter-card" style="margin-bottom:20px;">
     <div class="card-body">
-        <form class="form-inline" method="get" action="{{ url_for('daily_entry') }}" id="filterForm">
+        <form class="form-inline entry002a-filter-form" method="get" action="{{ url_for('daily_entry') }}" id="filterForm">
             <div class="form-group" style="margin-bottom:0">
                 <label>{{ t('Сана') }}</label>
                 <input type="date" name="date" id="filterDate"
@@ -227,7 +455,7 @@
 </div>
 
 {% if selected_org_id and equipment_list %}
-<form method="post" action="{{ url_for('save_entry') }}" id="entryForm" onsubmit="return validateEntryBeforeSubmit()">
+<form method="post" action="{{ url_for('save_entry') }}" id="entryForm" onsubmit="return validateEntryBeforeSubmit()" class="entry002a-save-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="work_date" value="{{ selected_date.isoformat() }}">
     <input type="hidden" name="org_id" value="{{ selected_org_id }}">
@@ -595,6 +823,51 @@ function setAllIdle() {
     markFormDirty();
     updateEntryStats();
 }
+
+
+/* ENTRY002A_JS_MARKER: visual hints only, no save/copy logic changes. */
+document.addEventListener('DOMContentLoaded', function () {
+    function refreshEntry002AVisualHints() {
+        document.querySelectorAll('.eq-card').forEach(function (card) {
+            var statusInput = card.querySelector('input[type="radio"][name$="_status"]:checked');
+            var status = statusInput ? statusInput.value : (card.classList.contains('working') ? 'working' : 'idle');
+            card.classList.toggle('entry002a-working', status === 'working');
+            card.classList.toggle('entry002a-idle', status !== 'working');
+        });
+
+        document.querySelectorAll('.line-row, .work-line-row').forEach(function (row) {
+            var card = row.closest('.eq-card');
+            var cardStatusInput = card ? card.querySelector('input[type="radio"][name$="_status"]:checked') : null;
+            var isWorking = cardStatusInput ? cardStatusInput.value === 'working' : (card && card.classList.contains('working'));
+
+            var workType = row.querySelector('[name$="_work_type"]');
+            var quantity = row.querySelector('[name$="_quantity"]');
+            var price = row.querySelector('[name$="_price"]');
+
+            var incomplete = !!(isWorking && (
+                (workType && !workType.value) ||
+                (quantity && !quantity.value) ||
+                (price && !price.value)
+            ));
+
+            row.classList.toggle('entry002a-line-incomplete', incomplete);
+        });
+    }
+
+    document.addEventListener('input', function (event) {
+        if (event.target.closest('.line-row, .work-line-row, .eq-card')) {
+            refreshEntry002AVisualHints();
+        }
+    });
+
+    document.addEventListener('change', function (event) {
+        if (event.target.closest('.line-row, .work-line-row, .eq-card')) {
+            refreshEntry002AVisualHints();
+        }
+    });
+
+    refreshEntry002AVisualHints();
+});
 
 </script>
 {% endblock %}
