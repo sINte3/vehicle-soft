@@ -1482,3 +1482,49 @@ Related docs:
 
 - `docs/ENTRY002A_STAGING_VALIDATION_20260614.md`
 - `docs/ENTRY002A_PRODUCTION_ROLLOUT_20260614.md`
+
+## 2026-06-14  SPARE002A production complete
+
+Status: COMPLETE.
+
+Production commits:
+
+- `7e8ac60 Improve spare parts UX`
+- `b76cede Fix SPARE002A staging doc markers`
+- `6d391ab Fix spare parts header actions`
+
+Completed:
+
+- Improved `/spare-parts/` page header.
+- Added status/context summary pills.
+- Added guidance panel.
+- Improved list filter form layout.
+- Improved list table visual density.
+- Improved `/spare-parts/new` page header.
+- Added new request context summary pills.
+- Added new request guidance panel.
+- Improved new request form grouping.
+- Improved new request table styling.
+- Added sticky action row styling.
+- Added non-blocking visual hints for incomplete item rows.
+- Corrected top action buttons into one horizontal header row.
+- Production validation passed.
+- Manual production browser validation confirmed.
+
+Safety:
+
+- No schema changes.
+- No migrations.
+- No route changes.
+- No spare_parts.py changes.
+- No save_request changes.
+- No submit_request changes.
+- No approve_request changes.
+- No reject_request changes.
+- No BOT003 outbox logic changes.
+- No bot logic changes.
+
+Related docs:
+
+- `docs/SPARE002A_STAGING_VALIDATION_20260614.md`
+- `docs/SPARE002A_PRODUCTION_ROLLOUT_20260614.md`

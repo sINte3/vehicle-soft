@@ -1294,3 +1294,53 @@ Next recommended step:
   - better filter/action layout
   - clearer request cards/table density
   - template-first approach without changing spare request business logic
+
+## 2026-06-14  Current state after SPARE002A
+
+SPARE002A was completed on production.
+
+Current Git target before docs-only production sync:
+
+- `6d391ab Fix spare parts header actions`
+
+Production service state:
+
+- `TransportReport`: RUNNING
+- `TransportBot`: RUNNING
+- `TransportBot003`: RUNNING
+
+Implemented:
+
+- `/spare-parts/` UX refresh
+- `/spare-parts/new` UX refresh
+- spare parts list page header
+- status/context summary pills
+- guidance panel
+- filter form layout
+- table visual density
+- new request page header
+- new request form grouping
+- sticky action row styling
+- non-blocking visual hints for incomplete item rows
+- corrected top action buttons into one horizontal header row
+
+Important safety notes:
+
+- No DB schema changes.
+- No migrations.
+- No route changes.
+- No `spare_parts.py` changes.
+- No `save_request` changes.
+- No `submit_request` changes.
+- No `approve_request` changes.
+- No `reject_request` changes.
+- No BOT003 outbox logic changes.
+- No bot logic changes.
+
+Next recommended step:
+
+- `UX002E / FUEL002A`: improve fuel/receipts UX using the same template-first approach:
+  - clearer fuel receipts header and status context
+  - better filter/action layout
+  - table density/readability
+  - no route or business logic changes in the first patch
