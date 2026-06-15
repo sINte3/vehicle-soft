@@ -1962,3 +1962,36 @@ Current closure sequence status:
 
 Future work should start as a new scoped task.
 
+## 2026-06-15  FUEL-IDX-001 fuel transaction date indexes
+
+Completed:
+
+- [x] Run read-only staging audit for `fuel_transactions2` indexes and query plans.
+- [x] Confirm active table `fuel_transactions2` was missing date indexes.
+- [x] Confirm date-range query used full scan before index.
+- [x] Add `ix_fuel_transactions2_txn_datetime`.
+- [x] Add `ix_fuel_transactions2_station_datetime`.
+- [x] Add idempotent migration `migrate_fuel_idx_001.py`.
+- [x] Update `FuelTransaction2.__table_args__` in `models.py`.
+- [x] Back up staging source and DB.
+- [x] Stop staging services for SQLite index migration.
+- [x] Apply migration on staging DB.
+- [x] Restart staging services.
+- [x] Validate staging indexes and query plans.
+- [x] Commit source changes.
+- [x] Push source changes.
+- [x] Verify production pull scope.
+- [x] Back up production source and DB.
+- [x] Stop production services for SQLite index migration.
+- [x] Pull source changes to production.
+- [x] Compile production changed files.
+- [x] Apply migration on production DB.
+- [x] Restart production services.
+- [x] Validate production indexes and query plans.
+- [x] Confirm production services RUNNING.
+- [x] Close FUEL-IDX-001.
+
+Next recommended task:
+
+- [ ] FUEL-IDX-002: replace non-sargable `date(txn_datetime)` filters with explicit datetime ranges.
+

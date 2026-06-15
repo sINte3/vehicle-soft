@@ -1966,3 +1966,36 @@ Summary:
 
 DOC003 is the final documentation/state closure stage for the current Claude-audit sequence.
 
+## 2026-06-15  FUEL-IDX-001 fuel transaction date indexes completed
+
+Status: completed on staging and production.
+
+Code commit:
+
+`62001d48886f8a1342cc83a2ab958dc3d8a53ef2`  `Add fuel transaction date indexes`
+
+Summary:
+
+- Confirmed EXTAUDIT002 finding with read-only staging query plan audit.
+- Added indexes to active `fuel_transactions2` table:
+  - `ix_fuel_transactions2_txn_datetime`
+  - `ix_fuel_transactions2_station_datetime`
+- Added idempotent migration:
+  - `migrate_fuel_idx_001.py`
+- Updated model declaration:
+  - `FuelTransaction2.__table_args__`
+- Applied migration on staging DB.
+- Applied migration on production DB.
+- Confirmed business data unchanged.
+- Confirmed query plans now use covering indexes for date-range and station+date-range queries.
+- Confirmed app import OK.
+- Confirmed production HTTP smoke for `/login`, `/fuel/`, `/fuel/report`.
+- Confirmed production services RUNNING after rollout:
+  - `TransportReport`
+  - `TransportBot`
+  - `TransportBot003`
+
+Remaining related future task:
+
+- FUEL-IDX-002: replace non-sargable `date(txn_datetime)` filters with explicit datetime ranges.
+

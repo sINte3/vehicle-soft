@@ -206,3 +206,40 @@ Confirmed:
 - No service restart required.
 - Current closure sequence fully documented.
 
+## FUEL-IDX-001 fuel transaction date indexes  2026-06-15
+
+Result: PASSED.
+
+Staging:
+
+- Read-only audit confirmed missing date indexes on active `fuel_transactions2`.
+- Before index: date-range query used `SCAN fuel_transactions2`.
+- Migration applied successfully.
+- Indexes created:
+  - `ix_fuel_transactions2_txn_datetime`
+  - `ix_fuel_transactions2_station_datetime`
+- After index:
+  - date-range query uses covering index.
+  - station+date-range query uses covering index.
+- Business data unchanged.
+- Staging services running.
+
+Production:
+
+- Source pull scope verified.
+- Source backup created.
+- DB backup created.
+- Services stopped before SQLite index migration.
+- Migration applied successfully.
+- Business data unchanged.
+- App import OK.
+- HTTP smoke passed:
+  - `/login`
+  - `/fuel/`
+  - `/fuel/report`
+- Production services running.
+
+Final code commit:
+
+`62001d48886f8a1342cc83a2ab958dc3d8a53ef2`
+
