@@ -429,3 +429,51 @@ Final code commit:
 
 {code_commit}
 
+## API-FUEL-LEGACY-001 fuel sync legacy alias audit - 2026-06-15
+
+Result: PASSED.
+
+Audit type:
+
+- read-only;
+- staging only;
+- no source changes;
+- no DB writes;
+- no POST requests;
+- no service restart.
+
+Confirmed routes:
+
+- /fuel/api/fuel_sync
+  - endpoint: fuel.api_fuel_sync
+  - method: POST
+- /api/fuel_sync
+  - endpoint: api_fuel_sync_legacy
+  - method: POST
+
+Validation:
+
+- app import OK.
+- URL rules count: 86.
+- Canonical route present.
+- Legacy alias present.
+- Both endpoints call shared _perform_fuel_sync().
+- CSRF exemption includes both:
+  - /fuel/api/fuel_sync
+  - /api/fuel_sync
+- hmac.compare_digest present in shared token check.
+- GET /fuel/api/fuel_sync returned 405.
+- GET /api/fuel_sync returned 405.
+- No tracebacks found.
+- Final staging git status clean.
+- Staging services running:
+  - TransportReportStaging
+  - TransportBotStaging
+  - TransportBot003Staging
+
+Decision:
+
+- Keep /api/fuel_sync temporarily.
+- Treat it as deprecated.
+- Do not remove until Topaz agent configuration is confirmed to use /fuel/api/fuel_sync.
+

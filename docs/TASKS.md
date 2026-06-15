@@ -2091,3 +2091,26 @@ Next recommended task candidates:
 - [ ] API-FUEL-LEGACY-001: review legacy /api/fuel_sync alias.
 - [ ] CSRF-AUDIT-001: deeper CSRF coverage audit for remaining POST routes.
 
+## 2026-06-15 - API-FUEL-LEGACY-001 fuel sync legacy alias audit
+
+Completed:
+
+- [x] Run read-only staging audit for /api/fuel_sync legacy alias.
+- [x] Confirm canonical /fuel/api/fuel_sync route exists.
+- [x] Confirm legacy /api/fuel_sync route exists.
+- [x] Confirm both endpoints call _perform_fuel_sync().
+- [x] Confirm CSRF exemption includes both sync paths.
+- [x] Confirm hmac.compare_digest is used in shared fuel sync token check.
+- [x] Confirm GET on both POST-only sync endpoints returns 405.
+- [x] Confirm no source files were modified.
+- [x] Confirm no DB writes were performed.
+- [x] Confirm no POST requests were executed.
+- [x] Decide not to remove legacy alias until Topaz config is confirmed.
+- [x] Close API-FUEL-LEGACY-001 as docs-only decision.
+
+Next recommended task candidates:
+
+- [ ] API-FUEL-LEGACY-002: confirm Topaz agent endpoint config and plan safe alias removal.
+- [ ] PERF-DASH-001: joinedload improvements for transport dashboard/report.
+- [ ] CSRF-AUDIT-001: deeper CSRF coverage audit for remaining POST routes.
+

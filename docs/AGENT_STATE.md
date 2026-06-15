@@ -2074,3 +2074,26 @@ Summary:
 - No DB writes were performed.
 - No POST requests were executed.
 
+## 2026-06-15 - API-FUEL-LEGACY-001 fuel sync legacy alias audit completed
+
+Status: completed as docs-only decision closure.
+
+Base commit:
+
+2cb98a1cff176e459059946a7cf03b1b24102400
+
+Summary:
+
+- Audited legacy /api/fuel_sync alias.
+- Confirmed canonical /fuel/api/fuel_sync endpoint exists.
+- Confirmed legacy alias /api/fuel_sync exists.
+- Confirmed both endpoints call the shared _perform_fuel_sync() logic.
+- Confirmed CSRF exemption includes both fuel sync paths.
+- Confirmed hmac.compare_digest is used in shared sync token check.
+- Confirmed GET on both POST-only sync endpoints returns 405.
+- Decision: keep /api/fuel_sync temporarily until Topaz agent configuration is confirmed updated.
+- No source files were modified.
+- No DB writes were performed.
+- No POST requests were executed.
+- No service restart was performed.
+
