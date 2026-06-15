@@ -163,3 +163,33 @@ Expected result:
 ## 14. Rollback rule
 
 Old production server 10.103.25.200 remains rollback-standby only and must not be started unless rollback is explicitly authorized.
+
+## QA003 final whole-application QA  2026-06-15
+
+Result: PASSED.
+
+Staging:
+
+- `QA003_1_FINAL_READ_ONLY_QA_STAGING_OK=YES`
+- `QA003_1_FINAL_WHOLE_APPLICATION_READ_ONLY_QA_STAGING=OK`
+- warnings: 0
+- errors: 0
+- DB count errors: 0
+- route render errors: 0
+
+Production:
+
+- `QA003_2_FINAL_READ_ONLY_QA_PRODUCTION_OK=YES`
+- `QA003_2_FINAL_WHOLE_APPLICATION_READ_ONLY_QA_PRODUCTION=OK`
+- warnings: 0
+- errors: 0
+- DB count errors: 0
+- route render errors: 0
+
+Confirmed:
+
+- no DB writes
+- no POST requests
+- no service restart
+- production services running
+

@@ -1898,3 +1898,49 @@ Final code commit:
 
 UI003 is closed for the current Claude-audit scope.
 
+## 2026-06-15  QA003 final whole-application QA completed
+
+Status: completed on staging and production.
+
+Summary:
+
+- Completed final read-only whole-application QA on staging.
+- Completed final read-only whole-application QA on production.
+- Confirmed app import OK on both environments.
+- Confirmed required DB tables present.
+- Confirmed active admin and active operators exist.
+- Confirmed 5 active application modules.
+- Confirmed organizations and equipment tables populated.
+- Confirmed UI markers present:
+  - `DASH002`
+  - `FUEL002`
+  - `SPARE001A_TEMPLATE_UX`
+  - `REPORT002`
+  - `UI003A_ERROR_TEMPLATE`
+- Confirmed unauthenticated smoke checks passed.
+- Confirmed authenticated GET route render QA passed.
+- Confirmed 30 GET rules audited and 60 render/access rows checked.
+- Confirmed route render errors count: 0.
+- Confirmed warnings count: 0.
+- Confirmed errors count: 0.
+- Confirmed DB counts unchanged.
+- Confirmed no POST requests were executed.
+- Confirmed no service restart was performed.
+- Confirmed production services remained RUNNING:
+  - `TransportReport`
+  - `TransportBot`
+  - `TransportBot003`
+
+Final markers:
+
+- `QA003_1_FINAL_READ_ONLY_QA_STAGING_OK=YES`
+- `QA003_1_FINAL_WHOLE_APPLICATION_READ_ONLY_QA_STAGING=OK`
+- `QA003_2_FINAL_READ_ONLY_QA_PRODUCTION_OK=YES`
+- `QA003_2_FINAL_WHOLE_APPLICATION_READ_ONLY_QA_PRODUCTION=OK`
+
+QA003 is closed for the current Claude-audit scope.
+
+Current base commit:
+
+`374e4e5a0b4e226784b866da7f0414276a2f60d9`  `Document UI003 general UI unification`
+
