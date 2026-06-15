@@ -2097,3 +2097,26 @@ Summary:
 - No POST requests were executed.
 - No service restart was performed.
 
+## 2026-06-15 - PERF-DASH-001 fuel dashboard/report query optimization completed
+
+Status: completed and deployed to production.
+
+Code commit:
+
+45049de8fd279f5352d89090b61b4716698f27ef
+
+Summary:
+
+- Audited dashboard/report SQL query counts on staging.
+- Confirmed high repeated SELECT counts on /, /fuel/, and /fuel/report.
+- Optimized fuel_routes.py only.
+- Reduced SELECT count:
+  - / from 101 to 28;
+  - /fuel/ from 84 to 11;
+  - /fuel/report from 94 to 19.
+- Production rollout completed with source-only pull.
+- Only TransportReport was restarted.
+- Telegram bot services were not restarted.
+- Production smoke passed.
+- Production services are running.
+

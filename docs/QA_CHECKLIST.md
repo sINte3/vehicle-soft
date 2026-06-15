@@ -477,3 +477,64 @@ Decision:
 - Treat it as deprecated.
 - Do not remove until Topaz agent configuration is confirmed to use /fuel/api/fuel_sync.
 
+## PERF-DASH-001 fuel dashboard/report query optimization - 2026-06-15
+
+Result: PASSED.
+
+Scope:
+
+- fuel_routes.py only.
+- No DB schema changes.
+- No migration.
+- No POST requests during validation.
+- No Telegram bot restart.
+
+Baseline audit:
+
+- /: 101 SELECT.
+- /fuel/: 84 SELECT.
+- /fuel/report: 94 SELECT.
+- /spare-parts/: 29 SELECT, left for future task.
+- /wialon/report/export writes audit_logs on GET, excluded from this task.
+
+Staging patch validation:
+
+- py_compile passed.
+- git diff --check passed.
+- app import OK.
+- URL rules count: 86.
+- Source checks passed:
+  - PERF-DASH-001 V3B marker present.
+  - _fuel_balance_map present.
+  - _fuel_station_count_map present.
+  - _fuel_today_expense_map present.
+  - _fuel_latest_txn_map present.
+  - bulk collect loop present.
+  - joinedload present.
+  - selectinload(FuelWarehouse.stations) absent.
+- SQL count after patch:
+  - /: 28 SELECT.
+  - /fuel/: 11 SELECT.
+  - /fuel/report: 19 SELECT.
+- No DB writes.
+- No POST requests.
+- No tracebacks.
+- Staging post-restart smoke OK.
+
+Production validation:
+
+- Production pull scope: fuel_routes.py only.
+- Production source backup created.
+- Production pull fast-forward only.
+- Production py_compile passed.
+- Production source validation passed.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Production smoke OK.
+
+Final production services:
+
+- TransportReport: RUNNING.
+- TransportBot: RUNNING.
+- TransportBot003: RUNNING.
+
