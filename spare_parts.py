@@ -1,6 +1,8 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, g
 from flask_login import login_required, current_user
 from datetime import datetime, date
+from sqlalchemy import func
+from sqlalchemy.orm import joinedload, selectinload
 
 from models import db, SparePart, SparePartRequest, SparePartRequestItem, SparePartStatusHistory, Organization, Equipment, module_required
 from sec003a_ext import log_audit, diff_dict
@@ -196,7 +198,15 @@ def index():
     date_from_s = request.args.get('date_from', '')
     date_to_s = request.args.get('date_to', '')
 
-    q = SparePartRequest.query
+    # PERF-SPARE-001B: eager-load spare parts index relations.
+    # [REASON]: Avoid N+1 SELECTs for req.items, req.equipment, req.organization and req.creator.
+    q = (SparePartRequest.query
+         .options(
+             joinedload(SparePartRequest.organization),
+             joinedload(SparePartRequest.equipment),
+             joinedload(SparePartRequest.creator),
+             selectinload(SparePartRequest.items),
+         ))
     user_org_ids = _spare_user_org_ids()
     if user_org_ids is not None:
         q = q.filter(SparePartRequest.organization_id.in_(user_org_ids))
@@ -219,13 +229,23 @@ def index():
 
     requests_list = q.order_by(SparePartRequest.created_at.desc()).all()
 
-    counts = {}
+    counts = {s: 0 for s in STATUS_LABELS}
     count_base = SparePartRequest.query
-    if user_org_ids is not None:
+    if user_org_ids:
         count_base = count_base.filter(SparePartRequest.organization_id.in_(user_org_ids))
-    for s in STATUS_LABELS:
-        counts[s] = count_base.filter(SparePartRequest.status == s).count()
-    counts['all'] = count_base.count()
+
+    count_rows = (count_base
+                  .with_entities(SparePartRequest.status,
+                                 func.count(SparePartRequest.id))
+                  .group_by(SparePartRequest.status)
+                  .all())
+
+    counts['all'] = 0
+    for row_status, row_count in count_rows:
+        row_count = int(row_count or 0)
+        counts['all'] += row_count
+        if row_status in counts:
+            counts[row_status] = row_count
 
     if user_org_ids is None:
         organizations = Organization.query.order_by(Organization.sort_order).all()
