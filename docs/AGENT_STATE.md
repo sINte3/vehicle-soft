@@ -1590,3 +1590,35 @@ Current completed milestone:
   - `TransportBot003Staging`
 - BOT003 dry-run passed.
 - Recommended next step: start read-only discovery for the next module outside fuel, likely main dashboard or spare-parts depending on priority.
+
+## 2026-06-15  DASH002 Main dashboard UX completed
+
+Status: completed and deployed to production.
+
+Code commit:
+
+`f2d73a9976e43346e9164d22ca33def90ba9d277`  `Improve main dashboard UX`
+
+Summary:
+
+- Improved main dashboard `/` UX.
+- Changed only `templates/index.html`.
+- Added `DASH002_MAIN_DASHBOARD_UX` marker.
+- Preserved existing `/` route, filters, old daily report section, table, and all existing links.
+- No DB, migration, business logic, Topaz, BOT003, or bot service changes.
+- Staging visual QA passed.
+- Production rollout passed.
+- Production visual QA confirmed by user.
+- Production service `TransportReport` restarted successfully.
+- Bot services were not restarted and remained RUNNING.
+
+Production backups:
+
+- Source: `D:\transport-report-backups\production\source\DASH002_MAIN_DASHBOARD_UX_20260615_125933`
+- DB: `D:\transport-report-backups\production\daily\transport_dash002_main_dashboard_ux_20260615_125933.db`
+
+Next recommended stage:
+
+1. Continue dashboard polish only if user reports visual issues.
+2. Otherwise proceed to read-only discovery for the next module: `spare-parts`.
+

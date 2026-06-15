@@ -1724,3 +1724,30 @@ Completed:
 - Final production QA
 - Production HEAD: `17df914`
 - Final QA result: passed
+
+## 2026-06-15  DASH002 Main dashboard UX
+
+Completed:
+
+- [x] Read-only discovery for `/`.
+- [x] Confirmed route: `app.py` / `index()`.
+- [x] Confirmed template: `templates/index.html`.
+- [x] Confirmed safe patch scope: template only.
+- [x] Applied staging UX patch.
+- [x] Validated py_compile, app import, template load, direct render and route behavior.
+- [x] Restarted `TransportReportStaging`.
+- [x] User visually checked staging.
+- [x] Committed and pushed code commit `f2d73a9976e43346e9164d22ca33def90ba9d277`.
+- [x] Backed up production source and DB.
+- [x] Pulled code to production.
+- [x] Validated production before restart.
+- [x] Restarted only `TransportReport`.
+- [x] Confirmed `TransportBot` and `TransportBot003` remained RUNNING.
+- [x] User visually checked production.
+
+Pending:
+
+- [ ] Commit this docs-only update.
+- [ ] Pull docs-only update to production without service restart.
+- [ ] Start next module read-only discovery: `spare-parts`.
+
