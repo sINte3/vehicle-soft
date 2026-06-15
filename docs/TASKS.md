@@ -1805,3 +1805,27 @@ Pending:
 - [ ] Pull docs-only update to production without service restart.
 - [ ] Continue with SPARE001C controlled workflow test on staging.
 
+## 2026-06-15  SPARE001C controlled staging spare parts workflow test
+
+Completed:
+
+- [x] Backed up staging DB before controlled workflow test.
+- [x] Created controlled test request 9.
+- [x] Tested `draft -> submitted -> approved`.
+- [x] Created controlled test request 10.
+- [x] Tested `submitted -> rejected`.
+- [x] Verified final statuses.
+- [x] Verified 4 status history rows.
+- [x] Verified audit logs.
+- [x] Verified BOT003 outbox events.
+- [x] Verified BOT003 staging delivery: 4 sent, 0 pending, 0 failed.
+- [x] Confirmed Git remained clean.
+- [x] Confirmed no production touch.
+- [x] Confirmed no service restart.
+
+Pending:
+
+- [ ] Commit this docs-only update.
+- [ ] Pull docs-only update to production without service restart.
+- [ ] Continue with SPARE001D role/access read-only audit.
+

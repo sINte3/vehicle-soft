@@ -1700,3 +1700,39 @@ Next recommended stage:
 
 - SPARE001C: controlled staging workflow test for create draft, submit, approve/reject, BOT003 outbox and status history for a new test request.
 
+## 2026-06-15  SPARE001C controlled staging spare parts workflow test completed
+
+Status: completed on staging.
+
+Summary:
+
+- Performed controlled staging-only spare parts workflow test.
+- Created request 9: `draft -> submitted -> approved`.
+- Created request 10: `submitted -> rejected`.
+- Confirmed status history rows for all expected transitions.
+- Confirmed audit logs for created requests/items/status changes.
+- Confirmed BOT003 outbox events for submitted/approved/rejected.
+- Confirmed `TransportBot003Staging` delivered all 4 events.
+- No source code changed.
+- Production was not touched.
+- No service restart performed.
+
+Staging test run:
+
+- Run tag: `SPARE001C_TEST_20260615_134745`
+- Backup: `D:\transport-report-backups\staging\daily\transport_spare001c_workflow_test_20260615_134745.db`
+- Test requests: 9 and 10
+- BOT003 sent rows: 4
+- Pending rows: 0
+- Failed rows: 0
+
+Services:
+
+- `TransportReportStaging`: RUNNING
+- `TransportBotStaging`: RUNNING
+- `TransportBot003Staging`: RUNNING
+
+Next recommended stage:
+
+- SPARE001D: read-only role/access audit for spare parts permissions and organization filtering.
+
