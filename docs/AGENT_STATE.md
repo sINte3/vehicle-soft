@@ -1806,3 +1806,32 @@ Next recommended stage:
 
 - SPARE001F: final spare parts module documentation/QA closure, or move to the next feature after user approval.
 
+## 2026-06-15  SPARE001F final spare parts QA closure completed
+
+Status: completed on staging and production.
+
+Summary:
+
+- Performed final read-only QA for spare parts module on staging and production.
+- Confirmed staging and production are synchronized on commit `2740519babb05dd7d640307a0c87f1d2d6fa62b1`.
+- Confirmed services are RUNNING in both environments.
+- Confirmed active operators have `spare_parts_access=1`.
+- Confirmed all active operators have 17 assigned organizations.
+- Confirmed status history coverage has no gaps.
+- Confirmed BOT003 outbox has no pending/failed rows.
+- Confirmed admin routes work.
+- Confirmed operator list/new/detail routes work.
+- Confirmed operator catalog access returns `403 Forbidden`.
+- Confirmed unauthenticated users redirect to login.
+- No DB writes were performed.
+- No POST requests were executed.
+- No source code changed.
+- No service restart performed.
+
+Final result:
+
+- `STAGING_SPARE001F_FINAL_QA_OK=YES`
+- `PRODUCTION_SPARE001F_FINAL_QA_OK=YES`
+
+Spare parts module QA cycle is closed for the current scope.
+

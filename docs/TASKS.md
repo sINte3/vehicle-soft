@@ -1855,3 +1855,29 @@ Pending:
 - [ ] Pull docs-only update to production without service restart.
 - [ ] Continue with SPARE001E controlled operator workflow test on staging.
 
+## 2026-06-15  SPARE001F final spare parts QA closure
+
+Completed:
+
+- [x] Final read-only staging QA.
+- [x] Final read-only production QA.
+- [x] Confirmed Git sync on staging and production.
+- [x] Confirmed services RUNNING on staging and production.
+- [x] Confirmed active operator permissions.
+- [x] Confirmed status history coverage.
+- [x] Confirmed BOT003 outbox status.
+- [x] Confirmed admin route access.
+- [x] Confirmed operator route access.
+- [x] Confirmed operator catalog remains forbidden.
+- [x] Confirmed unauthenticated redirects.
+- [x] Confirmed no DB writes.
+- [x] Confirmed no POST requests.
+- [x] Confirmed no service restart.
+- [x] Closed spare parts module QA cycle for current scope.
+
+Pending:
+
+- [ ] Commit this docs-only update.
+- [ ] Pull docs-only update to production without service restart.
+- [ ] Decide next development module/stage.
+
