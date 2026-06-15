@@ -483,6 +483,8 @@ class FuelTransaction2(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint('station_id', 'topaz_txn_id', name='uq_station_txn_id'),
+        db.Index('ix_fuel_transactions2_txn_datetime', 'txn_datetime'),
+        db.Index('ix_fuel_transactions2_station_datetime', 'station_id', 'txn_datetime'),
     )
 
 
