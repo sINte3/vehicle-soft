@@ -1775,3 +1775,34 @@ Next recommended stage:
 
 - SPARE001E: controlled operator workflow test on staging using a real active operator account path, not admin, to confirm end-user experience.
 
+## 2026-06-15  SPARE001E controlled operator workflow test on staging completed
+
+Status: completed on staging.
+
+Summary:
+
+- Performed controlled spare parts workflow test as active operator `muhiddin`.
+- Initial test script failed before creating a request due to nonexistent `can_access_module` method; no request was created in that attempt.
+- Fixed test used `user_module_permissions` for permission check.
+- Created request 11 as `muhiddin`: `draft -> submitted`.
+- Created request 12 as `muhiddin` due to repeated fixed run: `draft -> submitted`.
+- Confirmed operator cannot approve or reject requests: `403 Forbidden`.
+- Confirmed operator cannot open catalog: `403 Forbidden`.
+- Confirmed detail page renders for operator.
+- Confirmed status history rows for request 11 and 12.
+- Confirmed audit logs with username snapshot `muhiddin`.
+- Confirmed BOT003 staging delivered both submitted notifications.
+- No source code changed.
+- Production was not touched.
+- No service restart performed.
+
+Backups:
+
+- `D:\transport-report-backups\staging\daily\transport_spare001e_operator_workflow_test_20260615_142154.db`
+- `D:\transport-report-backups\staging\daily\transport_spare001e_operator_workflow_test_fixed_20260615_142410.db`
+- `D:\transport-report-backups\staging\daily\transport_spare001e_operator_workflow_test_fixed_20260615_142426.db`
+
+Next recommended stage:
+
+- SPARE001F: final spare parts module documentation/QA closure, or move to the next feature after user approval.
+
