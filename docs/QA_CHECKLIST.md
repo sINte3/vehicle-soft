@@ -353,3 +353,79 @@ Final code commit:
 
 {code_commit}
 
+## SEC-HARD-001 basic security hardening - 2026-06-15
+
+Result: PASSED.
+
+Changed files:
+
+- app.py
+- fuel_routes.py
+
+Staging:
+
+- Read-only audit found:
+  - MAX_CONTENT_LENGTH missing.
+  - explicit 500 handler missing.
+  - fuel sync token check using direct comparison.
+- Source backup created.
+- py_compile passed.
+- git diff --check passed.
+- Source scan passed:
+  - app_has_MAX_CONTENT_LENGTH=True
+  - app_has_500_handler=True
+  - fuel_has_hmac_import=True
+  - fuel_has_compare_digest=True
+  - fuel_old_token_compare_removed=True
+- App import OK.
+- URL rules count: 86.
+- MAX_CONTENT_LENGTH runtime value: 16777216.
+- 500 handler registered.
+- HTTP smoke passed:
+  - /login
+  - /fuel/api/fuel_ping
+  - /fuel/
+  - /fuel/report
+  - /fuel/transactions
+  - /nonexistent-security-audit-url
+- TransportReportStaging restarted and running.
+- No DB writes were performed.
+- No POST requests were executed.
+
+Production:
+
+- Pull scope verified:
+  - app.py
+  - fuel_routes.py
+- Production source backup created.
+- Production compile passed.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Source scan passed:
+  - app_has_MAX_CONTENT_LENGTH=True
+  - app_has_500_handler=True
+  - fuel_has_hmac_import=True
+  - fuel_has_compare_digest=True
+  - fuel_old_token_compare_removed=True
+- App import OK.
+- URL rules count: 86.
+- MAX_CONTENT_LENGTH runtime value: 16777216.
+- 500 handler registered.
+- HTTP smoke passed:
+  - /login
+  - /fuel/api/fuel_ping
+  - /fuel/
+  - /fuel/report
+  - /fuel/transactions
+  - /nonexistent-security-audit-url
+- No DB writes were performed.
+- No POST requests were executed.
+- Final production services running:
+  - TransportReport
+  - TransportBot
+  - TransportBot003
+
+Final code commit:
+
+{code_commit}
+

@@ -2057,3 +2057,37 @@ Next recommended task candidates:
 - [ ] PERF-DASH-001: joinedload improvements for transport dashboard/report.
 - [ ] API-FUEL-LEGACY-001: review legacy /api/fuel_sync alias.
 
+## 2026-06-15 - SEC-HARD-001 basic security hardening
+
+Completed:
+
+- [x] Run read-only staging audit for basic security hardening.
+- [x] Confirm MAX_CONTENT_LENGTH was missing.
+- [x] Confirm explicit 500 error handler was missing.
+- [x] Confirm fuel sync token comparison used direct string comparison.
+- [x] Back up staging source files.
+- [x] Add MAX_CONTENT_LENGTH default of 16 MiB.
+- [x] Add explicit 500 error handler.
+- [x] Replace Topaz fuel sync token comparison with hmac.compare_digest.
+- [x] Validate staging source scan.
+- [x] Validate staging app import and runtime config.
+- [x] Validate staging HTTP smoke.
+- [x] Restart TransportReportStaging.
+- [x] Validate staging post-restart smoke.
+- [x] Commit source change.
+- [x] Push source change.
+- [x] Verify production pull scope.
+- [x] Back up production source files.
+- [x] Pull source patch to production.
+- [x] Compile production changed files.
+- [x] Restart production web service only.
+- [x] Validate production source scan, runtime config and HTTP smoke.
+- [x] Confirm production services RUNNING.
+- [x] Close SEC-HARD-001.
+
+Next recommended task candidates:
+
+- [ ] PERF-DASH-001: joinedload improvements for transport dashboard/report.
+- [ ] API-FUEL-LEGACY-001: review legacy /api/fuel_sync alias.
+- [ ] CSRF-AUDIT-001: deeper CSRF coverage audit for remaining POST routes.
+

@@ -2051,3 +2051,26 @@ Summary:
 - No POST requests were executed.
 - No production service restart was performed.
 
+## 2026-06-15 - SEC-HARD-001 basic security hardening completed
+
+Status: completed on staging and production.
+
+Code commit:
+
+3b95db567dde716cd95a885d1b4e568af8153dcb
+
+Summary:
+
+- Added MAX_CONTENT_LENGTH default of 16 MiB in app.py.
+- Added explicit 500 error handler in app.py.
+- Replaced Topaz fuel sync direct token comparison with hmac.compare_digest in fuel_routes.py.
+- Confirmed app import and URL rules count.
+- Confirmed MAX_CONTENT_LENGTH runtime value is 16777216.
+- Confirmed 500 handler is registered.
+- Confirmed old payload.get('token') != api_token expression removed.
+- Confirmed staging and production HTTP smoke.
+- Restarted only TransportReport on production.
+- TransportBot and TransportBot003 were not restarted.
+- No DB writes were performed.
+- No POST requests were executed.
+
