@@ -2,6 +2,35 @@
 {% block title %}АЗС — {{ 'Начальные остатки топлива' if lang == 'ru' else 'Ёқилғи бошланғич қолдиқлари' }}{% endblock %}
 {% block content %}
 
+<style>
+/* FUEL002F_MARKER: initial balance UX, template/localization only */
+.fuel002f-page-header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:start;margin-bottom:14px}
+.fuel002f-page-header h1{margin-bottom:6px}
+.fuel002f-subtitle{color:var(--text-muted);font-size:13px;line-height:1.45}
+.fuel002f-context-strip{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin:0 0 14px 0}
+.fuel002f-pill{border:1px solid var(--border);background:var(--card-bg);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow-sm)}
+.fuel002f-pill span{display:block;color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+.fuel002f-pill strong{display:block;font-size:15px;color:var(--text-main)}
+.fuel002f-guidance-panel{display:grid;grid-template-columns:repeat(3,minmax(190px,1fr));gap:10px;margin-bottom:16px}
+.fuel002f-guidance-card{border:1px solid var(--border);border-left:4px solid var(--accent);background:var(--card-bg);border-radius:10px;padding:11px 13px;box-shadow:var(--shadow-sm)}
+.fuel002f-guidance-card strong{display:block;margin-bottom:4px;color:var(--text-main);font-size:13px}
+.fuel002f-guidance-card span{display:block;color:var(--text-muted);font-size:12px;line-height:1.4}
+.fuel002f-form-card{border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-sm);overflow:hidden}
+.fuel002f-form-card .card-header{background:var(--bg-soft)}
+form.fuel002f-balance-form{display:grid;grid-template-columns:minmax(220px,2fr) minmax(120px,1fr) minmax(150px,1fr) minmax(160px,1fr) minmax(220px,2fr) auto;gap:10px;align-items:end}
+form.fuel002f-balance-form .form-group{margin-bottom:0!important}
+.fuel002f-table-wrap{width:100%;overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:var(--card-bg);box-shadow:var(--shadow-sm)}
+.fuel002f-table-wrap .table,.fuel002f-table-wrap table{margin-bottom:0}
+.fuel002f-balance-table{min-width:820px}
+.fuel002f-balance-table th{white-space:nowrap;font-size:12px;background:var(--bg-soft)}
+.fuel002f-balance-table td{vertical-align:middle}
+@media(max-width:1200px){.fuel002f-context-strip,.fuel002f-guidance-panel{grid-template-columns:1fr 1fr}form.fuel002f-balance-form{grid-template-columns:repeat(2,minmax(180px,1fr))}}
+@media(max-width:760px){.fuel002f-page-header,.fuel002f-context-strip,.fuel002f-guidance-panel,form.fuel002f-balance-form{grid-template-columns:1fr}}
+/* FUEL002F_END */
+</style>
+
+
+
 {% set L_title = 'Начальные остатки топлива' if lang == 'ru' else 'Ёқилғи бошланғич қолдиқлари' %}
 {% set L_back = '← Дашборд' if lang == 'ru' else '← Дашборд' %}
 {% set L_rule1 = 'Начальный остаток — точка отсчёта баланса по складу.' if lang == 'ru' else 'Бошланғич қолдиқ — омбор бўйича баланснинг бошланиш нуқтаси.' %}
@@ -29,17 +58,34 @@
 .invalid-client { border-color:var(--danger) !important; box-shadow:0 0 0 2px rgba(220,38,38,.12); }
 </style>
 
-<div class="page-header">
-    <div><h1>{{ L_title }}</h1><div class="text-muted text-sm">{{ L_formula }}</div></div>
+<div class="page-header fuel002f-page-header FUEL002F_MARKER">
+    <div><div>
+    <h1>{{ L_title }}</h1>
+    <div class="fuel002f-subtitle">{{ t('Бошланғич қолдиқ: омборлар бўйича ДТ қолдиғини ҳисобот бошланиши учун белгилаш.') }}</div>
+  </div><div class="text-muted text-sm">{{ L_formula }}</div></div>
     <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ L_back }}</a>
 </div>
 
 <div class="fuel-help"><strong>ДТ.</strong> {{ L_rule1 }} {{ L_rule2 }}</div>
 
-<div class="card" style="margin-bottom:24px;">
+
+<div class="fuel002f-context-strip">
+  <div class="fuel002f-pill"><span>{{ t('Омборлар') }}</span><strong>{{ warehouses|length }}</strong></div>
+  <div class="fuel002f-pill"><span>{{ t('Ёқилғи тури') }}</span><strong>{{ t('ДТ') }}</strong></div>
+  <div class="fuel002f-pill"><span>{{ t('Қолдиқ ёзувлари') }}</span><strong>{{ existing|length }}</strong></div>
+  <div class="fuel002f-pill"><span>{{ t('Ҳисобот асоси') }}</span><strong>{{ today }}</strong></div>
+</div>
+
+<div class="fuel002f-guidance-panel">
+  <div class="fuel002f-guidance-card"><strong>{{ t('1. Омборни танланг') }}</strong><span>{{ t('Бошланғич қолдиқ аниқ бир омбор бўйича сақланади.') }}</span></div>
+  <div class="fuel002f-guidance-card"><strong>{{ t('2. Миқдор ва санани киритинг') }}</strong><span>{{ t('Миқдор литрда, сана эса ҳисобот бошланиш куни сифатида ишлатилади.') }}</span></div>
+  <div class="fuel002f-guidance-card"><strong>{{ t('3. Мавжуд ёзув янгиланади') }}</strong><span>{{ t('Бир омбор ва ДТ учун ёзув бўлса, у янги миқдор билан янгиланади.') }}</span></div>
+</div>
+
+<div class="card fuel002f-form-card" style="margin-bottom:24px;">
     <div class="card-header">{{ L_set }}</div>
     <div class="card-body">
-        <form method="post" action="{{ url_for('fuel.save_initial_balance') }}" class="form-inline" id="initialBalanceForm" onsubmit="return validateInitialBalanceBeforeSubmit()">
+        <form method="post" action="{{ url_for('fuel.save_initial_balance') }}" class="form-inline fuel002f-balance-form" id="initialBalanceForm" onsubmit="return validateInitialBalanceBeforeSubmit()">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group" style="margin-bottom:0; flex:2;">
                 <label>{{ L_wh }}</label>
@@ -82,7 +128,8 @@
 <div class="card">
     <div class="card-header">{{ L_current }}</div>
     <div style="overflow-x:auto;">
-    <table>
+    <div class="fuel002f-table-wrap FUEL002F_TABLE_WRAP_MARKER">
+<table class="fuel002f-balance-table">
         <thead>
             <tr><th>{{ L_wh }}</th><th>{{ L_fuel }}</th><th class="text-right">{{ L_qty }}</th><th>{{ L_date }}</th><th class="text-muted text-sm">{{ L_note }}</th></tr>
         </thead>
@@ -111,6 +158,7 @@
         {% endfor %}
         </tbody>
     </table>
+</div>
     </div>
 </div>
 
