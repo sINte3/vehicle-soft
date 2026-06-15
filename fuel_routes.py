@@ -16,7 +16,8 @@ from flask_login import login_required, current_user
 from datetime import datetime, date, timedelta
 import hashlib
 from io import BytesIO
-from sqlalchemy import func
+from sqlalchemy import func, and_, or_
+from sqlalchemy.orm import joinedload
 from types import SimpleNamespace
 
 from models import (
@@ -210,82 +211,232 @@ def admin_required_fuel(f):
     return decorated
 
 
+# PERF-DASH-001 V3B: bulk fuel dashboard/report helpers.
+# [REASON]: Avoid repeated per-warehouse/per-fuel SELECTs on fuel dashboard/report pages.
+def _fuel_balance_map(warehouse_ids, fuel_type=None):
+    ids = [int(x) for x in (warehouse_ids or []) if x]
+    result = {wh_id: {} for wh_id in ids}
+
+    if not ids:
+        return result
+
+    ib_query = (FuelInitialBalance.query
+                .filter(FuelInitialBalance.warehouse_id.in_(ids))
+                .order_by(FuelInitialBalance.warehouse_id,
+                          FuelInitialBalance.fuel_type,
+                          FuelInitialBalance.id))
+
+    if fuel_type:
+        ib_query = ib_query.filter(FuelInitialBalance.fuel_type == fuel_type)
+
+    initial_rows = ib_query.all()
+
+    initial_map = {}
+    fuel_types_by_wh = {}
+
+    for ib in initial_rows:
+        wh_id = int(ib.warehouse_id)
+        key = (wh_id, ib.fuel_type)
+        if key not in initial_map:
+            initial_map[key] = ib
+            fuel_types_by_wh.setdefault(wh_id, [])
+            if ib.fuel_type not in fuel_types_by_wh[wh_id]:
+                fuel_types_by_wh[wh_id].append(ib.fuel_type)
+
+    receipt_conditions = []
+    expense_conditions = []
+
+    for (wh_id, ft), ib in initial_map.items():
+        receipt_conditions.append(and_(
+            FuelReceipt2.warehouse_id == wh_id,
+            FuelReceipt2.fuel_type == ft,
+            FuelReceipt2.receipt_date >= ib.balance_date,
+        ))
+        expense_conditions.append(and_(
+            FuelStation2.warehouse_id == wh_id,
+            FuelTransaction2.fuel_type == ft,
+            FuelTransaction2.txn_datetime >= datetime.combine(ib.balance_date, datetime.min.time()),
+        ))
+
+    receipt_sums = {}
+    if receipt_conditions:
+        receipt_rows = (db.session.query(
+                FuelReceipt2.warehouse_id,
+                FuelReceipt2.fuel_type,
+                func.coalesce(func.sum(FuelReceipt2.quantity), 0)
+            )
+            .filter(or_(*receipt_conditions))
+            .group_by(FuelReceipt2.warehouse_id, FuelReceipt2.fuel_type)
+            .all())
+
+        receipt_sums = {
+            (int(wh_id), ft): float(total or 0)
+            for wh_id, ft, total in receipt_rows
+        }
+
+    expense_sums = {}
+    if expense_conditions:
+        expense_rows = (db.session.query(
+                FuelStation2.warehouse_id,
+                FuelTransaction2.fuel_type,
+                func.coalesce(func.sum(FuelTransaction2.quantity), 0)
+            )
+            .join(FuelTransaction2, FuelTransaction2.station_id == FuelStation2.id)
+            .filter(or_(*expense_conditions))
+            .group_by(FuelStation2.warehouse_id, FuelTransaction2.fuel_type)
+            .all())
+
+        expense_sums = {
+            (int(wh_id), ft): float(total or 0)
+            for wh_id, ft, total in expense_rows
+        }
+
+    for wh_id in ids:
+        ftypes = fuel_types_by_wh.get(wh_id)
+
+        if not ftypes:
+            if fuel_type:
+                if fuel_type == 'ДТ':
+                    result[wh_id]['ДТ'] = None
+            else:
+                result[wh_id]['ДТ'] = None
+            continue
+
+        for ft in ftypes:
+            ib = initial_map.get((wh_id, ft))
+            if not ib:
+                result[wh_id][ft] = None
+                continue
+
+            receipts = receipt_sums.get((wh_id, ft), 0.0)
+            expenses = expense_sums.get((wh_id, ft), 0.0)
+            result[wh_id][ft] = round(float(ib.quantity or 0) + receipts - expenses, 2)
+
+    return result
+
+
+def _fuel_station_count_map(warehouse_ids, active_only=False):
+    ids = [int(x) for x in (warehouse_ids or []) if x]
+    if not ids:
+        return {}
+
+    q = (db.session.query(FuelStation2.warehouse_id, func.count(FuelStation2.id))
+         .filter(FuelStation2.warehouse_id.in_(ids)))
+
+    if active_only:
+        q = q.filter(FuelStation2.is_active.is_(True))
+
+    return {
+        int(wh_id): int(cnt or 0)
+        for wh_id, cnt in q.group_by(FuelStation2.warehouse_id).all()
+    }
+
+
+def _fuel_today_expense_map(warehouse_ids):
+    ids = [int(x) for x in (warehouse_ids or []) if x]
+    if not ids:
+        return {}
+
+    day_start = datetime.combine(date.today(), datetime.min.time())
+    day_end = day_start + timedelta(days=1)
+
+    rows = (db.session.query(
+            FuelStation2.warehouse_id,
+            func.coalesce(func.sum(FuelTransaction2.quantity), 0)
+        )
+        .join(FuelTransaction2, FuelTransaction2.station_id == FuelStation2.id)
+        .filter(FuelStation2.warehouse_id.in_(ids),
+                FuelTransaction2.txn_datetime >= day_start,
+                FuelTransaction2.txn_datetime < day_end)
+        .group_by(FuelStation2.warehouse_id)
+        .all())
+
+    return {int(wh_id): float(total or 0) for wh_id, total in rows}
+
+
+def _fuel_latest_txn_map(warehouse_ids, start_dt=None, end_dt=None, station_id=None):
+    ids = [int(x) for x in (warehouse_ids or []) if x]
+    if not ids:
+        return {}
+
+    max_query = (db.session.query(
+            FuelStation2.warehouse_id,
+            func.max(FuelTransaction2.txn_datetime)
+        )
+        .join(FuelTransaction2, FuelTransaction2.station_id == FuelStation2.id)
+        .filter(FuelStation2.warehouse_id.in_(ids)))
+
+    if start_dt is not None:
+        max_query = max_query.filter(FuelTransaction2.txn_datetime >= start_dt)
+    if end_dt is not None:
+        max_query = max_query.filter(FuelTransaction2.txn_datetime <= end_dt)
+    if station_id:
+        max_query = max_query.filter(FuelTransaction2.station_id == station_id)
+
+    max_rows = max_query.group_by(FuelStation2.warehouse_id).all()
+
+    conditions = []
+    for wh_id, max_dt in max_rows:
+        if max_dt is None:
+            continue
+        cond = and_(FuelStation2.warehouse_id == wh_id,
+                    FuelTransaction2.txn_datetime == max_dt)
+        if station_id:
+            cond = and_(cond, FuelTransaction2.station_id == station_id)
+        conditions.append(cond)
+
+    if not conditions:
+        return {}
+
+    txns = (FuelTransaction2.query
+            .options(joinedload(FuelTransaction2.station))
+            .join(FuelStation2)
+            .filter(or_(*conditions))
+            .order_by(FuelTransaction2.txn_datetime.desc(),
+                      FuelTransaction2.id.desc())
+            .all())
+
+    result = {}
+    for tx in txns:
+        wh_id = getattr(getattr(tx, 'station', None), 'warehouse_id', None)
+        if wh_id is not None and int(wh_id) not in result:
+            result[int(wh_id)] = tx
+
+    return result
+
+
 def get_warehouse_balance(warehouse_id, fuel_type=None):
     """
     Возвращает dict {fuel_type: current_liters}.
     current = initial_balance + receipts - transactions  (всё после initial.balance_date).
     """
-    # Определяем виды топлива для данного склада
-    fuel_types_q = (db.session.query(FuelInitialBalance.fuel_type)
-                    .filter_by(warehouse_id=warehouse_id)
-                    .distinct().all())
-    fuel_types = [r[0] for r in fuel_types_q] or ['ДТ']
-
-    if fuel_type:
-        fuel_types = [fuel_type] if fuel_type in fuel_types else []
-
-    result = {}
-    for ft in fuel_types:
-        # Начальный остаток
-        ib = (FuelInitialBalance.query
-              .filter_by(warehouse_id=warehouse_id, fuel_type=ft)
-              .first())
-        if not ib:
-            result[ft] = None   # не задан начальный остаток
-            continue
-
-        since = ib.balance_date
-
-        # Приходы после since
-        receipts = (db.session.query(func.coalesce(func.sum(FuelReceipt2.quantity), 0))
-                    .filter(FuelReceipt2.warehouse_id == warehouse_id,
-                            FuelReceipt2.fuel_type == ft,
-                            FuelReceipt2.receipt_date >= since)
-                    .scalar())
-
-        # Расходы (через АЗС) после since
-        expenses = (db.session.query(func.coalesce(func.sum(FuelTransaction2.quantity), 0))
-                    .join(FuelStation2)
-                    .filter(FuelStation2.warehouse_id == warehouse_id,
-                            FuelTransaction2.fuel_type == ft,
-                            FuelTransaction2.txn_datetime >= datetime.combine(since, datetime.min.time()))
-                    .scalar())
-
-        result[ft] = round(ib.quantity + receipts - expenses, 2)
-
-    return result
+    return _fuel_balance_map([warehouse_id], fuel_type=fuel_type).get(int(warehouse_id), {})
 
 
 def get_all_balances():
     """Балансы всех складов для дашборда. Returns list of dicts."""
     warehouses = FuelWarehouse.query.order_by(FuelWarehouse.name).all()
+    warehouse_ids = [wh.id for wh in warehouses]
+
+    balances_by_wh = _fuel_balance_map(warehouse_ids)
+    latest_txn_by_wh = _fuel_latest_txn_map(warehouse_ids)
+    today_expense_by_wh = _fuel_today_expense_map(warehouse_ids)
+    active_station_count_by_wh = _fuel_station_count_map(warehouse_ids, active_only=True)
+
     rows = []
     for wh in warehouses:
-        balances = get_warehouse_balance(wh.id)
-        last_txn = (FuelTransaction2.query
-                    .join(FuelStation2)
-                    .filter(FuelStation2.warehouse_id == wh.id)
-                    .order_by(FuelTransaction2.txn_datetime.desc())
-                    .first())
-        today_expense = (db.session.query(func.coalesce(func.sum(FuelTransaction2.quantity), 0))
-                         .join(FuelStation2)
-                         .filter(FuelStation2.warehouse_id == wh.id,
-                                 FuelTransaction2.txn_datetime >= datetime.combine(date.today(), datetime.min.time()),
-                                 FuelTransaction2.txn_datetime < datetime.combine(date.today() + timedelta(days=1), datetime.min.time()))
-                         .scalar())
         rows.append({
             'warehouse': wh,
-            'balances': balances,
-            'last_txn': last_txn,
-            'today_expense': today_expense,
-            'stations': wh.stations.filter_by(is_active=True).count(),
+            'balances': balances_by_wh.get(wh.id, {}),
+            'last_txn': latest_txn_by_wh.get(wh.id),
+            'today_expense': today_expense_by_wh.get(wh.id, 0),
+            'stations': active_station_count_by_wh.get(wh.id, 0),
         })
+
     return rows
 
 
-
-
-# ─── Fuel management report ─────────────────────────────────────────
+# Fuel management report
 
 def _fuel_report_lang():
     lang = getattr(g, 'lang', 'uz') or 'uz'
@@ -509,27 +660,122 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         'missing_initial': 0,
     }
 
+    warehouse_ids = [wh.id for wh in warehouses]
+
+    initial_rows = (FuelInitialBalance.query
+                    .filter(FuelInitialBalance.warehouse_id.in_(warehouse_ids),
+                            FuelInitialBalance.fuel_type == 'ДТ')
+                    .order_by(FuelInitialBalance.warehouse_id, FuelInitialBalance.id)
+                    .all())
+
+    initial_by_wh = {}
+    for ib in initial_rows:
+        wh_id = int(ib.warehouse_id)
+        if wh_id not in initial_by_wh:
+            initial_by_wh[wh_id] = ib
+
+    before_receipt_conditions = []
+    before_issue_conditions = []
+
+    for wh_id, ib in initial_by_wh.items():
+        if d_from <= ib.balance_date:
+            continue
+
+        before_date = d_from - timedelta(days=1)
+        before_receipt_conditions.append(and_(
+            FuelReceipt2.warehouse_id == wh_id,
+            FuelReceipt2.receipt_date >= ib.balance_date,
+            FuelReceipt2.receipt_date <= before_date,
+        ))
+
+        before_issue_conditions.append(and_(
+            FuelStation2.warehouse_id == wh_id,
+            FuelTransaction2.txn_datetime >= datetime.combine(ib.balance_date, datetime.min.time()),
+            FuelTransaction2.txn_datetime <= datetime.combine(before_date, datetime.max.time()),
+        ))
+
+    receipts_before_by_wh = {}
+    if before_receipt_conditions:
+        rows = (db.session.query(
+                FuelReceipt2.warehouse_id,
+                func.coalesce(func.sum(FuelReceipt2.quantity), 0)
+            )
+            .filter(or_(*before_receipt_conditions))
+            .group_by(FuelReceipt2.warehouse_id)
+            .all())
+        receipts_before_by_wh = {int(wh_id): float(total or 0) for wh_id, total in rows}
+
+    issues_before_by_wh = {}
+    if before_issue_conditions:
+        rows = (db.session.query(
+                FuelStation2.warehouse_id,
+                func.coalesce(func.sum(FuelTransaction2.quantity), 0)
+            )
+            .join(FuelTransaction2, FuelTransaction2.station_id == FuelStation2.id)
+            .filter(or_(*before_issue_conditions))
+            .group_by(FuelStation2.warehouse_id)
+            .all())
+        issues_before_by_wh = {int(wh_id): float(total or 0) for wh_id, total in rows}
+
+    period_receipts_by_wh = {}
+    if warehouse_ids:
+        rows = (db.session.query(
+                FuelReceipt2.warehouse_id,
+                func.coalesce(func.sum(FuelReceipt2.quantity), 0)
+            )
+            .filter(FuelReceipt2.warehouse_id.in_(warehouse_ids),
+                    FuelReceipt2.receipt_date >= d_from,
+                    FuelReceipt2.receipt_date <= d_to)
+            .group_by(FuelReceipt2.warehouse_id)
+            .all())
+        period_receipts_by_wh = {int(wh_id): float(total or 0) for wh_id, total in rows}
+
+    tx_stats_by_wh = {}
+    if warehouse_ids:
+        tx_stats_q = (db.session.query(
+                FuelStation2.warehouse_id,
+                func.coalesce(func.sum(FuelTransaction2.quantity), 0),
+                func.count(FuelTransaction2.id),
+            )
+            .join(FuelTransaction2, FuelTransaction2.station_id == FuelStation2.id)
+            .filter(FuelStation2.warehouse_id.in_(warehouse_ids),
+                    FuelTransaction2.txn_datetime >= d_from_dt,
+                    FuelTransaction2.txn_datetime <= d_to_dt))
+
+        if station_id:
+            tx_stats_q = tx_stats_q.filter(FuelTransaction2.station_id == station_id)
+
+        for wh_id, issued_total, tx_count in tx_stats_q.group_by(FuelStation2.warehouse_id).all():
+            tx_stats_by_wh[int(wh_id)] = {
+                'issued': float(issued_total or 0),
+                'tx_count': int(tx_count or 0),
+            }
+
+    stations_count_by_wh = _fuel_station_count_map(warehouse_ids, active_only=False)
+    last_txn_by_wh = _fuel_latest_txn_map(warehouse_ids, start_dt=d_from_dt, end_dt=d_to_dt, station_id=station_id)
+
     for wh in warehouses:
-        opening, initial_balance = _fuel_opening_balance(wh.id, d_from)
-        receipts = _sum_receipts_for_period(wh.id, d_from, d_to)
-        issued = _sum_issues_for_period(wh.id, d_from_dt, d_to_dt, station_id=station_id)
-        tx_count_q = (db.session.query(func.count(FuelTransaction2.id))
-                      .join(FuelStation2)
-                      .filter(FuelStation2.warehouse_id == wh.id,
-                              FuelTransaction2.txn_datetime >= d_from_dt,
-                              FuelTransaction2.txn_datetime <= d_to_dt))
-        if station_id:
-            tx_count_q = tx_count_q.filter(FuelTransaction2.station_id == station_id)
-        tx_count = int(tx_count_q.scalar() or 0)
-        stations_count = wh.stations.count()
-        last_txn_q = (FuelTransaction2.query
-                      .join(FuelStation2)
-                      .filter(FuelStation2.warehouse_id == wh.id,
-                              FuelTransaction2.txn_datetime >= d_from_dt,
-                              FuelTransaction2.txn_datetime <= d_to_dt))
-        if station_id:
-            last_txn_q = last_txn_q.filter(FuelTransaction2.station_id == station_id)
-        last_txn = last_txn_q.order_by(FuelTransaction2.txn_datetime.desc()).first()
+        initial_balance = initial_by_wh.get(wh.id)
+
+        if not initial_balance:
+            opening = None
+        elif d_from <= initial_balance.balance_date:
+            opening = float(initial_balance.quantity or 0)
+        else:
+            opening = round(
+                float(initial_balance.quantity or 0)
+                + receipts_before_by_wh.get(wh.id, 0.0)
+                - issues_before_by_wh.get(wh.id, 0.0),
+                2,
+            )
+
+        receipts = period_receipts_by_wh.get(wh.id, 0.0)
+        tx_stats = tx_stats_by_wh.get(wh.id, {})
+        issued = float(tx_stats.get('issued') or 0)
+        tx_count = int(tx_stats.get('tx_count') or 0)
+        stations_count = int(stations_count_by_wh.get(wh.id, 0))
+        last_txn = last_txn_by_wh.get(wh.id)
+
         ending = None if opening is None else round(opening + receipts - issued, 2)
 
         if opening is None:
@@ -581,6 +827,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
     ).order_by(func.coalesce(func.sum(FuelTransaction2.quantity), 0).desc(), FuelStation2.name).all()
 
     recent_txns_q = (FuelTransaction2.query
+                     .options(joinedload(FuelTransaction2.station))
                      .join(FuelStation2)
                      .filter(FuelTransaction2.txn_datetime >= d_from_dt,
                              FuelTransaction2.txn_datetime <= d_to_dt))
@@ -688,6 +935,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         ))
 
     large_txn_q = (FuelTransaction2.query
+                   .options(joinedload(FuelTransaction2.station))
                    .join(FuelStation2)
                    .filter(FuelTransaction2.txn_datetime >= d_from_dt,
                            FuelTransaction2.txn_datetime <= d_to_dt,
@@ -710,6 +958,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         ))
 
     bad_qty_q = (FuelTransaction2.query
+                 .options(joinedload(FuelTransaction2.station))
                  .join(FuelStation2)
                  .filter(FuelTransaction2.txn_datetime >= d_from_dt,
                          FuelTransaction2.txn_datetime <= d_to_dt)
@@ -1087,6 +1336,7 @@ def dashboard():
 
     # Последние 30 транзакций
     recent_txns = (FuelTransaction2.query
+                   .options(joinedload(FuelTransaction2.station))
                    .join(FuelStation2)
                    .order_by(FuelTransaction2.txn_datetime.desc())
                    .limit(30).all())
