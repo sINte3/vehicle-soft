@@ -2166,3 +2166,26 @@ Summary:
 - Telegram bot services were not restarted.
 - Production smoke passed.
 
+## 2026-06-15 - AUDIT-GET-SIDE-EFFECT-002 Wialon workload GET export side effect fixed
+
+Status: completed and deployed to production.
+
+Code commit:
+
+a1a2f1ac745ccc9aa7e91aa328377430064d7ac6
+
+Summary:
+
+- Expanded GET export/download DML audit.
+- Confirmed one remaining Wialon export side effect:
+  - GET /wialon/workload/export attempted INSERT INTO audit_logs.
+- Source found in wialon_import.py, function wialon_workload_export.
+- Removed _audit_wialon(...) and db.session.commit() from the GET workload export path.
+- Preserved workload Excel export response.
+- Confirmed /wialon/report/export fix from AUDIT-GET-SIDE-EFFECT-001 is still present.
+- Staging validation confirmed DML count is now 0 for all sampled export/download GET routes.
+- Production rollout completed with source-only pull.
+- Only TransportReport was restarted.
+- Telegram bot services were not restarted.
+- Production smoke passed.
+

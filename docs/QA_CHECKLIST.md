@@ -669,3 +669,78 @@ Final production services:
 - TransportBot: RUNNING.
 - TransportBot003: RUNNING.
 
+## AUDIT-GET-SIDE-EFFECT-002 Wialon workload GET export side effect - 2026-06-15
+
+Result: PASSED.
+
+Scope:
+
+- wialon_import.py only.
+- No DB schema changes.
+- No migration.
+- No POST requests during validation.
+- No Telegram bot restart.
+
+Baseline audit:
+
+- /wialon/workload/export attempted INSERT INTO audit_logs during GET.
+- DML was blocked by read-only audit hook.
+- No actual DB writes were performed during audit.
+
+Clean sampled export/download GET routes:
+
+- /ref/equipment/export
+- /ref/work_types/export_diagnostics
+- /ref/customers/export_diagnostics
+- /wialon/report/export
+- /fuel/report?export=1
+- /report?export=1
+
+Source area:
+
+- source file: wialon_import.py
+- function: wialon_workload_export
+- write source:
+  - _audit_wialon(...)
+  - db.session.commit()
+
+Staging patch validation:
+
+- py_compile passed.
+- git diff --check passed.
+- app import OK.
+- URL rules count: 86.
+- Source checks passed:
+  - AUDIT-GET-SIDE-EFFECT-001B marker still present in wialon_report_export.
+  - _audit_wialon(...) removed from wialon_report_export.
+  - db.session.commit() removed from wialon_report_export.
+  - AUDIT-GET-SIDE-EFFECT-002B marker present in wialon_workload_export.
+  - _audit_wialon(...) removed from wialon_workload_export.
+  - db.session.commit() removed from wialon_workload_export.
+  - workload send_file response preserved.
+- /wialon/workload/export:
+  - status OK.
+  - response mimetype application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.
+  - DML count: 0.
+  - SELECT count: 20.
+- No tracebacks.
+- No POST requests.
+- Staging post-restart smoke OK.
+
+Production validation:
+
+- Production pull scope: wialon_import.py only.
+- Production source backup created.
+- Production pull fast-forward only.
+- Production py_compile passed.
+- Production source validation passed.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Production smoke OK.
+
+Final production services:
+
+- TransportReport: RUNNING.
+- TransportBot: RUNNING.
+- TransportBot003: RUNNING.
+
