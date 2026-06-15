@@ -1535,3 +1535,19 @@ Current completed milestone:
   - `TransportBot003`
 - BOT003 dry-run passed.
 - Next recommended UX sequence: continue `/fuel/warnings`, then `/fuel/` dashboard.
+
+
+## FUEL002G_WARNINGS_AGENT_STATE
+
+Current completed milestone:
+
+- FUEL002G warnings UX is deployed to production.
+- Latest production HEAD before docs-only close: `0eef3e7b7e1891437731166a94ce057d102985fa`
+- `HEAD == origin/main`
+- `git status` clean
+- Production services running:
+  - `TransportReport`
+  - `TransportBot`
+  - `TransportBot003`
+- BOT003 dry-run passed.
+- Next recommended UX sequence: continue `/fuel/` dashboard after warnings.

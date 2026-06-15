@@ -1687,3 +1687,15 @@ Completed on production:
 - Production commit: `da4565d`
 - Production URL: `/fuel/initial-balance`
 - Final verification: passed
+
+
+## FUEL002G_WARNINGS_PRODUCTION_DONE
+
+Status: completed.
+
+Completed on production:
+
+- FUEL002G warnings UX
+- Production commit: `0eef3e7`
+- Production URL: `/fuel/warnings`
+- Final verification: passed
