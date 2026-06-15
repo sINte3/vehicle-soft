@@ -598,3 +598,74 @@ Final production services:
 - TransportBot: RUNNING.
 - TransportBot003: RUNNING.
 
+## AUDIT-GET-SIDE-EFFECT-001 Wialon GET export side effect - 2026-06-15
+
+Result: PASSED.
+
+Scope:
+
+- wialon_import.py only.
+- No DB schema changes.
+- No migration.
+- No POST requests during validation.
+- No Telegram bot restart.
+
+Baseline audit:
+
+- /wialon/report/export attempted INSERT INTO audit_logs during GET.
+- DML was blocked by read-only audit hook.
+- No actual DB writes were performed during audit.
+
+Clean sampled GET routes:
+
+- /wialon/report
+- /wialon
+- /report
+- /fuel/report
+- /spare-parts/
+
+Diagnostic:
+
+- source file: wialon_import.py
+- function: wialon_report_export
+- write source:
+  - _audit_wialon(...)
+  - db.session.commit()
+
+Staging patch validation:
+
+- py_compile passed.
+- git diff --check passed.
+- app import OK.
+- URL rules count: 86.
+- Source checks passed:
+  - AUDIT-GET-SIDE-EFFECT-001B marker present.
+  - _audit_wialon(...) removed from wialon_report_export.
+  - db.session.commit() removed from wialon_report_export.
+  - send_file response preserved.
+- /wialon/report/export:
+  - status OK.
+  - response mimetype application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.
+  - DML count: 0.
+  - SELECT count: 2.
+- No tracebacks.
+- No POST requests.
+- Staging post-restart smoke OK.
+
+Production validation:
+
+- Production pull scope: wialon_import.py only.
+- Production source backup created.
+- Production pull fast-forward only.
+- Production py_compile passed.
+- Production source validation passed.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Production smoke OK.
+
+Final production services:
+
+- TransportReport: RUNNING.
+- TransportBot: RUNNING.
+- TransportBot003: RUNNING.
+

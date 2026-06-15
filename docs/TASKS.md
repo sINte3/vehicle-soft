@@ -2176,3 +2176,33 @@ Future candidates:
 - [ ] API-FUEL-LEGACY-002: confirm Topaz endpoint config and plan safe legacy alias removal.
 - [ ] CSRF-AUDIT-001: deeper CSRF coverage audit for remaining POST routes.
 
+## 2026-06-15 - AUDIT-GET-SIDE-EFFECT-001 Wialon GET export side effect
+
+Completed:
+
+- [x] Run read-only staging audit for GET routes with DML blocker.
+- [x] Confirm /wialon/report/export attempted INSERT INTO audit_logs during GET.
+- [x] Confirm other sampled GET routes had no DML.
+- [x] Run diagnostic source dump for wialon_report_export.
+- [x] Identify _audit_wialon(...) and db.session.commit() inside GET export route.
+- [x] Patch wialon_import.py only.
+- [x] Validate /wialon/report/export returns Excel response without DML.
+- [x] Restart staging TransportReportStaging only.
+- [x] Validate staging post-restart smoke.
+- [x] Commit source patch.
+- [x] Push to GitHub.
+- [x] Verify production pull scope is source-only.
+- [x] Create production source backup.
+- [x] Pull to production.
+- [x] Compile and validate production source.
+- [x] Restart production TransportReport only.
+- [x] Confirm Telegram bot services were not restarted.
+- [x] Validate production post-restart smoke.
+- [x] Close AUDIT-GET-SIDE-EFFECT-001 as completed.
+
+Future candidates:
+
+- [ ] AUDIT-GET-SIDE-EFFECT-002: expand DML-blocked audit to all GET-only export/download routes.
+- [ ] CSRF-AUDIT-001: deeper CSRF coverage audit for remaining POST routes.
+- [ ] API-FUEL-LEGACY-002: confirm Topaz endpoint config and plan safe legacy alias removal.
+

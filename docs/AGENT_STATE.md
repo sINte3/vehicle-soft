@@ -2144,3 +2144,25 @@ Summary:
 - Production smoke passed.
 - Production services are running.
 
+## 2026-06-15 - AUDIT-GET-SIDE-EFFECT-001 Wialon GET export side effect fixed
+
+Status: completed and deployed to production.
+
+Code commit:
+
+5c86893cf9175210822e502a1e85f259a51938e8
+
+Summary:
+
+- Audited GET routes for unintended database writes.
+- Confirmed one side effect:
+  - GET /wialon/report/export attempted INSERT INTO audit_logs.
+- Diagnostic found source in wialon_import.py, function wialon_report_export.
+- Removed _audit_wialon(...) and db.session.commit() from the GET export path.
+- Preserved Excel export response.
+- Staging validation confirmed DML count is now 0.
+- Production rollout completed with source-only pull.
+- Only TransportReport was restarted.
+- Telegram bot services were not restarted.
+- Production smoke passed.
+
