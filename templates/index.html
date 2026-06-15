@@ -19,15 +19,181 @@
 {% set L_quick = 'Быстрые действия' if lang == 'ru' else 'Тезкор амаллар' %}
 {% set L_no_access = 'Нет доступа к модулю' if lang == 'ru' else 'Модулга рухсат йўқ' %}
 
-<div class="dash-hero">
+<!-- DASH002_MAIN_DASHBOARD_UX -->
+<style>
+    .dash002-hero {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        padding: 18px 20px;
+        margin-bottom: 18px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: linear-gradient(135deg, var(--surface), var(--surface2));
+        box-shadow: var(--shadow);
+    }
+    .dash002-hero h1 {
+        margin: 0 0 6px 0;
+        font-size: 24px;
+        line-height: 1.2;
+    }
+    .dash002-period {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: var(--accent-light);
+        color: var(--accent);
+        font-size: 13px;
+        font-weight: 600;
+    }
+    .dash002-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+    .dash002-primary-grid,
+    .dash002-secondary-grid {
+        display: grid;
+        gap: 14px;
+        margin-bottom: 14px;
+    }
+    .dash002-primary-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .dash002-secondary-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .dash002-card {
+        display: flex;
+        flex-direction: column;
+        min-height: 210px;
+        padding: 16px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+    }
+    .dash002-card.small {
+        min-height: 160px;
+    }
+    .dash002-card .dash-card-head {
+        margin-bottom: 12px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--border);
+    }
+    .dash002-card .dash-card-head span {
+        font-size: 15px;
+        font-weight: 700;
+    }
+    .dash002-main {
+        margin-bottom: 12px;
+    }
+    .dash002-main .dash-main-value {
+        font-size: 30px;
+        line-height: 1;
+        font-weight: 800;
+    }
+    .dash002-main .dash-main-label {
+        margin-top: 5px;
+        color: var(--text2);
+        font-size: 13px;
+    }
+    .dash002-card .dash-metrics {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 0;
+    }
+    .dash002-card .dash-metrics.compact {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .dash002-card .dash-metrics > div {
+        min-height: 48px;
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface2);
+    }
+    .dash002-card .dash-metrics b {
+        display: block;
+        font-size: 16px;
+        line-height: 1.2;
+    }
+    .dash002-card .dash-metrics span {
+        display: block;
+        margin-top: 3px;
+        color: var(--text2);
+        font-size: 12px;
+        line-height: 1.25;
+    }
+    .dash002-card .dash-quick-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        margin-top: auto;
+        padding-top: 12px;
+    }
+    .dash002-card .dash-quick-links a {
+        padding: 5px 8px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface2);
+        font-size: 12px;
+        font-weight: 600;
+        text-decoration: none;
+    }
+    .dash002-card .dash-quick-links a:hover {
+        border-color: var(--accent);
+        background: var(--accent-light);
+    }
+    .dash002-no-access {
+        margin-top: auto;
+        padding: 14px;
+        border: 1px dashed var(--border-strong);
+        border-radius: var(--radius);
+        color: var(--text2);
+        background: var(--surface2);
+        text-align: center;
+        font-size: 13px;
+    }
+    .dash002-audit-card {
+        margin-bottom: 18px;
+    }
+    @media (max-width: 1100px) {
+        .dash002-primary-grid,
+        .dash002-secondary-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+    @media (max-width: 760px) {
+        .dash002-hero {
+            flex-direction: column;
+        }
+        .dash002-actions {
+            justify-content: flex-start;
+        }
+        .dash002-primary-grid,
+        .dash002-secondary-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
+<div class="dash-hero dash002-hero">
     <div>
         <h1>{{ L_dashboard_title }}</h1>
-        <div class="dash-subtitle">
-            {{ L_dashboard_subtitle }}:
+        <div class="dash-subtitle">{{ L_dashboard_subtitle }}</div>
+        <div class="dash002-period">
+            <span>{{ L_period }}:</span>
             <strong>{{ d_from.strftime('%d.%m.%Y') }}{% if d_from != d_to %} — {{ d_to.strftime('%d.%m.%Y') }}{% endif %}</strong>
         </div>
     </div>
-    <div class="dash-actions">
+    <div class="dash-actions dash002-actions">
         <a href="{{ url_for('report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="btn btn-secondary btn-sm">{{ 'Основной отчёт' if lang == 'ru' else 'Асосий ҳисобот' }}</a>
         {% if dashboard.module_access.fuel %}
         <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="btn btn-secondary btn-sm">{{ 'Отчёт по топливу' if lang == 'ru' else 'Ёқилғи ҳисоботи' }}</a>
@@ -38,26 +204,29 @@
     </div>
 </div>
 
-<div class="dash-grid">
-    <div class="dash-card">
+<div class="dash-grid dash002-primary-grid">
+    <div class="dash-card dash002-card">
         <div class="dash-card-head">
             <span>{{ L_transport }}</span>
             <a href="{{ url_for('daily_entry', date=d_from.isoformat()) }}">{{ 'Ввод' if lang == 'ru' else 'Киритиш' }}</a>
         </div>
-        <div class="dash-main-value">{{ dashboard.transport.working_rows }}</div>
-        <div class="dash-main-label">{{ 'рабочих строк' if lang == 'ru' else 'иш қаторлари' }}</div>
+        <div class="dash002-main">
+            <div class="dash-main-value">{{ dashboard.transport.working_rows }}</div>
+            <div class="dash-main-label">{{ 'рабочих строк' if lang == 'ru' else 'иш қаторлари' }}</div>
+        </div>
         <div class="dash-metrics">
             <div><b>{{ dashboard.transport.records }}</b><span>{{ 'всего строк' if lang == 'ru' else 'жами қатор' }}</span></div>
             <div><b>{{ dashboard.transport.idle_rows }}</b><span>{{ 'простой/без работ' if lang == 'ru' else 'бекор/ишсиз' }}</span></div>
             <div><b>{{ dashboard.transport.equipment_working }}</b><span>{{ 'техника работала' if lang == 'ru' else 'техника ишлади' }}</span></div>
             <div><b>{{ dashboard.transport.amount|fmt_sum or '0' }}</b><span>{{ 'сумма' if lang == 'ru' else 'сумма' }}</span></div>
-                    <div class="dash-quick-links">
-                        <a href="{{ url_for('report') }}">{{ 'Основной отчёт' if lang == 'ru' else 'Асосий ҳисобот' }}</a>
-                    </div>
+        </div>
+        <div class="dash-quick-links">
+            <a href="{{ url_for('report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Основной отчёт' if lang == 'ru' else 'Асосий ҳисобот' }}</a>
+            <a href="{{ url_for('daily_entry', date=d_from.isoformat()) }}">{{ 'Ввод данных' if lang == 'ru' else 'Маълумот киритиш' }}</a>
         </div>
     </div>
 
-    <div class="dash-card {% if dashboard.fuel.danger_warnings %}dash-danger{% elif dashboard.fuel.warnings %}dash-warn{% endif %}">
+    <div class="dash-card dash002-card {% if dashboard.fuel.danger_warnings %}dash-danger{% elif dashboard.fuel.warnings %}dash-warn{% endif %}">
         <div class="dash-card-head">
             <span>{{ L_fuel }}</span>
             {% if dashboard.module_access.fuel %}
@@ -65,25 +234,27 @@
             {% endif %}
         </div>
         {% if dashboard.module_access.fuel %}
-        <div class="dash-main-value">{{ '%.2f'|format(dashboard.fuel.issued or 0) }}</div>
-        <div class="dash-main-label">{{ 'литров выдано' if lang == 'ru' else 'литр берилди' }}</div>
+        <div class="dash002-main">
+            <div class="dash-main-value">{{ '%.2f'|format(dashboard.fuel.issued or 0) }}</div>
+            <div class="dash-main-label">{{ 'литров выдано' if lang == 'ru' else 'литр берилди' }}</div>
+        </div>
         <div class="dash-metrics">
             <div><b>{{ dashboard.fuel.transactions }}</b><span>{{ 'Topaz транзакций' if lang == 'ru' else 'Topaz транзакция' }}</span></div>
             <div><b>{{ dashboard.fuel.latest_sync_text or '—' }}</b><span>{{ 'последняя синхронизация' if lang == 'ru' else 'охирги синхронизация' }}</span></div>
             <div><b>{{ dashboard.fuel.warnings }}</b><span>{{ L_warnings|lower }}</span></div>
             <div><b>{{ dashboard.fuel.danger_warnings }}</b><span>{{ 'критические' if lang == 'ru' else 'критик' }}</span></div>
-                    <div class="dash-quick-links">
-                        <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Отчёт' if lang == 'ru' else 'Ҳисобот' }}</a>
-                        <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Предупреждения' if lang == 'ru' else 'Огоҳлантиришлар' }}</a>
-                        <a href="{{ url_for('fuel.transactions') }}">{{ 'Транзакции' if lang == 'ru' else 'Транзакциялар' }}</a>
-                    </div>
+        </div>
+        <div class="dash-quick-links">
+            <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Отчёт' if lang == 'ru' else 'Ҳисобот' }}</a>
+            <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Предупреждения' if lang == 'ru' else 'Огоҳлантиришлар' }}</a>
+            <a href="{{ url_for('fuel.transactions') }}">{{ 'Транзакции' if lang == 'ru' else 'Транзакциялар' }}</a>
         </div>
         {% else %}
-        <div class="dash-no-access">{{ L_no_access }}</div>
+        <div class="dash-no-access dash002-no-access">{{ L_no_access }}</div>
         {% endif %}
     </div>
 
-    <div class="dash-card {% if dashboard.fuel.danger_warnings %}dash-danger{% elif dashboard.fuel.warnings %}dash-warn{% endif %}">
+    <div class="dash-card dash002-card {% if dashboard.fuel.danger_warnings %}dash-danger{% elif dashboard.fuel.warnings %}dash-warn{% endif %}">
         <div class="dash-card-head">
             <span>{{ L_warnings }}</span>
             {% if dashboard.module_access.fuel %}
@@ -91,35 +262,36 @@
             {% endif %}
         </div>
         {% if dashboard.module_access.fuel %}
-        {% if dashboard.fuel.danger_warnings %}
-                <div class="dash-severity-banner danger">{{ 'Есть критические предупреждения  требуется проверка' if lang == 'ru' else 'Критик огоҳлантиришлар бор  текшириш керак' }}</div>
-                {% elif dashboard.fuel.warnings %}
-                <div class="dash-severity-banner warning">{{ 'Есть предупреждения  проверьте реестр' if lang == 'ru' else 'Огоҳлантиришлар бор  реестрни текширинг' }}</div>
-                {% else %}
-                <div class="dash-severity-banner ok">{{ 'Критических предупреждений нет' if lang == 'ru' else 'Критик огоҳлантиришлар йўқ' }}</div>
-                {% endif %}
-                <div class="dash-main-value">{{ dashboard.fuel.warnings }}</div>
-        <div class="dash-main-label">{{ 'активных предупреждений по расчёту' if lang == 'ru' else 'ҳисобланган фаол огоҳлантиришлар' }}</div>
+            {% if dashboard.fuel.danger_warnings %}
+            <div class="dash-severity-banner danger">{{ 'Есть критические предупреждения — требуется проверка' if lang == 'ru' else 'Критик огоҳлантиришлар бор — текшириш керак' }}</div>
+            {% elif dashboard.fuel.warnings %}
+            <div class="dash-severity-banner warning">{{ 'Есть предупреждения — проверьте реестр' if lang == 'ru' else 'Огоҳлантиришлар бор — реестрни текширинг' }}</div>
+            {% else %}
+            <div class="dash-severity-banner ok">{{ 'Критических предупреждений нет' if lang == 'ru' else 'Критик огоҳлантиришлар йўқ' }}</div>
+            {% endif %}
+        <div class="dash002-main">
+            <div class="dash-main-value">{{ dashboard.fuel.warnings }}</div>
+            <div class="dash-main-label">{{ 'активных предупреждений по расчёту' if lang == 'ru' else 'ҳисобланган фаол огоҳлантиришлар' }}</div>
+        </div>
         <div class="dash-metrics">
             <div><b>{{ dashboard.fuel.review_new }}</b><span>{{ 'новые' if lang == 'ru' else 'янги' }}</span></div>
             <div><b>{{ dashboard.fuel.review_in_progress }}</b><span>{{ 'в работе' if lang == 'ru' else 'ишда' }}</span></div>
             <div><b>{{ dashboard.fuel.review_resolved }}</b><span>{{ 'проверено' if lang == 'ru' else 'текширилди' }}</span></div>
             <div><b>{{ dashboard.fuel.danger_warnings }}</b><span>{{ 'критические' if lang == 'ru' else 'критик' }}</span></div>
-                    <!-- DASH002B_WARNING_LINKS_FIXED -->
-                    <div class="dash-quick-links">
-                        <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Реестр' if lang == 'ru' else 'Реестр' }}</a>
-                        <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat(), status='new') }}">{{ 'Новые' if lang == 'ru' else 'Янги' }}</a>
-                        <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat(), severity='danger') }}">{{ 'Критические' if lang == 'ru' else 'Критик' }}</a>
-                    </div>
+        </div>
+        <div class="dash-quick-links">
+            <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Реестр' if lang == 'ru' else 'Реестр' }}</a>
+            <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat(), status='new') }}">{{ 'Новые' if lang == 'ru' else 'Янги' }}</a>
+            <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat(), severity='danger') }}">{{ 'Критические' if lang == 'ru' else 'Критик' }}</a>
         </div>
         {% else %}
-        <div class="dash-no-access">{{ L_no_access }}</div>
+        <div class="dash-no-access dash002-no-access">{{ L_no_access }}</div>
         {% endif %}
     </div>
 </div>
 
-<div class="dash-grid secondary">
-    <div class="dash-card small">
+<div class="dash-grid dash002-secondary-grid secondary">
+    <div class="dash-card dash002-card small">
         <div class="dash-card-head">
             <span>{{ L_spares }}</span>
             {% if dashboard.module_access.spare_parts %}<a href="{{ url_for('spare_parts.index') }}">{{ 'Открыть' if lang == 'ru' else 'Очиш' }}</a>{% endif %}
@@ -130,18 +302,18 @@
             <div><b>{{ dashboard.spare.submitted }}</b><span>{{ 'отправлено' if lang == 'ru' else 'юборилган' }}</span></div>
             <div><b>{{ dashboard.spare.approved }}</b><span>{{ 'утверждено' if lang == 'ru' else 'тасдиқланган' }}</span></div>
             <div><b>{{ dashboard.spare.rejected }}</b><span>{{ 'отклонено' if lang == 'ru' else 'рад этилган' }}</span></div>
-                    <div class="dash-quick-links">
-                        <a href="{{ url_for('spare_parts.index') }}">{{ 'Все заявки' if lang == 'ru' else 'Барча сўровлар' }}</a>
-                        <a href="{{ url_for('spare_parts.index', status='submitted') }}">{{ 'На рассмотрении' if lang == 'ru' else 'Кўриб чиқишда' }}</a>
-                        <a href="{{ url_for('spare_parts.new_request') }}">{{ 'Новая заявка' if lang == 'ru' else 'Янги сўров' }}</a>
-                    </div>
+        </div>
+        <div class="dash-quick-links">
+            <a href="{{ url_for('spare_parts.index') }}">{{ 'Все заявки' if lang == 'ru' else 'Барча сўровлар' }}</a>
+            <a href="{{ url_for('spare_parts.index', status='submitted') }}">{{ 'На рассмотрении' if lang == 'ru' else 'Кўриб чиқишда' }}</a>
+            <a href="{{ url_for('spare_parts.new_request') }}">{{ 'Новая заявка' if lang == 'ru' else 'Янги сўров' }}</a>
         </div>
         {% else %}
-        <div class="dash-no-access">{{ L_no_access }}</div>
+        <div class="dash-no-access dash002-no-access">{{ L_no_access }}</div>
         {% endif %}
     </div>
 
-    <div class="dash-card small">
+    <div class="dash-card dash002-card small">
         <div class="dash-card-head">
             <span>{{ L_wialon }}</span>
             {% if dashboard.module_access.wialon %}<a href="{{ url_for('wialon_index') }}">{{ 'Открыть' if lang == 'ru' else 'Очиш' }}</a>{% endif %}
@@ -152,18 +324,18 @@
             <div><b>{{ dashboard.wialon.unmapped }}</b><span>{{ 'не связано' if lang == 'ru' else 'боғланмаган' }}</span></div>
             <div><b>{{ dashboard.wialon.skipped }}</b><span>{{ 'нет в системе' if lang == 'ru' else 'тизимда йўқ' }}</span></div>
             <div><b>{{ dashboard.wialon.total }}</b><span>{{ 'всего' if lang == 'ru' else 'жами' }}</span></div>
-                    <div class="dash-quick-links">
-                        <a href="{{ url_for('wialon_mapping_list') }}">{{ 'Mapping' if lang == 'ru' else 'Mapping' }}</a>
-                        <a href="{{ url_for('wialon_auto_match') }}">{{ 'Авто-маппинг' if lang == 'ru' else 'Авто-маппинг' }}</a>
-                        <a href="{{ url_for('wialon_report') }}">{{ 'Отчёт' if lang == 'ru' else 'Ҳисобот' }}</a>
-                    </div>
+        </div>
+        <div class="dash-quick-links">
+            <a href="{{ url_for('wialon_mapping_list') }}">{{ 'Mapping' if lang == 'ru' else 'Mapping' }}</a>
+            <a href="{{ url_for('wialon_auto_match') }}">{{ 'Авто-маппинг' if lang == 'ru' else 'Авто-маппинг' }}</a>
+            <a href="{{ url_for('wialon_report') }}">{{ 'Отчёт' if lang == 'ru' else 'Ҳисобот' }}</a>
         </div>
         {% else %}
-        <div class="dash-no-access">{{ L_no_access }}</div>
+        <div class="dash-no-access dash002-no-access">{{ L_no_access }}</div>
         {% endif %}
     </div>
 
-    <div class="dash-card small">
+    <div class="dash-card dash002-card small">
         <div class="dash-card-head"><span>{{ L_system }}</span></div>
         <div class="dash-metrics compact">
             <div><b>{{ dashboard.backup.name or '—' }}</b><span>{{ 'последний backup' if lang == 'ru' else 'охирги backup' }}</span></div>
@@ -175,7 +347,7 @@
 </div>
 
 {% if dashboard.audit %}
-<div class="card dash-audit-card">
+<div class="card dash-audit-card dash002-audit-card">
     <div class="card-header">
         <span>{{ 'Последние действия в системе' if lang == 'ru' else 'Тизимдаги охирги амаллар' }}</span>
         {% if dashboard.module_access.admin %}<a href="{{ url_for('admin_audit_logs') }}" class="btn btn-secondary btn-sm">{{ 'Журнал' if lang == 'ru' else 'Журнал' }}</a>{% endif %}
@@ -188,14 +360,14 @@
                 <span>{{ a.description or '' }}</span>
             </div>
             <div class="dash-audit-meta">
-                {{ a.created_at }} · {{ a.username_snapshot or 'system' }} · {{ a.status or 'ok' }}
+                <span>{{ a.username_snapshot or 'system' }}</span>
+                <span>{{ a.created_at }}</span>
             </div>
         </div>
         {% endfor %}
     </div>
 </div>
 {% endif %}
-
 
 <!-- DASH002C_MARKER: legacy daily report section separator -->
 <div class="legacy-report-section">
