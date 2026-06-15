@@ -2,6 +2,179 @@
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти — заявки' if is_ru else 'Эҳтиёт қисмлар — сўровлар' }}{% endblock %}
 {% block content %}
+
+<!-- SPARE001A_TEMPLATE_UX -->
+<style>
+    .spare001a-scope {
+        --spare-gap: 14px;
+    }
+
+    .spare001a-scope .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 14px;
+        margin-bottom: 18px;
+        padding: 18px 20px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: linear-gradient(135deg, var(--surface), var(--surface2));
+        box-shadow: var(--shadow);
+    }
+
+    .spare001a-scope .page-header h1 {
+        margin: 0 0 6px 0;
+        font-size: 24px;
+        line-height: 1.2;
+    }
+
+    .spare001a-scope .page-header .text-muted,
+    .spare001a-scope .text-muted {
+        line-height: 1.45;
+    }
+
+    .spare001a-scope .card {
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+    }
+
+    .spare001a-scope .card + .card {
+        margin-top: 14px;
+    }
+
+    .spare001a-scope .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface2);
+        font-weight: 700;
+    }
+
+    .spare001a-scope .card-body {
+        padding: 14px;
+    }
+
+    .spare001a-scope .form-inline,
+    .spare001a-scope .spare002a-filter-form,
+    .spare001a-scope .spare002a-request-form {
+        gap: 12px;
+        align-items: flex-end;
+    }
+
+    .spare001a-scope label {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--text2);
+    }
+
+    .spare001a-scope input,
+    .spare001a-scope select,
+    .spare001a-scope textarea {
+        max-width: 100%;
+    }
+
+    .spare001a-scope table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+    }
+
+    .spare001a-scope thead th {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        background: var(--surface2);
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--text2);
+    }
+
+    .spare001a-scope tbody tr:hover {
+        background: var(--surface2);
+    }
+
+    .spare001a-scope .spare-stat,
+    .spare001a-scope .spare-detail-card {
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface2);
+    }
+
+    .spare001a-scope .spare-stat .label,
+    .spare001a-scope .spare-detail-card .label {
+        margin-bottom: 4px;
+        color: var(--text2);
+        font-size: 12px;
+        font-weight: 700;
+    }
+
+    .spare001a-scope .spare-stat .value {
+        font-size: 22px;
+        font-weight: 800;
+        line-height: 1.1;
+    }
+
+    .spare001a-scope .spare002a-guidance-title {
+        margin-bottom: 4px;
+        font-weight: 800;
+        color: var(--text);
+    }
+
+    .spare001a-scope .catalog-note,
+    .spare001a-scope .spare-review-box {
+        margin-bottom: 14px;
+        padding: 12px 14px;
+        border: 1px solid var(--border);
+        border-left: 4px solid var(--accent);
+        border-radius: var(--radius);
+        background: var(--accent-light);
+        line-height: 1.45;
+    }
+
+    .spare001a-scope .spare-row-muted {
+        color: var(--text2);
+        font-size: 12px;
+    }
+
+    .spare001a-scope .btn {
+        white-space: nowrap;
+    }
+
+    .spare001a-scope .btn-sm {
+        padding: 5px 9px;
+    }
+
+    .spare001a-scope .table-responsive,
+    .spare001a-scope .spare-table-wrap {
+        overflow-x: auto;
+    }
+
+    @media (max-width: 900px) {
+        .spare001a-scope .page-header {
+            flex-direction: column;
+        }
+
+        .spare001a-scope .form-inline,
+        .spare001a-scope .spare002a-filter-form,
+        .spare001a-scope .spare002a-request-form {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .spare001a-scope .card-header {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+    }
+</style>
+<div class="spare001a-scope">
+
 <style>
 .spare-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
 .spare-hero h1 { margin-bottom:6px; }
@@ -375,7 +548,9 @@
     <div class="form-group" style="margin-bottom:0; min-width:190px;">
         <label>{{ 'Статус' if is_ru else 'Ҳолат' }}</label>
         <select id="clientStatusFilter" onchange="filterSpareRequests()">
-            <option value="all">{{ 'Все статусы' if is_ru else 'Барча ҳолатлар' }}</option>
+            <option value="all">{{ 'В
+</div>
+се статусы' if is_ru else 'Барча ҳолатлар' }}</option>
             {% for s, labels in status_labels.items() %}
             <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ labels[lang] }}</option>
             {% endfor %}
