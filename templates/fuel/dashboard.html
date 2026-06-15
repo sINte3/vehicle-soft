@@ -43,11 +43,123 @@
 .fuel-pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700; background:var(--info-light); color:var(--info); }
 .fuel-balance-status { display:block; margin-top:4px; font-size:11px; font-weight:600; color:var(--text2); }
 @media (max-width:768px) { .fuel-hero { flex-direction:column; } .fuel-actions { justify-content:flex-start; } }
+
+/* FUEL002H_MARKER: fuel dashboard UX refresh, template/localization only. */
+.fuel002h-subtitle {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+  margin-top: 6px;
+}
+
+.fuel002h-context-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 14px 0 14px 0;
+}
+
+.fuel002h-pill {
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow-sm);
+}
+
+.fuel002h-pill span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 4px;
+}
+
+.fuel002h-pill strong {
+  display: block;
+  font-size: 15px;
+  color: var(--text-main);
+}
+
+.fuel002h-guidance-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(190px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.fuel002h-guidance-card {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 11px 13px;
+  box-shadow: var(--shadow-sm);
+}
+
+.fuel002h-guidance-card strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.fuel002h-guidance-card span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.fuel002h-stats-grid .stat-card {
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+}
+
+.fuel002h-balance-card,
+.fuel002h-recent-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.fuel002h-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.fuel002h-dashboard-table {
+  min-width: 860px;
+}
+
+.fuel002h-dashboard-table th {
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+@media (max-width:1050px) {
+  .fuel002h-context-strip,
+  .fuel002h-guidance-panel {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width:700px) {
+  .fuel002h-context-strip,
+  .fuel002h-guidance-panel {
+    grid-template-columns: 1fr;
+  }
+}
+/* FUEL002H_END */
+
 </style>
 
 <div class="fuel-hero">
     <div>
-        <h1>{{ L_title }}</h1>
+        <h1> {{ L_title }}</h1>
+        <div class="fuel002h-subtitle FUEL002H_MARKER">{{ t('Ёқилғи панели: омбор қолдиқлари, кунлик сарф, АЗС ва охирги беришларни тез кўриш.') }}</div>
         <div class="text-muted text-sm">{{ L_subtitle }}</div>
     </div>
     <div class="fuel-actions">
@@ -72,7 +184,42 @@
     {% endif %}
 </div>
 
-<div class="stats-grid" style="grid-template-columns: repeat(auto-fit,minmax(170px,1fr)); margin-bottom:20px;">
+
+<div class="fuel002h-context-strip">
+    <div class="fuel002h-pill">
+        <span>{{ t('Омборлар') }}</span>
+        <strong>{{ balance_rows|length }}</strong>
+    </div>
+    <div class="fuel002h-pill">
+        <span>{{ t('Фаол АЗС') }}</span>
+        <strong>{{ balance_rows|sum(attribute='stations') }}</strong>
+    </div>
+    <div class="fuel002h-pill">
+        <span>{{ t('Бугун берилди') }}</span>
+        <strong>{{ "%.1f"|format(today_total or 0) }} л</strong>
+    </div>
+    <div class="fuel002h-pill">
+        <span>{{ t('Охирги беришлар') }}</span>
+        <strong>{{ recent_txns|length }}</strong>
+    </div>
+</div>
+
+<div class="fuel002h-guidance-panel">
+    <div class="fuel002h-guidance-card">
+        <strong>{{ t('1. Қолдиқларни кўринг') }}</strong>
+        <span>{{ t('Асосий жадвал омборлар кесимида жорий қолдиқ ва ҳолатни кўрсатади.') }}</span>
+    </div>
+    <div class="fuel002h-guidance-card">
+        <strong>{{ t('2. Ҳаракатларга тез ўтинг') }}</strong>
+        <span>{{ t('Беришлар, ҳисобот, огоҳлантиришлар, киримлар, АЗС ва омборлар бўлимлари юқорида очилади.') }}</span>
+    </div>
+    <div class="fuel002h-guidance-card">
+        <strong>{{ t('3. Охирги беришларни назорат қилинг') }}</strong>
+        <span>{{ t('Пастдаги жадвалда охирги 30 та топливная операция кўринади.') }}</span>
+    </div>
+</div>
+
+<div class="stats-grid fuel002h-stats-grid FUEL002H_STATS_MARKER" style="grid-template-columns: repeat(auto-fit,minmax(170px,1fr)); margin-bottom:20px;">
     <div class="stat-card">
         <div class="label">{{ L_today }}</div>
         <div class="value" style="color:var(--danger);">{{ '%.0f'|format(today_total) }} л</div>
@@ -87,10 +234,11 @@
     </div>
 </div>
 
-<div class="card" style="margin-bottom:24px;">
+<div class="card fuel002h-balance-card FUEL002H_BALANCE_CARD_MARKER" style="margin-bottom:24px;">
     <div class="card-header">{{ L_balances }}</div>
     <div style="overflow-x:auto;">
-    <table>
+    <div class="fuel002h-table-wrap FUEL002H_BALANCE_TABLE_MARKER">
+<table class="fuel002h-dashboard-table">
         <thead>
             <tr>
                 <th>{{ L_wh }}</th>
@@ -163,17 +311,19 @@
         {% endfor %}
         </tbody>
     </table>
+</div>
     </div>
 </div>
 
 {% if recent_txns %}
-<div class="card">
+<div class="card fuel002h-recent-card FUEL002H_RECENT_CARD_MARKER">
     <div class="card-header" style="justify-content:space-between;">
         <span>{{ L_recent }} ({{ recent_txns|length }})</span>
         <a href="{{ url_for('fuel.transactions') }}" class="btn btn-secondary btn-sm">{{ L_all }} →</a>
     </div>
     <div style="overflow-x:auto;">
-    <table>
+    <div class="fuel002h-table-wrap FUEL002H_RECENT_TABLE_MARKER">
+<table class="fuel002h-dashboard-table">
         <thead>
             <tr>
                 <th>{{ L_datetime }}</th>
@@ -197,6 +347,7 @@
         {% endfor %}
         </tbody>
     </table>
+</div>
     </div>
 </div>
 {% endif %}
