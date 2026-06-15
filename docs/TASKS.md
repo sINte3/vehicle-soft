@@ -1881,3 +1881,31 @@ Pending:
 - [ ] Pull docs-only update to production without service restart.
 - [ ] Decide next development module/stage.
 
+## 2026-06-15  REPORT002 general `/report` validation
+
+Completed:
+
+- [x] Read-only staging audit of `/report`.
+- [x] Source/template audit of `app.py` and `templates/report.html`.
+- [x] Confirmed `REPORT002A_MARKER` is present.
+- [x] Confirmed admin/operator GET access.
+- [x] Confirmed filtered GET.
+- [x] Confirmed CSRF token.
+- [x] Confirmed Excel main export on staging.
+- [x] Confirmed Excel daily activity export on staging.
+- [x] Confirmed operator Excel main export on staging.
+- [x] Confirmed production GET access.
+- [x] Confirmed production Excel main export.
+- [x] Confirmed production Excel daily activity export.
+- [x] Confirmed generated `.xlsx` files are valid.
+- [x] Confirmed DB counts did not change.
+- [x] Confirmed no source changes were needed.
+- [x] Confirmed no service restart.
+- [x] Closed `/report` for current Claude-audit scope.
+
+Pending:
+
+- [ ] Commit this docs-only update.
+- [ ] Pull docs-only update to production without service restart.
+- [ ] Start UI003 general UI/design unification audit.
+

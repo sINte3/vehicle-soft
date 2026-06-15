@@ -1835,3 +1835,33 @@ Final result:
 
 Spare parts module QA cycle is closed for the current scope.
 
+## 2026-06-15  REPORT002 general `/report` validation completed
+
+Status: completed on staging and production.
+
+Summary:
+
+- Confirmed `/report` already contains `REPORT002A_MARKER`.
+- Confirmed `/report` GET works for admin and operator.
+- Confirmed filtered GET works for admin and operator.
+- Confirmed CSRF token is present in report form.
+- Confirmed Excel export works for admin main report.
+- Confirmed Excel export works for admin daily activity report.
+- Confirmed Excel export works for operator main report.
+- Confirmed generated `.xlsx` files are valid.
+- Confirmed temporary export files were created only in isolated temp folders and removed.
+- Confirmed DB counts did not change.
+- Confirmed unauthenticated `/report` redirects to login.
+- Confirmed `/report/` returns 404 under current route configuration.
+- Confirmed services remained RUNNING.
+- No source code changed.
+- No DB writes were performed.
+- No service restart performed.
+
+Final result:
+
+- `REPORT002_3B_FUNCTIONAL_VALIDATION_STAGING_OK=YES`
+- `REPORT002_4_FUNCTIONAL_VALIDATION_PRODUCTION_OK=YES`
+
+General `/report` route is closed for the current Claude-audit scope.
+
