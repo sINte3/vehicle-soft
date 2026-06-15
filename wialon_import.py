@@ -1051,19 +1051,10 @@ def register_wialon_routes(app, editor_required, admin_required):
 
         from flask import send_file as _sf
         fname = u'Motochaslar_{}.xlsx'.format(sel_date.strftime('%d_%m_%Y'))
-        _audit_wialon(
-            'wialon_engine_hours_exported',
-            entity_type='wialon_report',
-            entity_label=fname,
-            after={
-                'date': sel_date.isoformat(),
-                'org_id': org_id,
-                'records_count': len(records),
-                'filename': fname,
-            },
-            description='Wialon engine-hours report exported'
-        )
-        db.session.commit()
+        # AUDIT-GET-SIDE-EFFECT-001B: GET export must not write audit_logs.
+        pass
+        # AUDIT-GET-SIDE-EFFECT-001B: removed session commit from GET export.
+        pass
         return _sf(buf, as_attachment=True,
                    download_name=fname,
                    mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
