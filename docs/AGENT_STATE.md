@@ -1736,3 +1736,42 @@ Next recommended stage:
 
 - SPARE001D: read-only role/access audit for spare parts permissions and organization filtering.
 
+## 2026-06-15  SPARE001D spare parts role/access audit and permission enablement completed
+
+Status: completed on staging and production.
+
+Summary:
+
+- Performed read-only role/access audit on staging.
+- Performed read-only role/access audit on production.
+- Confirmed active operators had organizations assigned but `spare_parts_access=0`.
+- Enabled `spare_parts` access for active operators on staging.
+- Validated operator access on staging.
+- Enabled `spare_parts` access for active operators on production.
+- Validated operator access on production.
+- Confirmed catalog remains admin-only.
+- No source code changed.
+- No schema changed.
+- No migration added.
+- No service restart performed.
+
+Operators enabled:
+
+- `muhiddin`
+- `abdugani`
+- `mirfayz`
+- `sardor`
+
+Staging backups:
+
+- `D:\transport-report-backups\staging\daily\transport_spare001d3_enable_spare_parts_active_ops_20260615_141345.db`
+- `D:\transport-report-backups\staging\daily\transport_spare001d3_enable_spare_parts_active_ops_20260615_141354.db`
+
+Production backup:
+
+- `D:\transport-report-backups\production\daily\transport_spare001d4_enable_spare_parts_active_ops_20260615_141801.db`
+
+Next recommended stage:
+
+- SPARE001E: controlled operator workflow test on staging using a real active operator account path, not admin, to confirm end-user experience.
+

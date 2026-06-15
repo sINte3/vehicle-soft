@@ -1829,3 +1829,29 @@ Pending:
 - [ ] Pull docs-only update to production without service restart.
 - [ ] Continue with SPARE001D role/access read-only audit.
 
+## 2026-06-15  SPARE001D spare parts role/access audit and permission enablement
+
+Completed:
+
+- [x] Read-only staging role/access audit.
+- [x] Read-only production role/access audit.
+- [x] Confirmed active operators had `spare_parts_access=0`.
+- [x] Confirmed admin access was valid.
+- [x] Confirmed unauthenticated users redirect to login.
+- [x] Backed up staging DB.
+- [x] Enabled `spare_parts` access for active operators on staging.
+- [x] Validated staging operator access to list/new/details.
+- [x] Validated staging catalog remains admin-only.
+- [x] Backed up production DB.
+- [x] Enabled `spare_parts` access for active operators on production.
+- [x] Validated production operator access to list/new/details.
+- [x] Validated production catalog remains admin-only.
+- [x] Confirmed no source code changes.
+- [x] Confirmed no service restart.
+
+Pending:
+
+- [ ] Commit this docs-only update.
+- [ ] Pull docs-only update to production without service restart.
+- [ ] Continue with SPARE001E controlled operator workflow test on staging.
+
