@@ -1,9 +1,32 @@
 {% extends "base.html" %}
-{% block title %}Хатолик {{ code }}{% endblock %}
+{% block title %}{{ t('Хатолик') }} {{ code }}{% endblock %}
 {% block content %}
-<div style="text-align:center; padding:60px 20px;">
-    <div style="font-size:72px; font-weight:700; color:var(--border-strong); margin-bottom:8px;">{{ code }}</div>
-    <h2 style="margin-bottom:12px;">{{ message }}</h2>
-    <a href="{{ url_for('index') }}" class="btn btn-secondary">← Бош саҳифага</a>
+{# UI003A_ERROR_TEMPLATE: unified error page, template-only. #}
+
+<div class="page-header UI003A_ERROR_TEMPLATE">
+    <div>
+        <h1>{{ t('Хатолик') }} {{ code }}</h1>
+        <div class="text-muted text-sm">
+            {{ t('Саҳифа ёки амални бажаришда хатолик юз берди.') }}
+        </div>
+    </div>
+</div>
+
+<div class="card" style="max-width:720px; margin:0 auto;">
+    <div class="card-body" style="text-align:center; padding:48px 24px;">
+        <div style="font-size:72px; line-height:1; font-weight:800; color:var(--border-strong); margin-bottom:12px;">
+            {{ code }}
+        </div>
+
+        <h2 style="margin-bottom:10px;">{{ message }}</h2>
+
+        <p class="text-muted" style="margin-bottom:22px;">
+            {{ t('Керакли бўлимга қайтинг ёки бош саҳифадан давом этинг.') }}
+        </p>
+
+        <a href="{{ url_for('index') }}" class="btn btn-secondary">
+             {{ t('Бош саҳифа') }}
+        </a>
+    </div>
 </div>
 {% endblock %}
