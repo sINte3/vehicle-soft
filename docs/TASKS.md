@@ -1995,3 +1995,34 @@ Next recommended task:
 
 - [ ] FUEL-IDX-002: replace non-sargable `date(txn_datetime)` filters with explicit datetime ranges.
 
+## 2026-06-15 - FUEL-IDX-002 sargable fuel transaction date filters
+
+Completed:
+
+- [x] Run read-only staging audit for non-sargable func.date(...) filters.
+- [x] Confirm affected source lines in fuel_routes.py.
+- [x] Confirm old and new count comparison matches.
+- [x] Confirm explicit day range uses ix_fuel_transactions2_txn_datetime.
+- [x] Replace func.date(FuelTransaction2.txn_datetime) == date.today() filters.
+- [x] Validate source scan has no remaining func.date(...) calls in fuel_routes.py.
+- [x] Validate staging app import.
+- [x] Validate staging authenticated render of key fuel pages.
+- [x] Restart TransportReportStaging.
+- [x] Validate post-restart staging smoke.
+- [x] Commit source change.
+- [x] Push source change.
+- [x] Verify production pull scope.
+- [x] Back up production source file.
+- [x] Pull source change to production.
+- [x] Compile production changed file.
+- [x] Restart production web service only.
+- [x] Validate production source scan, query plan and HTTP smoke.
+- [x] Confirm production services RUNNING.
+- [x] Close FUEL-IDX-002.
+
+Next recommended task candidates:
+
+- [ ] SEC-HARD-001: MAX_CONTENT_LENGTH, constant-time fuel sync token compare, 500 handler.
+- [ ] CLEAN-TPL-001: remove orphaned legacy fuel templates.
+- [ ] PERF-DASH-001: joinedload improvements for transport dashboard/report.
+

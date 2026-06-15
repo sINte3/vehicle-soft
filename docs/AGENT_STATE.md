@@ -1999,3 +1999,31 @@ Remaining related future task:
 
 - FUEL-IDX-002: replace non-sargable `date(txn_datetime)` filters with explicit datetime ranges.
 
+## 2026-06-15 - FUEL-IDX-002 sargable fuel transaction date filters completed
+
+Status: completed on staging and production.
+
+Code commit:
+
+781a826eab6e7e662032b1da1d29a373912a24fd
+
+Summary:
+
+- Completed follow-up to FUEL-IDX-001.
+- Replaced remaining non-sargable func.date(FuelTransaction2.txn_datetime) == date.today() filters in fuel_routes.py.
+- Replaced them with explicit day range filters:
+  - txn_datetime >= today_start
+  - txn_datetime < next_day_start
+- Confirmed old and new counts match on staging and production.
+- Confirmed query plan uses ix_fuel_transactions2_txn_datetime.
+- Confirmed no remaining func.date(...) calls in fuel_routes.py.
+- Confirmed production smoke for:
+  - /login
+  - /fuel/
+  - /fuel/stations
+  - /fuel/transactions
+  - /fuel/report
+- Restarted only TransportReport on production.
+- TransportBot and TransportBot003 were not restarted.
+- No DB writes were performed.
+

@@ -243,3 +243,49 @@ Final code commit:
 
 `62001d48886f8a1342cc83a2ab958dc3d8a53ef2`
 
+## FUEL-IDX-002 sargable fuel transaction date filters - 2026-06-15
+
+Result: PASSED.
+
+Staging:
+
+- Read-only audit found two old func.date(FuelTransaction2.txn_datetime) filters.
+- Source patch changed only fuel_routes.py.
+- TARGET_PRESENT=False.
+- FUNC_DATE_CALL_LINES_AFTER_PATCH=[].
+- Old/new count comparison matched:
+  - 30 vs 30 on staging.
+- New range query uses ix_fuel_transactions2_txn_datetime.
+- Authenticated render passed:
+  - /fuel/
+  - /fuel/stations
+  - /fuel/transactions
+  - /fuel/report
+- Unauthenticated smoke passed.
+- TransportReportStaging restarted and running.
+
+Production:
+
+- Pull scope verified:
+  - fuel_routes.py only.
+- Source backup created.
+- Production compile passed.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Source scan confirmed no remaining old func.date(...) filters.
+- Old/new count comparison matched:
+  - 47 vs 47 on production.
+- New range query uses ix_fuel_transactions2_txn_datetime.
+- HTTP smoke passed:
+  - /login
+  - /fuel/
+  - /fuel/stations
+  - /fuel/transactions
+  - /fuel/report
+- No DB writes were performed.
+- Final production services running.
+
+Final code commit:
+
+{code_commit}
+
