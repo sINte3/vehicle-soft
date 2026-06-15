@@ -1663,3 +1663,15 @@ Completed on production:
 - Production commit: `47bb0f2`
 - Production URL: `/fuel/report`
 - Final verification: passed
+
+
+## FUEL002E_STATIONS_PRODUCTION_DONE
+
+Status: completed.
+
+Completed on production:
+
+- FUEL002E stations UX
+- Production commit: `adace00`
+- Production URL: `/fuel/stations`
+- Final verification: passed
