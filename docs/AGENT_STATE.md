@@ -2027,3 +2027,27 @@ Summary:
 - TransportBot and TransportBot003 were not restarted.
 - No DB writes were performed.
 
+## 2026-06-15 - CLEAN-TPL-001 orphaned legacy fuel template cleanup completed
+
+Status: completed on staging and production.
+
+Code commit:
+
+3bb4385472c54fefb19656608df33e3398085bfd
+
+Summary:
+
+- Removed five confirmed orphaned root-level legacy fuel templates:
+  - templates/fuel_balance.html
+  - templates/fuel_dashboard.html
+  - templates/fuel_history.html
+  - templates/fuel_receipts.html
+  - templates/fuel_sync_log.html
+- Confirmed current Flask render_template references use active templates/fuel/*.html.
+- Confirmed active fuel templates remain present.
+- Confirmed authenticated render of key fuel pages on staging and production.
+- Confirmed unauthenticated smoke on key fuel pages.
+- No DB writes were performed.
+- No POST requests were executed.
+- No production service restart was performed.
+

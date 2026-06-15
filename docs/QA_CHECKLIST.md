@@ -289,3 +289,67 @@ Final code commit:
 
 {code_commit}
 
+## CLEAN-TPL-001 orphaned legacy fuel template cleanup - 2026-06-15
+
+Result: PASSED.
+
+Deleted templates:
+
+- templates/fuel_balance.html
+- templates/fuel_dashboard.html
+- templates/fuel_history.html
+- templates/fuel_receipts.html
+- templates/fuel_sync_log.html
+
+Staging:
+
+- Read-only audit confirmed root-level legacy fuel templates were orphaned.
+- Backup created before deletion.
+- Deleted only the five confirmed legacy templates.
+- Active templates/fuel/*.html files remained present.
+- No Python render_template references to deleted files.
+- App import OK.
+- Authenticated render passed:
+  - /fuel/
+  - /fuel/warehouses
+  - /fuel/initial-balance
+  - /fuel/receipts
+  - /fuel/transactions
+  - /fuel/stations
+  - /fuel/report
+  - /fuel/warnings
+- Unauthenticated smoke passed.
+- No DB writes were performed.
+- No POST requests were executed.
+- No service restart was performed.
+
+Production:
+
+- Pull scope verified:
+  - five template deletions only.
+- Production source backup created.
+- Deleted legacy templates confirmed absent.
+- Active templates/fuel/*.html files confirmed present.
+- App import OK.
+- Authenticated render passed:
+  - /fuel/
+  - /fuel/warehouses
+  - /fuel/initial-balance
+  - /fuel/receipts
+  - /fuel/transactions
+  - /fuel/stations
+  - /fuel/report
+  - /fuel/warnings
+- Unauthenticated smoke passed.
+- No DB writes were performed.
+- No POST requests were executed.
+- No service restart was performed.
+- Final production services running:
+  - TransportReport
+  - TransportBot
+  - TransportBot003
+
+Final code commit:
+
+{code_commit}
+

@@ -2026,3 +2026,34 @@ Next recommended task candidates:
 - [ ] CLEAN-TPL-001: remove orphaned legacy fuel templates.
 - [ ] PERF-DASH-001: joinedload improvements for transport dashboard/report.
 
+## 2026-06-15 - CLEAN-TPL-001 orphaned legacy fuel template cleanup
+
+Completed:
+
+- [x] Run read-only staging audit for legacy root-level fuel templates.
+- [x] Confirm active templates/fuel/*.html files exist.
+- [x] Confirm current render_template references use active fuel templates.
+- [x] Back up legacy templates on staging.
+- [x] Delete only confirmed orphaned legacy templates on staging.
+- [x] Validate deleted files are gone.
+- [x] Validate active fuel templates remain.
+- [x] Validate no Python render_template references to deleted files.
+- [x] Validate staging authenticated render of key fuel pages.
+- [x] Validate staging unauthenticated smoke.
+- [x] Commit source deletions.
+- [x] Push source deletions.
+- [x] Verify production pull scope.
+- [x] Back up production legacy templates.
+- [x] Pull source deletions to production.
+- [x] Validate production file state.
+- [x] Validate production authenticated render of key fuel pages.
+- [x] Validate production unauthenticated smoke.
+- [x] Confirm production services RUNNING.
+- [x] Close CLEAN-TPL-001.
+
+Next recommended task candidates:
+
+- [ ] SEC-HARD-001: MAX_CONTENT_LENGTH, constant-time fuel sync token compare, 500 handler.
+- [ ] PERF-DASH-001: joinedload improvements for transport dashboard/report.
+- [ ] API-FUEL-LEGACY-001: review legacy /api/fuel_sync alias.
+
