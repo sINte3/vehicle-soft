@@ -46,11 +46,132 @@
 .warning-form textarea { min-height:40px; }
 @media (max-width:1050px) { .warning-filter { grid-template-columns:repeat(2,minmax(130px,1fr)); } .warning-form { grid-template-columns:1fr; } }
 @media (max-width:700px) { .warning-hero { flex-direction:column; } .warning-actions { justify-content:flex-start; } .warning-filter { grid-template-columns:1fr; } }
+
+/* FUEL002G_MARKER: fuel warnings UX refresh, template/localization only. */
+.fuel002g-page-header {
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: var(--shadow-sm);
+}
+
+.fuel002g-page-header h1 {
+  margin-bottom: 6px;
+}
+
+.fuel002g-subtitle {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.fuel002g-context-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 14px 0 14px 0;
+}
+
+.fuel002g-pill {
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow-sm);
+}
+
+.fuel002g-pill span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 4px;
+}
+
+.fuel002g-pill strong {
+  display: block;
+  font-size: 15px;
+  color: var(--text-main);
+}
+
+.fuel002g-guidance-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(190px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.fuel002g-guidance-card {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 11px 13px;
+  box-shadow: var(--shadow-sm);
+}
+
+.fuel002g-guidance-card strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.fuel002g-guidance-card span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.fuel002g-filter-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+}
+
+.fuel002g-filter-form {
+  align-items: end;
+}
+
+.fuel002g-warning-card {
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+}
+
+.fuel002g-warning-card .warning-title {
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.fuel002g-review-form {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+@media (max-width:1050px) {
+  .fuel002g-context-strip,
+  .fuel002g-guidance-panel {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width:700px) {
+  .fuel002g-context-strip,
+  .fuel002g-guidance-panel {
+    grid-template-columns: 1fr;
+  }
+}
+/* FUEL002G_END */
+
 </style>
 
-<div class="warning-hero">
+<div class="warning-hero fuel002g-page-header FUEL002G_MARKER">
     <div>
         <h1>{{ L_title }}</h1>
+        <div class="fuel002g-subtitle">{{ t('Ёқилғи огоҳлантиришлари: давр, жиддийлик, ҳолат ва текширув изоҳларини бошқариш.') }}</div>
         <div class="text-muted text-sm">{{ L_subtitle }}</div>
     </div>
     <div class="warning-actions">
@@ -61,9 +182,44 @@
 
 <div class="warning-note">{{ L_hint }}</div>
 
-<div class="card" style="margin-bottom:16px;">
+<div class="fuel002g-context-strip">
+    <div class="fuel002g-pill">
+        <span>{{ t('Жами огоҳлантиришлар') }}</span>
+        <strong>{{ counts.total }}</strong>
+    </div>
+    <div class="fuel002g-pill">
+        <span>{{ t('Кўрсатилган') }}</span>
+        <strong>{{ counts.filtered }}</strong>
+    </div>
+    <div class="fuel002g-pill">
+        <span>{{ t('Фаол') }}</span>
+        <strong>{{ counts.current }}</strong>
+    </div>
+    <div class="fuel002g-pill">
+        <span>{{ t('Критик') }}</span>
+        <strong>{{ counts.danger }}</strong>
+    </div>
+</div>
+
+<div class="fuel002g-guidance-panel">
+    <div class="fuel002g-guidance-card">
+        <strong>{{ t('1. Фильтрларни танланг') }}</strong>
+        <span>{{ t('Давр, ҳолат, жиддийлик, тур ва қидирув бўйича рўйхатни қисқартиринг.') }}</span>
+    </div>
+    <div class="fuel002g-guidance-card">
+        <strong>{{ t('2. Огоҳлантиришни текширинг') }}</strong>
+        <span>{{ t('Карточкада сабаб, қиймат ва жорий ёки архив ҳолати кўринади.') }}</span>
+    </div>
+    <div class="fuel002g-guidance-card">
+        <strong>{{ t('3. Ҳолат ва изоҳни сақланг') }}</strong>
+        <span>{{ t('Ҳар бир огоҳлантириш бўйича иш ҳолати ва текширув изоҳини сақлаш мумкин.') }}</span>
+    </div>
+</div>
+
+
+<div class="card fuel002g-filter-card FUEL002G_FILTER_MARKER" style="margin-bottom:16px;">
     <div class="card-body">
-        <form method="get" class="warning-filter">
+        <form method="get" class="warning-filter fuel002g-filter-form">
             <div class="form-group" style="margin-bottom:0;"><label>{{ L_from }}</label><input type="date" name="date_from" value="{{ d_from.isoformat() }}"></div>
             <div class="form-group" style="margin-bottom:0;"><label>{{ L_to }}</label><input type="date" name="date_to" value="{{ d_to.isoformat() }}"></div>
             <div class="form-group" style="margin-bottom:0;">
@@ -106,7 +262,7 @@
 {% set wt = warning_text(w, lang) %}
 {% set w_title = wt[0] %}
 {% set w_details = wt[1] %}
-<div class="warning-card {{ w.severity }}">
+<div class="warning-card fuel002g-warning-card FUEL002G_CARD_MARKER {{ w.severity }}">
     <div class="warning-title">{{ w_title }}</div>
     <div class="text-sm text-muted">{{ w_details }}</div>
     <div class="warning-meta">
@@ -120,7 +276,7 @@
     {% if w.reviewer_name or w.review_updated_at %}
     <div class="text-xs text-muted" style="margin-top:4px;">{{ L_reviewer }}: {{ w.reviewer_name or '—' }}{% if w.review_updated_at %}; {{ L_updated }}: {{ w.review_updated_at.strftime('%d.%m.%Y %H:%M') }}{% endif %}</div>
     {% endif %}
-    <form method="post" action="{{ url_for('fuel.fuel_warning_update', warning_key=w.key) }}" class="warning-form">
+    <form method="post" action="{{ url_for('fuel.fuel_warning_update', warning_key=w.key) }}" class="warning-form fuel002g-review-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="return_url" value="{{ request.full_path }}">
         <input type="hidden" name="warning_code" value="{{ w.code }}">
