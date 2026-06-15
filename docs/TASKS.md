@@ -1781,3 +1781,27 @@ Pending:
 - [ ] Commit this docs-only update.
 - [ ] Pull docs-only update to production without service restart.
 
+## 2026-06-15  SPARE001B spare parts status history audit/backfill
+
+Completed:
+
+- [x] Read-only audit of `spare_parts.py` workflow.
+- [x] Confirmed existing `_add_status_history(...)` helper.
+- [x] Confirmed existing status history writes in submit/approve/reject paths.
+- [x] Confirmed staging gap: 8 historical requests with zero history.
+- [x] Confirmed production gap: 3 historical requests with zero history.
+- [x] Backed up staging DB.
+- [x] Backfilled staging status history.
+- [x] Validated staging history coverage.
+- [x] Backed up production DB.
+- [x] Backfilled production status history.
+- [x] Validated production history coverage.
+- [x] Confirmed no code changes.
+- [x] Confirmed no service restart.
+
+Pending:
+
+- [ ] Commit this docs-only update.
+- [ ] Pull docs-only update to production without service restart.
+- [ ] Continue with SPARE001C controlled workflow test on staging.
+

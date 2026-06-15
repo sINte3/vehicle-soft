@@ -1657,3 +1657,46 @@ Next recommended stage:
 1. Commit this docs-only update and pull it to production without service restart.
 2. Continue with next safe UX/discovery task only after user confirmation.
 
+## 2026-06-15  SPARE001B spare parts status history audit/backfill completed
+
+Status: completed on staging and production.
+
+Summary:
+
+- Performed read-only workflow audit of spare parts module.
+- Confirmed existing code already writes `SparePartStatusHistory` for new submitted/approved/rejected transitions.
+- Found historical data gap: existing requests had zero status history rows.
+- Performed staging DB backfill after backup.
+- Performed production DB backfill after backup.
+- No code files changed.
+- No DB schema changed.
+- No migration added.
+- No service restart performed.
+
+Staging result:
+
+- Requests: 8
+- Inserted history rows: 9
+- Remaining history gaps: 0
+- Backup: `D:\transport-report-backups\staging\daily\transport_spare001b_status_history_backfill_20260615_133549.db`
+
+Production result:
+
+- Requests: 3
+- Inserted history rows: 4
+- Validation errors: 0
+- Backup: `D:\transport-report-backups\production\daily\transport_spare001b_status_history_backfill_20260615_133738.db`
+
+Services:
+
+- `TransportReportStaging`: RUNNING
+- `TransportBotStaging`: RUNNING
+- `TransportBot003Staging`: RUNNING
+- `TransportReport`: RUNNING
+- `TransportBot`: RUNNING
+- `TransportBot003`: RUNNING
+
+Next recommended stage:
+
+- SPARE001C: controlled staging workflow test for create draft, submit, approve/reject, BOT003 outbox and status history for a new test request.
+
