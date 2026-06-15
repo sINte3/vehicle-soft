@@ -1519,3 +1519,19 @@ Current completed milestone:
   - `TransportBot003`
 - BOT003 dry-run passed.
 - Next recommended UX sequence: continue remaining fuel pages or move to the next confirmed module.
+
+
+## FUEL002F_INITIAL_BALANCE_AGENT_STATE
+
+Current completed milestone:
+
+- FUEL002F initial balance UX is deployed to production.
+- Latest production HEAD before docs-only close: `da4565d49be2702ecc5873daa04cf6b66e071e8e`
+- `HEAD == origin/main`
+- `git status` clean
+- Production services running:
+  - `TransportReport`
+  - `TransportBot`
+  - `TransportBot003`
+- BOT003 dry-run passed.
+- Next recommended UX sequence: continue `/fuel/warnings`, then `/fuel/` dashboard.

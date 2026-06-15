@@ -1675,3 +1675,15 @@ Completed on production:
 - Production commit: `adace00`
 - Production URL: `/fuel/stations`
 - Final verification: passed
+
+
+## FUEL002F_INITIAL_BALANCE_PRODUCTION_DONE
+
+Status: completed.
+
+Completed on production:
+
+- FUEL002F initial balance UX
+- Production commit: `da4565d`
+- Production URL: `/fuel/initial-balance`
+- Final verification: passed
