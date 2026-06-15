@@ -1622,3 +1622,38 @@ Next recommended stage:
 1. Continue dashboard polish only if user reports visual issues.
 2. Otherwise proceed to read-only discovery for the next module: `spare-parts`.
 
+## 2026-06-15  SPARE001A Spare parts templates UX completed
+
+Status: completed and deployed to production.
+
+Code commit:
+
+`53cfb078ca78782e7d7a17ffdb80ae1c30bb9509`  `Improve spare parts templates UX`
+
+Summary:
+
+- Improved spare parts module template UX.
+- Changed only 4 templates:
+  - `templates/spare_parts_list.html`
+  - `templates/spare_part_form.html`
+  - `templates/spare_part_detail.html`
+  - `templates/spare_parts_catalog.html`
+- Added `SPARE001A_TEMPLATE_UX` marker and scoped wrapper `spare001a-scope`.
+- No DB, migration, route logic, POST handler, status transition, audit, BOT003, Telegram bot or Topaz changes.
+- Staging technical validation passed.
+- Staging visual QA confirmed by user.
+- Production rollout passed.
+- Production visual QA confirmed by user.
+- Production service `TransportReport` restarted successfully.
+- Bot services were not restarted and remained RUNNING.
+
+Production backups:
+
+- Source: `D:\transport-report-backups\production\source\SPARE001A_UX_20260615_131401`
+- DB: `D:\transport-report-backups\production\daily\transport_spare001a_ux_20260615_131401.db`
+
+Next recommended stage:
+
+1. Commit this docs-only update and pull it to production without service restart.
+2. Continue with next safe UX/discovery task only after user confirmation.
+

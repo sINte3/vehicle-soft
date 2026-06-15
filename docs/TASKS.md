@@ -1751,3 +1751,33 @@ Pending:
 - [ ] Pull docs-only update to production without service restart.
 - [ ] Start next module read-only discovery: `spare-parts`.
 
+## 2026-06-15  SPARE001A Spare parts templates UX
+
+Completed:
+
+- [x] Read-only discovery for spare parts module.
+- [x] Confirmed routes in `spare_parts.py`.
+- [x] Confirmed DB tables and models.
+- [x] Confirmed safe patch scope: 4 templates only.
+- [x] Created staging backup for 4 templates.
+- [x] Applied staging UX patch.
+- [x] Cleaned trailing whitespace.
+- [x] Validated `git diff --check`.
+- [x] Validated `py_compile`.
+- [x] Validated app import and template load.
+- [x] Validated direct render for list, new, catalog and detail pages.
+- [x] Restarted `TransportReportStaging`.
+- [x] User visually checked staging.
+- [x] Committed and pushed code commit `53cfb078ca78782e7d7a17ffdb80ae1c30bb9509`.
+- [x] Backed up production source and DB.
+- [x] Pulled code to production.
+- [x] Validated production before restart.
+- [x] Restarted only `TransportReport`.
+- [x] Confirmed `TransportBot` and `TransportBot003` remained RUNNING.
+- [x] User visually checked production.
+
+Pending:
+
+- [ ] Commit this docs-only update.
+- [ ] Pull docs-only update to production without service restart.
+
