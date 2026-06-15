@@ -1865,3 +1865,36 @@ Final result:
 
 General `/report` route is closed for the current Claude-audit scope.
 
+## 2026-06-15  UI003 general UI/design unification completed
+
+Status: completed on staging and production.
+
+Summary:
+
+- Completed whole-application UI/template inventory.
+- Confirmed 39 templates total.
+- Confirmed 38 user-facing templates.
+- Confirmed 14 templates already had known refresh markers.
+- Confirmed no old Bootstrap `panel panel` usage.
+- Confirmed no old `btn-default` usage.
+- Completed route render audit for 30 GET rules and 60 user/render combinations.
+- Confirmed route render errors count: 0.
+- Confirmed traceback/Internal Server Error signals: none.
+- Completed targeted source audit of unmarked templates.
+- Confirmed all reviewed templates were acceptable modern unmarked templates except `error.html`.
+- Applied template-only patch to `templates/error.html`.
+- Added marker `UI003A_ERROR_TEMPLATE`.
+- Validated staging error template render for 403, 404 and 500.
+- Validated production error template render for 403, 404 and 500.
+- Confirmed 404 smoke check on staging and production.
+- Confirmed DB counts did not change.
+- Confirmed no POST requests were executed.
+- Restarted staging and production web service only to load template change.
+- Confirmed bot services remained RUNNING.
+
+Final code commit:
+
+`c0fa7628fee91dc1fecbb6f7af88653eef45525c`  `Improve error page UI`
+
+UI003 is closed for the current Claude-audit scope.
+
