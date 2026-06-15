@@ -1163,17 +1163,8 @@ def register_wialon_routes(app, editor_required, admin_required):
             filter_org_ids = [selected_org_id]
         output_dir = current_app.config.get('REPORTS_DIR', 'reports')
         fpath = generate_workload_excel(d_from, d_to, output_dir, filter_org_ids)
-        _audit_wialon(
-            'wialon_workload_exported',
-            entity_type='wialon_workload',
-            entity_label=os.path.basename(fpath),
-            after={
-                'date_from': d_from.isoformat(),
-                'date_to': d_to.isoformat(),
-                'org_id': selected_org_id,
-                'filename': os.path.basename(fpath),
-            },
-            description='Wialon workload report exported'
-        )
-        db.session.commit()
+        # AUDIT-GET-SIDE-EFFECT-002B: GET workload export must not write audit_logs.
+        pass
+        # AUDIT-GET-SIDE-EFFECT-002B: removed session commit from GET workload export.
+        pass
         return send_file(fpath, as_attachment=True, download_name=os.path.basename(fpath))
