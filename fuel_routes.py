@@ -9,6 +9,7 @@ Flask Blueprint: /fuel/* и /api/fuel_*
   Баланс = НачОстаток + Приходы - Расходы (транзакции).
 """
 
+import hmac
 from flask import (Blueprint, render_template, request, redirect,
                    url_for, flash, jsonify, abort, current_app, g, send_file)
 from flask_login import login_required, current_user
@@ -1641,7 +1642,8 @@ def _perform_fuel_sync():
         return jsonify(error='invalid JSON'), 400
 
     api_token = current_app.config.get('FUEL_API_TOKEN')
-    if not api_token or not payload or payload.get('token') != api_token:
+    submitted_token = str(payload.get('token') or '') if payload else ''
+    if not api_token or not payload or not hmac.compare_digest(submitted_token, str(api_token)):
         return jsonify(error='unauthorized'), 401
 
     transactions = payload.get('transactions', [])

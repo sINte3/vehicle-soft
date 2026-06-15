@@ -55,6 +55,10 @@ from sqlite_runtime import enable_sqlite_wal
 def create_app():
     app = Flask(__name__)
     app.config.from_object(get_config())
+    # SEC-HARD-001: limit request body size to 16 MiB.
+    if not app.config.get('MAX_CONTENT_LENGTH'):
+        app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+
     os.makedirs(app.config['REPORTS_DIR'], exist_ok=True)
     os.makedirs(os.path.join(os.path.dirname(__file__), 'instance'), exist_ok=True)
 
@@ -2533,6 +2537,15 @@ def create_app():
     def not_found(e):
         return render_template('error.html', code=404,
                                message='Саҳифа топилмади'), 404
+
+    @app.errorhandler(500)
+    def internal_error(e):
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        return render_template('error.html', code=500,
+                               message='Ички сервер хатоси'), 500
 
     with app.app_context():
         # [REASON]: FIX002 - Enable WAL mode for multi-process SQLite access.
