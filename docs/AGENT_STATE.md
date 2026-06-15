@@ -2120,3 +2120,27 @@ Summary:
 - Production smoke passed.
 - Production services are running.
 
+## 2026-06-15 - PERF-SPARE-001 spare parts index query optimization completed
+
+Status: completed and deployed to production.
+
+Code commit:
+
+578980a4818c536d2ec77d22ef935c3005489e59
+
+Summary:
+
+- Audited /spare-parts/ SQL query count on staging.
+- Confirmed repeated SELECT patterns:
+  - spare_part_request_items;
+  - equipment;
+  - status counts;
+  - users.
+- Optimized spare_parts.py only.
+- Reduced /spare-parts/ SELECT count from 29 to 4.
+- Production rollout completed with source-only pull.
+- Only TransportReport was restarted.
+- Telegram bot services were not restarted.
+- Production smoke passed.
+- Production services are running.
+

@@ -538,3 +538,63 @@ Final production services:
 - TransportBot: RUNNING.
 - TransportBot003: RUNNING.
 
+## PERF-SPARE-001 spare parts index query optimization - 2026-06-15
+
+Result: PASSED.
+
+Scope:
+
+- spare_parts.py only.
+- No DB schema changes.
+- No migration.
+- No POST requests during validation.
+- No Telegram bot restart.
+
+Baseline audit:
+
+- /spare-parts/: 29 SELECT.
+- Repeated spare_part_request_items SELECTs: 12.
+- Repeated equipment SELECTs: 8.
+- Repeated status count SELECTs: 4.
+- Repeated users SELECTs: 2.
+
+Staging patch validation:
+
+- py_compile passed.
+- git diff --check passed.
+- app import OK.
+- URL rules count: 86.
+- Source checks passed:
+  - PERF-SPARE-001B marker present.
+  - joinedload present.
+  - selectinload present.
+  - grouped counts present.
+  - old status count loop removed.
+  - selectinload(SparePartRequest.items) present.
+  - joinedload(SparePartRequest.equipment) present.
+  - joinedload(SparePartRequest.organization) present.
+  - joinedload(SparePartRequest.creator) present.
+- SQL count after patch:
+  - /spare-parts/: 4 SELECT.
+- No DB writes.
+- No POST requests.
+- No tracebacks.
+- Staging post-restart smoke OK.
+
+Production validation:
+
+- Production pull scope: spare_parts.py only.
+- Production source backup created.
+- Production pull fast-forward only.
+- Production py_compile passed.
+- Production source validation passed.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Production smoke OK.
+
+Final production services:
+
+- TransportReport: RUNNING.
+- TransportBot: RUNNING.
+- TransportBot003: RUNNING.
+

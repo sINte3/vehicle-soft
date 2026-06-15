@@ -2147,3 +2147,32 @@ Future candidates:
 - [ ] API-FUEL-LEGACY-002: confirm Topaz endpoint config and plan safe legacy alias removal.
 - [ ] CSRF-AUDIT-001: deeper CSRF coverage audit for remaining POST routes.
 
+## 2026-06-15 - PERF-SPARE-001 spare parts index query optimization
+
+Completed:
+
+- [x] Run read-only staging SQL audit for /spare-parts/.
+- [x] Confirm repeated SELECT patterns.
+- [x] Identify spare_parts.py as patch target.
+- [x] Add eager loading for spare parts index relationships.
+- [x] Replace per-status count loop with grouped aggregate query.
+- [x] Validate staging source.
+- [x] Restart staging TransportReportStaging only.
+- [x] Validate staging post-restart smoke.
+- [x] Commit source patch.
+- [x] Push to GitHub.
+- [x] Verify production pull scope is source-only.
+- [x] Create production source backup.
+- [x] Pull to production.
+- [x] Compile and validate production source.
+- [x] Restart production TransportReport only.
+- [x] Confirm Telegram bot services were not restarted.
+- [x] Validate production post-restart smoke.
+- [x] Close PERF-SPARE-001 as completed.
+
+Future candidates:
+
+- [ ] AUDIT-GET-SIDE-EFFECT-001: review GET export routes that write audit logs.
+- [ ] API-FUEL-LEGACY-002: confirm Topaz endpoint config and plan safe legacy alias removal.
+- [ ] CSRF-AUDIT-001: deeper CSRF coverage audit for remaining POST routes.
+
