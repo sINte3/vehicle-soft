@@ -269,7 +269,8 @@ def get_all_balances():
         today_expense = (db.session.query(func.coalesce(func.sum(FuelTransaction2.quantity), 0))
                          .join(FuelStation2)
                          .filter(FuelStation2.warehouse_id == wh.id,
-                                 func.date(FuelTransaction2.txn_datetime) == date.today())
+                                 FuelTransaction2.txn_datetime >= datetime.combine(date.today(), datetime.min.time()),
+                                 FuelTransaction2.txn_datetime < datetime.combine(date.today() + timedelta(days=1), datetime.min.time()))
                          .scalar())
         rows.append({
             'warehouse': wh,
@@ -1091,7 +1092,8 @@ def dashboard():
 
     # Статистика за сегодня
     today_total = (db.session.query(func.coalesce(func.sum(FuelTransaction2.quantity), 0))
-                   .filter(func.date(FuelTransaction2.txn_datetime) == date.today())
+                   .filter(FuelTransaction2.txn_datetime >= datetime.combine(date.today(), datetime.min.time()),
+                           FuelTransaction2.txn_datetime < datetime.combine(date.today() + timedelta(days=1), datetime.min.time()))
                    .scalar())
 
     return render_template('fuel/dashboard.html',
