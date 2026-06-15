@@ -2,6 +2,165 @@
 {% block title %}АЗС — {{ 'Справочник АЗС' if lang == 'ru' else 'АЗС маълумотномаси' }}{% endblock %}
 {% block content %}
 
+<style>
+/* FUEL002E_MARKER: fuel stations UX refresh, template/localization only. */
+.fuel002e-page-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.fuel002e-page-header h1 {
+  margin-bottom: 6px;
+}
+
+.fuel002e-subtitle {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.fuel002e-context-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 0 0 14px 0;
+}
+
+.fuel002e-pill {
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow-sm);
+}
+
+.fuel002e-pill span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 4px;
+}
+
+.fuel002e-pill strong {
+  display: block;
+  font-size: 15px;
+  color: var(--text-main);
+}
+
+.fuel002e-guidance-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(190px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.fuel002e-guidance-card {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 11px 13px;
+  box-shadow: var(--shadow-sm);
+}
+
+.fuel002e-guidance-card strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.fuel002e-guidance-card span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.fuel002e-form-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.fuel002e-form-card .card-header {
+  background: var(--bg-soft);
+}
+
+form.fuel002e-station-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) minmax(130px, 1fr) minmax(220px, 2fr) minmax(110px, .8fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+form.fuel002e-station-form .form-group {
+  margin-bottom: 0 !important;
+}
+
+.fuel002e-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-sm);
+}
+
+.fuel002e-table-wrap .table,
+.fuel002e-table-wrap table {
+  margin-bottom: 0;
+}
+
+.fuel002e-stations-table {
+  min-width: 920px;
+}
+
+.fuel002e-stations-table th {
+  white-space: nowrap;
+  font-size: 12px;
+  background: var(--bg-soft);
+}
+
+.fuel002e-stations-table td {
+  vertical-align: middle;
+}
+
+.fuel002e-action-form {
+  display: inline-block;
+  margin: 2px 0;
+}
+
+@media (max-width: 1200px) {
+  .fuel002e-context-strip,
+  .fuel002e-guidance-panel {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  form.fuel002e-station-form {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .fuel002e-page-header,
+  .fuel002e-context-strip,
+  .fuel002e-guidance-panel,
+  form.fuel002e-station-form {
+    grid-template-columns: 1fr;
+  }
+}
+/* FUEL002E_END */
+</style>
+
+
+
 {% set L_title = 'Справочник АЗС' if lang == 'ru' else 'АЗС маълумотномаси' %}
 {% set L_subtitle = 'Каждая АЗС привязывается к складу и Topaz ID. Выдачи ДТ приходят из Topaz.' if lang == 'ru' else 'Ҳар бир АЗС омбор ва Topaz ID га боғланади. ДТ беришлари Topazдан келади.' %}
 {% set L_back = '← Склады' if lang == 'ru' else '← Омборлар' %}
@@ -38,17 +197,55 @@
 .invalid-client { border-color:var(--danger) !important; box-shadow:0 0 0 2px rgba(220,38,38,.12); }
 </style>
 
-<div class="page-header">
-    <div><h1>{{ L_title }}</h1><div class="text-muted text-sm">{{ L_subtitle }}</div></div>
+<div class="page-header fuel002e-page-header FUEL002E_MARKER">
+    <div><div>
+    <h1>{{ L_title }}</h1>
+    <div class="fuel002e-subtitle">{{ t('АЗСлар справочниги: Topaz ID, омбор, фаоллик ва ўчириш ҳимояси.') }}</div>
+  </div><div class="text-muted text-sm">{{ L_subtitle }}</div></div>
     <a href="{{ url_for('fuel.warehouses') }}" class="btn btn-secondary">{{ L_back }}</a>
 </div>
 
 <div class="fuel-help"><strong>Topaz ID.</strong> {{ L_subtitle }}</div>
 
-<div class="card" style="margin-bottom:20px;">
+
+<div class="fuel002e-context-strip">
+  <div class="fuel002e-pill">
+    <span>{{ t('АЗСлар') }}</span>
+    <strong>{{ stations|length }}</strong>
+  </div>
+  <div class="fuel002e-pill">
+    <span>{{ t('мборлар') }}</span>
+    <strong>{{ warehouses|length }}</strong>
+  </div>
+  <div class="fuel002e-pill">
+    <span>Topaz ID</span>
+    <strong>{{ t('Мажбурий') }}</strong>
+  </div>
+  <div class="fuel002e-pill">
+    <span>{{ t('Ҳимоя') }}</span>
+    <strong>{{ t('Транзакциялар билан') }}</strong>
+  </div>
+</div>
+
+<div class="fuel002e-guidance-panel">
+  <div class="fuel002e-guidance-card">
+    <strong>{{ t('1. АЗС маълумотини киритинг') }}</strong>
+    <span>{{ t('Ном, Topaz ID ва омборни тўғри танланг.') }}</span>
+  </div>
+  <div class="fuel002e-guidance-card">
+    <strong>{{ t('2. Фаоллик ҳолатини текширинг') }}</strong>
+    <span>{{ t('Фаол АЗСлар транзакция қабул қилиш учун ишлатилади.') }}</span>
+  </div>
+  <div class="fuel002e-guidance-card">
+    <strong>{{ t('3. Ўчириш ҳимояланган') }}</strong>
+    <span>{{ t('Транзакцияси бор АЗС ўчирилмайди, фақат ўчириб қўйилади.') }}</span>
+  </div>
+</div>
+
+<div class="card fuel002e-form-card" style="margin-bottom:20px;">
     <div class="card-header"><span id="stationFormTitle">{{ L_form }}</span></div>
     <div class="card-body">
-        <form method="post" action="{{ url_for('fuel.save_station') }}" class="form-inline" id="stationForm" onsubmit="return validateStationBeforeSubmit()">
+        <form method="post" action="{{ url_for('fuel.save_station') }}" class="form-inline fuel002e-station-form" id="stationForm" onsubmit="return validateStationBeforeSubmit()">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="stId" value="">
             <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_name }}</label><input type="text" name="name" id="stName" required></div>
@@ -81,7 +278,8 @@
 <div class="card">
     <div class="card-header">{{ L_all }} ({{ stations|length }})</div>
     <div style="overflow-x:auto;">
-    <table>
+    <div class="fuel002e-table-wrap FUEL002E_TABLE_WRAP_MARKER">
+<table class="fuel002e-stations-table">
         <thead><tr><th>{{ L_name }}</th><th>Topaz ID</th><th>{{ L_wh }}</th><th class="text-center">{{ L_status }}</th><th class="text-right">{{ L_tx }}</th><th></th></tr></thead>
         <tbody>
         {% for st in stations %}
@@ -95,11 +293,11 @@
                 <button class="btn btn-secondary btn-sm" onclick='editSt({{ st.id }}, {{ st.name|tojson }}, {{ st.topaz_id }}, {{ st.warehouse_id }}, {{ st.is_active|lower }})'>{{ L_edit }}</button>
                 {% set del_info = station_delete_info.get(st.id) %}
                 {% if del_info and del_info.can_delete %}
-                <form method="post" action="{{ url_for('fuel.delete_station', sid=st.id) }}" style="display:inline;" onsubmit="return confirm('{{ L_confirm_delete }}: {{ st.name }}?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-danger btn-sm" title="{{ L_delete }}">✕</button></form>
+                <form method="post" action="{{ url_for('fuel.delete_station', sid=st.id) }}" style="display:inline;" onsubmit="return confirm('{{ L_confirm_delete }}: {{ st.name }}?')" class="fuel002e-action-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-danger btn-sm" title="{{ L_delete }}">✕</button></form>
                 {% elif not st.is_active %}
-                <form method="post" action="{{ url_for('fuel.enable_station', sid=st.id) }}" style="display:inline;" onsubmit="return confirm('{{ L_confirm_enable }}: {{ st.name }}?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-primary btn-sm">{{ L_enable }}</button></form>
+                <form method="post" action="{{ url_for('fuel.enable_station', sid=st.id) }}" style="display:inline;" onsubmit="return confirm('{{ L_confirm_enable }}: {{ st.name }}?')" class="fuel002e-action-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-primary btn-sm">{{ L_enable }}</button></form>
                 {% elif del_info and del_info.can_deactivate %}
-                <form method="post" action="{{ url_for('fuel.delete_station', sid=st.id) }}" style="display:inline;" onsubmit="return confirm('{{ L_confirm_deactivate }}: {{ st.name }}?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-secondary btn-sm" title="{{ L_linked_tip }}">{{ L_deactivate }}</button></form>
+                <form method="post" action="{{ url_for('fuel.delete_station', sid=st.id) }}" style="display:inline;" onsubmit="return confirm('{{ L_confirm_deactivate }}: {{ st.name }}?')" class="fuel002e-action-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-secondary btn-sm" title="{{ L_linked_tip }}">{{ L_deactivate }}</button></form>
                 {% else %}<span class="idle-badge" title="{{ L_linked_tip }}">{{ L_disabled }}</span>{% endif %}
             </td>
         </tr>
@@ -108,6 +306,7 @@
         {% endfor %}
         </tbody>
     </table>
+</div>
     </div>
 </div>
 
