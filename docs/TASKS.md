@@ -2749,3 +2749,27 @@ Deployment:
 - Production backup: `d:\transport-report-backups\production\source\fuel_transactions_nplus1_001_before_20260616_190905_a6bd954.zip`.
 - Restarted only `transportreport` on production.
 - Telegram bot services were not restarted.
+<!-- perf-fuel-report-warehouse-query-001d -->
+
+## PERF-FUEL-REPORT-WAREHOUSE-QUERY-001  `/fuel/report` duplicate warehouse query cleanup
+
+Status: DONE  deployed to staging and production on 2026-06-16.
+
+Scope:
+- Optimized `/fuel/report`.
+- Changed only `fuel_routes.py`.
+- Reused warehouses already loaded by `_collect_fuel_report_data()`.
+- Removed duplicate `FuelWarehouse.query.order_by(FuelWarehouse.name).all()` in the report route.
+
+Validation:
+- Before: `/fuel/report` had SQL total 22, repeated SQL kinds 1, duplicate ordered warehouse query count 2.
+- After staging: status 200, SQL total 21, repeated SQL kinds 0, warehouse ordered queries 1, non-select statements 0.
+- After production: status 200, SQL total 21, repeated SQL kinds 0, warehouse ordered queries 1, non-select statements 0.
+- Flask smoke after restart: `/`, `/fuel/report`, `/fuel/transactions`, `/fuel/receipts` return expected 302 to login when unauthenticated.
+- HTTP smoke: `/` and `/fuel/report` return expected 302 when unauthenticated.
+
+Deployment:
+- Commit: `6e6237b optimize fuel report warehouse loading`.
+- Production backup: `d:\transport-report-backups\production\source\fuel_report_warehouse_query_001_before_20260616_192639_d7961d8.zip`.
+- Restarted only `transportreport` on production.
+- Telegram bot services were not restarted.

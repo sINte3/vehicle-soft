@@ -2626,3 +2626,34 @@ Rollout notes:
 - Production updated with fast-forward pull.
 - Restarted only `transportreport`.
 - `transportbot` and `transportbot003` were queried only and not restarted.
+<!-- perf-fuel-report-warehouse-query-001d -->
+
+## 2026-06-16  PERF-FUEL-REPORT-WAREHOUSE-QUERY-001 completed
+
+Closed duplicate warehouse query on `/fuel/report`.
+
+Root cause:
+- `_collect_fuel_report_data()` already loaded the ordered warehouse list.
+- `fuel_report()` then loaded the same ordered warehouse list again before rendering the template.
+
+Code change:
+- Added `warehouses` to the report collector result.
+- In `fuel_report()`, created `data_for_template = dict(data)`.
+- Reused `data_for_template.pop('warehouses', None)` for the template `warehouses` argument.
+- Passed `**data_for_template` to avoid duplicate `warehouses` keyword in `render_template`.
+- File changed:
+  - `fuel_routes.py`
+- Commit:
+  - `6e6237b optimize fuel report warehouse loading`
+
+Measured result:
+- Before: status 200, SQL total 22, repeated SQL kinds 1, warehouse ordered queries 2.
+- After staging: status 200, SQL total 21, repeated SQL kinds 0, warehouse ordered queries 1, non-select statements 0.
+- After production: status 200, SQL total 21, repeated SQL kinds 0, warehouse ordered queries 1, non-select statements 0.
+
+Rollout notes:
+- First staging patch exposed a duplicate `warehouses` keyword error in `render_template`; fixed before commit.
+- Production backup created before pull.
+- Production updated with fast-forward pull.
+- Restarted only `transportreport`.
+- `transportbot` and `transportbot003` were queried only and not restarted.
