@@ -2598,3 +2598,31 @@ next candidates after closure:
    - evaluate query volume separately.
 4. ui/ux redesign
    - planned after technical debt is reduced.
+<!-- perf-fuel-transactions-nplus1-001d -->
+
+## 2026-06-16  PERF-FUEL-TRANSACTIONS-NPLUS1-001 completed
+
+Closed performance issue on `/fuel/transactions`.
+
+Root cause:
+- The route joined `FuelStation2`, but did not eager-load `FuelTransaction2.station`.
+- The template accessed `txn.station.name` and `txn.station.warehouse_name`, causing data-dependent lazy-load SELECTs.
+
+Code change:
+- Added:
+  - `joinedload(FuelTransaction2.station).joinedload(FuelStation2.warehouse)`
+- File changed:
+  - `fuel_routes.py`
+- Commit:
+  - `7f928c0 optimize fuel transactions station loading`
+
+Measured result:
+- Before: production had data-dependent N+1 on station lazy load.
+- After staging: status 200, SQL total 6, repeated SQL kinds 0, station lazy repeated total 0, warehouse lazy repeated total 0, non-select statements 0.
+- After production: status 200, SQL total 6, repeated SQL kinds 0, station lazy repeated total 0, warehouse lazy repeated total 0, non-select statements 0.
+
+Rollout notes:
+- Production backup created before pull.
+- Production updated with fast-forward pull.
+- Restarted only `transportreport`.
+- `transportbot` and `transportbot003` were queried only and not restarted.

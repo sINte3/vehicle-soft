@@ -2726,3 +2726,26 @@ notes:
 - commit message in code commit contains a copy typo: `ptimize fuel warehouse loading`.
 - the commit is valid and must not be amended.
 - this entry is docs-only closure for fuel-batch-perf-001d.
+<!-- perf-fuel-transactions-nplus1-001d -->
+
+## PERF-FUEL-TRANSACTIONS-NPLUS1-001  `/fuel/transactions` station lazy-load optimization
+
+Status: DONE  deployed to staging and production on 2026-06-16.
+
+Scope:
+- Optimized `/fuel/transactions`.
+- Changed only `fuel_routes.py`.
+- Added eager loading for `FuelTransaction2.station` and related `FuelStation2.warehouse`.
+- Removed template-triggered lazy loading caused by `txn.station.name` and `txn.station.warehouse_name`.
+
+Validation:
+- Staging authenticated GET `/fuel/transactions`: status 200, SQL total 6, repeated SQL kinds 0, station lazy repeated total 0, warehouse lazy repeated total 0, non-select statements 0.
+- Production authenticated GET `/fuel/transactions`: status 200, SQL total 6, repeated SQL kinds 0, station lazy repeated total 0, warehouse lazy repeated total 0, non-select statements 0.
+- Flask smoke after restart: `/`, `/fuel/transactions`, `/fuel/stations`, `/fuel/warehouses` return expected 302 to login when unauthenticated.
+- HTTP smoke: `/` and `/fuel/transactions` return expected 302 when unauthenticated.
+
+Deployment:
+- Commit: `7f928c0 optimize fuel transactions station loading`.
+- Production backup: `d:\transport-report-backups\production\source\fuel_transactions_nplus1_001_before_20260616_190905_a6bd954.zip`.
+- Restarted only `transportreport` on production.
+- Telegram bot services were not restarted.
