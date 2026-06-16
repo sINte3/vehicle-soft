@@ -2189,3 +2189,34 @@ Summary:
 - Telegram bot services were not restarted.
 - Production smoke passed.
 
+## 2026-06-16 - AUDIT-GET-SIDE-EFFECT-003 Logout GET side effect fixed
+
+Status: completed and deployed to production.
+
+Code commit:
+
+8132dd9f866d6b28ef6466d58180ad9634e299b3
+
+Summary:
+
+- Ran broad read-only GET DML audit on staging.
+- Confirmed one remaining GET side effect:
+  - GET /logout attempted INSERT INTO audit_logs.
+- Patched app.py only.
+- Removed log_audit(...) and db.session.commit() from GET /logout.
+- Preserved logout_user() and redirect behavior.
+- Staging validation passed.
+- Production rollout completed with source-only pull.
+- Only TransportReport was restarted.
+- Telegram bot services were not restarted.
+- Extra corrected post-rollout revalidation passed on staging and production.
+- Final checked routes had DML count 0:
+  - /logout
+  - /
+  - /admin/audit
+  - /fuel/
+  - /fuel/report
+  - /spare-parts/
+  - /wialon/report/export
+  - /wialon/workload/export
+

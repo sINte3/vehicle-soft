@@ -2241,3 +2241,36 @@ Future candidates:
 - [ ] CSRF-AUDIT-001: deeper CSRF coverage audit for remaining POST routes.
 - [ ] API-FUEL-LEGACY-002: confirm Topaz endpoint config and plan safe legacy alias removal.
 
+## 2026-06-16 - AUDIT-GET-SIDE-EFFECT-003 Logout GET side effect
+
+Completed:
+
+- [x] Run broad read-only staging audit for GET routes without URL parameters.
+- [x] Confirm /logout attempted INSERT INTO audit_logs during GET.
+- [x] Confirm other audited GET routes had no DML.
+- [x] Patch app.py only.
+- [x] Remove logout audit write from GET /logout.
+- [x] Remove db.session.commit() from GET /logout.
+- [x] Preserve logout_user() and redirect behavior.
+- [x] Validate /logout returns redirect without DML.
+- [x] Restart staging TransportReportStaging only.
+- [x] Validate staging post-restart smoke.
+- [x] Commit source patch.
+- [x] Push to GitHub.
+- [x] Verify production pull scope is source-only.
+- [x] Create production source backup.
+- [x] Pull to production.
+- [x] Compile and validate production source.
+- [x] Restart production TransportReport only.
+- [x] Confirm Telegram bot services were not restarted.
+- [x] Validate production post-restart smoke.
+- [x] Run corrected post-rollout DML revalidation on staging and production.
+- [x] Close AUDIT-GET-SIDE-EFFECT-003 as completed.
+
+Future candidates:
+
+- [ ] LOGOUT-POST-001: convert logout from GET to POST with CSRF-safe UI form.
+- [ ] PERF-REF-001: optimize /ref/equipment query count and response size.
+- [ ] PERF-WIALON-MAP-001: reduce /wialon/mapping response size and rendering cost.
+- [ ] CSRF-AUDIT-001: deeper CSRF coverage audit for remaining POST routes.
+

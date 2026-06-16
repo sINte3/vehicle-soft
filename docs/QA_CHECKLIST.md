@@ -744,3 +744,85 @@ Final production services:
 - TransportBot: RUNNING.
 - TransportBot003: RUNNING.
 
+## AUDIT-GET-SIDE-EFFECT-003 Logout GET side effect - 2026-06-16
+
+Result: PASSED.
+
+Scope:
+
+- app.py only.
+- No DB schema changes.
+- No migration.
+- No POST requests during validation.
+- No Telegram bot restart.
+
+Baseline audit:
+
+- /logout attempted INSERT INTO audit_logs during GET.
+- DML was blocked by read-only audit hook.
+- No actual DB writes were performed during audit.
+
+Implementation:
+
+- Removed log_audit(...) from GET /logout.
+- Removed db.session.commit() from GET /logout.
+- Preserved logout_user().
+- Preserved redirect behavior.
+
+Staging patch validation:
+
+- py_compile passed.
+- git diff --check passed.
+- app import OK.
+- URL rules count: 86.
+- Source checks passed:
+  - AUDIT-GET-SIDE-EFFECT-003B marker present.
+  - log_audit(...) removed from logout.
+  - db.session.commit() removed from logout.
+  - logout_user() preserved.
+  - redirect preserved.
+- /logout:
+  - status OK.
+  - redirect response preserved.
+  - DML count: 0.
+  - SELECT count: 0.
+- No tracebacks.
+- No POST requests.
+- Staging post-restart smoke OK.
+
+Production validation:
+
+- Production pull scope: app.py only.
+- Production source backup created.
+- Production pull fast-forward only.
+- Production py_compile passed.
+- Production source validation passed.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Production smoke OK.
+
+Corrected post-rollout revalidation:
+
+- The initial 003C staging DML validation had a typo in the validation helper, not in application code.
+- Corrected revalidation was run on staging and production.
+- Staging result: PASSED.
+- Production result: PASSED.
+- Revalidated routes:
+  - /logout
+  - /
+  - /admin/audit
+  - /fuel/
+  - /fuel/report
+  - /spare-parts/
+  - /wialon/report/export
+  - /wialon/workload/export
+- All revalidated routes had DML count 0.
+- No source files were modified during revalidation.
+- No service restart was performed during revalidation.
+
+Final production services:
+
+- TransportReport: RUNNING.
+- TransportBot: RUNNING.
+- TransportBot003: RUNNING.
+
