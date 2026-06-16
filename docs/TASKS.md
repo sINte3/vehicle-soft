@@ -2451,3 +2451,43 @@ Future candidates:
 - [ ] PERF-REF-BODY-001: reduce heavy reference page response size where useful.
 - [ ] PERF-WIALON-AUTOMATCH-001: audit `/wialon/auto_match` response size and SQL behavior if needed.
 
+## 2026-06-16 - PERF-REF-BODY-001 Reference equipment response size
+
+Completed:
+
+- [x] Run read-only source, SQL, and response diagnostic for heavy reference pages.
+- [x] Confirm `/ref/equipment` is the largest remaining reference page.
+- [x] Confirm `/ref/equipment` body size was about 2.5 MB.
+- [x] Confirm `/ref/equipment` option count was 8,783.
+- [x] Confirm SQL was already optimized at 8 SELECT.
+- [x] Confirm repeated SQL count was 0.
+- [x] Confirm source route: `app.py`, function `ref_equipment`.
+- [x] Confirm template: `templates/ref_equipment.html`.
+- [x] Patch `templates/ref_equipment.html` only.
+- [x] Replace repeated edit-row organization options with shared client-side options.
+- [x] Replace repeated edit-row category options with shared client-side options.
+- [x] Preserve filter controls.
+- [x] Preserve add form.
+- [x] Preserve delete/deactivate/enable forms.
+- [x] Validate `/ref/equipment` response reduced to about 1.5 MB on staging.
+- [x] Validate `/ref/equipment` option count reduced to 719.
+- [x] Confirm `/ref/equipment` SQL remains 8 SELECT.
+- [x] Confirm repeated SQL count remains 0.
+- [x] Restart staging TransportReportStaging only.
+- [x] Validate staging post-restart smoke.
+- [x] Commit source patch.
+- [x] Push to GitHub.
+- [x] Verify production pull scope is source-only.
+- [x] Create production source backup.
+- [x] Pull to production.
+- [x] Compile and validate production source.
+- [x] Restart production TransportReport only.
+- [x] Confirm Telegram bot services were not restarted.
+- [x] Validate production post-restart smoke.
+- [x] Close PERF-REF-BODY-001 as completed.
+
+Future candidates:
+
+- [ ] PERF-REF-BODY-002: reduce remaining `/ref/equipment` forms/inputs by converting inline edit rows to one reusable edit modal or lazy edit row.
+- [ ] PERF-WIALON-AUTOMATCH-001: audit `/wialon/auto_match` response size and SQL behavior if needed.
+

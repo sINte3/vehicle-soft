@@ -2363,3 +2363,35 @@ Summary:
 - Only TransportReport was restarted.
 - Telegram bot services were not restarted.
 
+## 2026-06-16 - PERF-REF-BODY-001 Reference equipment response size optimized
+
+Status: completed and deployed to production.
+
+Code commit:
+
+89e68c49a8620b4b33202af344fda99a614c2908
+
+Summary:
+
+- Ran read-only source, SQL, and response diagnostic for heavy reference pages.
+- Confirmed `/ref/equipment` was the largest remaining reference page.
+- Baseline `/ref/equipment`:
+  - 2,496,903 UTF-8 bytes.
+  - 8,783 `<option>` elements.
+  - 676 `<select>` elements.
+  - 675 forms.
+  - 8 SELECT.
+  - repeated SQL count 0.
+- Changed only `templates/ref_equipment.html`.
+- Replaced repeated edit-row organization/category option loops with shared client-side options.
+- Added shared `REF_EQUIPMENT_ORG_OPTIONS` and `REF_EQUIPMENT_CATEGORY_OPTIONS`.
+- Preserved delete/deactivate/enable forms.
+- Preserved existing Flask route and SQL logic.
+- No DB schema changes.
+- No migrations.
+- Reduced `/ref/equipment` response to about 1.5 MB.
+- Reduced `<option>` count to 719.
+- Production rollout completed with source-only pull.
+- Only TransportReport was restarted.
+- Telegram bot services were not restarted.
+

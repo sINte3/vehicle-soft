@@ -1242,3 +1242,104 @@ Final production services:
 - TransportBot: RUNNING.
 - TransportBot003: RUNNING.
 
+## PERF-REF-BODY-001 Reference equipment response size - 2026-06-16
+
+Result: PASSED.
+
+Scope:
+
+- templates/ref_equipment.html.
+- No DB schema changes.
+- No migration.
+- No POST requests during validation.
+- No Telegram bot restart.
+
+Baseline diagnostic:
+
+- /ref/equipment:
+  - response chars: 2,330,660.
+  - response UTF-8 bytes: 2,496,903.
+  - `<option>` count: 8,783.
+  - `<select>` count: 676.
+  - `<form>` count: 675.
+  - `<input>` count: 2,762.
+  - SQL count: 8 SELECT.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+
+Source diagnostic:
+
+- route file: app.py.
+- route function: ref_equipment.
+- template: templates/ref_equipment.html.
+- problem was remaining response body size, not SQL.
+- heaviest repeated HTML was edit-row organization/category option lists.
+
+Implementation:
+
+- Added marker:
+  - PERF-REF-BODY-001B_MARKER.
+- Added shared organization options payload:
+  - REF_EQUIPMENT_ORG_OPTIONS.
+- Added shared category options payload:
+  - REF_EQUIPMENT_CATEGORY_OPTIONS.
+- Added client-side edit-select population:
+  - populateRefEquipmentEditSelects.
+- Removed repeated edit-row organization option loop.
+- Removed repeated edit-row category option loop.
+- Preserved existing filter controls.
+- Preserved add form.
+- Preserved delete/deactivate/enable forms.
+- Preserved route and SQL logic.
+
+Staging validation:
+
+- py_compile passed.
+- git diff --check passed.
+- app import OK.
+- URL rules count: 86.
+- Source checks passed:
+  - marker present.
+  - shared organization class present.
+  - shared category class present.
+  - shared option payloads present.
+  - old edit loops removed.
+  - delete/enable forms preserved.
+- /ref/equipment:
+  - response chars: 1,422,642.
+  - response UTF-8 bytes: 1,498,837.
+  - `<option>` count: 719.
+  - SQL count: 8 SELECT.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+- Staging post-restart smoke OK.
+
+Production validation:
+
+- Production pull scope:
+  - templates/ref_equipment.html.
+- Production source backup created:
+  - D:\transport-report-backups\production\source\PERF_REF_BODY_001C_20260616_121122.
+- Production pull fast-forward only.
+- Production py_compile passed.
+- Production source validation passed.
+- /ref/equipment:
+  - response chars: 1,422,776.
+  - response UTF-8 bytes: 1,498,971.
+  - `<option>` count: 719.
+  - SQL count: 8 SELECT.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Production smoke OK.
+
+Final production services:
+
+- TransportReport: RUNNING.
+- TransportBot: RUNNING.
+- TransportBot003: RUNNING.
+
