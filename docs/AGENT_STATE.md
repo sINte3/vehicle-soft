@@ -2246,3 +2246,30 @@ Summary:
 - Telegram bot services were not restarted.
 - Production validation confirmed `/ref/equipment` remains at 8 SELECT and DML count 0.
 
+## 2026-06-16 - PERF-REF-002 Reference work types usage counters optimized
+
+Status: completed and deployed to production.
+
+Code commit:
+
+7afcc32a068fd419bb5743c12f2decec2eded37c
+
+Summary:
+
+- Ran read-only source and SQL diagnostic for `/ref/work_types`.
+- Confirmed `/ref/work_types` had 106 SELECT.
+- Confirmed root cause:
+  - 104 repeated `daily_records` count queries.
+- Source diagnostic confirmed issue in `app.py`, function `ref_work_types`.
+- Replaced per-row `.count()` calls with one grouped bulk usage count map.
+- Reused the grouped map for missing-from-reference diagnostics.
+- Changed only `app.py`.
+- No DB schema changes.
+- No migrations.
+- No templates changed.
+- Staging validation reduced `/ref/work_types` from 106 SELECT to 2 SELECT.
+- Production rollout completed with source-only pull.
+- Only TransportReport was restarted.
+- Telegram bot services were not restarted.
+- Production validation confirmed `/ref/work_types` remains at 2 SELECT and DML count 0.
+
