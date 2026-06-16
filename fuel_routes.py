@@ -1756,6 +1756,8 @@ def transactions():
     d_to_dt   = datetime.combine(d_to, datetime.max.time())
 
     q = (FuelTransaction2.query
+         # perf-fuel-transactions-nplus1-001_marker: eager load station and warehouse for transaction list.
+         .options(joinedload(FuelTransaction2.station).joinedload(FuelStation2.warehouse))
          .join(FuelStation2)
          .filter(FuelTransaction2.txn_datetime >= d_from_dt,
                  FuelTransaction2.txn_datetime <= d_to_dt))
