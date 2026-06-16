@@ -2341,3 +2341,36 @@ Future candidates:
 - [ ] PERF-REF-004: optimize `/ref/organizations` per-organization counters.
 - [ ] PERF-WIALON-MAP-001: reduce `/wialon/mapping` response size and rendering cost.
 
+## 2026-06-16 - PERF-REF-003 Reference customers usage counters
+
+Completed:
+
+- [x] Run read-only source and SQL diagnostic for `/ref/customers`.
+- [x] Confirm `/ref/customers` had 11 SELECT.
+- [x] Confirm root cause: 9 repeated `daily_records` count queries.
+- [x] Confirm source location: `app.py`, function `ref_customers`.
+- [x] Patch `app.py` only.
+- [x] Replace per-customer `.count()` calls with grouped bulk usage count map.
+- [x] Reuse grouped map for missing-from-reference diagnostics.
+- [x] Preserve all/internal/external and all/used/unused filtering behavior.
+- [x] Preserve template rendering.
+- [x] Validate `/ref/customers` reduced to 2 SELECT on staging.
+- [x] Confirm repeated SQL count is 0 on `/ref/customers`.
+- [x] Restart staging TransportReportStaging only.
+- [x] Validate staging post-restart smoke.
+- [x] Commit source patch.
+- [x] Push to GitHub.
+- [x] Verify production pull scope is source-only.
+- [x] Create production source backup.
+- [x] Pull to production.
+- [x] Compile and validate production source.
+- [x] Restart production TransportReport only.
+- [x] Confirm Telegram bot services were not restarted.
+- [x] Validate production post-restart smoke.
+- [x] Close PERF-REF-003 as completed.
+
+Future candidates:
+
+- [ ] PERF-REF-004: optimize `/ref/organizations` per-organization counters.
+- [ ] PERF-WIALON-MAP-001: reduce `/wialon/mapping` response size and rendering cost.
+

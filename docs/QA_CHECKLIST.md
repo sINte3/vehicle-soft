@@ -987,3 +987,81 @@ Final production services:
 - TransportBot: RUNNING.
 - TransportBot003: RUNNING.
 
+## PERF-REF-003 Reference customers usage counters - 2026-06-16
+
+Result: PASSED.
+
+Scope:
+
+- app.py only.
+- No DB schema changes.
+- No migration.
+- No template changes.
+- No POST requests during validation.
+- No Telegram bot restart.
+
+Baseline diagnostic:
+
+- /ref/customers:
+  - SELECT count: 11.
+  - repeated SQL count: 1 pattern.
+  - repeated daily_records count queries: 9.
+  - DML count: 0.
+  - no traceback.
+
+Source diagnostic:
+
+- file: app.py.
+- function: ref_customers.
+- problem was in Flask view, not template.
+
+Implementation:
+
+- Replaced per-customer `.count()` calls with one grouped bulk count map.
+- Reused grouped `daily_customer_counts` map for `cust_used`.
+- Removed separate distinct query for `DailyRecord.customer`.
+- Preserved existing statistics and filter logic.
+- Preserved ref_customers template rendering.
+
+Staging patch validation:
+
+- py_compile passed.
+- git diff --check passed.
+- app import OK.
+- URL rules count: 86.
+- Source checks passed:
+  - PERF-REF-003B marker present.
+  - bulk GROUP BY present.
+  - daily_customer_counts map present.
+  - per-row DailyRecord count removed.
+  - distinct DailyRecord.customer query removed.
+  - render_template preserved.
+- /ref/customers:
+  - SELECT count reduced to 2.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+- Staging post-restart smoke OK.
+
+Production validation:
+
+- Production pull scope: app.py only.
+- Production source backup created.
+- Production pull fast-forward only.
+- Production py_compile passed.
+- Production source validation passed.
+- /ref/customers:
+  - SELECT count: 2.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Production smoke OK.
+
+Final production services:
+
+- TransportReport: RUNNING.
+- TransportBot: RUNNING.
+- TransportBot003: RUNNING.
+
