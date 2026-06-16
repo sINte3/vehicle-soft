@@ -1343,3 +1343,122 @@ Final production services:
 - TransportBot: RUNNING.
 - TransportBot003: RUNNING.
 
+## PERF-REF-BODY-002 Reference equipment inline edit rendering - 2026-06-16
+
+Result: PASSED.
+
+Scope:
+
+- templates/ref_equipment.html.
+- No DB schema changes.
+- No migration.
+- No POST requests during validation.
+- No Telegram bot restart.
+
+Baseline diagnostic:
+
+- /ref/equipment:
+  - response chars: 1,422,642.
+  - response UTF-8 bytes: 1,498,837.
+  - `<tr>` count: 673.
+  - `<select>` count: 676.
+  - `<option>` count: 719.
+  - `<input>` count: 2,762.
+  - `<form>` count: 675.
+  - CSRF hidden inputs: 674.
+  - hidden `id` inputs: 336.
+  - old inline edit rows: 336.
+  - SQL count: 8 SELECT.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+
+Source diagnostic:
+
+- route file: app.py.
+- route function: ref_equipment.
+- template: templates/ref_equipment.html.
+- write endpoint: save_equipment.
+- save_equipment accepts optional `id` and the same fields used by the edit form.
+- problem was repeated hidden edit forms, not SQL.
+
+Implementation:
+
+- Added marker:
+  - PERF-REF-BODY-002B_MARKER.
+- Added row-level `data-*` attributes for equipment values.
+- Removed old per-row hidden edit row:
+  - `eq-edit-{{ eq.id }}`.
+- Added one shared edit row:
+  - `ref-equipment-edit-row`.
+- Added reusable edit JavaScript:
+  - `editEq(id)`.
+  - `cancelEqEdit()`.
+- Preserved existing save endpoint:
+  - `/ref/equipment/save`.
+- Preserved delete/deactivate/enable forms.
+- Preserved shared option payloads from PERF-REF-BODY-001.
+
+Staging validation:
+
+- py_compile passed.
+- git diff --check passed.
+- app import OK.
+- URL rules count: 86.
+- Source checks passed:
+  - marker present.
+  - shared edit row present.
+  - row data attributes present.
+  - old inline edit row removed.
+  - old edit DOM references removed.
+  - shared organization/category options preserved.
+  - delete/enable forms preserved.
+- /ref/equipment:
+  - response chars: 635,796.
+  - response UTF-8 bytes: 681,467.
+  - old inline edit rows: 0.
+  - shared edit rows: 1.
+  - data rows: 336.
+  - `<select>` count: 6.
+  - `<option>` count: 49.
+  - `<input>` count: 417.
+  - `<form>` count: 340.
+  - SQL count: 8 SELECT.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+- Staging post-restart smoke OK.
+
+Production validation:
+
+- Production pull scope:
+  - templates/ref_equipment.html.
+- Production source backup created:
+  - D:\transport-report-backups\production\source\PERF_REF_BODY_002C_20260616_122247.
+- Production pull fast-forward only.
+- Production py_compile passed.
+- Production source validation passed.
+- /ref/equipment:
+  - response chars: 635,930.
+  - response UTF-8 bytes: 681,601.
+  - old inline edit rows: 0.
+  - shared edit rows: 1.
+  - data rows: 336.
+  - `<select>` count: 6.
+  - `<option>` count: 49.
+  - `<input>` count: 417.
+  - `<form>` count: 340.
+  - SQL count: 8 SELECT.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Production smoke OK.
+
+Final production services:
+
+- TransportReport: RUNNING.
+- TransportBot: RUNNING.
+- TransportBot003: RUNNING.
+

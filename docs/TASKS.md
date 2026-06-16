@@ -2491,3 +2491,45 @@ Future candidates:
 - [ ] PERF-REF-BODY-002: reduce remaining `/ref/equipment` forms/inputs by converting inline edit rows to one reusable edit modal or lazy edit row.
 - [ ] PERF-WIALON-AUTOMATCH-001: audit `/wialon/auto_match` response size and SQL behavior if needed.
 
+## 2026-06-16 - PERF-REF-BODY-002 Reference equipment inline edit rendering
+
+Completed:
+
+- [x] Run read-only inline edit diagnostic for `/ref/equipment`.
+- [x] Confirm `/ref/equipment` still had about 1.50 MB response after PERF-REF-BODY-001.
+- [x] Confirm SQL was already optimized at 8 SELECT.
+- [x] Confirm repeated SQL count was 0.
+- [x] Confirm 336 hidden inline edit rows.
+- [x] Confirm 675 forms.
+- [x] Confirm 2,762 inputs.
+- [x] Confirm 676 selects.
+- [x] Confirm `save_equipment` accepts the same form fields with optional `id`.
+- [x] Patch `templates/ref_equipment.html` only.
+- [x] Add row-level `data-*` attributes.
+- [x] Replace per-row hidden edit forms with one reusable shared edit row.
+- [x] Preserve `/ref/equipment/save` POST contract.
+- [x] Preserve delete/deactivate/enable forms.
+- [x] Preserve shared organization/category options from PERF-REF-BODY-001.
+- [x] Validate `/ref/equipment` response reduced to about 0.68 MB on staging.
+- [x] Validate old inline edit rows reduced to 0.
+- [x] Validate shared edit row count is 1.
+- [x] Validate SQL remains 8 SELECT.
+- [x] Validate repeated SQL count remains 0.
+- [x] Restart staging TransportReportStaging only.
+- [x] Validate staging post-restart smoke.
+- [x] Commit source patch.
+- [x] Push to GitHub.
+- [x] Verify production pull scope is source-only.
+- [x] Create production source backup.
+- [x] Pull to production.
+- [x] Compile and validate production source.
+- [x] Restart production TransportReport only.
+- [x] Confirm Telegram bot services were not restarted.
+- [x] Validate production post-restart smoke.
+- [x] Close PERF-REF-BODY-002 as completed.
+
+Future candidates:
+
+- [ ] PERF-WIALON-AUTOMATCH-001: audit `/wialon/auto_match` response size and SQL behavior if needed.
+- [ ] PERF-WORK-TYPES-BODY-001: optional optimization of `/ref/work_types` inline edit rows if worth the risk.
+

@@ -2395,3 +2395,40 @@ Summary:
 - Only TransportReport was restarted.
 - Telegram bot services were not restarted.
 
+## 2026-06-16 - PERF-REF-BODY-002 Reference equipment inline edit rendering optimized
+
+Status: completed and deployed to production.
+
+Code commit:
+
+f3be56072961f8f26ec9842a7d9b4d62ab04523c
+
+Summary:
+
+- Diagnosed `/ref/equipment` remaining body-size issue after PERF-REF-BODY-001.
+- Confirmed SQL was already optimized:
+  - 8 SELECT.
+  - repeated SQL count 0.
+- Confirmed remaining issue was repeated hidden inline edit rows:
+  - 336 old inline edit rows.
+  - 675 forms.
+  - 2,762 inputs.
+  - 676 selects.
+  - response body about 1.50 MB.
+- Changed only `templates/ref_equipment.html`.
+- Replaced per-row hidden edit forms with one reusable shared edit row.
+- Added row-level `data-*` attributes.
+- Preserved existing `/ref/equipment/save` POST contract.
+- Preserved delete/deactivate/enable forms.
+- Preserved shared organization/category option payloads from PERF-REF-BODY-001.
+- Reduced `/ref/equipment` response to about 0.68 MB.
+- Reduced old inline edit rows to 0.
+- Reduced selects to 6.
+- Reduced inputs to 417.
+- Reduced forms to 340.
+- No DB schema changes.
+- No migrations.
+- Production rollout completed with source-only pull.
+- Only TransportReport was restarted.
+- Telegram bot services were not restarted.
+
