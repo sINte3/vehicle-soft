@@ -2300,3 +2300,34 @@ Summary:
 - Telegram bot services were not restarted.
 - Production validation confirmed `/ref/customers` remains at 2 SELECT and DML count 0.
 
+## 2026-06-16 - PERF-REF-004 Reference organizations linked counters optimized
+
+Status: completed and deployed to production.
+
+Code commit:
+
+735fa96ee1373e22ece08c1fd4908e0b14b63306
+
+Summary:
+
+- Ran read-only source and SQL diagnostic for `/ref/organizations`.
+- Confirmed `/ref/organizations` had 86 SELECT.
+- Confirmed root cause:
+  - 17 repeated `equipment` count queries.
+  - 17 repeated `fuel_warehouses` count queries.
+  - 17 repeated `spare_part_requests` count queries.
+  - 17 repeated `deficiencies` count queries.
+  - 17 repeated user relationship count queries.
+- Source diagnostic confirmed issue in `app.py`, function `ref_organizations`.
+- Replaced per-organization `.count()` calls with grouped bulk linked counter maps.
+- Counted users through `user_organizations`, not through `User.organization_id`.
+- Changed only `app.py`.
+- No DB schema changes.
+- No migrations.
+- No templates changed.
+- Staging validation reduced `/ref/organizations` from 86 SELECT to 6 SELECT.
+- Production rollout completed with source-only pull.
+- Only TransportReport was restarted.
+- Telegram bot services were not restarted.
+- Production validation confirmed `/ref/organizations` remains at 6 SELECT and DML count 0.
+

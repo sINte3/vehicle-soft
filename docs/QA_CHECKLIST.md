@@ -1065,3 +1065,88 @@ Final production services:
 - TransportBot: RUNNING.
 - TransportBot003: RUNNING.
 
+## PERF-REF-004 Reference organizations linked counters - 2026-06-16
+
+Result: PASSED.
+
+Scope:
+
+- app.py only.
+- No DB schema changes.
+- No migration.
+- No template changes.
+- No POST requests during validation.
+- No Telegram bot restart.
+
+Baseline diagnostic:
+
+- /ref/organizations:
+  - SELECT count: 86.
+  - repeated SQL count: 5 patterns.
+  - repeated linked count queries:
+    - Equipment: 17.
+    - FuelWarehouse: 17.
+    - SparePartRequest: 17.
+    - Deficiency: 17.
+    - User relationship count: 17.
+  - DML count: 0.
+  - no traceback.
+
+Source diagnostic:
+
+- file: app.py.
+- function: ref_organizations.
+- problem was in Flask view, not template.
+
+Implementation:
+
+- Replaced per-organization linked `.count()` calls with grouped bulk count maps.
+- Used helper `_org_count_map(model)` for models with `organization_id`.
+- Counted users through `user_organizations`.
+- Removed `org.users.count()` from the route.
+- Preserved existing statistics and delete-protection logic.
+- Preserved ref_organizations template rendering.
+
+Staging patch validation:
+
+- py_compile passed.
+- git diff --check passed.
+- app import OK.
+- URL rules count: 86.
+- Source checks passed:
+  - PERF-REF-004B marker present.
+  - org_ids list present.
+  - `_org_count_map` helper present.
+  - grouped count maps present.
+  - user count through `user_organizations` present.
+  - per-row linked counts removed.
+  - render_template preserved.
+- /ref/organizations:
+  - SELECT count reduced to 6.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+- Staging post-restart smoke OK.
+
+Production validation:
+
+- Production pull scope: app.py only.
+- Production source backup created.
+- Production pull fast-forward only.
+- Production py_compile passed.
+- Production source validation passed.
+- /ref/organizations:
+  - SELECT count: 6.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Production smoke OK.
+
+Final production services:
+
+- TransportReport: RUNNING.
+- TransportBot: RUNNING.
+- TransportBot003: RUNNING.
+

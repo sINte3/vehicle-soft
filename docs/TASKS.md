@@ -2374,3 +2374,40 @@ Future candidates:
 - [ ] PERF-REF-004: optimize `/ref/organizations` per-organization counters.
 - [ ] PERF-WIALON-MAP-001: reduce `/wialon/mapping` response size and rendering cost.
 
+## 2026-06-16 - PERF-REF-004 Reference organizations linked counters
+
+Completed:
+
+- [x] Run read-only source and SQL diagnostic for `/ref/organizations`.
+- [x] Confirm `/ref/organizations` had 86 SELECT.
+- [x] Confirm root cause: repeated per-organization linked count queries.
+- [x] Confirm source location: `app.py`, function `ref_organizations`.
+- [x] Patch `app.py` only.
+- [x] Replace Equipment per-organization `.count()` calls with grouped bulk count map.
+- [x] Replace FuelWarehouse per-organization `.count()` calls with grouped bulk count map.
+- [x] Replace SparePartRequest per-organization `.count()` calls with grouped bulk count map.
+- [x] Replace Deficiency per-organization `.count()` calls with grouped bulk count map.
+- [x] Replace user relationship count with grouped `user_organizations` count map.
+- [x] Preserve delete-protection logic.
+- [x] Preserve statistics logic.
+- [x] Preserve template rendering.
+- [x] Validate `/ref/organizations` reduced to 6 SELECT on staging.
+- [x] Confirm repeated SQL count is 0 on `/ref/organizations`.
+- [x] Restart staging TransportReportStaging only.
+- [x] Validate staging post-restart smoke.
+- [x] Commit source patch.
+- [x] Push to GitHub.
+- [x] Verify production pull scope is source-only.
+- [x] Create production source backup.
+- [x] Pull to production.
+- [x] Compile and validate production source.
+- [x] Restart production TransportReport only.
+- [x] Confirm Telegram bot services were not restarted.
+- [x] Validate production post-restart smoke.
+- [x] Close PERF-REF-004 as completed.
+
+Future candidates:
+
+- [ ] PERF-WIALON-MAP-001: reduce `/wialon/mapping` response size and rendering cost.
+- [ ] PERF-REF-BODY-001: reduce heavy reference page response size where useful.
+
