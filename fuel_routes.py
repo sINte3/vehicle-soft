@@ -990,6 +990,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         'd_to': d_to,
         'd_from_dt': d_from_dt,
         'd_to_dt': d_to_dt,
+        'warehouses': warehouses,
         'warehouse_rows': warehouse_rows,
         'station_rows': station_rows,
         'recent_txns': recent_txns,
@@ -1310,7 +1311,9 @@ def fuel_report():
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
 
-    warehouses = FuelWarehouse.query.order_by(FuelWarehouse.name).all()
+    # perf-fuel-report-warehouse-query-001_marker: reuse warehouses loaded by report collector.
+    data_for_template = dict(data)
+    warehouses = data_for_template.pop('warehouses', None) or FuelWarehouse.query.order_by(FuelWarehouse.name).all()
     stations = (FuelStation2.query
                 .join(FuelWarehouse)
                 .order_by(FuelWarehouse.name, FuelStation2.name).all())
@@ -1318,7 +1321,7 @@ def fuel_report():
                            warehouses=warehouses,
                            stations=stations,
                            fuel_types=FUEL_TYPES,
-                           **data)
+                           **data_for_template)
 
 
 # ─── Dashboard ────────────────────────────────────────────────────────
