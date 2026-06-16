@@ -1652,12 +1652,30 @@ def create_app():
             if e[0]
         ))
         equipment_delete_info = {}
+        equipment_ids = [eq.id for eq in equipment]
+
+        # PERF-REF-001C_MARKER: bulk linked counters for ref_equipment delete/deactivate state.
+        def _linked_count_map(model):
+            if not equipment_ids:
+                return {}
+            return dict(
+                db.session.query(model.equipment_id, db.func.count(model.id))
+                .filter(model.equipment_id.in_(equipment_ids))
+                .group_by(model.equipment_id)
+                .all()
+            )
+
+        daily_counts = _linked_count_map(DailyRecord)
+        engine_hours_counts = _linked_count_map(EngineHoursRecord)
+        wialon_mapping_counts = _linked_count_map(VialonMapping)
+        spare_request_counts = _linked_count_map(SparePartRequest)
+
         for eq in equipment:
             linked = {
-                'daily_records_count': DailyRecord.query.filter_by(equipment_id=eq.id).count(),
-                'engine_hours_count': EngineHoursRecord.query.filter_by(equipment_id=eq.id).count(),
-                'wialon_mapping_count': VialonMapping.query.filter_by(equipment_id=eq.id).count(),
-                'spare_part_request_count': SparePartRequest.query.filter_by(equipment_id=eq.id).count(),
+                'daily_records_count': int(daily_counts.get(eq.id, 0) or 0),
+                'engine_hours_count': int(engine_hours_counts.get(eq.id, 0) or 0),
+                'wialon_mapping_count': int(wialon_mapping_counts.get(eq.id, 0) or 0),
+                'spare_part_request_count': int(spare_request_counts.get(eq.id, 0) or 0),
             }
             linked_total = sum(linked.values())
             equipment_delete_info[eq.id] = {
