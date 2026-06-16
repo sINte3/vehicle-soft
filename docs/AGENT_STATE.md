@@ -2700,3 +2700,53 @@ Operational notes:
 - No commit/pull/restart was performed during diagnostics.
 - All relevant services remained RUNNING.
 - No code changes required for this sweep.
+<!-- perf-index-fuel-sync-dup-001d -->
+
+## 2026-06-16  PERF-INDEX-FUEL-SYNC-DUP-001 deployed
+
+Completed and deployed the main dashboard FuelSyncLog duplicate query optimization.
+
+What changed:
+- `fuel_routes.py`
+  - `_collect_fuel_report_data()` now returns `latest_sync`.
+- `app.py`
+  - `_build_dashboard_context()` reuses `fuel_report['latest_sync']` instead of issuing a duplicate direct query.
+  - Fallback direct query is kept for collector failure cases.
+
+Code commit:
+- `f00b386 optimize index fuel sync loading`
+
+Validation:
+- Staging:
+  - `/` status 200
+  - SQL total 30
+  - repeated SQL kinds 0
+  - `fuel_sync_logs2` query count 2
+  - non-select statements 0
+- Production:
+  - `/` status 200
+  - SQL total 31
+  - repeated SQL kinds 0
+  - `fuel_sync_logs2` query count 2
+  - non-select statements 0
+
+Deployment state:
+- staging = `f00b386`
+- production = `f00b386`
+- origin/main = `f00b386`
+
+Backup:
+- `d:\transport-report-backups\production\source\index_fuel_sync_dup_001_git_archive_before_20260616_200045_98ca314.zip`
+
+Services:
+- Restarted:
+  - `transportreportstaging`
+  - `transportreport`
+- Not restarted:
+  - `transportbot`
+  - `transportbot003`
+  - `transportbotstaging`
+  - `transportbot003staging`
+
+Final result:
+- Main route `/` no longer has repeated SQL caused by duplicate latest Topaz sync lookup.

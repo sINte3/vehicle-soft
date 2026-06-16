@@ -2806,3 +2806,42 @@ Verification:
 Conclusion:
 - No remaining fuel GET N+1 issue found.
 - Fuel GET route performance sweep is closed.
+<!-- perf-index-fuel-sync-dup-001d -->
+
+## PERF-INDEX-FUEL-SYNC-DUP-001  main dashboard FuelSyncLog duplicate query
+
+Status: DONE  deployed to staging and production.
+
+Scope:
+- Main route: `/`
+- Files changed:
+  - `app.py`
+  - `fuel_routes.py`
+
+Problem:
+- The main dashboard `/` called `_collect_fuel_report_data(d_from, d_to)`.
+- `_collect_fuel_report_data()` already loaded latest Topaz sync data.
+- `app.py` then queried `FuelSyncLog2.query.order_by(...).first()` again.
+- Result: duplicated `fuel_sync_logs2` latest-sync query on `/`.
+
+Fix:
+- `_collect_fuel_report_data()` now exposes already-loaded `latest_sync` in its returned data.
+- `_build_dashboard_context()` now reuses `fuel_report['latest_sync']`.
+- Fallback direct query remains only if the fuel report collector fails.
+
+Verification:
+- Staging before fix: `/` had repeated SQL kind 1 and 3 `fuel_sync_logs2` queries.
+- Staging after fix: `/` status 200, SQL total 30, repeated SQL kinds 0, `fuel_sync_logs2` query count 2, non-select statements 0.
+- Production after deployment: `/` status 200, SQL total 31, repeated SQL kinds 0, `fuel_sync_logs2` query count 2, non-select statements 0.
+
+Deployment:
+- Code commit: `f00b386 optimize index fuel sync loading`
+- Staging: `f00b386`
+- Production: `f00b386`
+- Production backup:
+  - `d:\transport-report-backups\production\source\index_fuel_sync_dup_001_git_archive_before_20260616_200045_98ca314.zip`
+
+Operational notes:
+- `transportreportstaging` restarted after staging validation.
+- `transportreport` restarted after production deployment.
+- Bot services were not restarted.
