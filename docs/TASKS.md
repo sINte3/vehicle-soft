@@ -2931,3 +2931,43 @@ Production verification:
 Conclusion:
 - No code changes required.
 - No N+1 issue found in remaining spare parts GET pages.
+<!-- perf-admin-users-orgs-nplus1-001d -->
+
+## PERF-ADMIN-USERS-ORGS-NPLUS1-001  `/admin/users` organizations N+1 optimization
+
+Status: DONE  deployed to staging and production.
+
+Scope:
+- `/admin/users`
+- File changed:
+  - `app.py`
+
+Problem:
+- `/admin/users` loaded users with `User.query.order_by(User.username).all()`.
+- The template accessed each user's organizations.
+- This caused repeated lazy-load queries through `user_organizations`.
+
+Before optimization:
+- Staging `/admin/users`: SQL total 12, repeated SQL kinds 1, organization repeated total 7.
+- Production `/admin/users`: SQL total 12, repeated SQL kinds 1, organization repeated total 7.
+
+Fix:
+- Added `selectinload(User.organizations)` to the `/admin/users` query.
+- Added import:
+  - `from sqlalchemy.orm import selectinload`
+
+After optimization:
+- Staging `/admin/users`: status 200, SQL total 6, repeated SQL kinds 0, organization repeated total 0, `user_organizations` query count 1, non-select statements 0.
+- Production `/admin/users`: diagnostics passed with repeated SQL kinds 0 and non-select statements 0.
+- `/admin/permissions`: regression check passed, repeated SQL kinds 0.
+- `/admin/audit`: regression check passed, repeated SQL kinds 0.
+
+Deployment:
+- Code commit: `2216514 optimize admin users organization loading`
+- Staging: `2216514`
+- Production: `2216514`
+
+Operational notes:
+- `transportreportstaging` restarted after validation.
+- `transportreport` restarted after production deployment.
+- Bot services were not restarted.

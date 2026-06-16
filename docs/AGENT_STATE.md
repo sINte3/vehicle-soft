@@ -2833,3 +2833,53 @@ Final result:
 - Remaining spare parts GET routes are clean.
 - No code changes were needed.
 - No service restart was required.
+<!-- perf-admin-users-orgs-nplus1-001d -->
+
+## 2026-06-16  PERF-ADMIN-USERS-ORGS-NPLUS1-001 deployed
+
+Completed and deployed the `/admin/users` organizations N+1 optimization.
+
+What changed:
+- `app.py`
+  - imported `selectinload`
+  - changed `/admin/users` query to use `selectinload(User.organizations)`
+
+Code commit:
+- `2216514 optimize admin users organization loading`
+
+Before:
+- `/admin/users` had repeated organization lazy-load queries:
+  - SQL total 12
+  - repeated SQL kinds 1
+  - organization repeated total 7
+
+After:
+- `/admin/users`:
+  - status 200
+  - SQL total 6
+  - repeated SQL kinds 0
+  - organization repeated total 0
+  - `user_organizations` query count 1
+  - non-select statements 0
+
+Regression:
+- `/admin/permissions`: clean
+- `/admin/audit`: clean
+
+Deployment state:
+- staging = `2216514`
+- production = `2216514`
+- origin/main = `2216514`
+
+Services:
+- Restarted:
+  - `transportreportstaging`
+  - `transportreport`
+- Not restarted:
+  - `transportbot`
+  - `transportbot003`
+  - `transportbotstaging`
+  - `transportbot003staging`
+
+Final result:
+- `/admin/users` no longer has organization N+1 queries.
