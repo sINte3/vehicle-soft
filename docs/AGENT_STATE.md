@@ -2657,3 +2657,46 @@ Rollout notes:
 - Production updated with fast-forward pull.
 - Restarted only `transportreport`.
 - `transportbot` and `transportbot003` were queried only and not restarted.
+<!-- perf-fuel-get-routes-sweep-001d -->
+
+## 2026-06-16  PERF-FUEL-GET-ROUTES-SWEEP-001 completed
+
+Completed a read-only N+1/performance sweep for all fuel GET routes.
+
+Route inventory:
+- Total fuel GET routes: 9
+- Routes:
+  - `/fuel/`
+  - `/fuel/api/fuel_ping`
+  - `/fuel/initial-balance`
+  - `/fuel/receipts`
+  - `/fuel/report`
+  - `/fuel/stations`
+  - `/fuel/transactions`
+  - `/fuel/warehouses`
+  - `/fuel/warnings`
+
+Measured clean routes in this sweep:
+- `/fuel/warnings`
+  - staging: status 200, SQL total 21, repeated SQL kinds 0, lazy-load repeated totals 0, non-select statements 0
+  - production: status 200, SQL total 21, repeated SQL kinds 0, lazy-load repeated totals 0, non-select statements 0
+- `/fuel/`
+  - staging: status 200, SQL total 14, repeated SQL kinds 0, lazy-load repeated totals 0, non-select statements 0
+  - production: status 200, SQL total 14, repeated SQL kinds 0, lazy-load repeated totals 0, non-select statements 0
+- `/fuel/receipts`
+  - staging: status 200, SQL total 5, repeated SQL kinds 0, lazy-load repeated totals 0, non-select statements 0
+  - production: status 200, SQL total 5, repeated SQL kinds 0, lazy-load repeated totals 0, non-select statements 0
+
+Previously optimized and/or validated fuel routes:
+- `/fuel/transactions`
+- `/fuel/report`
+- `/fuel/warehouses`
+- `/fuel/initial-balance`
+- `/fuel/stations`
+
+Operational notes:
+- Diagnostics were read-only.
+- No POST was executed.
+- No commit/pull/restart was performed during diagnostics.
+- All relevant services remained RUNNING.
+- No code changes required for this sweep.

@@ -2773,3 +2773,36 @@ Deployment:
 - Production backup: `d:\transport-report-backups\production\source\fuel_report_warehouse_query_001_before_20260616_192639_d7961d8.zip`.
 - Restarted only `transportreport` on production.
 - Telegram bot services were not restarted.
+<!-- perf-fuel-get-routes-sweep-001d -->
+
+## PERF-FUEL-GET-ROUTES-SWEEP-001  fuel GET routes N+1 sweep
+
+Status: DONE  no code changes required for the remaining fuel GET routes.
+
+Scope:
+- Inventoried all fuel GET routes.
+- Verified the remaining read-only fuel pages after prior optimizations.
+- No POST routes were executed.
+- No service restart was required.
+
+Fuel GET routes found:
+- `/fuel/`
+- `/fuel/api/fuel_ping`
+- `/fuel/initial-balance`
+- `/fuel/receipts`
+- `/fuel/report`
+- `/fuel/stations`
+- `/fuel/transactions`
+- `/fuel/warehouses`
+- `/fuel/warnings`
+
+Verification:
+- `/fuel/warnings`: status 200, SQL total 21, repeated SQL kinds 0, lazy-load repeated totals 0, non-select statements 0.
+- `/fuel/`: status 200, SQL total 14, repeated SQL kinds 0, lazy-load repeated totals 0, non-select statements 0.
+- `/fuel/receipts`: status 200, SQL total 5, repeated SQL kinds 0, lazy-load repeated totals 0, non-select statements 0.
+- `/fuel/api/fuel_ping`: technical ping route, no template and no N+1 risk.
+- `/fuel/report`, `/fuel/transactions`, `/fuel/warehouses`, `/fuel/initial-balance`, `/fuel/stations` were already validated in prior performance tasks.
+
+Conclusion:
+- No remaining fuel GET N+1 issue found.
+- Fuel GET route performance sweep is closed.
