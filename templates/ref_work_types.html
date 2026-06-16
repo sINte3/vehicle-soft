@@ -124,7 +124,11 @@
             <tbody>
                 {% for wt in work_types %}
                 {% set usage_count = work_type_usage.get(wt.id, 0) %}
-                <tr id="wt-row-{{ wt.id }}">
+                <tr id="wt-row-{{ wt.id }}"
+                    data-wt-id="{{ wt.id }}"
+                    data-name="{{ wt.name }}"
+                    data-default-unit="{{ wt.default_unit or '' }}"
+                    data-default-price="{{ wt.default_price|int if wt.default_price else 0 }}">
                     <td><strong>{{ wt.name }}</strong></td>
                     <td>{{ wt.default_unit or '' }}</td>
                     <td class="text-right">{{ wt.default_price|fmt_sum }}</td>
@@ -134,36 +138,45 @@
                         {% if usage_count %}
                         <span class="idle-badge" title="{{ L_linked_tip }}">{{ L_used }} ({{ usage_count }})</span>
                         {% else %}
-                        <form method="post" action="{{ url_for('delete_work_type', wid=wt.id) }}" style="display:inline;"
-                              onsubmit="return confirm('{{ L_delete }}: {{ wt.name }}?')">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button class="btn btn-danger btn-sm" type="submit" title="{{ L_delete }}">{{ L_delete }}</button>
-                        </form>
+                            <button class="btn btn-danger btn-sm" type="button"
+                                    onclick="deleteWt({{ wt.id }})"
+                                    title="{{ L_delete }}">{{ L_delete }}</button>
                         {% endif %}
                     </td>
                 </tr>
-                <tr id="wt-edit-{{ wt.id }}" style="display:none;">
-                    <td colspan="5">
-                        <form method="post" action="{{ url_for('save_work_type') }}" class="form-inline">
+                {% endfor %}
+                <tr id="wt-shared-edit-row" style="display:none;">
+                    <td colspan="10">
+                        <form method="post" action="{{ url_for('save_work_type') }}"
+                              id="wt-shared-edit-form" class="form-inline">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <input type="hidden" name="id" value="{{ wt.id }}">
-                            <div class="form-group" style="flex:1;"><label>{{ t('Иш тури номи') }}</label>
-                                <input type="text" name="name" value="{{ wt.name }}" required>
+                            <input type="hidden" name="id" id="wt-shared-id" value="">
+
+                            <div>
+                                <input type="text" name="name" id="wt-shared-name" required>
                             </div>
-                            <div class="form-group"><label>{{ t('Дефолт ўлчов') }}</label>
-                                <input type="text" name="default_unit" value="{{ wt.default_unit or '' }}" style="width:120px;">
+                            <div>
+                                <input type="text" name="default_unit" id="wt-shared-default-unit" style="width:120px;">
                             </div>
-                            <div class="form-group"><label>{{ t('Дефолт нарх') }}</label>
-                                <input type="number" name="default_price" value="{{ wt.default_price|int if wt.default_price else 0 }}" min="0" step="0.01" style="width:140px;">
+                            <div>
+                                <input type="number" name="default_price" id="wt-shared-default-price" min="0" step="0.01" style="width:140px;">
                             </div>
-                            <div class="form-group"><label>&nbsp;</label>
+                            <div>
                                 <button type="submit" class="btn btn-primary btn-sm">{{ t('Сақлаш') }}</button>
-                                <button type="button" class="btn btn-secondary btn-sm" onclick="cancelWtEdit({{ wt.id }})">{{ t('Бекор қилиш') }}</button>
+                                <button type="button" class="btn btn-secondary btn-sm" onclick="cancelWtEdit()">{{ t('Бекор қилиш') }}</button>
                             </div>
                         </form>
                     </td>
                 </tr>
-                {% endfor %}
+
+                <tr id="wt-shared-delete-row" style="display:none;">
+                    <td colspan="10">
+                        <form method="post" action="" id="wt-shared-delete-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        </form>
+                    </td>
+                </tr>
+
             </tbody>
         </table>
     </div>
@@ -179,4 +192,75 @@ function cancelWtEdit(id) {
     document.getElementById('wt-edit-' + id).style.display = 'none';
 }
 </script>
+
+<script>
+// PERF-WORK-TYPES-BODY-001B_MARKER: shared work type edit/delete forms.
+const WT_DELETE_URL_TEMPLATE = "{{ url_for('delete_work_type', wid=0) }}";
+
+function getWtRow(id) {
+    return document.querySelector('tr[data-wt-id="' + id + '"]');
+}
+
+function editWt(id) {
+    var row = getWtRow(id);
+    var editRow = document.getElementById('wt-shared-edit-row');
+    var idInput = document.getElementById('wt-shared-id');
+    var nameInput = document.getElementById('wt-shared-name');
+    var unitInput = document.getElementById('wt-shared-default-unit');
+    var priceInput = document.getElementById('wt-shared-default-price');
+
+    if (!row || !editRow || !idInput || !nameInput || !unitInput || !priceInput) return;
+
+    document.querySelectorAll('tr.wt-editing').forEach(function(r) {
+        r.classList.remove('wt-editing');
+    });
+
+    row.classList.add('wt-editing');
+    row.parentNode.insertBefore(editRow, row.nextSibling);
+    editRow.style.display = '';
+
+    idInput.value = row.dataset.wtId || '';
+    nameInput.value = row.dataset.name || '';
+    unitInput.value = row.dataset.defaultUnit || '';
+    priceInput.value = row.dataset.defaultPrice || '0';
+
+    nameInput.focus();
+}
+
+function cancelWtEdit() {
+    var editRow = document.getElementById('wt-shared-edit-row');
+    if (editRow) {
+        editRow.style.display = 'none';
+    }
+
+    document.querySelectorAll('tr.wt-editing').forEach(function(r) {
+        r.classList.remove('wt-editing');
+    });
+}
+
+function cancelWtEditLegacy(id) {
+    cancelWtEdit();
+}
+
+function deleteWt(id) {
+    var form = document.getElementById('wt-shared-delete-form');
+    var row = getWtRow(id);
+
+    if (!form || !row) return;
+
+    var name = row.dataset.name || id;
+    if (!confirm("{{ L_delete }}: " + name + "?")) return;
+
+    var actionUrl = WT_DELETE_URL_TEMPLATE.replace(/\/0$/, '/' + encodeURIComponent(id));
+    if (actionUrl === WT_DELETE_URL_TEMPLATE) {
+        actionUrl = WT_DELETE_URL_TEMPLATE.replace('/0/', '/' + encodeURIComponent(id) + '/');
+    }
+
+    if (actionUrl === WT_DELETE_URL_TEMPLATE) return;
+
+    form.action = actionUrl;
+    form.submit();
+}
+</script>
+
 {% endblock %}
