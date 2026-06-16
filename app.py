@@ -2264,8 +2264,15 @@ def create_app():
         usage_filter = request.args.get('usage', 'all')
 
         all_work_types = WorkType.query.order_by(WorkType.name).all()
+
+        # PERF-REF-002B_MARKER: bulk usage counters for ref_work_types.
+        daily_work_type_counts = dict(
+            db.session.query(DailyRecord.work_type, db.func.count(DailyRecord.id))
+            .group_by(DailyRecord.work_type)
+            .all()
+        )
         all_usage = {
-            wt.id: DailyRecord.query.filter(DailyRecord.work_type == wt.name).count()
+            wt.id: int(daily_work_type_counts.get(wt.name, 0) or 0)
             for wt in all_work_types
         }
 
@@ -2305,9 +2312,9 @@ def create_app():
 
         wt_ref = {(wt.name or '').strip() for wt in all_work_types if (wt.name or '').strip()}
         wt_used = {
-            (x[0] or '').strip()
-            for x in db.session.query(DailyRecord.work_type).distinct().all()
-            if (x[0] or '').strip()
+            (name or '').strip()
+            for name in daily_work_type_counts.keys()
+            if (name or '').strip()
         }
         missing_from_ref = sorted(wt_used - wt_ref)
 
