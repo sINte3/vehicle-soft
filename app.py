@@ -1476,16 +1476,47 @@ def create_app():
                 or needle in (o.short_name or '').casefold()
             ]
 
+        org_ids = [org.id for org in orgs]
+
+        # PERF-REF-004B_MARKER: bulk linked counters for ref_organizations.
+        def _org_count_map(model):
+            if not org_ids:
+                return {}
+            return dict(
+                db.session.query(model.organization_id, db.func.count(model.id))
+                .filter(model.organization_id.in_(org_ids))
+                .group_by(model.organization_id)
+                .all()
+            )
+
+        equipment_counts = _org_count_map(Equipment)
+        fuel_warehouse_counts = _org_count_map(FuelWarehouse)
+        spare_part_request_counts = _org_count_map(SparePartRequest)
+        deficiency_counts = _org_count_map(Deficiency)
+        user_org_table = db.metadata.tables.get('user_organizations')
+        if org_ids and user_org_table is not None:
+            user_counts = dict(
+                db.session.query(
+                    user_org_table.c.organization_id,
+                    db.func.count(user_org_table.c.user_id),
+                )
+                .filter(user_org_table.c.organization_id.in_(org_ids))
+                .group_by(user_org_table.c.organization_id)
+                .all()
+            )
+        else:
+            user_counts = {}
+
         org_delete_info = {}
         orgs_with_equipment = 0
         orgs_without_equipment = 0
         for org in orgs:
             linked = {
-                'equipment_count': Equipment.query.filter_by(organization_id=org.id).count(),
-                'fuel_warehouse_count': FuelWarehouse.query.filter_by(organization_id=org.id).count(),
-                'spare_part_request_count': SparePartRequest.query.filter_by(organization_id=org.id).count(),
-                'deficiency_count': Deficiency.query.filter_by(organization_id=org.id).count(),
-                'user_count': org.users.count() if hasattr(org, 'users') else 0,
+                'equipment_count': int(equipment_counts.get(org.id, 0) or 0),
+                'fuel_warehouse_count': int(fuel_warehouse_counts.get(org.id, 0) or 0),
+                'spare_part_request_count': int(spare_part_request_counts.get(org.id, 0) or 0),
+                'deficiency_count': int(deficiency_counts.get(org.id, 0) or 0),
+                'user_count': int(user_counts.get(org.id, 0) or 0),
             }
             if linked['equipment_count']:
                 orgs_with_equipment += 1
