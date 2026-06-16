@@ -2220,3 +2220,29 @@ Summary:
   - /wialon/report/export
   - /wialon/workload/export
 
+## 2026-06-16 - PERF-REF-001 Reference equipment linked counters optimized
+
+Status: completed and deployed to production.
+
+Code commit:
+
+bdd9b6b6e4a96b1799643d9613875f8e43cf0a1d
+
+Summary:
+
+- Ran read-only SQL audit for reference pages.
+- Confirmed `/ref/equipment` had a severe N+1 query pattern:
+  - 1348 SELECT total.
+  - 1344 repeated linked-record count queries.
+- Source diagnostic confirmed the issue was in `app.py`, function `ref_equipment`.
+- Replaced per-row `.count()` calls with four grouped bulk count maps.
+- Changed only `app.py`.
+- No DB schema changes.
+- No migrations.
+- No templates changed.
+- Staging validation reduced `/ref/equipment` from 1348 SELECT to 8 SELECT.
+- Production rollout completed with source-only pull.
+- Only TransportReport was restarted.
+- Telegram bot services were not restarted.
+- Production validation confirmed `/ref/equipment` remains at 8 SELECT and DML count 0.
+

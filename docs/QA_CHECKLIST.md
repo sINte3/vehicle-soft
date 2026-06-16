@@ -826,3 +826,86 @@ Final production services:
 - TransportBot: RUNNING.
 - TransportBot003: RUNNING.
 
+## PERF-REF-001 Reference equipment linked counters - 2026-06-16
+
+Result: PASSED.
+
+Scope:
+
+- app.py only.
+- No DB schema changes.
+- No migration.
+- No template changes.
+- No POST requests during validation.
+- No Telegram bot restart.
+
+Baseline audit:
+
+- /ref/equipment:
+  - SELECT count: 1348.
+  - response body: about 2.33 MB.
+  - DML count: 0.
+  - no traceback.
+- Root cause:
+  - 336 repeated daily_records count queries.
+  - 336 repeated engine_hours_records count queries.
+  - 336 repeated vialon_mappings count queries.
+  - 336 repeated spare_part_requests count queries.
+
+Source diagnostic:
+
+- file: app.py.
+- function: ref_equipment.
+- template `templates/ref_equipment.html` did not contain `.count()` calls.
+- N+1 counts were in the Flask view.
+
+Implementation:
+
+- Replaced four per-row `.count()` calls with grouped bulk count maps.
+- Preserved equipment_delete_info structure.
+- Preserved can_delete / can_deactivate / is_disabled logic.
+- Preserved ref_equipment template rendering.
+
+Staging patch validation:
+
+- py_compile passed.
+- git diff --check passed.
+- app import OK.
+- URL rules count: 86.
+- Source checks passed:
+  - PERF-REF-001C marker present.
+  - bulk helper present.
+  - per-row DailyRecord count removed.
+  - per-row EngineHoursRecord count removed.
+  - per-row VialonMapping count removed.
+  - per-row SparePartRequest count removed.
+  - render_template preserved.
+- /ref/equipment:
+  - SELECT count reduced to 8.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+- Staging post-restart smoke OK.
+
+Production validation:
+
+- Production pull scope: app.py only.
+- Production source backup created.
+- Production pull fast-forward only.
+- Production py_compile passed.
+- Production source validation passed.
+- /ref/equipment:
+  - SELECT count: 8.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Production smoke OK.
+
+Final production services:
+
+- TransportReport: RUNNING.
+- TransportBot: RUNNING.
+- TransportBot003: RUNNING.
+

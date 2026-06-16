@@ -2274,3 +2274,36 @@ Future candidates:
 - [ ] PERF-WIALON-MAP-001: reduce /wialon/mapping response size and rendering cost.
 - [ ] CSRF-AUDIT-001: deeper CSRF coverage audit for remaining POST routes.
 
+## 2026-06-16 - PERF-REF-001 Reference equipment linked counters
+
+Completed:
+
+- [x] Run read-only SQL audit for reference pages.
+- [x] Confirm `/ref/equipment` had 1348 SELECT.
+- [x] Confirm root cause: 4 per-equipment linked count queries.
+- [x] Run source diagnostic for `ref_equipment`.
+- [x] Confirm template did not contain `.count()` calls.
+- [x] Patch `app.py` only.
+- [x] Replace per-equipment `.count()` calls with grouped bulk count maps.
+- [x] Preserve delete/deactivate logic.
+- [x] Validate `/ref/equipment` reduced to 8 SELECT on staging.
+- [x] Confirm repeated SQL count is 0 on `/ref/equipment`.
+- [x] Restart staging TransportReportStaging only.
+- [x] Validate staging post-restart smoke.
+- [x] Commit source patch.
+- [x] Push to GitHub.
+- [x] Verify production pull scope is source-only.
+- [x] Create production source backup.
+- [x] Pull to production.
+- [x] Compile and validate production source.
+- [x] Restart production TransportReport only.
+- [x] Confirm Telegram bot services were not restarted.
+- [x] Validate production post-restart smoke.
+- [x] Close PERF-REF-001 as completed.
+
+Future candidates:
+
+- [ ] PERF-REF-002: optimize `/ref/work_types` repeated daily_records counters.
+- [ ] PERF-REF-003: optimize `/ref/organizations` per-organization counters.
+- [ ] PERF-WIALON-MAP-001: reduce `/wialon/mapping` response size and rendering cost.
+
