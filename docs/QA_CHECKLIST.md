@@ -1837,3 +1837,112 @@ Final production services:
 - TransportBot: RUNNING.
 - TransportBot003: RUNNING.
 
+## PERF-FUEL-STATIONS-NPLUS1-001 Fuel stations transaction counts optimization - 2026-06-16
+
+Result: PASSED.
+
+Scope:
+
+- fuel_routes.py.
+- templates/fuel/stations.html.
+- Source-only change.
+- No DB schema changes.
+- No migration.
+- No POST requests during validation.
+- No Telegram bot restart.
+
+Baseline diagnostic:
+
+- `/fuel/`:
+  - SQL count: 11 SELECT.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+  - no patch justified for dashboard itself.
+- `/fuel/stations`:
+  - response UTF-8 bytes: 60,440.
+  - SQL count: 44 SELECT.
+  - SQL unique count: 4.
+  - repeated SQL count: 2.
+  - repeated transaction count queries: 21 + 21.
+  - DML count: 0.
+  - no traceback.
+  - station rows: 21.
+  - forms: 23.
+  - inputs: 28.
+  - CSRF inputs: 23.
+
+Implementation:
+
+- Added route marker:
+  - PERF-FUEL-STATIONS-NPLUS1-001B_MARKER: bulk transaction counts for fuel stations.
+- Added template marker:
+  - PERF-FUEL-STATIONS-NPLUS1-001B_MARKER: use preloaded transaction counts.
+- Added one grouped transaction count query:
+  - FuelTransaction2.station_id.
+  - func.count(FuelTransaction2.id).
+  - station_id IN station_ids.
+  - GROUP BY station_id.
+- Reused counts through `station_delete_info`.
+- Replaced `st.transactions.count()` in template with preloaded count.
+- Preserved:
+  - save_station.
+  - delete_station.
+  - enable_station.
+  - station delete/deactivate protection.
+
+Staging validation:
+
+- py_compile passed.
+- git diff --check passed.
+- app import OK.
+- URL rules count: 86.
+- Source checks passed.
+- `/fuel/stations`:
+  - response UTF-8 bytes: 60,449.
+  - SQL count: 3 SELECT.
+  - SQL unique count: 3.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+  - station rows: 21.
+  - old `st.transactions.count()` mentions: 0.
+- Regression routes checked:
+  - /fuel/.
+  - /fuel/warehouses.
+  - /fuel/transactions.
+  - /fuel/report.
+  - /ref/work_types.
+  - /wialon/mapping.
+  - /spare-parts/.
+- Staging post-restart smoke OK.
+
+Production validation:
+
+- Production pull scope:
+  - fuel_routes.py.
+  - templates/fuel/stations.html.
+- Production source backup created:
+  - D:\transport-report-backups\production\source\PERF_FUEL_STATIONS_NPLUS1_001C_20260616_165855.
+- Production pull fast-forward only.
+- Production py_compile passed.
+- Production source validation passed.
+- `/fuel/stations`:
+  - response UTF-8 bytes: 60,449.
+  - SQL count: 3 SELECT.
+  - SQL unique count: 3.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+  - station rows: 21.
+  - old `st.transactions.count()` mentions: 0.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Production smoke OK.
+
+Final production services:
+
+- TransportReport: RUNNING.
+- TransportBot: RUNNING.
+- TransportBot003: RUNNING.
+

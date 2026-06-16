@@ -2658,3 +2658,41 @@ Future candidates:
 - [ ] PERF-REF-EQUIPMENT-BODY-003: optional further reduction of `/ref/equipment` remaining forms/actions if worth the UX risk.
 - [ ] PERF-FUEL-DASH-REPEAT-001: optional investigation of remaining repeated query on `/fuel/`.
 
+## 2026-06-16 - PERF-FUEL-STATIONS-NPLUS1-001 Fuel stations transaction counts optimization
+
+Completed:
+
+- [x] Run read-only fuel SQL diagnostic.
+- [x] Confirm `/fuel/` repeated SQL count is 0.
+- [x] Identify `/fuel/stations` as stronger N+1 candidate.
+- [x] Confirm baseline `/fuel/stations` SQL count 44.
+- [x] Confirm baseline repeated SQL count 2.
+- [x] Confirm repeated transaction count queries 21 + 21.
+- [x] Patch `fuel_routes.py`.
+- [x] Add bulk transaction count query grouped by station ID.
+- [x] Reuse preloaded counts inside `station_delete_info`.
+- [x] Patch `templates/fuel/stations.html`.
+- [x] Replace `st.transactions.count()` with preloaded transaction count.
+- [x] Validate `/fuel/stations` reduced to 3 SELECT on staging.
+- [x] Validate repeated SQL reduced to 0 on staging.
+- [x] Validate DML count 0 on staging.
+- [x] Validate no traceback on staging.
+- [x] Restart staging TransportReportStaging only.
+- [x] Validate staging post-restart smoke.
+- [x] Commit source patch.
+- [x] Push to GitHub.
+- [x] Verify production pull scope is source-only.
+- [x] Create production source backup.
+- [x] Pull to production.
+- [x] Compile and validate production source.
+- [x] Restart production TransportReport only.
+- [x] Confirm Telegram bot services were not restarted.
+- [x] Validate production post-restart smoke.
+- [x] Close PERF-FUEL-STATIONS-NPLUS1-001 as completed.
+
+Future candidates:
+
+- [ ] PERF-FUEL-WAREHOUSES-NPLUS1-001: optimize `/fuel/warehouses` repeated counts and lazy-loads.
+- [ ] PERF-FUEL-TRANSACTIONS-NPLUS1-001: optimize `/fuel/transactions` station lazy-loads if repeat persists.
+- [ ] PERF-FUEL-REPORT-REPEAT-001: review duplicate warehouse query in `/fuel/report`.
+

@@ -2532,3 +2532,33 @@ Summary:
 - Only TransportReport was restarted.
 - Telegram bot services were not restarted.
 
+## 2026-06-16 - PERF-FUEL-STATIONS-NPLUS1-001 Fuel stations transaction counts optimization
+
+Status: completed and deployed to production.
+
+Code commit:
+
+a7f295a9ece74f1821a52b755ae5daa024ecfd65
+
+Summary:
+
+- Diagnosed fuel dashboard and fuel reference routes.
+- Confirmed `/fuel/` itself did not have repeated SQL:
+  - 11 SELECT.
+  - repeated SQL count 0.
+- Found stronger optimization candidate in `/fuel/stations`:
+  - 44 SELECT.
+  - repeated SQL count 2.
+  - repeated transaction count queries 21 + 21.
+- Changed only:
+  - fuel_routes.py.
+  - templates/fuel/stations.html.
+- Replaced per-station transaction count queries with one grouped count query.
+- Reused preloaded transaction counts in `station_delete_info`.
+- Replaced template `st.transactions.count()` with preloaded count.
+- Reduced `/fuel/stations` from 44 SELECT to 3 SELECT.
+- Reduced repeated SQL from 2 to 0.
+- Production rollout completed.
+- Only TransportReport was restarted.
+- Telegram bot services were not restarted.
+
