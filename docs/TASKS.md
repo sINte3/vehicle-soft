@@ -2533,3 +2533,42 @@ Future candidates:
 - [ ] PERF-WIALON-AUTOMATCH-001: audit `/wialon/auto_match` response size and SQL behavior if needed.
 - [ ] PERF-WORK-TYPES-BODY-001: optional optimization of `/ref/work_types` inline edit rows if worth the risk.
 
+## 2026-06-16 - PERF-WIALON-WORKLOAD-001 Wialon workload bulk equipment loading
+
+Completed:
+
+- [x] Run read-only Wialon route/source/response diagnostic.
+- [x] Confirm `/wialon/auto_match` is not a performance problem.
+- [x] Identify real SQL issue in `/wialon/workload`.
+- [x] Identify same SQL issue in `/wialon/workload/export`.
+- [x] Confirm repeated equipment SQL query count was 17.
+- [x] Confirm `/wialon/workload` baseline SQL count was 21 SELECT.
+- [x] Confirm `/wialon/workload/export` baseline SQL count was 20 SELECT.
+- [x] Patch `workload_report.py`.
+- [x] Patch `wialon_import.py`.
+- [x] Add `preloaded_orgs` argument to `get_workload_data`.
+- [x] Reuse preloaded organizations from `/wialon/workload`.
+- [x] Replace per-organization equipment loading with one bulk equipment query.
+- [x] Preserve mapped-equipment filtering.
+- [x] Preserve export compatibility.
+- [x] Validate `/wialon/workload` reduced to 4 SELECT on staging.
+- [x] Validate `/wialon/workload/export` reduced to 4 SELECT on staging.
+- [x] Validate repeated equipment SQL eliminated on staging.
+- [x] Restart staging TransportReportStaging only.
+- [x] Validate staging post-restart smoke.
+- [x] Commit source patch.
+- [x] Push to GitHub.
+- [x] Verify production pull scope is source-only.
+- [x] Create production source backup.
+- [x] Pull to production.
+- [x] Compile and validate production source.
+- [x] Restart production TransportReport only.
+- [x] Confirm Telegram bot services were not restarted.
+- [x] Validate production post-restart smoke.
+- [x] Close PERF-WIALON-WORKLOAD-001 as completed.
+
+Future candidates:
+
+- [ ] PERF-WIALON-MAPPING-BODY-002: optional reduction of remaining `/wialon/mapping` forms/inputs if worth the UX risk.
+- [ ] PERF-WORK-TYPES-BODY-001: optional optimization of `/ref/work_types` inline edit rows if worth the risk.
+

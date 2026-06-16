@@ -2432,3 +2432,35 @@ Summary:
 - Only TransportReport was restarted.
 - Telegram bot services were not restarted.
 
+## 2026-06-16 - PERF-WIALON-WORKLOAD-001 Wialon workload SQL optimized
+
+Status: completed and deployed to production.
+
+Code commit:
+
+9c16198af3ccf75fdc1ec4cb0ee50cff19cd1b9d
+
+Summary:
+
+- Diagnosed Wialon routes after `/wialon/auto_match` audit.
+- Confirmed `/wialon/auto_match` was not the problem:
+  - 3 SELECT.
+  - repeated SQL count 0.
+  - response body about 31 KB.
+- Found real SQL issue in workload routes:
+  - `/wialon/workload`: 21 SELECT, repeated equipment query 17 times.
+  - `/wialon/workload/export`: 20 SELECT, repeated equipment query 17 times.
+- Changed `workload_report.py` and `wialon_import.py`.
+- Added `preloaded_orgs` support to `get_workload_data`.
+- Replaced per-organization equipment queries with one bulk equipment query.
+- Reused preloaded organizations in `/wialon/workload`.
+- Kept workload export compatible.
+- No DB schema changes.
+- No migrations.
+- No template changes.
+- Reduced workload SQL to 4 SELECT.
+- Eliminated repeated equipment SQL.
+- Production rollout completed with source-only pull.
+- Only TransportReport was restarted.
+- Telegram bot services were not restarted.
+

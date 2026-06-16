@@ -1462,3 +1462,127 @@ Final production services:
 - TransportBot: RUNNING.
 - TransportBot003: RUNNING.
 
+## PERF-WIALON-WORKLOAD-001 Wialon workload bulk equipment loading - 2026-06-16
+
+Result: PASSED.
+
+Scope:
+
+- workload_report.py.
+- wialon_import.py.
+- No DB schema changes.
+- No migration.
+- No template changes.
+- No POST requests during validation.
+- No Telegram bot restart.
+
+Baseline diagnostic:
+
+- `/wialon/auto_match`:
+  - response UTF-8 bytes: 31,000.
+  - SQL count: 3 SELECT.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+- `/wialon/workload`:
+  - response UTF-8 bytes: 230,785.
+  - SQL count: 21 SELECT.
+  - repeated SQL count: 2.
+  - repeated equipment query count: 17.
+  - DML count: 0.
+  - no traceback.
+- `/wialon/workload/export`:
+  - direct passthrough XLSX response.
+  - SQL count: 20 SELECT.
+  - repeated SQL count: 1.
+  - repeated equipment query count: 17.
+  - DML count: 0.
+  - no traceback.
+
+Source diagnostic:
+
+- `wialon_workload` route: wialon_import.py.
+- `wialon_workload_export` route: wialon_import.py.
+- workload builder: workload_report.py.
+- Problem was repeated equipment loading inside `get_workload_data`.
+- SQL issue was not in `/wialon/auto_match`.
+
+Implementation:
+
+- Added marker:
+  - PERF-WIALON-WORKLOAD-001B_MARKER.
+- Updated `get_workload_data` signature:
+  - `get_workload_data(d_from, d_to, org_ids=None, preloaded_orgs=None)`.
+- Added reuse of `preloaded_orgs`.
+- Added one bulk equipment query:
+  - `Equipment.organization_id.in_(org_ids_for_equipment)`.
+- Added `equipment_by_org` grouping in memory.
+- Removed per-organization:
+  - `.filter_by(organization_id=org.id, is_active=True)`.
+- Updated `/wialon/workload` call:
+  - `get_workload_data(d_from, d_to, filter_org_ids, preloaded_orgs=user_orgs)`.
+- Preserved workload export compatibility.
+
+Staging validation:
+
+- py_compile passed.
+- git diff --check passed.
+- app import OK.
+- URL rules count: 86.
+- Source checks passed.
+- `/wialon/workload`:
+  - response UTF-8 bytes: 230,785.
+  - SQL count: 4 SELECT.
+  - repeated SQL count: 0.
+  - repeated equipment SQL: 0.
+  - DML count: 0.
+  - no traceback.
+- `/wialon/workload/export`:
+  - direct passthrough XLSX response.
+  - SQL count: 4 SELECT.
+  - repeated SQL count: 0.
+  - repeated equipment SQL: 0.
+  - DML count: 0.
+  - no traceback.
+- Regression routes passed:
+  - /wialon/auto_match.
+  - /wialon/mapping.
+  - /wialon.
+  - /wialon/report.
+  - /ref/equipment.
+- Staging post-restart smoke OK.
+
+Production validation:
+
+- Production pull scope:
+  - workload_report.py.
+  - wialon_import.py.
+- Production source backup created:
+  - D:\transport-report-backups\production\source\PERF_WIALON_WORKLOAD_001C_20260616_123713.
+- Production pull fast-forward only.
+- Production py_compile passed.
+- Production source validation passed.
+- `/wialon/workload`:
+  - response UTF-8 bytes: 230,785.
+  - SQL count: 4 SELECT.
+  - repeated SQL count: 0.
+  - repeated equipment SQL: 0.
+  - DML count: 0.
+  - no traceback.
+- `/wialon/workload/export`:
+  - direct passthrough XLSX response.
+  - SQL count: 4 SELECT.
+  - repeated SQL count: 0.
+  - repeated equipment SQL: 0.
+  - DML count: 0.
+  - no traceback.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Production smoke OK.
+
+Final production services:
+
+- TransportReport: RUNNING.
+- TransportBot: RUNNING.
+- TransportBot003: RUNNING.
+
