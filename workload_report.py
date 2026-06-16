@@ -71,7 +71,7 @@ def _get_hours_map(d_from, d_to):
         return {}
 
 
-def get_workload_data(d_from, d_to, org_ids=None):
+def get_workload_data(d_from, d_to, org_ids=None, preloaded_orgs=None):
     """
     Returns (orgs_data, calendar_days, norm_hours) where orgs_data is:
     [
@@ -100,24 +100,49 @@ def get_workload_data(d_from, d_to, org_ids=None):
     mapped_ids = _get_mapped_equipment_ids()   # None means table missing
     hours_map  = _get_hours_map(d_from, d_to)
 
-    org_q = Organization.query.order_by(Organization.sort_order)
-    if org_ids:
-        org_q = org_q.filter(Organization.id.in_(org_ids))
-    orgs = org_q.all()
+    # PERF-WIALON-WORKLOAD-001B_MARKER: reuse preloaded orgs and bulk-load workload equipment.
+    if preloaded_orgs is not None:
+        orgs = list(preloaded_orgs)
+        if org_ids:
+            allowed_org_ids = set(org_ids)
+            orgs = [org for org in orgs if org.id in allowed_org_ids]
+        orgs.sort(key=lambda org: org.sort_order)
+    else:
+        org_q = Organization.query.order_by(Organization.sort_order)
+        if org_ids:
+            org_q = org_q.filter(Organization.id.in_(org_ids))
+        orgs = org_q.all()
+
+    org_ids_for_equipment = [org.id for org in orgs]
+    equipment_by_org = {org.id: [] for org in orgs}
+
+    if org_ids_for_equipment:
+        eq_q = (Equipment.query
+                .filter(Equipment.organization_id.in_(org_ids_for_equipment),
+                        Equipment.is_active == True)
+                .order_by(Equipment.organization_id, Equipment.name))
+
+        # Filter to Wialon-mapped equipment only (if mapping table exists).
+        if mapped_ids is not None:
+            if mapped_ids:
+                eq_q = eq_q.filter(Equipment.id.in_(mapped_ids))
+            else:
+                eq_q = None
+        else:
+            # Fallback: show equipment that has any engine hours data ever.
+            eq_with_hours = set(hours_map.keys())
+            if eq_with_hours:
+                eq_q = eq_q.filter(Equipment.id.in_(eq_with_hours))
+            else:
+                eq_q = None
+
+        if eq_q is not None:
+            for eq in eq_q.all():
+                equipment_by_org.setdefault(eq.organization_id, []).append(eq)
 
     result = []
     for org in orgs:
-        eq_q = (Equipment.query
-                .filter_by(organization_id=org.id, is_active=True)
-                .order_by(Equipment.name))
-
-        # Filter to Wialon-mapped equipment only (if mapping table exists)
-        if mapped_ids is not None:
-            equipment = [e for e in eq_q.all() if e.id in mapped_ids]
-        else:
-            # Fallback: show equipment that has any engine hours data ever
-            eq_with_hours = set(hours_map.keys())
-            equipment = [e for e in eq_q.all() if e.id in eq_with_hours]
+        equipment = equipment_by_org.get(org.id, [])
 
         if not equipment:
             continue

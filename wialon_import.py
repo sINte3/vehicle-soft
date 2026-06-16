@@ -1134,7 +1134,7 @@ def register_wialon_routes(app, editor_required, admin_required):
                 from flask import abort
                 abort(403)
             filter_org_ids = [selected_org_id]
-        orgs_data, calendar_days, norm_hours = get_workload_data(d_from, d_to, filter_org_ids)
+        orgs_data, calendar_days, norm_hours = get_workload_data(d_from, d_to, filter_org_ids, preloaded_orgs=user_orgs)
         all_rows  = [r for od in orgs_data for r in od['rows']]
         total_eq  = len(all_rows)
         zero_eq   = sum(1 for r in all_rows if r['fact'] == 0)
