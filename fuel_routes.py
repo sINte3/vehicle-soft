@@ -1369,22 +1369,70 @@ def warehouses():
     edit_warehouse = None
     if edit_id:
         edit_warehouse = FuelWarehouse.query.get(edit_id)
+    # fuel-batch-perf-001b_marker: bulk warehouse/station counts.
+    warehouse_ids = [wh.id for wh in whs]
+    station_rows = []
+    if warehouse_ids:
+        station_rows = (FuelStation2.query
+            .filter(FuelStation2.warehouse_id.in_(warehouse_ids))
+            .order_by(FuelStation2.warehouse_id, FuelStation2.name)
+            .all())
+
+    stations_by_warehouse = {wid: [] for wid in warehouse_ids}
+    station_ids = []
+    for st in station_rows:
+        stations_by_warehouse.setdefault(st.warehouse_id, []).append(st)
+        station_ids.append(st.id)
+
+    warehouse_station_counts = {wid: len(stations_by_warehouse.get(wid, [])) for wid in warehouse_ids}
+    warehouse_receipt_counts = {}
+    warehouse_initial_balance_counts = {}
+    station_tx_counts = {}
+
+    if warehouse_ids:
+        warehouse_receipt_counts = dict(
+            db.session.query(FuelReceipt2.warehouse_id, func.count(FuelReceipt2.id))
+            .filter(FuelReceipt2.warehouse_id.in_(warehouse_ids))
+            .group_by(FuelReceipt2.warehouse_id)
+            .all()
+        )
+        warehouse_initial_balance_counts = dict(
+            db.session.query(FuelInitialBalance.warehouse_id, func.count(FuelInitialBalance.id))
+            .filter(FuelInitialBalance.warehouse_id.in_(warehouse_ids))
+            .group_by(FuelInitialBalance.warehouse_id)
+            .all()
+        )
+
+    if station_ids:
+        station_tx_counts = dict(
+            db.session.query(FuelTransaction2.station_id, func.count(FuelTransaction2.id))
+            .filter(FuelTransaction2.station_id.in_(station_ids))
+            .group_by(FuelTransaction2.station_id)
+            .all()
+        )
+
+    fuel_batch_total_stations_count = sum(warehouse_station_counts.values())
+
     warehouse_delete_info = {}
     for wh in whs:
         linked = {
-            'stations_count': FuelStation2.query.filter_by(warehouse_id=wh.id).count(),
-            'receipts_count': FuelReceipt2.query.filter_by(warehouse_id=wh.id).count(),
-            'initial_balances_count': FuelInitialBalance.query.filter_by(warehouse_id=wh.id).count(),
+            'stations_count': int(warehouse_station_counts.get(wh.id, 0) or 0),
+            'receipts_count': int(warehouse_receipt_counts.get(wh.id, 0) or 0),
+            'initial_balances_count': int(warehouse_initial_balance_counts.get(wh.id, 0) or 0),
         }
         warehouse_delete_info[wh.id] = {
             'can_delete': not any(linked.values()),
             'linked_total': sum(linked.values()),
             'linked': linked,
         }
+
     return render_template('fuel/warehouses.html', warehouses=whs,
                            organizations=orgs, fuel_types=FUEL_TYPES,
                            edit_warehouse=edit_warehouse,
-                           warehouse_delete_info=warehouse_delete_info)
+                           warehouse_delete_info=warehouse_delete_info,
+                           fuel_batch_stations_by_warehouse=stations_by_warehouse,
+                           fuel_batch_station_tx_counts=station_tx_counts,
+                           fuel_batch_total_stations_count=fuel_batch_total_stations_count)
 
 
 @fuel_bp.route('/warehouses/save', methods=['POST'])
@@ -1476,10 +1524,18 @@ def delete_warehouse(wid):
 @admin_required_fuel
 def initial_balance():
     warehouses = FuelWarehouse.query.order_by(FuelWarehouse.name).all()
-    existing = {}
-    for wh in warehouses:
-        existing[wh.id] = {ib.fuel_type: ib
-                           for ib in wh.initial_balances.all()}
+    # fuel-batch-perf-001b_marker: bulk initial balance rows.
+    warehouse_ids = [wh.id for wh in warehouses]
+    initial_balance_rows = []
+    if warehouse_ids:
+        initial_balance_rows = (FuelInitialBalance.query
+            .filter(FuelInitialBalance.warehouse_id.in_(warehouse_ids))
+            .order_by(FuelInitialBalance.warehouse_id, FuelInitialBalance.fuel_type)
+            .all())
+
+    existing = {wh.id: {} for wh in warehouses}
+    for ib in initial_balance_rows:
+        existing.setdefault(ib.warehouse_id, {})[ib.fuel_type] = ib
     return render_template('fuel/initial_balance.html',
                            warehouses=warehouses, existing=existing,
                            fuel_types=FUEL_TYPES, today=date.today())

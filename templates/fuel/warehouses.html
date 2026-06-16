@@ -218,7 +218,7 @@ form.fuel002c-save-form textarea {
 
 <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); margin-bottom:16px;">
     <div class="stat-card"><div class="label">{{ L_total_wh }}</div><div class="value">{{ warehouses|length }}</div></div>
-    <div class="stat-card"><div class="label">{{ L_total_st }}</div><div class="value">{% set ns = namespace(total=0) %}{% for wh in warehouses %}{% set ns.total = ns.total + wh.stations.count() %}{% endfor %}{{ ns.total }}</div></div>
+    <div class="stat-card"><div class="label">{{ L_total_st }}</div><div class="value">{{ fuel_batch_total_stations_count }}</div></div>
     <div class="stat-card"><div class="label">{{ L_fuel if L_fuel is defined else 'ДТ' }}</div><div class="value text-sm">ДТ</div></div>
 </div>
 
@@ -285,7 +285,8 @@ form.fuel002c-save-form textarea {
 </div>
 
 {% for wh in warehouses %}
-{% set stations = wh.stations.all() %}
+{# fuel-batch-perf-001b_marker: use preloaded warehouse station maps. #}
+{% set stations = fuel_batch_stations_by_warehouse.get(wh.id, []) %}
 <div class="card wh-card" data-search="{{ (wh.name ~ ' ' ~ (wh.organization.name if wh.organization else '') ~ ' ' ~ (stations|map(attribute='name')|join(' ')))|lower }}" style="margin-bottom:16px; {% if edit_warehouse and edit_warehouse.id == wh.id %}border:2px solid var(--primary);{% endif %}">
     <div class="card-header" style="background:var(--surface2);">
         <div>
@@ -324,7 +325,7 @@ form.fuel002c-save-form textarea {
             <tbody>
             {% if stations %}
                 {% for st in stations %}
-                <tr><td>{{ st.name }}</td><td><code>{{ st.topaz_id }}</code></td><td>{% if st.is_active %}<span class="working-badge">{{ L_active }}</span>{% else %}<span class="idle-badge">{{ L_disabled }}</span>{% endif %}</td><td class="text-muted text-sm">{{ st.transactions.count() }}</td></tr>
+                <tr><td>{{ st.name }}</td><td><code>{{ st.topaz_id }}</code></td><td>{% if st.is_active %}<span class="working-badge">{{ L_active }}</span>{% else %}<span class="idle-badge">{{ L_disabled }}</span>{% endif %}</td><td class="text-muted text-sm">{{ fuel_batch_station_tx_counts.get(st.id, 0) }}</td></tr>
                 {% endfor %}
             {% else %}
             <tr><td colspan="4" class="text-muted text-sm" style="padding:16px;">{{ L_no_stations }} <a href="{{ url_for('fuel.stations') }}">{{ L_add_station }} →</a></td></tr>
