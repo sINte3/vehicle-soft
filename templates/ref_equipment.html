@@ -227,17 +227,17 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="id" value="{{ eq.id }}">
                             <div class="form-group"><label>{{ t('Ташкилот') }}</label>
-                                <select name="organization_id" required>
-                                    {% for org in organizations %}
-                                    <option value="{{ org.id }}" {% if eq.organization_id == org.id %}selected{% endif %}>{{ org.name }}</option>
-                                    {% endfor %}
+                                <select name="organization_id" required
+                                        class="ref-equipment-org-select"
+                                        data-selected="{{ eq.organization_id }}">
+                                    <option value="">{{ t(' выберите организацию ') }}</option>
                                 </select>
                             </div>
                             <div class="form-group"><label>{{ t('Категория') }}</label>
-                                <select name="category" required>
-                                    {% for code, name in CATEGORIES.items() %}
-                                    <option value="{{ code }}" {% if eq.category == code %}selected{% endif %}>{{ name }}</option>
-                                    {% endfor %}
+                                <select name="category" required
+                                        class="ref-equipment-category-select"
+                                        data-selected="{{ eq.category or '' }}">
+                                    <option value="">{{ t(' выберите категорию ') }}</option>
                                 </select>
                             </div>
                             <div class="form-group"><label>{{ t('Тури') }}</label>
@@ -281,5 +281,57 @@ document.addEventListener('DOMContentLoaded', function() {
     if (document.getElementById('ms-cats-eq')) initMultiselect('ms-cats-eq', '{{ t("Категория") }}');
     if (document.getElementById('ms-eqtypes')) initMultiselect('ms-eqtypes', '{{ t("Тури") }}');
 });
+
+// PERF-REF-BODY-001B_MARKER: shared edit select options for ref_equipment.
+const REF_EQUIPMENT_ORG_OPTIONS = [
+{% for org in organizations %}
+    {"id": {{ org.id|tojson }}, "label": {{ org.name|tojson }}},
+{% endfor %}
+];
+
+const REF_EQUIPMENT_CATEGORY_OPTIONS = [
+{% for code, name in CATEGORIES.items() %}
+    {"id": {{ code|tojson }}, "label": {{ name|tojson }}},
+{% endfor %}
+];
+
+function populateRefEquipmentSelect(sel, options) {
+    if (!sel || sel.getAttribute('data-ref-options-loaded') === '1') return;
+
+    var selected = sel.getAttribute('data-selected') || sel.value || '';
+    var firstText = sel.options.length ? sel.options[0].textContent : '';
+    var firstValue = sel.options.length ? sel.options[0].value : '';
+
+    sel.innerHTML = '';
+
+    var first = document.createElement('option');
+    first.value = firstValue;
+    first.textContent = firstText;
+    sel.appendChild(first);
+
+    options.forEach(function(item) {
+        var opt = document.createElement('option');
+        opt.value = String(item.id);
+        opt.textContent = item.label || String(item.id);
+        if (selected && String(item.id) === String(selected)) {
+            opt.selected = true;
+        }
+        sel.appendChild(opt);
+    });
+
+    sel.setAttribute('data-ref-options-loaded', '1');
+}
+
+function populateRefEquipmentEditSelects() {
+    document.querySelectorAll('select.ref-equipment-org-select').forEach(function(sel) {
+        populateRefEquipmentSelect(sel, REF_EQUIPMENT_ORG_OPTIONS);
+    });
+    document.querySelectorAll('select.ref-equipment-category-select').forEach(function(sel) {
+        populateRefEquipmentSelect(sel, REF_EQUIPMENT_CATEGORY_OPTIONS);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', populateRefEquipmentEditSelects);
+
 </script>
 {% endblock %}
