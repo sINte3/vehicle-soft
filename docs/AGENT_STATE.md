@@ -2783,3 +2783,28 @@ Related task:
 
 Final result:
 - Core transport GET routes are clean.
+<!-- perf-wialon-get-routes-sweep-001d -->
+
+## 2026-06-16  PERF-WIALON-GET-ROUTES-SWEEP-001 completed
+
+Completed read-only SQL/N+1 diagnostics for remaining Wialon GET routes.
+
+Routes checked:
+- `/wialon`
+- `/wialon/auto_match`
+- `/wialon/report`
+
+Staging:
+- `/wialon`: status 200, SQL total 6, repeated SQL kinds 0, non-select statements 0
+- `/wialon/auto_match`: status 200, SQL total 5, repeated SQL kinds 0, non-select statements 0
+- `/wialon/report`: status 200, SQL total 5, repeated SQL kinds 0, non-select statements 0
+
+Production:
+- `/wialon`: status 200, SQL total 6, repeated SQL kinds 0, non-select statements 0
+- `/wialon/auto_match`: status 200, SQL total 5, repeated SQL kinds 0, non-select statements 0
+- `/wialon/report`: status 200, SQL total 5, repeated SQL kinds 0, non-select statements 0
+
+Final result:
+- Remaining Wialon GET routes are clean.
+- No code changes were needed.
+- No service restart was required.

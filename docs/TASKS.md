@@ -2873,3 +2873,32 @@ Related code commit:
 Conclusion:
 - Core GET routes sweep is closed.
 - No remaining N+1 issue found in core transport pages.
+<!-- perf-wialon-get-routes-sweep-001d -->
+
+## PERF-WIALON-GET-ROUTES-SWEEP-001  remaining Wialon GET routes performance sweep
+
+Status: DONE  Wialon remaining GET pages verified.
+
+Scope:
+- `/wialon`
+- `/wialon/auto_match`
+- `/wialon/report`
+
+Results:
+- `/wialon`: clean, repeated SQL kinds 0, non-select statements 0.
+- `/wialon/auto_match`: clean, repeated SQL kinds 0, non-select statements 0.
+- `/wialon/report`: clean, repeated SQL kinds 0, non-select statements 0.
+
+Staging verification:
+- `/wialon`: status 200, SQL total 6, repeated SQL kinds 0, non-select statements 0.
+- `/wialon/auto_match`: status 200, SQL total 5, repeated SQL kinds 0, non-select statements 0.
+- `/wialon/report`: status 200, SQL total 5, repeated SQL kinds 0, non-select statements 0.
+
+Production verification:
+- `/wialon`: status 200, SQL total 6, repeated SQL kinds 0, non-select statements 0.
+- `/wialon/auto_match`: status 200, SQL total 5, repeated SQL kinds 0, non-select statements 0.
+- `/wialon/report`: status 200, SQL total 5, repeated SQL kinds 0, non-select statements 0.
+
+Conclusion:
+- No code changes required.
+- No N+1 issue found in the remaining Wialon GET pages.
