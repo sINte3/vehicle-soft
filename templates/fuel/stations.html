@@ -282,13 +282,14 @@ form.fuel002e-station-form .form-group {
 <table class="fuel002e-stations-table">
         <thead><tr><th>{{ L_name }}</th><th>Topaz ID</th><th>{{ L_wh }}</th><th class="text-center">{{ L_status }}</th><th class="text-right">{{ L_tx }}</th><th></th></tr></thead>
         <tbody>
+        {# PERF-FUEL-STATIONS-NPLUS1-001B_MARKER: use preloaded transaction counts. #}
         {% for st in stations %}
         <tr class="station-row" data-status="{{ 'active' if st.is_active else 'disabled' }}" data-search="{{ (st.name ~ ' ' ~ (st.warehouse.name if st.warehouse else '') ~ ' ' ~ st.topaz_id|string)|lower }}">
             <td style="font-weight:600;">{{ st.name }}</td>
             <td><code>{{ st.topaz_id }}</code></td>
             <td>{{ st.warehouse.name if st.warehouse else '—' }}</td>
             <td class="text-center">{% if st.is_active %}<span class="working-badge">{{ L_active }}</span>{% else %}<span class="idle-badge">{{ L_disabled }}</span>{% endif %}</td>
-            <td class="text-right text-muted text-sm">{{ st.transactions.count() }}</td>
+            <td class="text-right text-muted text-sm">{{ (station_delete_info.get(st.id) or {}).get('transactions_count', 0) }}</td>
             <td style="white-space:nowrap;">
                 <button class="btn btn-secondary btn-sm" onclick='editSt({{ st.id }}, {{ st.name|tojson }}, {{ st.topaz_id }}, {{ st.warehouse_id }}, {{ st.is_active|lower }})'>{{ L_edit }}</button>
                 {% set del_info = station_delete_info.get(st.id) %}

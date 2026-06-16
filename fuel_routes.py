@@ -1733,9 +1733,20 @@ def stations():
                     .join(FuelWarehouse)
                     .order_by(FuelWarehouse.name, FuelStation2.name).all())
     warehouses = FuelWarehouse.query.order_by(FuelWarehouse.name).all()
+    # PERF-FUEL-STATIONS-NPLUS1-001B_MARKER: bulk transaction counts for fuel stations.
+    station_ids = [st.id for st in all_stations]
+    station_tx_counts = {}
+    if station_ids:
+        station_tx_counts = dict(
+            db.session.query(FuelTransaction2.station_id, func.count(FuelTransaction2.id))
+            .filter(FuelTransaction2.station_id.in_(station_ids))
+            .group_by(FuelTransaction2.station_id)
+            .all()
+        )
+
     station_delete_info = {}
     for st in all_stations:
-        tx_count = FuelTransaction2.query.filter_by(station_id=st.id).count()
+        tx_count = int(station_tx_counts.get(st.id, 0) or 0)
         station_delete_info[st.id] = {
             'can_delete': tx_count == 0,
             'can_deactivate': tx_count > 0 and bool(st.is_active),
