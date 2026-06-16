@@ -2617,3 +2617,44 @@ Future candidates:
 - [ ] PERF-WIALON-MAPPING-PAGINATION-001: optional pagination/lazy loading for `/wialon/mapping` if the table keeps growing.
 - [ ] PERF-WORK-TYPES-BODY-001: optional optimization of `/ref/work_types` inline edit rows if worth the risk.
 
+## 2026-06-16 - PERF-WORK-TYPES-BODY-001 Reference work types shared forms
+
+Completed:
+
+- [x] Run read-only feasibility diagnostic for `/ref/work_types`.
+- [x] Confirm SQL already optimized at 2 SELECT.
+- [x] Confirm repeated SQL count 0.
+- [x] Identify HTML body issue caused by repeated inline edit/delete forms.
+- [x] Confirm baseline body size 266,902 bytes.
+- [x] Confirm baseline forms 111.
+- [x] Confirm baseline inputs 530.
+- [x] Confirm baseline CSRF inputs 110.
+- [x] Patch `templates/ref_work_types.html`.
+- [x] Replace repeated inline edit rows with shared edit row.
+- [x] Replace repeated delete forms with shared delete form.
+- [x] Preserve filter form.
+- [x] Preserve add-new-work-type form.
+- [x] Preserve existing POST contracts.
+- [x] Validate body size reduced to about 127 KB on staging.
+- [x] Validate forms reduced to 5 on staging.
+- [x] Validate inputs reduced to 12 on staging.
+- [x] Validate CSRF inputs reduced to 4 on staging.
+- [x] Validate old inline edit rows removed on staging.
+- [x] Restart staging TransportReportStaging only.
+- [x] Validate staging post-restart smoke.
+- [x] Commit source patch.
+- [x] Push to GitHub.
+- [x] Verify production pull scope is template-only.
+- [x] Create production source backup.
+- [x] Pull to production.
+- [x] Compile and validate production source.
+- [x] Restart production TransportReport only.
+- [x] Confirm Telegram bot services were not restarted.
+- [x] Validate production post-restart smoke.
+- [x] Close PERF-WORK-TYPES-BODY-001 as completed.
+
+Future candidates:
+
+- [ ] PERF-REF-EQUIPMENT-BODY-003: optional further reduction of `/ref/equipment` remaining forms/actions if worth the UX risk.
+- [ ] PERF-FUEL-DASH-REPEAT-001: optional investigation of remaining repeated query on `/fuel/`.
+

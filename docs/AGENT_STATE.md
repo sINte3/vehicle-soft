@@ -2499,3 +2499,36 @@ Summary:
 - Only TransportReport was restarted.
 - Telegram bot services were not restarted.
 
+## 2026-06-16 - PERF-WORK-TYPES-BODY-001 Reference work types shared forms
+
+Status: completed and deployed to production.
+
+Code commit:
+
+42452831d2643908a229ef1cb5514f8701dab469
+
+Summary:
+
+- Diagnosed `/ref/work_types` response body.
+- Confirmed SQL was not the problem:
+  - 2 SELECT.
+  - repeated SQL count 0.
+  - DML count 0.
+- Found HTML body issue:
+  - 266,902 bytes.
+  - 111 forms.
+  - 530 inputs.
+  - 110 CSRF inputs.
+  - repeated hidden edit rows.
+  - repeated delete forms.
+- Changed only `templates/ref_work_types.html`.
+- Replaced repeated inline edit rows with one shared edit row.
+- Replaced repeated delete forms with one shared delete form.
+- Preserved filter form and add-new form.
+- Preserved backend POST endpoints.
+- Reduced `/ref/work_types` body to about 127 KB.
+- Reduced forms to 5, inputs to 12, CSRF inputs to 4.
+- Production rollout completed with template-only pull.
+- Only TransportReport was restarted.
+- Telegram bot services were not restarted.
+

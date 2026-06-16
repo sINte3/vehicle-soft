@@ -1717,3 +1717,123 @@ Final production services:
 - TransportBot: RUNNING.
 - TransportBot003: RUNNING.
 
+## PERF-WORK-TYPES-BODY-001 Reference work types shared forms - 2026-06-16
+
+Result: PASSED.
+
+Scope:
+
+- templates/ref_work_types.html.
+- Template-only change.
+- No route code change.
+- No DB schema changes.
+- No migration.
+- No POST requests during validation.
+- No Telegram bot restart.
+
+Baseline diagnostic:
+
+- `/ref/work_types`:
+  - response UTF-8 bytes: 266,902.
+  - SQL count: 2 SELECT.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+  - table rows: 209.
+  - forms: 111.
+  - inputs: 530.
+  - selects: 1.
+  - options: 3.
+  - CSRF inputs: 110.
+  - hidden id inputs: 104.
+  - display:none count: 106.
+
+Implementation:
+
+- Added marker:
+  - PERF-WORK-TYPES-BODY-001B_MARKER.
+- Replaced repeated hidden inline edit rows with one shared edit row.
+- Replaced repeated delete forms with one shared delete form.
+- Preserved filter form.
+- Preserved add-new form.
+- Preserved `save_work_type`.
+- Preserved `delete_work_type`.
+- Added shared delete URL template.
+- Added row metadata:
+  - data-wt-id.
+  - data-name.
+  - data-default-unit.
+  - data-default-price.
+
+Staging validation:
+
+- py_compile passed.
+- git diff --check passed.
+- app import OK.
+- URL rules count: 86.
+- Source checks passed.
+- `/ref/work_types`:
+  - response UTF-8 bytes: 127,204.
+  - SQL count: 2 SELECT.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+  - table rows: 107.
+  - forms: 5.
+  - inputs: 12.
+  - selects: 1.
+  - options: 3.
+  - CSRF inputs: 4.
+  - hidden id inputs: 1.
+  - old inline edit rows: 0.
+  - shared edit row: 1.
+  - shared edit form: 1.
+  - shared delete form: 1.
+  - data-wt-id count: 105.
+  - data-name count: 104.
+- Regression routes passed:
+  - /ref/equipment.
+  - /wialon/mapping.
+  - /wialon/workload.
+  - /fuel/.
+  - /spare-parts/.
+- Staging post-restart smoke OK.
+
+Production validation:
+
+- Production pull scope:
+  - templates/ref_work_types.html.
+- Production source backup created:
+  - D:\transport-report-backups\production\source\PERF_WORK_TYPES_BODY_001C_20260616_154849.
+- Production pull fast-forward only.
+- Production py_compile passed.
+- Production source validation passed.
+- `/ref/work_types`:
+  - response UTF-8 bytes: 127,209.
+  - SQL count: 2 SELECT.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+  - table rows: 107.
+  - forms: 5.
+  - inputs: 12.
+  - selects: 1.
+  - options: 3.
+  - CSRF inputs: 4.
+  - hidden id inputs: 1.
+  - old inline edit rows: 0.
+  - shared edit row: 1.
+  - shared edit form: 1.
+  - shared delete form: 1.
+  - data-wt-id count: 105.
+  - data-name count: 104.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Production smoke OK.
+
+Final production services:
+
+- TransportReport: RUNNING.
+- TransportBot: RUNNING.
+- TransportBot003: RUNNING.
+
