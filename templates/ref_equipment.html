@@ -185,7 +185,16 @@
             </thead>
             <tbody>
                 {% for eq in equipment %}
-                <tr id="eq-row-{{ eq.id }}" class="{% if not eq.is_active %}ref-eq-inactive{% endif %}">
+                <tr id="eq-row-{{ eq.id }}"
+                    class="{% if not eq.is_active %}ref-eq-inactive{% endif %}"
+                    data-eq-id="{{ eq.id }}"
+                    data-org-id="{{ eq.organization_id }}"
+                    data-category="{{ eq.category or '' }}"
+                    data-eq-type="{{ eq.eq_type|default('', true)|e }}"
+                    data-name="{{ eq.name|default('', true)|e }}"
+                    data-plate="{{ eq.plate|default('', true)|e }}"
+                    data-default-unit="{{ eq.default_unit|default('', true)|e }}"
+                    data-default-price="{{ eq.default_price|int if eq.default_price else 0 }}">
                     <td class="text-center text-sm">{{ loop.index }}</td>
                     <td class="text-sm">{{ eq.organization.short_name or eq.organization.name }}</td>
                     <td><span class="text-sm">{{ eq.category_display }}</span></td>
@@ -221,62 +230,92 @@
                         {% endif %}
                     </td>
                 </tr>
-                <tr id="eq-edit-{{ eq.id }}" style="display:none;">
-                    <td colspan="9">
-                        <form method="post" action="{{ url_for('save_equipment') }}" class="form-inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <input type="hidden" name="id" value="{{ eq.id }}">
-                            <div class="form-group"><label>{{ t('Ташкилот') }}</label>
-                                <select name="organization_id" required
-                                        class="ref-equipment-org-select"
-                                        data-selected="{{ eq.organization_id }}">
-                                    <option value="">{{ t(' выберите организацию ') }}</option>
-                                </select>
-                            </div>
-                            <div class="form-group"><label>{{ t('Категория') }}</label>
-                                <select name="category" required
-                                        class="ref-equipment-category-select"
-                                        data-selected="{{ eq.category or '' }}">
-                                    <option value="">{{ t(' выберите категорию ') }}</option>
-                                </select>
-                            </div>
-                            <div class="form-group"><label>{{ t('Тури') }}</label>
-                                <input type="text" name="eq_type" value="{{ eq.eq_type }}">
-                            </div>
-                            <div class="form-group"><label>{{ t('Номи') }}</label>
-                                <input type="text" name="name" value="{{ eq.name }}" required>
-                            </div>
-                            <div class="form-group"><label>{{ t('Рақам') }}</label>
-                                <input type="text" name="plate" value="{{ eq.plate }}" required>
-                            </div>
-                            <div class="form-group"><label>{{ t('Ўлчов') }}</label>
-                                <input type="text" name="default_unit" value="{{ eq.default_unit }}" style="width:80px;">
-                            </div>
-                            <div class="form-group"><label>{{ t('Нарх') }}</label>
-                                <input type="number" name="default_price" value="{{ eq.default_price|int if eq.default_price else 0 }}" min="0" step="0.01" style="width:120px;">
-                            </div>
-                            <div class="form-group"><label>&nbsp;</label>
-                                <button type="submit" class="btn btn-primary btn-sm">{{ t('Сақлаш') }}</button>
-                                <button type="button" class="btn btn-secondary btn-sm" onclick="cancelEqEdit({{ eq.id }})">{{ t('Бекор қилиш') }}</button>
-                            </div>
+                {% endfor %}
+                <tr id="ref-equipment-edit-row" class="ref-equipment-shared-edit-row" style="display:none;">
+                    <td colspan="10">
+                        <form method="post" action="{{ url_for('save_equipment') }}" class="form-inline ref-equipment-shared-edit-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="id" id="ref-eq-edit-id" value="">
+
+                            <select name="organization_id" id="ref-eq-edit-organization-id" required
+                                    class="ref-equipment-org-select"
+                                    data-selected="">
+                                <option value="">{{ t(' выберите организацию ') }}</option>
+                            </select>
+
+                            <select name="category" id="ref-eq-edit-category" required
+                                    class="ref-equipment-category-select"
+                                    data-selected="">
+                                <option value="">{{ t(' выберите категорию ') }}</option>
+                            </select>
+
+                            <input type="text" name="eq_type" id="ref-eq-edit-eq-type" value="">
+                            <input type="text" name="name" id="ref-eq-edit-name" value="" required>
+                            <input type="text" name="plate" id="ref-eq-edit-plate" value="" required>
+                            <input type="text" name="default_unit" id="ref-eq-edit-default-unit" value="" style="width:80px;">
+                            <input type="number" name="default_price" id="ref-eq-edit-default-price" value="0" min="0" step="0.01" style="width:120px;">
+
+                            <button class="btn btn-primary btn-sm" type="submit">{{ 'Сохранить' if lang == 'ru' else 'Сақлаш' }}</button>
+                            <button class="btn btn-secondary btn-sm" type="button" onclick="cancelEqEdit()">{{ 'Отмена' if lang == 'ru' else 'Бекор қилиш' }}</button>
                         </form>
                     </td>
                 </tr>
-                {% endfor %}
+
             </tbody>
         </table>
     </div>
 </div>
 
 <script>
+// PERF-REF-BODY-002B_MARKER: one reusable edit row for ref_equipment.
+function setRefEquipmentField(id, value) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.value = value == null ? '' : String(value);
+}
+
 function editEq(id) {
-    document.getElementById('eq-row-' + id).style.display = 'none';
-    document.getElementById('eq-edit-' + id).style.display = '';
+    var row = document.getElementById('eq-row-' + id);
+    var editRow = document.getElementById('ref-equipment-edit-row');
+    if (!row || !editRow) return;
+
+    if (typeof populateRefEquipmentEditSelects === 'function') {
+        populateRefEquipmentEditSelects();
+    }
+
+    document.querySelectorAll('tr.ref-equipment-editing').forEach(function(r) {
+        r.classList.remove('ref-equipment-editing');
+        r.style.display = '';
+    });
+
+    row.classList.add('ref-equipment-editing');
+    row.parentNode.insertBefore(editRow, row.nextSibling);
+    editRow.style.display = '';
+
+    setRefEquipmentField('ref-eq-edit-id', row.dataset.eqId || id);
+    setRefEquipmentField('ref-eq-edit-organization-id', row.dataset.orgId || '');
+    setRefEquipmentField('ref-eq-edit-category', row.dataset.category || '');
+    setRefEquipmentField('ref-eq-edit-eq-type', row.dataset.eqType || '');
+    setRefEquipmentField('ref-eq-edit-name', row.dataset.name || '');
+    setRefEquipmentField('ref-eq-edit-plate', row.dataset.plate || '');
+    setRefEquipmentField('ref-eq-edit-default-unit', row.dataset.defaultUnit || '');
+    setRefEquipmentField('ref-eq-edit-default-price', row.dataset.defaultPrice || '0');
+
+    row.style.display = 'none';
 }
-function cancelEqEdit(id) {
-    document.getElementById('eq-row-' + id).style.display = '';
-    document.getElementById('eq-edit-' + id).style.display = 'none';
+
+function cancelEqEdit() {
+    var editRow = document.getElementById('ref-equipment-edit-row');
+    if (editRow) {
+        editRow.style.display = 'none';
+    }
+
+    document.querySelectorAll('tr.ref-equipment-editing').forEach(function(r) {
+        r.classList.remove('ref-equipment-editing');
+        r.style.display = '';
+    });
 }
+
 document.addEventListener('DOMContentLoaded', function() {
     if (document.getElementById('ms-cats-eq')) initMultiselect('ms-cats-eq', '{{ t("Категория") }}');
     if (document.getElementById('ms-eqtypes')) initMultiselect('ms-eqtypes', '{{ t("Тури") }}');
