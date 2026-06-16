@@ -1586,3 +1586,134 @@ Final production services:
 - TransportBot: RUNNING.
 - TransportBot003: RUNNING.
 
+## PERF-WIALON-MAPPING-BODY-002 Wialon mapping shared forms - 2026-06-16
+
+Result: PASSED.
+
+Scope:
+
+- templates/wialon_mapping_list.html.
+- Template-only change.
+- No route code change.
+- No DB schema changes.
+- No migration.
+- No POST requests during validation.
+- No Telegram bot restart.
+
+Baseline diagnostic:
+
+- `/wialon/mapping`:
+  - response UTF-8 bytes: 947,349.
+  - SQL count: 3 SELECT.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+  - mapping rows: 379.
+  - pending rows: 3.
+  - forms: 763.
+  - inputs: 1,909.
+  - selects: 384.
+  - options: 387.
+  - CSRF inputs: 763.
+  - edit save forms: 379.
+  - pending save forms: 3.
+  - equipment selects: 384.
+
+Implementation:
+
+- Added marker:
+  - PERF-WIALON-MAPPING-BODY-002B_MARKER.
+- Added fix markers:
+  - PERF-WIALON-MAPPING-BODY-002B_FIX_MARKER.
+  - PERF-WIALON-MAPPING-BODY-002B_FIX2_MARKER.
+- Replaced repeated row save forms with one shared edit form.
+- Replaced repeated row delete forms with one shared delete form.
+- Preserved pending save forms.
+- Preserved manual add form.
+- Preserved `wialon_mapping_save`.
+- Preserved `wialon_mapping_delete`.
+- Removed repeated rendered `data-search`.
+- Removed repeated rendered `data-delete-url`.
+- Added shared delete URL template.
+- Search now uses row text cache.
+
+Staging validation:
+
+- py_compile passed.
+- git diff --check passed.
+- app import OK.
+- URL rules count: 86.
+- Source checks passed.
+- `/wialon/mapping`:
+  - response UTF-8 bytes: 633,834.
+  - SQL count: 3 SELECT.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+  - mapping rows: 379.
+  - pending rows: 3.
+  - forms: 7.
+  - inputs: 18.
+  - selects: 6.
+  - options: 9.
+  - CSRF inputs: 7.
+  - old edit save forms: 0.
+  - pending save forms: 3.
+  - shared edit row: 1.
+  - shared edit form: 1.
+  - shared delete form: 1.
+  - `data-search`: 0.
+  - `data-delete-url`: 0.
+  - visible edit buttons: 379.
+  - visible skip buttons: 379.
+  - visible delete buttons: 379.
+- Regression routes passed:
+  - /wialon/auto_match.
+  - /wialon/workload.
+  - /wialon.
+  - /wialon/report.
+  - /ref/equipment.
+- Staging post-restart smoke OK.
+
+Production validation:
+
+- Production pull scope:
+  - templates/wialon_mapping_list.html.
+- Production source backup created:
+  - D:\transport-report-backups\production\source\PERF_WIALON_MAPPING_BODY_002C_20260616_145746.
+- Production pull fast-forward only.
+- Production py_compile passed.
+- Production source validation passed.
+- `/wialon/mapping`:
+  - response UTF-8 bytes: 633,834.
+  - SQL count: 3 SELECT.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+  - mapping rows: 379.
+  - pending rows: 3.
+  - forms: 7.
+  - inputs: 18.
+  - selects: 6.
+  - options: 9.
+  - CSRF inputs: 7.
+  - old edit save forms: 0.
+  - pending save forms: 3.
+  - shared edit row: 1.
+  - shared edit form: 1.
+  - shared delete form: 1.
+  - `data-search`: 0.
+  - `data-delete-url`: 0.
+  - visible edit buttons: 379.
+  - visible skip buttons: 379.
+  - visible delete buttons: 379.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Production smoke OK.
+
+Final production services:
+
+- TransportReport: RUNNING.
+- TransportBot: RUNNING.
+- TransportBot003: RUNNING.
+

@@ -2464,3 +2464,38 @@ Summary:
 - Only TransportReport was restarted.
 - Telegram bot services were not restarted.
 
+## 2026-06-16 - PERF-WIALON-MAPPING-BODY-002 Wialon mapping shared forms
+
+Status: completed and deployed to production.
+
+Code commit:
+
+1aa471977684b1fac950fdf758db57544082bd83
+
+Summary:
+
+- Diagnosed `/wialon/mapping` response body after SQL was already optimized.
+- Confirmed SQL was not the problem:
+  - 3 SELECT.
+  - repeated SQL count 0.
+  - DML count 0.
+- Found HTML body issue:
+  - 947,349 bytes.
+  - 763 forms.
+  - 1,909 inputs.
+  - 384 selects.
+  - 379 repeated edit save forms.
+- Changed only `templates/wialon_mapping_list.html`.
+- Replaced repeated per-row edit/delete forms with shared reusable forms.
+- Preserved pending forms and manual add form.
+- Preserved existing backend POST endpoints.
+- Removed heavy rendered `data-search`.
+- Removed repeated rendered `data-delete-url`.
+- Added shared delete URL template.
+- Changed search to use row text cache.
+- Reduced `/wialon/mapping` body to 633,834 bytes.
+- Reduced forms to 7, inputs to 18, selects to 6.
+- Production rollout completed with template-only pull.
+- Only TransportReport was restarted.
+- Telegram bot services were not restarted.
+

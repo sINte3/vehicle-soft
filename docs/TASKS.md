@@ -2572,3 +2572,48 @@ Future candidates:
 - [ ] PERF-WIALON-MAPPING-BODY-002: optional reduction of remaining `/wialon/mapping` forms/inputs if worth the UX risk.
 - [ ] PERF-WORK-TYPES-BODY-001: optional optimization of `/ref/work_types` inline edit rows if worth the risk.
 
+## 2026-06-16 - PERF-WIALON-MAPPING-BODY-002 Wialon mapping shared forms
+
+Completed:
+
+- [x] Run read-only feasibility diagnostic for `/wialon/mapping`.
+- [x] Confirm SQL already optimized at 3 SELECT.
+- [x] Confirm repeated SQL count 0.
+- [x] Identify HTML body issue caused by repeated per-row forms.
+- [x] Confirm baseline body size 947,349 bytes.
+- [x] Confirm baseline forms 763.
+- [x] Confirm baseline inputs 1,909.
+- [x] Confirm baseline selects 384.
+- [x] Confirm baseline edit save forms 379.
+- [x] Patch `templates/wialon_mapping_list.html`.
+- [x] Replace repeated edit forms with shared edit form.
+- [x] Replace repeated delete forms with shared delete form.
+- [x] Preserve pending forms.
+- [x] Preserve manual add form.
+- [x] Preserve existing POST contracts.
+- [x] Remove heavy rendered `data-search`.
+- [x] Remove repeated rendered `data-delete-url`.
+- [x] Add shared delete URL template.
+- [x] Validate body size reduced to 633,834 bytes on staging.
+- [x] Validate forms reduced to 7 on staging.
+- [x] Validate inputs reduced to 18 on staging.
+- [x] Validate selects reduced to 6 on staging.
+- [x] Validate old edit forms removed on staging.
+- [x] Restart staging TransportReportStaging only.
+- [x] Validate staging post-restart smoke.
+- [x] Commit source patch.
+- [x] Push to GitHub.
+- [x] Verify production pull scope is template-only.
+- [x] Create production source backup.
+- [x] Pull to production.
+- [x] Compile and validate production source.
+- [x] Restart production TransportReport only.
+- [x] Confirm Telegram bot services were not restarted.
+- [x] Validate production post-restart smoke.
+- [x] Close PERF-WIALON-MAPPING-BODY-002 as completed.
+
+Future candidates:
+
+- [ ] PERF-WIALON-MAPPING-PAGINATION-001: optional pagination/lazy loading for `/wialon/mapping` if the table keeps growing.
+- [ ] PERF-WORK-TYPES-BODY-001: optional optimization of `/ref/work_types` inline edit rows if worth the risk.
+
