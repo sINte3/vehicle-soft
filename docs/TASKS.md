@@ -2845,3 +2845,31 @@ Operational notes:
 - `transportreportstaging` restarted after staging validation.
 - `transportreport` restarted after production deployment.
 - Bot services were not restarted.
+<!-- perf-core-get-routes-sweep-001d -->
+
+## PERF-CORE-GET-ROUTES-SWEEP-001  core GET routes N+1/performance sweep
+
+Status: DONE  core transport pages verified.
+
+Scope:
+- `/`
+- `/entry`
+- `/deficiencies`
+- `/report`
+
+Results:
+- `/entry`: clean, SQL total 5, repeated SQL kinds 0, non-select statements 0.
+- `/deficiencies`: clean, SQL total 5, repeated SQL kinds 0, non-select statements 0.
+- `/report`: clean, SQL total 5, repeated SQL kinds 0, non-select statements 0.
+- `/`: initially had 1 repeated SQL kind caused by duplicate latest Topaz sync lookup. Fixed under `PERF-INDEX-FUEL-SYNC-DUP-001`.
+
+Final `/` verification after fix:
+- Staging: status 200, SQL total 30, repeated SQL kinds 0, `fuel_sync_logs2` query count 2, non-select statements 0.
+- Production: status 200, SQL total 31, repeated SQL kinds 0, `fuel_sync_logs2` query count 2, non-select statements 0.
+
+Related code commit:
+- `f00b386 optimize index fuel sync loading`
+
+Conclusion:
+- Core GET routes sweep is closed.
+- No remaining N+1 issue found in core transport pages.

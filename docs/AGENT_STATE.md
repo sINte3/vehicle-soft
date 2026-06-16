@@ -2750,3 +2750,36 @@ Services:
 
 Final result:
 - Main route `/` no longer has repeated SQL caused by duplicate latest Topaz sync lookup.
+<!-- perf-core-get-routes-sweep-001d -->
+
+## 2026-06-16  PERF-CORE-GET-ROUTES-SWEEP-001 completed
+
+Completed read-only SQL/N+1 diagnostics for core GET routes.
+
+Routes checked:
+- `/`
+- `/entry`
+- `/deficiencies`
+- `/report`
+
+Verification:
+- `/entry`
+  - staging: status 200, SQL total 5, repeated SQL kinds 0, non-select statements 0
+  - production: status 200, SQL total 5, repeated SQL kinds 0, non-select statements 0
+- `/deficiencies`
+  - staging: status 200, SQL total 5, repeated SQL kinds 0, non-select statements 0
+  - production: status 200, SQL total 5, repeated SQL kinds 0, non-select statements 0
+- `/report`
+  - staging: status 200, SQL total 5, repeated SQL kinds 0, non-select statements 0
+  - production: status 200, SQL total 5, repeated SQL kinds 0, non-select statements 0
+- `/`
+  - before optimization: repeated SQL kinds 1, duplicate latest `FuelSyncLog2` query
+  - after optimization:
+    - staging: status 200, SQL total 30, repeated SQL kinds 0, `fuel_sync_logs2` query count 2, non-select statements 0
+    - production: status 200, SQL total 31, repeated SQL kinds 0, `fuel_sync_logs2` query count 2, non-select statements 0
+
+Related task:
+- `PERF-INDEX-FUEL-SYNC-DUP-001`
+
+Final result:
+- Core transport GET routes are clean.
