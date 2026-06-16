@@ -2407,8 +2407,15 @@ def create_app():
         usage_filter = request.args.get('usage', 'all')
 
         all_customers = Customer.query.order_by(Customer.name).all()
+
+        # PERF-REF-003B_MARKER: bulk usage counters for ref_customers.
+        daily_customer_counts = dict(
+            db.session.query(DailyRecord.customer, db.func.count(DailyRecord.id))
+            .group_by(DailyRecord.customer)
+            .all()
+        )
         all_usage = {
-            customer.id: DailyRecord.query.filter(DailyRecord.customer == customer.name).count()
+            customer.id: int(daily_customer_counts.get(customer.name, 0) or 0)
             for customer in all_customers
         }
 
@@ -2431,9 +2438,9 @@ def create_app():
 
         cust_ref = {(c.name or '').strip() for c in all_customers if (c.name or '').strip()}
         cust_used = {
-            (x[0] or '').strip()
-            for x in db.session.query(DailyRecord.customer).distinct().all()
-            if (x[0] or '').strip()
+            (name or '').strip()
+            for name in daily_customer_counts.keys()
+            if (name or '').strip()
         }
         missing_from_ref = sorted(cust_used - cust_ref)
 
