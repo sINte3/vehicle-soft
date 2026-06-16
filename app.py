@@ -358,9 +358,10 @@ def create_app():
     @app.route('/logout')
     @login_required
     def logout():
-        log_audit(db, 'logout', entity_type='user', entity_id=current_user.id,
-                  entity_label=current_user.username, module='auth', description='User logout')
-        db.session.commit()
+        # AUDIT-GET-SIDE-EFFECT-003B: GET logout must not write audit_logs.
+        pass
+        # AUDIT-GET-SIDE-EFFECT-003B: removed session commit from GET logout.
+        pass
         logout_user()
         return redirect(url_for('login'))
 
@@ -1903,7 +1904,7 @@ def create_app():
         flash(ui_t('Техника қайта фаол қилинди.', 'Техника включена.'), 'success')
         return redirect(url_for('ref_equipment', org_id=eq.organization_id))
 
-    
+
 
     # TASK_REF_001D_MARKER: reference cleanup diagnostic XLSX exports.
     def _task_ref_001d_norm(value):
