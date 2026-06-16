@@ -49,6 +49,7 @@ from sec003a_ext import (
     model_snapshot, diff_dict, audit_action_name,
 )
 from sqlalchemy import text, or_
+from sqlalchemy.orm import selectinload
 from sqlite_runtime import enable_sqlite_wal
 
 
@@ -1273,7 +1274,9 @@ def create_app():
     @app.route('/admin/users')
     @admin_required
     def admin_users():
-        users = User.query.order_by(User.username).all()
+        users = (User.query
+             .options(selectinload(User.organizations))  # perf-admin-users-orgs-nplus1-001_marker
+             .order_by(User.username).all())
         orgs = Organization.query.order_by(Organization.sort_order).all()
         return render_template('admin_users.html', users=users, organizations=orgs)
 
