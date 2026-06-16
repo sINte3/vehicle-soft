@@ -996,6 +996,8 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         'recent_txns': recent_txns,
         'sync_logs': sync_logs,
         'sync_summary': sync_summary,
+        # perf-index-fuel-sync-dup-001_marker: expose already-loaded latest sync to dashboard context.
+        'latest_sync': latest_sync,
         'warnings': warnings,
         'warnings_summary': warnings_summary,
         'large_txn_threshold': FUEL_LARGE_TXN_THRESHOLD,

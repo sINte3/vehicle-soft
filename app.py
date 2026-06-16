@@ -514,8 +514,11 @@ def create_app():
             'review_resolved': 0,
         }
         if module_access['fuel']:
+            fuel_report = None
+            fuel_report_loaded = False
             try:
                 fuel_report = _collect_fuel_report_data(d_from, d_to)
+                fuel_report_loaded = True
                 fuel_totals = fuel_report.get('totals', {})
                 fuel_warning_summary = fuel_report.get('warnings_summary', {})
                 fuel['issued'] = fuel_totals.get('issued', 0) or 0
@@ -525,7 +528,10 @@ def create_app():
             except Exception:
                 pass
 
-            latest_sync = FuelSyncLog2.query.order_by(FuelSyncLog2.synced_at.desc()).first()
+            # perf-index-fuel-sync-dup-001_marker: reuse latest sync loaded by fuel report collector.
+            latest_sync = fuel_report.get('latest_sync') if fuel_report_loaded and fuel_report else None
+            if not fuel_report_loaded:
+                latest_sync = FuelSyncLog2.query.order_by(FuelSyncLog2.synced_at.desc()).first()
             fuel['latest_sync'] = latest_sync
             fuel['latest_sync_text'] = _format_dashboard_dt(getattr(latest_sync, 'synced_at', None))
             if latest_sync and latest_sync.synced_at:
