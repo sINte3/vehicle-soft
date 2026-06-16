@@ -684,7 +684,15 @@ def register_wialon_routes(app, editor_required, admin_required):
     @module_required('wialon')
     @admin_required
     def wialon_mapping_list():
-        mappings = VialonMapping.query.order_by(VialonMapping.vialon_name).all()
+        from sqlalchemy.orm import joinedload
+
+        # PERF-WIALON-MAP-001B_MARKER: eager-load equipment orgs and pass one shared equipment option list.
+        mappings = (
+            VialonMapping.query
+            .options(joinedload(VialonMapping.equipment).joinedload(Equipment.organization))
+            .order_by(VialonMapping.vialon_name)
+            .all()
+        )
         mapped_names = {m.vialon_name for m in mappings}
         pending = []
         seen_pending = set()
@@ -700,14 +708,35 @@ def register_wialon_routes(app, editor_required, admin_required):
                 seen_pending.add(vname)
                 pending.append({'vialon_name': vname, 'import_date': imp.import_date})
 
-        all_equipment = (Equipment.query.join(Organization)
-                         .filter(Equipment.is_active == True)
-                         .order_by(Organization.sort_order,
-                                   Equipment.category, Equipment.name).all())
+        all_equipment = (
+            Equipment.query
+            .options(joinedload(Equipment.organization))
+            .join(Organization)
+            .filter(Equipment.is_active == True)
+            .order_by(Organization.sort_order, Equipment.category, Equipment.name)
+            .all()
+        )
+        equipment_options = []
+        for eq in all_equipment:
+            org = eq.organization
+            org_label = ''
+            if org:
+                org_label = org.short_name or org.name or ''
+            label_parts = [eq.name or '']
+            if eq.plate:
+                label_parts.append(eq.plate)
+            if org_label:
+                label_parts.append(org_label)
+            equipment_options.append({
+                'id': eq.id,
+                'label': ' / '.join([part for part in label_parts if part]),
+            })
+
         return render_template('wialon_mapping_list.html',
                                mappings=mappings,
                                pending=pending,
-                               all_equipment=all_equipment)
+                               all_equipment=all_equipment,
+                               equipment_options=equipment_options)
 
     @app.route('/wialon/mapping/save', methods=['POST'])
     @module_required('wialon')

@@ -88,18 +88,10 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="vialon_name" value="{{ item.vialon_name }}">
                     <input type="hidden" name="skip" id="pskip-{{ loop.index }}" value="0">
-                    <select name="equipment_id" id="psel-{{ loop.index }}">
+                    <select name="equipment_id" id="psel-{{ loop.index }}" class="wialon-equipment-select">
                         <option value="">{{ t('— выберите технику —') }}</option>
-                        {% set prev_org = namespace(id=None) %}
-                        {% for eq in all_equipment %}
-                            {% if eq.organization.id != prev_org.id %}
-                                {% if prev_org.id is not none %}</optgroup>{% endif %}
-                                <optgroup label="{{ eq.organization.name }}">
-                                {% set prev_org.id = eq.organization.id %}
-                            {% endif %}
-                            <option value="{{ eq.id }}">{{ eq.name }}{% if eq.plate %} / {{ eq.plate }}{% endif %} / {{ eq.organization.short_name or eq.organization.name }}</option>
-                        {% endfor %}
-                        {% if all_equipment %}</optgroup>{% endif %}
+                        {# PERF-WIALON-MAP-001B: options are loaded once by JavaScript. #}
+{% if all_equipment %}</optgroup>{% endif %}
                     </select>
             </td>
             <td class="text-center">
@@ -149,18 +141,10 @@
             </div>
             <div class="form-group" style="margin-bottom:0; min-width:320px; flex:1;">
                 <label>{{ t('Техника в системе') }}</label>
-                <select name="equipment_id" style="width:100%;">
+                <select name="equipment_id" style="width:100%;" class="wialon-equipment-select">
                     <option value="">{{ t('— выберите технику —') }}</option>
-                    {% set prev_org = namespace(id=None) %}
-                    {% for eq in all_equipment %}
-                        {% if eq.organization.id != prev_org.id %}
-                            {% if prev_org.id is not none %}</optgroup>{% endif %}
-                            <optgroup label="{{ eq.organization.name }}">
-                            {% set prev_org.id = eq.organization.id %}
-                        {% endif %}
-                        <option value="{{ eq.id }}">{{ eq.name }}{% if eq.plate %} / {{ eq.plate }}{% endif %} / {{ eq.organization.short_name or eq.organization.name }}</option>
-                    {% endfor %}
-                    {% if all_equipment %}</optgroup>{% endif %}
+                        {# PERF-WIALON-MAP-001B: options are loaded once by JavaScript. #}
+{% if all_equipment %}</optgroup>{% endif %}
                 </select>
             </div>
             <label style="display:flex; align-items:center; gap:6px; cursor:pointer; margin-top:20px; white-space:nowrap;">
@@ -210,18 +194,10 @@
             </td>
             <td>
                 <div class="wialon-actions">
-                    <select id="sel-{{ m.id }}" style="font-size:12px; width:190px;">
+                    <select id="sel-{{ m.id }}" style="font-size:12px; width:190px;" class="wialon-equipment-select" data-selected="{{ m.equipment_id or '' }}">
                         <option value="">{{ t('— выберите —') }}</option>
-                        {% set prev_org = namespace(id=None) %}
-                        {% for eq in all_equipment %}
-                            {% if eq.organization.id != prev_org.id %}
-                                {% if prev_org.id is not none %}</optgroup>{% endif %}
-                                <optgroup label="{{ eq.organization.name }}">
-                                {% set prev_org.id = eq.organization.id %}
-                            {% endif %}
-                            <option value="{{ eq.id }}" {% if m.equipment_id == eq.id %}selected{% endif %}>{{ eq.name }}{% if eq.plate %} / {{ eq.plate }}{% endif %}</option>
-                        {% endfor %}
-                        {% if all_equipment %}</optgroup>{% endif %}
+                        {# PERF-WIALON-MAP-001B: options are loaded once by JavaScript. #}
+{% if all_equipment %}</optgroup>{% endif %}
                     </select>
                     <form method="post" action="{{ url_for('wialon_mapping_save') }}" id="eform-{{ m.id }}" style="display:inline;">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -253,6 +229,41 @@
 {% endblock %}
 {% block scripts %}
 <script>
+// PERF-WIALON-MAP-001B_MARKER: client-side shared equipment options.
+const WIALON_EQUIPMENT_OPTIONS = {{ equipment_options|tojson }};
+
+function populateWialonEquipmentSelects() {
+    document.querySelectorAll('select.wialon-equipment-select').forEach(function(sel) {
+        if (sel.getAttribute('data-wialon-options-loaded') === '1') return;
+
+        var selected = sel.getAttribute('data-selected') || sel.value || '';
+        var firstText = sel.options.length ? sel.options[0].textContent : '';
+        var firstValue = sel.options.length ? sel.options[0].value : '';
+
+        sel.innerHTML = '';
+
+        var first = document.createElement('option');
+        first.value = firstValue;
+        first.textContent = firstText;
+        sel.appendChild(first);
+
+        WIALON_EQUIPMENT_OPTIONS.forEach(function(item) {
+            var opt = document.createElement('option');
+            opt.value = String(item.id);
+            opt.textContent = item.label || String(item.id);
+            if (selected && String(item.id) === String(selected)) {
+                opt.selected = true;
+            }
+            sel.appendChild(opt);
+        });
+
+        sel.setAttribute('data-wialon-options-loaded', '1');
+    });
+}
+
+document.addEventListener('DOMContentLoaded', populateWialonEquipmentSelects);
+
+
 function toggleAddForm() {
     var f = document.getElementById('addForm');
     if (f) f.style.display = f.style.display === 'none' ? 'block' : 'none';
