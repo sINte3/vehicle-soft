@@ -91,7 +91,6 @@
                     <select name="equipment_id" id="psel-{{ loop.index }}" class="wialon-equipment-select">
                         <option value="">{{ t('— выберите технику —') }}</option>
                         {# PERF-WIALON-MAP-001B: options are loaded once by JavaScript. #}
-{% if all_equipment %}</optgroup>{% endif %}
                     </select>
             </td>
             <td class="text-center">
@@ -144,7 +143,6 @@
                 <select name="equipment_id" style="width:100%;" class="wialon-equipment-select">
                     <option value="">{{ t('— выберите технику —') }}</option>
                         {# PERF-WIALON-MAP-001B: options are loaded once by JavaScript. #}
-{% if all_equipment %}</optgroup>{% endif %}
                 </select>
             </div>
             <label style="display:flex; align-items:center; gap:6px; cursor:pointer; margin-top:20px; white-space:nowrap;">
@@ -170,7 +168,10 @@
         {% for m in mappings %}
         {% set row_status = 'skip' if m.skip else ('linked' if m.equipment else 'unknown') %}
         {% set search_text = (m.vialon_name ~ ' ' ~ (m.equipment.name if m.equipment else '') ~ ' ' ~ (m.equipment.plate if m.equipment and m.equipment.plate else '') ~ ' ' ~ (m.equipment.organization.name if m.equipment else '') ~ ' ' ~ (m.equipment.organization.short_name if m.equipment and m.equipment.organization.short_name else ''))|lower %}
-        <tr class="mapping-row" data-status="{{ row_status }}" data-search="{{ search_text }}">
+        <tr class="mapping-row"
+            data-status="{{ row_status }}"
+            data-map-id="{{ m.id }}"
+            data-equipment-id="{{ m.equipment_id or '' }}">
             <td><div class="wialon-name">{{ m.vialon_name }}</div></td>
             <td>
                 {% if m.equipment %}
@@ -192,29 +193,49 @@
                     <span class="wialon-status wialon-status-unknown">⚠ {{ t('Без решения') }}</span>
                 {% endif %}
             </td>
-            <td>
-                <div class="wialon-actions">
-                    <select id="sel-{{ m.id }}" style="font-size:12px; width:190px;" class="wialon-equipment-select" data-selected="{{ m.equipment_id or '' }}">
-                        <option value="">{{ t('— выберите —') }}</option>
-                        {# PERF-WIALON-MAP-001B: options are loaded once by JavaScript. #}
-{% if all_equipment %}</optgroup>{% endif %}
-                    </select>
-                    <form method="post" action="{{ url_for('wialon_mapping_save') }}" id="eform-{{ m.id }}" style="display:inline;">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="id" value="{{ m.id }}">
-                        <input type="hidden" name="equipment_id" id="ehid-{{ m.id }}" value="{{ m.equipment_id or '' }}">
-                        <input type="hidden" name="skip" id="eskip-{{ m.id }}" value="{{ '1' if m.skip else '0' }}">
-                        <button type="button" class="btn btn-secondary btn-sm" onclick="saveRow({{ m.id }})" title="{{ t('Сохранить изменение') }}">💾</button>
-                        <button type="button" class="btn btn-secondary btn-sm" onclick="markRowSkip({{ m.id }})" title="{{ t('Отметить как отсутствующий в системе') }}">🚫</button>
-                    </form>
-                    <form method="post" action="{{ url_for('wialon_mapping_delete', mid=m.id) }}" onsubmit="return confirm('{{ t('Удалить этот mapping?') }}');" style="display:inline;">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-danger btn-sm" title="{{ t('Удалить') }}">✕</button>
-                    </form>
+            <td>                <div class="wialon-actions">
+                    <button type="button" class="btn btn-secondary btn-sm"
+                            onclick="editMappingRow(this)"
+                            title="{{ t('Изменить mapping') }}">Изм.</button>
+                    <button type="button" class="btn btn-secondary btn-sm"
+                            onclick="submitMappingRowSkip(this)"
+                            title="{{ t('Отметить как отсутствующий в системе') }}">Нет</button>
+                    <button type="button" class="btn btn-danger btn-sm"
+                            onclick="deleteMappingRow(this)"
+                            title="{{ t('Удалить этот mapping?') }}">Удалить</button>
                 </div>
             </td>
         </tr>
         {% endfor %}
+        <tr id="wialon-shared-edit-row" class="wialon-shared-edit-row" style="display:none;">
+            <td colspan="6">
+                <form method="post" action="{{ url_for('wialon_mapping_save') }}"
+                      id="wialon-shared-edit-form" class="wialon-inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="id" id="wialon-shared-map-id" value="">
+                    <input type="hidden" name="skip" id="wialon-shared-skip" value="0">
+
+                    <select name="equipment_id" id="wialon-shared-equipment-id"
+                            class="wialon-equipment-select" style="width:100%; max-width:520px;"
+                            data-selected="">
+                        <option value="">{{ t(' выберите технику ') }}</option>
+                        {# PERF-WIALON-MAPPING-BODY-002B: options are loaded once by JavaScript. #}
+                    </select>
+
+                    <button type="submit" class="btn btn-primary btn-sm">{{ t('Сохранить') }}</button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="cancelMappingEdit()">{{ t('Отмена') }}</button>
+                </form>
+            </td>
+        </tr>
+
+        <tr id="wialon-shared-delete-row" style="display:none;">
+            <td colspan="6">
+                <form method="post" action="" id="wialon-shared-delete-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                </form>
+            </td>
+        </tr>
+
         </tbody>
     </table>
     </div>
@@ -231,6 +252,7 @@
 <script>
 // PERF-WIALON-MAP-001B_MARKER: client-side shared equipment options.
 const WIALON_EQUIPMENT_OPTIONS = {{ equipment_options|tojson }};
+const WIALON_MAPPING_DELETE_URL_TEMPLATE = "{{ url_for('wialon_mapping_delete', mid=0) }}"; // PERF-WIALON-MAPPING-BODY-002B_FIX2_MARKER: shared delete URL template.
 
 function populateWialonEquipmentSelects() {
     document.querySelectorAll('select.wialon-equipment-select').forEach(function(sel) {
@@ -269,20 +291,128 @@ function toggleAddForm() {
     if (f) f.style.display = f.style.display === 'none' ? 'block' : 'none';
 }
 
+// PERF-WIALON-MAPPING-BODY-002B_MARKER: shared mapping edit/delete forms.
+function getMappingRowFromButton(btn) {
+    if (!btn) return null;
+    return btn.closest('tr.mapping-row');
+}
+
+function getMappingRowById(mid) {
+    return document.querySelector('tr.mapping-row[data-map-id="' + mid + '"]');
+}
+
+function openSharedMappingEdit(row) {
+    var editRow = document.getElementById('wialon-shared-edit-row');
+    var mapId = document.getElementById('wialon-shared-map-id');
+    var skipInput = document.getElementById('wialon-shared-skip');
+    var equipmentSelect = document.getElementById('wialon-shared-equipment-id');
+
+    if (!row || !editRow || !mapId || !skipInput || !equipmentSelect) return;
+
+    document.querySelectorAll('tr.wialon-mapping-editing').forEach(function(r) {
+        r.classList.remove('wialon-mapping-editing');
+    });
+
+    row.classList.add('wialon-mapping-editing');
+    row.parentNode.insertBefore(editRow, row.nextSibling);
+    editRow.style.display = '';
+
+    mapId.value = row.dataset.mapId || '';
+    skipInput.value = '0';
+
+    var selectedEquipmentId = row.dataset.equipmentId || '';
+    equipmentSelect.setAttribute('data-selected', selectedEquipmentId);
+
+    if (typeof populateWialonEquipmentSelects === 'function') {
+        populateWialonEquipmentSelects();
+    }
+
+    equipmentSelect.value = selectedEquipmentId;
+}
+
+function editMappingRow(btn) {
+    openSharedMappingEdit(getMappingRowFromButton(btn));
+}
+
+function cancelMappingEdit() {
+    var editRow = document.getElementById('wialon-shared-edit-row');
+    if (editRow) {
+        editRow.style.display = 'none';
+    }
+
+    document.querySelectorAll('tr.wialon-mapping-editing').forEach(function(r) {
+        r.classList.remove('wialon-mapping-editing');
+    });
+}
+
+function submitMappingRowSkip(btn) {
+    var row = getMappingRowFromButton(btn);
+    if (!row) return;
+
+    if (!confirm("{{ t('Отметить этот Wialon объект как отсутствующий в системе?') }}")) return;
+
+    var form = document.getElementById('wialon-shared-edit-form');
+    var mapId = document.getElementById('wialon-shared-map-id');
+    var skipInput = document.getElementById('wialon-shared-skip');
+    var equipmentSelect = document.getElementById('wialon-shared-equipment-id');
+
+    if (!form || !mapId || !skipInput || !equipmentSelect) return;
+
+    mapId.value = row.dataset.mapId || '';
+    skipInput.value = '1';
+    equipmentSelect.value = '';
+
+    form.submit();
+}
+
+function deleteMappingRow(btn) {
+    var row = getMappingRowFromButton(btn);
+    var form = document.getElementById('wialon-shared-delete-form');
+
+    if (!row || !form) return;
+
+    if (!confirm("{{ t('Удалить этот mapping?') }}")) return;
+
+    var template = WIALON_MAPPING_DELETE_URL_TEMPLATE || '';
+    var mid = row.dataset.mapId || '';
+
+    if (!template || !mid) return;
+
+    var encodedMid = encodeURIComponent(mid);
+    var actionUrl = template.replace('/0/', '/' + encodedMid + '/');
+
+    if (actionUrl === template) {
+        actionUrl = template.replace(/\/0$/, '/' + encodedMid);
+    }
+
+    if (actionUrl === template) return;
+
+    form.action = actionUrl;
+    form.submit();
+}
+
 function saveRow(mid) {
-    var sel = document.getElementById('sel-' + mid);
-    document.getElementById('ehid-' + mid).value = sel ? sel.value : '';
-    document.getElementById('eskip-' + mid).value = '0';
-    document.getElementById('eform-' + mid).submit();
+    openSharedMappingEdit(getMappingRowById(mid));
 }
 
 function markRowSkip(mid) {
-    if (!confirm('{{ t('Отметить объект как отсутствующий в системе?') }}')) return;
-    var sel = document.getElementById('sel-' + mid);
-    if (sel) sel.value = '';
-    document.getElementById('ehid-' + mid).value = '';
-    document.getElementById('eskip-' + mid).value = '1';
-    document.getElementById('eform-' + mid).submit();
+    var row = getMappingRowById(mid);
+    if (!row) return;
+
+    if (!confirm("{{ t('Отметить этот Wialon объект как отсутствующий в системе?') }}")) return;
+
+    var form = document.getElementById('wialon-shared-edit-form');
+    var mapId = document.getElementById('wialon-shared-map-id');
+    var skipInput = document.getElementById('wialon-shared-skip');
+    var equipmentSelect = document.getElementById('wialon-shared-equipment-id');
+
+    if (!form || !mapId || !skipInput || !equipmentSelect) return;
+
+    mapId.value = row.dataset.mapId || '';
+    skipInput.value = '1';
+    equipmentSelect.value = '';
+
+    form.submit();
 }
 
 function savePending(idx) {
@@ -321,20 +451,37 @@ function validateManualAdd(form) {
     return true;
 }
 
+// PERF-WIALON-MAPPING-BODY-002B_FIX_MARKER: search uses row text cache and buttons are visible.
 function filterMappings() {
-    var q = (document.getElementById('mappingSearch').value || '').toLowerCase().trim();
-    var status = document.getElementById('statusFilter').value;
+    var searchInput = document.getElementById('mappingSearch');
+    var statusInput = document.getElementById('statusFilter');
+
+    var q = searchInput ? searchInput.value.toLowerCase().trim() : '';
+    var status = statusInput ? statusInput.value : '';
+
+    if (status === 'all') {
+        status = '';
+    }
+
     var rows = document.querySelectorAll('.mapping-row');
-    var visible = 0;
+
     rows.forEach(function(row) {
-        var okText = !q || (row.dataset.search || '').indexOf(q) !== -1;
-        var okStatus = status === 'all' || row.dataset.status === status;
-        var show = okText && okStatus;
-        row.classList.toggle('wialon-row-hidden', !show);
-        if (show) visible += 1;
+        var haystack = row.getAttribute('data-search-cache');
+
+        if (!haystack) {
+            haystack = (row.textContent || '').toLowerCase();
+            row.setAttribute('data-search-cache', haystack);
+        }
+
+        var rowStatus = row.dataset.status || '';
+        var matchesSearch = !q || haystack.indexOf(q) !== -1;
+        var matchesStatus = !status || rowStatus === status;
+
+        row.style.display = (matchesSearch && matchesStatus) ? '' : 'none';
     });
-    var counter = document.getElementById('mappingVisibleCount');
-    if (counter) counter.textContent = '{{ t('Показано') }}: ' + visible + '/' + rows.length;
+
+    cancelMappingEdit();
 }
+
 </script>
 {% endblock %}
