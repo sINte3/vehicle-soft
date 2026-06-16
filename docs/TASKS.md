@@ -2411,3 +2411,43 @@ Future candidates:
 - [ ] PERF-WIALON-MAP-001: reduce `/wialon/mapping` response size and rendering cost.
 - [ ] PERF-REF-BODY-001: reduce heavy reference page response size where useful.
 
+## 2026-06-16 - PERF-WIALON-MAP-001 Wialon mapping response size
+
+Completed:
+
+- [x] Run read-only source, SQL, and response diagnostic for `/wialon/mapping`.
+- [x] Confirm response size was about 19.9 MB.
+- [x] Confirm `<option>` count was 128,692.
+- [x] Confirm SQL count was 20 SELECT.
+- [x] Confirm repeated organization lazy-load query pattern.
+- [x] Confirm source route: `wialon_import.py`, function `wialon_mapping_list`.
+- [x] Confirm template: `templates/wialon_mapping_list.html`.
+- [x] Patch `wialon_import.py`.
+- [x] Patch `templates/wialon_mapping_list.html`.
+- [x] Add eager loading for mapping equipment organization.
+- [x] Add eager loading for active equipment organization.
+- [x] Build shared `equipment_options` list.
+- [x] Replace repeated server-rendered equipment option loops.
+- [x] Populate dropdowns client-side from shared JSON payload.
+- [x] Preserve save/edit/delete/skip behavior.
+- [x] Validate `/wialon/mapping` response reduced to about 0.95 MB on staging.
+- [x] Validate `/wialon/mapping` SQL reduced to 3 SELECT on staging.
+- [x] Confirm repeated SQL count is 0.
+- [x] Restart staging TransportReportStaging only.
+- [x] Validate staging post-restart smoke.
+- [x] Commit source patch.
+- [x] Push to GitHub.
+- [x] Verify production pull scope is source-only.
+- [x] Create production source backup.
+- [x] Pull to production.
+- [x] Compile and validate production source.
+- [x] Restart production TransportReport only.
+- [x] Confirm Telegram bot services were not restarted.
+- [x] Validate production post-restart smoke.
+- [x] Close PERF-WIALON-MAP-001 as completed.
+
+Future candidates:
+
+- [ ] PERF-REF-BODY-001: reduce heavy reference page response size where useful.
+- [ ] PERF-WIALON-AUTOMATCH-001: audit `/wialon/auto_match` response size and SQL behavior if needed.
+

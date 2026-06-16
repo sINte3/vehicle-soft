@@ -2331,3 +2331,35 @@ Summary:
 - Telegram bot services were not restarted.
 - Production validation confirmed `/ref/organizations` remains at 6 SELECT and DML count 0.
 
+## 2026-06-16 - PERF-WIALON-MAP-001 Wialon mapping response size optimized
+
+Status: completed and deployed to production.
+
+Code commit:
+
+86317434c0d39b89c7812225483e5ea8178358f2
+
+Summary:
+
+- Ran read-only source, SQL, and response diagnostic for `/wialon/mapping`.
+- Confirmed `/wialon/mapping` response was about 19.9 MB.
+- Confirmed root cause:
+  - 128,692 repeated `<option>` elements.
+  - full active equipment list rendered inside each mapping dropdown.
+  - repeated organization lazy-load queries.
+- Changed only:
+  - `wialon_import.py`
+  - `templates/wialon_mapping_list.html`
+- Added eager loading for mapping equipment and organizations.
+- Built one shared `equipment_options` list in the Flask view.
+- Replaced repeated server-rendered option loops with one client-side shared options payload.
+- Reduced `/wialon/mapping` response to about 0.95 MB.
+- Reduced `/wialon/mapping` SQL from 20 SELECT to 3 SELECT.
+- Reduced repeated SQL count to 0.
+- No DB schema changes.
+- No migrations.
+- Staging and production validation passed.
+- Production rollout completed with source-only pull.
+- Only TransportReport was restarted.
+- Telegram bot services were not restarted.
+

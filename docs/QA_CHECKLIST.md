@@ -1150,3 +1150,95 @@ Final production services:
 - TransportBot: RUNNING.
 - TransportBot003: RUNNING.
 
+## PERF-WIALON-MAP-001 Wialon mapping response size - 2026-06-16
+
+Result: PASSED.
+
+Scope:
+
+- wialon_import.py.
+- templates/wialon_mapping_list.html.
+- No DB schema changes.
+- No migration.
+- No POST requests during validation.
+- No Telegram bot restart.
+
+Baseline diagnostic:
+
+- /wialon/mapping:
+  - response chars: 19,225,278.
+  - response UTF-8 bytes: 19,898,023.
+  - `<option>` count: 128,692.
+  - `<select>` count: 384.
+  - SQL count: 20 SELECT.
+  - repeated SQL: 17 organization lazy-load queries.
+  - DML count: 0.
+  - no traceback.
+
+Source diagnostic:
+
+- route file: wialon_import.py.
+- route function: wialon_mapping_list.
+- template: templates/wialon_mapping_list.html.
+- problem was repeated template rendering of full equipment option lists plus missing eager-load of equipment organization data.
+
+Implementation:
+
+- Added `joinedload(VialonMapping.equipment).joinedload(Equipment.organization)`.
+- Added `joinedload(Equipment.organization)` for active equipment list.
+- Built shared `equipment_options` payload in Flask.
+- Passed `equipment_options` to the template.
+- Removed repeated `{% for eq in all_equipment %}` option loops.
+- Added shared client-side dropdown population.
+- Preserved existing mapping save/edit/delete/skip workflow.
+
+Staging validation:
+
+- py_compile passed.
+- git diff --check passed.
+- app import OK.
+- URL rules count: 86.
+- Source checks passed:
+  - route marker present.
+  - template marker present.
+  - eager loading present.
+  - shared equipment options present.
+  - repeated `all_equipment` option loops removed.
+  - save/edit JS functions preserved.
+- /wialon/mapping:
+  - response chars: 898,253.
+  - response UTF-8 bytes: 947,349.
+  - `<option>` count: 387.
+  - SQL count: 3 SELECT.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+- Staging post-restart smoke OK.
+
+Production validation:
+
+- Production pull scope:
+  - wialon_import.py.
+  - templates/wialon_mapping_list.html.
+- Production source backup created.
+- Production pull fast-forward only.
+- Production py_compile passed.
+- Production source validation passed.
+- /wialon/mapping:
+  - response chars: 898,253.
+  - response UTF-8 bytes: 947,349.
+  - `<option>` count: 387.
+  - SQL count: 3 SELECT.
+  - repeated SQL count: 0.
+  - DML count: 0.
+  - no traceback.
+- Only TransportReport restarted.
+- TransportBot and TransportBot003 were not restarted.
+- Production smoke OK.
+
+Final production services:
+
+- TransportReport: RUNNING.
+- TransportBot: RUNNING.
+- TransportBot003: RUNNING.
+
