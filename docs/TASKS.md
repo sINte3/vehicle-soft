@@ -2902,3 +2902,32 @@ Production verification:
 Conclusion:
 - No code changes required.
 - No N+1 issue found in the remaining Wialon GET pages.
+<!-- perf-spare-parts-get-routes-sweep-001d -->
+
+## PERF-SPARE-PARTS-GET-ROUTES-SWEEP-001  remaining spare parts GET routes performance sweep
+
+Status: DONE  remaining spare parts GET pages verified.
+
+Scope:
+- `/spare-parts/catalog`
+- `/spare-parts/new`
+- `/spare-parts/<id>`
+
+Results:
+- `/spare-parts/catalog`: clean, repeated SQL kinds 0, non-select statements 0.
+- `/spare-parts/new`: clean, repeated SQL kinds 0, non-select statements 0.
+- `/spare-parts/<id>`: clean on sampled latest request records, repeated SQL kinds 0, non-select statements 0.
+
+Staging verification:
+- `/spare-parts/catalog`: status 200, SQL total 4, repeated SQL kinds 0, non-select statements 0.
+- `/spare-parts/new`: status 200, SQL total 4, repeated SQL kinds 0, non-select statements 0.
+- `/spare-parts/12`: status 200, SQL total 7, repeated SQL kinds 0, non-select statements 0.
+
+Production verification:
+- `/spare-parts/catalog`: status 200, SQL total 4, repeated SQL kinds 0, non-select statements 0.
+- `/spare-parts/new`: status 200, SQL total 4, repeated SQL kinds 0, non-select statements 0.
+- `/spare-parts/3`: status 200, SQL total 6, repeated SQL kinds 0, non-select statements 0.
+
+Conclusion:
+- No code changes required.
+- No N+1 issue found in remaining spare parts GET pages.

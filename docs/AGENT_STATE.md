@@ -2808,3 +2808,28 @@ Final result:
 - Remaining Wialon GET routes are clean.
 - No code changes were needed.
 - No service restart was required.
+<!-- perf-spare-parts-get-routes-sweep-001d -->
+
+## 2026-06-16  PERF-SPARE-PARTS-GET-ROUTES-SWEEP-001 completed
+
+Completed read-only SQL/N+1 diagnostics for remaining spare parts GET routes.
+
+Routes checked:
+- `/spare-parts/catalog`
+- `/spare-parts/new`
+- `/spare-parts/<id>`
+
+Staging:
+- `/spare-parts/catalog`: status 200, SQL total 4, repeated SQL kinds 0, non-select statements 0
+- `/spare-parts/new`: status 200, SQL total 4, repeated SQL kinds 0, non-select statements 0
+- `/spare-parts/12`: status 200, SQL total 7, repeated SQL kinds 0, non-select statements 0
+
+Production:
+- `/spare-parts/catalog`: status 200, SQL total 4, repeated SQL kinds 0, non-select statements 0
+- `/spare-parts/new`: status 200, SQL total 4, repeated SQL kinds 0, non-select statements 0
+- `/spare-parts/3`: status 200, SQL total 6, repeated SQL kinds 0, non-select statements 0
+
+Final result:
+- Remaining spare parts GET routes are clean.
+- No code changes were needed.
+- No service restart was required.
