@@ -2883,3 +2883,49 @@ Services:
 
 Final result:
 - `/admin/users` no longer has organization N+1 queries.
+<!-- final-global-get-routes-control-001d -->
+
+## 2026-06-16  Final global GET route control completed
+
+Completed final read-only control after the current performance/security cleanup wave.
+
+Repository state:
+- staging = `9f31685`
+- production = `9f31685`
+- origin/main = `9f31685`
+
+Final verbose diagnostics:
+- staging exit code: 0
+- production exit code: 0
+- staging FINAL BAD ROUTES COUNT: 0
+- production FINAL BAD ROUTES COUNT: 0
+
+Validation result:
+- All checked GET routes returned status 200 under authenticated admin test client.
+- All checked routes had `repeated sql kinds = 0`.
+- All checked routes had `non select statements = 0`.
+- Staging and production are synchronized on the same commit.
+
+Operational state:
+- `transportreport`: RUNNING
+- `transportreportstaging`: RUNNING
+- `transportbot`: RUNNING
+- `transportbot003`: RUNNING
+- `transportbotstaging`: RUNNING
+- `transportbot003staging`: RUNNING
+
+No changes were made during the final read-only control:
+- no commit
+- no pull
+- no POST
+- no service restart
+
+Current wave status:
+- Fuel GET routes sweep: closed.
+- Core GET routes sweep: closed.
+- Wialon GET routes sweep: closed.
+- Spare parts GET routes sweep: closed.
+- `/admin/users` organization N+1: fixed, deployed, documented.
+- `/admin/permissions`: verified clean.
+- `/admin/audit`: verified clean.
+- Final global GET route control: passed.

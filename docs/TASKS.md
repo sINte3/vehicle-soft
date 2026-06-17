@@ -2971,3 +2971,74 @@ Operational notes:
 - `transportreportstaging` restarted after validation.
 - `transportreport` restarted after production deployment.
 - Bot services were not restarted.
+<!-- final-global-get-routes-control-001d -->
+
+## FINAL-GLOBAL-GET-ROUTES-CONTROL-001  final GET route and service control
+
+Status: DONE  staging and production passed final read-only control.
+
+Scope:
+- Final global GET route verification after performance/security cleanup.
+- Staging and production comparison.
+- Service state verification.
+
+Repository state:
+- Staging: `9f31685`
+- Production: `9f31685`
+- Origin/main: `9f31685`
+
+Routes checked:
+- Core:
+  - `/`
+  - `/entry`
+  - `/deficiencies`
+  - `/report`
+- Fuel:
+  - `/fuel/`
+  - `/fuel/api/fuel_ping`
+  - `/fuel/initial-balance`
+  - `/fuel/receipts`
+  - `/fuel/report`
+  - `/fuel/stations`
+  - `/fuel/transactions`
+  - `/fuel/warehouses`
+  - `/fuel/warnings`
+- Spare parts:
+  - `/spare-parts/`
+  - `/spare-parts/catalog`
+  - `/spare-parts/new`
+  - latest request detail route
+- Wialon:
+  - `/wialon`
+  - `/wialon/auto_match`
+  - `/wialon/report`
+  - `/wialon/workload`
+  - `/wialon/mapping`
+- Admin:
+  - `/admin/users`
+  - `/admin/permissions`
+  - `/admin/audit`
+- References:
+  - `/ref/equipment`
+  - `/ref/work_types`
+  - `/ref/customers`
+  - `/ref/organizations`
+
+Final result:
+- Staging final diagnostics exit code: 0
+- Production final diagnostics exit code: 0
+- Staging bad route count: 0
+- Production bad route count: 0
+- All checked authenticated GET routes returned status 200.
+- All checked routes had repeated SQL kinds 0.
+- All checked routes had non-select statements 0.
+- Services were checked and remained RUNNING.
+- No commit, pull, POST, or service restart was performed during final read-only diagnostics.
+
+Services verified RUNNING:
+- `transportreport`
+- `transportreportstaging`
+- `transportbot`
+- `transportbot003`
+- `transportbotstaging`
+- `transportbot003staging`
