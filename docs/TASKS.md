@@ -3042,3 +3042,40 @@ Services verified RUNNING:
 - `transportbot003`
 - `transportbotstaging`
 - `transportbot003staging`
+
+<!-- csrf-audit-001d -->
+## 2026-06-17 - CSRF-AUDIT-001 CSRF coverage audit
+
+Status: completed as read-only security audit.
+
+Completed:
+
+- [x] Confirmed baseline 255a904.
+- [x] Confirmed working tree was clean before audit.
+- [x] Confirmed global CSRF token helper exists.
+- [x] Confirmed global before_request CSRF enforcement exists.
+- [x] Confirmed CSRF comparison uses hmac.compare_digest.
+- [x] Inventoried Python POST routes.
+- [x] Found 46 POST routes.
+- [x] Inventoried HTML POST forms.
+- [x] Found 52 POST forms.
+- [x] Confirmed 52 of 52 browser POST forms contain CSRF marker.
+- [x] Confirmed 0 browser POST forms without CSRF marker.
+- [x] Reviewed CSRF-exempt paths.
+- [x] Confirmed fuel sync API endpoints are protected by FUEL_API_TOKEN.
+- [x] Confirmed bot API endpoints use Bearer token or one-time link-code logic.
+- [x] Confirmed potential risk item count was 0.
+- [x] Confirmed no code changes were required.
+- [x] Confirmed no DB changes, migrations, production pull, or service restart were performed.
+
+Result:
+
+- CSRF-AUDIT-001 PASS.
+- Code changes required: no.
+- Production changes required: no.
+- Service restart required: no.
+
+Future rule:
+
+- Any future browser POST form must include csrf_token.
+- Any future /api/bot/* POST route must include explicit API authentication or one-time-code validation because /api/bot/* is CSRF-exempt by design.

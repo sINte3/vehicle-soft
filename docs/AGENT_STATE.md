@@ -2929,3 +2929,29 @@ Current wave status:
 - `/admin/permissions`: verified clean.
 - `/admin/audit`: verified clean.
 - Final global GET route control: passed.
+
+## 2026-06-17 - CSRF-AUDIT-001 completed
+
+Status: completed as read-only security audit.
+
+Baseline:
+
+- 255a904 document final global get route control
+
+Summary:
+
+- Completed CSRF coverage audit after final global GET route control.
+- Confirmed global CSRF helper and before_request enforcement in app.py.
+- Confirmed all 52 discovered browser POST forms include CSRF markers.
+- Confirmed 46 Python POST routes were inventoried.
+- Confirmed potential risk item count was 0.
+- Confirmed CSRF-exempt API paths are limited to fuel sync endpoints and /api/bot/*.
+- Confirmed fuel sync API uses FUEL_API_TOKEN with hmac.compare_digest.
+- Confirmed bot API uses one-time link-code verification and Bearer token sessions.
+- No application code changes were required.
+- No database changes, migrations, production pull, or service restart were performed.
+
+Current status:
+
+- CSRF-AUDIT-001 is closed.
+- Next recommended choices: API-FUEL-LEGACY-002, TASK-REPORT-001, TASK-DEPLOY-005G.
