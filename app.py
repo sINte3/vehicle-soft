@@ -35,7 +35,7 @@ from models import (
 )
 from excel_export import generate_report
 from wialon_import import register_wialon_routes
-from fuel_routes import fuel_bp, _perform_fuel_sync, _collect_fuel_report_data  # noqa: F401 (registered below)
+from fuel_routes import fuel_bp, _collect_fuel_report_data  # noqa: F401 (registered below)
 from excel_daily_activity import generate_daily_activity
 from translations import TRANS
 from spare_parts import spare_parts_bp
@@ -106,7 +106,7 @@ def create_app():
     def is_csrf_exempt():
         # Topaz agent API endpoints are protected by FUEL_API_TOKEN and must not
         # require browser-session CSRF tokens.
-        if request.path in ('/fuel/api/fuel_sync', '/api/fuel_sync'):
+        if request.path == '/fuel/api/fuel_sync':
             return True
         # BOT001: Bot API endpoints use Bearer token auth, not browser sessions.
         if request.path.startswith('/api/bot/'):
@@ -2575,17 +2575,6 @@ def create_app():
     # в”Ђв”Ђв”Ђ FUEL (TOPAZ) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     app.register_blueprint(fuel_bp)
 
-    # [REASON]: Legacy compatibility alias. Older Topaz agent configs may POST to
-    # /api/fuel_sync before being updated to the canonical /fuel/api/fuel_sync.
-    # This alias applies the same token validation and sync logic with no duplication.
-    # The legacy path should be removed once all agent configs are confirmed updated.
-    @app.route('/api/fuel_sync', methods=['POST'])
-    def api_fuel_sync_legacy():
-        app.logger.warning(
-            'Topaz agent used deprecated endpoint /api/fuel_sync. '
-            'Update agent configuration to /fuel/api/fuel_sync.'
-        )
-        return _perform_fuel_sync()
 
     # в”Ђв”Ђв”Ђ SPARE PARTS в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     app.register_blueprint(spare_parts_bp)

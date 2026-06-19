@@ -2955,3 +2955,24 @@ Current status:
 
 - CSRF-AUDIT-001 is closed.
 - Next recommended choices: API-FUEL-LEGACY-002, TASK-REPORT-001, TASK-DEPLOY-005G.
+
+## API-FUEL-LEGACY-002 / API-FUEL-LEGACY-006B — Legacy fuel sync alias removal
+
+Date: 2026-06-19
+
+Staging-first implementation after endpoint verification.
+
+Evidence:
+- Real Topaz sync source IP: 10.103.40.140.
+- Production sync rows are fresh and successful in uel_sync_logs2.
+- No production warning found for Topaz agent used deprecated endpoint /api/fuel_sync.
+- Staging probe confirmed the warning is written when the legacy endpoint is called.
+- Therefore the real Topaz agent is considered migrated to /fuel/api/fuel_sync.
+
+Staging change:
+- removed temporary POST /api/fuel_sync alias from pp.py;
+- kept canonical POST /fuel/api/fuel_sync;
+- removed /api/fuel_sync from CSRF exemption list;
+- kept FUEL_API_TOKEN protection unchanged.
+
+Production remains unchanged until staging validation is complete.
