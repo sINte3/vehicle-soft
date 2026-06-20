@@ -36,3 +36,36 @@ Restore pp.py from the source backup created before this change, or revert this
 ## Status
 
 Staging implementation completed in API-FUEL-LEGACY-006B pending production rollout.
+
+## API-FUEL-LEGACY-002 / API-FUEL-LEGACY-009 — Final completion
+
+Date: 2026-06-20
+
+Final status: completed.
+
+What was done:
+- Removed temporary legacy `POST /api/fuel_sync` alias.
+- Kept canonical `POST /fuel/api/fuel_sync`.
+- Removed `/api/fuel_sync` from CSRF exemption list.
+- Kept `FUEL_API_TOKEN` validation unchanged.
+- Rolled out to staging first, then production.
+- Verified that both staging and production are on commit `9dd034e`.
+
+Validation:
+- `GET /api/fuel_sync` returns 404.
+- `GET /fuel/api/fuel_sync` returns 405.
+- `POST /fuel/api/fuel_sync` with invalid token returns 401.
+- `/api/bot/health` returns 200.
+- Production Topaz sync after rollout exists:
+  - sync id: 2525
+  - synced_at: 2026-06-20 03:33:02.704120
+  - agent_ip: 10.103.40.140
+  - received: 4
+  - new: 4
+  - status: ok
+  - error: empty
+
+Conclusion:
+- The real Topaz agent is working through the canonical `/fuel/api/fuel_sync` endpoint.
+- The legacy `/api/fuel_sync` alias has been removed safely.
+- API-FUEL-LEGACY-002 is closed.
