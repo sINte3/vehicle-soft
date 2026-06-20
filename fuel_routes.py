@@ -1595,63 +1595,66 @@ def initial_balance():
 
 
 @fuel_bp.route('/initial-balance/save', methods=['POST'])
-@module_required('fuel')
 @admin_required_fuel
 def save_initial_balance():
+    ib_id = request.form.get('id', type=int)
     warehouse_id = request.form.get('warehouse_id', type=int)
-    fuel_type = 'ДТ'
+    fuel_type = request.form.get('fuel_type', 'ДТ').strip()
+    quantity = request.form.get('quantity', type=float)
     balance_date_s = request.form.get('balance_date', '')
     note = request.form.get('note', '').strip()
 
-    errors = []
-    if not warehouse_id or not FuelWarehouse.query.get(warehouse_id):
-        errors.append(fuel_t('Омборни танланг', 'Выберите склад'))
-    if fuel_type not in FUEL_TYPES:
-        errors.append(fuel_t('Ёқилғи тури нотўғри', 'Некорректный тип топлива'))
-    try:
-        quantity = _parse_float_required(request.form.get('quantity'), 'quantity')
-    except ValueError:
-        quantity = None
-        errors.append(fuel_t('Миқдор сон бўлиши керак', 'Количество должно быть числом'))
-    try:
-        balance_date = _parse_fuel_date(balance_date_s, 'balance_date')
-    except ValueError:
-        balance_date = None
-        errors.append(fuel_t('Сана тўғри бўлиши керак', 'Дата должна быть корректной'))
-    if errors:
-        fuel_flash_errors(errors)
+    if not warehouse_id or quantity is None or quantity < 0:
+        flash('Заполните все поля. Остаток не может быть отрицательным.', 'warning')
         return redirect(url_for('fuel.initial_balance'))
 
-    existing = (FuelInitialBalance.query
-                .filter_by(warehouse_id=warehouse_id, fuel_type=fuel_type).first())
-    created = False
-    before = _fuel_initial_balance_snapshot(existing)
-    if existing:
-        ib = existing
-        ib.quantity = quantity
-        ib.balance_date = balance_date
-        ib.note = note
-    else:
-        ib = FuelInitialBalance(warehouse_id=warehouse_id, fuel_type=fuel_type,
-                                quantity=quantity, balance_date=balance_date,
-                                note=note, created_by=current_user.id)
-        db.session.add(ib)
-        created = True
+    try:
+        balance_date = datetime.strptime(balance_date_s, '%Y-%m-%d').date()
+    except ValueError:
+        balance_date = date.today()
 
-    db.session.flush()
-    after = _fuel_initial_balance_snapshot(ib)
-    _audit_fuel(
-        'fuel_initial_balance_saved',
-        entity_type='fuel_initial_balance',
-        entity_id=ib.id,
-        entity_label=f'{fuel_type} / warehouse {warehouse_id}',
-        before=before,
-        after=after,
-        changes={'created': created},
-        description='Fuel initial balance saved',
-    )
+    existing = None
+    if ib_id:
+        existing = FuelInitialBalance.query.get_or_404(ib_id)
+
+    duplicate = (FuelInitialBalance.query
+                 .filter_by(warehouse_id=warehouse_id, fuel_type=fuel_type)
+                 .first())
+
+    if duplicate and (not existing or duplicate.id != existing.id):
+        flash('Для этого склада и вида топлива уже есть начальный остаток. Используйте кнопку "Изм." у существующей строки.', 'warning')
+        return redirect(url_for('fuel.initial_balance'))
+
+    if existing:
+        existing.warehouse_id = warehouse_id
+        existing.fuel_type = fuel_type
+        existing.quantity = quantity
+        existing.balance_date = balance_date
+        existing.note = note
+        flash('Начальный остаток изменён. Баланс пересчитается автоматически.', 'success')
+    else:
+        ib = FuelInitialBalance(
+            warehouse_id=warehouse_id,
+            fuel_type=fuel_type,
+            quantity=quantity,
+            balance_date=balance_date,
+            note=note,
+            created_by=current_user.id,
+        )
+        db.session.add(ib)
+        flash('Начальный остаток сохранён. Баланс пересчитается автоматически.', 'success')
+
     db.session.commit()
-    flash(fuel_t('Бошланғич қолдиқ сақланди', 'Начальный остаток сохранён'), 'success')
+    return redirect(url_for('fuel.initial_balance'))
+
+
+@fuel_bp.route('/initial-balance/delete/<int:ib_id>', methods=['POST'])
+@admin_required_fuel
+def delete_initial_balance(ib_id):
+    ib = FuelInitialBalance.query.get_or_404(ib_id)
+    db.session.delete(ib)
+    db.session.commit()
+    flash('Начальный остаток удалён. Баланс пересчитается автоматически.', 'warning')
     return redirect(url_for('fuel.initial_balance'))
 
 

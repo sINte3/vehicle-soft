@@ -1,192 +1,161 @@
 {% extends "base.html" %}
-{% block title %}АЗС — {{ 'Начальные остатки топлива' if lang == 'ru' else 'Ёқилғи бошланғич қолдиқлари' }}{% endblock %}
+{% block title %}АЗС — Начальные остатки{% endblock %}
 {% block content %}
 
-<style>
-/* FUEL002F_MARKER: initial balance UX, template/localization only */
-.fuel002f-page-header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:start;margin-bottom:14px}
-.fuel002f-page-header h1{margin-bottom:6px}
-.fuel002f-subtitle{color:var(--text-muted);font-size:13px;line-height:1.45}
-.fuel002f-context-strip{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin:0 0 14px 0}
-.fuel002f-pill{border:1px solid var(--border);background:var(--card-bg);border-radius:10px;padding:10px 12px;box-shadow:var(--shadow-sm)}
-.fuel002f-pill span{display:block;color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
-.fuel002f-pill strong{display:block;font-size:15px;color:var(--text-main)}
-.fuel002f-guidance-panel{display:grid;grid-template-columns:repeat(3,minmax(190px,1fr));gap:10px;margin-bottom:16px}
-.fuel002f-guidance-card{border:1px solid var(--border);border-left:4px solid var(--accent);background:var(--card-bg);border-radius:10px;padding:11px 13px;box-shadow:var(--shadow-sm)}
-.fuel002f-guidance-card strong{display:block;margin-bottom:4px;color:var(--text-main);font-size:13px}
-.fuel002f-guidance-card span{display:block;color:var(--text-muted);font-size:12px;line-height:1.4}
-.fuel002f-form-card{border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-sm);overflow:hidden}
-.fuel002f-form-card .card-header{background:var(--bg-soft)}
-form.fuel002f-balance-form{display:grid;grid-template-columns:minmax(220px,2fr) minmax(120px,1fr) minmax(150px,1fr) minmax(160px,1fr) minmax(220px,2fr) auto;gap:10px;align-items:end}
-form.fuel002f-balance-form .form-group{margin-bottom:0!important}
-.fuel002f-table-wrap{width:100%;overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:var(--card-bg);box-shadow:var(--shadow-sm)}
-.fuel002f-table-wrap .table,.fuel002f-table-wrap table{margin-bottom:0}
-.fuel002f-balance-table{min-width:820px}
-.fuel002f-balance-table th{white-space:nowrap;font-size:12px;background:var(--bg-soft)}
-.fuel002f-balance-table td{vertical-align:middle}
-@media(max-width:1200px){.fuel002f-context-strip,.fuel002f-guidance-panel{grid-template-columns:1fr 1fr}form.fuel002f-balance-form{grid-template-columns:repeat(2,minmax(180px,1fr))}}
-@media(max-width:760px){.fuel002f-page-header,.fuel002f-context-strip,.fuel002f-guidance-panel,form.fuel002f-balance-form{grid-template-columns:1fr}}
-/* FUEL002F_END */
-</style>
-
-
-
-{% set L_title = 'Начальные остатки топлива' if lang == 'ru' else 'Ёқилғи бошланғич қолдиқлари' %}
-{% set L_back = '← Дашборд' if lang == 'ru' else '← Дашборд' %}
-{% set L_rule1 = 'Начальный остаток — точка отсчёта баланса по складу.' if lang == 'ru' else 'Бошланғич қолдиқ — омбор бўйича баланснинг бошланиш нуқтаси.' %}
-{% set L_rule2 = 'Отрицательное значение допускается как корректировка.' if lang == 'ru' else 'Манфий қиймат корректировка сифатида рухсат этилади.' %}
-{% set L_formula = 'Формула: начальный остаток + приход − выдачи Topaz.' if lang == 'ru' else 'Формула: бошланғич қолдиқ + кирим − Topaz беришлари.' %}
-{% set L_set = 'Установить начальный остаток' if lang == 'ru' else 'Бошланғич қолдиқни белгилаш' %}
-{% set L_wh = 'Склад' if lang == 'ru' else 'Омбор' %}
-{% set L_select = '— выберите —' if lang == 'ru' else '— танланг —' %}
-{% set L_fuel = 'Топливо' if lang == 'ru' else 'Ёқилғи тури' %}
-{% set L_qty = 'Остаток, литры' if lang == 'ru' else 'Қолдиқ, литр' %}
-{% set L_date = 'Дата остатка' if lang == 'ru' else 'Қолдиқ санаси' %}
-{% set L_note = 'Примечание' if lang == 'ru' else 'Изоҳ' %}
-{% set L_save = 'Сохранить' if lang == 'ru' else 'Сақлаш' %}
-{% set L_current = 'Текущие начальные остатки' if lang == 'ru' else 'Жорий бошланғич қолдиқлар' %}
-{% set L_missing = 'Начальный остаток не задан' if lang == 'ru' else 'Бошланғич қолдиқ белгиланмаган' %}
-{% set L_negative = 'Корректировка / отрицательный остаток' if lang == 'ru' else 'Корректировка / манфий қолдиқ' %}
-{% set L_search = 'Поиск по складу или примечанию' if lang == 'ru' else 'Омбор ёки изоҳ бўйича қидириш' %}
-{% set L_hint_qty = 'Можно указать отрицательное значение, если это корректировка.' if lang == 'ru' else 'Агар корректировка бўлса, манфий қиймат киритиш мумкин.' %}
-
-<style>
-.fuel-help { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
-.fuel-pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700; background:var(--info-light); color:var(--info); }
-.fuel-toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
-.fuel-toolbar input[type="text"] { min-width:280px; flex:1; }
-.invalid-client { border-color:var(--danger) !important; box-shadow:0 0 0 2px rgba(220,38,38,.12); }
-</style>
-
-<div class="page-header fuel002f-page-header FUEL002F_MARKER">
-    <div><div>
-    <h1>{{ L_title }}</h1>
-    <div class="fuel002f-subtitle">{{ t('Бошланғич қолдиқ: омборлар бўйича ДТ қолдиғини ҳисобот бошланиши учун белгилаш.') }}</div>
-  </div><div class="text-muted text-sm">{{ L_formula }}</div></div>
-    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ L_back }}</a>
+<div class="page-header">
+    <h1>Начальные остатки топлива</h1>
+    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">← Дашборд</a>
 </div>
 
-<div class="fuel-help"><strong>ДТ.</strong> {{ L_rule1 }} {{ L_rule2 }}</div>
-
-
-<div class="fuel002f-context-strip">
-  <div class="fuel002f-pill"><span>{{ t('Омборлар') }}</span><strong>{{ warehouses|length }}</strong></div>
-  <div class="fuel002f-pill"><span>{{ t('Ёқилғи тури') }}</span><strong>{{ t('ДТ') }}</strong></div>
-  <div class="fuel002f-pill"><span>{{ t('Қолдиқ ёзувлари') }}</span><strong>{{ existing|length }}</strong></div>
-  <div class="fuel002f-pill"><span>{{ t('Ҳисобот асоси') }}</span><strong>{{ today }}</strong></div>
+<div class="card" style="margin-bottom:16px; border-left:3px solid var(--info);">
+    <div class="card-body" style="padding:12px 16px; font-size:13px; color:var(--info);">
+        Начальный остаток — точка отсчёта для каждого склада и вида топлива.
+        После его установки баланс вычисляется автоматически:
+        <strong>Остаток = НачОстаток + Приходы − Выдачи</strong>.
+        Если изменить или удалить начальный остаток, баланс пересчитается автоматически при следующем открытии отчёта.
+    </div>
 </div>
 
-<div class="fuel002f-guidance-panel">
-  <div class="fuel002f-guidance-card"><strong>{{ t('1. Омборни танланг') }}</strong><span>{{ t('Бошланғич қолдиқ аниқ бир омбор бўйича сақланади.') }}</span></div>
-  <div class="fuel002f-guidance-card"><strong>{{ t('2. Миқдор ва санани киритинг') }}</strong><span>{{ t('Миқдор литрда, сана эса ҳисобот бошланиш куни сифатида ишлатилади.') }}</span></div>
-  <div class="fuel002f-guidance-card"><strong>{{ t('3. Мавжуд ёзув янгиланади') }}</strong><span>{{ t('Бир омбор ва ДТ учун ёзув бўлса, у янги миқдор билан янгиланади.') }}</span></div>
-</div>
-
-<div class="card fuel002f-form-card" style="margin-bottom:24px;">
-    <div class="card-header">{{ L_set }}</div>
+<div class="card" style="margin-bottom:24px;">
+    <div class="card-header">Добавить / изменить начальный остаток</div>
     <div class="card-body">
-        <form method="post" action="{{ url_for('fuel.save_initial_balance') }}" class="form-inline fuel002f-balance-form" id="initialBalanceForm" onsubmit="return validateInitialBalanceBeforeSubmit()">
+        <form method="post" action="{{ url_for('fuel.save_initial_balance') }}" class="form-inline" id="ibForm">
+            {% if csrf_token is defined %}
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% endif %}
+            <input type="hidden" name="id" id="ibId" value="">
+
             <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ L_wh }}</label>
-                <select name="warehouse_id" required>
-                    <option value="">{{ L_select }}</option>
-                    {% for wh in warehouses %}<option value="{{ wh.id }}">{{ wh.name }}</option>{% endfor %}
+                <label>Склад</label>
+                <select name="warehouse_id" id="ibWarehouse" required>
+                    <option value="">— выберите —</option>
+                    {% for wh in warehouses %}
+                    <option value="{{ wh.id }}">{{ wh.name }}</option>
+                    {% endfor %}
                 </select>
             </div>
-            <input type="hidden" name="fuel_type" value="ДТ">
+
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ L_fuel }}</label>
-                <div class="fuel-pill">ДТ</div>
+                <label>Вид топлива</label>
+                <select name="fuel_type" id="ibFuelType" required>
+                    {% for ft in fuel_types %}
+                    <option value="{{ ft }}" {% if ft == 'ДТ' %}selected{% endif %}>{{ ft }}</option>
+                    {% endfor %}
+                </select>
             </div>
+
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ L_qty }}</label>
-                <input type="number" name="quantity" step="0.1" required style="width:140px;" title="{{ L_hint_qty }}">
-                <small class="text-muted">{{ L_hint_qty }}</small>
+                <label>Остаток, литры</label>
+                <input type="number" name="quantity" id="ibQuantity" step="0.1" min="0" required style="width:130px;">
             </div>
+
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ L_date }}</label>
-                <input type="date" name="balance_date" value="{{ today.isoformat() }}" required>
+                <label>Дата остатка</label>
+                <input type="date" name="balance_date" id="ibDate" value="{{ today.isoformat() }}" required>
             </div>
+
             <div class="form-group" style="margin-bottom:0; flex:1;">
-                <label>{{ L_note }}</label>
-                <input type="text" name="note" placeholder="">
+                <label>Примечание</label>
+                <input type="text" name="note" id="ibNote" placeholder="">
             </div>
+
             <div class="form-group" style="margin-bottom:0;">
                 <label>&nbsp;</label>
-                <button type="submit" class="btn btn-primary">{{ L_save }}</button>
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+                <button type="button" class="btn btn-secondary" onclick="clearIBForm()">Сброс</button>
             </div>
         </form>
     </div>
 </div>
 
-<div class="fuel-toolbar">
-    <input type="text" id="initialSearch" placeholder="{{ L_search }}" oninput="filterInitialBalances()">
-    <span class="text-muted text-sm" id="initialVisibleCount"></span>
-</div>
-
 <div class="card">
-    <div class="card-header">{{ L_current }}</div>
-    <div style="overflow-x:auto;">
-    <div class="fuel002f-table-wrap FUEL002F_TABLE_WRAP_MARKER">
-<table class="fuel002f-balance-table">
+    <div class="card-header">Текущие начальные остатки</div>
+    <table>
         <thead>
-            <tr><th>{{ L_wh }}</th><th>{{ L_fuel }}</th><th class="text-right">{{ L_qty }}</th><th>{{ L_date }}</th><th class="text-muted text-sm">{{ L_note }}</th></tr>
+            <tr>
+                <th>Склад</th>
+                <th>Вид топлива</th>
+                <th class="text-right">Начальный остаток, л</th>
+                <th>Дата</th>
+                <th class="text-muted text-sm">Примечание</th>
+                <th style="width:120px;">Действия</th>
+            </tr>
         </thead>
         <tbody>
         {% for wh in warehouses %}
             {% set ibs = existing.get(wh.id, {}) %}
             {% if ibs %}
                 {% for ft, ib in ibs.items() %}
-                <tr class="initial-row" data-search="{{ (wh.name ~ ' ' ~ (ib.note or ''))|lower }}">
-                    {% if loop.first %}<td rowspan="{{ ibs|length }}" style="font-weight:700; vertical-align:top; padding-top:10px;">{{ wh.name }}</td>{% endif %}
-                    <td><span class="fuel-pill">{{ ft }}</span></td>
-                    <td class="text-right" style="font-weight:700; {% if ib.quantity < 0 %}color:var(--danger);{% endif %}">
-                        {{ '%.1f'|format(ib.quantity) }}
-                        {% if ib.quantity < 0 %}<div class="text-muted text-sm">{{ L_negative }}</div>{% endif %}
+                <tr>
+                    {% if loop.first %}
+                    <td rowspan="{{ ibs|length }}" style="font-weight:600; vertical-align:top; padding-top:10px;">
+                        {{ wh.name }}
                     </td>
+                    {% endif %}
+                    <td>
+                        <span style="font-size:11px; padding:1px 6px; background:var(--info-light);
+                                     color:var(--info); border-radius:2px;">{{ ft }}</span>
+                    </td>
+                    <td class="text-right" style="font-weight:600;">{{ '%.1f'|format(ib.quantity) }}</td>
                     <td class="text-sm">{{ ib.balance_date.strftime('%d.%m.%Y') }}</td>
                     <td class="text-muted text-sm">{{ ib.note or '' }}</td>
+                    <td style="white-space:nowrap;">
+                        <button type="button" class="btn btn-secondary btn-sm"
+                                onclick="editIB({{ ib.id }}, {{ wh.id }}, {{ ft|tojson }},
+                                                {{ ib.quantity }}, {{ ib.balance_date.isoformat()|tojson }},
+                                                {{ (ib.note or '')|tojson }})">
+                            Изм.
+                        </button>
+                        <form method="post" action="{{ url_for('fuel.delete_initial_balance', ib_id=ib.id) }}"
+                              style="display:inline;"
+                              onsubmit="return confirm('Удалить начальный остаток? Баланс будет пересчитан автоматически.')">
+                            {% if csrf_token is defined %}
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            {% endif %}
+                            <button type="submit" class="btn btn-danger btn-sm">✕</button>
+                        </form>
+                    </td>
                 </tr>
                 {% endfor %}
             {% else %}
-            <tr class="initial-row" data-search="{{ wh.name|lower }}">
-                <td style="font-weight:700;">{{ wh.name }}</td>
-                <td colspan="4" class="text-muted text-sm" style="color:var(--danger);">⚠ {{ L_missing }}</td>
+            <tr>
+                <td style="font-weight:600;">{{ wh.name }}</td>
+                <td colspan="5" class="text-muted text-sm" style="color:var(--danger);">
+                    ⚠ Начальный остаток не задан
+                </td>
             </tr>
             {% endif %}
         {% endfor %}
         </tbody>
     </table>
 </div>
-    </div>
-</div>
 
 {% endblock %}
+
 {% block scripts %}
 <script>
-function validateInitialBalanceBeforeSubmit() {
-    let ok = true;
-    const form = document.getElementById('initialBalanceForm');
-    form.querySelectorAll('.invalid-client').forEach(el => el.classList.remove('invalid-client'));
-    const wh = form.querySelector('[name=warehouse_id]');
-    const qty = form.querySelector('[name=quantity]');
-    const dt = form.querySelector('[name=balance_date]');
-    if (!wh.value) { wh.classList.add('invalid-client'); ok = false; }
-    if (!qty.value || isNaN(parseFloat(qty.value))) { qty.classList.add('invalid-client'); ok = false; }
-    if (!dt.value) { dt.classList.add('invalid-client'); ok = false; }
-    return ok;
+function editIB(id, whId, fuelType, qty, balanceDate, note) {
+    document.getElementById('ibId').value = id;
+    document.getElementById('ibQuantity').value = qty;
+    document.getElementById('ibDate').value = balanceDate;
+    document.getElementById('ibNote').value = note || '';
+
+    const whSel = document.getElementById('ibWarehouse');
+    for (let i = 0; i < whSel.options.length; i++) {
+        whSel.options[i].selected = (whSel.options[i].value == whId);
+    }
+
+    const ftSel = document.getElementById('ibFuelType');
+    for (let i = 0; i < ftSel.options.length; i++) {
+        ftSel.options[i].selected = (ftSel.options[i].value == fuelType);
+    }
+
+    window.scrollTo(0, 0);
 }
-function filterInitialBalances() {
-    const q = (document.getElementById('initialSearch').value || '').toLowerCase().trim();
-    let visible = 0;
-    document.querySelectorAll('.initial-row').forEach(row => {
-        const show = !q || row.dataset.search.indexOf(q) !== -1;
-        row.style.display = show ? '' : 'none';
-        if (show) visible++;
-    });
-    document.getElementById('initialVisibleCount').textContent = visible + ' / ' + document.querySelectorAll('.initial-row').length;
+
+function clearIBForm() {
+    document.getElementById('ibId').value = '';
+    document.getElementById('ibForm').reset();
 }
-document.addEventListener('DOMContentLoaded', filterInitialBalances);
 </script>
 {% endblock %}
