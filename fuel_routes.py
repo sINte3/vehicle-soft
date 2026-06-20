@@ -480,7 +480,7 @@ def get_warehouse_balance(warehouse_id, fuel_type=None):
 
 def get_all_balances():
     """Балансы всех складов для дашборда. Returns list of dicts."""
-    warehouses = FuelWarehouse.query.order_by(FuelWarehouse.name).all()
+    warehouses = fuel_warehouse_query_for_ui().order_by(FuelWarehouse.name).all()
     warehouse_ids = [wh.id for wh in warehouses]
 
     balances_by_wh = _fuel_balance_map(warehouse_ids)
@@ -1431,7 +1431,7 @@ def dashboard():
 @module_required('fuel')
 @admin_required_fuel
 def warehouses():
-    whs = (FuelWarehouse.query
+    whs = (fuel_warehouse_query_for_ui()
            .outerjoin(Organization)
            .order_by(FuelWarehouse.name).all())
     orgs = Organization.query.order_by(Organization.sort_order).all()
@@ -1576,7 +1576,7 @@ def delete_warehouse(wid):
 @module_required('fuel')
 @admin_required_fuel
 def initial_balance():
-    warehouses = FuelWarehouse.query.order_by(FuelWarehouse.name).all()
+    warehouses = fuel_warehouse_query_for_ui().order_by(FuelWarehouse.name).all()
     # fuel-batch-perf-001b_marker: bulk initial balance rows.
     warehouse_ids = [wh.id for wh in warehouses]
     initial_balance_rows = []
@@ -1680,9 +1680,11 @@ def receipts():
     )
     if wh_id:
         q = q.filter(FuelReceipt2.warehouse_id == wh_id)
+    else:
+        q = fuel_apply_warehouse_filter_for_ui(q, FuelReceipt2.warehouse_id)
     items = q.order_by(FuelReceipt2.receipt_date.desc(), FuelReceipt2.id.desc()).all()
 
-    warehouses = FuelWarehouse.query.order_by(FuelWarehouse.name).all()
+    warehouses = fuel_warehouse_query_for_ui().order_by(FuelWarehouse.name).all()
     total_qty = sum(r.quantity for r in items)
     return render_template('fuel/receipts.html',
                            items=items, warehouses=warehouses,
@@ -1819,7 +1821,7 @@ def transactions():
 
     items = q.order_by(FuelTransaction2.txn_datetime.desc()).limit(500).all()
 
-    warehouses = FuelWarehouse.query.order_by(FuelWarehouse.name).all()
+    warehouses = fuel_warehouse_query_for_ui().order_by(FuelWarehouse.name).all()
     total_qty = sum(t.quantity for t in items)
     total_amount = sum(t.amount for t in items)
 
@@ -1843,7 +1845,7 @@ def stations():
     all_stations = (FuelStation2.query
                     .join(FuelWarehouse)
                     .order_by(FuelWarehouse.name, FuelStation2.name).all())
-    warehouses = FuelWarehouse.query.order_by(FuelWarehouse.name).all()
+    warehouses = fuel_warehouse_query_for_ui().order_by(FuelWarehouse.name).all()
     # PERF-FUEL-STATIONS-NPLUS1-001B_MARKER: bulk transaction counts for fuel stations.
     station_ids = [st.id for st in all_stations]
     station_tx_counts = {}
@@ -1929,6 +1931,65 @@ def save_station():
     return redirect(url_for('fuel.stations'))
 
 
+
+
+
+# Target fuel hierarchy Topaz IDs from Иерархия АЗС.xlsx.
+# Legacy warehouses remain in DB for history, but ordinary UI hides them by default.
+FUEL_TARGET_TOPAZ_IDS = {
+    812011, 935501, 935541,
+    935531, 898131, 898141, 935471, 935511,
+    825261, 898151, 898111,
+    935491, 812301, 934451, 935521,
+    812021, 895101, 812001,
+    811971, 825241,
+    898121, 935551, 825271, 946231,
+}
+
+
+def fuel_show_legacy_warehouses():
+    """Return True only when user explicitly asks to show legacy warehouses."""
+    return request.args.get('show_legacy') == '1'
+
+
+def fuel_target_warehouse_ids():
+    """Warehouse IDs that contain target fuel stations/topaz IDs."""
+    rows = (db.session.query(FuelStation2.warehouse_id)
+            .filter(FuelStation2.topaz_id.in_(FUEL_TARGET_TOPAZ_IDS))
+            .filter(FuelStation2.warehouse_id.isnot(None))
+            .distinct()
+            .all())
+    return [r[0] for r in rows if r[0] is not None]
+
+
+def fuel_warehouse_query_for_ui():
+    """
+    Default UI query for fuel warehouses.
+
+    Normal mode: show only target/current warehouses.
+    Historical mode: add ?show_legacy=1 to show all warehouses.
+    """
+    q = FuelWarehouse.query
+    if fuel_show_legacy_warehouses():
+        return q
+
+    target_ids = fuel_target_warehouse_ids()
+    if not target_ids:
+        return q.filter(FuelWarehouse.id == -1)
+
+    return q.filter(FuelWarehouse.id.in_(target_ids))
+
+
+def fuel_apply_warehouse_filter_for_ui(query, warehouse_column):
+    """Apply default warehouse filter to receipt/transaction style queries."""
+    if fuel_show_legacy_warehouses():
+        return query
+
+    target_ids = fuel_target_warehouse_ids()
+    if not target_ids:
+        return query.filter(warehouse_column == -1)
+
+    return query.filter(warehouse_column.in_(target_ids))
 
 @fuel_bp.route('/stations/enable/<int:sid>', methods=['POST'])
 @admin_required_fuel
