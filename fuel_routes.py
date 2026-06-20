@@ -197,6 +197,71 @@ def _audit_fuel(action, entity_type='', entity_id=None, entity_label='', before=
 # are rejected (deny-all safe default). See docs/DEPLOYMENT_SECURITY.md.
 FUEL_TYPES = ['ДТ']
 
+def parse_fuel_station_date(value):
+    """Parse YYYY-MM-DD date from fuel station forms."""
+    value = (value or '').strip()
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, '%Y-%m-%d').date()
+    except ValueError:
+        return None
+
+
+def parse_topaz_txn_datetime(value):
+    """Parse Topaz transaction datetime with safe fallback."""
+    value = (value or '').strip()
+    if not value:
+        return datetime.utcnow()
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return datetime.utcnow()
+
+
+def station_matches_txn_datetime(station, txn_dt):
+    """Return True if station validity period allows this transaction date."""
+    if not station or not txn_dt:
+        return False
+    txn_date = txn_dt.date() if hasattr(txn_dt, 'date') else txn_dt
+    if station.valid_from and txn_date < station.valid_from:
+        return False
+    if station.valid_to and txn_date > station.valid_to:
+        return False
+    return True
+
+
+def resolve_fuel_station_for_topaz(topaz_id, txn_dt=None):
+    """Resolve Topaz column to station without active-only filtering.
+
+    Historical/inactive stations must still match old transactions.
+    If validity dates exist, transaction date is used to choose the station.
+    """
+    try:
+        topaz_id = int(topaz_id or 0)
+    except (TypeError, ValueError):
+        return None
+    if not topaz_id:
+        return None
+
+    stations = FuelStation2.query.filter_by(topaz_id=topaz_id).all()
+    if not stations:
+        return None
+
+    if txn_dt:
+        dated = [st for st in stations if station_matches_txn_datetime(st, txn_dt)]
+        if dated:
+            active_dated = [st for st in dated if st.is_active]
+            return active_dated[0] if active_dated else dated[0]
+
+        has_any_validity = any(st.valid_from or st.valid_to for st in stations)
+        if has_any_validity:
+            return None
+
+    active = [st for st in stations if st.is_active]
+    return active[0] if active else stations[0]
+
+
 
 # ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -1483,42 +1548,25 @@ def save_warehouse():
 
 
 @fuel_bp.route('/warehouses/delete/<int:wid>', methods=['POST'])
-@module_required('fuel')
 @admin_required_fuel
 def delete_warehouse(wid):
     wh = FuelWarehouse.query.get_or_404(wid)
-    before = _fuel_warehouse_snapshot(wh)
-    label = wh.name
-    linked = {
-        'stations_count': FuelStation2.query.filter_by(warehouse_id=wid).count(),
-        'receipts_count': FuelReceipt2.query.filter_by(warehouse_id=wid).count(),
-        'initial_balances_count': FuelInitialBalance.query.filter_by(warehouse_id=wid).count(),
-    }
-    if any(linked.values()):
-        _audit_fuel(
-            'fuel_warehouse_delete_blocked',
-            entity_type='fuel_warehouse',
-            entity_id=wh.id,
-            entity_label=label,
-            before=before,
-            after=linked,
-            description='Fuel warehouse delete blocked because linked records exist',
-        )
-        db.session.commit()
-        flash(fuel_t('Омбор ўчирилмади: боғланган маълумотлар мавжуд',
-                     'Склад не удалён: есть связанные данные'), 'warning')
+
+    station_count = FuelStation2.query.filter_by(warehouse_id=wh.id).count()
+    receipt_count = FuelReceipt2.query.filter_by(warehouse_id=wh.id).count()
+    balance_count = FuelInitialBalance.query.filter_by(warehouse_id=wh.id).count()
+    tx_count = (FuelTransaction2.query
+                .join(FuelStation2)
+                .filter(FuelStation2.warehouse_id == wh.id)
+                .count())
+
+    if station_count or receipt_count or balance_count or tx_count:
+        flash('Склад не удалён: есть АЗС, остатки, приходы или исторические выдачи. Удаление заблокировано для сохранения учёта.', 'warning')
         return redirect(url_for('fuel.warehouses'))
-    _audit_fuel(
-        'fuel_warehouse_deleted',
-        entity_type='fuel_warehouse',
-        entity_id=wh.id,
-        entity_label=label,
-        before=before,
-        description='Fuel warehouse deleted',
-    )
+
     db.session.delete(wh)
     db.session.commit()
-    flash(fuel_t('Омбор ўчирилди', 'Склад удалён'), 'warning')
+    flash('Склад удалён', 'warning')
     return redirect(url_for('fuel.warehouses'))
 
 
@@ -1822,7 +1870,6 @@ def stations():
 
 
 @fuel_bp.route('/stations/save', methods=['POST'])
-@module_required('fuel')
 @admin_required_fuel
 def save_station():
     sid = request.form.get('id', type=int)
@@ -1830,120 +1877,75 @@ def save_station():
     topaz_id = request.form.get('topaz_id', type=int)
     warehouse_id = request.form.get('warehouse_id', type=int)
     is_active = request.form.get('is_active') == 'on'
+    valid_from = parse_fuel_station_date(request.form.get('valid_from', ''))
+    valid_to = parse_fuel_station_date(request.form.get('valid_to', ''))
+    replacement_of_id = request.form.get('replacement_of_id', type=int)
+    notes = request.form.get('notes', '').strip()
 
-    if not name or not topaz_id or topaz_id <= 0 or not warehouse_id:
-        flash(fuel_t('Барча майдонларни тўлдиринг', 'Заполните все поля'), 'warning')
-        return redirect(url_for('fuel.stations'))
-    if not FuelWarehouse.query.get(warehouse_id):
-        flash(fuel_t('Омборни танланг', 'Выберите склад'), 'warning')
-        return redirect(url_for('fuel.stations'))
-    existing_topaz = FuelStation2.query.filter_by(topaz_id=topaz_id).first()
-    if existing_topaz and (not sid or existing_topaz.id != sid):
-        flash(fuel_t(f'Topaz ID {topaz_id} бўлган АЗС аллақачон мавжуд',
-                     f'АЗС с Topaz ID {topaz_id} уже существует'), 'warning')
+    if not name or not topaz_id or not warehouse_id:
+        flash('Заполните все обязательные поля', 'warning')
         return redirect(url_for('fuel.stations'))
 
-    created = False
-    before = None
+    if valid_from and valid_to and valid_from > valid_to:
+        flash('Дата начала действия АЗС не может быть позже даты окончания', 'warning')
+        return redirect(url_for('fuel.stations'))
+
+    if sid and replacement_of_id == sid:
+        flash('АЗС не может заменять саму себя', 'warning')
+        return redirect(url_for('fuel.stations'))
+
     if sid:
         st = FuelStation2.query.get_or_404(sid)
-        before = _fuel_station_snapshot(st)
+        duplicate = (FuelStation2.query
+                     .filter(FuelStation2.topaz_id == topaz_id,
+                             FuelStation2.id != sid)
+                     .first())
+        if duplicate:
+            flash(f'АЗС с Topaz ID {topaz_id} уже существует', 'warning')
+            return redirect(url_for('fuel.stations'))
+
         st.name = name
         st.topaz_id = topaz_id
         st.warehouse_id = warehouse_id
         st.is_active = is_active
+        st.valid_from = valid_from
+        st.valid_to = valid_to
+        st.replacement_of_id = replacement_of_id or None
+        st.notes = notes
     else:
+        existing = FuelStation2.query.filter_by(topaz_id=topaz_id).first()
+        if existing:
+            flash(f'АЗС с Topaz ID {topaz_id} уже существует', 'warning')
+            return redirect(url_for('fuel.stations'))
         st = FuelStation2(name=name, topaz_id=topaz_id,
-                          warehouse_id=warehouse_id, is_active=is_active)
+                          warehouse_id=warehouse_id, is_active=is_active,
+                          valid_from=valid_from, valid_to=valid_to,
+                          replacement_of_id=replacement_of_id or None,
+                          notes=notes)
         db.session.add(st)
-        created = True
 
-    db.session.flush()
-    after = _fuel_station_snapshot(st)
-    _audit_fuel(
-        'fuel_station_created' if created else 'fuel_station_updated',
-        entity_type='fuel_station',
-        entity_id=st.id,
-        entity_label=st.name,
-        before=before,
-        after=after,
-        description='Fuel station saved',
-    )
     db.session.commit()
-    flash(fuel_t('АЗС сақланди', 'АЗС сохранена'), 'success')
-    return redirect(url_for('fuel.stations'))
-
-
-@fuel_bp.route('/stations/enable/<int:sid>', methods=['POST'])
-@module_required('fuel')
-@admin_required_fuel
-def enable_station(sid):
-    st = FuelStation2.query.get_or_404(sid)
-    before = _fuel_station_snapshot(st)
-    if st.is_active:
-        flash(fuel_t('АЗС аллақачон фаол', 'АЗС уже активна'), 'info')
-        return redirect(url_for('fuel.stations'))
-    st.is_active = True
-    db.session.flush()
-    after = _fuel_station_snapshot(st)
-    _audit_fuel(
-        'fuel_station_reactivated',
-        entity_type='fuel_station',
-        entity_id=st.id,
-        entity_label=st.name,
-        before=before,
-        after=after,
-        description='Fuel station reactivated',
-    )
-    db.session.commit()
-    flash(fuel_t('АЗС қайта фаоллаштирилди', 'АЗС включена'), 'success')
+    flash('АЗС сохранена', 'success')
     return redirect(url_for('fuel.stations'))
 
 
 @fuel_bp.route('/stations/delete/<int:sid>', methods=['POST'])
-@module_required('fuel')
 @admin_required_fuel
 def delete_station(sid):
     st = FuelStation2.query.get_or_404(sid)
-    before = _fuel_station_snapshot(st)
-    label = st.name
-    transactions_count = FuelTransaction2.query.filter_by(station_id=sid).count()
-    if transactions_count:
-        if st.is_active:
-            st.is_active = False
-            db.session.flush()
-            after = _fuel_station_snapshot(st)
-            after['transactions_count'] = transactions_count
-            action = 'fuel_station_delete_blocked_deactivated'
-            description = 'Fuel station delete blocked; station was deactivated because transactions exist'
-        else:
-            after = {'transactions_count': transactions_count}
-            action = 'fuel_station_delete_blocked'
-            description = 'Fuel station delete blocked because transactions exist'
-        _audit_fuel(
-            action,
-            entity_type='fuel_station',
-            entity_id=st.id,
-            entity_label=label,
-            before=before,
-            after=after,
-            description=description,
-        )
+    tx_count = FuelTransaction2.query.filter_by(station_id=st.id).count()
+
+    if tx_count:
+        st.is_active = False
+        if not st.valid_to:
+            st.valid_to = datetime.utcnow().date()
         db.session.commit()
-        flash(fuel_t('АЗС ўчирилмади: транзакциялар мавжуд. АЗС ўчириб қўйилди.',
-                     'АЗС не удалена: есть транзакции. АЗС отключена.'), 'warning')
+        flash('АЗС имеет исторические выдачи и не удалена. Она переведена в неактивный статус.', 'warning')
         return redirect(url_for('fuel.stations'))
-    _audit_fuel(
-        'fuel_station_deleted',
-        entity_type='fuel_station',
-        entity_id=st.id,
-        entity_label=label,
-        before=before,
-        description='Fuel station deleted',
-    )
+
     db.session.delete(st)
     db.session.commit()
-    flash(fuel_t('АЗС ўчирилди', 'АЗС удалена'), 'warning')
+    flash('АЗС удалена', 'warning')
     return redirect(url_for('fuel.stations'))
 
 
@@ -1977,14 +1979,13 @@ def _perform_fuel_sync():
     dup_count = 0
     unknown_count = 0
     errors = []
-
-    # Предзагружаем маппинг topaz_id → station
-    station_map = {s.topaz_id: s for s in FuelStation2.query.filter_by(is_active=True).all()}
+    # Station is resolved per transaction by Topaz ID and transaction datetime.
 
     for txn in transactions:
         try:
             col_id = int(txn.get('topaz_col_id') or 0)
-            station = station_map.get(col_id)
+            txn_dt = parse_topaz_txn_datetime(txn.get('txn_datetime', ''))
+            station = resolve_fuel_station_for_topaz(col_id, txn_dt)
 
             if not station:
                 unknown_count += 1

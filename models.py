@@ -422,8 +422,12 @@ class FuelStation2(db.Model):
     name         = db.Column(db.String(200), nullable=False)
     topaz_id     = db.Column(db.Integer, unique=True, nullable=False)
     warehouse_id = db.Column(db.Integer, db.ForeignKey('fuel_warehouses.id'), nullable=False)
-    is_active    = db.Column(db.Boolean, default=True)
-    created_at   = db.Column(db.DateTime, default=datetime.utcnow)
+    is_active         = db.Column(db.Boolean, default=True)
+    valid_from        = db.Column(db.Date, nullable=True)
+    valid_to          = db.Column(db.Date, nullable=True)
+    replacement_of_id = db.Column(db.Integer, nullable=True)
+    notes             = db.Column(db.Text, default='')
+    created_at        = db.Column(db.DateTime, default=datetime.utcnow)
 
     transactions = db.relationship('FuelTransaction2', backref='station',
                                    cascade='all, delete-orphan', lazy='dynamic')
