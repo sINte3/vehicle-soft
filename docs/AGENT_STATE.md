@@ -3009,3 +3009,35 @@ Conclusion:
 - The real Topaz agent is working through the canonical `/fuel/api/fuel_sync` endpoint.
 - The legacy `/api/fuel_sync` alias has been removed safely.
 - API-FUEL-LEGACY-002 is closed.
+
+---
+
+## Runtime state update - OPS-PY-CRASH-001 closed
+
+Date: 2026-06-20
+
+Vehicle Soft services now run with Python user-site isolation enabled via python -s.
+
+Current service command lines:
+
+- Production Flask: python.exe -s run_server.py
+- Production BOT002: python.exe -s bot.py
+- Production BOT003 worker: python.exe -s bot003_outbox_worker.py --interval 30 --batch-size 20
+- Staging Flask: python.exe -s run_server.py
+- Staging BOT002: python.exe -s bot.py
+- Staging BOT003 worker: python.exe -s bot003_outbox_worker.py --interval 30 --batch-size 20
+
+Validation:
+
+- OPS-PY-CRASH-013 PASS
+- all six services RUNNING
+- production/staging HTTP checks passed
+- no post-10:09 Vehicle Soft crash/restart evidence
+- no DB changes
+- no code changes
+- no token rotation
+
+Config backups:
+
+- Staging: D:\transport-report-backups\staging\service_config\ops_py_crash_009_nssm_before_20260620_100240.txt
+- Production: D:\transport-report-backups\production\service_config\ops_py_crash_012_nssm_before_20260620_100709.txt

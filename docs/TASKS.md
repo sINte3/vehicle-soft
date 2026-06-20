@@ -3133,3 +3133,29 @@ Conclusion:
 - The real Topaz agent is working through the canonical `/fuel/api/fuel_sync` endpoint.
 - The legacy `/api/fuel_sync` alias has been removed safely.
 - API-FUEL-LEGACY-002 is closed.
+
+---
+
+## OPS-PY-CRASH-001 - CLOSED
+
+Status: CLOSED
+Closed: 2026-06-20
+Type: operational runtime isolation
+
+Summary:
+
+- Investigated repeated python.exe / MSVCP140.dll / 0xc0000005 crash events.
+- Determined that Vehicle Soft Python services could see user-site packages under C:\Users\umid\AppData\Roaming\Python\Python314\site-packages.
+- Verified Vehicle Soft compatibility with python -s.
+- Applied python -s to staging NSSM services first.
+- Validated staging health.
+- Applied python -s to production NSSM services.
+- Validated production and staging health.
+- No Telegram token rotation was performed by decision.
+- No code changes.
+- No DB changes.
+- No rollback required.
+
+Release record:
+
+- docs/release_ops_py_crash_001_python_s_runtime_isolation_20260620.md
