@@ -1929,6 +1929,26 @@ def save_station():
     return redirect(url_for('fuel.stations'))
 
 
+
+@fuel_bp.route('/stations/enable/<int:sid>', methods=['POST'])
+@admin_required_fuel
+def enable_station(sid):
+    st = FuelStation2.query.get_or_404(sid)
+
+    if st.is_active:
+        flash('АЗС уже активна', 'info')
+        return redirect(url_for('fuel.stations'))
+
+    if st.valid_to:
+        flash('АЗС не включена автоматически: задана дата окончания действия. Для исторической или заменённой АЗС измените даты вручную.', 'warning')
+        return redirect(url_for('fuel.stations'))
+
+    st.is_active = True
+    db.session.commit()
+    flash('АЗС включена', 'success')
+    return redirect(url_for('fuel.stations'))
+
+
 @fuel_bp.route('/stations/delete/<int:sid>', methods=['POST'])
 @admin_required_fuel
 def delete_station(sid):
