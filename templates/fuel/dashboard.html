@@ -30,9 +30,16 @@
 
 
 
-{# FUEL-REPORT-011A-DASHBOARD-LINK #}
-<div style="margin-bottom:12px;">
-    <a href="{{ url_for('fuel.balance_report') }}" class="btn btn-primary btn-sm">Отчёт остатков топлива</a>
+
+{# FUEL-REPORT-011A-v2-DASHBOARD-LINK #}
+<div class="card" style="margin-bottom:16px; padding:14px 16px; display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap; border:1px solid #bfdbfe; background:#eff6ff;">
+    <div>
+        <strong>Отчёт остатков топлива</strong>
+        <div class="text-muted text-sm" style="margin-top:3px;">
+            Периодический отчёт по 22 рабочим складам: остаток на начало, приход, расход Topaz и текущий остаток.
+        </div>
+    </div>
+    <a href="{{ url_for('fuel.balance_report') }}" class="btn btn-primary">Открыть отчёт</a>
 </div>
 
 {% set L_title = 'Остатки топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари' %}
