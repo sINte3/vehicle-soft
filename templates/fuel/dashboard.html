@@ -2,6 +2,33 @@
 {% block title %}АЗС — {{ 'Остатки топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари' }}{% endblock %}
 {% block content %}
 
+{# FUEL-HIERARCHY-010B: explicit working-vs-archive warehouse mode #}
+{% set show_legacy = request.args.get('show_legacy') == '1' %}
+
+{% if show_legacy %}
+<div class="card" style="margin-bottom:16px; border:1px solid #f59e0b; background:#fffbeb;">
+    <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; padding:12px 16px;">
+        <div>
+            <strong style="color:#92400e;">Архивный режим складов включён.</strong>
+            <div class="text-muted text-sm" style="margin-top:3px;">
+                <strong>Режим: 29 складов, включая архивные.</strong> Сейчас показаны рабочие и старые/архивные склады. Для текущей иерархии используйте режим 22 рабочих складов.
+            </div>
+        </div>
+        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">Вернуться к 22 рабочим складам</a>
+    </div>
+</div>
+{% else %}
+{% if current_user.is_admin %}
+<div class="text-muted text-sm" style="margin-bottom:10px;">
+    <strong>Режим: 22 рабочих склада.</strong> Показаны только рабочие склады новой иерархии.
+    <a href="{{ url_for('fuel.dashboard', show_legacy=1) }}">Показать архивные склады</a>
+</div>
+{% endif %}
+{% endif %}
+
+
+
+
 {% set L_title = 'Остатки топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари' %}
 {% set L_subtitle = 'Внутренний учёт ДТ по складам, АЗС, приходам и выдачам из Topaz.' if lang == 'ru' else 'Омборлар, АЗС, киримлар ва Topaz беришлари бўйича ДТ ички ҳисоби.' %}
 {% set L_dt_rule = 'Топливо учитывается только как ДТ. Цены и суммы в модуле не используются.' if lang == 'ru' else 'Ёқилғи фақат ДТ сифатида ҳисобга олинади. Модулда нарх ва сумма ишлатилмайди.' %}
@@ -15,7 +42,15 @@
 {% set L_today = 'Выдано сегодня' if lang == 'ru' else 'Бугун берилди' %}
 {% set L_warehouse_count = 'Складов' if lang == 'ru' else 'Омборлар сони' %}
 {% set L_active_stations = 'Активных АЗС' if lang == 'ru' else 'Фаол АЗС' %}
-{% set L_balances = 'Остатки по складам' if lang == 'ru' else 'Омборлар бўйича қолдиқлар' %}
+{% if lang == 'ru' %}
+    {% if show_legacy %}
+        {% set L_balances = 'По складам (' ~ balance_rows|length ~ ', включая архивные)' %}
+    {% else %}
+        {% set L_balances = 'По складам (' ~ balance_rows|length ~ ' рабочих)' %}
+    {% endif %}
+{% else %}
+    {% set L_balances = 'Омборлар бўйича қолдиқлар' %}
+{% endif %}
 {% set L_wh = 'Склад' if lang == 'ru' else 'Омбор' %}
 {% set L_fuel = 'Топливо' if lang == 'ru' else 'Ёқилғи' %}
 {% set L_balance = 'Остаток, л' if lang == 'ru' else 'Қолдиқ, л' %}
