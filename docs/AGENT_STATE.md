@@ -3041,3 +3041,27 @@ Config backups:
 
 - Staging: D:\transport-report-backups\staging\service_config\ops_py_crash_009_nssm_before_20260620_100240.txt
 - Production: D:\transport-report-backups\production\service_config\ops_py_crash_012_nssm_before_20260620_100709.txt
+
+## 2026-06-22 — FUEL-REPORT-011 completed
+
+Fuel balance report was completed and deployed to production.
+Final application commit: c5f898b add manual fuel expenses to balance report
+
+Completed:
+- fuel balance report page
+- Excel export
+- dashboard link
+- manual expense support
+- May manual expense for Варахшо чул: 2614.00 l
+- June 01-18 Topaz CSV backfill for 934451, 895101, 935491
+- production QA for May 2026 and June 01-18, 2026
+
+Validated production totals:
+- May 2026: opening 67472.00, receipts 257233.00, expenses 206418.22, closing 118286.78
+- June 01-18: opening 118286.78, receipts 107426.00, expenses 166236.06, closing 59476.72
+
+Operational rule:
+- Topaz + 1C are the source of truth for fuel expense reconciliation.
+- Manual Excel values are not accepted if they conflict with Topaz/1C.
+
+Release document: docs/RELEASE_FUEL_REPORT_011_BALANCE_REPORT_20260622.md

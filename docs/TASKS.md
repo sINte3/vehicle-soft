@@ -3159,3 +3159,8 @@ Summary:
 Release record:
 
 - docs/release_ops_py_crash_001_python_s_runtime_isolation_20260620.md
+
+## Completed — 2026-06-22
+
+- FUEL-REPORT-011: fuel balance report, Excel export, manual expenses, May manual expense correction, June Topaz CSV backfill, production QA.
+- See: docs/RELEASE_FUEL_REPORT_011_BALANCE_REPORT_20260622.md
