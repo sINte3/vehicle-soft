@@ -16,6 +16,7 @@ from flask_login import login_required, current_user
 from datetime import datetime, date, timedelta
 import hashlib
 from io import BytesIO
+from sqlalchemy import text
 from sqlalchemy import func, and_, or_
 from sqlalchemy.orm import joinedload
 from types import SimpleNamespace
@@ -2233,6 +2234,69 @@ def _fuel_report_sum_transactions(warehouse_id, fuel_type, dt_from=None, dt_to_e
     return float(q.scalar() or 0)
 
 
+
+
+# ─── FUEL-REPORT-011G: manual fuel expenses included in balance report ──
+
+def _fuel_report_sum_manual_expenses(warehouse_id, fuel_type, date_from=None, date_to=None):
+    conditions = [
+        "warehouse_id = :warehouse_id",
+        "fuel_type = :fuel_type",
+        "coalesce(is_deleted, 0) = 0",
+    ]
+    params = {
+        "warehouse_id": warehouse_id,
+        "fuel_type": fuel_type,
+    }
+
+    if date_from is not None:
+        conditions.append("expense_date >= :date_from")
+        params["date_from"] = date_from.isoformat() if hasattr(date_from, "isoformat") else str(date_from)
+
+    if date_to is not None:
+        conditions.append("expense_date <= :date_to")
+        params["date_to"] = date_to.isoformat() if hasattr(date_to, "isoformat") else str(date_to)
+
+    sql = "select coalesce(sum(quantity), 0) from fuel_manual_expenses where " + " and ".join(conditions)
+
+    try:
+        value = db.session.execute(text(sql), params).scalar()
+        return float(value or 0)
+    except Exception:
+        db.session.rollback()
+        return 0.0
+
+
+def _fuel_report_daily_manual_expenses(warehouse_id, fuel_type, start_date, end_date):
+    params = {
+        "warehouse_id": warehouse_id,
+        "fuel_type": fuel_type,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+    }
+
+    try:
+        rows = db.session.execute(
+            text("""
+                select expense_date, coalesce(sum(quantity), 0) as quantity
+                from fuel_manual_expenses
+                where warehouse_id = :warehouse_id
+                  and fuel_type = :fuel_type
+                  and coalesce(is_deleted, 0) = 0
+                  and expense_date >= :start_date
+                  and expense_date <= :end_date
+                group by expense_date
+                order by expense_date
+            """),
+            params,
+        ).fetchall()
+    except Exception:
+        db.session.rollback()
+        return {}
+
+    return {str(row[0]): float(row[1] or 0) for row in rows}
+
+
 def _fuel_report_daily_receipts(warehouse_id, fuel_type, start_date, end_date):
     rows = (
         db.session.query(
@@ -2333,7 +2397,13 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
                     dt_from=datetime.combine(initial_date, datetime.min.time()),
                     dt_to_exclusive=start_dt,
                 )
-                opening = initial_qty + before_receipts - before_expenses
+                before_manual_expenses = _fuel_report_sum_manual_expenses(
+                    wh.id,
+                    fuel_type,
+                    date_from=initial_date,
+                    date_to=start_date - timedelta(days=1),
+                )
+                opening = initial_qty + before_receipts - before_expenses - before_manual_expenses
             elif initial_date and initial_date > start_date:
                 opening = 0.0
             else:
@@ -2346,24 +2416,32 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
             date_to=end_date,
         )
 
-        period_expenses = _fuel_report_sum_transactions(
+        period_topaz_expenses = _fuel_report_sum_transactions(
             wh.id,
             fuel_type,
             dt_from=start_dt,
             dt_to_exclusive=end_dt_exclusive,
         )
+        period_manual_expenses = _fuel_report_sum_manual_expenses(
+            wh.id,
+            fuel_type,
+            date_from=start_date,
+            date_to=end_date,
+        )
+        period_expenses = period_topaz_expenses + period_manual_expenses
 
         closing = opening + period_receipts - period_expenses
 
         daily_receipts = _fuel_report_daily_receipts(wh.id, fuel_type, start_date, end_date)
         daily_expenses = _fuel_report_daily_expenses(wh.id, fuel_type, start_date, end_date)
+        daily_manual_expenses = _fuel_report_daily_manual_expenses(wh.id, fuel_type, start_date, end_date)
 
         daily = {}
         for item in date_items:
             key = item["key"]
             daily[key] = {
                 "receipts": round(daily_receipts.get(key, 0.0), 2),
-                "expenses": round(daily_expenses.get(key, 0.0), 2),
+                "expenses": round(daily_expenses.get(key, 0.0) + daily_manual_expenses.get(key, 0.0), 2),
             }
 
         if not show_zero:

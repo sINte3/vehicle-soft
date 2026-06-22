@@ -6,7 +6,7 @@
     <div>
         <h1>Отчёт остатков топлива</h1>
         <p class="text-muted">
-            Остаток на начало периода + приход - расход Topaz = текущий остаток.
+            Остаток на начало периода + приход - расход Topaz/ручной расход = текущий остаток.
             В отчёте используются только 22 рабочих склада новой иерархии.
         </p>
     </div>
@@ -67,7 +67,7 @@
         <div style="font-size:22px; font-weight:700; margin-top:6px;">{{ "%.2f"|format(totals.receipts) }} л</div>
     </div>
     <div class="card" style="padding:16px;">
-        <div class="text-muted">Расход Topaz</div>
+        <div class="text-muted">Расход Topaz + ручной</div>
         <div style="font-size:22px; font-weight:700; margin-top:6px;">{{ "%.2f"|format(totals.expenses) }} л</div>
     </div>
     <div class="card" style="padding:16px;">
@@ -83,7 +83,7 @@
         <div>
             <h2 style="margin:0;">ФАКТ: {{ start_date.strftime('%d.%m.%Y') }} — {{ end_date.strftime('%d.%m.%Y') }}</h2>
             <div class="text-muted" style="margin-top:4px;">
-                Формат близок к Excel-образцу: организация, склад, остаток, приход, расход и дневная детализация.
+                Формат близок к Excel-образцу: организация, склад, остаток, приход, расход и дневная детализация. Ручные расходы учитываются в общей колонке «Расход».
             </div>
         </div>
         <div class="text-muted">Складов: {{ rows|length }}</div>
