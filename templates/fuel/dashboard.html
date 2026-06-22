@@ -29,6 +29,12 @@
 
 
 
+
+{# FUEL-REPORT-011A-DASHBOARD-LINK #}
+<div style="margin-bottom:12px;">
+    <a href="{{ url_for('fuel.balance_report') }}" class="btn btn-primary btn-sm">Отчёт остатков топлива</a>
+</div>
+
 {% set L_title = 'Остатки топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари' %}
 {% set L_subtitle = 'Внутренний учёт ДТ по складам, АЗС, приходам и выдачам из Topaz.' if lang == 'ru' else 'Омборлар, АЗС, киримлар ва Topaz беришлари бўйича ДТ ички ҳисоби.' %}
 {% set L_dt_rule = 'Топливо учитывается только как ДТ. Цены и суммы в модуле не используются.' if lang == 'ru' else 'Ёқилғи фақат ДТ сифатида ҳисобга олинади. Модулда нарх ва сумма ишлатилмайди.' %}

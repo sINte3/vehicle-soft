@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Отчёт остатков топлива{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Отчёт остатков топлива</h1>
+        <p class="text-muted">
+            Сверка начального остатка, приходов, выдач Topaz и текущего остатка по рабочей иерархии складов.
+        </p>
+    </div>
+    <div>
+        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">Назад к АЗС</a>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:16px;">
+    <form method="get" action="{{ url_for('fuel.balance_report') }}" style="display:flex; flex-wrap:wrap; gap:12px; align-items:end;">
+        <div>
+            <label>Дата с</label>
+            <input type="date" name="start_date" value="{{ start_date.isoformat() }}" class="form-control">
+        </div>
+        <div>
+            <label>Дата по</label>
+            <input type="date" name="end_date" value="{{ end_date.isoformat() }}" class="form-control">
+        </div>
+        <div>
+            <label style="display:block;">Нулевые склады</label>
+            <label class="text-muted">
+                <input type="checkbox" name="hide_zero" value="1" {% if not show_zero %}checked{% endif %}>
+                скрыть нулевые
+            </label>
+        </div>
+        <div>
+            <button type="submit" class="btn btn-primary">Построить отчёт</button>
+            <a class="btn btn-secondary"
+               href="{{ url_for('fuel.balance_report_export', start_date=start_date.isoformat(), end_date=end_date.isoformat(), hide_zero='0' if show_zero else '1') }}">
+                Скачать Excel
+            </a>
+        </div>
+    </form>
+</div>
+
+<div class="grid grid-4" style="margin-bottom:16px;">
+    <div class="card">
+        <div class="text-muted">Остаток на начало</div>
+        <h3>{{ "%.2f"|format(totals.opening) }} л</h3>
+    </div>
+    <div class="card">
+        <div class="text-muted">Приход за период</div>
+        <h3>{{ "%.2f"|format(totals.receipts) }} л</h3>
+    </div>
+    <div class="card">
+        <div class="text-muted">Расход Topaz</div>
+        <h3>{{ "%.2f"|format(totals.expenses) }} л</h3>
+    </div>
+    <div class="card">
+        <div class="text-muted">Текущий остаток</div>
+        <h3>{{ "%.2f"|format(totals.closing) }} л</h3>
+    </div>
+</div>
+
+<div class="card">
+    <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:12px;">
+        <h2 style="margin:0;">ФАКТ: {{ start_date.strftime('%d.%m.%Y') }} — {{ end_date.strftime('%d.%m.%Y') }}</h2>
+        <span class="text-muted">Складов: {{ rows|length }}</span>
+    </div>
+
+    <div style="overflow:auto;">
+        <table class="table table-sm table-striped" style="min-width:1200px; white-space:nowrap;">
+            <thead>
+                <tr>
+                    <th rowspan="2">№</th>
+                    <th rowspan="2">Организация</th>
+                    <th rowspan="2">Склад</th>
+                    <th rowspan="2">Остаток на {{ start_date.strftime('%d/%m/%Y') }}</th>
+                    <th rowspan="2">Приход</th>
+                    <th rowspan="2">Расход</th>
+                    <th rowspan="2">Текущий остаток</th>
+                    {% for item in date_items %}
+                    <th colspan="2" class="text-center">{{ item.label }}</th>
+                    {% endfor %}
+                </tr>
+                <tr>
+                    {% for item in date_items %}
+                    <th>Приход</th>
+                    <th>Расход</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr {% if row.closing < 0 %}style="background:#fff1f2;"{% endif %}>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ row.organization }}</td>
+                    <td>{{ row.warehouse }}</td>
+                    <td class="text-right">{{ "%.2f"|format(row.opening) }}</td>
+                    <td class="text-right">{{ "%.2f"|format(row.receipts) }}</td>
+                    <td class="text-right">{{ "%.2f"|format(row.expenses) }}</td>
+                    <td class="text-right"><strong>{{ "%.2f"|format(row.closing) }}</strong></td>
+                    {% for item in date_items %}
+                    {% set daily = row.daily[item.key] %}
+                    <td class="text-right">{% if daily.receipts %}{{ "%.2f"|format(daily.receipts) }}{% endif %}</td>
+                    <td class="text-right">{% if daily.expenses %}{{ "%.2f"|format(daily.expenses) }}{% endif %}</td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr>
+                    <th colspan="3">ИТОГО</th>
+                    <th class="text-right">{{ "%.2f"|format(totals.opening) }}</th>
+                    <th class="text-right">{{ "%.2f"|format(totals.receipts) }}</th>
+                    <th class="text-right">{{ "%.2f"|format(totals.expenses) }}</th>
+                    <th class="text-right">{{ "%.2f"|format(totals.closing) }}</th>
+                    {% for item in date_items %}
+                    <th></th>
+                    <th></th>
+                    {% endfor %}
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+{% endblock %}

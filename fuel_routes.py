@@ -2183,3 +2183,401 @@ def _perform_fuel_sync():
 @fuel_bp.route('/api/fuel_sync', methods=['POST'])
 def api_fuel_sync():
     return _perform_fuel_sync()
+
+
+# ─── FUEL-REPORT-011A: Fuel balance period report ─────────────────────
+
+def _fuel_report_parse_date(value, default_value):
+    if not value:
+        return default_value
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except Exception:
+        return default_value
+
+
+def _fuel_report_date_items(start_date, end_date):
+    days = []
+    cur = start_date
+    while cur <= end_date:
+        days.append({
+            "date": cur,
+            "key": cur.isoformat(),
+            "label": cur.strftime("%d.%m"),
+        })
+        cur = cur + timedelta(days=1)
+    return days
+
+
+def _fuel_report_sum_receipts(warehouse_id, fuel_type, date_from=None, date_to=None):
+    q = db.session.query(func.coalesce(func.sum(FuelReceipt2.quantity), 0)).filter(
+        FuelReceipt2.warehouse_id == warehouse_id,
+        FuelReceipt2.fuel_type == fuel_type,
+    )
+    if date_from:
+        q = q.filter(FuelReceipt2.receipt_date >= date_from)
+    if date_to:
+        q = q.filter(FuelReceipt2.receipt_date <= date_to)
+    return float(q.scalar() or 0)
+
+
+def _fuel_report_sum_transactions(warehouse_id, fuel_type, dt_from=None, dt_to_exclusive=None):
+    q = db.session.query(func.coalesce(func.sum(FuelTransaction2.quantity), 0)).join(FuelStation2).filter(
+        FuelStation2.warehouse_id == warehouse_id,
+        FuelTransaction2.fuel_type == fuel_type,
+    )
+    if dt_from:
+        q = q.filter(FuelTransaction2.txn_datetime >= dt_from)
+    if dt_to_exclusive:
+        q = q.filter(FuelTransaction2.txn_datetime < dt_to_exclusive)
+    return float(q.scalar() or 0)
+
+
+def _fuel_report_daily_receipts(warehouse_id, fuel_type, start_date, end_date):
+    rows = (
+        db.session.query(
+            FuelReceipt2.receipt_date,
+            func.coalesce(func.sum(FuelReceipt2.quantity), 0),
+        )
+        .filter(
+            FuelReceipt2.warehouse_id == warehouse_id,
+            FuelReceipt2.fuel_type == fuel_type,
+            FuelReceipt2.receipt_date >= start_date,
+            FuelReceipt2.receipt_date <= end_date,
+        )
+        .group_by(FuelReceipt2.receipt_date)
+        .all()
+    )
+    return {
+        d.isoformat(): float(qty or 0)
+        for d, qty in rows
+        if d is not None
+    }
+
+
+def _fuel_report_daily_expenses(warehouse_id, fuel_type, start_date, end_date):
+    start_dt = datetime.combine(start_date, datetime.min.time())
+    end_dt = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+
+    rows = (
+        db.session.query(
+            func.date(FuelTransaction2.txn_datetime),
+            func.coalesce(func.sum(FuelTransaction2.quantity), 0),
+        )
+        .join(FuelStation2)
+        .filter(
+            FuelStation2.warehouse_id == warehouse_id,
+            FuelTransaction2.fuel_type == fuel_type,
+            FuelTransaction2.txn_datetime >= start_dt,
+            FuelTransaction2.txn_datetime < end_dt,
+        )
+        .group_by(func.date(FuelTransaction2.txn_datetime))
+        .all()
+    )
+
+    result = {}
+    for d, qty in rows:
+        if d is None:
+            continue
+        result[str(d)] = float(qty or 0)
+    return result
+
+
+def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="ДТ"):
+    date_items = _fuel_report_date_items(start_date, end_date)
+    start_dt = datetime.combine(start_date, datetime.min.time())
+    end_dt_exclusive = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+
+    warehouses = (
+        fuel_warehouse_query_for_ui()
+        .outerjoin(Organization)
+        .order_by(Organization.sort_order, FuelWarehouse.name)
+        .all()
+    )
+
+    rows = []
+
+    totals = {
+        "opening": 0.0,
+        "receipts": 0.0,
+        "expenses": 0.0,
+        "closing": 0.0,
+    }
+
+    for wh in warehouses:
+        initial = (
+            FuelInitialBalance.query
+            .filter_by(warehouse_id=wh.id, fuel_type=fuel_type)
+            .order_by(FuelInitialBalance.balance_date.asc(), FuelInitialBalance.id.asc())
+            .first()
+        )
+
+        opening = 0.0
+        initial_date = None
+        initial_qty = 0.0
+
+        if initial:
+            initial_date = initial.balance_date
+            initial_qty = float(initial.quantity or 0)
+
+            if initial_date and initial_date <= start_date:
+                before_receipts = _fuel_report_sum_receipts(
+                    wh.id,
+                    fuel_type,
+                    date_from=initial_date,
+                    date_to=start_date - timedelta(days=1),
+                )
+                before_expenses = _fuel_report_sum_transactions(
+                    wh.id,
+                    fuel_type,
+                    dt_from=datetime.combine(initial_date, datetime.min.time()),
+                    dt_to_exclusive=start_dt,
+                )
+                opening = initial_qty + before_receipts - before_expenses
+            elif initial_date and initial_date > start_date:
+                opening = 0.0
+            else:
+                opening = initial_qty
+
+        period_receipts = _fuel_report_sum_receipts(
+            wh.id,
+            fuel_type,
+            date_from=start_date,
+            date_to=end_date,
+        )
+
+        period_expenses = _fuel_report_sum_transactions(
+            wh.id,
+            fuel_type,
+            dt_from=start_dt,
+            dt_to_exclusive=end_dt_exclusive,
+        )
+
+        closing = opening + period_receipts - period_expenses
+
+        daily_receipts = _fuel_report_daily_receipts(wh.id, fuel_type, start_date, end_date)
+        daily_expenses = _fuel_report_daily_expenses(wh.id, fuel_type, start_date, end_date)
+
+        daily = {}
+        for item in date_items:
+            key = item["key"]
+            daily[key] = {
+                "receipts": round(daily_receipts.get(key, 0.0), 2),
+                "expenses": round(daily_expenses.get(key, 0.0), 2),
+            }
+
+        if not show_zero:
+            if round(opening, 2) == 0 and round(period_receipts, 2) == 0 and round(period_expenses, 2) == 0 and round(closing, 2) == 0:
+                continue
+
+        row = {
+            "warehouse_id": wh.id,
+            "organization": wh.organization.name if wh.organization else "",
+            "warehouse": wh.name,
+            "fuel_type": fuel_type,
+            "initial_date": initial_date,
+            "opening": round(opening, 2),
+            "receipts": round(period_receipts, 2),
+            "expenses": round(period_expenses, 2),
+            "closing": round(closing, 2),
+            "daily": daily,
+        }
+
+        rows.append(row)
+
+        totals["opening"] += row["opening"]
+        totals["receipts"] += row["receipts"]
+        totals["expenses"] += row["expenses"]
+        totals["closing"] += row["closing"]
+
+    for k in totals:
+        totals[k] = round(totals[k], 2)
+
+    return rows, date_items, totals
+
+
+@fuel_bp.route('/balance-report')
+@login_required
+def balance_report():
+    today = date.today()
+    default_start = today.replace(day=1)
+    default_end = today
+
+    start_date = _fuel_report_parse_date(request.args.get("start_date"), default_start)
+    end_date = _fuel_report_parse_date(request.args.get("end_date"), default_end)
+
+    if end_date < start_date:
+        start_date, end_date = end_date, start_date
+
+    max_days = 120
+    if (end_date - start_date).days + 1 > max_days:
+        flash(f"Период отчёта ограничен {max_days} днями.", "warning")
+        end_date = start_date + timedelta(days=max_days - 1)
+
+    show_zero = request.args.get("hide_zero") != "1"
+
+    rows, date_items, totals = _fuel_report_build_rows(
+        start_date=start_date,
+        end_date=end_date,
+        show_zero=show_zero,
+        fuel_type="ДТ",
+    )
+
+    return render_template(
+        "fuel/balance_report.html",
+        rows=rows,
+        date_items=date_items,
+        totals=totals,
+        start_date=start_date,
+        end_date=end_date,
+        show_zero=show_zero,
+        fuel_type="ДТ",
+    )
+
+
+@fuel_bp.route('/balance-report/export')
+@login_required
+def balance_report_export():
+    from io import BytesIO
+    from flask import send_file
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    today = date.today()
+    default_start = today.replace(day=1)
+    default_end = today
+
+    start_date = _fuel_report_parse_date(request.args.get("start_date"), default_start)
+    end_date = _fuel_report_parse_date(request.args.get("end_date"), default_end)
+
+    if end_date < start_date:
+        start_date, end_date = end_date, start_date
+
+    max_days = 120
+    if (end_date - start_date).days + 1 > max_days:
+        end_date = start_date + timedelta(days=max_days - 1)
+
+    show_zero = request.args.get("hide_zero") != "1"
+
+    rows, date_items, totals = _fuel_report_build_rows(
+        start_date=start_date,
+        end_date=end_date,
+        show_zero=show_zero,
+        fuel_type="ДТ",
+    )
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ФАКТ"
+
+    base_headers = [
+        "№",
+        "Организация",
+        "Склад",
+        f"Остаток на {start_date.strftime('%d/%m/%Y')}",
+        "Приход",
+        "Расход",
+        "Текущий остаток",
+    ]
+
+    max_col = len(base_headers) + len(date_items) * 2
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max_col)
+    ws.cell(row=1, column=1).value = f"Отчёт по остаткам топлива за период {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"
+    ws.cell(row=1, column=1).font = Font(bold=True, size=14)
+    ws.cell(row=1, column=1).alignment = Alignment(horizontal="center")
+
+    for col, title in enumerate(base_headers, start=1):
+        ws.cell(row=3, column=col).value = title
+        ws.merge_cells(start_row=3, start_column=col, end_row=4, end_column=col)
+
+    col = len(base_headers) + 1
+    for item in date_items:
+        ws.merge_cells(start_row=3, start_column=col, end_row=3, end_column=col + 1)
+        ws.cell(row=3, column=col).value = item["date"]
+        ws.cell(row=3, column=col).number_format = "dd.mm.yyyy"
+        ws.cell(row=4, column=col).value = "Приход"
+        ws.cell(row=4, column=col + 1).value = "Расход"
+        col += 2
+
+    data_start_row = 5
+    for idx, row in enumerate(rows, start=1):
+        r = data_start_row + idx - 1
+        ws.cell(row=r, column=1).value = idx
+        ws.cell(row=r, column=2).value = row["organization"]
+        ws.cell(row=r, column=3).value = row["warehouse"]
+        ws.cell(row=r, column=4).value = row["opening"]
+        ws.cell(row=r, column=5).value = row["receipts"]
+        ws.cell(row=r, column=6).value = row["expenses"]
+        ws.cell(row=r, column=7).value = row["closing"]
+
+        col = 8
+        for item in date_items:
+            daily = row["daily"][item["key"]]
+            ws.cell(row=r, column=col).value = daily["receipts"] if daily["receipts"] else None
+            ws.cell(row=r, column=col + 1).value = daily["expenses"] if daily["expenses"] else None
+            col += 2
+
+    total_row = data_start_row + len(rows)
+    ws.cell(row=total_row, column=2).value = "ИТОГО"
+    ws.cell(row=total_row, column=4).value = totals["opening"]
+    ws.cell(row=total_row, column=5).value = totals["receipts"]
+    ws.cell(row=total_row, column=6).value = totals["expenses"]
+    ws.cell(row=total_row, column=7).value = totals["closing"]
+
+    thin = Side(style="thin", color="D1D5DB")
+    header_fill = PatternFill("solid", fgColor="E5E7EB")
+    total_fill = PatternFill("solid", fgColor="FEF3C7")
+
+    for row_cells in ws.iter_rows(min_row=3, max_row=4, min_col=1, max_col=max_col):
+        for cell in row_cells:
+            cell.font = Font(bold=True)
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    for row_cells in ws.iter_rows(min_row=5, max_row=total_row, min_col=1, max_col=max_col):
+        for cell in row_cells:
+            cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+
+    for cell in ws[total_row]:
+        cell.font = Font(bold=True)
+        cell.fill = total_fill
+
+    for col_idx in range(4, max_col + 1):
+        for row_idx in range(5, total_row + 1):
+            ws.cell(row=row_idx, column=col_idx).number_format = '#,##0.00'
+
+    widths = {
+        1: 5,
+        2: 28,
+        3: 24,
+        4: 16,
+        5: 14,
+        6: 14,
+        7: 16,
+    }
+    for col_idx, width in widths.items():
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    for col_idx in range(8, max_col + 1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = 11
+
+    ws.freeze_panes = "H5"
+    ws.auto_filter.ref = f"A4:{get_column_letter(max_col)}{total_row}"
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    filename = f"fuel_balance_report_{start_date.isoformat()}_{end_date.isoformat()}.xlsx"
+
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
