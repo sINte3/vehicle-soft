@@ -1,4 +1,4 @@
-"""
+﻿"""
 fuel_routes.py — АЗС модуль v2
 Flask Blueprint: /fuel/* и /api/fuel_*
 
@@ -197,6 +197,265 @@ def _audit_fuel(action, entity_type='', entity_id=None, entity_label='', before=
 # reads FUEL_API_TOKEN from the environment. If not configured, all sync requests
 # are rejected (deny-all safe default). See docs/DEPLOYMENT_SECURITY.md.
 FUEL_TYPES = ['ДТ']
+
+
+# ─── FUEL-REPORT-012B/012C: Fuel reports center + station issues ──────
+
+
+def _fuel_stations_active():
+    """Return active fuel stations sorted by name, ordered by name and topaz_id."""
+    return (FuelStation2.query
+            .filter(FuelStation2.is_active.is_(True))
+            .order_by(FuelStation2.name, FuelStation2.topaz_id)
+            .all())
+
+
+def _fuel_station_issues_query(station_id, start_date, end_date):
+    """Return station issue transactions for given station and period.
+    Respects station validity dates when present."""
+    q = (FuelTransaction2.query
+         .options(joinedload(FuelTransaction2.station))
+         .filter(FuelTransaction2.station_id == station_id,
+                 FuelTransaction2.txn_datetime >= datetime.combine(start_date, datetime.min.time()),
+                 FuelTransaction2.txn_datetime <= datetime.combine(end_date, datetime.max.time()))
+         .order_by(FuelTransaction2.txn_datetime, FuelTransaction2.id))
+
+    # [REASON]: Filter by station validity dates per business rule 5:
+    # valid_from <= transaction date when valid_from is not null
+    # valid_to >= transaction date when valid_to is not null
+    station = FuelStation2.query.get(station_id)
+    if station:
+        if station.valid_from:
+            q = q.filter(FuelTransaction2.txn_datetime >=
+                         datetime.combine(station.valid_from, datetime.min.time()))
+        if station.valid_to:
+            q = q.filter(FuelTransaction2.txn_datetime <=
+                         datetime.combine(station.valid_to, datetime.max.time()))
+
+    return q.all()
+
+
+def _fuel_station_issue_summary(txns):
+    """Return summary dict from a list of station issue transactions."""
+    return {
+        'count': len(txns),
+        'total_liters': round(sum(t.quantity or 0 for t in txns), 2),
+    }
+
+
+def _fuel_station_issues_workbook(txns, station_name, topaz_id, start_date, end_date):
+    """Build Excel workbook for station issues with outline grouping by date."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Выдача АЗС"
+
+    # Title
+    ws.merge_cells('A1:E1')
+    ws.cell(row=1, column=1).value = f"Выдача топлива по АЗС: {station_name} (Topaz {topaz_id})"
+    ws.cell(row=1, column=1).font = Font(bold=True, size=14)
+    ws.cell(row=1, column=1).alignment = Alignment(horizontal="center")
+
+    # Period info
+    ws.merge_cells('A2:E2')
+    ws.cell(row=2, column=1).value = f"Период: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"
+    ws.cell(row=2, column=1).font = Font(size=11, color='666666')
+    ws.cell(row=2, column=1).alignment = Alignment(horizontal="center")
+
+    # Headers
+    headers = ['№', 'Дата/время', 'АЗС', 'Topaz ID', 'Литры']
+    header_row = 4
+    for col, title in enumerate(headers, start=1):
+        ws.cell(row=header_row, column=col).value = title
+
+    header_fill = PatternFill('solid', fgColor='D9EAD3')
+    header_font = Font(bold=True)
+    thin = Side(style='thin', color='D1D5DB')
+    for col in range(1, len(headers) + 1):
+        cell = ws.cell(row=header_row, column=col)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    # Outline: 0=date header, 1=transaction row
+    ws.sheet_properties.outlinePr.summaryBelow = True
+
+    grouped = {}
+    for txn in txns:
+        date_key = txn.txn_datetime.strftime('%Y-%m-%d') if txn.txn_datetime else 'unknown'
+        grouped.setdefault(date_key, []).append(txn)
+
+    row_idx = 0
+    for date_key in sorted(grouped.keys()):
+        day_txns = grouped[date_key]
+        date_display = datetime.strptime(date_key, '%Y-%m-%d').strftime('%d.%m.%Y')
+        subtotal = round(sum(t.quantity or 0 for t in day_txns), 2)
+
+        # Date header row (outline level 0)
+        r = header_row + 1 + row_idx
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
+        ws.cell(row=r, column=1).value = f"{date_display}  —  {len(day_txns)} выдач, всего {subtotal:.2f} л"
+        ws.cell(row=r, column=1).font = Font(bold=True, size=11, color='1A6B3C')
+        ws.cell(row=r, column=1).fill = PatternFill('solid', fgColor='F0F9F0')
+        for c in range(1, 6):
+            ws.cell(row=r, column=c).border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        row_idx += 1
+
+        for seq, txn in enumerate(day_txns, start=1):
+            r = header_row + 1 + row_idx
+            ws.row_dimensions[r].outlineLevel = 1
+            st_name = txn.station.name if txn.station else station_name
+            ws.cell(row=r, column=1).value = seq
+            ws.cell(row=r, column=2).value = txn.txn_datetime.strftime('%d.%m.%Y %H:%M') if txn.txn_datetime else ''
+            ws.cell(row=r, column=3).value = st_name
+            ws.cell(row=r, column=4).value = topaz_id
+            ws.cell(row=r, column=5).value = round(txn.quantity or 0, 2)
+            ws.cell(row=r, column=5).number_format = '#,##0.00'
+            for c in range(1, 6):
+                ws.cell(row=r, column=c).border = Border(left=thin, right=thin, top=thin, bottom=thin)
+                ws.cell(row=r, column=c).alignment = Alignment(vertical='center', wrap_text=True)
+            row_idx += 1
+
+        # Subtotal row
+        r = header_row + 1 + row_idx
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=4)
+        ws.cell(row=r, column=1).value = f"Итого за {date_display}"
+        ws.cell(row=r, column=1).font = Font(bold=True, italic=True)
+        ws.cell(row=r, column=1).alignment = Alignment(horizontal='right')
+        ws.cell(row=r, column=5).value = subtotal
+        ws.cell(row=r, column=5).number_format = '#,##0.00'
+        ws.cell(row=r, column=5).font = Font(bold=True)
+        for c in range(1, 6):
+            ws.cell(row=r, column=c).border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        row_idx += 1
+
+    # Grand total row
+    grand_total = round(sum(t.quantity or 0 for t in txns), 2)
+    r = header_row + 1 + row_idx
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=4)
+    ws.cell(row=r, column=1).value = "ВСЕГО"
+    ws.cell(row=r, column=1).font = Font(bold=True, size=12)
+    ws.cell(row=r, column=1).alignment = Alignment(horizontal='right')
+    ws.cell(row=r, column=5).value = grand_total
+    ws.cell(row=r, column=5).number_format = '#,##0.00'
+    ws.cell(row=r, column=5).font = Font(bold=True, size=12)
+    total_fill = PatternFill('solid', fgColor='FEF3C7')
+    for c in range(1, 6):
+        ws.cell(row=r, column=c).fill = total_fill
+        ws.cell(row=r, column=c).border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    # Column widths
+    col_widths = {1: 5, 2: 18, 3: 22, 4: 12, 5: 12}
+    for col_n, width in col_widths.items():
+        ws.column_dimensions[get_column_letter(col_n)].width = width
+
+    # Freeze panes and auto filter
+    ws.freeze_panes = 'A5'
+    ws.auto_filter.ref = f'A4:E{r}'
+
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+
+    return wb
+
+
+@fuel_bp.route('/reports')
+@module_required('fuel')
+def reports_center():
+    """FUEL-REPORT-012B: Fuel reports center page."""
+    return render_template('fuel/reports.html')
+
+
+@fuel_bp.route('/reports/station-issues')
+@module_required('fuel')
+def station_issues_report():
+    """FUEL-REPORT-012C: Station issue detail report."""
+    today = date.today()
+    default_start = today.replace(day=1)
+    default_end = today
+
+    start_date = _fuel_report_parse_date(request.args.get('start_date'), default_start)
+    end_date = _fuel_report_parse_date(request.args.get('end_date'), default_end)
+    if end_date < start_date:
+        start_date, end_date = end_date, start_date
+
+    station_id = request.args.get('station_id', type=int)
+    stations = _fuel_stations_active()
+
+    txns = []
+    station_name = ''
+    topaz_id = ''
+    summary = {'count': 0, 'total_liters': 0.0}
+
+    if station_id:
+        selected = FuelStation2.query.get(station_id)
+        if selected:
+            station_name = selected.name
+            topaz_id = selected.topaz_id
+            txns = _fuel_station_issues_query(station_id, start_date, end_date)
+            # [REASON]: FUEL-REPORT-012C grouping fix - precompute a safe date string
+            # for each transaction so that Jinja's groupby works without calling
+            # txn_datetime.date() (which fails because method references are not comparable).
+            for txn in txns:
+                if txn.txn_datetime and hasattr(txn.txn_datetime, 'strftime'):
+                    txn.txn_date = txn.txn_datetime.strftime('%Y-%m-%d')
+                else:
+                    txn.txn_date = str(txn.txn_datetime or '')[:10]
+            summary = _fuel_station_issue_summary(txns)
+
+    return render_template('fuel/station_issues_report.html',
+                           stations=stations,
+                           station_id=station_id,
+                           station_name=station_name,
+                           topaz_id=topaz_id,
+                           start_date=start_date,
+                           end_date=end_date,
+                           txns=txns,
+                           summary=summary)
+
+
+@fuel_bp.route('/reports/station-issues/export')
+@module_required('fuel')
+def station_issues_export():
+    """FUEL-REPORT-012C Excel export for station issue detail report."""
+    today = date.today()
+    default_start = today.replace(day=1)
+    default_end = today
+
+    start_date = _fuel_report_parse_date(request.args.get('start_date'), default_start)
+    end_date = _fuel_report_parse_date(request.args.get('end_date'), default_end)
+    if end_date < start_date:
+        start_date, end_date = end_date, start_date
+
+    station_id = request.args.get('station_id', type=int)
+    if not station_id:
+        return 'station_id is required', 400
+
+    station = FuelStation2.query.get(station_id)
+    if not station:
+        return 'Station not found', 404
+
+    txns = _fuel_station_issues_query(station_id, start_date, end_date)
+
+    wb = _fuel_station_issues_workbook(txns, station.name, station.topaz_id, start_date, end_date)
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    fname = f"station_issues_{station.topaz_id}_{start_date.isoformat()}_{end_date.isoformat()}.xlsx"
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=fname,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+
 
 def parse_fuel_station_date(value):
     """Parse YYYY-MM-DD date from fuel station forms."""

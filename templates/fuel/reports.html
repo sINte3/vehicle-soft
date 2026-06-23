@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}АЗС — Центр отчётов{% endblock %}
+{% block content %}
+
+{# FUEL-REPORT-012B: Fuel reports center page #}
+<style>
+.report012b-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+.report012b-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  background: var(--card-bg);
+  overflow: hidden;
+  transition: box-shadow 0.15s;
+}
+.report012b-card:hover {
+  box-shadow: var(--shadow-md);
+}
+.report012b-card-body {
+  padding: 16px 18px;
+}
+.report012b-card-body h3 {
+  margin: 0 0 6px 0;
+  font-size: 15px;
+}
+.report012b-card-body p {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.report012b-card-disabled {
+  opacity: 0.55;
+}
+.report012b-card-disabled:hover {
+  box-shadow: var(--shadow-sm);
+}
+.report012b-badge-coming {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  background: #f3f4f6;
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-top: 4px;
+}
+</style>
+
+<div class="page-header">
+    <h1>Центр отчётов — АЗС</h1>
+    <p class="text-muted" style="margin-top:4px;">Отчёты по топливу, выдачам и аналитика</p>
+</div>
+
+<div class="card" style="margin-bottom:16px; padding:10px 16px;">
+    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">← Назад к панели АЗС</a>
+</div>
+
+<div class="report012b-card-grid">
+
+    <a href="{{ url_for('fuel.balance_report') }}" class="report012b-card" style="text-decoration:none; color:inherit; display:block;">
+        <div class="report012b-card-body">
+            <h3>📊 Балансовый отчёт по топливу</h3>
+            <p>Остаток на начало, приход, расход Topaz, ручные расходы и текущий остаток по складам за период.</p>
+            <span style="font-size:12px; color:var(--accent);">Открыть отчёт →</span>
+        </div>
+    </a>
+
+    <a href="{{ url_for('fuel.station_issues_report') }}" class="report012b-card" style="text-decoration:none; color:inherit; display:block;">
+        <div class="report012b-card-body">
+            <h3>⛽ Выдача топлива по АЗС</h3>
+            <p>Детальный отчёт по выдачам: дата, карта/RFID, операция Topaz, литры. С группировкой по датам и Excel экспортом.</p>
+            <span style="font-size:12px; color:var(--accent);">Открыть отчёт →</span>
+        </div>
+    </a>
+
+    <div class="report012b-card report012b-card-disabled" style="cursor:default;">
+        <div class="report012b-card-body">
+            <h3>📋 Реестр выдачи топлива по картам</h3>
+            <p>Детализация по картам/RFID: сводка по каждой карте, количество и литры за период.</p>
+            <span class="report012b-badge-coming">скоро</span>
+        </div>
+    </div>
+
+    <div class="report012b-card report012b-card-disabled" style="cursor:default;">
+        <div class="report012b-card-body">
+            <h3>🏭 Итоги выдачи топлива по АЗС</h3>
+            <p>Сводка по всем АЗС: общее количество выдач, итого литров, среднее за период.</p>
+            <span class="report012b-badge-coming">скоро</span>
+        </div>
+    </div>
+
+    <div class="report012b-card report012b-card-disabled" style="cursor:default;">
+        <div class="report012b-card-body">
+            <h3>🔄 Движение топлива по карте</h3>
+            <p>История операций по конкретной карте/RFID: где, когда и сколько топлива выдано.</p>
+            <span class="report012b-badge-coming">скоро</span>
+        </div>
+    </div>
+
+</div>
+
+{% endblock %}

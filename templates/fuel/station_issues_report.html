@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}АЗС — Выдача топлива по АЗС{% endblock %}
+{% block content %}
+
+{# FUEL-REPORT-012C: Station issue detail report page #}
+<style>
+.station-issues-header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; flex-wrap:wrap; }
+.station-issues-summary { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px; margin-bottom:18px; }
+.station-issues-summary .stat-card { border-radius:10px; box-shadow:var(--shadow-sm); }
+.station-issues-empty { text-align:center; padding:48px 20px; color:var(--text-muted); }
+.station-issues-filter-card { border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:16px; background:var(--card-bg); box-shadow:var(--shadow-sm); }
+.station-issues-filter-card .filter-row { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
+.station-issues-filter-card label { font-size:12px; font-weight:600; display:block; margin-bottom:2px; color:var(--text-muted); }
+.station-issues-filter-card select,
+.station-issues-filter-card input { padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; }
+.station-issues-table { min-width:600px; }
+.station-issues-table th { white-space:nowrap; font-size:12px; }
+.station-issues-table td { white-space:nowrap; }
+.station-issues-total-row { font-weight:700; background:#fefce8; }
+</style>
+
+<div class="station-issues-header">
+    <div>
+        <h1>Выдача топлива по АЗС</h1>
+        <p class="text-muted text-sm" style="margin-top:4px;">Детальный отчёт по выдачам за период с группировкой по датам</p>
+    </div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <a href="{{ url_for('fuel.reports_center') }}" class="btn btn-secondary btn-sm">← Центр отчётов</a>
+        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">Панель АЗС</a>
+    </div>
+</div>
+
+<div class="station-issues-filter-card">
+    <form method="GET" action="{{ url_for('fuel.station_issues_report') }}">
+        <div class="filter-row">
+            <div>
+                <label>Начало периода</label>
+                <input type="date" name="start_date" value="{{ start_date.isoformat() }}">
+            </div>
+            <div>
+                <label>Конец периода</label>
+                <input type="date" name="end_date" value="{{ end_date.isoformat() }}">
+            </div>
+            <div>
+                <label>АЗС</label>
+                <select name="station_id" style="min-width:240px;">
+                    <option value="">— Выберите АЗС —</option>
+                    {% for st in stations %}
+                    <option value="{{ st.id }}" {% if station_id == st.id %}selected{% endif %}>
+                        {{ st.name }} — {{ st.topaz_id }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <button type="submit" class="btn btn-primary btn-sm">Показать</button>
+            </div>
+        </div>
+    </form>
+</div>
+
+{% if not station_id %}
+
+<div class="station-issues-empty">
+    <div style="font-size:48px; margin-bottom:12px;">📋</div>
+    <h3>Выберите АЗС и период</h3>
+    <p>Выберите заправочную станцию и укажите период, чтобы увидеть детальный отчёт по выдачам топлива.</p>
+</div>
+
+{% elif txns|length == 0 %}
+
+<div class="station-issues-empty">
+    <div style="font-size:48px; margin-bottom:12px;">📭</div>
+    <h3>Нет данных за выбранный период</h3>
+    <p>Для АЗС «{{ station_name }}» (Topaz {{ topaz_id }}) за период {{ start_date.strftime('%d.%m.%Y') }} — {{ end_date.strftime('%d.%m.%Y') }} нет записей о выдачах.</p>
+    <p class="text-muted text-sm" style="margin-top:8px;">Попробуйте изменить период или выбрать другую АЗС.</p>
+</div>
+
+{% else %}
+
+<div class="station-issues-summary">
+    <div class="stat-card">
+        <div class="label">Количество выдач</div>
+        <div class="value">{{ summary.count }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Итого литров</div>
+        <div class="value" style="color:var(--danger);">{{ '%.2f'|format(summary.total_liters) }} л</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Выбранная АЗС</div>
+        <div class="value" style="font-size:14px;">{{ station_name }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Период</div>
+        <div class="value" style="font-size:14px;">{{ start_date.strftime('%d.%m.%Y') }} — {{ end_date.strftime('%d.%m.%Y') }}</div>
+    </div>
+</div>
+
+<div style="margin-bottom:12px;">
+    <a href="{{ url_for('fuel.station_issues_export', start_date=start_date.isoformat(), end_date=end_date.isoformat(), station_id=station_id) }}" class="btn btn-primary btn-sm">📥 Excel</a>
+    <span class="text-muted text-sm" style="margin-left:8px;">{{ summary.count }} записей</span>
+</div>
+
+<div class="card" style="overflow:hidden;">
+    <div style="overflow-x:auto;">
+        <table class="station-issues-table">
+            <thead>
+                <tr>
+                    <th>№</th>
+                    <th>Дата/время</th>
+                    <th>АЗС</th>
+                    <th>Topaz ID</th>
+                    <th class="text-right">Литры</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% set grouped = txns|groupby('txn_date') %}
+                {% for date_group, day_txns in grouped|sort(attribute='grouper') %}
+                    {% set day_total = day_txns|sum(attribute='quantity') %}
+                    <tr style="background:#f0f9f0;">
+                        <td colspan="5" style="font-weight:600; color:#166534; font-size:13px; padding:6px 10px;">
+                            {{ date_group[8:10] }}.{{ date_group[5:7] }}.{{ date_group[0:4] }} — {{ day_txns|length }} выдач, всего {{ '%.2f'|format(day_total) }} л
+                        </td>
+                    </tr>
+                    {% for txn in day_txns %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td class="text-sm">{{ txn.txn_datetime.strftime('%d.%m.%Y %H:%M') }}</td>
+                        <td>{{ txn.station.name if txn.station else station_name }}</td>
+                        <td class="text-sm">{{ topaz_id }}</td>
+                        <td class="text-right" style="font-weight:600; color:var(--danger);">{{ '%.2f'|format(txn.quantity) }}</td>
+                    </tr>
+                    {% endfor %}
+                {% endfor %}
+                <tr class="station-issues-total-row">
+                    <td colspan="4" style="text-align:right; font-size:14px; padding:8px 10px;">ВСЕГО</td>
+                    <td class="text-right" style="font-size:15px; padding:8px 10px;">{{ '%.2f'|format(summary.total_liters) }} л</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% endif %}
+
+{% endblock %}
