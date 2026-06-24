@@ -106,7 +106,7 @@ def create_app():
     def is_csrf_exempt():
         # Topaz agent API endpoints are protected by FUEL_API_TOKEN and must not
         # require browser-session CSRF tokens.
-        if request.path == '/fuel/api/fuel_sync':
+        if request.path in ('/fuel/api/fuel_sync', '/fuel/api/card_sync'):
             return True
         # BOT001: Bot API endpoints use Bearer token auth, not browser sessions.
         if request.path.startswith('/api/bot/'):

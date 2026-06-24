@@ -111,6 +111,7 @@
                     <th>Дата/время</th>
                     <th>АЗС</th>
                     <th>Topaz ID</th>
+                    <th>Имя карты</th>
                     <th class="text-right">Литры</th>
                 </tr>
             </thead>
@@ -119,7 +120,7 @@
                 {% for date_group, day_txns in grouped|sort(attribute='grouper') %}
                     {% set day_total = day_txns|sum(attribute='quantity') %}
                     <tr style="background:#f0f9f0;">
-                        <td colspan="5" style="font-weight:600; color:#166534; font-size:13px; padding:6px 10px;">
+                        <td colspan="6" style="font-weight:600; color:#166534; font-size:13px; padding:6px 10px;">
                             {{ date_group[8:10] }}.{{ date_group[5:7] }}.{{ date_group[0:4] }} — {{ day_txns|length }} выдач, всего {{ '%.2f'|format(day_total) }} л
                         </td>
                     </tr>
@@ -129,12 +130,13 @@
                         <td class="text-sm">{{ txn.txn_datetime.strftime('%d.%m.%Y %H:%M') }}</td>
                         <td>{{ txn.station.name if txn.station else station_name }}</td>
                         <td class="text-sm">{{ topaz_id }}</td>
+                        <td>{{ card_name_map.get(txn.card_number|string, '—') if card_name_map else '—' }}</td>
                         <td class="text-right" style="font-weight:600; color:var(--danger);">{{ '%.2f'|format(txn.quantity) }}</td>
                     </tr>
                     {% endfor %}
                 {% endfor %}
                 <tr class="station-issues-total-row">
-                    <td colspan="4" style="text-align:right; font-size:14px; padding:8px 10px;">ВСЕГО</td>
+                    <td colspan="5" style="text-align:right; font-size:14px; padding:8px 10px;">ВСЕГО</td>
                     <td class="text-right" style="font-size:15px; padding:8px 10px;">{{ '%.2f'|format(summary.total_liters) }} л</td>
                 </tr>
             </tbody>

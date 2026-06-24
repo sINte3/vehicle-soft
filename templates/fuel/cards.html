@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block title %}АЗС — Справочник топливных карт{% endblock %}
+{% block content %}
+
+<style>
+.cards-page-header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; flex-wrap:wrap; }
+.cards-summary { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px; margin-bottom:18px; }
+.cards-summary .stat-card { border-radius:10px; box-shadow:var(--shadow-sm); }
+.cards-filter-card { border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:16px; background:var(--card-bg); box-shadow:var(--shadow-sm); }
+.cards-filter-card .filter-row { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
+.cards-filter-card label { font-size:12px; font-weight:600; display:block; margin-bottom:2px; color:var(--text-muted); }
+.cards-filter-card input { padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; min-width:240px; }
+.cards-table { min-width:800px; }
+.cards-table th { white-space:nowrap; font-size:12px; }
+.cards-table td { white-space:nowrap; }
+.cards-table .enabled-badge { color:#166534; background:#dcfce7; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; }
+.cards-table .disabled-badge { color:#991b1b; background:#fee2e2; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; }
+.cards-sync-section { margin-top:24px; }
+.cards-sync-table { min-width:600px; }
+.cards-sync-table th { white-space:nowrap; font-size:12px; }
+.cards-empty { text-align:center; padding:48px 20px; color:var(--text-muted); }
+</style>
+
+<div class="cards-page-header">
+    <div>
+        <h1>Справочник топливных карт</h1>
+        <p class="text-muted text-sm" style="margin-top:4px;">Каталог карт Topaz: имена, RFID, статус и синхронизация</p>
+    </div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">← Панель АЗС</a>
+        <a href="{{ url_for('fuel.reports_center') }}" class="btn btn-secondary btn-sm">Центр отчётов</a>
+    </div>
+</div>
+
+<div class="cards-summary">
+    <div class="stat-card">
+        <div class="label">Всего карт</div>
+        <div class="value">{{ total_cards }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Всего alias-привязок</div>
+        <div class="value">{{ total_aliases }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Активных карт</div>
+        <div class="value" style="color:var(--accent);">{{ active_cards }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Последняя синхронизация</div>
+        <div class="value" style="font-size:14px;">
+            {% if last_sync %}{{ last_sync.synced_at.strftime('%d.%m.%Y %H:%M') }}{% else %}—{% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="cards-filter-card">
+    <form method="GET" action="{{ url_for('fuel.card_directory') }}">
+        <div class="filter-row">
+            <div>
+                <label>Поиск</label>
+                <input type="search" name="q" placeholder="Имя карты, ID Topaz, RFID, номер машины" value="{{ q }}">
+            </div>
+            <div>
+                <button type="submit" class="btn btn-primary btn-sm">Найти</button>
+                {% if q %}
+                <a href="{{ url_for('fuel.card_directory') }}" class="btn btn-secondary btn-sm" style="margin-left:4px;">Сброс</a>
+                {% endif %}
+            </div>
+        </div>
+    </form>
+</div>
+
+{% if cards %}
+
+<div class="card" style="overflow:hidden;">
+    <div style="overflow-x:auto;">
+        <table class="cards-table">
+            <thead>
+                <tr>
+                    <th>ID Topaz</th>
+                    <th>Имя карты</th>
+                    <th>RFID</th>
+                    <th class="text-center">Активна</th>
+                    <th>Номер машины</th>
+                    <th>Модель</th>
+                    <th class="text-sm text-muted">Обновлено</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for card in cards %}
+                <tr>
+                    <td class="text-muted text-sm">{{ card.topaz_card_id or '—' }}</td>
+                    <td style="font-weight:600;">{{ card.display_name }}</td>
+                    <td class="text-sm text-muted">{{ card.rfid_code or '—' }}</td>
+                    <td class="text-center">
+                        {% if card.enabled %}<span class="enabled-badge">Да</span>{% else %}<span class="disabled-badge">Нет</span>{% endif %}
+                    </td>
+                    <td>{{ card.car_number or '—' }}</td>
+                    <td>{{ card.car_model or '—' }}</td>
+                    <td class="text-sm text-muted">{% if card.updated_at %}{{ card.updated_at.strftime('%d.%m.%Y %H:%M') }}{% else %}—{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% else %}
+
+<div class="cards-empty">
+    <div style="font-size:48px; margin-bottom:12px;">🪪</div>
+    {% if q %}
+    <h3>Ничего не найдено</h3>
+    <p>По вашему запросу «{{ q }}» карт не найдено.</p>
+    {% else %}
+    <h3>Каталог карт пуст</h3>
+    <p>Данные карт ещё не синхронизированы из Topaz. После синхронизации здесь появятся имена карт и привязки.</p>
+    {% endif %}
+</div>
+
+{% endif %}
+
+{% if sync_logs %}
+<div class="cards-sync-section">
+    <div class="card">
+        <div class="card-header">История синхронизации (последние {{ sync_logs|length }})</div>
+        <div style="overflow-x:auto;">
+            <table class="cards-sync-table">
+                <thead>
+                    <tr>
+                        <th>Время</th>
+                        <th>Источник</th>
+                        <th class="text-right">Получено</th>
+                        <th class="text-right">Создано</th>
+                        <th class="text-right">Обновлено</th>
+                        <th class="text-right">Пропущено</th>
+                        <th class="text-right">Конфликты</th>
+                        <th>Статус</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in sync_logs %}
+                    <tr>
+                        <td class="text-sm">{% if log.synced_at %}{{ log.synced_at.strftime('%d.%m.%Y %H:%M:%S') }}{% else %}—{% endif %}</td>
+                        <td class="text-sm">{{ log.source or '—' }}</td>
+                        <td class="text-right">{{ log.rows_received }}</td>
+                        <td class="text-right" style="color:var(--accent); font-weight:700;">{{ log.cards_created }}</td>
+                        <td class="text-right">{{ log.cards_updated }}</td>
+                        <td class="text-right">{{ log.rows_skipped }}</td>
+                        <td class="text-right">{{ log.aliases_conflicted }}</td>
+                        <td>{% if log.status == 'ok' %}<span class="fuel-status ok">OK</span>{% else %}<span class="fuel-status danger">{{ log.status }}</span>{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

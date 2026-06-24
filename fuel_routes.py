@@ -25,6 +25,7 @@ from models import (
     db, Organization,
     FuelWarehouse, FuelStation2, FuelInitialBalance,
     FuelReceipt2, FuelTransaction2, FuelSyncLog2, FuelWarningReview,
+    FuelCard, FuelCardAlias, FuelCardSyncLog,
     module_required,
 )
 
@@ -143,6 +144,51 @@ def _fuel_station_snapshot(station):
     }
 
 
+# [REASON]: FUEL-REPORT-012H-C card resolver — resolves FuelTransaction2.card_number
+# to FuelCard.display_name. Supports both topaz_card_id and rfid alias types.
+# Must not display raw card_number/RFID when no mapping exists — show em-dash instead.
+def _resolve_card_names(txns):
+    """Given a list of FuelTransaction2 rows, return a dict mapping card_number -> display_name."""
+    card_numbers = set()
+    for txn in txns:
+        val = (txn.card_number or '').strip()
+        if val:
+            card_numbers.add(val)
+
+    if not card_numbers:
+        return {}
+
+    aliases = (FuelCardAlias.query
+               .filter(FuelCardAlias.alias_type.in_(['topaz_card_id', 'rfid']),
+                       FuelCardAlias.alias_value.in_(list(card_numbers)))
+               .all())
+
+    result = {}
+    for alias in aliases:
+        if alias.card and alias.card.display_name:
+            result[alias.alias_value] = alias.card.display_name
+
+    return result
+
+
+def _card_display_name(card_number, name_map):
+    """Return display name from map, or em-dash if not found."""
+    if not card_number or not name_map:
+        return '—'
+    return name_map.get(card_number.strip(), '—')
+
+
+def _card_name_map_for_station_report(station_id, start_date, end_date):
+    """Build card_number -> display_name map for station issues report."""
+    from datetime import datetime as dt
+    txns = (FuelTransaction2.query
+            .filter(FuelTransaction2.station_id == station_id,
+                    FuelTransaction2.txn_datetime >= dt.combine(start_date, dt.min.time()),
+                    FuelTransaction2.txn_datetime <= dt.combine(end_date, dt.max.time()))
+            .all())
+    return _resolve_card_names(txns)
+
+
 def _fuel_initial_balance_snapshot(balance):
     if not balance:
         return None
@@ -243,7 +289,7 @@ def _fuel_station_issue_summary(txns):
     }
 
 
-def _fuel_station_issues_workbook(txns, station_name, topaz_id, start_date, end_date):
+def _fuel_station_issues_workbook(txns, station_name, topaz_id, start_date, end_date, card_name_map=None):
     """Build Excel workbook for station issues with outline grouping by date."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -254,19 +300,19 @@ def _fuel_station_issues_workbook(txns, station_name, topaz_id, start_date, end_
     ws.title = "Выдача АЗС"
 
     # Title
-    ws.merge_cells('A1:E1')
+    ws.merge_cells('A1:F1')
     ws.cell(row=1, column=1).value = f"Выдача топлива по АЗС: {station_name} (Topaz {topaz_id})"
     ws.cell(row=1, column=1).font = Font(bold=True, size=14)
     ws.cell(row=1, column=1).alignment = Alignment(horizontal="center")
 
     # Period info
-    ws.merge_cells('A2:E2')
+    ws.merge_cells('A2:F2')
     ws.cell(row=2, column=1).value = f"Период: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"
     ws.cell(row=2, column=1).font = Font(size=11, color='666666')
     ws.cell(row=2, column=1).alignment = Alignment(horizontal="center")
 
     # Headers
-    headers = ['№', 'Дата/время', 'АЗС', 'Topaz ID', 'Литры']
+    headers = ['№', 'Дата/время', 'АЗС', 'Topaz ID', 'Имя карты', 'Литры']
     header_row = 4
     for col, title in enumerate(headers, start=1):
         ws.cell(row=header_row, column=col).value = title
@@ -297,11 +343,11 @@ def _fuel_station_issues_workbook(txns, station_name, topaz_id, start_date, end_
 
         # Date header row (outline level 0)
         r = header_row + 1 + row_idx
-        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=6)
         ws.cell(row=r, column=1).value = f"{date_display}  —  {len(day_txns)} выдач, всего {subtotal:.2f} л"
         ws.cell(row=r, column=1).font = Font(bold=True, size=11, color='1A6B3C')
         ws.cell(row=r, column=1).fill = PatternFill('solid', fgColor='F0F9F0')
-        for c in range(1, 6):
+        for c in range(1, 7):
             ws.cell(row=r, column=c).border = Border(left=thin, right=thin, top=thin, bottom=thin)
         row_idx += 1
 
@@ -309,53 +355,55 @@ def _fuel_station_issues_workbook(txns, station_name, topaz_id, start_date, end_
             r = header_row + 1 + row_idx
             ws.row_dimensions[r].outlineLevel = 1
             st_name = txn.station.name if txn.station else station_name
+            card_name_val = _card_display_name(txn.card_number, card_name_map) if card_name_map else '—'
             ws.cell(row=r, column=1).value = seq
             ws.cell(row=r, column=2).value = txn.txn_datetime.strftime('%d.%m.%Y %H:%M') if txn.txn_datetime else ''
             ws.cell(row=r, column=3).value = st_name
             ws.cell(row=r, column=4).value = topaz_id
-            ws.cell(row=r, column=5).value = round(txn.quantity or 0, 2)
-            ws.cell(row=r, column=5).number_format = '#,##0.00'
-            for c in range(1, 6):
+            ws.cell(row=r, column=5).value = card_name_val
+            ws.cell(row=r, column=6).value = round(txn.quantity or 0, 2)
+            ws.cell(row=r, column=6).number_format = '#,##0.00'
+            for c in range(1, 7):
                 ws.cell(row=r, column=c).border = Border(left=thin, right=thin, top=thin, bottom=thin)
                 ws.cell(row=r, column=c).alignment = Alignment(vertical='center', wrap_text=True)
             row_idx += 1
 
         # Subtotal row
         r = header_row + 1 + row_idx
-        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=4)
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
         ws.cell(row=r, column=1).value = f"Итого за {date_display}"
         ws.cell(row=r, column=1).font = Font(bold=True, italic=True)
         ws.cell(row=r, column=1).alignment = Alignment(horizontal='right')
-        ws.cell(row=r, column=5).value = subtotal
-        ws.cell(row=r, column=5).number_format = '#,##0.00'
-        ws.cell(row=r, column=5).font = Font(bold=True)
-        for c in range(1, 6):
+        ws.cell(row=r, column=6).value = subtotal
+        ws.cell(row=r, column=6).number_format = '#,##0.00'
+        ws.cell(row=r, column=6).font = Font(bold=True)
+        for c in range(1, 7):
             ws.cell(row=r, column=c).border = Border(left=thin, right=thin, top=thin, bottom=thin)
         row_idx += 1
 
     # Grand total row
     grand_total = round(sum(t.quantity or 0 for t in txns), 2)
     r = header_row + 1 + row_idx
-    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=4)
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
     ws.cell(row=r, column=1).value = "ВСЕГО"
     ws.cell(row=r, column=1).font = Font(bold=True, size=12)
     ws.cell(row=r, column=1).alignment = Alignment(horizontal='right')
-    ws.cell(row=r, column=5).value = grand_total
-    ws.cell(row=r, column=5).number_format = '#,##0.00'
-    ws.cell(row=r, column=5).font = Font(bold=True, size=12)
+    ws.cell(row=r, column=6).value = grand_total
+    ws.cell(row=r, column=6).number_format = '#,##0.00'
+    ws.cell(row=r, column=6).font = Font(bold=True, size=12)
     total_fill = PatternFill('solid', fgColor='FEF3C7')
-    for c in range(1, 6):
+    for c in range(1, 7):
         ws.cell(row=r, column=c).fill = total_fill
         ws.cell(row=r, column=c).border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     # Column widths
-    col_widths = {1: 5, 2: 18, 3: 22, 4: 12, 5: 12}
+    col_widths = {1: 5, 2: 18, 3: 22, 4: 12, 5: 28, 6: 12}
     for col_n, width in col_widths.items():
         ws.column_dimensions[get_column_letter(col_n)].width = width
 
     # Freeze panes and auto filter
     ws.freeze_panes = 'A5'
-    ws.auto_filter.ref = f'A4:E{r}'
+    ws.auto_filter.ref = f'A4:F{r}'
 
     ws.page_setup.orientation = 'landscape'
     ws.page_setup.fitToWidth = 1
@@ -391,6 +439,7 @@ def station_issues_report():
     station_name = ''
     topaz_id = ''
     summary = {'count': 0, 'total_liters': 0.0}
+    card_name_map = {}
 
     if station_id:
         selected = FuelStation2.query.get(station_id)
@@ -407,6 +456,7 @@ def station_issues_report():
                 else:
                     txn.txn_date = str(txn.txn_datetime or '')[:10]
             summary = _fuel_station_issue_summary(txns)
+            card_name_map = _resolve_card_names(txns)
 
     return render_template('fuel/station_issues_report.html',
                            stations=stations,
@@ -416,7 +466,8 @@ def station_issues_report():
                            start_date=start_date,
                            end_date=end_date,
                            txns=txns,
-                           summary=summary)
+                           summary=summary,
+                            card_name_map=card_name_map)
 
 
 @fuel_bp.route('/reports/station-issues/export')
@@ -441,8 +492,9 @@ def station_issues_export():
         return 'Station not found', 404
 
     txns = _fuel_station_issues_query(station_id, start_date, end_date)
+    card_name_map = _resolve_card_names(txns)
 
-    wb = _fuel_station_issues_workbook(txns, station.name, station.topaz_id, start_date, end_date)
+    wb = _fuel_station_issues_workbook(txns, station.name, station.topaz_id, start_date, end_date, card_name_map=card_name_map)
 
     output = BytesIO()
     wb.save(output)
@@ -2443,6 +2495,193 @@ def _perform_fuel_sync():
 @fuel_bp.route('/api/fuel_sync', methods=['POST'])
 def api_fuel_sync():
     return _perform_fuel_sync()
+
+
+# ─── FUEL-REPORT-012H-C: Card Directory API ─────────────────────────
+
+@fuel_bp.route('/api/card_sync', methods=['POST'])
+def api_card_sync():
+    """FUEL-REPORT-012H-C: Receive card directory data from Topaz agent."""
+    try:
+        payload = request.get_json(force=True)
+    except Exception:
+        return jsonify(error='invalid JSON'), 400
+
+    api_token = current_app.config.get('FUEL_API_TOKEN')
+    submitted_token = str(payload.get('token') or '') if payload else ''
+    if not api_token or not payload or not hmac.compare_digest(submitted_token, str(api_token)):
+        return jsonify(error='unauthorized'), 401
+
+    source = str(payload.get('source') or 'topaz_dcCards').strip()
+    cards_data = payload.get('cards', [])
+
+    rows_received = len(cards_data)
+    cards_created = 0
+    cards_updated = 0
+    aliases_created = 0
+    aliases_updated = 0
+    aliases_conflicted = 0
+    rows_skipped = 0
+    now = datetime.utcnow()
+
+    for card_data in cards_data:
+        try:
+            card_id = str(card_data.get('card_id') or '').strip()
+            if not card_id:
+                rows_skipped += 1
+                continue
+
+            name = str(card_data.get('name') or '').strip()
+            code = str(card_data.get('code') or '').strip()
+            has_valid_name = bool(name) and name not in ('< Не выбран >', '<Не выбранно>', '<не выбрана>')
+            has_valid_code = bool(code) and code not in ('< Не выбран >', '<Не выбранно>', '<не выбрана>')
+
+            if not has_valid_name and not has_valid_code:
+                rows_skipped += 1
+                continue
+
+            display_name = name if has_valid_name else code
+            rfid_code = code if code else None
+            partner_id = str(card_data.get('partner_id') or '').strip() or None
+            enabled_val = card_data.get('enabled')
+            enabled = bool(enabled_val) if enabled_val is not None else True
+            car_number = str(card_data.get('car_number') or '').strip() or None
+            car_model = str(card_data.get('car_model') or '').strip() or None
+            transaction_id = str(card_data.get('transaction_id') or '').strip() or None
+
+            # Upsert FuelCard
+            card = FuelCard.query.filter_by(topaz_card_id=card_id).first()
+            if card:
+                card.display_name = display_name
+                card.rfid_code = rfid_code
+                card.partner_id = partner_id
+                card.enabled = enabled
+                card.car_number = car_number
+                card.car_model = car_model
+                card.topaz_transaction_id = transaction_id
+                card.source = source
+                card.last_seen = now
+                card.updated_at = now
+                cards_updated += 1
+            else:
+                card = FuelCard(
+                    topaz_card_id=card_id,
+                    display_name=display_name,
+                    rfid_code=rfid_code,
+                    partner_id=partner_id,
+                    enabled=enabled,
+                    car_number=car_number,
+                    car_model=car_model,
+                    topaz_transaction_id=transaction_id,
+                    source=source,
+                    first_seen=now,
+                    last_seen=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+                db.session.add(card)
+                cards_created += 1
+
+            db.session.flush()
+
+            # Alias: topaz_card_id
+            alias_rec = FuelCardAlias.query.filter_by(
+                alias_type='topaz_card_id', alias_value=card_id).first()
+            if alias_rec:
+                if alias_rec.card_id != card.id:
+                    aliases_conflicted += 1
+                else:
+                    alias_rec.last_seen = now
+                    alias_rec.updated_at = now
+                    aliases_updated += 1
+            else:
+                db.session.add(FuelCardAlias(
+                    card_id=card.id, alias_type='topaz_card_id',
+                    alias_value=card_id, source=source,
+                    first_seen=now, last_seen=now, created_at=now, updated_at=now,
+                ))
+                aliases_created += 1
+
+            # Alias: rfid
+            if rfid_code:
+                alias_rec = FuelCardAlias.query.filter_by(
+                    alias_type='rfid', alias_value=rfid_code).first()
+                if alias_rec:
+                    if alias_rec.card_id != card.id:
+                        aliases_conflicted += 1
+                    else:
+                        alias_rec.last_seen = now
+                        alias_rec.updated_at = now
+                        aliases_updated += 1
+                else:
+                    db.session.add(FuelCardAlias(
+                        card_id=card.id, alias_type='rfid',
+                        alias_value=rfid_code, source=source,
+                        first_seen=now, last_seen=now, created_at=now, updated_at=now,
+                    ))
+                    aliases_created += 1
+
+        except Exception:
+            db.session.rollback()
+            rows_skipped += 1
+            continue
+
+    sync_log = FuelCardSyncLog(
+        synced_at=now, source=source,
+        rows_received=rows_received, cards_created=cards_created,
+        cards_updated=cards_updated, aliases_created=aliases_created,
+        aliases_updated=aliases_updated, aliases_conflicted=aliases_conflicted,
+        rows_skipped=rows_skipped, status='ok',
+    )
+    db.session.add(sync_log)
+    db.session.commit()
+
+    return jsonify(ok=True, rows_received=rows_received,
+                   cards_created=cards_created, cards_updated=cards_updated,
+                   aliases_created=aliases_created, aliases_updated=aliases_updated,
+                   aliases_conflicted=aliases_conflicted, rows_skipped=rows_skipped)
+
+
+@fuel_bp.route('/cards')
+@module_required('fuel')
+def card_directory():
+    """FUEL-REPORT-012H-C: Card directory page with Unicode-safe search."""
+    q_raw = request.args.get('q', '').strip()
+
+    def norm(value):
+        value = str(value or '')
+        value = value.replace('\u0401', '\u0415').replace('\u0451', '\u0435')
+        value = ' '.join(value.split())
+        return value.casefold()
+
+    all_cards = FuelCard.query.order_by(FuelCard.display_name).all()
+
+    if q_raw:
+        q_norm = norm(q_raw)
+        cards = []
+        for card in all_cards:
+            hay = ' '.join([
+                str(card.display_name or ''),
+                str(card.topaz_card_id or ''),
+                str(card.rfid_code or ''),
+                str(card.car_number or ''),
+                str(card.car_model or ''),
+            ])
+            if q_norm in norm(hay):
+                cards.append(card)
+    else:
+        cards = all_cards
+
+    total_cards = len(cards)
+    active_cards = sum(1 for c in cards if c.enabled)
+    total_aliases = FuelCardAlias.query.count()
+    last_sync = FuelCardSyncLog.query.order_by(FuelCardSyncLog.synced_at.desc()).first()
+    sync_logs = FuelCardSyncLog.query.order_by(FuelCardSyncLog.synced_at.desc()).limit(20).all()
+
+    return render_template('fuel/cards.html',
+        cards=cards, total_cards=total_cards, active_cards=active_cards,
+        total_aliases=total_aliases, last_sync=last_sync,
+        sync_logs=sync_logs, q=request.args.get('q', ''))
 
 
 # ─── FUEL-REPORT-011A: Fuel balance period report ─────────────────────

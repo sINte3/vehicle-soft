@@ -645,6 +645,78 @@ class BotApiSession(db.Model):
         db.Index('idx_bot_api_sessions_user_id', 'user_id'),
     )
 
+# ─── FUEL-REPORT-012H-C: Card Directory ───────────────────────────────────────
+
+class FuelCard(db.Model):
+    """Card directory entry from Topaz dcCards.
+
+    Stores card display names and metadata so fuel reports can show
+    human-readable card/vehicle names instead of raw card numbers or RFID values.
+    """
+    __tablename__ = 'fuel_cards'
+    id                  = db.Column(db.Integer, primary_key=True)
+    topaz_card_id       = db.Column(db.String(100), unique=True, nullable=True)
+    display_name        = db.Column(db.String(300), nullable=False)
+    rfid_code           = db.Column(db.String(150), nullable=True)
+    partner_id          = db.Column(db.String(100), nullable=True)
+    enabled             = db.Column(db.Boolean, default=True)
+    car_number          = db.Column(db.String(100), nullable=True)
+    car_model           = db.Column(db.String(200), nullable=True)
+    topaz_transaction_id = db.Column(db.String(100), nullable=True)
+    source              = db.Column(db.String(100), default='topaz_dcCards')
+    first_seen          = db.Column(db.DateTime, nullable=True)
+    last_seen           = db.Column(db.DateTime, nullable=True)
+    created_at          = db.Column(db.DateTime, nullable=True)
+    updated_at          = db.Column(db.DateTime, nullable=True)
+    notes               = db.Column(db.Text, default='')
+
+    aliases = db.relationship('FuelCardAlias', backref='card',
+                               cascade='all, delete-orphan', lazy='dynamic')
+
+    __table_args__ = (
+        db.Index('ix_fuel_cards_topaz_card_id', 'topaz_card_id'),
+        db.Index('ix_fuel_cards_display_name', 'display_name'),
+        db.Index('ix_fuel_cards_rfid_code', 'rfid_code'),
+        db.Index('ix_fuel_cards_enabled', 'enabled'),
+    )
+
+
+class FuelCardAlias(db.Model):
+    """Alias mapping from a card_number or RFID value to a FuelCard."""
+    __tablename__ = 'fuel_card_aliases'
+    id          = db.Column(db.Integer, primary_key=True)
+    card_id     = db.Column(db.Integer, db.ForeignKey('fuel_cards.id'), nullable=False)
+    alias_type  = db.Column(db.String(30), nullable=False)
+    alias_value = db.Column(db.String(150), nullable=False)
+    source      = db.Column(db.String(100), default='topaz_dcCards')
+    first_seen  = db.Column(db.DateTime, nullable=True)
+    last_seen   = db.Column(db.DateTime, nullable=True)
+    created_at  = db.Column(db.DateTime, nullable=True)
+    updated_at  = db.Column(db.DateTime, nullable=True)
+
+    __table_args__ = (
+        db.UniqueConstraint('alias_type', 'alias_value', name='uq_card_alias_type_value'),
+        db.Index('ix_fuel_card_aliases_card_id', 'card_id'),
+        db.Index('ix_fuel_card_aliases_alias_value', 'alias_value'),
+    )
+
+
+class FuelCardSyncLog(db.Model):
+    """Log of card directory sync attempts from Topaz agent."""
+    __tablename__ = 'fuel_card_sync_logs'
+    id                = db.Column(db.Integer, primary_key=True)
+    synced_at         = db.Column(db.DateTime, nullable=True)
+    source            = db.Column(db.String(100), nullable=True)
+    rows_received     = db.Column(db.Integer, default=0)
+    cards_created     = db.Column(db.Integer, default=0)
+    cards_updated     = db.Column(db.Integer, default=0)
+    aliases_created   = db.Column(db.Integer, default=0)
+    aliases_updated   = db.Column(db.Integer, default=0)
+    aliases_conflicted = db.Column(db.Integer, default=0)
+    rows_skipped      = db.Column(db.Integer, default=0)
+    status            = db.Column(db.String(30), nullable=True)
+    message           = db.Column(db.Text, default='')
+
 
 # ─── BOT001: Bot Notification Queue ───────────────────────────────────────────
 
