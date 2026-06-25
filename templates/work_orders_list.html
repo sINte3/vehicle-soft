@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Наряды' if is_ru else 'Buyurtmalar' }}{% endblock %}
+{% block content %}
+
+<style>
+/* WORK-ORDER-001: work orders list, scoped styles reuse base design tokens. */
+.wo-scope .wo-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
+.wo-scope .wo-hero h1 { margin-bottom:6px; }
+.wo-scope .wo-counters { display:grid; grid-template-columns:repeat(4,minmax(140px,1fr)); gap:12px; margin-bottom:16px; }
+.wo-scope .wo-counter { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:14px 16px; box-shadow:var(--shadow); }
+.wo-scope .wo-counter .label { color:var(--text2); font-size:12px; font-weight:600; }
+.wo-scope .wo-counter .value { font-size:24px; font-weight:800; margin-top:4px; letter-spacing:-0.5px; }
+.wo-scope .wo-counter.danger .value { color:var(--danger); }
+.wo-scope .wo-filter { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+.wo-scope .wo-filter .form-group { margin-bottom:0; }
+.wo-scope .wo-badge { display:inline-flex; align-items:center; border-radius:999px; padding:3px 10px; font-size:12px; font-weight:700; background:var(--surface2); white-space:nowrap; }
+.wo-scope .wo-table-wrap { overflow-x:auto; }
+.wo-scope .wo-number { font-weight:700; white-space:nowrap; }
+.wo-scope .wo-muted { color:var(--text2); font-size:12px; }
+.wo-scope .wo-cards { display:none; }
+.wo-scope .wo-card { display:block; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:14px; margin-bottom:10px; text-decoration:none; color:var(--text); }
+.wo-scope .wo-card-top { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:8px; }
+.wo-scope .wo-card-row { font-size:13px; margin-top:3px; }
+.wo-scope .wo-card-row .k { color:var(--text2); }
+.wo-scope .wo-empty { text-align:center; padding:40px; color:var(--text2); }
+@media (max-width:768px) {
+    .wo-scope .wo-counters { grid-template-columns:1fr 1fr; }
+    .wo-scope .wo-hero { flex-direction:column; }
+    .wo-scope .wo-table-wrap { display:none; }
+    .wo-scope .wo-cards { display:block; }
+}
+</style>
+
+<div class="wo-scope">
+
+<div class="wo-hero">
+    <div>
+        <div class="page-header">
+            <h1>{{ 'Наряды' if is_ru else 'Buyurtmalar' }}</h1>
+            <div class="text-muted text-sm">
+                {{ 'Оперативный журнал нарядов по технике.' if is_ru else 'Texnika bo‘yicha buyurtmalar jurnali.' }}
+            </div>
+        </div>
+    </div>
+    {% if can_create %}
+    <a href="{{ url_for('work_orders.new') }}" class="btn btn-primary">
+        + {{ 'Новый наряд' if is_ru else 'Yangi buyurtma' }}
+    </a>
+    {% endif %}
+</div>
+
+<!-- Counter bar -->
+<div class="wo-counters">
+    <div class="wo-counter">
+        <div class="label">{{ 'Всего открытых' if is_ru else 'Jami ochiq' }}</div>
+        <div class="value">{{ status_counts.total_open }}</div>
+    </div>
+    <div class="wo-counter">
+        <div class="label">{{ 'В работе' if is_ru else 'Ishda' }}</div>
+        <div class="value">{{ status_counts.in_progress }}</div>
+    </div>
+    <div class="wo-counter">
+        <div class="label">{{ 'Выполнено сегодня' if is_ru else 'Bugun bajarildi' }}</div>
+        <div class="value">{{ status_counts.done_today }}</div>
+    </div>
+    <div class="wo-counter {% if status_counts.overdue > 0 %}danger{% endif %}">
+        <div class="label">{{ 'Просрочено' if is_ru else 'Muddati o‘tgan' }}</div>
+        <div class="value">{{ status_counts.overdue }}</div>
+    </div>
+</div>
+
+<!-- Filter toolbar -->
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-body" style="padding:12px 16px;">
+        <form method="get" action="{{ url_for('work_orders.index') }}" class="wo-filter">
+            <div class="form-group" style="min-width:180px;">
+                <label>{{ 'Статус' if is_ru else 'Holat' }}</label>
+                <select name="status">
+                    <option value="" {% if filters.status == '' %}selected{% endif %}>{{ 'Активные' if is_ru else 'Faol' }}</option>
+                    <option value="all" {% if filters.status == 'all' %}selected{% endif %}>{{ 'Все' if is_ru else 'Hammasi' }}</option>
+                    {% for s in statuses %}
+                    <option value="{{ s }}" {% if filters.status == s %}selected{% endif %}>{{ status_labels[s] }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="min-width:200px;">
+                <label>{{ 'Организация' if is_ru else 'Tashkilot' }}</label>
+                <select name="org_id">
+                    <option value="">{{ '— все организации —' if is_ru else '— barcha tashkilotlar —' }}</option>
+                    {% for org in organizations %}
+                    <option value="{{ org.id }}" {% if filters.org_id == org.id %}selected{% endif %}>{{ org.short_name or org.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>{{ 'Дата с' if is_ru else 'Sana dan' }}</label>
+                <input type="date" name="date_from" value="{{ filters.date_from }}">
+            </div>
+            <div class="form-group">
+                <label>{{ 'Дата по' if is_ru else 'Sana gacha' }}</label>
+                <input type="date" name="date_to" value="{{ filters.date_to }}">
+            </div>
+            <button type="submit" class="btn btn-secondary">{{ 'Показать' if is_ru else 'Ko‘rsatish' }}</button>
+        </form>
+    </div>
+</div>
+
+{% if work_orders %}
+<!-- Desktop table -->
+<div class="card wo-table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>№</th>
+                <th>{{ 'Дата' if is_ru else 'Sana' }}</th>
+                <th>{{ 'Организация' if is_ru else 'Tashkilot' }}</th>
+                <th>{{ 'Техника' if is_ru else 'Texnika' }}</th>
+                <th>{{ 'Тип работы' if is_ru else 'Ish turi' }}</th>
+                <th>{{ 'Исполнитель' if is_ru else 'Ijrochi' }}</th>
+                <th>{{ 'Статус' if is_ru else 'Holat' }}</th>
+                <th>{{ 'Действия' if is_ru else 'Amallar' }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for wo in work_orders %}
+            {% set eq_label = wo.equipment.name ~ ((' — ' ~ wo.equipment.plate) if wo.equipment and wo.equipment.plate else '') if wo.equipment else '—' %}
+            <tr>
+                <td class="wo-number">{{ wo.number }}</td>
+                <td>{{ wo.planned_date.strftime('%d.%m.%Y') }}</td>
+                <td>{{ (wo.organization.short_name or wo.organization.name) if wo.organization else '—' }}</td>
+                <td class="wo-muted">{{ eq_label }}</td>
+                <td>{{ wo.work_type_text or '—' }}</td>
+                <td class="wo-muted">{{ (wo.assignee.full_name or wo.assignee.username) if wo.assignee else '—' }}</td>
+                <td><span class="wo-badge" style="color:{{ status_colors[wo.status] }};">{{ status_labels[wo.status] }}</span></td>
+                <td>
+                    {% if wo.can_edit(current_user) %}
+                    {# Phase 2: edit form not yet implemented. #}
+                    <button class="btn btn-sm btn-secondary" disabled
+                            title="{{ 'Доступно в Фазе 2' if is_ru else '2-bosqichda mavjud' }}">
+                        {{ 'Редактировать' if is_ru else 'Tahrirlash' }}
+                    </button>
+                    {% else %}
+                    <span class="wo-muted">—</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Mobile cards -->
+<div class="wo-cards">
+    {% for wo in work_orders %}
+    {% set eq_label = wo.equipment.name ~ ((' — ' ~ wo.equipment.plate) if wo.equipment and wo.equipment.plate else '') if wo.equipment else '—' %}
+    {# Phase 2: detail page not yet implemented, link is a placeholder. #}
+    <a class="wo-card" href="#" title="{{ 'Карточка наряда — Фаза 2' if is_ru else 'Buyurtma kartasi — 2-bosqich' }}">
+        <div class="wo-card-top">
+            <span class="wo-number">{{ wo.number }}</span>
+            <span class="wo-badge" style="color:{{ status_colors[wo.status] }};">{{ status_labels[wo.status] }}</span>
+        </div>
+        <div class="wo-card-row"><span class="k">{{ 'Техника' if is_ru else 'Texnika' }}:</span> {{ eq_label }}</div>
+        <div class="wo-card-row"><span class="k">{{ 'Дата' if is_ru else 'Sana' }}:</span> {{ wo.planned_date.strftime('%d.%m.%Y') }}</div>
+        <div class="wo-card-row"><span class="k">{{ 'Тип работы' if is_ru else 'Ish turi' }}:</span> {{ wo.work_type_text or '—' }}</div>
+        <div class="wo-card-row"><span class="k">{{ 'Организация' if is_ru else 'Tashkilot' }}:</span> {{ (wo.organization.short_name or wo.organization.name) if wo.organization else '—' }}</div>
+    </a>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card">
+    <div class="wo-empty">
+        <div style="margin-bottom:12px;">{{ 'Нарядов нет' if is_ru else 'Buyurtmalar yo‘q' }}</div>
+        {% if can_create %}
+        <a href="{{ url_for('work_orders.new') }}" class="btn btn-primary">
+            + {{ 'Новый наряд' if is_ru else 'Yangi buyurtma' }}
+        </a>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+</div>
+{% endblock %}

@@ -11,10 +11,13 @@ db = SQLAlchemy()
 ROLE_ADMIN    = 'admin'
 ROLE_OPERATOR = 'operator'
 ROLE_VIEWER   = 'viewer'
+# [REASON]: WORK-ORDER-001 — new role for shop mechanics who execute work orders.
+ROLE_MECHANIC = 'mechanic'
 
 ROLES = {
     ROLE_ADMIN:    'Администратор',
     ROLE_OPERATOR: 'Оператор',
+    ROLE_MECHANIC: 'Механик',
     ROLE_VIEWER:   'Наблюдатель',
 }
 
@@ -208,6 +211,9 @@ class DailyRecord(db.Model):
 
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # [REASON]: WORK-ORDER-001 — back-link to the work order that auto-created this
+    # row on close (Phase 2). Nullable; existing rows and manual entries stay NULL.
+    work_order_id = db.Column(db.Integer, db.ForeignKey('work_orders.id'), nullable=True)
 
     __table_args__ = (
         db.Index('ix_daily_date_eq', 'work_date', 'equipment_id', 'line_index'),
@@ -231,6 +237,126 @@ class Deficiency(db.Model):
     created_at      = db.Column(db.DateTime, default=datetime.utcnow)
 
     organization = db.relationship('Organization')
+
+
+# ─── Work Orders (WORK-ORDER-001) ─────────────────────────────────────
+WO_STATUS_DRAFT       = 'draft'
+WO_STATUS_ASSIGNED    = 'assigned'
+WO_STATUS_IN_PROGRESS = 'in_progress'
+WO_STATUS_DONE        = 'done'
+WO_STATUS_CANCELLED   = 'cancelled'
+
+WO_STATUSES = [
+    WO_STATUS_DRAFT,
+    WO_STATUS_ASSIGNED,
+    WO_STATUS_IN_PROGRESS,
+    WO_STATUS_DONE,
+    WO_STATUS_CANCELLED,
+]
+
+WO_STATUS_LABELS_RU = {
+    WO_STATUS_DRAFT:       'Черновик',
+    WO_STATUS_ASSIGNED:    'Назначен',
+    WO_STATUS_IN_PROGRESS: 'В работе',
+    WO_STATUS_DONE:        'Выполнен',
+    WO_STATUS_CANCELLED:   'Отменён',
+}
+
+WO_STATUS_LABELS_UZ = {
+    WO_STATUS_DRAFT:       'Qoralama',
+    WO_STATUS_ASSIGNED:    'Tayinlangan',
+    WO_STATUS_IN_PROGRESS: 'Bajarilmoqda',
+    WO_STATUS_DONE:        'Bajarildi',
+    WO_STATUS_CANCELLED:   'Bekor qilindi',
+}
+
+WO_EVENT_STATUS_CHANGE     = 'status_change'
+WO_EVENT_PRICE_OVERRIDE    = 'price_override'
+WO_EVENT_ASSIGNMENT_CHANGE = 'assignment_change'
+
+
+class WorkOrder(db.Model):
+    __tablename__ = 'work_orders'
+    id              = db.Column(db.Integer, primary_key=True)
+    number          = db.Column(db.String(20), unique=True, nullable=False)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False)
+    equipment_id    = db.Column(db.Integer, db.ForeignKey('equipment.id'), nullable=False)
+    work_type_id    = db.Column(db.Integer, db.ForeignKey('work_types.id'), nullable=True)
+    work_type_text  = db.Column(db.String(200), nullable=False, default='')
+    customer_id     = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=True)
+    customer_text   = db.Column(db.String(300), nullable=False, default='')
+    assigned_to     = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_by      = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    status          = db.Column(db.String(20), nullable=False, default=WO_STATUS_DRAFT)
+    planned_date    = db.Column(db.Date, nullable=False)
+    actual_date     = db.Column(db.Date, nullable=True)
+    unit            = db.Column(db.String(30), nullable=False, default='ga')
+    planned_quantity = db.Column(db.Float, nullable=True)
+    actual_quantity  = db.Column(db.Float, nullable=True)
+    default_price   = db.Column(db.Float, nullable=False, default=0.0)
+    price           = db.Column(db.Float, nullable=False, default=0.0)
+    payment_type    = db.Column(db.String(20), nullable=False, default='')
+    note            = db.Column(db.Text, nullable=False, default='')
+    daily_record_id = db.Column(db.Integer, db.ForeignKey('daily_records.id'), nullable=True)
+    created_at      = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at      = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    closed_at       = db.Column(db.DateTime, nullable=True)
+
+    __table_args__ = (
+        db.Index('ix_wo_org_status_date', 'organization_id', 'status', 'planned_date'),
+        db.Index('ix_wo_equipment_date',  'equipment_id', 'planned_date'),
+        db.Index('ix_wo_assigned',        'assigned_to', 'status'),
+    )
+
+    organization = db.relationship('Organization', foreign_keys=[organization_id], lazy='joined')
+    equipment    = db.relationship('Equipment',    foreign_keys=[equipment_id],    lazy='joined')
+    work_type    = db.relationship('WorkType',     foreign_keys=[work_type_id])
+    customer     = db.relationship('Customer',     foreign_keys=[customer_id])
+    creator      = db.relationship('User',         foreign_keys=[created_by])
+    assignee     = db.relationship('User',         foreign_keys=[assigned_to])
+    history      = db.relationship('WorkOrderStatusHistory',
+                                   backref='work_order',
+                                   cascade='all, delete-orphan',
+                                   order_by='WorkOrderStatusHistory.changed_at',
+                                   lazy='dynamic')
+
+    def can_edit(self, user):
+        """True if user may edit this work order.
+
+        [REASON]: WORK-ORDER-001 ownership rule — admin edits anything; others may
+        edit only their own draft (matrix in the TZ, section 3.2).
+        """
+        if user is None:
+            return False
+        if user.role == ROLE_ADMIN:
+            return True
+        if self.status != WO_STATUS_DRAFT:
+            return False
+        return self.created_by == user.id
+
+    @property
+    def is_active(self):
+        return self.status not in (WO_STATUS_DONE, WO_STATUS_CANCELLED)
+
+    def status_label(self, lang='ru'):
+        labels = WO_STATUS_LABELS_UZ if lang == 'uz' else WO_STATUS_LABELS_RU
+        return labels.get(self.status, self.status)
+
+
+class WorkOrderStatusHistory(db.Model):
+    __tablename__ = 'work_order_status_history'
+    id            = db.Column(db.Integer, primary_key=True)
+    work_order_id = db.Column(db.Integer,
+                              db.ForeignKey('work_orders.id', ondelete='CASCADE'),
+                              nullable=False)
+    event_type    = db.Column(db.String(30), nullable=False, default=WO_EVENT_STATUS_CHANGE)
+    old_value     = db.Column(db.String(200), nullable=True)
+    new_value     = db.Column(db.String(200), nullable=False)
+    changed_by    = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    changed_at    = db.Column(db.DateTime, default=datetime.utcnow)
+    comment       = db.Column(db.Text, nullable=False, default='')
+
+    user = db.relationship('User', foreign_keys=[changed_by])
 
 
 # ─── NEW: Wialon integration tables ──────────────────────────────────

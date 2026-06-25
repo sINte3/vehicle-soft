@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Новый наряд' if is_ru else 'Yangi buyurtma' }}{% endblock %}
+{% block content %}
+
+<style>
+/* WORK-ORDER-001: create form, scoped styles reuse base design tokens. */
+.wof-scope .wof-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
+.wof-scope .wof-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.wof-scope .wof-grid .full { grid-column:1 / -1; }
+.wof-scope .wof-note { font-size:11px; color:var(--text2); margin-top:4px; }
+.wof-scope .wof-note.manual { color:var(--warn); }
+.wof-scope .wof-err { border-color:var(--danger) !important; box-shadow:0 0 0 2px rgba(192,57,43,.14); }
+.wof-scope .wof-actions { display:flex; gap:10px; margin-top:18px; flex-wrap:wrap; }
+.wof-scope .wof-errors { display:none; margin-bottom:16px; border-left:4px solid var(--danger); background:var(--danger-light); color:var(--danger); padding:12px 14px; border-radius:var(--radius); }
+.wof-scope .wof-errors ul { margin:6px 0 0 18px; }
+@media (max-width:768px) { .wof-scope .wof-grid { grid-template-columns:1fr; } }
+</style>
+
+<div class="wof-scope">
+
+<div class="wof-hero">
+    <div class="page-header" style="flex:1;">
+        <h1>{{ 'Новый наряд' if is_ru else 'Yangi buyurtma' }}</h1>
+        <div class="text-muted text-sm">
+            {{ 'Заполните дату, организацию и технику, затем тип работы.' if is_ru else 'Sana, tashkilot va texnikani, so‘ng ish turini kiriting.' }}
+        </div>
+    </div>
+    <a href="{{ url_for('work_orders.index') }}" class="btn btn-secondary">{{ '← Список' if is_ru else '← Ro‘yxat' }}</a>
+</div>
+
+<div id="wofErrors" class="wof-errors">
+    <strong>{{ 'Проверьте обязательные поля' if is_ru else 'Majburiy maydonlarni tekshiring' }}</strong>
+    <ul id="wofErrorList"></ul>
+</div>
+
+<form method="post" action="{{ url_for('work_orders.create') }}" id="woForm" onsubmit="return woValidate(event)">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="card">
+        <div class="card-body">
+            <div class="wof-grid">
+
+                <div class="form-group">
+                    <label>{{ 'Дата' if is_ru else 'Sana' }} *</label>
+                    <input type="date" name="planned_date" id="plannedDate" value="{{ today }}" required>
+                </div>
+
+                <div class="form-group">
+                    <label>{{ 'Организация' if is_ru else 'Tashkilot' }} *</label>
+                    <select name="organization_id" id="orgSelect" required onchange="loadEquipment(this.value)">
+                        <option value="">{{ '— выберите —' if is_ru else '— tanlang —' }}</option>
+                        {% for org in organizations %}
+                        <option value="{{ org.id }}" {% if organizations|length == 1 %}selected{% endif %}>{{ org.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>{{ 'Техника' if is_ru else 'Texnika' }} *</label>
+                    <select name="equipment_id" id="eqSelect" required>
+                        <option value="">{{ '— сначала выберите организацию —' if is_ru else '— avval tashkilotni tanlang —' }}</option>
+                        {% for eq in initial_equipment %}
+                        <option value="{{ eq.id }}">{{ eq.name }}{% if eq.plate %} — {{ eq.plate }}{% endif %}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>{{ 'Тип работы' if is_ru else 'Ish turi' }} *</label>
+                    <input type="text" name="work_type_text" id="workTypeText" list="wtList" autocomplete="off"
+                           placeholder="{{ 'Выберите или введите' if is_ru else 'Tanlang yoki kiriting' }}">
+                    <input type="hidden" name="work_type_id" id="workTypeId">
+                    <datalist id="wtList">
+                        {% for wt in work_types %}
+                        <option value="{{ wt.name }}" data-id="{{ wt.id }}" data-unit="{{ wt.default_unit or '' }}" data-price="{{ wt.default_price or 0 }}"></option>
+                        {% endfor %}
+                    </datalist>
+                </div>
+
+                <div class="form-group">
+                    <label>{{ 'Заказчик' if is_ru else 'Buyurtmachi' }}</label>
+                    <input type="text" name="customer_text" id="customerText" list="custList" autocomplete="off">
+                    <input type="hidden" name="customer_id" id="customerId">
+                    <datalist id="custList">
+                        {% for c in customers %}
+                        <option value="{{ c.name }}" data-id="{{ c.id }}"></option>
+                        {% endfor %}
+                    </datalist>
+                </div>
+
+                <div class="form-group">
+                    <label>{{ 'Ед. изм.' if is_ru else 'O‘lchov birligi' }}</label>
+                    <input type="text" name="unit" id="unitInput" value="ga">
+                </div>
+
+                <div class="form-group">
+                    <label>{{ 'Плановый объём' if is_ru else 'Rejalashtirilgan hajm' }}</label>
+                    <input type="number" name="planned_quantity" id="plannedQty" min="0" step="0.01">
+                </div>
+
+                <div class="form-group">
+                    <label>{{ 'Цена за ед.' if is_ru else 'Birlik narxi' }}</label>
+                    <input type="number" name="price" id="priceInput" min="0" step="0.01" value="0">
+                    <div class="wof-note" id="priceNote"></div>
+                </div>
+
+                <div class="form-group">
+                    <label>{{ 'Тип оплаты' if is_ru else 'To‘lov turi' }}</label>
+                    <select name="payment_type">
+                        <option value="">{{ '— не выбран —' if is_ru else '— tanlanmagan —' }}</option>
+                        <option value="naqd">{{ 'Наличные' if is_ru else 'Naqd' }}</option>
+                        <option value="bank">{{ 'Перечисление' if is_ru else 'Bank o‘tkazma' }}</option>
+                        <option value="ichki">{{ 'Внутренние' if is_ru else 'Ichki' }}</option>
+                        <option value="boshqa">{{ 'Прочее' if is_ru else 'Boshqa' }}</option>
+                    </select>
+                </div>
+
+                {% if is_admin %}
+                <div class="form-group">
+                    <label>{{ 'Назначить механика' if is_ru else 'Mexanikni tayinlash' }}</label>
+                    <select name="assigned_to">
+                        <option value="">{{ 'Не назначен' if is_ru else 'Tayinlanmagan' }}</option>
+                        {% for m in mechanics %}
+                        <option value="{{ m.id }}">{{ m.full_name or m.username }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+
+                <div class="form-group full">
+                    <label>{{ 'Примечание' if is_ru else 'Izoh' }}</label>
+                    <textarea name="note" rows="2"></textarea>
+                </div>
+
+            </div>
+
+            <div class="wof-actions">
+                <button type="submit" class="btn btn-primary">{{ 'Сохранить' if is_ru else 'Saqlash' }}</button>
+                <a href="{{ url_for('work_orders.index') }}" class="btn btn-secondary">{{ 'Отмена' if is_ru else 'Bekor qilish' }}</a>
+            </div>
+        </div>
+    </div>
+</form>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const WO_TEXT = {
+    fromCatalog: {{ ('Цена из справочника' if is_ru else 'Narx katalogdan')|tojson }},
+    manual: {{ ('Цена изменена вручную' if is_ru else 'Narx qo‘lda o‘zgartirildi')|tojson }},
+    needDate: {{ ('Укажите дату.' if is_ru else 'Sanani kiriting.')|tojson }},
+    needOrg: {{ ('Выберите организацию.' if is_ru else 'Tashkilotni tanlang.')|tojson }},
+    needEq: {{ ('Выберите технику.' if is_ru else 'Texnikani tanlang.')|tojson }},
+    needWorkType: {{ ('Выберите или введите тип работы.' if is_ru else 'Ish turini tanlang yoki kiriting.')|tojson }},
+    placeholderEq: {{ ('— сначала выберите организацию —' if is_ru else '— avval tashkilotni tanlang —')|tojson }},
+    noEq: {{ ('— нет техники —' if is_ru else '— texnika yo‘q —')|tojson }}
+};
+const EQUIP_URL = {{ url_for('work_orders.api_equipment_by_org')|tojson }};
+const PRICE_URL = {{ url_for('work_orders.api_work_type_price')|tojson }};
+
+function loadEquipment(orgId) {
+    const sel = document.getElementById('eqSelect');
+    if (!orgId) {
+        sel.innerHTML = '<option value="">' + WO_TEXT.placeholderEq + '</option>';
+        return;
+    }
+    fetch(EQUIP_URL + '?org_id=' + encodeURIComponent(orgId), {credentials: 'same-origin'})
+        .then(r => r.json())
+        .then(list => {
+            if (!Array.isArray(list) || list.length === 0) {
+                sel.innerHTML = '<option value="">' + WO_TEXT.noEq + '</option>';
+                return;
+            }
+            let html = '<option value=""></option>';
+            list.forEach(e => {
+                const label = e.plate ? (e.name + ' — ' + e.plate) : e.name;
+                html += '<option value="' + e.id + '">' + label.replace(/</g, '&lt;') + '</option>';
+            });
+            sel.innerHTML = html;
+        })
+        .catch(() => { sel.innerHTML = '<option value="">' + WO_TEXT.noEq + '</option>'; });
+}
+
+function loadWorkTypePrice(workTypeId) {
+    if (!workTypeId) return;
+    fetch(PRICE_URL + '?work_type_id=' + encodeURIComponent(workTypeId), {credentials: 'same-origin'})
+        .then(r => r.json())
+        .then(data => {
+            const unit = document.getElementById('unitInput');
+            const price = document.getElementById('priceInput');
+            if (data.unit) unit.value = data.unit;
+            if (data.price !== undefined && data.price !== null) price.value = data.price;
+            price.dataset.autofilled = '1';
+            setPriceNote(true);
+        })
+        .catch(() => {});
+}
+
+function setPriceNote(fromCatalog) {
+    const note = document.getElementById('priceNote');
+    if (fromCatalog) {
+        note.textContent = WO_TEXT.fromCatalog;
+        note.classList.remove('manual');
+    } else {
+        note.textContent = WO_TEXT.manual;
+        note.classList.add('manual');
+    }
+}
+
+// Match a free-text input against its datalist; return the matched <option> or null.
+function matchDatalistOption(input, datalistId) {
+    const val = (input.value || '').trim().toLowerCase();
+    if (!val) return null;
+    const opts = document.getElementById(datalistId).options;
+    for (let i = 0; i < opts.length; i++) {
+        if ((opts[i].value || '').trim().toLowerCase() === val) return opts[i];
+    }
+    return null;
+}
+
+function onWorkTypeChange() {
+    const input = document.getElementById('workTypeText');
+    const hidden = document.getElementById('workTypeId');
+    const opt = matchDatalistOption(input, 'wtList');
+    if (opt) {
+        hidden.value = opt.dataset.id || '';
+        loadWorkTypePrice(hidden.value);
+    } else {
+        hidden.value = '';  // free text
+    }
+}
+
+function onCustomerChange() {
+    const input = document.getElementById('customerText');
+    const hidden = document.getElementById('customerId');
+    const opt = matchDatalistOption(input, 'custList');
+    hidden.value = opt ? (opt.dataset.id || '') : '';
+}
+
+function woValidate(event) {
+    document.querySelectorAll('.wof-err').forEach(el => el.classList.remove('wof-err'));
+    const errors = [];
+    const date = document.getElementById('plannedDate');
+    const org = document.getElementById('orgSelect');
+    const eq = document.getElementById('eqSelect');
+    const wtText = document.getElementById('workTypeText');
+    const wtId = document.getElementById('workTypeId');
+
+    if (!date.value) { errors.push(WO_TEXT.needDate); date.classList.add('wof-err'); }
+    if (!org.value) { errors.push(WO_TEXT.needOrg); org.classList.add('wof-err'); }
+    if (!eq.value) { errors.push(WO_TEXT.needEq); eq.classList.add('wof-err'); }
+    if (!wtText.value.trim() && !wtId.value) { errors.push(WO_TEXT.needWorkType); wtText.classList.add('wof-err'); }
+
+    const box = document.getElementById('wofErrors');
+    const list = document.getElementById('wofErrorList');
+    if (errors.length) {
+        list.innerHTML = '';
+        errors.forEach(e => { const li = document.createElement('li'); li.textContent = e; list.appendChild(li); });
+        box.style.display = 'block';
+        box.scrollIntoView({behavior: 'smooth', block: 'start'});
+        return false;
+    }
+    box.style.display = 'none';
+    return true;
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    document.getElementById('workTypeText').addEventListener('change', onWorkTypeChange);
+    document.getElementById('workTypeText').addEventListener('input', onWorkTypeChange);
+    document.getElementById('customerText').addEventListener('change', onCustomerChange);
+    document.getElementById('customerText').addEventListener('input', onCustomerChange);
+    // User-typed price edits flip the note to "manual" (programmatic .value sets don't fire input).
+    document.getElementById('priceInput').addEventListener('input', function () {
+        this.dataset.autofilled = '0';
+        setPriceNote(false);
+    });
+    // If exactly one org is preselected, load its equipment immediately.
+    const org = document.getElementById('orgSelect');
+    if (org.value) loadEquipment(org.value);
+});
+</script>
+{% endblock %}

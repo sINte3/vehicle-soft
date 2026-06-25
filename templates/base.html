@@ -515,6 +515,11 @@ tbody tr:hover {
            {{ t('Эҳтиёт қисмлар') }}
         </a>
         {% endif %}
+        {# WORK-ORDER-001 nav: /work-orders, visible to all authenticated users (list is open to all). #}
+        <a href="{{ url_for('work_orders.index') }}"
+           class="{% if request.endpoint and request.endpoint.startswith('work_orders') %}active{% endif %}">
+           {{ t('Buyurtmalar') }}
+        </a>
         <a href="{{ url_for('report') }}" class="{% if request.endpoint == 'report' %}active{% endif %}">{{ t('Ҳисобот') }}</a>
         {% if current_user.is_authenticated and current_user.has_module_access('wialon') %}
         <div class="dropdown">

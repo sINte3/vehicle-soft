@@ -39,6 +39,7 @@ from fuel_routes import fuel_bp, _collect_fuel_report_data  # noqa: F401 (regist
 from excel_daily_activity import generate_daily_activity
 from translations import TRANS
 from spare_parts import spare_parts_bp
+from work_orders import work_orders_bp
 # BOT001: Telegram foundation blueprint
 from bot_api import bot_api_bp
 from bot_security import generate_link_code, hash_secret, utcnow
@@ -2578,6 +2579,11 @@ def create_app():
 
     # в”Ђв”Ђв”Ђ SPARE PARTS в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     app.register_blueprint(spare_parts_bp)
+
+    # ─── WORK ORDERS (WORK-ORDER-001) ─────────────────────────────────────────
+    # [REASON]: Phase 1 routes use @login_required + inline role/org checks and
+    # standard CSRF-protected browser forms (GET API endpoints need no exemption).
+    app.register_blueprint(work_orders_bp)
 
     # ─── BOT001: Telegram Bot API ─────────────────────────────────────────────
     # [REASON]: bot_api_bp provides /api/bot/* endpoints. Registered after spare_parts_bp.
