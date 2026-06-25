@@ -3065,3 +3065,14 @@ Operational rule:
 - Manual Excel values are not accepted if they conflict with Topaz/1C.
 
 Release document: docs/RELEASE_FUEL_REPORT_011_BALANCE_REPORT_20260622.md
+
+## 2026-06-24 — FUEL-REPORT-012H-C deployed to production (prod/staging drift closed)
+
+- Production advanced e69bf79 -> 324e32a (fast-forward). production = staging = origin/main.
+- Adds Topaz card directory: tables fuel_cards / fuel_card_aliases / fuel_card_sync_logs, endpoint /fuel/api/card_sync, page /fuel/cards, card-name column in the station-issues fuel report, language-correct Excel, Cyrillic card search.
+- Production DB backup before deploy: D:\transport-report-backups\production\daily\transport_20260624_122932.db (integrity ok).
+- Card directory seeded into production from the staging DB (local copy on the same server): 4885 cards, 9770 aliases, 0 orphan aliases. One fuel_card_sync_logs row recorded (source=staging_seed_012h).
+- Production smoke green: / =200, /fuel/cards =200 (4885 cards), card_sync bad-token =401, station-issues report shows card names with 0 unmatched.
+- Migration ledger note: migrate_fuel_012h_cards.py had a bug — index-name verification used sql.split()[-1] (yielded "(topaz_card_id)") and the except clause caught only Exception, so a verification SystemExit skipped con.commit() and the schema_migrations INSERT rolled back while CREATE TABLE/INDEX committed implicitly. Result on first run: schema created, ledger row missing. Fixed in repo (sql.split()[5], except BaseException). Production ledger row FUEL_012H_CARDS_DIRECTORY backfilled manually; staging ledger backfilled by re-running the fixed (idempotent) migration.
+- schema.txt (local debug schema dump, never committed) added to .gitignore.
+- Regular Topaz->prod card sync is NOT yet automated. Verified one-time loader topaz_send_cards_to_staging.py lives on the Topaz host (10.103.40.140) and loaded staging. Future task: point a copy at the production endpoint (:5050) and decide schedule vs manual.

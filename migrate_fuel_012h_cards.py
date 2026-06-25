@@ -187,7 +187,7 @@ def main() -> None:
                 raise SystemExit(f"TABLE_NOT_CREATED:{t}")
 
         # Verify indexes exist
-        index_names = [sql.split()[-1] for sql in INDEXES_SQL]
+        index_names = [sql.split()[5] for sql in INDEXES_SQL]
         print("NEW_INDEXES:")
         for name in index_names:
             cur.execute(
@@ -221,7 +221,7 @@ def main() -> None:
         print("FUEL_012H_CARDS_MIGRATION_OK=YES")
         print("No business data rows were changed.")
 
-    except Exception:
+    except BaseException:
         con.rollback()
         raise
     finally:

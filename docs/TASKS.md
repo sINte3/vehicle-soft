@@ -9,9 +9,22 @@
 
 ## In progress / next
 
-(none — see backlog for upcoming work)
+### Next: Заявки/Наряды (Orders / Work-requests) MVP — mobile-first. To be specced in a fresh chat (see project roadmap).
 
 ## Recently completed / appears completed
+
+### FUEL-REPORT-012H-C - Topaz card directory sync
+
+Priority: P1
+Status: **completed 2026-06-24 (production)**
+
+Changes made:
+- Added fuel_cards / fuel_card_aliases / fuel_card_sync_logs, /fuel/api/card_sync, /fuel/cards page, card-name column in the station-issues report, language-correct Excel, Cyrillic card search.
+- Production e69bf79 -> 324e32a; production = staging = origin/main (prod/staging drift closed).
+- Card directory seeded into production from staging DB: 4885 cards, 9770 aliases, 0 orphans.
+- Migration ledger row FUEL_012H_CARDS_DIRECTORY present on both production and staging.
+- Fixed migrate_fuel_012h_cards.py index-name/except bug (split()[5], except BaseException).
+- Backup before deploy: transport_20260624_122932.db (integrity ok). Smoke green incl. station-issues report, 0 unmatched.
 
 ### REPORT001B - Excel export improvements
 
@@ -440,6 +453,23 @@ Blocker:
 - Needs formal accounting rules from finance/accounting responsible person.
 
 ## Backlog
+
+### FUEL-CARDS-SYNC - Automate Topaz card directory sync to production
+
+Priority: P2
+Status: backlog
+
+- Source: Topaz Firebird dcCards (CardID/Name/Code/PartnerID/Enabled/CarNumber/CarModel/TransactionID) on 10.103.40.140.
+- Verified loader exists on Topaz host: topaz_send_cards_to_staging.py (uses topaz_agent.get_connection + API_TOKEN; POST /fuel/api/card_sync, batched 500).
+- Task: clone loader, switch STAGING_API_URL to http://10.103.25.14:5050/fuel/api/card_sync, set source label to _prod; validate on staging first; then decide TopazFuelAgent schedule vs manual (record choice in docs/DECISIONS.md).
+
+### SEC-TOKEN-ROT - Rotate FUEL_API_TOKEN and Firebird credentials
+
+Priority: P2
+Status: backlog
+
+- topaz_agent.py on the Topaz host stores the Firebird password and API token in plaintext; the same token authenticates fuel_sync and card_sync over plain HTTP on the LAN.
+- Task: rotate value, update topaz_agent.py + server env via nssm edit (do not overwrite other vars), confirm the token is not committed anywhere in the vehicle-soft git history.
 
 ### TASK-UI-001 — Finish remaining UZ/RU translation gaps
 

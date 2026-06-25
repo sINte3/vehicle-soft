@@ -72,3 +72,5 @@ logs/
 *.sqlite3
 *.log
 *.pyc
+
+schema.txt
