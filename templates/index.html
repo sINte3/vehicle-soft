@@ -182,6 +182,118 @@
             grid-template-columns: 1fr;
         }
     }
+    /* DASH003 — Work Orders analytics section */
+    .dash003-section { margin-bottom: 24px; }
+    .dash003-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        margin-bottom: 14px;
+    }
+    @media (max-width: 768px) {
+        .dash003-row { grid-template-columns: 1fr; }
+    }
+    .dash003-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+    }
+    .dash003-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 9px 14px;
+        background: var(--surface2);
+        border-bottom: 1px solid var(--border);
+        font-size: 11.5px;
+        font-weight: 700;
+        color: var(--text2);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .dash003-head a {
+        font-weight: 600;
+        font-size: 11.5px;
+        color: var(--danger);
+        text-decoration: none;
+        text-transform: none;
+        letter-spacing: 0;
+    }
+    .dash003-head a:hover { text-decoration: underline; }
+    .dash003-head .period-note {
+        font-weight: 400;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--text2);
+        font-size: 11px;
+    }
+    .dash003-tbl {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+    }
+    .dash003-tbl th {
+        padding: 6px 12px;
+        background: var(--surface2);
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--text2);
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+    }
+    .dash003-tbl td {
+        padding: 7px 12px;
+        border-bottom: 1px solid var(--border);
+        color: var(--text);
+        font-size: 12.5px;
+    }
+    .dash003-tbl tr:last-child td { border-bottom: none; }
+    .dash003-tbl .num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+    }
+    .dash003-tbl .warn { color: var(--danger); font-weight: 700; }
+    .dash003-tbl .wo-link {
+        color: var(--accent);
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 12px;
+    }
+    .dash003-tbl .wo-link:hover { text-decoration: underline; }
+    .dash003-tbl .eq-line {
+        display: block;
+        font-size: 11px;
+        color: var(--text2);
+        margin-top: 1px;
+    }
+    .dash003-days-badge {
+        display: inline-block;
+        padding: 1px 6px;
+        border-radius: 3px;
+        font-size: 11px;
+        font-weight: 700;
+        background: var(--danger-light);
+        color: var(--danger);
+    }
+    .dash003-empty {
+        padding: 14px 16px;
+        font-size: 12.5px;
+        color: var(--text2);
+        text-align: center;
+    }
+    .dash003-chart-wrap { padding: 14px 16px 10px; }
+    .dash003-chart-sub {
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+        color: var(--text2);
+        margin-top: 3px;
+        padding: 0 2px;
+    }
 </style>
 
 <div class="dash-hero dash002-hero">
@@ -323,6 +435,10 @@
             <div><b>{{ dashboard.work_orders.open }}</b><span>{{ 'открытые' if lang == 'ru' else 'очиқ' }}</span></div>
             <div><b>{{ dashboard.work_orders.done_today }}</b><span>{{ 'сегодня' if lang == 'ru' else 'бугун' }}</span></div>
             <div><b>{{ dashboard.work_orders.overdue }}</b><span>{{ 'просрочено' if lang == 'ru' else 'муддати ўтган' }}</span></div>
+            <div>
+                <b>{{ dashboard.work_orders.total_amount | fmt_sum or '—' }}</b>
+                <span>{{ 'сум выпол.' if lang == 'ru' else 'сўм бажар.' }}</span>
+            </div>
         </div>
         <div class="dash-quick-links">
             <a href="{{ url_for('work_orders.index') }}">{{ 'Все наряды' if lang == 'ru' else 'Барча буюртмалар' }}</a>
@@ -385,6 +501,160 @@
     </div>
 </div>
 {% endif %}
+
+{# DASH003 — Work Orders analytics ─────────────────────────────────────── #}
+{% if dashboard.work_orders.by_org or dashboard.work_orders.overdue_list %}
+<div class="dash003-section">
+
+  {# Row 1: by-org table + by-mechanic table #}
+  <div class="dash003-row">
+
+    {# By-org #}
+    <div class="dash003-card">
+      <div class="dash003-head">
+        <span>{{ 'Наряды по организациям' if lang == 'ru' else 'Ташкилотлар бўйича нарядлар' }}</span>
+        <span class="period-note">{{ d_from.strftime('%d.%m') }}–{{ d_to.strftime('%d.%m') }}</span>
+      </div>
+      {% if dashboard.work_orders.by_org %}
+      <table class="dash003-tbl">
+        <thead>
+          <tr>
+            <th>{{ 'Организация' if lang == 'ru' else 'Ташкилот' }}</th>
+            <th class="num">{{ 'Откр' if lang == 'ru' else 'Очиқ' }}</th>
+            <th class="num">{{ 'Выпол' if lang == 'ru' else 'Бажар' }}</th>
+            <th class="num">{{ 'Просроч' if lang == 'ru' else 'Муддат' }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in dashboard.work_orders.by_org %}
+          <tr>
+            <td>{{ row.name }}</td>
+            <td class="num">{{ row.open or '—' }}</td>
+            <td class="num">{{ row.done or '—' }}</td>
+            <td class="num {% if row.overdue > 0 %}warn{% endif %}">
+              {{ row.overdue if row.overdue else '—' }}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="dash003-empty">{{ 'Нет данных за период' if lang == 'ru' else 'Давр учун маълумот йўқ' }}</div>
+      {% endif %}
+    </div>
+
+    {# By-mechanic #}
+    <div class="dash003-card">
+      <div class="dash003-head">
+        <span>{{ 'Механики' if lang == 'ru' else 'Механиклар' }}</span>
+      </div>
+      {% if dashboard.work_orders.by_mechanic %}
+      <table class="dash003-tbl">
+        <thead>
+          <tr>
+            <th>{{ 'Механик' if lang == 'ru' else 'Механик' }}</th>
+            <th class="num">{{ 'Откр' if lang == 'ru' else 'Очиқ' }}</th>
+            <th class="num">{{ 'В работе' if lang == 'ru' else 'Ишда' }}</th>
+            <th class="num">{{ 'Выпол' if lang == 'ru' else 'Бажар' }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in dashboard.work_orders.by_mechanic %}
+          <tr>
+            <td>{{ row.name }}</td>
+            <td class="num">{{ row.open or '—' }}</td>
+            <td class="num">{{ row.in_progress or '—' }}</td>
+            <td class="num">{{ row.done or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="dash003-empty">{{ 'Нет назначенных механиков' if lang == 'ru' else 'Тайинланган механиклар йўқ' }}</div>
+      {% endif %}
+    </div>
+
+  </div>{# end row 1 #}
+
+  {# Row 2: overdue list + done-by-day bar chart #}
+  <div class="dash003-row">
+
+    {# Overdue list #}
+    <div class="dash003-card">
+      <div class="dash003-head">
+        <span>{{ 'Просроченные наряды' if lang == 'ru' else 'Муддати ўтган нарядлар' }}</span>
+        {% if dashboard.work_orders.overdue > 0 %}
+        <a href="{{ url_for('work_orders.index') }}?status=open">{{ 'Все →' if lang == 'ru' else 'Барча →' }}</a>
+        {% endif %}
+      </div>
+      {% if dashboard.work_orders.overdue_list %}
+      <table class="dash003-tbl">
+        <thead>
+          <tr>
+            <th>{{ 'Наряд / Техника' if lang == 'ru' else 'Наряд / Техника' }}</th>
+            <th>{{ 'Орг' if lang == 'ru' else 'Таш' }}</th>
+            <th class="num">{{ 'Дата' if lang == 'ru' else 'Сана' }}</th>
+            <th class="num">{{ 'Дней' if lang == 'ru' else 'Кун' }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in dashboard.work_orders.overdue_list %}
+          <tr>
+            <td>
+              <a href="{{ url_for('work_orders.detail', wo_id=item.id) }}" class="wo-link">{{ item.number }}</a>
+              <span class="eq-line">{{ item.equipment }}</span>
+            </td>
+            <td style="font-size:11.5px; color:var(--text2);">{{ item.org }}</td>
+            <td class="num" style="font-size:11.5px;">{{ item.planned }}</td>
+            <td class="num"><span class="dash003-days-badge">+{{ item.days }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="dash003-empty">{{ 'Просроченных нарядов нет ✓' if lang == 'ru' else 'Муддати ўтган нарядлар йўқ ✓' }}</div>
+      {% endif %}
+    </div>
+
+    {# Done-by-day mini bar chart #}
+    <div class="dash003-card">
+      <div class="dash003-head">
+        <span>{{ 'Выполнено — последние 14 дней' if lang == 'ru' else 'Сўнгги 14 кун — бажарилди' }}</span>
+      </div>
+      <div class="dash003-chart-wrap">
+        {% set bars = dashboard.work_orders.done_by_day %}
+        <svg viewBox="0 0 280 60" xmlns="http://www.w3.org/2000/svg"
+             style="width:100%; height:60px; overflow:visible;">
+          {% for bar in bars %}
+          {% set bx = loop.index0 * 20 %}
+          {% set bh = 0 if bar.count == 0 else [bar.pct * 44 // 100, 3] | max %}
+          {% set by = 44 - bh %}
+          <rect x="{{ bx + 2 }}" y="{{ by }}" width="16" height="{{ bh }}"
+                rx="2"
+                fill="{{ 'var(--accent)' if bar.count > 0 else 'var(--border)' }}"/>
+          {% if bar.count > 0 %}
+          <text x="{{ bx + 10 }}" y="{{ by - 2 }}"
+                text-anchor="middle" font-size="7" fill="var(--text2)">{{ bar.count }}</text>
+          {% endif %}
+          {% endfor %}
+          {# x-axis baseline #}
+          <line x1="0" y1="46" x2="280" y2="46" stroke="var(--border)" stroke-width="1"/>
+          {# date labels every 3rd bar #}
+          {% for bar in bars %}
+          {% if loop.index0 % 3 == 0 %}
+          <text x="{{ loop.index0 * 20 + 10 }}" y="56"
+                text-anchor="middle" font-size="7" fill="var(--text2)">{{ bar.label }}</text>
+          {% endif %}
+          {% endfor %}
+        </svg>
+      </div>
+    </div>
+
+  </div>{# end row 2 #}
+
+</div>{# end dash003-section #}
+{% endif %}
+{# /DASH003 ─────────────────────────────────────────────────────────────── #}
 
 <!-- DASH002C_MARKER: legacy daily report section separator -->
 <div class="legacy-report-section">

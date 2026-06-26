@@ -619,6 +619,121 @@ def create_app():
                 WorkOrder.status.in_(wo_open_statuses),
                 WorkOrder.planned_date < wo_today,
             ).count()
+
+            # DASH003 — extended WO analytics -----------------------------------------
+
+            # 1. Total amount of done WOs in the selected period
+            _amount_rows = wq.filter(
+                WorkOrder.status == WO_STATUS_DONE,
+                WorkOrder.actual_date >= d_from,
+                WorkOrder.actual_date <= d_to,
+            ).with_entities(WorkOrder.price, WorkOrder.actual_quantity).all()
+            work_orders['total_amount'] = int(sum(
+                (r.price or 0) * (r.actual_quantity or 0) for r in _amount_rows
+            ))
+
+            # 2. Per-organisation breakdown
+            _today_d = date.today()
+            _by_org = []
+            for _org in get_user_orgs():
+                _oq = wq.filter(WorkOrder.organization_id == _org.id)
+                _o_open = _oq.filter(WorkOrder.status.in_(wo_open_statuses)).count()
+                _o_done = _oq.filter(
+                    WorkOrder.status == WO_STATUS_DONE,
+                    WorkOrder.actual_date >= d_from,
+                    WorkOrder.actual_date <= d_to,
+                ).count()
+                _o_over = _oq.filter(
+                    WorkOrder.status.in_(wo_open_statuses),
+                    WorkOrder.planned_date < _today_d,
+                ).count()
+                if _o_open > 0 or _o_done > 0:
+                    _by_org.append({
+                        'name': (_org.short_name or _org.name or '')[:32],
+                        'open': _o_open,
+                        'done': _o_done,
+                        'overdue': _o_over,
+                    })
+            work_orders['by_org'] = _by_org
+
+            # 3. Per-mechanic breakdown (users who appear as assigned_to in visible WOs)
+            _assigned_ids = {
+                r[0] for r in
+                wq.filter(WorkOrder.assigned_to.isnot(None))
+                  .with_entities(WorkOrder.assigned_to)
+                  .distinct().all()
+            }
+            _by_mechanic = []
+            if _assigned_ids:
+                _umap = {
+                    u.id: (u.full_name or u.username)
+                    for u in User.query.filter(User.id.in_(_assigned_ids)).all()
+                }
+                for _uid in _assigned_ids:
+                    _mq = wq.filter(WorkOrder.assigned_to == _uid)
+                    _m_open  = _mq.filter(WorkOrder.status.in_(wo_open_statuses)).count()
+                    _m_inpro = _mq.filter(WorkOrder.status == WO_STATUS_IN_PROGRESS).count()
+                    _m_done  = _mq.filter(
+                        WorkOrder.status == WO_STATUS_DONE,
+                        WorkOrder.actual_date >= d_from,
+                        WorkOrder.actual_date <= d_to,
+                    ).count()
+                    if _m_open > 0 or _m_done > 0:
+                        _by_mechanic.append({
+                            'name': _umap.get(_uid, f'#{_uid}'),
+                            'open': _m_open,
+                            'in_progress': _m_inpro,
+                            'done': _m_done,
+                        })
+                _by_mechanic.sort(key=lambda x: -(x['done'] + x['open']))
+            work_orders['by_mechanic'] = _by_mechanic
+
+            # 4. Overdue list — top 10, ordered oldest first (for the overdue table)
+            _overdue_ws = (
+                wq.filter(
+                    WorkOrder.status.in_(wo_open_statuses),
+                    WorkOrder.planned_date < _today_d,
+                )
+                .order_by(WorkOrder.planned_date.asc())
+                .limit(10)
+                .all()
+            )
+            work_orders['overdue_list'] = [
+                {
+                    'id':        _w.id,
+                    'number':    _w.number,
+                    'org':       ((_w.organization.short_name or _w.organization.name)
+                                  if _w.organization else '—')[:22],
+                    'equipment': (_w.equipment.name if _w.equipment else '—')[:28],
+                    'planned':   _w.planned_date.strftime('%d.%m') if _w.planned_date else '—',
+                    'days':      (_today_d - _w.planned_date).days if _w.planned_date else 0,
+                    'status':    _w.status,
+                }
+                for _w in _overdue_ws
+            ]
+
+            # 5. Done-per-day for the last 14 calendar days (for the mini bar chart)
+            _dbd_counts = {}
+            for _r in wq.filter(
+                WorkOrder.status == WO_STATUS_DONE,
+                WorkOrder.actual_date >= (_today_d - timedelta(days=13)),
+                WorkOrder.actual_date <= _today_d,
+            ).with_entities(WorkOrder.actual_date).all():
+                _dbd_counts[_r.actual_date] = _dbd_counts.get(_r.actual_date, 0) + 1
+            _dbd_max = max(_dbd_counts.values(), default=1)
+            work_orders['done_by_day'] = [
+                {
+                    'label': (_today_d - timedelta(days=13 - _i)).strftime('%d'),
+                    'count': _dbd_counts.get(_today_d - timedelta(days=13 - _i), 0),
+                    'pct':   int(
+                        _dbd_counts.get(_today_d - timedelta(days=13 - _i), 0)
+                        / _dbd_max * 100
+                    ),
+                }
+                for _i in range(14)
+            ]
+
+            # DASH003 end ---------------------------------------------------------------
         except Exception:
             pass
 
