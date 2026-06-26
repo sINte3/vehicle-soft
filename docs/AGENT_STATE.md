@@ -3075,4 +3075,41 @@ Release document: docs/RELEASE_FUEL_REPORT_011_BALANCE_REPORT_20260622.md
 - Production smoke green: / =200, /fuel/cards =200 (4885 cards), card_sync bad-token =401, station-issues report shows card names with 0 unmatched.
 - Migration ledger note: migrate_fuel_012h_cards.py had a bug — index-name verification used sql.split()[-1] (yielded "(topaz_card_id)") and the except clause caught only Exception, so a verification SystemExit skipped con.commit() and the schema_migrations INSERT rolled back while CREATE TABLE/INDEX committed implicitly. Result on first run: schema created, ledger row missing. Fixed in repo (sql.split()[5], except BaseException). Production ledger row FUEL_012H_CARDS_DIRECTORY backfilled manually; staging ledger backfilled by re-running the fixed (idempotent) migration.
 - schema.txt (local debug schema dump, never committed) added to .gitignore.
+- Regular Topaz->prod card sync is NOT yet automated. Verified one-time loader topaz_send_cards_to_staging.py lives on the Topaz host (10.103.40.140) and loaded staging. Future task: point a copy at the production endpoint (:5050) and decide schedule vs manual.- schema.txt (local debug schema dump, never committed) added to .gitignore.
 - Regular Topaz->prod card sync is NOT yet automated. Verified one-time loader topaz_send_cards_to_staging.py lives on the Topaz host (10.103.40.140) and loaded staging. Future task: point a copy at the production endpoint (:5050) and decide schedule vs manual.
+
+## 2026-06-25 — WORK-ORDER-001 Phase 1+2 deployed to production
+
+- Production commit: a993b8f, tag prod-wo001-phase1-20260625.
+- Adds Work Orders module (Blueprint work_orders_bp, file work_orders.py).
+- Migration WORK_ORDERS_001: tables work_orders, work_order_status_history; column daily_records.work_order_id.
+- Phase 1: list + create form, org-scoped, equipment AJAX filter, work-type price AJAX.
+- Phase 2: status machine (draft → assigned → in_progress → done/cancelled), detail page, close form (separate page), automatic DailyRecord creation on closure, work_order_status_history logging, BOT003 outbox notifications for close/cancel.
+- Navigation entry "Наряды" added to base.html.
+- All smoke tests passed on staging and production.
+
+## 2026-06-26 — WORK-ORDER-001 Phase 3+4 deployed to production
+
+- Production commit: cf06662, tag prod-wo001-phase34-20260626.
+- Production backup before deploy: D:\transport-report-backups\daily\transport_20260626_105940.db (integrity ok).
+- All 6 services Running after deploy.
+
+Changes:
+- ROLE_MECHANIC constant and ROLES dict entry already present from Phase 2; confirmed in models.py.
+- Mechanic role option added to /admin/users role dropdown (templates/admin_users.html).
+- Work order list query and header counters filtered for mechanic role: mechanics see only orders they created or are assigned to.
+- Work order detail page: mechanic guard — abort(403) if mechanic accesses an order not assigned to or created by them.
+- Work Orders KPI block added to main dashboard (templates/index.html): open / done today / overdue counts, org-scoped for non-admins. Three queries added to / route in app.py.
+- price_override event (WO_EVENT_PRICE_OVERRIDE) already implemented in Phase 2 close route; confirmed present.
+- BOT003 close notification bug fixed: event_type is stored as a DB column in bot003_notification_outbox, not inside payload_json. _build_notification_text dispatched on payload.get("event_type") which always returned "unknown", causing wo_closed/wo_cancelled to fall through to the spare-parts formatter. Fix: inject row["event_type"] into payload dict before calling formatter (one line in bot003_outbox_worker.py process_outbox loop).
+
+WORK-ORDER-001 MVP (Phases 1–4) is fully complete on production.
+
+Next candidates (backlog):
+- WORK-ORDER-001 Phase 3 ownership edit guard: no /edit route exists in the module yet (deferred to future phase).
+- Management dashboard for work orders (strategic gap vs AgroWork).
+- SEC-TOKEN-ROT (P2): plaintext FUEL_API_TOKEN and Firebird password in topaz_agent.py.
+- BOT003 staging smoke not run end-to-end (partially verified via production deploy).
+- FUEL-CARDS-SYNC: card sync not automated.
+- AZS-ORG-REFACTOR: duplicate org IDs 20–24 deferred.
+- Wialon manual import (long-term).
