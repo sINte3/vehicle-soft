@@ -3113,3 +3113,28 @@ Next candidates (backlog):
 - FUEL-CARDS-SYNC: card sync not automated.
 - AZS-ORG-REFACTOR: duplicate org IDs 20–24 deferred.
 - Wialon manual import (long-term).
+
+## 2026-06-26 — DASH003 deployed to production
+
+- Production commit: abb2dc9, tag prod-dash003-20260626.
+- Production backup before deploy: D:\transport-report-backups\production\daily\transport_20260626_132822.db (integrity ok).
+- All 6 services Running after deploy.
+- Production = staging = origin/main at abb2dc9.
+
+Changes:
+- 5 new keys added to work_orders dict in `/` route (app.py):
+  total_amount, by_org, by_mechanic, overdue_list, done_by_day.
+- Compact WO KPI card on main dashboard now shows 4th metric: total done amount (fmt_sum).
+- New DASH003 analytics section added to templates/index.html (inserted before DASH002C_MARKER):
+  - Row 1: by-org table (open / done / overdue per org, period-scoped) + by-mechanic table (open / in_progress / done).
+  - Row 2: overdue list top-10 with clickable WO links + 14-day done bar chart (inline SVG, no JS).
+- All data org-scoped and role-scoped via existing wq base query. No DB migrations, no new dependencies.
+
+Next candidates (backlog):
+- UI-NEXT (P1): design refresh (vs_next.css + base_next.html under feature flag) based on Claude Design prototype.
+- SEC-TOKEN-ROT (P2): plaintext FUEL_API_TOKEN and Firebird password in topaz_agent.py.
+- WORK-ORDER-001 /edit route + ownership guard: deferred (no /edit route exists yet).
+- BOT003 staging smoke not run end-to-end.
+- FUEL-CARDS-SYNC: card sync not automated.
+- AZS-ORG-REFACTOR: duplicate org IDs 20–24 deferred.
+- Wialon manual import (long-term).
