@@ -19,7 +19,7 @@
 <div class="woc-scope">
 
 <a href="{{ url_for('work_orders.detail', wo_id=wo.id) }}" class="woc-back">← {{ wo.number }}</a>
-<h1>{{ wo.number }} — {{ 'Закрыть наряд' if is_ru else 'Yopish' }}</h1>
+<h1>{{ wo.number }} — {{ 'Закрыть наряд' if is_ru else 'Buyurtmani yopish' }}</h1>
 
 {% if existing_records_count > 0 %}
 <div class="alert alert-warning">
@@ -37,29 +37,29 @@
     <div class="card">
         <div class="card-body">
             <div class="form-group">
-                <label>{{ 'Фактическая дата' if is_ru else 'Haqiqiy sana' }}</label>
+                <label>{{ 'Фактическая дата' if is_ru else 'Ҳақиқий сана' }}</label>
                 <input type="date" name="actual_date" value="{{ wo.planned_date.strftime('%Y-%m-%d') }}">
             </div>
 
             <div class="form-group">
-                <label>{{ 'Фактический объём' if is_ru else 'Haqiqiy hajm' }} *</label>
+                <label>{{ 'Фактический объём' if is_ru else 'Ҳақиқий ҳажм' }} *</label>
                 <input type="number" name="actual_quantity" step="0.01" min="0" required
                        placeholder="{{ wo.unit }}"
                        value="{{ wo.actual_quantity if wo.actual_quantity is not none else (wo.planned_quantity if wo.planned_quantity is not none else '') }}">
             </div>
 
             <div class="form-group">
-                <label>{{ 'Тип оплаты' if is_ru else 'To‘lov turi' }}</label>
+                <label>{{ 'Тип оплаты' if is_ru else 'Тўлов тури' }}</label>
                 <select name="payment_type">
-                    <option value="naqd"   {{ 'selected' if wo.payment_type == 'naqd'   else '' }}>Naqd / Наличные</option>
-                    <option value="bank"   {{ 'selected' if wo.payment_type == 'bank'   else '' }}>Bank / Банк</option>
-                    <option value="ichki"  {{ 'selected' if wo.payment_type == 'ichki'  else '' }}>Ichki / Внутренний</option>
-                    <option value="boshqa" {{ 'selected' if wo.payment_type == 'boshqa' else '' }}>Boshqa / Прочее</option>
+                    <option value="naqd"   {{ 'selected' if wo.payment_type == 'naqd'   else '' }}>{{ 'Наличные' if is_ru else 'Накд' }}</option>
+                    <option value="bank"   {{ 'selected' if wo.payment_type == 'bank'   else '' }}>{{ 'Банк'     if is_ru else 'Банк' }}</option>
+                    <option value="ichki"  {{ 'selected' if wo.payment_type == 'ichki'  else '' }}>{{ 'Внутренний' if is_ru else 'Ички' }}</option>
+                    <option value="boshqa" {{ 'selected' if wo.payment_type == 'boshqa' else '' }}>{{ 'Прочее'   if is_ru else 'Бошқа' }}</option>
                 </select>
             </div>
 
             <div class="form-group">
-                <label>{{ 'Примечание' if is_ru else 'Izoh' }}</label>
+                <label>{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
                 <textarea name="note" rows="2"></textarea>
             </div>
 
