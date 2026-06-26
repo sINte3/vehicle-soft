@@ -14,20 +14,27 @@ flash + redirect on validation error). Routes are guarded with @login_required;
 role/ownership checks are inline per the TZ access matrix (section 3.2).
 """
 
+import json
+
 from flask import (
     Blueprint, render_template, request, redirect, url_for, flash, abort, g, jsonify
 )
 from flask_login import login_required, current_user
 from datetime import datetime, date
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 from models import (
     db, WorkOrder, WorkOrderStatusHistory,
     Organization, Equipment, WorkType, Customer, User,
+    DailyRecord,
     ROLE_ADMIN, ROLE_OPERATOR, ROLE_MECHANIC,
     WO_STATUSES, WO_STATUS_DRAFT, WO_STATUS_ASSIGNED, WO_STATUS_IN_PROGRESS,
     WO_STATUS_DONE, WO_STATUS_CANCELLED,
-    WO_STATUS_LABELS_RU, WO_STATUS_LABELS_UZ, WO_EVENT_STATUS_CHANGE,
+    WO_STATUS_LABELS_RU, WO_STATUS_LABELS_UZ,
+    WO_PAYMENT_TYPES_RU, WO_PAYMENT_TYPES_UZ,
+    WO_EVENT_STATUS_CHANGE,
+    WO_EVENT_PRICE_OVERRIDE,
+    WO_EVENT_ASSIGNMENT_CHANGE,
 )
 
 work_orders_bp = Blueprint('work_orders', __name__)
@@ -63,6 +70,10 @@ def _wo_t(uz_text, ru_text):
 
 def _wo_status_labels():
     return WO_STATUS_LABELS_RU if _wo_lang() == 'ru' else WO_STATUS_LABELS_UZ
+
+
+def _wo_payment_labels():
+    return WO_PAYMENT_TYPES_RU if _wo_lang() == 'ru' else WO_PAYMENT_TYPES_UZ
 
 
 def _wo_user_org_ids():
@@ -129,6 +140,65 @@ def _generate_wo_number(year: int) -> str:
         except (ValueError, IndexError):
             seq = 1
     return f"{prefix}{seq:05d}"
+
+
+# ─── Phase 2 access-check helpers ───────────────────────────────────────────────
+
+def _wo_can_start(wo):
+    if wo.status not in (WO_STATUS_DRAFT, WO_STATUS_ASSIGNED):
+        return False
+    return (current_user.is_admin or
+            wo.created_by == current_user.id or
+            wo.assigned_to == current_user.id)
+
+
+def _wo_can_close(wo):
+    if wo.status != WO_STATUS_IN_PROGRESS:
+        return False
+    return (current_user.is_admin or
+            wo.created_by == current_user.id or
+            wo.assigned_to == current_user.id)
+
+
+def _wo_can_cancel(wo):
+    if wo.status in (WO_STATUS_DONE, WO_STATUS_CANCELLED):
+        return False
+    return (current_user.is_admin or
+            (wo.status == WO_STATUS_DRAFT and wo.created_by == current_user.id))
+
+
+def _wo_can_assign(wo):
+    return (current_user.is_admin and
+            wo.status not in (WO_STATUS_DONE, WO_STATUS_CANCELLED))
+
+
+def _wo_outbox_insert(wo, event_type, target_user_id, target_telegram_id, payload_dict):
+    """Insert one notification row into bot003_notification_outbox.
+
+    [REASON]: bot003_notification_outbox.request_id is NOT NULL (designed for
+    spare parts). We pass wo.id as request_id — safe because the bot reads
+    context from payload_json, not by JOIN on request_id.
+    available_at / created_at / updated_at are TEXT columns; use ISO strings.
+    INSERT OR IGNORE prevents duplicate notifications on double-submit.
+    """
+    now_iso = datetime.utcnow().isoformat(timespec='seconds')
+    dedupe = f"wo_{wo.id}_{event_type}_{target_user_id or 0}"
+    db.session.execute(text(
+        "INSERT OR IGNORE INTO bot003_notification_outbox "
+        "(event_type, request_id, target_user_id, target_telegram_id, "
+        " payload_json, dedupe_key, status, attempts, max_attempts, "
+        " available_at, created_at, updated_at) "
+        "VALUES (:et, :rid, :tuid, :ttid, :pj, :dk, "
+        "        'pending', 0, 5, :now, :now, :now)"
+    ), {
+        'et':   event_type,
+        'rid':  wo.id,
+        'tuid': target_user_id,
+        'ttid': str(target_telegram_id) if target_telegram_id else None,
+        'pj':   json.dumps(payload_dict, ensure_ascii=False),
+        'dk':   dedupe,
+        'now':  now_iso,
+    })
 
 
 # ─── List ───────────────────────────────────────────────────────────────────
@@ -407,3 +477,277 @@ def api_equipment_by_org():
         }
         for e in eqs
     ])
+
+
+# ─── Phase 2: detail + status transitions ──────────────────────────────────────
+
+@work_orders_bp.route('/work-orders/<int:wo_id>')
+@login_required
+def detail(wo_id):
+    wo = WorkOrder.query.get_or_404(wo_id)
+    if not current_user.can_access_org(wo.organization_id):
+        abort(403)
+    lang = _wo_lang()
+    history = wo.history.order_by(WorkOrderStatusHistory.changed_at).all()
+    mechanics = []
+    if current_user.is_admin:
+        mechanics = (User.query
+                     .filter_by(role=ROLE_MECHANIC, is_active_user=True)
+                     .order_by(User.full_name, User.username).all())
+    return render_template(
+        'work_order_detail.html',
+        wo=wo,
+        history=history,
+        mechanics=mechanics,
+        can_start=_wo_can_start(wo),
+        can_close=_wo_can_close(wo),
+        can_cancel=_wo_can_cancel(wo),
+        can_assign=_wo_can_assign(wo),
+        status_labels=_wo_status_labels(),
+        status_colors=WO_STATUS_COLORS,
+        payment_labels=_wo_payment_labels(),
+        lang=lang,
+    )
+
+
+@work_orders_bp.route('/work-orders/<int:wo_id>/start', methods=['POST'])
+@login_required
+def start(wo_id):
+    wo = WorkOrder.query.get_or_404(wo_id)
+    if not current_user.can_access_org(wo.organization_id):
+        abort(403)
+    if not _wo_can_start(wo):
+        flash(_wo_t('Bu amalni bajarish mumkin emas', 'Действие недоступно'), 'warning')
+        return redirect(url_for('work_orders.detail', wo_id=wo_id))
+    old_status = wo.status
+    wo.status = WO_STATUS_IN_PROGRESS
+    db.session.add(WorkOrderStatusHistory(
+        work_order_id=wo.id,
+        event_type=WO_EVENT_STATUS_CHANGE,
+        old_value=old_status,
+        new_value=WO_STATUS_IN_PROGRESS,
+        changed_by=current_user.id,
+        comment='Started',
+    ))
+    db.session.commit()
+    flash(_wo_t('Buyurtma boshlandi', 'Наряд взят в работу'), 'success')
+    return redirect(url_for('work_orders.detail', wo_id=wo_id))
+
+
+@work_orders_bp.route('/work-orders/<int:wo_id>/close', methods=['GET', 'POST'])
+@login_required
+def close(wo_id):
+    wo = WorkOrder.query.get_or_404(wo_id)
+    if not current_user.can_access_org(wo.organization_id):
+        abort(403)
+    if not _wo_can_close(wo):
+        flash(_wo_t('Bu amalni bajarish mumkin emas', 'Действие недоступно'), 'warning')
+        return redirect(url_for('work_orders.detail', wo_id=wo_id))
+
+    if request.method == 'GET':
+        existing_count = DailyRecord.query.filter_by(
+            equipment_id=wo.equipment_id,
+            work_date=wo.planned_date,
+        ).count()
+        return render_template(
+            'work_order_close.html',
+            wo=wo,
+            existing_records_count=existing_count,
+            lang=_wo_lang(),
+        )
+
+    # --- POST: validate and commit ---
+    actual_date = _parse_date(request.form.get('actual_date', '')) or wo.planned_date
+    actual_quantity = _parse_float_or_none(request.form.get('actual_quantity', ''))
+    if actual_quantity is None:
+        flash(_wo_t('Haqiqiy hajmni kiriting', 'Укажите фактический объём'), 'warning')
+        return redirect(url_for('work_orders.close', wo_id=wo_id))
+
+    payment_type = request.form.get('payment_type', wo.payment_type or '').strip()
+    if payment_type not in VALID_PAYMENT_TYPES:
+        payment_type = ''
+    close_note = request.form.get('note', '').strip()
+
+    # Warn (non-blocking) if duplicate DailyRecord exists for actual_date
+    existing_count = DailyRecord.query.filter_by(
+        equipment_id=wo.equipment_id,
+        work_date=actual_date,
+    ).count()
+    if existing_count > 0:
+        flash(
+            _wo_t(
+                f'Diqqat: bu texnika uchun {existing_count} ta yozuv mavjud.',
+                f'Внимание: для этой техники уже есть {existing_count} записей за эту дату.',
+            ),
+            'warning',
+        )
+
+    # Compute amounts
+    total = (actual_quantity or 0.0) * (wo.price or 0.0)
+    amount_cash     = total if payment_type == 'naqd'  else 0.0
+    amount_transfer = total if payment_type == 'bank'  else 0.0
+    amount_internal = total if payment_type == 'ichki' else 0.0
+    amount_other    = total if payment_type not in ('naqd', 'bank', 'ichki') else 0.0
+
+    # Next line_index for (equipment_id, actual_date)
+    max_idx = db.session.query(func.max(DailyRecord.line_index)).filter(
+        DailyRecord.equipment_id == wo.equipment_id,
+        DailyRecord.work_date == actual_date,
+    ).scalar()
+    next_idx = (max_idx + 1) if max_idx is not None else 0
+
+    # Create DailyRecord
+    dr = DailyRecord(
+        work_date=actual_date,
+        equipment_id=wo.equipment_id,
+        line_index=next_idx,
+        status='working',
+        work_type=wo.work_type_text,
+        customer=wo.customer_text,
+        unit=wo.unit,
+        quantity=actual_quantity,
+        price=wo.price,
+        payment_type=payment_type,
+        amount_cash=amount_cash,
+        amount_transfer=amount_transfer,
+        amount_internal=amount_internal,
+        amount_other=amount_other,
+        note=f'Buyurtma {wo.number}',
+        created_by=current_user.id,
+        work_order_id=wo.id,
+    )
+    db.session.add(dr)
+    db.session.flush()  # get dr.id before setting back-reference
+
+    # Update work order
+    old_status = wo.status
+    wo.actual_date = actual_date
+    wo.actual_quantity = actual_quantity
+    wo.payment_type = payment_type
+    wo.status = WO_STATUS_DONE
+    wo.daily_record_id = dr.id
+    wo.closed_at = datetime.utcnow()
+    if close_note:
+        wo.note = (wo.note + '\n' + close_note).strip() if wo.note else close_note
+
+    # History
+    db.session.add(WorkOrderStatusHistory(
+        work_order_id=wo.id,
+        event_type=WO_EVENT_STATUS_CHANGE,
+        old_value=old_status,
+        new_value=WO_STATUS_DONE,
+        changed_by=current_user.id,
+        comment=f'Closed. qty={actual_quantity} {wo.unit} date={actual_date}',
+    ))
+
+    # BOT003: notify admins and creator
+    payload = {
+        'wo_number': wo.number,
+        'work_type': wo.work_type_text,
+        'equipment': wo.equipment.name,
+        'actual_qty': actual_quantity,
+        'unit': wo.unit,
+        'actual_date': str(actual_date),
+        'closed_by': current_user.username,
+    }
+    for admin_user in User.query.filter_by(role=ROLE_ADMIN, is_active_user=True).all():
+        if admin_user.telegram_id:
+            _wo_outbox_insert(wo, 'wo_closed', admin_user.id, admin_user.telegram_id, payload)
+    creator = User.query.get(wo.created_by)
+    if creator and not creator.is_admin and creator.telegram_id:
+        _wo_outbox_insert(wo, 'wo_closed', creator.id, creator.telegram_id, payload)
+
+    db.session.commit()
+    flash(
+        _wo_t(
+            f'Buyurtma {wo.number} yopildi.',
+            f'Наряд {wo.number} закрыт. Запись в отчёте создана.',
+        ),
+        'success',
+    )
+    return redirect(url_for('work_orders.detail', wo_id=wo_id))
+
+
+@work_orders_bp.route('/work-orders/<int:wo_id>/cancel', methods=['POST'])
+@login_required
+def cancel(wo_id):
+    wo = WorkOrder.query.get_or_404(wo_id)
+    if not current_user.can_access_org(wo.organization_id):
+        abort(403)
+    if not _wo_can_cancel(wo):
+        flash(_wo_t('Bu amalni bajarish mumkin emas', 'Действие недоступно'), 'warning')
+        return redirect(url_for('work_orders.detail', wo_id=wo_id))
+
+    old_status = wo.status
+    wo.status = WO_STATUS_CANCELLED
+    db.session.add(WorkOrderStatusHistory(
+        work_order_id=wo.id,
+        event_type=WO_EVENT_STATUS_CHANGE,
+        old_value=old_status,
+        new_value=WO_STATUS_CANCELLED,
+        changed_by=current_user.id,
+        comment='Cancelled',
+    ))
+
+    # BOT003: notify creator
+    creator = User.query.get(wo.created_by)
+    if creator and creator.telegram_id:
+        _wo_outbox_insert(wo, 'wo_cancelled', creator.id, creator.telegram_id, {
+            'wo_number': wo.number,
+            'equipment': wo.equipment.name,
+            'cancelled_by': current_user.username,
+        })
+
+    db.session.commit()
+    flash(_wo_t(f'Buyurtma {wo.number} bekor qilindi', f'Наряд {wo.number} отменён'), 'warning')
+    return redirect(url_for('work_orders.index'))
+
+
+@work_orders_bp.route('/work-orders/<int:wo_id>/assign', methods=['POST'])
+@login_required
+def assign(wo_id):
+    if not current_user.is_admin:
+        abort(403)
+    wo = WorkOrder.query.get_or_404(wo_id)
+    if wo.status in (WO_STATUS_DONE, WO_STATUS_CANCELLED):
+        flash(_wo_t('Bu buyurtmani tayinlab bolmaydi', 'Наряд закрыт, назначение невозможно'), 'warning')
+        return redirect(url_for('work_orders.detail', wo_id=wo_id))
+
+    mechanic_id = request.form.get('assigned_to', type=int)
+    if not mechanic_id:
+        flash(_wo_t('Mexanikni tanlang', 'Выберите механика'), 'warning')
+        return redirect(url_for('work_orders.detail', wo_id=wo_id))
+    mechanic = User.query.get(mechanic_id)
+    if not mechanic or mechanic.role != ROLE_MECHANIC:
+        flash(_wo_t('Mexanik topilmadi', 'Механик не найден'), 'warning')
+        return redirect(url_for('work_orders.detail', wo_id=wo_id))
+
+    old_assigned = wo.assigned_to
+    wo.assigned_to = mechanic.id
+    if wo.status == WO_STATUS_DRAFT:
+        wo.status = WO_STATUS_ASSIGNED
+        db.session.add(WorkOrderStatusHistory(
+            work_order_id=wo.id,
+            event_type=WO_EVENT_STATUS_CHANGE,
+            old_value=WO_STATUS_DRAFT,
+            new_value=WO_STATUS_ASSIGNED,
+            changed_by=current_user.id,
+            comment=f'Assigned to {mechanic.username}',
+        ))
+    db.session.add(WorkOrderStatusHistory(
+        work_order_id=wo.id,
+        event_type=WO_EVENT_ASSIGNMENT_CHANGE,
+        old_value=str(old_assigned) if old_assigned else None,
+        new_value=str(mechanic.id),
+        changed_by=current_user.id,
+        comment=f'Mechanic: {mechanic.full_name or mechanic.username}',
+    ))
+    db.session.commit()
+    flash(
+        _wo_t(
+            f'{mechanic.full_name or mechanic.username} tayinlandi',
+            f'Механик {mechanic.full_name or mechanic.username} назначен',
+        ),
+        'success',
+    )
+    return redirect(url_for('work_orders.detail', wo_id=wo_id))

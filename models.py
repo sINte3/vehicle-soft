@@ -270,6 +270,22 @@ WO_STATUS_LABELS_UZ = {
     WO_STATUS_CANCELLED:   'Bekor qilindi',
 }
 
+# [REASON]: WORK-ORDER-001 — payment_type is stored as a short code ('naqd' etc.)
+# for DB stability; UI always shows the localised label from these dicts.
+WO_PAYMENT_TYPES_RU = {
+    'naqd':   'Наличные',
+    'bank':   'Банк',
+    'ichki':  'Внутренний',
+    'boshqa': 'Прочее',
+}
+
+WO_PAYMENT_TYPES_UZ = {
+    'naqd':   'Накд',
+    'bank':   'Банк',
+    'ichki':  'Ички',
+    'boshqa': 'Бошқа',
+}
+
 WO_EVENT_STATUS_CHANGE     = 'status_change'
 WO_EVENT_PRICE_OVERRIDE    = 'price_override'
 WO_EVENT_ASSIGNMENT_CHANGE = 'assignment_change'

@@ -126,7 +126,7 @@
             {% for wo in work_orders %}
             {% set eq_label = wo.equipment.name ~ ((' — ' ~ wo.equipment.plate) if wo.equipment and wo.equipment.plate else '') if wo.equipment else '—' %}
             <tr>
-                <td class="wo-number">{{ wo.number }}</td>
+                <td class="wo-number"><a href="{{ url_for('work_orders.detail', wo_id=wo.id) }}">{{ wo.number }}</a></td>
                 <td>{{ wo.planned_date.strftime('%d.%m.%Y') }}</td>
                 <td>{{ (wo.organization.short_name or wo.organization.name) if wo.organization else '—' }}</td>
                 <td class="wo-muted">{{ eq_label }}</td>
@@ -134,15 +134,9 @@
                 <td class="wo-muted">{{ (wo.assignee.full_name or wo.assignee.username) if wo.assignee else '—' }}</td>
                 <td><span class="wo-badge" style="color:{{ status_colors[wo.status] }};">{{ status_labels[wo.status] }}</span></td>
                 <td>
-                    {% if wo.can_edit(current_user) %}
-                    {# Phase 2: edit form not yet implemented. #}
-                    <button class="btn btn-sm btn-secondary" disabled
-                            title="{{ 'Доступно в Фазе 2' if is_ru else '2-bosqichda mavjud' }}">
-                        {{ 'Редактировать' if is_ru else 'Tahrirlash' }}
-                    </button>
-                    {% else %}
-                    <span class="wo-muted">—</span>
-                    {% endif %}
+                    <a href="{{ url_for('work_orders.detail', wo_id=wo.id) }}" class="btn btn-sm btn-secondary">
+                        {{ 'Открыть' if is_ru else 'Ko‘rish' }}
+                    </a>
                 </td>
             </tr>
             {% endfor %}
@@ -154,8 +148,7 @@
 <div class="wo-cards">
     {% for wo in work_orders %}
     {% set eq_label = wo.equipment.name ~ ((' — ' ~ wo.equipment.plate) if wo.equipment and wo.equipment.plate else '') if wo.equipment else '—' %}
-    {# Phase 2: detail page not yet implemented, link is a placeholder. #}
-    <a class="wo-card" href="#" title="{{ 'Карточка наряда — Фаза 2' if is_ru else 'Buyurtma kartasi — 2-bosqich' }}">
+    <a class="wo-card" href="{{ url_for('work_orders.detail', wo_id=wo.id) }}">
         <div class="wo-card-top">
             <span class="wo-number">{{ wo.number }}</span>
             <span class="wo-badge" style="color:{{ status_colors[wo.status] }};">{{ status_labels[wo.status] }}</span>

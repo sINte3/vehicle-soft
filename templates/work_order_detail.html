@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ wo.number }}{% endblock %}
+{% block content %}
+
+<style>
+/* WORK-ORDER-001 Phase 2: detail page, scoped styles reuse base design tokens. */
+.wod-scope .wod-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
+.wod-scope .wod-hero h1 { margin:0 0 6px 0; font-size:24px; line-height:1.2; }
+.wod-scope .wod-back { color:var(--text2); text-decoration:none; font-size:13px; display:inline-block; margin-bottom:8px; }
+.wod-scope .wod-badge { display:inline-flex; align-items:center; border-radius:999px; padding:6px 12px; font-size:13px; font-weight:700; background:var(--surface2); white-space:nowrap; }
+.wod-scope .wod-grid { display:grid; grid-template-columns:repeat(3,minmax(160px,1fr)); gap:12px; margin-bottom:16px; }
+.wod-scope .wod-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:12px; box-shadow:var(--shadow); }
+.wod-scope .wod-card .label { color:var(--text2); font-size:11px; text-transform:uppercase; font-weight:700; margin-bottom:4px; }
+.wod-scope .wod-card .full { grid-column:1 / -1; }
+.wod-scope .full { grid-column:1 / -1; }
+.wod-scope .wod-actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
+.wod-scope .wod-actions form { display:inline; margin:0; }
+.wod-scope .wod-done-box { border-left:4px solid var(--accent); background:var(--accent-light); border-radius:var(--radius); padding:12px 14px; margin-bottom:16px; }
+.wod-scope .history-entry { display:flex; flex-wrap:wrap; gap:10px; align-items:baseline; padding:8px 0; border-bottom:1px dashed var(--border); font-size:13px; }
+.wod-scope .history-entry:last-child { border-bottom:none; }
+.wod-scope .history-time { color:var(--text2); font-size:12px; min-width:120px; }
+.wod-scope .history-actor { font-weight:700; }
+.wod-scope .history-event { color:var(--text2); font-size:12px; }
+.wod-scope .history-comment { color:var(--text2); font-style:italic; }
+@media (max-width:768px) {
+    .wod-scope .wod-grid { grid-template-columns:1fr 1fr; }
+    .wod-scope .wod-hero { flex-direction:column; }
+    .wod-scope .history-entry { flex-direction:column; gap:2px; }
+}
+@media (max-width:480px) { .wod-scope .wod-grid { grid-template-columns:1fr; } }
+</style>
+
+<div class="wod-scope">
+
+{% set eq_label = wo.equipment.name ~ ((' — ' ~ wo.equipment.plate) if wo.equipment and wo.equipment.plate else '') if wo.equipment else '—' %}
+
+<div class="wod-hero">
+    <div>
+        <a href="{{ url_for('work_orders.index') }}" class="wod-back">← {{ 'Наряды' if is_ru else 'Buyurtmalar' }}</a>
+        <h1>{{ wo.number }}</h1>
+    </div>
+    <span class="wod-badge" style="color:{{ status_colors[wo.status] }};">{{ status_labels[wo.status] }}</span>
+</div>
+
+<!-- Info card -->
+<div class="wod-grid">
+    <div class="wod-card"><div class="label">{{ 'Техника' if is_ru else 'Texnika' }}</div><div>{{ eq_label }}</div></div>
+    <div class="wod-card"><div class="label">{{ 'Организация' if is_ru else 'Tashkilot' }}</div><div>{{ (wo.organization.short_name or wo.organization.name) if wo.organization else '—' }}</div></div>
+    <div class="wod-card"><div class="label">{{ 'Плановая дата' if is_ru else 'Rejalashtirilgan sana' }}</div><div>{{ wo.planned_date.strftime('%d.%m.%Y') }}</div></div>
+    <div class="wod-card"><div class="label">{{ 'Тип работы' if is_ru else 'Ish turi' }}</div><div>{{ wo.work_type_text or '—' }}</div></div>
+    <div class="wod-card"><div class="label">{{ 'Заказчик' if is_ru else 'Buyurtmachi' }}</div><div>{{ wo.customer_text or '—' }}</div></div>
+    <div class="wod-card"><div class="label">{{ 'Исполнитель' if is_ru else 'Ijrochi' }}</div><div>{{ (wo.assignee.full_name or wo.assignee.username) if wo.assignee else '—' }}</div></div>
+    <div class="wod-card"><div class="label">{{ 'Плановый объём' if is_ru else 'Rejalashtirilgan hajm' }}</div><div>{{ wo.planned_quantity if wo.planned_quantity is not none else '—' }} {{ wo.unit }}</div></div>
+    <div class="wod-card"><div class="label">{{ 'Цена за ед.' if is_ru else 'Birlik narxi' }}</div><div>{{ wo.price|fmt_sum or '0' }}</div></div>
+    <div class="wod-card"><div class="label">{{ 'Тип оплаты' if is_ru else 'Тўлов тури' }}</div><div>{{ payment_labels.get(wo.payment_type, '—') if wo.payment_type else '—' }}</div></div>
+    <div class="wod-card full"><div class="label">{{ 'Примечание' if is_ru else 'Izoh' }}</div><div>{{ wo.note or '—' }}</div></div>
+</div>
+
+<!-- Actual results (only when done) -->
+{% if wo.status == 'done' %}
+<div class="wod-done-box">
+    <div style="font-weight:700; margin-bottom:8px;">{{ 'Результат' if is_ru else 'Natija' }}</div>
+    <div class="wod-grid" style="margin-bottom:0;">
+        <div class="wod-card"><div class="label">{{ 'Фактическая дата' if is_ru else 'Haqiqiy sana' }}</div><div>{{ wo.actual_date.strftime('%d.%m.%Y') if wo.actual_date else '—' }}</div></div>
+        <div class="wod-card"><div class="label">{{ 'Фактический объём' if is_ru else 'Haqiqiy hajm' }}</div><div>{{ wo.actual_quantity if wo.actual_quantity is not none else '—' }} {{ wo.unit }}</div></div>
+        <div class="wod-card"><div class="label">{{ 'Сумма' if is_ru else 'Summa' }}</div><div>{{ ((wo.actual_quantity or 0) * (wo.price or 0))|fmt_sum or '0' }}</div></div>
+    </div>
+    {% if wo.daily_record_id %}
+    <div style="margin-top:10px; color:var(--text2); font-size:13px;">
+        ✓ {{ 'Запись в отчёте создана' if is_ru else 'Hisobotda yozuv yaratildi' }}
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Action buttons -->
+{% if can_start or can_close or can_cancel or (can_assign and mechanics) %}
+<div class="wod-actions">
+    {% if can_start %}
+    <form method="post" action="{{ url_for('work_orders.start', wo_id=wo.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit"
+                onclick="return confirm('{{ 'Buyurtmani boshlashni tasdiqlaysizmi?' if not is_ru else 'Начать выполнение наряда?' }}')"
+                class="btn btn-primary">
+            {{ 'Начать' if is_ru else 'Boshlash' }}
+        </button>
+    </form>
+    {% endif %}
+
+    {% if can_close %}
+    <a href="{{ url_for('work_orders.close', wo_id=wo.id) }}" class="btn btn-success">
+        {{ 'Закрыть' if is_ru else 'Yopish' }}
+    </a>
+    {% endif %}
+
+    {% if can_cancel %}
+    <form method="post" action="{{ url_for('work_orders.cancel', wo_id=wo.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit"
+                onclick="return confirm('{{ 'Buyurtmani bekor qilishni tasdiqlaysizmi?' if not is_ru else 'Отменить наряд?' }}')"
+                class="btn btn-danger">
+            {{ 'Отменить' if is_ru else 'Bekor qilish' }}
+        </button>
+    </form>
+    {% endif %}
+
+    {% if can_assign and mechanics %}
+    <form method="post" action="{{ url_for('work_orders.assign', wo_id=wo.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <select name="assigned_to" style="display:inline-block; width:auto;">
+            <option value="">— {{ 'Механик' if is_ru else 'Mexanik' }} —</option>
+            {% for m in mechanics %}
+            <option value="{{ m.id }}" {{ 'selected' if wo.assigned_to == m.id else '' }}>
+                {{ m.full_name or m.username }}
+            </option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-sm btn-secondary">
+            {{ 'Назначить' if is_ru else 'Tayinlash' }}
+        </button>
+    </form>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- History timeline -->
+<div class="card">
+    <div class="card-header">{{ 'История' if is_ru else 'Tarix' }}</div>
+    <div class="card-body">
+        {% for entry in history %}
+        <div class="history-entry">
+            <span class="history-time">{{ entry.changed_at.strftime('%d.%m.%Y %H:%M') }}</span>
+            <span class="history-actor">{{ entry.user.full_name or entry.user.username if entry.user else '—' }}</span>
+            <span class="history-event">{{ entry.event_type }}</span>
+            {% if entry.old_value %}
+                <span>{{ entry.old_value }} → {{ entry.new_value }}</span>
+            {% else %}
+                <span>{{ entry.new_value }}</span>
+            {% endif %}
+            {% if entry.comment %}<span class="history-comment">{{ entry.comment }}</span>{% endif %}
+        </div>
+        {% else %}
+        <div class="text-muted text-sm">—</div>
+        {% endfor %}
+    </div>
+</div>
+
+</div>
+{% endblock %}
