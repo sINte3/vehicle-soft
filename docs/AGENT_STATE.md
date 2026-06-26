@@ -3138,3 +3138,22 @@ Next candidates (backlog):
 - FUEL-CARDS-SYNC: card sync not automated.
 - AZS-ORG-REFACTOR: duplicate org IDs 20–24 deferred.
 - Wialon manual import (long-term).
+
+## 2026-06-26 — SEC-TOKEN-ROT completed
+
+- FUEL_API_TOKEN rotated on Vehicle Soft server (setx /M system variable).
+- Old token: 'topaz-agent-2026' (plaintext in topaz_agent.py). Now invalid.
+- New token: generated via secrets.token_urlsafe(24). Not stored in any file or repo.
+- topaz_agent.py on Topaz server (10.103.40.140) updated with new token value.
+- TransportReport and TransportReportStaging restarted after rotation.
+- Validation: fuel_ping 200 on production and staging. API auth 200 from Topaz agent.
+- topaz_agent.py was never committed to vehicle-soft git repo — no git history cleanup needed.
+- FIREBIRD_PASS ('electro') not rotated — out of scope, requires Firebird admin tooling.
+
+Next candidates (backlog):
+- UI-NEXT (P1): design refresh (vs_next.css + base_next.html under feature flag) based on Claude Design prototype.
+- WORK-ORDER-001 /edit route + ownership guard: deferred.
+- BOT003 staging smoke not run end-to-end.
+- FUEL-CARDS-SYNC: card sync not automated.
+- AZS-ORG-REFACTOR: duplicate org IDs 20–24 deferred.
+- Wialon manual import (long-term).
