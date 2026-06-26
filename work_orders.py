@@ -21,7 +21,7 @@ from flask import (
 )
 from flask_login import login_required, current_user
 from datetime import datetime, date
-from sqlalchemy import func, text
+from sqlalchemy import func, text, or_
 
 from models import (
     db, WorkOrder, WorkOrderStatusHistory,
@@ -218,6 +218,12 @@ def index():
     if user_org_ids is not None:
         q = q.filter(WorkOrder.organization_id.in_(user_org_ids or [-1]))
 
+    # [REASON]: WORK-ORDER-001 TZ 3.4 — a mechanic only sees orders they created
+    # or are assigned to (within their orgs), not every order in those orgs.
+    if current_user.role == ROLE_MECHANIC:
+        q = q.filter(or_(WorkOrder.assigned_to == current_user.id,
+                         WorkOrder.created_by == current_user.id))
+
     # status: '' = open/active (default), 'all' = every status, else exact match.
     if status_filter == '':
         q = q.filter(WorkOrder.status.in_(WO_OPEN_STATUSES))
@@ -267,6 +273,11 @@ def _compute_status_counts(user_org_ids):
         b = WorkOrder.query
         if user_org_ids is not None:
             b = b.filter(WorkOrder.organization_id.in_(user_org_ids or [-1]))
+        # [REASON]: WORK-ORDER-001 TZ 3.4 — keep the header counters consistent
+        # with the mechanic-scoped list (own/assigned orders only).
+        if current_user.role == ROLE_MECHANIC:
+            b = b.filter(or_(WorkOrder.assigned_to == current_user.id,
+                             WorkOrder.created_by == current_user.id))
         return b
 
     total_open = base().filter(WorkOrder.status.in_(WO_OPEN_STATUSES)).count()
@@ -487,6 +498,11 @@ def detail(wo_id):
     wo = WorkOrder.query.get_or_404(wo_id)
     if not current_user.can_access_org(wo.organization_id):
         abort(403)
+    # [REASON]: WORK-ORDER-001 TZ 3.5 — a mechanic may open only their own or
+    # assigned orders, even inside an organization they belong to.
+    if current_user.role == ROLE_MECHANIC and not (
+            wo.assigned_to == current_user.id or wo.created_by == current_user.id):
+        abort(403)
     lang = _wo_lang()
     history = wo.history.order_by(WorkOrderStatusHistory.changed_at).all()
     mechanics = []
@@ -639,6 +655,18 @@ def close(wo_id):
         changed_by=current_user.id,
         comment=f'Closed. qty={actual_quantity} {wo.unit} date={actual_date}',
     ))
+
+    # [REASON]: WORK-ORDER-001 TZ 5 — record when the closing price differs from
+    # the catalog default so manual price overrides are auditable in the timeline.
+    if abs((wo.price or 0.0) - (wo.default_price or 0.0)) > 0.01:
+        db.session.add(WorkOrderStatusHistory(
+            work_order_id=wo.id,
+            event_type=WO_EVENT_PRICE_OVERRIDE,
+            old_value=str(wo.default_price),
+            new_value=str(wo.price),
+            changed_by=current_user.id,
+            comment=f'price_override: {wo.default_price} -> {wo.price}',
+        ))
 
     # BOT003: notify admins and creator
     payload = {

@@ -313,6 +313,23 @@
         {% endif %}
     </div>
 
+    {# WORK-ORDER-001: work orders KPI card — mirrors the spare parts card structure. #}
+    <div class="dash-card dash002-card small">
+        <div class="dash-card-head">
+            <span>{{ 'Наряды' if lang == 'ru' else 'Buyurtmalar' }}</span>
+            <a href="{{ url_for('work_orders.index') }}">{{ 'Открыть' if lang == 'ru' else 'Очиш' }}</a>
+        </div>
+        <div class="dash-metrics compact">
+            <div><b>{{ dashboard.work_orders.open }}</b><span>{{ 'открытые' if lang == 'ru' else 'очиқ' }}</span></div>
+            <div><b>{{ dashboard.work_orders.done_today }}</b><span>{{ 'сегодня' if lang == 'ru' else 'бугун' }}</span></div>
+            <div><b>{{ dashboard.work_orders.overdue }}</b><span>{{ 'просрочено' if lang == 'ru' else 'муддати ўтган' }}</span></div>
+        </div>
+        <div class="dash-quick-links">
+            <a href="{{ url_for('work_orders.index') }}">{{ 'Все наряды' if lang == 'ru' else 'Барча буюртмалар' }}</a>
+            <a href="{{ url_for('work_orders.new') }}">{{ 'Новый наряд' if lang == 'ru' else 'Янги буюртма' }}</a>
+        </div>
+    </div>
+
     <div class="dash-card dash002-card small">
         <div class="dash-card-head">
             <span>{{ L_wialon }}</span>

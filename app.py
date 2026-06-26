@@ -24,6 +24,8 @@ from models import (
     FuelWarehouse, FuelStation2, FuelInitialBalance, FuelReceipt2, FuelTransaction2,
     FuelSyncLog2, FuelWarningReview,
     SparePartRequest,
+    WorkOrder,
+    WO_STATUS_DRAFT, WO_STATUS_ASSIGNED, WO_STATUS_IN_PROGRESS, WO_STATUS_DONE,
     ROLE_ADMIN, ROLE_OPERATOR, ROLE_VIEWER, ROLES,
     CAT_YUKORI, CAT_MTZ, CAT_QATNOV, CAT_MINI, CAT_COMBINE,
     CAT_SPECIAL, CAT_YUK_TRANSPORT, CAT_MOTORCYCLE, CAT_PASSENGER,
@@ -594,6 +596,32 @@ def create_app():
             except Exception:
                 pass
 
+        # [REASON]: WORK-ORDER-001 TZ 6 — dashboard KPI for work orders. Org-scoped
+        # for non-admins (mirrors the spare block); best-effort so a query error
+        # never breaks the main dashboard render.
+        work_orders = {
+            'open': 0,
+            'done_today': 0,
+            'overdue': 0,
+        }
+        try:
+            wo_today = date.today()
+            wo_open_statuses = (WO_STATUS_DRAFT, WO_STATUS_ASSIGNED, WO_STATUS_IN_PROGRESS)
+            wq = WorkOrder.query
+            if not current_user.is_admin and filter_org_ids:
+                wq = wq.filter(WorkOrder.organization_id.in_(filter_org_ids))
+            work_orders['open'] = wq.filter(WorkOrder.status.in_(wo_open_statuses)).count()
+            work_orders['done_today'] = wq.filter(
+                WorkOrder.status == WO_STATUS_DONE,
+                WorkOrder.actual_date == wo_today,
+            ).count()
+            work_orders['overdue'] = wq.filter(
+                WorkOrder.status.in_(wo_open_statuses),
+                WorkOrder.planned_date < wo_today,
+            ).count()
+        except Exception:
+            pass
+
         audit = []
         try:
             audit = db.session.execute(text("""
@@ -610,6 +638,7 @@ def create_app():
             'fuel': fuel,
             'wialon': wialon,
             'spare': spare,
+            'work_orders': work_orders,
             'audit': audit,
             'backup': _latest_backup_info(),
             'module_access': module_access,

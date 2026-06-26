@@ -270,6 +270,39 @@ def _build_notification_text(payload):
         A formatted string for the Telegram message.
     """
     event_type = payload.get("event_type", "unknown")
+
+    # [REASON]: WORK-ORDER-001 — work order events carry a different payload shape
+    # and deep-link to /work-orders (not /spare-parts). Format and return them
+    # before the spare-part logic below. request_id holds the work order id.
+    if event_type in ("wo_closed", "wo_cancelled"):
+        wo_id = payload.get("request_id")
+        wo_number = html.escape(str(payload.get("wo_number", "")))
+        equipment = html.escape(str(payload.get("equipment", "")))
+        if event_type == "wo_closed":
+            actual_qty = html.escape(str(payload.get("actual_qty", "")))
+            unit = html.escape(str(payload.get("unit", "")))
+            actual_date = html.escape(str(payload.get("actual_date", "")))
+            wo_lines = [
+                "\U00002705 Naryad bajarildi / Наряд выполнен",
+                "",
+                "\U0001F4CB {}".format(wo_number),
+                "\U0001F698 {}".format(equipment),
+                "\U0001F4CF {} {}".format(actual_qty, unit),
+                "\U0001F4C5 {}".format(actual_date),
+            ]
+        else:  # wo_cancelled
+            wo_lines = [
+                "\U0000274C Naryad bekor qilindi / Наряд отменён",
+                "",
+                "\U0001F4CB {}".format(wo_number),
+                "\U0001F698 {}".format(equipment),
+            ]
+        wo_lines.append("")
+        wo_lines.append("\U0001F517 <a href='{}/work-orders/{}'>Ochish / Открыть</a>".format(
+            get_public_base_url(), wo_id or ""
+        ))
+        return "\n".join(wo_lines)
+
     request_id = payload.get("request_id")
     request_number = payload.get("request_number", "")
     organization_name = payload.get("organization_name", "")
@@ -427,6 +460,9 @@ def process_outbox(bot_token=None, app=None, batch_size=20, dry_run=False):
                 continue
 
             # Build message text
+            # [FIX]: event_type is stored as a DB column, not inside payload_json.
+            # Inject it so _build_notification_text can dispatch on wo_closed etc.
+            payload["event_type"] = row["event_type"]
             text = _build_notification_text(payload)
 
             # Send via Telegram
