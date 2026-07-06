@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}АЗС — {{ 'Реестр предупреждений' if lang == 'ru' else 'Огоҳлантиришлар реестри' }}{% endblock %}
 {% block content %}
 
@@ -23,6 +23,8 @@
 {% set L_updated = 'Обновлено' if lang == 'ru' else 'Янгиланди' %}
 {% set L_no_rows = 'Предупреждения по выбранным фильтрам не найдены.' if lang == 'ru' else 'Танланган фильтрлар бўйича огоҳлантиришлар топилмади.' %}
 {% set L_hint = 'Важно: расчёт предупреждений остаётся автоматическим. Этот реестр хранит только результат ручной проверки и комментарий.' if lang == 'ru' else 'Муҳим: огоҳлантиришлар автоматик ҳисобланади. Бу реестр фақат қўлда текшириш натижаси ва изоҳни сақлайди.' %}
+{% set L_cs_in_progress = 'В работе' if lang == 'ru' else 'Ишда' %}
+{% set L_cs_resolved = 'Проверено' if lang == 'ru' else 'Текширилди' %}
 
 <style>
 .warning-hero { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:16px; }
@@ -50,10 +52,10 @@
 /* FUEL002G_MARKER: fuel warnings UX refresh, template/localization only. */
 .fuel002g-page-header {
   border: 1px solid var(--border);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 12px;
   padding: 14px 16px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002g-page-header h1 {
@@ -61,29 +63,29 @@
 }
 
 .fuel002g-subtitle {
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 13px;
   line-height: 1.45;
 }
 
 .fuel002g-context-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  grid-template-columns: repeat(6, minmax(130px, 1fr));
   gap: 10px;
   margin: 14px 0 14px 0;
 }
 
 .fuel002g-pill {
   border: 1px solid var(--border);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 10px;
   padding: 10px 12px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002g-pill span {
   display: block;
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -93,7 +95,7 @@
 .fuel002g-pill strong {
   display: block;
   font-size: 15px;
-  color: var(--text-main);
+  color: var(--text);
 }
 
 .fuel002g-guidance-panel {
@@ -106,22 +108,22 @@
 .fuel002g-guidance-card {
   border: 1px solid var(--border);
   border-left: 4px solid var(--accent);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 10px;
   padding: 11px 13px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002g-guidance-card strong {
   display: block;
   margin-bottom: 4px;
-  color: var(--text-main);
+  color: var(--text);
   font-size: 13px;
 }
 
 .fuel002g-guidance-card span {
   display: block;
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -129,7 +131,7 @@
 .fuel002g-filter-card {
   border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002g-filter-form {
@@ -138,7 +140,7 @@
 
 .fuel002g-warning-card {
   border-radius: 12px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002g-warning-card .warning-title {
@@ -199,6 +201,14 @@
         <span>{{ t('Критик') }}</span>
         <strong>{{ counts.danger }}</strong>
     </div>
+    <div class="fuel002g-pill">
+        <span>{{ L_cs_in_progress }}</span>
+        <strong>{{ counts.in_progress }}</strong>
+    </div>
+    <div class="fuel002g-pill">
+        <span>{{ L_cs_resolved }}</span>
+        <strong style="color:var(--accent);">{{ counts.resolved }}</strong>
+    </div>
 </div>
 
 <div class="fuel002g-guidance-panel">
@@ -220,42 +230,33 @@
 <div class="card fuel002g-filter-card FUEL002G_FILTER_MARKER" style="margin-bottom:16px;">
     <div class="card-body">
         <form method="get" class="warning-filter fuel002g-filter-form">
-            <div class="form-group" style="margin-bottom:0;"><label>{{ L_from }}</label><input type="date" name="date_from" value="{{ d_from.isoformat() }}"></div>
-            <div class="form-group" style="margin-bottom:0;"><label>{{ L_to }}</label><input type="date" name="date_to" value="{{ d_to.isoformat() }}"></div>
+            <div class="form-group" style="margin-bottom:0;"><label>{{ L_from }}</label><input type="date" name="date_from" value="{{ d_from.isoformat() }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0;"><label>{{ L_to }}</label><input type="date" name="date_to" value="{{ d_to.isoformat() }}" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ L_status }}</label>
-                <select name="status">
+                <select name="status" class="form-control">
                     <option value="">{{ L_all }}</option>
                     {% for st in status_options %}<option value="{{ st }}" {% if status_filter == st %}selected{% endif %}>{{ status_label(st, lang) }}</option>{% endfor %}
                 </select>
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ L_severity }}</label>
-                <select name="severity">
+                <select name="severity" class="form-control">
                     <option value="">{{ L_all }}</option>
                     {% for sev in severity_options %}<option value="{{ sev }}" {% if severity_filter == sev %}selected{% endif %}>{{ severity_label(sev, lang) }}</option>{% endfor %}
                 </select>
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ L_type }}</label>
-                <select name="code">
+                <select name="code" class="form-control">
                     <option value="">{{ L_all }}</option>
                     {% for code in code_options %}<option value="{{ code }}" {% if code_filter == code %}selected{% endif %}>{{ code }}</option>{% endfor %}
                 </select>
             </div>
             <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button type="submit" class="btn btn-primary">{{ L_show }}</button></div>
-            <div class="form-group" style="grid-column:1/-1; margin-bottom:0;"><input type="text" name="q" value="{{ q }}" placeholder="{{ L_search }}"></div>
+            <div class="form-group" style="grid-column:1/-1; margin-bottom:0;"><input type="text" name="q" value="{{ q }}" placeholder="{{ L_search }}" class="form-control"></div>
         </form>
     </div>
-</div>
-
-<div class="warning-stats">
-    <div class="stat-card"><div class="label">{{ 'Всего' if lang == 'ru' else 'Жами' }}</div><div class="value">{{ counts.total }}</div></div>
-    <div class="stat-card"><div class="label">{{ 'Показано' if lang == 'ru' else 'Кўрсатилди' }}</div><div class="value">{{ counts.filtered }}</div></div>
-    <div class="stat-card"><div class="label">{{ 'Активных' if lang == 'ru' else 'Фаол' }}</div><div class="value">{{ counts.current }}</div></div>
-    <div class="stat-card"><div class="label">{{ 'Критичных' if lang == 'ru' else 'Критик' }}</div><div class="value" style="color:var(--danger);">{{ counts.danger }}</div></div>
-    <div class="stat-card"><div class="label">{{ 'В работе' if lang == 'ru' else 'Ишда' }}</div><div class="value">{{ counts.in_progress }}</div></div>
-    <div class="stat-card"><div class="label">{{ 'Проверено' if lang == 'ru' else 'Текширилди' }}</div><div class="value" style="color:var(--accent);">{{ counts.resolved }}</div></div>
 </div>
 
 {% for w in warnings %}
@@ -288,13 +289,13 @@
         <input type="hidden" name="value_snapshot" value="{{ w.value if w.value is not none else '' }}">
         <div class="form-group" style="margin-bottom:0;">
             <label>{{ L_status }}</label>
-            <select name="status">
+            <select name="status" class="form-control">
                 {% for st in status_options %}<option value="{{ st }}" {% if w.review_status == st %}selected{% endif %}>{{ status_label(st, lang) }}</option>{% endfor %}
             </select>
         </div>
         <div class="form-group" style="margin-bottom:0;">
             <label>{{ L_comment }}</label>
-            <textarea name="comment" placeholder="{{ L_comment }}">{{ w.review_comment }}</textarea>
+            <textarea name="comment" placeholder="{{ L_comment }}" class="form-control">{{ w.review_comment }}</textarea>
         </div>
         <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button class="btn btn-primary btn-sm" type="submit">{{ L_save }}</button></div>
     </form>

@@ -1,9 +1,36 @@
-{% extends "base.html" %}
-{% block title %}Виалон — Маппинг{% endblock %}
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% set L_title = 'Виалон — Маппинг' if is_ru else 'Wialon — Mapping' %}
+{% set L_header = 'Виалон — Маппинг текшируви' if is_ru else 'Wialon — Mapping tekshiruvi' %}
+{% set L_date_label = 'Сана:' if is_ru else 'Sana:' %}
+{% set L_mapped_header = 'Автоматик аниқланган:' if is_ru else 'Avtomatik aniqlangan:' %}
+{% set L_equip_count = 'та техника' if is_ru else 'ta texnika' %}
+{% set L_mapped_note = '— маппинг жадвалидан топилди, сақланади' if is_ru else '— mapping jadvalidan topildi, saqlanadi' %}
+{% set L_col_wialon = 'Виалон номи' if is_ru else 'Wialon nomi' %}
+{% set L_col_our_system = 'Бизнинг тизим (техника)' if is_ru else 'Bizning tizim (texnika)' %}
+{% set L_col_org = 'Ташкилот' if is_ru else 'Tashkilot' %}
+{% set L_col_engine = 'Мотосоат' if is_ru else 'Motosoat' %}
+{% set L_col_moving = 'Ҳаракатда' if is_ru else 'Harakatda' %}
+{% set L_col_idle = 'Холостой' if is_ru else 'Holostoy' %}
+{% set L_unmapped_header = 'Белгиланмаган техника:' if is_ru else 'Belgilanmagan texnika:' %}
+{% set L_unmapped_note = '— ҳар бири учун қарор қабул қилинг' if is_ru else '— har biri uchun qaror qabul qiling' %}
+{% set L_col_select = 'Бизнинг тизимда (танланг)' if is_ru else 'Bizning tizimda (tanlang)' %}
+{% set L_col_skip = 'Ўтказиб юбориш' if is_ru else "O'tkazib yuborish" %}
+{% set L_placeholder = '— танланг —' if is_ru else '— tanlang —' %}
+{% set L_option_later = '🔸 Кейин (сақламаслик)' if is_ru else '🔸 Keyin (saqlamaslik)' %}
+{% set L_option_skip = '🚫 Бизнинг технологиямизда йўқ' if is_ru else "🚫 Bizning texnologiyamizda yo'q" %}
+{% set L_skip_header = 'Ўтказиб юборилади:' if is_ru else "O'tkazib yuboriladi:" %}
+{% set L_skip_note = '— «тизимда йўқ» деб белгиланган' if is_ru else '— «tizimda yo\'q» deb belgilangan' %}
+{% set L_save_btn = '💾 Сақлаш ва импортни якунлаш' if is_ru else '💾 Saqlash va importni yakunlash' %}
+{% set L_cancel_btn = 'Бекор қилиш' if is_ru else 'Bekor qilish' %}
+{% set L_helper_note = 'Белгиланмаган техника учун «Кейин» танланса — бу импортда сақланмайди. Кейинги импортда яна кўрсатилади.' if is_ru else 'Belgilanmagan texnika uchun «Keyin» tanlansa — bu importda saqlanmaydi. Keyingi importda yana ko\'rsatiladi.' %}
+{% set L_skip_title = 'Тизимда йўқ техника — доим ўтказиб юбориш' if is_ru else 'Tizimda yo\'q texnika — doim o\'tkazib yuborish' %}
+{% set L_hour = 'соат' if is_ru else 'soat' %}
+{% block title %}{{ L_title }}{% endblock %}
 {% block content %}
 <div class="page-header">
-    <h1>Виалон — Маппинг текшируви</h1>
-    <div class="text-muted text-sm">Сана: <strong>{{ work_date.strftime('%d.%m.%Y') }}</strong></div>
+    <h1>{{ L_header }}</h1>
+    <div class="text-muted text-sm">{{ L_date_label }} <strong>{{ work_date.strftime('%d.%m.%Y') }}</strong></div>
 </div>
 
 <form method="post" action="{{ url_for('wialon_save') }}">
@@ -15,18 +42,18 @@
     {% if mapped %}
     <div class="card" style="margin-bottom:20px;">
         <div class="card-header" style="background:var(--accent-light);">
-            ✅ Автоматик аниқланган: <strong>{{ mapped|length }} та техника</strong>
-            <span class="text-muted text-sm" style="margin-left:8px;">— маппинг жадвалидан топилди, сақланади</span>
+            ✅ {{ L_mapped_header }} <strong>{{ mapped|length }} {{ L_equip_count }}</strong>
+            <span class="text-muted text-sm" style="margin-left:8px;">{{ L_mapped_note }}</span>
         </div>
         <table>
             <thead>
                 <tr>
-                    <th>Виалон номи</th>
-                    <th>Бизнинг тизим (техника)</th>
-                    <th>Ташкилот</th>
-                    <th class="text-right">Мотосоат</th>
-                    <th class="text-right">Ҳаракатда</th>
-                    <th class="text-right">Холостой</th>
+                    <th>{{ L_col_wialon }}</th>
+                    <th>{{ L_col_our_system }}</th>
+                    <th>{{ L_col_org }}</th>
+                    <th class="text-right">{{ L_col_engine }}</th>
+                    <th class="text-right">{{ L_col_moving }}</th>
+                    <th class="text-right">{{ L_col_idle }}</th>
                 </tr>
             </thead>
             <tbody>
@@ -42,10 +69,10 @@
                 <td style="font-weight:600;">{{ item.equipment.name }}</td>
                 <td class="text-sm">{{ item.equipment.organization.name }}</td>
                 <td class="text-right" style="font-weight:600; color:var(--accent);">
-                    {{ '%.2f' | format(item.engine_hours) }} соат
+                    {{ '%.2f' | format(item.engine_hours) }} {{ L_hour }}
                 </td>
-                <td class="text-right text-sm">{{ '%.2f' | format(item.hours_moving) }} соат</td>
-                <td class="text-right text-sm">{{ '%.2f' | format(item.hours_idle) }} соат</td>
+                <td class="text-right text-sm">{{ '%.2f' | format(item.hours_moving) }} {{ L_hour }}</td>
+                <td class="text-right text-sm">{{ '%.2f' | format(item.hours_idle) }} {{ L_hour }}</td>
             </tr>
             {% endfor %}
             </tbody>
@@ -57,17 +84,17 @@
     {% if unmapped %}
     <div class="card" style="margin-bottom:20px;">
         <div class="card-header" style="background:var(--warn-light); color:var(--warn);">
-            ⚠ Белгиланмаган техника: <strong>{{ unmapped|length }} та</strong>
-            <span class="text-muted text-sm" style="margin-left:8px;">— ҳар бири учун қарор қабул қилинг</span>
+            ⚠ {{ L_unmapped_header }} <strong>{{ unmapped|length }} {{ L_equip_count }}</strong>
+            <span class="text-muted text-sm" style="margin-left:8px;">{{ L_unmapped_note }}</span>
         </div>
         <div class="card-body" style="padding:0;">
         <table>
             <thead>
                 <tr>
-                    <th>Виалон номи</th>
-                    <th class="text-right">Мотосоат</th>
-                    <th style="min-width:300px;">Бизнинг тизимда (танланг)</th>
-                    <th class="text-center">Ўтказиб юбориш</th>
+                    <th>{{ L_col_wialon }}</th>
+                    <th class="text-right">{{ L_col_engine }}</th>
+                    <th style="min-width:300px;">{{ L_col_select }}</th>
+                    <th class="text-center">{{ L_col_skip }}</th>
                 </tr>
             </thead>
             <tbody>
@@ -79,15 +106,15 @@
             <tr>
                 <td style="font-size:13px;">{{ item.vialon_name }}</td>
                 <td class="text-right" style="font-weight:600;">
-                    {{ '%.2f' | format(item.engine_hours) }} соат
+                    {{ '%.2f' | format(item.engine_hours) }} {{ L_hour }}
                 </td>
                 <td>
-                    <select name="eq_choice" onchange="onChoiceChange(this)"
+                    <select name="eq_choice" class="form-control" onchange="onChoiceChange(this)"
                             style="width:100%; font-size:13px;"
                             data-skip-col="{{ loop.index0 }}">
-                        <option value="">— танланг —</option>
-                        <option value="ignore">🔸 Кейин (сақламаслик)</option>
-                        <option value="skip">🚫 Бизнинг технологиямизда йўқ</option>
+                        <option value="">{{ L_placeholder }}</option>
+                        <option value="ignore">{{ L_option_later }}</option>
+                        <option value="skip">{{ L_option_skip }}</option>
                         {% set prev_org = namespace(id=None) %}
                         {% for eq in all_equipment %}
                             {% if eq.organization.id != prev_org.id %}
@@ -103,7 +130,7 @@
                 <td class="text-center">
                     <input type="checkbox" id="skip-{{ loop.index0 }}"
                            onclick="setSkip({{ loop.index0 }}, this.checked)"
-                           title="Тизимда йўқ техника — доим ўтказиб юбориш">
+                           title="{{ L_skip_title }}">
                 </td>
             </tr>
             {% endfor %}
@@ -117,8 +144,8 @@
     {% if skipped %}
     <div class="card" style="margin-bottom:20px;">
         <div class="card-header">
-            ⏭ Ўтказиб юборилади: <strong>{{ skipped|length }} та</strong>
-            <span class="text-muted text-sm"> — «тизимда йўқ» деб белгиланган</span>
+            ⏭ {{ L_skip_header }} <strong>{{ skipped|length }} {{ L_equip_count }}</strong>
+            <span class="text-muted text-sm">{{ L_skip_note }}</span>
         </div>
         <div class="card-body">
         <div style="display:flex; flex-wrap:wrap; gap:6px;">
@@ -136,12 +163,11 @@
     {# ── Action buttons ── #}
     <div style="display:flex; gap:12px; margin-top:16px;">
         <button type="submit" class="btn btn-primary btn-lg">
-            💾 Сақлаш ва импортни якунлаш
+            {{ L_save_btn }}
         </button>
-        <a href="{{ url_for('wialon_index') }}" class="btn btn-secondary">Бекор қилиш</a>
+        <a href="{{ url_for('wialon_index') }}" class="btn btn-secondary">{{ L_cancel_btn }}</a>
         <span class="text-muted text-sm" style="align-self:center;">
-            Белгиланмаган техника учун «Кейин» танланса — бу импортда сақланмайди.
-            Кейинги импортда яна кўрсатилади.
+            {{ L_helper_note }}
         </span>
     </div>
 </form>

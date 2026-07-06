@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}АЗС — {{ 'Справочник АЗС' if lang == 'ru' else 'АЗС маълумотномаси' }}{% endblock %}
 {% block content %}
 
@@ -17,7 +17,7 @@
 }
 
 .fuel002e-subtitle {
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 13px;
   line-height: 1.45;
 }
@@ -31,15 +31,15 @@
 
 .fuel002e-pill {
   border: 1px solid var(--border);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 10px;
   padding: 10px 12px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002e-pill span {
   display: block;
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -49,7 +49,7 @@
 .fuel002e-pill strong {
   display: block;
   font-size: 15px;
-  color: var(--text-main);
+  color: var(--text);
 }
 
 .fuel002e-guidance-panel {
@@ -62,22 +62,22 @@
 .fuel002e-guidance-card {
   border: 1px solid var(--border);
   border-left: 4px solid var(--accent);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 10px;
   padding: 11px 13px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002e-guidance-card strong {
   display: block;
   margin-bottom: 4px;
-  color: var(--text-main);
+  color: var(--text);
   font-size: 13px;
 }
 
 .fuel002e-guidance-card span {
   display: block;
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -85,12 +85,12 @@
 .fuel002e-form-card {
   border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
   overflow: hidden;
 }
 
 .fuel002e-form-card .card-header {
-  background: var(--bg-soft);
+  background: var(--surface2);
 }
 
 form.fuel002e-station-form {
@@ -109,8 +109,8 @@ form.fuel002e-station-form .form-group {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: var(--card-bg);
-  box-shadow: var(--shadow-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow);
 }
 
 .fuel002e-table-wrap .table,
@@ -125,7 +125,7 @@ form.fuel002e-station-form .form-group {
 .fuel002e-stations-table th {
   white-space: nowrap;
   font-size: 12px;
-  background: var(--bg-soft);
+  background: var(--surface2);
 }
 
 .fuel002e-stations-table td {
@@ -182,6 +182,7 @@ form.fuel002e-station-form .form-group {
 {% set L_edit = 'Изменить' if lang == 'ru' else 'Ўзг.' %}
 {% set L_search = 'Поиск по АЗС, складу или Topaz ID' if lang == 'ru' else 'АЗС, омбор ёки Topaz ID бўйича қидириш' %}
 {% set L_filter_all = 'Все статусы' if lang == 'ru' else 'Барча ҳолатлар' %}
+{% set L_cs_warehouses = 'Складов' if lang == 'ru' else 'Омборлар' %}
 {% set L_filter_active = 'Активные' if lang == 'ru' else 'Фаоллар' %}
 {% set L_filter_disabled = 'Отключённые' if lang == 'ru' else 'Ўчирилганлар' %}
 {% set L_no_data = 'АЗС не добавлены. Добавьте вручную.' if lang == 'ru' else 'АЗС қўшилмаган. Қўлда қўшинг.' %}
@@ -214,7 +215,7 @@ form.fuel002e-station-form .form-group {
     <strong>{{ stations|length }}</strong>
   </div>
   <div class="fuel002e-pill">
-    <span>{{ t('мборлар') }}</span>
+    <span>{{ L_cs_warehouses }}</span>
     <strong>{{ warehouses|length }}</strong>
   </div>
   <div class="fuel002e-pill">
@@ -248,11 +249,11 @@ form.fuel002e-station-form .form-group {
         <form method="post" action="{{ url_for('fuel.save_station') }}" class="form-inline fuel002e-station-form" id="stationForm" onsubmit="return validateStationBeforeSubmit()">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="stId" value="">
-            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_name }}</label><input type="text" name="name" id="stName" required></div>
-            <div class="form-group" style="margin-bottom:0;"><label>Topaz ID</label><input type="number" name="topaz_id" id="stTopazId" required min="1" style="width:130px;"></div>
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_name }}</label><input type="text" name="name" id="stName" required class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0;"><label>Topaz ID</label><input type="number" name="topaz_id" id="stTopazId" required min="1" style="width:130px;" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0; flex:2;">
                 <label>{{ L_wh }}</label>
-                <select name="warehouse_id" id="stWarehouse" required><option value="">{{ L_select }}</option>{% for wh in warehouses %}<option value="{{ wh.id }}">{{ wh.name }}</option>{% endfor %}</select>
+                <select name="warehouse_id" id="stWarehouse" required class="form-control"><option value="">{{ L_select }}</option>{% for wh in warehouses %}<option value="{{ wh.id }}">{{ wh.name }}</option>{% endfor %}</select>
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ L_active }}</label>
@@ -270,8 +271,8 @@ form.fuel002e-station-form .form-group {
 </div>
 
 <div class="fuel-toolbar">
-    <input type="text" id="stationSearch" placeholder="{{ L_search }}" oninput="filterStations()">
-    <select id="stationStatusFilter" onchange="filterStations()" style="max-width:200px;"><option value="all">{{ L_filter_all }}</option><option value="active">{{ L_filter_active }}</option><option value="disabled">{{ L_filter_disabled }}</option></select>
+    <input type="text" id="stationSearch" placeholder="{{ L_search }}" oninput="filterStations()" class="form-control">
+    <select id="stationStatusFilter" onchange="filterStations()" style="max-width:200px;" class="form-control"><option value="all">{{ L_filter_all }}</option><option value="active">{{ L_filter_active }}</option><option value="disabled">{{ L_filter_disabled }}</option></select>
     <span class="text-muted text-sm" id="stationVisibleCount"></span>
 </div>
 

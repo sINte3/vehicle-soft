@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}{{ t('Wialon auto-match') }}{% endblock %}
 
 {% block content %}
@@ -49,8 +49,8 @@
 <div class="automatch-toolbar">
     <button type="button" class="btn btn-secondary btn-sm" onclick="toggleAllSections(true)">{{ t('Развернуть все') }}</button>
     <button type="button" class="btn btn-secondary btn-sm" onclick="toggleAllSections(false)">{{ t('Свернуть точные') }}</button>
-    <input type="text" id="autoMatchSearch" placeholder="{{ t('Поиск по Wialon, технике, госномеру') }}" oninput="filterAutoMatchRows()">
-    <select id="autoMatchFilter" onchange="filterAutoMatchRows()" style="max-width:230px;">
+    <input type="text" id="autoMatchSearch" class="form-control" placeholder="{{ t('Поиск по Wialon, технике, госномеру') }}" oninput="filterAutoMatchRows()">
+    <select id="autoMatchFilter" class="form-control" onchange="filterAutoMatchRows()" style="max-width:230px;">
         <option value="all">{{ t('Все группы') }}</option>
         <option value="high">{{ t('Точные') }}</option>
         <option value="medium">{{ t('Проверить') }}</option>
@@ -60,7 +60,7 @@
 </div>
 
 {% macro equipment_select(selected_eq) -%}
-<select name="equipment_id" style="width:100%; font-size:12px;">
+<select name="equipment_id" class="form-control" style="width:100%; font-size:12px;">
     <option value="">{{ t('— выберите технику —') }}</option>
     {% set prev_org = namespace(id=None) %}
     {% for eq in all_equipment %}

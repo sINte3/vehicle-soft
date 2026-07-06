@@ -1,23 +1,41 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}АЗС — Начальные остатки{% endblock %}
 {% block content %}
 
-<div class="page-header">
-    <h1>Начальные остатки топлива</h1>
-    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">← Дашборд</a>
+{% set L_back = '← Дашборд' if lang == 'ru' else '← Дашборд' %}
+{% set L_info = 'Начальный остаток — точка отсчёта для каждого склада и вида топлива. После его установки баланс вычисляется автоматически: Остаток = НачОстаток + Приходы − Выдачи. Если изменить или удалить начальный остаток, баланс пересчитается автоматически при следующем открытии отчёта.' if lang == 'ru' else 'Бошланғич қолдиқ — ҳар бир омбор ва ёқилғи тури учун ҳисоб бошланғич нуқтаси. Уни белгилагандан сўнг баланс автоматик ҳисобланади: Қолдиқ = Бошланғич қолдиқ + Киримлар − Беришлар. Бошланғич қолдиқ ўзгартирилса ёки ўчирилса, баланс кейинги ҳисобот очилганда автоматик қайта ҳисобланади.' %}
+{% set L_form_title = 'Добавить / изменить начальный остаток' if lang == 'ru' else 'Бошланғич қолдиқни қўшиш / ўзгартириш' %}
+{% set L_wh = 'Склад' if lang == 'ru' else 'Омбор' %}
+{% set L_select = '— выберите —' if lang == 'ru' else '— танланг —' %}
+{% set L_fuel_type = 'Вид топлива' if lang == 'ru' else 'Ёқилғи тури' %}
+{% set L_qty = 'Остаток, литры' if lang == 'ru' else 'Қолдиқ, литр' %}
+{% set L_date = 'Дата остатка' if lang == 'ru' else 'Қолдиқ санаси' %}
+{% set L_note = 'Примечание' if lang == 'ru' else 'Изоҳ' %}
+{% set L_save = 'Сохранить' if lang == 'ru' else 'Сақлаш' %}
+{% set L_reset_btn = 'Сброс' if lang == 'ru' else 'Тозалаш' %}
+{% set L_table_title = 'Текущие начальные остатки' if lang == 'ru' else 'Жорий бошланғич қолдиқлар' %}
+{% set L_th_wh = 'Склад' if lang == 'ru' else 'Омбор' %}
+{% set L_th_fuel = 'Вид топлива' if lang == 'ru' else 'Ёқилғи тури' %}
+{% set L_th_qty = 'Начальный остаток, л' if lang == 'ru' else 'Бошланғич қолдиқ, л' %}
+{% set L_th_date = 'Дата' if lang == 'ru' else 'Сана' %}
+{% set L_th_note = 'Примечание' if lang == 'ru' else 'Изоҳ' %}
+{% set L_th_actions = 'Действия' if lang == 'ru' else 'Амаллар' %}
+{% set L_edit = 'Изм.' if lang == 'ru' else 'Ўзг.' %}
+{% set L_confirm_delete = 'Удалить начальный остаток? Баланс будет пересчитан автоматически.' if lang == 'ru' else 'Бошланғич қолдиқ ўчирилсинми? Баланс автоматик қайта ҳисобланади.' %}
+{% set L_missing = '⚠ Начальный остаток не задан' if lang == 'ru' else '⚠ Бошланғич қолдиқ белгиланмаган' %}
+
+<div style="display:flex; justify-content:flex-end; margin-bottom:12px;">
+    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ L_back }}</a>
 </div>
 
 <div class="card" style="margin-bottom:16px; border-left:3px solid var(--info);">
     <div class="card-body" style="padding:12px 16px; font-size:13px; color:var(--info);">
-        Начальный остаток — точка отсчёта для каждого склада и вида топлива.
-        После его установки баланс вычисляется автоматически:
-        <strong>Остаток = НачОстаток + Приходы − Выдачи</strong>.
-        Если изменить или удалить начальный остаток, баланс пересчитается автоматически при следующем открытии отчёта.
+        {{ L_info }}
     </div>
 </div>
 
 <div class="card" style="margin-bottom:24px;">
-    <div class="card-header">Добавить / изменить начальный остаток</div>
+    <div class="card-header">{{ L_form_title }}</div>
     <div class="card-body">
         <form method="post" action="{{ url_for('fuel.save_initial_balance') }}" class="form-inline" id="ibForm">
             {% if csrf_token is defined %}
@@ -26,9 +44,9 @@
             <input type="hidden" name="id" id="ibId" value="">
 
             <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>Склад</label>
-                <select name="warehouse_id" id="ibWarehouse" required>
-                    <option value="">— выберите —</option>
+                <label>{{ L_wh }}</label>
+                <select name="warehouse_id" id="ibWarehouse" required class="form-control">
+                    <option value="">{{ L_select }}</option>
                     {% for wh in warehouses %}
                     <option value="{{ wh.id }}">{{ wh.name }}</option>
                     {% endfor %}
@@ -36,8 +54,8 @@
             </div>
 
             <div class="form-group" style="margin-bottom:0;">
-                <label>Вид топлива</label>
-                <select name="fuel_type" id="ibFuelType" required>
+                <label>{{ L_fuel_type }}</label>
+                <select name="fuel_type" id="ibFuelType" required class="form-control">
                     {% for ft in fuel_types %}
                     <option value="{{ ft }}" {% if ft == 'ДТ' %}selected{% endif %}>{{ ft }}</option>
                     {% endfor %}
@@ -45,40 +63,40 @@
             </div>
 
             <div class="form-group" style="margin-bottom:0;">
-                <label>Остаток, литры</label>
-                <input type="number" name="quantity" id="ibQuantity" step="0.1" min="0" required style="width:130px;">
+                <label>{{ L_qty }}</label>
+                <input type="number" name="quantity" id="ibQuantity" step="0.1" min="0" required style="width:130px;" class="form-control">
             </div>
 
             <div class="form-group" style="margin-bottom:0;">
-                <label>Дата остатка</label>
-                <input type="date" name="balance_date" id="ibDate" value="{{ today.isoformat() }}" required>
+                <label>{{ L_date }}</label>
+                <input type="date" name="balance_date" id="ibDate" value="{{ today.isoformat() }}" required class="form-control">
             </div>
 
             <div class="form-group" style="margin-bottom:0; flex:1;">
-                <label>Примечание</label>
-                <input type="text" name="note" id="ibNote" placeholder="">
+                <label>{{ L_note }}</label>
+                <input type="text" name="note" id="ibNote" placeholder="" class="form-control">
             </div>
 
             <div class="form-group" style="margin-bottom:0;">
                 <label>&nbsp;</label>
-                <button type="submit" class="btn btn-primary">Сохранить</button>
-                <button type="button" class="btn btn-secondary" onclick="clearIBForm()">Сброс</button>
+                <button type="submit" class="btn btn-primary">{{ L_save }}</button>
+                <button type="button" class="btn btn-secondary" onclick="clearIBForm()">{{ L_reset_btn }}</button>
             </div>
         </form>
     </div>
 </div>
 
 <div class="card">
-    <div class="card-header">Текущие начальные остатки</div>
+    <div class="card-header">{{ L_table_title }}</div>
     <table>
         <thead>
             <tr>
-                <th>Склад</th>
-                <th>Вид топлива</th>
-                <th class="text-right">Начальный остаток, л</th>
-                <th>Дата</th>
-                <th class="text-muted text-sm">Примечание</th>
-                <th style="width:120px;">Действия</th>
+                <th>{{ L_th_wh }}</th>
+                <th>{{ L_th_fuel }}</th>
+                <th class="text-right">{{ L_th_qty }}</th>
+                <th>{{ L_th_date }}</th>
+                <th class="text-muted text-sm">{{ L_th_note }}</th>
+                <th style="width:120px;">{{ L_th_actions }}</th>
             </tr>
         </thead>
         <tbody>
@@ -104,11 +122,11 @@
                                 onclick="editIB({{ ib.id }}, {{ wh.id }}, {{ ft|tojson }},
                                                 {{ ib.quantity }}, {{ ib.balance_date.isoformat()|tojson }},
                                                 {{ (ib.note or '')|tojson }})">
-                            Изм.
+                            {{ L_edit }}
                         </button>
                         <form method="post" action="{{ url_for('fuel.delete_initial_balance', ib_id=ib.id) }}"
                               style="display:inline;"
-                              onsubmit="return confirm('Удалить начальный остаток? Баланс будет пересчитан автоматически.')">
+                              onsubmit="return confirm('{{ L_confirm_delete }}')">
                             {% if csrf_token is defined %}
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             {% endif %}
@@ -121,7 +139,7 @@
             <tr>
                 <td style="font-weight:600;">{{ wh.name }}</td>
                 <td colspan="5" class="text-muted text-sm" style="color:var(--danger);">
-                    ⚠ Начальный остаток не задан
+                    {{ L_missing }}
                 </td>
             </tr>
             {% endif %}

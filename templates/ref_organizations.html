@@ -1,13 +1,10 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}{{ t('Ташкилотлар') }}{% endblock %}
 {% block content %}
 {% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
 {% set L_used = 'Используется' if lang == 'ru' else 'Ишлатилган' %}
 {% set L_linked_tip = 'Есть связанные данные. Удаление заблокировано для сохранения истории.' if lang == 'ru' else 'Боғланган маълумотлар мавжуд. Тарихни сақлаш учун ўчириш блокланган.' %}
 
-<div class="page-header">
-    <h1>{{ t('Ташкилотлар') }}</h1>
-</div>
 
 <style>
 /* TASK_REF_001B_ORG_TEMPLATE_MARKER */
@@ -26,7 +23,7 @@
         <form method="get" action="{{ url_for('ref_organizations') }}" class="form-inline" style="gap:12px; align-items:flex-end;">
             <div class="form-group" style="margin-bottom:0; flex:1; min-width:240px;">
                 <label>{{ 'Поиск' if lang == 'ru' else 'Қидириш' }}</label>
-                <input type="text" name="q" value="{{ search_q or '' }}" placeholder="{{ 'название или короткое имя' if lang == 'ru' else 'номи ёки қисқа номи' }}">
+                <input type="text" name="q" value="{{ search_q or '' }}" placeholder="{{ 'название или короткое имя' if lang == 'ru' else 'номи ёки қисқа номи' }}" class="form-control">
             </div>
             <button type="submit" class="btn btn-primary btn-sm">{{ 'Искать' if lang == 'ru' else 'Қидириш' }}</button>
             <a href="{{ url_for('ref_organizations') }}" class="btn btn-secondary btn-sm">{{ 'Сбросить' if lang == 'ru' else 'Тозалаш' }}</a>
@@ -60,11 +57,11 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group" style="margin-bottom:0; flex:1; min-width:260px;">
                 <label>{{ t('Ташкилот номи') }}</label>
-                <input type="text" name="name" required placeholder="Когон ПТЗ">
+                <input type="text" name="name" required placeholder="Когон ПТЗ" class="form-control">
             </div>
             <div class="form-group" style="margin-bottom:0; min-width:180px;">
                 <label>{{ 'Короткое имя' if lang == 'ru' else 'Қисқа номи' }}</label>
-                <input type="text" name="short_name" placeholder="Когон">
+                <input type="text" name="short_name" placeholder="Когон" class="form-control">
             </div>
             <button type="submit" class="btn btn-primary">{{ t('Қўшиш') }}</button>
         </form>
@@ -92,8 +89,8 @@
                 <form method="post" action="{{ url_for('save_organization') }}" class="form-inline" style="gap:6px;">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="id" value="{{ org.id }}">
-                    <input type="text" name="name" value="{{ org.name }}" required style="width:260px;">
-                    <input type="text" name="short_name" value="{{ org.short_name or '' }}" placeholder="{{ 'Короткое имя' if lang == 'ru' else 'Қисқа номи' }}" style="width:160px;">
+                    <input type="text" name="name" value="{{ org.name }}" required style="width:260px;" class="form-control">
+                    <input type="text" name="short_name" value="{{ org.short_name or '' }}" placeholder="{{ 'Короткое имя' if lang == 'ru' else 'Қисқа номи' }}" style="width:160px;" class="form-control">
                     <button type="submit" class="btn btn-sm btn-secondary">{{ 'Сохранить' if lang == 'ru' else 'Сақлаш' }}</button>
                 </form>
             </td>

@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}{{ t('Виалон') }} импорт{% endblock %}
 {% block content %}
 
@@ -75,7 +75,7 @@
                 <label style="font-size:12px; font-weight:600; color:var(--text2);
                               display:block; margin-bottom:4px;">{{ t('САНА') }}</label>
                 <input type="date" name="report_date" id="singleDate"
-                       value="{{ yesterday }}" style="width:180px;">
+                       class="form-control" value="{{ yesterday }}" style="width:180px;">
             </div>
 
             <div id="field-range" style="display:none; margin-bottom:14px;
@@ -84,13 +84,13 @@
                     <label style="font-size:12px; font-weight:600; color:var(--text2);
                                   display:block; margin-bottom:4px;">{{ t('ДАН') }}</label>
                     <input type="date" name="date_from" id="dateFrom"
-                           value="{{ yesterday }}" style="width:160px;">
+                           class="form-control" value="{{ yesterday }}" style="width:160px;">
                 </div>
                 <div>
                     <label style="font-size:12px; font-weight:600; color:var(--text2);
                                   display:block; margin-bottom:4px;">{{ t('ГАЧА') }}</label>
                     <input type="date" name="date_to" id="dateTo"
-                           value="{{ yesterday }}" style="width:160px;">
+                           class="form-control" value="{{ yesterday }}" style="width:160px;">
                 </div>
             </div>
 
@@ -105,7 +105,7 @@
                     {{ t('ZIP ЕКИ CSV ФАЙЛ (Виалон — Поездки гурух ҳисоботи)') }}
                 </label>
                 <input type="file" name="wialon_file" accept=".zip,.csv"
-                       required style="width:100%;">
+                       class="form-control" required style="width:100%;">
             </div>
 
             <button type="submit" class="btn btn-primary btn-lg">{{ t('📤 Юклаш') }}</button>

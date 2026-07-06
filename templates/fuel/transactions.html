@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}АЗС — {{ 'Выдачи топлива из Topaz' if lang == 'ru' else 'Topazдан ёқилғи беришлар' }}{% endblock %}
 {% block content %}
 
@@ -17,7 +17,7 @@
 }
 
 .fuel002b-subtitle {
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 13px;
   line-height: 1.45;
   margin-top: 2px;
@@ -32,15 +32,15 @@
 
 .fuel002b-pill {
   border: 1px solid var(--border);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 10px;
   padding: 10px 12px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002b-pill span {
   display: block;
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -50,7 +50,7 @@
 .fuel002b-pill strong {
   display: block;
   font-size: 15px;
-  color: var(--text-main);
+  color: var(--text);
 }
 
 .fuel002b-guidance-panel {
@@ -63,22 +63,22 @@
 .fuel002b-guidance-card {
   border: 1px solid var(--border);
   border-left: 4px solid var(--accent);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 10px;
   padding: 11px 13px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002b-guidance-card strong {
   display: block;
   margin-bottom: 4px;
-  color: var(--text-main);
+  color: var(--text);
   font-size: 13px;
 }
 
 .fuel002b-guidance-card span {
   display: block;
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -92,8 +92,8 @@
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: var(--card-bg);
-  box-shadow: var(--shadow-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow);
 }
 
 .fuel002b-filter-form input,
@@ -106,8 +106,8 @@
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: var(--card-bg);
-  box-shadow: var(--shadow-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow);
   margin-bottom: 16px;
 }
 
@@ -127,7 +127,7 @@
 .fuel002b-sync-table th {
   white-space: nowrap;
   font-size: 12px;
-  background: var(--bg-soft);
+  background: var(--surface2);
 }
 
 .fuel002b-transaction-table td,
@@ -185,6 +185,16 @@
 {% set L_unknown = 'Неизв. АЗС' if lang == 'ru' else 'Номаълум АЗС' %}
 {% set L_status = 'Статус' if lang == 'ru' else 'Ҳолат' %}
 {% set L_error = 'Ошибка' if lang == 'ru' else 'Хато' %}
+{% set L_cs_period = 'Период' if lang == 'ru' else 'Давр' %}
+{% set L_cs_rows = 'Строк на экране' if lang == 'ru' else 'Экрандаги қаторлар' %}
+{% set L_cs_total_l = 'Итого литров' if lang == 'ru' else 'Жами литр' %}
+{% set L_cs_sync = 'Sync-логи' if lang == 'ru' else 'Синхр. логлари' %}
+{% set L_gd_1_title = '1. Выберите период' if lang == 'ru' else '1. Даврни танланг' %}
+{% set L_gd_1_text = 'По умолчанию показывается текущий день. Для сверки задайте нужный диапазон.' if lang == 'ru' else 'Стандарт бўйича жорий кун кўрсатилади. Солиштириш учун керакли даврни белгиланг.' %}
+{% set L_gd_2_title = '2. Сузьте по складу' if lang == 'ru' else '2. Омбор бўйича торайтиринг' %}
+{% set L_gd_2_text = 'Фильтр по складу помогает быстро найти выдачи конкретного подразделения.' if lang == 'ru' else 'Омбор фильтри маълум бўлинманинг беришларини тез топишга ёрдам беради.' %}
+{% set L_gd_3_title = '3. Проверяйте лимит' if lang == 'ru' else '3. Лимитни назорат қилинг' %}
+{% set L_gd_3_text = 'На странице выводится до 500 последних транзакций по выбранному фильтру.' if lang == 'ru' else 'Саҳифада танланган фильтр бўйича охирги 500 тагача транзакция кўрсатилади.' %}
 
 <div class="page-header fuel002b-page-header">
     <div>
@@ -199,50 +209,50 @@
         
 <div class="fuel002b-context-strip FUEL002B_MARKER">
   <div class="fuel002b-pill">
-    <span>Период</span>
+    <span>{{ L_cs_period }}</span>
     <strong>{{ d_from.strftime('%d.%m.%Y') if d_from else '' }}  {{ d_to.strftime('%d.%m.%Y') if d_to else '' }}</strong>
   </div>
   <div class="fuel002b-pill">
-    <span>Строк на экране</span>
+    <span>{{ L_cs_rows }}</span>
     <strong>{{ items|length }} / 500</strong>
   </div>
   <div class="fuel002b-pill">
-    <span>Итого литров</span>
+    <span>{{ L_cs_total_l }}</span>
     <strong>{{ '%.0f'|format(total_qty or 0) }} л</strong>
   </div>
   <div class="fuel002b-pill">
-    <span>Sync-логи</span>
+    <span>{{ L_cs_sync }}</span>
     <strong>{{ sync_logs|length }}</strong>
   </div>
 </div>
 
 <div class="fuel002b-guidance-panel">
   <div class="fuel002b-guidance-card">
-    <strong>1. Выберите период</strong>
-    <span>По умолчанию показывается текущий день. Для сверки задайте нужный диапазон.</span>
+    <strong>{{ L_gd_1_title }}</strong>
+    <span>{{ L_gd_1_text }}</span>
   </div>
   <div class="fuel002b-guidance-card">
-    <strong>2. Сузьте по складу</strong>
-    <span>Фильтр по складу помогает быстро найти выдачи конкретного подразделения.</span>
+    <strong>{{ L_gd_2_title }}</strong>
+    <span>{{ L_gd_2_text }}</span>
   </div>
   <div class="fuel002b-guidance-card">
-    <strong>3. Проверяйте лимит</strong>
-    <span>На странице выводится до 500 последних транзакций по выбранному фильтру.</span>
+    <strong>{{ L_gd_3_title }}</strong>
+    <span>{{ L_gd_3_text }}</span>
   </div>
 </div>
 
 <form method="get" class="form-inline fuel002b-filter-form">
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ L_from }}</label>
-                <input type="date" name="date_from" value="{{ d_from.isoformat() }}">
+                <input type="date" name="date_from" value="{{ d_from.isoformat() }}" class="form-control">
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ L_to }}</label>
-                <input type="date" name="date_to" value="{{ d_to.isoformat() }}">
+                <input type="date" name="date_to" value="{{ d_to.isoformat() }}" class="form-control">
             </div>
             <div class="form-group" style="margin-bottom:0; flex:1;">
                 <label>{{ L_wh }}</label>
-                <select name="warehouse_id">
+                <select name="warehouse_id" class="form-control">
                     <option value="">{{ L_all }}</option>
                     {% for wh in warehouses %}
                     <option value="{{ wh.id }}" {% if selected_wh_id == wh.id %}selected{% endif %}>{{ wh.name }}</option>
@@ -255,12 +265,6 @@
             </div>
         </form>
     </div>
-</div>
-
-<div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin-bottom:16px;">
-    <div class="stat-card"><div class="label">{{ L_count }}</div><div class="value">{{ items|length }}</div></div>
-    <div class="stat-card"><div class="label">{{ L_total_l }}</div><div class="value" style="color:var(--danger);">{{ '%.0f'|format(total_qty) }} л</div></div>
-    <div class="stat-card"><div class="label">{{ L_fuel }}</div><div class="value text-sm">ДТ</div></div>
 </div>
 
 <div class="card" style="margin-bottom:24px;">

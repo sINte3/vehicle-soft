@@ -1,32 +1,32 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}{{ t('Маълумот киритиш') }}{% endblock %}
 {% block content %}
 
 <style>
 .entry-context { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin-top:12px; }
-.entry-context-item { background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius); padding:10px 12px; }
-.entry-context-label { font-size:11px; color:var(--text2); font-weight:700; text-transform:uppercase; letter-spacing:.3px; }
+.entry-context-item { background:var(--vs-surface-2); border:1px solid var(--vs-border); border-radius:var(--vs-r); padding:10px 12px; }
+.entry-context-label { font-size:11px; color:var(--vs-text-muted); font-weight:700; text-transform:uppercase; letter-spacing:.3px; }
 .entry-context-value { font-size:15px; font-weight:700; margin-top:2px; }
-.entry-warning { margin-top:10px; padding:10px 12px; background:var(--warn-light); border:1px solid #f3df9d; border-radius:var(--radius); color:#7a5b0d; font-size:12px; }
-.entry-toolbar { position:sticky; top:56px; z-index:50; display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; align-items:center; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:10px; box-shadow:var(--shadow); }
+.entry-warning { margin-top:10px; padding:10px 12px; background:var(--vs-warning-bg); border:1px solid #f3df9d; border-radius:var(--vs-r); color:#7a5b0d; font-size:12px; }
+.entry-toolbar { position:sticky; top:56px; z-index:50; display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; align-items:center; background:var(--vs-bg); border:1px solid var(--vs-border); border-radius:var(--vs-r); padding:10px; box-shadow:var(--vs-shadow); }
 .entry-toolbar .entry-search { min-width:240px; max-width:360px; }
-.entry-toolbar .entry-stat { font-size:12px; color:var(--text2); background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:6px 10px; white-space:nowrap; }
-.entry-help-panel { background:var(--info-light); color:var(--info); border:1px solid #cfe4f4; border-radius:var(--radius); padding:10px 12px; font-size:12px; margin-bottom:14px; }
+.entry-toolbar .entry-stat { font-size:12px; color:var(--vs-text-muted); background:var(--vs-surface); border:1px solid var(--vs-border); border-radius:var(--vs-r); padding:6px 10px; white-space:nowrap; }
+.entry-help-panel { background:var(--vs-info-bg); color:var(--vs-info); border:1px solid #cfe4f4; border-radius:var(--vs-r); padding:10px 12px; font-size:12px; margin-bottom:14px; }
 .entry-help-panel strong { font-weight:700; }
 .eq-card-header { gap:10px; }
 .eq-title-wrap { flex:1; min-width:220px; }
 .eq-main-title { font-weight:700; font-size:14px; line-height:1.25; }
 .eq-sub-title { margin-top:2px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
-.eq-pill { display:inline-flex; align-items:center; gap:4px; padding:2px 7px; border-radius:999px; background:var(--surface); border:1px solid var(--border); color:var(--text2); font-size:11px; font-weight:600; }
+.eq-pill { display:inline-flex; align-items:center; gap:4px; padding:2px 7px; border-radius:999px; background:var(--vs-surface); border:1px solid var(--vs-border); color:var(--vs-text-muted); font-size:11px; font-weight:600; }
 .eq-card-tools { display:flex; gap:8px; align-items:center; }
-.eq-toggle-hint { color:var(--text2); font-size:11px; white-space:nowrap; }
-.eq-card-body-hint { background:var(--surface2); border:1px dashed var(--border-strong); border-radius:var(--radius); padding:8px 10px; margin-bottom:12px; font-size:12px; color:var(--text2); }
-.line-row { border:1px solid transparent; border-radius:var(--radius); padding:8px; background:var(--surface); }
-.line-row:nth-child(even) { background:var(--surface2); }
-.line-row.entry-invalid { border-color:var(--danger); background:var(--danger-light); }
-.entry-field-invalid { border-color:var(--danger) !important; box-shadow:0 0 0 3px var(--danger-light) !important; }
+.eq-toggle-hint { color:var(--vs-text-muted); font-size:11px; white-space:nowrap; }
+.eq-card-body-hint { background:var(--vs-surface-2); border:1px dashed var(--vs-border-2); border-radius:var(--vs-r); padding:8px 10px; margin-bottom:12px; font-size:12px; color:var(--vs-text-muted); }
+.line-row { border:1px solid transparent; border-radius:var(--vs-r); padding:8px; background:var(--vs-surface); }
+.line-row:nth-child(even) { background:var(--vs-surface-2); }
+.line-row.entry-invalid { border-color:var(--vs-danger); background:var(--vs-danger-bg); }
+.entry-field-invalid { border-color:var(--vs-danger) !important; box-shadow:0 0 0 3px var(--vs-danger-bg) !important; }
 .line-actions { display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap; }
-.entry-bottom-save { display:flex; gap:10px; align-items:center; margin-top:20px; padding:14px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); }
+.entry-bottom-save { display:flex; gap:10px; align-items:center; margin-top:20px; padding:14px; background:var(--vs-surface); border:1px solid var(--vs-border); border-radius:var(--vs-r); box-shadow:var(--vs-shadow); }
 .entry-empty-state { text-align:center; padding:60px 20px; }
 @media (max-width:768px) { .entry-toolbar { top:0; } .entry-toolbar .entry-search { max-width:none; width:100%; } }
 
@@ -44,7 +44,7 @@
 }
 
 .entry002a-subtitle {
-  color: var(--ux-muted, #667085);
+  color: var(--vs-text-muted);
   font-size: 14px;
   line-height: 1.45;
 }
@@ -62,16 +62,16 @@
   gap: 6px;
   padding: 7px 10px;
   border-radius: 999px;
-  border: 1px solid var(--ux-border-soft, #edf1f6);
-  background: var(--ux-surface, #fff);
-  color: var(--ux-text, #1f2937);
+  border: 1px solid var(--vs-border);
+  background: var(--vs-surface);
+  color: var(--vs-text);
   font-size: 12px;
   font-weight: 800;
-  box-shadow: var(--ux-shadow-soft, 0 3px 10px rgba(15, 23, 42, 0.05));
+  box-shadow: var(--vs-shadow-sm);
 }
 
 .entry002a-pill strong {
-  color: var(--ux-primary, #2563eb);
+  color: var(--vs-primary);
 }
 
 .entry002a-guidance-panel {
@@ -82,11 +82,11 @@
 }
 
 .entry002a-guidance-card {
-  border: 1px solid var(--ux-border-soft, #edf1f6);
-  background: var(--ux-surface, #fff);
-  border-radius: var(--ux-radius, 14px);
+  border: 1px solid var(--vs-border);
+  background: var(--vs-surface);
+  border-radius: var(--vs-r-lg);
   padding: 12px 14px;
-  box-shadow: var(--ux-shadow-soft, 0 3px 10px rgba(15, 23, 42, 0.05));
+  box-shadow: var(--vs-shadow-sm);
 }
 
 .entry002a-guidance-title {
@@ -95,13 +95,13 @@
 }
 
 .entry002a-guidance-text {
-  color: var(--ux-muted, #667085);
+  color: var(--vs-text-muted);
   font-size: 13px;
   line-height: 1.45;
 }
 
 .entry002a-filter-card {
-  border-left: 4px solid var(--ux-primary, #2563eb);
+  border-left: 4px solid var(--vs-primary);
 }
 
 .entry002a-filter-form {
@@ -113,19 +113,20 @@
 }
 
 .entry002a-save-form .org-section {
-  border: 1px solid var(--ux-border-soft, #edf1f6);
-  border-radius: var(--ux-radius, 14px);
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-lg);
   overflow: hidden;
   margin-bottom: 14px;
-  background: var(--ux-surface, #fff);
-  box-shadow: var(--ux-shadow-soft, 0 3px 10px rgba(15, 23, 42, 0.04));
+  background: var(--vs-surface);
+  box-shadow: var(--vs-shadow-sm);
 }
 
 .entry002a-save-form .org-section-header {
-  background: var(--ux-surface-soft, #f8fafc);
-  border-bottom: 1px solid var(--ux-border-soft, #edf1f6);
+  background: var(--vs-surface-3);
+  border-bottom: 1px solid var(--vs-border);
   padding: 11px 14px;
   font-weight: 900;
+  color: var(--vs-text);
 }
 
 .entry002a-save-form .org-section-body {
@@ -133,43 +134,43 @@
 }
 
 .entry002a-save-form .eq-card {
-  border: 1px solid var(--ux-border-soft, #edf1f6);
-  border-radius: var(--ux-radius, 14px);
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-lg);
   overflow: hidden;
   margin-bottom: 10px;
-  background: var(--ux-surface, #fff);
+  background: var(--vs-surface);
 }
 
 .entry002a-save-form .eq-card.working,
 .entry002a-save-form .eq-card.entry002a-working {
-  border-left: 4px solid var(--ux-success, #16a34a);
+  border-left: 4px solid var(--vs-brand-green);
 }
 
 .entry002a-save-form .eq-card.idle,
 .entry002a-save-form .eq-card.entry002a-idle {
-  border-left: 4px solid var(--ux-muted, #667085);
+  border-left: 4px solid var(--vs-text-muted);
 }
 
 .entry002a-save-form .eq-card-header {
-  background: var(--ux-surface-soft, #f8fafc);
+  background: var(--vs-surface-3);
 }
 
 .entry002a-save-form .line-row,
 .entry002a-save-form .work-line-row {
-  border-radius: var(--ux-radius-sm, 9px);
+  border-radius: var(--vs-r);
   padding: 8px;
 }
 
 .entry002a-save-form .entry002a-line-incomplete {
-  outline: 1px dashed var(--ux-warning, #b45309);
-  background: var(--ux-warning-soft, #fffbeb);
+  outline: 1px dashed var(--vs-warning);
+  background: var(--vs-warning-bg);
 }
 
 .entry002a-save-form .entry002a-line-incomplete::after {
   content: "Проверьте вид работы, количество и цену";
   display: block;
   grid-column: 1 / -1;
-  color: var(--ux-warning, #b45309);
+  color: var(--vs-warning);
   font-size: 12px;
   font-weight: 800;
   margin-top: 4px;
@@ -183,7 +184,7 @@
 
 .entry002a-save-form .amount-display {
   font-weight: 900;
-  color: var(--ux-primary, #2563eb);
+  color: var(--vs-primary);
 }
 
 .entry002a-save-form .entry-bottom-save {
@@ -192,8 +193,8 @@
   z-index: 20;
   background: rgba(255,255,255,0.96);
   backdrop-filter: blur(8px);
-  border: 1px solid var(--ux-border-soft, #edf1f6);
-  border-radius: var(--ux-radius, 14px);
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-lg);
   padding: 12px;
   box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.08);
 }
@@ -223,6 +224,169 @@
   }
 }
 /* ENTRY002A_END */
+
+/* [UI-NEXT]: unified input/select/textarea styling with design tokens */
+.entry002a-save-form input,
+.entry002a-save-form select,
+.entry002a-save-form textarea,
+.entry002a-filter-form input,
+.entry002a-filter-form select {
+  font-family: var(--vs-font);
+  font-size: 13px;
+  padding: 8px 11px;
+  border: 1px solid var(--vs-border-input);
+  border-radius: var(--vs-r-sm);
+  background: #fff;
+  color: var(--vs-text);
+  transition: border-color .15s, box-shadow .15s;
+  line-height: 1.4;
+}
+.entry002a-save-form input:focus,
+.entry002a-save-form select:focus,
+.entry002a-save-form textarea:focus,
+.entry002a-filter-form input:focus,
+.entry002a-filter-form select:focus {
+  outline: none;
+  border-color: var(--vs-primary);
+  box-shadow: var(--vs-ring-primary);
+}
+/* Inputs that should fill their cell */
+.entry002a-save-form .form-group > input[type=text],
+.entry002a-save-form .form-group > select,
+.entry002a-filter-form .form-group > input,
+.entry002a-filter-form .form-group > select {
+  width: 100%;
+}
+
+/* ===== Missing component classes (were in legacy shell) ===== */
+
+/* Cards */
+.card {
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-lg);
+  box-shadow: var(--vs-shadow-sm);
+}
+.card-body { padding: 16px 18px; }
+
+/* Page header */
+.page-header h1 {
+  font-size: var(--vs-fs-2xl);
+  font-weight: 800;
+  letter-spacing: -.5px;
+}
+
+/* Form groups + labels */
+.form-group { margin-bottom: 14px; }
+.form-group > label {
+  display: block;
+  font-size: var(--vs-fs-xs);
+  font-weight: 600;
+  color: var(--vs-text-muted);
+  margin-bottom: 5px;
+  letter-spacing: .2px;
+}
+.form-inline { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.field-help { font-size: var(--vs-fs-xs); color: var(--vs-text-soft); margin-top: 4px; }
+
+/* Buttons */
+.btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 15px;
+  font-family: var(--vs-font); font-size: var(--vs-fs); font-weight: 600;
+  border: 1px solid var(--vs-border-input);
+  border-radius: var(--vs-r);
+  background: #fff; color: var(--vs-text);
+  cursor: pointer; text-decoration: none; line-height: 1.2;
+  transition: all .13s ease;
+}
+.btn:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
+.btn-primary { background: var(--vs-primary); color: #fff; border-color: var(--vs-primary); font-weight: 700; }
+.btn-primary:hover { background: var(--vs-primary-hover); border-color: var(--vs-primary-hover); color: #fff; }
+.btn-secondary { background: #fff; color: var(--vs-text); border-color: var(--vs-border-input); }
+.btn-secondary:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
+.btn-danger { color: var(--vs-danger); border-color: #f3d6d6; }
+.btn-danger:hover { background: var(--vs-danger); color: #fff; border-color: var(--vs-danger); }
+.btn-sm { padding: 6px 12px; font-size: var(--vs-fs-sm); border-radius: var(--vs-r-sm); }
+.btn-lg { padding: 12px 20px; font-size: 14.5px; border-radius: var(--vs-r-md); }
+
+/* Text helpers */
+.text-muted { color: var(--vs-text-muted); }
+.text-sm { font-size: var(--vs-fs-sm); }
+
+/* Equipment card */
+.eq-card {
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-lg);
+  overflow: hidden;
+  margin-bottom: 10px;
+  background: var(--vs-surface);
+  box-shadow: var(--vs-shadow-sm);
+}
+.eq-card.working { border-left: 4px solid var(--vs-brand-green); }
+.eq-card.idle    { border-left: 4px solid var(--vs-text-soft); }
+.eq-card-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  background: var(--vs-surface-3);
+  cursor: pointer;
+}
+.eq-card-body { padding: 14px; }
+
+/* Status badges */
+.working-badge, .idle-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: var(--vs-r-pill);
+  font-size: 10.5px; font-weight: 700;
+  white-space: nowrap; letter-spacing: .1px;
+}
+.working-badge { background: var(--vs-success-bg); color: var(--vs-success); }
+.idle-badge    { background: var(--vs-warning-bg); color: var(--vs-warning); }
+
+/* Equipment pills (plate / type / unit) */
+.eq-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--vs-r-pill);
+  background: var(--vs-surface); border: 1px solid var(--vs-border);
+  color: var(--vs-text-muted); font-size: 11px; font-weight: 600;
+}
+
+/* Status toggle group (Работал / Простой) — proper segmented control */
+.toggle-group {
+  display: inline-flex;
+  border: 1px solid var(--vs-border-input);
+  border-radius: var(--vs-r-sm);
+  overflow: hidden;
+}
+.toggle-group label {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 16px;
+  font-size: 13px; font-weight: 600;
+  background: #fff; color: var(--vs-text-muted);
+  cursor: pointer;
+  border: none;
+  transition: all .13s ease;
+  margin: 0;
+}
+.toggle-group label + label { border-left: 1px solid var(--vs-border-input); }
+.toggle-group label:hover { background: var(--vs-surface-2); }
+/* The radio inside is visually hidden but keeps its function */
+.toggle-group label input[type=radio] {
+  appearance: none; -webkit-appearance: none;
+  width: 0; height: 0; margin: 0; padding: 0;
+  position: absolute; opacity: 0;
+}
+/* JS sets inline background on the active label; this is the fallback for
+   the :has() capable browsers so the active state looks like the design */
+.toggle-group label:has(input[type=radio]:checked) {
+  background: var(--vs-primary);
+  color: #fff;
+}
+
+/* Hide legacy context tiles — the entry002a pills already show this info */
+.entry-context { display: none; }
 
 </style>
 
@@ -328,14 +492,14 @@
     <div class="eq-card-body" id="eq-body-{{ eq.id }}" style="{% if not is_working and not rec %}display:none;{% endif %}">
         <div class="eq-card-body-hint">{{ t('Ишлаган ҳолатида камида битта иш тури ва миқдор киритилади. Бўш ҳолатида сабаб ёзинг.') }}</div>
         <div style="display:flex; align-items:center; gap:16px; margin-bottom:12px;">
-            <label style="font-weight:600; font-size:12px; color:var(--text2);">{{ t('ҲОЛАТ:') }}</label>
+            <label style="font-weight:600; font-size:12px; color:var(--vs-text-muted);">{{ t('ҲОЛАТ:') }}</label>
             <div class="toggle-group">
-                <label {% if is_working %}style="background:var(--accent);color:#fff;"{% endif %}>
+                <label {% if is_working %}style="background:var(--vs-primary);color:#fff;"{% endif %}>
                     <input type="radio" name="eq_{{ eq.id }}_status" value="working"
                            {% if is_working %}checked{% endif %}
                            onchange="onStatusChange({{ eq.id }}, 'working'); markFormDirty()"> {{ t('Ишлаган') }}
                 </label>
-                <label {% if not is_working %}style="background:var(--warn);color:#fff;"{% endif %}>
+                <label {% if not is_working %}style="background:var(--vs-warning);color:#fff;"{% endif %}>
                     <input type="radio" name="eq_{{ eq.id }}_status" value="idle"
                            {% if not is_working %}checked{% endif %}
                            onchange="onStatusChange({{ eq.id }}, 'idle'); markFormDirty()"> {{ t('Бўш') }}
@@ -363,7 +527,7 @@
             {% endif %}
             </div>
             <div class="line-actions">
-                <button type="button" class="btn btn-secondary btn-sm" onclick="addLine({{ eq.id }})">
+                <button type="button" class="btn btn-secondary btn-sm vs-btn vs-btn-primary" onclick="addLine({{ eq.id }})">
                     {{ t('Қўшимча иш қўшиш') }}
                 </button>
                 <span class="text-muted text-sm">{{ t('Бир техникага бир нечта иш турини киритиш мумкин') }}</span>
@@ -392,9 +556,9 @@
         {{ t('Ташкилот') }}:
         <strong>
           {% if selected_org_id %}
-            {{ t('танланган') }}
+            {{ t('Танланган') }}
           {% else %}
-            {{ t('танланмаган') }}
+            {{ t('Танланмаган') }}
           {% endif %}
         </strong>
       </span>
@@ -466,7 +630,7 @@
     </div>
 
     <div class="entry-toolbar">
-        <button type="submit" class="btn btn-primary btn-lg">{{ t('💾 Сақлаш') }}</button>
+        <button type="submit" class="btn btn-primary btn-lg vs-btn vs-btn-success">{{ t('💾 Сақлаш') }}</button>
         <button type="button" class="btn btn-secondary" onclick="setAllIdle()">{{ t('Ҳаммасини «бўш» қилиш') }}</button>
         <button type="button" class="btn btn-secondary" onclick="expandAllCards()">{{ t('Барчасини очиш') }}</button>
         <button type="button" class="btn btn-secondary" onclick="collapseAllCards()">{{ t('Барчасини ёпиш') }}</button>
@@ -505,7 +669,7 @@
     {% endfor %}
 
     <div class="entry-bottom-save">
-        <button type="submit" class="btn btn-primary btn-lg">{{ t('💾 Сақлаш') }}</button>
+        <button type="submit" class="btn btn-primary btn-lg vs-btn vs-btn-success">{{ t('💾 Сақлаш') }}</button>
         <span class="text-muted text-sm">{{ t('Сақлашдан олдин қизил билан белгиланган майдонларни текширинг.') }}</span>
     </div>
 </form>
@@ -672,8 +836,8 @@ function onStatusChange(eqId, status) {
     if (badge) { badge.className = status === 'working' ? 'working-badge' : 'idle-badge'; badge.textContent = status === 'working' ? '{{ t("Ишлаган") }}' : '{{ t("Бўш") }}'; }
     const labels = card.querySelectorAll('.toggle-group label');
     labels.forEach(l => { l.style.background = ''; l.style.color = ''; });
-    if (status === 'working') { labels[0].style.background = 'var(--accent)'; labels[0].style.color = '#fff'; }
-    else { labels[1].style.background = 'var(--warn)'; labels[1].style.color = '#fff'; }
+    if (status === 'working') { labels[0].style.background = 'var(--vs-primary)'; labels[0].style.color = '#fff'; }
+    else { labels[1].style.background = 'var(--vs-warning)'; labels[1].style.color = '#fff'; }
     updateEntryStats();
 }
 

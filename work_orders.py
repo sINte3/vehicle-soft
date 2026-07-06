@@ -42,8 +42,9 @@ work_orders_bp = Blueprint('work_orders', __name__)
 # Statuses considered "open" / active for counters and the default list view.
 WO_OPEN_STATUSES = (WO_STATUS_DRAFT, WO_STATUS_ASSIGNED, WO_STATUS_IN_PROGRESS)
 
-# [REASON]: Colours reuse base.html CSS variables so badges match the rest of the
-# UI (grey draft, blue assigned, amber in-progress, green done, red cancelled).
+# [REASON]: Colours reuse design-system.css --vs-* tokens so badges match the rest
+# of the UI (grey draft, blue assigned, amber in-progress, green done, red
+# cancelled).
 WO_STATUS_COLORS = {
     WO_STATUS_DRAFT:       'var(--text2)',
     WO_STATUS_ASSIGNED:    'var(--info)',

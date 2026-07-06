@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}АЗС — {{ 'Приходы топлива' if lang == 'ru' else 'Ёқилғи киримлари' }}{% endblock %}
 {% block content %}
 
@@ -27,6 +27,15 @@
 {% set L_delete = 'Удалить приход?' if lang == 'ru' else 'Кирим ўчирилсинми?' %}
 {% set L_empty = 'За выбранный период приходов нет.' if lang == 'ru' else 'Танланган давр учун кирим йўқ.' %}
 {% set L_qty_hint = 'Введите литры. Значение должно быть больше 0.' if lang == 'ru' else 'Литрни киритинг. Қиймат 0 дан катта бўлиши керак.' %}
+{% set L_cs_period = 'Период' if lang == 'ru' else 'Давр' %}
+{% set L_cs_records = 'Записей' if lang == 'ru' else 'Ёзувлар' %}
+{% set L_cs_warehouses = 'Складов' if lang == 'ru' else 'Омборлар сони' %}
+{% set L_gd_1_title = '1. Введите приход' if lang == 'ru' else '1. Киримни киритинг' %}
+{% set L_gd_1_text = 'Укажите дату, склад и количество литров. Остальные поля помогают сверять документы.' if lang == 'ru' else 'Сана, омбор ва литр миқдорини кўрсатинг. Қолган майдонлар ҳужжатларни солиштиришга ёрдам беради.' %}
+{% set L_gd_2_title = '2. Используйте фильтр' if lang == 'ru' else '2. Фильтрдан фойдаланинг' %}
+{% set L_gd_2_text = 'Период и склад позволяют быстро проверить нужные поступления топлива.' if lang == 'ru' else 'Давр ва омбор керакли ёқилғи киримларини тез текширишга имкон беради.' %}
+{% set L_gd_3_title = '3. Проверяйте итог' if lang == 'ru' else '3. Жамини текширинг' %}
+{% set L_gd_3_text = 'Общий объём по выбранному периоду отображается над таблицей.' if lang == 'ru' else 'Танланган давр бўйича умумий ҳажм жадвал устида кўрсатилади.' %}
 
 <style>
 .fuel-toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
@@ -49,7 +58,7 @@
 }
 
 .fuel002a-subtitle {
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 13px;
   line-height: 1.45;
   margin-top: 2px;
@@ -64,15 +73,15 @@
 
 .fuel002a-pill {
   border: 1px solid var(--border);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 10px;
   padding: 10px 12px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002a-pill span {
   display: block;
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -82,7 +91,7 @@
 .fuel002a-pill strong {
   display: block;
   font-size: 15px;
-  color: var(--text-main);
+  color: var(--text);
 }
 
 .fuel002a-guidance-panel {
@@ -95,22 +104,22 @@
 .fuel002a-guidance-card {
   border: 1px solid var(--border);
   border-left: 4px solid var(--accent);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 10px;
   padding: 11px 13px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002a-guidance-card strong {
   display: block;
   margin-bottom: 4px;
-  color: var(--text-main);
+  color: var(--text);
   font-size: 13px;
 }
 
 .fuel002a-guidance-card span {
   display: block;
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -120,7 +129,7 @@
 .fuel002a-table-card {
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002a-form-card .card-header,
@@ -144,20 +153,6 @@
 .fuel002a-field-missing {
   border-color: #dc3545 !important;
   box-shadow: 0 0 0 2px rgba(220, 53, 69, .08);
-}
-
-.fuel002a-total-box {
-  font-weight: 700;
-  color: var(--accent);
-  font-size: 14px;
-  padding: 8px 10px;
-  min-width: 130px;
-  min-height: 36px;
-  display: inline-flex;
-  align-items: center;
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-  background: var(--bg-soft);
 }
 
 .fuel002a-table-wrap {
@@ -221,35 +216,35 @@
 
 <div class="fuel002a-context-strip">
   <div class="fuel002a-pill">
-    <span>Период</span>
+    <span>{{ L_cs_period }}</span>
     <strong>{{ d_from.strftime('%d.%m.%Y') if d_from else '' }}  {{ d_to.strftime('%d.%m.%Y') if d_to else '' }}</strong>
   </div>
   <div class="fuel002a-pill">
-    <span>Записей</span>
+    <span>{{ L_cs_records }}</span>
     <strong>{{ items|length }}</strong>
   </div>
   <div class="fuel002a-pill">
-    <span>Итого</span>
+    <span>{{ L_total }}</span>
     <strong>{{ '%.0f'|format(total_qty or 0) }} л</strong>
   </div>
   <div class="fuel002a-pill">
-    <span>Складов</span>
+    <span>{{ L_cs_warehouses }}</span>
     <strong>{{ warehouses|length }}</strong>
   </div>
 </div>
 
 <div class="fuel002a-guidance-panel">
   <div class="fuel002a-guidance-card fuel002a-form-card">
-    <strong>1. Введите приход</strong>
-    <span>Укажите дату, склад и количество литров. Остальные поля помогают сверять документы.</span>
+    <strong>{{ L_gd_1_title }}</strong>
+    <span>{{ L_gd_1_text }}</span>
   </div>
   <div class="fuel002a-guidance-card fuel002a-filter-card">
-    <strong>2. Используйте фильтр</strong>
-    <span>Период и склад позволяют быстро проверить нужные поступления топлива.</span>
+    <strong>{{ L_gd_2_title }}</strong>
+    <span>{{ L_gd_2_text }}</span>
   </div>
   <div class="fuel002a-guidance-card fuel002a-table-card">
-    <strong>3. Проверяйте итог</strong>
-    <span>Общий объём по выбранному периоду отображается над таблицей.</span>
+    <strong>{{ L_gd_3_title }}</strong>
+    <span>{{ L_gd_3_text }}</span>
   </div>
 </div>
 </div>
@@ -267,11 +262,11 @@
             <div class="form-inline">
                 <div class="form-group" style="margin-bottom:0;">
                     <label>{{ L_date }}</label>
-                    <input type="date" name="receipt_date" value="{{ today.isoformat() }}" required>
+                    <input type="date" name="receipt_date" value="{{ today.isoformat() }}" required class="form-control">
                 </div>
                 <div class="form-group" style="margin-bottom:0; flex:2;">
                     <label>{{ L_wh }}</label>
-                    <select name="warehouse_id" required>
+                    <select name="warehouse_id" required class="form-control">
                         <option value="">{{ L_select }}</option>
                         {% for wh in warehouses %}
                         <option value="{{ wh.id }}" {% if selected_wh_id == wh.id %}selected{% endif %}>{{ wh.name }}</option>
@@ -285,22 +280,22 @@
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
                     <label>{{ L_qty }}</label>
-                    <input type="number" name="quantity" step="0.1" min="0.1" required style="width:130px;" title="{{ L_qty_hint }}">
+                    <input type="number" name="quantity" class="form-control" step="0.1" min="0.1" required style="width:130px;" title="{{ L_qty_hint }}">
                     <small class="text-muted">{{ L_qty_hint }}</small>
                 </div>
             </div>
             <div class="form-inline" style="margin-top:10px;">
                 <div class="form-group" style="margin-bottom:0; flex:2;">
                     <label>{{ L_supplier }}</label>
-                    <input type="text" name="supplier" id="rSupplier" placeholder="">
+                    <input type="text" name="supplier" id="rSupplier" placeholder="" class="form-control">
                 </div>
                 <div class="form-group" style="margin-bottom:0; flex:1;">
                     <label>{{ L_doc }}</label>
-                    <input type="text" name="doc_number" id="rDoc" placeholder="">
+                    <input type="text" name="doc_number" id="rDoc" placeholder="" class="form-control">
                 </div>
                 <div class="form-group" style="margin-bottom:0; flex:2;">
                     <label>{{ L_note }}</label>
-                    <input type="text" name="note" id="rNote">
+                    <input type="text" name="note" id="rNote" class="form-control">
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
                     <label>&nbsp;</label>
@@ -315,11 +310,11 @@
 <div class="card" style="margin-bottom:16px;">
     <div class="card-body" style="padding:12px 20px;">
         <form method="get" class="form-inline fuel002a-filter-form">
-            <div class="form-group" style="margin-bottom:0;"><label>{{ L_from }}</label><input type="date" name="date_from" value="{{ d_from.isoformat() }}"></div>
-            <div class="form-group" style="margin-bottom:0;"><label>{{ L_to }}</label><input type="date" name="date_to" value="{{ d_to.isoformat() }}"></div>
+            <div class="form-group" style="margin-bottom:0;"><label>{{ L_from }}</label><input type="date" name="date_from" value="{{ d_from.isoformat() }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0;"><label>{{ L_to }}</label><input type="date" name="date_to" value="{{ d_to.isoformat() }}" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0; flex:1;">
                 <label>{{ L_wh }}</label>
-                <select name="warehouse_id">
+                <select name="warehouse_id" class="form-control">
                     <option value="">{{ L_all }}</option>
                     {% for wh in warehouses %}<option value="{{ wh.id }}" {% if selected_wh_id == wh.id %}selected{% endif %}>{{ wh.name }}</option>{% endfor %}
                 </select>
@@ -330,7 +325,7 @@
 </div>
 
 <div class="fuel-toolbar">
-    <input type="text" id="receiptSearch" placeholder="{{ L_search }}" oninput="filterReceipts()">
+    <input type="text" id="receiptSearch" placeholder="{{ L_search }}" oninput="filterReceipts()" class="form-control">
     <span class="text-muted text-sm" id="receiptVisibleCount"></span>
 </div>
 

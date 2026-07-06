@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти — новая заявка' if is_ru else 'Эҳтиёт қисмлар — янги сўров' }}{% endblock %}
 {% block content %}
@@ -63,7 +63,7 @@
     .spare001a-scope .spare002a-filter-form,
     .spare001a-scope .spare002a-request-form {
         gap: 12px;
-        align-items: flex-end;
+        align-items: flex-start;
     }
 
     .spare001a-scope label {
@@ -76,6 +76,22 @@
     .spare001a-scope select,
     .spare001a-scope textarea {
         max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    .spare001a-scope input.form-control,
+    .spare001a-scope select.form-control {
+        height: 38px;
+        line-height: 1.4;
+    }
+
+    .spare001a-scope input[type="date"].form-control {
+        -webkit-appearance: none;
+        appearance: none;
+        padding-top: 0;
+        padding-bottom: 0;
+        display: flex;
+        align-items: center;
     }
 
     .spare001a-scope table {
@@ -414,9 +430,6 @@
     </div>
   </div>
 </div>
-        <div class="text-muted text-sm">
-            {{ 'Заполните организацию, при необходимости выберите технику и добавьте минимум одну позицию.' if is_ru else 'Ташкилотни тўлдиринг, керак бўлса техникани танланг ва камида битта позиция қўшинг.' }}
-        </div>
     </div>
     <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ '← Список заявок' if is_ru else '← Сўровлар рўйхати' }}</a>
 </div>
@@ -447,11 +460,11 @@
             <div class="form-inline">
                 <div class="form-group">
                     <label>{{ 'Дата заявки' if is_ru else 'Сўров санаси' }}</label>
-                    <input type="date" name="request_date" id="requestDate" value="{{ today }}" required style="width:160px;">
+                    <input type="date" name="request_date" id="requestDate" class="form-control" value="{{ today }}" required style="width:160px;">
                 </div>
                 <div class="form-group" style="flex:1; min-width:240px;">
                     <label>{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
-                    <select name="organization_id" id="orgSelect" required onchange="filterEquipment()">
+                    <select name="organization_id" id="orgSelect" class="form-control" required onchange="filterEquipment()">
                         <option value="">{{ '— выберите организацию —' if is_ru else '— ташкилотни танланг —' }}</option>
                         {% for org in organizations %}
                         <option value="{{ org.id }}">{{ org.name }}</option>
@@ -461,7 +474,7 @@
                 </div>
                 <div class="form-group" style="flex:2; min-width:360px;">
                     <label>{{ 'Техника' if is_ru else 'Техника' }}</label>
-                    <select name="equipment_id" id="eqSelect">
+                    <select name="equipment_id" id="eqSelect" class="form-control">
                         <option value="">{{ '— сначала выберите организацию —' if is_ru else '— аввал ташкилотни танланг —' }}</option>
                         {% for eq in all_equipment %}
                         {% set org_label = (eq.organization.short_name or eq.organization.name) if eq.organization else '' %}
@@ -476,7 +489,7 @@
             </div>
             <div class="form-group">
                 <label>{{ 'Примечание к заявке' if is_ru else 'Сўров изоҳи' }}</label>
-                <textarea name="note" rows="2" placeholder="{{ 'Например: срочно, причина замены, место установки...' if is_ru else 'Масалан: шошилинч, алмаштириш сабаби, ўрнатиш жойи...' }}"></textarea>
+                <textarea name="note" class="form-control" rows="2" placeholder="{{ 'Например: срочно, причина замены, место установки...' if is_ru else 'Масалан: шошилинч, алмаштириш сабаби, ўрнатиш жойи...' }}"></textarea>
             </div>
         </div>
     </div>
@@ -503,11 +516,11 @@
                 <tbody id="itemsBody">
                     <tr class="item-row">
                         <td class="row-no">1</td>
-                        <td><input type="text" name="item_name" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" required style="width:100%;"></td>
-                        <td><input type="text" name="item_part_number" placeholder="000-000" style="width:100%;"></td>
-                        <td><input type="number" name="item_quantity" value="1" min="0.001" step="0.001" style="width:100%;"></td>
-                        <td><input type="text" name="item_unit" value="dona" style="width:100%;"></td>
-                        <td><input type="text" name="item_note" placeholder="{{ 'Комментарий' if is_ru else 'Изоҳ' }}" style="width:100%;"></td>
+                        <td><input type="text" name="item_name" class="form-control" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" required style="width:100%;"></td>
+                        <td><input type="text" name="item_part_number" class="form-control" placeholder="000-000" style="width:100%;"></td>
+                        <td><input type="number" name="item_quantity" class="form-control" value="1" min="0.001" step="0.001" style="width:100%;"></td>
+                        <td><input type="text" name="item_unit" class="form-control" value="dona" style="width:100%;"></td>
+                        <td><input type="text" name="item_note" class="form-control" placeholder="{{ 'Комментарий' if is_ru else 'Изоҳ' }}" style="width:100%;"></td>
                         <td class="spare-row-actions"><button type="button" onclick="removeRow(this)" class="btn btn-secondary btn-sm" style="padding:4px 8px;">✕</button></td>
                     </tr>
                 </tbody>
@@ -572,11 +585,11 @@ function addRow() {
     row.className = 'item-row';
     row.innerHTML = `
         <td class="row-no"></td>
-        <td><input type="text" name="item_name" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" style="width:100%;"></td>
-        <td><input type="text" name="item_part_number" placeholder="000-000" style="width:100%;"></td>
-        <td><input type="number" name="item_quantity" value="1" min="0.001" step="0.001" style="width:100%;"></td>
-        <td><input type="text" name="item_unit" value="dona" style="width:100%;"></td>
-        <td><input type="text" name="item_note" placeholder="{{ 'Комментарий' if is_ru else 'Изоҳ' }}" style="width:100%;"></td>
+        <td><input type="text" name="item_name" class="form-control" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" style="width:100%;"></td>
+        <td><input type="text" name="item_part_number" class="form-control" placeholder="000-000" style="width:100%;"></td>
+        <td><input type="number" name="item_quantity" class="form-control" value="1" min="0.001" step="0.001" style="width:100%;"></td>
+        <td><input type="text" name="item_unit" class="form-control" value="dona" style="width:100%;"></td>
+        <td><input type="text" name="item_note" class="form-control" placeholder="{{ 'Комментарий' if is_ru else 'Изоҳ' }}" style="width:100%;"></td>
         <td class="spare-row-actions"><button type="button" onclick="removeRow(this)" class="btn btn-danger btn-sm" style="padding:4px 8px;">✕</button></td>
     `;
     tbody.appendChild(row);
@@ -594,9 +607,7 @@ function removeRow(btn) {
 function clearEmptyRows() {
     const rows = Array.from(document.querySelectorAll('#itemsBody .item-row'));
     rows.forEach(row => {
-        const name = (row.querySelector('[name=i
-</div>
-tem_name]').value || '').trim();
+        const name = (row.querySelector('[name=item_name]').value || '').trim();
         const qty = (row.querySelector('[name=item_quantity]').value || '').trim();
         const part = (row.querySelector('[name=item_part_number]').value || '').trim();
         const note = (row.querySelector('[name=item_note]').value || '').trim();

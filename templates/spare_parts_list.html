@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти — заявки' if is_ru else 'Эҳтиёт қисмлар — сўровлар' }}{% endblock %}
 {% block content %}
@@ -63,7 +63,7 @@
     .spare001a-scope .spare002a-filter-form,
     .spare001a-scope .spare002a-request-form {
         gap: 12px;
-        align-items: flex-end;
+        align-items: flex-start;
     }
 
     .spare001a-scope label {
@@ -76,6 +76,22 @@
     .spare001a-scope select,
     .spare001a-scope textarea {
         max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    .spare001a-scope input.form-control,
+    .spare001a-scope select.form-control {
+        height: 38px;
+        line-height: 1.4;
+    }
+
+    .spare001a-scope input[type="date"].form-control {
+        -webkit-appearance: none;
+        appearance: none;
+        padding-top: 0;
+        padding-bottom: 0;
+        display: flex;
+        align-items: center;
     }
 
     .spare001a-scope table {
@@ -488,15 +504,6 @@
     </div>
   </div>
 </div>
-        <div class="text-muted text-sm">
-            {{ 'Создание, отправка и рассмотрение заявок на запасные части.' if is_ru else 'Эҳтиёт қисмларга сўров яратиш, юбориш ва кўриб чиқиш.' }}
-        </div>
-    </div>
-    <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        {% if current_user.can_edit %}
-{% endif %}
-        {% if current_user.is_admin %}
-{% endif %}
     </div>
 </div>
 
@@ -520,7 +527,7 @@
             {% if status_filter %}<input type="hidden" name="status" value="{{ status_filter }}">{% endif %}
             <div class="form-group" style="margin-bottom:0; min-width:220px;">
                 <label>{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
-                <select name="org_id" onchange="this.form.submit()">
+                <select name="org_id" onchange="this.form.submit()" class="form-control">
                     <option value="">{{ '— все организации —' if is_ru else '— барча ташкилотлар —' }}</option>
                     {% for org in organizations %}
                     <option value="{{ org.id }}" {% if org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
@@ -529,11 +536,11 @@
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
-                <input type="date" name="date_from" value="{{ date_from_s }}" style="width:150px;">
+                <input type="date" name="date_from" class="form-control" value="{{ date_from_s }}" style="width:150px;">
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
-                <input type="date" name="date_to" value="{{ date_to_s }}" style="width:150px;">
+                <input type="date" name="date_to" class="form-control" value="{{ date_to_s }}" style="width:150px;">
             </div>
             <button type="submit" class="btn btn-secondary btn-sm">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
         </form>
@@ -543,14 +550,12 @@
 <div class="spare-toolbar">
     <div class="form-group search" style="margin-bottom:0;">
         <label>{{ 'Поиск' if is_ru else 'Қидириш' }}</label>
-        <input type="text" id="spareRequestSearch" placeholder="{{ 'Поиск по номеру, организации, технике, автору' if is_ru else 'Рақам, ташкилот, техника, муаллиф бўйича қидириш' }}" oninput="filterSpareRequests()">
+        <input type="text" id="spareRequestSearch" class="form-control" placeholder="{{ 'Поиск по номеру, организации, технике, автору' if is_ru else 'Рақам, ташкилот, техника, муаллиф бўйича қидириш' }}" oninput="filterSpareRequests()">
     </div>
     <div class="form-group" style="margin-bottom:0; min-width:190px;">
         <label>{{ 'Статус' if is_ru else 'Ҳолат' }}</label>
-        <select id="clientStatusFilter" onchange="filterSpareRequests()">
-            <option value="all">{{ 'В
-</div>
-се статусы' if is_ru else 'Барча ҳолатлар' }}</option>
+        <select id="clientStatusFilter" onchange="filterSpareRequests()" class="form-control">
+            <option value="all">{{ 'Все статусы' if is_ru else 'Барча ҳолатлар' }}</option>
             {% for s, labels in status_labels.items() %}
             <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ labels[lang] }}</option>
             {% endfor %}

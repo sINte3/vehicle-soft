@@ -1,12 +1,11 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}{{ t('Иш турлари') }}{% endblock %}
 {% block content %}
 {% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
 {% set L_used = 'Используется' if lang == 'ru' else 'Ишлатилган' %}
 {% set L_linked_tip = 'Используется в ежедневных отчётах. Удаление заблокировано для сохранения истории.' if lang == 'ru' else 'Кунлик ҳисоботларда ишлатилган. Тарихни сақлаш учун ўчириш блокланган.' %}
 
-<div class="page-header">
-    <h1>{{ t('Иш турлари') }}</h1>
+<div class="vs-row-end vs-mb">
 <div class="ref-export-actions TASK_REF_001D_WORK_TYPES_EXPORT_BUTTON">
   <a class="btn secondary" href="{{ url_for('export_work_types_diagnostics') }}">
     {{ 'Excel диагностика' if lang == 'ru' else 'Excel диагностика' }}
@@ -32,11 +31,11 @@
         <form method="get" action="{{ url_for('ref_work_types') }}" class="form-inline" style="gap:12px; align-items:flex-end;">
             <div class="form-group" style="margin-bottom:0; flex:1; min-width:240px;">
                 <label>{{ 'Поиск' if lang == 'ru' else 'Қидириш' }}</label>
-                <input type="text" name="q" value="{{ search_q or '' }}" placeholder="{{ 'название или единица' if lang == 'ru' else 'номи ёки ўлчов бирлиги' }}">
+                <input type="text" name="q" value="{{ search_q or '' }}" placeholder="{{ 'название или единица' if lang == 'ru' else 'номи ёки ўлчов бирлиги' }}" class="form-control">
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ 'Использование' if lang == 'ru' else 'Ишлатилиши' }}</label>
-                <select name="usage" style="min-width:150px;">
+                <select name="usage" style="min-width:150px;" class="form-control">
                     <option value="all" {% if selected_usage == 'all' %}selected{% endif %}>{{ 'Все' if lang == 'ru' else 'Барчаси' }}</option>
                     <option value="used" {% if selected_usage == 'used' %}selected{% endif %}>{{ 'Используемые' if lang == 'ru' else 'Ишлатилган' }}</option>
                     <option value="unused" {% if selected_usage == 'unused' %}selected{% endif %}>{{ 'Неиспользуемые' if lang == 'ru' else 'Ишлатилмаган' }}</option>
@@ -93,13 +92,13 @@
         <form method="post" action="{{ url_for('save_work_type') }}" class="form-inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group" style="flex:1;"><label>{{ t('Иш тури номи') }}</label>
-                <input type="text" name="name" placeholder="Шудгор / Чигит экиш / Борона мола..." required>
+                <input type="text" name="name" placeholder="Шудгор / Чигит экиш / Борона мола..." required class="form-control">
             </div>
             <div class="form-group"><label>{{ t('Дефолт ўлчов') }}</label>
-                <input type="text" name="default_unit" placeholder="га / соат / м-соат / Рейс" style="width:120px;">
+                <input type="text" name="default_unit" placeholder="га / соат / м-соат / Рейс" style="width:120px;" class="form-control">
             </div>
             <div class="form-group"><label>{{ t('Дефолт нарх') }}</label>
-                <input type="number" name="default_price" placeholder="0" min="0" step="0.01" style="width:140px;">
+                <input type="number" name="default_price" placeholder="0" min="0" step="0.01" style="width:140px;" class="form-control">
             </div>
             <div class="form-group"><label>&nbsp;</label>
                 <button type="submit" class="btn btn-primary">+ {{ t('Қўшиш') }}</button>
@@ -153,13 +152,13 @@
                             <input type="hidden" name="id" id="wt-shared-id" value="">
 
                             <div>
-                                <input type="text" name="name" id="wt-shared-name" required>
+                                <input type="text" name="name" id="wt-shared-name" required class="form-control">
                             </div>
                             <div>
-                                <input type="text" name="default_unit" id="wt-shared-default-unit" style="width:120px;">
+                                <input type="text" name="default_unit" id="wt-shared-default-unit" style="width:120px;" class="form-control">
                             </div>
                             <div>
-                                <input type="number" name="default_price" id="wt-shared-default-price" min="0" step="0.01" style="width:140px;">
+                                <input type="number" name="default_price" id="wt-shared-default-price" min="0" step="0.01" style="width:140px;" class="form-control">
                             </div>
                             <div>
                                 <button type="submit" class="btn btn-primary btn-sm">{{ t('Сақлаш') }}</button>

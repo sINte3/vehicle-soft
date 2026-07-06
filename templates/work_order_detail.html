@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ wo.number }}{% endblock %}
 {% block content %}
@@ -53,7 +53,7 @@
     <div class="wod-card"><div class="label">{{ 'Исполнитель' if is_ru else 'Ijrochi' }}</div><div>{{ (wo.assignee.full_name or wo.assignee.username) if wo.assignee else '—' }}</div></div>
     <div class="wod-card"><div class="label">{{ 'Плановый объём' if is_ru else 'Rejalashtirilgan hajm' }}</div><div>{{ wo.planned_quantity if wo.planned_quantity is not none else '—' }} {{ wo.unit }}</div></div>
     <div class="wod-card"><div class="label">{{ 'Цена за ед.' if is_ru else 'Birlik narxi' }}</div><div>{{ wo.price|fmt_sum or '0' }}</div></div>
-    <div class="wod-card"><div class="label">{{ 'Тип оплаты' if is_ru else 'Тўлов тури' }}</div><div>{{ payment_labels.get(wo.payment_type, '—') if wo.payment_type else '—' }}</div></div>
+    <div class="wod-card"><div class="label">{{ 'Тип оплаты' if is_ru else 'To‘lov turi' }}</div><div>{{ payment_labels.get(wo.payment_type, '—') if wo.payment_type else '—' }}</div></div>
     <div class="wod-card full"><div class="label">{{ 'Примечание' if is_ru else 'Izoh' }}</div><div>{{ wo.note or '—' }}</div></div>
 </div>
 
@@ -108,7 +108,7 @@
     {% if can_assign and mechanics %}
     <form method="post" action="{{ url_for('work_orders.assign', wo_id=wo.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <select name="assigned_to" style="display:inline-block; width:auto;">
+        <select name="assigned_to" class="form-control" style="display:inline-block; width:auto;">
             <option value="">— {{ 'Механик' if is_ru else 'Mexanik' }} —</option>
             {% for m in mechanics %}
             <option value="{{ m.id }}" {{ 'selected' if wo.assigned_to == m.id else '' }}>

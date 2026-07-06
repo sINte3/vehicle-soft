@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}{{ t('Wialon mapping') }}{% endblock %}
 {% block content %}
 
@@ -88,7 +88,7 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="vialon_name" value="{{ item.vialon_name }}">
                     <input type="hidden" name="skip" id="pskip-{{ loop.index }}" value="0">
-                    <select name="equipment_id" id="psel-{{ loop.index }}" class="wialon-equipment-select">
+                    <select name="equipment_id" id="psel-{{ loop.index }}" class="wialon-equipment-select form-control">
                         <option value="">{{ t('— выберите технику —') }}</option>
                         {# PERF-WIALON-MAP-001B: options are loaded once by JavaScript. #}
                     </select>
@@ -114,8 +114,8 @@
 
 <div class="wialon-toolbar">
     <button class="btn btn-secondary btn-sm" onclick="toggleAddForm()" type="button">{{ t('+ Добавить') }}</button>
-    <input type="text" id="mappingSearch" placeholder="{{ t('Поиск по Wialon, технике, госномеру или организации') }}" oninput="filterMappings()">
-    <select id="statusFilter" onchange="filterMappings()" style="max-width:220px;">
+    <input type="text" id="mappingSearch" class="form-control" placeholder="{{ t('Поиск по Wialon, технике, госномеру или организации') }}" oninput="filterMappings()">
+    <select id="statusFilter" class="form-control" onchange="filterMappings()" style="max-width:220px;">
         <option value="all">{{ t('Все статусы') }}</option>
         <option value="linked">{{ t('Привязано') }}</option>
         <option value="skip">{{ t('Нет в системе') }}</option>
@@ -135,12 +135,12 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group" style="margin-bottom:0; min-width:280px; flex:1;">
                 <label>{{ t('Wialon объект') }}</label>
-                <input type="text" name="vialon_name" required placeholder="Arion-630C 073 HA">
+                <input type="text" name="vialon_name" class="form-control" required placeholder="Arion-630C 073 HA">
                 <div class="wialon-hint">{{ t('Введите точное имя объекта из Wialon.') }}</div>
             </div>
             <div class="form-group" style="margin-bottom:0; min-width:320px; flex:1;">
                 <label>{{ t('Техника в системе') }}</label>
-                <select name="equipment_id" style="width:100%;" class="wialon-equipment-select">
+                <select name="equipment_id" style="width:100%;" class="wialon-equipment-select form-control">
                     <option value="">{{ t('— выберите технику —') }}</option>
                         {# PERF-WIALON-MAP-001B: options are loaded once by JavaScript. #}
                 </select>
@@ -193,7 +193,8 @@
                     <span class="wialon-status wialon-status-unknown">⚠ {{ t('Без решения') }}</span>
                 {% endif %}
             </td>
-            <td>                <div class="wialon-actions">
+            <td>
+                    <div class="wialon-actions">
                     <button type="button" class="btn btn-secondary btn-sm"
                             onclick="editMappingRow(this)"
                             title="{{ t('Изменить mapping') }}">Изм.</button>
@@ -216,9 +217,9 @@
                     <input type="hidden" name="skip" id="wialon-shared-skip" value="0">
 
                     <select name="equipment_id" id="wialon-shared-equipment-id"
-                            class="wialon-equipment-select" style="width:100%; max-width:520px;"
+                            class="wialon-equipment-select form-control" style="width:100%; max-width:520px;"
                             data-selected="">
-                        <option value="">{{ t(' выберите технику ') }}</option>
+                        <option value="">{{ t('— выберите технику —') }}</option>
                         {# PERF-WIALON-MAPPING-BODY-002B: options are loaded once by JavaScript. #}
                     </select>
 

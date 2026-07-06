@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти' if is_ru else 'Эҳтиёт қисмлар' }} — {{ 'Заявка' if is_ru else 'Сўров' }} #{{ req.id }}{% endblock %}
 {% block content %}
@@ -63,7 +63,7 @@
     .spare001a-scope .spare002a-filter-form,
     .spare001a-scope .spare002a-request-form {
         gap: 12px;
-        align-items: flex-end;
+        align-items: flex-start;
     }
 
     .spare001a-scope label {
@@ -76,6 +76,22 @@
     .spare001a-scope select,
     .spare001a-scope textarea {
         max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    .spare001a-scope input.form-control,
+    .spare001a-scope select.form-control {
+        height: 38px;
+        line-height: 1.4;
+    }
+
+    .spare001a-scope input[type="date"].form-control {
+        -webkit-appearance: none;
+        appearance: none;
+        padding-top: 0;
+        padding-bottom: 0;
+        display: flex;
+        align-items: center;
     }
 
     .spare001a-scope table {
@@ -278,7 +294,7 @@
     <div class="card-body">
         <div class="form-group">
             <label>{{ 'Комментарий к решению' if is_ru else 'Қарор изоҳи' }}</label>
-            <textarea id="reviewComment" rows="3" placeholder="{{ 'Например: утвердить закупку, заменить аналогом, отклонить по причине...' if is_ru else 'Масалан: харидни тасдиқлаш, аналог билан алмаштириш, сабаб билан рад этиш...' }}"></textarea>
+            <textarea id="reviewComment" class="form-control" rows="3" placeholder="{{ 'Например: утвердить закупку, заменить аналогом, отклонить по причине...' if is_ru else 'Масалан: харидни тасдиқлаш, аналог билан алмаштириш, сабаб билан рад этиш...' }}"></textarea>
         </div>
         <div style="display:flex; gap:10px; flex-wrap:wrap;">
             <form method="post" action="{{ url_for('spare_parts.approve_request', rid=req.id) }}" onsubmit="return setCommentAndConfirm(this, true)">

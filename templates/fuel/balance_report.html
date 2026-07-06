@@ -1,28 +1,51 @@
-{% extends "base.html" %}
-{% block title %}Отчёт остатков топлива{% endblock %}
+{% extends g.base_template %}
+{% block title %}{{ 'Отчёт остатков топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари ҳисоботи' }}{% endblock %}
 
 {% block content %}
+{% set L_title = 'Отчёт остатков топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари ҳисоботи' %}
+{% set L_formula = 'Остаток на начало периода + приход - расход Topaz/ручной расход = текущий остаток. В отчёте используются только 22 рабочих склада новой иерархии.' if lang == 'ru' else 'Давр бошидаги қолдиқ + кирим - Topaz/қўлда сарф = жорий қолдиқ. Ҳисоботда фақат янги иерархиянинг 22 та ишчи омбори ишлатилади.' %}
+{% set L_back = 'Назад к АЗС' if lang == 'ru' else 'АЗС бўлимига қайтиш' %}
+{% set L_params_title = 'Параметры отчёта' if lang == 'ru' else 'Ҳисобот параметрлари' %}
+{% set L_params_hint = 'Выберите период и скачайте отчёт в Excel при необходимости.' if lang == 'ru' else 'Даврни танланг ва зарур бўлса ҳисоботни Excelда юклаб олинг.' %}
+{% set L_wh_in_report = 'Складов в отчёте:' if lang == 'ru' else 'Ҳисоботдаги омборлар:' %}
+{% set L_date_from = 'Дата с' if lang == 'ru' else 'Сана дан' %}
+{% set L_date_to = 'Дата по' if lang == 'ru' else 'Сана гача' %}
+{% set L_zero_wh = 'Нулевые склады' if lang == 'ru' else 'Нол омборлар' %}
+{% set L_hide_zero = 'скрыть нулевые' if lang == 'ru' else 'нолларни яшириш' %}
+{% set L_build = 'Построить отчёт' if lang == 'ru' else 'Ҳисоботни шакллантириш' %}
+{% set L_download_excel = 'Скачать Excel' if lang == 'ru' else 'Excelни юклаб олиш' %}
+{% set L_opening = 'Остаток на начало' if lang == 'ru' else 'Бошланғич қолдиқ' %}
+{% set L_receipts_period = 'Приход за период' if lang == 'ru' else 'Давр учун кирим' %}
+{% set L_expenses_total = 'Расход Topaz + ручной' if lang == 'ru' else 'Topaz + қўлда сарф' %}
+{% set L_closing = 'Текущий остаток' if lang == 'ru' else 'Жорий қолдиқ' %}
+{% set L_table_desc = 'Формат близок к Excel-образцу: организация, склад, остаток, приход, расход и дневная детализация. Ручные расходы учитываются в общей колонке «Расход».' if lang == 'ru' else 'Формат Excel намунасига яқин: ташкилот, омбор, қолдиқ, кирим, сарф ва кунлик тафсилот. Қўлда киритилган сарфлар умумий «Сарф» устунида ҳисобга олинади.' %}
+{% set L_wh_count = 'Складов:' if lang == 'ru' else 'Омборлар:' %}
+{% set L_num = '№' if lang == 'ru' else '№' %}
+{% set L_org = 'Организация' if lang == 'ru' else 'Ташкилот' %}
+{% set L_wh = 'Склад' if lang == 'ru' else 'Омбор' %}
+{% set L_receipts = 'Приход' if lang == 'ru' else 'Кирим' %}
+{% set L_expense = 'Расход' if lang == 'ru' else 'Сарф' %}
+{% set L_total = 'ИТОГО' if lang == 'ru' else 'ЖАМИ' %}
 <div class="page-header">
     <div>
-        <h1>Отчёт остатков топлива</h1>
+        <h1>{{ L_title }}</h1>
         <p class="text-muted">
-            Остаток на начало периода + приход - расход Topaz/ручной расход = текущий остаток.
-            В отчёте используются только 22 рабочих склада новой иерархии.
+            {{ L_formula }}
         </p>
     </div>
     <div>
-        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">Назад к АЗС</a>
+        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ L_back }}</a>
     </div>
 </div>
 
 <div class="card" style="margin-bottom:16px; padding:16px;">
     <div style="display:flex; justify-content:space-between; gap:16px; align-items:flex-start; flex-wrap:wrap;">
         <div>
-            <h2 style="margin:0 0 4px 0;">Параметры отчёта</h2>
-            <div class="text-muted">Выберите период и скачайте отчёт в Excel при необходимости.</div>
+            <h2 style="margin:0 0 4px 0;">{{ L_params_title }}</h2>
+            <div class="text-muted">{{ L_params_hint }}</div>
         </div>
         <div class="text-muted">
-            Складов в отчёте: <strong>{{ rows|length }}</strong>
+            {{ L_wh_in_report }} <strong>{{ rows|length }}</strong>
         </div>
     </div>
 
@@ -30,28 +53,28 @@
           action="{{ url_for('fuel.balance_report') }}"
           style="margin-top:14px; display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end;">
         <div style="min-width:170px;">
-            <label style="display:block; margin-bottom:5px;">Дата с</label>
+            <label style="display:block; margin-bottom:5px;">{{ L_date_from }}</label>
             <input type="date" name="start_date" value="{{ start_date.isoformat() }}" class="form-control" style="width:170px;">
         </div>
 
         <div style="min-width:170px;">
-            <label style="display:block; margin-bottom:5px;">Дата по</label>
+            <label style="display:block; margin-bottom:5px;">{{ L_date_to }}</label>
             <input type="date" name="end_date" value="{{ end_date.isoformat() }}" class="form-control" style="width:170px;">
         </div>
 
         <div style="min-width:180px;">
-            <label style="display:block; margin-bottom:5px;">Нулевые склады</label>
+            <label style="display:block; margin-bottom:5px;">{{ L_zero_wh }}</label>
             <label class="text-muted" style="display:flex; gap:6px; align-items:center;">
                 <input type="checkbox" name="hide_zero" value="1" {% if not show_zero %}checked{% endif %}>
-                скрыть нулевые
+                {{ L_hide_zero }}
             </label>
         </div>
 
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button type="submit" class="btn btn-primary">Построить отчёт</button>
+            <button type="submit" class="btn btn-primary">{{ L_build }}</button>
             <a class="btn btn-secondary"
                href="{{ url_for('fuel.balance_report_export', start_date=start_date.isoformat(), end_date=end_date.isoformat(), hide_zero='0' if show_zero else '1') }}">
-                Скачать Excel
+                {{ L_download_excel }}
             </a>
         </div>
     </form>
@@ -59,61 +82,61 @@
 
 <div style="display:grid; grid-template-columns:repeat(4, minmax(180px, 1fr)); gap:12px; margin-bottom:16px;">
     <div class="card" style="padding:16px;">
-        <div class="text-muted">Остаток на начало</div>
+        <div class="text-muted">{{ L_opening }}</div>
         <div style="font-size:22px; font-weight:700; margin-top:6px;">{{ "%.2f"|format(totals.opening) }} л</div>
     </div>
     <div class="card" style="padding:16px;">
-        <div class="text-muted">Приход за период</div>
+        <div class="text-muted">{{ L_receipts_period }}</div>
         <div style="font-size:22px; font-weight:700; margin-top:6px;">{{ "%.2f"|format(totals.receipts) }} л</div>
     </div>
     <div class="card" style="padding:16px;">
-        <div class="text-muted">Расход Topaz + ручной</div>
+        <div class="text-muted">{{ L_expenses_total }}</div>
         <div style="font-size:22px; font-weight:700; margin-top:6px;">{{ "%.2f"|format(totals.expenses) }} л</div>
     </div>
     <div class="card" style="padding:16px;">
-        <div class="text-muted">Текущий остаток</div>
-        <div style="font-size:22px; font-weight:700; margin-top:6px; {% if totals.closing < 0 %}color:#b91c1c;{% endif %}">
+        <div class="text-muted">{{ L_closing }}</div>
+        <div style="font-size:22px; font-weight:700; margin-top:6px; {% if totals.closing < 0 %}color:var(--danger);{% endif %}">
             {{ "%.2f"|format(totals.closing) }} л
         </div>
     </div>
 </div>
 
 <div class="card" style="padding:0; overflow:hidden;">
-    <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; padding:16px; border-bottom:1px solid #e5e7eb; flex-wrap:wrap;">
+    <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; padding:16px; border-bottom:1px solid var(--border); flex-wrap:wrap;">
         <div>
             <h2 style="margin:0;">ФАКТ: {{ start_date.strftime('%d.%m.%Y') }} — {{ end_date.strftime('%d.%m.%Y') }}</h2>
             <div class="text-muted" style="margin-top:4px;">
-                Формат близок к Excel-образцу: организация, склад, остаток, приход, расход и дневная детализация. Ручные расходы учитываются в общей колонке «Расход».
+                {{ L_table_desc }}
             </div>
         </div>
-        <div class="text-muted">Складов: {{ rows|length }}</div>
+        <div class="text-muted">{{ L_wh_count }} {{ rows|length }}</div>
     </div>
 
     <div style="overflow:auto; max-width:100%;">
         <table class="table table-sm table-striped" style="min-width:1500px; white-space:nowrap; margin:0; font-size:13px;">
             <thead>
                 <tr>
-                    <th rowspan="2" style="vertical-align:middle;">№</th>
-                    <th rowspan="2" style="vertical-align:middle; min-width:190px;">Организация</th>
-                    <th rowspan="2" style="vertical-align:middle; min-width:170px;">Склад</th>
-                    <th rowspan="2" style="vertical-align:middle;">Остаток на {{ start_date.strftime('%d/%m/%Y') }}</th>
-                    <th rowspan="2" style="vertical-align:middle;">Приход</th>
-                    <th rowspan="2" style="vertical-align:middle;">Расход</th>
-                    <th rowspan="2" style="vertical-align:middle;">Текущий остаток</th>
+                    <th rowspan="2" style="vertical-align:middle;">{{ L_num }}</th>
+                    <th rowspan="2" style="vertical-align:middle; min-width:190px;">{{ L_org }}</th>
+                    <th rowspan="2" style="vertical-align:middle; min-width:170px;">{{ L_wh }}</th>
+                    <th rowspan="2" style="vertical-align:middle;">{% if lang == 'ru' %}Остаток на {{ start_date.strftime('%d/%m/%Y') }}{% else %}{{ start_date.strftime('%d/%m/%Y') }} даги қолдиқ{% endif %}</th>
+                    <th rowspan="2" style="vertical-align:middle;">{{ L_receipts }}</th>
+                    <th rowspan="2" style="vertical-align:middle;">{{ L_expense }}</th>
+                    <th rowspan="2" style="vertical-align:middle;">{{ L_closing }}</th>
                     {% for item in date_items %}
                     <th colspan="2" class="text-center">{{ item.label }}</th>
                     {% endfor %}
                 </tr>
                 <tr>
                     {% for item in date_items %}
-                    <th>Приход</th>
-                    <th>Расход</th>
+                    <th>{{ L_receipts }}</th>
+                    <th>{{ L_expense }}</th>
                     {% endfor %}
                 </tr>
             </thead>
             <tbody>
                 {% for row in rows %}
-                <tr {% if row.closing < 0 %}style="background:#fff1f2;"{% endif %}>
+                <tr {% if row.closing < 0 %}style="background:var(--danger-light);"{% endif %}>
                     <td>{{ loop.index }}</td>
                     <td>{{ row.organization }}</td>
                     <td>{{ row.warehouse }}</td>
@@ -131,7 +154,7 @@
             </tbody>
             <tfoot>
                 <tr style="font-weight:700;">
-                    <th colspan="3">ИТОГО</th>
+                    <th colspan="3">{{ L_total }}</th>
                     <th class="text-right">{{ "%.2f"|format(totals.opening) }}</th>
                     <th class="text-right">{{ "%.2f"|format(totals.receipts) }}</th>
                     <th class="text-right">{{ "%.2f"|format(totals.expenses) }}</th>

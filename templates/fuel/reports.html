@@ -1,6 +1,24 @@
-{% extends "base.html" %}
-{% block title %}АЗС — Центр отчётов{% endblock %}
+{% extends g.base_template %}
+{% block title %}АЗС — {{ 'Центр отчётов' if lang == 'ru' else 'Ҳисоботлар маркази' }}{% endblock %}
 {% block content %}
+
+{% set L_subtitle = 'Отчёты по топливу, выдачам и аналитика' if lang == 'ru' else 'Ёқилғи, беришлар ва таҳлил бўйича ҳисоботлар' %}
+{% set L_back = '← Назад к панели АЗС' if lang == 'ru' else '← АЗС панелига қайтиш' %}
+{% set L_open_report = 'Открыть отчёт →' if lang == 'ru' else 'Ҳисоботни очиш →' %}
+{% set L_open_directory = 'Открыть справочник →' if lang == 'ru' else 'Маълумотномани очиш →' %}
+{% set L_coming_soon = 'скоро' if lang == 'ru' else 'тез орада' %}
+{% set L_card1_title = '📊 Балансовый отчёт по топливу' if lang == 'ru' else '📊 Ёқилғи баланс ҳисоботи' %}
+{% set L_card1_desc = 'Остаток на начало, приход, расход Topaz, ручные расходы и текущий остаток по складам за период.' if lang == 'ru' else 'Давр бошидаги қолдиқ, кирим, Topaz сарфи, қўлда киритилган сарфлар ва омборлар бўйича жорий қолдиқ.' %}
+{% set L_card2_title = '⛽ Выдача топлива по АЗС' if lang == 'ru' else '⛽ АЗС бўйича ёқилғи бериш' %}
+{% set L_card2_desc = 'Детальный отчёт по выдачам: дата, карта/RFID, операция Topaz, литры. С группировкой по датам и Excel экспортом.' if lang == 'ru' else 'Беришлар бўйича батафсил ҳисобот: сана, карта/RFID, Topaz операцияси, литр. Саналар бўйича группалаш ва Excel экспорти билан.' %}
+{% set L_card3_title = '🪪 Справочник топливных карт' if lang == 'ru' else '🪪 Ёқилғи карталари маълумотномаси' %}
+{% set L_card3_desc = 'Каталог карт Topaz: имена карт, RFID, привязки, статус и история синхронизации карточного справочника.' if lang == 'ru' else 'Topaz карталари каталоги: карта номлари, RFID, боғланишлар, ҳолат ва карталар маълумотномаси синхронизация тарихи.' %}
+{% set L_card4_title = '📋 Реестр выдачи топлива по картам' if lang == 'ru' else '📋 Карталар бўйича ёқилғи бериш реестри' %}
+{% set L_card4_desc = 'Детализация по картам/RFID: сводка по каждой карте, количество и литры за период.' if lang == 'ru' else 'Карталар/RFID бўйича батафсиллик: ҳар бир карта учун сводка, давр учун сони ва литр.' %}
+{% set L_card5_title = '🏭 Итоги выдачи топлива по АЗС' if lang == 'ru' else '🏭 АЗС бўйича ёқилғи бериш якунлари' %}
+{% set L_card5_desc = 'Сводка по всем АЗС: общее количество выдач, итого литров, среднее за период.' if lang == 'ru' else 'Барча АЗСлар бўйича сводка: жами беришлар сони, жами литр, давр учун ўртача.' %}
+{% set L_card6_title = '🔄 Движение топлива по карте' if lang == 'ru' else '🔄 Карта бўйича ёқилғи ҳаракати' %}
+{% set L_card6_desc = 'История операций по конкретной карте/RFID: где, когда и сколько топлива выдано.' if lang == 'ru' else 'Маълум карта/RFID бўйича операциялар тарихи: қаерда, қачон ва қанча ёқилғи берилган.' %}
 
 {# FUEL-REPORT-012B: Fuel reports center page #}
 <style>
@@ -13,13 +31,13 @@
 .report012b-card {
   border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: var(--shadow-sm);
-  background: var(--card-bg);
+  box-shadow: var(--shadow);
+  background: var(--surface);
   overflow: hidden;
   transition: box-shadow 0.15s;
 }
 .report012b-card:hover {
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow);
 }
 .report012b-card-body {
   padding: 16px 18px;
@@ -31,14 +49,14 @@
 .report012b-card-body p {
   margin: 0 0 12px 0;
   font-size: 13px;
-  color: var(--text-muted);
+  color: var(--text2);
   line-height: 1.4;
 }
 .report012b-card-disabled {
   opacity: 0.55;
 }
 .report012b-card-disabled:hover {
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 .report012b-badge-coming {
   display: inline-block;
@@ -52,62 +70,59 @@
 }
 </style>
 
-<div class="page-header">
-    <h1>Центр отчётов — АЗС</h1>
-    <p class="text-muted" style="margin-top:4px;">Отчёты по топливу, выдачам и аналитика</p>
-</div>
+<div class="text-muted text-sm" style="margin-bottom:12px;">{{ L_subtitle }}</div>
 
 <div class="card" style="margin-bottom:16px; padding:10px 16px;">
-    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">← Назад к панели АЗС</a>
+    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">{{ L_back }}</a>
 </div>
 
 <div class="report012b-card-grid">
 
     <a href="{{ url_for('fuel.balance_report') }}" class="report012b-card" style="text-decoration:none; color:inherit; display:block;">
         <div class="report012b-card-body">
-            <h3>📊 Балансовый отчёт по топливу</h3>
-            <p>Остаток на начало, приход, расход Topaz, ручные расходы и текущий остаток по складам за период.</p>
-            <span style="font-size:12px; color:var(--accent);">Открыть отчёт →</span>
+            <h3>{{ L_card1_title }}</h3>
+            <p>{{ L_card1_desc }}</p>
+            <span style="font-size:12px; color:var(--accent);">{{ L_open_report }}</span>
         </div>
     </a>
 
     <a href="{{ url_for('fuel.station_issues_report') }}" class="report012b-card" style="text-decoration:none; color:inherit; display:block;">
         <div class="report012b-card-body">
-            <h3>⛽ Выдача топлива по АЗС</h3>
-            <p>Детальный отчёт по выдачам: дата, карта/RFID, операция Topaz, литры. С группировкой по датам и Excel экспортом.</p>
-            <span style="font-size:12px; color:var(--accent);">Открыть отчёт →</span>
+            <h3>{{ L_card2_title }}</h3>
+            <p>{{ L_card2_desc }}</p>
+            <span style="font-size:12px; color:var(--accent);">{{ L_open_report }}</span>
         </div>
     </a>
 
     <a href="{{ url_for('fuel.card_directory') }}" class="report012b-card" style="text-decoration:none; color:inherit; display:block;">
         <div class="report012b-card-body">
-            <h3>🪪 Справочник топливных карт</h3>
-            <p>Каталог карт Topaz: имена карт, RFID, привязки, статус и история синхронизации карточного справочника.</p>
-            <span style="font-size:12px; color:var(--accent);">Открыть справочник →</span>
+            <h3>{{ L_card3_title }}</h3>
+            <p>{{ L_card3_desc }}</p>
+            <span style="font-size:12px; color:var(--accent);">{{ L_open_directory }}</span>
         </div>
     </a>
 
     <div class="report012b-card report012b-card-disabled" style="cursor:default;">
         <div class="report012b-card-body">
-            <h3>📋 Реестр выдачи топлива по картам</h3>
-            <p>Детализация по картам/RFID: сводка по каждой карте, количество и литры за период.</p>
-            <span class="report012b-badge-coming">скоро</span>
+            <h3>{{ L_card4_title }}</h3>
+            <p>{{ L_card4_desc }}</p>
+            <span class="report012b-badge-coming">{{ L_coming_soon }}</span>
         </div>
     </div>
 
     <div class="report012b-card report012b-card-disabled" style="cursor:default;">
         <div class="report012b-card-body">
-            <h3>🏭 Итоги выдачи топлива по АЗС</h3>
-            <p>Сводка по всем АЗС: общее количество выдач, итого литров, среднее за период.</p>
-            <span class="report012b-badge-coming">скоро</span>
+            <h3>{{ L_card5_title }}</h3>
+            <p>{{ L_card5_desc }}</p>
+            <span class="report012b-badge-coming">{{ L_coming_soon }}</span>
         </div>
     </div>
 
     <div class="report012b-card report012b-card-disabled" style="cursor:default;">
         <div class="report012b-card-body">
-            <h3>🔄 Движение топлива по карте</h3>
-            <p>История операций по конкретной карте/RFID: где, когда и сколько топлива выдано.</p>
-            <span class="report012b-badge-coming">скоро</span>
+            <h3>{{ L_card6_title }}</h3>
+            <p>{{ L_card6_desc }}</p>
+            <span class="report012b-badge-coming">{{ L_coming_soon }}</span>
         </div>
     </div>
 

@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}АЗС — {{ 'Склады и АЗС' if lang == 'ru' else 'Омборлар ва АЗС' }}{% endblock %}
 {% block content %}
 
@@ -17,7 +17,7 @@
 }
 
 .fuel002c-subtitle {
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 13px;
   line-height: 1.45;
   margin-top: 2px;
@@ -32,15 +32,15 @@
 
 .fuel002c-pill {
   border: 1px solid var(--border);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 10px;
   padding: 10px 12px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002c-pill span {
   display: block;
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -50,7 +50,7 @@
 .fuel002c-pill strong {
   display: block;
   font-size: 15px;
-  color: var(--text-main);
+  color: var(--text);
 }
 
 .fuel002c-guidance-panel {
@@ -63,32 +63,32 @@
 .fuel002c-guidance-card {
   border: 1px solid var(--border);
   border-left: 4px solid var(--accent);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 10px;
   padding: 11px 13px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002c-guidance-card strong {
   display: block;
   margin-bottom: 4px;
-  color: var(--text-main);
+  color: var(--text);
   font-size: 13px;
 }
 
 .fuel002c-guidance-card span {
   display: block;
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 12px;
   line-height: 1.4;
 }
 
 .fuel002c-form-card {
   border: 1px solid var(--border);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 12px;
   padding: 14px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
   margin-bottom: 16px;
 }
 
@@ -110,8 +110,8 @@ form.fuel002c-save-form textarea {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: var(--card-bg);
-  box-shadow: var(--shadow-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow);
   margin-bottom: 16px;
 }
 
@@ -126,7 +126,7 @@ form.fuel002c-save-form textarea {
 .fuel002c-warehouse-table th {
   white-space: nowrap;
   font-size: 12px;
-  background: var(--bg-soft);
+  background: var(--surface2);
 }
 
 .fuel002c-warehouse-table td {
@@ -146,7 +146,7 @@ form.fuel002c-save-form textarea {
 }
 
 .fuel002c-linked-note {
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 12px;
   line-height: 1.35;
 }
@@ -266,12 +266,12 @@ form.fuel002c-save-form textarea {
 <form method="post" action="{{ url_for('fuel.save_warehouse') }}" class="form-inline fuel002c-save-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" value="">
-            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_name }}</label><input type="text" name="name" required></div>
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_name }}</label><input type="text" name="name" required class="form-control"></div>
             <div class="form-group" style="margin-bottom:0; flex:2;">
                 <label>{{ L_org }}</label>
-                <select name="organization_id"><option value="">{{ L_unlinked }}</option>{% for org in organizations %}<option value="{{ org.id }}">{{ org.name }}</option>{% endfor %}</select>
+                <select name="organization_id" class="form-control"><option value="">{{ L_unlinked }}</option>{% for org in organizations %}<option value="{{ org.id }}">{{ org.name }}</option>{% endfor %}</select>
             </div>
-            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_notes }}</label><input type="text" name="notes"></div>
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_notes }}</label><input type="text" name="notes" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button type="submit" class="btn btn-primary">{{ L_save }}</button></div>
         </form>
 </div>
@@ -280,7 +280,7 @@ form.fuel002c-save-form textarea {
 {% endif %}
 
 <div class="fuel-toolbar">
-    <input type="text" id="warehouseSearch" placeholder="{{ L_search }}" oninput="filterWarehouses()">
+    <input type="text" id="warehouseSearch" placeholder="{{ L_search }}" oninput="filterWarehouses()" class="form-control">
     <span class="text-muted text-sm" id="warehouseVisibleCount"></span>
 </div>
 
@@ -310,9 +310,9 @@ form.fuel002c-save-form textarea {
         <div style="font-weight:700; margin-bottom:12px;">{{ L_edit }}: {{ wh.name }}</div>
         <form method="post" action="{{ url_for('fuel.save_warehouse') }}" class="form-inline fuel002c-save-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="id" value="{{ wh.id }}">
-            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_name }}</label><input type="text" name="name" required value="{{ wh.name }}"></div>
-            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_org }}</label><select name="organization_id"><option value="">{{ L_unlinked }}</option>{% for org in organizations %}<option value="{{ org.id }}" {% if wh.organization_id == org.id %}selected{% endif %}>{{ org.name }}</option>{% endfor %}</select></div>
-            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_notes }}</label><input type="text" name="notes" value="{{ wh.notes or '' }}"></div>
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_name }}</label><input type="text" name="name" required value="{{ wh.name }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_org }}</label><select name="organization_id" class="form-control"><option value="">{{ L_unlinked }}</option>{% for org in organizations %}<option value="{{ org.id }}" {% if wh.organization_id == org.id %}selected{% endif %}>{{ org.name }}</option>{% endfor %}</select></div>
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_notes }}</label><input type="text" name="notes" value="{{ wh.notes or '' }}" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button type="submit" class="btn btn-primary">{{ L_save }}</button><a href="{{ url_for('fuel.warehouses') }}#warehouse-{{ wh.id }}" class="btn btn-secondary">{{ L_reset }}</a></div>
         </form>
     </div>

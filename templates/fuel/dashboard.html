@@ -1,6 +1,17 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}АЗС — {{ 'Остатки топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари' }}{% endblock %}
 {% block content %}
+
+{% set L_balance_report_title = 'Отчёт остатков топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари ҳисоботи' %}
+{% set L_balance_report_desc = 'Периодический отчёт по 22 рабочим складам: остаток на начало, приход, расход Topaz и текущий остаток.' if lang == 'ru' else '22 та ишчи омбор бўйича даврий ҳисобот: бошланғич қолдиқ, кирим, Topaz сарфи ва жорий қолдиқ.' %}
+{% set L_balance_report_open = 'Открыть отчёт' if lang == 'ru' else 'Ҳисоботни очиш' %}
+{% set L_legacy_on = 'Архивный режим складов включён.' if lang == 'ru' else 'Омборларнинг архив режими ёқилган.' %}
+{% set L_legacy_mode_29 = 'Режим: 29 складов, включая архивные.' if lang == 'ru' else 'Режим: 29 омбор, шу жумладан архивдагилар.' %}
+{% set L_legacy_note = 'Сейчас показаны рабочие и старые/архивные склады. Для текущей иерархии используйте режим 22 рабочих складов.' if lang == 'ru' else 'Ҳозир ишчи ва эски/архив омборлар кўрсатилмоқда. Жорий иерархия учун 22 та ишчи омбор режимидан фойдаланинг.' %}
+{% set L_legacy_back = 'Вернуться к 22 рабочим складам' if lang == 'ru' else '22 та ишчи омборга қайтиш' %}
+{% set L_legacy_mode_22 = 'Режим: 22 рабочих склада.' if lang == 'ru' else 'Режим: 22 та ишчи омбор.' %}
+{% set L_legacy_only_working = 'Показаны только рабочие склады новой иерархии.' if lang == 'ru' else 'Фақат янги иерархиянинг ишчи омборлари кўрсатилган.' %}
+{% set L_legacy_show = 'Показать архивные склады' if lang == 'ru' else 'Архив омборларни кўрсатиш' %}
 
 {# FUEL-HIERARCHY-010B: explicit working-vs-archive warehouse mode #}
 {% set show_legacy = request.args.get('show_legacy') == '1' %}
@@ -9,19 +20,19 @@
 <div class="card" style="margin-bottom:16px; border:1px solid #f59e0b; background:#fffbeb;">
     <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; padding:12px 16px;">
         <div>
-            <strong style="color:#92400e;">Архивный режим складов включён.</strong>
+            <strong style="color:#92400e;">{{ L_legacy_on }}</strong>
             <div class="text-muted text-sm" style="margin-top:3px;">
-                <strong>Режим: 29 складов, включая архивные.</strong> Сейчас показаны рабочие и старые/архивные склады. Для текущей иерархии используйте режим 22 рабочих складов.
+                <strong>{{ L_legacy_mode_29 }}</strong> {{ L_legacy_note }}
             </div>
         </div>
-        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">Вернуться к 22 рабочим складам</a>
+        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">{{ L_legacy_back }}</a>
     </div>
 </div>
 {% else %}
 {% if current_user.is_admin %}
 <div class="text-muted text-sm" style="margin-bottom:10px;">
-    <strong>Режим: 22 рабочих склада.</strong> Показаны только рабочие склады новой иерархии.
-    <a href="{{ url_for('fuel.dashboard', show_legacy=1) }}">Показать архивные склады</a>
+    <strong>{{ L_legacy_mode_22 }}</strong> {{ L_legacy_only_working }}
+    <a href="{{ url_for('fuel.dashboard', show_legacy=1) }}">{{ L_legacy_show }}</a>
 </div>
 {% endif %}
 {% endif %}
@@ -34,12 +45,12 @@
 {# FUEL-REPORT-011A-v2-DASHBOARD-LINK #}
 <div class="card" style="margin-bottom:16px; padding:14px 16px; display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap; border:1px solid #bfdbfe; background:#eff6ff;">
     <div>
-        <strong>Отчёт остатков топлива</strong>
+        <strong>{{ L_balance_report_title }}</strong>
         <div class="text-muted text-sm" style="margin-top:3px;">
-            Периодический отчёт по 22 рабочим складам: остаток на начало, приход, расход Topaz и текущий остаток.
+            {{ L_balance_report_desc }}
         </div>
     </div>
-    <a href="{{ url_for('fuel.balance_report') }}" class="btn btn-primary">Открыть отчёт</a>
+    <a href="{{ url_for('fuel.balance_report') }}" class="btn btn-primary">{{ L_balance_report_open }}</a>
 </div>
 
 {% set L_title = 'Остатки топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари' %}
@@ -82,7 +93,6 @@
 {% set L_negative = 'Отрицательный остаток' if lang == 'ru' else 'Манфий қолдиқ' %}
 {% set L_low = 'Низкий остаток' if lang == 'ru' else 'Кам қолдиқ' %}
 {% set L_ok = 'Норма' if lang == 'ru' else 'Норма' %}
-
 <style>
 .fuel-hero { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:16px; }
 .fuel-hero h1 { margin-bottom:6px; }
@@ -94,7 +104,7 @@
 
 /* FUEL002H_MARKER: fuel dashboard UX refresh, template/localization only. */
 .fuel002h-subtitle {
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 13px;
   line-height: 1.45;
   margin-top: 6px;
@@ -109,15 +119,15 @@
 
 .fuel002h-pill {
   border: 1px solid var(--border);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 10px;
   padding: 10px 12px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002h-pill span {
   display: block;
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -127,7 +137,7 @@
 .fuel002h-pill strong {
   display: block;
   font-size: 15px;
-  color: var(--text-main);
+  color: var(--text);
 }
 
 .fuel002h-guidance-panel {
@@ -140,36 +150,31 @@
 .fuel002h-guidance-card {
   border: 1px solid var(--border);
   border-left: 4px solid var(--accent);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 10px;
   padding: 11px 13px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002h-guidance-card strong {
   display: block;
   margin-bottom: 4px;
-  color: var(--text-main);
+  color: var(--text);
   font-size: 13px;
 }
 
 .fuel002h-guidance-card span {
   display: block;
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 12px;
   line-height: 1.4;
-}
-
-.fuel002h-stats-grid .stat-card {
-  border-radius: 12px;
-  box-shadow: var(--shadow-sm);
 }
 
 .fuel002h-balance-card,
 .fuel002h-recent-card {
   border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
   overflow: hidden;
 }
 
@@ -268,20 +273,6 @@
     </div>
 </div>
 
-<div class="stats-grid fuel002h-stats-grid FUEL002H_STATS_MARKER" style="grid-template-columns: repeat(auto-fit,minmax(170px,1fr)); margin-bottom:20px;">
-    <div class="stat-card">
-        <div class="label">{{ L_today }}</div>
-        <div class="value" style="color:var(--danger);">{{ '%.0f'|format(today_total) }} л</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">{{ L_warehouse_count }}</div>
-        <div class="value">{{ balance_rows|length }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">{{ L_active_stations }}</div>
-        <div class="value">{{ balance_rows|sum(attribute='stations') }}</div>
-    </div>
-</div>
 
 <div class="card fuel002h-balance-card FUEL002H_BALANCE_CARD_MARKER" style="margin-bottom:24px;">
     <div class="card-header">{{ L_balances }}</div>

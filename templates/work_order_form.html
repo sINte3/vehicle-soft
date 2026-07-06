@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Новый наряд' if is_ru else 'Yangi buyurtma' }}{% endblock %}
 {% block content %}
@@ -43,12 +43,12 @@
 
                 <div class="form-group">
                     <label>{{ 'Дата' if is_ru else 'Sana' }} *</label>
-                    <input type="date" name="planned_date" id="plannedDate" value="{{ today }}" required>
+                    <input type="date" name="planned_date" id="plannedDate" class="form-control" value="{{ today }}" required>
                 </div>
 
                 <div class="form-group">
                     <label>{{ 'Организация' if is_ru else 'Tashkilot' }} *</label>
-                    <select name="organization_id" id="orgSelect" required onchange="loadEquipment(this.value)">
+                    <select name="organization_id" id="orgSelect" class="form-control" required onchange="loadEquipment(this.value)">
                         <option value="">{{ '— выберите —' if is_ru else '— tanlang —' }}</option>
                         {% for org in organizations %}
                         <option value="{{ org.id }}" {% if organizations|length == 1 %}selected{% endif %}>{{ org.name }}</option>
@@ -58,7 +58,7 @@
 
                 <div class="form-group">
                     <label>{{ 'Техника' if is_ru else 'Texnika' }} *</label>
-                    <select name="equipment_id" id="eqSelect" required>
+                    <select name="equipment_id" id="eqSelect" class="form-control" required>
                         <option value="">{{ '— сначала выберите организацию —' if is_ru else '— avval tashkilotni tanlang —' }}</option>
                         {% for eq in initial_equipment %}
                         <option value="{{ eq.id }}">{{ eq.name }}{% if eq.plate %} — {{ eq.plate }}{% endif %}</option>
@@ -68,7 +68,7 @@
 
                 <div class="form-group">
                     <label>{{ 'Тип работы' if is_ru else 'Ish turi' }} *</label>
-                    <input type="text" name="work_type_text" id="workTypeText" list="wtList" autocomplete="off"
+                    <input type="text" name="work_type_text" id="workTypeText" class="form-control" list="wtList" autocomplete="off"
                            placeholder="{{ 'Выберите или введите' if is_ru else 'Tanlang yoki kiriting' }}">
                     <input type="hidden" name="work_type_id" id="workTypeId">
                     <datalist id="wtList">
@@ -80,7 +80,7 @@
 
                 <div class="form-group">
                     <label>{{ 'Заказчик' if is_ru else 'Buyurtmachi' }}</label>
-                    <input type="text" name="customer_text" id="customerText" list="custList" autocomplete="off">
+                    <input type="text" name="customer_text" id="customerText" class="form-control" list="custList" autocomplete="off">
                     <input type="hidden" name="customer_id" id="customerId">
                     <datalist id="custList">
                         {% for c in customers %}
@@ -91,23 +91,23 @@
 
                 <div class="form-group">
                     <label>{{ 'Ед. изм.' if is_ru else 'O‘lchov birligi' }}</label>
-                    <input type="text" name="unit" id="unitInput" value="ga">
+                    <input type="text" name="unit" id="unitInput" class="form-control" value="ga">
                 </div>
 
                 <div class="form-group">
                     <label>{{ 'Плановый объём' if is_ru else 'Rejalashtirilgan hajm' }}</label>
-                    <input type="number" name="planned_quantity" id="plannedQty" min="0" step="0.01">
+                    <input type="number" name="planned_quantity" id="plannedQty" class="form-control" min="0" step="0.01">
                 </div>
 
                 <div class="form-group">
                     <label>{{ 'Цена за ед.' if is_ru else 'Birlik narxi' }}</label>
-                    <input type="number" name="price" id="priceInput" min="0" step="0.01" value="0">
+                    <input type="number" name="price" id="priceInput" class="form-control" min="0" step="0.01" value="0">
                     <div class="wof-note" id="priceNote"></div>
                 </div>
 
                 <div class="form-group">
                     <label>{{ 'Тип оплаты' if is_ru else 'To‘lov turi' }}</label>
-                    <select name="payment_type">
+                    <select name="payment_type" class="form-control">
                         <option value="">{{ '— не выбран —' if is_ru else '— tanlanmagan —' }}</option>
                         <option value="naqd">{{ 'Наличные' if is_ru else 'Naqd' }}</option>
                         <option value="bank">{{ 'Перечисление' if is_ru else 'Bank o‘tkazma' }}</option>
@@ -119,7 +119,7 @@
                 {% if is_admin %}
                 <div class="form-group">
                     <label>{{ 'Назначить механика' if is_ru else 'Mexanikni tayinlash' }}</label>
-                    <select name="assigned_to">
+                    <select name="assigned_to" class="form-control">
                         <option value="">{{ 'Не назначен' if is_ru else 'Tayinlanmagan' }}</option>
                         {% for m in mechanics %}
                         <option value="{{ m.id }}">{{ m.full_name or m.username }}</option>
@@ -130,7 +130,7 @@
 
                 <div class="form-group full">
                     <label>{{ 'Примечание' if is_ru else 'Izoh' }}</label>
-                    <textarea name="note" rows="2"></textarea>
+                    <textarea name="note" class="form-control" rows="2"></textarea>
                 </div>
 
             </div>

@@ -106,6 +106,17 @@ def create_app():
 
     app.jinja_env.globals['csrf_token'] = get_csrf_token
 
+    def static_v(filename):
+        """Static URL with a ?v=<mtime> cache-busting param (no-op if file is missing)."""
+        url = url_for('static', filename=filename)
+        try:
+            full_path = os.path.join(app.static_folder, filename)
+            return f"{url}?v={int(os.path.getmtime(full_path))}"
+        except OSError:
+            return url
+
+    app.jinja_env.globals['static_v'] = static_v
+
     def is_csrf_exempt():
         # Topaz agent API endpoints are protected by FUEL_API_TOKEN and must not
         # require browser-session CSRF tokens.
@@ -138,6 +149,27 @@ def create_app():
             g.lang = getattr(current_user, 'language', 'uz') or 'uz'
         else:
             g.lang = 'uz'
+
+    def _resolve_base_template():
+        # [REASON]: UI-NEXT Phase 1-10 complete. base_next.html is now the only
+        # shell — NEXT_UI env var is retired. The function and g.base_template
+        # mechanism are kept so future template changes have a single extension
+        # point, not ~40 child-template overrides.
+        return 'base_next.html'
+
+    @app.before_request
+    def set_base_template():
+        g.base_template = _resolve_base_template()
+
+    @app.context_processor
+    def inject_base_template():
+        # [REASON]: Guarantee g.base_template exists at render time even when the
+        # before_request chain was skipped — e.g. enforce_csrf_protection above
+        # aborts(400) before set_base_template runs, and 404s render error.html too —
+        # so the migrated `{% extends g.base_template %}` can never raise.
+        if not hasattr(g, 'base_template'):
+            g.base_template = _resolve_base_template()
+        return {}
 
     @app.before_request
     def enforce_temp_password_change():
@@ -212,9 +244,12 @@ def create_app():
 
     def get_user_orgs():
         if current_user.is_admin:
-            return Organization.query.order_by(Organization.sort_order).all()
+            return (Organization.query
+                    .filter(Organization.sort_order != 999)
+                    .order_by(Organization.sort_order).all())
         return (Organization.query
                 .filter(Organization.id.in_([o.id for o in current_user.organizations]))
+                .filter(Organization.sort_order != 999)
                 .order_by(Organization.sort_order).all())
 
     def check_org_access(org_id):

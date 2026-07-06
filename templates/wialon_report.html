@@ -1,7 +1,18 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}{{ t('Юклама ҳисобот') }}{% endblock %}
 
 {% block content %}
+<style>
+.wialon-report-scope input[type="date"],
+.wialon-report-scope select.form-control {
+    height: 38px;
+}
+.wialon-report-scope input[type="date"] {
+    appearance: none;
+    -webkit-appearance: none;
+}
+</style>
+<div class="wialon-report-scope">
 <div class="page-header">
     <h1>{{ t('Юклама ҳисобот') }}</h1>
     <div style="display:flex; gap:8px;">
@@ -41,7 +52,7 @@
                 <div id="f-day" style="{% if mode!='day' %}display:none;{% endif %}">
                     <label style="font-size:12px; font-weight:600; color:var(--text2);
                                   display:block; margin-bottom:4px;">{{ t('САНА') }}</label>
-                    <input type="date" name="date" value="{{ d_from.isoformat() }}"
+                    <input type="date" name="date" class="form-control" value="{{ d_from.isoformat() }}"
                            onchange="this.form.submit()" style="width:160px;">
                 </div>
 
@@ -51,13 +62,13 @@
                     <div>
                         <label style="font-size:12px; font-weight:600; color:var(--text2);
                                       display:block; margin-bottom:4px;">{{ t('ДАН') }}</label>
-                        <input type="date" name="date_from" value="{{ d_from.isoformat() }}"
+                        <input type="date" name="date_from" class="form-control" value="{{ d_from.isoformat() }}"
                                style="width:155px;">
                     </div>
                     <div>
                         <label style="font-size:12px; font-weight:600; color:var(--text2);
                                       display:block; margin-bottom:4px;">{{ t('ГАЧА') }}</label>
-                        <input type="date" name="date_to" value="{{ d_to.isoformat() }}"
+                        <input type="date" name="date_to" class="form-control" value="{{ d_to.isoformat() }}"
                                style="width:155px;">
                     </div>
                     <button type="submit" class="btn btn-primary btn-sm">{{ t('Кўрсатиш') }}</button>
@@ -76,7 +87,7 @@
                 <div style="min-width:220px;">
                     <label style="font-size:12px; font-weight:600; color:var(--text2);
                                   display:block; margin-bottom:4px;">{{ t('ТАШКИЛОТ') }}</label>
-                    <select name="org_id" onchange="this.form.submit()">
+                    <select name="org_id" class="form-control" onchange="this.form.submit()">
                         <option value="">{{ t('— Барча ташкилотлар —') }}</option>
                         {% for org in organizations %}
                         <option value="{{ org.id }}"
@@ -210,6 +221,7 @@
     </div>
 </div>
 {% endif %}
+</div>
 {% endblock %}
 
 {% block scripts %}

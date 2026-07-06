@@ -1,12 +1,11 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}{{ t('Буюртмачилар') }}{% endblock %}
 {% block content %}
 {% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
 {% set L_used = 'Используется' if lang == 'ru' else 'Ишлатилган' %}
 {% set L_linked_tip = 'Используется в ежедневных отчётах. Удаление заблокировано для сохранения истории.' if lang == 'ru' else 'Кунлик ҳисоботларда ишлатилган. Тарихни сақлаш учун ўчириш блокланган.' %}
 
-<div class="page-header">
-    <h1>{{ t('Буюртмачилар') }}</h1>
+<div class="vs-row-end vs-mb">
 <div class="ref-export-actions TASK_REF_001D_CUSTOMERS_EXPORT_BUTTON">
   <a class="btn secondary" href="{{ url_for('export_customers_diagnostics') }}">
     {{ 'Excel диагностика' if lang == 'ru' else 'Excel диагностика' }}
@@ -32,11 +31,11 @@
         <form method="get" action="{{ url_for('ref_customers') }}" class="form-inline" style="gap:12px; align-items:flex-end;">
             <div class="form-group" style="margin-bottom:0; flex:1; min-width:240px;">
                 <label>{{ 'Поиск' if lang == 'ru' else 'Қидириш' }}</label>
-                <input type="text" name="q" value="{{ search_q or '' }}" placeholder="{{ 'название заказчика' if lang == 'ru' else 'буюртмачи номи' }}">
+                <input type="text" name="q" value="{{ search_q or '' }}" placeholder="{{ 'название заказчика' if lang == 'ru' else 'буюртмачи номи' }}" class="form-control">
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ t('Тури') }}</label>
-                <select name="customer_type" style="min-width:140px;">
+                <select name="customer_type" style="min-width:140px;" class="form-control">
                     <option value="all" {% if selected_customer_type == 'all' %}selected{% endif %}>{{ 'Все' if lang == 'ru' else 'Барчаси' }}</option>
                     <option value="external" {% if selected_customer_type == 'external' %}selected{% endif %}>{{ t('Ташқи') }}</option>
                     <option value="internal" {% if selected_customer_type == 'internal' %}selected{% endif %}>{{ t('Ички') }}</option>
@@ -44,7 +43,7 @@
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ 'Использование' if lang == 'ru' else 'Ишлатилиши' }}</label>
-                <select name="usage" style="min-width:150px;">
+                <select name="usage" style="min-width:150px;" class="form-control">
                     <option value="all" {% if selected_usage == 'all' %}selected{% endif %}>{{ 'Все' if lang == 'ru' else 'Барчаси' }}</option>
                     <option value="used" {% if selected_usage == 'used' %}selected{% endif %}>{{ 'Используемые' if lang == 'ru' else 'Ишлатилган' }}</option>
                     <option value="unused" {% if selected_usage == 'unused' %}selected{% endif %}>{{ 'Неиспользуемые' if lang == 'ru' else 'Ишлатилмаган' }}</option>
@@ -97,11 +96,11 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group" style="margin-bottom:0; flex:1;">
                 <label>{{ t('Буюртмачи номи') }}</label>
-                <input type="text" name="name" required placeholder="Фермер хўжалиги номи">
+                <input type="text" name="name" required placeholder="Фермер хўжалиги номи" class="form-control">
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ t('Тури') }}</label>
-                <select name="customer_type" style="width:150px;">
+                <select name="customer_type" style="width:150px;" class="form-control">
                     <option value="external">{{ t('Ташқи') }}</option>
                     <option value="internal">{{ t('Ички') }}</option>
                 </select>
@@ -132,8 +131,8 @@
                 <form method="post" action="{{ url_for('save_customer') }}" class="form-inline" style="gap:6px;">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="id" value="{{ c.id }}">
-                    <input type="text" name="name" value="{{ c.name }}" required style="width:300px;">
-                    <select name="customer_type" style="width:130px;">
+                    <input type="text" name="name" value="{{ c.name }}" required style="width:300px;" class="form-control">
+                    <select name="customer_type" style="width:130px;" class="form-control">
                         <option value="external" {% if c.customer_type == 'external' %}selected{% endif %}>{{ t('Ташқи') }}</option>
                         <option value="internal" {% if c.customer_type == 'internal' %}selected{% endif %}>{{ t('Ички') }}</option>
                     </select>

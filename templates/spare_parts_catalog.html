@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти — каталог' if is_ru else 'Эҳтиёт қисмлар — каталог' }}{% endblock %}
 {% block content %}
@@ -63,7 +63,7 @@
     .spare001a-scope .spare002a-filter-form,
     .spare001a-scope .spare002a-request-form {
         gap: 12px;
-        align-items: flex-end;
+        align-items: flex-start;
     }
 
     .spare001a-scope label {
@@ -76,6 +76,22 @@
     .spare001a-scope select,
     .spare001a-scope textarea {
         max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    .spare001a-scope input.form-control,
+    .spare001a-scope select.form-control {
+        height: 38px;
+        line-height: 1.4;
+    }
+
+    .spare001a-scope input[type="date"].form-control {
+        -webkit-appearance: none;
+        appearance: none;
+        padding-top: 0;
+        padding-bottom: 0;
+        display: flex;
+        align-items: center;
     }
 
     .spare001a-scope table {
@@ -202,19 +218,19 @@
             <input type="hidden" name="id" id="editId" value="">
             <div class="form-group" style="flex:2; min-width:220px;">
                 <label>{{ 'Название' if is_ru else 'Номи' }}</label>
-                <input type="text" name="name" id="editName" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" required>
+                <input type="text" name="name" id="editName" class="form-control" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" required>
             </div>
             <div class="form-group" style="flex:1; min-width:150px;">
                 <label>{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</label>
-                <input type="text" name="part_number" id="editPartNum" placeholder="000-000">
+                <input type="text" name="part_number" id="editPartNum" class="form-control" placeholder="000-000">
             </div>
             <div class="form-group" style="width:120px;">
                 <label>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</label>
-                <input type="text" name="unit" id="editUnit" value="dona" style="width:100%;">
+                <input type="text" name="unit" id="editUnit" class="form-control" value="dona" style="width:100%;">
             </div>
             <div class="form-group" style="flex:1; min-width:170px;">
                 <label>{{ 'Категория' if is_ru else 'Категория' }}</label>
-                <input type="text" name="category" id="editCategory" placeholder="{{ 'Двигатель / тормоз / фильтр...' if is_ru else 'Двигатель / тормоз / фильтр...' }}">
+                <input type="text" name="category" id="editCategory" class="form-control" placeholder="{{ 'Двигатель / тормоз / фильтр...' if is_ru else 'Двигатель / тормоз / фильтр...' }}">
             </div>
             <div class="form-group">
                 <label>&nbsp;</label>
@@ -228,9 +244,7 @@
 <div class="catalog-toolbar">
     <div class="form-group search" style="margin-bottom:0;">
         <label>{{ 'Поиск' if is_ru else 'Қидириш' }}</label>
-        <input type="text" id="catalogSearch"
-</div>
- placeholder="{{ 'Поиск по названию, артикулу, категории' if is_ru else 'Ном, артикул, категория бўйича қидириш' }}" oninput="filterCatalog()">
+        <input type="text" id="catalogSearch" class="form-control" placeholder="{{ 'Поиск по названию, артикулу, категории' if is_ru else 'Ном, артикул, категория бўйича қидириш' }}" oninput="filterCatalog()">
     </div>
     <div class="text-muted text-sm" id="catalogCounter">{{ 'Показано' if is_ru else 'Кўрсатилган' }}: {{ parts|length }}</div>
 </div>

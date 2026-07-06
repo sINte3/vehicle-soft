@@ -1,3 +1,37 @@
+﻿## 2026-07-06 — UI-NEXT Phase 10 COMPLETE (all modules)
+
+**Current state:** UI-NEXT redesign fully complete on staging. All modules
+migrated to base_next.html design system. NEXT_UI flag retired, base.html
+deleted, static/ assets tracked. Single Phase 10 release commit created and
+pushed (`e707efe`) alongside static/ tracking commit (`ee9234c`). Staging on
+branch main, up to date with origin/main, working tree clean. Production
+(port 5050, server 10.103.25.14) not touched.
+
+**Phase 9 — fuel/* module:** COMPLETE (2026-07-03) — all 12 fuel templates migrated
+(extends swap + form-control + CSS fixes + bilingual pass).
+
+**Phase 9 — work_orders/* module:** COMPLETE (2026-07-05) — all 4 WO templates
+migrated (+ label fixes).
+
+**Phase 9 — spare_parts/* module:** COMPLETE (2026-07-05) — all 4 spare parts
+templates migrated (+ bugfixes).
+
+**Phase 9 — wialon/* module:** COMPLETE (2026-07-06) — all 5 wialon templates
+migrated (extends swap + form-control + full bilingual pass on
+wialon_mapping.html + translation bugfix). See "UI-NEXT Phase 9 — wialon/*"
+section below for details.
+
+**Global fix (not wialon-specific), found while closing out wialon/*:**
+`.org-section` / `.org-section-header` / `.org-section-body` were missing
+entirely from `design-system.css`'s compat layer — added globally. Plus two
+small pre-existing translation gaps in `daily_entry.html` found in the same
+QA pass. See "UI-NEXT Phase 9 — wialon/*" section below for full detail.
+
+**Phase 9 is now fully COMPLETE across all modules** (fuel/*, work_orders/*,
+spare_parts/*, wialon/*). **Phase 10:** COMPLETE — see final summary below.
+
+Full details in the UI-NEXT staging section at the end of this file.
+
 ## 2026-06-09 — BOT002B completed (Telegram bot runner)
 
 - BOT002B (Telegram bot runner for spare parts) deployed to production on 2026-06-09.
@@ -2970,7 +3004,7 @@ Evidence:
 - Therefore the real Topaz agent is considered migrated to /fuel/api/fuel_sync.
 
 Staging change:
-- removed temporary POST /api/fuel_sync alias from pp.py;
+- removed temporary POST /api/fuel_sync alias from  pp.py;
 - kept canonical POST /fuel/api/fuel_sync;
 - removed /api/fuel_sync from CSRF exemption list;
 - kept FUEL_API_TOKEN protection unchanged.
@@ -3151,9 +3185,386 @@ Next candidates (backlog):
 - FIREBIRD_PASS ('electro') not rotated — out of scope, requires Firebird admin tooling.
 
 Next candidates (backlog):
-- UI-NEXT (P1): design refresh (vs_next.css + base_next.html under feature flag) based on Claude Design prototype.
 - WORK-ORDER-001 /edit route + ownership guard: deferred.
 - BOT003 staging smoke not run end-to-end.
 - FUEL-CARDS-SYNC: card sync not automated.
 - AZS-ORG-REFACTOR: duplicate org IDs 20–24 deferred.
 - Wialon manual import (long-term).
+
+## UI-NEXT redesign — staging progress (updated 2026-07-05)
+
+**Status:** In progress on STAGING ONLY. Nothing committed to git. Production
+(port 5050) untouched. Feature flag `NEXT_UI=1` set in staging NSSM
+`AppEnvironmentExtra` (alongside `BOT_INTERNAL_TOKEN=bot003-staging-secret`).
+
+**Mechanism:** `app.py` `before_request` sets `g.base_template` to
+`base_next.html` when `NEXT_UI=1`, else `base.html`. All child templates use
+`{% extends g.base_template %}`.
+
+**Design system:** `static/css/design-system.css` (from Claude Design handoff)
+— navy gradient sidebar, glassy topbar, Golos Text font, all `vs-*` classes and
+`--vs-*` tokens.
+
+### Completed phases (staging, uncommitted)
+
+- **Phase 1** — Infrastructure. `design-system.css` placed; `base_next.html`
+  rewritten as the new shell (navy sidebar with all 14 menu items, topbar,
+  language switcher, user chip, inline lucide SVG icons). Logo at
+  `static/img/logo.png`. ✅ Visually confirmed.
+- **Phase 2** — `index.html` (dashboard) rewritten on vs-* classes: hero, two
+  KPI rows, DASH003 work-orders analytics, legacy report (filter + accordion
+  table). ✅ Visually confirmed.
+- **UI-FIX-02** — Added `.vs-multiselect` component (Section 16 of
+  design-system.css) and replaced the 3 legacy `.ms-*` multiselects in
+  index.html (org/category/work-type filter). ✅ Confirmed working.
+- **Phase 3** — `login.html` rewritten: vs-login-* card, animated mesh
+  background (4 drifting blobs), cursor trail (blue dots), password toggle,
+  language switcher, reduced-motion guard. Also removed the audit-log card from
+  the dashboard and reduced the system-info strip. ✅ Confirmed (animations are
+  subtle/low-priority, parked).
+- **UI-FIX-03** — Removed the system-info strip from dashboard entirely;
+  boosted login animations. ✅
+- **Phase 4 + 4b** — `daily_entry.html` (the high-traffic operator page).
+  Variant A: remapped all 27 legacy/`--ux-*` CSS variables to `--vs-*` tokens,
+  and added a local `<style>` block defining the page-specific component classes
+  (.card, .btn*, .form-group, .eq-card, .toggle-group, .working-badge,
+  .idle-badge, .eq-pill) since base_next.html doesn't carry them. Save buttons
+  green, add-line button blue. All JS (calcAmount, addLine, removeLine,
+  onStatusChange, confirmFilterChange, validation, search) untouched.
+  ✅ Confirmed working incl. amount calculation, toggle, line add.
+  NOTE: daily_entry has its OWN local `<style>` — it must keep winning the
+  cascade over any global compatibility layer.
+
+### Phase 5 — COMPLETE
+
+- Global compatibility layer added to `design-system.css` end (legacy
+  `.card`/`.card-header`/`.card-body`/`.btn*`/`.form-group`/`.form-inline`/`table`/
+  `.badge*`/`.alert*`/helpers/`.page-header`/`.vs-pill.active` + `:root` remap of
+  legacy vars to `--vs-*`).
+- Migrated `deficiencies.html`: pills, `vs-table-wrap`/`vs-table`, green save button,
+  old local `<style>` removed; `setMode()` JS selector `.mode-btn` → `.vs-pill`.
+- Tokens verified byte-for-byte against the Claude Design prototype (`Vehicle Soft -
+  review.html` in project knowledge): `--vs-border: #e6ecf4`, `--vs-shadow-sm: 0 1px
+  3px rgba(16,40,80,.05)` — the visually "flat" look on a 1080p monitor is the
+  approved design, not a bug. Two rounds of token "strengthening" were explored and
+  reverted after confirming they diverged from the prototype; `design-system.css.
+  phase5b_backup` holds the correct baseline.
+- Fixed real gap vs. prototype: 10 bare `<input>`/`<textarea>`/`<select>` elements in
+  `deficiencies.html` had no class and rendered as bare browser defaults; added
+  `class="form-control"` to each (add form + view-range filters + inline-edit row).
+  Visually confirmed matching the prototype after fix.
+- Added `static_v()` cache-busting helper (`app.py` + `templates/base_next.html`
+  only) — appends `?v=<mtime>` to design-system.css so browsers pick up CSS edits
+  without a hard-refresh. `base.html` (production shell) untouched.
+
+**Known minor gap, closed during Phase 6:** `deficiencies.html` had a redundant
+`page-header` `<h1>` block above the first card (prototype shows no separate H1 there —
+topbar title covers it). Removed as part of the Phase 6 pass; visually confirmed.
+
+Rollback: nothing committed; git holds the pre-Phase-5 state. CSS backups on disk:
+`design-system.css.phase5b_backup`, `design-system.css.phase5c_backup`.
+
+### Phase 6 — COMPLETE
+
+- Reference pages: `ref_organizations.html`, `ref_equipment.html`,
+  `ref_work_types.html`, `ref_customers.html`.
+- Verified before touching anything: `.card`/`.card-header`/`.card-body`/`.btn*`/
+  `.form-group`/`.form-inline` and legacy CSS var names (`--border`/`--surface`/
+  `--text2`/`--warn`/`--radius`/`--shadow`/`--surface2`/`--danger-light`) were already
+  correctly wired via the Phase 5 compat layer in all 4 templates — no changes needed
+  there.
+- Added `class="form-control"` to bare `<input>`/`<select>` fields: 7 in
+  ref_customers.html, 5 in ref_organizations.html, 8 in ref_work_types.html, 17 in
+  ref_equipment.html (2 of those appended to an existing class rather than added
+  fresh).
+- Fixed real gap: `.idle-badge` was used on ref_customers/ref_organizations/
+  ref_equipment but only ever defined locally inside daily_entry.html's own
+  `<style>` — added a global compat-layer rule so it renders as a proper pill
+  everywhere; daily_entry.html untouched, its local definition still wins there by
+  cascade order.
+- Closed the Phase 5 page-header leftover (see above) across deficiencies.html,
+  ref_organizations.html, ref_equipment.html (deleted outright — no button inside).
+  ref_customers.html and ref_work_types.html had a live "Excel диагностика" export
+  button inside that block — wrapper replaced with `vs-row-end vs-mb`, button kept.
+- Visually confirmed against spec on all 5 pages (4 ref pages + deficiencies) —
+  no open gaps at close.
+
+Rollback: nothing committed; manual per-line reversion (each change is an isolated
+class addition or small block edit).
+
+### Phase 7 — COMPLETE
+
+- Scope: `admin_permissions.html`, `admin_users.html`, `audit_logs.html`.
+- Page-header removed from all 3 (none had a button inside — deleted outright).
+- `class="form-control"` added: 4 fields in admin_users.html (username, full_name,
+  password, role select), 5 fields in audit_logs.html (date_from, date_to, user_id/
+  action/module selects). Checkboxes explicitly excluded everywhere (permission
+  matrix, `is_active`, `org_ids`) — confirmed untouched.
+- `checkbox-grid` → `vs-check-grid`/`vs-check-card` rename in admin_users.html —
+  grid layout visually confirmed working (org checkboxes now in clean columns);
+  the `.vs-check-card` border-chip on each label was NOT individually re-verified
+  via DevTools — low risk either way (worst case is grid-only, still strictly better
+  than the prior fully-unstyled state, no regression possible).
+- Global `.working-badge` added to the compat layer (pairs with Phase 6's
+  `.idle-badge`) — visually confirmed on both admin_users.html ("Активные") and
+  audit_logs.html ("OK"/"failed" — the failed→idle-badge branch is pre-existing
+  template logic, not a Phase 7 change).
+- Deferred, not part of this pass: `.role-badge` in admin_permissions.html/
+  admin_users.html already has full inline color styling (not broken, just
+  off-token) — no verified design reference for this page yet.
+- **PM note for future chats:** the audit log page's actual route is
+  `/admin/audit` — NOT `/admin/audit_logs` despite the template filename being
+  `audit_logs.html`. A wrong URL guessed from the filename produced a false-alarm
+  404 during verification; the sidebar's `url_for('admin_audit_logs')` link always
+  resolves correctly regardless. Use the sidebar link or this confirmed path, not
+  the filename, when spot-checking this page directly by URL.
+
+Rollback: nothing committed; manual per-line reversion (each change is an isolated
+class addition/rename or small block edit).
+
+### Phase 8 — COMPLETE
+
+- Scope: `report.html`.
+- Three missing CSS custom properties added to the legacy `:root` remap:
+  `--accent-light`, `--success-light`, `--warning-light` (completes an asymmetry
+  left over from Phase 5 — `-light` variants existed for warn/danger/info but not
+  accent/success).
+- Global `.toggle-group` added to the compat layer (same locally-scoped-only pattern
+  as `.idle-badge`/`.working-badge` — only ever defined inside daily_entry.html's
+  local `<style>`; daily_entry.html unaffected, still wins there by cascade).
+- Global `.stat-card` added, deliberately scoped to `.stat-card .label`/
+  `.stat-card .value` (not bare `.label`/`.value`, which are too generic to style
+  globally without collision risk). Confirmed via screenshot the KPI tiles rendered
+  with zero visual treatment before this fix.
+- `class="form-control"` added to 4 bare fields (report_date, date_from, date_to,
+  reportSearch).
+- Explicitly NOT touched: the `page-header` block on this page carries live
+  functional content (subtitle + filter-summary pill row) — unlike every other
+  phase, this is not a redundant duplicate and must not be deleted. The
+  `REPORT002A`-marked style block uses `--ux-*` vars with inline fallbacks and is
+  fully self-sufficient — left untouched. `.value.cash`/`.value.transfer`/
+  `.value.internal` color modifiers deferred (same reasoning as `.role-badge` in
+  Phase 7 — no verified design reference).
+- Blank cash/transfer/internal/total amounts on a no-data date were investigated and
+  confirmed to be `fmt_sum()`'s intentional "hide zero" behavior in app.py, not a
+  bug — no code change needed there.
+
+### Infrastructure fixes found while verifying Phase 8 (not CSS, not phase-scoped)
+
+**`initMultiselect` missing from base_next.html.** The legacy `.ms-wrap` multiselect
+(used only by `ref_equipment.html` and `report.html` — confirmed via
+`grep -l ms-wrap templates/*.html`, no other file uses it) depends on a JS function
+that was only ever defined inline in `templates/base.html` (old prod shell), never
+carried over when these two templates switched to `base_next.html`. Predates Phase 5
+— not caused by any UI-NEXT phase. Fixed by copying the function byte-for-byte from
+base.html into base_next.html (same position, right after
+`{% block scripts %}{% endblock %}`). Confirmed no collision with index.html's
+separate `.vs-multiselect` component (different function name, verified via grep).
+`templates/base.html` untouched (read-only source). Verified working on both
+affected pages post-fix; no regression on index.html's existing filters.
+
+**AZS-ORG-REFACTOR — duplicate organizations now hidden from user-facing filters.**
+5 phantom organizations (IDs 20-24, `sort_order == 999`, kept in the DB only for
+`fuel_warehouses` foreign-key integrity, all with 0 equipment) were appearing in
+every organization picker (dashboard, `/report`, `/ref/equipment`) because the
+shared `get_user_orgs()` helper (9 call sites) had no exclusion filter — the
+original AZS-ORG-REFACTOR backlog note said they were "left in place," but the
+filter itself was apparently never implemented in code, or was lost. Fixed with a
+2-line addition to `get_user_orgs()` (`app.py`, both admin/non-admin branches):
+`.filter(Organization.sort_order != 999)`. Verified: exactly IDs 20-24
+(Мирзачул Агрокластер Груп, Бухоро Сервис Агрокластер, Гарден Бухоро Агрокластер,
+Бухоро Агрокластер Заминлари, Бухоро Агрокластер Чорва) excluded from
+`/ref/equipment` and `/report` filters; `/ref/organizations` admin view (separate
+raw query, doesn't use `get_user_orgs()`) still shows all 22 including these 5, as
+intended — admin needs full DB visibility. AZS-ORG-REFACTOR backlog item can be
+downgraded: the FK/underlying-orgs cleanup is still open, but the user-facing
+symptom (dropdown clutter) is resolved.
+
+### UI-NEXT Phase 9 — fuel/* module: COMPLETE (2026-07-03)
+
+All 12 fuel/* templates migrated: dashboard, transactions, receipts, reports,
+report, balance_report, warnings, stations, warehouses, cards,
+initial_balance, station_issues_report.
+
+Recurring fixes applied across the batch:
+- Undefined CSS vars (`--text-muted`/`--card-bg`/`--shadow-sm`/`--text-main`/
+  `--bg-soft`) → correct compat-layer tokens (`--text2`/`--surface`/
+  `--shadow`/`--text`/`--surface2`). Root cause: later "UX refresh" passes
+  (FUEL002x markers) invented plausible-sounding var names that were never
+  real tokens, even under the old pre-UI-NEXT base.html.
+- `.stats-grid` given `display:grid` in design-system.css (was silently
+  missing — legacy base.html set it on the class itself, never carried over
+  in Phase 8's compat layer). Fixes layout on every page reusing this legacy
+  markup, not just fuel/*.
+- Bare `<input>`/`<select>` fields → added `class="form-control"` across all
+  12 files.
+- Full bilingual pass added to files with zero lang branching: reports.html,
+  balance_report.html, cards.html, initial_balance.html,
+  station_issues_report.html.
+- One broken translation lookup fixed: `t('мборлар')` (typo, missing
+  leading О) on stations.html → replaced with explicit `{% set %}`.
+- Confirmed `t()` performs bidirectional RU↔UZ lookup (not RU-only as
+  TASK-UI-001C's original convention implied) — safe to leave existing t()
+  calls with UZ-language arguments untouched; only used explicit `{% set %}`
+  for any NEW strings added during Phase 9 (t() lookup isn't guaranteed for
+  strings not already in translations.py).
+- Confirmed `report.html`, `reports.html`, and `balance_report.html` are
+  NOT duplicates — distinct purposes (operational/diagnostic vs. hub/nav vs.
+  accounting-reconciliation with per-org/per-day breakdown, the canonical
+  Excel-format report). Deferred, post-Phase-9 idea: shared tab/nav strip
+  across fuel report pages instead of hub-card navigation — not started.
+
+Key lesson (critical): Jinja `{% set %}` used before declaration renders as
+a silent empty string — not caught by `py_compile` or "APP IMPORT OK". Only
+caught by visually checking rendered RU/UZ output. Happened once on
+dashboard.html Phase 9 pass; fixed and avoided on all subsequent files by
+explicitly placing new `{% set %}` blocks before first use.
+
+### UI-NEXT Phase 9 — work_orders/*: COMPLETE (2026-07-05)
+
+All 4 work order templates migrated: extends swap, class="form-control" on all bare
+fields (13 fields in work_order_form.html, 4 in work_orders_list.html, 4 in
+work_order_close.html, 1 in work_order_detail.html). Fixed Uzbek labels: "Тўлов тури"
+→ "To'lov turi", payment type values "Naqd/Bank/Ichki/Boshqa" corrected.
+
+### UI-NEXT Phase 9 — spare_parts/*: COMPLETE (2026-07-05)
+
+All 4 spare parts templates migrated: extends swap, class="form-control" on all bare
+fields, CSS compatibility fixes (align-items, box-sizing, 38px height rules,
+input[type="date"] appearance). Bugfixes: fixed broken clearEmptyRows() function
+(tem_name fragment split across lines, now works), fixed broken Uzbek string "Всe
+статусы" → "Все статусы", removed dead {% if %} wrappers and empty conditionals.
+
+**Corruption pattern found (new, not seen in fuel/* or work_orders/*):** a stray
+literal `</div>` corrupting mid-token in 3 of 4 files — split an HTML attribute
+(`spare_parts_catalog.html`, `id="catalogSearch"` input), a Jinja string literal
+(`spare_parts_list.html`, "Все статусы" option), and a JS CSS-selector string
+inside `clearEmptyRows()` (`spare_part_form.html`, `[name=item_name]` — this one
+did NOT show up on any screenshot, only broke at runtime). Root cause: leftover
+damage from an earlier "SPARE002A" UX-refresh pass, found only by reading each
+file's full source, not by grep or visual check alone. `spare_part_detail.html`
+was clean. Any future module should be read in full before assuming it only
+needs a form-control pass — this class of corruption is invisible until you
+read the raw file.
+
+**Field-height fix is LOCAL to spare_parts/*, not global.** `.form-control`
+(design-system.css) has no explicit `height`, only padding — native
+`<input type="date">` vs `<select>` render at slightly different heights
+across browsers. Fixed by adding `height: 38px` + `input[type="date"]
+{ appearance: none; ... }` scoped inside `.spare001a-scope` in these 4 files
+only — design-system.css itself was NOT touched. If the same date/select
+height mismatch appears in wialon/* or any future module, the fix must be
+reapplied per-module; it is not inherited automatically.
+
+### UI-NEXT Phase 9 — wialon/*: COMPLETE (2026-07-06)
+
+All 5 wialon templates migrated: extends swap (done earlier) +
+`class="form-control"` on all bare fields across `wialon.html`,
+`wialon_auto_match.html`, `wialon_mapping.html`, `wialon_mapping_list.html`,
+`wialon_report.html`. Full manual read of all 5 files found none of the
+stray-`</div>`-mid-token corruption seen in spare_parts/* this time.
+
+`wialon_mapping.html` got a full RU/UZ bilingual pass (28 `L_*` variables —
+previously had zero translation support, 100% hardcoded Uzbek). Fixed a
+broken placeholder string in `wialon_mapping_list.html`: a shared edit-row
+select had `t(' выберите технику ')` (missing em-dashes) instead of the
+`'— выберите технику —'` used by the other two identical placeholders in the
+same file — mattered at runtime because JS reused that option's text as the
+rebuilt select's placeholder. Visually confirmed RU+UZ on all 5 pages.
+
+**Global fix found and applied during this pass (not wialon-specific):**
+`.org-section` / `.org-section-header` / `.org-section-body` were missing
+entirely from `design-system.css`'s compat layer (same class of gap as
+`.stats-grid` in fuel/* Phase 9 — legacy `base.html` had them, never carried
+into the compat layer). Symptom: `wialon_report.html`'s per-org header bars
+("Когон ПТЗ" + "Жами: NN соат") rendered bunched-left instead of
+space-between, with the second span nearly invisible (light text, no dark
+background). Fixed by adding the three rules globally, matching legacy
+`base.html` structure with `--vs-*` tokens.
+
+This global change was checked against `daily_entry.html`, which uses the
+same three classes for its equipment group headers and has its own scoped
+override `.entry002a-save-form .org-section-header` (background/padding).
+That scoped rule did not set `color`, so it inherited the new global
+`color: #fff` — making its group headers briefly white-on-light and
+unreadable. Fixed with an explicit `color: var(--vs-text);` added to the
+scoped rule in `daily_entry.html`. No regression to `wialon_report.html`,
+which still gets its dark bar + white text from the global rule untouched.
+
+**Two more pre-existing translation gaps found in `daily_entry.html` during
+the same visual QA pass (unrelated to UI-NEXT itself, just surfaced by it):**
+- `t('танланмаган')` / `t('танланган')` (lowercase) never matched the
+  existing capitalized dictionary keys — `t()` is case-sensitive. Fixed by
+  capitalizing the template calls to `t('Танланмаган')` / `t('Танланган')`.
+  Added the missing `'Танланган': 'Выбрано'` pair to `translations.py`
+  (UZ-identity + RU value — same 2-entry pattern as the existing
+  `'Танланмаган'` pair: one entry in the UZ base dict, one in the RU base
+  dict; no third reverse entry needed for this pattern).
+- The page subtitle ("Ежедневный ввод работы техники: выберите дату и
+  организацию...") had zero `translations.py` entry in either direction —
+  Uzbek UI showed raw Russian. Added a translation, marked with comment
+  `# PHASE9_DAILY_ENTRY_SUBTITLE` in `translations.py` — **machine-grade,
+  flagged for native Uzbek speaker review before being treated as final.**
+
+All fixes verified via screenshot, RU and UZ, both with and without an
+organization selected on `daily_entry.html`. No regressions found in any of
+the earlier-confirmed fixes on repeat checks. Nothing committed to git.
+
+### UI-NEXT Phase 10 — COMPLETE
+
+NEXT_UI flag retired, base.html removed, static/ assets tracked in git (commit
+`ee9234c`), all modules migrated to base_next.html design system, visually
+confirmed RU+UZ on staging across all modules: shell, dashboard, login,
+daily_entry, deficiencies, ref_*, admin_*, report, fuel/*, work_orders/*,
+spare_parts/*, wialon/*. Single release commit created and pushed to GitHub.
+
+### UI-NEXT Phase 10 — Closing summary
+
+- NEXT_UI flag removed from `app.py` — `g.base_template` always resolves to
+  `base_next.html`, no env-var toggle.
+- Legacy `base.html` deleted from version control.
+- `static/css/design-system.css` and `static/img/logo.png` tracked in git.
+- All ~40 templates updated: `extends` directives, form-control classes,
+  page-header cleanup, bilingual (RU+UZ) verification across all modules.
+- One clean commit `e707efe` covers all remaining Phase 1-10 changes.
+- Prior commit `ee9234c` (`Track static/ assets`) pushed alongside.
+- Production not touched. Staging clean and up to date with `origin/main`.
+
+### Files touched on staging (all uncommitted)
+
+- `static/css/design-system.css` (handoff + Section 16 multiselect + Phase 5
+  compatibility layer + Phase 6 `.idle-badge` + Phase 7 `.working-badge` + Phase 8
+  `--accent-light`/`--success-light`/`--warning-light`/`.toggle-group`/`.stat-card`
+  + Phase 9 global `.org-section`/`.org-section-header`/`.org-section-body`)
+- `static/img/logo.png` (added)
+- `templates/base_next.html` (new shell + `initMultiselect` transplanted from
+  base.html — infrastructure fix, restores `.ms-wrap` on ref_equipment.html/
+  report.html)
+- `templates/index.html` (rewritten)
+- `templates/login.html` (rewritten)
+- `templates/daily_entry.html` (variable remap + local component styles +
+  Phase 9 follow-up: scoped `.org-section-header` missing `color` fix,
+  `t('танланмаган')`/`t('танланган')` case fixes, subtitle translation added)
+- `templates/deficiencies.html` (pills + vs-table + Phase 6 page-header removal)
+- `templates/ref_organizations.html`, `templates/ref_equipment.html`,
+  `templates/ref_work_types.html`, `templates/ref_customers.html` (Phase 6:
+  form-control on bare fields, page-header cleanup)
+- `templates/admin_permissions.html`, `templates/admin_users.html`,
+  `templates/audit_logs.html` (Phase 7: form-control on bare fields, page-header
+  cleanup, vs-check-grid/vs-check-card rename in admin_users.html)
+- `templates/report.html` (Phase 8: form-control on bare fields; page-header
+  intentionally NOT touched — carries live filter-summary content)
+- `templates/fuel/*` (12 files), `templates/work_orders_list.html`,
+  `templates/work_order_form.html`, `templates/work_order_detail.html`,
+  `templates/work_order_close.html`, `templates/spare_parts_list.html`,
+  `templates/spare_parts_catalog.html`, `templates/spare_part_form.html`,
+  `templates/spare_part_detail.html` (Phase 9, see module sections above)
+- `templates/wialon.html`, `templates/wialon_auto_match.html`,
+  `templates/wialon_mapping.html`, `templates/wialon_mapping_list.html`,
+  `templates/wialon_report.html` (Phase 9, see wialon/* section above)
+- `translations.py` (Phase 9 wialon follow-up: added `'Танланган': 'Выбрано'`
+  pair + `daily_entry.html` subtitle translation, marked
+  `# PHASE9_DAILY_ENTRY_SUBTITLE`, flagged for native speaker review)
+- ~40 child templates: `{% extends 'base.html' %}` → `{% extends g.base_template %}`
+- `app.py` (`before_request` g.base_template based on NEXT_UI env var + `static_v`
+  cache-busting helper + `get_user_orgs()` AZS-ORG-REFACTOR filter fix)

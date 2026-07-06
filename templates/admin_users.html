@@ -1,10 +1,7 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}{{ t('Фойдаланувчилар') }}{% endblock %}
-{% block content %}
-<div class="page-header">
-    <h1>{{ t('Фойдаланувчилар бошқаруви') }}</h1>
-</div>
 
+{% block content %}
 <!-- Add/Edit User Form -->
 <div class="card" style="margin-bottom:20px;" id="user-form">
     <div class="card-header">{{ t('Янги фойдаланувчи қўшиш') }}</div>
@@ -15,19 +12,19 @@
             <div class="form-inline" style="margin-bottom:16px;">
                 <div class="form-group" style="margin-bottom:0;">
                     <label>{{ t('Логин') }}</label>
-                    <input type="text" name="username" id="form-username" required placeholder="operator1" style="width:160px;">
+                    <input type="text" name="username" id="form-username" required placeholder="operator1" class="form-control" style="width:160px;">
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
                     <label>{{ t('Тўлиқ исм') }}</label>
-                    <input type="text" name="full_name" id="form-fullname" placeholder="Ахмедов Умид" style="width:200px;">
+                    <input type="text" name="full_name" id="form-fullname" placeholder="Ахмедов Умид" class="form-control" style="width:200px;">
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
                     <label>{{ t('Временный пароль (при вводе потребует смену)') }}</label>
-                    <input type="password" name="password" id="form-password" placeholder="Минимум 8 символов" style="width:150px;">
+                    <input type="password" name="password" id="form-password" placeholder="Минимум 8 символов" class="form-control" style="width:150px;">
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
                     <label>{{ t('Роль') }}</label>
-                    <select name="role" id="form-role" style="width:160px;" onchange="toggleOrgSection(this.value)">
+                    <select name="role" id="form-role" class="form-control" style="width:160px;" onchange="toggleOrgSection(this.value)">
                         <option value="operator">{{ t('Оператор') }}</option>
                         <option value="mechanic">{{ t('Механик') }}</option>
                         <option value="viewer">{{ t('Наблюдатель') }}</option>
@@ -46,9 +43,9 @@
             <div id="org-assignment">
                 <div class="form-group">
                     <label>{{ t('Ташкилотлар (фойдаланувчи бошқара оладиган)') }}</label>
-                    <div class="checkbox-grid">
+                    <div class="vs-check-grid">
                         {% for org in organizations %}
-                        <label>
+                        <label class="vs-check-card">
                             <input type="checkbox" name="org_ids" value="{{ org.id }}">
                             {{ org.name }}
                         </label>

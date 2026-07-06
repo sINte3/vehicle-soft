@@ -1,0 +1,312 @@
+{# ===========================================================================
+   templates/base_next.html — Vehicle Soft new shell (UI-NEXT)
+   Active when NEXT_UI=1 environment variable is set.
+   Uses ONLY vs-* classes from static/css/design-system.css.
+   =========================================================================== #}
+<!DOCTYPE html>
+<html lang="{{ g.lang or 'uz' }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Бошқарув{% endblock %} — Бухоро Агрокластер</title>
+
+  {# Fonts — Golos Text имеет полную кириллицу #}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+  {# Design system — ВСЕГДА первым CSS-файлом #}
+  <link rel="stylesheet" href="{{ static_v('css/design-system.css') }}">
+
+  {% block head_extra %}{% endblock %}
+</head>
+<body>
+
+{# ===== LOGIN PAGE: renders without shell. login.html renders its own flashes. ===== #}
+{% if request.endpoint == 'login' or not current_user.is_authenticated %}
+  <main>
+    {{ self.content() }}
+  </main>
+
+{% else %}
+
+{# ===== AUTHENTICATED SHELL ===== #}
+{% set current = request.endpoint or '' %}
+<div class="vs-shell">
+
+  {# ====== SIDEBAR ====== #}
+  <aside class="vs-sidebar" id="vsSidebar">
+
+    <div class="vs-side-brand">
+      <div class="vs-side-brand-mark">
+        <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Buxoro Agro Klaster">
+      </div>
+      <div class="vs-side-brand-meta">
+        <div class="vs-side-brand-title">Бухоро Агрокластер</div>
+        <div class="vs-side-brand-sub">{{ 'Транспорт отчёт' if g.lang == 'ru' else 'Транспорт ҳисоботи' }}</div>
+      </div>
+    </div>
+
+    <nav class="vs-side-nav">
+
+      <div class="vs-side-section">{{ 'Основное' if g.lang == 'ru' else 'Асосий' }}</div>
+
+      <a href="{{ url_for('index') }}" class="vs-side-link{% if current == 'index' %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-7h4v7h4a1 1 0 0 0 1-1V9.5"/></svg>
+        </span>
+        <span class="vs-side-label">{{ t('Бош саҳифа') }}</span>
+      </a>
+
+      {% if current_user.can_edit %}
+      <a href="{{ url_for('daily_entry') }}" class="vs-side-link{% if current == 'daily_entry' %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4v2h6V4"/><path d="M9 11h6M9 15h4"/></svg>
+        </span>
+        <span class="vs-side-label">{{ t('Маълумот киритиш') }}</span>
+      </a>
+
+      <a href="{{ url_for('deficiencies_list') }}" class="vs-side-link{% if current == 'deficiencies_list' %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v5"/><circle cx="12" cy="17" r=".5"/></svg>
+        </span>
+        <span class="vs-side-label">{{ t('Камчиликлар') }}</span>
+      </a>
+      {% endif %}
+
+      <a href="{{ url_for('report') }}" class="vs-side-link{% if current == 'report' %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>
+        </span>
+        <span class="vs-side-label">{{ t('Ҳисобот') }}</span>
+      </a>
+
+      <div class="vs-side-section">{{ 'Модули' if g.lang == 'ru' else 'Модуллар' }}</div>
+
+      <a href="{{ url_for('work_orders.index') }}" class="vs-side-link{% if current and current.startswith('work_orders.') %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><rect x="3" y="4" width="18" height="17" rx="2"/></svg>
+        </span>
+        <span class="vs-side-label">{{ 'Наряды' if g.lang == 'ru' else 'Буюртмалар' }}</span>
+      </a>
+
+      <a href="{{ url_for('spare_parts.index') }}" class="vs-side-link{% if current and current.startswith('spare_parts.') %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.65 1.65 0 0 0-1.8-.3 1.65 1.65 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.65 1.65 0 0 0-1-1.5 1.65 1.65 0 0 0-1.8.3l-.1.1A2 2 0 1 1 4.4 17l.1-.1a1.65 1.65 0 0 0 .3-1.8 1.65 1.65 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.65 1.65 0 0 0 1.5-1 1.65 1.65 0 0 0-.3-1.8l-.1-.1A2 2 0 1 1 7 4.4l.1.1a1.65 1.65 0 0 0 1.8.3H9a1.65 1.65 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.65 1.65 0 0 0 1 1.5 1.65 1.65 0 0 0 1.8-.3l.1-.1A2 2 0 1 1 19.6 7l-.1.1a1.65 1.65 0 0 0-.3 1.8V9a1.65 1.65 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.65 1.65 0 0 0-1.5 1z"/></svg>
+        </span>
+        <span class="vs-side-label">{{ 'Запчасти' if g.lang == 'ru' else 'Эҳтиёт қисмлар' }}</span>
+      </a>
+
+      <a href="{{ url_for('fuel.dashboard') }}" class="vs-side-link{% if current and current.startswith('fuel.') %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v16"/><path d="M3 21h11"/><path d="M14 8h3l3 3v8a2 2 0 0 1-2 2"/><path d="M14 13h6"/></svg>
+        </span>
+        <span class="vs-side-label">{{ 'АЗС' if g.lang == 'ru' else 'АЁҚШ' }}</span>
+      </a>
+
+      <a href="{{ url_for('wialon_index') }}" class="vs-side-link{% if current and current.startswith('wialon') %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10z"/></svg>
+        </span>
+        <span class="vs-side-label">{{ 'Виалон' if g.lang == 'ru' else 'Виалон' }}</span>
+      </a>
+
+      <div class="vs-side-section">{{ 'Справочники' if g.lang == 'ru' else 'Маълумотномалар' }}</div>
+
+      <a href="{{ url_for('ref_organizations') }}" class="vs-side-link{% if current == 'ref_organizations' %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M9 8h.01M9 12h.01M9 16h.01M15 8h.01M15 12h.01M15 16h.01"/></svg>
+        </span>
+        <span class="vs-side-label">{{ t('Ташкилотлар') }}</span>
+      </a>
+
+      <a href="{{ url_for('ref_equipment') }}" class="vs-side-link{% if current == 'ref_equipment' %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="6" width="14" height="11" rx="1"/><path d="M15 9h4l3 3v5h-7V9z"/><circle cx="5.5" cy="18" r="2"/><circle cx="18.5" cy="18" r="2"/></svg>
+        </span>
+        <span class="vs-side-label">{{ t('Техникалар') }}</span>
+      </a>
+
+      <a href="{{ url_for('ref_work_types') }}" class="vs-side-link{% if current == 'ref_work_types' %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
+        </span>
+        <span class="vs-side-label">{{ t('Иш турлари') }}</span>
+      </a>
+
+      <a href="{{ url_for('ref_customers') }}" class="vs-side-link{% if current == 'ref_customers' %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/></svg>
+        </span>
+        <span class="vs-side-label">{{ t('Буюртмачилар') }}</span>
+      </a>
+
+      {% if current_user.is_admin %}
+      <div class="vs-side-section">{{ 'Администрирование' if g.lang == 'ru' else 'Маъмурий' }}</div>
+
+      <a href="{{ url_for('admin_users') }}" class="vs-side-link{% if current == 'admin_users' %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v5c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V7l8-4z"/></svg>
+        </span>
+        <span class="vs-side-label">{{ t('Фойдаланувчилар') }}</span>
+      </a>
+
+      <a href="{{ url_for('admin_permissions') }}" class="vs-side-link{% if current == 'admin_permissions' %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        </span>
+        <span class="vs-side-label">{{ t('Модул ҳуқуқлари') }}</span>
+      </a>
+
+      <a href="{{ url_for('admin_audit_logs') }}" class="vs-side-link{% if current == 'admin_audit_logs' %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h8M8 17h5"/></svg>
+        </span>
+        <span class="vs-side-label">{{ 'Журнал действий' if g.lang == 'ru' else 'Амаллар журнали' }}</span>
+      </a>
+      {% endif %}
+
+    </nav>
+
+    <div class="vs-side-foot">
+      <a href="{{ url_for('logout') }}" class="vs-side-logout">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </span>
+        <span class="vs-side-label">{{ t('Чиқиш') }}</span>
+      </a>
+    </div>
+  </aside>
+
+  {# ====== MAIN COLUMN ====== #}
+  <div class="vs-main">
+
+    <header class="vs-topbar">
+      <button class="vs-topbar-burger" type="button" onclick="document.getElementById('vsSidebar').classList.toggle('is-collapsed')" title="{{ 'Меню' if g.lang == 'ru' else 'Меню' }}">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+
+      <div class="vs-topbar-title">
+        <div class="vs-crumb">
+          <span>{{ 'Бухоро Агрокластер' }}</span>
+          <span class="vs-crumb-sep">/</span>
+          <span>{% block crumb %}{{ self.title() }}{% endblock %}</span>
+        </div>
+        <div class="vs-screen-title">{% block screen_title %}{{ self.title() }}{% endblock %}</div>
+      </div>
+
+      <div class="vs-spacer"></div>
+
+      <form method="post" action="{{ url_for('set_language_route') }}" class="vs-lang">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button name="lang" value="uz" class="{% if g.lang == 'uz' %}is-active{% endif %}" type="submit">УЗ</button>
+        <button name="lang" value="ru" class="{% if g.lang == 'ru' %}is-active{% endif %}" type="submit">РУ</button>
+      </form>
+
+      <a href="{{ url_for('profile') }}" class="vs-user-chip">
+        <span class="vs-avatar">
+          {%- set _disp = current_user.full_name or current_user.username -%}
+          {{ _disp[:1] | upper }}
+        </span>
+        <span class="vs-user-meta">
+          <span class="vs-user-name">{{ current_user.full_name or current_user.username }}</span>
+          <span class="vs-user-role">
+            {% if current_user.role == 'admin' %}{{ 'Администратор' if g.lang == 'ru' else 'Администратор' }}
+            {% elif current_user.role == 'operator' %}{{ 'Оператор' if g.lang == 'ru' else 'Оператор' }}
+            {% elif current_user.role == 'mechanic' %}{{ 'Механик' if g.lang == 'ru' else 'Механик' }}
+            {% elif current_user.role == 'branch_operator' %}{{ 'Филиал оператори' }}
+            {% else %}{{ 'Кузатувчи' if g.lang == 'ru' else 'Кузатувчи' }}{% endif %}
+          </span>
+        </span>
+      </a>
+    </header>
+
+    <main class="vs-content">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="vs-stack-sm vs-mb">
+            {% for category, msg in messages %}
+              <div class="vs-alert is-{{ category if category in ['success','warning','danger','info'] else 'info' }}">{{ msg }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      {% block content %}{% endblock %}
+    </main>
+
+  </div>
+</div>
+{% endif %}
+
+{% block scripts %}{% endblock %}
+<script>
+function initMultiselect(wrapperId, triggerLabel) {
+    var wrap = document.getElementById(wrapperId);
+    if (!wrap) return;
+    var trigger = wrap.querySelector('.ms-trigger');
+    var dropdown = wrap.querySelector('.ms-dropdown');
+    if (!trigger || !dropdown) return;
+
+    var boxes = Array.prototype.slice.call(
+        dropdown.querySelectorAll('input[type=checkbox]:not(.ms-all)')
+    );
+    var allBox = dropdown.querySelector('.ms-all');
+
+    function updateLabel() {
+        var checked = boxes.filter(function(b) { return b.checked; });
+        var label;
+        if (checked.length === 0) {
+            label = triggerLabel + ': {{ t("Танланмаган") }}';
+        } else if (checked.length === boxes.length) {
+            label = triggerLabel + ': {{ t("Барчаси") }} (' + boxes.length + ')';
+        } else {
+            label = triggerLabel + ': ' + checked.length + ' {{ t("та танланди") }}';
+        }
+        trigger.textContent = label;
+    }
+
+    trigger.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        document.querySelectorAll('.ms-dropdown.open').forEach(function(d) {
+            if (d !== dropdown) d.classList.remove('open');
+        });
+        dropdown.classList.toggle('open');
+    });
+
+    document.addEventListener('click', function(e) {
+        if (!wrap.contains(e.target)) {
+            dropdown.classList.remove('open');
+        }
+    });
+
+    dropdown.addEventListener('click', function(e) {
+        e.stopPropagation();
+    });
+
+    if (allBox) {
+        allBox.addEventListener('change', function() {
+            boxes.forEach(function(b) { b.checked = allBox.checked; });
+            updateLabel();
+        });
+    }
+
+    boxes.forEach(function(b) {
+        b.addEventListener('change', function() {
+            if (allBox) {
+                allBox.checked = boxes.every(function(b) { return b.checked; });
+            }
+            updateLabel();
+        });
+    });
+
+    if (allBox && boxes.length > 0) {
+        allBox.checked = boxes.every(function(b) { return b.checked; });
+    }
+
+    updateLabel();
+}
+</script>
+</body>
+</html>

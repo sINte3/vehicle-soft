@@ -1,60 +1,275 @@
-<!DOCTYPE html>
-<html lang="uz">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Кириш — Бухоро Агрокластер</title>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        * { margin:0; padding:0; box-sizing:border-box; }
-        body { font-family:'IBM Plex Sans',sans-serif; background:#2c2a25; min-height:100vh; display:flex; align-items:center; justify-content:center; }
-        .login-box { background:#fff; border-radius:8px; box-shadow:0 8px 32px rgba(0,0,0,0.3); width:380px; overflow:hidden; }
-        .login-header { background:#1a6b3c; color:#fff; padding:32px 32px 24px; text-align:center; }
-        .login-header h1 { font-size:20px; font-weight:700; margin-bottom:4px; }
-        .login-header p { font-size:13px; opacity:0.8; }
-        .login-body { padding:32px; }
-        .form-group { margin-bottom:18px; }
-        .form-group label { display:block; font-size:12px; font-weight:600; color:#6b6860; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px; }
-        input { font-family:inherit; font-size:14px; padding:10px 12px; border:1px solid #e0ddd5; border-radius:6px; width:100%; transition:border-color .15s; }
-        input:focus { outline:none; border-color:#1a6b3c; box-shadow:0 0 0 3px rgba(26,107,60,0.15); }
-        .btn { display:block; width:100%; padding:12px; font-family:inherit; font-size:14px; font-weight:700; border:none; border-radius:6px; cursor:pointer; background:#1a6b3c; color:#fff; transition:background .15s; }
-        .btn:hover { background:#155a31; }
-        .flash { padding:10px 14px; border-radius:6px; margin-bottom:16px; font-size:13px; font-weight:500; }
-        .flash-warning { background:#fef9e7; color:#8B6914; }
-        .flash-info { background:#eaf2f8; color:#2471a3; }
-        .flash-success { background:#e8f5ed; color:#1a6b3c; }
-        .footer { text-align:center; padding:16px; font-size:11px; color:#6b6860; border-top:1px solid #e0ddd5; }
-    </style>
-</head>
-<body>
-    <div class="login-box">
-        <div class="login-header">
-            <h1>Бухоро Агрокластер</h1>
-            <p>Транспорт ҳисоботи тизими</p>
-        </div>
-        <div class="login-body">
-            {% with messages = get_flashed_messages(with_categories=true) %}
-            {% for category, msg in messages %}
-            <div class="flash flash-{{ category }}">{{ msg }}</div>
-            {% endfor %}
-            {% endwith %}
+{% extends g.base_template %}
+{% block title %}{{ 'Вход' if g.lang == 'ru' else 'Кириш' }}{% endblock %}
 
-            <form method="post">
+{% block head_extra %}
+<style>
+  /* ============== Login page custom effects ============== */
+  .vs-login-page-pro {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+  }
+
+  /* Animated mesh background — 4 drifting blobs */
+  .vs-mesh {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .vs-mesh-blob {
+    position: absolute;
+    width: 540px; height: 540px;
+    border-radius: 50%;
+    filter: blur(90px);
+    opacity: 0.55;
+    will-change: transform;
+  }
+  .vs-mesh-blob-1 { background: #2563eb; top: -120px; left: -100px;   animation: vs-blob-1 14s ease-in-out infinite; opacity: 0.65; }
+  .vs-mesh-blob-2 { background: #06b6d4; top:  30%;   right: -180px;  animation: vs-blob-2 17s ease-in-out infinite; opacity: 0.60; }
+  .vs-mesh-blob-3 { background: #4f93ff; bottom: -150px; left: 25%;   animation: vs-blob-3 15s ease-in-out infinite; opacity: 0.60; }
+  .vs-mesh-blob-4 { background: #15803d; bottom: 20%; right: 18%;     animation: vs-blob-4 18s ease-in-out infinite; opacity: 0.42; }
+
+  @keyframes vs-blob-1 {
+    0%, 100% { transform: translate(0,0)          scale(1); }
+    33%      { transform: translate(180px,120px)  scale(1.18); }
+    66%      { transform: translate(-90px,200px)  scale(0.90); }
+  }
+  @keyframes vs-blob-2 {
+    0%, 100% { transform: translate(0,0)          scale(1); }
+    50%      { transform: translate(-260px,150px) scale(1.22); }
+  }
+  @keyframes vs-blob-3 {
+    0%, 100% { transform: translate(0,0)          scale(1); }
+    25%      { transform: translate(160px,-140px) scale(1.10); }
+    75%      { transform: translate(-200px,-90px) scale(1.18); }
+  }
+  @keyframes vs-blob-4 {
+    0%, 100% { transform: translate(0,0)          scale(1); }
+    50%      { transform: translate(140px,-130px) scale(0.85); }
+  }
+
+  /* Cursor trail dots — soft, blue-tinted, NOT rainbow */
+  .vs-cursor-dot {
+    position: fixed;
+    pointer-events: none;
+    z-index: 9999;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,255,255,1), rgba(125,200,255,0.75) 35%, rgba(37,99,235,0.35) 60%, transparent 80%);
+    box-shadow: 0 0 14px rgba(125,200,255,0.55), 0 0 28px rgba(37,99,235,0.25);
+    animation: vs-dot-fade 1.2s ease-out forwards;
+    will-change: transform, opacity;
+    transform: translate(-50%, -50%);
+  }
+  @keyframes vs-dot-fade {
+    0%   { opacity: 1;    transform: translate(-50%,-50%) scale(1); }
+    100% { opacity: 0;    transform: translate(-50%,-50%) scale(3.2); }
+  }
+
+  /* Card refinement */
+  .vs-login-card-pro {
+    background: rgba(255,255,255,0.97);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255,255,255,0.6);
+  }
+  .vs-login-logo {
+    height: 56px;
+    width: auto;
+    object-fit: contain;
+    display: block;
+    margin: 0 auto;
+  }
+
+  /* Field with leading icon and optional trailing button */
+  .vs-input-icon { position: relative; }
+  .vs-input-icon .vs-input { padding-left: 38px; padding-right: 38px; }
+  .vs-input-icon-leading {
+    position: absolute;
+    left: 12px; top: 50%;
+    transform: translateY(-50%);
+    color: var(--vs-text-soft);
+    pointer-events: none;
+    display: flex;
+  }
+  .vs-input-icon-trailing {
+    position: absolute;
+    right: 8px; top: 50%;
+    transform: translateY(-50%);
+    color: var(--vs-text-soft);
+    background: transparent;
+    border: none;
+    padding: 5px;
+    cursor: pointer;
+    display: flex;
+    border-radius: var(--vs-r-xs);
+    transition: color var(--vs-t-fast), background var(--vs-t-fast);
+  }
+  .vs-input-icon-trailing:hover { color: var(--vs-primary); background: var(--vs-primary-soft); }
+
+  /* Language switcher pinned to top-right of viewport */
+  .vs-login-lang {
+    position: fixed;
+    top: 22px; right: 22px;
+    z-index: 100;
+    display: flex;
+    border: 1px solid rgba(255,255,255,0.22);
+    border-radius: var(--vs-r);
+    overflow: hidden;
+    background: rgba(255,255,255,0.08);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .vs-login-lang button {
+    padding: 7px 14px;
+    border: none;
+    background: transparent;
+    color: rgba(255,255,255,0.78);
+    font-family: inherit;
+    font-size: 11.5px;
+    font-weight: 700;
+    cursor: pointer;
+    letter-spacing: .4px;
+    transition: all var(--vs-t-fast);
+  }
+  .vs-login-lang button + button { border-left: 1px solid rgba(255,255,255,0.22); }
+  .vs-login-lang button.is-active {
+    background: rgba(255,255,255,0.95);
+    color: var(--vs-primary);
+  }
+  .vs-login-lang button:hover:not(.is-active) {
+    color: #fff;
+    background: rgba(255,255,255,0.10);
+  }
+
+  /* Submit button full width + arrow */
+  .vs-login-form .vs-btn-primary {
+    justify-content: center;
+  }
+  .vs-login-form .vs-field + .vs-field { margin-top: 14px; }
+
+  /* Reduced motion: disable mesh animation + cursor trail */
+  @media (prefers-reduced-motion: reduce) {
+    .vs-mesh-blob { animation: none; }
+    .vs-cursor-dot { display: none; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="vs-login-page vs-login-page-pro">
+
+  {# Animated mesh background #}
+  <div class="vs-mesh" aria-hidden="true">
+    <div class="vs-mesh-blob vs-mesh-blob-1"></div>
+    <div class="vs-mesh-blob vs-mesh-blob-2"></div>
+    <div class="vs-mesh-blob vs-mesh-blob-3"></div>
+    <div class="vs-mesh-blob vs-mesh-blob-4"></div>
+  </div>
+
+  {# Language switcher in top-right corner #}
+  <form method="post" action="{{ url_for('set_language_route') }}" class="vs-login-lang">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div class="form-group">
-                    <label>Логин</label>
-                    <input type="text" name="username" required autofocus placeholder="admin">
-                </div>
-                <div class="form-group">
-                    <label>Парол</label>
-                    <input type="password" name="password" required placeholder="••••••">
-                </div>
-                <button type="submit" class="btn">Кириш</button>
-            </form>
-        </div>
-        <div class="footer">
-            «Бухоро Агрокластер» МЧЖ &middot; 2026
-        </div>
+    <button name="lang" value="uz" type="submit" class="{% if g.lang == 'uz' %}is-active{% endif %}">УЗ</button>
+    <button name="lang" value="ru" type="submit" class="{% if g.lang == 'ru' %}is-active{% endif %}">РУ</button>
+  </form>
+
+  <div class="vs-login-card vs-login-card-pro">
+
+    <div class="vs-login-head">
+      <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Buxoro Agro Klaster" class="vs-login-logo">
+      <div class="vs-login-sub">{{ 'Транспорт ҳисоботи тизими' if g.lang == 'uz' else 'Система транспортного учёта' }}</div>
     </div>
-</body>
-</html>
+
+    <form method="post" class="vs-login-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div style="margin-bottom: 16px;">
+            {% for category, msg in messages %}
+              <div class="vs-alert is-{{ category if category in ['success','warning','danger','info'] else 'warning' }}">{{ msg }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      <div class="vs-field">
+        <label class="vs-label">{{ 'Логин' if g.lang == 'ru' else 'Логин' }}</label>
+        <div class="vs-input-icon">
+          <span class="vs-input-icon-leading">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </span>
+          <input type="text" name="username" class="vs-input" required autofocus autocomplete="username" placeholder="admin">
+        </div>
+      </div>
+
+      <div class="vs-field">
+        <label class="vs-label">{{ 'Пароль' if g.lang == 'ru' else 'Парол' }}</label>
+        <div class="vs-input-icon">
+          <span class="vs-input-icon-leading">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          </span>
+          <input type="password" name="password" id="vsPwField" class="vs-input" required autocomplete="current-password" placeholder="••••••">
+          <button type="button" class="vs-input-icon-trailing" onclick="vsTogglePw()" aria-label="{{ 'Показать пароль' if g.lang == 'ru' else 'Паролни кўрсатиш' }}" tabindex="-1">
+            <svg id="vsPwIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <button type="submit" class="vs-btn vs-btn-primary">
+        {{ 'Войти' if g.lang == 'ru' else 'Кириш' }}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      </button>
+    </form>
+
+    <div class="vs-login-foot">
+      © 2026 «{{ 'Бухоро Агрокластер' if g.lang == 'uz' else 'Бухоро Агрокластер' }}» {{ 'МЧЖ' if g.lang == 'uz' else 'ООО' }}
+    </div>
+  </div>
+</div>
+
+<script>
+  // Show/hide password toggle
+  function vsTogglePw() {
+    var f = document.getElementById('vsPwField');
+    var i = document.getElementById('vsPwIcon');
+    if (!f || !i) return;
+    if (f.type === 'password') {
+      f.type = 'text';
+      i.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>';
+    } else {
+      f.type = 'password';
+      i.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+    }
+  }
+
+  // Cursor trail — corporate blue/white, NOT rainbow, throttled, respects reduced-motion
+  (function() {
+    var mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (mq.matches) return;
+
+    var lastTime = 0;
+    var minInterval = 28; // ~36 dots/sec max
+    document.addEventListener('mousemove', function(e) {
+      var now = Date.now();
+      if (now - lastTime < minInterval) return;
+      lastTime = now;
+
+      var dot = document.createElement('div');
+      dot.className = 'vs-cursor-dot';
+      dot.style.left = e.clientX + 'px';
+      dot.style.top  = e.clientY + 'px';
+      var size = 10 + Math.random() * 10;       // 10-20 px (was 6-12 px)
+      dot.style.width  = size + 'px';
+      dot.style.height = size + 'px';
+      document.body.appendChild(dot);
+
+      setTimeout(function() { dot.remove(); }, 1200);  // match 1.2s css fade
+    }, { passive: true });
+  })();
+</script>
+{% endblock %}

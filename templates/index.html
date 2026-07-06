@@ -1,1142 +1,719 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}{{ t('Бош саҳифа') }}{% endblock %}
+
 {% block content %}
 
-{# ─── DATE RANGE SELECTOR ─── #}
-<div class="page-header">
-    <h1>{{ 'Главная панель' if lang == 'ru' else 'Бошқарув панели' }}</h1>
+{# ════════ HERO ════════ #}
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Главная панель' if lang == 'ru' else 'Бошқарув панели' }}</div>
+    <div class="vs-hero-sub">{{ 'Ключевые показатели за выбранный период' if lang == 'ru' else 'Танланган давр бўйича асосий кўрсаткичлар' }}</div>
+    <div class="vs-date-chip" style="margin-top:12px;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+      <span>{{ 'Период' if lang == 'ru' else 'Давр' }}:</span>
+      <strong>{{ d_from.strftime('%d.%m.%Y') }}{% if d_from != d_to %} — {{ d_to.strftime('%d.%m.%Y') }}{% endif %}</strong>
+    </div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="vs-btn">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>
+      {{ 'Основной отчёт' if lang == 'ru' else 'Асосий ҳисобот' }}
+    </a>
+    {% if dashboard.module_access.fuel %}
+    <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="vs-btn">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v16"/><path d="M3 21h11"/><path d="M14 8h3l3 3v8a2 2 0 0 1-2 2"/></svg>
+      {{ 'Топливо' if lang == 'ru' else 'Ёқилғи' }}
+    </a>
+    {% endif %}
+  </div>
 </div>
 
-{% set L_dashboard_title = 'Управленческий dashboard' if lang == 'ru' else 'Бошқарув dashboard' %}
-{% set L_dashboard_subtitle = 'Ключевые показатели за выбранный период' if lang == 'ru' else 'Танланган давр бўйича асосий кўрсаткичлар' %}
-{% set L_period = 'Период' if lang == 'ru' else 'Давр' %}
-{% set L_transport = 'Работы транспорта' if lang == 'ru' else 'Транспорт ишлари' %}
-{% set L_fuel = 'Топливо' if lang == 'ru' else 'Ёқилғи' %}
-{% set L_warnings = 'Предупреждения' if lang == 'ru' else 'Огоҳлантиришлар' %}
-{% set L_spares = 'Запчасти' if lang == 'ru' else 'Эҳтиёт қисмлар' %}
-{% set L_wialon = 'Wialon mapping' if lang == 'ru' else 'Wialon маппинг' %}
-{% set L_system = 'Система' if lang == 'ru' else 'Тизим' %}
-{% set L_quick = 'Быстрые действия' if lang == 'ru' else 'Тезкор амаллар' %}
-{% set L_no_access = 'Нет доступа к модулю' if lang == 'ru' else 'Модулга рухсат йўқ' %}
+{# ════════ PRIMARY KPI ROW ════════ #}
+<div class="vs-kpi-grid vs-mb">
 
-<!-- DASH002_MAIN_DASHBOARD_UX -->
-<style>
-    .dash002-hero {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 16px;
-        padding: 18px 20px;
-        margin-bottom: 18px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: linear-gradient(135deg, var(--surface), var(--surface2));
-        box-shadow: var(--shadow);
-    }
-    .dash002-hero h1 {
-        margin: 0 0 6px 0;
-        font-size: 24px;
-        line-height: 1.2;
-    }
-    .dash002-period {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        margin-top: 8px;
-        padding: 6px 10px;
-        border-radius: 999px;
-        background: var(--accent-light);
-        color: var(--accent);
-        font-size: 13px;
-        font-weight: 600;
-    }
-    .dash002-actions {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-        justify-content: flex-end;
-    }
-    .dash002-primary-grid,
-    .dash002-secondary-grid {
-        display: grid;
-        gap: 14px;
-        margin-bottom: 14px;
-    }
-    .dash002-primary-grid {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-    .dash002-secondary-grid {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-    .dash002-card {
-        display: flex;
-        flex-direction: column;
-        min-height: 210px;
-        padding: 16px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: var(--surface);
-        box-shadow: var(--shadow);
-    }
-    .dash002-card.small {
-        min-height: 160px;
-    }
-    .dash002-card .dash-card-head {
-        margin-bottom: 12px;
-        padding-bottom: 10px;
-        border-bottom: 1px solid var(--border);
-    }
-    .dash002-card .dash-card-head span {
-        font-size: 15px;
-        font-weight: 700;
-    }
-    .dash002-main {
-        margin-bottom: 12px;
-    }
-    .dash002-main .dash-main-value {
-        font-size: 30px;
-        line-height: 1;
-        font-weight: 800;
-    }
-    .dash002-main .dash-main-label {
-        margin-top: 5px;
-        color: var(--text2);
-        font-size: 13px;
-    }
-    .dash002-card .dash-metrics {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 8px;
-        margin-top: 0;
-    }
-    .dash002-card .dash-metrics.compact {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    .dash002-card .dash-metrics > div {
-        min-height: 48px;
-        padding: 8px 10px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: var(--surface2);
-    }
-    .dash002-card .dash-metrics b {
-        display: block;
-        font-size: 16px;
-        line-height: 1.2;
-    }
-    .dash002-card .dash-metrics span {
-        display: block;
-        margin-top: 3px;
-        color: var(--text2);
-        font-size: 12px;
-        line-height: 1.25;
-    }
-    .dash002-card .dash-quick-links {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 7px;
-        margin-top: auto;
-        padding-top: 12px;
-    }
-    .dash002-card .dash-quick-links a {
-        padding: 5px 8px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: var(--surface2);
-        font-size: 12px;
-        font-weight: 600;
-        text-decoration: none;
-    }
-    .dash002-card .dash-quick-links a:hover {
-        border-color: var(--accent);
-        background: var(--accent-light);
-    }
-    .dash002-no-access {
-        margin-top: auto;
-        padding: 14px;
-        border: 1px dashed var(--border-strong);
-        border-radius: var(--radius);
-        color: var(--text2);
-        background: var(--surface2);
-        text-align: center;
-        font-size: 13px;
-    }
-    .dash002-audit-card {
-        margin-bottom: 18px;
-    }
-    @media (max-width: 1100px) {
-        .dash002-primary-grid,
-        .dash002-secondary-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-    }
-    @media (max-width: 760px) {
-        .dash002-hero {
-            flex-direction: column;
-        }
-        .dash002-actions {
-            justify-content: flex-start;
-        }
-        .dash002-primary-grid,
-        .dash002-secondary-grid {
-            grid-template-columns: 1fr;
-        }
-    }
-    /* DASH003 — Work Orders analytics section */
-    .dash003-section { margin-bottom: 24px; }
-    .dash003-row {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 14px;
-        margin-bottom: 14px;
-    }
-    @media (max-width: 768px) {
-        .dash003-row { grid-template-columns: 1fr; }
-    }
-    .dash003-card {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        overflow: hidden;
-    }
-    .dash003-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 9px 14px;
-        background: var(--surface2);
-        border-bottom: 1px solid var(--border);
-        font-size: 11.5px;
-        font-weight: 700;
-        color: var(--text2);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    .dash003-head a {
-        font-weight: 600;
-        font-size: 11.5px;
-        color: var(--danger);
-        text-decoration: none;
-        text-transform: none;
-        letter-spacing: 0;
-    }
-    .dash003-head a:hover { text-decoration: underline; }
-    .dash003-head .period-note {
-        font-weight: 400;
-        text-transform: none;
-        letter-spacing: 0;
-        color: var(--text2);
-        font-size: 11px;
-    }
-    .dash003-tbl {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 12.5px;
-    }
-    .dash003-tbl th {
-        padding: 6px 12px;
-        background: var(--surface2);
-        font-size: 11px;
-        font-weight: 700;
-        color: var(--text2);
-        text-transform: uppercase;
-        letter-spacing: 0.3px;
-        text-align: left;
-        border-bottom: 1px solid var(--border);
-    }
-    .dash003-tbl td {
-        padding: 7px 12px;
-        border-bottom: 1px solid var(--border);
-        color: var(--text);
-        font-size: 12.5px;
-    }
-    .dash003-tbl tr:last-child td { border-bottom: none; }
-    .dash003-tbl .num {
-        text-align: right;
-        font-variant-numeric: tabular-nums;
-        font-weight: 600;
-    }
-    .dash003-tbl .warn { color: var(--danger); font-weight: 700; }
-    .dash003-tbl .wo-link {
-        color: var(--accent);
-        text-decoration: none;
-        font-weight: 600;
-        font-size: 12px;
-    }
-    .dash003-tbl .wo-link:hover { text-decoration: underline; }
-    .dash003-tbl .eq-line {
-        display: block;
-        font-size: 11px;
-        color: var(--text2);
-        margin-top: 1px;
-    }
-    .dash003-days-badge {
-        display: inline-block;
-        padding: 1px 6px;
-        border-radius: 3px;
-        font-size: 11px;
-        font-weight: 700;
-        background: var(--danger-light);
-        color: var(--danger);
-    }
-    .dash003-empty {
-        padding: 14px 16px;
-        font-size: 12.5px;
-        color: var(--text2);
-        text-align: center;
-    }
-    .dash003-chart-wrap { padding: 14px 16px 10px; }
-    .dash003-chart-sub {
-        display: flex;
-        justify-content: space-between;
-        font-size: 10px;
-        color: var(--text2);
-        margin-top: 3px;
-        padding: 0 2px;
-    }
-</style>
+  {# Transport #}
+  <div class="vs-kpi">
+    <div class="vs-kpi-head">
+      <div class="vs-kpi-label">{{ 'Работы транспорта' if lang == 'ru' else 'Транспорт ишлари' }}</div>
+      {% if current_user.can_edit %}
+      <a href="{{ url_for('daily_entry', date=d_from.isoformat()) }}" class="vs-kpi-link">{{ 'Ввод →' if lang == 'ru' else 'Киритиш →' }}</a>
+      {% endif %}
+    </div>
+    <div class="vs-kpi-main">
+      <div class="vs-kpi-value vs-num">{{ dashboard.transport.working_rows }}</div>
+      <div class="vs-kpi-cap">{{ 'рабочих строк' if lang == 'ru' else 'иш қаторлари' }}</div>
+    </div>
+    <div class="vs-kpi-grid-2">
+      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.transport.records }}</span><span class="vs-mini-l">{{ 'всего строк' if lang == 'ru' else 'жами қатор' }}</span></div>
+      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.transport.idle_rows }}</span><span class="vs-mini-l">{{ 'простой/без работ' if lang == 'ru' else 'бўш/ишсиз' }}</span></div>
+      <div class="vs-mini is-success"><span class="vs-mini-v vs-num">{{ dashboard.transport.equipment_working }}</span><span class="vs-mini-l">{{ 'техника работала' if lang == 'ru' else 'техника ишлади' }}</span></div>
+      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.transport.amount|fmt_sum or '0' }}</span><span class="vs-mini-l">{{ 'сумма' if lang == 'ru' else 'сумма, сўм' }}</span></div>
+    </div>
+  </div>
 
-<div class="dash-hero dash002-hero">
-    <div>
-        <h1>{{ L_dashboard_title }}</h1>
-        <div class="dash-subtitle">{{ L_dashboard_subtitle }}</div>
-        <div class="dash002-period">
-            <span>{{ L_period }}:</span>
-            <strong>{{ d_from.strftime('%d.%m.%Y') }}{% if d_from != d_to %} — {{ d_to.strftime('%d.%m.%Y') }}{% endif %}</strong>
-        </div>
+  {# Fuel #}
+  <div class="vs-kpi{% if dashboard.fuel.danger_warnings %} vs-card-accent-danger{% elif dashboard.fuel.warnings %} vs-card-accent-warning{% endif %}">
+    <div class="vs-kpi-head">
+      <div class="vs-kpi-label">{{ 'Топливо · АЗС' if lang == 'ru' else 'Ёқилғи · АЗС' }}</div>
+      {% if dashboard.module_access.fuel %}
+      <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="vs-kpi-link">{{ 'Открыть →' if lang == 'ru' else 'Очиш →' }}</a>
+      {% endif %}
     </div>
-    <div class="dash-actions dash002-actions">
-        <a href="{{ url_for('report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="btn btn-secondary btn-sm">{{ 'Основной отчёт' if lang == 'ru' else 'Асосий ҳисобот' }}</a>
-        {% if dashboard.module_access.fuel %}
-        <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="btn btn-secondary btn-sm">{{ 'Отчёт по топливу' if lang == 'ru' else 'Ёқилғи ҳисоботи' }}</a>
-        {% endif %}
-        {% if dashboard.module_access.spare_parts %}
-        <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary btn-sm">{{ L_spares }}</a>
-        {% endif %}
+    {% if dashboard.module_access.fuel %}
+    <div class="vs-kpi-main">
+      <div class="vs-kpi-value vs-num">{{ '%.2f'|format(dashboard.fuel.issued or 0) }}</div>
+      <div class="vs-kpi-cap">{{ 'литров выдано' if lang == 'ru' else 'литр берилди' }}</div>
     </div>
+    <div class="vs-kpi-grid-2">
+      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.fuel.transactions }}</span><span class="vs-mini-l">Topaz {{ 'транзакций' if lang == 'ru' else 'транзакция' }}</span></div>
+      <div class="vs-mini"><span class="vs-mini-v" style="font-size:13px;">{{ dashboard.fuel.latest_sync_text or '—' }}</span><span class="vs-mini-l">{{ 'последняя синхронизация' if lang == 'ru' else 'охирги синхронизация' }}</span></div>
+      <div class="vs-mini{% if dashboard.fuel.warnings %} is-warning{% endif %}"><span class="vs-mini-v vs-num">{{ dashboard.fuel.warnings }}</span><span class="vs-mini-l">{{ 'предупреждения' if lang == 'ru' else 'огоҳлантириш' }}</span></div>
+      <div class="vs-mini{% if dashboard.fuel.danger_warnings %} is-danger{% endif %}"><span class="vs-mini-v vs-num">{{ dashboard.fuel.danger_warnings }}</span><span class="vs-mini-l">{{ 'критические' if lang == 'ru' else 'критик' }}</span></div>
+    </div>
+    {% else %}
+    <div class="vs-empty" style="border:none; padding:32px 0; background:transparent;">
+      <div class="vs-empty-sub">{{ 'Нет доступа к модулю' if lang == 'ru' else 'Модулга рухсат йўқ' }}</div>
+    </div>
+    {% endif %}
+  </div>
+
+  {# Warnings #}
+  <div class="vs-kpi{% if dashboard.fuel.danger_warnings %} vs-card-accent-danger{% elif dashboard.fuel.warnings %} vs-card-accent-warning{% endif %}">
+    <div class="vs-kpi-head">
+      <div class="vs-kpi-label">{{ 'Предупреждения' if lang == 'ru' else 'Огоҳлантиришлар' }}</div>
+      {% if dashboard.module_access.fuel %}
+      <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="vs-kpi-link">{{ 'Реестр →' if lang == 'ru' else 'Реестр →' }}</a>
+      {% endif %}
+    </div>
+    {% if dashboard.module_access.fuel %}
+    {% if dashboard.fuel.danger_warnings %}
+    <div class="vs-alert is-danger" style="margin-bottom:14px;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v5"/><circle cx="12" cy="17" r=".5"/></svg>
+      {{ 'Критические — требуется проверка' if lang == 'ru' else 'Критик — текшириш керак' }}
+    </div>
+    {% elif dashboard.fuel.warnings %}
+    <div class="vs-alert is-warning" style="margin-bottom:14px;">
+      {{ 'Есть предупреждения' if lang == 'ru' else 'Огоҳлантиришлар бор' }}
+    </div>
+    {% else %}
+    <div class="vs-alert is-success" style="margin-bottom:14px;">
+      {{ 'Критических нет' if lang == 'ru' else 'Критик йўқ' }}
+    </div>
+    {% endif %}
+    <div class="vs-kpi-main">
+      <div class="vs-kpi-value vs-num">{{ dashboard.fuel.warnings }}</div>
+      <div class="vs-kpi-cap">{{ 'активных по расчёту' if lang == 'ru' else 'ҳисобланган фаол' }}</div>
+    </div>
+    <div class="vs-kpi-grid-2">
+      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.fuel.review_new }}</span><span class="vs-mini-l">{{ 'новые' if lang == 'ru' else 'янги' }}</span></div>
+      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.fuel.review_in_progress }}</span><span class="vs-mini-l">{{ 'в работе' if lang == 'ru' else 'ишда' }}</span></div>
+      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.fuel.review_resolved }}</span><span class="vs-mini-l">{{ 'проверено' if lang == 'ru' else 'текширилди' }}</span></div>
+      <div class="vs-mini{% if dashboard.fuel.danger_warnings %} is-danger{% endif %}"><span class="vs-mini-v vs-num">{{ dashboard.fuel.danger_warnings }}</span><span class="vs-mini-l">{{ 'критические' if lang == 'ru' else 'критик' }}</span></div>
+    </div>
+    {% else %}
+    <div class="vs-empty" style="border:none; padding:32px 0; background:transparent;">
+      <div class="vs-empty-sub">{{ 'Нет доступа к модулю' if lang == 'ru' else 'Модулга рухсат йўқ' }}</div>
+    </div>
+    {% endif %}
+  </div>
+
 </div>
 
-<div class="dash-grid dash002-primary-grid">
-    <div class="dash-card dash002-card">
-        <div class="dash-card-head">
-            <span>{{ L_transport }}</span>
-            <a href="{{ url_for('daily_entry', date=d_from.isoformat()) }}">{{ 'Ввод' if lang == 'ru' else 'Киритиш' }}</a>
-        </div>
-        <div class="dash002-main">
-            <div class="dash-main-value">{{ dashboard.transport.working_rows }}</div>
-            <div class="dash-main-label">{{ 'рабочих строк' if lang == 'ru' else 'иш қаторлари' }}</div>
-        </div>
-        <div class="dash-metrics">
-            <div><b>{{ dashboard.transport.records }}</b><span>{{ 'всего строк' if lang == 'ru' else 'жами қатор' }}</span></div>
-            <div><b>{{ dashboard.transport.idle_rows }}</b><span>{{ 'простой/без работ' if lang == 'ru' else 'бекор/ишсиз' }}</span></div>
-            <div><b>{{ dashboard.transport.equipment_working }}</b><span>{{ 'техника работала' if lang == 'ru' else 'техника ишлади' }}</span></div>
-            <div><b>{{ dashboard.transport.amount|fmt_sum or '0' }}</b><span>{{ 'сумма' if lang == 'ru' else 'сумма' }}</span></div>
-        </div>
-        <div class="dash-quick-links">
-            <a href="{{ url_for('report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Основной отчёт' if lang == 'ru' else 'Асосий ҳисобот' }}</a>
-            <a href="{{ url_for('daily_entry', date=d_from.isoformat()) }}">{{ 'Ввод данных' if lang == 'ru' else 'Маълумот киритиш' }}</a>
-        </div>
-    </div>
+{# ════════ SECONDARY KPI ROW (3 modules) ════════ #}
+<div class="vs-kpi-grid vs-mb">
 
-    <div class="dash-card dash002-card {% if dashboard.fuel.danger_warnings %}dash-danger{% elif dashboard.fuel.warnings %}dash-warn{% endif %}">
-        <div class="dash-card-head">
-            <span>{{ L_fuel }}</span>
-            {% if dashboard.module_access.fuel %}
-            <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Открыть' if lang == 'ru' else 'Очиш' }}</a>
-            {% endif %}
-        </div>
-        {% if dashboard.module_access.fuel %}
-        <div class="dash002-main">
-            <div class="dash-main-value">{{ '%.2f'|format(dashboard.fuel.issued or 0) }}</div>
-            <div class="dash-main-label">{{ 'литров выдано' if lang == 'ru' else 'литр берилди' }}</div>
-        </div>
-        <div class="dash-metrics">
-            <div><b>{{ dashboard.fuel.transactions }}</b><span>{{ 'Topaz транзакций' if lang == 'ru' else 'Topaz транзакция' }}</span></div>
-            <div><b>{{ dashboard.fuel.latest_sync_text or '—' }}</b><span>{{ 'последняя синхронизация' if lang == 'ru' else 'охирги синхронизация' }}</span></div>
-            <div><b>{{ dashboard.fuel.warnings }}</b><span>{{ L_warnings|lower }}</span></div>
-            <div><b>{{ dashboard.fuel.danger_warnings }}</b><span>{{ 'критические' if lang == 'ru' else 'критик' }}</span></div>
-        </div>
-        <div class="dash-quick-links">
-            <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Отчёт' if lang == 'ru' else 'Ҳисобот' }}</a>
-            <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Предупреждения' if lang == 'ru' else 'Огоҳлантиришлар' }}</a>
-            <a href="{{ url_for('fuel.transactions') }}">{{ 'Транзакции' if lang == 'ru' else 'Транзакциялар' }}</a>
-        </div>
-        {% else %}
-        <div class="dash-no-access dash002-no-access">{{ L_no_access }}</div>
-        {% endif %}
+  {# Spare parts #}
+  <div class="vs-kpi">
+    <div class="vs-kpi-head">
+      <div class="vs-kpi-label">{{ 'Запчасти' if lang == 'ru' else 'Эҳтиёт қисмлар' }}</div>
+      {% if dashboard.module_access.spare_parts %}
+      <a href="{{ url_for('spare_parts.index') }}" class="vs-kpi-link">{{ 'Открыть →' if lang == 'ru' else 'Очиш →' }}</a>
+      {% endif %}
     </div>
+    {% if dashboard.module_access.spare_parts %}
+    <div class="vs-kpi-grid-2">
+      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.spare.open }}</span><span class="vs-mini-l">{{ 'открытые' if lang == 'ru' else 'очиқ' }}</span></div>
+      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.spare.submitted }}</span><span class="vs-mini-l">{{ 'отправлено' if lang == 'ru' else 'юборилган' }}</span></div>
+      <div class="vs-mini is-success"><span class="vs-mini-v vs-num">{{ dashboard.spare.approved }}</span><span class="vs-mini-l">{{ 'утверждено' if lang == 'ru' else 'тасдиқланган' }}</span></div>
+      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.spare.rejected }}</span><span class="vs-mini-l">{{ 'отклонено' if lang == 'ru' else 'рад этилган' }}</span></div>
+    </div>
+    {% else %}
+    <div class="vs-empty" style="border:none; padding:24px 0; background:transparent;">
+      <div class="vs-empty-sub">{{ 'Нет доступа к модулю' if lang == 'ru' else 'Модулга рухсат йўқ' }}</div>
+    </div>
+    {% endif %}
+  </div>
 
-    <div class="dash-card dash002-card {% if dashboard.fuel.danger_warnings %}dash-danger{% elif dashboard.fuel.warnings %}dash-warn{% endif %}">
-        <div class="dash-card-head">
-            <span>{{ L_warnings }}</span>
-            {% if dashboard.module_access.fuel %}
-            <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Реестр' if lang == 'ru' else 'Реестр' }}</a>
-            {% endif %}
-        </div>
-        {% if dashboard.module_access.fuel %}
-            {% if dashboard.fuel.danger_warnings %}
-            <div class="dash-severity-banner danger">{{ 'Есть критические предупреждения — требуется проверка' if lang == 'ru' else 'Критик огоҳлантиришлар бор — текшириш керак' }}</div>
-            {% elif dashboard.fuel.warnings %}
-            <div class="dash-severity-banner warning">{{ 'Есть предупреждения — проверьте реестр' if lang == 'ru' else 'Огоҳлантиришлар бор — реестрни текширинг' }}</div>
-            {% else %}
-            <div class="dash-severity-banner ok">{{ 'Критических предупреждений нет' if lang == 'ru' else 'Критик огоҳлантиришлар йўқ' }}</div>
-            {% endif %}
-        <div class="dash002-main">
-            <div class="dash-main-value">{{ dashboard.fuel.warnings }}</div>
-            <div class="dash-main-label">{{ 'активных предупреждений по расчёту' if lang == 'ru' else 'ҳисобланган фаол огоҳлантиришлар' }}</div>
-        </div>
-        <div class="dash-metrics">
-            <div><b>{{ dashboard.fuel.review_new }}</b><span>{{ 'новые' if lang == 'ru' else 'янги' }}</span></div>
-            <div><b>{{ dashboard.fuel.review_in_progress }}</b><span>{{ 'в работе' if lang == 'ru' else 'ишда' }}</span></div>
-            <div><b>{{ dashboard.fuel.review_resolved }}</b><span>{{ 'проверено' if lang == 'ru' else 'текширилди' }}</span></div>
-            <div><b>{{ dashboard.fuel.danger_warnings }}</b><span>{{ 'критические' if lang == 'ru' else 'критик' }}</span></div>
-        </div>
-        <div class="dash-quick-links">
-            <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">{{ 'Реестр' if lang == 'ru' else 'Реестр' }}</a>
-            <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat(), status='new') }}">{{ 'Новые' if lang == 'ru' else 'Янги' }}</a>
-            <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat(), severity='danger') }}">{{ 'Критические' if lang == 'ru' else 'Критик' }}</a>
-        </div>
-        {% else %}
-        <div class="dash-no-access dash002-no-access">{{ L_no_access }}</div>
-        {% endif %}
+  {# Work Orders #}
+  <div class="vs-kpi">
+    <div class="vs-kpi-head">
+      <div class="vs-kpi-label">{{ 'Наряды' if lang == 'ru' else 'Буюртмалар' }}</div>
+      <a href="{{ url_for('work_orders.index') }}" class="vs-kpi-link">{{ 'Открыть →' if lang == 'ru' else 'Очиш →' }}</a>
     </div>
+    <div class="vs-kpi-grid-2">
+      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.work_orders.open }}</span><span class="vs-mini-l">{{ 'открытые' if lang == 'ru' else 'очиқ' }}</span></div>
+      <div class="vs-mini is-success"><span class="vs-mini-v vs-num">{{ dashboard.work_orders.done_today }}</span><span class="vs-mini-l">{{ 'сегодня' if lang == 'ru' else 'бугун' }}</span></div>
+      <div class="vs-mini{% if dashboard.work_orders.overdue > 0 %} is-danger{% endif %}"><span class="vs-mini-v vs-num">{{ dashboard.work_orders.overdue }}</span><span class="vs-mini-l">{{ 'просрочено' if lang == 'ru' else 'муддати ўтган' }}</span></div>
+      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.work_orders.total_amount | fmt_sum or '—' }}</span><span class="vs-mini-l">{{ 'сум выпол.' if lang == 'ru' else 'сўм бажар.' }}</span></div>
+    </div>
+  </div>
+
+  {# Wialon #}
+  <div class="vs-kpi">
+    <div class="vs-kpi-head">
+      <div class="vs-kpi-label">Wialon GPS</div>
+      {% if dashboard.module_access.wialon %}
+      <a href="{{ url_for('wialon_index') }}" class="vs-kpi-link">{{ 'Открыть →' if lang == 'ru' else 'Очиш →' }}</a>
+      {% endif %}
+    </div>
+    {% if dashboard.module_access.wialon %}
+    <div class="vs-kpi-grid-2">
+      <div class="vs-mini is-success"><span class="vs-mini-v vs-num">{{ dashboard.wialon.linked }}</span><span class="vs-mini-l">{{ 'связано' if lang == 'ru' else 'боғланган' }}</span></div>
+      <div class="vs-mini{% if dashboard.wialon.unmapped > 0 %} is-warning{% endif %}"><span class="vs-mini-v vs-num">{{ dashboard.wialon.unmapped }}</span><span class="vs-mini-l">{{ 'не связано' if lang == 'ru' else 'боғланмаган' }}</span></div>
+      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.wialon.skipped }}</span><span class="vs-mini-l">{{ 'нет в системе' if lang == 'ru' else 'тизимда йўқ' }}</span></div>
+      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.wialon.total }}</span><span class="vs-mini-l">{{ 'всего' if lang == 'ru' else 'жами' }}</span></div>
+    </div>
+    {% else %}
+    <div class="vs-empty" style="border:none; padding:24px 0; background:transparent;">
+      <div class="vs-empty-sub">{{ 'Нет доступа к модулю' if lang == 'ru' else 'Модулга рухсат йўқ' }}</div>
+    </div>
+    {% endif %}
+  </div>
+
 </div>
 
-<div class="dash-grid dash002-secondary-grid secondary">
-    <div class="dash-card dash002-card small">
-        <div class="dash-card-head">
-            <span>{{ L_spares }}</span>
-            {% if dashboard.module_access.spare_parts %}<a href="{{ url_for('spare_parts.index') }}">{{ 'Открыть' if lang == 'ru' else 'Очиш' }}</a>{% endif %}
-        </div>
-        {% if dashboard.module_access.spare_parts %}
-        <div class="dash-metrics compact">
-            <div><b>{{ dashboard.spare.open }}</b><span>{{ 'открытые' if lang == 'ru' else 'очиқ' }}</span></div>
-            <div><b>{{ dashboard.spare.submitted }}</b><span>{{ 'отправлено' if lang == 'ru' else 'юборилган' }}</span></div>
-            <div><b>{{ dashboard.spare.approved }}</b><span>{{ 'утверждено' if lang == 'ru' else 'тасдиқланган' }}</span></div>
-            <div><b>{{ dashboard.spare.rejected }}</b><span>{{ 'отклонено' if lang == 'ru' else 'рад этилган' }}</span></div>
-        </div>
-        <div class="dash-quick-links">
-            <a href="{{ url_for('spare_parts.index') }}">{{ 'Все заявки' if lang == 'ru' else 'Барча сўровлар' }}</a>
-            <a href="{{ url_for('spare_parts.index', status='submitted') }}">{{ 'На рассмотрении' if lang == 'ru' else 'Кўриб чиқишда' }}</a>
-            <a href="{{ url_for('spare_parts.new_request') }}">{{ 'Новая заявка' if lang == 'ru' else 'Янги сўров' }}</a>
-        </div>
-        {% else %}
-        <div class="dash-no-access dash002-no-access">{{ L_no_access }}</div>
-        {% endif %}
-    </div>
-
-    {# WORK-ORDER-001: work orders KPI card — mirrors the spare parts card structure. #}
-    <div class="dash-card dash002-card small">
-        <div class="dash-card-head">
-            <span>{{ 'Наряды' if lang == 'ru' else 'Buyurtmalar' }}</span>
-            <a href="{{ url_for('work_orders.index') }}">{{ 'Открыть' if lang == 'ru' else 'Очиш' }}</a>
-        </div>
-        <div class="dash-metrics compact">
-            <div><b>{{ dashboard.work_orders.open }}</b><span>{{ 'открытые' if lang == 'ru' else 'очиқ' }}</span></div>
-            <div><b>{{ dashboard.work_orders.done_today }}</b><span>{{ 'сегодня' if lang == 'ru' else 'бугун' }}</span></div>
-            <div><b>{{ dashboard.work_orders.overdue }}</b><span>{{ 'просрочено' if lang == 'ru' else 'муддати ўтган' }}</span></div>
-            <div>
-                <b>{{ dashboard.work_orders.total_amount | fmt_sum or '—' }}</b>
-                <span>{{ 'сум выпол.' if lang == 'ru' else 'сўм бажар.' }}</span>
-            </div>
-        </div>
-        <div class="dash-quick-links">
-            <a href="{{ url_for('work_orders.index') }}">{{ 'Все наряды' if lang == 'ru' else 'Барча буюртмалар' }}</a>
-            <a href="{{ url_for('work_orders.new') }}">{{ 'Новый наряд' if lang == 'ru' else 'Янги буюртма' }}</a>
-        </div>
-    </div>
-
-    <div class="dash-card dash002-card small">
-        <div class="dash-card-head">
-            <span>{{ L_wialon }}</span>
-            {% if dashboard.module_access.wialon %}<a href="{{ url_for('wialon_index') }}">{{ 'Открыть' if lang == 'ru' else 'Очиш' }}</a>{% endif %}
-        </div>
-        {% if dashboard.module_access.wialon %}
-        <div class="dash-metrics compact">
-            <div><b>{{ dashboard.wialon.linked }}</b><span>{{ 'связано' if lang == 'ru' else 'боғланган' }}</span></div>
-            <div><b>{{ dashboard.wialon.unmapped }}</b><span>{{ 'не связано' if lang == 'ru' else 'боғланмаган' }}</span></div>
-            <div><b>{{ dashboard.wialon.skipped }}</b><span>{{ 'нет в системе' if lang == 'ru' else 'тизимда йўқ' }}</span></div>
-            <div><b>{{ dashboard.wialon.total }}</b><span>{{ 'всего' if lang == 'ru' else 'жами' }}</span></div>
-        </div>
-        <div class="dash-quick-links">
-            <a href="{{ url_for('wialon_mapping_list') }}">{{ 'Mapping' if lang == 'ru' else 'Mapping' }}</a>
-            <a href="{{ url_for('wialon_auto_match') }}">{{ 'Авто-маппинг' if lang == 'ru' else 'Авто-маппинг' }}</a>
-            <a href="{{ url_for('wialon_report') }}">{{ 'Отчёт' if lang == 'ru' else 'Ҳисобот' }}</a>
-        </div>
-        {% else %}
-        <div class="dash-no-access dash002-no-access">{{ L_no_access }}</div>
-        {% endif %}
-    </div>
-
-    <div class="dash-card dash002-card small">
-        <div class="dash-card-head"><span>{{ L_system }}</span></div>
-        <div class="dash-metrics compact">
-            <div><b>{{ dashboard.backup.name or '—' }}</b><span>{{ 'последний backup' if lang == 'ru' else 'охирги backup' }}</span></div>
-            <div><b>{% if dashboard.backup.age_hours is not none %}{{ dashboard.backup.age_hours }} {{ 'ч' if lang == 'ru' else 'соат' }}{% else %}—{% endif %}</b><span>{{ 'возраст backup' if lang == 'ru' else 'backup ёши' }}</span></div>
-            <div><b>{{ dashboard.audit|length }}</b><span>{{ 'последние события' if lang == 'ru' else 'охирги воқеалар' }}</span></div>
-            <div><b>{{ dashboard.fuel.sync_age_hours if dashboard.fuel.sync_age_hours is not none else '—' }}</b><span>{{ 'часов с Topaz sync' if lang == 'ru' else 'Topaz sync соат' }}</span></div>
-        </div>
-    </div>
-</div>
-
-{% if dashboard.audit %}
-<div class="card dash-audit-card dash002-audit-card">
-    <div class="card-header">
-        <span>{{ 'Последние действия в системе' if lang == 'ru' else 'Тизимдаги охирги амаллар' }}</span>
-        {% if dashboard.module_access.admin %}<a href="{{ url_for('admin_audit_logs') }}" class="btn btn-secondary btn-sm">{{ 'Журнал' if lang == 'ru' else 'Журнал' }}</a>{% endif %}
-    </div>
-    <div class="dash-audit-list">
-        {% for a in dashboard.audit %}
-        <div class="dash-audit-row">
-            <div>
-                <strong>{{ a.action }}</strong>
-                <span>{{ a.description or '' }}</span>
-            </div>
-            <div class="dash-audit-meta">
-                <span>{{ a.username_snapshot or 'system' }}</span>
-                <span>{{ a.created_at }}</span>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-</div>
-{% endif %}
-
-{# DASH003 — Work Orders analytics ─────────────────────────────────────── #}
+{# ════════ DASH003 — WORK ORDERS ANALYTICS ════════ #}
 {% if dashboard.work_orders.by_org or dashboard.work_orders.overdue_list %}
-<div class="dash003-section">
-
-  {# Row 1: by-org table + by-mechanic table #}
-  <div class="dash003-row">
-
-    {# By-org #}
-    <div class="dash003-card">
-      <div class="dash003-head">
-        <span>{{ 'Наряды по организациям' if lang == 'ru' else 'Ташкилотлар бўйича нарядлар' }}</span>
-        <span class="period-note">{{ d_from.strftime('%d.%m') }}–{{ d_to.strftime('%d.%m') }}</span>
+<div class="vs-mb">
+  {# Row 1 #}
+  <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px; margin-bottom:14px;">
+    <div class="vs-table-wrap">
+      <div class="vs-card-header">
+        <div class="vs-card-title">{{ 'Наряды по организациям' if lang == 'ru' else 'Ташкилотлар бўйича нарядлар' }}</div>
+        <span class="vs-soft" style="font-size:11.5px;">{{ d_from.strftime('%d.%m') }}–{{ d_to.strftime('%d.%m') }}</span>
       </div>
       {% if dashboard.work_orders.by_org %}
-      <table class="dash003-tbl">
-        <thead>
-          <tr>
-            <th>{{ 'Организация' if lang == 'ru' else 'Ташкилот' }}</th>
-            <th class="num">{{ 'Откр' if lang == 'ru' else 'Очиқ' }}</th>
-            <th class="num">{{ 'Выпол' if lang == 'ru' else 'Бажар' }}</th>
-            <th class="num">{{ 'Просроч' if lang == 'ru' else 'Муддат' }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in dashboard.work_orders.by_org %}
-          <tr>
-            <td>{{ row.name }}</td>
-            <td class="num">{{ row.open or '—' }}</td>
-            <td class="num">{{ row.done or '—' }}</td>
-            <td class="num {% if row.overdue > 0 %}warn{% endif %}">
-              {{ row.overdue if row.overdue else '—' }}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+      <div class="vs-table-scroll">
+        <table class="vs-table is-compact">
+          <thead>
+            <tr>
+              <th>{{ 'Организация' if lang == 'ru' else 'Ташкилот' }}</th>
+              <th class="right">{{ 'Откр' if lang == 'ru' else 'Очиқ' }}</th>
+              <th class="right">{{ 'Выпол' if lang == 'ru' else 'Бажар' }}</th>
+              <th class="right">{{ 'Просроч' if lang == 'ru' else 'Муддат' }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in dashboard.work_orders.by_org %}
+            <tr>
+              <td>{{ row.name }}</td>
+              <td class="right vs-num">{{ row.open or '—' }}</td>
+              <td class="right vs-num">{{ row.done or '—' }}</td>
+              <td class="right vs-num"{% if row.overdue > 0 %} style="color:var(--vs-danger); font-weight:700;"{% endif %}>{{ row.overdue if row.overdue else '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
       {% else %}
-      <div class="dash003-empty">{{ 'Нет данных за период' if lang == 'ru' else 'Давр учун маълумот йўқ' }}</div>
+      <div style="padding:24px; text-align:center;" class="vs-soft">{{ 'Нет данных за период' if lang == 'ru' else 'Давр учун маълумот йўқ' }}</div>
       {% endif %}
     </div>
 
-    {# By-mechanic #}
-    <div class="dash003-card">
-      <div class="dash003-head">
-        <span>{{ 'Механики' if lang == 'ru' else 'Механиклар' }}</span>
+    <div class="vs-table-wrap">
+      <div class="vs-card-header">
+        <div class="vs-card-title">{{ 'Механики' if lang == 'ru' else 'Механиклар' }}</div>
       </div>
       {% if dashboard.work_orders.by_mechanic %}
-      <table class="dash003-tbl">
-        <thead>
-          <tr>
-            <th>{{ 'Механик' if lang == 'ru' else 'Механик' }}</th>
-            <th class="num">{{ 'Откр' if lang == 'ru' else 'Очиқ' }}</th>
-            <th class="num">{{ 'В работе' if lang == 'ru' else 'Ишда' }}</th>
-            <th class="num">{{ 'Выпол' if lang == 'ru' else 'Бажар' }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in dashboard.work_orders.by_mechanic %}
-          <tr>
-            <td>{{ row.name }}</td>
-            <td class="num">{{ row.open or '—' }}</td>
-            <td class="num">{{ row.in_progress or '—' }}</td>
-            <td class="num">{{ row.done or '—' }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+      <div class="vs-table-scroll">
+        <table class="vs-table is-compact">
+          <thead>
+            <tr>
+              <th>{{ 'Механик' if lang == 'ru' else 'Механик' }}</th>
+              <th class="right">{{ 'Откр' if lang == 'ru' else 'Очиқ' }}</th>
+              <th class="right">{{ 'В работе' if lang == 'ru' else 'Ишда' }}</th>
+              <th class="right">{{ 'Выпол' if lang == 'ru' else 'Бажар' }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in dashboard.work_orders.by_mechanic %}
+            <tr>
+              <td>{{ row.name }}</td>
+              <td class="right vs-num">{{ row.open or '—' }}</td>
+              <td class="right vs-num">{{ row.in_progress or '—' }}</td>
+              <td class="right vs-num">{{ row.done or '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
       {% else %}
-      <div class="dash003-empty">{{ 'Нет назначенных механиков' if lang == 'ru' else 'Тайинланган механиклар йўқ' }}</div>
+      <div style="padding:24px; text-align:center;" class="vs-soft">{{ 'Нет назначенных механиков' if lang == 'ru' else 'Тайинланган механиклар йўқ' }}</div>
       {% endif %}
     </div>
+  </div>
 
-  </div>{# end row 1 #}
-
-  {# Row 2: overdue list + done-by-day bar chart #}
-  <div class="dash003-row">
-
-    {# Overdue list #}
-    <div class="dash003-card">
-      <div class="dash003-head">
-        <span>{{ 'Просроченные наряды' if lang == 'ru' else 'Муддати ўтган нарядлар' }}</span>
+  {# Row 2 #}
+  <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px;">
+    <div class="vs-table-wrap">
+      <div class="vs-card-header">
+        <div class="vs-card-title">{{ 'Просроченные наряды' if lang == 'ru' else 'Муддати ўтган нарядлар' }}</div>
         {% if dashboard.work_orders.overdue > 0 %}
-        <a href="{{ url_for('work_orders.index') }}?status=open">{{ 'Все →' if lang == 'ru' else 'Барча →' }}</a>
+        <a href="{{ url_for('work_orders.index') }}?status=open" class="vs-kpi-link" style="color:var(--vs-danger);">{{ 'Все →' if lang == 'ru' else 'Барча →' }}</a>
         {% endif %}
       </div>
       {% if dashboard.work_orders.overdue_list %}
-      <table class="dash003-tbl">
-        <thead>
-          <tr>
-            <th>{{ 'Наряд / Техника' if lang == 'ru' else 'Наряд / Техника' }}</th>
-            <th>{{ 'Орг' if lang == 'ru' else 'Таш' }}</th>
-            <th class="num">{{ 'Дата' if lang == 'ru' else 'Сана' }}</th>
-            <th class="num">{{ 'Дней' if lang == 'ru' else 'Кун' }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for item in dashboard.work_orders.overdue_list %}
-          <tr>
-            <td>
-              <a href="{{ url_for('work_orders.detail', wo_id=item.id) }}" class="wo-link">{{ item.number }}</a>
-              <span class="eq-line">{{ item.equipment }}</span>
-            </td>
-            <td style="font-size:11.5px; color:var(--text2);">{{ item.org }}</td>
-            <td class="num" style="font-size:11.5px;">{{ item.planned }}</td>
-            <td class="num"><span class="dash003-days-badge">+{{ item.days }}</span></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+      <div class="vs-table-scroll">
+        <table class="vs-table is-compact">
+          <thead>
+            <tr>
+              <th>{{ 'Наряд / Техника' if lang == 'ru' else 'Наряд / Техника' }}</th>
+              <th>{{ 'Орг' if lang == 'ru' else 'Таш' }}</th>
+              <th class="right">{{ 'Дата' if lang == 'ru' else 'Сана' }}</th>
+              <th class="right">{{ 'Дней' if lang == 'ru' else 'Кун' }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in dashboard.work_orders.overdue_list %}
+            <tr>
+              <td>
+                <a href="{{ url_for('work_orders.detail', wo_id=item.id) }}" style="font-weight:600;">{{ item.number }}</a>
+                <span style="display:block; font-size:11.5px; margin-top:2px;" class="vs-soft">{{ item.equipment }}</span>
+              </td>
+              <td class="vs-muted" style="font-size:11.5px;">{{ item.org }}</td>
+              <td class="right vs-num" style="font-size:11.5px;">{{ item.planned }}</td>
+              <td class="right"><span class="vs-badge vs-badge-danger">+{{ item.days }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
       {% else %}
-      <div class="dash003-empty">{{ 'Просроченных нарядов нет ✓' if lang == 'ru' else 'Муддати ўтган нарядлар йўқ ✓' }}</div>
+      <div style="padding:24px; text-align:center; color:var(--vs-success); font-weight:600;">{{ 'Просроченных нарядов нет ✓' if lang == 'ru' else 'Муддати ўтган нарядлар йўқ ✓' }}</div>
       {% endif %}
     </div>
 
-    {# Done-by-day mini bar chart #}
-    <div class="dash003-card">
-      <div class="dash003-head">
-        <span>{{ 'Выполнено — последние 14 дней' if lang == 'ru' else 'Сўнгги 14 кун — бажарилди' }}</span>
+    <div class="vs-table-wrap">
+      <div class="vs-card-header">
+        <div class="vs-card-title">{{ 'Выполнено — последние 14 дней' if lang == 'ru' else 'Сўнгги 14 кун — бажарилди' }}</div>
       </div>
-      <div class="dash003-chart-wrap">
+      <div style="padding: 18px 20px 14px;">
         {% set bars = dashboard.work_orders.done_by_day %}
-        <svg viewBox="0 0 280 60" xmlns="http://www.w3.org/2000/svg"
-             style="width:100%; height:60px; overflow:visible;">
+        <svg viewBox="0 0 280 60" xmlns="http://www.w3.org/2000/svg" style="width:100%; height:80px; overflow:visible;">
           {% for bar in bars %}
           {% set bx = loop.index0 * 20 %}
           {% set bh = 0 if bar.count == 0 else [bar.pct * 44 // 100, 3] | max %}
           {% set by = 44 - bh %}
-          <rect x="{{ bx + 2 }}" y="{{ by }}" width="16" height="{{ bh }}"
-                rx="2"
-                fill="{{ 'var(--accent)' if bar.count > 0 else 'var(--border)' }}"/>
+          <rect x="{{ bx + 2 }}" y="{{ by }}" width="16" height="{{ bh }}" rx="2" fill="{{ 'var(--vs-primary)' if bar.count > 0 else 'var(--vs-border-2)' }}"/>
           {% if bar.count > 0 %}
-          <text x="{{ bx + 10 }}" y="{{ by - 2 }}"
-                text-anchor="middle" font-size="7" fill="var(--text2)">{{ bar.count }}</text>
+          <text x="{{ bx + 10 }}" y="{{ by - 2 }}" text-anchor="middle" font-size="8" fill="var(--vs-text-muted)" font-weight="600">{{ bar.count }}</text>
           {% endif %}
           {% endfor %}
-          {# x-axis baseline #}
-          <line x1="0" y1="46" x2="280" y2="46" stroke="var(--border)" stroke-width="1"/>
-          {# date labels every 3rd bar #}
+          <line x1="0" y1="46" x2="280" y2="46" stroke="var(--vs-border-2)" stroke-width="1"/>
           {% for bar in bars %}
           {% if loop.index0 % 3 == 0 %}
-          <text x="{{ loop.index0 * 20 + 10 }}" y="56"
-                text-anchor="middle" font-size="7" fill="var(--text2)">{{ bar.label }}</text>
+          <text x="{{ loop.index0 * 20 + 10 }}" y="56" text-anchor="middle" font-size="8" fill="var(--vs-text-soft)">{{ bar.label }}</text>
           {% endif %}
           {% endfor %}
         </svg>
       </div>
     </div>
-
-  </div>{# end row 2 #}
-
-</div>{# end dash003-section #}
+  </div>
+</div>
 {% endif %}
-{# /DASH003 ─────────────────────────────────────────────────────────────── #}
 
-<!-- DASH002C_MARKER: legacy daily report section separator -->
-<div class="legacy-report-section">
-    <div class="legacy-report-head">
-        <div>
-            <h2>{{ 'Дневной отчёт и ввод данных' if lang == 'ru' else 'Кунлик ҳисобот ва маълумот киритиш' }}</h2>
-            <p>{{ 'Фильтры, итоги и строки работ за выбранный период' if lang == 'ru' else 'Танланган давр бўйича фильтрлар, якунлар ва иш қаторлари' }}</p>
-        </div>
-        <div class="legacy-report-actions">
-            <a href="{{ url_for('daily_entry', date=d_from.isoformat()) }}" class="btn btn-secondary btn-sm">{{ 'Ввод данных' if lang == 'ru' else 'Маълумот киритиш' }}</a>
-            <a href="{{ url_for('report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="btn btn-secondary btn-sm">{{ 'Открыть полный отчёт' if lang == 'ru' else 'Тўлиқ ҳисоботни очиш' }}</a>
-        </div>
+{# ════════ LEGACY REPORT — HEADER ════════ #}
+<div class="vs-card vs-card-xl vs-mb">
+  <div class="vs-card-header">
+    <div>
+      <div class="vs-card-title" style="font-size:17px;">{{ 'Дневной отчёт и ввод данных' if lang == 'ru' else 'Кунлик ҳисобот ва маълумот киритиш' }}</div>
+      <div class="vs-soft" style="font-size:12.5px; margin-top:4px;">{{ 'Фильтры, итоги и строки работ за выбранный период' if lang == 'ru' else 'Танланган давр бўйича фильтрлар, якунлар ва иш қаторлари' }}</div>
     </div>
+    <div class="vs-row-end">
+      {% if current_user.can_edit %}
+      <a href="{{ url_for('daily_entry', date=d_from.isoformat()) }}" class="vs-btn vs-btn-sm">{{ 'Ввод данных' if lang == 'ru' else 'Маълумот киритиш' }}</a>
+      {% endif %}
+      <a href="{{ url_for('report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="vs-btn vs-btn-sm vs-btn-primary">{{ 'Открыть полный отчёт' if lang == 'ru' else 'Тўлиқ ҳисоботни очиш' }}</a>
+    </div>
+  </div>
 </div>
 
-<div class="card legacy-filter-card" style="margin-bottom:20px;">
-    <div class="card-body">
-        <form method="post" action="{{ url_for('index') }}" id="dateForm">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <div class="date-mode-tabs">
-                <button type="button" class="mode-btn {% if mode == 'day' %}active{% endif %}"
-                        onclick="setMode('day')">{{ t('Бугун') }}</button>
-                <button type="button" class="mode-btn {% if mode == 'week' %}active{% endif %}"
-                        onclick="setMode('week')">{{ t('Ҳафта') }}</button>
-                <button type="button" class="mode-btn {% if mode == 'month' %}active{% endif %}"
-                        onclick="setMode('month')">{{ t('Ой') }}</button>
-                <button type="button" class="mode-btn {% if mode == 'range' %}active{% endif %}"
-                        onclick="setMode('range')">{{ t('Ихтиёрий') }}</button>
-            </div>
-            <input type="hidden" name="mode" id="modeInput" value="{{ mode }}">
+{# ════════ LEGACY REPORT — FILTER ════════ #}
+<div class="vs-card vs-card-xl vs-mb" style="border-top: 3px solid var(--vs-primary);">
+  <div class="vs-card-body">
+    <form method="post" action="{{ url_for('index') }}" id="dateForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-            <div class="date-fields" style="margin-top:12px;">
-                <div id="dayFields" style="{% if mode != 'day' %}display:none;{% endif %}">
-                    <input type="date" name="date" value="{{ d_from.isoformat() }}"
-                           onchange="document.getElementById('dateForm').submit()">
-                </div>
-                <div id="rangeFields" style="{% if mode != 'range' %}display:none;{% endif %} display:flex; gap:10px; align-items:center;">
-                    <label style="font-size:13px; color:var(--text2);">{{ t('Дан:') }}</label>
-                    <input type="date" name="date_from" value="{{ d_from.isoformat() }}">
-                    <label style="font-size:13px; color:var(--text2);">{{ t('Гача:') }}</label>
-                    <input type="date" name="date_to" value="{{ d_to.isoformat() }}">
-                </div>
-                <div id="autoFields" style="{% if mode not in ('week', 'month') %}display:none;{% endif %}">
-                    <span class="text-muted" style="font-size:13px;">
-                        {{ d_from.strftime('%d.%m.%Y') }} — {{ d_to.strftime('%d.%m.%Y') }}
-                        ({{ num_days }} {{ t('кун') }})
-                    </span>
-                </div>
-            </div>
+      <div class="vs-pills">
+        <button type="button" class="vs-pill{% if mode == 'day' %} is-active{% endif %}" onclick="setMode(event, 'day')">{{ t('Бугун') }}</button>
+        <button type="button" class="vs-pill{% if mode == 'week' %} is-active{% endif %}" onclick="setMode(event, 'week')">{{ t('Ҳафта') }}</button>
+        <button type="button" class="vs-pill{% if mode == 'month' %} is-active{% endif %}" onclick="setMode(event, 'month')">{{ t('Ой') }}</button>
+        <button type="button" class="vs-pill{% if mode == 'range' %} is-active{% endif %}" onclick="setMode(event, 'range')">{{ t('Ихтиёрий') }}</button>
+      </div>
+      <input type="hidden" name="mode" id="modeInput" value="{{ mode }}">
 
-            <div style="margin-top:12px; display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
-                <div>
-                    <label style="font-size:12px; font-weight:600; color:var(--text2); display:block; margin-bottom:4px;">{{ t('Ташкилот') }}</label>
-                    <div class="ms-wrap" id="ms-orgs-idx">
-                        <button type="button" class="ms-trigger"></button>
-                        <div class="ms-dropdown">
-                            <label class="ms-item ms-select-all">
-                                <input type="checkbox" class="ms-all"
-                                       {% if not selected_org_ids %}checked{% endif %}> {{ t('Барчаси') }}
-                            </label>
-                            {% for org in organizations %}
-                            <label class="ms-item">
-                                <input type="checkbox" name="org_ids" value="{{ org.id }}"
-                                       {% if not selected_org_ids or org.id in selected_org_ids %}checked{% endif %}>
-                                {{ org.name }}
-                            </label>
-                            {% endfor %}
-                        </div>
-                    </div>
-                </div>
-                <div>
-                    <label style="font-size:12px; font-weight:600; color:var(--text2); display:block; margin-bottom:4px;">{{ t('Категория') }}</label>
-                    <div class="ms-wrap" id="ms-cats-idx">
-                        <button type="button" class="ms-trigger"></button>
-                        <div class="ms-dropdown">
-                            <label class="ms-item ms-select-all">
-                                <input type="checkbox" class="ms-all"
-                                       {% if not selected_cats %}checked{% endif %}> {{ t('Барчаси') }}
-                            </label>
-                            {% for code, name in CATEGORIES.items() %}
-                            <label class="ms-item">
-                                <input type="checkbox" name="cat_codes" value="{{ code }}"
-                                       {% if not selected_cats or code in selected_cats %}checked{% endif %}>
-                                {{ name }}
-                            </label>
-                            {% endfor %}
-                        </div>
-                    </div>
-                </div>
-                <div>
-                    <label style="font-size:12px; font-weight:600; color:var(--text2); display:block; margin-bottom:4px;">{{ t('Иш тури') }}</label>
-                    <div class="ms-wrap" id="ms-wtypes-idx">
-                        <button type="button" class="ms-trigger"></button>
-                        <div class="ms-dropdown">
-                            <label class="ms-item ms-select-all">
-                                <input type="checkbox" class="ms-all"
-                                       {% if not selected_work_types %}checked{% endif %}> {{ t('Барчаси') }}
-                            </label>
-                            {% for wt in all_work_types %}
-                            <label class="ms-item">
-                                <input type="checkbox" name="work_types" value="{{ wt }}"
-                                       {% if not selected_work_types or wt in selected_work_types %}checked{% endif %}>
-                                {{ wt }}
-                            </label>
-                            {% endfor %}
-                        </div>
-                    </div>
-                </div>
-                <button type="submit" class="btn btn-primary btn-sm">{{ t('Кўрсатиш') }}</button>
+      <div style="margin-top:14px;">
+        <div id="dayFields" style="{% if mode != 'day' %}display:none;{% endif %}">
+          <div class="vs-field" style="max-width:200px;">
+            <label class="vs-label">{{ t('Сана') }}</label>
+            <input class="vs-input" type="date" name="date" value="{{ d_from.isoformat() }}" onchange="document.getElementById('dateForm').submit()">
+          </div>
+        </div>
+        <div id="rangeFields" class="vs-form-row" style="{% if mode != 'range' %}display:none;{% endif %}">
+          <div class="vs-field" style="max-width:200px;">
+            <label class="vs-label">{{ t('Дан') }}</label>
+            <input class="vs-input" type="date" name="date_from" value="{{ d_from.isoformat() }}">
+          </div>
+          <div class="vs-field" style="max-width:200px;">
+            <label class="vs-label">{{ t('Гача') }}</label>
+            <input class="vs-input" type="date" name="date_to" value="{{ d_to.isoformat() }}">
+          </div>
+        </div>
+        <div id="autoFields" class="vs-soft" style="{% if mode not in ('week', 'month') %}display:none;{% endif %} font-size:13px;">
+          {{ d_from.strftime('%d.%m.%Y') }} — {{ d_to.strftime('%d.%m.%Y') }} ({{ num_days }} {{ t('кун') }})
+        </div>
+      </div>
+
+      <div class="vs-form-row" style="margin-top:14px;">
+        <div class="vs-field">
+          <label class="vs-label">{{ t('Ташкилот') }}</label>
+          <div class="vs-multiselect" id="vsms-orgs">
+            <button type="button" class="vs-multiselect-trigger" onclick="vsmsToggle('vsms-orgs')">
+              <span class="vs-ms-label" data-all-label="{{ t('Барчаси') }}" data-selected-label="{{ 'выбрано' if lang == 'ru' else 'танланган' }}">{{ t('Барчаси') }}</span>
+              <span class="vs-ms-count"></span>
+              <span class="vs-ms-arrow">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </span>
+            </button>
+            <div class="vs-multiselect-dropdown">
+              {% for org in organizations %}
+              <label>
+                <input type="checkbox" name="org_ids" value="{{ org.id }}"
+                       {% if not selected_org_ids or org.id in selected_org_ids %}checked{% endif %}
+                       onchange="vsmsUpdate('vsms-orgs')">
+                <span>{{ org.name }}</span>
+              </label>
+              {% endfor %}
+              <div class="vs-multiselect-footer">
+                <button type="button" onclick="vsmsAll('vsms-orgs', true)">{{ t('Барчаси') }}</button>
+                <button type="button" onclick="vsmsAll('vsms-orgs', false)">{{ 'Очистить' if lang == 'ru' else 'Тозалаш' }}</button>
+              </div>
             </div>
-        </form>
-    </div>
+          </div>
+        </div>
+
+        <div class="vs-field">
+          <label class="vs-label">{{ t('Категория') }}</label>
+          <div class="vs-multiselect" id="vsms-cats">
+            <button type="button" class="vs-multiselect-trigger" onclick="vsmsToggle('vsms-cats')">
+              <span class="vs-ms-label" data-all-label="{{ t('Барчаси') }}" data-selected-label="{{ 'выбрано' if lang == 'ru' else 'танланган' }}">{{ t('Барчаси') }}</span>
+              <span class="vs-ms-count"></span>
+              <span class="vs-ms-arrow">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </span>
+            </button>
+            <div class="vs-multiselect-dropdown">
+              {% for code, name in CATEGORIES.items() %}
+              <label>
+                <input type="checkbox" name="cat_codes" value="{{ code }}"
+                       {% if not selected_cats or code in selected_cats %}checked{% endif %}
+                       onchange="vsmsUpdate('vsms-cats')">
+                <span>{{ name }}</span>
+              </label>
+              {% endfor %}
+              <div class="vs-multiselect-footer">
+                <button type="button" onclick="vsmsAll('vsms-cats', true)">{{ t('Барчаси') }}</button>
+                <button type="button" onclick="vsmsAll('vsms-cats', false)">{{ 'Очистить' if lang == 'ru' else 'Тозалаш' }}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="vs-field">
+          <label class="vs-label">{{ t('Иш тури') }}</label>
+          <div class="vs-multiselect" id="vsms-wtypes">
+            <button type="button" class="vs-multiselect-trigger" onclick="vsmsToggle('vsms-wtypes')">
+              <span class="vs-ms-label" data-all-label="{{ t('Барчаси') }}" data-selected-label="{{ 'выбрано' if lang == 'ru' else 'танланган' }}">{{ t('Барчаси') }}</span>
+              <span class="vs-ms-count"></span>
+              <span class="vs-ms-arrow">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </span>
+            </button>
+            <div class="vs-multiselect-dropdown">
+              {% for wt in all_work_types %}
+              <label>
+                <input type="checkbox" name="work_types" value="{{ wt }}"
+                       {% if not selected_work_types or wt in selected_work_types %}checked{% endif %}
+                       onchange="vsmsUpdate('vsms-wtypes')">
+                <span>{{ wt }}</span>
+              </label>
+              {% endfor %}
+              <div class="vs-multiselect-footer">
+                <button type="button" onclick="vsmsAll('vsms-wtypes', true)">{{ t('Барчаси') }}</button>
+                <button type="button" onclick="vsmsAll('vsms-wtypes', false)">{{ 'Очистить' if lang == 'ru' else 'Тозалаш' }}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <button type="submit" class="vs-btn vs-btn-primary">{{ t('Кўрсатиш') }}</button>
+      </div>
+    </form>
+  </div>
 </div>
 
-{# ─── SUMMARY CARDS ─── #}
-<div class="stats-grid">
-    <div class="stat-card">
-        <div class="label">{{ t('Жами сумма') }}</div>
-        <div class="value">{{ total|fmt_sum }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">{{ t('Нақд') }}</div>
-        <div class="value cash">{{ total_cash|fmt_sum }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">{{ t('Пул кўчириш') }}</div>
-        <div class="value transfer">{{ total_transfer|fmt_sum }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">{{ t('Тизим корхонасида ишлади') }}</div>
-        <div class="value internal">{{ total_internal|fmt_sum }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">{{ t('Бошқа') }}</div>
-        <div class="value">{{ total_other|fmt_sum }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">{{ t('Ишлаган техника') }}</div>
-        <div class="value">{{ working_count }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">{{ t('Бўш техника') }}</div>
-        <div class="value text-muted">{{ idle_count }}</div>
-    </div>
+{# ════════ LEGACY REPORT — SUMMARY STATS ════════ #}
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ t('Жами сумма') }}</div>
+    <div class="vs-stat-value vs-num">{{ total|fmt_sum }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ t('Нақд') }}</div>
+    <div class="vs-stat-value vs-num is-success">{{ total_cash|fmt_sum }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ t('Пул кўчириш') }}</div>
+    <div class="vs-stat-value vs-num is-info">{{ total_transfer|fmt_sum }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ t('Тизим') }}</div>
+    <div class="vs-stat-value vs-num is-purple">{{ total_internal|fmt_sum }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ t('Бошқа') }}</div>
+    <div class="vs-stat-value vs-num">{{ total_other|fmt_sum }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ t('Ишлаган техника') }}</div>
+    <div class="vs-stat-value vs-num">{{ working_count }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ t('Бўш техника') }}</div>
+    <div class="vs-stat-value vs-num is-muted">{{ idle_count }}</div>
+  </div>
 </div>
 
 {% if is_range %}
-<div style="margin-bottom:16px; color:var(--text2); font-size:13px;">
-    {{ t('Давр:') }} <strong>{{ d_from.strftime('%d.%m.%Y') }} — {{ d_to.strftime('%d.%m.%Y') }}</strong> ({{ num_days }} {{ t('кун') }})
-    {% if deficiencies_count > 0 %} | {{ t('Камчиликлар:') }} <strong>{{ deficiencies_count }}</strong>{% endif %}
+<div class="vs-muted" style="margin-bottom:16px; font-size:13px;">
+  {{ t('Давр:') }} <strong>{{ d_from.strftime('%d.%m.%Y') }} — {{ d_to.strftime('%d.%m.%Y') }}</strong> ({{ num_days }} {{ t('кун') }})
+  {% if deficiencies_count > 0 %} | {{ t('Камчиликлар:') }} <strong>{{ deficiencies_count }}</strong>{% endif %}
 </div>
 {% elif deficiencies_count > 0 %}
-<div style="margin-bottom:16px; color:var(--text2); font-size:13px;">
-    {{ t('Камчиликлар:') }} <strong>{{ deficiencies_count }}</strong>
+<div class="vs-muted" style="margin-bottom:16px; font-size:13px;">
+  {{ t('Камчиликлар:') }} <strong>{{ deficiencies_count }}</strong>
 </div>
 {% endif %}
 
-{# ─── ACCORDION TABLE ─── #}
+{# ════════ LEGACY REPORT — ACCORDION TABLE ════════ #}
 {% if orgs_data %}
-<div class="card">
-    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
-        <span>
-            {% if is_range %}
-            {{ t('Ташкилотлар бўйича') }}: {{ d_from.strftime('%d.%m.%Y') }} — {{ d_to.strftime('%d.%m.%Y') }}
-            {% else %}
-            {{ t('Ташкилотлар бўйича') }}: {{ d_from.strftime('%d.%m.%Y') }}
-            {% endif %}
-        </span>
-        <span>
-            <button class="btn btn-secondary btn-sm" onclick="toggleAllOrgs(true)">{{ t('Барчасини очиш') }}</button>
-            <button class="btn btn-secondary btn-sm" onclick="toggleAllOrgs(false)">{{ t('Барчасини ёпиш') }}</button>
-        </span>
+<div class="vs-table-wrap">
+  <div class="vs-card-header">
+    <div class="vs-card-title">
+      {% if is_range %}
+      {{ t('Ташкилотлар бўйича') }}: {{ d_from.strftime('%d.%m.%Y') }} — {{ d_to.strftime('%d.%m.%Y') }}
+      {% else %}
+      {{ t('Ташкилотлар бўйича') }}: {{ d_from.strftime('%d.%m.%Y') }}
+      {% endif %}
     </div>
-    <table class="accordion-table">
-        <thead>
-            <tr>
-                <th style="width:36px;"></th>
-                <th>{{ t('Ташкилот / Техника') }}</th>
-                <th class="text-center" style="width:60px;">{{ t('Ишл.') }}</th>
-                <th class="text-center" style="width:60px;">{{ t('Бўш') }}</th>
-                <th class="text-right">{{ t('Нақд') }}</th>
-                <th class="text-right">{{ t('Пул кўч.') }}</th>
-                <th class="text-right">{{ t('Тизим') }}</th>
-                <th class="text-right">{{ t('Бошқа') }}</th>
-                <th class="text-right">{{ t('Жами') }}</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for od in orgs_data %}
-        {# ─── Level 1: Organization row ─── #}
-        <tr class="org-row level1" onclick="toggleOrg({{ od.org.id }})" style="cursor:pointer;">
-            <td class="text-center">
-                <span class="toggle-icon" id="icon-org-{{ od.org.id }}">▶</span>
-            </td>
-            <td style="font-weight:700;">{{ od.org.name }}</td>
-            <td class="text-center">{{ od.working_count }}</td>
-            <td class="text-center text-muted">{{ od.idle_count }}</td>
-            <td class="text-right">{{ od.cash|fmt_sum }}</td>
-            <td class="text-right">{{ od.transfer|fmt_sum }}</td>
-            <td class="text-right">{{ od.internal|fmt_sum }}</td>
-            <td class="text-right">{{ od.other|fmt_sum }}</td>
-            <td class="text-right" style="font-weight:700;">{{ od.total|fmt_sum }}</td>
+    <div class="vs-row-end">
+      <button type="button" class="vs-btn vs-btn-sm" onclick="toggleAllOrgs(true)">{{ t('Барчасини очиш') }}</button>
+      <button type="button" class="vs-btn vs-btn-sm" onclick="toggleAllOrgs(false)">{{ t('Барчасини ёпиш') }}</button>
+    </div>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table">
+      <thead>
+        <tr>
+          <th style="width:36px;"></th>
+          <th>{{ t('Ташкилот / Техника') }}</th>
+          <th class="center" style="width:60px;">{{ t('Ишл.') }}</th>
+          <th class="center" style="width:60px;">{{ t('Бўш') }}</th>
+          <th class="right">{{ t('Нақд') }}</th>
+          <th class="right">{{ t('Пул кўч.') }}</th>
+          <th class="right">{{ t('Тизим') }}</th>
+          <th class="right">{{ t('Бошқа') }}</th>
+          <th class="right">{{ t('Жами') }}</th>
         </tr>
+      </thead>
+      <tbody>
+      {% for od in orgs_data %}
+      <tr class="is-clickable" onclick="toggleOrg({{ od.org.id }})">
+        <td class="center"><span class="toggle-icon" id="icon-org-{{ od.org.id }}">▶</span></td>
+        <td style="font-weight:700;">{{ od.org.name }}</td>
+        <td class="center vs-num">{{ od.working_count }}</td>
+        <td class="center vs-num vs-muted">{{ od.idle_count }}</td>
+        <td class="right vs-num">{{ od.cash|fmt_sum }}</td>
+        <td class="right vs-num">{{ od.transfer|fmt_sum }}</td>
+        <td class="right vs-num">{{ od.internal|fmt_sum }}</td>
+        <td class="right vs-num">{{ od.other|fmt_sum }}</td>
+        <td class="right vs-num" style="font-weight:700;">{{ od.total|fmt_sum }}</td>
+      </tr>
 
-        {# ─── Level 2: Equipment rows (hidden by default) ─── #}
-        {% for eqid, ed in od.equipment.items() %}
-        <tr class="eq-row level2 org-{{ od.org.id }}-eq" style="display:none;" onclick="toggleEq({{ od.org.id }}, {{ eqid }}); event.stopPropagation();">
-            <td class="text-center">
-                {% if ed.records|length > 0 %}
-                <span class="toggle-icon toggle-sm" id="icon-eq-{{ od.org.id }}-{{ eqid }}">▶</span>
-                {% endif %}
-            </td>
-            <td style="padding-left:30px;">
-                <span style="font-weight:500;">{{ ed.eq.name }}</span>
-                {% if ed.eq.plate %}<span class="text-sm text-muted"> {{ ed.eq.plate }}</span>{% endif %}
-            </td>
-            <td class="text-center">
-                {% if is_range %}
-                    {% if ed.working_days > 0 %}
-                    <span class="text-sm">{{ ed.working_days }} {{ t('кун') }}</span>
-                    {% endif %}
-                {% else %}
-                    {% if ed.working_days > 0 %}
-                    <span class="working-badge" style="font-size:11px;">{{ t('Ишлаган') }}</span>
-                    {% endif %}
-                {% endif %}
-            </td>
-            <td class="text-center text-muted">
-                {% if is_range %}
-                    {% if ed.idle_days > 0 %}
-                    <span class="text-sm">{{ ed.idle_days }} {{ t('кун') }}</span>
-                    {% endif %}
-                {% else %}
-                    {% if ed.idle_days > 0 and ed.working_days == 0 %}
-                    <span class="idle-badge" style="font-size:11px;">{{ t('Бўш') }}</span>
-                    {% endif %}
-                {% endif %}
-            </td>
-            <td class="text-right text-sm">{{ ed.cash|fmt_sum }}</td>
-            <td class="text-right text-sm">{{ ed.transfer|fmt_sum }}</td>
-            <td class="text-right text-sm">{{ ed.internal|fmt_sum }}</td>
-            <td class="text-right text-sm">{{ ed.other|fmt_sum }}</td>
-            <td class="text-right" style="font-weight:600;">{{ ed.total|fmt_sum }}</td>
-        </tr>
+      {% for eqid, ed in od.equipment.items() %}
+      <tr class="vs-accord-l2 org-{{ od.org.id }}-eq is-clickable" style="display:none;" onclick="toggleEq({{ od.org.id }}, {{ eqid }}); event.stopPropagation();">
+        <td class="center">
+          {% if ed.records|length > 0 %}
+          <span class="toggle-icon toggle-sm" id="icon-eq-{{ od.org.id }}-{{ eqid }}">▶</span>
+          {% endif %}
+        </td>
+        <td>
+          <span style="font-weight:500;">{{ ed.eq.name }}</span>
+          {% if ed.eq.plate %}<span class="vs-soft" style="font-size:12px;"> {{ ed.eq.plate }}</span>{% endif %}
+        </td>
+        <td class="center">
+          {% if is_range %}
+            {% if ed.working_days > 0 %}<span style="font-size:12px;">{{ ed.working_days }} {{ t('кун') }}</span>{% endif %}
+          {% else %}
+            {% if ed.working_days > 0 %}<span class="vs-badge vs-badge-success">{{ t('Ишлаган') }}</span>{% endif %}
+          {% endif %}
+        </td>
+        <td class="center vs-muted">
+          {% if is_range %}
+            {% if ed.idle_days > 0 %}<span style="font-size:12px;">{{ ed.idle_days }} {{ t('кун') }}</span>{% endif %}
+          {% else %}
+            {% if ed.idle_days > 0 and ed.working_days == 0 %}<span class="vs-badge vs-badge-warning">{{ t('Бўш') }}</span>{% endif %}
+          {% endif %}
+        </td>
+        <td class="right vs-num" style="font-size:12.5px;">{{ ed.cash|fmt_sum }}</td>
+        <td class="right vs-num" style="font-size:12.5px;">{{ ed.transfer|fmt_sum }}</td>
+        <td class="right vs-num" style="font-size:12.5px;">{{ ed.internal|fmt_sum }}</td>
+        <td class="right vs-num" style="font-size:12.5px;">{{ ed.other|fmt_sum }}</td>
+        <td class="right vs-num" style="font-weight:600;">{{ ed.total|fmt_sum }}</td>
+      </tr>
 
-        {# ─── Level 3: Record detail rows (hidden by default) ─── #}
-        {% for r in ed.records %}
-        <tr class="rec-row level3 eq-{{ od.org.id }}-{{ eqid }}-rec" style="display:none;">
-            <td></td>
-            <td style="padding-left:55px;">
-                {% if is_range %}
-                <span class="text-sm text-muted">{{ r.work_date.strftime('%d.%m') }}</span>
-                {% endif %}
-                {% if r.status == 'working' %}
-                    <span class="working-badge" style="font-size:10px;">{{ r.work_type }}</span>
-                    <span class="text-sm text-muted">{{ r.customer }}</span>
-                {% else %}
-                    <span class="idle-badge" style="font-size:10px;">{{ r.idle_reason or t('Бўш') }}</span>
-                {% endif %}
-            </td>
-            <td colspan="2" class="text-center text-sm">
-                {% if r.status == 'working' and r.quantity %}
-                    {{ r.quantity }} {{ r.unit }} &times; {{ r.price|fmt_sum }}
-                {% endif %}
-            </td>
-            <td class="text-right text-sm">{% if r.amount_cash %}{{ r.amount_cash|fmt_sum }}{% endif %}</td>
-            <td class="text-right text-sm">{% if r.amount_transfer %}{{ r.amount_transfer|fmt_sum }}{% endif %}</td>
-            <td class="text-right text-sm">{% if r.amount_internal %}{{ r.amount_internal|fmt_sum }}{% endif %}</td>
-            <td class="text-right text-sm">{% if r.amount_other %}{{ r.amount_other|fmt_sum }}{% endif %}</td>
-            <td class="text-right text-sm" style="font-weight:500;">{{ r.total_amount|fmt_sum }}</td>
+      {% for r in ed.records %}
+      <tr class="vs-accord-l3 eq-{{ od.org.id }}-{{ eqid }}-rec" style="display:none;">
+        <td></td>
+        <td>
+          {% if is_range %}<span class="vs-soft" style="font-size:12px;">{{ r.work_date.strftime('%d.%m') }}</span> {% endif %}
+          {% if r.status == 'working' %}
+            <span class="vs-badge vs-badge-success">{{ r.work_type }}</span>
+            <span class="vs-soft" style="font-size:12px;">{{ r.customer }}</span>
+          {% else %}
+            <span class="vs-badge vs-badge-warning">{{ r.idle_reason or t('Бўш') }}</span>
+          {% endif %}
+        </td>
+        <td colspan="2" class="center" style="font-size:12px;">
+          {% if r.status == 'working' and r.quantity %}
+            {{ r.quantity }} {{ r.unit }} &times; {{ r.price|fmt_sum }}
+          {% endif %}
+        </td>
+        <td class="right vs-num">{% if r.amount_cash %}{{ r.amount_cash|fmt_sum }}{% endif %}</td>
+        <td class="right vs-num">{% if r.amount_transfer %}{{ r.amount_transfer|fmt_sum }}{% endif %}</td>
+        <td class="right vs-num">{% if r.amount_internal %}{{ r.amount_internal|fmt_sum }}{% endif %}</td>
+        <td class="right vs-num">{% if r.amount_other %}{{ r.amount_other|fmt_sum }}{% endif %}</td>
+        <td class="right vs-num" style="font-weight:500;">{{ r.total_amount|fmt_sum }}</td>
+      </tr>
+      {% endfor %}
+      {% endfor %}
+      {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td></td>
+          <td class="total" style="font-weight:800;">{{ t('ЖАМИ') }}</td>
+          <td class="center vs-num">{{ working_count }}</td>
+          <td class="center vs-num">{{ idle_count }}</td>
+          <td class="right vs-num">{{ total_cash|fmt_sum }}</td>
+          <td class="right vs-num">{{ total_transfer|fmt_sum }}</td>
+          <td class="right vs-num">{{ total_internal|fmt_sum }}</td>
+          <td class="right vs-num">{{ total_other|fmt_sum }}</td>
+          <td class="right vs-num total">{{ total|fmt_sum }}</td>
         </tr>
-        {% endfor %}
-        {% endfor %}
-        {% endfor %}
-        </tbody>
-        <tfoot>
-            <tr class="total-row">
-                <td></td>
-                <td style="font-weight:700;">{{ t('ЖАМИ') }}</td>
-                <td class="text-center">{{ working_count }}</td>
-                <td class="text-center">{{ idle_count }}</td>
-                <td class="text-right">{{ total_cash|fmt_sum }}</td>
-                <td class="text-right">{{ total_transfer|fmt_sum }}</td>
-                <td class="text-right">{{ total_internal|fmt_sum }}</td>
-                <td class="text-right">{{ total_other|fmt_sum }}</td>
-                <td class="text-right">{{ total|fmt_sum }}</td>
-            </tr>
-        </tfoot>
+      </tfoot>
     </table>
+  </div>
 </div>
 
 {% else %}
-<div class="card">
-    <div class="card-body" style="text-align:center; padding:60px;">
-        <div style="font-size:48px; margin-bottom:16px;">📋</div>
-        <h3 style="margin-bottom:8px;">
-            {% if is_range %}
-            {{ d_from.strftime('%d.%m.%Y') }} — {{ d_to.strftime('%d.%m.%Y') }} {{ t('учун маълумот йўқ') }}
-            {% else %}
-            {{ d_from.strftime('%d.%m.%Y') }} {{ t('учун маълумот йўқ') }}
-            {% endif %}
-        </h3>
-        <p class="text-muted" style="margin-bottom:20px;">{{ t('Маълумот киритишни бошланг') }}</p>
-        <a href="{{ url_for('daily_entry', date=d_from.isoformat()) }}" class="btn btn-primary btn-lg">
-            {{ t('Маълумот киритиш →') }}
-        </a>
-    </div>
+<div class="vs-empty">
+  <div class="vs-empty-ico">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4v2h6V4M9 10h6M9 14h4"/></svg>
+  </div>
+  <div class="vs-empty-title">
+    {% if is_range %}
+    {{ d_from.strftime('%d.%m.%Y') }} — {{ d_to.strftime('%d.%m.%Y') }} {{ t('учун маълумот йўқ') }}
+    {% else %}
+    {{ d_from.strftime('%d.%m.%Y') }} {{ t('учун маълумот йўқ') }}
+    {% endif %}
+  </div>
+  <div class="vs-empty-sub">{{ t('Маълумот киритишни бошланг') }}</div>
+  {% if current_user.can_edit %}
+  <div style="margin-top:16px;">
+    <a href="{{ url_for('daily_entry', date=d_from.isoformat()) }}" class="vs-btn vs-btn-primary vs-btn-lg">{{ t('Маълумот киритиш →') }}</a>
+  </div>
+  {% endif %}
 </div>
 {% endif %}
+
 {% endblock %}
 
 {% block scripts %}
-<style>
-
-.dash-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:18px; padding:18px 20px; border:1px solid var(--border); border-radius:var(--radius); background:linear-gradient(180deg,var(--surface),var(--surface2)); box-shadow:var(--shadow); }
-.dash-hero h1 { font-size:22px; margin-bottom:4px; }
-.dash-subtitle { color:var(--text2); font-size:13px; }
-.dash-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
-.dash-grid { display:grid; grid-template-columns:repeat(3,minmax(220px,1fr)); gap:12px; margin-bottom:14px; }
-.dash-grid.secondary { grid-template-columns:repeat(3,minmax(220px,1fr)); margin-bottom:20px; }
-.dash-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:14px 16px; min-height:170px; }
-.dash-card.small { min-height:130px; }
-.dash-card.dash-warn { border-left:4px solid var(--warn); }
-.dash-card.dash-danger { border-left:4px solid var(--danger); }
-.dash-card-head { display:flex; justify-content:space-between; gap:10px; align-items:center; margin-bottom:10px; font-size:13px; font-weight:700; color:var(--text2); text-transform:uppercase; letter-spacing:.4px; }
-.dash-card-head a { color:var(--accent); text-decoration:none; font-size:12px; text-transform:none; letter-spacing:0; }
-.dash-main-value { font-size:30px; font-weight:800; letter-spacing:-.8px; line-height:1.1; }
-.dash-main-label { color:var(--text2); font-size:12px; margin:2px 0 12px; }
-.dash-metrics { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
-.dash-metrics.compact { margin-top:8px; }
-.dash-metrics div { background:var(--surface2); border:1px solid var(--border); border-radius:5px; padding:8px 10px; min-width:0; }
-.dash-metrics b { display:block; font-size:15px; line-height:1.2; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.dash-metrics span { display:block; color:var(--text2); font-size:11px; margin-top:2px; }
-.dash-no-access { padding:30px 0; color:var(--text2); text-align:center; font-size:13px; }
-.dash-audit-card { margin-bottom:20px; }
-.dash-audit-list { padding:4px 0; }
-.dash-audit-row { display:flex; justify-content:space-between; gap:14px; padding:10px 16px; border-bottom:1px solid var(--border); }
-.dash-audit-row:last-child { border-bottom:0; }
-.dash-audit-row strong { display:block; font-size:13px; }
-.dash-audit-row span { display:block; color:var(--text2); font-size:12px; margin-top:2px; }
-.dash-audit-meta { color:var(--text2); font-size:11px; white-space:nowrap; text-align:right; }
-
-/* DASH002B_MARKER: dashboard drill-down links and severity polish */
-.dash-quick-links {
-    grid-column:1 / -1;
-    display:flex;
-    gap:6px;
-    flex-wrap:wrap;
-    margin-top:2px;
-}
-.dash-metrics .dash-quick-links {
-    background:transparent;
-    border:0;
-    padding:0;
-}
-.dash-quick-links a {
-    display:inline-flex;
-    align-items:center;
-    gap:4px;
-    padding:5px 8px;
-    border:1px solid var(--border);
-    border-radius:999px;
-    background:var(--surface);
-    color:var(--accent);
-    text-decoration:none;
-    font-size:11px;
-    font-weight:700;
-    white-space:nowrap;
-}
-.dash-quick-links a:hover {
-    border-color:var(--accent);
-    background:var(--accent-light);
-}
-.dash-severity-banner {
-    grid-column:1 / -1;
-    border-radius:var(--radius);
-    padding:8px 10px;
-    margin-bottom:8px;
-    font-size:12px;
-    font-weight:700;
-}
-.dash-severity-banner.danger {
-    background:var(--danger-light);
-    color:var(--danger);
-    border:1px solid rgba(220,53,69,.25);
-}
-.dash-severity-banner.warning {
-    background:var(--warn-light);
-    color:var(--warn);
-    border:1px solid rgba(255,193,7,.35);
-}
-.dash-severity-banner.ok {
-    background:var(--accent-light);
-    color:var(--accent);
-    border:1px solid rgba(40,167,69,.25);
-}
-
-
-/* DASH002C_MARKER: dashboard/report separation polish */
-.legacy-report-section {
-    margin:24px 0 12px;
-    padding-top:4px;
-}
-.legacy-report-head {
-    display:flex;
-    justify-content:space-between;
-    align-items:flex-start;
-    gap:16px;
-    padding:16px 18px;
-    border:1px solid var(--border);
-    border-radius:var(--radius);
-    background:var(--surface);
-    box-shadow:var(--shadow);
-}
-.legacy-report-head h2 {
-    margin:0 0 4px;
-    font-size:18px;
-    line-height:1.2;
-}
-.legacy-report-head p {
-    margin:0;
-    color:var(--text2);
-    font-size:13px;
-}
-.legacy-report-actions {
-    display:flex;
-    gap:8px;
-    flex-wrap:wrap;
-    justify-content:flex-end;
-}
-.legacy-filter-card {
-    border-top:3px solid var(--accent);
-}
-
-@media (max-width:1000px) { .dash-grid, .dash-grid.secondary { grid-template-columns:1fr; } .dash-hero { flex-direction:column; } .dash-actions { justify-content:flex-start; } .dash-audit-row { flex-direction:column; } .dash-audit-meta { text-align:left; white-space:normal; } .legacy-report-head { flex-direction:column; } .legacy-report-actions { justify-content:flex-start; } }
-.date-mode-tabs { display:flex; gap:4px; }
-.mode-btn { padding:8px 16px; border:1px solid var(--border); border-radius:6px;
-            background:var(--surface); font-size:13px; cursor:pointer; transition:all 0.15s; }
-.mode-btn:hover { background:var(--surface2); }
-.mode-btn.active { background:var(--accent); color:white; border-color:var(--accent); }
-.accordion-table { width:100%; border-collapse:collapse; }
-.accordion-table th { font-size:12px; color:var(--text2); padding:8px 10px; border-bottom:2px solid var(--border); }
-.accordion-table td { padding:8px 10px; border-bottom:1px solid var(--border); font-size:13px; }
-.org-row { background:var(--surface2); }
-.org-row:hover { background:var(--surface); }
-.eq-row { background:var(--bg); }
-.eq-row:hover { background:var(--surface); cursor:pointer; }
-.rec-row { background:var(--bg); }
-.rec-row td { font-size:12px; color:var(--text2); }
-.total-row td { font-weight:700; font-size:14px; background:var(--surface2); border-top:2px solid var(--border); padding:12px 10px; }
-.toggle-icon { font-size:10px; color:var(--text2); display:inline-block; transition:transform 0.15s; }
-.toggle-icon.open { transform:rotate(90deg); }
-.toggle-sm { font-size:8px; }
-</style>
 <script>
-function setMode(mode) {
+function setMode(e, mode) {
     document.getElementById('modeInput').value = mode;
     document.getElementById('dayFields').style.display = mode === 'day' ? '' : 'none';
     document.getElementById('rangeFields').style.display = mode === 'range' ? 'flex' : 'none';
     document.getElementById('autoFields').style.display = (mode === 'week' || mode === 'month') ? '' : 'none';
-    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
-    event.target.classList.add('active');
+    document.querySelectorAll('.vs-pill').forEach(b => b.classList.remove('is-active'));
+    if (e && e.target) e.target.classList.add('is-active');
     if (mode !== 'range') {
         document.getElementById('dateForm').submit();
     }
 }
 
+function vsmsToggle(id) {
+  var ms = document.getElementById(id);
+  if (!ms) return;
+  var open = ms.classList.toggle('is-open');
+  if (open) {
+    document.querySelectorAll('.vs-multiselect.is-open').forEach(function(other) {
+      if (other.id !== id) other.classList.remove('is-open');
+    });
+  }
+}
+function vsmsUpdate(id) {
+  var ms = document.getElementById(id);
+  if (!ms) return;
+  var boxes = ms.querySelectorAll('input[type=checkbox]');
+  var total = boxes.length;
+  var checked = ms.querySelectorAll('input[type=checkbox]:checked').length;
+  var countEl = ms.querySelector('.vs-ms-count');
+  var labelEl = ms.querySelector('.vs-ms-label');
+  var allLabel = labelEl.dataset.allLabel || 'All';
+  var selLabel = labelEl.dataset.selectedLabel || 'selected';
+  if (checked === 0 || checked === total) {
+    countEl.style.display = 'none';
+    labelEl.textContent = allLabel;
+  } else {
+    countEl.style.display = '';
+    countEl.textContent = checked + '/' + total;
+    labelEl.textContent = checked + ' ' + selLabel;
+  }
+}
+function vsmsAll(id, value) {
+  var ms = document.getElementById(id);
+  if (!ms) return;
+  ms.querySelectorAll('input[type=checkbox]').forEach(function(cb) { cb.checked = value; });
+  vsmsUpdate(id);
+}
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.vs-multiselect')) {
+    document.querySelectorAll('.vs-multiselect.is-open').forEach(function(ms) {
+      ms.classList.remove('is-open');
+    });
+  }
+});
 document.addEventListener('DOMContentLoaded', function() {
-    if (document.getElementById('ms-orgs-idx')) initMultiselect('ms-orgs-idx', '{{ t("Ташкилот") }}');
-    if (document.getElementById('ms-cats-idx')) initMultiselect('ms-cats-idx', '{{ t("Категория") }}');
-    if (document.getElementById('ms-wtypes-idx')) initMultiselect('ms-wtypes-idx', '{{ t("Иш тури") }}');
+  document.querySelectorAll('.vs-multiselect').forEach(function(ms) { vsmsUpdate(ms.id); });
 });
 
 function toggleOrg(orgId) {
     const rows = document.querySelectorAll('.org-' + orgId + '-eq');
     const icon = document.getElementById('icon-org-' + orgId);
     const isOpen = icon.classList.contains('open');
-
     rows.forEach(r => r.style.display = isOpen ? 'none' : '');
     icon.classList.toggle('open');
-
-    // If closing org, also close all its equipment
     if (isOpen) {
         document.querySelectorAll('[class*="eq-' + orgId + '-"][class*="-rec"]').forEach(r => r.style.display = 'none');
         document.querySelectorAll('[id^="icon-eq-' + orgId + '-"]').forEach(i => i.classList.remove('open'));
@@ -1153,14 +730,19 @@ function toggleEq(orgId, eqId) {
 }
 
 function toggleAllOrgs(open) {
-    document.querySelectorAll('.level2').forEach(r => r.style.display = open ? '' : 'none');
+    document.querySelectorAll('.vs-accord-l2').forEach(r => r.style.display = open ? '' : 'none');
     document.querySelectorAll('[id^="icon-org-"]').forEach(i => {
         if (open) i.classList.add('open'); else i.classList.remove('open');
     });
     if (!open) {
-        document.querySelectorAll('.level3').forEach(r => r.style.display = 'none');
+        document.querySelectorAll('.vs-accord-l3').forEach(r => r.style.display = 'none');
         document.querySelectorAll('[id^="icon-eq-"]').forEach(i => i.classList.remove('open'));
     }
 }
 </script>
+<style>
+.toggle-icon { display:inline-block; font-size:10px; color: var(--vs-text-soft); transition: transform 0.15s; }
+.toggle-icon.open { transform: rotate(90deg); }
+.toggle-sm { font-size: 8px; }
+</style>
 {% endblock %}

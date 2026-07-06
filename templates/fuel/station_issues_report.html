@@ -1,16 +1,41 @@
-{% extends "base.html" %}
-{% block title %}АЗС — Выдача топлива по АЗС{% endblock %}
+{% extends g.base_template %}
+{% block title %}АЗС — {{ 'Выдача топлива по АЗС' if lang == 'ru' else 'АЗС бўйича ёқилғи бериш' }}{% endblock %}
 {% block content %}
+
+{% set L_title = 'Выдача топлива по АЗС' if lang == 'ru' else 'АЗС бўйича ёқилғи бериш' %}
+{% set L_subtitle = 'Детальный отчёт по выдачам за период с группировкой по датам' if lang == 'ru' else 'Давр бўйича беришлар бўйича батафсил ҳисобот, саналар бўйича группаланган' %}
+{% set L_back = '← Центр отчётов' if lang == 'ru' else '← Ҳисоботлар маркази' %}
+{% set L_dashboard = 'Панель АЗС' if lang == 'ru' else 'АЗС панели' %}
+{% set L_date_from = 'Начало периода' if lang == 'ru' else 'Давр бошланиши' %}
+{% set L_date_to = 'Конец периода' if lang == 'ru' else 'Давр тугаши' %}
+{% set L_station = 'АЗС' if lang == 'ru' else 'АЗС' %}
+{% set L_select_station = '— Выберите АЗС —' if lang == 'ru' else '— АЗСни танланг —' %}
+{% set L_show = 'Показать' if lang == 'ru' else 'Кўрсатиш' %}
+{% set L_empty1_title = 'Выберите АЗС и период' if lang == 'ru' else 'АЗС ва даврни танланг' %}
+{% set L_empty1_text = 'Выберите заправочную станцию и укажите период, чтобы увидеть детальный отчёт по выдачам топлива.' if lang == 'ru' else 'Батафсил ҳисоботни кўриш учун АЗСни ва даврни танланг.' %}
+{% set L_empty2_title = 'Нет данных за выбранный период' if lang == 'ru' else 'Танланган давр учун маълумот йўқ' %}
+{% set L_empty2_hint = 'Попробуйте изменить период или выбрать другую АЗС.' if lang == 'ru' else 'Даврни ўзгартириб кўринг ёки бошқа АЗСни танланг.' %}
+{% set L_count = 'Количество выдач' if lang == 'ru' else 'Беришлар сони' %}
+{% set L_total_l = 'Итого литров' if lang == 'ru' else 'Жами литр' %}
+{% set L_selected_station = 'Выбранная АЗС' if lang == 'ru' else 'Танланган АЗС' %}
+{% set L_period = 'Период' if lang == 'ru' else 'Давр' %}
+{% set L_records = 'записей' if lang == 'ru' else 'ёзув' %}
+{% set L_th_num = '№' if lang == 'ru' else '№' %}
+{% set L_th_datetime = 'Дата/время' if lang == 'ru' else 'Сана/вақт' %}
+{% set L_th_card = 'Имя карты' if lang == 'ru' else 'Карта номи' %}
+{% set L_th_liters = 'Литры' if lang == 'ru' else 'Литр' %}
+{% set L_day_issues = 'выдач, всего' if lang == 'ru' else 'бериш, жами' %}
+{% set L_grand_total = 'ВСЕГО' if lang == 'ru' else 'ЖАМИ' %}
 
 {# FUEL-REPORT-012C: Station issue detail report page #}
 <style>
 .station-issues-header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; flex-wrap:wrap; }
 .station-issues-summary { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px; margin-bottom:18px; }
-.station-issues-summary .stat-card { border-radius:10px; box-shadow:var(--shadow-sm); }
-.station-issues-empty { text-align:center; padding:48px 20px; color:var(--text-muted); }
-.station-issues-filter-card { border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:16px; background:var(--card-bg); box-shadow:var(--shadow-sm); }
+.station-issues-summary .stat-card { border-radius:10px; box-shadow:var(--shadow); }
+.station-issues-empty { text-align:center; padding:48px 20px; color:var(--text2); }
+.station-issues-filter-card { border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:16px; background:var(--surface); box-shadow:var(--shadow); }
 .station-issues-filter-card .filter-row { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
-.station-issues-filter-card label { font-size:12px; font-weight:600; display:block; margin-bottom:2px; color:var(--text-muted); }
+.station-issues-filter-card label { font-size:12px; font-weight:600; display:block; margin-bottom:2px; color:var(--text2); }
 .station-issues-filter-card select,
 .station-issues-filter-card input { padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; }
 .station-issues-table { min-width:600px; }
@@ -21,12 +46,12 @@
 
 <div class="station-issues-header">
     <div>
-        <h1>Выдача топлива по АЗС</h1>
-        <p class="text-muted text-sm" style="margin-top:4px;">Детальный отчёт по выдачам за период с группировкой по датам</p>
+        <h1>{{ L_title }}</h1>
+        <p class="text-muted text-sm" style="margin-top:4px;">{{ L_subtitle }}</p>
     </div>
     <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <a href="{{ url_for('fuel.reports_center') }}" class="btn btn-secondary btn-sm">← Центр отчётов</a>
-        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">Панель АЗС</a>
+        <a href="{{ url_for('fuel.reports_center') }}" class="btn btn-secondary btn-sm">{{ L_back }}</a>
+        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">{{ L_dashboard }}</a>
     </div>
 </div>
 
@@ -34,17 +59,17 @@
     <form method="GET" action="{{ url_for('fuel.station_issues_report') }}">
         <div class="filter-row">
             <div>
-                <label>Начало периода</label>
-                <input type="date" name="start_date" value="{{ start_date.isoformat() }}">
+                <label>{{ L_date_from }}</label>
+                <input type="date" name="start_date" value="{{ start_date.isoformat() }}" class="form-control">
             </div>
             <div>
-                <label>Конец периода</label>
-                <input type="date" name="end_date" value="{{ end_date.isoformat() }}">
+                <label>{{ L_date_to }}</label>
+                <input type="date" name="end_date" value="{{ end_date.isoformat() }}" class="form-control">
             </div>
             <div>
-                <label>АЗС</label>
-                <select name="station_id" style="min-width:240px;">
-                    <option value="">— Выберите АЗС —</option>
+                <label>{{ L_station }}</label>
+                <select name="station_id" style="min-width:240px;" class="form-control">
+                    <option value="">{{ L_select_station }}</option>
                     {% for st in stations %}
                     <option value="{{ st.id }}" {% if station_id == st.id %}selected{% endif %}>
                         {{ st.name }} — {{ st.topaz_id }}
@@ -53,7 +78,7 @@
                 </select>
             </div>
             <div>
-                <button type="submit" class="btn btn-primary btn-sm">Показать</button>
+                <button type="submit" class="btn btn-primary btn-sm">{{ L_show }}</button>
             </div>
         </div>
     </form>
@@ -63,43 +88,43 @@
 
 <div class="station-issues-empty">
     <div style="font-size:48px; margin-bottom:12px;">📋</div>
-    <h3>Выберите АЗС и период</h3>
-    <p>Выберите заправочную станцию и укажите период, чтобы увидеть детальный отчёт по выдачам топлива.</p>
+    <h3>{{ L_empty1_title }}</h3>
+    <p>{{ L_empty1_text }}</p>
 </div>
 
 {% elif txns|length == 0 %}
 
 <div class="station-issues-empty">
     <div style="font-size:48px; margin-bottom:12px;">📭</div>
-    <h3>Нет данных за выбранный период</h3>
-    <p>Для АЗС «{{ station_name }}» (Topaz {{ topaz_id }}) за период {{ start_date.strftime('%d.%m.%Y') }} — {{ end_date.strftime('%d.%m.%Y') }} нет записей о выдачах.</p>
-    <p class="text-muted text-sm" style="margin-top:8px;">Попробуйте изменить период или выбрать другую АЗС.</p>
+    <h3>{{ L_empty2_title }}</h3>
+    <p>{{ 'Для АЗС «' if lang == 'ru' else '«' }}{{ station_name }}{{ '» (Topaz ' if lang == 'ru' else '» (Topaz ' }}{{ topaz_id }}{{ ') за период ' if lang == 'ru' else ') ' }}{{ start_date.strftime('%d.%m.%Y') }} — {{ end_date.strftime('%d.%m.%Y') }}{{ ' нет записей о выдачах.' if lang == 'ru' else ' даврида беришлар йўқ.' }}</p>
+    <p class="text-muted text-sm" style="margin-top:8px;">{{ L_empty2_hint }}</p>
 </div>
 
 {% else %}
 
 <div class="station-issues-summary">
     <div class="stat-card">
-        <div class="label">Количество выдач</div>
+        <div class="label">{{ L_count }}</div>
         <div class="value">{{ summary.count }}</div>
     </div>
     <div class="stat-card">
-        <div class="label">Итого литров</div>
+        <div class="label">{{ L_total_l }}</div>
         <div class="value" style="color:var(--danger);">{{ '%.2f'|format(summary.total_liters) }} л</div>
     </div>
     <div class="stat-card">
-        <div class="label">Выбранная АЗС</div>
+        <div class="label">{{ L_selected_station }}</div>
         <div class="value" style="font-size:14px;">{{ station_name }}</div>
     </div>
     <div class="stat-card">
-        <div class="label">Период</div>
+        <div class="label">{{ L_period }}</div>
         <div class="value" style="font-size:14px;">{{ start_date.strftime('%d.%m.%Y') }} — {{ end_date.strftime('%d.%m.%Y') }}</div>
     </div>
 </div>
 
 <div style="margin-bottom:12px;">
     <a href="{{ url_for('fuel.station_issues_export', start_date=start_date.isoformat(), end_date=end_date.isoformat(), station_id=station_id) }}" class="btn btn-primary btn-sm">📥 Excel</a>
-    <span class="text-muted text-sm" style="margin-left:8px;">{{ summary.count }} записей</span>
+    <span class="text-muted text-sm" style="margin-left:8px;">{{ summary.count }} {{ L_records }}</span>
 </div>
 
 <div class="card" style="overflow:hidden;">
@@ -107,12 +132,12 @@
         <table class="station-issues-table">
             <thead>
                 <tr>
-                    <th>№</th>
-                    <th>Дата/время</th>
+                    <th>{{ L_th_num }}</th>
+                    <th>{{ L_th_datetime }}</th>
                     <th>АЗС</th>
                     <th>Topaz ID</th>
-                    <th>Имя карты</th>
-                    <th class="text-right">Литры</th>
+                    <th>{{ L_th_card }}</th>
+                    <th class="text-right">{{ L_th_liters }}</th>
                 </tr>
             </thead>
             <tbody>
@@ -121,7 +146,7 @@
                     {% set day_total = day_txns|sum(attribute='quantity') %}
                     <tr style="background:#f0f9f0;">
                         <td colspan="6" style="font-weight:600; color:#166534; font-size:13px; padding:6px 10px;">
-                            {{ date_group[8:10] }}.{{ date_group[5:7] }}.{{ date_group[0:4] }} — {{ day_txns|length }} выдач, всего {{ '%.2f'|format(day_total) }} л
+                            {{ date_group[8:10] }}.{{ date_group[5:7] }}.{{ date_group[0:4] }} — {{ day_txns|length }} {{ L_day_issues }} {{ '%.2f'|format(day_total) }} л
                         </td>
                     </tr>
                     {% for txn in day_txns %}
@@ -136,7 +161,7 @@
                     {% endfor %}
                 {% endfor %}
                 <tr class="station-issues-total-row">
-                    <td colspan="5" style="text-align:right; font-size:14px; padding:8px 10px;">ВСЕГО</td>
+                    <td colspan="5" style="text-align:right; font-size:14px; padding:8px 10px;">{{ L_grand_total }}</td>
                     <td class="text-right" style="font-size:15px; padding:8px 10px;">{{ '%.2f'|format(summary.total_liters) }} л</td>
                 </tr>
             </tbody>

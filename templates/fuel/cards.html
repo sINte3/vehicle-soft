@@ -1,14 +1,46 @@
-{% extends "base.html" %}
-{% block title %}АЗС — Справочник топливных карт{% endblock %}
+{% extends g.base_template %}
+{% block title %}АЗС — {{ 'Справочник топливных карт' if lang == 'ru' else 'Ёқилғи карталари маълумотномаси' }}{% endblock %}
 {% block content %}
+
+{% set L_title = 'Справочник топливных карт' if lang == 'ru' else 'Ёқилғи карталари маълумотномаси' %}
+{% set L_subtitle = 'Каталог карт Topaz: имена, RFID, статус и синхронизация' if lang == 'ru' else 'Topaz карталари каталоги: номлар, RFID, ҳолат ва синхронизация' %}
+{% set L_back = '← Панель АЗС' if lang == 'ru' else '← АЗС панели' %}
+{% set L_reports_center = 'Центр отчётов' if lang == 'ru' else 'Ҳисоботлар маркази' %}
+{% set L_total_cards = 'Всего карт' if lang == 'ru' else 'Жами карталар' %}
+{% set L_total_aliases = 'Всего alias-привязок' if lang == 'ru' else 'Жами alias боғланишлар' %}
+{% set L_active_cards = 'Активных карт' if lang == 'ru' else 'Фаол карталар' %}
+{% set L_last_sync = 'Последняя синхронизация' if lang == 'ru' else 'Охирги синхронизация' %}
+{% set L_search = 'Поиск' if lang == 'ru' else 'Қидириш' %}
+{% set L_search_ph = 'Имя карты, ID Topaz, RFID, номер машины' if lang == 'ru' else 'Карта номи, Topaz ID, RFID, машина рақами' %}
+{% set L_find = 'Найти' if lang == 'ru' else 'Топиш' %}
+{% set L_reset = 'Сброс' if lang == 'ru' else 'Тозалаш' %}
+{% set L_th_name = 'Имя карты' if lang == 'ru' else 'Карта номи' %}
+{% set L_th_active = 'Активна' if lang == 'ru' else 'Фаол' %}
+{% set L_th_car = 'Номер машины' if lang == 'ru' else 'Машина рақами' %}
+{% set L_th_model = 'Модель' if lang == 'ru' else 'Модел' %}
+{% set L_th_updated = 'Обновлено' if lang == 'ru' else 'Янгиланди' %}
+{% set L_yes = 'Да' if lang == 'ru' else 'Ҳа' %}
+{% set L_no = 'Нет' if lang == 'ru' else 'Йўқ' %}
+{% set L_not_found_title = 'Ничего не найдено' if lang == 'ru' else 'Ҳеч нарса топилмади' %}
+{% set L_empty_title = 'Каталог карт пуст' if lang == 'ru' else 'Карталар каталоги бўш' %}
+{% set L_empty_text = 'Данные карт ещё не синхронизированы из Topaz. После синхронизации здесь появятся имена карт и привязки.' if lang == 'ru' else 'Карталар маълумотлари ҳали Topazдан синхронланмаган. Синхронизациядан сўнг бу ерда карта номлари ва боғланишлар пайдо бўлади.' %}
+{% set L_sync_title = 'История синхронизации (последние' if lang == 'ru' else 'Синхронизация тарихи (охирги' %}
+{% set L_sh_time = 'Время' if lang == 'ru' else 'Вақт' %}
+{% set L_sh_source = 'Источник' if lang == 'ru' else 'Манба' %}
+{% set L_sh_received = 'Получено' if lang == 'ru' else 'Қабул қилинди' %}
+{% set L_sh_created = 'Создано' if lang == 'ru' else 'Яратилди' %}
+{% set L_sh_updated = 'Обновлено' if lang == 'ru' else 'Янгиланди' %}
+{% set L_sh_skipped = 'Пропущено' if lang == 'ru' else 'Ўтказиб юборилди' %}
+{% set L_sh_conflicts = 'Конфликты' if lang == 'ru' else 'Можаролар' %}
+{% set L_sh_status = 'Статус' if lang == 'ru' else 'Ҳолат' %}
 
 <style>
 .cards-page-header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; flex-wrap:wrap; }
 .cards-summary { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px; margin-bottom:18px; }
-.cards-summary .stat-card { border-radius:10px; box-shadow:var(--shadow-sm); }
-.cards-filter-card { border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:16px; background:var(--card-bg); box-shadow:var(--shadow-sm); }
+.cards-summary .stat-card { border-radius:10px; box-shadow:var(--shadow); }
+.cards-filter-card { border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:16px; background:var(--surface); box-shadow:var(--shadow); }
 .cards-filter-card .filter-row { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
-.cards-filter-card label { font-size:12px; font-weight:600; display:block; margin-bottom:2px; color:var(--text-muted); }
+.cards-filter-card label { font-size:12px; font-weight:600; display:block; margin-bottom:2px; color:var(--text2); }
 .cards-filter-card input { padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; min-width:240px; }
 .cards-table { min-width:800px; }
 .cards-table th { white-space:nowrap; font-size:12px; }
@@ -23,30 +55,30 @@
 
 <div class="cards-page-header">
     <div>
-        <h1>Справочник топливных карт</h1>
-        <p class="text-muted text-sm" style="margin-top:4px;">Каталог карт Topaz: имена, RFID, статус и синхронизация</p>
+        <h1>{{ L_title }}</h1>
+        <p class="text-muted text-sm" style="margin-top:4px;">{{ L_subtitle }}</p>
     </div>
     <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">← Панель АЗС</a>
-        <a href="{{ url_for('fuel.reports_center') }}" class="btn btn-secondary btn-sm">Центр отчётов</a>
+        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">{{ L_back }}</a>
+        <a href="{{ url_for('fuel.reports_center') }}" class="btn btn-secondary btn-sm">{{ L_reports_center }}</a>
     </div>
 </div>
 
 <div class="cards-summary">
     <div class="stat-card">
-        <div class="label">Всего карт</div>
+        <div class="label">{{ L_total_cards }}</div>
         <div class="value">{{ total_cards }}</div>
     </div>
     <div class="stat-card">
-        <div class="label">Всего alias-привязок</div>
+        <div class="label">{{ L_total_aliases }}</div>
         <div class="value">{{ total_aliases }}</div>
     </div>
     <div class="stat-card">
-        <div class="label">Активных карт</div>
+        <div class="label">{{ L_active_cards }}</div>
         <div class="value" style="color:var(--accent);">{{ active_cards }}</div>
     </div>
     <div class="stat-card">
-        <div class="label">Последняя синхронизация</div>
+        <div class="label">{{ L_last_sync }}</div>
         <div class="value" style="font-size:14px;">
             {% if last_sync %}{{ last_sync.synced_at.strftime('%d.%m.%Y %H:%M') }}{% else %}—{% endif %}
         </div>
@@ -57,13 +89,13 @@
     <form method="GET" action="{{ url_for('fuel.card_directory') }}">
         <div class="filter-row">
             <div>
-                <label>Поиск</label>
-                <input type="search" name="q" placeholder="Имя карты, ID Topaz, RFID, номер машины" value="{{ q }}">
+                <label>{{ L_search }}</label>
+                <input type="search" name="q" placeholder="{{ L_search_ph }}" value="{{ q }}" class="form-control">
             </div>
             <div>
-                <button type="submit" class="btn btn-primary btn-sm">Найти</button>
+                <button type="submit" class="btn btn-primary btn-sm">{{ L_find }}</button>
                 {% if q %}
-                <a href="{{ url_for('fuel.card_directory') }}" class="btn btn-secondary btn-sm" style="margin-left:4px;">Сброс</a>
+                <a href="{{ url_for('fuel.card_directory') }}" class="btn btn-secondary btn-sm" style="margin-left:4px;">{{ L_reset }}</a>
                 {% endif %}
             </div>
         </div>
@@ -78,12 +110,12 @@
             <thead>
                 <tr>
                     <th>ID Topaz</th>
-                    <th>Имя карты</th>
+                    <th>{{ L_th_name }}</th>
                     <th>RFID</th>
-                    <th class="text-center">Активна</th>
-                    <th>Номер машины</th>
-                    <th>Модель</th>
-                    <th class="text-sm text-muted">Обновлено</th>
+                    <th class="text-center">{{ L_th_active }}</th>
+                    <th>{{ L_th_car }}</th>
+                    <th>{{ L_th_model }}</th>
+                    <th class="text-sm text-muted">{{ L_th_updated }}</th>
                 </tr>
             </thead>
             <tbody>
@@ -93,7 +125,7 @@
                     <td style="font-weight:600;">{{ card.display_name }}</td>
                     <td class="text-sm text-muted">{{ card.rfid_code or '—' }}</td>
                     <td class="text-center">
-                        {% if card.enabled %}<span class="enabled-badge">Да</span>{% else %}<span class="disabled-badge">Нет</span>{% endif %}
+                        {% if card.enabled %}<span class="enabled-badge">{{ L_yes }}</span>{% else %}<span class="disabled-badge">{{ L_no }}</span>{% endif %}
                     </td>
                     <td>{{ card.car_number or '—' }}</td>
                     <td>{{ card.car_model or '—' }}</td>
@@ -110,11 +142,11 @@
 <div class="cards-empty">
     <div style="font-size:48px; margin-bottom:12px;">🪪</div>
     {% if q %}
-    <h3>Ничего не найдено</h3>
-    <p>По вашему запросу «{{ q }}» карт не найдено.</p>
+    <h3>{{ L_not_found_title }}</h3>
+    <p>{{ 'По вашему запросу «' if lang == 'ru' else '«' }}{{ q }}{{ '» карт не найдено.' if lang == 'ru' else '» сўрови бўйича карта топилмади.' }}</p>
     {% else %}
-    <h3>Каталог карт пуст</h3>
-    <p>Данные карт ещё не синхронизированы из Topaz. После синхронизации здесь появятся имена карт и привязки.</p>
+    <h3>{{ L_empty_title }}</h3>
+    <p>{{ L_empty_text }}</p>
     {% endif %}
 </div>
 
@@ -123,19 +155,19 @@
 {% if sync_logs %}
 <div class="cards-sync-section">
     <div class="card">
-        <div class="card-header">История синхронизации (последние {{ sync_logs|length }})</div>
+        <div class="card-header">{{ L_sync_title }} {{ sync_logs|length }})</div>
         <div style="overflow-x:auto;">
             <table class="cards-sync-table">
                 <thead>
                     <tr>
-                        <th>Время</th>
-                        <th>Источник</th>
-                        <th class="text-right">Получено</th>
-                        <th class="text-right">Создано</th>
-                        <th class="text-right">Обновлено</th>
-                        <th class="text-right">Пропущено</th>
-                        <th class="text-right">Конфликты</th>
-                        <th>Статус</th>
+                        <th>{{ L_sh_time }}</th>
+                        <th>{{ L_sh_source }}</th>
+                        <th class="text-right">{{ L_sh_received }}</th>
+                        <th class="text-right">{{ L_sh_created }}</th>
+                        <th class="text-right">{{ L_sh_updated }}</th>
+                        <th class="text-right">{{ L_sh_skipped }}</th>
+                        <th class="text-right">{{ L_sh_conflicts }}</th>
+                        <th>{{ L_sh_status }}</th>
                     </tr>
                 </thead>
                 <tbody>

@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}{{ t('Ҳисобот') }}{% endblock %}
 {% block content %}
 {% set is_ru = (lang == 'ru') %}
@@ -333,17 +333,17 @@
             <div class="report-period-row">
                 <div id="dayField" style="{% if mode != 'day' %}display:none;{% endif %}">
                     <label style="font-size:12px; font-weight:600; color:var(--text2); display:block; margin-bottom:4px;">{{ t('САНА') }}</label>
-                    <input type="date" name="report_date" value="{{ d_from.isoformat() }}" style="width:180px;">
+                    <input type="date" name="report_date" value="{{ d_from.isoformat() }}" style="width:180px;" class="form-control">
                 </div>
 
                 <div id="rangeField" style="{% if mode != 'range' %}display:none;{% endif %} gap:12px; align-items:end; flex-wrap:wrap;">
                     <div>
                         <label style="font-size:12px; font-weight:600; color:var(--text2); display:block; margin-bottom:4px;">{{ t('ДАН') }}</label>
-                        <input type="date" name="date_from" value="{{ d_from.isoformat() }}">
+                        <input type="date" name="date_from" value="{{ d_from.isoformat() }}" class="form-control">
                     </div>
                     <div>
                         <label style="font-size:12px; font-weight:600; color:var(--text2); display:block; margin-bottom:4px;">{{ t('ГАЧА') }}</label>
-                        <input type="date" name="date_to" value="{{ d_to.isoformat() }}">
+                        <input type="date" name="date_to" value="{{ d_to.isoformat() }}" class="form-control">
                     </div>
                 </div>
 
@@ -446,7 +446,7 @@
         </div>
 
         <div class="report-toolbar">
-            <input type="text" id="reportSearch" placeholder="{{ L_search }}" oninput="filterReportRows()">
+            <input type="text" id="reportSearch" placeholder="{{ L_search }}" oninput="filterReportRows()" class="form-control">
             {% if hidden_rows_count > 0 %}
             <span class="report-muted">{{ L_limited }} {{ hidden_rows_count }} {% if is_ru %}строк скрыто{% else %}қатор яширилган{% endif %}.</span>
             {% endif %}

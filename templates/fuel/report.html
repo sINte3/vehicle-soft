@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}АЗС — {{ 'Отчёт по топливу' if lang == 'ru' else 'Ёқилғи ҳисоботи' }}{% endblock %}
 {% block content %}
 
@@ -17,7 +17,7 @@
 }
 
 .fuel002d-subtitle {
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 13px;
   line-height: 1.45;
 }
@@ -31,15 +31,15 @@
 
 .fuel002d-pill {
   border: 1px solid var(--border);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 10px;
   padding: 10px 12px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002d-pill span {
   display: block;
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -49,7 +49,7 @@
 .fuel002d-pill strong {
   display: block;
   font-size: 15px;
-  color: var(--text-main);
+  color: var(--text);
 }
 
 .fuel002d-guidance-panel {
@@ -62,32 +62,32 @@
 .fuel002d-guidance-card {
   border: 1px solid var(--border);
   border-left: 4px solid var(--accent);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 10px;
   padding: 11px 13px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 .fuel002d-guidance-card strong {
   display: block;
   margin-bottom: 4px;
-  color: var(--text-main);
+  color: var(--text);
   font-size: 13px;
 }
 
 .fuel002d-guidance-card span {
   display: block;
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 12px;
   line-height: 1.4;
 }
 
 .fuel002d-filter-card {
   border: 1px solid var(--border);
-  background: var(--card-bg);
+  background: var(--surface);
   border-radius: 12px;
   padding: 14px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
   margin-bottom: 16px;
 }
 
@@ -104,8 +104,8 @@ form.fuel002d-filter-form {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: var(--card-bg);
-  box-shadow: var(--shadow-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow);
   margin-bottom: 16px;
 }
 
@@ -120,7 +120,7 @@ form.fuel002d-filter-form {
 .fuel002d-report-table th {
   white-space: nowrap;
   font-size: 12px;
-  background: var(--bg-soft);
+  background: var(--surface2);
 }
 
 .fuel002d-report-table td {
@@ -128,7 +128,7 @@ form.fuel002d-filter-form {
 }
 
 .fuel002d-section-note {
-  color: var(--text-muted);
+  color: var(--text2);
   font-size: 12px;
   margin: -4px 0 10px 0;
 }
@@ -293,22 +293,22 @@ form.fuel002d-filter-form {
 <form method="get" class="fuel-report-filter fuel002d-filter-form" id="fuelReportForm">
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ L_from }}</label>
-                <input type="date" name="date_from" value="{{ d_from.isoformat() }}">
+                <input type="date" name="date_from" class="form-control" value="{{ d_from.isoformat() }}">
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ L_to }}</label>
-                <input type="date" name="date_to" value="{{ d_to.isoformat() }}">
+                <input type="date" name="date_to" class="form-control" value="{{ d_to.isoformat() }}">
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ L_wh }}</label>
-                <select name="warehouse_id" id="warehouseFilter" onchange="filterStationsByWarehouse()">
+                <select name="warehouse_id" id="warehouseFilter" class="form-control" onchange="filterStationsByWarehouse()">
                     <option value="">{{ L_all }}</option>
                     {% for wh in warehouses %}<option value="{{ wh.id }}" {% if selected_warehouse_id == wh.id %}selected{% endif %}>{{ wh.name }}</option>{% endfor %}
                 </select>
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ L_station }}</label>
-                <select name="station_id" id="stationFilter">
+                <select name="station_id" id="stationFilter" class="form-control">
                     <option value="">{{ L_all }}</option>
                     {% for st in stations %}<option value="{{ st.id }}" data-wh="{{ st.warehouse_id }}" {% if selected_station_id == st.id %}selected{% endif %}>{{ st.name }} — {{ st.warehouse_name }}</option>{% endfor %}
                 </select>

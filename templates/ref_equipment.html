@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends g.base_template %}
 {% block title %}{{ t('Техникалар') }}{% endblock %}
 {% block content %}
 {% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
@@ -7,9 +7,6 @@
 {% set L_enable = 'Включить' if lang == 'ru' else 'Фаол қилиш' %}
 {% set L_linked_tip = 'Есть связанные записи. Физическое удаление заблокировано.' if lang == 'ru' else 'Боғланган ёзувлар мавжуд. Жисмоний ўчириш блокланган.' %}
 
-<div class="page-header">
-    <h1>{{ t('Техникалар') }}</h1>
-</div>
 
 <style>
 /* TASK_REF_001A_TEMPLATE_MARKER */
@@ -32,7 +29,7 @@
         <form method="get" action="{{ url_for('ref_equipment') }}" class="form-inline" style="flex-wrap:wrap; gap:12px; align-items:flex-end;">
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ t('Ташкилот') }}</label>
-                <select name="org_id" style="min-width:180px;">
+                <select name="org_id" style="min-width:180px;" class="form-control">
                     <option value="">{{ t('— Барчаси —') }}</option>
                     {% for org in organizations %}
                     <option value="{{ org.id }}" {% if selected_org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
@@ -79,7 +76,7 @@
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ 'Статус' if lang == 'ru' else 'Ҳолат' }}</label>
-                <select name="status" style="min-width:150px;">
+                <select name="status" style="min-width:150px;" class="form-control">
                     <option value="all" {% if selected_status == 'all' %}selected{% endif %}>{{ 'Все' if lang == 'ru' else 'Барчаси' }}</option>
                     <option value="active" {% if selected_status == 'active' %}selected{% endif %}>{{ 'Активные' if lang == 'ru' else 'Фаол' }}</option>
                     <option value="inactive" {% if selected_status == 'inactive' %}selected{% endif %}>{{ 'Отключённые' if lang == 'ru' else 'Фаол эмас' }}</option>
@@ -87,7 +84,7 @@
             </div>
             <div class="form-group" style="margin-bottom:0; min-width:220px; flex:1;">
                 <label>{{ 'Поиск' if lang == 'ru' else 'Қидириш' }}</label>
-                <input type="text" name="q" value="{{ search_q or '' }}" placeholder="{{ 'модель, госномер, тип, организация' if lang == 'ru' else 'модел, давлат рақами, тури, ташкилот' }}">
+                <input type="text" name="q" value="{{ search_q or '' }}" placeholder="{{ 'модель, госномер, тип, организация' if lang == 'ru' else 'модел, давлат рақами, тури, ташкилот' }}" class="form-control">
             </div>
             <button type="submit" class="btn btn-primary btn-sm">{{ t('Қидириш') }}</button>
             <a href="{{ url_for('ref_equipment') }}" class="btn btn-secondary btn-sm">{{ 'Сбросить' if lang == 'ru' else 'Тозалаш' }}</a>
@@ -124,33 +121,33 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-inline">
                 <div class="form-group"><label>{{ t('Ташкилот') }}</label>
-                    <select name="organization_id" required>
+                    <select name="organization_id" required class="form-control">
                         {% for org in organizations %}
                         <option value="{{ org.id }}" {% if selected_org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
                         {% endfor %}
                     </select>
                 </div>
                 <div class="form-group"><label>{{ t('Категория') }}</label>
-                    <select name="category" required>
+                    <select name="category" required class="form-control">
                         {% for code, name in CATEGORIES.items() %}
                         <option value="{{ code }}">{{ t(name) }}</option>
                         {% endfor %}
                     </select>
                 </div>
                 <div class="form-group"><label>{{ t('Тури') }}</label>
-                    <input type="text" name="eq_type" placeholder="Трактор МТЗ / Самосвал / Экскаватор...">
+                    <input type="text" name="eq_type" placeholder="Трактор МТЗ / Самосвал / Экскаватор..." class="form-control">
                 </div>
                 <div class="form-group"><label>{{ t('Техника номи') }}</label>
-                    <input type="text" name="name" placeholder="МТЗ 261 EA" required>
+                    <input type="text" name="name" placeholder="МТЗ 261 EA" required class="form-control">
                 </div>
                 <div class="form-group"><label>{{ t('Давлат рақами') }}</label>
-                    <input type="text" name="plate" placeholder="80 561 EA" required>
+                    <input type="text" name="plate" placeholder="80 561 EA" required class="form-control">
                 </div>
                 <div class="form-group"><label>{{ t('Ўлчов (дефолт)') }}</label>
-                    <input type="text" name="default_unit" placeholder="га" style="width:80px;">
+                    <input type="text" name="default_unit" placeholder="га" style="width:80px;" class="form-control">
                 </div>
                 <div class="form-group"><label>{{ t('Нарх (дефолт)') }}</label>
-                    <input type="number" name="default_price" placeholder="0" min="0" step="0.01" style="width:120px;">
+                    <input type="number" name="default_price" placeholder="0" min="0" step="0.01" style="width:120px;" class="form-control">
                 </div>
                 <div class="form-group"><label>&nbsp;</label>
                     <button type="submit" class="btn btn-primary">+ {{ t('Қўшиш') }}</button>
@@ -238,22 +235,22 @@
                             <input type="hidden" name="id" id="ref-eq-edit-id" value="">
 
                             <select name="organization_id" id="ref-eq-edit-organization-id" required
-                                    class="ref-equipment-org-select"
+                                    class="ref-equipment-org-select form-control"
                                     data-selected="">
                                 <option value="">{{ t(' выберите организацию ') }}</option>
                             </select>
 
                             <select name="category" id="ref-eq-edit-category" required
-                                    class="ref-equipment-category-select"
+                                    class="ref-equipment-category-select form-control"
                                     data-selected="">
                                 <option value="">{{ t(' выберите категорию ') }}</option>
                             </select>
 
-                            <input type="text" name="eq_type" id="ref-eq-edit-eq-type" value="">
-                            <input type="text" name="name" id="ref-eq-edit-name" value="" required>
-                            <input type="text" name="plate" id="ref-eq-edit-plate" value="" required>
-                            <input type="text" name="default_unit" id="ref-eq-edit-default-unit" value="" style="width:80px;">
-                            <input type="number" name="default_price" id="ref-eq-edit-default-price" value="0" min="0" step="0.01" style="width:120px;">
+                            <input type="text" name="eq_type" id="ref-eq-edit-eq-type" value="" class="form-control">
+                            <input type="text" name="name" id="ref-eq-edit-name" value="" required class="form-control">
+                            <input type="text" name="plate" id="ref-eq-edit-plate" value="" required class="form-control">
+                            <input type="text" name="default_unit" id="ref-eq-edit-default-unit" value="" style="width:80px;" class="form-control">
+                            <input type="number" name="default_price" id="ref-eq-edit-default-price" value="0" min="0" step="0.01" style="width:120px;" class="form-control">
 
                             <button class="btn btn-primary btn-sm" type="submit">{{ 'Сохранить' if lang == 'ru' else 'Сақлаш' }}</button>
                             <button class="btn btn-secondary btn-sm" type="button" onclick="cancelEqEdit()">{{ 'Отмена' if lang == 'ru' else 'Бекор қилиш' }}</button>
