@@ -1,0 +1,1111 @@
+/* =====================================================================
+   Vehicle Soft — Design System
+   Buxoro Agrokluster · Transport hisoboti
+   Plain CSS. No frameworks. Cyrillic-friendly. Drop into static/css/.
+   ===================================================================== */
+
+/* ---------- 1. TOKENS -------------------------------------------------- */
+:root {
+  /* Brand */
+  --vs-primary:        #2563eb;
+  --vs-primary-hover:  #1d4ed8;
+  --vs-primary-soft:   #eaf1fe;
+  --vs-brand-green:    #15803d;
+  --vs-brand-green-h:  #12692f;
+  --vs-brand-green-s:  #e7f6ec;
+
+  /* Sidebar (navy) */
+  --vs-side-bg-1:      #0f2b50;
+  --vs-side-bg-2:      #0c2244;
+  --vs-side-text:      #a9bad4;
+  --vs-side-text-dim:  #7e93b4;
+  --vs-side-section:   #5f779b;
+  --vs-side-hover:     rgba(255,255,255,.07);
+  --vs-side-active:    rgba(79,147,255,.16);
+  --vs-side-active-bar:#4f93ff;
+  --vs-side-active-fg: #ffffff;
+
+  /* Neutrals */
+  --vs-bg:             #eef2f7;
+  --vs-surface:        #ffffff;
+  --vs-surface-2:      #f7f9fc;
+  --vs-surface-3:      #f1f5fa;
+  --vs-border:         #e6ecf4;
+  --vs-border-2:       #e2e8f1;
+  --vs-border-3:       #eef2f7;
+  --vs-border-input:   #d8e0ea;
+
+  /* Text */
+  --vs-text:           #182230;
+  --vs-text-muted:     #5b6b80;
+  --vs-text-soft:      #8a97a8;
+  --vs-text-faint:     #b5c0d0;
+
+  /* Status */
+  --vs-success:        #15803d;   --vs-success-bg: #e7f6ec;
+  --vs-warning:        #b45309;   --vs-warning-bg: #fdf3e3;
+  --vs-danger:         #c0392b;   --vs-danger-bg:  #fdeeee;
+  --vs-info:           #2563eb;   --vs-info-bg:    #eaf1fe;
+  --vs-purple:         #7c3aed;   --vs-purple-bg:  #f1eafe;
+
+  /* Radii */
+  --vs-r-xs: 6px; --vs-r-sm: 8px; --vs-r:   9px;
+  --vs-r-md:10px; --vs-r-lg:12px; --vs-r-xl:14px;
+  --vs-r-pill: 999px;
+
+  /* Elevation */
+  --vs-shadow-sm: 0 1px 3px rgba(16,40,80,.05);
+  --vs-shadow:    0 2px 8px rgba(16,40,80,.08);
+  --vs-shadow-lg: 0 16px 40px rgba(16,40,80,.16);
+  --vs-shadow-primary: 0 8px 18px rgba(37,99,235,.28);
+  --vs-shadow-success: 0 8px 18px rgba(21,128,61,.28);
+
+  /* Focus ring */
+  --vs-ring-primary: 0 0 0 3px rgba(37,99,235,.15);
+
+  /* Layout */
+  --vs-side-w:        252px;
+  --vs-side-w-col:     74px;
+  --vs-top-h:          62px;
+  --vs-content-pad:   24px;
+  --vs-content-max: 1520px;
+
+  /* Type */
+  --vs-font: 'Golos Text', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  --vs-fs-xs: 11px; --vs-fs-sm: 12px; --vs-fs:    13px;
+  --vs-fs-md:14px;  --vs-fs-lg: 17px; --vs-fs-xl: 21px; --vs-fs-2xl: 23px;
+
+  /* Motion */
+  --vs-t-fast: .13s ease;
+  --vs-t:      .17s ease;
+}
+
+/* ---------- 2. RESET + GLOBALS ---------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--vs-font);
+  font-size: var(--vs-fs);
+  color: var(--vs-text);
+  background: var(--vs-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  line-height: 1.45;
+}
+h1,h2,h3,h4 { margin: 0; letter-spacing: -.3px; }
+a { color: var(--vs-primary); text-decoration: none; }
+a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #c7d2e0; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: #aebccd; background-clip: content-box; }
+
+/* Typography helpers */
+.vs-num { font-variant-numeric: tabular-nums; }
+.vs-muted { color: var(--vs-text-muted); }
+.vs-soft  { color: var(--vs-text-soft); }
+.vs-caption {
+  font-size: var(--vs-fs-xs);
+  font-weight: 600;
+  color: var(--vs-text-muted);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+
+/* ---------- 3. APP SHELL ---------------------------------------------- */
+.vs-shell { display: flex; min-height: 100vh; align-items: stretch; }
+
+/* Sidebar */
+.vs-sidebar {
+  width: var(--vs-side-w);
+  flex: none;
+  background: linear-gradient(180deg, var(--vs-side-bg-1) 0%, var(--vs-side-bg-2) 100%);
+  color: var(--vs-side-text);
+  position: sticky; top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+  transition: width .18s ease;
+}
+.vs-sidebar.is-collapsed { width: var(--vs-side-w-col); }
+.vs-sidebar.is-collapsed .vs-side-label,
+.vs-sidebar.is-collapsed .vs-side-section,
+.vs-sidebar.is-collapsed .vs-side-brand-meta { display: none; }
+
+.vs-side-brand {
+  display: flex; align-items: center; gap: 11px;
+  padding: 16px 16px 14px;
+  min-height: var(--vs-top-h);
+}
+.vs-side-brand-mark {
+  flex: none; width: 40px; height: 40px;
+  border-radius: var(--vs-r-md);
+  background: #fff;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,.25);
+}
+.vs-side-brand-mark img { width: 30px; height: 30px; object-fit: contain; object-position: left; }
+.vs-side-brand-meta { min-width: 0; }
+.vs-side-brand-title { font-size: 13.5px; font-weight: 700; color: #fff; letter-spacing: -.2px; line-height: 1.15; }
+.vs-side-brand-sub   { font-size: 10.5px; color: var(--vs-side-text-dim); letter-spacing: .3px; margin-top: 1px; }
+
+.vs-side-nav { flex: 1; padding: 6px 12px 14px; }
+.vs-side-section {
+  font-size: 10px; font-weight: 700;
+  color: var(--vs-side-section);
+  letter-spacing: .9px; text-transform: uppercase;
+  padding: 14px 10px 6px;
+}
+.vs-side-link {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%;
+  padding: 9px 11px;
+  margin-bottom: 2px;
+  border: none; border-radius: var(--vs-r);
+  cursor: pointer;
+  background: transparent;
+  color: var(--vs-side-text);
+  font-weight: 500;
+  font-size: 13.5px;
+  font-family: inherit;
+  text-align: left;
+  text-decoration: none;
+  transition: background var(--vs-t-fast), color var(--vs-t-fast);
+}
+.vs-side-link:hover { background: var(--vs-side-hover); color: var(--vs-side-active-fg); text-decoration: none; }
+.vs-side-link.is-active {
+  background: var(--vs-side-active);
+  color: var(--vs-side-active-fg);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--vs-side-active-bar);
+}
+.vs-side-link.is-active .vs-side-icon { color: var(--vs-side-active-bar); }
+.vs-side-icon {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px;
+  color: var(--vs-side-text-dim);
+}
+.vs-side-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.vs-side-foot { padding: 12px; border-top: 1px solid rgba(255,255,255,.08); }
+.vs-side-logout {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%;
+  padding: 9px 11px;
+  border: none; border-radius: var(--vs-r);
+  background: transparent; color: #9fb1cc;
+  font-weight: 600; font-size: 13.5px; font-family: inherit;
+  cursor: pointer; text-align: left;
+  transition: background var(--vs-t-fast), color var(--vs-t-fast);
+}
+.vs-side-logout:hover { background: rgba(220,38,38,.16); color: #ffb4b4; }
+
+/* Main column */
+.vs-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+/* Topbar */
+.vs-topbar {
+  height: var(--vs-top-h); flex: none;
+  position: sticky; top: 0; z-index: 30;
+  display: flex; align-items: center; gap: 14px;
+  padding: 0 var(--vs-content-pad);
+  background: rgba(255,255,255,.88);
+  backdrop-filter: saturate(1.5) blur(10px);
+  -webkit-backdrop-filter: saturate(1.5) blur(10px);
+  border-bottom: 1px solid var(--vs-border-2);
+}
+.vs-topbar-burger {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px;
+  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r);
+  background: #fff; color: var(--vs-text-muted);
+  cursor: pointer; transition: all var(--vs-t-fast);
+}
+.vs-topbar-burger:hover { background: #f1f5fa; color: var(--vs-primary); border-color: #cdd7e5; }
+.vs-topbar-title { flex: 1; min-width: 0; }
+.vs-crumb {
+  font-size: 11px; color: var(--vs-text-soft);
+  font-weight: 500; letter-spacing: .2px;
+  display: flex; align-items: center; gap: 5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vs-crumb .vs-crumb-sep { color: #cdd7e5; }
+.vs-screen-title {
+  font-size: var(--vs-fs-lg); font-weight: 700; letter-spacing: -.3px;
+  margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Language segmented */
+.vs-lang { display: flex; border: 1px solid var(--vs-border-2); border-radius: var(--vs-r); overflow: hidden; background: #fff; }
+.vs-lang button {
+  padding: 7px 12px; border: none; background: #fff; color: var(--vs-text-muted);
+  font-family: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer;
+  letter-spacing: .4px;
+}
+.vs-lang button + button { border-left: 1px solid var(--vs-border-2); }
+.vs-lang button.is-active { background: var(--vs-primary); color: #fff; }
+
+/* User chip */
+.vs-user-chip {
+  display: flex; align-items: center; gap: 9px;
+  padding: 5px 8px 5px 6px;
+  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r-md);
+  background: #fff; cursor: pointer; font-family: inherit;
+  transition: border-color var(--vs-t-fast);
+}
+.vs-user-chip:hover { border-color: #cdd7e5; }
+.vs-avatar {
+  flex: none; width: 32px; height: 32px; border-radius: var(--vs-r-sm);
+  background: linear-gradient(135deg, var(--vs-primary), var(--vs-primary-hover));
+  color: #fff; display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700;
+}
+.vs-user-meta { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; line-height: 1.2; }
+.vs-user-name { font-size: 12.5px; font-weight: 600; color: var(--vs-text); white-space: nowrap; }
+.vs-user-role { font-size: 10.5px; color: var(--vs-text-soft); white-space: nowrap; }
+
+/* Content area */
+.vs-content {
+  flex: 1; min-width: 0;
+  padding: var(--vs-content-pad);
+  max-width: var(--vs-content-max); width: 100%;
+}
+
+/* ---------- 4. BUTTONS ------------------------------------------------ */
+.vs-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 15px;
+  font-family: inherit; font-size: var(--vs-fs); font-weight: 600;
+  border: 1px solid var(--vs-border-input);
+  border-radius: var(--vs-r);
+  background: #fff; color: var(--vs-text);
+  cursor: pointer;
+  transition: all var(--vs-t-fast);
+  text-decoration: none;
+  line-height: 1.2;
+}
+.vs-btn:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
+.vs-btn:focus-visible { outline: none; box-shadow: var(--vs-ring-primary); border-color: var(--vs-primary); }
+.vs-btn:disabled, .vs-btn.is-disabled { opacity: .55; cursor: not-allowed; }
+.vs-btn .vs-icon { display: flex; }
+
+.vs-btn-primary {
+  background: var(--vs-primary); color: #fff; border-color: var(--vs-primary);
+  font-weight: 700;
+}
+.vs-btn-primary:hover { background: var(--vs-primary-hover); border-color: var(--vs-primary-hover); color: #fff; box-shadow: var(--vs-shadow-primary); }
+.vs-btn-primary:focus-visible { box-shadow: var(--vs-ring-primary); }
+
+.vs-btn-success {
+  background: var(--vs-brand-green); color: #fff; border-color: var(--vs-brand-green);
+  font-weight: 700;
+}
+.vs-btn-success:hover { background: var(--vs-brand-green-h); border-color: var(--vs-brand-green-h); color: #fff; box-shadow: var(--vs-shadow-success); }
+
+.vs-btn-danger { color: var(--vs-danger); border-color: #f3d6d6; }
+.vs-btn-danger:hover { background: var(--vs-danger); color: #fff; border-color: var(--vs-danger); }
+
+.vs-btn-ghost  { background: transparent; border-color: transparent; color: var(--vs-text-muted); }
+.vs-btn-ghost:hover { background: #f1f5fa; color: var(--vs-primary); border-color: transparent; }
+
+.vs-btn-sm { padding: 6px 12px; font-size: var(--vs-fs-sm); border-radius: var(--vs-r-sm); }
+.vs-btn-lg { padding: 12px 20px; font-size: 14.5px; border-radius: var(--vs-r-md); }
+
+/* Icon-only square buttons (table actions) */
+.vs-btn-icon {
+  display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0;
+  border: 1px solid var(--vs-border-input); border-radius: var(--vs-r-sm);
+  background: #fff; color: var(--vs-text-muted);
+  cursor: pointer; transition: all var(--vs-t-fast);
+}
+.vs-btn-icon:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
+.vs-btn-icon.is-danger { color: var(--vs-danger); border-color: #f3d6d6; }
+.vs-btn-icon.is-danger:hover { background: var(--vs-danger); color: #fff; border-color: var(--vs-danger); }
+
+/* Segmented control (radio-like row of pills) */
+.vs-segmented { display: inline-flex; border: 1px solid var(--vs-border-input); border-radius: var(--vs-r-sm); overflow: hidden; }
+.vs-segmented > * {
+  padding: 8px 13px;
+  font-size: 12.5px; font-weight: 500;
+  background: #fff; color: var(--vs-text-muted);
+  border: none; border-left: 1px solid var(--vs-border-2);
+  font-family: inherit; cursor: pointer;
+}
+.vs-segmented > *:first-child { border-left: none; }
+.vs-segmented > .is-active { background: var(--vs-primary); color: #fff; font-weight: 600; }
+
+/* Date-mode pills */
+.vs-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.vs-pill {
+  padding: 8px 16px;
+  border: 1px solid var(--vs-border-input); border-radius: var(--vs-r);
+  background: #fff; color: var(--vs-text);
+  font-family: inherit; font-size: var(--vs-fs); font-weight: 600;
+  cursor: pointer; transition: all var(--vs-t-fast);
+}
+.vs-pill:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
+.vs-pill.is-active { background: var(--vs-primary); color: #fff; border-color: var(--vs-primary); }
+
+/* ---------- 5. FORMS -------------------------------------------------- */
+.vs-field { display: block; }
+.vs-label {
+  display: block;
+  font-size: var(--vs-fs-xs); font-weight: 600;
+  color: var(--vs-text-muted);
+  margin-bottom: 5px;
+  letter-spacing: .2px;
+}
+.vs-label-upper { text-transform: uppercase; letter-spacing: .6px; }
+
+.vs-input, .vs-select, .vs-textarea {
+  width: 100%;
+  font-family: inherit; font-size: var(--vs-fs);
+  padding: 8px 11px;
+  border: 1px solid var(--vs-border-input);
+  border-radius: var(--vs-r-sm);
+  background: #fff; color: var(--vs-text);
+  outline: none;
+  transition: border-color var(--vs-t-fast), box-shadow var(--vs-t-fast);
+  line-height: 1.4;
+}
+.vs-input:focus, .vs-select:focus, .vs-textarea:focus {
+  border-color: var(--vs-primary);
+  box-shadow: var(--vs-ring-primary);
+}
+.vs-input:disabled, .vs-select:disabled, .vs-textarea:disabled {
+  background: var(--vs-surface-2); color: var(--vs-text-soft); cursor: not-allowed;
+}
+.vs-input.is-error, .vs-select.is-error, .vs-textarea.is-error {
+  border-color: var(--vs-danger);
+  box-shadow: 0 0 0 3px rgba(192,57,43,.13);
+}
+.vs-textarea { resize: vertical; min-height: 90px; line-height: 1.5; padding: 10px 12px; border-radius: var(--vs-r); }
+.vs-select { cursor: pointer; }
+.vs-input-lg { padding: 11px 13px; font-size: var(--vs-fs-md); border-radius: var(--vs-r); }
+
+.vs-input-search { position: relative; }
+.vs-input-search .vs-input { padding-left: 36px; padding-top: 9px; padding-bottom: 9px; }
+.vs-input-search .vs-icon {
+  position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+  color: var(--vs-text-soft); display: flex; pointer-events: none;
+}
+
+.vs-help { display: block; font-size: var(--vs-fs-xs); color: var(--vs-text-soft); margin-top: 5px; }
+.vs-error-msg { display: block; font-size: var(--vs-fs-xs); color: var(--vs-danger); margin-top: 5px; font-weight: 500; }
+
+.vs-form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.vs-form-row > .vs-field { flex: 1; min-width: 200px; }
+
+.vs-check-card {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px;
+  padding: 8px 11px;
+  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r-sm);
+  cursor: pointer; transition: all var(--vs-t-fast);
+}
+.vs-check-card:hover { border-color: var(--vs-primary); background: #f5f9ff; }
+.vs-check-card input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--vs-primary); }
+.vs-check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 7px; }
+
+/* ---------- 6. CARDS -------------------------------------------------- */
+.vs-card {
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-lg);
+  box-shadow: var(--vs-shadow-sm);
+}
+.vs-card-xl { border-radius: var(--vs-r-xl); }
+
+.vs-card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--vs-border-3);
+}
+.vs-card-title { font-size: var(--vs-fs-md); font-weight: 700; }
+.vs-card-body { padding: 16px 18px; }
+
+.vs-card-accent-top    { border-top: 3px solid var(--vs-primary); }
+.vs-card-accent-left   { border-left: 4px solid var(--vs-primary); }
+.vs-card-accent-warning { border-left: 4px solid var(--vs-warning); }
+.vs-card-accent-danger  { border-left: 4px solid var(--vs-danger);  }
+.vs-card-accent-success { border-left: 4px solid var(--vs-brand-green); }
+
+.vs-hero {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 16px; flex-wrap: wrap;
+  padding: 20px 22px;
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-xl);
+  background: linear-gradient(135deg, #ffffff, #f5f8fc);
+  box-shadow: var(--vs-shadow-sm);
+}
+.vs-hero-title { font-size: var(--vs-fs-2xl); font-weight: 800; letter-spacing: -.5px; }
+.vs-hero-sub   { color: var(--vs-text-muted); font-size: 13.5px; margin-top: 4px; }
+
+.vs-date-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border-radius: var(--vs-r-pill);
+  background: var(--vs-primary-soft); color: #1d4ed8;
+  font-size: 12.5px; font-weight: 600;
+}
+.vs-date-chip strong { font-weight: 700; }
+
+/* ---------- 7. KPI CARDS --------------------------------------------- */
+.vs-kpi-grid     { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.vs-kpi-grid-2   { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.vs-stat-grid    { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 11px; }
+.vs-stat-grid-4  { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+
+.vs-kpi {
+  display: flex; flex-direction: column;
+  padding: 17px;
+  background: #fff;
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-xl);
+  box-shadow: var(--vs-shadow-sm);
+}
+.vs-kpi-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-bottom: 11px; margin-bottom: 13px;
+  border-bottom: 1px solid var(--vs-border-3);
+}
+.vs-kpi-label {
+  font-size: 11.5px; font-weight: 700;
+  color: var(--vs-text-muted);
+  text-transform: uppercase; letter-spacing: .5px;
+}
+.vs-kpi-link {
+  border: none; background: transparent; padding: 0;
+  color: var(--vs-primary); font-family: inherit;
+  font-size: var(--vs-fs-sm); font-weight: 600; cursor: pointer;
+  text-decoration: none;
+}
+.vs-kpi-link:hover { color: var(--vs-primary-hover); }
+
+.vs-kpi-main { margin-bottom: 14px; }
+.vs-kpi-value { font-size: 31px; font-weight: 800; line-height: 1; letter-spacing: -.8px; font-variant-numeric: tabular-nums; }
+.vs-kpi-cap   { margin-top: 5px; color: var(--vs-text-muted); font-size: 12.5px; }
+
+.vs-mini {
+  padding: 9px 11px;
+  border: 1px solid var(--vs-border-3); border-radius: var(--vs-r);
+  background: var(--vs-surface-2);
+}
+.vs-mini-v { display: block; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.vs-mini-l { display: block; margin-top: 2px; color: var(--vs-text-soft); font-size: 11.5px; }
+
+.vs-mini.is-success { border-color: #d6ecdd; background: #f3faf5; }
+.vs-mini.is-success .vs-mini-v { color: var(--vs-success); }
+.vs-mini.is-warning { border-color: #fdebd0; background: #fdf6ec; }
+.vs-mini.is-warning .vs-mini-v { color: var(--vs-warning); }
+.vs-mini.is-warning .vs-mini-l { color: #b07d3a; }
+.vs-mini.is-danger  { border-color: #f6d4d4; background: var(--vs-danger-bg); }
+.vs-mini.is-danger  .vs-mini-v { color: var(--vs-danger); }
+.vs-mini.is-danger  .vs-mini-l { color: #b5544a; }
+
+.vs-stat {
+  padding: 14px 15px;
+  background: #fff;
+  border: 1px solid var(--vs-border); border-radius: var(--vs-r-lg);
+  box-shadow: var(--vs-shadow-sm);
+}
+.vs-stat-label {
+  font-size: 10.5px; font-weight: 600;
+  color: var(--vs-text-soft);
+  text-transform: uppercase; letter-spacing: .4px; line-height: 1.3;
+}
+.vs-stat-value {
+  margin-top: 6px;
+  font-size: 19px; font-weight: 800; letter-spacing: -.4px;
+  font-variant-numeric: tabular-nums;
+}
+.vs-stat-value.is-success { color: var(--vs-success); }
+.vs-stat-value.is-info    { color: var(--vs-info); }
+.vs-stat-value.is-purple  { color: var(--vs-purple); }
+.vs-stat-value.is-muted   { color: var(--vs-text-soft); }
+.vs-stat-value.is-warning { color: var(--vs-warning); }
+.vs-stat-value.is-danger  { color: var(--vs-danger); }
+
+/* Inline alert */
+.vs-alert {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 11px; border-radius: var(--vs-r);
+  font-size: 12px; font-weight: 600;
+}
+.vs-alert.is-danger  { background: var(--vs-danger-bg);  color: var(--vs-danger); }
+.vs-alert.is-warning { background: var(--vs-warning-bg); color: var(--vs-warning); }
+.vs-alert.is-info    { background: var(--vs-info-bg);    color: var(--vs-info); }
+.vs-alert.is-success { background: var(--vs-success-bg); color: var(--vs-success); }
+
+/* ---------- 8. TABLES ------------------------------------------------- */
+.vs-table-wrap {
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-xl);
+  box-shadow: var(--vs-shadow-sm);
+  overflow: hidden;
+}
+.vs-table-wrap .vs-table-scroll { overflow-x: auto; }
+
+.vs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--vs-fs);
+}
+.vs-table.vs-num { font-variant-numeric: tabular-nums; }
+.vs-table thead tr { background: var(--vs-surface-3); }
+.vs-table th {
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--vs-border-2);
+  font-size: 11px; font-weight: 700;
+  color: var(--vs-text-muted);
+  text-transform: uppercase; letter-spacing: .4px;
+  white-space: nowrap;
+}
+.vs-table th.center { text-align: center; }
+.vs-table th.right  { text-align: right; }
+.vs-table td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--vs-border-3);
+  vertical-align: middle;
+}
+.vs-table td.center { text-align: center; }
+.vs-table td.right  { text-align: right; }
+.vs-table tbody tr:hover { background: var(--vs-surface-2); }
+.vs-table tbody tr.is-clickable { cursor: pointer; }
+.vs-table tfoot tr { background: var(--vs-primary-soft); }
+.vs-table tfoot td {
+  padding: 13px 14px;
+  border-top: 2px solid var(--vs-primary);
+  border-bottom: none;
+  font-weight: 700;
+}
+.vs-table tfoot td.total { font-weight: 800; }
+
+.vs-table.is-compact th, .vs-table.is-compact td { padding: 9px 12px; }
+.vs-table.is-compact td { font-size: 12.5px; }
+
+.vs-table tr.is-warning-row { background: #fef9f0; }
+.vs-table tr.is-danger-row  { background: #fef6f4; }
+.vs-table tr.is-danger-row td:first-child { border-left: 3px solid var(--vs-danger); }
+.vs-table tr.is-warning-row td:first-child { border-left: 3px solid var(--vs-warning); }
+
+.vs-row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+
+.vs-accord-l2 td:nth-child(2) { padding-left: 34px; }
+.vs-accord-l3 td:nth-child(2) { padding-left: 56px; }
+.vs-accord-l2 { background: #fff; }
+.vs-accord-l3 { background: var(--vs-surface-2); }
+.vs-accord-l3 td { padding-top: 7px; padding-bottom: 7px; color: var(--vs-text-muted); font-size: 12px; }
+
+/* ---------- 9. BADGES ------------------------------------------------- */
+.vs-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: var(--vs-r-pill);
+  font-size: 10.5px; font-weight: 700;
+  background: var(--vs-surface-3); color: var(--vs-text-muted);
+  white-space: nowrap;
+  letter-spacing: .1px;
+  line-height: 1.5;
+}
+.vs-badge-sm { padding: 1px 7px; font-size: 10px; }
+.vs-badge-success { background: var(--vs-success-bg); color: var(--vs-success); }
+.vs-badge-warning { background: var(--vs-warning-bg); color: var(--vs-warning); }
+.vs-badge-danger  { background: var(--vs-danger-bg);  color: var(--vs-danger); }
+.vs-badge-info    { background: var(--vs-info-bg);    color: var(--vs-info); }
+.vs-badge-purple  { background: var(--vs-purple-bg);  color: var(--vs-purple); }
+
+.vs-badge-cat-mtz          { background: var(--vs-info-bg);    color: var(--vs-info); }
+.vs-badge-cat-yukori       { background: var(--vs-purple-bg);  color: var(--vs-purple); }
+.vs-badge-cat-yuk_transport{ background: var(--vs-warning-bg); color: var(--vs-warning); }
+
+.vs-badge-role-admin           { background: var(--vs-danger-bg);  color: var(--vs-danger); }
+.vs-badge-role-operator        { background: var(--vs-success-bg); color: var(--vs-success); }
+.vs-badge-role-branch_operator { background: #e3f5f2;              color: #0d7d72; }
+.vs-badge-role-viewer          { background: var(--vs-info-bg);    color: var(--vs-info); }
+
+/* ---------- 10. LOGIN ------------------------------------------------- */
+.vs-login-page {
+  min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  background: linear-gradient(160deg, #18406f 0%, #0e2a4f 52%, #081a35 100%);
+}
+.vs-login-card {
+  width: 404px; max-width: 100%;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 30px 70px rgba(6,18,38,.45);
+  overflow: hidden;
+}
+.vs-login-head { padding: 38px 40px 28px; text-align: center; }
+.vs-login-head img { height: 48px; width: auto; display: inline-block; }
+.vs-login-sub  { margin-top: 16px; font-size: var(--vs-fs); color: var(--vs-text-muted); font-weight: 500; }
+.vs-login-form { padding: 6px 40px 30px; }
+.vs-login-form .vs-field + .vs-field { margin-top: 16px; }
+.vs-login-form .vs-btn-primary { width: 100%; margin-top: 24px; padding: 13px; font-size: 14.5px; border-radius: var(--vs-r); }
+.vs-login-foot {
+  text-align: center; padding: 16px;
+  font-size: 11.5px; color: var(--vs-text-soft);
+  border-top: 1px solid var(--vs-border-3);
+}
+
+/* ---------- 11. DROPDOWN MENU ---------------------------------------- */
+.vs-menu {
+  position: absolute; top: calc(100% + 8px); right: 0;
+  min-width: 188px;
+  background: #fff;
+  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r-lg);
+  box-shadow: var(--vs-shadow-lg);
+  padding: 6px; z-index: 50;
+}
+.vs-menu-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 9px 11px;
+  border: none; border-radius: var(--vs-r-sm);
+  background: transparent; color: var(--vs-text);
+  font-family: inherit; font-size: var(--vs-fs); font-weight: 500;
+  cursor: pointer; text-align: left;
+  text-decoration: none;
+}
+.vs-menu-item:hover { background: #f1f5fa; }
+.vs-menu-item.is-danger { color: var(--vs-danger); font-weight: 600; }
+.vs-menu-item.is-danger:hover { background: var(--vs-danger-bg); }
+.vs-menu-sep { height: 1px; background: var(--vs-border-3); margin: 5px 8px; }
+
+/* ---------- 12. EMPTY / PLACEHOLDER ---------------------------------- */
+.vs-empty {
+  border: 1px dashed #cdd7e5;
+  border-radius: var(--vs-r-xl);
+  background: #fff;
+  padding: 64px 32px; text-align: center;
+}
+.vs-empty-ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 56px; height: 56px;
+  border-radius: var(--vs-r-xl);
+  background: var(--vs-primary-soft); color: var(--vs-primary);
+  margin-bottom: 16px;
+}
+.vs-empty-title { font-size: 18px; font-weight: 700; margin: 0 0 6px; }
+.vs-empty-sub   { color: var(--vs-text-soft); font-size: 13.5px; margin: 0; }
+
+/* ---------- 13. UTILITIES -------------------------------------------- */
+.vs-stack    { display: flex; flex-direction: column; gap: 14px; }
+.vs-stack-sm { display: flex; flex-direction: column; gap: 8px; }
+.vs-stack-lg { display: flex; flex-direction: column; gap: 18px; }
+.vs-row      { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
+.vs-row-end  { display: flex; gap: 9px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+.vs-spacer   { flex: 1; }
+.vs-mb-sm { margin-bottom: 12px; } .vs-mb { margin-bottom: 16px; } .vs-mb-lg { margin-bottom: 24px; }
+.vs-mt-sm { margin-top: 12px; }    .vs-mt { margin-top: 16px; }
+
+/* ---------- 14. RESPONSIVE GUARDS ------------------------------------ */
+@media (max-width: 1280px) {
+  .vs-stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 1100px) {
+  .vs-kpi-grid    { grid-template-columns: 1fr; }
+  .vs-stat-grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vs-stat-grid   { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .vs-sidebar { width: var(--vs-side-w-col); }
+  .vs-sidebar .vs-side-label,
+  .vs-sidebar .vs-side-section,
+  .vs-sidebar .vs-side-brand-meta { display: none; }
+  :root { --vs-content-pad: 16px; }
+}
+
+/* ---------- 15. ICONS (size + stroke conventions) -------------------- */
+.vs-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.vs-icon svg { width: 1em; height: 1em; }
+
+/* ---------- LEGACY: Multiselect dropdown ------------------------------
+   TEMPORARY: will be replaced by .vs-multiselect in a future design-system
+   release. Approved by Claude Design for current rewrite.
+   Used in: index.html (org/cat/work-type filter), report.html.
+   --------------------------------------------------------------------- */
+.ms-wrap { position: relative; display: inline-block; min-width: 220px; vertical-align: top; }
+.ms-trigger {
+  display: block; width: 100%;
+  padding: 8px 32px 8px 11px;
+  border: 1px solid var(--vs-border-input);
+  border-radius: var(--vs-r-sm);
+  background: #fff; color: var(--vs-text);
+  cursor: pointer; font-size: 13px;
+  font-family: inherit; text-align: left;
+  user-select: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  position: relative; min-height: 36px;
+  transition: border-color var(--vs-t-fast), box-shadow var(--vs-t-fast);
+}
+.ms-trigger::after {
+  content: '▾'; position: absolute; right: 11px; top: 50%;
+  transform: translateY(-50%); pointer-events: none;
+  color: var(--vs-text-soft);
+}
+.ms-trigger:hover { border-color: var(--vs-primary); }
+.ms-trigger:focus { outline: none; border-color: var(--vs-primary); box-shadow: var(--vs-ring-primary); }
+.ms-dropdown {
+  display: none; position: absolute;
+  top: calc(100% + 3px); left: 0; z-index: 500;
+  background: #fff;
+  border: 1px solid var(--vs-border-2);
+  border-radius: var(--vs-r-lg);
+  box-shadow: var(--vs-shadow-lg);
+  min-width: 100%;
+  max-height: 340px; overflow-y: auto;
+  padding: 4px 0;
+}
+.ms-dropdown.open { display: block; }
+.ms-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px;
+  cursor: pointer; font-size: 13px; line-height: 1.4;
+  color: var(--vs-text);
+}
+.ms-item:hover { background: var(--vs-primary-soft); color: var(--vs-primary); }
+.ms-item input[type=checkbox] { width: auto; cursor: pointer; flex-shrink: 0; accent-color: var(--vs-primary); }
+.ms-select-all {
+  border-bottom: 1px solid var(--vs-border-3);
+  font-weight: 600;
+  background: var(--vs-surface-2);
+}
+
+/* ---------- 16. MULTISELECT DROPDOWN (new component) -----------------
+   Replaces the legacy .ms-* widget. Use in any page that needs a
+   multi-select filter. JS in templates/_vs_multiselect_js.html (inline
+   in index.html for now).
+   --------------------------------------------------------------------- */
+.vs-multiselect { position: relative; display: inline-block; }
+
+.vs-multiselect-trigger {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 11px;
+  border: 1px solid var(--vs-border-input); border-radius: var(--vs-r-sm);
+  background: #fff; color: var(--vs-text);
+  font-family: inherit; font-size: var(--vs-fs);
+  cursor: pointer; min-width: 200px;
+  transition: border-color var(--vs-t-fast), box-shadow var(--vs-t-fast);
+  user-select: none;
+}
+.vs-multiselect-trigger:hover { border-color: var(--vs-primary); }
+.vs-multiselect.is-open .vs-multiselect-trigger {
+  border-color: var(--vs-primary);
+  box-shadow: var(--vs-ring-primary);
+}
+.vs-multiselect-trigger .vs-ms-label {
+  flex: 1; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vs-multiselect-trigger .vs-ms-count {
+  flex: none;
+  padding: 1px 7px; border-radius: var(--vs-r-pill);
+  background: var(--vs-primary-soft); color: var(--vs-primary);
+  font-size: 10.5px; font-weight: 700;
+  display: none;
+}
+.vs-multiselect-trigger .vs-ms-arrow {
+  flex: none; color: var(--vs-text-soft); display: flex;
+  transition: transform var(--vs-t-fast);
+}
+.vs-multiselect.is-open .vs-multiselect-trigger .vs-ms-arrow {
+  transform: rotate(180deg);
+}
+.vs-multiselect-dropdown {
+  display: none;
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 500;
+  min-width: 240px; max-width: 360px; max-height: 320px;
+  background: #fff;
+  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r-lg);
+  box-shadow: var(--vs-shadow-lg);
+  overflow-y: auto;
+  padding: 6px;
+}
+.vs-multiselect.is-open .vs-multiselect-dropdown { display: block; }
+.vs-multiselect-dropdown label {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 10px; border-radius: var(--vs-r-sm);
+  cursor: pointer; font-size: var(--vs-fs); color: var(--vs-text);
+  transition: background var(--vs-t-fast);
+  white-space: nowrap;
+}
+.vs-multiselect-dropdown label:hover { background: var(--vs-surface-2); }
+.vs-multiselect-dropdown input[type=checkbox] {
+  width: 15px; height: 15px; accent-color: var(--vs-primary); flex: none;
+}
+.vs-multiselect-footer {
+  display: flex; gap: 6px; justify-content: flex-end;
+  padding: 7px 6px 3px;
+  border-top: 1px solid var(--vs-border-3);
+  margin-top: 4px;
+  position: sticky; bottom: -6px; background: #fff;
+}
+.vs-multiselect-footer button {
+  padding: 5px 10px; border-radius: var(--vs-r-sm);
+  font-family: inherit; font-size: 11.5px; font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--vs-border-input);
+  background: #fff; color: var(--vs-text-muted);
+  transition: all var(--vs-t-fast);
+}
+.vs-multiselect-footer button:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
+
+/* ==========================================================================
+   COMPATIBILITY LAYER — maps legacy class names to vs-* tokens.
+   Covers ~30 templates that use .card/.btn/.form-group/table etc.
+   Removable after full template rewrite.
+   NOTE: daily_entry.html defines its own local copies of some of these;
+   its inline <style> loads later and wins the cascade (intended).
+   ========================================================================== */
+
+/* Cards */
+.card           { background: var(--vs-surface); border: 1px solid var(--vs-border); border-radius: var(--vs-r-xl); box-shadow: var(--vs-shadow-sm); }
+.card-header    { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 14px 18px; border-bottom: 1px solid var(--vs-border-3); font-size: 14px; font-weight: 700; }
+.card-body      { padding: 16px 18px; }
+.card-footer    { padding: 12px 18px; border-top: 1px solid var(--vs-border-3); }
+.card-title     { font-size: 14px; font-weight: 700; margin: 0; }
+.card-subtitle  { font-size: 12.5px; color: var(--vs-text-muted); margin-top: 2px; }
+
+/* Buttons */
+.btn            { display: inline-flex; align-items: center; gap: 7px; padding: 9px 15px; font-family: var(--vs-font); font-size: var(--vs-fs); font-weight: 600; border: 1px solid var(--vs-border-input); border-radius: var(--vs-r); background: #fff; color: var(--vs-text); cursor: pointer; text-decoration: none; transition: all var(--vs-t-fast); }
+.btn:hover      { border-color: var(--vs-primary); color: var(--vs-primary); }
+.btn-primary    { background: var(--vs-primary); color: #fff; border-color: var(--vs-primary); font-weight: 700; }
+.btn-primary:hover { background: var(--vs-primary-hover); border-color: var(--vs-primary-hover); color: #fff; box-shadow: var(--vs-shadow-primary); }
+.btn-success    { background: var(--vs-brand-green); color: #fff; border-color: var(--vs-brand-green); font-weight: 700; }
+.btn-success:hover { background: var(--vs-brand-green-h); color: #fff; box-shadow: var(--vs-shadow-success); }
+.btn-secondary  { background: #fff; color: var(--vs-text); border-color: var(--vs-border-input); }
+.btn-secondary:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
+.btn-danger     { color: var(--vs-danger); border-color: #f3d6d6; background: #fff; }
+.btn-danger:hover { background: var(--vs-danger); color: #fff; border-color: var(--vs-danger); }
+.btn-sm         { padding: 6px 12px; font-size: var(--vs-fs-sm); border-radius: var(--vs-r-sm); }
+.btn-lg         { padding: 12px 20px; font-size: 14.5px; border-radius: var(--vs-r-md); }
+.btn-link       { background: transparent; border: none; color: var(--vs-primary); padding: 0; font-family: var(--vs-font); font-size: var(--vs-fs); cursor: pointer; }
+.btn-link:hover { color: var(--vs-primary-hover); text-decoration: underline; }
+.btn-icon       { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--vs-border-input); border-radius: var(--vs-r-sm); background: #fff; color: var(--vs-text-muted); cursor: pointer; transition: all var(--vs-t-fast); }
+.btn-icon:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
+.btn-icon.btn-danger:hover { background: var(--vs-danger); color: #fff; border-color: var(--vs-danger); }
+
+/* Forms */
+.form-group     { margin-bottom: 14px; }
+.form-label, label.form-label { display: block; font-size: var(--vs-fs-xs); font-weight: 600; color: var(--vs-text-muted); margin-bottom: 5px; }
+.form-control   { width: 100%; font-family: var(--vs-font); font-size: var(--vs-fs); padding: 8px 11px; border: 1px solid var(--vs-border-input); border-radius: var(--vs-r-sm); background: #fff; color: var(--vs-text); outline: none; transition: border-color var(--vs-t-fast), box-shadow var(--vs-t-fast); }
+.form-control:focus { border-color: var(--vs-primary); box-shadow: var(--vs-ring-primary); }
+.form-control:disabled { background: var(--vs-surface-2); color: var(--vs-text-soft); }
+.form-inline    { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.form-inline .form-group { margin-bottom: 0; }
+.field-help, .form-text { display: block; font-size: var(--vs-fs-xs); color: var(--vs-text-soft); margin-top: 4px; }
+.input-group    { display: flex; }
+.input-group .form-control { border-radius: var(--vs-r-sm) 0 0 var(--vs-r-sm); }
+.input-group .btn { border-radius: 0 var(--vs-r-sm) var(--vs-r-sm) 0; border-left: none; }
+
+/* Tables (legacy bare <table> and .table) */
+table.table, .card table { width: 100%; border-collapse: collapse; font-size: var(--vs-fs); }
+table.table th, .card table th { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--vs-border-2); font-size: 11px; font-weight: 700; color: var(--vs-text-muted); text-transform: uppercase; letter-spacing: .4px; background: var(--vs-surface-3); white-space: nowrap; }
+table.table td, .card table td { padding: 11px 14px; border-bottom: 1px solid var(--vs-border-3); vertical-align: middle; }
+table.table tbody tr:hover, .card table tbody tr:hover { background: var(--vs-surface-2); }
+table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size: 12.5px; }
+
+/* Badges */
+.badge          { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 10.5px; font-weight: 700; }
+.badge-success  { background: var(--vs-success-bg); color: var(--vs-success); }
+.badge-warning  { background: var(--vs-warning-bg); color: var(--vs-warning); }
+.badge-danger   { background: var(--vs-danger-bg);  color: var(--vs-danger); }
+.badge-info     { background: var(--vs-info-bg);    color: var(--vs-info); }
+.badge-secondary{ background: var(--vs-surface-3);  color: var(--vs-text-muted); }
+
+/* Idle/inactive-state pill badge — used on ref_* pages ("Используется", "Отключена").
+   daily_entry.html keeps its own local copy which loads later and wins the cascade
+   there (unchanged, intended); this addition only affects pages with no local override. */
+.idle-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  background: var(--vs-surface-3);
+  color: var(--vs-text-muted);
+  white-space: nowrap;
+}
+
+/* Toggle-group (radio pill strip) — used by report.html period selector.
+   daily_entry.html has its own local copy which wins the cascade there;
+   this global base only affects pages with no local override. */
+.toggle-group {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.toggle-group label {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  border: 1px solid var(--vs-border-input);
+  border-radius: var(--vs-r);
+  background: #fff;
+  color: var(--vs-text);
+  font-size: var(--vs-fs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--vs-t-fast);
+}
+.toggle-group label:hover {
+  border-color: var(--vs-primary);
+}
+.toggle-group input[type="radio"] {
+  margin-right: 6px;
+  accent-color: var(--vs-primary);
+}
+
+/* Legacy .stats-grid for fuel module pages */
+.stats-grid { display: grid; gap: 12px; }
+
+/* Legacy .org-section / .org-section-header / .org-section-body — used by
+   wialon_report.html (per-org breakdown header: org name + total hours) and
+   daily_entry.html (equipment group headers). Never carried into this compat
+   layer from base.html. Missing display:flex + background/color caused the
+   two-element header bars (wialon_report.html) to render bunched-left with
+   near-invisible light text on a light background; single-element headers
+   (daily_entry.html) rendered as plain unstyled text. */
+.org-section { margin-bottom: 20px; }
+.org-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--vs-text);
+  color: #fff;
+  border-radius: var(--vs-r) var(--vs-r) 0 0;
+  font-weight: 600;
+  font-size: 13px;
+}
+.org-section-body {
+  border: 1px solid var(--vs-border);
+  border-top: none;
+  border-radius: 0 0 var(--vs-r) var(--vs-r);
+}
+
+/* Stat card — used by report.html KPI grids. Scoped to .stat-card .label /
+   .stat-card .value so generic class names don't collide elsewhere. */
+.stat-card {
+  padding: 14px 15px;
+  background: #fff;
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-lg);
+  box-shadow: var(--vs-shadow-sm);
+}
+.stat-card .label {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--vs-text-soft);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  line-height: 1.3;
+}
+.stat-card .value {
+  margin-top: 6px;
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -.4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Positive/active-state pill badge — pairs with .idle-badge above. Used on
+   admin_users.html ("Фаол") and audit_logs.html ("OK"). Color taken from the existing
+   --vs-success / --vs-success-bg pairing already used by .badge-success elsewhere in
+   this file — not pixel-matched against daily_entry.html's local copy (not accessible
+   at time of writing), but daily_entry.html's own local <style> continues to win the
+   cascade there regardless, so this cannot regress it. */
+.working-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  background: var(--vs-success-bg);
+  color: var(--vs-success);
+  white-space: nowrap;
+}
+
+/* Alerts */
+.alert          { padding: 10px 14px; border-radius: var(--vs-r); font-size: var(--vs-fs); margin-bottom: 12px; }
+.alert-success  { background: var(--vs-success-bg); color: var(--vs-success); }
+.alert-warning  { background: var(--vs-warning-bg); color: var(--vs-warning); }
+.alert-danger   { background: var(--vs-danger-bg);  color: var(--vs-danger); }
+.alert-info     { background: var(--vs-info-bg);    color: var(--vs-info); }
+
+/* Typography helpers */
+.text-muted     { color: var(--vs-text-muted); }
+.text-soft      { color: var(--vs-text-soft); }
+.text-center    { text-align: center; }
+.text-right     { text-align: right; }
+.text-sm        { font-size: var(--vs-fs-sm); }
+.text-xs        { font-size: var(--vs-fs-xs); }
+.text-success   { color: var(--vs-success); }
+.text-danger    { color: var(--vs-danger); }
+.text-warning   { color: var(--vs-warning); }
+.text-primary   { color: var(--vs-primary); }
+.fw-bold        { font-weight: 700; }
+.fw-semibold    { font-weight: 600; }
+
+/* Layout helpers */
+.d-flex         { display: flex; }
+.align-items-center { align-items: center; }
+.justify-content-between { justify-content: space-between; }
+.gap-2          { gap: 8px; }
+.gap-3          { gap: 12px; }
+.flex-1         { flex: 1; }
+.mb-0           { margin-bottom: 0; }
+.mb-2           { margin-bottom: 8px; }
+.mb-3           { margin-bottom: 14px; }
+.mt-2           { margin-top: 8px; }
+.mt-3           { margin-top: 14px; }
+.ms-auto        { margin-left: auto; }
+.w-100          { width: 100%; }
+
+/* page-header (legacy) */
+.page-header        { margin-bottom: 16px; }
+.page-header h1     { font-size: var(--vs-fs-2xl); font-weight: 800; letter-spacing: -.5px; }
+
+/* Make .vs-pill respond to the legacy "active" class as well as "is-active",
+   because some templates' JS toggles .active (not .is-active). */
+.vs-pill.active { background: var(--vs-primary); color: #fff; border-color: var(--vs-primary); }
+
+/* Legacy CSS variable remaps (templates still referencing --surface/--border/etc.)
+   Safe one-way mapping to vs tokens; none of these names are defined elsewhere
+   in base_next.html, so there is no recursion. */
+:root {
+  --surface:       var(--vs-surface);
+  --surface2:      var(--vs-surface-2);
+  --border:        var(--vs-border-2);
+  --border-strong: var(--vs-border-2);
+  --accent:        var(--vs-primary);
+  --accent-soft:   var(--vs-primary-soft);
+  --accent-light:  var(--vs-primary-soft);
+  --success-light: var(--vs-success-bg);
+  --warning-light: var(--vs-warning-bg);
+  --warn:          var(--vs-warning);
+  --warn-soft:     var(--vs-warning-bg);
+  --warn-light:    var(--vs-warning-bg);
+  --danger:        var(--vs-danger);
+  --danger-soft:   var(--vs-danger-bg);
+  --danger-light:  var(--vs-danger-bg);
+  --info:          var(--vs-info);
+  --info-light:    var(--vs-info-bg);
+  --success:       var(--vs-brand-green);
+  --success-soft:  var(--vs-brand-green-s);
+  --text:          var(--vs-text);
+  --text2:         var(--vs-text-muted);
+  --text3:         var(--vs-text-soft);
+  --bg:            var(--vs-bg);
+  --radius:        var(--vs-r);
+  --shadow:        var(--vs-shadow);
+}
+/* END COMPATIBILITY LAYER */
