@@ -38,7 +38,9 @@ Desktop.ini
 *.swo
 
 # Claude Code agent session and memory files (not project source)
-.claude/
+.claude/*
+!.claude/skills/
+!.claude/agents/
 
 # One-time migration and fix script log output (runtime artifacts, not source)
 migration_log_*.csv
