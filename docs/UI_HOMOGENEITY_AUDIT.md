@@ -126,6 +126,7 @@ UI-NEXT:
    var fix; add `workload.html` to a completed wialon batch (form-control +
    bilingual pass, matching what the other 5 wialon files got in Phase 9).
    Very low risk, closes two concrete confirmed bugs/gaps.
+   **COMPLETED 2026-07-06** — commit `c53b4ff`, tag `prod-ui-phase11-20260706`.
 2. **Phase 12 — spare_parts/* + report.html full visual redesign.** Highest
    value: retires the undocumented `--ux-*` local design language entirely,
    replaces with `--vs-*`/`vs-*` components. Also gives `report.html` its

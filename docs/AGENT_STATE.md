@@ -1,4 +1,36 @@
-﻿## 2026-07-06 — UI-NEXT Phase 10 deployed to production (RELEASE)
+﻿## 2026-07-06 — Phase 11 (TASK-UI-AUDIT-001) deployed to production
+
+- Production commit: c53b4ff
+- Tag: prod-ui-phase11-20260706
+- Staging / origin/main: same commit, no drift.
+- Pre-deploy production DB backup:
+  C:\transport-report-backups\before_update\transport_20260706_152928_before_update.db
+  (also D:\transport-report-backups\production\daily\transport_20260706_152928.db,
+  integrity ok)
+- Files changed: templates/fuel/cards.html, templates/workload.html.
+- fuel/cards.html: fixed leftover undefined CSS var from the Phase 9
+  batch fix (line 53, `var(--text-muted)` → `var(--text2)`).
+- workload.html: added `class="form-control"` to 3 date inputs + 1 org
+  select (this file was missed by the original Phase 9 wialon/* batch,
+  which only covered wialon.html/wialon_auto_match.html/
+  wialon_mapping.html/wialon_mapping_list.html/wialon_report.html).
+  Added scoped `.workload-scope` CSS fixing a RU/UZ field-height and
+  alignment inconsistency between `<input type="date">` and `<select>`
+  surfaced by the form-control addition. No `design-system.css` change,
+  scoped to this page only, matching the `.spare001a-scope` pattern.
+- No database migration. No route/business-logic change.
+- TransportReport restarted; TransportBot/TransportBot003 untouched and
+  confirmed still running.
+- Verified on production, RU and UZ, both pages: HTTP 200, no new
+  exceptions in error log.
+
+Recommended next stage:
+- Phase 12 (TASK-UI-AUDIT-001 plan) — full visual redesign of
+  spare_parts/* (4 templates) + report.html, retiring the SPARE002A-era
+  `--ux-*` local CSS variable layer in favor of `--vs-*`/`vs-*`
+  components. See docs/UI_HOMOGENEITY_AUDIT.md for full context.
+
+## 2026-07-06 — UI-NEXT Phase 10 deployed to production (RELEASE)
 
 - Production commit: 850ee034679e61b2d61705ec92c2e5436d5066f8
 - Tag: prod-ui-next-phase10-20260706
