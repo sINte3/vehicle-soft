@@ -1,11 +1,36 @@
-﻿## 2026-07-06 — UI-NEXT Phase 10 COMPLETE (all modules)
+﻿## 2026-07-06 — UI-NEXT Phase 10 deployed to production (RELEASE)
 
-**Current state:** UI-NEXT redesign fully complete on staging. All modules
+- Production commit: 850ee034679e61b2d61705ec92c2e5436d5066f8
+- Tag: prod-ui-next-phase10-20260706
+- Staging / origin/main: same commit, no drift.
+- Pre-deploy production DB backup:
+  C:\transport-report-backups\before_update\transport_20260706_134111_before_update.db
+- Scope: UI-NEXT Phases 1-10 fully rolled out and confirmed via smoke test
+  (RU+UZ) across dashboard, daily entry, report, wialon, fuel, reference
+  directories, admin.
+- NEXT_UI feature flag removed from code (base_next.html is now the only
+  shell). Old templates/base.html removed.
+- static/ (design-system.css, logo.png) brought under git for the first
+  time in this release.
+- TransportBot and TransportBot003 (both environments) were NOT touched
+  and NOT restarted during this release.
+- No database migration was part of this release.
+
+Recommended next stage:
+- Full template-by-template design-homogeneity audit (see docs/TASKS.md),
+  to catch pages that only received a mechanical `extends` swap or a
+  partial form-control pass instead of a full visual redesign. Known
+  examples going in: templates/change_temporary_password.html (never a
+  target of any phase) and templates/audit_logs.html (Phase 7: form-control
+  only, no card/color/badge pass — deliberately deferred at the time,
+  "no verified design reference for this page yet").
+
+## 2026-07-06 — UI-NEXT Phase 10 COMPLETE (all modules)
+
+**Current state:** UI-NEXT redesign fully complete. All modules
 migrated to base_next.html design system. NEXT_UI flag retired, base.html
-deleted, static/ assets tracked. Single Phase 10 release commit created and
-pushed (`e707efe`) alongside static/ tracking commit (`ee9234c`). Staging on
-branch main, up to date with origin/main, working tree clean. Production
-(port 5050, server 10.103.25.14) not touched.
+deleted, static/ assets tracked. Commit `850ee03` (Phase 10 release) on
+origin/main, staging and production up to date.
 
 **Phase 9 — fuel/* module:** COMPLETE (2026-07-03) — all 12 fuel templates migrated
 (extends swap + form-control + CSS fixes + bilingual pass).

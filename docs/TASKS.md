@@ -9,6 +9,21 @@
 
 ## In progress / next
 
+### TASK-UI-AUDIT-001 — Whole-application design homogeneity audit (PENDING)
+
+Goal: produce a full inventory of every user-facing template, classifying
+each as (a) fully redesigned to the new design system, (b) partial
+form-control-only pass, or (c) mechanical extends-swap only with no visual
+work. Output a written list of discrepancies. This audit is the input for
+planning the next phased cleanup (same phased approach as UI-NEXT) — no
+template should be fixed piecemeal before the audit is complete.
+
+Known confirmed gaps to include in the audit as starting evidence:
+- templates/change_temporary_password.html — 2-line diff, never in scope
+  of any UI-NEXT phase.
+- templates/audit_logs.html — Phase 7 gave it form-control only; full
+  visual pass explicitly deferred.
+
 ### Next: Заявки/Наряды (Orders / Work-requests) MVP — mobile-first. To be specced in a fresh chat (see project roadmap).
 
 ## Recently completed / appears completed
