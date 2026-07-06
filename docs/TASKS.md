@@ -9,7 +9,8 @@
 
 ## In progress / next
 
-### TASK-UI-AUDIT-001 — Whole-application design homogeneity audit (PENDING)
+### TASK-UI-AUDIT-001 — Whole-application design homogeneity audit (COMPLETED 2026-07-06)
+See docs/UI_HOMOGENEITY_AUDIT.md for full findings and the proposed Phase 11-16 plan.
 
 Goal: produce a full inventory of every user-facing template, classifying
 each as (a) fully redesigned to the new design system, (b) partial
