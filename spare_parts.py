@@ -1,10 +1,16 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, g
+import os
+import uuid
+
+from flask import (Blueprint, render_template, request, redirect, url_for, flash,
+                   abort, g, jsonify, current_app, send_from_directory)
 from flask_login import login_required, current_user
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload, selectinload
 
-from models import db, SparePart, SparePartRequest, SparePartRequestItem, SparePartStatusHistory, Organization, Equipment, module_required
+from models import (db, SparePart, SparePartCategory, SparePartPriceAudit,
+                    SparePartAttachment, SparePartRequest, SparePartRequestItem,
+                    SparePartStatusHistory, Organization, Equipment, module_required)
 from sec003a_ext import log_audit, diff_dict
 
 # [REASON]: BOT003 — Best-effort Telegram notifications. Import is guarded so that
@@ -24,15 +30,43 @@ spare_parts_bp = Blueprint('spare_parts', __name__, url_prefix='/spare-parts')
 STATUS_LABELS = {
     'draft':     {'uz': 'Чорнов',       'ru': 'Черновик'},
     'submitted': {'uz': 'Юборилган',    'ru': 'Отправлено'},
+    # [REASON]: SPARE-STAGE1 — application-level status for the price
+    # reject/return workflow; no schema change (status column is free VARCHAR).
+    # Flow: draft -> submitted -> (returned_for_revision -> submitted) -> approved | rejected
+    'returned_for_revision': {'uz': 'Қайта ишлашга қайтарилган', 'ru': 'На доработке'},
     'approved':  {'uz': 'Тасдиқланган', 'ru': 'Утверждено'},
     'rejected':  {'uz': 'Рад этилган',  'ru': 'Отклонено'},
 }
 STATUS_COLORS = {
     'draft':     'var(--text2)',
     'submitted': 'var(--info)',
+    'returned_for_revision': 'var(--warn)',
     'approved':  'var(--accent)',
     'rejected':  'var(--danger)',
 }
+
+PRICE_STATUS_LABELS = {
+    'pending':   {'uz': 'Нарх кутилмоқда',      'ru': 'Цена не подтверждена'},
+    'confirmed': {'uz': 'Нарх тасдиқланган',    'ru': 'Цена подтверждена'},
+    'rejected':  {'uz': 'Нарх рад этилган',     'ru': 'Цена отклонена'},
+    'returned':  {'uz': 'Нарх қайтарилган',     'ru': 'Цена возвращена'},
+}
+PRICE_STATUS_COLORS = {
+    'pending':   'var(--text2)',
+    'confirmed': 'var(--accent)',
+    'rejected':  'var(--danger)',
+    'returned':  'var(--warn)',
+}
+
+# Photo upload rules (SPARE-STAGE1). Extension AND content signature are both
+# checked -- Content-Type alone is never trusted.
+ALLOWED_PHOTO_EXTENSIONS = {'.jpg', '.jpeg', '.png'}
+# [REASON]: No Pillow in requirements.txt (no new dependencies without
+# approval), so file content is verified with a minimal magic-byte check.
+PHOTO_SIGNATURES = (
+    (b'\xff\xd8\xff', ('.jpg', '.jpeg')),          # JPEG
+    (b'\x89PNG\r\n\x1a\n', ('.png',)),             # PNG
+)
 
 
 def _spare_lang():
@@ -157,6 +191,8 @@ def _item_snapshot(item):
         'quantity': getattr(item, 'quantity', None),
         'unit': getattr(item, 'unit', ''),
         'note': getattr(item, 'note', ''),
+        'price': getattr(item, 'price', None),
+        'price_status': getattr(item, 'price_status', ''),
     }
 
 
@@ -169,6 +205,10 @@ def _catalog_snapshot(part):
         'part_number': getattr(part, 'part_number', ''),
         'unit': getattr(part, 'unit', ''),
         'category': getattr(part, 'category', ''),
+        'category_id': getattr(part, 'category_id', None),
+        'status': getattr(part, 'status', ''),
+        'merged_into_id': getattr(part, 'merged_into_id', None),
+        'source_request_item_id': getattr(part, 'source_request_item_id', None),
         'created_at': _date_iso(getattr(part, 'created_at', None)),
     }
 
@@ -187,6 +227,118 @@ def _audit_spare(action, entity_type='', entity_id=None, entity_label='', before
         changes=changes,
         description=description,
     )
+
+
+# ─── SPARE-STAGE1: price audit / repeat-order / photo-gate helpers ────────────
+
+def write_price_audit(item_id, old_price, new_price, action, user_id):
+    """Append a SparePartPriceAudit row for a price action.
+
+    [REASON]: SPARE-STAGE1 — plain function with explicit arguments only (no
+    current_user / request access) so the future Telegram bot process (BOT002B)
+    can call it outside a Flask request context. Does not flush or commit --
+    the caller is responsible for the final commit.
+    """
+    db.session.add(SparePartPriceAudit(
+        item_id=item_id,
+        old_price=old_price,
+        new_price=new_price,
+        action=action,
+        changed_by=user_id,
+    ))
+
+
+def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None):
+    """Repeat-order warning engine.
+
+    Returns {'severity': 'red'|'yellow'|None, 'days_since': int|None, 'history': [...]}.
+
+    [REASON]: SPARE-STAGE1 — same equipment + same catalog part requested again
+    within 90 days is surfaced to the operator/approver. <=7 days is 'red',
+    <=30 days 'yellow', <=90 days history only. Rejected requests are excluded.
+    This engine WARNS only -- it never blocks saving or submitting.
+    """
+    empty = {'severity': None, 'days_since': None, 'history': []}
+    if not equipment_id or not spare_part_id:
+        return empty
+    window_start = date.today() - timedelta(days=90)
+    q = (db.session.query(SparePartRequestItem, SparePartRequest)
+         .join(SparePartRequest,
+               SparePartRequestItem.request_id == SparePartRequest.id)
+         .filter(SparePartRequest.equipment_id == equipment_id,
+                 SparePartRequestItem.spare_part_id == spare_part_id,
+                 SparePartRequest.request_date >= window_start,
+                 SparePartRequest.status != 'rejected'))
+    if exclude_request_id:
+        q = q.filter(SparePartRequest.id != exclude_request_id)
+    rows = q.order_by(SparePartRequest.request_date.desc(),
+                      SparePartRequest.id.desc()).all()
+    if not rows:
+        return empty
+    history = [{
+        'request_id': req.id,
+        'request_date': _date_iso(req.request_date),
+        'status': req.status,
+        'quantity': item.quantity,
+        'unit': item.unit or '',
+    } for item, req in rows]
+    days_since = (date.today() - rows[0][1].request_date).days
+    if days_since <= 7:
+        severity = 'red'
+    elif days_since <= 30:
+        severity = 'yellow'
+    else:
+        severity = None
+    return {'severity': severity, 'days_since': days_since, 'history': history}
+
+
+def _photo_required(item):
+    """True when the item needs at least one photo before submit.
+
+    [REASON]: SPARE-STAGE1 — categories with kind='unit' require photo proof;
+    an item whose catalog part has no category yet (including fresh
+    pending_review candidates) is treated as requiring a photo (safe default).
+    Only kind='consumable' makes photos optional.
+    """
+    part = item.spare_part
+    if part is None or part.category_id is None:
+        return True
+    cat = part.category_ref
+    return (cat.kind if cat else 'unit') != 'consumable'
+
+
+def _items_missing_photos(items):
+    """Return bilingual row labels for items that require a photo but have none."""
+    missing = []
+    for idx, item in enumerate(items, start=1):
+        if not _photo_required(item):
+            continue
+        if not (item.attachments or []):
+            missing.append('{}. {}'.format(idx, item.name))
+    return missing
+
+
+def _approval_blockers(spr):
+    """Bilingual error list explaining why a submitted request cannot be approved.
+
+    [REASON]: SPARE-STAGE1 approval gate — a request is approvable only when
+    every item points to a reviewed catalog entry (no pending_review) and every
+    item price is confirmed.
+    """
+    errors = []
+    for idx, item in enumerate(spr.items, start=1):
+        part = item.spare_part
+        if part is not None and part.status == 'pending_review':
+            errors.append(_spare_t(
+                '{}-позиция «{}»: янги каталог ёзуви ҳали текширилмаган (каталог менежери тасдиқлаши керак)',
+                '{}. позиция «{}»: новая запись каталога ещё не проверена (нужно решение менеджера каталога)'
+            ).format(idx, item.name))
+        if item.price_status != 'confirmed':
+            errors.append(_spare_t(
+                '{}-позиция «{}»: нарх тасдиқланмаган',
+                '{}. позиция «{}»: цена не подтверждена'
+            ).format(idx, item.name))
+    return errors
 
 
 @spare_parts_bp.route('/')
@@ -275,21 +427,25 @@ def new_request():
     user_org_ids = _spare_user_org_ids()
     if user_org_ids is None:
         organizations = Organization.query.order_by(Organization.sort_order).all()
-        equipment_query = Equipment.query.filter_by(is_active=True)
     else:
         organizations = (Organization.query
                          .filter(Organization.id.in_(user_org_ids))
                          .order_by(Organization.sort_order).all())
-        equipment_query = Equipment.query.filter(Equipment.is_active == True,
-                                                 Equipment.organization_id.in_(user_org_ids))
-    all_equipment = (equipment_query
-                     .order_by(Equipment.organization_id, Equipment.name, Equipment.plate)
+    # [REASON]: SPARE-STAGE1 — equipment is now loaded per organization via
+    # AJAX (api_equipment_by_org), so the full equipment list is no longer
+    # rendered into the form. Catalog parts feed the datalist part picker.
+    catalog_parts = (SparePart.query
+                     .options(joinedload(SparePart.category_ref))
+                     .filter(SparePart.status == 'active',
+                             db.or_(SparePart.is_active == True,  # noqa: E712
+                                    SparePart.is_active.is_(None)))
+                     .order_by(SparePart.name)
                      .all())
     return render_template('spare_part_form.html',
                            req=None,
                            today=date.today().isoformat(),
                            organizations=organizations,
-                           all_equipment=all_equipment,
+                           catalog_parts=catalog_parts,
                            lang=_spare_lang())
 
 
@@ -328,6 +484,9 @@ def save_request():
     qtys = request.form.getlist('item_quantity')
     units = request.form.getlist('item_unit')
     notes = request.form.getlist('item_note')
+    # [REASON]: SPARE-STAGE1 — hidden per-row field filled by the catalog part
+    # picker; empty value means free-text entry ("not in catalog" flow).
+    sp_ids = request.form.getlist('item_spare_part_id')
 
     prepared_items = []
     validation_errors = []
@@ -338,6 +497,7 @@ def save_request():
         part_number = parts[i].strip() if i < len(parts) else ''
         unit = units[i].strip() if i < len(units) else 'dona'
         item_note = notes[i].strip() if i < len(notes) else ''
+        sp_raw = sp_ids[i].strip() if i < len(sp_ids) else ''
 
         if not name and not qty_raw and not part_number and not item_note:
             continue
@@ -350,12 +510,29 @@ def save_request():
             validation_errors.append(_spare_t('{}. қатор: миқдор мусбат бўлиши керак', '{} строка: количество должно быть больше нуля').format(row_no))
             continue
 
+        # Resolve the catalog link. A stale/merged/inactive id silently falls
+        # back to the free-text flow instead of failing the whole request.
+        spare_part = None
+        if sp_raw:
+            try:
+                sp_id = int(sp_raw)
+            except ValueError:
+                sp_id = None
+            if sp_id:
+                cand = SparePart.query.get(sp_id)
+                if cand and cand.status == 'merged' and cand.merged_into_id:
+                    cand = SparePart.query.get(cand.merged_into_id)
+                if cand and cand.status in ('active', 'pending_review') and cand.is_active != False:  # noqa: E712
+                    spare_part = cand
+
         prepared_items.append({
             'name': name,
             'part_number': part_number,
             'quantity': qty,
             'unit': unit or 'dona',
             'note': item_note,
+            'spare_part': spare_part,
+            'form_index': i,
         })
 
     if validation_errors:
@@ -370,7 +547,7 @@ def save_request():
         request_date=req_date,
         organization_id=org_id,
         equipment_id=eq_id,
-        status=status,
+        status='draft',
         note=note,
         created_by=current_user.id,
     )
@@ -381,6 +558,7 @@ def save_request():
     for prepared in prepared_items:
         item = SparePartRequestItem(
             request_id=spr.id,
+            spare_part_id=prepared['spare_part'].id if prepared['spare_part'] else None,
             name=prepared['name'],
             part_number=prepared['part_number'],
             quantity=prepared['quantity'],
@@ -388,9 +566,54 @@ def save_request():
             note=prepared['note'],
         )
         db.session.add(item)
-        created_items.append(item)
+        created_items.append((item, prepared))
 
     db.session.flush()
+
+    # [REASON]: SPARE-STAGE1 "not in catalog" flow — a free-text item creates a
+    # pending_review catalog candidate linked back to this item. The request
+    # can be saved/submitted with the pending link but cannot be approved until
+    # a catalog manager approves or merges the candidate (_approval_blockers).
+    for item, prepared in created_items:
+        if prepared['spare_part'] is not None:
+            continue
+        candidate = SparePart(
+            name=item.name,
+            part_number=item.part_number,
+            unit=item.unit,
+            status='pending_review',
+            created_by=current_user.id,
+            source_request_item_id=item.id,
+        )
+        db.session.add(candidate)
+        db.session.flush()
+        item.spare_part_id = candidate.id
+        _audit_spare(
+            'spare_part_catalog_created',
+            entity_type='spare_part_catalog',
+            entity_id=candidate.id,
+            entity_label=candidate.name,
+            after=_catalog_snapshot(candidate),
+            description='Pending-review catalog candidate auto-created from request item #{}'.format(item.id)
+        )
+
+    # [REASON]: SPARE-STAGE1 mandatory-photo rule — items in 'unit' (or not yet
+    # categorized) categories need at least one photo before submit. To avoid
+    # losing the operator's typed rows, a failed submit is kept as a draft with
+    # a clear bilingual error; photos can be added on the detail page.
+    if status == 'submitted':
+        missing = _items_missing_photos([item for item, _ in created_items])
+        if missing:
+            status = 'draft'
+            _spare_flash_errors(
+                missing,
+                title_uz='Сўров юборилмади, чорнов сифатида сақланди. Қуйидаги позицияларга камида битта фото керак:',
+                title_ru='Заявка не отправлена и сохранена как черновик. Этим позициям нужно хотя бы одно фото:',
+            )
+
+    if status == 'submitted':
+        spr.status = 'submitted'
+
     _audit_spare(
         'spare_part_request_created',
         entity_type='spare_part_request',
@@ -399,7 +622,7 @@ def save_request():
         after=_request_snapshot(spr),
         description='Spare part request created'
     )
-    for item in created_items:
+    for item, _prepared in created_items:
         _audit_spare(
             'spare_part_item_created',
             entity_type='spare_part_request_item',
@@ -417,7 +640,7 @@ def save_request():
         # [REASON]: BOT003 — Post-commit best-effort notification, never raises.
         if _BOT003_AVAILABLE:
             enqueue_spare_request_submitted_best_effort(spr.id)
-    else:
+    elif status == 'draft':
         flash(_spare_t('Чорнов сақланди', 'Черновик сохранён'), 'info')
     return redirect(url_for('spare_parts.detail', rid=spr.id))
 
@@ -428,10 +651,23 @@ def detail(rid):
     lang = getattr(g, 'lang', 'uz')
     spr = SparePartRequest.query.get_or_404(rid)
     _spare_check_request_access(spr)
+    # SPARE-STAGE1 action visibility flags for the template.
+    can_price = (current_user.has_module_access('spare_parts_price_confirm')
+                 and spr.status == 'submitted')
+    can_approve = (current_user.has_module_access('spare_parts_approve')
+                   and spr.status == 'submitted')
+    can_edit_photos = (current_user.can_edit
+                       and spr.created_by == current_user.id
+                       and spr.status in ('draft', 'returned_for_revision'))
     return render_template('spare_part_detail.html',
                            req=spr,
                            status_labels=STATUS_LABELS,
                            status_colors=STATUS_COLORS,
+                           price_status_labels=PRICE_STATUS_LABELS,
+                           price_status_colors=PRICE_STATUS_COLORS,
+                           can_price=can_price,
+                           can_approve=can_approve,
+                           can_edit_photos=can_edit_photos,
                            lang=lang)
 
 
@@ -440,8 +676,20 @@ def detail(rid):
 def submit_request(rid):
     spr = SparePartRequest.query.get_or_404(rid)
     _spare_check_request_access(spr)
-    if spr.status != 'draft' or spr.created_by != current_user.id:
+    # [REASON]: SPARE-STAGE1 — the price reject/return workflow sends a request
+    # back as 'returned_for_revision'; the owner fixes it and resubmits from
+    # the same button, so both statuses are submittable.
+    if spr.status not in ('draft', 'returned_for_revision') or spr.created_by != current_user.id:
         abort(403)
+    # [REASON]: SPARE-STAGE1 mandatory-photo rule at submit time.
+    missing = _items_missing_photos(spr.items)
+    if missing:
+        _spare_flash_errors(
+            missing,
+            title_uz='Сўров юборилмади. Қуйидаги позицияларга камида битта фото керак:',
+            title_ru='Заявка не отправлена. Этим позициям нужно хотя бы одно фото:',
+        )
+        return redirect(url_for('spare_parts.detail', rid=rid))
     before = _request_snapshot(spr)
     old_status = spr.status
     spr.status = 'submitted'
@@ -469,12 +717,25 @@ def submit_request(rid):
 @spare_parts_bp.route('/<int:rid>/approve', methods=['POST'])
 @module_required('spare_parts')
 def approve_request(rid):
-    if not current_user.is_admin:
+    # [REASON]: SPARE-STAGE1 — final approval now requires the explicit
+    # 'spare_parts_approve' permission; has_module_access() keeps the admin
+    # bypass, so admins retain access and nobody else gains it automatically.
+    if not current_user.has_module_access('spare_parts_approve'):
         abort(403)
     spr = SparePartRequest.query.get_or_404(rid)
     _spare_check_request_access(spr)
     if spr.status != 'submitted':
         abort(400)
+    # [REASON]: SPARE-STAGE1 approval gate — pending_review catalog candidates
+    # and unconfirmed prices block approval with an itemised bilingual error.
+    blockers = _approval_blockers(spr)
+    if blockers:
+        _spare_flash_errors(
+            blockers,
+            title_uz='Сўровни тасдиқлаб бўлмайди:',
+            title_ru='Заявку нельзя утвердить:',
+        )
+        return redirect(url_for('spare_parts.detail', rid=rid))
     before = _request_snapshot(spr)
     old_status = spr.status
     spr.status = 'approved'
@@ -505,7 +766,8 @@ def approve_request(rid):
 @spare_parts_bp.route('/<int:rid>/reject', methods=['POST'])
 @module_required('spare_parts')
 def reject_request(rid):
-    if not current_user.is_admin:
+    # [REASON]: SPARE-STAGE1 — same permission as approval (see approve_request).
+    if not current_user.has_module_access('spare_parts_approve'):
         abort(403)
     spr = SparePartRequest.query.get_or_404(rid)
     _spare_check_request_access(spr)
@@ -538,25 +800,226 @@ def reject_request(rid):
     return redirect(url_for('spare_parts.detail', rid=rid))
 
 
+# ─── SPARE-STAGE1: price workflow ─────────────────────────────────────────────
+
+def _price_action_target(rid, item_id):
+    """Shared guard for price actions: access, permission, status, ownership."""
+    spr = SparePartRequest.query.get_or_404(rid)
+    _spare_check_request_access(spr)
+    # [REASON]: SPARE-STAGE1 — price actions require the explicit
+    # 'spare_parts_price_confirm' permission (admin passes automatically).
+    if not current_user.has_module_access('spare_parts_price_confirm'):
+        abort(403)
+    # Prices are set/confirmed while the request is under review.
+    if spr.status != 'submitted':
+        abort(400)
+    item = SparePartRequestItem.query.get_or_404(item_id)
+    if item.request_id != spr.id:
+        abort(404)
+    return spr, item
+
+
+@spare_parts_bp.route('/<int:rid>/items/<int:item_id>/price/set', methods=['POST'])
+@module_required('spare_parts')
+def item_price_set(rid, item_id):
+    spr, item = _price_action_target(rid, item_id)
+    raw = (request.form.get('price', '') or '').strip()
+    try:
+        price = float(raw.replace(',', '.').replace(' ', ''))
+        if price < 0:
+            raise ValueError()
+    except (TypeError, ValueError):
+        _spare_flash_errors([_spare_t('Нарх мусбат сон бўлиши керак',
+                                      'Цена должна быть неотрицательным числом')],
+                            title_uz='Нарх сақланмади:', title_ru='Цена не сохранена:')
+        return redirect(url_for('spare_parts.detail', rid=rid))
+    old_price = item.price
+    item.price = price
+    # Setting a new value restarts the confirm cycle.
+    item.price_status = 'pending'
+    item.price_set_by = current_user.id
+    item.price_set_at = datetime.utcnow()
+    write_price_audit(item.id, old_price, price, 'set', current_user.id)
+    _audit_spare(
+        'spare_part_item_price_set',
+        entity_type='spare_part_request_item',
+        entity_id=item.id,
+        entity_label=item.name,
+        changes={'price': {'before': old_price, 'after': price}},
+        description='Item price set on request #{}'.format(spr.id)
+    )
+    db.session.commit()
+    flash(_spare_t('Нарх сақланди', 'Цена сохранена'), 'success')
+    return redirect(url_for('spare_parts.detail', rid=rid))
+
+
+@spare_parts_bp.route('/<int:rid>/items/<int:item_id>/price/confirm', methods=['POST'])
+@module_required('spare_parts')
+def item_price_confirm(rid, item_id):
+    spr, item = _price_action_target(rid, item_id)
+    if item.price is None:
+        _spare_flash_errors([_spare_t('Аввал нархни киритинг', 'Сначала укажите цену')],
+                            title_uz='Нарх тасдиқланмади:', title_ru='Цена не подтверждена:')
+        return redirect(url_for('spare_parts.detail', rid=rid))
+    item.price_status = 'confirmed'
+    write_price_audit(item.id, item.price, item.price, 'confirm', current_user.id)
+    _audit_spare(
+        'spare_part_item_price_confirmed',
+        entity_type='spare_part_request_item',
+        entity_id=item.id,
+        entity_label=item.name,
+        changes={'price_status': {'before': 'pending', 'after': 'confirmed'}},
+        description='Item price confirmed on request #{}'.format(spr.id)
+    )
+    db.session.commit()
+    flash(_spare_t('Нарх тасдиқланди', 'Цена подтверждена'), 'success')
+    return redirect(url_for('spare_parts.detail', rid=rid))
+
+
+@spare_parts_bp.route('/<int:rid>/items/<int:item_id>/price/reject', methods=['POST'])
+@module_required('spare_parts')
+def item_price_reject(rid, item_id):
+    spr, item = _price_action_target(rid, item_id)
+    mode = request.form.get('mode', 'reject')
+    if mode not in ('reject', 'return'):
+        abort(400)
+    comment = (request.form.get('comment', '') or '').strip()
+    old_price_status = item.price_status
+    item.price_status = 'rejected' if mode == 'reject' else 'returned'
+    write_price_audit(item.id, item.price, item.price, mode, current_user.id)
+    # [REASON]: SPARE-STAGE1 — a price rejection/return sends the whole request
+    # back to the operator; recorded in BOTH SparePartPriceAudit (above) and
+    # SparePartStatusHistory (below), per the approved workflow.
+    old_status = spr.status
+    spr.status = 'returned_for_revision'
+    _add_status_history(spr.id, old_status, 'returned_for_revision',
+                        comment=comment or 'Item #{} price {}'.format(item.id, item.price_status),
+                        changed_by=current_user.id)
+    _audit_spare(
+        'spare_part_request_status_changed',
+        entity_type='spare_part_request',
+        entity_id=spr.id,
+        entity_label='Request #{}'.format(spr.id),
+        changes={'status': {'before': old_status, 'after': spr.status},
+                 'item_price_status': {'before': old_price_status, 'after': item.price_status}},
+        description='Request returned for revision: item #{} price {}'.format(item.id, item.price_status)
+    )
+    db.session.commit()
+    flash(_spare_t('Сўров қайта ишлашга қайтарилди', 'Заявка возвращена на доработку'), 'warning')
+    return redirect(url_for('spare_parts.detail', rid=rid))
+
+
+# ─── SPARE-STAGE1: JSON endpoints ─────────────────────────────────────────────
+
+@spare_parts_bp.route('/api/equipment-by-org')
+@module_required('spare_parts')
+def api_equipment_by_org():
+    # [REASON]: SPARE-STAGE1 — mirrors work_orders.api_equipment_by_org (that
+    # file is outside this task's scope fence and returns no eq_type, which the
+    # spare parts form must show as read-only reference text). Same org-access
+    # rule and active-equipment filter.
+    org_id = request.args.get('org_id', type=int)
+    if not org_id or not current_user.can_access_org(org_id):
+        return jsonify([])
+    eqs = (Equipment.query
+           .filter_by(organization_id=org_id, is_active=True)
+           .order_by(Equipment.name, Equipment.plate).all())
+    return jsonify([
+        {
+            'id': e.id,
+            'name': e.name,
+            'plate': e.plate or '',
+            'eq_type': e.eq_type or '',
+            'category': e.category_display,
+        }
+        for e in eqs
+    ])
+
+
+@spare_parts_bp.route('/api/repeat-check')
+@module_required('spare_parts')
+def api_repeat_check():
+    equipment_id = request.args.get('equipment_id', type=int)
+    spare_part_id = request.args.get('spare_part_id', type=int)
+    exclude_request_id = request.args.get('exclude_request_id', type=int)
+    empty = {'severity': None, 'days_since': None, 'history': []}
+    if not equipment_id or not spare_part_id:
+        return jsonify(empty)
+    eq = Equipment.query.get(equipment_id)
+    if not eq or not current_user.can_access_org(eq.organization_id):
+        return jsonify(empty)
+    return jsonify(_check_repeat_orders(equipment_id, spare_part_id, exclude_request_id))
+
+
+@spare_parts_bp.route('/api/price-suggestions')
+@module_required('spare_parts')
+def api_price_suggestions():
+    # [REASON]: SPARE-STAGE1 — last 3 confirmed prices for a catalog part,
+    # shown as a hint when setting a price. Exact part match only, no fuzzy.
+    spare_part_id = request.args.get('spare_part_id', type=int)
+    if not spare_part_id:
+        return jsonify([])
+    rows = (SparePartPriceAudit.query
+            .join(SparePartRequestItem,
+                  SparePartPriceAudit.item_id == SparePartRequestItem.id)
+            .filter(SparePartRequestItem.spare_part_id == spare_part_id,
+                    SparePartPriceAudit.action == 'confirm')
+            .order_by(SparePartPriceAudit.changed_at.desc())
+            .limit(3)
+            .all())
+    return jsonify([
+        {'price': a.new_price,
+         'date': a.changed_at.date().isoformat() if a.changed_at else None}
+        for a in rows
+    ])
+
+
+# ─── Catalog ──────────────────────────────────────────────────────────────────
+
 @spare_parts_bp.route('/catalog')
 @module_required('spare_parts')
 def catalog():
-    if not current_user.is_admin:
+    # [REASON]: SPARE-STAGE1 — catalog management now sits behind the explicit
+    # 'spare_parts_catalog_manage' permission (admin passes automatically, so
+    # existing admin access is preserved; previously this was is_admin-only).
+    if not current_user.has_module_access('spare_parts_catalog_manage'):
         abort(403)
-    parts = SparePart.query.order_by(SparePart.name).all()
-    return render_template('spare_parts_catalog.html', parts=parts, lang=_spare_lang())
+    parts = (SparePart.query
+             .options(joinedload(SparePart.category_ref))
+             .order_by(SparePart.name).all())
+    pending_parts = (SparePart.query
+                     .options(joinedload(SparePart.creator),
+                              joinedload(SparePart.source_item))
+                     .filter(SparePart.status == 'pending_review')
+                     .order_by(SparePart.created_at)
+                     .all())
+    merge_targets = [p for p in parts
+                     if p.status == 'active' and p.is_active != False]  # noqa: E712
+    categories = (SparePartCategory.query
+                  .order_by(SparePartCategory.sort_order, SparePartCategory.id)
+                  .all())
+    return render_template('spare_parts_catalog.html',
+                           parts=parts,
+                           pending_parts=pending_parts,
+                           merge_targets=merge_targets,
+                           categories=categories,
+                           lang=_spare_lang())
 
 
 @spare_parts_bp.route('/catalog/save', methods=['POST'])
 @module_required('spare_parts')
 def catalog_save():
-    if not current_user.is_admin:
+    if not current_user.has_module_access('spare_parts_catalog_manage'):
         abort(403)
     pid = request.form.get('id', type=int)
     name = request.form.get('name', '').strip()
     part_number = request.form.get('part_number', '').strip()
     unit = request.form.get('unit', 'dona').strip()
-    category = request.form.get('category', '').strip()
+    # [REASON]: SPARE-STAGE1 — the form now sends category_id (managed
+    # categories); the deprecated free-text `category` column is left untouched.
+    category_id = request.form.get('category_id', type=int) or None
+    if category_id and not SparePartCategory.query.get(category_id):
+        category_id = None
 
     if not name:
         flash(_spare_t('Номини киритинг', 'Введите название'), 'warning')
@@ -570,9 +1033,10 @@ def catalog_save():
         part.name = name
         part.part_number = part_number
         part.unit = unit
-        part.category = category
+        part.category_id = category_id
     else:
-        part = SparePart(name=name, part_number=part_number, unit=unit, category=category)
+        part = SparePart(name=name, part_number=part_number, unit=unit,
+                         category_id=category_id, created_by=current_user.id)
         db.session.add(part)
         created = True
     db.session.flush()
@@ -589,4 +1053,130 @@ def catalog_save():
     )
     db.session.commit()
     flash(_spare_t('Сақланди', 'Сохранено'), 'success')
+    return redirect(url_for('spare_parts.catalog'))
+
+
+@spare_parts_bp.route('/catalog/categories/save', methods=['POST'])
+@module_required('spare_parts')
+def catalog_category_save():
+    if not current_user.has_module_access('spare_parts_catalog_manage'):
+        abort(403)
+    cid = request.form.get('id', type=int)
+    name_ru = (request.form.get('name_ru', '') or '').strip()
+    name_uz = (request.form.get('name_uz', '') or '').strip()
+    kind = (request.form.get('kind', 'unit') or 'unit').strip()
+    sort_order = request.form.get('sort_order', type=int) or 0
+    if kind not in ('unit', 'consumable'):
+        abort(400)
+    if not name_ru or not name_uz:
+        _spare_flash_errors(
+            [_spare_t('Категория номини иккала тилда киритинг',
+                      'Введите название категории на обоих языках')],
+            title_uz='Категория сақланмади:', title_ru='Категория не сохранена:')
+        return redirect(url_for('spare_parts.catalog'))
+
+    created = False
+    if cid:
+        cat = SparePartCategory.query.get_or_404(cid)
+        cat.name_ru = name_ru
+        cat.name_uz = name_uz
+        cat.kind = kind
+        cat.sort_order = sort_order
+        cat.is_active = request.form.get('is_active') is not None
+    else:
+        cat = SparePartCategory(name_ru=name_ru, name_uz=name_uz, kind=kind,
+                                sort_order=sort_order, created_by=current_user.id)
+        db.session.add(cat)
+        created = True
+    db.session.flush()
+    _audit_spare(
+        'spare_part_category_created' if created else 'spare_part_category_updated',
+        entity_type='spare_part_category',
+        entity_id=cat.id,
+        entity_label=cat.name_ru,
+        description='Spare part category saved (kind={})'.format(cat.kind)
+    )
+    db.session.commit()
+    flash(_spare_t('Категория сақланди', 'Категория сохранена'), 'success')
+    return redirect(url_for('spare_parts.catalog'))
+
+
+@spare_parts_bp.route('/catalog/review/<int:pid>/approve', methods=['POST'])
+@module_required('spare_parts')
+def catalog_review_approve(pid):
+    """Approve a pending_review candidate as a new canonical catalog entry."""
+    if not current_user.has_module_access('spare_parts_catalog_manage'):
+        abort(403)
+    part = SparePart.query.get_or_404(pid)
+    if part.status != 'pending_review':
+        abort(400)
+    category_id = request.form.get('category_id', type=int)
+    category = SparePartCategory.query.get(category_id) if category_id else None
+    # [REASON]: SPARE-STAGE1 — approving as new requires a category so the
+    # photo rule (unit/consumable) and analytics have a defined bucket.
+    if not category:
+        _spare_flash_errors(
+            [_spare_t('Категорияни танланг', 'Выберите категорию')],
+            title_uz='Ёзув тасдиқланмади:', title_ru='Запись не подтверждена:')
+        return redirect(url_for('spare_parts.catalog'))
+    before = _catalog_snapshot(part)
+    part.category_id = category.id
+    part.status = 'active'
+    after = _catalog_snapshot(part)
+    _audit_spare(
+        'spare_part_catalog_review_approved',
+        entity_type='spare_part_catalog',
+        entity_id=part.id,
+        entity_label=part.name,
+        before=before,
+        after=after,
+        changes=diff_dict(before, after),
+        description='Pending-review candidate approved as new catalog entry'
+    )
+    db.session.commit()
+    flash(_spare_t('Каталог ёзуви тасдиқланди', 'Запись каталога подтверждена'), 'success')
+    return redirect(url_for('spare_parts.catalog'))
+
+
+@spare_parts_bp.route('/catalog/review/<int:pid>/merge', methods=['POST'])
+@module_required('spare_parts')
+def catalog_review_merge(pid):
+    """Merge a pending_review candidate into an existing canonical entry."""
+    if not current_user.has_module_access('spare_parts_catalog_manage'):
+        abort(403)
+    part = SparePart.query.get_or_404(pid)
+    if part.status != 'pending_review':
+        abort(400)
+    target_id = request.form.get('target_id', type=int)
+    target = SparePart.query.get(target_id) if target_id else None
+    if not target or target.id == part.id or target.status != 'active':
+        _spare_flash_errors(
+            [_spare_t('Бирлаштириш учун фаол каталог ёзувини танланг',
+                      'Выберите активную запись каталога для объединения')],
+            title_uz='Бирлаштирилмади:', title_ru='Объединение не выполнено:')
+        return redirect(url_for('spare_parts.catalog'))
+    before = _catalog_snapshot(part)
+    # [REASON]: SPARE-STAGE1 — repoint every request item that referenced the
+    # duplicate candidate to the canonical entry so history and the repeat
+    # engine count them against one part. Bulk update runs before the part is
+    # modified so no in-session state needs re-synchronisation.
+    repointed = (SparePartRequestItem.query
+                 .filter(SparePartRequestItem.spare_part_id == part.id)
+                 .update({'spare_part_id': target.id}, synchronize_session=False))
+    part.status = 'merged'
+    part.merged_into_id = target.id
+    after = _catalog_snapshot(part)
+    _audit_spare(
+        'spare_part_catalog_review_merged',
+        entity_type='spare_part_catalog',
+        entity_id=part.id,
+        entity_label=part.name,
+        before=before,
+        after=after,
+        changes=diff_dict(before, after),
+        description='Candidate merged into catalog entry #{} ({} items repointed)'.format(
+            target.id, repointed)
+    )
+    db.session.commit()
+    flash(_spare_t('Ёзув бирлаштирилди', 'Записи объединены'), 'success')
     return redirect(url_for('spare_parts.catalog'))
