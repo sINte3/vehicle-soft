@@ -3,259 +3,70 @@
 {% block title %}{{ 'Запчасти — каталог' if is_ru else 'Эҳтиёт қисмлар — каталог' }}{% endblock %}
 {% block content %}
 
-<!-- SPARE001A_TEMPLATE_UX -->
-<style>
-    .spare001a-scope {
-        --spare-gap: 14px;
-    }
-
-    .spare001a-scope .page-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 14px;
-        margin-bottom: 18px;
-        padding: 18px 20px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: linear-gradient(135deg, var(--surface), var(--surface2));
-        box-shadow: var(--shadow);
-    }
-
-    .spare001a-scope .page-header h1 {
-        margin: 0 0 6px 0;
-        font-size: 24px;
-        line-height: 1.2;
-    }
-
-    .spare001a-scope .page-header .text-muted,
-    .spare001a-scope .text-muted {
-        line-height: 1.45;
-    }
-
-    .spare001a-scope .card {
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: var(--surface);
-        box-shadow: var(--shadow);
-    }
-
-    .spare001a-scope .card + .card {
-        margin-top: 14px;
-    }
-
-    .spare001a-scope .card-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 12px;
-        padding: 12px 14px;
-        border-bottom: 1px solid var(--border);
-        background: var(--surface2);
-        font-weight: 700;
-    }
-
-    .spare001a-scope .card-body {
-        padding: 14px;
-    }
-
-    .spare001a-scope .form-inline,
-    .spare001a-scope .spare002a-filter-form,
-    .spare001a-scope .spare002a-request-form {
-        gap: 12px;
-        align-items: flex-start;
-    }
-
-    .spare001a-scope label {
-        font-size: 12px;
-        font-weight: 700;
-        color: var(--text2);
-    }
-
-    .spare001a-scope input,
-    .spare001a-scope select,
-    .spare001a-scope textarea {
-        max-width: 100%;
-        box-sizing: border-box;
-    }
-
-    .spare001a-scope input.form-control,
-    .spare001a-scope select.form-control {
-        height: 38px;
-        line-height: 1.4;
-    }
-
-    .spare001a-scope input[type="date"].form-control {
-        -webkit-appearance: none;
-        appearance: none;
-        padding-top: 0;
-        padding-bottom: 0;
-        display: flex;
-        align-items: center;
-    }
-
-    .spare001a-scope table {
-        width: 100%;
-        border-collapse: separate;
-        border-spacing: 0;
-    }
-
-    .spare001a-scope thead th {
-        position: sticky;
-        top: 0;
-        z-index: 1;
-        background: var(--surface2);
-        border-bottom: 1px solid var(--border);
-        font-size: 12px;
-        color: var(--text2);
-    }
-
-    .spare001a-scope tbody tr:hover {
-        background: var(--surface2);
-    }
-
-    .spare001a-scope .spare-stat,
-    .spare001a-scope .spare-detail-card {
-        padding: 12px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: var(--surface2);
-    }
-
-    .spare001a-scope .spare-stat .label,
-    .spare001a-scope .spare-detail-card .label {
-        margin-bottom: 4px;
-        color: var(--text2);
-        font-size: 12px;
-        font-weight: 700;
-    }
-
-    .spare001a-scope .spare-stat .value {
-        font-size: 22px;
-        font-weight: 800;
-        line-height: 1.1;
-    }
-
-    .spare001a-scope .spare002a-guidance-title {
-        margin-bottom: 4px;
-        font-weight: 800;
-        color: var(--text);
-    }
-
-    .spare001a-scope .catalog-note,
-    .spare001a-scope .spare-review-box {
-        margin-bottom: 14px;
-        padding: 12px 14px;
-        border: 1px solid var(--border);
-        border-left: 4px solid var(--accent);
-        border-radius: var(--radius);
-        background: var(--accent-light);
-        line-height: 1.45;
-    }
-
-    .spare001a-scope .spare-row-muted {
-        color: var(--text2);
-        font-size: 12px;
-    }
-
-    .spare001a-scope .btn {
-        white-space: nowrap;
-    }
-
-    .spare001a-scope .btn-sm {
-        padding: 5px 9px;
-    }
-
-    .spare001a-scope .table-responsive,
-    .spare001a-scope .spare-table-wrap {
-        overflow-x: auto;
-    }
-
-    @media (max-width: 900px) {
-        .spare001a-scope .page-header {
-            flex-direction: column;
-        }
-
-        .spare001a-scope .form-inline,
-        .spare001a-scope .spare002a-filter-form,
-        .spare001a-scope .spare002a-request-form {
-            flex-direction: column;
-            align-items: stretch;
-        }
-
-        .spare001a-scope .card-header {
-            flex-direction: column;
-            align-items: flex-start;
-        }
-    }
-</style>
-<div class="spare001a-scope">
-
-<style>
-.catalog-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
-.catalog-note { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
-.catalog-toolbar { display:flex; gap:10px; align-items:end; flex-wrap:wrap; margin-bottom:16px; }
-.catalog-toolbar .search { min-width:260px; flex:1; }
-.catalog-form-error { border-color:var(--danger) !important; box-shadow:0 0 0 2px rgba(220,53,69,.12); }
-@media (max-width:768px) { .catalog-hero { flex-direction:column; } .catalog-toolbar .search { min-width:100%; } }
-</style>
-
-<div class="catalog-hero">
-    <div>
-        <h1>{{ 'Каталог запчастей' if is_ru else 'Эҳтиёт қисмлар каталоги' }}</h1>
-        <div class="text-muted text-sm">{{ 'Справочник часто используемых запчастей для быстрого заполнения заявок.' if is_ru else 'Сўровларни тез тўлдириш учун кўп ишлатиладиган запчастлар маълумотномаси.' }}</div>
-    </div>
-    <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ '← Заявки' if is_ru else '← Сўровлар' }}</a>
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Каталог запчастей' if is_ru else 'Эҳтиёт қисмлар каталоги' }}</div>
+    <div class="vs-hero-sub">{{ 'Справочник часто используемых запчастей для быстрого заполнения заявок.' if is_ru else 'Сўровларни тез тўлдириш учун кўп ишлатиладиган запчастлар маълумотномаси.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('spare_parts.index') }}" class="vs-btn">{{ '← Заявки' if is_ru else '← Сўровлар' }}</a>
+  </div>
 </div>
 
-<div class="catalog-note">{{ 'Минимально обязательное поле — название. Артикул, единица измерения и категория помогают быстрее находить нужную деталь.' if is_ru else 'Камида номини киритиш мажбурий. Артикул, ўлчов бирлиги ва категория керакли детални тез топишга ёрдам беради.' }}</div>
+<div class="vs-alert is-info vs-mb">{{ 'Минимально обязательное поле — название. Артикул, единица измерения и категория помогают быстрее находить нужную деталь.' if is_ru else 'Камида номини киритиш мажбурий. Артикул, ўлчов бирлиги ва категория керакли детални тез топишга ёрдам беради.' }}</div>
 
-<div class="card" style="margin-bottom:20px;">
-    <div class="card-header" id="catalogFormTitle">{{ 'Добавить новую запчасть' if is_ru else 'Янги қисм қўшиш' }}</div>
-    <div class="card-body">
-        <form method="post" action="{{ url_for('spare_parts.catalog_save') }}" class="form-inline" id="catalogForm" onsubmit="return validateCatalogBeforeSubmit()">
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title" id="catalogFormTitle">{{ 'Добавить новую запчасть' if is_ru else 'Янги қисм қўшиш' }}</div>
+    </div>
+    <div class="vs-card-body">
+        <form method="post" action="{{ url_for('spare_parts.catalog_save') }}" class="vs-form-row" id="catalogForm" onsubmit="return validateCatalogBeforeSubmit()">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="editId" value="">
-            <div class="form-group" style="flex:2; min-width:220px;">
-                <label>{{ 'Название' if is_ru else 'Номи' }}</label>
-                <input type="text" name="name" id="editName" class="form-control" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" required>
+            <div class="vs-field" style="flex:2; min-width:220px;">
+                <label class="vs-label">{{ 'Название' if is_ru else 'Номи' }}</label>
+                <input type="text" name="name" id="editName" class="vs-input" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" required>
             </div>
-            <div class="form-group" style="flex:1; min-width:150px;">
-                <label>{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</label>
-                <input type="text" name="part_number" id="editPartNum" class="form-control" placeholder="000-000">
+            <div class="vs-field" style="flex:1; min-width:150px;">
+                <label class="vs-label">{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</label>
+                <input type="text" name="part_number" id="editPartNum" class="vs-input" placeholder="000-000">
             </div>
-            <div class="form-group" style="width:120px;">
-                <label>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</label>
-                <input type="text" name="unit" id="editUnit" class="form-control" value="dona" style="width:100%;">
+            <div class="vs-field" style="width:120px;">
+                <label class="vs-label">{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</label>
+                <input type="text" name="unit" id="editUnit" class="vs-input" value="{{ 'шт' if is_ru else 'дона' }}">
             </div>
-            <div class="form-group" style="flex:1; min-width:170px;">
-                <label>{{ 'Категория' if is_ru else 'Категория' }}</label>
-                <input type="text" name="category" id="editCategory" class="form-control" placeholder="{{ 'Двигатель / тормоз / фильтр...' if is_ru else 'Двигатель / тормоз / фильтр...' }}">
+            <div class="vs-field" style="flex:1; min-width:170px;">
+                <label class="vs-label">{{ 'Категория' if is_ru else 'Категория' }}</label>
+                <input type="text" name="category" id="editCategory" class="vs-input" placeholder="{{ 'Двигатель / тормоз / фильтр...' if is_ru else 'Двигатель / тормоз / фильтр...' }}">
             </div>
-            <div class="form-group">
-                <label>&nbsp;</label>
-                <button type="submit" class="btn btn-primary">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
-                <button type="button" class="btn btn-secondary" onclick="resetForm()">{{ 'Сбросить' if is_ru else 'Тозалаш' }}</button>
+            <div class="vs-field" style="flex:none;">
+                <label class="vs-label">&nbsp;</label>
+                <div class="vs-row">
+                    <button type="submit" class="vs-btn vs-btn-primary">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+                    <button type="button" class="vs-btn" onclick="resetForm()">{{ 'Сбросить' if is_ru else 'Тозалаш' }}</button>
+                </div>
             </div>
         </form>
     </div>
 </div>
 
-<div class="catalog-toolbar">
-    <div class="form-group search" style="margin-bottom:0;">
-        <label>{{ 'Поиск' if is_ru else 'Қидириш' }}</label>
-        <input type="text" id="catalogSearch" class="form-control" placeholder="{{ 'Поиск по названию, артикулу, категории' if is_ru else 'Ном, артикул, категория бўйича қидириш' }}" oninput="filterCatalog()">
+<div class="vs-row vs-mb" style="justify-content:space-between; align-items:flex-end;">
+    <div class="vs-field" style="min-width:280px; flex:1;">
+        <label class="vs-label">{{ 'Поиск' if is_ru else 'Қидириш' }}</label>
+        <input type="text" id="catalogSearch" class="vs-input" placeholder="{{ 'Поиск по названию, артикулу, категории' if is_ru else 'Ном, артикул, категория бўйича қидириш' }}" oninput="filterCatalog()">
     </div>
-    <div class="text-muted text-sm" id="catalogCounter">{{ 'Показано' if is_ru else 'Кўрсатилган' }}: {{ parts|length }}</div>
+    <div class="vs-soft" id="catalogCounter" style="font-size:12.5px;">{{ 'Показано' if is_ru else 'Кўрсатилган' }}: {{ parts|length }}</div>
 </div>
 
-<div class="card">
-    <div class="card-header">{{ 'Всего в каталоге' if is_ru else 'Каталогда жами' }}: {{ parts|length }}</div>
-    <div style="overflow-x:auto;">
-    <table style="min-width:760px;">
+<div class="vs-table-wrap">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ 'Всего в каталоге' if is_ru else 'Каталогда жами' }}: {{ parts|length }}</span>
+    </div>
+    <div class="vs-table-scroll">
+    <table class="vs-table">
         <thead>
             <tr>
-                <th>№</th>
+                <th style="width:40px;">№</th>
                 <th>{{ 'Название' if is_ru else 'Номи' }}</th>
                 <th>{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</th>
                 <th>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
@@ -267,12 +78,12 @@
             {% for part in parts %}
             <tr class="catalog-row" data-search="{{ (part.name ~ ' ' ~ (part.part_number or '') ~ ' ' ~ (part.unit or '') ~ ' ' ~ (part.category or ''))|lower }}">
                 <td>{{ loop.index }}</td>
-                <td><strong>{{ part.name }}</strong></td>
-                <td class="text-sm text-muted">{{ part.part_number or '—' }}</td>
-                <td>{{ part.unit or 'dona' }}</td>
-                <td class="text-sm text-muted">{{ part.category or '—' }}</td>
-                <td>
-                    <button class="btn btn-sm btn-secondary" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
+                <td style="font-weight:600;">{{ part.name }}</td>
+                <td class="text-sm vs-muted">{{ part.part_number or '—' }}</td>
+                <td>{{ part.unit or ('шт' if is_ru else 'дона') }}</td>
+                <td class="text-sm vs-muted">{{ part.category or '—' }}</td>
+                <td class="right">
+                    <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
                             onclick='editPart({{ part.id }}, {{ part.name|tojson }}, {{ (part.part_number or "")|tojson }}, {{ (part.unit or "")|tojson }}, {{ (part.category or "")|tojson }})'>✏</button>
                 </td>
             </tr>
@@ -290,11 +101,12 @@ const CATALOG_TEXT = {
     requiredName: {{ ('Введите название запчасти.' if is_ru else 'Запчасть номини киритинг.')|tojson }},
     shown: {{ ('Показано' if is_ru else 'Кўрсатилган')|tojson }}
 };
+const DEFAULT_UNIT = {{ ('шт' if is_ru else 'дона')|tojson }};
 function editPart(id, name, partNum, unit, cat) {
     document.getElementById('editId').value = id;
     document.getElementById('editName').value = name;
     document.getElementById('editPartNum').value = partNum;
-    document.getElementById('editUnit').value = unit || 'dona';
+    document.getElementById('editUnit').value = unit || DEFAULT_UNIT;
     document.getElementById('editCategory').value = cat;
     document.getElementById('catalogFormTitle').textContent = CATALOG_TEXT.editTitle;
     document.getElementById('editName').focus();
@@ -303,16 +115,16 @@ function resetForm() {
     document.getElementById('editId').value = '';
     document.getElementById('editName').value = '';
     document.getElementById('editPartNum').value = '';
-    document.getElementById('editUnit').value = 'dona';
+    document.getElementById('editUnit').value = DEFAULT_UNIT;
     document.getElementById('editCategory').value = '';
     document.getElementById('catalogFormTitle').textContent = CATALOG_TEXT.addTitle;
-    document.getElementById('editName').classList.remove('catalog-form-error');
+    document.getElementById('editName').classList.remove('is-error');
 }
 function validateCatalogBeforeSubmit() {
     const name = document.getElementById('editName');
-    name.classList.remove('catalog-form-error');
+    name.classList.remove('is-error');
     if (!(name.value || '').trim()) {
-        name.classList.add('catalog-form-error');
+        name.classList.add('is-error');
         alert(CATALOG_TEXT.requiredName);
         name.focus();
         return false;

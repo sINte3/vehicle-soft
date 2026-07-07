@@ -3,262 +3,79 @@
 {% block title %}{{ 'Запчасти' if is_ru else 'Эҳтиёт қисмлар' }} — {{ 'Заявка' if is_ru else 'Сўров' }} #{{ req.id }}{% endblock %}
 {% block content %}
 
-<!-- SPARE001A_TEMPLATE_UX -->
-<style>
-    .spare001a-scope {
-        --spare-gap: 14px;
-    }
-
-    .spare001a-scope .page-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 14px;
-        margin-bottom: 18px;
-        padding: 18px 20px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: linear-gradient(135deg, var(--surface), var(--surface2));
-        box-shadow: var(--shadow);
-    }
-
-    .spare001a-scope .page-header h1 {
-        margin: 0 0 6px 0;
-        font-size: 24px;
-        line-height: 1.2;
-    }
-
-    .spare001a-scope .page-header .text-muted,
-    .spare001a-scope .text-muted {
-        line-height: 1.45;
-    }
-
-    .spare001a-scope .card {
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: var(--surface);
-        box-shadow: var(--shadow);
-    }
-
-    .spare001a-scope .card + .card {
-        margin-top: 14px;
-    }
-
-    .spare001a-scope .card-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 12px;
-        padding: 12px 14px;
-        border-bottom: 1px solid var(--border);
-        background: var(--surface2);
-        font-weight: 700;
-    }
-
-    .spare001a-scope .card-body {
-        padding: 14px;
-    }
-
-    .spare001a-scope .form-inline,
-    .spare001a-scope .spare002a-filter-form,
-    .spare001a-scope .spare002a-request-form {
-        gap: 12px;
-        align-items: flex-start;
-    }
-
-    .spare001a-scope label {
-        font-size: 12px;
-        font-weight: 700;
-        color: var(--text2);
-    }
-
-    .spare001a-scope input,
-    .spare001a-scope select,
-    .spare001a-scope textarea {
-        max-width: 100%;
-        box-sizing: border-box;
-    }
-
-    .spare001a-scope input.form-control,
-    .spare001a-scope select.form-control {
-        height: 38px;
-        line-height: 1.4;
-    }
-
-    .spare001a-scope input[type="date"].form-control {
-        -webkit-appearance: none;
-        appearance: none;
-        padding-top: 0;
-        padding-bottom: 0;
-        display: flex;
-        align-items: center;
-    }
-
-    .spare001a-scope table {
-        width: 100%;
-        border-collapse: separate;
-        border-spacing: 0;
-    }
-
-    .spare001a-scope thead th {
-        position: sticky;
-        top: 0;
-        z-index: 1;
-        background: var(--surface2);
-        border-bottom: 1px solid var(--border);
-        font-size: 12px;
-        color: var(--text2);
-    }
-
-    .spare001a-scope tbody tr:hover {
-        background: var(--surface2);
-    }
-
-    .spare001a-scope .spare-stat,
-    .spare001a-scope .spare-detail-card {
-        padding: 12px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: var(--surface2);
-    }
-
-    .spare001a-scope .spare-stat .label,
-    .spare001a-scope .spare-detail-card .label {
-        margin-bottom: 4px;
-        color: var(--text2);
-        font-size: 12px;
-        font-weight: 700;
-    }
-
-    .spare001a-scope .spare-stat .value {
-        font-size: 22px;
-        font-weight: 800;
-        line-height: 1.1;
-    }
-
-    .spare001a-scope .spare002a-guidance-title {
-        margin-bottom: 4px;
-        font-weight: 800;
-        color: var(--text);
-    }
-
-    .spare001a-scope .catalog-note,
-    .spare001a-scope .spare-review-box {
-        margin-bottom: 14px;
-        padding: 12px 14px;
-        border: 1px solid var(--border);
-        border-left: 4px solid var(--accent);
-        border-radius: var(--radius);
-        background: var(--accent-light);
-        line-height: 1.45;
-    }
-
-    .spare001a-scope .spare-row-muted {
-        color: var(--text2);
-        font-size: 12px;
-    }
-
-    .spare001a-scope .btn {
-        white-space: nowrap;
-    }
-
-    .spare001a-scope .btn-sm {
-        padding: 5px 9px;
-    }
-
-    .spare001a-scope .table-responsive,
-    .spare001a-scope .spare-table-wrap {
-        overflow-x: auto;
-    }
-
-    @media (max-width: 900px) {
-        .spare001a-scope .page-header {
-            flex-direction: column;
-        }
-
-        .spare001a-scope .form-inline,
-        .spare001a-scope .spare002a-filter-form,
-        .spare001a-scope .spare002a-request-form {
-            flex-direction: column;
-            align-items: stretch;
-        }
-
-        .spare001a-scope .card-header {
-            flex-direction: column;
-            align-items: flex-start;
-        }
-    }
-</style>
-<div class="spare001a-scope">
-
 {% set eq_label = req.equipment.name ~ ((' — ' ~ req.equipment.plate) if req.equipment and req.equipment.plate else '') if req.equipment else '—' %}
-<style>
-.spare-detail-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
-.spare-status-pill { display:inline-flex; align-items:center; border-radius:999px; padding:6px 12px; font-size:13px; font-weight:700; background:var(--surface2); }
-.spare-detail-grid { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:12px; margin-bottom:16px; }
-.spare-detail-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:12px; box-shadow:var(--shadow); }
-.spare-detail-card .label { color:var(--text2); font-size:11px; text-transform:uppercase; font-weight:700; margin-bottom:4px; }
-.spare-review-box { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); border-radius:var(--radius); padding:12px 14px; margin-bottom:16px; }
-.spare-action-bar { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px; }
-@media (max-width:900px) { .spare-detail-grid { grid-template-columns:repeat(2,minmax(160px,1fr)); } .spare-detail-hero { flex-direction:column; } }
-@media (max-width:600px) { .spare-detail-grid { grid-template-columns:1fr; } }
-</style>
+{% set status_alert_kind = {'draft': 'is-warning', 'submitted': 'is-info', 'approved': 'is-success', 'rejected': 'is-danger'}[req.status] %}
 
-<div class="spare-detail-hero">
-    <div>
-        <h1>{{ 'Заявка' if is_ru else 'Сўров' }} #{{ req.id }}</h1>
-        <div class="text-muted text-sm">
-            {{ 'Просмотр состава заявки и статуса рассмотрения.' if is_ru else 'Сўров таркиби ва кўриб чиқиш ҳолатини кўриш.' }}
-        </div>
-    </div>
-    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-        <span class="spare-status-pill" style="color:{{ status_colors[req.status] }};">{{ status_labels[req.status][lang] }}</span>
-        <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ '← Список' if is_ru else '← Рўйхат' }}</a>
-    </div>
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Заявка' if is_ru else 'Сўров' }} #{{ req.id }}</div>
+    <div class="vs-hero-sub">{{ 'Просмотр состава заявки и статуса рассмотрения.' if is_ru else 'Сўров таркиби ва кўриб чиқиш ҳолатини кўриш.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <span class="vs-badge" style="color:{{ status_colors[req.status] }}; font-size:12px; padding:6px 12px;">{{ status_labels[req.status][lang] }}</span>
+    <a href="{{ url_for('spare_parts.index') }}" class="vs-btn">{{ '← Список' if is_ru else '← Рўйхат' }}</a>
+  </div>
 </div>
 
 {% if req.status == 'draft' %}
-<div class="spare-review-box">{{ 'Черновик ещё не отправлен администратору. Его можно отправить на рассмотрение.' if is_ru else 'Чорнов ҳали администраторга юборилмаган. Уни кўриб чиқишга юбориш мумкин.' }}</div>
+<div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Черновик ещё не отправлен администратору. Его можно отправить на рассмотрение.' if is_ru else 'Чорнов ҳали администраторга юборилмаган. Уни кўриб чиқишга юбориш мумкин.' }}</div>
 {% elif req.status == 'submitted' %}
-<div class="spare-review-box">{{ 'Заявка отправлена и ожидает решения администратора.' if is_ru else 'Сўров юборилган ва администратор қарорини кутмоқда.' }}</div>
+<div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Заявка отправлена и ожидает решения администратора.' if is_ru else 'Сўров юборилган ва администратор қарорини кутмоқда.' }}</div>
 {% elif req.status == 'approved' %}
-<div class="spare-review-box">{{ 'Заявка утверждена.' if is_ru else 'Сўров тасдиқланган.' }}</div>
+<div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Заявка утверждена.' if is_ru else 'Сўров тасдиқланган.' }}</div>
 {% elif req.status == 'rejected' %}
-<div class="spare-review-box">{{ 'Заявка отклонена. Смотрите комментарий рассмотрения, если он указан.' if is_ru else 'Сўров рад этилган. Агар изоҳ берилган бўлса, кўриб чиқиш изоҳини кўринг.' }}</div>
+<div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Заявка отклонена. Смотрите комментарий рассмотрения, если он указан.' if is_ru else 'Сўров рад этилган. Агар изоҳ берилган бўлса, кўриб чиқиш изоҳини кўринг.' }}</div>
 {% endif %}
 
-<div class="spare-detail-grid">
-    <div class="spare-detail-card"><div class="label">{{ 'Дата' if is_ru else 'Сана' }}</div><div>{{ req.request_date.strftime('%d.%m.%Y') }}</div></div>
-    <div class="spare-detail-card"><div class="label">{{ 'Организация' if is_ru else 'Ташкилот' }}</div><div>{{ req.organization.name }}</div></div>
-    <div class="spare-detail-card"><div class="label">{{ 'Техника' if is_ru else 'Техника' }}</div><div>{{ eq_label }}</div></div>
-    <div class="spare-detail-card"><div class="label">{{ 'Позиции' if is_ru else 'Позициялар' }}</div><div><strong>{{ req.items|length }}</strong></div></div>
-    <div class="spare-detail-card"><div class="label">{{ 'Создал' if is_ru else 'Яратди' }}</div><div>{{ req.creator.full_name or req.creator.username if req.creator else '—' }}<br><span class="text-muted text-sm">{{ req.created_at.strftime('%d.%m.%Y %H:%M') }}</span></div></div>
-    <div class="spare-detail-card"><div class="label">{{ 'Рассмотрел' if is_ru else 'Кўриб чиқди' }}</div><div>{{ req.reviewer.username if req.reviewer else '—' }}{% if req.reviewed_at %}<br><span class="text-muted text-sm">{{ req.reviewed_at.strftime('%d.%m.%Y %H:%M') }}</span>{% endif %}</div></div>
-    <div class="spare-detail-card" style="grid-column:span 2;"><div class="label">{{ 'Примечание' if is_ru else 'Изоҳ' }}</div><div>{{ req.note or '—' }}</div></div>
+<div class="vs-stat-grid vs-mb">
+    <div class="vs-stat"><div class="vs-stat-label">{{ 'Дата' if is_ru else 'Сана' }}</div><div class="vs-stat-value" style="font-size:14px;">{{ req.request_date.strftime('%d.%m.%Y') }}</div></div>
+    <div class="vs-stat"><div class="vs-stat-label">{{ 'Организация' if is_ru else 'Ташкилот' }}</div><div class="vs-stat-value" style="font-size:14px;">{{ req.organization.name }}</div></div>
+    <div class="vs-stat"><div class="vs-stat-label">{{ 'Техника' if is_ru else 'Техника' }}</div><div class="vs-stat-value" style="font-size:14px;">{{ eq_label }}</div></div>
+    <div class="vs-stat"><div class="vs-stat-label">{{ 'Позиции' if is_ru else 'Позициялар' }}</div><div class="vs-stat-value">{{ req.items|length }}</div></div>
+    <div class="vs-stat">
+        <div class="vs-stat-label">{{ 'Создал' if is_ru else 'Яратди' }}</div>
+        <div class="vs-stat-value" style="font-size:13px;">{{ req.creator.full_name or req.creator.username if req.creator else '—' }}</div>
+        <div class="vs-soft" style="font-size:11px; margin-top:2px;">{{ req.created_at.strftime('%d.%m.%Y %H:%M') }}</div>
+    </div>
+    <div class="vs-stat">
+        <div class="vs-stat-label">{{ 'Рассмотрел' if is_ru else 'Кўриб чиқди' }}</div>
+        <div class="vs-stat-value" style="font-size:13px;">{{ req.reviewer.username if req.reviewer else '—' }}</div>
+        {% if req.reviewed_at %}<div class="vs-soft" style="font-size:11px; margin-top:2px;">{{ req.reviewed_at.strftime('%d.%m.%Y %H:%M') }}</div>{% endif %}
+    </div>
+</div>
+
+<div class="vs-card vs-mb">
+    <div class="vs-card-body" style="padding:12px 16px;">
+        <div class="vs-label" style="margin-bottom:4px;">{{ 'Примечание' if is_ru else 'Изоҳ' }}</div>
+        <div>{{ req.note or '—' }}</div>
+    </div>
 </div>
 
 {% if req.reviewer or req.review_comment %}
-<div class="card" style="margin-bottom:16px;">
-    <div class="card-header">{{ 'Результат рассмотрения' if is_ru else 'Кўриб чиқиш натижаси' }}</div>
-    <div class="card-body">
-        <div><strong>{{ status_labels[req.status][lang] }}</strong>{% if req.reviewer %} — {{ req.reviewer.username }}{% endif %}{% if req.reviewed_at %}
-</div>
-({{ req.reviewed_at.strftime('%d.%m.%Y %H:%M') }}){% endif %}</div>
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title">{{ 'Результат рассмотрения' if is_ru else 'Кўриб чиқиш натижаси' }}</div>
+    </div>
+    <div class="vs-card-body">
+        <div><strong>{{ status_labels[req.status][lang] }}</strong>{% if req.reviewer %} — {{ req.reviewer.username }}{% endif %}{% if req.reviewed_at %} ({{ req.reviewed_at.strftime('%d.%m.%Y %H:%M') }}){% endif %}</div>
         {% if req.review_comment %}<div style="margin-top:8px;">{{ req.review_comment }}</div>{% endif %}
     </div>
 </div>
 {% endif %}
 
-<div class="card" style="margin-bottom:16px;">
-    <div class="card-header">{{ 'Позиции заявки' if is_ru else 'Сўров позициялари' }} ({{ req.items|length }})</div>
-    <div style="overflow-x:auto;">
-    <table style="min-width:760px;">
+<div class="vs-table-wrap vs-mb">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ 'Позиции заявки' if is_ru else 'Сўров позициялари' }}</span>
+        <span class="vs-soft" style="font-size:12px;">{{ req.items|length }}</span>
+    </div>
+    <div class="vs-table-scroll">
+    <table class="vs-table">
         <thead>
             <tr>
-                <th>№</th>
+                <th style="width:40px;">№</th>
                 <th>{{ 'Название' if is_ru else 'Номи' }}</th>
                 <th>{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</th>
-                <th class="text-right">{{ 'Количество' if is_ru else 'Миқдор' }}</th>
+                <th class="right">{{ 'Количество' if is_ru else 'Миқдор' }}</th>
                 <th>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
                 <th>{{ 'Примечание' if is_ru else 'Изоҳ' }}</th>
             </tr>
@@ -267,11 +84,11 @@
             {% for item in req.items %}
             <tr>
                 <td>{{ loop.index }}</td>
-                <td><strong>{{ item.name }}</strong></td>
-                <td class="text-sm text-muted">{{ item.part_number or '—' }}</td>
-                <td class="text-right"><strong>{{ item.quantity }}</strong></td>
-                <td>{{ item.unit or 'dona' }}</td>
-                <td class="text-sm text-muted">{{ item.note or '—' }}</td>
+                <td style="font-weight:600;">{{ item.name }}</td>
+                <td class="text-sm vs-muted">{{ item.part_number or '—' }}</td>
+                <td class="right" style="font-weight:600;">{{ item.quantity }}</td>
+                <td>{{ item.unit or ('шт' if is_ru else 'дона') }}</td>
+                <td class="text-sm vs-muted">{{ item.note or '—' }}</td>
             </tr>
             {% endfor %}
         </tbody>
@@ -280,32 +97,34 @@
 </div>
 
 {% if req.status == 'draft' and current_user.id == req.created_by %}
-<div class="spare-action-bar">
+<div class="vs-row vs-mb">
     <form method="post" action="{{ url_for('spare_parts.submit_request', rid=req.id) }}" onsubmit="return confirm({{ ('Отправить заявку администратору?' if is_ru else 'Сўровни администраторга юборишни тасдиқлайсизми?')|tojson }})">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-primary">📤 {{ 'Отправить на рассмотрение' if is_ru else 'Кўриб чиқишга юбориш' }}</button>
+        <button type="submit" class="vs-btn vs-btn-primary">📤 {{ 'Отправить на рассмотрение' if is_ru else 'Кўриб чиқишга юбориш' }}</button>
     </form>
 </div>
 {% endif %}
 
 {% if req.status == 'submitted' and current_user.is_admin %}
-<div class="card" style="margin-bottom:16px;">
-    <div class="card-header">{{ 'Рассмотрение администратором' if is_ru else 'Администратор кўриб чиқиши' }}</div>
-    <div class="card-body">
-        <div class="form-group">
-            <label>{{ 'Комментарий к решению' if is_ru else 'Қарор изоҳи' }}</label>
-            <textarea id="reviewComment" class="form-control" rows="3" placeholder="{{ 'Например: утвердить закупку, заменить аналогом, отклонить по причине...' if is_ru else 'Масалан: харидни тасдиқлаш, аналог билан алмаштириш, сабаб билан рад этиш...' }}"></textarea>
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title">{{ 'Рассмотрение администратором' if is_ru else 'Администратор кўриб чиқиши' }}</div>
+    </div>
+    <div class="vs-card-body">
+        <div class="vs-field vs-mb">
+            <label class="vs-label">{{ 'Комментарий к решению' if is_ru else 'Қарор изоҳи' }}</label>
+            <textarea id="reviewComment" class="vs-textarea" rows="3" placeholder="{{ 'Например: утвердить закупку, заменить аналогом, отклонить по причине...' if is_ru else 'Масалан: харидни тасдиқлаш, аналог билан алмаштириш, сабаб билан рад этиш...' }}"></textarea>
         </div>
-        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <div class="vs-row">
             <form method="post" action="{{ url_for('spare_parts.approve_request', rid=req.id) }}" onsubmit="return setCommentAndConfirm(this, true)">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="review_comment">
-                <button type="submit" class="btn btn-primary">✅ {{ 'Утвердить заявку' if is_ru else 'Сўровни тасдиқлаш' }}</button>
+                <button type="submit" class="vs-btn vs-btn-primary">✅ {{ 'Утвердить заявку' if is_ru else 'Сўровни тасдиқлаш' }}</button>
             </form>
             <form method="post" action="{{ url_for('spare_parts.reject_request', rid=req.id) }}" onsubmit="return setCommentAndConfirm(this, false)">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="review_comment">
-                <button type="submit" class="btn btn-danger">❌ {{ 'Отклонить заявку' if is_ru else 'Сўровни рад этиш' }}</button>
+                <button type="submit" class="vs-btn vs-btn-danger">❌ {{ 'Отклонить заявку' if is_ru else 'Сўровни рад этиш' }}</button>
             </form>
         </div>
     </div>
