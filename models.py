@@ -698,14 +698,56 @@ class UserModulePermission(db.Model):
 
 # ─── Task P3: Spare Parts ─────────────────────────────────────────────────────
 
+class SparePartCategory(db.Model):
+    """SPARE-STAGE1: managed category tree for the spare parts catalog.
+
+    kind='unit' items require photo proof on request submit;
+    kind='consumable' items do not. Created by migrate_spare_parts_stage1.py.
+    """
+    __tablename__ = 'spare_part_categories'
+    id          = db.Column(db.Integer, primary_key=True)
+    name_ru     = db.Column(db.String(200), nullable=False)
+    name_uz     = db.Column(db.String(200), nullable=False)
+    parent_id   = db.Column(db.Integer, db.ForeignKey('spare_part_categories.id'), nullable=True)
+    kind        = db.Column(db.String(20), nullable=False, default='unit')  # 'unit' | 'consumable'
+    is_active   = db.Column(db.Boolean, default=True)
+    sort_order  = db.Column(db.Integer, default=0)
+    created_at  = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by  = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+
+    parent  = db.relationship('SparePartCategory', remote_side=[id], backref='children')
+    creator = db.relationship('User', foreign_keys=[created_by])
+
+    __table_args__ = (
+        db.Index('idx_spare_part_categories_parent_id', 'parent_id'),
+    )
+
+
 class SparePart(db.Model):
     __tablename__ = 'spare_parts'
     id          = db.Column(db.Integer, primary_key=True)
     name        = db.Column(db.String(300), nullable=False)
     part_number = db.Column(db.String(100), default='')
     unit        = db.Column(db.String(30), default='dona')
+    # [REASON]: SPARE-STAGE1 — free-text `category` is deprecated in favour of
+    # category_id but kept untouched this stage so existing data/UI stay valid.
     category    = db.Column(db.String(100), default='')
     created_at  = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # SPARE-STAGE1 additive columns (migrate_spare_parts_stage1.py):
+    category_id            = db.Column(db.Integer, db.ForeignKey('spare_part_categories.id'), nullable=True)
+    # [REASON]: SPARE-STAGE1 — 'pending_review' marks operator-created candidates
+    # a catalog manager must approve or merge before the request can be approved.
+    status                 = db.Column(db.String(20), nullable=False, default='active')  # active/pending_review/merged
+    merged_into_id         = db.Column(db.Integer, db.ForeignKey('spare_parts.id'), nullable=True)
+    created_by             = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    source_request_item_id = db.Column(db.Integer, db.ForeignKey('spare_part_request_items.id'), nullable=True)
+    is_active              = db.Column(db.Boolean, default=True)
+
+    category_ref = db.relationship('SparePartCategory', foreign_keys=[category_id])
+    merged_into  = db.relationship('SparePart', remote_side=[id], foreign_keys=[merged_into_id])
+    creator      = db.relationship('User', foreign_keys=[created_by])
+    source_item  = db.relationship('SparePartRequestItem', foreign_keys=[source_request_item_id])
 
 
 class SparePartRequest(db.Model):
@@ -739,7 +781,72 @@ class SparePartRequestItem(db.Model):
     quantity      = db.Column(db.Float, nullable=False, default=1)
     unit          = db.Column(db.String(30), default='dona')
     note          = db.Column(db.String(300), default='')
-    spare_part    = db.relationship('SparePart')
+
+    # SPARE-STAGE1 additive columns (migrate_spare_parts_stage1.py):
+    # [REASON]: SPARE-STAGE1 — manual price entry with mandatory audit trail;
+    # a request cannot be approved until every item's price_status == 'confirmed'.
+    price         = db.Column(db.Float, nullable=True)
+    price_status  = db.Column(db.String(20), nullable=False, default='pending')  # pending/confirmed/rejected/returned
+    price_set_by  = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    price_set_at  = db.Column(db.DateTime, nullable=True)
+
+    spare_part    = db.relationship('SparePart', foreign_keys=[spare_part_id])
+    price_setter  = db.relationship('User', foreign_keys=[price_set_by])
+
+
+# [REASON]: SPARE-STAGE1 — performance indexes for the repeat-order warning
+# engine, which scans prior items by spare_part_id and equipment_id + date.
+db.Index('idx_spare_part_request_items_spare_part_id', SparePartRequestItem.spare_part_id)
+db.Index('idx_spare_part_requests_equipment_id_date', SparePartRequest.equipment_id, SparePartRequest.request_date)
+
+
+class SparePartPriceAudit(db.Model):
+    """SPARE-STAGE1: audit trail for every price action on a request item.
+
+    Written through a plain helper taking explicit arguments (see
+    spare_parts.write_price_audit) so a non-Flask process (Telegram bot)
+    can reuse it without a request context.
+    """
+    __tablename__ = 'spare_part_price_audit'
+    id         = db.Column(db.Integer, primary_key=True)
+    item_id    = db.Column(db.Integer, db.ForeignKey('spare_part_request_items.id'), nullable=False)
+    old_price  = db.Column(db.Float, nullable=True)
+    new_price  = db.Column(db.Float, nullable=True)
+    action     = db.Column(db.String(20), nullable=False, default='set')  # set/confirm/reject/return
+    changed_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    changed_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    item = db.relationship('SparePartRequestItem', foreign_keys=[item_id])
+    user = db.relationship('User', foreign_keys=[changed_by])
+
+    __table_args__ = (
+        db.Index('idx_spare_part_price_audit_item_id', 'item_id'),
+    )
+
+
+class SparePartAttachment(db.Model):
+    """SPARE-STAGE1: photo attachments for request items.
+
+    file_path stores only the on-disk filename built from item_id + a random
+    suffix (never original_filename), so any process that knows UPLOAD_FOLDER
+    can resolve it without Flask context.
+    """
+    __tablename__ = 'spare_part_attachments'
+    id                = db.Column(db.Integer, primary_key=True)
+    item_id           = db.Column(db.Integer, db.ForeignKey('spare_part_request_items.id'), nullable=False)
+    file_path         = db.Column(db.String(500), nullable=False)
+    original_filename = db.Column(db.String(300), default='')
+    file_size         = db.Column(db.Integer, default=0)
+    uploaded_by       = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    uploaded_at       = db.Column(db.DateTime, default=datetime.utcnow)
+
+    item     = db.relationship('SparePartRequestItem', foreign_keys=[item_id],
+                               backref='attachments')
+    uploader = db.relationship('User', foreign_keys=[uploaded_by])
+
+    __table_args__ = (
+        db.Index('idx_spare_part_attachments_item_id', 'item_id'),
+    )
 
 
 # ─── BOT001: Spare Part Status History ───────────────────────────────────────
