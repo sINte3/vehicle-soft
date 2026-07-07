@@ -19,6 +19,11 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     REPORTS_DIR = os.path.join(BASE_DIR, 'reports')
 
+    # [REASON]: SPARE-STAGE1 — spare part photo storage. Kept as a plain path
+    # relative to the app folder (not wired through Flask app context) so the
+    # separate Telegram bot process can resolve the same files independently.
+    UPLOAD_FOLDER = 'instance/uploads/spare_parts'
+
     # Session settings
     PERMANENT_SESSION_LIFETIME = 86400  # 24 hours
 

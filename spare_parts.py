@@ -318,6 +318,92 @@ def _items_missing_photos(items):
     return missing
 
 
+# ─── SPARE-STAGE1: photo upload infrastructure ────────────────────────────────
+
+def _upload_dir():
+    """Absolute path of the spare parts upload folder (created on demand).
+
+    UPLOAD_FOLDER is a plain path relative to the app folder so the Telegram
+    bot process can resolve the same location without Flask context.
+    """
+    folder = current_app.config.get('UPLOAD_FOLDER') or 'instance/uploads/spare_parts'
+    if not os.path.isabs(folder):
+        folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), folder)
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def _validate_photo(fs):
+    """Validate an uploaded photo. Returns (ext, None) or (None, bilingual error).
+
+    [REASON]: SPARE-STAGE1 — extension whitelist AND content magic-byte check;
+    the client-supplied Content-Type is never trusted.
+    """
+    filename = fs.filename or ''
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ALLOWED_PHOTO_EXTENSIONS:
+        return None, _spare_t(
+            '«{}»: фақат JPG/PNG файллар қабул қилинади',
+            '«{}»: допускаются только файлы JPG/PNG').format(filename)
+    head = fs.stream.read(8)
+    fs.stream.seek(0)
+    for sig, exts in PHOTO_SIGNATURES:
+        if head.startswith(sig) and ext in exts:
+            return ext, None
+    return None, _spare_t(
+        '«{}»: файл мазмуни JPG/PNG эмас',
+        '«{}»: содержимое файла не является JPG/PNG').format(filename)
+
+
+def _store_item_photo(fs, item_id, user_id):
+    """Validate and persist one uploaded photo for an item.
+
+    Returns a bilingual error string, or None on success. Adds the
+    SparePartAttachment row without committing (caller commits).
+
+    [REASON]: SPARE-STAGE1 — the on-disk name is built ONLY from item_id and a
+    random suffix; original_filename is stored as metadata, never used for the
+    path (path traversal risk), and the naming scheme is reproducible by the
+    future bot process.
+    """
+    ext, err = _validate_photo(fs)
+    if err:
+        return err
+    fname = '{}_{}{}'.format(item_id, uuid.uuid4().hex[:8], ext)
+    fs.save(os.path.join(_upload_dir(), fname))
+    db.session.add(SparePartAttachment(
+        item_id=item_id,
+        file_path=fname,
+        original_filename=(fs.filename or '')[:300],
+        file_size=os.path.getsize(os.path.join(_upload_dir(), fname)),
+        uploaded_by=user_id,
+    ))
+    return None
+
+
+def _store_submitted_item_photos(created_items):
+    """Intake per-row photo files posted with the request form.
+
+    created_items is a list of (item, prepared) pairs; each row's files arrive
+    as item_photo_{form_index}. Invalid files are skipped and reported — if
+    that leaves a mandatory photo missing, the submit gate keeps the request
+    as a draft with its own explicit message.
+    """
+    errors = []
+    for item, prepared in created_items:
+        files = request.files.getlist('item_photo_{}'.format(prepared['form_index']))
+        for fs in files:
+            if not fs or not fs.filename:
+                continue
+            err = _store_item_photo(fs, item.id, current_user.id)
+            if err:
+                errors.append(err)
+    if errors:
+        _spare_flash_errors(errors,
+                            title_uz='Баъзи фотолар қабул қилинмади:',
+                            title_ru='Некоторые фото не приняты:')
+
+
 def _approval_blockers(spr):
     """Bilingual error list explaining why a submitted request cannot be approved.
 
@@ -596,6 +682,9 @@ def save_request():
             after=_catalog_snapshot(candidate),
             description='Pending-review catalog candidate auto-created from request item #{}'.format(item.id)
         )
+
+    _store_submitted_item_photos(created_items)
+    db.session.flush()
 
     # [REASON]: SPARE-STAGE1 mandatory-photo rule — items in 'unit' (or not yet
     # categorized) categories need at least one photo before submit. To avoid
@@ -907,6 +996,68 @@ def item_price_reject(rid, item_id):
     db.session.commit()
     flash(_spare_t('Сўров қайта ишлашга қайтарилди', 'Заявка возвращена на доработку'), 'warning')
     return redirect(url_for('spare_parts.detail', rid=rid))
+
+
+# ─── SPARE-STAGE1: photo routes ───────────────────────────────────────────────
+
+@spare_parts_bp.route('/<int:rid>/items/<int:item_id>/photo', methods=['POST'])
+@module_required('spare_parts')
+def item_photo_upload(rid, item_id):
+    spr = SparePartRequest.query.get_or_404(rid)
+    _spare_check_request_access(spr)
+    item = SparePartRequestItem.query.get_or_404(item_id)
+    if item.request_id != spr.id:
+        abort(404)
+    is_owner = current_user.can_edit and spr.created_by == current_user.id
+    if not (is_owner or current_user.is_admin):
+        abort(403)
+    # Photos are attached while the operator can still change the request.
+    if spr.status not in ('draft', 'returned_for_revision'):
+        abort(400)
+    stored = 0
+    errors = []
+    for fs in request.files.getlist('photo'):
+        if not fs or not fs.filename:
+            continue
+        err = _store_item_photo(fs, item.id, current_user.id)
+        if err:
+            errors.append(err)
+        else:
+            stored += 1
+    if errors:
+        _spare_flash_errors(errors,
+                            title_uz='Баъзи фотолар қабул қилинмади:',
+                            title_ru='Некоторые фото не приняты:')
+    if stored:
+        _audit_spare(
+            'spare_part_item_photo_uploaded',
+            entity_type='spare_part_request_item',
+            entity_id=item.id,
+            entity_label=item.name,
+            description='{} photo(s) uploaded for item on request #{}'.format(stored, spr.id)
+        )
+        db.session.commit()
+        flash(_spare_t('Фото юкланди', 'Фото загружено'), 'success')
+    elif not errors:
+        flash(_spare_t('Файл танланмаган', 'Файл не выбран'), 'warning')
+    return redirect(url_for('spare_parts.detail', rid=rid))
+
+
+@spare_parts_bp.route('/attachments/<int:att_id>')
+@module_required('spare_parts')
+def attachment_file(att_id):
+    att = SparePartAttachment.query.get_or_404(att_id)
+    item = att.item
+    spr = item.request if item else None
+    if spr is None:
+        abort(404)
+    # [REASON]: SPARE-STAGE1 — uploads are NOT served as raw static files; the
+    # same org-scoped access check as detail(rid) applies to every download.
+    _spare_check_request_access(spr)
+    fname = os.path.basename(att.file_path or '')
+    if not fname:
+        abort(404)
+    return send_from_directory(_upload_dir(), fname)
 
 
 # ─── SPARE-STAGE1: JSON endpoints ─────────────────────────────────────────────
