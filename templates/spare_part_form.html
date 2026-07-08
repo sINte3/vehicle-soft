@@ -3,533 +3,130 @@
 {% block title %}{{ 'Запчасти — новая заявка' if is_ru else 'Эҳтиёт қисмлар — янги сўров' }}{% endblock %}
 {% block content %}
 
-<!-- SPARE001A_TEMPLATE_UX -->
 <style>
-    .spare001a-scope {
-        --spare-gap: 14px;
-    }
-
-    .spare001a-scope .page-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 14px;
-        margin-bottom: 18px;
-        padding: 18px 20px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: linear-gradient(135deg, var(--surface), var(--surface2));
-        box-shadow: var(--shadow);
-    }
-
-    .spare001a-scope .page-header h1 {
-        margin: 0 0 6px 0;
-        font-size: 24px;
-        line-height: 1.2;
-    }
-
-    .spare001a-scope .page-header .text-muted,
-    .spare001a-scope .text-muted {
-        line-height: 1.45;
-    }
-
-    .spare001a-scope .card {
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: var(--surface);
-        box-shadow: var(--shadow);
-    }
-
-    .spare001a-scope .card + .card {
-        margin-top: 14px;
-    }
-
-    .spare001a-scope .card-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 12px;
-        padding: 12px 14px;
-        border-bottom: 1px solid var(--border);
-        background: var(--surface2);
-        font-weight: 700;
-    }
-
-    .spare001a-scope .card-body {
-        padding: 14px;
-    }
-
-    .spare001a-scope .form-inline,
-    .spare001a-scope .spare002a-filter-form,
-    .spare001a-scope .spare002a-request-form {
-        gap: 12px;
-        align-items: flex-start;
-    }
-
-    .spare001a-scope label {
-        font-size: 12px;
-        font-weight: 700;
-        color: var(--text2);
-    }
-
-    .spare001a-scope input,
-    .spare001a-scope select,
-    .spare001a-scope textarea {
-        max-width: 100%;
-        box-sizing: border-box;
-    }
-
-    .spare001a-scope input.form-control,
-    .spare001a-scope select.form-control {
-        height: 38px;
-        line-height: 1.4;
-    }
-
-    .spare001a-scope input[type="date"].form-control {
-        -webkit-appearance: none;
-        appearance: none;
-        padding-top: 0;
-        padding-bottom: 0;
-        display: flex;
-        align-items: center;
-    }
-
-    .spare001a-scope table {
-        width: 100%;
-        border-collapse: separate;
-        border-spacing: 0;
-    }
-
-    .spare001a-scope thead th {
-        position: sticky;
-        top: 0;
-        z-index: 1;
-        background: var(--surface2);
-        border-bottom: 1px solid var(--border);
-        font-size: 12px;
-        color: var(--text2);
-    }
-
-    .spare001a-scope tbody tr:hover {
-        background: var(--surface2);
-    }
-
-    .spare001a-scope .spare-stat,
-    .spare001a-scope .spare-detail-card {
-        padding: 12px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: var(--surface2);
-    }
-
-    .spare001a-scope .spare-stat .label,
-    .spare001a-scope .spare-detail-card .label {
-        margin-bottom: 4px;
-        color: var(--text2);
-        font-size: 12px;
-        font-weight: 700;
-    }
-
-    .spare001a-scope .spare-stat .value {
-        font-size: 22px;
-        font-weight: 800;
-        line-height: 1.1;
-    }
-
-    .spare001a-scope .spare002a-guidance-title {
-        margin-bottom: 4px;
-        font-weight: 800;
-        color: var(--text);
-    }
-
-    .spare001a-scope .catalog-note,
-    .spare001a-scope .spare-review-box {
-        margin-bottom: 14px;
-        padding: 12px 14px;
-        border: 1px solid var(--border);
-        border-left: 4px solid var(--accent);
-        border-radius: var(--radius);
-        background: var(--accent-light);
-        line-height: 1.45;
-    }
-
-    .spare001a-scope .spare-row-muted {
-        color: var(--text2);
-        font-size: 12px;
-    }
-
-    .spare001a-scope .btn {
-        white-space: nowrap;
-    }
-
-    .spare001a-scope .btn-sm {
-        padding: 5px 9px;
-    }
-
-    .spare001a-scope .table-responsive,
-    .spare001a-scope .spare-table-wrap {
-        overflow-x: auto;
-    }
-
-    @media (max-width: 900px) {
-        .spare001a-scope .page-header {
-            flex-direction: column;
-        }
-
-        .spare001a-scope .form-inline,
-        .spare001a-scope .spare002a-filter-form,
-        .spare001a-scope .spare002a-request-form {
-            flex-direction: column;
-            align-items: stretch;
-        }
-
-        .spare001a-scope .card-header {
-            flex-direction: column;
-            align-items: flex-start;
-        }
-    }
-</style>
-<div class="spare001a-scope">
-
-<style>
-.spare-form-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
-.spare-form-note { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
-.spare-form-toolbar { position:sticky; top:56px; z-index:40; display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:16px; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); }
-.spare-form-toolbar .stat { font-size:12px; color:var(--text2); background:var(--surface2); border-radius:var(--radius); padding:6px 10px; }
-.spare-form-error { border-color:var(--danger) !important; box-shadow:0 0 0 2px rgba(220,53,69,.12); }
-.spare-client-errors { display:none; margin-bottom:16px; border-left:4px solid var(--danger); background:var(--danger-light); color:var(--danger); padding:12px 14px; border-radius:var(--radius); }
-.spare-client-errors ul { margin:6px 0 0 18px; padding:0; }
-.spare-items-table input { min-width:0; }
-.spare-row-actions { white-space:nowrap; }
-@media (max-width:768px) { .spare-form-hero { flex-direction:column; } .spare-form-toolbar { top:0; } }
-
-/* SPARE002A_MARKER: spare parts UX refresh, template-only. */
-.spare002a-page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.spare002a-page-header h1 {
-  margin-bottom: 6px;
-}
-
-.spare002a-subtitle {
-  color: var(--ux-muted, #667085);
-  font-size: 14px;
-  line-height: 1.45;
-}
-
-.spare002a-context-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.spare002a-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--ux-border-soft, #edf1f6);
-  background: var(--ux-surface, #fff);
-  color: var(--ux-text, #1f2937);
-  font-size: 12px;
-  font-weight: 800;
-  box-shadow: var(--ux-shadow-soft, 0 3px 10px rgba(15, 23, 42, 0.05));
-}
-
-.spare002a-pill strong {
-  color: var(--ux-primary, #2563eb);
-}
-
-.spare002a-guidance-panel {
-  display: grid;
-  grid-template-columns: 1.2fr 1fr;
-  gap: 12px;
-  margin: 0 0 16px;
-}
-
-.spare002a-guidance-card {
-  border: 1px solid var(--ux-border-soft, #edf1f6);
-  background: var(--ux-surface, #fff);
-  border-radius: var(--ux-radius, 14px);
-  padding: 12px 14px;
-  box-shadow: var(--ux-shadow-soft, 0 3px 10px rgba(15, 23, 42, 0.05));
-}
-
-.spare002a-guidance-title {
-  font-weight: 900;
-  margin-bottom: 5px;
-}
-
-.spare002a-guidance-text {
-  color: var(--ux-muted, #667085);
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.spare002a-filter-card,
-.spare002a-main-card,
-.spare002a-form-card {
-  border-left: 4px solid var(--ux-primary, #2563eb);
-}
-
-.spare002a-filter-form {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: flex-end;
-}
-
-.spare002a-filter-form .form-group {
-  margin-bottom: 0;
-}
-
-.spare002a-table-wrap {
-  overflow-x: auto;
-}
-
-.spare002a-table {
-  width: 100%;
-  font-size: 13px;
-}
-
-.spare002a-table th {
-  white-space: nowrap;
-  background: var(--ux-surface-soft, #f8fafc);
-}
-
-.spare002a-table td {
-  vertical-align: top;
-}
-
-.spare002a-table tbody tr:hover {
-  background: var(--ux-surface-soft, #f8fafc);
-}
-
-.spare002a-request-form .card {
-  border: 1px solid var(--ux-border-soft, #edf1f6);
-  border-radius: var(--ux-radius, 14px);
-  overflow: hidden;
-  box-shadow: var(--ux-shadow-soft, 0 3px 10px rgba(15, 23, 42, 0.04));
-}
-
-.spare002a-request-form .card-header {
-  background: var(--ux-surface-soft, #f8fafc);
-  font-weight: 900;
-}
-
-.spare002a-request-form input,
-.spare002a-request-form select,
-.spare002a-request-form textarea {
-  min-height: 36px;
-}
-
-.spare002a-request-form .item-row.spare002a-item-incomplete {
-  outline: 1px dashed var(--ux-warning, #b45309);
-  background: var(--ux-warning-soft, #fffbeb);
-}
-
-.spare002a-request-form .item-row.spare002a-item-incomplete::after {
-  content: "Проверьте название запчасти и количество";
-  color: var(--ux-warning, #b45309);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.spare002a-action-row {
-  position: sticky;
-  bottom: 0;
-  z-index: 20;
-  background: rgba(255,255,255,0.96);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--ux-border-soft, #edf1f6);
-  border-radius: var(--ux-radius, 14px);
-  padding: 12px;
-  box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.08);
-}
-
-@media (max-width: 900px) {
-  .spare002a-page-header {
-    display: block;
-  }
-
-  .spare002a-guidance-panel {
-    grid-template-columns: 1fr;
-  }
-
-  .spare002a-filter-form {
-    display: block;
-  }
-
-  .spare002a-filter-form .form-group,
-  .spare002a-filter-form .btn {
-    width: 100%;
-    margin-top: 8px;
-  }
-
-  .spare002a-action-row {
-    position: static;
-  }
-
-  .spare002a-action-row .btn {
-    width: 100%;
-    margin-top: 8px;
-  }
-}
-/* SPARE002A_END */
-
+/* SPARE-STAGE1 scoped helpers for the request form (vs-* components elsewhere). */
+.sp-form-scope .sp-hint { font-size:11.5px; color:var(--text2); margin-top:3px; line-height:1.35; }
+.sp-form-scope .sp-hint.is-catalog { color:var(--accent); }
+.sp-form-scope .sp-hint.is-new { color:var(--warn); }
+.sp-form-scope .sp-repeat { display:none; margin-top:4px; padding:6px 8px; border-radius:6px; font-size:11.5px; line-height:1.4; }
+.sp-form-scope .sp-repeat.is-red { display:block; background:var(--danger-light); color:var(--danger); border:1px solid var(--danger); }
+.sp-form-scope .sp-repeat.is-yellow { display:block; background:var(--warn-light); color:var(--warn); border:1px solid var(--warn); }
+.sp-form-scope .sp-repeat.is-history { display:block; background:var(--surface2); color:var(--text2); border:1px solid var(--border); }
+.sp-form-scope .sp-eq-ref { font-size:12px; color:var(--text2); margin-top:4px; }
+.sp-form-scope .sp-eq-ref strong { color:var(--text); }
+.sp-form-scope .sp-toolbar { position:sticky; top:0; z-index:30; }
+.sp-form-scope .vs-table td { vertical-align:top; }
+.sp-form-scope .vs-table input[type="file"] { font-size:11px; max-width:170px; }
+.sp-form-scope .is-error { border-color:var(--danger) !important; }
 </style>
 
-<div class="spare-form-hero">
-    <div>
-        <div class="page-header spare002a-page-header SPARE002A_MARKER">
+<div class="sp-form-scope">
+
+<div class="vs-hero vs-mb">
   <div>
-    <h1>{{ 'Новая заявка на запчасти' if is_ru else 'Эҳтиёт қисмлар учун янги сўров' }}</h1>
-    <div class="spare002a-subtitle">
-      {% if is_ru is defined and is_ru %}
-        Создайте заявку на запчасти: выберите дату, организацию, технику и добавьте позиции.
-      {% else %}
-        Эҳтиёт қисмлар сўровини яратинг: сана, ташкилот, техника ва позицияларни киритинг.
-      {% endif %}
-    </div>
-
-    <div class="spare002a-context-strip">
-      <span class="spare002a-pill">
-        {{ 'Дата' if is_ru is defined and is_ru else 'Сана' }}:
-        <strong>{{ today }}</strong>
-      </span>
-      <span class="spare002a-pill">
-        {{ 'Организаций' if is_ru is defined and is_ru else 'Ташкилотлар' }}:
-        <strong>{{ organizations|length }}</strong>
-      </span>
-      <span class="spare002a-pill">
-        {{ 'Техники' if is_ru is defined and is_ru else 'Техника' }}:
-        <strong>{{ all_equipment|length }}</strong>
-      </span>
-    </div>
+    <div class="vs-hero-title">{{ 'Новая заявка на запчасти' if is_ru else 'Эҳтиёт қисмлар учун янги сўров' }}</div>
+    <div class="vs-hero-sub">{{ 'Выберите организацию и технику, подберите запчасти из каталога и добавьте фото. Черновик можно сохранить без отправки.' if is_ru else 'Ташкилот ва техникани танланг, запчастларни каталогдан танланг ва фото қўшинг. Чорновни юбормасдан сақлаш мумкин.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('spare_parts.index') }}" class="vs-btn">{{ '← Список заявок' if is_ru else '← Сўровлар рўйхати' }}</a>
   </div>
 </div>
 
-<div class="spare002a-guidance-panel">
-  <div class="spare002a-guidance-card">
-    <div class="spare002a-guidance-title">{{ 'Порядок заполнения' if is_ru is defined and is_ru else 'Тўлдириш тартиби' }}</div>
-    <div class="spare002a-guidance-text">
-      {{ 'Заполните основные данные, затем добавьте хотя бы одну позицию: название и количество обязательны.' if is_ru is defined and is_ru else 'Аввал асосий маълумотларни, кейин камида битта позицияни киритинг: ном ва миқдор мажбурий.' }}
-    </div>
-  </div>
-  <div class="spare002a-guidance-card">
-    <div class="spare002a-guidance-title">{{ 'Черновик или отправка' if is_ru is defined and is_ru else 'Чорнов ёки юбориш' }}</div>
-    <div class="spare002a-guidance-text">
-      {{ 'Черновик можно сохранить без отправки на рассмотрение. Отправленная заявка попадает администратору.' if is_ru is defined and is_ru else 'Чорнов кўриб чиқишга юборилмайди. Юборилган сўров администраторга тушади.' }}
-    </div>
-  </div>
-</div>
-    </div>
-    <a href="{{ url_for('spare_parts.index') }}" class="btn btn-secondary">{{ '← Список заявок' if is_ru else '← Сўровлар рўйхати' }}</a>
-</div>
+<div class="vs-alert is-info vs-mb">{{ 'Запчасть выбирайте из каталога. Если её нет в каталоге — введите название вручную: позиция уйдёт на проверку менеджеру каталога, заявку можно отправить, но утвердят её только после проверки. Для не-расходников обязательно хотя бы одно фото (JPG/PNG).' if is_ru else 'Запчастни каталогдан танланг. Каталогда бўлмаса — номини қўлда киритинг: позиция каталог менежери текширувига юборилади, сўровни юбориш мумкин, аммо текширувдан кейингина тасдиқланади. Сарф материали бўлмаганлар учун камида битта фото (JPG/PNG) мажбурий.' }}</div>
 
-<div class="spare-form-note">
-    {{ 'Правило: черновик можно сохранить для доработки, а отправленная заявка уходит администратору на рассмотрение.' if is_ru else 'Қоида: чорнов кейин тўлдириш учун сақланади, юборилган сўров эса администратор кўришига ўтади.' }}
-</div>
-
-<div id="clientErrors" class="spare-client-errors">
+<div id="clientErrors" class="vs-alert is-danger vs-mb" style="display:none;">
     <strong>{{ 'Заявка не готова к сохранению' if is_ru else 'Сўров сақлашга тайёр эмас' }}</strong>
-    <ul id="clientErrorList"></ul>
+    <ul id="clientErrorList" style="margin:6px 0 0 18px; padding:0;"></ul>
 </div>
 
-<form method="post" action="{{ url_for('spare_parts.save_request') }}" id="spForm" onsubmit="return validateSpareRequestBeforeSubmit(event)" class="spare002a-request-form">
+<form method="post" action="{{ url_for('spare_parts.save_request') }}" id="spForm" enctype="multipart/form-data" onsubmit="return validateSpareRequestBeforeSubmit(event)">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-    <div class="spare-form-toolbar">
-        <button type="submit" name="action" value="draft" class="btn btn-secondary">💾 {{ 'Сохранить черновик' if is_ru else 'Чорновни сақлаш' }}</button>
-        <button type="submit" name="action" value="submit" class="btn btn-primary">📤 {{ 'Отправить на рассмотрение' if is_ru else 'Кўриб чиқишга юбориш' }}</button>
-        <button type="button" class="btn btn-secondary" onclick="addRow()">+ {{ 'Добавить позицию' if is_ru else 'Позиция қўшиш' }}</button>
-        <button type="button" class="btn btn-secondary" onclick="clearEmptyRows()">{{ 'Убрать пустые строки' if is_ru else 'Бўш қаторларни олиб ташлаш' }}</button>
-        <span class="stat" id="itemsCounter">{{ 'Позиций' if is_ru else 'Позициялар' }}: 1</span>
+    <div class="vs-card vs-mb sp-toolbar">
+        <div class="vs-card-body" style="padding:10px 14px;">
+            <div class="vs-row" style="flex-wrap:wrap; gap:8px; align-items:center;">
+                <button type="submit" name="action" value="draft" class="vs-btn">💾 {{ 'Сохранить черновик' if is_ru else 'Чорновни сақлаш' }}</button>
+                <button type="submit" name="action" value="submit" class="vs-btn vs-btn-primary">📤 {{ 'Отправить на рассмотрение' if is_ru else 'Кўриб чиқишга юбориш' }}</button>
+                <button type="button" class="vs-btn" onclick="addRow()">+ {{ 'Добавить позицию' if is_ru else 'Позиция қўшиш' }}</button>
+                <button type="button" class="vs-btn" onclick="clearEmptyRows()">{{ 'Убрать пустые строки' if is_ru else 'Бўш қаторларни олиб ташлаш' }}</button>
+                <span class="vs-soft" id="itemsCounter" style="font-size:12px;">{{ 'Позиций' if is_ru else 'Позициялар' }}: 1</span>
+            </div>
+        </div>
     </div>
 
-    <div class="card spare002a-form-card" style="margin-bottom:16px;">
-        <div class="card-header">{{ 'Основные данные' if is_ru else 'Асосий маълумот' }}</div>
-        <div class="card-body">
-            <div class="form-inline">
-                <div class="form-group">
-                    <label>{{ 'Дата заявки' if is_ru else 'Сўров санаси' }}</label>
-                    <input type="date" name="request_date" id="requestDate" class="form-control" value="{{ today }}" required style="width:160px;">
+    <div class="vs-card vs-mb">
+        <div class="vs-card-header">
+            <div class="vs-card-title">{{ 'Основные данные' if is_ru else 'Асосий маълумот' }}</div>
+        </div>
+        <div class="vs-card-body">
+            <div class="vs-form-row">
+                <div class="vs-field" style="width:170px;">
+                    <label class="vs-label">{{ 'Дата заявки' if is_ru else 'Сўров санаси' }}</label>
+                    <input type="date" name="request_date" id="requestDate" class="vs-input" value="{{ today }}" required>
                 </div>
-                <div class="form-group" style="flex:1; min-width:240px;">
-                    <label>{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
-                    <select name="organization_id" id="orgSelect" class="form-control" required onchange="filterEquipment()">
+                <div class="vs-field" style="flex:1; min-width:240px;">
+                    <label class="vs-label">{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
+                    <select name="organization_id" id="orgSelect" class="vs-select" required onchange="onOrgChange()">
                         <option value="">{{ '— выберите организацию —' if is_ru else '— ташкилотни танланг —' }}</option>
                         {% for org in organizations %}
                         <option value="{{ org.id }}">{{ org.name }}</option>
                         {% endfor %}
                     </select>
-                    <div class="text-sm text-muted" style="margin-top:4px;">{{ 'Обязательное поле.' if is_ru else 'Мажбурий майдон.' }}</div>
+                    <div class="vs-help">{{ 'Обязательное поле.' if is_ru else 'Мажбурий майдон.' }}</div>
                 </div>
-                <div class="form-group" style="flex:2; min-width:360px;">
-                    <label>{{ 'Техника' if is_ru else 'Техника' }}</label>
-                    <select name="equipment_id" id="eqSelect" class="form-control">
+                <div class="vs-field" style="flex:2; min-width:300px;">
+                    <label class="vs-label">{{ 'Техника' if is_ru else 'Техника' }}</label>
+                    <select name="equipment_id" id="eqSelect" class="vs-select" onchange="onEquipmentChange()">
                         <option value="">{{ '— сначала выберите организацию —' if is_ru else '— аввал ташкилотни танланг —' }}</option>
-                        {% for eq in all_equipment %}
-                        {% set org_label = (eq.organization.short_name or eq.organization.name) if eq.organization else '' %}
-                        {% set eq_label = eq.name ~ ((' — ' ~ eq.plate) if eq.plate else '') ~ ((' — ' ~ org_label) if org_label else '') %}
-                        <option value="{{ eq.id }}" data-org="{{ eq.organization_id }}">{{ eq_label }}</option>
-                        {% endfor %}
                     </select>
-                    <div class="text-sm text-muted" style="margin-top:4px;">
-                        {{ 'Если заявка относится к конкретной технике, выберите её. В списке показаны модель, госномер и организация.' if is_ru else 'Сўров аниқ техникага тегишли бўлса, уни танланг. Рўйхатда модел, давлат рақами ва ташкилот кўрсатилган.' }}
-                    </div>
+                    <div class="sp-eq-ref" id="eqRef" style="display:none;"></div>
+                    <div class="vs-help">{{ 'Список техники загружается по выбранной организации.' if is_ru else 'Техника рўйхати танланган ташкилот бўйича юкланади.' }}</div>
                 </div>
             </div>
-            <div class="form-group">
-                <label>{{ 'Примечание к заявке' if is_ru else 'Сўров изоҳи' }}</label>
-                <textarea name="note" class="form-control" rows="2" placeholder="{{ 'Например: срочно, причина замены, место установки...' if is_ru else 'Масалан: шошилинч, алмаштириш сабаби, ўрнатиш жойи...' }}"></textarea>
+            <div class="vs-field vs-mt-sm">
+                <label class="vs-label">{{ 'Примечание к заявке' if is_ru else 'Сўров изоҳи' }}</label>
+                <textarea name="note" class="vs-textarea" rows="2" placeholder="{{ 'Например: срочно, причина замены, место установки...' if is_ru else 'Масалан: шошилинч, алмаштириш сабаби, ўрнатиш жойи...' }}"></textarea>
             </div>
         </div>
     </div>
 
-    <div class="card" style="margin-bottom:16px;">
-        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-            <span>{{ 'Позиции заявки' if is_ru else 'Сўров позициялари' }}</span>
-            <button type="button" class="btn btn-secondary btn-sm" onclick="addRow()">+ {{ 'Добавить' if is_ru else 'Қўшиш' }}</button>
+    <div class="vs-table-wrap vs-mb">
+        <div class="vs-card-header">
+            <span class="vs-card-title">{{ 'Позиции заявки' if is_ru else 'Сўров позициялари' }}</span>
+            <button type="button" class="vs-btn vs-btn-sm" onclick="addRow()">+ {{ 'Добавить' if is_ru else 'Қўшиш' }}</button>
         </div>
-        <div class="card-body" style="padding:0; overflow-x:auto;">
-            <div class="spare002a-table-wrap">
-<table id="itemsTable" class="spare-items-table spare002a-table" style="width:100%; min-width:850px;">
-                <thead>
-                    <tr>
-                        <th style="width:40px;">№</th>
-                        <th style="min-width:220px;">{{ 'Название запчасти' if is_ru else 'Запчасть номи' }}</th>
-                        <th style="width:150px;">{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</th>
-                        <th style="width:120px;">{{ 'Количество' if is_ru else 'Миқдор' }}</th>
-                        <th style="width:110px;">{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
-                        <th style="min-width:180px;">{{ 'Примечание' if is_ru else 'Изоҳ' }}</th>
-                        <th style="width:70px;"></th>
-                    </tr>
-                </thead>
-                <tbody id="itemsBody">
-                    <tr class="item-row">
-                        <td class="row-no">1</td>
-                        <td><input type="text" name="item_name" class="form-control" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" required style="width:100%;"></td>
-                        <td><input type="text" name="item_part_number" class="form-control" placeholder="000-000" style="width:100%;"></td>
-                        <td><input type="number" name="item_quantity" class="form-control" value="1" min="0.001" step="0.001" style="width:100%;"></td>
-                        <td><input type="text" name="item_unit" class="form-control" value="dona" style="width:100%;"></td>
-                        <td><input type="text" name="item_note" class="form-control" placeholder="{{ 'Комментарий' if is_ru else 'Изоҳ' }}" style="width:100%;"></td>
-                        <td class="spare-row-actions"><button type="button" onclick="removeRow(this)" class="btn btn-secondary btn-sm" style="padding:4px 8px;">✕</button></td>
-                    </tr>
-                </tbody>
-            </table>
-</div>
+        <div class="vs-table-scroll">
+        <table class="vs-table" id="itemsTable" style="min-width:1000px;">
+            <thead>
+                <tr>
+                    <th style="width:40px;">№</th>
+                    <th style="min-width:240px;">{{ 'Запчасть (каталог или вручную)' if is_ru else 'Запчасть (каталог ёки қўлда)' }}</th>
+                    <th style="width:130px;">{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</th>
+                    <th style="width:100px;">{{ 'Количество' if is_ru else 'Миқдор' }}</th>
+                    <th style="width:100px;">{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
+                    <th style="min-width:150px;">{{ 'Примечание' if is_ru else 'Изоҳ' }}</th>
+                    <th style="width:180px;">{{ 'Фото' if is_ru else 'Фото' }}</th>
+                    <th style="width:50px;"></th>
+                </tr>
+            </thead>
+            <tbody id="itemsBody">
+            </tbody>
+        </table>
         </div>
     </div>
 </form>
 
+<datalist id="catalogParts">
+    {% for part in catalog_parts %}
+    <option value="{{ part.name }}"
+            data-id="{{ part.id }}"
+            data-unit="{{ part.unit or 'dona' }}"
+            data-part-number="{{ part.part_number or '' }}"
+            data-kind="{{ part.category_ref.kind if part.category_ref else '' }}"></option>
+    {% endfor %}
+</datalist>
+
+</div>
 {% endblock %}
 {% block scripts %}
 <script>
@@ -540,61 +137,55 @@ const TEXT = {
     oneItem: {{ ('Добавьте хотя бы одну позицию.' if is_ru else 'Камида битта позиция қўшинг.')|tojson }},
     itemName: {{ ('строка: введите название запчасти.' if is_ru else 'қатор: запчасть номини киритинг.')|tojson }},
     itemQty: {{ ('строка: количество должно быть больше нуля.' if is_ru else 'қатор: миқдор нолдан катта бўлиши керак.')|tojson }},
-    confirmSubmit: {{ ('Отправить заявку на рассмотрение?' if is_ru else 'Сўровни кўриб чиқишга юборишни тасдиқлайсизми?')|tojson }}
+    itemPhoto: {{ ('строка: для этой позиции нужно хотя бы одно фото (JPG/PNG).' if is_ru else 'қатор: бу позиция учун камида битта фото керак (JPG/PNG).')|tojson }},
+    confirmSubmit: {{ ('Отправить заявку на рассмотрение?' if is_ru else 'Сўровни кўриб чиқишга юборишни тасдиқлайсизми?')|tojson }},
+    placeholderEq: {{ ('— сначала выберите организацию —' if is_ru else '— аввал ташкилотни танланг —')|tojson }},
+    chooseEq: {{ ('— выберите технику —' if is_ru else '— техникани танланг —')|tojson }},
+    noEq: {{ ('— нет техники —' if is_ru else '— техника йўқ —')|tojson }},
+    eqType: {{ ('Тип' if is_ru else 'Тури')|tojson }},
+    eqPlate: {{ ('Госномер' if is_ru else 'Давлат рақами')|tojson }},
+    fromCatalog: {{ ('Из каталога — фото по правилам категории.' if is_ru else 'Каталогдан — фото категория қоидаси бўйича.')|tojson }},
+    fromCatalogConsumable: {{ ('Из каталога (расходник) — фото не обязательно.' if is_ru else 'Каталогдан (сарф материали) — фото мажбурий эмас.')|tojson }},
+    newPart: {{ ('Нет в каталоге — уйдёт на проверку, нужно фото.' if is_ru else 'Каталогда йўқ — текширувга юборилади, фото керак.')|tojson }},
+    repeatRed: {{ ('Эта деталь уже запрашивалась для этой техники' if is_ru else 'Бу деталь ушбу техника учун сўралган эди') |tojson }},
+    repeatYellow: {{ ('Эта деталь недавно запрашивалась для этой техники' if is_ru else 'Бу деталь ушбу техника учун яқинда сўралган') |tojson }},
+    repeatHistory: {{ ('История за 90 дней' if is_ru else '90 кунлик тарих')|tojson }},
+    daysAgo: {{ ('дн. назад' if is_ru else 'кун олдин')|tojson }},
+    photoName: {{ ('Название детали' if is_ru else 'Деталь номи')|tojson }},
+    noteName: {{ ('Комментарий' if is_ru else 'Изоҳ')|tojson }}
 };
+const EQUIP_URL = {{ url_for('spare_parts.api_equipment_by_org')|tojson }};
+const REPEAT_URL = {{ url_for('spare_parts.api_repeat_check')|tojson }};
 
-function filterEquipment() {
-    const orgId = document.getElementById('orgSelect').value;
-    const eqSel = document.getElementById('eqSelect');
-    let visible = 0;
-    Array.from(eqSel.options).forEach(opt => {
-        if (!opt.value) return;
-        const show = orgId && opt.dataset.org === orgId;
-        opt.style.display = show ? '' : 'none';
-        if (show) visible += 1;
-    });
-    if (eqSel.selectedOptions[0] && eqSel.selectedOptions[0].style.display === 'none') {
-        eqSel.value = '';
-    }
-    if (!orgId) eqSel.value = '';
+let EQ_DATA = {};
+
+function rowTemplate() {
+    return `
+        <td class="row-no"></td>
+        <td>
+            <input type="text" name="item_name" class="vs-input" list="catalogParts" placeholder="${TEXT.photoName}" autocomplete="off" oninput="onPartInput(this)" onchange="onPartInput(this)">
+            <input type="hidden" name="item_spare_part_id" value="">
+            <div class="sp-hint"></div>
+            <div class="sp-repeat"></div>
+        </td>
+        <td><input type="text" name="item_part_number" class="vs-input" placeholder="000-000"></td>
+        <td><input type="number" name="item_quantity" class="vs-input" value="1" min="0.001" step="0.001"></td>
+        <td><input type="text" name="item_unit" class="vs-input" value="dona"></td>
+        <td><input type="text" name="item_note" class="vs-input" placeholder="${TEXT.noteName}"></td>
+        <td><input type="file" name="item_photo_0" accept=".jpg,.jpeg,.png" multiple></td>
+        <td class="right"><button type="button" onclick="removeRow(this)" class="vs-btn-icon" title="✕">✕</button></td>
+    `;
 }
 
-function renumberRows() {
-    document.querySelectorAll('#itemsBody .item-row').forEach((row, idx) => {
-        const no = row.querySelector('.row-no');
-        if (no) no.textContent = idx + 1;
-    });
-    updateItemsCounter();
-}
-
-function updateItemsCounter() {
-    let filled = 0;
-    document.querySelectorAll('#itemsBody .item-row').forEach(row => {
-        const name = (row.querySelector('[name=item_name]').value || '').trim();
-        const qty = (row.querySelector('[name=item_quantity]').value || '').trim();
-        const part = (row.querySelector('[name=item_part_number]').value || '').trim();
-        const note = (row.querySelector('[name=item_note]').value || '').trim();
-        if (name || qty || part || note) filled += 1;
-    });
-    document.getElementById('itemsCounter').textContent = TEXT.positions + ': ' + filled;
-}
-
-function addRow() {
+function addRow(focusName) {
     const tbody = document.getElementById('itemsBody');
     const row = document.createElement('tr');
     row.className = 'item-row';
-    row.innerHTML = `
-        <td class="row-no"></td>
-        <td><input type="text" name="item_name" class="form-control" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" style="width:100%;"></td>
-        <td><input type="text" name="item_part_number" class="form-control" placeholder="000-000" style="width:100%;"></td>
-        <td><input type="number" name="item_quantity" class="form-control" value="1" min="0.001" step="0.001" style="width:100%;"></td>
-        <td><input type="text" name="item_unit" class="form-control" value="dona" style="width:100%;"></td>
-        <td><input type="text" name="item_note" class="form-control" placeholder="{{ 'Комментарий' if is_ru else 'Изоҳ' }}" style="width:100%;"></td>
-        <td class="spare-row-actions"><button type="button" onclick="removeRow(this)" class="btn btn-danger btn-sm" style="padding:4px 8px;">✕</button></td>
-    `;
+    row.innerHTML = rowTemplate();
     tbody.appendChild(row);
-    row.querySelector('[name=item_name]').focus();
     renumberRows();
+    if (focusName !== false) row.querySelector('[name=item_name]').focus();
+    return row;
 }
 
 function removeRow(btn) {
@@ -605,16 +196,163 @@ function removeRow(btn) {
 }
 
 function clearEmptyRows() {
-    const rows = Array.from(document.querySelectorAll('#itemsBody .item-row'));
-    rows.forEach(row => {
+    Array.from(document.querySelectorAll('#itemsBody .item-row')).forEach(row => {
+        if (document.querySelectorAll('#itemsBody .item-row').length <= 1) return;
         const name = (row.querySelector('[name=item_name]').value || '').trim();
-        const qty = (row.querySelector('[name=item_quantity]').value || '').trim();
         const part = (row.querySelector('[name=item_part_number]').value || '').trim();
         const note = (row.querySelector('[name=item_note]').value || '').trim();
-        if (!name && !qty && !part && !note && rows.length > 1) row.remove();
+        const hasFiles = (row.querySelector('input[type=file]').files || []).length > 0;
+        if (!name && !part && !note && !hasFiles) row.remove();
     });
     renumberRows();
 }
+
+function renumberRows() {
+    document.querySelectorAll('#itemsBody .item-row').forEach((row, idx) => {
+        const no = row.querySelector('.row-no');
+        if (no) no.textContent = idx + 1;
+        // [REASON]: server matches photos to rows by position: item_photo_{i}
+        const file = row.querySelector('input[type=file]');
+        if (file) file.name = 'item_photo_' + idx;
+    });
+    updateItemsCounter();
+}
+
+function updateItemsCounter() {
+    let filled = 0;
+    document.querySelectorAll('#itemsBody .item-row').forEach(row => {
+        const name = (row.querySelector('[name=item_name]').value || '').trim();
+        if (name) filled += 1;
+    });
+    document.getElementById('itemsCounter').textContent = TEXT.positions + ': ' + filled;
+}
+
+// ─── Catalog part matching ───────────────────────────────────────────────────
+
+function matchCatalogOption(value) {
+    const v = (value || '').trim().toLowerCase();
+    if (!v) return null;
+    const opts = document.getElementById('catalogParts').options;
+    for (let i = 0; i < opts.length; i++) {
+        if ((opts[i].value || '').trim().toLowerCase() === v) return opts[i];
+    }
+    return null;
+}
+
+function onPartInput(input) {
+    const row = input.closest('tr');
+    const hidden = row.querySelector('[name=item_spare_part_id]');
+    const hint = row.querySelector('.sp-hint');
+    const unitInput = row.querySelector('[name=item_unit]');
+    const partNumberInput = row.querySelector('[name=item_part_number]');
+    const opt = matchCatalogOption(input.value);
+    if (opt) {
+        hidden.value = opt.dataset.id || '';
+        row.dataset.kind = opt.dataset.kind || '';
+        if (opt.dataset.unit && (!unitInput.value || unitInput.value === 'dona')) unitInput.value = opt.dataset.unit;
+        if (opt.dataset.partNumber && !partNumberInput.value) partNumberInput.value = opt.dataset.partNumber;
+        const consumable = (opt.dataset.kind === 'consumable');
+        hint.textContent = consumable ? TEXT.fromCatalogConsumable : TEXT.fromCatalog;
+        hint.className = 'sp-hint is-catalog';
+    } else {
+        hidden.value = '';
+        row.dataset.kind = '';
+        if ((input.value || '').trim()) {
+            hint.textContent = TEXT.newPart;
+            hint.className = 'sp-hint is-new';
+        } else {
+            hint.textContent = '';
+            hint.className = 'sp-hint';
+        }
+    }
+    updateItemsCounter();
+    checkRepeat(row);
+}
+
+// ─── Repeat-order warnings (warn only, never block) ──────────────────────────
+
+function checkRepeat(row) {
+    const box = row.querySelector('.sp-repeat');
+    const partId = row.querySelector('[name=item_spare_part_id]').value;
+    const eqId = document.getElementById('eqSelect').value;
+    box.className = 'sp-repeat';
+    box.innerHTML = '';
+    if (!partId || !eqId) return;
+    fetch(REPEAT_URL + '?equipment_id=' + encodeURIComponent(eqId) + '&spare_part_id=' + encodeURIComponent(partId), {credentials: 'same-origin'})
+        .then(r => r.json())
+        .then(data => {
+            if (!data || !data.history || data.history.length === 0) return;
+            let cls = 'is-history';
+            let title = TEXT.repeatHistory;
+            if (data.severity === 'red') { cls = 'is-red'; title = '⚠ ' + TEXT.repeatRed; }
+            else if (data.severity === 'yellow') { cls = 'is-yellow'; title = '⚠ ' + TEXT.repeatYellow; }
+            let html = '<strong>' + title + (data.days_since !== null ? ' (' + data.days_since + ' ' + TEXT.daysAgo + ')' : '') + '</strong>';
+            data.history.slice(0, 3).forEach(h => {
+                html += '<br>#' + h.request_id + ' · ' + h.request_date + ' · ' + h.quantity + ' ' + (h.unit || '');
+            });
+            box.className = 'sp-repeat ' + cls;
+            box.innerHTML = html;
+        })
+        .catch(() => {});
+}
+
+function recheckAllRows() {
+    document.querySelectorAll('#itemsBody .item-row').forEach(checkRepeat);
+}
+
+// ─── Equipment loading (AJAX by organization) ────────────────────────────────
+
+function onOrgChange() {
+    const orgId = document.getElementById('orgSelect').value;
+    loadEquipment(orgId);
+}
+
+function loadEquipment(orgId) {
+    const sel = document.getElementById('eqSelect');
+    EQ_DATA = {};
+    document.getElementById('eqRef').style.display = 'none';
+    if (!orgId) {
+        sel.innerHTML = '<option value="">' + TEXT.placeholderEq + '</option>';
+        recheckAllRows();
+        return;
+    }
+    fetch(EQUIP_URL + '?org_id=' + encodeURIComponent(orgId), {credentials: 'same-origin'})
+        .then(r => r.json())
+        .then(list => {
+            if (!Array.isArray(list) || list.length === 0) {
+                sel.innerHTML = '<option value="">' + TEXT.noEq + '</option>';
+                recheckAllRows();
+                return;
+            }
+            let html = '<option value="">' + TEXT.chooseEq + '</option>';
+            list.forEach(e => {
+                EQ_DATA[e.id] = e;
+                const label = e.plate ? (e.name + ' — ' + e.plate) : e.name;
+                html += '<option value="' + e.id + '">' + label.replace(/</g, '&lt;') + '</option>';
+            });
+            sel.innerHTML = html;
+            recheckAllRows();
+        })
+        .catch(() => { sel.innerHTML = '<option value="">' + TEXT.noEq + '</option>'; });
+}
+
+function onEquipmentChange() {
+    const eqId = document.getElementById('eqSelect').value;
+    const ref = document.getElementById('eqRef');
+    const e = EQ_DATA[eqId];
+    if (e) {
+        // [REASON]: eq_type and plate are read-only reference text, not inputs.
+        const type = (e.eq_type || '—').replace(/</g, '&lt;');
+        const plate = (e.plate || '—').replace(/</g, '&lt;');
+        ref.innerHTML = TEXT.eqType + ': <strong>' + type + '</strong> · ' + TEXT.eqPlate + ': <strong>' + plate + '</strong>';
+        ref.style.display = '';
+    } else {
+        ref.style.display = 'none';
+    }
+    recheckAllRows();
+}
+
+// ─── Validation ───────────────────────────────────────────────────────────────
 
 function showClientErrors(errors) {
     const box = document.getElementById('clientErrors');
@@ -626,75 +364,57 @@ function showClientErrors(errors) {
         list.appendChild(li);
     });
     box.style.display = errors.length ? 'block' : 'none';
-    if (errors.length) box.scrollIntoView({behavior:'smooth', block:'start'});
+    if (errors.length) box.scrollIntoView({behavior: 'smooth', block: 'start'});
 }
 
 function validateSpareRequestBeforeSubmit(event) {
-    document.querySelectorAll('.spare-form-error').forEach(el => el.classList.remove('spare-form-error'));
+    // Drop untouched rows first so a leftover empty row (its quantity defaults
+    // to 1) does not trigger a server-side "enter the part name" error.
+    clearEmptyRows();
+    document.querySelectorAll('.is-error').forEach(el => el.classList.remove('is-error'));
     const errors = [];
+    const isSubmit = event && event.submitter && event.submitter.value === 'submit';
     const requestDate = document.getElementById('requestDate');
     const org = document.getElementById('orgSelect');
-    if (!requestDate.value) { errors.push(TEXT.selectDate); requestDate.classList.add('spare-form-error'); }
-    if (!org.value) { errors.push(TEXT.selectOrg); org.classList.add('spare-form-error'); }
+    if (!requestDate.value) { errors.push(TEXT.selectDate); requestDate.classList.add('is-error'); }
+    if (!org.value) { errors.push(TEXT.selectOrg); org.classList.add('is-error'); }
 
     let validItems = 0;
     document.querySelectorAll('#itemsBody .item-row').forEach((row, idx) => {
         const nameInput = row.querySelector('[name=item_name]');
         const qtyInput = row.querySelector('[name=item_quantity]');
-        const partInput = row.querySelector('[name=item_part_number]');
-        const noteInput = row.querySelector('[name=item_note]');
+        const fileInput = row.querySelector('input[type=file]');
         const name = (nameInput.value || '').trim();
         const qtyRaw = (qtyInput.value || '').trim();
-        const hasAnything = name || qtyRaw || (partInput.value || '').trim() || (noteInput.value || '').trim();
+        const hasAnything = name || (row.querySelector('[name=item_part_number]').value || '').trim() || (row.querySelector('[name=item_note]').value || '').trim();
         if (!hasAnything) return;
-        if (!name) { errors.push((idx + 1) + ' ' + TEXT.itemName); nameInput.classList.add('spare-form-error'); return; }
+        if (!name) { errors.push((idx + 1) + ' ' + TEXT.itemName); nameInput.classList.add('is-error'); return; }
         const qty = parseFloat(qtyRaw.replace(',', '.'));
-        if (!Number.isFinite(qty) || qty <= 0) { errors.push((idx + 1) + ' ' + TEXT.itemQty); qtyInput.classList.add('spare-form-error'); return; }
+        if (!Number.isFinite(qty) || qty <= 0) { errors.push((idx + 1) + ' ' + TEXT.itemQty); qtyInput.classList.add('is-error'); return; }
+        if (isSubmit) {
+            // [REASON]: mirrors the server photo gate — consumable catalog parts
+            // are exempt, everything else needs at least one photo to submit.
+            const photoRequired = (row.dataset.kind || '') !== 'consumable';
+            if (photoRequired && (fileInput.files || []).length === 0) {
+                errors.push((idx + 1) + ' ' + TEXT.itemPhoto);
+                fileInput.classList.add('is-error');
+                return;
+            }
+        }
         validItems += 1;
     });
     if (validItems === 0) errors.push(TEXT.oneItem);
     if (errors.length) { showClientErrors(errors); return false; }
     showClientErrors([]);
-    if (event && event.submitter && event.submitter.value === 'submit') return confirm(TEXT.confirmSubmit);
+    if (isSubmit) return confirm(TEXT.confirmSubmit);
     return true;
 }
 
 document.addEventListener('input', function(e) {
-    if (e.target.closest('#itemsBody')) updateItemsCounter();
+    if (e.target.closest && e.target.closest('#itemsBody')) updateItemsCounter();
 });
-document.addEventListener('DOMContentLoaded', function() { filterEquipment(); renumberRows(); });
-
-/* SPARE002A_JS_MARKER: visual row hints only, no submit/save logic changes. */
-document.addEventListener('DOMContentLoaded', function () {
-    function refreshSpare002AItemHints() {
-        document.querySelectorAll('#itemsBody .item-row').forEach(function (row) {
-            var name = row.querySelector('[name="item_name"]');
-            var quantity = row.querySelector('[name="item_quantity"]');
-            var hasAnyValue = Array.from(row.querySelectorAll('input')).some(function (input) {
-                return (input.value || '').trim() !== '';
-            });
-            var incomplete = hasAnyValue && (
-                (name && !name.value.trim()) ||
-                (quantity && !quantity.value.trim())
-            );
-            row.classList.toggle('spare002a-item-incomplete', incomplete);
-        });
-    }
-
-    document.addEventListener('input', function (event) {
-        if (event.target.closest && event.target.closest('#itemsBody')) {
-            refreshSpare002AItemHints();
-        }
-    });
-
-    document.addEventListener('change', function (event) {
-        if (event.target.closest && event.target.closest('#itemsBody')) {
-            refreshSpare002AItemHints();
-        }
-    });
-
-    refreshSpare002AItemHints();
+document.addEventListener('DOMContentLoaded', function() {
+    addRow(false);
 });
-
 </script>
 {% endblock %}

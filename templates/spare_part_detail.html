@@ -4,7 +4,8 @@
 {% block content %}
 
 {% set eq_label = req.equipment.name ~ ((' — ' ~ req.equipment.plate) if req.equipment and req.equipment.plate else '') if req.equipment else '—' %}
-{% set status_alert_kind = {'draft': 'is-warning', 'submitted': 'is-info', 'approved': 'is-success', 'rejected': 'is-danger'}[req.status] %}
+{# SPARE-STAGE1: .get() with fallback — status now also includes returned_for_revision. #}
+{% set status_alert_kind = {'draft': 'is-warning', 'submitted': 'is-info', 'returned_for_revision': 'is-warning', 'approved': 'is-success', 'rejected': 'is-danger'}.get(req.status, 'is-info') %}
 
 <div class="vs-hero vs-mb">
   <div>
@@ -21,6 +22,8 @@
 <div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Черновик ещё не отправлен администратору. Его можно отправить на рассмотрение.' if is_ru else 'Чорнов ҳали администраторга юборилмаган. Уни кўриб чиқишга юбориш мумкин.' }}</div>
 {% elif req.status == 'submitted' %}
 <div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Заявка отправлена и ожидает решения администратора.' if is_ru else 'Сўров юборилган ва администратор қарорини кутмоқда.' }}</div>
+{% elif req.status == 'returned_for_revision' %}
+<div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Заявка возвращена на доработку (цена отклонена или возвращена). Исправьте позиции/фото и отправьте повторно.' if is_ru else 'Сўров қайта ишлашга қайтарилган (нарх рад этилган ёки қайтарилган). Позиция/фотоларни тузатиб, қайта юборинг.' }}</div>
 {% elif req.status == 'approved' %}
 <div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Заявка утверждена.' if is_ru else 'Сўров тасдиқланган.' }}</div>
 {% elif req.status == 'rejected' %}
@@ -74,20 +77,55 @@
             <tr>
                 <th style="width:40px;">№</th>
                 <th>{{ 'Название' if is_ru else 'Номи' }}</th>
+                <th>{{ 'Категория' if is_ru else 'Категория' }}</th>
                 <th>{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</th>
                 <th class="right">{{ 'Количество' if is_ru else 'Миқдор' }}</th>
                 <th>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
+                <th class="right">{{ 'Цена' if is_ru else 'Нарх' }}</th>
+                <th>{{ 'Статус цены' if is_ru else 'Нарх ҳолати' }}</th>
+                <th>{{ 'Фото' if is_ru else 'Фото' }}</th>
                 <th>{{ 'Примечание' if is_ru else 'Изоҳ' }}</th>
             </tr>
         </thead>
         <tbody>
             {% for item in req.items %}
+            {% set part = item.spare_part %}
             <tr>
                 <td>{{ loop.index }}</td>
-                <td style="font-weight:600;">{{ item.name }}</td>
+                <td style="font-weight:600;">{{ item.name }}
+                    {# SPARE-STAGE1: catalog candidate flag — blocks approval until reviewed #}
+                    {% if part and part.status == 'pending_review' %}
+                    <div><span class="vs-badge vs-badge-warning vs-badge-sm">{{ 'каталог: на проверке' if is_ru else 'каталог: текширувда' }}</span></div>
+                    {% endif %}
+                </td>
+                <td class="text-sm vs-muted">
+                    {% if part and part.category_ref %}{{ part.category_ref.name_ru if is_ru else part.category_ref.name_uz }}{% else %}—{% endif %}
+                </td>
                 <td class="text-sm vs-muted">{{ item.part_number or '—' }}</td>
                 <td class="right" style="font-weight:600;">{{ item.quantity }}</td>
                 <td>{{ item.unit or ('шт' if is_ru else 'дона') }}</td>
+                <td class="right" style="font-weight:600;">
+                    {% if item.price is not none %}{{ item.price|fmt_sum or item.price }}{% else %}—{% endif %}
+                    {% if item.price_setter %}<div class="vs-soft" style="font-size:10.5px;">{{ item.price_setter.username }}{% if item.price_set_at %} · {{ item.price_set_at.strftime('%d.%m %H:%M') }}{% endif %}</div>{% endif %}
+                </td>
+                <td>
+                    <span class="vs-badge vs-badge-sm" style="color:{{ price_status_colors.get(item.price_status, 'var(--text2)') }};">{{ price_status_labels[item.price_status][lang] if item.price_status in price_status_labels else item.price_status }}</span>
+                </td>
+                <td>
+                    {% for att in item.attachments %}
+                    <a href="{{ url_for('spare_parts.attachment_file', att_id=att.id) }}" target="_blank" title="{{ att.original_filename }}">
+                        <img src="{{ url_for('spare_parts.attachment_file', att_id=att.id) }}" alt="" style="height:42px; border-radius:6px; margin:1px; border:1px solid var(--border);">
+                    </a>
+                    {% else %}
+                    <span class="vs-soft" style="font-size:11px;">—</span>
+                    {% endfor %}
+                    {% if can_edit_photos %}
+                    <form method="post" action="{{ url_for('spare_parts.item_photo_upload', rid=req.id, item_id=item.id) }}" enctype="multipart/form-data" style="margin-top:4px;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="file" name="photo" accept=".jpg,.jpeg,.png" multiple style="font-size:10.5px; max-width:150px;" onchange="this.form.submit()">
+                    </form>
+                    {% endif %}
+                </td>
                 <td class="text-sm vs-muted">{{ item.note or '—' }}</td>
             </tr>
             {% endfor %}
@@ -96,19 +134,83 @@
     </div>
 </div>
 
-{% if req.status == 'draft' and current_user.id == req.created_by %}
+{# SPARE-STAGE1: resubmit is also allowed from returned_for_revision. #}
+{% if req.status in ('draft', 'returned_for_revision') and current_user.id == req.created_by %}
 <div class="vs-row vs-mb">
-    <form method="post" action="{{ url_for('spare_parts.submit_request', rid=req.id) }}" onsubmit="return confirm({{ ('Отправить заявку администратору?' if is_ru else 'Сўровни администраторга юборишни тасдиқлайсизми?')|tojson }})">
+    <form method="post" action="{{ url_for('spare_parts.submit_request', rid=req.id) }}" onsubmit="return confirm({{ ('Отправить заявку на рассмотрение?' if is_ru else 'Сўровни кўриб чиқишга юборишни тасдиқлайсизми?')|tojson }})">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="vs-btn vs-btn-primary">📤 {{ 'Отправить на рассмотрение' if is_ru else 'Кўриб чиқишга юбориш' }}</button>
     </form>
 </div>
 {% endif %}
 
-{% if req.status == 'submitted' and current_user.is_admin %}
+{# ─── SPARE-STAGE1: price review (spare_parts_price_confirm) ─────────── #}
+{% if can_price %}
 <div class="vs-card vs-mb">
     <div class="vs-card-header">
-        <div class="vs-card-title">{{ 'Рассмотрение администратором' if is_ru else 'Администратор кўриб чиқиши' }}</div>
+        <div class="vs-card-title">{{ 'Проверка цен' if is_ru else 'Нархларни текшириш' }}</div>
+    </div>
+    <div class="vs-card-body">
+        <div class="vs-soft vs-mb-sm" style="font-size:12.5px;">{{ 'Укажите и подтвердите цену каждой позиции. «Вернуть»/«Отклонить» возвращает всю заявку оператору на доработку. Подсказка показывает последние подтверждённые цены этой детали.' if is_ru else 'Ҳар бир позиция нархини киритинг ва тасдиқланг. «Қайтариш»/«Рад этиш» бутун сўровни операторга қайтаради. Кўрсатма ушбу деталнинг охирги тасдиқланган нархларини кўрсатади.' }}</div>
+        <div class="vs-table-scroll">
+        <table class="vs-table">
+            <thead>
+                <tr>
+                    <th style="width:40px;">№</th>
+                    <th>{{ 'Название' if is_ru else 'Номи' }}</th>
+                    <th style="width:230px;">{{ 'Цена' if is_ru else 'Нарх' }}</th>
+                    <th>{{ 'Последние цены' if is_ru else 'Охирги нархлар' }}</th>
+                    <th style="width:330px;">{{ 'Решение' if is_ru else 'Қарор' }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in req.items %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td style="font-weight:600;">{{ item.name }}
+                        <div><span class="vs-badge vs-badge-sm" style="color:{{ price_status_colors.get(item.price_status, 'var(--text2)') }};">{{ price_status_labels[item.price_status][lang] if item.price_status in price_status_labels else item.price_status }}</span></div>
+                    </td>
+                    <td>
+                        <form method="post" action="{{ url_for('spare_parts.item_price_set', rid=req.id, item_id=item.id) }}" class="vs-row" style="gap:6px;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="number" name="price" class="vs-input" step="0.01" min="0" value="{{ item.price if item.price is not none else '' }}" style="width:130px;">
+                            <button type="submit" class="vs-btn vs-btn-sm">💾</button>
+                        </form>
+                    </td>
+                    <td class="text-sm vs-muted price-hint" data-part-id="{{ item.spare_part_id or '' }}">…</td>
+                    <td>
+                        <div class="vs-row" style="gap:6px; flex-wrap:wrap;">
+                            <form method="post" action="{{ url_for('spare_parts.item_price_confirm', rid=req.id, item_id=item.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="vs-btn vs-btn-sm vs-btn-success" {% if item.price is none %}disabled{% endif %}>✓ {{ 'Подтвердить' if is_ru else 'Тасдиқлаш' }}</button>
+                            </form>
+                            <form method="post" action="{{ url_for('spare_parts.item_price_reject', rid=req.id, item_id=item.id) }}" onsubmit="return priceRejectConfirm(this)">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="mode" value="return">
+                                <input type="hidden" name="comment" value="">
+                                <button type="submit" class="vs-btn vs-btn-sm">↩ {{ 'Вернуть' if is_ru else 'Қайтариш' }}</button>
+                            </form>
+                            <form method="post" action="{{ url_for('spare_parts.item_price_reject', rid=req.id, item_id=item.id) }}" onsubmit="return priceRejectConfirm(this)">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="mode" value="reject">
+                                <input type="hidden" name="comment" value="">
+                                <button type="submit" class="vs-btn vs-btn-sm vs-btn-danger">✕ {{ 'Отклонить' if is_ru else 'Рад этиш' }}</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if can_approve %}
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title">{{ 'Рассмотрение заявки' if is_ru else 'Сўровни кўриб чиқиш' }}</div>
     </div>
     <div class="vs-card-body">
         <div class="vs-field vs-mb">
@@ -141,5 +243,38 @@ function setCommentAndConfirm(form, approve) {
         : {{ ('Отклонить эту заявку?' if is_ru else 'Ушбу сўровни рад этасизми?')|tojson }};
     return confirm(msg);
 }
+
+/* SPARE-STAGE1: price review helpers. */
+function priceRejectConfirm(form) {
+    const isReject = form.querySelector('[name=mode]').value === 'reject';
+    const promptMsg = {{ ('Комментарий для оператора (необязательно):' if is_ru else 'Оператор учун изоҳ (мажбурий эмас):')|tojson }};
+    const confirmMsg = isReject
+        ? {{ ('Отклонить цену и вернуть заявку на доработку?' if is_ru else 'Нархни рад этиб, сўровни қайта ишлашга қайтарасизми?')|tojson }}
+        : {{ ('Вернуть цену и заявку на доработку?' if is_ru else 'Нарх ва сўровни қайта ишлашга қайтарасизми?')|tojson }};
+    if (!confirm(confirmMsg)) return false;
+    const comment = prompt(promptMsg, '');
+    if (comment === null) return false;
+    form.querySelector('[name=comment]').value = comment;
+    return true;
+}
+
+/* SPARE-STAGE1: last confirmed prices hint (AJAX). */
+document.addEventListener('DOMContentLoaded', function () {
+    const hints = document.querySelectorAll('.price-hint');
+    if (!hints.length) return;
+    const url = {{ url_for('spare_parts.api_price_suggestions')|tojson }};
+    const noData = {{ ('нет данных' if is_ru else 'маълумот йўқ')|tojson }};
+    hints.forEach(cell => {
+        const partId = cell.dataset.partId;
+        if (!partId) { cell.textContent = noData; return; }
+        fetch(url + '?spare_part_id=' + encodeURIComponent(partId), {credentials: 'same-origin'})
+            .then(r => r.json())
+            .then(list => {
+                if (!Array.isArray(list) || !list.length) { cell.textContent = noData; return; }
+                cell.textContent = list.map(p => (p.price !== null ? p.price : '—') + (p.date ? ' (' + p.date + ')' : '')).join(', ');
+            })
+            .catch(() => { cell.textContent = noData; });
+    });
+});
 </script>
 {% endblock %}

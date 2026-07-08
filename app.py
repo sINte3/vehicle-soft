@@ -2819,6 +2819,13 @@ def create_app():
                 ('fuel', 'Ёқилғи модули', 'Модуль ГСМ'),
                 ('deficiencies', 'Камчиликлар', 'Недостатки'),
                 ('spare_parts', 'Эҳтиёт қисмлар', 'Запчасти'),
+                # [REASON]: SPARE-STAGE1 — action-level permissions checked via
+                # has_module_access() inside the spare parts module. Existing DBs
+                # get these rows from migrate_spare_parts_stage1.py; this list
+                # only serves fresh installs (it runs when app_modules is empty).
+                ('spare_parts_catalog_manage', 'Эҳтиёт қисмлар: каталогни бошқариш', 'Запчасти: управление каталогом'),
+                ('spare_parts_price_confirm', 'Эҳтиёт қисмлар: нархни тасдиқлаш', 'Запчасти: подтверждение цен'),
+                ('spare_parts_approve', 'Эҳтиёт қисмлар: сўровни тасдиқлаш', 'Запчасти: утверждение заявок'),
             ]:
                 db.session.add(AppModule(code=code, name_uz=name_uz, name_ru=name_ru))
             db.session.commit()

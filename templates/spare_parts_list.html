@@ -3,582 +3,97 @@
 {% block title %}{{ 'Запчасти — заявки' if is_ru else 'Эҳтиёт қисмлар — сўровлар' }}{% endblock %}
 {% block content %}
 
-<!-- SPARE001A_TEMPLATE_UX -->
-<style>
-    .spare001a-scope {
-        --spare-gap: 14px;
-    }
-
-    .spare001a-scope .page-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 14px;
-        margin-bottom: 18px;
-        padding: 18px 20px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: linear-gradient(135deg, var(--surface), var(--surface2));
-        box-shadow: var(--shadow);
-    }
-
-    .spare001a-scope .page-header h1 {
-        margin: 0 0 6px 0;
-        font-size: 24px;
-        line-height: 1.2;
-    }
-
-    .spare001a-scope .page-header .text-muted,
-    .spare001a-scope .text-muted {
-        line-height: 1.45;
-    }
-
-    .spare001a-scope .card {
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: var(--surface);
-        box-shadow: var(--shadow);
-    }
-
-    .spare001a-scope .card + .card {
-        margin-top: 14px;
-    }
-
-    .spare001a-scope .card-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 12px;
-        padding: 12px 14px;
-        border-bottom: 1px solid var(--border);
-        background: var(--surface2);
-        font-weight: 700;
-    }
-
-    .spare001a-scope .card-body {
-        padding: 14px;
-    }
-
-    .spare001a-scope .form-inline,
-    .spare001a-scope .spare002a-filter-form,
-    .spare001a-scope .spare002a-request-form {
-        gap: 12px;
-        align-items: flex-start;
-    }
-
-    .spare001a-scope label {
-        font-size: 12px;
-        font-weight: 700;
-        color: var(--text2);
-    }
-
-    .spare001a-scope input,
-    .spare001a-scope select,
-    .spare001a-scope textarea {
-        max-width: 100%;
-        box-sizing: border-box;
-    }
-
-    .spare001a-scope input.form-control,
-    .spare001a-scope select.form-control {
-        height: 38px;
-        line-height: 1.4;
-    }
-
-    .spare001a-scope input[type="date"].form-control {
-        -webkit-appearance: none;
-        appearance: none;
-        padding-top: 0;
-        padding-bottom: 0;
-        display: flex;
-        align-items: center;
-    }
-
-    .spare001a-scope table {
-        width: 100%;
-        border-collapse: separate;
-        border-spacing: 0;
-    }
-
-    .spare001a-scope thead th {
-        position: sticky;
-        top: 0;
-        z-index: 1;
-        background: var(--surface2);
-        border-bottom: 1px solid var(--border);
-        font-size: 12px;
-        color: var(--text2);
-    }
-
-    .spare001a-scope tbody tr:hover {
-        background: var(--surface2);
-    }
-
-    .spare001a-scope .spare-stat,
-    .spare001a-scope .spare-detail-card {
-        padding: 12px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: var(--surface2);
-    }
-
-    .spare001a-scope .spare-stat .label,
-    .spare001a-scope .spare-detail-card .label {
-        margin-bottom: 4px;
-        color: var(--text2);
-        font-size: 12px;
-        font-weight: 700;
-    }
-
-    .spare001a-scope .spare-stat .value {
-        font-size: 22px;
-        font-weight: 800;
-        line-height: 1.1;
-    }
-
-    .spare001a-scope .spare002a-guidance-title {
-        margin-bottom: 4px;
-        font-weight: 800;
-        color: var(--text);
-    }
-
-    .spare001a-scope .catalog-note,
-    .spare001a-scope .spare-review-box {
-        margin-bottom: 14px;
-        padding: 12px 14px;
-        border: 1px solid var(--border);
-        border-left: 4px solid var(--accent);
-        border-radius: var(--radius);
-        background: var(--accent-light);
-        line-height: 1.45;
-    }
-
-    .spare001a-scope .spare-row-muted {
-        color: var(--text2);
-        font-size: 12px;
-    }
-
-    .spare001a-scope .btn {
-        white-space: nowrap;
-    }
-
-    .spare001a-scope .btn-sm {
-        padding: 5px 9px;
-    }
-
-    .spare001a-scope .table-responsive,
-    .spare001a-scope .spare-table-wrap {
-        overflow-x: auto;
-    }
-
-    @media (max-width: 900px) {
-        .spare001a-scope .page-header {
-            flex-direction: column;
-        }
-
-        .spare001a-scope .form-inline,
-        .spare001a-scope .spare002a-filter-form,
-        .spare001a-scope .spare002a-request-form {
-            flex-direction: column;
-            align-items: stretch;
-        }
-
-        .spare001a-scope .card-header {
-            flex-direction: column;
-            align-items: flex-start;
-        }
-    }
-</style>
-<div class="spare001a-scope">
-
-<style>
-.spare-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
-.spare-hero h1 { margin-bottom:6px; }
-.spare-note { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
-.spare-stats { display:grid; grid-template-columns:repeat(5,minmax(120px,1fr)); gap:10px; margin-bottom:16px; }
-.spare-stat { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:12px; box-shadow:var(--shadow); }
-.spare-stat .value { font-size:22px; font-weight:700; margin-top:2px; }
-.spare-stat .label { color:var(--text2); font-size:12px; }
-.spare-toolbar { display:flex; gap:10px; align-items:end; flex-wrap:wrap; margin-bottom:16px; }
-.spare-toolbar .search { min-width:260px; flex:1; }
-.spare-status-pill { display:inline-flex; align-items:center; border-radius:999px; padding:4px 9px; font-size:12px; font-weight:700; background:var(--surface2); white-space:nowrap; }
-.spare-row-muted { color:var(--text2); font-size:12px; }
-@media (max-width:900px) { .spare-stats { grid-template-columns:repeat(2,minmax(120px,1fr)); } .spare-hero { flex-direction:column; } }
-@media (max-width:600px) { .spare-stats { grid-template-columns:1fr; } .spare-toolbar .search { min-width:100%; } }
-
-/* SPARE002A_MARKER: spare parts UX refresh, template-only. */
-.spare002a-page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.spare002a-page-header h1 {
-  margin-bottom: 6px;
-}
-
-.spare002a-subtitle {
-  color: var(--ux-muted, #667085);
-  font-size: 14px;
-  line-height: 1.45;
-}
-
-.spare002a-context-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.spare002a-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--ux-border-soft, #edf1f6);
-  background: var(--ux-surface, #fff);
-  color: var(--ux-text, #1f2937);
-  font-size: 12px;
-  font-weight: 800;
-  box-shadow: var(--ux-shadow-soft, 0 3px 10px rgba(15, 23, 42, 0.05));
-}
-
-.spare002a-pill strong {
-  color: var(--ux-primary, #2563eb);
-}
-
-.spare002a-guidance-panel {
-  display: grid;
-  grid-template-columns: 1.2fr 1fr;
-  gap: 12px;
-  margin: 0 0 16px;
-}
-
-.spare002a-guidance-card {
-  border: 1px solid var(--ux-border-soft, #edf1f6);
-  background: var(--ux-surface, #fff);
-  border-radius: var(--ux-radius, 14px);
-  padding: 12px 14px;
-  box-shadow: var(--ux-shadow-soft, 0 3px 10px rgba(15, 23, 42, 0.05));
-}
-
-.spare002a-guidance-title {
-  font-weight: 900;
-  margin-bottom: 5px;
-}
-
-.spare002a-guidance-text {
-  color: var(--ux-muted, #667085);
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.spare002a-filter-card,
-.spare002a-main-card,
-.spare002a-form-card {
-  border-left: 4px solid var(--ux-primary, #2563eb);
-}
-
-.spare002a-filter-form {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: flex-end;
-}
-
-.spare002a-filter-form .form-group {
-  margin-bottom: 0;
-}
-
-.spare002a-table-wrap {
-  overflow-x: auto;
-}
-
-.spare002a-table {
-  width: 100%;
-  font-size: 13px;
-}
-
-.spare002a-table th {
-  white-space: nowrap;
-  background: var(--ux-surface-soft, #f8fafc);
-}
-
-.spare002a-table td {
-  vertical-align: top;
-}
-
-.spare002a-table tbody tr:hover {
-  background: var(--ux-surface-soft, #f8fafc);
-}
-
-.spare002a-request-form .card {
-  border: 1px solid var(--ux-border-soft, #edf1f6);
-  border-radius: var(--ux-radius, 14px);
-  overflow: hidden;
-  box-shadow: var(--ux-shadow-soft, 0 3px 10px rgba(15, 23, 42, 0.04));
-}
-
-.spare002a-request-form .card-header {
-  background: var(--ux-surface-soft, #f8fafc);
-  font-weight: 900;
-}
-
-.spare002a-request-form input,
-.spare002a-request-form select,
-.spare002a-request-form textarea {
-  min-height: 36px;
-}
-
-.spare002a-request-form .item-row.spare002a-item-incomplete {
-  outline: 1px dashed var(--ux-warning, #b45309);
-  background: var(--ux-warning-soft, #fffbeb);
-}
-
-.spare002a-request-form .item-row.spare002a-item-incomplete::after {
-  content: "Проверьте название запчасти и количество";
-  color: var(--ux-warning, #b45309);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.spare002a-action-row {
-  position: sticky;
-  bottom: 0;
-  z-index: 20;
-  background: rgba(255,255,255,0.96);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--ux-border-soft, #edf1f6);
-  border-radius: var(--ux-radius, 14px);
-  padding: 12px;
-  box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.08);
-}
-
-@media (max-width: 900px) {
-  .spare002a-page-header {
-    display: block;
-  }
-
-  .spare002a-guidance-panel {
-    grid-template-columns: 1fr;
-  }
-
-  .spare002a-filter-form {
-    display: block;
-  }
-
-  .spare002a-filter-form .form-group,
-  .spare002a-filter-form .btn {
-    width: 100%;
-    margin-top: 8px;
-  }
-
-  .spare002a-action-row {
-    position: static;
-  }
-
-  .spare002a-action-row .btn {
-    width: 100%;
-    margin-top: 8px;
-  }
-}
-
-/* SPARE002A_BUTTONS_FIX_V2_MARKER: explicit horizontal header action row. */
-.spare002a-page-header {
-  display: grid !important;
-  grid-template-columns: minmax(0, 1fr) auto !important;
-  align-items: start !important;
-  column-gap: 16px !important;
-}
-
-.spare002a-header-actions {
-  display: flex !important;
-  flex-direction: row !important;
-  flex-wrap: nowrap !important;
-  align-items: center !important;
-  justify-content: flex-end !important;
-  gap: 8px !important;
-  margin-left: auto !important;
-  white-space: nowrap !important;
-}
-
-.spare002a-header-actions .btn {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  width: auto !important;
-  min-width: 0 !important;
-  margin: 0 !important;
-  white-space: nowrap !important;
-  flex: 0 0 auto !important;
-}
-
-@media (max-width: 900px) {
-  .spare002a-page-header {
-    grid-template-columns: 1fr !important;
-  }
-
-  .spare002a-header-actions {
-    justify-content: flex-start !important;
-    margin-left: 0 !important;
-    margin-top: 10px !important;
-    flex-wrap: wrap !important;
-  }
-
-  .spare002a-header-actions .btn {
-    width: auto !important;
-  }
-}
-/* SPARE002A_BUTTONS_FIX_V2_END */
-
-/* SPARE002A_END */
-
-</style>
-
-<div class="spare-hero">
-    <div>
-        <div class="page-header spare002a-page-header SPARE002A_MARKER">
+<div class="vs-hero vs-mb">
   <div>
-    <h1>{{ 'Заявки на запчасти' if is_ru else 'Эҳтиёт қисмлар сўровлари' }}</h1>
-    <div class="spare002a-subtitle">
-      {% if is_ru is defined and is_ru %}
-        Список заявок на запчасти: фильтруйте по статусу, организации и датам, затем открывайте заявку для просмотра.
-      {% else %}
-        Эҳтиёт қисмлар сўровлари рўйхати: ҳолат, ташкилот ва сана бўйича сараланг, кейин сўровни очиб кўринг.
-      {% endif %}
-    </div>
-
-    <div class="spare002a-context-strip">
-      <span class="spare002a-pill">
-        {{ 'Всего' if is_ru is defined and is_ru else 'Жами' }}:
-        <strong>{{ counts.all }}</strong>
-      </span>
-      <span class="spare002a-pill">
-        {{ 'Показано' if is_ru is defined and is_ru else 'Кўрсатилган' }}:
-        <strong>{{ requests_list|length }}</strong>
-      </span>
-      <span class="spare002a-pill">
-        {{ 'Статус' if is_ru is defined and is_ru else 'Ҳолат' }}:
-        <strong>
-          {% if status_filter %}
-            {{ status_labels[status_filter][lang] }}
-          {% else %}
-            {{ 'Все' if is_ru is defined and is_ru else 'Барчаси' }}
-          {% endif %}
-        </strong>
-      </span>
-      <span class="spare002a-pill">
-        {{ 'Submitted' if is_ru is defined and is_ru else 'Юборилган' }}:
-        <strong>{{ counts.submitted if counts.submitted is defined else 0 }}</strong>
-      </span>
-    </div>
+    <div class="vs-hero-title">{{ 'Заявки на запчасти' if is_ru else 'Эҳтиёт қисмлар сўровлари' }}</div>
+    <div class="vs-hero-sub">{{ 'Фильтруйте заявки по статусу, организации и датам, затем открывайте заявку для просмотра и действий.' if is_ru else 'Сўровларни ҳолат, ташкилот ва сана бўйича сараланг, кейин кўриш ва амаллар учун сўровни очинг.' }}</div>
   </div>
-
-<div class="spare002a-header-actions">
-  <a href="{{ url_for('spare_parts.new_request') }}" class="btn btn-primary">
-    + {{ 'Новая заявка' if is_ru else 'Янги сўров' }}
-  </a>
-  {% if current_user.is_admin %}
-    <a href="{{ url_for('spare_parts.catalog') }}" class="btn btn-secondary">
-      {{ 'Каталог запчастей' if is_ru else 'Эҳтиёт қисмлар каталоги' }}
-    </a>
-  {% endif %}
-</div>
-
-</div>
-
-<div class="spare002a-guidance-panel">
-  <div class="spare002a-guidance-card">
-    <div class="spare002a-guidance-title">{{ 'Как работать со списком' if is_ru is defined and is_ru else 'Рўйхат билан ишлаш' }}</div>
-    <div class="spare002a-guidance-text">
-      {{ 'Используйте фильтры сверху, чтобы быстро найти заявку. Для действий откройте карточку заявки.' if is_ru is defined and is_ru else 'Сўровни тез топиш учун юқоридаги фильтрлардан фойдаланинг. Амаллар учун сўров карточкасини очинг.' }}
-    </div>
-  </div>
-  <div class="spare002a-guidance-card">
-    <div class="spare002a-guidance-title">{{ 'Важно' if is_ru is defined and is_ru else 'Муҳим' }}</div>
-    <div class="spare002a-guidance-text">
-      {{ 'Этот экран только помогает просматривать и фильтровать заявки. Бизнес-логика статусов не изменена.' if is_ru is defined and is_ru else 'Бу экран сўровларни кўриш ва саралашни осонлаштиради. Ҳолатлар бизнес-логикаси ўзгартирилмаган.' }}
-    </div>
+  <div class="vs-row-end">
+    {% if current_user.can_edit %}
+    <a href="{{ url_for('spare_parts.new_request') }}" class="vs-btn vs-btn-primary">+ {{ 'Новая заявка' if is_ru else 'Янги сўров' }}</a>
+    {% endif %}
+    {% if current_user.has_module_access('spare_parts_catalog_manage') %}
+    <a href="{{ url_for('spare_parts.catalog') }}" class="vs-btn">{{ 'Каталог запчастей' if is_ru else 'Эҳтиёт қисмлар каталоги' }}</a>
+    {% endif %}
   </div>
 </div>
+
+<div class="vs-alert is-info vs-mb">{{ 'Правило: оператор создаёт и отправляет заявку; цены подтверждает снабжение, утверждение выполняет ответственный с правом «Утверждение заявок».' if is_ru else 'Қоида: оператор сўров яратади ва юборади; нархларни таъминот тасдиқлайди, сўровни «Сўровни тасдиқлаш» ҳуқуқига эга масъул тасдиқлайди.' }}</div>
+
+<div class="vs-stat-grid vs-mb">
+    <div class="vs-stat">
+        <div class="vs-stat-label">{{ 'Всего' if is_ru else 'Жами' }}</div>
+        <div class="vs-stat-value">{{ counts.all }}</div>
     </div>
-</div>
-
-<div class="spare-note">
-    {{ 'Правило: оператор создаёт и отправляет заявку; утверждение или отклонение выполняет только администратор.' if is_ru else 'Қоида: оператор сўров яратади ва юборади; тасдиқлаш ёки рад этишни фақат администратор бажаради.' }}
-</div>
-
-<div class="spare-stats">
-    <div class="spare-stat"><div class="label">{{ 'Всего' if is_ru else 'Жами' }}</div><div class="value">{{ counts.all }}</div></div>
     {% for s, labels in status_labels.items() %}
-    <div class="spare-stat">
-        <div class="label">{{ labels[lang] }}</div>
-        <div class="value" style="color:{{ status_colors[s] }};">{{ counts[s] }}</div>
+    <div class="vs-stat">
+        <div class="vs-stat-label">{{ labels[lang] }}</div>
+        <div class="vs-stat-value" style="color:{{ status_colors[s] }};">{{ counts[s] }}</div>
     </div>
     {% endfor %}
 </div>
 
-<div class="card spare002a-filter-card" style="margin-bottom:16px;">
-    <div class="card-body" style="padding:12px 16px;">
-        <form method="get" action="{{ url_for('spare_parts.index') }}" class="form-inline spare002a-filter-form">
+<div class="vs-card vs-mb">
+    <div class="vs-card-body">
+        <form method="get" action="{{ url_for('spare_parts.index') }}" class="vs-form-row">
             {% if status_filter %}<input type="hidden" name="status" value="{{ status_filter }}">{% endif %}
-            <div class="form-group" style="margin-bottom:0; min-width:220px;">
-                <label>{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
-                <select name="org_id" onchange="this.form.submit()" class="form-control">
+            <div class="vs-field" style="min-width:220px; flex:1;">
+                <label class="vs-label">{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
+                <select name="org_id" onchange="this.form.submit()" class="vs-select">
                     <option value="">{{ '— все организации —' if is_ru else '— барча ташкилотлар —' }}</option>
                     {% for org in organizations %}
                     <option value="{{ org.id }}" {% if org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
                     {% endfor %}
                 </select>
             </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
-                <input type="date" name="date_from" class="form-control" value="{{ date_from_s }}" style="width:150px;">
+            <div class="vs-field" style="width:160px;">
+                <label class="vs-label">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
+                <input type="date" name="date_from" class="vs-input" value="{{ date_from_s }}">
             </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
-                <input type="date" name="date_to" class="form-control" value="{{ date_to_s }}" style="width:150px;">
+            <div class="vs-field" style="width:160px;">
+                <label class="vs-label">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
+                <input type="date" name="date_to" class="vs-input" value="{{ date_to_s }}">
             </div>
-            <button type="submit" class="btn btn-secondary btn-sm">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+            <div class="vs-field" style="flex:none;">
+                <label class="vs-label">&nbsp;</label>
+                <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+            </div>
         </form>
     </div>
 </div>
 
-<div class="spare-toolbar">
-    <div class="form-group search" style="margin-bottom:0;">
-        <label>{{ 'Поиск' if is_ru else 'Қидириш' }}</label>
-        <input type="text" id="spareRequestSearch" class="form-control" placeholder="{{ 'Поиск по номеру, организации, технике, автору' if is_ru else 'Рақам, ташкилот, техника, муаллиф бўйича қидириш' }}" oninput="filterSpareRequests()">
+<div class="vs-row vs-mb" style="justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:12px;">
+    <div class="vs-field" style="min-width:260px; flex:1;">
+        <label class="vs-label">{{ 'Поиск' if is_ru else 'Қидириш' }}</label>
+        <input type="text" id="spareRequestSearch" class="vs-input" placeholder="{{ 'Поиск по номеру, организации, технике, автору' if is_ru else 'Рақам, ташкилот, техника, муаллиф бўйича қидириш' }}" oninput="filterSpareRequests()">
     </div>
-    <div class="form-group" style="margin-bottom:0; min-width:190px;">
-        <label>{{ 'Статус' if is_ru else 'Ҳолат' }}</label>
-        <select id="clientStatusFilter" onchange="filterSpareRequests()" class="form-control">
+    <div class="vs-field" style="min-width:200px;">
+        <label class="vs-label">{{ 'Статус' if is_ru else 'Ҳолат' }}</label>
+        <select id="clientStatusFilter" onchange="filterSpareRequests()" class="vs-select">
             <option value="all">{{ 'Все статусы' if is_ru else 'Барча ҳолатлар' }}</option>
             {% for s, labels in status_labels.items() %}
             <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ labels[lang] }}</option>
             {% endfor %}
         </select>
     </div>
-    <div class="spare-row-muted" id="visibleCounter">{{ 'Показано' if is_ru else 'Кўрсатилган' }}: {{ requests_list|length }}</div>
+    <div class="vs-soft" id="visibleCounter" style="font-size:12.5px;">{{ 'Показано' if is_ru else 'Кўрсатилган' }}: {{ requests_list|length }}</div>
 </div>
 
-<div class="card spare002a-main-card">
-    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-        <span>{{ 'Список заявок' if is_ru else 'Сўровлар рўйхати' }}</span>
-        <span class="text-muted text-sm">{{ 'На странице' if is_ru else 'Саҳифада' }}: {{ requests_list|length }}</span>
+<div class="vs-table-wrap">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ 'Список заявок' if is_ru else 'Сўровлар рўйхати' }}</span>
+        <span class="vs-soft" style="font-size:12px;">{{ 'На странице' if is_ru else 'Саҳифада' }}: {{ requests_list|length }}</span>
     </div>
     {% if requests_list %}
-    <div class="spare002a-table-wrap">
-<table class="spare002a-table">
+    <div class="vs-table-scroll">
+    <table class="vs-table">
         <thead>
             <tr>
-                <th>№</th>
+                <th style="width:70px;">№</th>
                 <th>{{ 'Дата' if is_ru else 'Сана' }}</th>
                 <th>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
                 <th>{{ 'Техника' if is_ru else 'Техника' }}</th>
-                <th class="text-center">{{ 'Позиций' if is_ru else 'Позициялар' }}</th>
+                <th class="right">{{ 'Позиций' if is_ru else 'Позициялар' }}</th>
                 <th>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
                 <th>{{ 'Создал' if is_ru else 'Яратди' }}</th>
                 <th></th>
@@ -589,37 +104,40 @@
             {% set eq_label = req.equipment.name ~ ((' — ' ~ req.equipment.plate) if req.equipment and req.equipment.plate else '') if req.equipment else '—' %}
             {% set org_label = req.organization.short_name or req.organization.name %}
             <tr class="spare-request-row" data-status="{{ req.status }}" data-search="{{ (req.id|string ~ ' ' ~ org_label ~ ' ' ~ eq_label ~ ' ' ~ (req.creator.username if req.creator else ''))|lower }}">
-                <td><strong>#{{ req.id }}</strong></td>
+                <td style="font-weight:700;">#{{ req.id }}</td>
                 <td>{{ req.request_date.strftime('%d.%m.%Y') }}</td>
                 <td>{{ org_label }}</td>
-                <td class="spare-row-muted">{{ eq_label }}</td>
-                <td class="text-center"><strong>{{ req.items|length }}</strong></td>
+                <td class="text-sm vs-muted">{{ eq_label }}</td>
+                <td class="right" style="font-weight:600;">{{ req.items|length }}</td>
                 <td>
-                    <span class="spare-status-pill" style="color:{{ status_colors[req.status] }};">
-                        {{ status_labels[req.status][lang] }}
-                    </span>
+                    <span class="vs-badge" style="color:{{ status_colors.get(req.status, 'var(--text2)') }};">{{ status_labels[req.status][lang] if req.status in status_labels else req.status }}</span>
                 </td>
-                <td class="spare-row-muted">
+                <td class="text-sm vs-muted">
                     {{ req.creator.username if req.creator else '—' }}<br>
                     <span style="font-size:11px;">{{ req.created_at.strftime('%d.%m.%Y %H:%M') }}</span>
                 </td>
-                <td>
-                    <a href="{{ url_for('spare_parts.detail', rid=req.id) }}" class="btn btn-sm btn-secondary">{{ 'Открыть' if is_ru else 'Очиш' }}</a>
+                <td class="right">
+                    <a href="{{ url_for('spare_parts.detail', rid=req.id) }}" class="vs-btn vs-btn-sm">{{ 'Открыть' if is_ru else 'Очиш' }}</a>
                 </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
-</div>
+    </div>
     {% else %}
-    <div class="card-body" style="text-align:center; padding:40px; color:var(--text2);">
-        {{ 'Заявок нет' if is_ru else 'Сўров йўқ' }}
+    <div class="vs-empty">
+        <div class="vs-empty-ico">📋</div>
+        <div class="vs-empty-title">{{ 'Заявок нет' if is_ru else 'Сўров йўқ' }}</div>
+        <div class="vs-empty-sub">{{ 'Создайте первую заявку кнопкой «Новая заявка».' if is_ru else '«Янги сўров» тугмаси орқали биринчи сўровни яратинг.' }}</div>
     </div>
     {% endif %}
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
+const LIST_TEXT = {
+    shown: {{ ('Показано' if is_ru else 'Кўрсатилган')|tojson }}
+};
 function filterSpareRequests() {
     const q = (document.getElementById('spareRequestSearch').value || '').toLowerCase().trim();
     const status = document.getElementById('clientStatusFilter').value;
@@ -634,7 +152,7 @@ function filterSpareRequests() {
         if (show) visible += 1;
     });
     const counter = document.getElementById('visibleCounter');
-    if (counter) counter.textContent = '{{ 'Показано' if is_ru else 'Кўрсатилган' }}: ' + visible;
+    if (counter) counter.textContent = LIST_TEXT.shown + ': ' + visible;
 }
 document.addEventListener('DOMContentLoaded', filterSpareRequests);
 </script>

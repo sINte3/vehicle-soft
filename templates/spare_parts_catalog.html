@@ -15,6 +15,70 @@
 
 <div class="vs-alert is-info vs-mb">{{ 'Минимально обязательное поле — название. Артикул, единица измерения и категория помогают быстрее находить нужную деталь.' if is_ru else 'Камида номини киритиш мажбурий. Артикул, ўлчов бирлиги ва категория керакли детални тез топишга ёрдам беради.' }}</div>
 
+{# ─── SPARE-STAGE1: pending-review queue ─────────────────────────────── #}
+{% if pending_parts %}
+<div class="vs-card vs-card-accent-warning vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title">⏳ {{ 'Очередь на проверку' if is_ru else 'Текширув навбати' }} ({{ pending_parts|length }})</div>
+    </div>
+    <div class="vs-card-body">
+        <div class="vs-soft vs-mb-sm" style="font-size:12.5px;">{{ 'Позиции, введённые операторами вручную. Утвердите как новую запись каталога (с категорией) или объедините с существующей. Пока позиция здесь — её заявку нельзя утвердить.' if is_ru else 'Операторлар қўлда киритган позициялар. Янги каталог ёзуви сифатида (категория билан) тасдиқланг ёки мавжуди билан бирлаштиринг. Позиция шу ерда экан — унинг сўровини тасдиқлаб бўлмайди.' }}</div>
+        <div class="vs-table-scroll">
+        <table class="vs-table">
+            <thead>
+                <tr>
+                    <th>{{ 'Название' if is_ru else 'Номи' }}</th>
+                    <th>{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</th>
+                    <th>{{ 'Источник' if is_ru else 'Манба' }}</th>
+                    <th>{{ 'Утвердить как новую' if is_ru else 'Янги сифатида тасдиқлаш' }}</th>
+                    <th>{{ 'Объединить с' if is_ru else 'Бирлаштириш' }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for pp in pending_parts %}
+                <tr>
+                    <td style="font-weight:600;">{{ pp.name }}
+                        <div class="vs-soft" style="font-size:11px;">{{ pp.creator.username if pp.creator else '—' }} · {{ pp.created_at.strftime('%d.%m.%Y %H:%M') if pp.created_at else '—' }}</div>
+                    </td>
+                    <td class="text-sm vs-muted">{{ pp.part_number or '—' }}</td>
+                    <td class="text-sm">
+                        {% if pp.source_item %}
+                        <a href="{{ url_for('spare_parts.detail', rid=pp.source_item.request_id) }}">{{ 'Заявка' if is_ru else 'Сўров' }} #{{ pp.source_item.request_id }}</a>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td>
+                        <form method="post" action="{{ url_for('spare_parts.catalog_review_approve', pid=pp.id) }}" class="vs-row" style="gap:6px;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <select name="category_id" class="vs-select" style="min-width:150px;" required>
+                                <option value="">{{ '— категория —' if is_ru else '— категория —' }}</option>
+                                {% for cat in categories if cat.is_active %}
+                                <option value="{{ cat.id }}">{{ cat.name_ru if is_ru else cat.name_uz }}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="submit" class="vs-btn vs-btn-sm vs-btn-primary">✓ {{ 'Утвердить' if is_ru else 'Тасдиқлаш' }}</button>
+                        </form>
+                    </td>
+                    <td>
+                        <form method="post" action="{{ url_for('spare_parts.catalog_review_merge', pid=pp.id) }}" class="vs-row" style="gap:6px;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <select name="target_id" class="vs-select" style="min-width:170px;" required>
+                                <option value="">{{ '— запись каталога —' if is_ru else '— каталог ёзуви —' }}</option>
+                                {% for mt in merge_targets %}
+                                <option value="{{ mt.id }}">{{ mt.name }}{% if mt.part_number %} ({{ mt.part_number }}){% endif %}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="submit" class="vs-btn vs-btn-sm">⇄ {{ 'Объединить' if is_ru else 'Бирлаштириш' }}</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <div class="vs-card vs-mb">
     <div class="vs-card-header">
         <div class="vs-card-title" id="catalogFormTitle">{{ 'Добавить новую запчасть' if is_ru else 'Янги қисм қўшиш' }}</div>
@@ -35,9 +99,15 @@
                 <label class="vs-label">{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</label>
                 <input type="text" name="unit" id="editUnit" class="vs-input" value="{{ 'шт' if is_ru else 'дона' }}">
             </div>
+            {# SPARE-STAGE1: managed category picker replaces the deprecated free-text field. #}
             <div class="vs-field" style="flex:1; min-width:170px;">
                 <label class="vs-label">{{ 'Категория' if is_ru else 'Категория' }}</label>
-                <input type="text" name="category" id="editCategory" class="vs-input" placeholder="{{ 'Двигатель / тормоз / фильтр...' if is_ru else 'Двигатель / тормоз / фильтр...' }}">
+                <select name="category_id" id="editCategory" class="vs-select">
+                    <option value="">{{ '— без категории —' if is_ru else '— категориясиз —' }}</option>
+                    {% for cat in categories if cat.is_active %}
+                    <option value="{{ cat.id }}">{{ cat.name_ru if is_ru else cat.name_uz }}</option>
+                    {% endfor %}
+                </select>
             </div>
             <div class="vs-field" style="flex:none;">
                 <label class="vs-label">&nbsp;</label>
@@ -71,25 +141,124 @@
                 <th>{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</th>
                 <th>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
                 <th>{{ 'Категория' if is_ru else 'Категория' }}</th>
+                <th>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
                 <th></th>
             </tr>
         </thead>
         <tbody>
             {% for part in parts %}
-            <tr class="catalog-row" data-search="{{ (part.name ~ ' ' ~ (part.part_number or '') ~ ' ' ~ (part.unit or '') ~ ' ' ~ (part.category or ''))|lower }}">
+            {% set cat_label = (part.category_ref.name_ru if is_ru else part.category_ref.name_uz) if part.category_ref else (part.category or '—') %}
+            <tr class="catalog-row" data-search="{{ (part.name ~ ' ' ~ (part.part_number or '') ~ ' ' ~ (part.unit or '') ~ ' ' ~ cat_label)|lower }}">
                 <td>{{ loop.index }}</td>
                 <td style="font-weight:600;">{{ part.name }}</td>
                 <td class="text-sm vs-muted">{{ part.part_number or '—' }}</td>
                 <td>{{ part.unit or ('шт' if is_ru else 'дона') }}</td>
-                <td class="text-sm vs-muted">{{ part.category or '—' }}</td>
+                <td class="text-sm vs-muted">{{ cat_label }}</td>
+                <td>
+                    {# SPARE-STAGE1: catalog entry lifecycle status #}
+                    {% if part.status == 'pending_review' %}
+                    <span class="vs-badge vs-badge-warning vs-badge-sm">{{ 'на проверке' if is_ru else 'текширувда' }}</span>
+                    {% elif part.status == 'merged' %}
+                    <span class="vs-badge vs-badge-sm">{{ 'объединена' if is_ru else 'бирлаштирилган' }} → #{{ part.merged_into_id }}</span>
+                    {% else %}
+                    <span class="vs-badge vs-badge-success vs-badge-sm">{{ 'активна' if is_ru else 'фаол' }}</span>
+                    {% endif %}
+                </td>
                 <td class="right">
+                    {% if part.status == 'active' %}
                     <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
-                            onclick='editPart({{ part.id }}, {{ part.name|tojson }}, {{ (part.part_number or "")|tojson }}, {{ (part.unit or "")|tojson }}, {{ (part.category or "")|tojson }})'>✏</button>
+                            onclick='editPart({{ part.id }}, {{ part.name|tojson }}, {{ (part.part_number or "")|tojson }}, {{ (part.unit or "")|tojson }}, {{ (part.category_id or "")|tojson }})'>✏</button>
+                    {% endif %}
                 </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+    </div>
+</div>
+
+{# ─── SPARE-STAGE1: categories management ────────────────────────────── #}
+<div class="vs-card vs-mb vs-mt">
+    <div class="vs-card-header">
+        <div class="vs-card-title" id="categoryFormTitle">{{ 'Категории каталога' if is_ru else 'Каталог категориялари' }}</div>
+    </div>
+    <div class="vs-card-body">
+        <div class="vs-soft vs-mb-sm" style="font-size:12.5px;">{{ 'Категории вида «узел» требуют фото при отправке заявки; «расходник» — нет.' if is_ru else '«Узел» туридаги категориялар сўров юборишда фото талаб қилади; «сарф материали» — йўқ.' }}</div>
+        <form method="post" action="{{ url_for('spare_parts.catalog_category_save') }}" class="vs-form-row vs-mb" id="categoryForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="id" id="catEditId" value="">
+            <div class="vs-field" style="flex:1; min-width:180px;">
+                <label class="vs-label">{{ 'Название (рус.)' if is_ru else 'Номи (русча)' }}</label>
+                <input type="text" name="name_ru" id="catNameRu" class="vs-input" required>
+            </div>
+            <div class="vs-field" style="flex:1; min-width:180px;">
+                <label class="vs-label">{{ 'Название (узб.)' if is_ru else 'Номи (ўзбекча)' }}</label>
+                <input type="text" name="name_uz" id="catNameUz" class="vs-input" required>
+            </div>
+            <div class="vs-field" style="width:170px;">
+                <label class="vs-label">{{ 'Вид' if is_ru else 'Тури' }}</label>
+                <select name="kind" id="catKind" class="vs-select">
+                    <option value="unit">{{ 'Узел (нужно фото)' if is_ru else 'Узел (фото керак)' }}</option>
+                    <option value="consumable">{{ 'Расходник' if is_ru else 'Сарф материали' }}</option>
+                </select>
+            </div>
+            <div class="vs-field" style="width:90px;">
+                <label class="vs-label">{{ 'Порядок' if is_ru else 'Тартиб' }}</label>
+                <input type="number" name="sort_order" id="catSort" class="vs-input" value="0">
+            </div>
+            <div class="vs-field" style="width:90px;" id="catActiveField" hidden>
+                <label class="vs-label">{{ 'Активна' if is_ru else 'Фаол' }}</label>
+                <input type="checkbox" name="is_active" id="catActive" checked style="width:20px; height:20px; margin-top:8px;">
+            </div>
+            <div class="vs-field" style="flex:none;">
+                <label class="vs-label">&nbsp;</label>
+                <div class="vs-row">
+                    <button type="submit" class="vs-btn vs-btn-primary">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+                    <button type="button" class="vs-btn" onclick="resetCategoryForm()">{{ 'Сбросить' if is_ru else 'Тозалаш' }}</button>
+                </div>
+            </div>
+        </form>
+        {% if categories %}
+        <div class="vs-table-scroll">
+        <table class="vs-table">
+            <thead>
+                <tr>
+                    <th style="width:40px;">№</th>
+                    <th>{{ 'Название (рус.)' if is_ru else 'Номи (русча)' }}</th>
+                    <th>{{ 'Название (узб.)' if is_ru else 'Номи (ўзбекча)' }}</th>
+                    <th>{{ 'Вид' if is_ru else 'Тури' }}</th>
+                    <th class="right">{{ 'Порядок' if is_ru else 'Тартиб' }}</th>
+                    <th>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for cat in categories %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td style="font-weight:600;">{{ cat.name_ru }}</td>
+                    <td>{{ cat.name_uz }}</td>
+                    <td class="text-sm vs-muted">{{ ('Узел' if is_ru else 'Узел') if cat.kind == 'unit' else ('Расходник' if is_ru else 'Сарф материали') }}</td>
+                    <td class="right">{{ cat.sort_order or 0 }}</td>
+                    <td>
+                        {% if cat.is_active %}
+                        <span class="vs-badge vs-badge-success vs-badge-sm">{{ 'активна' if is_ru else 'фаол' }}</span>
+                        {% else %}
+                        <span class="vs-badge vs-badge-sm">{{ 'выключена' if is_ru else 'ўчирилган' }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="right">
+                        <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
+                                onclick='editCategory({{ cat.id }}, {{ cat.name_ru|tojson }}, {{ cat.name_uz|tojson }}, {{ cat.kind|tojson }}, {{ cat.sort_order or 0 }}, {{ 1 if cat.is_active else 0 }})'>✏</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <div class="vs-soft" style="font-size:12.5px;">{{ 'Категорий пока нет — добавьте первую (например: Двигатель, Гидравлика, Масла и жидкости).' if is_ru else 'Ҳозирча категория йўқ — биринчисини қўшинг (масалан: Двигатель, Гидравлика, Мойлар ва суюқликлар).' }}</div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}
@@ -102,14 +271,36 @@ const CATALOG_TEXT = {
     shown: {{ ('Показано' if is_ru else 'Кўрсатилган')|tojson }}
 };
 const DEFAULT_UNIT = {{ ('шт' if is_ru else 'дона')|tojson }};
-function editPart(id, name, partNum, unit, cat) {
+function editPart(id, name, partNum, unit, catId) {
     document.getElementById('editId').value = id;
     document.getElementById('editName').value = name;
     document.getElementById('editPartNum').value = partNum;
     document.getElementById('editUnit').value = unit || DEFAULT_UNIT;
-    document.getElementById('editCategory').value = cat;
+    // SPARE-STAGE1: category is now a managed category_id select.
+    document.getElementById('editCategory').value = catId || '';
     document.getElementById('catalogFormTitle').textContent = CATALOG_TEXT.editTitle;
     document.getElementById('editName').focus();
+}
+
+/* SPARE-STAGE1: category management form helpers. */
+function editCategory(id, nameRu, nameUz, kind, sortOrder, isActive) {
+    document.getElementById('catEditId').value = id;
+    document.getElementById('catNameRu').value = nameRu;
+    document.getElementById('catNameUz').value = nameUz;
+    document.getElementById('catKind').value = kind || 'unit';
+    document.getElementById('catSort').value = sortOrder || 0;
+    document.getElementById('catActive').checked = !!isActive;
+    document.getElementById('catActiveField').hidden = false;
+    document.getElementById('catNameRu').focus();
+}
+function resetCategoryForm() {
+    document.getElementById('catEditId').value = '';
+    document.getElementById('catNameRu').value = '';
+    document.getElementById('catNameUz').value = '';
+    document.getElementById('catKind').value = 'unit';
+    document.getElementById('catSort').value = 0;
+    document.getElementById('catActive').checked = true;
+    document.getElementById('catActiveField').hidden = true;
 }
 function resetForm() {
     document.getElementById('editId').value = '';
