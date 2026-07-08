@@ -2826,6 +2826,7 @@ def create_app():
                 ('spare_parts_catalog_manage', 'Эҳтиёт қисмлар: каталогни бошқариш', 'Запчасти: управление каталогом'),
                 ('spare_parts_price_confirm', 'Эҳтиёт қисмлар: нархни тасдиқлаш', 'Запчасти: подтверждение цен'),
                 ('spare_parts_approve', 'Эҳтиёт қисмлар: сўровни тасдиқлаш', 'Запчасти: утверждение заявок'),
+                ('spare_parts_reports', 'Эҳтиёт қисмлар: ҳисоботлар', 'Запчасти: отчёты'),
             ]:
                 db.session.add(AppModule(code=code, name_uz=name_uz, name_ru=name_ru))
             db.session.commit()

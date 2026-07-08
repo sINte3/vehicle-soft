@@ -1,0 +1,332 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Запчасти — отчёты' if is_ru else 'Эҳтиёт қисмлар — ҳисоботлар' }}{% endblock %}
+{% block content %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Отчёты по запчастям' if is_ru else 'Эҳтиёт қисмлар ҳисоботлари' }}</div>
+    <div class="vs-hero-sub">{{ 'Затраты по технике, организациям и категориям, повторные заказы и самые дорогие позиции за период.' if is_ru else 'Давр учун техника, ташкилот ва категория бўйича харажатлар, такрорий сўровлар ва энг қиммат позициялар.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('spare_parts.index') }}" class="vs-btn">{{ '← Заявки' if is_ru else '← Сўровлар' }}</a>
+    <a href="{{ url_for('spare_parts.reports_export', date_from=date_from_s, date_to=date_to_s, org_id=org_id, equipment_id=equipment_id, category_id=category_id) }}" class="vs-btn vs-btn-primary">⬇ {{ 'Скачать Excel' if is_ru else 'Excel юклаб олиш' }}</a>
+  </div>
+</div>
+
+<div class="vs-alert is-info vs-mb">{{ 'В суммы попадают только утверждённые заявки с подтверждёнными ценами (цена × количество). Черновики и неподтверждённые цены не считаются.' if is_ru else 'Суммаларга фақат тасдиқланган нархли, тасдиқланган сўровлар киради (нарх × миқдор). Чорновлар ва тасдиқланмаган нархлар ҳисобланмайди.' }}</div>
+
+{# ─── Filters ────────────────────────────────────────────────────────── #}
+<div class="vs-card vs-mb">
+    <div class="vs-card-body">
+        <form method="get" action="{{ url_for('spare_parts.reports') }}" class="vs-form-row">
+            <div class="vs-field" style="width:160px;">
+                <label class="vs-label">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
+                <input type="date" name="date_from" class="vs-input" value="{{ date_from_s }}">
+            </div>
+            <div class="vs-field" style="width:160px;">
+                <label class="vs-label">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
+                <input type="date" name="date_to" class="vs-input" value="{{ date_to_s }}">
+            </div>
+            <div class="vs-field" style="min-width:210px; flex:1;">
+                <label class="vs-label">{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
+                <select name="org_id" id="orgSelect" class="vs-select" onchange="onOrgChange()">
+                    <option value="">{{ '— все организации —' if is_ru else '— барча ташкилотлар —' }}</option>
+                    {% for org in organizations %}
+                    <option value="{{ org.id }}" {% if org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="vs-field" style="min-width:210px; flex:1;">
+                <label class="vs-label">{{ 'Техника' if is_ru else 'Техника' }}</label>
+                <select name="equipment_id" id="eqSelect" class="vs-select">
+                    <option value="">{{ '— вся техника —' if is_ru else '— барча техника —' }}</option>
+                    {% for eq in equipment_options %}
+                    <option value="{{ eq.id }}" {% if equipment_id == eq.id %}selected{% endif %}>{{ eq.name }}{% if eq.plate %} — {{ eq.plate }}{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="vs-field" style="min-width:190px;">
+                <label class="vs-label">{{ 'Категория' if is_ru else 'Категория' }}</label>
+                <select name="category_id" class="vs-select">
+                    <option value="">{{ '— все категории —' if is_ru else '— барча категориялар —' }}</option>
+                    {% for cat in categories %}
+                    <option value="{{ cat.id }}" {% if category_id == cat.id %}selected{% endif %}>{{ cat.name_ru if is_ru else cat.name_uz }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="vs-field" style="flex:none;">
+                <label class="vs-label">&nbsp;</label>
+                <button type="submit" class="vs-btn vs-btn-primary">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{# ─── Summary ────────────────────────────────────────────────────────── #}
+<div class="vs-stat-grid vs-mb">
+    <div class="vs-stat">
+        <div class="vs-stat-label">{{ 'Сумма за период, сум' if is_ru else 'Давр суммаси, сўм' }}</div>
+        <div class="vs-stat-value">{{ data.grand_total|fmt_sum or '0' }}</div>
+    </div>
+    <div class="vs-stat">
+        <div class="vs-stat-label">{{ 'Утверждённых позиций' if is_ru else 'Тасдиқланган позициялар' }}</div>
+        <div class="vs-stat-value">{{ data.cost_lines_count }}</div>
+    </div>
+    <div class="vs-stat">
+        <div class="vs-stat-label">{{ 'Повторных предупреждений' if is_ru else 'Такрорий огоҳлантиришлар' }}</div>
+        <div class="vs-stat-value" style="color:{{ 'var(--danger)' if data.repeat_rows else 'var(--accent)' }};">{{ data.repeat_rows|length }}</div>
+    </div>
+</div>
+
+{# ─── Table 1: costs by equipment ────────────────────────────────────── #}
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title">{{ 'Затраты по технике' if is_ru else 'Техника бўйича харажатлар' }}</div>
+    </div>
+    <div class="vs-card-body">
+        {% if data.by_equipment %}
+        <div class="vs-table-scroll">
+        <table class="vs-table">
+            <thead>
+                <tr>
+                    <th style="width:40px;">№</th>
+                    <th>{{ 'Техника' if is_ru else 'Техника' }}</th>
+                    <th>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
+                    <th class="right">{{ 'Позиций' if is_ru else 'Позициялар' }}</th>
+                    <th class="right">{{ 'Сумма, сум' if is_ru else 'Сумма, сўм' }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in data.by_equipment %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td style="font-weight:600;">
+                        {% if r.equipment %}{{ r.equipment.name }}{% if r.equipment.plate %} <span class="vs-muted text-sm">— {{ r.equipment.plate }}</span>{% endif %}
+                        {% else %}<span class="vs-muted">{{ '— без техники —' if is_ru else '— техникасиз —' }}</span>{% endif %}
+                    </td>
+                    <td class="text-sm vs-muted">{{ (r.organization.short_name or r.organization.name) if r.organization else '—' }}</td>
+                    <td class="right">{{ r.lines }}</td>
+                    <td class="right" style="font-weight:600;">{{ r.total|fmt_sum or '0' }}</td>
+                </tr>
+                {% endfor %}
+                <tr style="font-weight:700;">
+                    <td></td>
+                    <td>{{ 'ИТОГО' if is_ru else 'ЖАМИ' }}</td>
+                    <td></td>
+                    <td class="right">{{ data.cost_lines_count }}</td>
+                    <td class="right">{{ data.grand_total|fmt_sum or '0' }}</td>
+                </tr>
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <div class="vs-soft" style="font-size:12.5px;">{{ 'Нет утверждённых позиций с подтверждённой ценой за выбранный период.' if is_ru else 'Танланган давр учун тасдиқланган нархли позициялар йўқ.' }}</div>
+        {% endif %}
+    </div>
+</div>
+
+{# ─── Table 2: costs by organization ─────────────────────────────────── #}
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title">{{ 'Затраты по организациям' if is_ru else 'Ташкилотлар бўйича харажатлар' }}</div>
+    </div>
+    <div class="vs-card-body">
+        {% if data.by_organization %}
+        <div class="vs-table-scroll">
+        <table class="vs-table">
+            <thead>
+                <tr>
+                    <th style="width:40px;">№</th>
+                    <th>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
+                    <th class="right">{{ 'Позиций' if is_ru else 'Позициялар' }}</th>
+                    <th class="right">{{ 'Сумма, сум' if is_ru else 'Сумма, сўм' }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in data.by_organization %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td style="font-weight:600;">{{ (r.organization.short_name or r.organization.name) if r.organization else '—' }}</td>
+                    <td class="right">{{ r.lines }}</td>
+                    <td class="right" style="font-weight:600;">{{ r.total|fmt_sum or '0' }}</td>
+                </tr>
+                {% endfor %}
+                <tr style="font-weight:700;">
+                    <td></td>
+                    <td>{{ 'ИТОГО' if is_ru else 'ЖАМИ' }}</td>
+                    <td class="right">{{ data.cost_lines_count }}</td>
+                    <td class="right">{{ data.grand_total|fmt_sum or '0' }}</td>
+                </tr>
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <div class="vs-soft" style="font-size:12.5px;">{{ 'Нет утверждённых позиций с подтверждённой ценой за выбранный период.' if is_ru else 'Танланган давр учун тасдиқланган нархли позициялар йўқ.' }}</div>
+        {% endif %}
+    </div>
+</div>
+
+{# ─── Table 3: costs by category ─────────────────────────────────────── #}
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title">{{ 'Затраты по категориям' if is_ru else 'Категориялар бўйича харажатлар' }}</div>
+    </div>
+    <div class="vs-card-body">
+        {% if data.by_category %}
+        <div class="vs-table-scroll">
+        <table class="vs-table">
+            <thead>
+                <tr>
+                    <th style="width:40px;">№</th>
+                    <th>{{ 'Категория' if is_ru else 'Категория' }}</th>
+                    <th class="right">{{ 'Позиций' if is_ru else 'Позициялар' }}</th>
+                    <th class="right">{{ 'Сумма, сум' if is_ru else 'Сумма, сўм' }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in data.by_category %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td style="font-weight:600;">
+                        {% if r.category %}{{ r.category.name_ru if is_ru else r.category.name_uz }}
+                        {% else %}<span class="vs-muted">{{ '— без категории —' if is_ru else '— категориясиз —' }}</span>{% endif %}
+                    </td>
+                    <td class="right">{{ r.lines }}</td>
+                    <td class="right" style="font-weight:600;">{{ r.total|fmt_sum or '0' }}</td>
+                </tr>
+                {% endfor %}
+                <tr style="font-weight:700;">
+                    <td></td>
+                    <td>{{ 'ИТОГО' if is_ru else 'ЖАМИ' }}</td>
+                    <td class="right">{{ data.cost_lines_count }}</td>
+                    <td class="right">{{ data.grand_total|fmt_sum or '0' }}</td>
+                </tr>
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <div class="vs-soft" style="font-size:12.5px;">{{ 'Нет утверждённых позиций с подтверждённой ценой за выбранный период.' if is_ru else 'Танланган давр учун тасдиқланган нархли позициялар йўқ.' }}</div>
+        {% endif %}
+    </div>
+</div>
+
+{# ─── Table 4: repeat-order warnings ─────────────────────────────────── #}
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title">⚠ {{ 'Повторные заказы (красный ≤7 дн., жёлтый ≤30 дн.)' if is_ru else 'Такрорий сўровлар (қизил ≤7 кун, сариқ ≤30 кун)' }}</div>
+    </div>
+    <div class="vs-card-body">
+        {% if data.repeat_rows %}
+        <div class="vs-table-scroll">
+        <table class="vs-table">
+            <thead>
+                <tr>
+                    <th style="width:80px;">{{ 'Заявка' if is_ru else 'Сўров' }}</th>
+                    <th>{{ 'Дата' if is_ru else 'Сана' }}</th>
+                    <th>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
+                    <th>{{ 'Техника' if is_ru else 'Техника' }}</th>
+                    <th>{{ 'Запчасть' if is_ru else 'Эҳтиёт қисм' }}</th>
+                    <th>{{ 'Уровень' if is_ru else 'Даража' }}</th>
+                    <th class="right">{{ 'Дней с прошлого заказа' if is_ru else 'Олдинги сўровдан кунлар' }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in data.repeat_rows %}
+                <tr>
+                    <td style="font-weight:700;"><a href="{{ url_for('spare_parts.detail', rid=r.request_id) }}">#{{ r.request_id }}</a></td>
+                    <td>{{ r.request_date.strftime('%d.%m.%Y') }}</td>
+                    <td class="text-sm vs-muted">{{ (r.organization.short_name or r.organization.name) if r.organization else '—' }}</td>
+                    <td class="text-sm">{{ r.equipment.name if r.equipment else '—' }}{% if r.equipment and r.equipment.plate %} <span class="vs-muted">— {{ r.equipment.plate }}</span>{% endif %}</td>
+                    <td style="font-weight:600;">{{ r.part_name }}</td>
+                    <td>
+                        {% if r.severity == 'red' %}
+                        <span class="vs-badge vs-badge-sm" style="color:var(--danger);">{{ 'красный' if is_ru else 'қизил' }}</span>
+                        {% else %}
+                        <span class="vs-badge vs-badge-sm" style="color:var(--warn);">{{ 'жёлтый' if is_ru else 'сариқ' }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="right" style="font-weight:600;">{{ r.days_since }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <div class="vs-soft" style="font-size:12.5px;">{{ 'Повторных заказов за выбранный период не найдено.' if is_ru else 'Танланган давр учун такрорий сўровлар топилмади.' }}</div>
+        {% endif %}
+    </div>
+</div>
+
+{# ─── Table 5: top-20 most expensive line items ──────────────────────── #}
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title">{{ 'Топ-20 самых дорогих позиций' if is_ru else 'Топ-20 энг қиммат позициялар' }}</div>
+    </div>
+    <div class="vs-card-body">
+        {% if data.top_items %}
+        <div class="vs-table-scroll">
+        <table class="vs-table">
+            <thead>
+                <tr>
+                    <th style="width:40px;">№</th>
+                    <th style="width:80px;">{{ 'Заявка' if is_ru else 'Сўров' }}</th>
+                    <th>{{ 'Дата' if is_ru else 'Сана' }}</th>
+                    <th>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
+                    <th>{{ 'Техника' if is_ru else 'Техника' }}</th>
+                    <th>{{ 'Запчасть' if is_ru else 'Эҳтиёт қисм' }}</th>
+                    <th class="right">{{ 'Кол-во' if is_ru else 'Миқдор' }}</th>
+                    <th>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
+                    <th class="right">{{ 'Цена, сум' if is_ru else 'Нарх, сўм' }}</th>
+                    <th class="right">{{ 'Сумма, сум' if is_ru else 'Сумма, сўм' }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in data.top_items %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td style="font-weight:700;"><a href="{{ url_for('spare_parts.detail', rid=r.request_id) }}">#{{ r.request_id }}</a></td>
+                    <td>{{ r.request_date.strftime('%d.%m.%Y') }}</td>
+                    <td class="text-sm vs-muted">{{ (r.organization.short_name or r.organization.name) if r.organization else '—' }}</td>
+                    <td class="text-sm">{{ r.equipment.name if r.equipment else '—' }}</td>
+                    <td style="font-weight:600;">{{ r.name }}</td>
+                    <td class="right">{{ r.quantity }}</td>
+                    <td class="text-sm vs-muted">{{ r.unit or '—' }}</td>
+                    <td class="right">{{ r.price|fmt_sum or '0' }}</td>
+                    <td class="right" style="font-weight:600;">{{ r.total|fmt_sum or '0' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <div class="vs-soft" style="font-size:12.5px;">{{ 'Нет утверждённых позиций с подтверждённой ценой за выбранный период.' if is_ru else 'Танланган давр учун тасдиқланган нархли позициялар йўқ.' }}</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+/* SPARE-REPORTS: equipment filter follows the selected organization via the
+   same AJAX endpoint the request form uses (api_equipment_by_org). */
+const EQUIP_URL = {{ url_for('spare_parts.api_equipment_by_org')|tojson }};
+const EQ_PLACEHOLDER = {{ ('— вся техника —' if is_ru else '— барча техника —')|tojson }};
+function onOrgChange() {
+    const orgId = document.getElementById('orgSelect').value;
+    const sel = document.getElementById('eqSelect');
+    sel.innerHTML = '<option value="">' + EQ_PLACEHOLDER + '</option>';
+    if (!orgId) return;
+    fetch(EQUIP_URL + '?org_id=' + encodeURIComponent(orgId), {credentials: 'same-origin'})
+        .then(r => r.json())
+        .then(items => {
+            (items || []).forEach(e => {
+                const opt = document.createElement('option');
+                opt.value = e.id;
+                opt.textContent = e.name + (e.plate ? ' — ' + e.plate : '');
+                sel.appendChild(opt);
+            });
+        })
+        .catch(() => {});
+}
+</script>
+{% endblock %}

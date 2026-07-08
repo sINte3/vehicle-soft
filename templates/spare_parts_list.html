@@ -15,6 +15,7 @@
     {% if current_user.has_module_access('spare_parts_catalog_manage') %}
     <a href="{{ url_for('spare_parts.catalog') }}" class="vs-btn">{{ 'Каталог запчастей' if is_ru else 'Эҳтиёт қисмлар каталоги' }}</a>
     {% endif %}
+    {% if current_user.has_module_access('spare_parts_reports') %}<a href="{{ url_for('spare_parts.reports') }}" class="vs-btn">📊 {{ 'Отчёты' if is_ru else 'Ҳисоботлар' }}</a>{% endif %}
   </div>
 </div>
 
