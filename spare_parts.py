@@ -1331,3 +1331,399 @@ def catalog_review_merge(pid):
     db.session.commit()
     flash(_spare_t('Ёзув бирлаштирилди', 'Записи объединены'), 'success')
     return redirect(url_for('spare_parts.catalog'))
+
+
+# ─── SPARE-REPORTS: costs & repeat-warning analytics ──────────────────────────
+
+def _reports_parse_date(value, default):
+    """Lenient date parser for report query-string filters.
+
+    [REASON]: SPARE-REPORTS — mirrors fuel_routes._parse_report_date: a bad
+    query-string value falls back to the default period instead of failing
+    the whole page (unlike _parse_spare_date, which raises for form input).
+    """
+    try:
+        return datetime.strptime(value or '', '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        return default
+
+
+def _reports_filters():
+    """Read and validate the filter set shared by reports and reports_export."""
+    today = date.today()
+    default_start = today.replace(day=1)
+    d_from = _reports_parse_date(request.args.get('date_from'), default_start)
+    d_to = _reports_parse_date(request.args.get('date_to'), today)
+    if d_from > d_to:
+        d_from, d_to = d_to, d_from
+
+    org_id = request.args.get('org_id', type=int) or None
+    if org_id and not current_user.can_access_org(org_id):
+        abort(403)
+
+    equipment_id = request.args.get('equipment_id', type=int) or None
+    if equipment_id:
+        eq = Equipment.query.get(equipment_id)
+        if eq is None:
+            equipment_id = None
+        elif not current_user.can_access_org(eq.organization_id):
+            abort(403)
+        elif org_id and eq.organization_id != org_id:
+            # Stale equipment kept from a previously selected organization —
+            # the organization filter wins, the equipment filter is dropped.
+            equipment_id = None
+
+    category_id = request.args.get('category_id', type=int) or None
+    if category_id and not SparePartCategory.query.get(category_id):
+        category_id = None
+
+    return d_from, d_to, org_id, equipment_id, category_id
+
+
+def _reports_data(d_from, d_to, org_id=None, equipment_id=None, category_id=None):
+    """Collect the five spare parts report tables for one filter set.
+
+    [REASON]: SPARE-REPORTS business rule — cost tables count only money
+    actually authorized: SparePartRequest.status == 'approved' AND
+    SparePartRequestItem.price_status == 'confirmed'. Draft/pending amounts
+    never enter cost totals. Line cost = price * quantity.
+    """
+    user_org_ids = _spare_user_org_ids()
+
+    q = (db.session.query(SparePartRequestItem, SparePartRequest, SparePart)
+         .join(SparePartRequest,
+               SparePartRequestItem.request_id == SparePartRequest.id)
+         .outerjoin(SparePart,
+                    SparePartRequestItem.spare_part_id == SparePart.id)
+         .filter(SparePartRequest.request_date >= d_from,
+                 SparePartRequest.request_date <= d_to))
+    if user_org_ids is not None:
+        q = q.filter(SparePartRequest.organization_id.in_(user_org_ids))
+    if org_id:
+        q = q.filter(SparePartRequest.organization_id == org_id)
+    if equipment_id:
+        q = q.filter(SparePartRequest.equipment_id == equipment_id)
+    if category_id:
+        # NULL-category items (free-text/no catalog link) drop out here by
+        # SQL NULL semantics, which is correct for an explicit category filter.
+        q = q.filter(SparePart.category_id == category_id)
+    lines = q.order_by(SparePartRequest.request_date,
+                       SparePartRequest.id,
+                       SparePartRequestItem.id).all()
+
+    org_map = {o.id: o for o in Organization.query.all()}
+    cat_map = {c.id: c for c in SparePartCategory.query.all()}
+    eq_ids = {req.equipment_id for _item, req, _part in lines if req.equipment_id}
+    eq_map = ({e.id: e for e in Equipment.query.filter(Equipment.id.in_(eq_ids)).all()}
+              if eq_ids else {})
+
+    def _cost(item):
+        return float(item.price or 0) * float(item.quantity or 0)
+
+    cost_lines = [(item, req, part) for item, req, part in lines
+                  if req.status == 'approved' and item.price_status == 'confirmed']
+
+    # Table 1: costs by equipment. Grouped by (organization_id, equipment_id)
+    # so the NULL-equipment bucket stays split per organization and every row
+    # can show its organization; real equipment belongs to exactly one
+    # organization, so this equals grouping by equipment_id for it.
+    eq_totals = {}
+    for item, req, _part in cost_lines:
+        key = (req.organization_id, req.equipment_id)
+        row = eq_totals.setdefault(key, {
+            'organization': org_map.get(req.organization_id),
+            'equipment': eq_map.get(req.equipment_id),
+            'total': 0.0, 'lines': 0,
+        })
+        row['total'] += _cost(item)
+        row['lines'] += 1
+    by_equipment = sorted(eq_totals.values(),
+                          key=lambda r: r['total'], reverse=True)
+
+    # Table 2: costs by organization.
+    org_totals = {}
+    for item, req, _part in cost_lines:
+        row = org_totals.setdefault(req.organization_id, {
+            'organization': org_map.get(req.organization_id),
+            'total': 0.0, 'lines': 0,
+        })
+        row['total'] += _cost(item)
+        row['lines'] += 1
+    by_organization = sorted(org_totals.values(),
+                             key=lambda r: r['total'], reverse=True)
+
+    # Table 3: costs by catalog category. Items without a category (no catalog
+    # link, or a part not yet categorized) get their own None bucket — they are
+    # shown as «без категории» / «категориясиз», never silently dropped.
+    cat_totals = {}
+    for item, _req, part in cost_lines:
+        cat_id = part.category_id if part is not None else None
+        row = cat_totals.setdefault(cat_id, {
+            'category': cat_map.get(cat_id),
+            'total': 0.0, 'lines': 0,
+        })
+        row['total'] += _cost(item)
+        row['lines'] += 1
+    by_category = sorted(cat_totals.values(),
+                         key=lambda r: r['total'], reverse=True)
+
+    grand_total = sum(_cost(item) for item, _req, _part in cost_lines)
+
+    # Table 4: repeat-order warnings triggered in the period.
+    # [REASON]: SPARE-REPORTS — verbatim reuse of the SPARE-STAGE1 engine
+    # (_check_repeat_orders), not a reimplementation: severity/days_since are
+    # the engine's live view (anchored to today, 90-day window, red ≤7 /
+    # yellow ≤30, rejected prior requests excluded), i.e. exactly what the
+    # request detail page shows for the same item today.
+    repeat_rows = []
+    for item, req, _part in lines:
+        if not req.equipment_id or not item.spare_part_id:
+            continue
+        res = _check_repeat_orders(req.equipment_id, item.spare_part_id,
+                                   exclude_request_id=req.id)
+        if res['severity'] in ('red', 'yellow'):
+            repeat_rows.append({
+                'request_id': req.id,
+                'request_date': req.request_date,
+                'equipment': eq_map.get(req.equipment_id),
+                'organization': org_map.get(req.organization_id),
+                'part_name': item.name,
+                'severity': res['severity'],
+                'days_since': res['days_since'],
+            })
+    repeat_rows.sort(key=lambda r: (0 if r['severity'] == 'red' else 1,
+                                    r['days_since'] if r['days_since'] is not None else 999))
+
+    # Table 5: top-20 most expensive confirmed approved line items.
+    top_lines = sorted(cost_lines, key=lambda t: _cost(t[0]), reverse=True)[:20]
+    top_items = [{
+        'request_id': req.id,
+        'request_date': req.request_date,
+        'organization': org_map.get(req.organization_id),
+        'equipment': eq_map.get(req.equipment_id),
+        'name': item.name,
+        'quantity': item.quantity,
+        'unit': item.unit or '',
+        'price': item.price,
+        'total': _cost(item),
+    } for item, req, _part in top_lines]
+
+    return {
+        'd_from': d_from,
+        'd_to': d_to,
+        'by_equipment': by_equipment,
+        'by_organization': by_organization,
+        'by_category': by_category,
+        'grand_total': grand_total,
+        'cost_lines_count': len(cost_lines),
+        'repeat_rows': repeat_rows,
+        'top_items': top_items,
+    }
+
+
+def _spare_reports_workbook(data, lang='uz'):
+    """Build the 5-sheet Excel workbook for the spare parts reports.
+
+    Follows the styling conventions of fuel_routes._fuel_report_workbook
+    (bold filled header row, frozen header, borders, auto column widths).
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
+
+    # [REASON]: SPARE-REPORTS — costs are сум amounts, so the money format is
+    # excel_export.py's NUM_FMT ('#,##0', no decimals — same style as fmt_sum
+    # in templates), not the fuel report's '#,##0.00' liters format.
+    money_fmt = '#,##0'
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    header_fill = PatternFill('solid', fgColor='D9EAD3')
+    header_font = Font(bold=True)
+    total_font = Font(bold=True)
+    thin = Side(style='thin', color='D9D9D9')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def style_table(ws, money_cols=()):
+        ws.freeze_panes = 'A2'
+        ws.sheet_view.showGridLines = False
+        max_col = ws.max_column
+        max_row = ws.max_row
+        for cell in ws[1]:
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center', vertical='center',
+                                       wrap_text=True)
+        for row in ws.iter_rows(min_row=1, max_row=max_row, max_col=max_col):
+            for cell in row:
+                cell.border = border
+                if cell.row > 1 and cell.column in money_cols \
+                        and isinstance(cell.value, (int, float)):
+                    cell.number_format = money_fmt
+        for col in range(1, max_col + 1):
+            letter = get_column_letter(col)
+            width = 10
+            for cell in ws[letter]:
+                val = '' if cell.value is None else str(cell.value)
+                width = max(width, min(len(val) + 2, 38))
+            ws.column_dimensions[letter].width = width
+
+    def eq_name(eq):
+        return eq.name if eq else L('— без техники —', '— техникасиз —')
+
+    def eq_plate(eq):
+        return (eq.plate or '') if eq else ''
+
+    def org_name(org):
+        return (org.short_name or org.name) if org else '—'
+
+    severity_labels = {
+        'red': L('Красный (≤7 дней)', 'Қизил (≤7 кун)'),
+        'yellow': L('Жёлтый (≤30 дней)', 'Сариқ (≤30 кун)'),
+    }
+
+    # Sheet 1: costs by equipment.
+    ws = wb.create_sheet('Затраты по технике')
+    ws.append([L('Техника', 'Техника'), L('Гос. номер', 'Давлат рақами'),
+               L('Организация', 'Ташкилот'), L('Позиций', 'Позициялар'),
+               L('Сумма, сум', 'Сумма, сўм')])
+    for r in data['by_equipment']:
+        ws.append([eq_name(r['equipment']), eq_plate(r['equipment']),
+                   org_name(r['organization']), r['lines'], r['total']])
+    ws.append([L('ИТОГО', 'ЖАМИ'), '', '', data['cost_lines_count'],
+               data['grand_total']])
+    for cell in ws[ws.max_row]:
+        cell.font = total_font
+    style_table(ws, money_cols=(5,))
+
+    # Sheet 2: costs by organization.
+    ws = wb.create_sheet('Затраты по организациям')
+    ws.append([L('Организация', 'Ташкилот'), L('Позиций', 'Позициялар'),
+               L('Сумма, сум', 'Сумма, сўм')])
+    for r in data['by_organization']:
+        ws.append([org_name(r['organization']), r['lines'], r['total']])
+    ws.append([L('ИТОГО', 'ЖАМИ'), data['cost_lines_count'], data['grand_total']])
+    for cell in ws[ws.max_row]:
+        cell.font = total_font
+    style_table(ws, money_cols=(3,))
+
+    # Sheet 3: costs by catalog category.
+    ws = wb.create_sheet('Затраты по категориям')
+    ws.append([L('Категория', 'Категория'), L('Позиций', 'Позициялар'),
+               L('Сумма, сум', 'Сумма, сўм')])
+    for r in data['by_category']:
+        cat = r['category']
+        label = ((cat.name_ru if lang == 'ru' else cat.name_uz) if cat
+                 else L('— без категории —', '— категориясиз —'))
+        ws.append([label, r['lines'], r['total']])
+    ws.append([L('ИТОГО', 'ЖАМИ'), data['cost_lines_count'], data['grand_total']])
+    for cell in ws[ws.max_row]:
+        cell.font = total_font
+    style_table(ws, money_cols=(3,))
+
+    # Sheet 4: repeat-order warnings.
+    ws = wb.create_sheet('Повторные заказы')
+    ws.append([L('Заявка', 'Сўров'), L('Дата', 'Сана'),
+               L('Организация', 'Ташкилот'), L('Техника', 'Техника'),
+               L('Запчасть', 'Эҳтиёт қисм'), L('Уровень', 'Даража'),
+               L('Дней с прошлого заказа', 'Олдинги сўровдан кунлар')])
+    for r in data['repeat_rows']:
+        ws.append(['#{}'.format(r['request_id']),
+                   r['request_date'].strftime('%d.%m.%Y'),
+                   org_name(r['organization']), eq_name(r['equipment']),
+                   r['part_name'],
+                   severity_labels.get(r['severity'], r['severity']),
+                   r['days_since']])
+    style_table(ws)
+
+    # Sheet 5: top-20 most expensive line items.
+    ws = wb.create_sheet('Топ-20 позиций')
+    ws.append([L('Заявка', 'Сўров'), L('Дата', 'Сана'),
+               L('Организация', 'Ташкилот'), L('Техника', 'Техника'),
+               L('Запчасть', 'Эҳтиёт қисм'), L('Кол-во', 'Миқдор'),
+               L('Ед. изм.', 'Ўлчов бирлиги'), L('Цена, сум', 'Нарх, сўм'),
+               L('Сумма, сум', 'Сумма, сўм')])
+    for r in data['top_items']:
+        ws.append(['#{}'.format(r['request_id']),
+                   r['request_date'].strftime('%d.%m.%Y'),
+                   org_name(r['organization']), eq_name(r['equipment']),
+                   r['name'], r['quantity'], r['unit'], r['price'], r['total']])
+    style_table(ws, money_cols=(8, 9))
+
+    return wb
+
+
+@spare_parts_bp.route('/reports')
+@module_required('spare_parts')
+def reports():
+    # [REASON]: SPARE-REPORTS — the whole screen sits behind the explicit
+    # spare_parts_reports permission, checked the same way as the three
+    # SPARE-STAGE1 permissions (has_module_access keeps the admin bypass).
+    if not current_user.has_module_access('spare_parts_reports'):
+        abort(403)
+    d_from, d_to, org_id, equipment_id, category_id = _reports_filters()
+    data = _reports_data(d_from, d_to, org_id=org_id,
+                         equipment_id=equipment_id, category_id=category_id)
+
+    user_org_ids = _spare_user_org_ids()
+    if user_org_ids is None:
+        organizations = Organization.query.order_by(Organization.sort_order).all()
+    else:
+        organizations = (Organization.query
+                         .filter(Organization.id.in_(user_org_ids))
+                         .order_by(Organization.sort_order).all())
+    categories = (SparePartCategory.query
+                  .order_by(SparePartCategory.sort_order, SparePartCategory.id)
+                  .all())
+    # Initial options for the equipment filter; refreshed on organization
+    # change via the same AJAX endpoint the request form uses
+    # (api_equipment_by_org — active equipment of the selected organization).
+    if org_id:
+        equipment_options = (Equipment.query
+                             .filter_by(organization_id=org_id, is_active=True)
+                             .order_by(Equipment.name, Equipment.plate).all())
+    else:
+        equipment_options = []
+    return render_template('spare_parts_reports.html',
+                           data=data,
+                           date_from_s=d_from.isoformat(),
+                           date_to_s=d_to.isoformat(),
+                           org_id=org_id,
+                           equipment_id=equipment_id,
+                           category_id=category_id,
+                           organizations=organizations,
+                           categories=categories,
+                           equipment_options=equipment_options,
+                           lang=_spare_lang())
+
+
+@spare_parts_bp.route('/reports/export')
+@module_required('spare_parts')
+def reports_export():
+    # Same gate as the reports screen (this is the same data, as a file).
+    if not current_user.has_module_access('spare_parts_reports'):
+        abort(403)
+    d_from, d_to, org_id, equipment_id, category_id = _reports_filters()
+    data = _reports_data(d_from, d_to, org_id=org_id,
+                         equipment_id=equipment_id, category_id=category_id)
+    wb = _spare_reports_workbook(data, lang=_spare_lang())
+    # Local imports mirror fuel_routes.balance_report_export — keeps this
+    # change additive (module-level flask import line untouched).
+    from io import BytesIO
+    from flask import send_file
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    prefix = ('Spare_parts_report' if _spare_lang() == 'ru'
+              else 'Ehtiyot_qismlar_hisoboti')
+    fname = '{}_{}_{}.xlsx'.format(prefix, d_from.strftime('%d_%m_%Y'),
+                                   d_to.strftime('%d_%m_%Y'))
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=fname,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
