@@ -58,15 +58,46 @@ PRICE_STATUS_COLORS = {
     'returned':  'var(--warn)',
 }
 
-# Photo upload rules (SPARE-STAGE1). Extension AND content signature are both
-# checked -- Content-Type alone is never trusted.
-ALLOWED_PHOTO_EXTENSIONS = {'.jpg', '.jpeg', '.png'}
-# [REASON]: No Pillow in requirements.txt (no new dependencies without
-# approval), so file content is verified with a minimal magic-byte check.
-PHOTO_SIGNATURES = (
-    (b'\xff\xd8\xff', ('.jpg', '.jpeg')),          # JPEG
-    (b'\x89PNG\r\n\x1a\n', ('.png',)),             # PNG
-)
+# Photo/video upload rules (SPARE-STAGE1 + MOBILE-UPLOAD-001). Extension AND
+# content signature are both checked -- Content-Type alone is never trusted.
+# [REASON]: MOBILE-UPLOAD-001 — field mechanics use phone cameras; iPhones
+# default to HEIC, and Android/action-cam footage is commonly MP4/WEBM/
+# MKV/AVI, so JPG/PNG-only was too narrow for real field use.
+ALLOWED_PHOTO_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'}
+ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.mov', '.webm', '.avi', '.mkv'}
+ALLOWED_ATTACHMENT_EXTENSIONS = ALLOWED_PHOTO_EXTENSIONS | ALLOWED_VIDEO_EXTENSIONS
+
+# [REASON]: No Pillow/ffmpeg in requirements.txt (no new dependencies without
+# approval), so file content is verified with minimal magic-byte checks per
+# container format instead (see _validate_photo). ISO-BMFF (`ftyp` at offset
+# 4) covers MP4/MOV/HEIC/HEIF -- deliberately NOT distinguishing exact brand
+# codes between them (real complexity for negligible anti-spoofing benefit
+# here); a valid `ftyp` box is sufficient proof the file is a real media
+# container and not, e.g., a renamed .txt/.html (the actual failure mode
+# this project hit once in QA, caught by the JPG/PNG check -- the new
+# formats keep that same bar).
+
+MAX_ATTACHMENT_SIZE_MB = 50
+MAX_ATTACHMENT_SIZE = MAX_ATTACHMENT_SIZE_MB * 1024 * 1024
+# [REASON]: MOBILE-UPLOAD-001 — photos and videos combined, per request line
+# item (both the create flow and the detail-page add-more flow enforce this
+# against the same running count).
+MAX_ATTACHMENTS_PER_ITEM = 5
+
+# [REASON]: MOBILE-UPLOAD-001 — attachment_file() no longer relies on
+# mimetypes.guess_type() (unreliable for WEBP/HEIC across Windows Python
+# installs); Content-Type is looked up explicitly per stored extension.
+ATTACHMENT_CONTENT_TYPES = {
+    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+    '.heic': 'image/heic', '.heif': 'image/heif',
+    '.mp4': 'video/mp4',
+    '.mov': 'video/quicktime',
+    '.webm': 'video/webm',
+    '.avi': 'video/x-msvideo',
+    '.mkv': 'video/x-matroska',
+}
 
 
 def _spare_lang():
@@ -334,25 +365,52 @@ def _upload_dir():
 
 
 def _validate_photo(fs):
-    """Validate an uploaded photo. Returns (ext, None) or (None, bilingual error).
+    """Validate an uploaded photo or video attachment.
 
-    [REASON]: SPARE-STAGE1 — extension whitelist AND content magic-byte check;
-    the client-supplied Content-Type is never trusted.
+    Returns (ext, None) on success, or (None, bilingual error) on failure.
+
+    [REASON]: MOBILE-UPLOAD-001 — extends the SPARE-STAGE1 JPG/PNG-only
+    check to the formats mechanics' phones actually produce (WEBP/HEIC
+    photos, MP4/MOV/WEBM/AVI/MKV videos). Extension whitelist, size limit
+    AND content magic-byte check are all required; the client-supplied
+    Content-Type is never trusted.
     """
     filename = fs.filename or ''
     ext = os.path.splitext(filename)[1].lower()
-    if ext not in ALLOWED_PHOTO_EXTENSIONS:
+    if ext not in ALLOWED_ATTACHMENT_EXTENSIONS:
         return None, _spare_t(
-            '«{}»: фақат JPG/PNG файллар қабул қилинади',
-            '«{}»: допускаются только файлы JPG/PNG').format(filename)
-    head = fs.stream.read(8)
+            '«{}»: рухсат этилган форматлар — JPG, PNG, WEBP, HEIC/HEIF, MP4, MOV, WEBM, AVI, MKV',
+            '«{}»: допустимые форматы — JPG, PNG, WEBP, HEIC/HEIF, MP4, MOV, WEBM, AVI, MKV').format(filename)
+
+    fs.stream.seek(0, os.SEEK_END)
+    size = fs.stream.tell()
     fs.stream.seek(0)
-    for sig, exts in PHOTO_SIGNATURES:
-        if head.startswith(sig) and ext in exts:
-            return ext, None
+    if size > MAX_ATTACHMENT_SIZE:
+        return None, _spare_t(
+            '«{}»: файл ҳажми {} МБдан ошмаслиги керак',
+            '«{}»: размер файла не должен превышать {} МБ').format(filename, MAX_ATTACHMENT_SIZE_MB)
+
+    # [REASON]: WEBP/AVI (RIFF) signatures need bytes up to offset 12; read a
+    # 16-byte header once and slice it for every check below.
+    head = fs.stream.read(16)
+    fs.stream.seek(0)
+
+    if ext in ('.jpg', '.jpeg') and head.startswith(b'\xff\xd8\xff'):
+        return ext, None
+    if ext == '.png' and head.startswith(b'\x89PNG\r\n\x1a\n'):
+        return ext, None
+    if ext == '.webp' and head[0:4] == b'RIFF' and head[8:12] == b'WEBP':
+        return ext, None
+    if ext == '.avi' and head[0:4] == b'RIFF' and head[8:12] == b'AVI ':
+        return ext, None
+    if ext in ('.mp4', '.mov', '.heic', '.heif') and head[4:8] == b'ftyp':
+        return ext, None
+    if ext in ('.webm', '.mkv') and head[0:4] == b'\x1a\x45\xdf\xa3':
+        return ext, None
+
     return None, _spare_t(
-        '«{}»: файл мазмуни JPG/PNG эмас',
-        '«{}»: содержимое файла не является JPG/PNG').format(filename)
+        '«{}»: файл мазмуни кўрсатилган кенгайтмага мос эмас',
+        '«{}»: содержимое файла не соответствует указанному расширению').format(filename)
 
 
 def _store_item_photo(fs, item_id, user_id):
@@ -381,23 +439,52 @@ def _store_item_photo(fs, item_id, user_id):
     return None
 
 
+def _store_attachments_for_item(files, item_id, user_id, existing_count):
+    """Validate and store files for one item, up to MAX_ATTACHMENTS_PER_ITEM total.
+
+    Returns (stored_count, errors). Files beyond the per-item cap (existing
+    attachments + files already stored earlier in this same call) are
+    rejected with a clear bilingual error instead of being silently dropped
+    or truncated mid-file -- the caller's already-stored files are untouched.
+
+    [REASON]: MOBILE-UPLOAD-001 — shared by the create-request flow (always
+    existing_count=0) and the detail-page add-more flow (existing_count is
+    the item's current SparePartAttachment count), so both enforce the same
+    5-photos-and-videos-combined-per-item cap the same way.
+    """
+    errors = []
+    stored = 0
+    for fs in files:
+        if existing_count + stored >= MAX_ATTACHMENTS_PER_ITEM:
+            errors.append(_spare_t(
+                '«{}»: позицияга энг кўпи билан {} та файл бириктириш мумкин',
+                '«{}»: к позиции можно прикрепить не более {} файлов'
+            ).format(fs.filename or '', MAX_ATTACHMENTS_PER_ITEM))
+            continue
+        err = _store_item_photo(fs, item_id, user_id)
+        if err:
+            errors.append(err)
+        else:
+            stored += 1
+    return stored, errors
+
+
 def _store_submitted_item_photos(created_items):
-    """Intake per-row photo files posted with the request form.
+    """Intake per-row photo/video files posted with the request form.
 
     created_items is a list of (item, prepared) pairs; each row's files arrive
     as item_photo_{form_index}. Invalid files are skipped and reported — if
-    that leaves a mandatory photo missing, the submit gate keeps the request
-    as a draft with its own explicit message.
+    that leaves a mandatory photo/video missing, the submit gate keeps the
+    request as a draft with its own explicit message.
     """
     errors = []
     for item, prepared in created_items:
-        files = request.files.getlist('item_photo_{}'.format(prepared['form_index']))
-        for fs in files:
-            if not fs or not fs.filename:
-                continue
-            err = _store_item_photo(fs, item.id, current_user.id)
-            if err:
-                errors.append(err)
+        files = [fs for fs in
+                 request.files.getlist('item_photo_{}'.format(prepared['form_index']))
+                 if fs and fs.filename]
+        _, item_errors = _store_attachments_for_item(
+            files, item.id, current_user.id, existing_count=0)
+        errors.extend(item_errors)
     if errors:
         _spare_flash_errors(errors,
                             title_uz='Баъзи фотолар қабул қилинмади:',
@@ -1014,16 +1101,13 @@ def item_photo_upload(rid, item_id):
     # Photos are attached while the operator can still change the request.
     if spr.status not in ('draft', 'returned_for_revision'):
         abort(400)
-    stored = 0
-    errors = []
-    for fs in request.files.getlist('photo'):
-        if not fs or not fs.filename:
-            continue
-        err = _store_item_photo(fs, item.id, current_user.id)
-        if err:
-            errors.append(err)
-        else:
-            stored += 1
+    # [REASON]: MOBILE-UPLOAD-001 — freshly counted (not item.attachments, which
+    # may be a stale relationship cache) so the 5-per-item cap is enforced
+    # against what is actually stored right now.
+    existing_count = SparePartAttachment.query.filter_by(item_id=item.id).count()
+    files = [fs for fs in request.files.getlist('photo') if fs and fs.filename]
+    stored, errors = _store_attachments_for_item(
+        files, item.id, current_user.id, existing_count)
     if errors:
         _spare_flash_errors(errors,
                             title_uz='Баъзи фотолар қабул қилинмади:',
@@ -1057,7 +1141,14 @@ def attachment_file(att_id):
     fname = os.path.basename(att.file_path or '')
     if not fname:
         abort(404)
-    return send_from_directory(_upload_dir(), fname)
+    # [REASON]: MOBILE-UPLOAD-001 — explicit Content-Type per stored
+    # extension so videos render/scrub correctly in <video> and images
+    # don't fall back to a generic download prompt; conditional=True (Flask
+    # default) gives Range-request support for free, which video seeking
+    # needs.
+    ext = os.path.splitext(fname)[1].lower()
+    mimetype = ATTACHMENT_CONTENT_TYPES.get(ext, 'application/octet-stream')
+    return send_from_directory(_upload_dir(), fname, mimetype=mimetype)
 
 
 # ─── SPARE-STAGE1: JSON endpoints ─────────────────────────────────────────────

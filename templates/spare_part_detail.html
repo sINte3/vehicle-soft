@@ -126,10 +126,19 @@
                     <span class="vs-badge vs-badge-sm" style="color:{{ price_status_colors.get(item.price_status, 'var(--text2)') }};">{{ price_status_labels[item.price_status][lang] if item.price_status in price_status_labels else item.price_status }}</span>
                 </td>
                 <td>
+                    {# MOBILE-UPLOAD-001: render by stored extension -- <img> for photos, native <video controls> for videos (no extra library, browser-native scrubbing via the serving route's Range support). #}
+                    {% set video_exts = ['mp4', 'mov', 'webm', 'avi', 'mkv'] %}
                     {% for att in item.attachments %}
+                    {% set att_ext = (att.file_path.rsplit('.', 1)[-1]|lower) if '.' in att.file_path else '' %}
+                    {% if att_ext in video_exts %}
+                    <video controls preload="metadata" style="height:60px; border-radius:6px; margin:1px; border:1px solid var(--border); vertical-align:middle;" title="{{ att.original_filename }}">
+                        <source src="{{ url_for('spare_parts.attachment_file', att_id=att.id) }}">
+                    </video>
+                    {% else %}
                     <a href="{{ url_for('spare_parts.attachment_file', att_id=att.id) }}" target="_blank" title="{{ att.original_filename }}">
                         <img src="{{ url_for('spare_parts.attachment_file', att_id=att.id) }}" alt="" style="height:42px; border-radius:6px; margin:1px; border:1px solid var(--border);">
                     </a>
+                    {% endif %}
                     {% else %}
                     <span class="vs-soft" style="font-size:11px;">—</span>
                     {% endfor %}
