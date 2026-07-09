@@ -58,6 +58,28 @@ PRICE_STATUS_COLORS = {
     'returned':  'var(--warn)',
 }
 
+# ─── SPARE-STAGE2: warning rule 3/4/6 thresholds ─────────────────────────────
+# [REASON]: SPARE-STAGE2 — rules 3/4/6 are warn-only (never block), same
+# principle as the SPARE-STAGE1 repeat engine (rules 1-2). The values below
+# are tunable starting points agreed with the project owner, not validated
+# business constants.
+
+# Tunable starting value: rule 3 warns when the same equipment + same catalog
+# part appears on MORE THAN this many approved requests in the trailing window.
+RULE3_MAX_OCCURRENCES_90D = 3
+# Tunable starting value: rule 3 trailing lookback window in days (mirrors the
+# 90-day window already used by the rules 1-2 repeat engine).
+RULE3_WINDOW_DAYS = 90
+# Tunable starting value: rule 4 warns when current-month approved+confirmed
+# spend exceeds the trailing-months average by more than this multiplier.
+RULE4_COST_ANOMALY_MULTIPLIER = 2.0
+# Tunable starting value: rule 4 baseline length in calendar months (the
+# months immediately before the current one).
+RULE4_BASELINE_MONTHS = 3
+# Tunable starting value: rule 6 warns when the same equipment + part was on a
+# request rejected within this many trailing days.
+RULE6_REJECTED_LOOKBACK_DAYS = 30
+
 # Photo/video upload rules (SPARE-STAGE1 + MOBILE-UPLOAD-001). Extension AND
 # content signature are both checked -- Content-Type alone is never trusted.
 # [REASON]: MOBILE-UPLOAD-001 — field mechanics use phone cameras; iPhones
@@ -321,6 +343,184 @@ def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None):
     else:
         severity = None
     return {'severity': severity, 'days_since': days_since, 'history': history}
+
+
+# ─── SPARE-STAGE2: warning rules 3, 4, 6 ─────────────────────────────────────
+# Additive rule set alongside the SPARE-STAGE1 repeat engine above; the
+# _check_repeat_orders function (rules 1-2) is deliberately not modified.
+
+def _fmt_sum_text(value):
+    """1234567.0 -> '1 234 567' (same style as the fmt_sum Jinja filter in app.py)."""
+    return '{:,.0f}'.format(float(value or 0)).replace(',', ' ')
+
+
+def _month_start_back(d, months_back):
+    """First day of the month `months_back` calendar months before d's month."""
+    total = d.year * 12 + (d.month - 1) - months_back
+    return date(total // 12, total % 12 + 1, 1)
+
+
+def _check_rule3_frequency(equipment_id, spare_part_id, exclude_request_id=None):
+    """Rule 3 — frequency: same equipment + same canonical part on more than
+    RULE3_MAX_OCCURRENCES_90D approved requests in the trailing window.
+
+    [REASON]: SPARE-STAGE2 — approved requests only (unlike rules 1-2, which
+    count everything non-rejected): the frequency signal is about parts the
+    business actually paid for repeatedly, per the task spec. Yellow only.
+    """
+    window_start = date.today() - timedelta(days=RULE3_WINDOW_DAYS)
+    q = (db.session.query(SparePartRequest.id, SparePartRequest.request_date)
+         .join(SparePartRequestItem,
+               SparePartRequestItem.request_id == SparePartRequest.id)
+         .filter(SparePartRequest.equipment_id == equipment_id,
+                 SparePartRequestItem.spare_part_id == spare_part_id,
+                 SparePartRequest.request_date >= window_start,
+                 SparePartRequest.status == 'approved'))
+    if exclude_request_id:
+        q = q.filter(SparePartRequest.id != exclude_request_id)
+    # distinct: the same part listed twice on one request counts once.
+    rows = q.distinct().order_by(SparePartRequest.request_date.desc()).all()
+    if len(rows) <= RULE3_MAX_OCCURRENCES_90D:
+        return None
+    shown = [r.request_date.strftime('%d.%m.%Y') for r in rows[:8]]
+    dates_text = ', '.join(shown) + ('…' if len(rows) > 8 else '')
+    return {
+        'rule': 3,
+        'severity': 'yellow',
+        'count': len(rows),
+        'dates': [r.request_date.isoformat() for r in rows],
+        'message': _spare_t(
+            'Охирги {} кунда бу эҳтиёт қисм ушбу техника учун {} марта тасдиқланган: {}',
+            'За последние {} дней эта деталь для этой техники уже утверждалась {} раз: {}'
+        ).format(RULE3_WINDOW_DAYS, len(rows), dates_text),
+    }
+
+
+def _check_rule4_cost_anomaly(equipment_id, spare_part_id, exclude_request_id=None):
+    """Rule 4 — category cost anomaly: current calendar month approved+confirmed
+    spend for this equipment in this item's category vs the average of the
+    RULE4_BASELINE_MONTHS months before the current one.
+
+    [REASON]: SPARE-STAGE2 — spend counts only authorized money (approved
+    request + confirmed price, same rule as the SPARE-REPORTS cost tables).
+    No warning without at least one prior month of spend — a first-ever
+    purchase in a category has nothing to compare against.
+    """
+    part = SparePart.query.get(spare_part_id)
+    if part is None or part.category_id is None:
+        return None
+    today = date.today()
+    month_start = today.replace(day=1)
+    next_month_start = _month_start_back(today, -1)
+    baseline_start = _month_start_back(today, RULE4_BASELINE_MONTHS)
+    q = (db.session.query(SparePartRequestItem.price,
+                          SparePartRequestItem.quantity,
+                          SparePartRequest.request_date)
+         .join(SparePartRequest,
+               SparePartRequestItem.request_id == SparePartRequest.id)
+         .join(SparePart, SparePartRequestItem.spare_part_id == SparePart.id)
+         .filter(SparePartRequest.equipment_id == equipment_id,
+                 SparePart.category_id == part.category_id,
+                 SparePartRequest.status == 'approved',
+                 SparePartRequestItem.price_status == 'confirmed',
+                 SparePartRequest.request_date >= baseline_start,
+                 SparePartRequest.request_date < next_month_start))
+    if exclude_request_id:
+        q = q.filter(SparePartRequest.id != exclude_request_id)
+    current_total = 0.0
+    prior_total = 0.0
+    prior_months_with_data = set()
+    for price, quantity, req_date in q.all():
+        cost = float(price or 0) * float(quantity or 0)
+        if req_date >= month_start:
+            current_total += cost
+        else:
+            prior_total += cost
+            prior_months_with_data.add((req_date.year, req_date.month))
+    if not prior_months_with_data or prior_total <= 0:
+        return None
+    baseline_avg = prior_total / RULE4_BASELINE_MONTHS
+    if current_total <= RULE4_COST_ANOMALY_MULTIPLIER * baseline_avg:
+        return None
+    category = part.category_ref
+    cat_name = ((category.name_ru if _spare_lang() == 'ru' else category.name_uz)
+                if category else '')
+    return {
+        'rule': 4,
+        'severity': 'yellow',
+        'current_month_total': round(current_total, 2),
+        'baseline_avg': round(baseline_avg, 2),
+        'message': _spare_t(
+            '«{cat}» категорияси: шу ойдаги харажат {cur} сўм — олдинги {months} ой ўртачасидан ({avg} сўм) {mult} баробардан кўп',
+            'Категория «{cat}»: расходы в этом месяце {cur} сум — более чем в {mult} раза выше среднего за прошлые {months} мес. ({avg} сум)'
+        ).format(cat=cat_name,
+                 cur=_fmt_sum_text(current_total),
+                 avg=_fmt_sum_text(baseline_avg),
+                 months=RULE4_BASELINE_MONTHS,
+                 mult=RULE4_COST_ANOMALY_MULTIPLIER),
+    }
+
+
+def _check_rule6_recent_rejection(equipment_id, spare_part_id, exclude_request_id=None):
+    """Rule 6 — recently rejected, resubmitted: same equipment + same part was
+    on a request rejected within the trailing RULE6_REJECTED_LOOKBACK_DAYS.
+
+    The warning carries the rejection date and the reviewer's comment so the
+    approver sees WHY it was rejected last time.
+    """
+    cutoff_dt = datetime.utcnow() - timedelta(days=RULE6_REJECTED_LOOKBACK_DAYS)
+    cutoff_date = date.today() - timedelta(days=RULE6_REJECTED_LOOKBACK_DAYS)
+    q = (db.session.query(SparePartRequest)
+         .join(SparePartRequestItem,
+               SparePartRequestItem.request_id == SparePartRequest.id)
+         .filter(SparePartRequest.equipment_id == equipment_id,
+                 SparePartRequestItem.spare_part_id == spare_part_id,
+                 SparePartRequest.status == 'rejected',
+                 # [REASON]: reviewed_at is when the rejection actually happened;
+                 # request_date is only the fallback for legacy rows without it.
+                 db.or_(SparePartRequest.reviewed_at >= cutoff_dt,
+                        db.and_(SparePartRequest.reviewed_at.is_(None),
+                                SparePartRequest.request_date >= cutoff_date))))
+    if exclude_request_id:
+        q = q.filter(SparePartRequest.id != exclude_request_id)
+    rejected = q.order_by(SparePartRequest.reviewed_at.desc(),
+                          SparePartRequest.id.desc()).first()
+    if rejected is None:
+        return None
+    rejected_on = (rejected.reviewed_at.date() if rejected.reviewed_at
+                   else rejected.request_date)
+    comment = (rejected.review_comment or '').strip()
+    comment_text = comment if comment else _spare_t('изоҳсиз', 'без комментария')
+    return {
+        'rule': 6,
+        'severity': 'yellow',
+        'request_id': rejected.id,
+        'rejected_date': rejected_on.isoformat(),
+        'comment': comment,
+        'message': _spare_t(
+            'Бу эҳтиёт қисм бўйича #{} сўров {} куни рад этилган. Изоҳ: {}',
+            'Похожая заявка #{} на эту деталь была отклонена {}. Комментарий: {}'
+        ).format(rejected.id, rejected_on.strftime('%d.%m.%Y'), comment_text),
+    }
+
+
+def _check_extra_warnings(equipment_id, spare_part_id, exclude_request_id=None):
+    """SPARE-STAGE2 aggregator for rules 3/4/6.
+
+    Returns a list of warning dicts (possibly empty). Purely additive to the
+    rules 1-2 engine: callers keep using _check_repeat_orders unchanged and
+    attach this list alongside it.
+    """
+    if not equipment_id or not spare_part_id:
+        return []
+    warnings = []
+    for check in (_check_rule3_frequency,
+                  _check_rule4_cost_anomaly,
+                  _check_rule6_recent_rejection):
+        result = check(equipment_id, spare_part_id, exclude_request_id)
+        if result:
+            warnings.append(result)
+    return warnings
 
 
 def _photo_required(item):
@@ -835,6 +1035,21 @@ def detail(rid):
     can_edit_photos = (current_user.can_edit
                        and spr.created_by == current_user.id
                        and spr.status in ('draft', 'returned_for_revision'))
+    # [REASON]: SPARE-STAGE2 — the warn-only rules must be visible to the
+    # reviewer at approval time, not only to the operator while typing the
+    # request. Computed per item while the request is under review; rules 1-2
+    # come from the untouched SPARE-STAGE1 engine, 3/4/6 from the new checks.
+    item_warnings = {}
+    if spr.status == 'submitted' and (can_price or can_approve):
+        for item in spr.items:
+            if not spr.equipment_id or not item.spare_part_id:
+                continue
+            base = _check_repeat_orders(spr.equipment_id, item.spare_part_id,
+                                        exclude_request_id=spr.id)
+            extra = _check_extra_warnings(spr.equipment_id, item.spare_part_id,
+                                          exclude_request_id=spr.id)
+            if base['severity'] or extra:
+                item_warnings[item.id] = {'base': base, 'extra': extra}
     return render_template('spare_part_detail.html',
                            req=spr,
                            status_labels=STATUS_LABELS,
@@ -844,6 +1059,7 @@ def detail(rid):
                            can_price=can_price,
                            can_approve=can_approve,
                            can_edit_photos=can_edit_photos,
+                           item_warnings=item_warnings,
                            lang=lang)
 
 
@@ -1184,13 +1400,18 @@ def api_repeat_check():
     equipment_id = request.args.get('equipment_id', type=int)
     spare_part_id = request.args.get('spare_part_id', type=int)
     exclude_request_id = request.args.get('exclude_request_id', type=int)
-    empty = {'severity': None, 'days_since': None, 'history': []}
+    empty = {'severity': None, 'days_since': None, 'history': [], 'extra_warnings': []}
     if not equipment_id or not spare_part_id:
         return jsonify(empty)
     eq = Equipment.query.get(equipment_id)
     if not eq or not current_user.can_access_org(eq.organization_id):
         return jsonify(empty)
-    return jsonify(_check_repeat_orders(equipment_id, spare_part_id, exclude_request_id))
+    result = _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id)
+    # [REASON]: SPARE-STAGE2 — rules 3/4/6 ride along under an additive key;
+    # the original rules 1-2 payload stays byte-identical for existing callers.
+    result['extra_warnings'] = _check_extra_warnings(
+        equipment_id, spare_part_id, exclude_request_id)
+    return jsonify(result)
 
 
 @spare_parts_bp.route('/api/price-suggestions')

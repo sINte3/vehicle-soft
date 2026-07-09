@@ -183,6 +183,7 @@ function rowTemplate() {
             <input type="hidden" name="item_spare_part_id" value="">
             <div class="sp-hint"></div>
             <div class="sp-repeat"></div>
+            <div class="sp-extra"></div>
         </td>
         <td><input type="text" name="item_part_number" class="vs-input" placeholder="000-000"></td>
         <td><input type="number" name="item_quantity" class="vs-input" value="1" min="0.001" step="0.001"></td>
@@ -314,14 +315,26 @@ function onPartInput(input) {
 
 function checkRepeat(row) {
     const box = row.querySelector('.sp-repeat');
+    const extraBox = row.querySelector('.sp-extra');
     const partId = row.querySelector('[name=item_spare_part_id]').value;
     const eqId = document.getElementById('eqSelect').value;
     box.className = 'sp-repeat';
     box.innerHTML = '';
+    extraBox.innerHTML = '';
     if (!partId || !eqId) return;
     fetch(REPEAT_URL + '?equipment_id=' + encodeURIComponent(eqId) + '&spare_part_id=' + encodeURIComponent(partId), {credentials: 'same-origin'})
         .then(r => r.json())
         .then(data => {
+            // SPARE-STAGE2 rules 3/4/6: server-localized messages, warn-only,
+            // rendered as extra yellow boxes below the rules 1-2 box.
+            if (data && Array.isArray(data.extra_warnings)) {
+                data.extra_warnings.forEach(w => {
+                    const div = document.createElement('div');
+                    div.className = 'sp-repeat ' + (w.severity === 'red' ? 'is-red' : 'is-yellow');
+                    div.textContent = '⚠ ' + (w.message || '');
+                    extraBox.appendChild(div);
+                });
+            }
             if (!data || !data.history || data.history.length === 0) return;
             let cls = 'is-history';
             let title = TEXT.repeatHistory;

@@ -15,6 +15,11 @@
 .sp-upload-size { font-size:10px; color:var(--text2); }
 .sp-upload-remove { flex:none; border:none; background:none; color:var(--danger); cursor:pointer; font-size:12px; padding:2px 4px; }
 .sp-upload-msg { font-size:10.5px; color:var(--danger); margin-top:4px; display:none; }
+/* SPARE-STAGE2: reviewer-facing warning lines (rules 1-2 + 3/4/6), same
+   severity styling as the request form's .sp-repeat boxes. */
+.sp-warn { margin-top:4px; padding:6px 8px; border-radius:6px; font-size:12px; line-height:1.4; }
+.sp-warn.is-red { background:var(--danger-light); color:var(--danger); border:1px solid var(--danger); }
+.sp-warn.is-yellow { background:var(--warn-light); color:var(--warn); border:1px solid var(--warn); }
 </style>
 
 {% set eq_label = req.equipment.name ~ ((' — ' ~ req.equipment.plate) if req.equipment and req.equipment.plate else '') if req.equipment else '—' %}
@@ -162,6 +167,32 @@
     </table>
     </div>
 </div>
+
+{# ─── SPARE-STAGE2: warn-only rules shown to the reviewer at approval time ── #}
+{% if item_warnings %}
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title">⚠ {{ 'Предупреждения по позициям' if is_ru else 'Позициялар бўйича огоҳлантиришлар' }}</div>
+    </div>
+    <div class="vs-card-body">
+        <div class="vs-soft vs-mb-sm" style="font-size:12.5px;">{{ 'Предупреждения не блокируют решение — проверьте их перед утверждением.' if is_ru else 'Огоҳлантиришлар қарорни блокламайди — тасдиқлашдан олдин уларни текширинг.' }}</div>
+        {% for item in req.items %}
+        {% if item.id in item_warnings %}
+        {% set w = item_warnings[item.id] %}
+        <div style="margin-bottom:10px;">
+            <div style="font-weight:600; font-size:13px;">{{ loop.index }}. {{ item.name }}</div>
+            {% if w.base.severity %}
+            <div class="sp-warn {{ 'is-red' if w.base.severity == 'red' else 'is-yellow' }}">⚠ {{ 'Эта деталь уже запрашивалась для этой техники' if is_ru else 'Бу эҳтиёт қисм ушбу техника учун сўралган эди' }} ({{ w.base.days_since }} {{ 'дн. назад' if is_ru else 'кун олдин' }}{% if w.base.history %}, {{ 'заявка' if is_ru else 'сўров' }} #{{ w.base.history[0].request_id }}{% endif %})</div>
+            {% endif %}
+            {% for ew in w.extra %}
+            <div class="sp-warn is-yellow">⚠ {{ ew.message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
 
 {# SPARE-STAGE1: resubmit is also allowed from returned_for_revision. #}
 {% if req.status in ('draft', 'returned_for_revision') and current_user.id == req.created_by %}
