@@ -61,20 +61,17 @@ def create_app():
     app.config.from_object(get_config())
     # SEC-HARD-001: limit request body size.
     # [REASON]: MOBILE-UPLOAD-001 raised the spare-parts per-file attachment
-    # cap to 50 MB (MAX_ATTACHMENT_SIZE in spare_parts.py). 60 MB gives
-    # headroom above that single-file ceiling plus normal multipart form
-    # overhead for the common case (one large photo/video). Note this is
-    # NOT sized for the theoretical worst case: item_photo_upload() and
-    # save_request() read attachments via request.files.getlist(), so one
-    # POST can legitimately carry more than one file (up to
-    # MAX_ATTACHMENTS_PER_ITEM per item, across possibly several items in
-    # save_request) -- several near-50MB files in a single submission can
-    # still exceed 60 MB and hit the 413 handler below even though every
-    # individual file is within its own per-file limit. That is accepted,
-    # not a bug: it just means uploading many large files in one go may
-    # need to be split across a couple of submissions.
+    # cap to 50 MB (MAX_ATTACHMENT_SIZE in spare_parts.py). Uploads here are
+    # NOT one file per request: item_photo_upload() and save_request() both
+    # read attachments via request.files.getlist(), so a single POST can
+    # legitimately carry up to MAX_ATTACHMENTS_PER_ITEM (5) files for one
+    # item -- a corrected premise from an earlier version of this comment,
+    # which sized this limit for a single 50 MB file instead. 300 MB covers
+    # that real aggregate ceiling (5 x 50 MB = 250 MB) plus multipart form
+    # overhead, with headroom for the rare case of save_request() carrying
+    # several items' worth of attachments in one submission.
     if not app.config.get('MAX_CONTENT_LENGTH'):
-        app.config['MAX_CONTENT_LENGTH'] = 60 * 1024 * 1024
+        app.config['MAX_CONTENT_LENGTH'] = 300 * 1024 * 1024
 
     os.makedirs(app.config['REPORTS_DIR'], exist_ok=True)
     os.makedirs(os.path.join(os.path.dirname(__file__), 'instance'), exist_ok=True)
@@ -2799,7 +2796,7 @@ def create_app():
                                message='Саҳифа топилмади'), 404
 
     # [REASON]: MOBILE-UPLOAD-001 follow-up — a request over
-    # MAX_CONTENT_LENGTH (60 MB) is rejected by Werkzeug before any route
+    # MAX_CONTENT_LENGTH (300 MB) is rejected by Werkzeug before any route
     # runs; without this handler that was Werkzeug's plain default error
     # page. Same render_template('error.html', code=..., message=...)
     # pattern as the handlers above; message uses ui_t() (already defined
@@ -2809,8 +2806,8 @@ def create_app():
     def request_entity_too_large(e):
         return render_template('error.html', code=413,
                                message=ui_t(
-                                   'Файл жуда катта. Энг кўпи билан 60 МБ юкланг.',
-                                   'Файл слишком большой. Загружайте не более 60 МБ.'
+                                   'Файл(лар) жуда катта. Умумий ҳажм 300 МБдан ошмаслиги керак.',
+                                   'Файл(ы) слишком большие. Общий размер не должен превышать 300 МБ.'
                                )), 413
 
     @app.errorhandler(500)
