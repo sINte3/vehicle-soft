@@ -1677,7 +1677,7 @@ def _spare_reports_workbook(data, lang='uz'):
     }
 
     # Sheet 1: costs by equipment.
-    ws = wb.create_sheet('Затраты по технике')
+    ws = wb.create_sheet(L('Затраты по технике', 'Техника бўйича харажатлар'))
     ws.append([L('Техника', 'Техника'), L('Гос. номер', 'Давлат рақами'),
                L('Организация', 'Ташкилот'), L('Позиций', 'Позициялар'),
                L('Сумма, сум', 'Сумма, сўм')])
@@ -1691,7 +1691,7 @@ def _spare_reports_workbook(data, lang='uz'):
     style_table(ws, money_cols=(5,))
 
     # Sheet 2: costs by organization.
-    ws = wb.create_sheet('Затраты по организациям')
+    ws = wb.create_sheet(L('Затраты по организациям', 'Ташкилотлар бўйича харажатлар'))
     ws.append([L('Организация', 'Ташкилот'), L('Позиций', 'Позициялар'),
                L('Сумма, сум', 'Сумма, сўм')])
     for r in data['by_organization']:
@@ -1702,7 +1702,7 @@ def _spare_reports_workbook(data, lang='uz'):
     style_table(ws, money_cols=(3,))
 
     # Sheet 3: costs by catalog category.
-    ws = wb.create_sheet('Затраты по категориям')
+    ws = wb.create_sheet(L('Затраты по категориям', 'Категориялар бўйича харажатлар'))
     ws.append([L('Категория', 'Категория'), L('Позиций', 'Позициялар'),
                L('Сумма, сум', 'Сумма, сўм')])
     for r in data['by_category']:
@@ -1716,7 +1716,15 @@ def _spare_reports_workbook(data, lang='uz'):
     style_table(ws, money_cols=(3,))
 
     # Sheet 4: repeat-order warnings.
-    ws = wb.create_sheet('Повторные заказы')
+    # [REASON]: MOBILE-UPLOAD-001/i18n — Excel worksheet names are capped at
+    # 31 characters and cannot contain : \ / ? * [ ]. The on-screen card
+    # title for this table also carries a "(red <=7d, yellow <=30d)"
+    # parenthetical, which alone pushes the RU/UZ pair to 49/47 characters.
+    # That detail is already shown per-row via the Уровень/Даража column
+    # (severity_labels below), so the sheet name reuses only the base
+    # RU/UZ title without the parenthetical -- still the exact label pair
+    # used on screen, just without the redundant, over-length suffix.
+    ws = wb.create_sheet(L('Повторные заказы', 'Такрорий сўровлар'))
     ws.append([L('Заявка', 'Сўров'), L('Дата', 'Сана'),
                L('Организация', 'Ташкилот'), L('Техника', 'Техника'),
                L('Запчасть', 'Эҳтиёт қисм'), L('Уровень', 'Даража'),
@@ -1731,7 +1739,7 @@ def _spare_reports_workbook(data, lang='uz'):
     style_table(ws)
 
     # Sheet 5: top-20 most expensive line items.
-    ws = wb.create_sheet('Топ-20 позиций')
+    ws = wb.create_sheet(L('Топ-20 самых дорогих позиций', 'Топ-20 энг қиммат позициялар'))
     ws.append([L('Заявка', 'Сўров'), L('Дата', 'Сана'),
                L('Организация', 'Ташкилот'), L('Техника', 'Техника'),
                L('Запчасть', 'Эҳтиёт қисм'), L('Кол-во', 'Миқдор'),
