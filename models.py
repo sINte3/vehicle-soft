@@ -750,6 +750,13 @@ class SparePart(db.Model):
     source_item  = db.relationship('SparePartRequestItem', foreign_keys=[source_request_item_id])
 
 
+# [REASON]: SPARE-STAGE2 — the fuzzy catalog search fetches the full active
+# candidate list on every keystroke-triggered request; this index keeps that
+# fetch cheap as the catalog grows. Existing DBs get it via
+# migrate_spare_parts_stage2.py.
+db.Index('idx_spare_parts_status_active', SparePart.status, SparePart.is_active)
+
+
 class SparePartRequest(db.Model):
     __tablename__ = 'spare_part_requests'
     id              = db.Column(db.Integer, primary_key=True)

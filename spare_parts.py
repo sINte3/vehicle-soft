@@ -1,5 +1,7 @@
 import os
+import re
 import uuid
+from difflib import SequenceMatcher
 
 from flask import (Blueprint, render_template, request, redirect, url_for, flash,
                    abort, g, jsonify, current_app, send_from_directory)
@@ -79,6 +81,13 @@ RULE4_BASELINE_MONTHS = 3
 # Tunable starting value: rule 6 warns when the same equipment + part was on a
 # request rejected within this many trailing days.
 RULE6_REJECTED_LOOKBACK_DAYS = 30
+
+# ─── SPARE-STAGE2: fuzzy catalog search ──────────────────────────────────────
+# Tunable starting value: minimum difflib ratio for a fuzzy-only match
+# (same default cutoff difflib.get_close_matches uses).
+FUZZY_MATCH_MIN_RATIO = 0.6
+# Tunable starting value: maximum results returned by api_catalog_search.
+FUZZY_SEARCH_MAX_RESULTS = 10
 
 # Photo/video upload rules (SPARE-STAGE1 + MOBILE-UPLOAD-001). Extension AND
 # content signature are both checked -- Content-Type alone is never trusted.
@@ -1434,6 +1443,101 @@ def api_price_suggestions():
         {'price': a.new_price,
          'date': a.changed_at.date().isoformat() if a.changed_at else None}
         for a in rows
+    ])
+
+
+# ─── SPARE-STAGE2: fuzzy catalog search ───────────────────────────────────────
+
+def _norm_search_text(value):
+    """Normalize text for catalog search comparison.
+
+    [REASON]: SPARE-STAGE2 — same normalization approach as app.py's
+    _task_ref_001d_norm (casefold + collapse whitespace), plus punctuation
+    folded to spaces, so «Фильтр, масляный.» equals «фильтр масляный» before
+    any fuzzy scoring; difflib then only has to absorb genuine typos.
+    """
+    value = (value or '').casefold()
+    value = re.sub(r'[^\w\s]+', ' ', value)
+    return re.sub(r'\s+', ' ', value).strip()
+
+
+def _fuzzy_score(query_norm, name_norm):
+    """Best difflib ratio between direct and token-sorted comparison.
+
+    [REASON]: the token-sorted pass makes word-order swaps («масляный фильтр»
+    vs «фильтр масляный») score near 1.0 instead of ~0.5, without any
+    third-party fuzzy library.
+    """
+    direct = SequenceMatcher(None, query_norm, name_norm).ratio()
+    query_sorted = ' '.join(sorted(query_norm.split()))
+    name_sorted = ' '.join(sorted(name_norm.split()))
+    if query_sorted == query_norm and name_sorted == name_norm:
+        return direct
+    return max(direct, SequenceMatcher(None, query_sorted, name_sorted).ratio())
+
+
+def _search_catalog_parts(query, limit=FUZZY_SEARCH_MAX_RESULTS):
+    """Ranked catalog search over selectable parts: exact > substring > fuzzy.
+
+    Matches against the part name only (single `name` column in Stage 1/2).
+    Returns a list of (part, match_kind, score) tuples. Stdlib difflib only —
+    at this catalog's scale (a few hundred rows) scoring the full candidate
+    list per request is fast enough, no search dependency needed.
+
+    [REASON]: exact and substring tiers always rank above fuzzy-only hits, so
+    a correctly typed name can never be outranked by a fuzzy competitor.
+    """
+    query_norm = _norm_search_text(query)
+    if not query_norm:
+        return []
+    parts = (SparePart.query
+             .options(joinedload(SparePart.category_ref))
+             .filter(SparePart.status == 'active',
+                     db.or_(SparePart.is_active == True,  # noqa: E712
+                            SparePart.is_active.is_(None)))
+             .order_by(SparePart.name)
+             .all())
+    exact, substr, fuzzy = [], [], []
+    for part in parts:
+        name_norm = _norm_search_text(part.name)
+        if not name_norm:
+            continue
+        if name_norm == query_norm:
+            exact.append((part, 'exact', 1.0))
+            continue
+        score = _fuzzy_score(query_norm, name_norm)
+        if query_norm in name_norm:
+            substr.append((part, 'substring', score))
+        elif score >= FUZZY_MATCH_MIN_RATIO:
+            fuzzy.append((part, 'fuzzy', score))
+    # Python sort is stable: ties inside a tier keep alphabetical order.
+    substr.sort(key=lambda t: -t[2])
+    fuzzy.sort(key=lambda t: -t[2])
+    return (exact + substr + fuzzy)[:limit]
+
+
+@spare_parts_bp.route('/api/catalog-search')
+@module_required('spare_parts')
+def api_catalog_search():
+    """Typo-tolerant catalog picker search (SPARE-STAGE2, Task 2).
+
+    Used by the request form's part picker and the catalog screen's search
+    box. Same candidate set as the form's datalist: active, non-merged parts.
+    """
+    q = (request.args.get('q', '') or '').strip()
+    if len(q) < 2:
+        return jsonify([])
+    return jsonify([
+        {
+            'id': part.id,
+            'name': part.name,
+            'part_number': part.part_number or '',
+            'unit': part.unit or 'dona',
+            'kind': (part.category_ref.kind if part.category_ref else ''),
+            'match': match_kind,
+            'score': round(score, 3),
+        }
+        for part, match_kind, score in _search_catalog_parts(q)
     ])
 
 
