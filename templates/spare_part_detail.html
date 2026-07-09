@@ -3,6 +3,20 @@
 {% block title %}{{ 'Запчасти' if is_ru else 'Эҳтиёт қисмлар' }} — {{ 'Заявка' if is_ru else 'Сўров' }} #{{ req.id }}{% endblock %}
 {% block content %}
 
+<style>
+/* MOBILE-UPLOAD-001: vs-* styled multi-file photo/video widget (see static/js/spare_parts_upload.js). */
+.sp-upload-btn.is-error { border-color:var(--danger) !important; color:var(--danger); }
+.sp-upload-list { display:flex; flex-direction:column; gap:4px; margin-top:6px; }
+.sp-upload-item { display:flex; align-items:center; gap:6px; background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:3px 5px; }
+.sp-upload-thumb { width:28px; height:28px; flex:none; border-radius:4px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:var(--surface); font-size:15px; }
+.sp-upload-thumb img { width:100%; height:100%; object-fit:cover; }
+.sp-upload-meta { flex:1; min-width:0; }
+.sp-upload-name { font-size:10.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:110px; }
+.sp-upload-size { font-size:10px; color:var(--text2); }
+.sp-upload-remove { flex:none; border:none; background:none; color:var(--danger); cursor:pointer; font-size:12px; padding:2px 4px; }
+.sp-upload-msg { font-size:10.5px; color:var(--danger); margin-top:4px; display:none; }
+</style>
+
 {% set eq_label = req.equipment.name ~ ((' — ' ~ req.equipment.plate) if req.equipment and req.equipment.plate else '') if req.equipment else '—' %}
 {# SPARE-STAGE1: .get() with fallback — status now also includes returned_for_revision. #}
 {% set status_alert_kind = {'draft': 'is-warning', 'submitted': 'is-info', 'returned_for_revision': 'is-warning', 'approved': 'is-success', 'rejected': 'is-danger'}.get(req.status, 'is-info') %}
@@ -112,17 +126,32 @@
                     <span class="vs-badge vs-badge-sm" style="color:{{ price_status_colors.get(item.price_status, 'var(--text2)') }};">{{ price_status_labels[item.price_status][lang] if item.price_status in price_status_labels else item.price_status }}</span>
                 </td>
                 <td>
+                    {# MOBILE-UPLOAD-001: render by stored extension -- <img> for photos, native <video controls> for videos (no extra library, browser-native scrubbing via the serving route's Range support). #}
+                    {% set video_exts = ['mp4', 'mov', 'webm', 'avi', 'mkv'] %}
                     {% for att in item.attachments %}
+                    {% set att_ext = (att.file_path.rsplit('.', 1)[-1]|lower) if '.' in att.file_path else '' %}
+                    {% if att_ext in video_exts %}
+                    <video controls preload="metadata" style="height:60px; border-radius:6px; margin:1px; border:1px solid var(--border); vertical-align:middle;" title="{{ att.original_filename }}">
+                        <source src="{{ url_for('spare_parts.attachment_file', att_id=att.id) }}">
+                    </video>
+                    {% else %}
                     <a href="{{ url_for('spare_parts.attachment_file', att_id=att.id) }}" target="_blank" title="{{ att.original_filename }}">
                         <img src="{{ url_for('spare_parts.attachment_file', att_id=att.id) }}" alt="" style="height:42px; border-radius:6px; margin:1px; border:1px solid var(--border);">
                     </a>
+                    {% endif %}
                     {% else %}
                     <span class="vs-soft" style="font-size:11px;">—</span>
                     {% endfor %}
                     {% if can_edit_photos %}
-                    <form method="post" action="{{ url_for('spare_parts.item_photo_upload', rid=req.id, item_id=item.id) }}" enctype="multipart/form-data" style="margin-top:4px;">
+                    <form method="post" action="{{ url_for('spare_parts.item_photo_upload', rid=req.id, item_id=item.id) }}" enctype="multipart/form-data" class="sp-upload-form" style="margin-top:6px;">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="file" name="photo" accept=".jpg,.jpeg,.png" multiple style="font-size:10.5px; max-width:150px;" onchange="this.form.submit()">
+                        <div class="sp-upload" data-existing-count="{{ item.attachments|length }}">
+                            <input type="file" name="photo" accept="image/*,video/*" multiple class="sp-upload-input" style="display:none;">
+                            <button type="button" class="vs-btn vs-btn-sm sp-upload-btn">📎 {{ 'Выбрать' if is_ru else 'Танлаш' }}</button>
+                            <div class="sp-upload-list"></div>
+                            <div class="sp-upload-msg"></div>
+                        </div>
+                        <button type="submit" class="vs-btn vs-btn-sm vs-btn-primary sp-upload-submit" style="display:none; margin-top:4px;">⬆ {{ 'Загрузить' if is_ru else 'Юклаш' }}</button>
                     </form>
                     {% endif %}
                 </td>
@@ -151,7 +180,7 @@
         <div class="vs-card-title">{{ 'Проверка цен' if is_ru else 'Нархларни текшириш' }}</div>
     </div>
     <div class="vs-card-body">
-        <div class="vs-soft vs-mb-sm" style="font-size:12.5px;">{{ 'Укажите и подтвердите цену каждой позиции. «Вернуть»/«Отклонить» возвращает всю заявку оператору на доработку. Подсказка показывает последние подтверждённые цены этой детали.' if is_ru else 'Ҳар бир позиция нархини киритинг ва тасдиқланг. «Қайтариш»/«Рад этиш» бутун сўровни операторга қайтаради. Кўрсатма ушбу деталнинг охирги тасдиқланган нархларини кўрсатади.' }}</div>
+        <div class="vs-soft vs-mb-sm" style="font-size:12.5px;">{{ 'Укажите и подтвердите цену каждой позиции. «Вернуть»/«Отклонить» возвращает всю заявку оператору на доработку. Подсказка показывает последние подтверждённые цены этой детали.' if is_ru else 'Ҳар бир позиция нархини киритинг ва тасдиқланг. «Қайтариш»/«Рад этиш» бутун сўровни операторга қайтаради. Кўрсатма ушбу эҳтиёт қисмнинг охирги тасдиқланган нархларини кўрсатади.' }}</div>
         <div class="vs-table-scroll">
         <table class="vs-table">
             <thead>
@@ -235,7 +264,29 @@
 
 {% endblock %}
 {% block scripts %}
+<script src="{{ static_v('js/spare_parts_upload.js') }}"></script>
 <script>
+/* MOBILE-UPLOAD-001: one widget per item row (each item has its own 5-file cap). */
+const UPLOAD_TEXT = {
+    tooMany: {{ ('Максимум {max} файлов на позицию — лишние не добавлены.' if is_ru else 'Позицияга энг кўпи билан {max} та файл — ортиқчалари қўшилмади.')|tojson }},
+    tooLarge: {{ ('«{name}»: файл больше 50 МБ.' if is_ru else '«{name}»: файл 50 МБдан катта.')|tojson }},
+    limitReached: {{ ('Достигнут лимит файлов для этой позиции.' if is_ru else 'Бу позиция учун файллар чегарасига етилди.')|tojson }}
+};
+const UPLOAD_MAX_FILES = 5;
+document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('.sp-upload').forEach(function (widget) {
+        SpareUpload.init(widget, {
+            maxFiles: UPLOAD_MAX_FILES,
+            maxSizeBytes: 50 * 1024 * 1024,
+            text: {
+                tooMany: UPLOAD_TEXT.tooMany.replace('{max}', UPLOAD_MAX_FILES),
+                tooLarge: UPLOAD_TEXT.tooLarge,
+                limitReached: UPLOAD_TEXT.limitReached,
+            },
+        });
+    });
+});
+
 function setCommentAndConfirm(form, approve) {
     form.querySelector('[name=review_comment]').value = document.getElementById('reviewComment').value;
     const msg = approve

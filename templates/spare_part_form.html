@@ -16,8 +16,19 @@
 .sp-form-scope .sp-eq-ref strong { color:var(--text); }
 .sp-form-scope .sp-toolbar { position:sticky; top:0; z-index:30; }
 .sp-form-scope .vs-table td { vertical-align:top; }
-.sp-form-scope .vs-table input[type="file"] { font-size:11px; max-width:170px; }
 .sp-form-scope .is-error { border-color:var(--danger) !important; }
+/* MOBILE-UPLOAD-001: vs-* styled multi-file photo/video widget (see static/js/spare_parts_upload.js). */
+.sp-form-scope .sp-upload { min-width:170px; }
+.sp-form-scope .sp-upload-btn.is-error { border-color:var(--danger) !important; color:var(--danger); }
+.sp-form-scope .sp-upload-list { display:flex; flex-direction:column; gap:4px; margin-top:6px; }
+.sp-form-scope .sp-upload-item { display:flex; align-items:center; gap:6px; background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:3px 5px; }
+.sp-form-scope .sp-upload-thumb { width:28px; height:28px; flex:none; border-radius:4px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:var(--surface); font-size:15px; }
+.sp-form-scope .sp-upload-thumb img { width:100%; height:100%; object-fit:cover; }
+.sp-form-scope .sp-upload-meta { flex:1; min-width:0; }
+.sp-form-scope .sp-upload-name { font-size:10.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:110px; }
+.sp-form-scope .sp-upload-size { font-size:10px; color:var(--text2); }
+.sp-form-scope .sp-upload-remove { flex:none; border:none; background:none; color:var(--danger); cursor:pointer; font-size:12px; padding:2px 4px; }
+.sp-form-scope .sp-upload-msg { font-size:10.5px; color:var(--danger); margin-top:4px; display:none; }
 </style>
 
 <div class="sp-form-scope">
@@ -25,14 +36,14 @@
 <div class="vs-hero vs-mb">
   <div>
     <div class="vs-hero-title">{{ 'Новая заявка на запчасти' if is_ru else 'Эҳтиёт қисмлар учун янги сўров' }}</div>
-    <div class="vs-hero-sub">{{ 'Выберите организацию и технику, подберите запчасти из каталога и добавьте фото. Черновик можно сохранить без отправки.' if is_ru else 'Ташкилот ва техникани танланг, запчастларни каталогдан танланг ва фото қўшинг. Чорновни юбормасдан сақлаш мумкин.' }}</div>
+    <div class="vs-hero-sub">{{ 'Выберите организацию и технику, подберите запчасти из каталога и добавьте фото. Черновик можно сохранить без отправки.' if is_ru else 'Ташкилот ва техникани танланг, эҳтиёт қисмларни каталогдан танланг ва фото қўшинг. Чорновни юбормасдан сақлаш мумкин.' }}</div>
   </div>
   <div class="vs-row-end">
     <a href="{{ url_for('spare_parts.index') }}" class="vs-btn">{{ '← Список заявок' if is_ru else '← Сўровлар рўйхати' }}</a>
   </div>
 </div>
 
-<div class="vs-alert is-info vs-mb">{{ 'Запчасть выбирайте из каталога. Если её нет в каталоге — введите название вручную: позиция уйдёт на проверку менеджеру каталога, заявку можно отправить, но утвердят её только после проверки. Для не-расходников обязательно хотя бы одно фото (JPG/PNG).' if is_ru else 'Запчастни каталогдан танланг. Каталогда бўлмаса — номини қўлда киритинг: позиция каталог менежери текширувига юборилади, сўровни юбориш мумкин, аммо текширувдан кейингина тасдиқланади. Сарф материали бўлмаганлар учун камида битта фото (JPG/PNG) мажбурий.' }}</div>
+<div class="vs-alert is-info vs-mb">{{ 'Запчасть выбирайте из каталога. Если её нет в каталоге — введите название вручную: позиция уйдёт на проверку менеджеру каталога, заявку можно отправить, но утвердят её только после проверки. Для не-расходников обязательно хотя бы одно фото или видео (JPG, PNG, WEBP, HEIC, MP4, MOV, WEBM, AVI, MKV; до 50 МБ и до 5 файлов на позицию).' if is_ru else 'Эҳтиёт қисмни каталогдан танланг. Каталогда бўлмаса — номини қўлда киритинг: позиция каталог менежери текширувига юборилади, сўровни юбориш мумкин, аммо текширувдан кейингина тасдиқланади. Сарф материали бўлмаганлар учун камида битта фото ёки видео мажбурий (JPG, PNG, WEBP, HEIC, MP4, MOV, WEBM, AVI, MKV; ҳар бир позицияга 50 МБгача ва 5 тагача файл).' }}</div>
 
 <div id="clientErrors" class="vs-alert is-danger vs-mb" style="display:none;">
     <strong>{{ 'Заявка не готова к сохранению' if is_ru else 'Сўров сақлашга тайёр эмас' }}</strong>
@@ -100,12 +111,12 @@
             <thead>
                 <tr>
                     <th style="width:40px;">№</th>
-                    <th style="min-width:240px;">{{ 'Запчасть (каталог или вручную)' if is_ru else 'Запчасть (каталог ёки қўлда)' }}</th>
+                    <th style="min-width:240px;">{{ 'Запчасть (каталог или вручную)' if is_ru else 'Эҳтиёт қисм (каталог ёки қўлда)' }}</th>
                     <th style="width:130px;">{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</th>
                     <th style="width:100px;">{{ 'Количество' if is_ru else 'Миқдор' }}</th>
                     <th style="width:100px;">{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
                     <th style="min-width:150px;">{{ 'Примечание' if is_ru else 'Изоҳ' }}</th>
-                    <th style="width:180px;">{{ 'Фото' if is_ru else 'Фото' }}</th>
+                    <th style="width:200px;">{{ 'Фото/видео' if is_ru else 'Фото/видео' }}</th>
                     <th style="width:50px;"></th>
                 </tr>
             </thead>
@@ -129,15 +140,16 @@
 </div>
 {% endblock %}
 {% block scripts %}
+<script src="{{ static_v('js/spare_parts_upload.js') }}"></script>
 <script>
 const TEXT = {
     positions: {{ ('Позиций' if is_ru else 'Позициялар')|tojson }},
     selectOrg: {{ ('Выберите организацию.' if is_ru else 'Ташкилотни танланг.')|tojson }},
     selectDate: {{ ('Укажите дату заявки.' if is_ru else 'Сўров санасини кўрсатинг.')|tojson }},
     oneItem: {{ ('Добавьте хотя бы одну позицию.' if is_ru else 'Камида битта позиция қўшинг.')|tojson }},
-    itemName: {{ ('строка: введите название запчасти.' if is_ru else 'қатор: запчасть номини киритинг.')|tojson }},
+    itemName: {{ ('строка: введите название запчасти.' if is_ru else 'қатор: эҳтиёт қисм номини киритинг.')|tojson }},
     itemQty: {{ ('строка: количество должно быть больше нуля.' if is_ru else 'қатор: миқдор нолдан катта бўлиши керак.')|tojson }},
-    itemPhoto: {{ ('строка: для этой позиции нужно хотя бы одно фото (JPG/PNG).' if is_ru else 'қатор: бу позиция учун камида битта фото керак (JPG/PNG).')|tojson }},
+    itemPhoto: {{ ('строка: для этой позиции нужно хотя бы одно фото или видео.' if is_ru else 'қатор: бу позиция учун камида битта фото ёки видео керак.')|tojson }},
     confirmSubmit: {{ ('Отправить заявку на рассмотрение?' if is_ru else 'Сўровни кўриб чиқишга юборишни тасдиқлайсизми?')|tojson }},
     placeholderEq: {{ ('— сначала выберите организацию —' if is_ru else '— аввал ташкилотни танланг —')|tojson }},
     chooseEq: {{ ('— выберите технику —' if is_ru else '— техникани танланг —')|tojson }},
@@ -147,12 +159,16 @@ const TEXT = {
     fromCatalog: {{ ('Из каталога — фото по правилам категории.' if is_ru else 'Каталогдан — фото категория қоидаси бўйича.')|tojson }},
     fromCatalogConsumable: {{ ('Из каталога (расходник) — фото не обязательно.' if is_ru else 'Каталогдан (сарф материали) — фото мажбурий эмас.')|tojson }},
     newPart: {{ ('Нет в каталоге — уйдёт на проверку, нужно фото.' if is_ru else 'Каталогда йўқ — текширувга юборилади, фото керак.')|tojson }},
-    repeatRed: {{ ('Эта деталь уже запрашивалась для этой техники' if is_ru else 'Бу деталь ушбу техника учун сўралган эди') |tojson }},
-    repeatYellow: {{ ('Эта деталь недавно запрашивалась для этой техники' if is_ru else 'Бу деталь ушбу техника учун яқинда сўралган') |tojson }},
+    repeatRed: {{ ('Эта деталь уже запрашивалась для этой техники' if is_ru else 'Бу эҳтиёт қисм ушбу техника учун сўралган эди') |tojson }},
+    repeatYellow: {{ ('Эта деталь недавно запрашивалась для этой техники' if is_ru else 'Бу эҳтиёт қисм ушбу техника учун яқинда сўралган') |tojson }},
     repeatHistory: {{ ('История за 90 дней' if is_ru else '90 кунлик тарих')|tojson }},
     daysAgo: {{ ('дн. назад' if is_ru else 'кун олдин')|tojson }},
-    photoName: {{ ('Название детали' if is_ru else 'Деталь номи')|tojson }},
-    noteName: {{ ('Комментарий' if is_ru else 'Изоҳ')|tojson }}
+    photoName: {{ ('Название детали' if is_ru else 'Эҳтиёт қисм номи')|tojson }},
+    noteName: {{ ('Комментарий' if is_ru else 'Изоҳ')|tojson }},
+    chooseFiles: {{ ('Выбрать фото/видео' if is_ru else 'Фото/видео танлаш')|tojson }},
+    uploadTooMany: {{ ('Максимум {max} файлов на позицию — лишние не добавлены.' if is_ru else 'Позицияга энг кўпи билан {max} та файл — ортиқчалари қўшилмади.')|tojson }},
+    uploadTooLarge: {{ ('«{name}»: файл больше 50 МБ.' if is_ru else '«{name}»: файл 50 МБдан катта.')|tojson }},
+    uploadLimitReached: {{ ('Достигнут лимит файлов для этой позиции.' if is_ru else 'Бу позиция учун файллар чегарасига етилди.')|tojson }}
 };
 const EQUIP_URL = {{ url_for('spare_parts.api_equipment_by_org')|tojson }};
 const REPEAT_URL = {{ url_for('spare_parts.api_repeat_check')|tojson }};
@@ -172,9 +188,33 @@ function rowTemplate() {
         <td><input type="number" name="item_quantity" class="vs-input" value="1" min="0.001" step="0.001"></td>
         <td><input type="text" name="item_unit" class="vs-input" value="dona"></td>
         <td><input type="text" name="item_note" class="vs-input" placeholder="${TEXT.noteName}"></td>
-        <td><input type="file" name="item_photo_0" accept=".jpg,.jpeg,.png" multiple></td>
+        <td>
+            <div class="sp-upload" data-existing-count="0">
+                <input type="file" name="item_photo_0" accept="image/*,video/*" multiple class="sp-upload-input" style="display:none;">
+                <button type="button" class="vs-btn vs-btn-sm sp-upload-btn">📎 ${TEXT.chooseFiles}</button>
+                <div class="sp-upload-list"></div>
+                <div class="sp-upload-msg"></div>
+            </div>
+        </td>
         <td class="right"><button type="button" onclick="removeRow(this)" class="vs-btn-icon" title="✕">✕</button></td>
     `;
+}
+
+// [REASON]: MOBILE-UPLOAD-001 — 50 MB per file, 5 files per item (client-side
+// mirror of the authoritative server-side limits in spare_parts.py).
+const UPLOAD_MAX_FILES = 5;
+const UPLOAD_MAX_SIZE_BYTES = 50 * 1024 * 1024;
+
+function initRowUpload(row) {
+    SpareUpload.init(row.querySelector('.sp-upload'), {
+        maxFiles: UPLOAD_MAX_FILES,
+        maxSizeBytes: UPLOAD_MAX_SIZE_BYTES,
+        text: {
+            tooMany: TEXT.uploadTooMany.replace('{max}', UPLOAD_MAX_FILES),
+            tooLarge: TEXT.uploadTooLarge,
+            limitReached: TEXT.uploadLimitReached,
+        },
+    });
 }
 
 function addRow(focusName) {
@@ -183,6 +223,7 @@ function addRow(focusName) {
     row.className = 'item-row';
     row.innerHTML = rowTemplate();
     tbody.appendChild(row);
+    initRowUpload(row);
     renumberRows();
     if (focusName !== false) row.querySelector('[name=item_name]').focus();
     return row;
@@ -397,7 +438,8 @@ function validateSpareRequestBeforeSubmit(event) {
             const photoRequired = (row.dataset.kind || '') !== 'consumable';
             if (photoRequired && (fileInput.files || []).length === 0) {
                 errors.push((idx + 1) + ' ' + TEXT.itemPhoto);
-                fileInput.classList.add('is-error');
+                const uploadBtn = row.querySelector('.sp-upload-btn');
+                if (uploadBtn) uploadBtn.classList.add('is-error');
                 return;
             }
         }
