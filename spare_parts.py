@@ -12,7 +12,8 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from models import (db, SparePart, SparePartCategory, SparePartPriceAudit,
                     SparePartAttachment, SparePartRequest, SparePartRequestItem,
-                    SparePartStatusHistory, Organization, Equipment, module_required)
+                    SparePartSku, SparePartStatusHistory, Organization, Equipment,
+                    module_required)
 from sec003a_ext import log_audit, diff_dict
 
 # [REASON]: BOT003 — Best-effort Telegram notifications. Import is guarded so that
@@ -248,6 +249,7 @@ def _item_snapshot(item):
         'id': getattr(item, 'id', None),
         'request_id': getattr(item, 'request_id', None),
         'spare_part_id': getattr(item, 'spare_part_id', None),
+        'sku_id': getattr(item, 'sku_id', None),
         'name': getattr(item, 'name', ''),
         'part_number': getattr(item, 'part_number', ''),
         'quantity': getattr(item, 'quantity', None),
@@ -308,6 +310,38 @@ def write_price_audit(item_id, old_price, new_price, action, user_id):
         action=action,
         changed_by=user_id,
     ))
+
+
+def _update_sku_price_stats(sku_id):
+    """Recompute a SKU's informational last_price / avg_price from its
+    confirmed-price history.
+
+    [REASON]: SPARE-STAGE2 business rule — one direction only: the price
+    CONFIRM workflow writes SKU stats; SKU stats never set or bypass a
+    request price (SparePartPriceAudit + price_status stay the single source
+    of truth). avg_price is a simple running average over every 'confirm'
+    audit row of items referencing this SKU. Does not commit — the caller's
+    transaction covers it.
+    """
+    if not sku_id:
+        return
+    sku = SparePartSku.query.get(sku_id)
+    if sku is None:
+        return
+    rows = (db.session.query(SparePartPriceAudit.new_price)
+            .join(SparePartRequestItem,
+                  SparePartPriceAudit.item_id == SparePartRequestItem.id)
+            .filter(SparePartRequestItem.sku_id == sku_id,
+                    SparePartPriceAudit.action == 'confirm',
+                    SparePartPriceAudit.new_price.isnot(None))
+            .order_by(SparePartPriceAudit.changed_at.asc(),
+                      SparePartPriceAudit.id.asc())
+            .all())
+    prices = [float(r[0]) for r in rows]
+    if not prices:
+        return
+    sku.last_price = prices[-1]
+    sku.avg_price = round(sum(prices) / len(prices), 2)
 
 
 def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None):
@@ -869,6 +903,9 @@ def save_request():
     # [REASON]: SPARE-STAGE1 — hidden per-row field filled by the catalog part
     # picker; empty value means free-text entry ("not in catalog" flow).
     sp_ids = request.form.getlist('item_spare_part_id')
+    # SPARE-STAGE2 — optional per-row SKU choice (select is always submitted,
+    # empty value = no SKU, which keeps the exact Stage 1 item behaviour).
+    sku_ids = request.form.getlist('item_sku_id')
 
     prepared_items = []
     validation_errors = []
@@ -907,6 +944,22 @@ def save_request():
                 if cand and cand.status in ('active', 'pending_review') and cand.is_active != False:  # noqa: E712
                     spare_part = cand
 
+        # [REASON]: SPARE-STAGE2 — resolve the optional SKU with the same
+        # silent-fallback rule as the catalog link above: a stale, inactive or
+        # wrong-part SKU id degrades to "no SKU" instead of failing the save.
+        sku = None
+        sku_raw = sku_ids[i].strip() if i < len(sku_ids) else ''
+        if sku_raw and spare_part is not None:
+            try:
+                sku_id = int(sku_raw)
+            except ValueError:
+                sku_id = None
+            if sku_id:
+                sku_cand = SparePartSku.query.get(sku_id)
+                if (sku_cand and sku_cand.spare_part_id == spare_part.id
+                        and sku_cand.is_active != False):  # noqa: E712
+                    sku = sku_cand
+
         prepared_items.append({
             'name': name,
             'part_number': part_number,
@@ -914,6 +967,7 @@ def save_request():
             'unit': unit or 'dona',
             'note': item_note,
             'spare_part': spare_part,
+            'sku': sku,
             'form_index': i,
         })
 
@@ -941,6 +995,7 @@ def save_request():
         item = SparePartRequestItem(
             request_id=spr.id,
             spare_part_id=prepared['spare_part'].id if prepared['spare_part'] else None,
+            sku_id=prepared['sku'].id if prepared['sku'] else None,
             name=prepared['name'],
             part_number=prepared['part_number'],
             quantity=prepared['quantity'],
@@ -1264,6 +1319,11 @@ def item_price_confirm(rid, item_id):
         return redirect(url_for('spare_parts.detail', rid=rid))
     item.price_status = 'confirmed'
     write_price_audit(item.id, item.price, item.price, 'confirm', current_user.id)
+    # [REASON]: SPARE-STAGE2 — confirm is the only event that feeds SKU price
+    # stats (one-way write; see _update_sku_price_stats). Runs before commit so
+    # the stats land in the same transaction as the confirmation itself.
+    if item.sku_id:
+        _update_sku_price_stats(item.sku_id)
     _audit_spare(
         'spare_part_item_price_confirmed',
         entity_type='spare_part_request_item',
@@ -1539,6 +1599,139 @@ def api_catalog_search():
         }
         for part, match_kind, score in _search_catalog_parts(q)
     ])
+
+
+# ─── SPARE-STAGE2: SKU catalog ────────────────────────────────────────────────
+
+def _sku_snapshot(sku):
+    if not sku:
+        return None
+    return {
+        'id': getattr(sku, 'id', None),
+        'spare_part_id': getattr(sku, 'spare_part_id', None),
+        'brand': getattr(sku, 'brand', ''),
+        'article_number': getattr(sku, 'article_number', ''),
+        'supplier': getattr(sku, 'supplier', ''),
+        'last_price': getattr(sku, 'last_price', None),
+        'avg_price': getattr(sku, 'avg_price', None),
+        'is_active': getattr(sku, 'is_active', None),
+    }
+
+
+@spare_parts_bp.route('/api/skus-by-part')
+@module_required('spare_parts')
+def api_skus_by_part():
+    """Active SKUs of one canonical part, for the request form's SKU picker.
+
+    last_price is included as a SUGGESTION only — the price confirm workflow
+    still applies to whatever ends up on the request item.
+    """
+    spare_part_id = request.args.get('spare_part_id', type=int)
+    if not spare_part_id:
+        return jsonify([])
+    skus = (SparePartSku.query
+            .filter(SparePartSku.spare_part_id == spare_part_id,
+                    db.or_(SparePartSku.is_active == True,  # noqa: E712
+                           SparePartSku.is_active.is_(None)))
+            .order_by(SparePartSku.brand, SparePartSku.article_number,
+                      SparePartSku.id)
+            .all())
+    return jsonify([
+        {
+            'id': s.id,
+            'brand': s.brand or '',
+            'article_number': s.article_number or '',
+            'supplier': s.supplier or '',
+            'label': s.label,
+            'last_price': s.last_price,
+            'avg_price': s.avg_price,
+        }
+        for s in skus
+    ])
+
+
+@spare_parts_bp.route('/skus')
+@module_required('spare_parts')
+def skus():
+    # [REASON]: SPARE-STAGE2 — SKU management is part of catalog stewardship,
+    # so it sits behind the existing spare_parts_catalog_manage permission
+    # (no new permission for this screen, per the task decision).
+    if not current_user.has_module_access('spare_parts_catalog_manage'):
+        abort(403)
+    sku_rows = (SparePartSku.query
+                .options(joinedload(SparePartSku.spare_part))
+                .order_by(SparePartSku.spare_part_id, SparePartSku.brand,
+                          SparePartSku.id)
+                .all())
+    catalog_parts = (SparePart.query
+                     .filter(SparePart.status == 'active',
+                             db.or_(SparePart.is_active == True,  # noqa: E712
+                                    SparePart.is_active.is_(None)))
+                     .order_by(SparePart.name)
+                     .all())
+    return render_template('spare_parts_skus.html',
+                           sku_rows=sku_rows,
+                           catalog_parts=catalog_parts,
+                           lang=_spare_lang())
+
+
+@spare_parts_bp.route('/skus/save', methods=['POST'])
+@module_required('spare_parts')
+def sku_save():
+    if not current_user.has_module_access('spare_parts_catalog_manage'):
+        abort(403)
+    sku_id = request.form.get('id', type=int)
+    spare_part_id = request.form.get('spare_part_id', type=int)
+    brand = (request.form.get('brand', '') or '').strip()
+    article_number = (request.form.get('article_number', '') or '').strip()
+    supplier = (request.form.get('supplier', '') or '').strip()
+
+    part = SparePart.query.get(spare_part_id) if spare_part_id else None
+    errors = []
+    if part is None or part.status != 'active' or part.is_active == False:  # noqa: E712
+        errors.append(_spare_t('Каталогдан фаол эҳтиёт қисмни танланг',
+                               'Выберите активную запчасть из каталога'))
+    # A SKU with no brand, no article and no supplier identifies nothing.
+    if not (brand or article_number or supplier):
+        errors.append(_spare_t(
+            'Камида битта майдонни тўлдиринг: бренд, артикул ёки таъминотчи',
+            'Заполните хотя бы одно поле: бренд, артикул или поставщик'))
+    if errors:
+        _spare_flash_errors(errors, title_uz='SKU сақланмади:',
+                            title_ru='SKU не сохранён:')
+        return redirect(url_for('spare_parts.skus'))
+
+    created = False
+    before = None
+    if sku_id:
+        sku = SparePartSku.query.get_or_404(sku_id)
+        before = _sku_snapshot(sku)
+        sku.spare_part_id = part.id
+        sku.brand = brand
+        sku.article_number = article_number
+        sku.supplier = supplier
+        sku.is_active = request.form.get('is_active') is not None
+    else:
+        sku = SparePartSku(spare_part_id=part.id, brand=brand,
+                           article_number=article_number, supplier=supplier,
+                           created_by=current_user.id)
+        db.session.add(sku)
+        created = True
+    db.session.flush()
+    after = _sku_snapshot(sku)
+    _audit_spare(
+        'spare_part_sku_created' if created else 'spare_part_sku_updated',
+        entity_type='spare_part_sku',
+        entity_id=sku.id,
+        entity_label='{} — {}'.format(part.name, sku.label),
+        before=before,
+        after=after,
+        changes=diff_dict(before, after),
+        description='Spare part SKU saved'
+    )
+    db.session.commit()
+    flash(_spare_t('SKU сақланди', 'SKU сохранён'), 'success')
+    return redirect(url_for('spare_parts.skus'))
 
 
 # ─── Catalog ──────────────────────────────────────────────────────────────────

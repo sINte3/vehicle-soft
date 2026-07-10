@@ -116,6 +116,10 @@
                     {% if part and part.status == 'pending_review' %}
                     <div><span class="vs-badge vs-badge-warning vs-badge-sm">{{ 'каталог: на проверке' if is_ru else 'каталог: текширувда' }}</span></div>
                     {% endif %}
+                    {# SPARE-STAGE2: chosen SKU (brand / article / supplier) #}
+                    {% if item.sku %}
+                    <div class="vs-soft" style="font-size:11px; font-weight:400;">SKU: {{ item.sku.label }}</div>
+                    {% endif %}
                 </td>
                 <td class="text-sm vs-muted">
                     {% if part and part.category_ref %}{{ part.category_ref.name_ru if is_ru else part.category_ref.name_uz }}{% else %}—{% endif %}
@@ -229,13 +233,25 @@
                     <td>{{ loop.index }}</td>
                     <td style="font-weight:600;">{{ item.name }}
                         <div><span class="vs-badge vs-badge-sm" style="color:{{ price_status_colors.get(item.price_status, 'var(--text2)') }};">{{ price_status_labels[item.price_status][lang] if item.price_status in price_status_labels else item.price_status }}</span></div>
+                        {# SPARE-STAGE2: chosen SKU context for the price reviewer #}
+                        {% if item.sku %}
+                        <div class="vs-soft" style="font-size:11px; font-weight:400;">SKU: {{ item.sku.label }}</div>
+                        {% endif %}
                     </td>
                     <td>
+                        {# SPARE-STAGE2: when no price is set yet, the SKU's last
+                           confirmed price pre-fills the input as a SUGGESTION —
+                           saving and confirming still go through the normal
+                           price audit workflow unchanged. #}
+                        {% set suggested = item.sku.last_price if (item.price is none and item.sku and item.sku.last_price is not none) else none %}
                         <form method="post" action="{{ url_for('spare_parts.item_price_set', rid=req.id, item_id=item.id) }}" class="vs-row" style="gap:6px;">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <input type="number" name="price" class="vs-input" step="0.01" min="0" value="{{ item.price if item.price is not none else '' }}" style="width:130px;">
+                            <input type="number" name="price" class="vs-input" step="0.01" min="0" value="{{ item.price if item.price is not none else (suggested if suggested is not none else '') }}" style="width:130px;"{% if suggested is not none %} title="{{ 'Подсказка из SKU (последняя подтверждённая цена) — сохраните и подтвердите' if is_ru else 'SKU кўрсатмаси (охирги тасдиқланган нарх) — сақланг ва тасдиқланг' }}"{% endif %}>
                             <button type="submit" class="vs-btn vs-btn-sm">💾</button>
                         </form>
+                        {% if suggested is not none %}
+                        <div class="vs-soft" style="font-size:10.5px;">{{ 'подсказка из SKU' if is_ru else 'SKU кўрсатмаси' }}</div>
+                        {% endif %}
                     </td>
                     <td class="text-sm vs-muted price-hint" data-part-id="{{ item.spare_part_id or '' }}">…</td>
                     <td>

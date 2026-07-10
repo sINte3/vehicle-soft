@@ -1,0 +1,181 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Запчасти — SKU' if is_ru else 'Эҳтиёт қисмлар — SKU' }}{% endblock %}
+{% block content %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'SKU — варианты поставки' if is_ru else 'SKU — таъминот вариантлари' }}</div>
+    <div class="vs-hero-sub">{{ 'Конкретные варианты (бренд, артикул, поставщик) для записей каталога. Цены обновляются автоматически при подтверждении цен в заявках.' if is_ru else 'Каталог ёзувлари учун аниқ вариантлар (бренд, артикул, таъминотчи). Нархлар сўровларда нарх тасдиқланганда автоматик янгиланади.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('spare_parts.catalog') }}" class="vs-btn">{{ '← Каталог' if is_ru else '← Каталог' }}</a>
+    <a href="{{ url_for('spare_parts.index') }}" class="vs-btn">{{ 'Заявки' if is_ru else 'Сўровлар' }}</a>
+  </div>
+</div>
+
+<div class="vs-alert is-info vs-mb">{{ 'SKU не обязателен в заявке: позиция без SKU работает как раньше. Последняя/средняя цена — справочные, они не заменяют подтверждение цены в заявке.' if is_ru else 'Сўровда SKU мажбурий эмас: SKUсиз позиция аввалгидек ишлайди. Охирги/ўртача нарх — маълумот учун, улар сўровдаги нарх тасдиқлашни алмаштирмайди.' }}</div>
+
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title" id="skuFormTitle">{{ 'Добавить SKU' if is_ru else 'Янги SKU қўшиш' }}</div>
+    </div>
+    <div class="vs-card-body">
+        <form method="post" action="{{ url_for('spare_parts.sku_save') }}" class="vs-form-row" id="skuForm" onsubmit="return validateSkuBeforeSubmit()">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="id" id="skuEditId" value="">
+            <div class="vs-field" style="flex:2; min-width:240px;">
+                <label class="vs-label">{{ 'Запчасть (каталог)' if is_ru else 'Эҳтиёт қисм (каталог)' }}</label>
+                <select name="spare_part_id" id="skuPart" class="vs-select" required>
+                    <option value="">{{ '— выберите запчасть —' if is_ru else '— эҳтиёт қисмни танланг —' }}</option>
+                    {% for part in catalog_parts %}
+                    <option value="{{ part.id }}">{{ part.name }}{% if part.part_number %} ({{ part.part_number }}){% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="vs-field" style="flex:1; min-width:150px;">
+                <label class="vs-label">{{ 'Бренд' if is_ru else 'Бренд' }}</label>
+                <input type="text" name="brand" id="skuBrand" class="vs-input" placeholder="Bosch">
+            </div>
+            <div class="vs-field" style="flex:1; min-width:150px;">
+                <label class="vs-label">{{ 'Артикул' if is_ru else 'Артикул' }}</label>
+                <input type="text" name="article_number" id="skuArticle" class="vs-input" placeholder="0986452041">
+            </div>
+            <div class="vs-field" style="flex:1; min-width:150px;">
+                <label class="vs-label">{{ 'Поставщик' if is_ru else 'Таъминотчи' }}</label>
+                <input type="text" name="supplier" id="skuSupplier" class="vs-input" placeholder="{{ 'ООО ТехСнаб' if is_ru else 'ТехСнаб МЧЖ' }}">
+            </div>
+            <div class="vs-field" style="width:90px;" id="skuActiveField" hidden>
+                <label class="vs-label">{{ 'Активен' if is_ru else 'Фаол' }}</label>
+                <input type="checkbox" name="is_active" id="skuActive" checked style="width:20px; height:20px; margin-top:8px;">
+            </div>
+            <div class="vs-field" style="flex:none;">
+                <label class="vs-label">&nbsp;</label>
+                <div class="vs-row">
+                    <button type="submit" class="vs-btn vs-btn-primary">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+                    <button type="button" class="vs-btn" onclick="resetSkuForm()">{{ 'Сбросить' if is_ru else 'Тозалаш' }}</button>
+                </div>
+            </div>
+        </form>
+        <div class="vs-help vs-mt-sm">{{ 'Заполните хотя бы одно из полей: бренд, артикул или поставщик.' if is_ru else 'Камида битта майдонни тўлдиринг: бренд, артикул ёки таъминотчи.' }}</div>
+    </div>
+</div>
+
+<div class="vs-row vs-mb" style="justify-content:space-between; align-items:flex-end;">
+    <div class="vs-field" style="min-width:280px; flex:1;">
+        <label class="vs-label">{{ 'Поиск' if is_ru else 'Қидириш' }}</label>
+        <input type="text" id="skuSearch" class="vs-input" placeholder="{{ 'Поиск по запчасти, бренду, артикулу, поставщику' if is_ru else 'Эҳтиёт қисм, бренд, артикул, таъминотчи бўйича қидириш' }}" oninput="filterSkus()">
+    </div>
+    <div class="vs-soft" id="skuCounter" style="font-size:12.5px;">{{ 'Показано' if is_ru else 'Кўрсатилган' }}: {{ sku_rows|length }}</div>
+</div>
+
+<div class="vs-table-wrap">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ 'Всего SKU' if is_ru else 'Жами SKU' }}: {{ sku_rows|length }}</span>
+    </div>
+    <div class="vs-table-scroll">
+    <table class="vs-table">
+        <thead>
+            <tr>
+                <th style="width:40px;">№</th>
+                <th>{{ 'Запчасть' if is_ru else 'Эҳтиёт қисм' }}</th>
+                <th>{{ 'Бренд' if is_ru else 'Бренд' }}</th>
+                <th>{{ 'Артикул' if is_ru else 'Артикул' }}</th>
+                <th>{{ 'Поставщик' if is_ru else 'Таъминотчи' }}</th>
+                <th class="right">{{ 'Посл. цена' if is_ru else 'Охирги нарх' }}</th>
+                <th class="right">{{ 'Средн. цена' if is_ru else 'Ўртача нарх' }}</th>
+                <th>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for sku in sku_rows %}
+            <tr class="sku-row" data-search="{{ ((sku.spare_part.name if sku.spare_part else '') ~ ' ' ~ (sku.brand or '') ~ ' ' ~ (sku.article_number or '') ~ ' ' ~ (sku.supplier or ''))|lower }}">
+                <td>{{ loop.index }}</td>
+                <td style="font-weight:600;">{{ sku.spare_part.name if sku.spare_part else '—' }}</td>
+                <td>{{ sku.brand or '—' }}</td>
+                <td class="text-sm vs-muted">{{ sku.article_number or '—' }}</td>
+                <td class="text-sm vs-muted">{{ sku.supplier or '—' }}</td>
+                <td class="right">{{ sku.last_price|fmt_sum if sku.last_price is not none else '—' }}</td>
+                <td class="right">{{ sku.avg_price|fmt_sum if sku.avg_price is not none else '—' }}</td>
+                <td>
+                    {% if sku.is_active %}
+                    <span class="vs-badge vs-badge-success vs-badge-sm">{{ 'активен' if is_ru else 'фаол' }}</span>
+                    {% else %}
+                    <span class="vs-badge vs-badge-sm">{{ 'выключен' if is_ru else 'ўчирилган' }}</span>
+                    {% endif %}
+                </td>
+                <td class="right">
+                    <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
+                            onclick='editSku({{ sku.id }}, {{ sku.spare_part_id }}, {{ (sku.brand or "")|tojson }}, {{ (sku.article_number or "")|tojson }}, {{ (sku.supplier or "")|tojson }}, {{ 1 if sku.is_active else 0 }})'>✏</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% if not sku_rows %}
+    <div class="vs-empty">
+        <div class="vs-empty-ico">🏷️</div>
+        <div class="vs-empty-title">{{ 'SKU пока нет' if is_ru else 'Ҳозирча SKU йўқ' }}</div>
+        <div class="vs-empty-sub">{{ 'Добавьте первый вариант поставки в форме выше.' if is_ru else 'Юқоридаги шаклда биринчи таъминот вариантини қўшинг.' }}</div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const SKU_TEXT = {
+    addTitle: {{ ('Добавить SKU' if is_ru else 'Янги SKU қўшиш')|tojson }},
+    editTitle: {{ ('Редактирование SKU' if is_ru else 'SKU таҳрирлаш')|tojson }},
+    requiredPart: {{ ('Выберите запчасть из каталога.' if is_ru else 'Каталогдан эҳтиёт қисмни танланг.')|tojson }},
+    requiredOneField: {{ ('Заполните хотя бы одно поле: бренд, артикул или поставщик.' if is_ru else 'Камида битта майдонни тўлдиринг: бренд, артикул ёки таъминотчи.')|tojson }},
+    shown: {{ ('Показано' if is_ru else 'Кўрсатилган')|tojson }}
+};
+function editSku(id, partId, brand, article, supplier, isActive) {
+    document.getElementById('skuEditId').value = id;
+    document.getElementById('skuPart').value = partId;
+    document.getElementById('skuBrand').value = brand;
+    document.getElementById('skuArticle').value = article;
+    document.getElementById('skuSupplier').value = supplier;
+    document.getElementById('skuActive').checked = !!isActive;
+    document.getElementById('skuActiveField').hidden = false;
+    document.getElementById('skuFormTitle').textContent = SKU_TEXT.editTitle;
+    document.getElementById('skuBrand').focus();
+}
+function resetSkuForm() {
+    document.getElementById('skuEditId').value = '';
+    document.getElementById('skuPart').value = '';
+    document.getElementById('skuBrand').value = '';
+    document.getElementById('skuArticle').value = '';
+    document.getElementById('skuSupplier').value = '';
+    document.getElementById('skuActive').checked = true;
+    document.getElementById('skuActiveField').hidden = true;
+    document.getElementById('skuFormTitle').textContent = SKU_TEXT.addTitle;
+}
+function validateSkuBeforeSubmit() {
+    if (!document.getElementById('skuPart').value) {
+        alert(SKU_TEXT.requiredPart);
+        return false;
+    }
+    const filled = ['skuBrand', 'skuArticle', 'skuSupplier']
+        .some(id => (document.getElementById(id).value || '').trim());
+    if (!filled) {
+        alert(SKU_TEXT.requiredOneField);
+        return false;
+    }
+    return true;
+}
+function filterSkus() {
+    const q = (document.getElementById('skuSearch').value || '').toLowerCase().trim();
+    let visible = 0;
+    document.querySelectorAll('.sku-row').forEach(row => {
+        const show = !q || (row.dataset.search || '').includes(q);
+        row.style.display = show ? '' : 'none';
+        if (show) visible += 1;
+    });
+    document.getElementById('skuCounter').textContent = SKU_TEXT.shown + ': ' + visible;
+}
+document.addEventListener('DOMContentLoaded', filterSkus);
+</script>
+{% endblock %}

@@ -173,11 +173,15 @@ const TEXT = {
     uploadTooMany: {{ ('Максимум {max} файлов на позицию — лишние не добавлены.' if is_ru else 'Позицияга энг кўпи билан {max} та файл — ортиқчалари қўшилмади.')|tojson }},
     uploadTooLarge: {{ ('«{name}»: файл больше 50 МБ.' if is_ru else '«{name}»: файл 50 МБдан катта.')|tojson }},
     uploadLimitReached: {{ ('Достигнут лимит файлов для этой позиции.' if is_ru else 'Бу позиция учун файллар чегарасига етилди.')|tojson }},
-    fuzzyLabel: {{ ('Похожие в каталоге:' if is_ru else 'Каталогдаги ўхшашлари:')|tojson }}
+    fuzzyLabel: {{ ('Похожие в каталоге:' if is_ru else 'Каталогдаги ўхшашлари:')|tojson }},
+    skuPlaceholder: {{ ('— SKU (не обязательно) —' if is_ru else '— SKU (мажбурий эмас) —')|tojson }},
+    skuLastPrice: {{ ('посл. цена' if is_ru else 'охирги нарх')|tojson }},
+    skuSum: {{ ('сум' if is_ru else 'сўм')|tojson }}
 };
 const EQUIP_URL = {{ url_for('spare_parts.api_equipment_by_org')|tojson }};
 const REPEAT_URL = {{ url_for('spare_parts.api_repeat_check')|tojson }};
 const CATALOG_SEARCH_URL = {{ url_for('spare_parts.api_catalog_search')|tojson }};
+const SKUS_URL = {{ url_for('spare_parts.api_skus_by_part')|tojson }};
 
 let EQ_DATA = {};
 
@@ -189,6 +193,8 @@ function rowTemplate() {
             <input type="hidden" name="item_spare_part_id" value="">
             <div class="sp-hint"></div>
             <div class="sp-fuzzy"></div>
+            <select name="item_sku_id" class="vs-select sp-sku-select" style="display:none; margin-top:4px;" onchange="onSkuChange(this)"></select>
+            <div class="sp-hint sp-sku-hint"></div>
             <div class="sp-repeat"></div>
             <div class="sp-extra"></div>
         </td>
@@ -304,6 +310,7 @@ function onPartInput(input) {
         hint.textContent = consumable ? TEXT.fromCatalogConsumable : TEXT.fromCatalog;
         hint.className = 'sp-hint is-catalog';
         fuzzySuggest(row, '');   // exact match found — no suggestions needed
+        loadSkus(row, hidden.value);
     } else {
         hidden.value = '';
         row.dataset.kind = '';
@@ -315,9 +322,62 @@ function onPartInput(input) {
             hint.className = 'sp-hint';
         }
         fuzzySuggest(row, input.value);
+        loadSkus(row, null);
     }
     updateItemsCounter();
     checkRepeat(row);
+}
+
+// ─── SPARE-STAGE2: optional SKU picker per row ───────────────────────────────
+// Shown only when the chosen catalog part has active SKUs. Selecting one is
+// optional; the empty value keeps the exact Stage 1 no-SKU behaviour.
+function loadSkus(row, partId) {
+    const sel = row.querySelector('.sp-sku-select');
+    const hint = row.querySelector('.sp-sku-hint');
+    row._skuSeq = (row._skuSeq || 0) + 1;
+    const seq = row._skuSeq;
+    if (partId && partId === row.dataset.skuPartId && sel.options.length) {
+        return;   // same part, options already loaded — keep the user's choice
+    }
+    sel.style.display = 'none';
+    sel.innerHTML = '';
+    sel.value = '';
+    hint.textContent = '';
+    hint.className = 'sp-hint sp-sku-hint';
+    row.dataset.skuPartId = '';
+    if (!partId) return;
+    fetch(SKUS_URL + '?spare_part_id=' + encodeURIComponent(partId), {credentials: 'same-origin'})
+        .then(r => r.json())
+        .then(list => {
+            if (seq !== row._skuSeq) return;   // part changed meanwhile
+            if (!Array.isArray(list) || !list.length) return;
+            row.dataset.skuPartId = partId;
+            let html = '<option value="">' + TEXT.skuPlaceholder + '</option>';
+            list.forEach(s => {
+                const priceNote = (s.last_price !== null && s.last_price !== undefined)
+                    ? ' · ' + TEXT.skuLastPrice + ': ' + s.last_price
+                    : '';
+                html += '<option value="' + s.id + '" data-last-price="' + (s.last_price !== null && s.last_price !== undefined ? s.last_price : '') + '">'
+                      + (s.label + priceNote).replace(/</g, '&lt;') + '</option>';
+            });
+            sel.innerHTML = html;
+            sel.style.display = '';
+        })
+        .catch(() => {});
+}
+
+function onSkuChange(sel) {
+    const row = sel.closest('tr');
+    const hint = row.querySelector('.sp-sku-hint');
+    const opt = sel.options[sel.selectedIndex];
+    const lastPrice = opt ? (opt.dataset.lastPrice || '') : '';
+    if (sel.value && lastPrice) {
+        hint.textContent = TEXT.skuLastPrice + ': ' + lastPrice + ' ' + TEXT.skuSum;
+        hint.className = 'sp-hint sp-sku-hint is-catalog';
+    } else {
+        hint.textContent = '';
+        hint.className = 'sp-hint sp-sku-hint';
+    }
 }
 
 // ─── SPARE-STAGE2: typo-tolerant catalog suggestions ────────────────────────

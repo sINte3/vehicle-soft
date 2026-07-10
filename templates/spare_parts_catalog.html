@@ -9,6 +9,8 @@
     <div class="vs-hero-sub">{{ 'Справочник часто используемых запчастей для быстрого заполнения заявок.' if is_ru else 'Сўровларни тез тўлдириш учун кўп ишлатиладиган запчастлар маълумотномаси.' }}</div>
   </div>
   <div class="vs-row-end">
+    {# SPARE-STAGE2: SKU management lives under the same catalog permission. #}
+    <a href="{{ url_for('spare_parts.skus') }}" class="vs-btn">🏷️ {{ 'SKU — варианты поставки' if is_ru else 'SKU — таъминот вариантлари' }}</a>
     <a href="{{ url_for('spare_parts.index') }}" class="vs-btn">{{ '← Заявки' if is_ru else '← Сўровлар' }}</a>
   </div>
 </div>

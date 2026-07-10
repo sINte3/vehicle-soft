@@ -6,8 +6,16 @@ Creates (Task 2 -- fuzzy search):
     (the fuzzy catalog search fetches the full active candidate list on
     every keystroke-triggered request)
 
+Creates (Task 3 -- SKU catalog):
+  - spare_part_skus (brand/article/supplier variants of a canonical part;
+    last_price/avg_price are informational, written one-way by the price
+    confirm workflow)
+  - additive nullable column spare_part_request_items.sku_id
+  - supporting indexes
+
 Safe / idempotent:
-  - CREATE INDEX IF NOT EXISTS only.
+  - CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS.
+  - ALTER TABLE ... ADD COLUMN only when the column is absent.
   - Registers itself in schema_migrations and skips on re-run.
   - Does not touch or delete any existing business data.
 
@@ -27,9 +35,13 @@ Run (service must be STOPPED first to avoid SQLite write conflicts):
 Rollback:
   This migration is purely additive.
   DROP INDEX IF EXISTS idx_spare_parts_status_active;
+  DROP INDEX IF EXISTS idx_spare_part_skus_spare_part_id;
+  DROP INDEX IF EXISTS idx_spare_part_request_items_sku_id;
+  DROP TABLE IF EXISTS spare_part_skus;
   DELETE FROM schema_migrations WHERE name = 'SPARE_PARTS_STAGE2';
-  (As with prior spare-parts migrations, the real safety net is the
-   pre-migration database backup.)
+  (Dropping the added spare_part_request_items.sku_id column requires a
+   SQLite table rebuild. As with prior spare-parts migrations, the real
+   safety net is the pre-migration database backup.)
 """
 
 import os
@@ -41,12 +53,50 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(ROOT, 'instance', 'transport.db')
 MIGRATION_ID = 'SPARE_PARTS_STAGE2'
 
+CREATE_SKUS = """
+    CREATE TABLE IF NOT EXISTS spare_part_skus (
+        id             INTEGER PRIMARY KEY,
+        spare_part_id  INTEGER NOT NULL REFERENCES spare_parts(id),
+        brand          VARCHAR(200) DEFAULT '',
+        article_number VARCHAR(100) DEFAULT '',
+        supplier       VARCHAR(200) DEFAULT '',
+        last_price     FLOAT,
+        avg_price      FLOAT,
+        is_active      BOOLEAN DEFAULT 1,
+        created_by     INTEGER REFERENCES users(id),
+        created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+"""
+
+# ALTER TABLE ... ADD COLUMN statements, applied only when the column is absent.
+REQUEST_ITEM_COLUMNS = [
+    ("sku_id", "ALTER TABLE spare_part_request_items ADD COLUMN sku_id INTEGER"
+               " REFERENCES spare_part_skus(id)"),
+]
+
 INDEXES = [
     # [REASON]: SPARE-STAGE2 fuzzy search scans active catalog parts on every
     # keystroke-triggered search request; keep the candidate fetch indexed.
     "CREATE INDEX IF NOT EXISTS idx_spare_parts_status_active"
     " ON spare_parts(status, is_active)",
+    "CREATE INDEX IF NOT EXISTS idx_spare_part_skus_spare_part_id"
+    " ON spare_part_skus(spare_part_id)",
+    # [REASON]: the SKU price-stats recompute scans confirm audit rows of all
+    # items referencing one SKU.
+    "CREATE INDEX IF NOT EXISTS idx_spare_part_request_items_sku_id"
+    " ON spare_part_request_items(sku_id)",
 ]
+
+
+def _add_missing_columns(cur, table, columns):
+    existing = [r[1] for r in cur.execute(
+        "PRAGMA table_info({})".format(table)).fetchall()]
+    for col_name, ddl in columns:
+        if col_name not in existing:
+            cur.execute(ddl)
+            print("  added column {}.{}".format(table, col_name))
+        else:
+            print("  column {}.{} already present, skipped".format(table, col_name))
 
 # [REASON]: Matches migration_utils._CREATE_TABLE_SQL exactly so a fresh install
 # (where migrate_000 has not run yet) still gets a compatible registry table.
@@ -85,7 +135,8 @@ def _record_migration(cur):
             "INSERT OR IGNORE INTO schema_migrations (name, applied_at, description) "
             "VALUES (?, ?, ?)",
             (MIGRATION_ID, datetime.utcnow().isoformat(timespec='seconds'),
-             'SPARE-STAGE2: fuzzy search index.'),
+             'SPARE-STAGE2: fuzzy search index; SKU catalog table, '
+             'request-item sku_id column, indexes.'),
         )
     else:
         cur.execute(
@@ -110,6 +161,12 @@ def run():
         if _migration_applied(cur):
             print("Migration {} already applied. Skipping.".format(MIGRATION_ID))
             return
+
+        print("Creating tables...")
+        cur.execute(CREATE_SKUS)
+
+        print("Adding columns to spare_part_request_items...")
+        _add_missing_columns(cur, 'spare_part_request_items', REQUEST_ITEM_COLUMNS)
 
         print("Creating indexes...")
         for sql in INDEXES:

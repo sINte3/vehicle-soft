@@ -757,6 +757,42 @@ class SparePart(db.Model):
 db.Index('idx_spare_parts_status_active', SparePart.status, SparePart.is_active)
 
 
+class SparePartSku(db.Model):
+    """SPARE-STAGE2: purchasable variant (brand/article/supplier) of a canonical part.
+
+    A SKU always belongs to exactly one canonical spare_parts row. last_price /
+    avg_price are informational only and updated ONE WAY by the price-confirm
+    workflow (see spare_parts._update_sku_price_stats): SparePartPriceAudit +
+    price_status remain the single source of truth for what a request pays.
+    Created by migrate_spare_parts_stage2.py.
+    """
+    __tablename__ = 'spare_part_skus'
+    id             = db.Column(db.Integer, primary_key=True)
+    spare_part_id  = db.Column(db.Integer, db.ForeignKey('spare_parts.id'), nullable=False)
+    brand          = db.Column(db.String(200), default='')
+    article_number = db.Column(db.String(100), default='')
+    supplier       = db.Column(db.String(200), default='')
+    last_price     = db.Column(db.Float, nullable=True)
+    avg_price      = db.Column(db.Float, nullable=True)
+    is_active      = db.Column(db.Boolean, default=True)
+    created_by     = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at     = db.Column(db.DateTime, default=datetime.utcnow)
+
+    spare_part = db.relationship('SparePart', foreign_keys=[spare_part_id],
+                                 backref=db.backref('skus', lazy='dynamic'))
+    creator    = db.relationship('User', foreign_keys=[created_by])
+
+    __table_args__ = (
+        db.Index('idx_spare_part_skus_spare_part_id', 'spare_part_id'),
+    )
+
+    @property
+    def label(self):
+        """Human-readable 'brand / article / supplier' line for pickers and acts."""
+        fields = [f for f in (self.brand, self.article_number, self.supplier) if f]
+        return ' / '.join(fields) if fields else '#{}'.format(self.id)
+
+
 class SparePartRequest(db.Model):
     __tablename__ = 'spare_part_requests'
     id              = db.Column(db.Integer, primary_key=True)
@@ -797,14 +833,23 @@ class SparePartRequestItem(db.Model):
     price_set_by  = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     price_set_at  = db.Column(db.DateTime, nullable=True)
 
+    # SPARE-STAGE2 additive column (migrate_spare_parts_stage2.py):
+    # [REASON]: SPARE-STAGE2 — optional concrete SKU choice; NULL keeps the
+    # exact Stage 1 behaviour (free canonical part, no inventory tracking).
+    sku_id        = db.Column(db.Integer, db.ForeignKey('spare_part_skus.id'), nullable=True)
+
     spare_part    = db.relationship('SparePart', foreign_keys=[spare_part_id])
     price_setter  = db.relationship('User', foreign_keys=[price_set_by])
+    sku           = db.relationship('SparePartSku', foreign_keys=[sku_id])
 
 
 # [REASON]: SPARE-STAGE1 — performance indexes for the repeat-order warning
 # engine, which scans prior items by spare_part_id and equipment_id + date.
 db.Index('idx_spare_part_request_items_spare_part_id', SparePartRequestItem.spare_part_id)
 db.Index('idx_spare_part_requests_equipment_id_date', SparePartRequest.equipment_id, SparePartRequest.request_date)
+# [REASON]: SPARE-STAGE2 — the SKU price-stats recompute scans confirm audit
+# rows of all items referencing one SKU.
+db.Index('idx_spare_part_request_items_sku_id', SparePartRequestItem.sku_id)
 
 
 class SparePartPriceAudit(db.Model):
