@@ -793,6 +793,92 @@ class SparePartSku(db.Model):
         return ' / '.join(fields) if fields else '#{}'.format(self.id)
 
 
+class SparePartWarehouse(db.Model):
+    """SPARE-STAGE2: spare parts warehouse (= organization).
+
+    [REASON]: Confirmed business rule — exactly ONE warehouse per organization
+    (not multiple locations, not a shared central warehouse). Mirrors
+    FuelWarehouse's organization-scoping pattern, but here organization_id is
+    NOT NULL + UNIQUE so the one-per-organization rule is enforced by the
+    database, not just application code. Created by migrate_spare_parts_stage2.py.
+    """
+    __tablename__ = 'spare_part_warehouses'
+    id              = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'),
+                                nullable=False, unique=True)
+    name            = db.Column(db.String(200), nullable=False)
+    is_active       = db.Column(db.Boolean, default=True)
+    created_at      = db.Column(db.DateTime, default=datetime.utcnow)
+
+    organization = db.relationship('Organization')
+
+
+class SparePartInventory(db.Model):
+    """SPARE-STAGE2: current on-hand quantity per (warehouse, SKU).
+
+    [REASON]: Inventory is tracked at the SKU level ONLY (confirmed business
+    rule) — a canonical part with no SKU has no trackable stock. Rows are
+    created lazily on first movement; quantity must never be written except
+    through spare_parts._apply_inventory_movement, which records the matching
+    movement row in the same transaction.
+    """
+    __tablename__ = 'spare_part_inventory'
+    id           = db.Column(db.Integer, primary_key=True)
+    warehouse_id = db.Column(db.Integer, db.ForeignKey('spare_part_warehouses.id'),
+                             nullable=False)
+    sku_id       = db.Column(db.Integer, db.ForeignKey('spare_part_skus.id'),
+                             nullable=False)
+    quantity     = db.Column(db.Float, nullable=False, default=0)
+    unit         = db.Column(db.String(30), default='dona')
+    updated_at   = db.Column(db.DateTime, default=datetime.utcnow,
+                             onupdate=datetime.utcnow)
+
+    warehouse = db.relationship('SparePartWarehouse',
+                                backref=db.backref('inventory', lazy='dynamic'))
+    sku       = db.relationship('SparePartSku')
+
+    __table_args__ = (
+        db.UniqueConstraint('warehouse_id', 'sku_id',
+                            name='uq_spare_part_inventory_wh_sku'),
+    )
+
+
+class SparePartInventoryMovement(db.Model):
+    """SPARE-STAGE2: append-only audit trail of every stock change.
+
+    quantity is SIGNED (positive receipts, negative issues/write-offs);
+    balance_after snapshots the resulting on-hand quantity at movement time so
+    the trail stays historically correct even if later movements are inserted
+    out of chronological order. Summing a (warehouse, sku) pair's movement
+    quantities must always equal its spare_part_inventory.quantity.
+    """
+    __tablename__ = 'spare_part_inventory_movements'
+    id             = db.Column(db.Integer, primary_key=True)
+    warehouse_id   = db.Column(db.Integer, db.ForeignKey('spare_part_warehouses.id'),
+                               nullable=False)
+    sku_id         = db.Column(db.Integer, db.ForeignKey('spare_part_skus.id'),
+                               nullable=False)
+    movement_type  = db.Column(db.String(20), nullable=False)  # receipt/issue/adjustment/write_off
+    quantity       = db.Column(db.Float, nullable=False)       # signed
+    balance_after  = db.Column(db.Float, nullable=False)
+    reference_type = db.Column(db.String(30), nullable=False, default='manual')  # request_item/manual/import
+    reference_id   = db.Column(db.Integer, nullable=True)
+    note           = db.Column(db.Text, nullable=False, default='')
+    created_by     = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at     = db.Column(db.DateTime, default=datetime.utcnow)
+
+    warehouse = db.relationship('SparePartWarehouse')
+    sku       = db.relationship('SparePartSku')
+    creator   = db.relationship('User', foreign_keys=[created_by])
+
+    __table_args__ = (
+        db.Index('idx_spare_part_inv_movements_wh_sku', 'warehouse_id', 'sku_id'),
+        db.Index('idx_spare_part_inv_movements_created_at', 'created_at'),
+        db.Index('idx_spare_part_inv_movements_reference',
+                 'reference_type', 'reference_id'),
+    )
+
+
 class SparePartRequest(db.Model):
     __tablename__ = 'spare_part_requests'
     id              = db.Column(db.Integer, primary_key=True)

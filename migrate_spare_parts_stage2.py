@@ -13,9 +13,20 @@ Creates (Task 3 -- SKU catalog):
   - additive nullable column spare_part_request_items.sku_id
   - supporting indexes
 
+Creates (Task 4 -- warehouses + inventory + movements):
+  - spare_part_warehouses (one per organization, UNIQUE(organization_id)
+    enforced at the DB level)
+  - spare_part_inventory (one row per warehouse+SKU, UNIQUE(warehouse_id,
+    sku_id); rows are created lazily on first movement -- no zero seeding)
+  - spare_part_inventory_movements (signed quantity + balance_after snapshot;
+    every quantity write goes through a movement in the same transaction)
+  - one new app_modules permission row (INSERT OR IGNORE):
+      spare_parts_inventory_manage
+
 Safe / idempotent:
   - CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS.
   - ALTER TABLE ... ADD COLUMN only when the column is absent.
+  - INSERT OR IGNORE for app_modules seed rows (code column is UNIQUE).
   - Registers itself in schema_migrations and skips on re-run.
   - Does not touch or delete any existing business data.
 
@@ -37,7 +48,14 @@ Rollback:
   DROP INDEX IF EXISTS idx_spare_parts_status_active;
   DROP INDEX IF EXISTS idx_spare_part_skus_spare_part_id;
   DROP INDEX IF EXISTS idx_spare_part_request_items_sku_id;
+  DROP INDEX IF EXISTS idx_spare_part_inv_movements_wh_sku;
+  DROP INDEX IF EXISTS idx_spare_part_inv_movements_created_at;
+  DROP INDEX IF EXISTS idx_spare_part_inv_movements_reference;
+  DROP TABLE IF EXISTS spare_part_inventory_movements;
+  DROP TABLE IF EXISTS spare_part_inventory;
+  DROP TABLE IF EXISTS spare_part_warehouses;
   DROP TABLE IF EXISTS spare_part_skus;
+  DELETE FROM app_modules WHERE code IN ('spare_parts_inventory_manage');
   DELETE FROM schema_migrations WHERE name = 'SPARE_PARTS_STAGE2';
   (Dropping the added spare_part_request_items.sku_id column requires a
    SQLite table rebuild. As with prior spare-parts migrations, the real
@@ -74,6 +92,55 @@ REQUEST_ITEM_COLUMNS = [
                " REFERENCES spare_part_skus(id)"),
 ]
 
+CREATE_WAREHOUSES = """
+    CREATE TABLE IF NOT EXISTS spare_part_warehouses (
+        id              INTEGER PRIMARY KEY,
+        organization_id INTEGER NOT NULL UNIQUE REFERENCES organizations(id),
+        name            VARCHAR(200) NOT NULL,
+        is_active       BOOLEAN DEFAULT 1,
+        created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+"""
+
+CREATE_INVENTORY = """
+    CREATE TABLE IF NOT EXISTS spare_part_inventory (
+        id           INTEGER PRIMARY KEY,
+        warehouse_id INTEGER NOT NULL REFERENCES spare_part_warehouses(id),
+        sku_id       INTEGER NOT NULL REFERENCES spare_part_skus(id),
+        quantity     FLOAT NOT NULL DEFAULT 0,
+        unit         VARCHAR(30) DEFAULT 'dona',
+        updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uq_spare_part_inventory_wh_sku UNIQUE (warehouse_id, sku_id)
+    )
+"""
+
+CREATE_MOVEMENTS = """
+    CREATE TABLE IF NOT EXISTS spare_part_inventory_movements (
+        id             INTEGER PRIMARY KEY,
+        warehouse_id   INTEGER NOT NULL REFERENCES spare_part_warehouses(id),
+        sku_id         INTEGER NOT NULL REFERENCES spare_part_skus(id),
+        movement_type  VARCHAR(20) NOT NULL,
+        quantity       FLOAT NOT NULL,
+        balance_after  FLOAT NOT NULL,
+        reference_type VARCHAR(30) NOT NULL DEFAULT 'manual',
+        reference_id   INTEGER,
+        note           TEXT NOT NULL DEFAULT '',
+        created_by     INTEGER REFERENCES users(id),
+        created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+"""
+
+# [REASON]: New permission primitive surfaces automatically in the existing
+# /admin/permissions UI (it iterates active app_modules generically). Nobody
+# is granted access here -- deny-by-default; only is_admin passes until an
+# admin explicitly grants the module. Same pattern as the prior spare-parts
+# permission rows.
+NEW_MODULES = [
+    ('spare_parts_inventory_manage',
+     'Эҳтиёт қисмлар: омбор ва қолдиқлар',
+     'Запчасти: склад и остатки'),
+]
+
 INDEXES = [
     # [REASON]: SPARE-STAGE2 fuzzy search scans active catalog parts on every
     # keystroke-triggered search request; keep the candidate fetch indexed.
@@ -85,7 +152,34 @@ INDEXES = [
     # items referencing one SKU.
     "CREATE INDEX IF NOT EXISTS idx_spare_part_request_items_sku_id"
     " ON spare_part_request_items(sku_id)",
+    # [REASON]: movement journal is queried per warehouse (screen) and per
+    # (warehouse, sku) pair (audit-sum check), plus newest-first by date.
+    "CREATE INDEX IF NOT EXISTS idx_spare_part_inv_movements_wh_sku"
+    " ON spare_part_inventory_movements(warehouse_id, sku_id)",
+    "CREATE INDEX IF NOT EXISTS idx_spare_part_inv_movements_created_at"
+    " ON spare_part_inventory_movements(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_spare_part_inv_movements_reference"
+    " ON spare_part_inventory_movements(reference_type, reference_id)",
 ]
+
+
+def _seed_modules(cur):
+    cur.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='app_modules'"
+    )
+    if cur.fetchone() is None:
+        # Fresh install path: app.py create_app() seeds app_modules on first
+        # start via db.create_all(); nothing to do here.
+        print("  app_modules table not found, module seed skipped "
+              "(fresh install seeds via app start)")
+        return
+    for code, name_uz, name_ru in NEW_MODULES:
+        cur.execute(
+            "INSERT OR IGNORE INTO app_modules (code, name_uz, name_ru, is_active) "
+            "VALUES (?, ?, ?, 1)",
+            (code, name_uz, name_ru),
+        )
+        print("  module {} ensured".format(code))
 
 
 def _add_missing_columns(cur, table, columns):
@@ -136,7 +230,8 @@ def _record_migration(cur):
             "VALUES (?, ?, ?)",
             (MIGRATION_ID, datetime.utcnow().isoformat(timespec='seconds'),
              'SPARE-STAGE2: fuzzy search index; SKU catalog table, '
-             'request-item sku_id column, indexes.'),
+             'request-item sku_id column; warehouses, inventory, movements, '
+             '1 permission module row; indexes.'),
         )
     else:
         cur.execute(
@@ -164,6 +259,9 @@ def run():
 
         print("Creating tables...")
         cur.execute(CREATE_SKUS)
+        cur.execute(CREATE_WAREHOUSES)
+        cur.execute(CREATE_INVENTORY)
+        cur.execute(CREATE_MOVEMENTS)
 
         print("Adding columns to spare_part_request_items...")
         _add_missing_columns(cur, 'spare_part_request_items', REQUEST_ITEM_COLUMNS)
@@ -171,6 +269,9 @@ def run():
         print("Creating indexes...")
         for sql in INDEXES:
             cur.execute(sql)
+
+        print("Seeding permission module rows...")
+        _seed_modules(cur)
 
         _record_migration(cur)
         con.commit()

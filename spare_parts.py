@@ -11,9 +11,10 @@ from sqlalchemy import func
 from sqlalchemy.orm import joinedload, selectinload
 
 from models import (db, SparePart, SparePartCategory, SparePartPriceAudit,
-                    SparePartAttachment, SparePartRequest, SparePartRequestItem,
-                    SparePartSku, SparePartStatusHistory, Organization, Equipment,
-                    module_required)
+                    SparePartAttachment, SparePartInventory,
+                    SparePartInventoryMovement, SparePartRequest,
+                    SparePartRequestItem, SparePartSku, SparePartStatusHistory,
+                    SparePartWarehouse, Organization, Equipment, module_required)
 from sec003a_ext import log_audit, diff_dict
 
 # [REASON]: BOT003 — Best-effort Telegram notifications. Import is guarded so that
@@ -89,6 +90,15 @@ RULE6_REJECTED_LOOKBACK_DAYS = 30
 FUZZY_MATCH_MIN_RATIO = 0.6
 # Tunable starting value: maximum results returned by api_catalog_search.
 FUZZY_SEARCH_MAX_RESULTS = 10
+
+# ─── SPARE-STAGE2: inventory movement types ──────────────────────────────────
+INV_MOVEMENT_TYPES = ('receipt', 'issue', 'adjustment', 'write_off')
+INV_MOVEMENT_LABELS = {
+    'receipt':    {'uz': 'Кирим',         'ru': 'Приход'},
+    'issue':      {'uz': 'Бериш',         'ru': 'Выдача'},
+    'adjustment': {'uz': 'Тузатиш',       'ru': 'Корректировка'},
+    'write_off':  {'uz': 'Ҳисобдан чиқариш', 'ru': 'Списание'},
+}
 
 # Photo/video upload rules (SPARE-STAGE1 + MOBILE-UPLOAD-001). Extension AND
 # content signature are both checked -- Content-Type alone is never trusted.
@@ -1732,6 +1742,232 @@ def sku_save():
     db.session.commit()
     flash(_spare_t('SKU сақланди', 'SKU сохранён'), 'success')
     return redirect(url_for('spare_parts.skus'))
+
+
+# ─── SPARE-STAGE2: warehouses + inventory + movements ─────────────────────────
+
+def _apply_inventory_movement(warehouse_id, sku_id, movement_type, quantity,
+                              reference_type='manual', reference_id=None,
+                              note='', user_id=None):
+    """Apply one signed stock change to a (warehouse, SKU) pair WITH its audit row.
+
+    [REASON]: SPARE-STAGE2 core invariant — spare_part_inventory.quantity is
+    never written anywhere except through this function, which records the
+    matching movement row (with a balance_after snapshot) in the same
+    transaction. A reviewer can sum a pair's movement quantities and always
+    get the pair's current quantity. Does not flush/commit beyond the flush
+    needed for a lazily created inventory row — the caller owns the
+    transaction, so a multi-item action (Task 5 issue) stays all-or-nothing.
+
+    Sign rules per type: receipt > 0; issue/write_off < 0; adjustment any
+    non-zero. The resulting balance MAY go negative: warehouses deliberately
+    start at zero (opening balances are a future task), so blocking negative
+    stock would block the whole issue workflow until real counts arrive.
+
+    Raises ValueError with a short reason code on invalid input.
+    """
+    if movement_type not in INV_MOVEMENT_TYPES:
+        raise ValueError('movement_type')
+    try:
+        quantity = float(quantity)
+    except (TypeError, ValueError):
+        raise ValueError('quantity')
+    if quantity == 0:
+        raise ValueError('zero_quantity')
+    if movement_type == 'receipt' and quantity < 0:
+        raise ValueError('receipt_negative')
+    if movement_type in ('issue', 'write_off') and quantity > 0:
+        raise ValueError('issue_positive')
+
+    inv = SparePartInventory.query.filter_by(
+        warehouse_id=warehouse_id, sku_id=sku_id).first()
+    if inv is None:
+        # [REASON]: inventory rows are created lazily on first movement — no
+        # zero-quantity seeding of every SKU × warehouse combination.
+        sku = SparePartSku.query.get(sku_id)
+        unit = (sku.spare_part.unit if sku and sku.spare_part else '') or 'dona'
+        inv = SparePartInventory(warehouse_id=warehouse_id, sku_id=sku_id,
+                                 quantity=0, unit=unit)
+        db.session.add(inv)
+        db.session.flush()
+
+    new_qty = round(float(inv.quantity or 0) + quantity, 3)
+    inv.quantity = new_qty
+    inv.updated_at = datetime.utcnow()
+    movement = SparePartInventoryMovement(
+        warehouse_id=warehouse_id,
+        sku_id=sku_id,
+        movement_type=movement_type,
+        quantity=quantity,
+        balance_after=new_qty,
+        reference_type=reference_type,
+        reference_id=reference_id,
+        note=note or '',
+        created_by=user_id,
+    )
+    db.session.add(movement)
+    return movement
+
+
+def _spare_orgs_for_user():
+    """Organizations the current user may see, ordered like the rest of the module."""
+    user_org_ids = _spare_user_org_ids()
+    q = Organization.query.order_by(Organization.sort_order)
+    if user_org_ids is not None:
+        q = q.filter(Organization.id.in_(user_org_ids))
+    return q.all()
+
+
+@spare_parts_bp.route('/inventory')
+@module_required('spare_parts')
+def inventory():
+    # [REASON]: SPARE-STAGE2 — new permission primitive for warehouse work,
+    # same has_module_access()+admin-bypass pattern as the other five
+    # spare-parts permissions. Seeded by migrate_spare_parts_stage2.py.
+    if not current_user.has_module_access('spare_parts_inventory_manage'):
+        abort(403)
+    organizations = _spare_orgs_for_user()
+    org_id = request.args.get('org_id', type=int)
+    if org_id and not current_user.can_access_org(org_id):
+        abort(403)
+    if not org_id and organizations:
+        org_id = organizations[0].id
+
+    warehouse = (SparePartWarehouse.query.filter_by(organization_id=org_id).first()
+                 if org_id else None)
+    inventory_rows = []
+    movements = []
+    if warehouse:
+        inventory_rows = (SparePartInventory.query
+                          .options(joinedload(SparePartInventory.sku)
+                                   .joinedload(SparePartSku.spare_part))
+                          .filter_by(warehouse_id=warehouse.id)
+                          .all())
+        inventory_rows.sort(key=lambda r: ((r.sku.spare_part.name if r.sku and r.sku.spare_part else ''),
+                                           (r.sku.label if r.sku else '')))
+        movements = (SparePartInventoryMovement.query
+                     .options(joinedload(SparePartInventoryMovement.sku)
+                              .joinedload(SparePartSku.spare_part),
+                              joinedload(SparePartInventoryMovement.creator))
+                     .filter_by(warehouse_id=warehouse.id)
+                     .order_by(SparePartInventoryMovement.id.desc())
+                     .limit(30)
+                     .all())
+    # SKU picker for the manual movement form: all active SKUs, labelled with
+    # their canonical part name.
+    sku_options = (SparePartSku.query
+                   .options(joinedload(SparePartSku.spare_part))
+                   .filter(db.or_(SparePartSku.is_active == True,  # noqa: E712
+                                  SparePartSku.is_active.is_(None)))
+                   .all())
+    sku_options.sort(key=lambda s: ((s.spare_part.name if s.spare_part else ''), s.label))
+    return render_template('spare_parts_inventory.html',
+                           organizations=organizations,
+                           org_id=org_id,
+                           warehouse=warehouse,
+                           inventory_rows=inventory_rows,
+                           movements=movements,
+                           sku_options=sku_options,
+                           movement_labels=INV_MOVEMENT_LABELS,
+                           lang=_spare_lang())
+
+
+@spare_parts_bp.route('/inventory/warehouse', methods=['POST'])
+@module_required('spare_parts')
+def inventory_warehouse_create():
+    if not current_user.has_module_access('spare_parts_inventory_manage'):
+        abort(403)
+    org_id = request.form.get('organization_id', type=int)
+    name = (request.form.get('name', '') or '').strip()
+    if not org_id or not current_user.can_access_org(org_id):
+        abort(403)
+    org = Organization.query.get_or_404(org_id)
+    if not name:
+        name = org.name
+    # [REASON]: the UNIQUE(organization_id) constraint is the real guard; this
+    # pre-check only exists to show a friendly message instead of a 500.
+    if SparePartWarehouse.query.filter_by(organization_id=org_id).first():
+        _spare_flash_errors(
+            [_spare_t('Бу ташкилот учун омбор аллақачон мавжуд',
+                      'Склад для этой организации уже существует')],
+            title_uz='Омбор яратилмади:', title_ru='Склад не создан:')
+        return redirect(url_for('spare_parts.inventory', org_id=org_id))
+    warehouse = SparePartWarehouse(organization_id=org_id, name=name[:200])
+    db.session.add(warehouse)
+    db.session.flush()
+    _audit_spare(
+        'spare_part_warehouse_created',
+        entity_type='spare_part_warehouse',
+        entity_id=warehouse.id,
+        entity_label=warehouse.name,
+        after={'id': warehouse.id, 'organization_id': org_id, 'name': warehouse.name},
+        description='Spare part warehouse created'
+    )
+    db.session.commit()
+    flash(_spare_t('Омбор яратилди', 'Склад создан'), 'success')
+    return redirect(url_for('spare_parts.inventory', org_id=org_id))
+
+
+@spare_parts_bp.route('/inventory/movement', methods=['POST'])
+@module_required('spare_parts')
+def inventory_movement_create():
+    """Manual receipt / adjustment entry."""
+    if not current_user.has_module_access('spare_parts_inventory_manage'):
+        abort(403)
+    warehouse_id = request.form.get('warehouse_id', type=int)
+    warehouse = SparePartWarehouse.query.get_or_404(warehouse_id)
+    if not current_user.can_access_org(warehouse.organization_id):
+        abort(403)
+    movement_type = (request.form.get('movement_type', '') or '').strip()
+    # Manual entry allows receipts and adjustments only; issues and write-offs
+    # come from the request issue workflow (Task 5), never typed by hand.
+    if movement_type not in ('receipt', 'adjustment'):
+        abort(400)
+    sku_id = request.form.get('sku_id', type=int)
+    sku = SparePartSku.query.get(sku_id) if sku_id else None
+    note = (request.form.get('note', '') or '').strip()
+    raw_qty = (request.form.get('quantity', '') or '').strip().replace(',', '.')
+
+    errors = []
+    if sku is None or sku.is_active == False:  # noqa: E712
+        errors.append(_spare_t('SKU танланг', 'Выберите SKU'))
+    quantity = None
+    try:
+        quantity = float(raw_qty)
+    except (TypeError, ValueError):
+        errors.append(_spare_t('Миқдор сон бўлиши керак', 'Количество должно быть числом'))
+    if quantity is not None:
+        if quantity == 0:
+            errors.append(_spare_t('Миқдор нолдан фарқли бўлиши керак',
+                                   'Количество не может быть нулём'))
+        elif movement_type == 'receipt' and quantity < 0:
+            errors.append(_spare_t('Кирим миқдори мусбат бўлиши керак',
+                                   'Количество прихода должно быть положительным'))
+    if errors:
+        _spare_flash_errors(errors, title_uz='Ҳаракат сақланмади:',
+                            title_ru='Движение не сохранено:')
+        return redirect(url_for('spare_parts.inventory',
+                                org_id=warehouse.organization_id))
+
+    movement = _apply_inventory_movement(
+        warehouse.id, sku.id, movement_type, quantity,
+        reference_type='manual', note=note, user_id=current_user.id)
+    _audit_spare(
+        'spare_part_inventory_movement_created',
+        entity_type='spare_part_inventory_movement',
+        entity_id=None,
+        entity_label='{} {} {}'.format(movement_type, quantity, sku.label),
+        after={'warehouse_id': warehouse.id, 'sku_id': sku.id,
+               'movement_type': movement_type, 'quantity': quantity,
+               'balance_after': movement.balance_after},
+        description='Manual inventory movement'
+    )
+    db.session.commit()
+    flash(_spare_t('Ҳаракат сақланди. Янги қолдиқ: {}',
+                   'Движение сохранено. Новый остаток: {}').format(movement.balance_after),
+          'success')
+    return redirect(url_for('spare_parts.inventory',
+                            org_id=warehouse.organization_id))
 
 
 # ─── Catalog ──────────────────────────────────────────────────────────────────
