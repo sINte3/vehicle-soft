@@ -1,0 +1,70 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Акт списания' if is_ru else 'Ҳисобдан чиқариш далолатномаси' }} {{ act.act_number }}{% endblock %}
+{% block content %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">🧾 {{ 'Акт списания' if is_ru else 'Ҳисобдан чиқариш далолатномаси' }} {{ act.act_number }}</div>
+    <div class="vs-hero-sub">{{ 'Акт сформирован при выдаче заявки и является постоянным документом — изменение или отмена не предусмотрены.' if is_ru else 'Далолатнома сўров берилганда шакллантирилган ва доимий ҳужжат ҳисобланади — ўзгартириш ёки бекор қилиш кўзда тутилмаган.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('spare_parts.act_pdf', act_id=act.id) }}" target="_blank" class="vs-btn vs-btn-primary">⬇ {{ 'Скачать / печать PDF' if is_ru else 'PDF юклаш / чоп этиш' }}</a>
+    <a href="{{ url_for('spare_parts.detail', rid=act.request_id) }}" class="vs-btn">{{ '← Заявка' if is_ru else '← Сўров' }} #{{ act.request_id }}</a>
+  </div>
+</div>
+
+<div class="vs-stat-grid vs-mb">
+    <div class="vs-stat"><div class="vs-stat-label">{{ 'Номер акта' if is_ru else 'Далолатнома рақами' }}</div><div class="vs-stat-value" style="font-size:14px;">{{ act.act_number }}</div></div>
+    <div class="vs-stat"><div class="vs-stat-label">{{ 'Дата выдачи' if is_ru else 'Берилган сана' }}</div><div class="vs-stat-value" style="font-size:14px;">{{ act.issued_date.strftime('%d.%m.%Y') }}</div></div>
+    <div class="vs-stat"><div class="vs-stat-label">{{ 'Организация' if is_ru else 'Ташкилот' }}</div><div class="vs-stat-value" style="font-size:14px;">{{ act.organization.name if act.organization else '—' }}</div></div>
+    <div class="vs-stat"><div class="vs-stat-label">{{ 'Склад' if is_ru else 'Омбор' }}</div><div class="vs-stat-value" style="font-size:14px;">{{ act.warehouse.name if act.warehouse else '—' }}</div></div>
+    <div class="vs-stat"><div class="vs-stat-label">{{ 'Выдал' if is_ru else 'Берди' }}</div><div class="vs-stat-value" style="font-size:13px;">{{ (act.issuer.full_name or act.issuer.username) if act.issuer else '—' }}</div></div>
+</div>
+
+<div class="vs-table-wrap vs-mb">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ 'Позиции акта' if is_ru else 'Далолатнома позициялари' }}</span>
+        <span class="vs-soft" style="font-size:12px;">{{ act.items|length }}</span>
+    </div>
+    <div class="vs-table-scroll">
+    <table class="vs-table">
+        <thead>
+            <tr>
+                <th style="width:40px;">№</th>
+                <th>{{ 'Наименование' if is_ru else 'Номи' }}</th>
+                <th>SKU</th>
+                <th class="right">{{ 'Кол-во' if is_ru else 'Миқдор' }}</th>
+                <th>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
+                <th class="right">{{ 'Цена' if is_ru else 'Нарх' }}</th>
+                <th class="right">{{ 'Сумма' if is_ru else 'Сумма' }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% set ns = namespace(total=0.0) %}
+            {% for item in act.items %}
+            {% if item.total is not none %}{% set ns.total = ns.total + item.total %}{% endif %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td style="font-weight:600;">{{ item.name }}</td>
+                <td class="text-sm vs-muted">{{ item.sku_label or '—' }}</td>
+                <td class="right" style="font-weight:600;">{{ item.quantity }}</td>
+                <td>{{ item.unit or '—' }}</td>
+                <td class="right">{{ item.price|fmt_sum if item.price is not none else '—' }}</td>
+                <td class="right" style="font-weight:600;">{{ item.total|fmt_sum if item.total is not none else '—' }}</td>
+            </tr>
+            {% endfor %}
+            <tr>
+                <td colspan="6" style="font-weight:700;">{{ 'ИТОГО' if is_ru else 'ЖАМИ' }}</td>
+                <td class="right" style="font-weight:700;">{{ ns.total|fmt_sum or '0' }}</td>
+            </tr>
+        </tbody>
+    </table>
+    </div>
+</div>
+
+{% if act.items|selectattr('sku_label', 'equalto', '')|list %}
+<div class="vs-alert is-warning vs-mb">{{ 'Позиции без SKU выданы без списания со складского учёта.' if is_ru else 'SKUсиз позициялар омбор ҳисобидан чиқарилмасдан берилди.' }}</div>
+{% endif %}
+
+{% endblock %}

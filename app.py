@@ -2852,9 +2852,10 @@ def create_app():
                 ('spare_parts_price_confirm', 'Эҳтиёт қисмлар: нархни тасдиқлаш', 'Запчасти: подтверждение цен'),
                 ('spare_parts_approve', 'Эҳтиёт қисмлар: сўровни тасдиқлаш', 'Запчасти: утверждение заявок'),
                 ('spare_parts_reports', 'Эҳтиёт қисмлар: ҳисоботлар', 'Запчасти: отчёты'),
-                # [REASON]: SPARE-STAGE2 — existing DBs get this row from
+                # [REASON]: SPARE-STAGE2 — existing DBs get these rows from
                 # migrate_spare_parts_stage2.py; this list only serves fresh installs.
                 ('spare_parts_inventory_manage', 'Эҳтиёт қисмлар: омбор ва қолдиқлар', 'Запчасти: склад и остатки'),
+                ('spare_parts_issue', 'Эҳтиёт қисмлар: омбордан бериш', 'Запчасти: выдача со склада'),
             ]:
                 db.session.add(AppModule(code=code, name_uz=name_uz, name_ru=name_ru))
             db.session.commit()

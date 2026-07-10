@@ -14,7 +14,9 @@ from models import (db, SparePart, SparePartCategory, SparePartPriceAudit,
                     SparePartAttachment, SparePartInventory,
                     SparePartInventoryMovement, SparePartRequest,
                     SparePartRequestItem, SparePartSku, SparePartStatusHistory,
-                    SparePartWarehouse, Organization, Equipment, module_required)
+                    SparePartWarehouse, SparePartWriteOffAct,
+                    SparePartWriteOffActItem, Organization, Equipment,
+                    module_required)
 from sec003a_ext import log_audit, diff_dict
 
 # [REASON]: BOT003 — Best-effort Telegram notifications. Import is guarded so that
@@ -40,6 +42,10 @@ STATUS_LABELS = {
     'returned_for_revision': {'uz': 'Қайта ишлашга қайтарилган', 'ru': 'На доработке'},
     'approved':  {'uz': 'Тасдиқланган', 'ru': 'Утверждено'},
     'rejected':  {'uz': 'Рад этилган',  'ru': 'Отклонено'},
+    # [REASON]: SPARE-STAGE2 — new terminal state, reachable ONLY from
+    # 'approved' (issue_request enforces the transition): the approved goods
+    # were physically handed over and a write-off act was generated.
+    'issued':    {'uz': 'Берилган',     'ru': 'Выдано'},
 }
 STATUS_COLORS = {
     'draft':     'var(--text2)',
@@ -47,6 +53,7 @@ STATUS_COLORS = {
     'returned_for_revision': 'var(--warn)',
     'approved':  'var(--accent)',
     'rejected':  'var(--danger)',
+    'issued':    'var(--success)',
 }
 
 PRICE_STATUS_LABELS = {
@@ -1106,6 +1113,14 @@ def detail(rid):
                  and spr.status == 'submitted')
     can_approve = (current_user.has_module_access('spare_parts_approve')
                    and spr.status == 'submitted')
+    # [REASON]: SPARE-STAGE2 — issuing is a separate permission from approval
+    # (warehouse handover vs purchase decision); only approved requests offer it.
+    can_issue = (current_user.has_module_access('spare_parts_issue')
+                 and spr.status == 'approved')
+    issue_ctx = _issue_context(spr) if can_issue else None
+    # Acts are visible on the request once issued (permanent, no un-issue).
+    acts = (SparePartWriteOffAct.query.filter_by(request_id=spr.id)
+            .order_by(SparePartWriteOffAct.id).all())
     can_edit_photos = (current_user.can_edit
                        and spr.created_by == current_user.id
                        and spr.status in ('draft', 'returned_for_revision'))
@@ -1133,6 +1148,9 @@ def detail(rid):
                            can_price=can_price,
                            can_approve=can_approve,
                            can_edit_photos=can_edit_photos,
+                           can_issue=can_issue,
+                           issue_ctx=issue_ctx,
+                           acts=acts,
                            item_warnings=item_warnings,
                            lang=lang)
 
@@ -1968,6 +1986,226 @@ def inventory_movement_create():
           'success')
     return redirect(url_for('spare_parts.inventory',
                             org_id=warehouse.organization_id))
+
+
+# ─── SPARE-STAGE2: issue + write-off acts ─────────────────────────────────────
+
+def _acts_dir():
+    """Absolute path of the write-off act PDF folder (created on demand).
+
+    Sibling of the photo UPLOAD_FOLDER, same resolution rule: a plain path
+    relative to the app folder so non-Flask processes can find the files.
+    """
+    folder = os.path.join('instance', 'uploads', 'spare_parts_acts')
+    root = os.path.dirname(os.path.abspath(__file__))
+    folder = os.path.join(root, folder)
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def _generate_act_number(year):
+    """Next SPW-{year}-{00001} act number.
+
+    [REASON]: SPARE-STAGE2 — exact reuse of the MAX+1-inside-a-transaction
+    technique proven by work_orders._generate_wo_number: act_number is UNIQUE,
+    so a rare concurrent race raises IntegrityError on commit instead of
+    silently duplicating a number; acceptable for this low-concurrency app.
+    """
+    prefix = 'SPW-{}-'.format(year)
+    last = db.session.query(func.max(SparePartWriteOffAct.act_number)).filter(
+        SparePartWriteOffAct.act_number.like(prefix + '%')
+    ).scalar()
+    seq = 1
+    if last:
+        try:
+            seq = int(last.split('-')[-1]) + 1
+        except (ValueError, IndexError):
+            seq = 1
+    return '{}{:05d}'.format(prefix, seq)
+
+
+def _issue_context(spr):
+    """Data the detail page needs to offer the issue action.
+
+    Returns dict with: sku_items / no_sku_items, the organization's warehouse
+    (or None), and current stock per SKU item so the issuer sees what will be
+    deducted (and what would go negative) BEFORE confirming.
+    """
+    sku_items = [i for i in spr.items if i.sku_id]
+    no_sku_items = [i for i in spr.items if not i.sku_id]
+    warehouse = SparePartWarehouse.query.filter_by(
+        organization_id=spr.organization_id).first()
+    stock = {}
+    if warehouse and sku_items:
+        rows = (SparePartInventory.query
+                .filter(SparePartInventory.warehouse_id == warehouse.id,
+                        SparePartInventory.sku_id.in_([i.sku_id for i in sku_items]))
+                .all())
+        stock = {r.sku_id: r.quantity for r in rows}
+    return {
+        'sku_items': sku_items,
+        'no_sku_items': no_sku_items,
+        'warehouse': warehouse,
+        'stock': stock,
+    }
+
+
+@spare_parts_bp.route('/<int:rid>/issue', methods=['POST'])
+@module_required('spare_parts')
+def issue_request(rid):
+    """approved -> issued: deduct SKU stock, create the write-off act + PDF.
+
+    All-or-nothing: every deduction, the act row, its item snapshots and the
+    PDF render happen in ONE transaction — any failure rolls the whole issue
+    back and the request stays 'approved'.
+    """
+    # [REASON]: SPARE-STAGE2 — separate permission from spare_parts_approve,
+    # matching the real-world split between "approve the purchase" and
+    # "physically hand it over from the warehouse".
+    if not current_user.has_module_access('spare_parts_issue'):
+        abort(403)
+    spr = SparePartRequest.query.get_or_404(rid)
+    _spare_check_request_access(spr)
+    # [REASON]: 'issued' is reachable ONLY from 'approved' — never from any
+    # other status, and never twice (no un-issue; acts are permanent).
+    if spr.status != 'approved':
+        abort(400)
+
+    ctx = _issue_context(spr)
+    errors = []
+    if ctx['sku_items'] and ctx['warehouse'] is None:
+        errors.append(_spare_t(
+            'Ташкилотда эҳтиёт қисмлар омбори йўқ. Аввал «Омбор» экранида омбор яратинг.',
+            'У организации нет склада запчастей. Сначала создайте склад на экране «Склад».'))
+    # [REASON]: SPARE-STAGE2 — untracked (no-SKU) items must be issued
+    # CONSCIOUSLY: the form shows which items skip stock deduction and the
+    # server independently requires the explicit confirmation flag, so the
+    # rule holds even if the client-side UI is bypassed.
+    if ctx['no_sku_items'] and request.form.get('confirm_no_sku') != '1':
+        errors.append(_spare_t(
+            'SKUсиз позициялар омбордан ҳисобдан чиқарилмайди — беришдан олдин буни тасдиқлаш шарт',
+            'Позиции без SKU не будут списаны со склада — перед выдачей это нужно явно подтвердить'))
+    if errors:
+        _spare_flash_errors(errors, title_uz='Бериб бўлмади:',
+                            title_ru='Выдача не выполнена:')
+        return redirect(url_for('spare_parts.detail', rid=rid))
+
+    warehouse = ctx['warehouse']
+    act_pdf_full_path = None
+    try:
+        # 1. Inventory movements for every SKU item (negative issue quantities).
+        for item in ctx['sku_items']:
+            _apply_inventory_movement(
+                warehouse.id, item.sku_id, 'issue', -float(item.quantity or 0),
+                reference_type='request_item', reference_id=item.id,
+                note='Request #{}'.format(spr.id), user_id=current_user.id)
+
+        # 2. The act with MAX+1 numbering and snapshotted items.
+        issued_date = date.today()
+        act = SparePartWriteOffAct(
+            act_number=_generate_act_number(issued_date.year),
+            request_id=spr.id,
+            organization_id=spr.organization_id,
+            warehouse_id=warehouse.id if warehouse else None,
+            issued_date=issued_date,
+            issued_by=current_user.id,
+        )
+        db.session.add(act)
+        db.session.flush()
+        for item in spr.items:
+            total = None
+            if item.price is not None:
+                total = round(float(item.price) * float(item.quantity or 0), 2)
+            db.session.add(SparePartWriteOffActItem(
+                act_id=act.id,
+                request_item_id=item.id,
+                name=item.name,
+                sku_label=(item.sku.label if item.sku else ''),
+                quantity=item.quantity,
+                unit=item.unit or 'dona',
+                price=item.price,
+                total=total,
+            ))
+        db.session.flush()
+
+        # 3. Status transition + history + audit.
+        old_status = spr.status
+        spr.status = 'issued'
+        _add_status_history(spr.id, old_status, 'issued',
+                            comment='Act {}'.format(act.act_number),
+                            changed_by=current_user.id)
+        _audit_spare(
+            'spare_part_request_status_changed',
+            entity_type='spare_part_request',
+            entity_id=spr.id,
+            entity_label='Request #{}'.format(spr.id),
+            changes={'status': {'before': old_status, 'after': 'issued'},
+                     'act_number': {'before': None, 'after': act.act_number}},
+            description='Request issued; write-off act {} created'.format(act.act_number)
+        )
+
+        # 4. Render the PDF inside the same transaction: a request must never
+        # end up 'issued' without its printable act.
+        from spare_parts_pdf import generate_write_off_act_pdf
+        fname = '{}_{}.pdf'.format(act.id, act.act_number)
+        act_pdf_full_path = os.path.join(_acts_dir(), fname)
+        generate_write_off_act_pdf(act, act_pdf_full_path, lang=_spare_lang())
+        act.pdf_path = fname
+
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        # Remove the orphan file if the PDF was written but the commit failed.
+        if act_pdf_full_path and os.path.exists(act_pdf_full_path):
+            try:
+                os.remove(act_pdf_full_path)
+            except OSError:
+                pass
+        current_app.logger.exception('Issue action failed for request %s', rid)
+        _spare_flash_errors(
+            [_spare_t('Ички хатолик — ҳеч нарса ўзгартирилмади',
+                      'Внутренняя ошибка — ничего не изменено')],
+            title_uz='Бериб бўлмади:', title_ru='Выдача не выполнена:')
+        return redirect(url_for('spare_parts.detail', rid=rid))
+
+    flash(_spare_t('Сўров берилди. Далолатнома: {}',
+                   'Заявка выдана. Акт: {}').format(act.act_number), 'success')
+    # [REASON]: deliberately NO bot003 notification here — the bot's event
+    # allowlist (out of this task's scope fence) has no issued event type, so
+    # a call would only produce "Unknown event_type" log noise on every issue.
+    return redirect(url_for('spare_parts.act_detail', act_id=act.id))
+
+
+@spare_parts_bp.route('/acts/<int:act_id>')
+@module_required('spare_parts')
+def act_detail(act_id):
+    act = SparePartWriteOffAct.query.get_or_404(act_id)
+    # Same org-scoped access rule as the request it belongs to.
+    spr = act.request
+    if spr is None:
+        abort(404)
+    _spare_check_request_access(spr)
+    return render_template('spare_part_act.html',
+                           act=act,
+                           req=spr,
+                           lang=_spare_lang())
+
+
+@spare_parts_bp.route('/acts/<int:act_id>/pdf')
+@module_required('spare_parts')
+def act_pdf(act_id):
+    act = SparePartWriteOffAct.query.get_or_404(act_id)
+    spr = act.request
+    if spr is None:
+        abort(404)
+    # [REASON]: act PDFs are NOT served as raw static files; the same
+    # org-scoped access check as the act/request detail applies to downloads.
+    _spare_check_request_access(spr)
+    fname = os.path.basename(act.pdf_path or '')
+    if not fname:
+        abort(404)
+    return send_from_directory(_acts_dir(), fname, mimetype='application/pdf',
+                               download_name='{}.pdf'.format(act.act_number))
 
 
 # ─── Catalog ──────────────────────────────────────────────────────────────────

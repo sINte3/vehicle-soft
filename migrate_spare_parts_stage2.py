@@ -23,6 +23,15 @@ Creates (Task 4 -- warehouses + inventory + movements):
   - one new app_modules permission row (INSERT OR IGNORE):
       spare_parts_inventory_manage
 
+Creates (Task 5 -- issued status + write-off acts):
+  - spare_part_write_off_acts (act_number SPW-{YEAR}-{seq} UNIQUE, pdf_path)
+  - spare_part_write_off_act_items (name/sku_label/quantity/unit/price/total
+    snapshotted at issue time)
+  - one new app_modules permission row (INSERT OR IGNORE):
+      spare_parts_issue
+  (the 'issued' request status itself is application-level -- the status
+   column is free VARCHAR, no schema change needed)
+
 Safe / idempotent:
   - CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS.
   - ALTER TABLE ... ADD COLUMN only when the column is absent.
@@ -44,19 +53,29 @@ Run (service must be STOPPED first to avoid SQLite write conflicts):
   .\\nssm.exe start TransportReportStaging
 
 Rollback:
-  This migration is purely additive.
+  This migration is purely additive (new tables, one nullable column, three
+  permission rows nobody is granted automatically, indexes). A manual
+  rollback would need to undo, in this order:
   DROP INDEX IF EXISTS idx_spare_parts_status_active;
   DROP INDEX IF EXISTS idx_spare_part_skus_spare_part_id;
   DROP INDEX IF EXISTS idx_spare_part_request_items_sku_id;
   DROP INDEX IF EXISTS idx_spare_part_inv_movements_wh_sku;
   DROP INDEX IF EXISTS idx_spare_part_inv_movements_created_at;
   DROP INDEX IF EXISTS idx_spare_part_inv_movements_reference;
+  DROP INDEX IF EXISTS idx_spare_part_write_off_acts_request_id;
+  DROP INDEX IF EXISTS idx_spare_part_write_off_act_items_act_id;
+  DROP TABLE IF EXISTS spare_part_write_off_act_items;
+  DROP TABLE IF EXISTS spare_part_write_off_acts;
   DROP TABLE IF EXISTS spare_part_inventory_movements;
   DROP TABLE IF EXISTS spare_part_inventory;
   DROP TABLE IF EXISTS spare_part_warehouses;
   DROP TABLE IF EXISTS spare_part_skus;
-  DELETE FROM app_modules WHERE code IN ('spare_parts_inventory_manage');
+  DELETE FROM app_modules WHERE code IN
+    ('spare_parts_inventory_manage', 'spare_parts_issue');
   DELETE FROM schema_migrations WHERE name = 'SPARE_PARTS_STAGE2';
+  Also revert any spare_part_requests.status='issued' rows (e.g. back to
+  'approved') if the application code is rolled back too, and remove
+  generated PDFs under instance/uploads/spare_parts_acts/.
   (Dropping the added spare_part_request_items.sku_id column requires a
    SQLite table rebuild. As with prior spare-parts migrations, the real
    safety net is the pre-migration database backup.)
@@ -130,7 +149,35 @@ CREATE_MOVEMENTS = """
     )
 """
 
-# [REASON]: New permission primitive surfaces automatically in the existing
+CREATE_ACTS = """
+    CREATE TABLE IF NOT EXISTS spare_part_write_off_acts (
+        id              INTEGER PRIMARY KEY,
+        act_number      VARCHAR(20) NOT NULL UNIQUE,
+        request_id      INTEGER NOT NULL REFERENCES spare_part_requests(id),
+        organization_id INTEGER NOT NULL REFERENCES organizations(id),
+        warehouse_id    INTEGER REFERENCES spare_part_warehouses(id),
+        issued_date     DATE NOT NULL,
+        issued_by       INTEGER REFERENCES users(id),
+        pdf_path        VARCHAR(500) DEFAULT '',
+        created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+"""
+
+CREATE_ACT_ITEMS = """
+    CREATE TABLE IF NOT EXISTS spare_part_write_off_act_items (
+        id              INTEGER PRIMARY KEY,
+        act_id          INTEGER NOT NULL REFERENCES spare_part_write_off_acts(id),
+        request_item_id INTEGER REFERENCES spare_part_request_items(id),
+        name            VARCHAR(300) NOT NULL,
+        sku_label       VARCHAR(500) DEFAULT '',
+        quantity        FLOAT NOT NULL,
+        unit            VARCHAR(30) DEFAULT 'dona',
+        price           FLOAT,
+        total           FLOAT
+    )
+"""
+
+# [REASON]: New permission primitives surface automatically in the existing
 # /admin/permissions UI (it iterates active app_modules generically). Nobody
 # is granted access here -- deny-by-default; only is_admin passes until an
 # admin explicitly grants the module. Same pattern as the prior spare-parts
@@ -139,6 +186,12 @@ NEW_MODULES = [
     ('spare_parts_inventory_manage',
      'Эҳтиёт қисмлар: омбор ва қолдиқлар',
      'Запчасти: склад и остатки'),
+    # [REASON]: issuing is deliberately separate from spare_parts_approve --
+    # approving the purchase and physically handing goods over from the
+    # warehouse are different real-world responsibilities.
+    ('spare_parts_issue',
+     'Эҳтиёт қисмлар: омбордан бериш',
+     'Запчасти: выдача со склада'),
 ]
 
 INDEXES = [
@@ -160,6 +213,10 @@ INDEXES = [
     " ON spare_part_inventory_movements(created_at)",
     "CREATE INDEX IF NOT EXISTS idx_spare_part_inv_movements_reference"
     " ON spare_part_inventory_movements(reference_type, reference_id)",
+    "CREATE INDEX IF NOT EXISTS idx_spare_part_write_off_acts_request_id"
+    " ON spare_part_write_off_acts(request_id)",
+    "CREATE INDEX IF NOT EXISTS idx_spare_part_write_off_act_items_act_id"
+    " ON spare_part_write_off_act_items(act_id)",
 ]
 
 
@@ -230,8 +287,8 @@ def _record_migration(cur):
             "VALUES (?, ?, ?)",
             (MIGRATION_ID, datetime.utcnow().isoformat(timespec='seconds'),
              'SPARE-STAGE2: fuzzy search index; SKU catalog table, '
-             'request-item sku_id column; warehouses, inventory, movements, '
-             '1 permission module row; indexes.'),
+             'request-item sku_id column; warehouses, inventory, movements; '
+             'write-off acts; 2 permission module rows; indexes.'),
         )
     else:
         cur.execute(
@@ -262,6 +319,8 @@ def run():
         cur.execute(CREATE_WAREHOUSES)
         cur.execute(CREATE_INVENTORY)
         cur.execute(CREATE_MOVEMENTS)
+        cur.execute(CREATE_ACTS)
+        cur.execute(CREATE_ACT_ITEMS)
 
         print("Adding columns to spare_part_request_items...")
         _add_missing_columns(cur, 'spare_part_request_items', REQUEST_ITEM_COLUMNS)

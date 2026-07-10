@@ -879,6 +879,70 @@ class SparePartInventoryMovement(db.Model):
     )
 
 
+class SparePartWriteOffAct(db.Model):
+    """SPARE-STAGE2: write-off act generated when an approved request is issued.
+
+    act_number format SPW-{YEAR}-{5-digit-seq}: MAX+1 inside the issue
+    transaction, the exact technique proven by work_orders._generate_wo_number
+    (act_number is UNIQUE, so a rare race raises IntegrityError on commit).
+    Once created, acts are permanent — there is deliberately no un-issue.
+    """
+    __tablename__ = 'spare_part_write_off_acts'
+    id              = db.Column(db.Integer, primary_key=True)
+    act_number      = db.Column(db.String(20), unique=True, nullable=False)
+    request_id      = db.Column(db.Integer, db.ForeignKey('spare_part_requests.id'),
+                                nullable=False)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'),
+                                nullable=False)
+    # [REASON]: nullable — a request whose items all lack a SKU can be issued
+    # even when its organization has no warehouse (nothing trackable to deduct).
+    warehouse_id    = db.Column(db.Integer, db.ForeignKey('spare_part_warehouses.id'),
+                                nullable=True)
+    issued_date     = db.Column(db.Date, nullable=False)
+    issued_by       = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    pdf_path        = db.Column(db.String(500), default='')
+    created_at      = db.Column(db.DateTime, default=datetime.utcnow)
+
+    request      = db.relationship('SparePartRequest',
+                                   backref=db.backref('write_off_acts', lazy='select'))
+    organization = db.relationship('Organization')
+    warehouse    = db.relationship('SparePartWarehouse')
+    issuer       = db.relationship('User', foreign_keys=[issued_by])
+    items        = db.relationship('SparePartWriteOffActItem', backref='act',
+                                   cascade='all, delete-orphan')
+
+    __table_args__ = (
+        db.Index('idx_spare_part_write_off_acts_request_id', 'request_id'),
+    )
+
+
+class SparePartWriteOffActItem(db.Model):
+    """SPARE-STAGE2: one act line per request item, SNAPSHOTTED at issue time.
+
+    [REASON]: name/sku_label/quantity/unit/price/total are copied, not joined
+    back to the live request/catalog later, so the act stays historically
+    accurate even if catalog or SKU data changes afterwards.
+    """
+    __tablename__ = 'spare_part_write_off_act_items'
+    id              = db.Column(db.Integer, primary_key=True)
+    act_id          = db.Column(db.Integer,
+                                db.ForeignKey('spare_part_write_off_acts.id'),
+                                nullable=False)
+    request_item_id = db.Column(db.Integer,
+                                db.ForeignKey('spare_part_request_items.id'),
+                                nullable=True)
+    name            = db.Column(db.String(300), nullable=False)
+    sku_label       = db.Column(db.String(500), default='')
+    quantity        = db.Column(db.Float, nullable=False)
+    unit            = db.Column(db.String(30), default='dona')
+    price           = db.Column(db.Float, nullable=True)
+    total           = db.Column(db.Float, nullable=True)
+
+    __table_args__ = (
+        db.Index('idx_spare_part_write_off_act_items_act_id', 'act_id'),
+    )
+
+
 class SparePartRequest(db.Model):
     __tablename__ = 'spare_part_requests'
     id              = db.Column(db.Integer, primary_key=True)
