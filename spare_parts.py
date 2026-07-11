@@ -1,10 +1,11 @@
+import io
 import os
 import re
 import uuid
 from difflib import SequenceMatcher
 
 from flask import (Blueprint, render_template, request, redirect, url_for, flash,
-                   abort, g, jsonify, current_app, send_from_directory)
+                   abort, g, jsonify, current_app, send_from_directory, send_file)
 from flask_login import login_required, current_user
 from datetime import datetime, date, timedelta
 from sqlalchemy import func
@@ -424,9 +425,14 @@ def _check_rule3_frequency(equipment_id, spare_part_id, exclude_request_id=None)
     """Rule 3 — frequency: same equipment + same canonical part on more than
     RULE3_MAX_OCCURRENCES_90D approved requests in the trailing window.
 
-    [REASON]: SPARE-STAGE2 — approved requests only (unlike rules 1-2, which
+    [REASON]: SPARE-STAGE2 — authorized requests only (unlike rules 1-2, which
     count everything non-rejected): the frequency signal is about parts the
     business actually paid for repeatedly, per the task spec. Yellow only.
+
+    [REASON]: SPARE-STAGE2-QA-FIX3 — count both 'approved' and 'issued'.
+    'issued' is a Stage-2 terminal state reachable ONLY from 'approved' (goods
+    physically handed over + write-off act exists), so it is a stronger signal
+    of real authorized spend, not a reason to drop the request from the count.
     """
     window_start = date.today() - timedelta(days=RULE3_WINDOW_DAYS)
     q = (db.session.query(SparePartRequest.id, SparePartRequest.request_date)
@@ -435,7 +441,7 @@ def _check_rule3_frequency(equipment_id, spare_part_id, exclude_request_id=None)
          .filter(SparePartRequest.equipment_id == equipment_id,
                  SparePartRequestItem.spare_part_id == spare_part_id,
                  SparePartRequest.request_date >= window_start,
-                 SparePartRequest.status == 'approved'))
+                 SparePartRequest.status.in_(('approved', 'issued'))))
     if exclude_request_id:
         q = q.filter(SparePartRequest.id != exclude_request_id)
     # distinct: the same part listed twice on one request counts once.
@@ -461,10 +467,14 @@ def _check_rule4_cost_anomaly(equipment_id, spare_part_id, exclude_request_id=No
     spend for this equipment in this item's category vs the average of the
     RULE4_BASELINE_MONTHS months before the current one.
 
-    [REASON]: SPARE-STAGE2 — spend counts only authorized money (approved
-    request + confirmed price, same rule as the SPARE-REPORTS cost tables).
-    No warning without at least one prior month of spend — a first-ever
+    [REASON]: SPARE-STAGE2 — spend counts only authorized money (approved or
+    issued request + confirmed price, same rule as the SPARE-REPORTS cost
+    tables). No warning without at least one prior month of spend — a first-ever
     purchase in a category has nothing to compare against.
+
+    [REASON]: SPARE-STAGE2-QA-FIX3 — 'issued' requests count exactly like
+    'approved' ones (issued is reachable only from approved and means the money
+    was actually spent), so both statuses feed the cost baseline.
     """
     part = SparePart.query.get(spare_part_id)
     if part is None or part.category_id is None:
@@ -481,7 +491,7 @@ def _check_rule4_cost_anomaly(equipment_id, spare_part_id, exclude_request_id=No
          .join(SparePart, SparePartRequestItem.spare_part_id == SparePart.id)
          .filter(SparePartRequest.equipment_id == equipment_id,
                  SparePart.category_id == part.category_id,
-                 SparePartRequest.status == 'approved',
+                 SparePartRequest.status.in_(('approved', 'issued')),
                  SparePartRequestItem.price_status == 'confirmed',
                  SparePartRequest.request_date >= baseline_start,
                  SparePartRequest.request_date < next_month_start))
@@ -1871,6 +1881,22 @@ def inventory():
                      .order_by(SparePartInventoryMovement.id.desc())
                      .limit(30)
                      .all())
+    # [REASON]: SPARE-STAGE2-QA-FIX2 — for 'request_item' movements the stored
+    # reference_id is the SparePartRequestItem PK, NOT the request number. Resolve
+    # each item PK to its parent request number so the journal's "Основание" column
+    # shows the real request an auditor can look up (e.g. «Заявка #10»), instead of
+    # the item's internal id which looks like a non-existent request.
+    movement_request_no = {}
+    request_item_ids = [m.reference_id for m in movements
+                        if m.reference_type == 'request_item' and m.reference_id]
+    if request_item_ids:
+        item_to_req = dict(
+            db.session.query(SparePartRequestItem.id,
+                             SparePartRequestItem.request_id)
+            .filter(SparePartRequestItem.id.in_(request_item_ids)).all())
+        for m in movements:
+            if m.reference_type == 'request_item' and m.reference_id in item_to_req:
+                movement_request_no[m.id] = item_to_req[m.reference_id]
     # SKU picker for the manual movement form: all active SKUs, labelled with
     # their canonical part name.
     sku_options = (SparePartSku.query
@@ -1885,6 +1911,7 @@ def inventory():
                            warehouse=warehouse,
                            inventory_rows=inventory_rows,
                            movements=movements,
+                           movement_request_no=movement_request_no,
                            sku_options=sku_options,
                            movement_labels=INV_MOVEMENT_LABELS,
                            lang=_spare_lang())
@@ -2201,11 +2228,23 @@ def act_pdf(act_id):
     # [REASON]: act PDFs are NOT served as raw static files; the same
     # org-scoped access check as the act/request detail applies to downloads.
     _spare_check_request_access(spr)
-    fname = os.path.basename(act.pdf_path or '')
-    if not fname:
-        abort(404)
-    return send_from_directory(_acts_dir(), fname, mimetype='application/pdf',
-                               download_name='{}.pdf'.format(act.act_number))
+    # [REASON]: SPARE-STAGE2-QA-FIX1 — the act RECORD (number, items, prices,
+    # organization, permanence/no-un-issue) is frozen at issue time and must
+    # never change. Only the PRINTED rendering is regenerated fresh here, in the
+    # language the viewer currently wants — mirroring how the Excel report export
+    # already follows the current UI language instead of the language at some past
+    # event. An optional ?lang=ru|uz overrides the UI default so an act issued in
+    # one language can be printed in the other without touching the global toggle.
+    # The archival copy written at issue time to act.pdf_path is left untouched.
+    lang = request.args.get('lang')
+    if lang not in ('ru', 'uz'):
+        lang = _spare_lang()
+    from spare_parts_pdf import generate_write_off_act_pdf
+    buffer = io.BytesIO()
+    generate_write_off_act_pdf(act, buffer, lang=lang)
+    buffer.seek(0)
+    return send_file(buffer, mimetype='application/pdf',
+                     download_name='{}.pdf'.format(act.act_number))
 
 
 # ─── Catalog ──────────────────────────────────────────────────────────────────
@@ -2467,9 +2506,15 @@ def _reports_data(d_from, d_to, org_id=None, equipment_id=None, category_id=None
     """Collect the five spare parts report tables for one filter set.
 
     [REASON]: SPARE-REPORTS business rule — cost tables count only money
-    actually authorized: SparePartRequest.status == 'approved' AND
+    actually authorized: SparePartRequest.status in ('approved', 'issued') AND
     SparePartRequestItem.price_status == 'confirmed'. Draft/pending amounts
     never enter cost totals. Line cost = price * quantity.
+
+    [REASON]: SPARE-STAGE2-QA-FIX3 — 'issued' is a Stage-2 terminal state
+    reachable ONLY from 'approved' (goods handed over + write-off act exists);
+    it is strictly a stronger signal of real spend than 'approved' alone, so it
+    must be counted in every cost table and the top-20 — excluding it was an
+    unintended Stage-1-era assumption that Stage 2 broke.
     """
     user_org_ids = _spare_user_org_ids()
 
@@ -2504,7 +2549,8 @@ def _reports_data(d_from, d_to, org_id=None, equipment_id=None, category_id=None
         return float(item.price or 0) * float(item.quantity or 0)
 
     cost_lines = [(item, req, part) for item, req, part in lines
-                  if req.status == 'approved' and item.price_status == 'confirmed']
+                  if req.status in ('approved', 'issued')
+                  and item.price_status == 'confirmed']
 
     # Table 1: costs by equipment. Grouped by (organization_id, equipment_id)
     # so the NULL-equipment bucket stays split per organization and every row
