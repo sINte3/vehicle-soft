@@ -4,3 +4,4 @@ flask-login==0.6.3
 openpyxl==3.1.2
 waitress==3.0.0
 werkzeug==3.0.1
+reportlab==5.0.0

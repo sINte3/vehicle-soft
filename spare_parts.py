@@ -1,5 +1,7 @@
 import os
+import re
 import uuid
+from difflib import SequenceMatcher
 
 from flask import (Blueprint, render_template, request, redirect, url_for, flash,
                    abort, g, jsonify, current_app, send_from_directory)
@@ -9,8 +11,12 @@ from sqlalchemy import func
 from sqlalchemy.orm import joinedload, selectinload
 
 from models import (db, SparePart, SparePartCategory, SparePartPriceAudit,
-                    SparePartAttachment, SparePartRequest, SparePartRequestItem,
-                    SparePartStatusHistory, Organization, Equipment, module_required)
+                    SparePartAttachment, SparePartInventory,
+                    SparePartInventoryMovement, SparePartRequest,
+                    SparePartRequestItem, SparePartSku, SparePartStatusHistory,
+                    SparePartWarehouse, SparePartWriteOffAct,
+                    SparePartWriteOffActItem, Organization, Equipment,
+                    module_required)
 from sec003a_ext import log_audit, diff_dict
 
 # [REASON]: BOT003 — Best-effort Telegram notifications. Import is guarded so that
@@ -36,6 +42,10 @@ STATUS_LABELS = {
     'returned_for_revision': {'uz': 'Қайта ишлашга қайтарилган', 'ru': 'На доработке'},
     'approved':  {'uz': 'Тасдиқланган', 'ru': 'Утверждено'},
     'rejected':  {'uz': 'Рад этилган',  'ru': 'Отклонено'},
+    # [REASON]: SPARE-STAGE2 — new terminal state, reachable ONLY from
+    # 'approved' (issue_request enforces the transition): the approved goods
+    # were physically handed over and a write-off act was generated.
+    'issued':    {'uz': 'Берилган',     'ru': 'Выдано'},
 }
 STATUS_COLORS = {
     'draft':     'var(--text2)',
@@ -43,6 +53,7 @@ STATUS_COLORS = {
     'returned_for_revision': 'var(--warn)',
     'approved':  'var(--accent)',
     'rejected':  'var(--danger)',
+    'issued':    'var(--success)',
 }
 
 PRICE_STATUS_LABELS = {
@@ -56,6 +67,44 @@ PRICE_STATUS_COLORS = {
     'confirmed': 'var(--accent)',
     'rejected':  'var(--danger)',
     'returned':  'var(--warn)',
+}
+
+# ─── SPARE-STAGE2: warning rule 3/4/6 thresholds ─────────────────────────────
+# [REASON]: SPARE-STAGE2 — rules 3/4/6 are warn-only (never block), same
+# principle as the SPARE-STAGE1 repeat engine (rules 1-2). The values below
+# are tunable starting points agreed with the project owner, not validated
+# business constants.
+
+# Tunable starting value: rule 3 warns when the same equipment + same catalog
+# part appears on MORE THAN this many approved requests in the trailing window.
+RULE3_MAX_OCCURRENCES_90D = 3
+# Tunable starting value: rule 3 trailing lookback window in days (mirrors the
+# 90-day window already used by the rules 1-2 repeat engine).
+RULE3_WINDOW_DAYS = 90
+# Tunable starting value: rule 4 warns when current-month approved+confirmed
+# spend exceeds the trailing-months average by more than this multiplier.
+RULE4_COST_ANOMALY_MULTIPLIER = 2.0
+# Tunable starting value: rule 4 baseline length in calendar months (the
+# months immediately before the current one).
+RULE4_BASELINE_MONTHS = 3
+# Tunable starting value: rule 6 warns when the same equipment + part was on a
+# request rejected within this many trailing days.
+RULE6_REJECTED_LOOKBACK_DAYS = 30
+
+# ─── SPARE-STAGE2: fuzzy catalog search ──────────────────────────────────────
+# Tunable starting value: minimum difflib ratio for a fuzzy-only match
+# (same default cutoff difflib.get_close_matches uses).
+FUZZY_MATCH_MIN_RATIO = 0.6
+# Tunable starting value: maximum results returned by api_catalog_search.
+FUZZY_SEARCH_MAX_RESULTS = 10
+
+# ─── SPARE-STAGE2: inventory movement types ──────────────────────────────────
+INV_MOVEMENT_TYPES = ('receipt', 'issue', 'adjustment', 'write_off')
+INV_MOVEMENT_LABELS = {
+    'receipt':    {'uz': 'Кирим',         'ru': 'Приход'},
+    'issue':      {'uz': 'Бериш',         'ru': 'Выдача'},
+    'adjustment': {'uz': 'Тузатиш',       'ru': 'Корректировка'},
+    'write_off':  {'uz': 'Ҳисобдан чиқариш', 'ru': 'Списание'},
 }
 
 # Photo/video upload rules (SPARE-STAGE1 + MOBILE-UPLOAD-001). Extension AND
@@ -217,6 +266,7 @@ def _item_snapshot(item):
         'id': getattr(item, 'id', None),
         'request_id': getattr(item, 'request_id', None),
         'spare_part_id': getattr(item, 'spare_part_id', None),
+        'sku_id': getattr(item, 'sku_id', None),
         'name': getattr(item, 'name', ''),
         'part_number': getattr(item, 'part_number', ''),
         'quantity': getattr(item, 'quantity', None),
@@ -279,6 +329,38 @@ def write_price_audit(item_id, old_price, new_price, action, user_id):
     ))
 
 
+def _update_sku_price_stats(sku_id):
+    """Recompute a SKU's informational last_price / avg_price from its
+    confirmed-price history.
+
+    [REASON]: SPARE-STAGE2 business rule — one direction only: the price
+    CONFIRM workflow writes SKU stats; SKU stats never set or bypass a
+    request price (SparePartPriceAudit + price_status stay the single source
+    of truth). avg_price is a simple running average over every 'confirm'
+    audit row of items referencing this SKU. Does not commit — the caller's
+    transaction covers it.
+    """
+    if not sku_id:
+        return
+    sku = SparePartSku.query.get(sku_id)
+    if sku is None:
+        return
+    rows = (db.session.query(SparePartPriceAudit.new_price)
+            .join(SparePartRequestItem,
+                  SparePartPriceAudit.item_id == SparePartRequestItem.id)
+            .filter(SparePartRequestItem.sku_id == sku_id,
+                    SparePartPriceAudit.action == 'confirm',
+                    SparePartPriceAudit.new_price.isnot(None))
+            .order_by(SparePartPriceAudit.changed_at.asc(),
+                      SparePartPriceAudit.id.asc())
+            .all())
+    prices = [float(r[0]) for r in rows]
+    if not prices:
+        return
+    sku.last_price = prices[-1]
+    sku.avg_price = round(sum(prices) / len(prices), 2)
+
+
 def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None):
     """Repeat-order warning engine.
 
@@ -321,6 +403,184 @@ def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None):
     else:
         severity = None
     return {'severity': severity, 'days_since': days_since, 'history': history}
+
+
+# ─── SPARE-STAGE2: warning rules 3, 4, 6 ─────────────────────────────────────
+# Additive rule set alongside the SPARE-STAGE1 repeat engine above; the
+# _check_repeat_orders function (rules 1-2) is deliberately not modified.
+
+def _fmt_sum_text(value):
+    """1234567.0 -> '1 234 567' (same style as the fmt_sum Jinja filter in app.py)."""
+    return '{:,.0f}'.format(float(value or 0)).replace(',', ' ')
+
+
+def _month_start_back(d, months_back):
+    """First day of the month `months_back` calendar months before d's month."""
+    total = d.year * 12 + (d.month - 1) - months_back
+    return date(total // 12, total % 12 + 1, 1)
+
+
+def _check_rule3_frequency(equipment_id, spare_part_id, exclude_request_id=None):
+    """Rule 3 — frequency: same equipment + same canonical part on more than
+    RULE3_MAX_OCCURRENCES_90D approved requests in the trailing window.
+
+    [REASON]: SPARE-STAGE2 — approved requests only (unlike rules 1-2, which
+    count everything non-rejected): the frequency signal is about parts the
+    business actually paid for repeatedly, per the task spec. Yellow only.
+    """
+    window_start = date.today() - timedelta(days=RULE3_WINDOW_DAYS)
+    q = (db.session.query(SparePartRequest.id, SparePartRequest.request_date)
+         .join(SparePartRequestItem,
+               SparePartRequestItem.request_id == SparePartRequest.id)
+         .filter(SparePartRequest.equipment_id == equipment_id,
+                 SparePartRequestItem.spare_part_id == spare_part_id,
+                 SparePartRequest.request_date >= window_start,
+                 SparePartRequest.status == 'approved'))
+    if exclude_request_id:
+        q = q.filter(SparePartRequest.id != exclude_request_id)
+    # distinct: the same part listed twice on one request counts once.
+    rows = q.distinct().order_by(SparePartRequest.request_date.desc()).all()
+    if len(rows) <= RULE3_MAX_OCCURRENCES_90D:
+        return None
+    shown = [r.request_date.strftime('%d.%m.%Y') for r in rows[:8]]
+    dates_text = ', '.join(shown) + ('…' if len(rows) > 8 else '')
+    return {
+        'rule': 3,
+        'severity': 'yellow',
+        'count': len(rows),
+        'dates': [r.request_date.isoformat() for r in rows],
+        'message': _spare_t(
+            'Охирги {} кунда бу эҳтиёт қисм ушбу техника учун {} марта тасдиқланган: {}',
+            'За последние {} дней эта деталь для этой техники уже утверждалась {} раз: {}'
+        ).format(RULE3_WINDOW_DAYS, len(rows), dates_text),
+    }
+
+
+def _check_rule4_cost_anomaly(equipment_id, spare_part_id, exclude_request_id=None):
+    """Rule 4 — category cost anomaly: current calendar month approved+confirmed
+    spend for this equipment in this item's category vs the average of the
+    RULE4_BASELINE_MONTHS months before the current one.
+
+    [REASON]: SPARE-STAGE2 — spend counts only authorized money (approved
+    request + confirmed price, same rule as the SPARE-REPORTS cost tables).
+    No warning without at least one prior month of spend — a first-ever
+    purchase in a category has nothing to compare against.
+    """
+    part = SparePart.query.get(spare_part_id)
+    if part is None or part.category_id is None:
+        return None
+    today = date.today()
+    month_start = today.replace(day=1)
+    next_month_start = _month_start_back(today, -1)
+    baseline_start = _month_start_back(today, RULE4_BASELINE_MONTHS)
+    q = (db.session.query(SparePartRequestItem.price,
+                          SparePartRequestItem.quantity,
+                          SparePartRequest.request_date)
+         .join(SparePartRequest,
+               SparePartRequestItem.request_id == SparePartRequest.id)
+         .join(SparePart, SparePartRequestItem.spare_part_id == SparePart.id)
+         .filter(SparePartRequest.equipment_id == equipment_id,
+                 SparePart.category_id == part.category_id,
+                 SparePartRequest.status == 'approved',
+                 SparePartRequestItem.price_status == 'confirmed',
+                 SparePartRequest.request_date >= baseline_start,
+                 SparePartRequest.request_date < next_month_start))
+    if exclude_request_id:
+        q = q.filter(SparePartRequest.id != exclude_request_id)
+    current_total = 0.0
+    prior_total = 0.0
+    prior_months_with_data = set()
+    for price, quantity, req_date in q.all():
+        cost = float(price or 0) * float(quantity or 0)
+        if req_date >= month_start:
+            current_total += cost
+        else:
+            prior_total += cost
+            prior_months_with_data.add((req_date.year, req_date.month))
+    if not prior_months_with_data or prior_total <= 0:
+        return None
+    baseline_avg = prior_total / RULE4_BASELINE_MONTHS
+    if current_total <= RULE4_COST_ANOMALY_MULTIPLIER * baseline_avg:
+        return None
+    category = part.category_ref
+    cat_name = ((category.name_ru if _spare_lang() == 'ru' else category.name_uz)
+                if category else '')
+    return {
+        'rule': 4,
+        'severity': 'yellow',
+        'current_month_total': round(current_total, 2),
+        'baseline_avg': round(baseline_avg, 2),
+        'message': _spare_t(
+            '«{cat}» категорияси: шу ойдаги харажат {cur} сўм — олдинги {months} ой ўртачасидан ({avg} сўм) {mult} баробардан кўп',
+            'Категория «{cat}»: расходы в этом месяце {cur} сум — более чем в {mult} раза выше среднего за прошлые {months} мес. ({avg} сум)'
+        ).format(cat=cat_name,
+                 cur=_fmt_sum_text(current_total),
+                 avg=_fmt_sum_text(baseline_avg),
+                 months=RULE4_BASELINE_MONTHS,
+                 mult=RULE4_COST_ANOMALY_MULTIPLIER),
+    }
+
+
+def _check_rule6_recent_rejection(equipment_id, spare_part_id, exclude_request_id=None):
+    """Rule 6 — recently rejected, resubmitted: same equipment + same part was
+    on a request rejected within the trailing RULE6_REJECTED_LOOKBACK_DAYS.
+
+    The warning carries the rejection date and the reviewer's comment so the
+    approver sees WHY it was rejected last time.
+    """
+    cutoff_dt = datetime.utcnow() - timedelta(days=RULE6_REJECTED_LOOKBACK_DAYS)
+    cutoff_date = date.today() - timedelta(days=RULE6_REJECTED_LOOKBACK_DAYS)
+    q = (db.session.query(SparePartRequest)
+         .join(SparePartRequestItem,
+               SparePartRequestItem.request_id == SparePartRequest.id)
+         .filter(SparePartRequest.equipment_id == equipment_id,
+                 SparePartRequestItem.spare_part_id == spare_part_id,
+                 SparePartRequest.status == 'rejected',
+                 # [REASON]: reviewed_at is when the rejection actually happened;
+                 # request_date is only the fallback for legacy rows without it.
+                 db.or_(SparePartRequest.reviewed_at >= cutoff_dt,
+                        db.and_(SparePartRequest.reviewed_at.is_(None),
+                                SparePartRequest.request_date >= cutoff_date))))
+    if exclude_request_id:
+        q = q.filter(SparePartRequest.id != exclude_request_id)
+    rejected = q.order_by(SparePartRequest.reviewed_at.desc(),
+                          SparePartRequest.id.desc()).first()
+    if rejected is None:
+        return None
+    rejected_on = (rejected.reviewed_at.date() if rejected.reviewed_at
+                   else rejected.request_date)
+    comment = (rejected.review_comment or '').strip()
+    comment_text = comment if comment else _spare_t('изоҳсиз', 'без комментария')
+    return {
+        'rule': 6,
+        'severity': 'yellow',
+        'request_id': rejected.id,
+        'rejected_date': rejected_on.isoformat(),
+        'comment': comment,
+        'message': _spare_t(
+            'Бу эҳтиёт қисм бўйича #{} сўров {} куни рад этилган. Изоҳ: {}',
+            'Похожая заявка #{} на эту деталь была отклонена {}. Комментарий: {}'
+        ).format(rejected.id, rejected_on.strftime('%d.%m.%Y'), comment_text),
+    }
+
+
+def _check_extra_warnings(equipment_id, spare_part_id, exclude_request_id=None):
+    """SPARE-STAGE2 aggregator for rules 3/4/6.
+
+    Returns a list of warning dicts (possibly empty). Purely additive to the
+    rules 1-2 engine: callers keep using _check_repeat_orders unchanged and
+    attach this list alongside it.
+    """
+    if not equipment_id or not spare_part_id:
+        return []
+    warnings = []
+    for check in (_check_rule3_frequency,
+                  _check_rule4_cost_anomaly,
+                  _check_rule6_recent_rejection):
+        result = check(equipment_id, spare_part_id, exclude_request_id)
+        if result:
+            warnings.append(result)
+    return warnings
 
 
 def _photo_required(item):
@@ -660,6 +920,9 @@ def save_request():
     # [REASON]: SPARE-STAGE1 — hidden per-row field filled by the catalog part
     # picker; empty value means free-text entry ("not in catalog" flow).
     sp_ids = request.form.getlist('item_spare_part_id')
+    # SPARE-STAGE2 — optional per-row SKU choice (select is always submitted,
+    # empty value = no SKU, which keeps the exact Stage 1 item behaviour).
+    sku_ids = request.form.getlist('item_sku_id')
 
     prepared_items = []
     validation_errors = []
@@ -698,6 +961,22 @@ def save_request():
                 if cand and cand.status in ('active', 'pending_review') and cand.is_active != False:  # noqa: E712
                     spare_part = cand
 
+        # [REASON]: SPARE-STAGE2 — resolve the optional SKU with the same
+        # silent-fallback rule as the catalog link above: a stale, inactive or
+        # wrong-part SKU id degrades to "no SKU" instead of failing the save.
+        sku = None
+        sku_raw = sku_ids[i].strip() if i < len(sku_ids) else ''
+        if sku_raw and spare_part is not None:
+            try:
+                sku_id = int(sku_raw)
+            except ValueError:
+                sku_id = None
+            if sku_id:
+                sku_cand = SparePartSku.query.get(sku_id)
+                if (sku_cand and sku_cand.spare_part_id == spare_part.id
+                        and sku_cand.is_active != False):  # noqa: E712
+                    sku = sku_cand
+
         prepared_items.append({
             'name': name,
             'part_number': part_number,
@@ -705,6 +984,7 @@ def save_request():
             'unit': unit or 'dona',
             'note': item_note,
             'spare_part': spare_part,
+            'sku': sku,
             'form_index': i,
         })
 
@@ -732,6 +1012,7 @@ def save_request():
         item = SparePartRequestItem(
             request_id=spr.id,
             spare_part_id=prepared['spare_part'].id if prepared['spare_part'] else None,
+            sku_id=prepared['sku'].id if prepared['sku'] else None,
             name=prepared['name'],
             part_number=prepared['part_number'],
             quantity=prepared['quantity'],
@@ -832,9 +1113,32 @@ def detail(rid):
                  and spr.status == 'submitted')
     can_approve = (current_user.has_module_access('spare_parts_approve')
                    and spr.status == 'submitted')
+    # [REASON]: SPARE-STAGE2 — issuing is a separate permission from approval
+    # (warehouse handover vs purchase decision); only approved requests offer it.
+    can_issue = (current_user.has_module_access('spare_parts_issue')
+                 and spr.status == 'approved')
+    issue_ctx = _issue_context(spr) if can_issue else None
+    # Acts are visible on the request once issued (permanent, no un-issue).
+    acts = (SparePartWriteOffAct.query.filter_by(request_id=spr.id)
+            .order_by(SparePartWriteOffAct.id).all())
     can_edit_photos = (current_user.can_edit
                        and spr.created_by == current_user.id
                        and spr.status in ('draft', 'returned_for_revision'))
+    # [REASON]: SPARE-STAGE2 — the warn-only rules must be visible to the
+    # reviewer at approval time, not only to the operator while typing the
+    # request. Computed per item while the request is under review; rules 1-2
+    # come from the untouched SPARE-STAGE1 engine, 3/4/6 from the new checks.
+    item_warnings = {}
+    if spr.status == 'submitted' and (can_price or can_approve):
+        for item in spr.items:
+            if not spr.equipment_id or not item.spare_part_id:
+                continue
+            base = _check_repeat_orders(spr.equipment_id, item.spare_part_id,
+                                        exclude_request_id=spr.id)
+            extra = _check_extra_warnings(spr.equipment_id, item.spare_part_id,
+                                          exclude_request_id=spr.id)
+            if base['severity'] or extra:
+                item_warnings[item.id] = {'base': base, 'extra': extra}
     return render_template('spare_part_detail.html',
                            req=spr,
                            status_labels=STATUS_LABELS,
@@ -844,6 +1148,10 @@ def detail(rid):
                            can_price=can_price,
                            can_approve=can_approve,
                            can_edit_photos=can_edit_photos,
+                           can_issue=can_issue,
+                           issue_ctx=issue_ctx,
+                           acts=acts,
+                           item_warnings=item_warnings,
                            lang=lang)
 
 
@@ -1039,6 +1347,11 @@ def item_price_confirm(rid, item_id):
         return redirect(url_for('spare_parts.detail', rid=rid))
     item.price_status = 'confirmed'
     write_price_audit(item.id, item.price, item.price, 'confirm', current_user.id)
+    # [REASON]: SPARE-STAGE2 — confirm is the only event that feeds SKU price
+    # stats (one-way write; see _update_sku_price_stats). Runs before commit so
+    # the stats land in the same transaction as the confirmation itself.
+    if item.sku_id:
+        _update_sku_price_stats(item.sku_id)
     _audit_spare(
         'spare_part_item_price_confirmed',
         entity_type='spare_part_request_item',
@@ -1184,13 +1497,18 @@ def api_repeat_check():
     equipment_id = request.args.get('equipment_id', type=int)
     spare_part_id = request.args.get('spare_part_id', type=int)
     exclude_request_id = request.args.get('exclude_request_id', type=int)
-    empty = {'severity': None, 'days_since': None, 'history': []}
+    empty = {'severity': None, 'days_since': None, 'history': [], 'extra_warnings': []}
     if not equipment_id or not spare_part_id:
         return jsonify(empty)
     eq = Equipment.query.get(equipment_id)
     if not eq or not current_user.can_access_org(eq.organization_id):
         return jsonify(empty)
-    return jsonify(_check_repeat_orders(equipment_id, spare_part_id, exclude_request_id))
+    result = _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id)
+    # [REASON]: SPARE-STAGE2 — rules 3/4/6 ride along under an additive key;
+    # the original rules 1-2 payload stays byte-identical for existing callers.
+    result['extra_warnings'] = _check_extra_warnings(
+        equipment_id, spare_part_id, exclude_request_id)
+    return jsonify(result)
 
 
 @spare_parts_bp.route('/api/price-suggestions')
@@ -1214,6 +1532,680 @@ def api_price_suggestions():
          'date': a.changed_at.date().isoformat() if a.changed_at else None}
         for a in rows
     ])
+
+
+# ─── SPARE-STAGE2: fuzzy catalog search ───────────────────────────────────────
+
+def _norm_search_text(value):
+    """Normalize text for catalog search comparison.
+
+    [REASON]: SPARE-STAGE2 — same normalization approach as app.py's
+    _task_ref_001d_norm (casefold + collapse whitespace), plus punctuation
+    folded to spaces, so «Фильтр, масляный.» equals «фильтр масляный» before
+    any fuzzy scoring; difflib then only has to absorb genuine typos.
+    """
+    value = (value or '').casefold()
+    value = re.sub(r'[^\w\s]+', ' ', value)
+    return re.sub(r'\s+', ' ', value).strip()
+
+
+def _fuzzy_score(query_norm, name_norm):
+    """Best difflib ratio between direct and token-sorted comparison.
+
+    [REASON]: the token-sorted pass makes word-order swaps («масляный фильтр»
+    vs «фильтр масляный») score near 1.0 instead of ~0.5, without any
+    third-party fuzzy library.
+    """
+    direct = SequenceMatcher(None, query_norm, name_norm).ratio()
+    query_sorted = ' '.join(sorted(query_norm.split()))
+    name_sorted = ' '.join(sorted(name_norm.split()))
+    if query_sorted == query_norm and name_sorted == name_norm:
+        return direct
+    return max(direct, SequenceMatcher(None, query_sorted, name_sorted).ratio())
+
+
+def _search_catalog_parts(query, limit=FUZZY_SEARCH_MAX_RESULTS):
+    """Ranked catalog search over selectable parts: exact > substring > fuzzy.
+
+    Matches against the part name only (single `name` column in Stage 1/2).
+    Returns a list of (part, match_kind, score) tuples. Stdlib difflib only —
+    at this catalog's scale (a few hundred rows) scoring the full candidate
+    list per request is fast enough, no search dependency needed.
+
+    [REASON]: exact and substring tiers always rank above fuzzy-only hits, so
+    a correctly typed name can never be outranked by a fuzzy competitor.
+    """
+    query_norm = _norm_search_text(query)
+    if not query_norm:
+        return []
+    parts = (SparePart.query
+             .options(joinedload(SparePart.category_ref))
+             .filter(SparePart.status == 'active',
+                     db.or_(SparePart.is_active == True,  # noqa: E712
+                            SparePart.is_active.is_(None)))
+             .order_by(SparePart.name)
+             .all())
+    exact, substr, fuzzy = [], [], []
+    for part in parts:
+        name_norm = _norm_search_text(part.name)
+        if not name_norm:
+            continue
+        if name_norm == query_norm:
+            exact.append((part, 'exact', 1.0))
+            continue
+        score = _fuzzy_score(query_norm, name_norm)
+        if query_norm in name_norm:
+            substr.append((part, 'substring', score))
+        elif score >= FUZZY_MATCH_MIN_RATIO:
+            fuzzy.append((part, 'fuzzy', score))
+    # Python sort is stable: ties inside a tier keep alphabetical order.
+    substr.sort(key=lambda t: -t[2])
+    fuzzy.sort(key=lambda t: -t[2])
+    return (exact + substr + fuzzy)[:limit]
+
+
+@spare_parts_bp.route('/api/catalog-search')
+@module_required('spare_parts')
+def api_catalog_search():
+    """Typo-tolerant catalog picker search (SPARE-STAGE2, Task 2).
+
+    Used by the request form's part picker and the catalog screen's search
+    box. Same candidate set as the form's datalist: active, non-merged parts.
+    """
+    q = (request.args.get('q', '') or '').strip()
+    if len(q) < 2:
+        return jsonify([])
+    return jsonify([
+        {
+            'id': part.id,
+            'name': part.name,
+            'part_number': part.part_number or '',
+            'unit': part.unit or 'dona',
+            'kind': (part.category_ref.kind if part.category_ref else ''),
+            'match': match_kind,
+            'score': round(score, 3),
+        }
+        for part, match_kind, score in _search_catalog_parts(q)
+    ])
+
+
+# ─── SPARE-STAGE2: SKU catalog ────────────────────────────────────────────────
+
+def _sku_snapshot(sku):
+    if not sku:
+        return None
+    return {
+        'id': getattr(sku, 'id', None),
+        'spare_part_id': getattr(sku, 'spare_part_id', None),
+        'brand': getattr(sku, 'brand', ''),
+        'article_number': getattr(sku, 'article_number', ''),
+        'supplier': getattr(sku, 'supplier', ''),
+        'last_price': getattr(sku, 'last_price', None),
+        'avg_price': getattr(sku, 'avg_price', None),
+        'is_active': getattr(sku, 'is_active', None),
+    }
+
+
+@spare_parts_bp.route('/api/skus-by-part')
+@module_required('spare_parts')
+def api_skus_by_part():
+    """Active SKUs of one canonical part, for the request form's SKU picker.
+
+    last_price is included as a SUGGESTION only — the price confirm workflow
+    still applies to whatever ends up on the request item.
+    """
+    spare_part_id = request.args.get('spare_part_id', type=int)
+    if not spare_part_id:
+        return jsonify([])
+    skus = (SparePartSku.query
+            .filter(SparePartSku.spare_part_id == spare_part_id,
+                    db.or_(SparePartSku.is_active == True,  # noqa: E712
+                           SparePartSku.is_active.is_(None)))
+            .order_by(SparePartSku.brand, SparePartSku.article_number,
+                      SparePartSku.id)
+            .all())
+    return jsonify([
+        {
+            'id': s.id,
+            'brand': s.brand or '',
+            'article_number': s.article_number or '',
+            'supplier': s.supplier or '',
+            'label': s.label,
+            'last_price': s.last_price,
+            'avg_price': s.avg_price,
+        }
+        for s in skus
+    ])
+
+
+@spare_parts_bp.route('/skus')
+@module_required('spare_parts')
+def skus():
+    # [REASON]: SPARE-STAGE2 — SKU management is part of catalog stewardship,
+    # so it sits behind the existing spare_parts_catalog_manage permission
+    # (no new permission for this screen, per the task decision).
+    if not current_user.has_module_access('spare_parts_catalog_manage'):
+        abort(403)
+    sku_rows = (SparePartSku.query
+                .options(joinedload(SparePartSku.spare_part))
+                .order_by(SparePartSku.spare_part_id, SparePartSku.brand,
+                          SparePartSku.id)
+                .all())
+    catalog_parts = (SparePart.query
+                     .filter(SparePart.status == 'active',
+                             db.or_(SparePart.is_active == True,  # noqa: E712
+                                    SparePart.is_active.is_(None)))
+                     .order_by(SparePart.name)
+                     .all())
+    return render_template('spare_parts_skus.html',
+                           sku_rows=sku_rows,
+                           catalog_parts=catalog_parts,
+                           lang=_spare_lang())
+
+
+@spare_parts_bp.route('/skus/save', methods=['POST'])
+@module_required('spare_parts')
+def sku_save():
+    if not current_user.has_module_access('spare_parts_catalog_manage'):
+        abort(403)
+    sku_id = request.form.get('id', type=int)
+    spare_part_id = request.form.get('spare_part_id', type=int)
+    brand = (request.form.get('brand', '') or '').strip()
+    article_number = (request.form.get('article_number', '') or '').strip()
+    supplier = (request.form.get('supplier', '') or '').strip()
+
+    part = SparePart.query.get(spare_part_id) if spare_part_id else None
+    errors = []
+    if part is None or part.status != 'active' or part.is_active == False:  # noqa: E712
+        errors.append(_spare_t('Каталогдан фаол эҳтиёт қисмни танланг',
+                               'Выберите активную запчасть из каталога'))
+    # A SKU with no brand, no article and no supplier identifies nothing.
+    if not (brand or article_number or supplier):
+        errors.append(_spare_t(
+            'Камида битта майдонни тўлдиринг: бренд, артикул ёки таъминотчи',
+            'Заполните хотя бы одно поле: бренд, артикул или поставщик'))
+    if errors:
+        _spare_flash_errors(errors, title_uz='SKU сақланмади:',
+                            title_ru='SKU не сохранён:')
+        return redirect(url_for('spare_parts.skus'))
+
+    created = False
+    before = None
+    if sku_id:
+        sku = SparePartSku.query.get_or_404(sku_id)
+        before = _sku_snapshot(sku)
+        sku.spare_part_id = part.id
+        sku.brand = brand
+        sku.article_number = article_number
+        sku.supplier = supplier
+        sku.is_active = request.form.get('is_active') is not None
+    else:
+        sku = SparePartSku(spare_part_id=part.id, brand=brand,
+                           article_number=article_number, supplier=supplier,
+                           created_by=current_user.id)
+        db.session.add(sku)
+        created = True
+    db.session.flush()
+    after = _sku_snapshot(sku)
+    _audit_spare(
+        'spare_part_sku_created' if created else 'spare_part_sku_updated',
+        entity_type='spare_part_sku',
+        entity_id=sku.id,
+        entity_label='{} — {}'.format(part.name, sku.label),
+        before=before,
+        after=after,
+        changes=diff_dict(before, after),
+        description='Spare part SKU saved'
+    )
+    db.session.commit()
+    flash(_spare_t('SKU сақланди', 'SKU сохранён'), 'success')
+    return redirect(url_for('spare_parts.skus'))
+
+
+# ─── SPARE-STAGE2: warehouses + inventory + movements ─────────────────────────
+
+def _apply_inventory_movement(warehouse_id, sku_id, movement_type, quantity,
+                              reference_type='manual', reference_id=None,
+                              note='', user_id=None):
+    """Apply one signed stock change to a (warehouse, SKU) pair WITH its audit row.
+
+    [REASON]: SPARE-STAGE2 core invariant — spare_part_inventory.quantity is
+    never written anywhere except through this function, which records the
+    matching movement row (with a balance_after snapshot) in the same
+    transaction. A reviewer can sum a pair's movement quantities and always
+    get the pair's current quantity. Does not flush/commit beyond the flush
+    needed for a lazily created inventory row — the caller owns the
+    transaction, so a multi-item action (Task 5 issue) stays all-or-nothing.
+
+    Sign rules per type: receipt > 0; issue/write_off < 0; adjustment any
+    non-zero. The resulting balance MAY go negative: warehouses deliberately
+    start at zero (opening balances are a future task), so blocking negative
+    stock would block the whole issue workflow until real counts arrive.
+
+    Raises ValueError with a short reason code on invalid input.
+    """
+    if movement_type not in INV_MOVEMENT_TYPES:
+        raise ValueError('movement_type')
+    try:
+        quantity = float(quantity)
+    except (TypeError, ValueError):
+        raise ValueError('quantity')
+    if quantity == 0:
+        raise ValueError('zero_quantity')
+    if movement_type == 'receipt' and quantity < 0:
+        raise ValueError('receipt_negative')
+    if movement_type in ('issue', 'write_off') and quantity > 0:
+        raise ValueError('issue_positive')
+
+    inv = SparePartInventory.query.filter_by(
+        warehouse_id=warehouse_id, sku_id=sku_id).first()
+    if inv is None:
+        # [REASON]: inventory rows are created lazily on first movement — no
+        # zero-quantity seeding of every SKU × warehouse combination.
+        sku = SparePartSku.query.get(sku_id)
+        unit = (sku.spare_part.unit if sku and sku.spare_part else '') or 'dona'
+        inv = SparePartInventory(warehouse_id=warehouse_id, sku_id=sku_id,
+                                 quantity=0, unit=unit)
+        db.session.add(inv)
+        db.session.flush()
+
+    new_qty = round(float(inv.quantity or 0) + quantity, 3)
+    inv.quantity = new_qty
+    inv.updated_at = datetime.utcnow()
+    movement = SparePartInventoryMovement(
+        warehouse_id=warehouse_id,
+        sku_id=sku_id,
+        movement_type=movement_type,
+        quantity=quantity,
+        balance_after=new_qty,
+        reference_type=reference_type,
+        reference_id=reference_id,
+        note=note or '',
+        created_by=user_id,
+    )
+    db.session.add(movement)
+    return movement
+
+
+def _spare_orgs_for_user():
+    """Organizations the current user may see, ordered like the rest of the module."""
+    user_org_ids = _spare_user_org_ids()
+    q = Organization.query.order_by(Organization.sort_order)
+    if user_org_ids is not None:
+        q = q.filter(Organization.id.in_(user_org_ids))
+    return q.all()
+
+
+@spare_parts_bp.route('/inventory')
+@module_required('spare_parts')
+def inventory():
+    # [REASON]: SPARE-STAGE2 — new permission primitive for warehouse work,
+    # same has_module_access()+admin-bypass pattern as the other five
+    # spare-parts permissions. Seeded by migrate_spare_parts_stage2.py.
+    if not current_user.has_module_access('spare_parts_inventory_manage'):
+        abort(403)
+    organizations = _spare_orgs_for_user()
+    org_id = request.args.get('org_id', type=int)
+    if org_id and not current_user.can_access_org(org_id):
+        abort(403)
+    if not org_id and organizations:
+        org_id = organizations[0].id
+
+    warehouse = (SparePartWarehouse.query.filter_by(organization_id=org_id).first()
+                 if org_id else None)
+    inventory_rows = []
+    movements = []
+    if warehouse:
+        inventory_rows = (SparePartInventory.query
+                          .options(joinedload(SparePartInventory.sku)
+                                   .joinedload(SparePartSku.spare_part))
+                          .filter_by(warehouse_id=warehouse.id)
+                          .all())
+        inventory_rows.sort(key=lambda r: ((r.sku.spare_part.name if r.sku and r.sku.spare_part else ''),
+                                           (r.sku.label if r.sku else '')))
+        movements = (SparePartInventoryMovement.query
+                     .options(joinedload(SparePartInventoryMovement.sku)
+                              .joinedload(SparePartSku.spare_part),
+                              joinedload(SparePartInventoryMovement.creator))
+                     .filter_by(warehouse_id=warehouse.id)
+                     .order_by(SparePartInventoryMovement.id.desc())
+                     .limit(30)
+                     .all())
+    # SKU picker for the manual movement form: all active SKUs, labelled with
+    # their canonical part name.
+    sku_options = (SparePartSku.query
+                   .options(joinedload(SparePartSku.spare_part))
+                   .filter(db.or_(SparePartSku.is_active == True,  # noqa: E712
+                                  SparePartSku.is_active.is_(None)))
+                   .all())
+    sku_options.sort(key=lambda s: ((s.spare_part.name if s.spare_part else ''), s.label))
+    return render_template('spare_parts_inventory.html',
+                           organizations=organizations,
+                           org_id=org_id,
+                           warehouse=warehouse,
+                           inventory_rows=inventory_rows,
+                           movements=movements,
+                           sku_options=sku_options,
+                           movement_labels=INV_MOVEMENT_LABELS,
+                           lang=_spare_lang())
+
+
+@spare_parts_bp.route('/inventory/warehouse', methods=['POST'])
+@module_required('spare_parts')
+def inventory_warehouse_create():
+    if not current_user.has_module_access('spare_parts_inventory_manage'):
+        abort(403)
+    org_id = request.form.get('organization_id', type=int)
+    name = (request.form.get('name', '') or '').strip()
+    if not org_id or not current_user.can_access_org(org_id):
+        abort(403)
+    org = Organization.query.get_or_404(org_id)
+    if not name:
+        name = org.name
+    # [REASON]: the UNIQUE(organization_id) constraint is the real guard; this
+    # pre-check only exists to show a friendly message instead of a 500.
+    if SparePartWarehouse.query.filter_by(organization_id=org_id).first():
+        _spare_flash_errors(
+            [_spare_t('Бу ташкилот учун омбор аллақачон мавжуд',
+                      'Склад для этой организации уже существует')],
+            title_uz='Омбор яратилмади:', title_ru='Склад не создан:')
+        return redirect(url_for('spare_parts.inventory', org_id=org_id))
+    warehouse = SparePartWarehouse(organization_id=org_id, name=name[:200])
+    db.session.add(warehouse)
+    db.session.flush()
+    _audit_spare(
+        'spare_part_warehouse_created',
+        entity_type='spare_part_warehouse',
+        entity_id=warehouse.id,
+        entity_label=warehouse.name,
+        after={'id': warehouse.id, 'organization_id': org_id, 'name': warehouse.name},
+        description='Spare part warehouse created'
+    )
+    db.session.commit()
+    flash(_spare_t('Омбор яратилди', 'Склад создан'), 'success')
+    return redirect(url_for('spare_parts.inventory', org_id=org_id))
+
+
+@spare_parts_bp.route('/inventory/movement', methods=['POST'])
+@module_required('spare_parts')
+def inventory_movement_create():
+    """Manual receipt / adjustment entry."""
+    if not current_user.has_module_access('spare_parts_inventory_manage'):
+        abort(403)
+    warehouse_id = request.form.get('warehouse_id', type=int)
+    warehouse = SparePartWarehouse.query.get_or_404(warehouse_id)
+    if not current_user.can_access_org(warehouse.organization_id):
+        abort(403)
+    movement_type = (request.form.get('movement_type', '') or '').strip()
+    # Manual entry allows receipts and adjustments only; issues and write-offs
+    # come from the request issue workflow (Task 5), never typed by hand.
+    if movement_type not in ('receipt', 'adjustment'):
+        abort(400)
+    sku_id = request.form.get('sku_id', type=int)
+    sku = SparePartSku.query.get(sku_id) if sku_id else None
+    note = (request.form.get('note', '') or '').strip()
+    raw_qty = (request.form.get('quantity', '') or '').strip().replace(',', '.')
+
+    errors = []
+    if sku is None or sku.is_active == False:  # noqa: E712
+        errors.append(_spare_t('SKU танланг', 'Выберите SKU'))
+    quantity = None
+    try:
+        quantity = float(raw_qty)
+    except (TypeError, ValueError):
+        errors.append(_spare_t('Миқдор сон бўлиши керак', 'Количество должно быть числом'))
+    if quantity is not None:
+        if quantity == 0:
+            errors.append(_spare_t('Миқдор нолдан фарқли бўлиши керак',
+                                   'Количество не может быть нулём'))
+        elif movement_type == 'receipt' and quantity < 0:
+            errors.append(_spare_t('Кирим миқдори мусбат бўлиши керак',
+                                   'Количество прихода должно быть положительным'))
+    if errors:
+        _spare_flash_errors(errors, title_uz='Ҳаракат сақланмади:',
+                            title_ru='Движение не сохранено:')
+        return redirect(url_for('spare_parts.inventory',
+                                org_id=warehouse.organization_id))
+
+    movement = _apply_inventory_movement(
+        warehouse.id, sku.id, movement_type, quantity,
+        reference_type='manual', note=note, user_id=current_user.id)
+    _audit_spare(
+        'spare_part_inventory_movement_created',
+        entity_type='spare_part_inventory_movement',
+        entity_id=None,
+        entity_label='{} {} {}'.format(movement_type, quantity, sku.label),
+        after={'warehouse_id': warehouse.id, 'sku_id': sku.id,
+               'movement_type': movement_type, 'quantity': quantity,
+               'balance_after': movement.balance_after},
+        description='Manual inventory movement'
+    )
+    db.session.commit()
+    flash(_spare_t('Ҳаракат сақланди. Янги қолдиқ: {}',
+                   'Движение сохранено. Новый остаток: {}').format(movement.balance_after),
+          'success')
+    return redirect(url_for('spare_parts.inventory',
+                            org_id=warehouse.organization_id))
+
+
+# ─── SPARE-STAGE2: issue + write-off acts ─────────────────────────────────────
+
+def _acts_dir():
+    """Absolute path of the write-off act PDF folder (created on demand).
+
+    Sibling of the photo UPLOAD_FOLDER, same resolution rule: a plain path
+    relative to the app folder so non-Flask processes can find the files.
+    """
+    folder = os.path.join('instance', 'uploads', 'spare_parts_acts')
+    root = os.path.dirname(os.path.abspath(__file__))
+    folder = os.path.join(root, folder)
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def _generate_act_number(year):
+    """Next SPW-{year}-{00001} act number.
+
+    [REASON]: SPARE-STAGE2 — exact reuse of the MAX+1-inside-a-transaction
+    technique proven by work_orders._generate_wo_number: act_number is UNIQUE,
+    so a rare concurrent race raises IntegrityError on commit instead of
+    silently duplicating a number; acceptable for this low-concurrency app.
+    """
+    prefix = 'SPW-{}-'.format(year)
+    last = db.session.query(func.max(SparePartWriteOffAct.act_number)).filter(
+        SparePartWriteOffAct.act_number.like(prefix + '%')
+    ).scalar()
+    seq = 1
+    if last:
+        try:
+            seq = int(last.split('-')[-1]) + 1
+        except (ValueError, IndexError):
+            seq = 1
+    return '{}{:05d}'.format(prefix, seq)
+
+
+def _issue_context(spr):
+    """Data the detail page needs to offer the issue action.
+
+    Returns dict with: sku_items / no_sku_items, the organization's warehouse
+    (or None), and current stock per SKU item so the issuer sees what will be
+    deducted (and what would go negative) BEFORE confirming.
+    """
+    sku_items = [i for i in spr.items if i.sku_id]
+    no_sku_items = [i for i in spr.items if not i.sku_id]
+    warehouse = SparePartWarehouse.query.filter_by(
+        organization_id=spr.organization_id).first()
+    stock = {}
+    if warehouse and sku_items:
+        rows = (SparePartInventory.query
+                .filter(SparePartInventory.warehouse_id == warehouse.id,
+                        SparePartInventory.sku_id.in_([i.sku_id for i in sku_items]))
+                .all())
+        stock = {r.sku_id: r.quantity for r in rows}
+    return {
+        'sku_items': sku_items,
+        'no_sku_items': no_sku_items,
+        'warehouse': warehouse,
+        'stock': stock,
+    }
+
+
+@spare_parts_bp.route('/<int:rid>/issue', methods=['POST'])
+@module_required('spare_parts')
+def issue_request(rid):
+    """approved -> issued: deduct SKU stock, create the write-off act + PDF.
+
+    All-or-nothing: every deduction, the act row, its item snapshots and the
+    PDF render happen in ONE transaction — any failure rolls the whole issue
+    back and the request stays 'approved'.
+    """
+    # [REASON]: SPARE-STAGE2 — separate permission from spare_parts_approve,
+    # matching the real-world split between "approve the purchase" and
+    # "physically hand it over from the warehouse".
+    if not current_user.has_module_access('spare_parts_issue'):
+        abort(403)
+    spr = SparePartRequest.query.get_or_404(rid)
+    _spare_check_request_access(spr)
+    # [REASON]: 'issued' is reachable ONLY from 'approved' — never from any
+    # other status, and never twice (no un-issue; acts are permanent).
+    if spr.status != 'approved':
+        abort(400)
+
+    ctx = _issue_context(spr)
+    errors = []
+    if ctx['sku_items'] and ctx['warehouse'] is None:
+        errors.append(_spare_t(
+            'Ташкилотда эҳтиёт қисмлар омбори йўқ. Аввал «Омбор» экранида омбор яратинг.',
+            'У организации нет склада запчастей. Сначала создайте склад на экране «Склад».'))
+    # [REASON]: SPARE-STAGE2 — untracked (no-SKU) items must be issued
+    # CONSCIOUSLY: the form shows which items skip stock deduction and the
+    # server independently requires the explicit confirmation flag, so the
+    # rule holds even if the client-side UI is bypassed.
+    if ctx['no_sku_items'] and request.form.get('confirm_no_sku') != '1':
+        errors.append(_spare_t(
+            'SKUсиз позициялар омбордан ҳисобдан чиқарилмайди — беришдан олдин буни тасдиқлаш шарт',
+            'Позиции без SKU не будут списаны со склада — перед выдачей это нужно явно подтвердить'))
+    if errors:
+        _spare_flash_errors(errors, title_uz='Бериб бўлмади:',
+                            title_ru='Выдача не выполнена:')
+        return redirect(url_for('spare_parts.detail', rid=rid))
+
+    warehouse = ctx['warehouse']
+    act_pdf_full_path = None
+    try:
+        # 1. Inventory movements for every SKU item (negative issue quantities).
+        for item in ctx['sku_items']:
+            _apply_inventory_movement(
+                warehouse.id, item.sku_id, 'issue', -float(item.quantity or 0),
+                reference_type='request_item', reference_id=item.id,
+                note='Request #{}'.format(spr.id), user_id=current_user.id)
+
+        # 2. The act with MAX+1 numbering and snapshotted items.
+        issued_date = date.today()
+        act = SparePartWriteOffAct(
+            act_number=_generate_act_number(issued_date.year),
+            request_id=spr.id,
+            organization_id=spr.organization_id,
+            warehouse_id=warehouse.id if warehouse else None,
+            issued_date=issued_date,
+            issued_by=current_user.id,
+        )
+        db.session.add(act)
+        db.session.flush()
+        for item in spr.items:
+            total = None
+            if item.price is not None:
+                total = round(float(item.price) * float(item.quantity or 0), 2)
+            db.session.add(SparePartWriteOffActItem(
+                act_id=act.id,
+                request_item_id=item.id,
+                name=item.name,
+                sku_label=(item.sku.label if item.sku else ''),
+                quantity=item.quantity,
+                unit=item.unit or 'dona',
+                price=item.price,
+                total=total,
+            ))
+        db.session.flush()
+
+        # 3. Status transition + history + audit.
+        old_status = spr.status
+        spr.status = 'issued'
+        _add_status_history(spr.id, old_status, 'issued',
+                            comment='Act {}'.format(act.act_number),
+                            changed_by=current_user.id)
+        _audit_spare(
+            'spare_part_request_status_changed',
+            entity_type='spare_part_request',
+            entity_id=spr.id,
+            entity_label='Request #{}'.format(spr.id),
+            changes={'status': {'before': old_status, 'after': 'issued'},
+                     'act_number': {'before': None, 'after': act.act_number}},
+            description='Request issued; write-off act {} created'.format(act.act_number)
+        )
+
+        # 4. Render the PDF inside the same transaction: a request must never
+        # end up 'issued' without its printable act.
+        from spare_parts_pdf import generate_write_off_act_pdf
+        fname = '{}_{}.pdf'.format(act.id, act.act_number)
+        act_pdf_full_path = os.path.join(_acts_dir(), fname)
+        generate_write_off_act_pdf(act, act_pdf_full_path, lang=_spare_lang())
+        act.pdf_path = fname
+
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        # Remove the orphan file if the PDF was written but the commit failed.
+        if act_pdf_full_path and os.path.exists(act_pdf_full_path):
+            try:
+                os.remove(act_pdf_full_path)
+            except OSError:
+                pass
+        current_app.logger.exception('Issue action failed for request %s', rid)
+        _spare_flash_errors(
+            [_spare_t('Ички хатолик — ҳеч нарса ўзгартирилмади',
+                      'Внутренняя ошибка — ничего не изменено')],
+            title_uz='Бериб бўлмади:', title_ru='Выдача не выполнена:')
+        return redirect(url_for('spare_parts.detail', rid=rid))
+
+    flash(_spare_t('Сўров берилди. Далолатнома: {}',
+                   'Заявка выдана. Акт: {}').format(act.act_number), 'success')
+    # [REASON]: deliberately NO bot003 notification here — the bot's event
+    # allowlist (out of this task's scope fence) has no issued event type, so
+    # a call would only produce "Unknown event_type" log noise on every issue.
+    return redirect(url_for('spare_parts.act_detail', act_id=act.id))
+
+
+@spare_parts_bp.route('/acts/<int:act_id>')
+@module_required('spare_parts')
+def act_detail(act_id):
+    act = SparePartWriteOffAct.query.get_or_404(act_id)
+    # Same org-scoped access rule as the request it belongs to.
+    spr = act.request
+    if spr is None:
+        abort(404)
+    _spare_check_request_access(spr)
+    return render_template('spare_part_act.html',
+                           act=act,
+                           req=spr,
+                           lang=_spare_lang())
+
+
+@spare_parts_bp.route('/acts/<int:act_id>/pdf')
+@module_required('spare_parts')
+def act_pdf(act_id):
+    act = SparePartWriteOffAct.query.get_or_404(act_id)
+    spr = act.request
+    if spr is None:
+        abort(404)
+    # [REASON]: act PDFs are NOT served as raw static files; the same
+    # org-scoped access check as the act/request detail applies to downloads.
+    _spare_check_request_access(spr)
+    fname = os.path.basename(act.pdf_path or '')
+    if not fname:
+        abort(404)
+    return send_from_directory(_acts_dir(), fname, mimetype='application/pdf',
+                               download_name='{}.pdf'.format(act.act_number))
 
 
 # ─── Catalog ──────────────────────────────────────────────────────────────────

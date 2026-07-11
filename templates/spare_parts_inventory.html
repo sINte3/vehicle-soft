@@ -1,0 +1,212 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Запчасти — склад' if is_ru else 'Эҳтиёт қисмлар — омбор' }}{% endblock %}
+{% block content %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Склад запчастей' if is_ru else 'Эҳтиёт қисмлар омбори' }}</div>
+    <div class="vs-hero-sub">{{ 'Остатки по SKU и журнал движений. Один склад на организацию. Учёт ведётся только по позициям с выбранным SKU.' if is_ru else 'SKU бўйича қолдиқлар ва ҳаракатлар журнали. Ҳар бир ташкилотга битта омбор. Ҳисоб фақат SKU танланган позициялар бўйича юритилади.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('spare_parts.index') }}" class="vs-btn">{{ '← Заявки' if is_ru else '← Сўровлар' }}</a>
+  </div>
+</div>
+
+<div class="vs-alert is-info vs-mb">{{ 'Склады начинают с нулевых остатков — вводите приходы вручную. Выдача и списание создаются автоматически при выдаче утверждённой заявки.' if is_ru else 'Омборлар нол қолдиқдан бошланади — киримларни қўлда киритинг. Бериш ва ҳисобдан чиқариш тасдиқланган сўров берилганда автоматик яратилади.' }}</div>
+
+<div class="vs-card vs-mb">
+    <div class="vs-card-body">
+        <form method="get" action="{{ url_for('spare_parts.inventory') }}" class="vs-form-row">
+            <div class="vs-field" style="min-width:260px; flex:1;">
+                <label class="vs-label">{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
+                <select name="org_id" onchange="this.form.submit()" class="vs-select">
+                    {% for org in organizations %}
+                    <option value="{{ org.id }}" {% if org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="vs-field" style="flex:none;">
+                <label class="vs-label">&nbsp;</label>
+                <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if not warehouse %}
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title">{{ 'Склад ещё не создан' if is_ru else 'Омбор ҳали яратилмаган' }}</div>
+    </div>
+    <div class="vs-card-body">
+        <div class="vs-soft vs-mb-sm" style="font-size:12.5px;">{{ 'У этой организации пока нет склада запчастей. Создайте его, чтобы вести остатки и выдавать заявки со списанием со склада.' if is_ru else 'Бу ташкилотда ҳали эҳтиёт қисмлар омбори йўқ. Қолдиқларни юритиш ва сўровларни омбордан бериш учун омбор яратинг.' }}</div>
+        <form method="post" action="{{ url_for('spare_parts.inventory_warehouse_create') }}" class="vs-form-row">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="organization_id" value="{{ org_id }}">
+            <div class="vs-field" style="flex:1; min-width:240px;">
+                <label class="vs-label">{{ 'Название склада' if is_ru else 'Омбор номи' }}</label>
+                {% set current_org = organizations|selectattr('id', 'equalto', org_id)|first %}
+                <input type="text" name="name" class="vs-input" value="{{ current_org.name if current_org else '' }}">
+            </div>
+            <div class="vs-field" style="flex:none;">
+                <label class="vs-label">&nbsp;</label>
+                <button type="submit" class="vs-btn vs-btn-primary">+ {{ 'Создать склад' if is_ru else 'Омбор яратиш' }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% else %}
+
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title">{{ 'Приход / корректировка' if is_ru else 'Кирим / тузатиш' }} — {{ warehouse.name }}</div>
+    </div>
+    <div class="vs-card-body">
+        <form method="post" action="{{ url_for('spare_parts.inventory_movement_create') }}" class="vs-form-row" onsubmit="return validateMovement()">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="warehouse_id" value="{{ warehouse.id }}">
+            <div class="vs-field" style="flex:2; min-width:260px;">
+                <label class="vs-label">SKU</label>
+                <select name="sku_id" id="movSku" class="vs-select" required>
+                    <option value="">{{ '— выберите SKU —' if is_ru else '— SKU танланг —' }}</option>
+                    {% for sku in sku_options %}
+                    <option value="{{ sku.id }}">{{ sku.spare_part.name if sku.spare_part else '?' }} — {{ sku.label }}</option>
+                    {% endfor %}
+                </select>
+                <div class="vs-help">{{ 'Нет нужного SKU? Добавьте его на экране «SKU — варианты поставки».' if is_ru else 'Керакли SKU йўқми? Уни «SKU — таъминот вариантлари» экранида қўшинг.' }}</div>
+            </div>
+            <div class="vs-field" style="width:180px;">
+                <label class="vs-label">{{ 'Тип движения' if is_ru else 'Ҳаракат тури' }}</label>
+                <select name="movement_type" id="movType" class="vs-select">
+                    <option value="receipt">{{ movement_labels['receipt'][lang] }}</option>
+                    <option value="adjustment">{{ movement_labels['adjustment'][lang] }}</option>
+                </select>
+                <div class="vs-help">{{ 'Корректировка может быть отрицательной.' if is_ru else 'Тузатиш манфий бўлиши мумкин.' }}</div>
+            </div>
+            <div class="vs-field" style="width:140px;">
+                <label class="vs-label">{{ 'Количество' if is_ru else 'Миқдор' }}</label>
+                <input type="number" name="quantity" id="movQty" class="vs-input" step="0.001" required>
+            </div>
+            <div class="vs-field" style="flex:1; min-width:180px;">
+                <label class="vs-label">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+                <input type="text" name="note" class="vs-input" placeholder="{{ 'накладная, причина корректировки...' if is_ru else 'юк хати, тузатиш сабаби...' }}">
+            </div>
+            <div class="vs-field" style="flex:none;">
+                <label class="vs-label">&nbsp;</label>
+                <button type="submit" class="vs-btn vs-btn-primary">💾 {{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="vs-table-wrap vs-mb">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ 'Текущие остатки' if is_ru else 'Жорий қолдиқлар' }} — {{ warehouse.name }}</span>
+        <span class="vs-soft" style="font-size:12px;">{{ inventory_rows|length }}</span>
+    </div>
+    {% if inventory_rows %}
+    <div class="vs-table-scroll">
+    <table class="vs-table">
+        <thead>
+            <tr>
+                <th style="width:40px;">№</th>
+                <th>{{ 'Запчасть' if is_ru else 'Эҳтиёт қисм' }}</th>
+                <th>SKU</th>
+                <th class="right">{{ 'Остаток' if is_ru else 'Қолдиқ' }}</th>
+                <th>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
+                <th>{{ 'Обновлено' if is_ru else 'Янгиланган' }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in inventory_rows %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td style="font-weight:600;">{{ row.sku.spare_part.name if row.sku and row.sku.spare_part else '—' }}</td>
+                <td class="text-sm vs-muted">{{ row.sku.label if row.sku else '—' }}</td>
+                <td class="right" style="font-weight:700; color:{{ 'var(--danger)' if row.quantity < 0 else 'var(--text)' }};">{{ row.quantity }}</td>
+                <td>{{ row.unit or 'dona' }}</td>
+                <td class="text-sm vs-muted">{{ row.updated_at.strftime('%d.%m.%Y %H:%M') if row.updated_at else '—' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="vs-empty">
+        <div class="vs-empty-ico">📦</div>
+        <div class="vs-empty-title">{{ 'Остатков пока нет' if is_ru else 'Ҳозирча қолдиқ йўқ' }}</div>
+        <div class="vs-empty-sub">{{ 'Строки появляются после первого прихода или корректировки.' if is_ru else 'Қаторлар биринчи кирим ёки тузатишдан кейин пайдо бўлади.' }}</div>
+    </div>
+    {% endif %}
+</div>
+
+<div class="vs-table-wrap">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ 'Последние движения' if is_ru else 'Охирги ҳаракатлар' }}</span>
+        <span class="vs-soft" style="font-size:12px;">{{ movements|length }}</span>
+    </div>
+    {% if movements %}
+    <div class="vs-table-scroll">
+    <table class="vs-table">
+        <thead>
+            <tr>
+                <th>{{ 'Дата' if is_ru else 'Сана' }}</th>
+                <th>{{ 'Запчасть / SKU' if is_ru else 'Эҳтиёт қисм / SKU' }}</th>
+                <th>{{ 'Тип' if is_ru else 'Тури' }}</th>
+                <th class="right">{{ 'Кол-во' if is_ru else 'Миқдор' }}</th>
+                <th class="right">{{ 'Остаток после' if is_ru else 'Кейинги қолдиқ' }}</th>
+                <th>{{ 'Основание' if is_ru else 'Асос' }}</th>
+                <th>{{ 'Кто' if is_ru else 'Ким' }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in movements %}
+            <tr>
+                <td class="text-sm vs-muted">{{ m.created_at.strftime('%d.%m.%Y %H:%M') if m.created_at else '—' }}</td>
+                <td>
+                    <span style="font-weight:600;">{{ m.sku.spare_part.name if m.sku and m.sku.spare_part else '—' }}</span>
+                    <div class="vs-soft" style="font-size:11px;">{{ m.sku.label if m.sku else '—' }}</div>
+                </td>
+                <td>{{ movement_labels[m.movement_type][lang] if m.movement_type in movement_labels else m.movement_type }}</td>
+                <td class="right" style="font-weight:600; color:{{ 'var(--accent)' if m.quantity > 0 else 'var(--danger)' }};">{{ '+' if m.quantity > 0 }}{{ m.quantity }}</td>
+                <td class="right">{{ m.balance_after }}</td>
+                <td class="text-sm vs-muted">
+                    {% if m.reference_type == 'request_item' and m.reference_id %}
+                    {{ 'позиция заявки' if is_ru else 'сўров позицияси' }} #{{ m.reference_id }}
+                    {% else %}{{ m.note or ('вручную' if is_ru else 'қўлда') }}{% endif %}
+                </td>
+                <td class="text-sm vs-muted">{{ m.creator.username if m.creator else '—' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="vs-empty">
+        <div class="vs-empty-ico">📄</div>
+        <div class="vs-empty-title">{{ 'Движений пока нет' if is_ru else 'Ҳозирча ҳаракат йўқ' }}</div>
+        <div class="vs-empty-sub">{{ 'Здесь появится журнал приходов, корректировок и выдач.' if is_ru else 'Бу ерда кирим, тузатиш ва беришлар журнали пайдо бўлади.' }}</div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+const INV_TEXT = {
+    needSku: {{ ('Выберите SKU.' if is_ru else 'SKU танланг.')|tojson }},
+    needQty: {{ ('Количество должно быть числом, отличным от нуля.' if is_ru else 'Миқдор нолдан фарқли сон бўлиши керак.')|tojson }},
+    receiptPositive: {{ ('Количество прихода должно быть положительным.' if is_ru else 'Кирим миқдори мусбат бўлиши керак.')|tojson }}
+};
+function validateMovement() {
+    const sku = document.getElementById('movSku').value;
+    const type = document.getElementById('movType').value;
+    const qty = parseFloat((document.getElementById('movQty').value || '').replace(',', '.'));
+    if (!sku) { alert(INV_TEXT.needSku); return false; }
+    if (!Number.isFinite(qty) || qty === 0) { alert(INV_TEXT.needQty); return false; }
+    if (type === 'receipt' && qty < 0) { alert(INV_TEXT.receiptPositive); return false; }
+    return true;
+}
+</script>
+{% endblock %}

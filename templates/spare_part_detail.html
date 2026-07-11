@@ -15,11 +15,16 @@
 .sp-upload-size { font-size:10px; color:var(--text2); }
 .sp-upload-remove { flex:none; border:none; background:none; color:var(--danger); cursor:pointer; font-size:12px; padding:2px 4px; }
 .sp-upload-msg { font-size:10.5px; color:var(--danger); margin-top:4px; display:none; }
+/* SPARE-STAGE2: reviewer-facing warning lines (rules 1-2 + 3/4/6), same
+   severity styling as the request form's .sp-repeat boxes. */
+.sp-warn { margin-top:4px; padding:6px 8px; border-radius:6px; font-size:12px; line-height:1.4; }
+.sp-warn.is-red { background:var(--danger-light); color:var(--danger); border:1px solid var(--danger); }
+.sp-warn.is-yellow { background:var(--warn-light); color:var(--warn); border:1px solid var(--warn); }
 </style>
 
 {% set eq_label = req.equipment.name ~ ((' — ' ~ req.equipment.plate) if req.equipment and req.equipment.plate else '') if req.equipment else '—' %}
 {# SPARE-STAGE1: .get() with fallback — status now also includes returned_for_revision. #}
-{% set status_alert_kind = {'draft': 'is-warning', 'submitted': 'is-info', 'returned_for_revision': 'is-warning', 'approved': 'is-success', 'rejected': 'is-danger'}.get(req.status, 'is-info') %}
+{% set status_alert_kind = {'draft': 'is-warning', 'submitted': 'is-info', 'returned_for_revision': 'is-warning', 'approved': 'is-success', 'rejected': 'is-danger', 'issued': 'is-success'}.get(req.status, 'is-info') %}
 
 <div class="vs-hero vs-mb">
   <div>
@@ -42,6 +47,8 @@
 <div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Заявка утверждена.' if is_ru else 'Сўров тасдиқланган.' }}</div>
 {% elif req.status == 'rejected' %}
 <div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Заявка отклонена. Смотрите комментарий рассмотрения, если он указан.' if is_ru else 'Сўров рад этилган. Агар изоҳ берилган бўлса, кўриб чиқиш изоҳини кўринг.' }}</div>
+{% elif req.status == 'issued' %}
+<div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Заявка выдана со склада. Акт списания сформирован — ссылка ниже.' if is_ru else 'Сўров омбордан берилган. Ҳисобдан чиқариш далолатномаси шакллантирилган — ҳавола қуйида.' }}</div>
 {% endif %}
 
 <div class="vs-stat-grid vs-mb">
@@ -111,6 +118,10 @@
                     {% if part and part.status == 'pending_review' %}
                     <div><span class="vs-badge vs-badge-warning vs-badge-sm">{{ 'каталог: на проверке' if is_ru else 'каталог: текширувда' }}</span></div>
                     {% endif %}
+                    {# SPARE-STAGE2: chosen SKU (brand / article / supplier) #}
+                    {% if item.sku %}
+                    <div class="vs-soft" style="font-size:11px; font-weight:400;">SKU: {{ item.sku.label }}</div>
+                    {% endif %}
                 </td>
                 <td class="text-sm vs-muted">
                     {% if part and part.category_ref %}{{ part.category_ref.name_ru if is_ru else part.category_ref.name_uz }}{% else %}—{% endif %}
@@ -163,6 +174,122 @@
     </div>
 </div>
 
+{# ─── SPARE-STAGE2: warn-only rules shown to the reviewer at approval time ── #}
+{% if item_warnings %}
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title">⚠ {{ 'Предупреждения по позициям' if is_ru else 'Позициялар бўйича огоҳлантиришлар' }}</div>
+    </div>
+    <div class="vs-card-body">
+        <div class="vs-soft vs-mb-sm" style="font-size:12.5px;">{{ 'Предупреждения не блокируют решение — проверьте их перед утверждением.' if is_ru else 'Огоҳлантиришлар қарорни блокламайди — тасдиқлашдан олдин уларни текширинг.' }}</div>
+        {% for item in req.items %}
+        {% if item.id in item_warnings %}
+        {% set w = item_warnings[item.id] %}
+        <div style="margin-bottom:10px;">
+            <div style="font-weight:600; font-size:13px;">{{ loop.index }}. {{ item.name }}</div>
+            {% if w.base.severity %}
+            <div class="sp-warn {{ 'is-red' if w.base.severity == 'red' else 'is-yellow' }}">⚠ {{ 'Эта деталь уже запрашивалась для этой техники' if is_ru else 'Бу эҳтиёт қисм ушбу техника учун сўралган эди' }} ({{ w.base.days_since }} {{ 'дн. назад' if is_ru else 'кун олдин' }}{% if w.base.history %}, {{ 'заявка' if is_ru else 'сўров' }} #{{ w.base.history[0].request_id }}{% endif %})</div>
+            {% endif %}
+            {% for ew in w.extra %}
+            <div class="sp-warn is-yellow">⚠ {{ ew.message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{# ─── SPARE-STAGE2: write-off acts of this request ──────────────────── #}
+{% if acts %}
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title">🧾 {{ 'Акты списания' if is_ru else 'Ҳисобдан чиқариш далолатномалари' }}</div>
+    </div>
+    <div class="vs-card-body">
+        {% for act in acts %}
+        <div class="vs-row" style="gap:10px; align-items:center; flex-wrap:wrap;">
+            <span style="font-weight:700;">{{ act.act_number }}</span>
+            <span class="vs-soft" style="font-size:12px;">{{ act.issued_date.strftime('%d.%m.%Y') }}{% if act.issuer %} · {{ act.issuer.full_name or act.issuer.username }}{% endif %}</span>
+            <a href="{{ url_for('spare_parts.act_detail', act_id=act.id) }}" class="vs-btn vs-btn-sm">{{ 'Открыть' if is_ru else 'Очиш' }}</a>
+            <a href="{{ url_for('spare_parts.act_pdf', act_id=act.id) }}" target="_blank" class="vs-btn vs-btn-sm">⬇ PDF</a>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{# ─── SPARE-STAGE2: issue action (approved -> issued, spare_parts_issue) ── #}
+{% if can_issue %}
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title">📦 {{ 'Выдача со склада' if is_ru else 'Омбордан бериш' }}</div>
+    </div>
+    <div class="vs-card-body">
+        <div class="vs-soft vs-mb-sm" style="font-size:12.5px;">{{ 'Выдача спишет позиции с SKU со склада организации, создаст акт списания (PDF) и переведёт заявку в статус «Выдано». Действие необратимо.' if is_ru else 'Бериш SKU танланган позицияларни ташкилот омборидан ҳисобдан чиқаради, далолатнома (PDF) яратади ва сўровни «Берилган» ҳолатига ўтказади. Амал қайтарилмайди.' }}</div>
+
+        {% if issue_ctx.sku_items and not issue_ctx.warehouse %}
+        <div class="vs-alert is-danger vs-mb">{{ 'У организации нет склада запчастей — сначала создайте его на экране «Склад».' if is_ru else 'Ташкилотда эҳтиёт қисмлар омбори йўқ — аввал уни «Омбор» экранида яратинг.' }}
+            {% if current_user.has_module_access('spare_parts_inventory_manage') %}
+            <div style="margin-top:6px;"><a href="{{ url_for('spare_parts.inventory', org_id=req.organization_id) }}" class="vs-btn vs-btn-sm">📦 {{ 'Открыть склад' if is_ru else 'Омборни очиш' }}</a></div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if issue_ctx.sku_items %}
+        <div class="vs-label vs-mb-sm">{{ 'Будут списаны со склада' if is_ru else 'Омбордан ҳисобдан чиқарилади' }}:</div>
+        <div class="vs-table-scroll vs-mb">
+        <table class="vs-table">
+            <thead><tr>
+                <th>{{ 'Позиция' if is_ru else 'Позиция' }}</th>
+                <th>SKU</th>
+                <th class="right">{{ 'Кол-во' if is_ru else 'Миқдор' }}</th>
+                <th class="right">{{ 'Остаток сейчас' if is_ru else 'Ҳозирги қолдиқ' }}</th>
+            </tr></thead>
+            <tbody>
+                {% for item in issue_ctx.sku_items %}
+                {% set stock_now = issue_ctx.stock.get(item.sku_id) %}
+                <tr>
+                    <td style="font-weight:600;">{{ item.name }}</td>
+                    <td class="text-sm vs-muted">{{ item.sku.label if item.sku else '—' }}</td>
+                    <td class="right">{{ item.quantity }} {{ item.unit or '' }}</td>
+                    <td class="right" style="color:{{ 'var(--danger)' if (stock_now is none or stock_now < item.quantity) else 'var(--text)' }};">
+                        {{ stock_now if stock_now is not none else 0 }}
+                        {% if stock_now is none or stock_now < item.quantity %}
+                        <div class="vs-soft" style="font-size:10.5px;">{{ 'уйдёт в минус' if is_ru else 'минусга тушади' }}</div>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% endif %}
+
+        <form method="post" action="{{ url_for('spare_parts.issue_request', rid=req.id) }}" onsubmit="return confirmIssue()">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% if issue_ctx.no_sku_items %}
+            {# [REASON]: SPARE-STAGE2 — untracked items are issued only with an
+               explicit confirmation; the checkbox mirrors the server-side gate. #}
+            <div class="vs-alert is-warning vs-mb">
+                <strong>{{ 'Позиции без SKU — не будут списаны со склада:' if is_ru else 'SKUсиз позициялар — омбордан ҳисобдан чиқарилмайди:' }}</strong>
+                <ul style="margin:6px 0 8px 18px; padding:0;">
+                    {% for item in issue_ctx.no_sku_items %}
+                    <li>{{ item.name }} — {{ item.quantity }} {{ item.unit or '' }}</li>
+                    {% endfor %}
+                </ul>
+                <label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer;">
+                    <input type="checkbox" name="confirm_no_sku" value="1" id="confirmNoSku" style="margin-top:3px;">
+                    <span>{{ 'Подтверждаю выдачу этих позиций без списания со складского учёта' if is_ru else 'Ушбу позицияларни омбор ҳисобидан чиқармасдан беришни тасдиқлайман' }}</span>
+                </label>
+            </div>
+            {% endif %}
+            <button type="submit" class="vs-btn vs-btn-primary" {% if issue_ctx.sku_items and not issue_ctx.warehouse %}disabled{% endif %}>📦 {{ 'Выдать и сформировать акт' if is_ru else 'Бериш ва далолатнома яратиш' }}</button>
+        </form>
+    </div>
+</div>
+{% endif %}
+
 {# SPARE-STAGE1: resubmit is also allowed from returned_for_revision. #}
 {% if req.status in ('draft', 'returned_for_revision') and current_user.id == req.created_by %}
 <div class="vs-row vs-mb">
@@ -198,13 +325,25 @@
                     <td>{{ loop.index }}</td>
                     <td style="font-weight:600;">{{ item.name }}
                         <div><span class="vs-badge vs-badge-sm" style="color:{{ price_status_colors.get(item.price_status, 'var(--text2)') }};">{{ price_status_labels[item.price_status][lang] if item.price_status in price_status_labels else item.price_status }}</span></div>
+                        {# SPARE-STAGE2: chosen SKU context for the price reviewer #}
+                        {% if item.sku %}
+                        <div class="vs-soft" style="font-size:11px; font-weight:400;">SKU: {{ item.sku.label }}</div>
+                        {% endif %}
                     </td>
                     <td>
+                        {# SPARE-STAGE2: when no price is set yet, the SKU's last
+                           confirmed price pre-fills the input as a SUGGESTION —
+                           saving and confirming still go through the normal
+                           price audit workflow unchanged. #}
+                        {% set suggested = item.sku.last_price if (item.price is none and item.sku and item.sku.last_price is not none) else none %}
                         <form method="post" action="{{ url_for('spare_parts.item_price_set', rid=req.id, item_id=item.id) }}" class="vs-row" style="gap:6px;">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <input type="number" name="price" class="vs-input" step="0.01" min="0" value="{{ item.price if item.price is not none else '' }}" style="width:130px;">
+                            <input type="number" name="price" class="vs-input" step="0.01" min="0" value="{{ item.price if item.price is not none else (suggested if suggested is not none else '') }}" style="width:130px;"{% if suggested is not none %} title="{{ 'Подсказка из SKU (последняя подтверждённая цена) — сохраните и подтвердите' if is_ru else 'SKU кўрсатмаси (охирги тасдиқланган нарх) — сақланг ва тасдиқланг' }}"{% endif %}>
                             <button type="submit" class="vs-btn vs-btn-sm">💾</button>
                         </form>
+                        {% if suggested is not none %}
+                        <div class="vs-soft" style="font-size:10.5px;">{{ 'подсказка из SKU' if is_ru else 'SKU кўрсатмаси' }}</div>
+                        {% endif %}
                     </td>
                     <td class="text-sm vs-muted price-hint" data-part-id="{{ item.spare_part_id or '' }}">…</td>
                     <td>
@@ -286,6 +425,17 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 });
+
+/* SPARE-STAGE2: issue confirmation — the no-SKU checkbox must be ticked
+   before the browser confirm; the server enforces the same rule again. */
+function confirmIssue() {
+    const cb = document.getElementById('confirmNoSku');
+    if (cb && !cb.checked) {
+        alert({{ ('Отметьте подтверждение по позициям без SKU.' if is_ru else 'SKUсиз позициялар бўйича тасдиқни белгиланг.')|tojson }});
+        return false;
+    }
+    return confirm({{ ('Выдать заявку и сформировать акт списания? Действие необратимо.' if is_ru else 'Сўровни бериб, далолатнома яратилсинми? Амал қайтарилмайди.')|tojson }});
+}
 
 function setCommentAndConfirm(form, approve) {
     form.querySelector('[name=review_comment]').value = document.getElementById('reviewComment').value;

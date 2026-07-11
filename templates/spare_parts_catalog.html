@@ -9,6 +9,8 @@
     <div class="vs-hero-sub">{{ 'Справочник часто используемых запчастей для быстрого заполнения заявок.' if is_ru else 'Сўровларни тез тўлдириш учун кўп ишлатиладиган запчастлар маълумотномаси.' }}</div>
   </div>
   <div class="vs-row-end">
+    {# SPARE-STAGE2: SKU management lives under the same catalog permission. #}
+    <a href="{{ url_for('spare_parts.skus') }}" class="vs-btn">🏷️ {{ 'SKU — варианты поставки' if is_ru else 'SKU — таъминот вариантлари' }}</a>
     <a href="{{ url_for('spare_parts.index') }}" class="vs-btn">{{ '← Заявки' if is_ru else '← Сўровлар' }}</a>
   </div>
 </div>
@@ -148,7 +150,7 @@
         <tbody>
             {% for part in parts %}
             {% set cat_label = (part.category_ref.name_ru if is_ru else part.category_ref.name_uz) if part.category_ref else (part.category or '—') %}
-            <tr class="catalog-row" data-search="{{ (part.name ~ ' ' ~ (part.part_number or '') ~ ' ' ~ (part.unit or '') ~ ' ' ~ cat_label)|lower }}">
+            <tr class="catalog-row" data-part-id="{{ part.id }}" data-search="{{ (part.name ~ ' ' ~ (part.part_number or '') ~ ' ' ~ (part.unit or '') ~ ' ' ~ cat_label)|lower }}">
                 <td>{{ loop.index }}</td>
                 <td style="font-weight:600;">{{ part.name }}</td>
                 <td class="text-sm vs-muted">{{ part.part_number or '—' }}</td>
@@ -322,15 +324,48 @@ function validateCatalogBeforeSubmit() {
     }
     return true;
 }
-function filterCatalog() {
+/* SPARE-STAGE2: the instant substring filter is kept as-is; a debounced
+   server-side difflib search (typo-tolerant) additionally un-hides rows whose
+   part id comes back from /api/catalog-search, so a misspelled query still
+   finds the intended part. */
+const CATALOG_SEARCH_URL = {{ url_for('spare_parts.api_catalog_search')|tojson }};
+let fuzzyIds = new Set();
+let fuzzyTimer = null;
+let fuzzySeq = 0;
+
+function applyCatalogFilter() {
     const q = (document.getElementById('catalogSearch').value || '').toLowerCase().trim();
     let visible = 0;
     document.querySelectorAll('.catalog-row').forEach(row => {
-        const show = !q || (row.dataset.search || '').includes(q);
+        const bySubstr = !q || (row.dataset.search || '').includes(q);
+        const byFuzzy = q && fuzzyIds.has(row.dataset.partId || '');
+        const show = bySubstr || byFuzzy;
         row.style.display = show ? '' : 'none';
         if (show) visible += 1;
     });
     document.getElementById('catalogCounter').textContent = CATALOG_TEXT.shown + ': ' + visible;
+}
+
+function filterCatalog() {
+    const q = (document.getElementById('catalogSearch').value || '').trim();
+    applyCatalogFilter();
+    if (fuzzyTimer) clearTimeout(fuzzyTimer);
+    fuzzySeq += 1;
+    if (q.length < 3) {
+        if (fuzzyIds.size) { fuzzyIds = new Set(); applyCatalogFilter(); }
+        return;
+    }
+    const seq = fuzzySeq;
+    fuzzyTimer = setTimeout(() => {
+        fetch(CATALOG_SEARCH_URL + '?q=' + encodeURIComponent(q), {credentials: 'same-origin'})
+            .then(r => r.json())
+            .then(list => {
+                if (seq !== fuzzySeq) return;   // a newer keystroke won
+                fuzzyIds = new Set((Array.isArray(list) ? list : []).map(p => String(p.id)));
+                applyCatalogFilter();
+            })
+            .catch(() => {});
+    }, 250);
 }
 document.addEventListener('DOMContentLoaded', filterCatalog);
 </script>

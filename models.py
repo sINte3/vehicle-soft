@@ -750,6 +750,199 @@ class SparePart(db.Model):
     source_item  = db.relationship('SparePartRequestItem', foreign_keys=[source_request_item_id])
 
 
+# [REASON]: SPARE-STAGE2 — the fuzzy catalog search fetches the full active
+# candidate list on every keystroke-triggered request; this index keeps that
+# fetch cheap as the catalog grows. Existing DBs get it via
+# migrate_spare_parts_stage2.py.
+db.Index('idx_spare_parts_status_active', SparePart.status, SparePart.is_active)
+
+
+class SparePartSku(db.Model):
+    """SPARE-STAGE2: purchasable variant (brand/article/supplier) of a canonical part.
+
+    A SKU always belongs to exactly one canonical spare_parts row. last_price /
+    avg_price are informational only and updated ONE WAY by the price-confirm
+    workflow (see spare_parts._update_sku_price_stats): SparePartPriceAudit +
+    price_status remain the single source of truth for what a request pays.
+    Created by migrate_spare_parts_stage2.py.
+    """
+    __tablename__ = 'spare_part_skus'
+    id             = db.Column(db.Integer, primary_key=True)
+    spare_part_id  = db.Column(db.Integer, db.ForeignKey('spare_parts.id'), nullable=False)
+    brand          = db.Column(db.String(200), default='')
+    article_number = db.Column(db.String(100), default='')
+    supplier       = db.Column(db.String(200), default='')
+    last_price     = db.Column(db.Float, nullable=True)
+    avg_price      = db.Column(db.Float, nullable=True)
+    is_active      = db.Column(db.Boolean, default=True)
+    created_by     = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at     = db.Column(db.DateTime, default=datetime.utcnow)
+
+    spare_part = db.relationship('SparePart', foreign_keys=[spare_part_id],
+                                 backref=db.backref('skus', lazy='dynamic'))
+    creator    = db.relationship('User', foreign_keys=[created_by])
+
+    __table_args__ = (
+        db.Index('idx_spare_part_skus_spare_part_id', 'spare_part_id'),
+    )
+
+    @property
+    def label(self):
+        """Human-readable 'brand / article / supplier' line for pickers and acts."""
+        fields = [f for f in (self.brand, self.article_number, self.supplier) if f]
+        return ' / '.join(fields) if fields else '#{}'.format(self.id)
+
+
+class SparePartWarehouse(db.Model):
+    """SPARE-STAGE2: spare parts warehouse (= organization).
+
+    [REASON]: Confirmed business rule — exactly ONE warehouse per organization
+    (not multiple locations, not a shared central warehouse). Mirrors
+    FuelWarehouse's organization-scoping pattern, but here organization_id is
+    NOT NULL + UNIQUE so the one-per-organization rule is enforced by the
+    database, not just application code. Created by migrate_spare_parts_stage2.py.
+    """
+    __tablename__ = 'spare_part_warehouses'
+    id              = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'),
+                                nullable=False, unique=True)
+    name            = db.Column(db.String(200), nullable=False)
+    is_active       = db.Column(db.Boolean, default=True)
+    created_at      = db.Column(db.DateTime, default=datetime.utcnow)
+
+    organization = db.relationship('Organization')
+
+
+class SparePartInventory(db.Model):
+    """SPARE-STAGE2: current on-hand quantity per (warehouse, SKU).
+
+    [REASON]: Inventory is tracked at the SKU level ONLY (confirmed business
+    rule) — a canonical part with no SKU has no trackable stock. Rows are
+    created lazily on first movement; quantity must never be written except
+    through spare_parts._apply_inventory_movement, which records the matching
+    movement row in the same transaction.
+    """
+    __tablename__ = 'spare_part_inventory'
+    id           = db.Column(db.Integer, primary_key=True)
+    warehouse_id = db.Column(db.Integer, db.ForeignKey('spare_part_warehouses.id'),
+                             nullable=False)
+    sku_id       = db.Column(db.Integer, db.ForeignKey('spare_part_skus.id'),
+                             nullable=False)
+    quantity     = db.Column(db.Float, nullable=False, default=0)
+    unit         = db.Column(db.String(30), default='dona')
+    updated_at   = db.Column(db.DateTime, default=datetime.utcnow,
+                             onupdate=datetime.utcnow)
+
+    warehouse = db.relationship('SparePartWarehouse',
+                                backref=db.backref('inventory', lazy='dynamic'))
+    sku       = db.relationship('SparePartSku')
+
+    __table_args__ = (
+        db.UniqueConstraint('warehouse_id', 'sku_id',
+                            name='uq_spare_part_inventory_wh_sku'),
+    )
+
+
+class SparePartInventoryMovement(db.Model):
+    """SPARE-STAGE2: append-only audit trail of every stock change.
+
+    quantity is SIGNED (positive receipts, negative issues/write-offs);
+    balance_after snapshots the resulting on-hand quantity at movement time so
+    the trail stays historically correct even if later movements are inserted
+    out of chronological order. Summing a (warehouse, sku) pair's movement
+    quantities must always equal its spare_part_inventory.quantity.
+    """
+    __tablename__ = 'spare_part_inventory_movements'
+    id             = db.Column(db.Integer, primary_key=True)
+    warehouse_id   = db.Column(db.Integer, db.ForeignKey('spare_part_warehouses.id'),
+                               nullable=False)
+    sku_id         = db.Column(db.Integer, db.ForeignKey('spare_part_skus.id'),
+                               nullable=False)
+    movement_type  = db.Column(db.String(20), nullable=False)  # receipt/issue/adjustment/write_off
+    quantity       = db.Column(db.Float, nullable=False)       # signed
+    balance_after  = db.Column(db.Float, nullable=False)
+    reference_type = db.Column(db.String(30), nullable=False, default='manual')  # request_item/manual/import
+    reference_id   = db.Column(db.Integer, nullable=True)
+    note           = db.Column(db.Text, nullable=False, default='')
+    created_by     = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at     = db.Column(db.DateTime, default=datetime.utcnow)
+
+    warehouse = db.relationship('SparePartWarehouse')
+    sku       = db.relationship('SparePartSku')
+    creator   = db.relationship('User', foreign_keys=[created_by])
+
+    __table_args__ = (
+        db.Index('idx_spare_part_inv_movements_wh_sku', 'warehouse_id', 'sku_id'),
+        db.Index('idx_spare_part_inv_movements_created_at', 'created_at'),
+        db.Index('idx_spare_part_inv_movements_reference',
+                 'reference_type', 'reference_id'),
+    )
+
+
+class SparePartWriteOffAct(db.Model):
+    """SPARE-STAGE2: write-off act generated when an approved request is issued.
+
+    act_number format SPW-{YEAR}-{5-digit-seq}: MAX+1 inside the issue
+    transaction, the exact technique proven by work_orders._generate_wo_number
+    (act_number is UNIQUE, so a rare race raises IntegrityError on commit).
+    Once created, acts are permanent — there is deliberately no un-issue.
+    """
+    __tablename__ = 'spare_part_write_off_acts'
+    id              = db.Column(db.Integer, primary_key=True)
+    act_number      = db.Column(db.String(20), unique=True, nullable=False)
+    request_id      = db.Column(db.Integer, db.ForeignKey('spare_part_requests.id'),
+                                nullable=False)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'),
+                                nullable=False)
+    # [REASON]: nullable — a request whose items all lack a SKU can be issued
+    # even when its organization has no warehouse (nothing trackable to deduct).
+    warehouse_id    = db.Column(db.Integer, db.ForeignKey('spare_part_warehouses.id'),
+                                nullable=True)
+    issued_date     = db.Column(db.Date, nullable=False)
+    issued_by       = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    pdf_path        = db.Column(db.String(500), default='')
+    created_at      = db.Column(db.DateTime, default=datetime.utcnow)
+
+    request      = db.relationship('SparePartRequest',
+                                   backref=db.backref('write_off_acts', lazy='select'))
+    organization = db.relationship('Organization')
+    warehouse    = db.relationship('SparePartWarehouse')
+    issuer       = db.relationship('User', foreign_keys=[issued_by])
+    items        = db.relationship('SparePartWriteOffActItem', backref='act',
+                                   cascade='all, delete-orphan')
+
+    __table_args__ = (
+        db.Index('idx_spare_part_write_off_acts_request_id', 'request_id'),
+    )
+
+
+class SparePartWriteOffActItem(db.Model):
+    """SPARE-STAGE2: one act line per request item, SNAPSHOTTED at issue time.
+
+    [REASON]: name/sku_label/quantity/unit/price/total are copied, not joined
+    back to the live request/catalog later, so the act stays historically
+    accurate even if catalog or SKU data changes afterwards.
+    """
+    __tablename__ = 'spare_part_write_off_act_items'
+    id              = db.Column(db.Integer, primary_key=True)
+    act_id          = db.Column(db.Integer,
+                                db.ForeignKey('spare_part_write_off_acts.id'),
+                                nullable=False)
+    request_item_id = db.Column(db.Integer,
+                                db.ForeignKey('spare_part_request_items.id'),
+                                nullable=True)
+    name            = db.Column(db.String(300), nullable=False)
+    sku_label       = db.Column(db.String(500), default='')
+    quantity        = db.Column(db.Float, nullable=False)
+    unit            = db.Column(db.String(30), default='dona')
+    price           = db.Column(db.Float, nullable=True)
+    total           = db.Column(db.Float, nullable=True)
+
+    __table_args__ = (
+        db.Index('idx_spare_part_write_off_act_items_act_id', 'act_id'),
+    )
+
+
 class SparePartRequest(db.Model):
     __tablename__ = 'spare_part_requests'
     id              = db.Column(db.Integer, primary_key=True)
@@ -790,14 +983,23 @@ class SparePartRequestItem(db.Model):
     price_set_by  = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     price_set_at  = db.Column(db.DateTime, nullable=True)
 
+    # SPARE-STAGE2 additive column (migrate_spare_parts_stage2.py):
+    # [REASON]: SPARE-STAGE2 — optional concrete SKU choice; NULL keeps the
+    # exact Stage 1 behaviour (free canonical part, no inventory tracking).
+    sku_id        = db.Column(db.Integer, db.ForeignKey('spare_part_skus.id'), nullable=True)
+
     spare_part    = db.relationship('SparePart', foreign_keys=[spare_part_id])
     price_setter  = db.relationship('User', foreign_keys=[price_set_by])
+    sku           = db.relationship('SparePartSku', foreign_keys=[sku_id])
 
 
 # [REASON]: SPARE-STAGE1 — performance indexes for the repeat-order warning
 # engine, which scans prior items by spare_part_id and equipment_id + date.
 db.Index('idx_spare_part_request_items_spare_part_id', SparePartRequestItem.spare_part_id)
 db.Index('idx_spare_part_requests_equipment_id_date', SparePartRequest.equipment_id, SparePartRequest.request_date)
+# [REASON]: SPARE-STAGE2 — the SKU price-stats recompute scans confirm audit
+# rows of all items referencing one SKU.
+db.Index('idx_spare_part_request_items_sku_id', SparePartRequestItem.sku_id)
 
 
 class SparePartPriceAudit(db.Model):
