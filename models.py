@@ -157,8 +157,19 @@ class Equipment(db.Model):
     default_unit    = db.Column(db.String(30), default='')
     is_active       = db.Column(db.Boolean, default=True)
 
+    # [REASON]: SPARE-STAGE3 — canonical equipment-model reference, added
+    # ALONGSIDE the legacy free-text `eq_type` (added via
+    # migrate_spare_parts_stage3.py for existing DBs). `eq_type` is NOT removed
+    # or renamed — it is still read directly by daily_entry.html and written by
+    # the equipment form / init_data.py. Whenever model_id is set through the
+    # new UI, eq_type is kept in sync (as the model's name text) so every
+    # existing eq_type reader keeps seeing correct data.
+    model_id        = db.Column(db.Integer, db.ForeignKey('equipment_models.id'), nullable=True)
+
     records = db.relationship('DailyRecord', backref='equipment',
                               cascade='all, delete-orphan', lazy='dynamic')
+    model   = db.relationship('EquipmentModel', foreign_keys=[model_id],
+                              backref=db.backref('equipment', lazy='dynamic'))
 
     @property
     def full_name(self):
@@ -169,6 +180,29 @@ class Equipment(db.Model):
     @property
     def category_display(self):
         return CATEGORIES.get(self.category, self.category)
+
+
+class EquipmentModel(db.Model):
+    """SPARE-STAGE3: canonical equipment-model reference.
+
+    [REASON]: SPARE-STAGE3 — the spare-parts compatibility matrix needs a stable
+    identifier for "what model of machine is this part for". Historically the
+    only signal was Equipment.eq_type free text (e.g. 'New Holland 7060' vs
+    'NEW HOLLAND-7060' typed inconsistently). This table is seeded one-to-one
+    from every distinct eq_type value by the Stage-3 migration (no near-match
+    dedup — that is a manual human decision made later via the merge screen).
+    `migrated_from_eq_type` keeps the raw source text for audit/traceability.
+    """
+    __tablename__ = 'equipment_models'
+    id                    = db.Column(db.Integer, primary_key=True)
+    name                  = db.Column(db.String(150), nullable=False, unique=True)
+    name_uz               = db.Column(db.String(150), nullable=True)
+    manufacturer          = db.Column(db.String(100), nullable=True)
+    is_active             = db.Column(db.Boolean, default=True)
+    # [REASON]: SPARE-STAGE3 — audit trail of the exact eq_type text this
+    # canonical model was migrated from; NULL for models created by hand later.
+    migrated_from_eq_type = db.Column(db.String(150), nullable=True)
+    created_at            = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class WorkType(db.Model):
@@ -940,6 +974,66 @@ class SparePartWriteOffActItem(db.Model):
 
     __table_args__ = (
         db.Index('idx_spare_part_write_off_act_items_act_id', 'act_id'),
+    )
+
+
+class SparePartCompatibility(db.Model):
+    """SPARE-STAGE3: which equipment models a catalog part is compatible with.
+
+    [REASON]: SPARE-STAGE3 business rule — ABSENCE of any row for a given
+    spare_part_id means "compatibility not yet defined", NOT "incompatible with
+    everything". Warning rule 5 must stay completely silent for parts that have
+    zero compatibility rows (the matrix starts empty on deploy day; treating
+    empty as incompatible would red-flag nearly every request and be useless
+    noise). See spare_parts._check_rule5_incompatibility.
+    """
+    __tablename__ = 'spare_part_compatibility'
+    id                 = db.Column(db.Integer, primary_key=True)
+    spare_part_id      = db.Column(db.Integer, db.ForeignKey('spare_parts.id'), nullable=False)
+    equipment_model_id = db.Column(db.Integer, db.ForeignKey('equipment_models.id'), nullable=False)
+    created_by         = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at         = db.Column(db.DateTime, default=datetime.utcnow)
+
+    spare_part      = db.relationship('SparePart', foreign_keys=[spare_part_id],
+                                      backref=db.backref('compatibilities', lazy='dynamic'))
+    equipment_model = db.relationship('EquipmentModel', foreign_keys=[equipment_model_id])
+    creator         = db.relationship('User', foreign_keys=[created_by])
+
+    __table_args__ = (
+        db.UniqueConstraint('spare_part_id', 'equipment_model_id',
+                            name='uq_spare_part_compatibility_part_model'),
+        db.Index('idx_spare_part_compatibility_part', 'spare_part_id'),
+        db.Index('idx_spare_part_compatibility_model', 'equipment_model_id'),
+    )
+
+
+class SparePartMaintenanceNorm(db.Model):
+    """SPARE-STAGE3: engine-hours replacement interval for a part.
+
+    [REASON]: SPARE-STAGE3 — passive maintenance notification only (the owner
+    deliberately deferred any auto-created draft request to a later stage).
+    equipment_model_id NULL means the norm applies to every model. The
+    notification fires when accumulated engine-hours since the last recorded
+    replacement of this part on a given machine reach interval_hours; see
+    spare_parts._maintenance_due_rows for how "hours since last replacement" is
+    derived from the per-day Wialon EngineHoursRecord data.
+    """
+    __tablename__ = 'spare_part_maintenance_norms'
+    id                 = db.Column(db.Integer, primary_key=True)
+    spare_part_id      = db.Column(db.Integer, db.ForeignKey('spare_parts.id'), nullable=False)
+    equipment_model_id = db.Column(db.Integer, db.ForeignKey('equipment_models.id'), nullable=True)
+    interval_hours     = db.Column(db.Float, nullable=False)
+    is_active          = db.Column(db.Boolean, default=True)
+    created_by         = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at         = db.Column(db.DateTime, default=datetime.utcnow)
+
+    spare_part      = db.relationship('SparePart', foreign_keys=[spare_part_id],
+                                      backref=db.backref('maintenance_norms', lazy='dynamic'))
+    equipment_model = db.relationship('EquipmentModel', foreign_keys=[equipment_model_id])
+    creator         = db.relationship('User', foreign_keys=[created_by])
+
+    __table_args__ = (
+        db.Index('idx_spare_part_maintenance_norms_part', 'spare_part_id'),
     )
 
 

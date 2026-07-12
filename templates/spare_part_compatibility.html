@@ -1,0 +1,67 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Совместимость' if is_ru else 'Мослик' }} — {{ part.name }}{% endblock %}
+{% block content %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Совместимость детали' if is_ru else 'Деталь мослиги' }}</div>
+    <div class="vs-hero-sub">{{ part.name }}{% if part.part_number %} · {{ part.part_number }}{% endif %}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('spare_parts.catalog') }}" class="vs-btn">{{ '← Каталог' if is_ru else '← Каталог' }}</a>
+  </div>
+</div>
+
+<div class="vs-alert is-info vs-mb">{{ 'Отметьте модели техники, для которых эта деталь подходит. Если не отмечено ничего — совместимость считается «не задана», и предупреждение о несовместимости не показывается (не блокирует и не считает деталь несовместимой со всем).' if is_ru else 'Ушбу деталь мос келадиган техника моделларини белгиланг. Ҳеч нарса белгиланмаса — мослик «аниқланмаган» ҳисобланади ва мос эмаслик огоҳлантириши кўрсатилмайди (блокламайди ва детални ҳамма нарсага мос эмас деб ҳисобламайди).' }}</div>
+
+<form method="post" action="{{ url_for('spare_parts.catalog_compatibility_save', pid=part.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="vs-card vs-mb">
+        <div class="vs-card-header">
+            <div class="vs-card-title">{{ 'Совместимые модели' if is_ru else 'Мос моделлар' }}</div>
+            <div class="vs-row" style="gap:8px;">
+                <button type="button" class="vs-btn vs-btn-sm" onclick="toggleAllCompat(true)">{{ 'Выбрать все' if is_ru else 'Ҳаммасини танлаш' }}</button>
+                <button type="button" class="vs-btn vs-btn-sm" onclick="toggleAllCompat(false)">{{ 'Снять все' if is_ru else 'Ҳаммасини бекор' }}</button>
+            </div>
+        </div>
+        <div class="vs-card-body">
+            {% if models %}
+            <div style="margin-bottom:10px;">
+                <input type="text" id="compatFilter" class="vs-input" placeholder="{{ 'Фильтр моделей…' if is_ru else 'Моделларни сараланг…' }}" oninput="filterCompat()">
+            </div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:6px;">
+                {% for m in models %}
+                <label class="vs-check-row compat-item" data-label="{{ m.name|lower }}"
+                       style="display:flex; align-items:center; gap:8px; padding:6px 8px; border:1px solid var(--border); border-radius:6px;">
+                    <input type="checkbox" name="model_ids" value="{{ m.id }}" {% if m.id in selected_ids %}checked{% endif %} style="width:18px; height:18px;">
+                    <span>{{ m.name }}{% if m.manufacturer %} <span class="vs-muted text-sm">· {{ m.manufacturer }}</span>{% endif %}</span>
+                </label>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="vs-soft">{{ 'Нет активных моделей. Сначала добавьте модели техники.' if is_ru else 'Фаол моделлар йўқ. Аввал техника моделларини қўшинг.' }}
+                <a href="{{ url_for('spare_parts.equipment_models') }}">{{ 'Модели техники' if is_ru else 'Техника моделлари' }}</a></div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="vs-row">
+        <button type="submit" class="vs-btn vs-btn-primary">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+        <a href="{{ url_for('spare_parts.catalog') }}" class="vs-btn">{{ 'Отмена' if is_ru else 'Бекор қилиш' }}</a>
+    </div>
+</form>
+
+<script>
+function toggleAllCompat(state) {
+    document.querySelectorAll('.compat-item input[type=checkbox]').forEach(function(cb) {
+        if (cb.closest('.compat-item').style.display !== 'none') cb.checked = state;
+    });
+}
+function filterCompat() {
+    var q = (document.getElementById('compatFilter').value || '').toLowerCase();
+    document.querySelectorAll('.compat-item').forEach(function(el) {
+        el.style.display = (el.getAttribute('data-label').indexOf(q) !== -1) ? '' : 'none';
+    });
+}
+</script>
+{% endblock %}

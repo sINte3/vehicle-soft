@@ -18,7 +18,7 @@ from flask_login import (
 )
 from config import get_config
 from models import (
-    db, User, Organization, Equipment, WorkType, Customer, DailyRecord,
+    db, User, Organization, Equipment, EquipmentModel, WorkType, Customer, DailyRecord,
     Deficiency, VialonMapping, VialonImport, EngineHoursRecord,
     FuelStation, FuelTank, FuelSnapshot, FuelTransaction, FuelSyncLog,
     FuelWarehouse, FuelStation2, FuelInitialBalance, FuelReceipt2, FuelTransaction2,
@@ -1915,6 +1915,10 @@ def create_app():
                 'linked_total': linked_total,
                 'linked': linked,
             }
+        # [REASON]: SPARE-STAGE3 — active canonical models for the equipment
+        # form's model picker (Part 1c). Legacy eq_type free-text still works.
+        equipment_models = (EquipmentModel.query.filter_by(is_active=True)
+                            .order_by(EquipmentModel.name).all())
         return render_template('ref_equipment.html',
             equipment=equipment, organizations=orgs,
             selected_org_id=org_id, categories=CATEGORIES,
@@ -1922,6 +1926,7 @@ def create_app():
             selected_eq_types=eq_types, total_count=total_count,
             selected_status=status_filter, search_q=search_q,
             equipment_stats=equipment_stats,
+            equipment_models=equipment_models,
             equipment_delete_info=equipment_delete_info)
 
     @app.route('/ref/equipment/export')
@@ -2038,6 +2043,28 @@ def create_app():
         eq_type = normalize_ref_text(request.form.get('eq_type',''))
         default_unit = normalize_ref_text(request.form.get('default_unit',''))
         category = request.form.get('category','mtz')
+        # [REASON]: SPARE-STAGE3 — the equipment form now offers a canonical
+        # EquipmentModel picker (with an inline "add new model" option). When a
+        # model is chosen/created we set BOTH model_id AND eq_type (text = the
+        # model's name) so legacy eq_type readers keep working. If no model is
+        # selected (model_id blank), the free-text eq_type path below is
+        # unchanged, so existing callers/tests behave exactly as before.
+        model_id = request.form.get('model_id', type=int)
+        new_model_name = normalize_ref_text(request.form.get('new_model_name', ''))
+        resolved_model = None
+        if new_model_name:
+            # Inline "add new model": reuse an existing model with that exact
+            # name (name is UNIQUE) or create one.
+            resolved_model = EquipmentModel.query.filter(
+                db.func.lower(EquipmentModel.name) == new_model_name.lower()).first()
+            if resolved_model is None:
+                resolved_model = EquipmentModel(name=new_model_name, is_active=True)
+                db.session.add(resolved_model)
+                db.session.flush()
+        elif model_id:
+            resolved_model = EquipmentModel.query.get(model_id)
+        if resolved_model is not None:
+            eq_type = resolved_model.name
         if not name:
             flash(ui_t('Техника номини киритинг', 'Введите название техники'), 'warning')
             return redirect(url_for('ref_equipment', org_id=org_id))
@@ -2062,7 +2089,12 @@ def create_app():
                   organization_id=org_id,
                   default_price=default_price or 0,
                   default_unit=default_unit)
-        eq_fields = ['id', 'name', 'plate', 'category', 'eq_type', 'organization_id', 'default_price', 'default_unit', 'is_active']
+        # [REASON]: SPARE-STAGE3 — only touch model_id when the form actually
+        # supplied a model choice; a blank picker leaves an existing link intact
+        # (and the free-text eq_type path unchanged for backward compatibility).
+        if resolved_model is not None:
+            kw['model_id'] = resolved_model.id
+        eq_fields = ['id', 'name', 'plate', 'category', 'eq_type', 'model_id', 'organization_id', 'default_price', 'default_unit', 'is_active']
         before = None
         if eid:
             eq = Equipment.query.get_or_404(eid)

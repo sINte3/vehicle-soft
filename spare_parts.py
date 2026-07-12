@@ -17,6 +17,8 @@ from models import (db, SparePart, SparePartCategory, SparePartPriceAudit,
                     SparePartRequestItem, SparePartSku, SparePartStatusHistory,
                     SparePartWarehouse, SparePartWriteOffAct,
                     SparePartWriteOffActItem, Organization, Equipment,
+                    EquipmentModel, SparePartCompatibility,
+                    SparePartMaintenanceNorm, EngineHoursRecord,
                     module_required)
 from sec003a_ext import log_audit, diff_dict
 
@@ -574,17 +576,80 @@ def _check_rule6_recent_rejection(equipment_id, spare_part_id, exclude_request_i
     }
 
 
+def _model_display_name(model):
+    """Model label honouring the viewer's language (name_uz when set + uz)."""
+    if model is None:
+        return ''
+    if _spare_lang() == 'uz' and (model.name_uz or '').strip():
+        return model.name_uz
+    return model.name or ''
+
+
+def _check_rule5_incompatibility(equipment_id, spare_part_id, exclude_request_id=None):
+    """Rule 5 — incompatibility: the part is NOT in the compatibility list of
+    the request's equipment model.
+
+    [REASON]: SPARE-STAGE3 — severity RED (like rules 1-2, unlike the yellow
+    rules 3/4/6): requesting a part that is known-incompatible with the machine
+    is a hard mistake, not a soft frequency/cost signal. Still warn-only — it
+    never blocks submission or approval, same principle as every other rule.
+
+    Fires ONLY when the part has at least one SparePartCompatibility row AND the
+    equipment's model_id is not among them. Stays completely SILENT when:
+      - the part has zero compatibility rows (compatibility "not yet defined" —
+        the matrix starts empty on deploy, absence is never "incompatible"), or
+      - the equipment's model_id is NULL (defensive; shouldn't happen after the
+        Stage-3 migration, but never crash or false-positive if it does).
+
+    exclude_request_id is accepted for signature parity with the other rules; it
+    has no effect here (rule 5 depends on the catalog/equipment, not on prior
+    requests).
+    """
+    if not equipment_id or not spare_part_id:
+        return None
+    compatible_ids = [
+        row[0] for row in
+        db.session.query(SparePartCompatibility.equipment_model_id)
+        .filter(SparePartCompatibility.spare_part_id == spare_part_id).all()
+    ]
+    if not compatible_ids:
+        # Compatibility not yet defined for this part -> silent.
+        return None
+    eq = Equipment.query.get(equipment_id)
+    model_id = eq.model_id if eq else None
+    if not model_id:
+        # Equipment has no canonical model -> can't judge; silent (defensive).
+        return None
+    if model_id in compatible_ids:
+        return None
+    model = EquipmentModel.query.get(model_id)
+    model_name = _model_display_name(model) or ('#%s' % model_id)
+    return {
+        'rule': 5,
+        'severity': 'red',
+        'equipment_model_id': model_id,
+        'message': _spare_t(
+            'Бу деталь «{model}» модели учун мос деталлар рўйхатига кирмайди.',
+            'Эта деталь не входит в список совместимых для модели «{model}».'
+        ).format(model=model_name),
+    }
+
+
 def _check_extra_warnings(equipment_id, spare_part_id, exclude_request_id=None):
-    """SPARE-STAGE2 aggregator for rules 3/4/6.
+    """SPARE-STAGE2/3 aggregator for rules 3/4/5/6.
 
     Returns a list of warning dicts (possibly empty). Purely additive to the
     rules 1-2 engine: callers keep using _check_repeat_orders unchanged and
-    attach this list alongside it.
+    attach this list alongside it. Each dict carries its own 'severity', so the
+    red rule 5 renders red and the yellow rules 3/4/6 render yellow.
     """
     if not equipment_id or not spare_part_id:
         return []
     warnings = []
-    for check in (_check_rule3_frequency,
+    # [REASON]: SPARE-STAGE3 — rule 5 (red incompatibility) listed first so the
+    # hardest signal renders at the top of the warnings block.
+    for check in (_check_rule5_incompatibility,
+                  _check_rule3_frequency,
                   _check_rule4_cost_anomaly,
                   _check_rule6_recent_rejection):
         result = check(equipment_id, spare_part_id, exclude_request_id)
@@ -2453,6 +2518,423 @@ def catalog_review_merge(pid):
     db.session.commit()
     flash(_spare_t('Ёзув бирлаштирилди', 'Записи объединены'), 'success')
     return redirect(url_for('spare_parts.catalog'))
+
+
+# ─── SPARE-STAGE3: equipment-model reference management ───────────────────────
+
+def _require_catalog_manage():
+    # [REASON]: SPARE-STAGE3 — all Stage-3 management screens (equipment models,
+    # compatibility, maintenance norms) reuse the Stage-1 catalog permission.
+    if not current_user.has_module_access('spare_parts_catalog_manage'):
+        abort(403)
+
+
+@spare_parts_bp.route('/equipment-models')
+@module_required('spare_parts')
+def equipment_models():
+    """Manage the canonical equipment-model reference (Part 1b).
+
+    Lists every model with how many Equipment rows point at it and how many
+    compatibility rows reference it. This is where the owner does the one-time
+    reconciliation of the ~336 migrated models (rename typos, merge duplicates)
+    at their own pace — it never needs to be "finished" for the app to work.
+    """
+    _require_catalog_manage()
+    models = (EquipmentModel.query
+              .order_by(EquipmentModel.is_active.desc(), EquipmentModel.name)
+              .all())
+    # Bulk counters (avoid N+1): equipment per model, compatibility per model.
+    eq_counts = dict(
+        db.session.query(Equipment.model_id, func.count(Equipment.id))
+        .filter(Equipment.model_id.isnot(None))
+        .group_by(Equipment.model_id).all())
+    compat_counts = dict(
+        db.session.query(SparePartCompatibility.equipment_model_id,
+                         func.count(SparePartCompatibility.id))
+        .group_by(SparePartCompatibility.equipment_model_id).all())
+    active_models = [m for m in models if m.is_active]
+    return render_template('spare_parts_equipment_models.html',
+                           models=models,
+                           active_models=active_models,
+                           eq_counts=eq_counts,
+                           compat_counts=compat_counts,
+                           lang=_spare_lang())
+
+
+@spare_parts_bp.route('/equipment-models/save', methods=['POST'])
+@module_required('spare_parts')
+def equipment_model_save():
+    """Create a model or edit its name/name_uz/manufacturer/active flag.
+
+    Renaming keeps eq_type text in sync on every Equipment row pointing at the
+    model, so legacy eq_type readers (daily_entry.html etc.) stay correct.
+    """
+    _require_catalog_manage()
+    mid = request.form.get('id', type=int)
+    name = (request.form.get('name', '') or '').strip()
+    name_uz = (request.form.get('name_uz', '') or '').strip()
+    manufacturer = (request.form.get('manufacturer', '') or '').strip()
+    is_active = request.form.get('is_active') is not None
+    if not name:
+        flash(_spare_t('Модель номини киритинг', 'Введите название модели'), 'warning')
+        return redirect(url_for('spare_parts.equipment_models'))
+    # name is UNIQUE at the DB level — pre-check for a friendly message.
+    clash = (EquipmentModel.query
+             .filter(func.lower(EquipmentModel.name) == name.lower())
+             .filter(EquipmentModel.id != (mid or 0)).first())
+    if clash:
+        flash(_spare_t('Бундай номли модель мавжуд',
+                       'Модель с таким названием уже существует'), 'warning')
+        return redirect(url_for('spare_parts.equipment_models'))
+
+    created = False
+    if mid:
+        model = EquipmentModel.query.get_or_404(mid)
+        old_name = model.name
+        model.name = name
+        model.name_uz = name_uz or None
+        model.manufacturer = manufacturer or None
+        model.is_active = is_active
+        synced = 0
+        if old_name != name:
+            # [REASON]: SPARE-STAGE3 — keep eq_type in sync with the model name
+            # so any code still reading eq_type directly sees the canonical text.
+            synced = (Equipment.query.filter_by(model_id=model.id)
+                      .update({'eq_type': name}, synchronize_session=False))
+        _audit_spare(
+            'spare_part_equipment_model_updated',
+            entity_type='equipment_model', entity_id=model.id,
+            entity_label=model.name,
+            description='Model renamed {!r}->{!r}, {} equipment eq_type synced'.format(
+                old_name, name, synced) if old_name != name else 'Model updated')
+    else:
+        model = EquipmentModel(name=name, name_uz=name_uz or None,
+                               manufacturer=manufacturer or None, is_active=is_active)
+        db.session.add(model)
+        db.session.flush()
+        created = True
+        _audit_spare(
+            'spare_part_equipment_model_created',
+            entity_type='equipment_model', entity_id=model.id,
+            entity_label=model.name, description='Model created')
+    db.session.commit()
+    flash(_spare_t('Сақланди', 'Сохранено'), 'success')
+    return redirect(url_for('spare_parts.equipment_models'))
+
+
+@spare_parts_bp.route('/equipment-models/merge', methods=['POST'])
+@module_required('spare_parts')
+def equipment_model_merge():
+    """Merge one model into a survivor (Part 1b).
+
+    Reassigns every Equipment.model_id and SparePartCompatibility /
+    SparePartMaintenanceNorm equipment_model_id from the merged-away model to
+    the survivor, syncs eq_type text on affected Equipment to the survivor's
+    name, then deactivates (never hard-deletes) the merged model so its
+    migrated_from_eq_type audit trail survives.
+    """
+    _require_catalog_manage()
+    survivor_id = request.form.get('survivor_id', type=int)
+    merged_id = request.form.get('merged_id', type=int)
+    survivor = EquipmentModel.query.get(survivor_id) if survivor_id else None
+    merged = EquipmentModel.query.get(merged_id) if merged_id else None
+    if not survivor or not merged or survivor.id == merged.id:
+        flash(_spare_t('Бирлаштириш учун иккита ҳар хил моделни танланг',
+                       'Выберите две разные модели для объединения'), 'warning')
+        return redirect(url_for('spare_parts.equipment_models'))
+
+    # Compatibility: repoint, but first drop rows that would collide with a
+    # survivor row for the same part (UNIQUE(spare_part_id, equipment_model_id)).
+    survivor_parts = [r[0] for r in db.session.query(
+        SparePartCompatibility.spare_part_id)
+        .filter(SparePartCompatibility.equipment_model_id == survivor.id).all()]
+    dropped_dupes = 0
+    if survivor_parts:
+        dropped_dupes = (SparePartCompatibility.query
+                         .filter(SparePartCompatibility.equipment_model_id == merged.id,
+                                 SparePartCompatibility.spare_part_id.in_(survivor_parts))
+                         .delete(synchronize_session=False))
+    compat_moved = (SparePartCompatibility.query
+                    .filter_by(equipment_model_id=merged.id)
+                    .update({'equipment_model_id': survivor.id}, synchronize_session=False))
+    norms_moved = (SparePartMaintenanceNorm.query
+                   .filter_by(equipment_model_id=merged.id)
+                   .update({'equipment_model_id': survivor.id}, synchronize_session=False))
+    eq_moved = (Equipment.query.filter_by(model_id=merged.id)
+                .update({'model_id': survivor.id, 'eq_type': survivor.name},
+                        synchronize_session=False))
+    merged.is_active = False
+    _audit_spare(
+        'spare_part_equipment_model_merged',
+        entity_type='equipment_model', entity_id=merged.id,
+        entity_label=merged.name,
+        description=('Merged {!r}(#{}) into {!r}(#{}): {} equipment, {} compat '
+                     '({} dup dropped), {} norms repointed').format(
+            merged.name, merged.id, survivor.name, survivor.id,
+            eq_moved, compat_moved, dropped_dupes, norms_moved))
+    db.session.commit()
+    flash(_spare_t('Моделлар бирлаштирилди', 'Модели объединены'), 'success')
+    return redirect(url_for('spare_parts.equipment_models'))
+
+
+# ─── SPARE-STAGE3: part <-> model compatibility matrix (Part 2) ───────────────
+
+@spare_parts_bp.route('/catalog/<int:pid>/compatibility')
+@module_required('spare_parts')
+def catalog_compatibility(pid):
+    """Edit which equipment models a catalog part is compatible with."""
+    _require_catalog_manage()
+    part = SparePart.query.get_or_404(pid)
+    selected_ids = {r[0] for r in db.session.query(
+        SparePartCompatibility.equipment_model_id)
+        .filter(SparePartCompatibility.spare_part_id == pid).all()}
+    # [REASON]: SPARE-STAGE3 — show active models PLUS any already-linked model
+    # even if it became inactive, so saving the form never silently drops a
+    # compatibility row that had no visible checkbox to represent it.
+    models = (EquipmentModel.query
+              .filter(db.or_(EquipmentModel.is_active.is_(True),
+                             EquipmentModel.id.in_(selected_ids)))
+              .order_by(EquipmentModel.name).all())
+    return render_template('spare_part_compatibility.html',
+                           part=part, models=models,
+                           selected_ids=selected_ids, lang=_spare_lang())
+
+
+@spare_parts_bp.route('/catalog/<int:pid>/compatibility/save', methods=['POST'])
+@module_required('spare_parts')
+def catalog_compatibility_save(pid):
+    """Reconcile SparePartCompatibility rows for a part from the checkbox set."""
+    _require_catalog_manage()
+    part = SparePart.query.get_or_404(pid)
+    chosen = set(request.form.getlist('model_ids', type=int))
+    # Only allow real, active models to be added.
+    if chosen:
+        valid = {m.id for m in EquipmentModel.query
+                 .filter(EquipmentModel.id.in_(chosen)).all()}
+        chosen &= valid
+    existing = {r.equipment_model_id: r for r in
+                SparePartCompatibility.query.filter_by(spare_part_id=pid).all()}
+    to_add = chosen - set(existing.keys())
+    to_remove = set(existing.keys()) - chosen
+    for model_id in to_add:
+        db.session.add(SparePartCompatibility(
+            spare_part_id=pid, equipment_model_id=model_id,
+            created_by=current_user.id))
+    for model_id in to_remove:
+        db.session.delete(existing[model_id])
+    _audit_spare(
+        'spare_part_compatibility_updated',
+        entity_type='spare_part_catalog', entity_id=part.id,
+        entity_label=part.name,
+        description='Compatibility set: +{} -{} (now {} models)'.format(
+            len(to_add), len(to_remove), len(chosen)))
+    db.session.commit()
+    flash(_spare_t('Мослик сақланди', 'Совместимость сохранена'), 'success')
+    return redirect(url_for('spare_parts.catalog_compatibility', pid=pid))
+
+
+# ─── SPARE-STAGE3: maintenance-interval norms + passive notification (Part 4) ──
+
+def _current_engine_hours(equipment_id):
+    """Cumulative engine-hours for a machine = SUM of the per-day Wialon records.
+
+    [REASON]: SPARE-STAGE3 — EngineHoursRecord.engine_hours is a PER-DAY value
+    (hours the engine ran that work_date), NOT a lifetime odometer. Cumulative
+    hours are therefore the running sum of those daily rows. See the Part-4
+    note in docs for why this is the only engine-hours signal available.
+    """
+    total = (db.session.query(func.coalesce(func.sum(EngineHoursRecord.engine_hours), 0.0))
+             .filter(EngineHoursRecord.equipment_id == equipment_id).scalar())
+    return float(total or 0.0)
+
+
+def _last_replacement_date(equipment_id, spare_part_id):
+    """Most recent date part `spare_part_id` was physically issued for machine
+    `equipment_id` (its write-off act's issued_date), or None if never.
+
+    [REASON]: SPARE-STAGE3 — there is NO engine-hours snapshot captured at issue
+    time anywhere in the Stage-1/2 flow, so "last replacement" is anchored to
+    the write-off act's calendar issued_date (the physical handover). Engine-
+    hours accumulated since are then summed from the per-day records strictly
+    after that date. When no issue exists, we DON'T know when the part was last
+    replaced, so the caller stays silent — the feature warms up as parts get
+    issued through the module, never guessing on missing data.
+    """
+    row = (db.session.query(func.max(SparePartWriteOffAct.issued_date))
+           .join(SparePartWriteOffActItem,
+                 SparePartWriteOffActItem.act_id == SparePartWriteOffAct.id)
+           .join(SparePartRequestItem,
+                 SparePartWriteOffActItem.request_item_id == SparePartRequestItem.id)
+           .join(SparePartRequest,
+                 SparePartWriteOffAct.request_id == SparePartRequest.id)
+           .filter(SparePartRequest.equipment_id == equipment_id,
+                   SparePartRequestItem.spare_part_id == spare_part_id)
+           .scalar())
+    return row
+
+
+def _hours_since_replacement(equipment_id, since_date):
+    """Engine-hours accumulated strictly AFTER since_date for this machine."""
+    total = (db.session.query(func.coalesce(func.sum(EngineHoursRecord.engine_hours), 0.0))
+             .filter(EngineHoursRecord.equipment_id == equipment_id,
+                     EngineHoursRecord.work_date > since_date).scalar())
+    return float(total or 0.0)
+
+
+def _maintenance_due_rows(org_ids=None):
+    """Compute which (equipment, part) pairs have crossed their interval.
+
+    Passive only: returns a list of due dicts. A pair contributes a row ONLY
+    when it has a real replacement anchor (an issued write-off act) AND the
+    engine-hours accumulated since that anchor reach the norm's interval_hours.
+    No anchor -> silent (we don't fabricate a replacement time). This can only
+    ever under-alert (miss) if Wialon data is incomplete; it never false-fires.
+    """
+    due = []
+    norms = (SparePartMaintenanceNorm.query
+             .filter_by(is_active=True)
+             .options(joinedload(SparePartMaintenanceNorm.spare_part),
+                      joinedload(SparePartMaintenanceNorm.equipment_model))
+             .all())
+    for norm in norms:
+        if not norm.interval_hours or norm.interval_hours <= 0:
+            continue
+        # Candidate machines = those ever issued this part (i.e. have an anchor),
+        # optionally narrowed to the norm's model. Anchor-set query keeps this
+        # naturally silent for parts never issued anywhere.
+        anchor_eq_q = (db.session.query(SparePartRequest.equipment_id)
+                       .join(SparePartWriteOffAct,
+                             SparePartWriteOffAct.request_id == SparePartRequest.id)
+                       .join(SparePartWriteOffActItem,
+                             SparePartWriteOffActItem.act_id == SparePartWriteOffAct.id)
+                       .join(SparePartRequestItem,
+                             SparePartWriteOffActItem.request_item_id == SparePartRequestItem.id)
+                       .filter(SparePartRequestItem.spare_part_id == norm.spare_part_id,
+                               SparePartRequest.equipment_id.isnot(None))
+                       .distinct())
+        eq_ids = [r[0] for r in anchor_eq_q.all()]
+        if not eq_ids:
+            continue
+        eq_q = Equipment.query.filter(Equipment.id.in_(eq_ids),
+                                      Equipment.is_active.is_(True))
+        if norm.equipment_model_id:
+            eq_q = eq_q.filter(Equipment.model_id == norm.equipment_model_id)
+        if org_ids is not None:
+            eq_q = eq_q.filter(Equipment.organization_id.in_(org_ids))
+        for eq in eq_q.all():
+            anchor = _last_replacement_date(eq.id, norm.spare_part_id)
+            if anchor is None:
+                continue
+            hours_since = _hours_since_replacement(eq.id, anchor)
+            if hours_since < norm.interval_hours:
+                continue
+            due.append({
+                'equipment': eq,
+                'part': norm.spare_part,
+                'norm': norm,
+                'model': eq.model,
+                'last_replaced': anchor,
+                'hours_since': round(hours_since, 1),
+                'interval_hours': norm.interval_hours,
+                'overdue_by': round(hours_since - norm.interval_hours, 1),
+            })
+    # Most overdue first.
+    due.sort(key=lambda d: d['overdue_by'], reverse=True)
+    return due
+
+
+@spare_parts_bp.route('/maintenance-norms')
+@module_required('spare_parts')
+def maintenance_norms():
+    """CRUD list for engine-hours replacement intervals."""
+    _require_catalog_manage()
+    norms = (SparePartMaintenanceNorm.query
+             .options(joinedload(SparePartMaintenanceNorm.spare_part),
+                      joinedload(SparePartMaintenanceNorm.equipment_model))
+             .order_by(SparePartMaintenanceNorm.is_active.desc(),
+                       SparePartMaintenanceNorm.id.desc())
+             .all())
+    parts = (SparePart.query.filter_by(status='active')
+             .order_by(SparePart.name).all())
+    models = (EquipmentModel.query.filter_by(is_active=True)
+              .order_by(EquipmentModel.name).all())
+    return render_template('spare_parts_maintenance_norms.html',
+                           norms=norms, parts=parts, models=models,
+                           lang=_spare_lang())
+
+
+@spare_parts_bp.route('/maintenance-norms/save', methods=['POST'])
+@module_required('spare_parts')
+def maintenance_norm_save():
+    _require_catalog_manage()
+    nid = request.form.get('id', type=int)
+    spare_part_id = request.form.get('spare_part_id', type=int)
+    equipment_model_id = request.form.get('equipment_model_id', type=int) or None
+    is_active = request.form.get('is_active') is not None
+    try:
+        interval_hours = float((request.form.get('interval_hours', '') or '').replace(',', '.'))
+    except ValueError:
+        interval_hours = 0
+    if not spare_part_id or not SparePart.query.get(spare_part_id):
+        flash(_spare_t('Деталью танланг', 'Выберите деталь'), 'warning')
+        return redirect(url_for('spare_parts.maintenance_norms'))
+    if interval_hours <= 0:
+        flash(_spare_t('Интервал (моточас) 0 дан катта бўлиши керак',
+                       'Интервал (моточасы) должен быть больше 0'), 'warning')
+        return redirect(url_for('spare_parts.maintenance_norms'))
+    if equipment_model_id and not EquipmentModel.query.get(equipment_model_id):
+        equipment_model_id = None
+    if nid:
+        norm = SparePartMaintenanceNorm.query.get_or_404(nid)
+        norm.spare_part_id = spare_part_id
+        norm.equipment_model_id = equipment_model_id
+        norm.interval_hours = interval_hours
+        norm.is_active = is_active
+        action = 'spare_part_maintenance_norm_updated'
+    else:
+        norm = SparePartMaintenanceNorm(
+            spare_part_id=spare_part_id, equipment_model_id=equipment_model_id,
+            interval_hours=interval_hours, is_active=is_active,
+            created_by=current_user.id)
+        db.session.add(norm)
+        action = 'spare_part_maintenance_norm_created'
+    db.session.flush()
+    _audit_spare(action, entity_type='spare_part_maintenance_norm',
+                 entity_id=norm.id, entity_label=str(norm.spare_part_id),
+                 description='Norm interval={}h model={}'.format(
+                     interval_hours, equipment_model_id or 'ALL'))
+    db.session.commit()
+    flash(_spare_t('Сақланди', 'Сохранено'), 'success')
+    return redirect(url_for('spare_parts.maintenance_norms'))
+
+
+@spare_parts_bp.route('/maintenance-norms/<int:nid>/delete', methods=['POST'])
+@module_required('spare_parts')
+def maintenance_norm_delete(nid):
+    _require_catalog_manage()
+    norm = SparePartMaintenanceNorm.query.get_or_404(nid)
+    _audit_spare('spare_part_maintenance_norm_deleted',
+                 entity_type='spare_part_maintenance_norm', entity_id=norm.id,
+                 entity_label=str(norm.spare_part_id), description='Norm deleted')
+    db.session.delete(norm)
+    db.session.commit()
+    flash(_spare_t('Ўчирилди', 'Удалено'), 'success')
+    return redirect(url_for('spare_parts.maintenance_norms'))
+
+
+@spare_parts_bp.route('/maintenance')
+@module_required('spare_parts')
+def maintenance_due():
+    """Passive 'upcoming/overdue maintenance' list (Part 4).
+
+    [REASON]: SPARE-STAGE3 — deliberately notification-only. It never creates a
+    draft request; the owner decided passive notification for this stage.
+    """
+    _require_catalog_manage()
+    org_ids = None if current_user.is_admin else current_user.get_org_ids()
+    rows = _maintenance_due_rows(org_ids=org_ids)
+    return render_template('spare_parts_maintenance_due.html',
+                           rows=rows, lang=_spare_lang())
 
 
 # ─── SPARE-REPORTS: costs & repeat-warning analytics ──────────────────────────

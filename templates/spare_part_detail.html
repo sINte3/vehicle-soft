@@ -191,7 +191,8 @@
             <div class="sp-warn {{ 'is-red' if w.base.severity == 'red' else 'is-yellow' }}">⚠ {{ 'Эта деталь уже запрашивалась для этой техники' if is_ru else 'Бу эҳтиёт қисм ушбу техника учун сўралган эди' }} ({{ w.base.days_since }} {{ 'дн. назад' if is_ru else 'кун олдин' }}{% if w.base.history %}, {{ 'заявка' if is_ru else 'сўров' }} #{{ w.base.history[0].request_id }}{% endif %})</div>
             {% endif %}
             {% for ew in w.extra %}
-            <div class="sp-warn is-yellow">⚠ {{ ew.message }}</div>
+            {# SPARE-STAGE3: honour each rule's own severity — rule 5 is red, rules 3/4/6 yellow. #}
+            <div class="sp-warn {{ 'is-red' if ew.severity == 'red' else 'is-yellow' }}">⚠ {{ ew.message }}</div>
             {% endfor %}
         </div>
         {% endif %}

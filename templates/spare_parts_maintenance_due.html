@@ -1,0 +1,62 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Пора менять' if is_ru else 'Алмаштириш вақти' }}{% endblock %}
+{% block content %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Пора менять' if is_ru else 'Алмаштириш вақти' }}</div>
+    <div class="vs-hero-sub">{{ 'Пассивное уведомление: техника, наработавшая интервал замены детали. Ничего не создаётся автоматически — это только подсказка.' if is_ru else 'Пассив огоҳлантириш: детал алмаштириш интервалига етган техника. Ҳеч нарса автоматик яратилмайди — бу фақат эслатма.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('spare_parts.maintenance_norms') }}" class="vs-btn">🛠️ {{ 'Нормы' if is_ru else 'Нормалар' }}</a>
+    <a href="{{ url_for('spare_parts.index') }}" class="vs-btn">{{ 'Заявки' if is_ru else 'Сўровлар' }}</a>
+  </div>
+</div>
+
+<div class="vs-alert is-info vs-mb">{{ 'Наработка считается по данным моточасов Wialon после даты последней выдачи детали. Если по технике нет данных моточасов или деталь ещё не выдавалась через модуль — она здесь не появится (уведомление не «выдумывает» пропущенное).' if is_ru else 'Наработка деталь охирги берилган санадан кейинги Wialon моточас маълумотлари бўйича ҳисобланади. Агар техникада моточас маълумоти бўлмаса ёки деталь модул орқали ҳали берилмаган бўлса — у бу ерда кўринмайди (огоҳлантириш йўқ маълумотни «ўйлаб топмайди»).' }}</div>
+
+{% if rows %}
+<div class="vs-table-wrap">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ 'К замене' if is_ru else 'Алмаштиришга' }}: {{ rows|length }}</span>
+    </div>
+    <div class="vs-table-scroll">
+    <table class="vs-table">
+        <thead>
+            <tr>
+                <th style="width:40px;">№</th>
+                <th>{{ 'Техника' if is_ru else 'Техника' }}</th>
+                <th>{{ 'Модель' if is_ru else 'Модель' }}</th>
+                <th>{{ 'Деталь' if is_ru else 'Деталь' }}</th>
+                <th>{{ 'Последняя выдача' if is_ru else 'Охирги берилиш' }}</th>
+                <th class="right">{{ 'Наработка, моточас' if is_ru else 'Наработка, моточас' }}</th>
+                <th class="right">{{ 'Интервал' if is_ru else 'Интервал' }}</th>
+                <th class="right">{{ 'Превышение' if is_ru else 'Ошиб кетган' }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td style="font-weight:600;">{{ r.equipment.name }}{% if r.equipment.plate %}<div class="vs-muted text-sm">{{ r.equipment.plate }}</div>{% endif %}</td>
+                <td class="text-sm">{{ r.model.name if r.model else '—' }}</td>
+                <td class="text-sm">{{ r.part.name if r.part else '—' }}</td>
+                <td class="text-sm">{{ r.last_replaced.strftime('%d.%m.%Y') }}</td>
+                <td class="right">{{ r.hours_since }}</td>
+                <td class="right">{{ r.interval_hours|round(0, 'floor')|int }}</td>
+                <td class="right"><span class="vs-badge vs-badge-warning vs-badge-sm">+{{ r.overdue_by }}</span></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% else %}
+<div class="vs-card">
+    <div class="vs-card-body">
+        <div class="vs-soft" style="text-align:center; padding:20px;">✓ {{ 'Нет техники, наработавшей интервал замены (по имеющимся данным).' if is_ru else 'Алмаштириш интервалига етган техника йўқ (мавжуд маълумотлар бўйича).' }}</div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
