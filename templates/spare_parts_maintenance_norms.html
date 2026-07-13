@@ -1,0 +1,131 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Нормы (моточасы)' if is_ru else 'Нормалар (моточас)' }}{% endblock %}
+{% block content %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Нормы замены (моточасы)' if is_ru else 'Алмаштириш нормалари (моточас)' }}</div>
+    <div class="vs-hero-sub">{{ 'Интервал замены детали в моточасах. Когда после последней выдачи детали техника наработает интервал, деталь попадёт в список «Пора менять».' if is_ru else 'Детални алмаштириш интервали (моточас). Охирги берилишдан кейин техника интервалга етса, деталь «Алмаштириш вақти» рўйхатига тушади.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('spare_parts.maintenance_due') }}" class="vs-btn">⏰ {{ 'Пора менять' if is_ru else 'Алмаштириш вақти' }}</a>
+    <a href="{{ url_for('spare_parts.catalog') }}" class="vs-btn">{{ '← Каталог' if is_ru else '← Каталог' }}</a>
+  </div>
+</div>
+
+<div class="vs-alert is-info vs-mb">{{ 'Модель не обязательна: пустое значение — норма для всех моделей. «Наработка с последней замены» считается по данным моточасов Wialon после даты последней выдачи детали на эту технику.' if is_ru else 'Модель мажбурий эмас: бўш қиймат — барча моделлар учун норма. «Охирги алмаштиришдан наработка» ушбу техникага деталь берилган санадан кейинги Wialon моточас маълумотлари бўйича ҳисобланади.' }}</div>
+
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title" id="normFormTitle">{{ 'Добавить норму' if is_ru else 'Норма қўшиш' }}</div>
+    </div>
+    <div class="vs-card-body">
+        <form method="post" action="{{ url_for('spare_parts.maintenance_norm_save') }}" class="vs-form-row">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="id" id="normEditId" value="">
+            <div class="vs-field" style="flex:2; min-width:240px;">
+                <label class="vs-label">{{ 'Деталь (каталог)' if is_ru else 'Деталь (каталог)' }}</label>
+                <select name="spare_part_id" id="normPart" class="vs-select" required>
+                    <option value="">{{ '— выберите деталь —' if is_ru else '— деталью танланг —' }}</option>
+                    {% for p in parts %}
+                    <option value="{{ p.id }}">{{ p.name }}{% if p.part_number %} ({{ p.part_number }}){% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="vs-field" style="flex:1; min-width:200px;">
+                <label class="vs-label">{{ 'Модель (необязательно)' if is_ru else 'Модель (ихтиёрий)' }}</label>
+                <select name="equipment_model_id" id="normModel" class="vs-select">
+                    <option value="">{{ '— все модели —' if is_ru else '— барча моделлар —' }}</option>
+                    {% for m in models %}
+                    <option value="{{ m.id }}">{{ m.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="vs-field" style="width:150px;">
+                <label class="vs-label">{{ 'Интервал, моточас' if is_ru else 'Интервал, моточас' }}</label>
+                <input type="number" name="interval_hours" id="normInterval" class="vs-input" min="0" step="1" placeholder="250" required>
+            </div>
+            <div class="vs-field" style="width:90px;">
+                <label class="vs-label">{{ 'Активна' if is_ru else 'Фаол' }}</label>
+                <input type="checkbox" name="is_active" id="normActive" checked style="width:20px; height:20px; margin-top:8px;">
+            </div>
+            <div class="vs-field" style="flex:none;">
+                <label class="vs-label">&nbsp;</label>
+                <div class="vs-row">
+                    <button type="submit" class="vs-btn vs-btn-primary">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+                    <button type="button" class="vs-btn" onclick="resetNormForm()">{{ 'Сбросить' if is_ru else 'Тозалаш' }}</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="vs-table-wrap">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ 'Всего норм' if is_ru else 'Жами нормалар' }}: {{ norms|length }}</span>
+    </div>
+    <div class="vs-table-scroll">
+    <table class="vs-table">
+        <thead>
+            <tr>
+                <th style="width:40px;">№</th>
+                <th>{{ 'Деталь' if is_ru else 'Деталь' }}</th>
+                <th>{{ 'Модель' if is_ru else 'Модель' }}</th>
+                <th class="right">{{ 'Интервал, моточас' if is_ru else 'Интервал, моточас' }}</th>
+                <th>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for n in norms %}
+            <tr class="{% if not n.is_active %}ref-eq-inactive{% endif %}">
+                <td>{{ loop.index }}</td>
+                <td style="font-weight:600;">{{ n.spare_part.name if n.spare_part else '#' ~ n.spare_part_id }}</td>
+                <td class="text-sm">{{ n.equipment_model.name if n.equipment_model else ('все модели' if is_ru else 'барча моделлар') }}</td>
+                <td class="right">{{ n.interval_hours|round(0, 'floor')|int }}</td>
+                <td>
+                    {% if n.is_active %}
+                    <span class="vs-badge vs-badge-success vs-badge-sm">{{ 'активна' if is_ru else 'фаол' }}</span>
+                    {% else %}
+                    <span class="vs-badge vs-badge-sm">{{ 'неактивна' if is_ru else 'нофаол' }}</span>
+                    {% endif %}
+                </td>
+                <td class="right">
+                    <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
+                            onclick='editNorm({{ n.id }}, {{ n.spare_part_id }}, {{ (n.equipment_model_id or "")|tojson }}, {{ n.interval_hours|tojson }}, {{ (n.is_active|int) }})'>✏</button>
+                    <form method="post" action="{{ url_for('spare_parts.maintenance_norm_delete', nid=n.id) }}" style="display:inline;"
+                          onsubmit="return confirm('{{ 'Удалить норму?' if is_ru else 'Норма ўчирилсинми?' }}');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="vs-btn-icon" title="{{ 'Удалить' if is_ru else 'Ўчириш' }}">🗑</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<script>
+function editNorm(id, partId, modelId, interval, isActive) {
+    document.getElementById('normEditId').value = id;
+    document.getElementById('normPart').value = partId;
+    document.getElementById('normModel').value = modelId || '';
+    document.getElementById('normInterval').value = interval;
+    document.getElementById('normActive').checked = !!isActive;
+    document.getElementById('normFormTitle').textContent =
+        {{ ('Редактировать норму' if is_ru else 'Норма таҳрирлаш')|tojson }} + ' #' + id;
+    window.scrollTo({top: 0, behavior: 'smooth'});
+}
+function resetNormForm() {
+    document.getElementById('normEditId').value = '';
+    document.getElementById('normPart').value = '';
+    document.getElementById('normModel').value = '';
+    document.getElementById('normInterval').value = '';
+    document.getElementById('normActive').checked = true;
+    document.getElementById('normFormTitle').textContent =
+        {{ ('Добавить норму' if is_ru else 'Норма қўшиш')|tojson }};
+}
+</script>
+{% endblock %}

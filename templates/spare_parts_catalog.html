@@ -11,6 +11,10 @@
   <div class="vs-row-end">
     {# SPARE-STAGE2: SKU management lives under the same catalog permission. #}
     <a href="{{ url_for('spare_parts.skus') }}" class="vs-btn">🏷️ {{ 'SKU — варианты поставки' if is_ru else 'SKU — таъминот вариантлари' }}</a>
+    {# SPARE-STAGE3: equipment-model reference, maintenance intervals, and the passive due list. #}
+    <a href="{{ url_for('spare_parts.equipment_models') }}" class="vs-btn">🚜 {{ 'Модели техники' if is_ru else 'Техника моделлари' }}</a>
+    <a href="{{ url_for('spare_parts.maintenance_norms') }}" class="vs-btn">🛠️ {{ 'Нормы (моточасы)' if is_ru else 'Нормалар (моточас)' }}</a>
+    <a href="{{ url_for('spare_parts.maintenance_due') }}" class="vs-btn">⏰ {{ 'Пора менять' if is_ru else 'Алмаштириш вақти' }}</a>
     <a href="{{ url_for('spare_parts.index') }}" class="vs-btn">{{ '← Заявки' if is_ru else '← Сўровлар' }}</a>
   </div>
 </div>
@@ -170,6 +174,9 @@
                     {% if part.status == 'active' %}
                     <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
                             onclick='editPart({{ part.id }}, {{ part.name|tojson }}, {{ (part.part_number or "")|tojson }}, {{ (part.unit or "")|tojson }}, {{ (part.category_id or "")|tojson }})'>✏</button>
+                    {# SPARE-STAGE3: per-part compatibility editor (writes SparePartCompatibility rows). #}
+                    <a class="vs-btn-icon" title="{{ 'Совместимость с моделями' if is_ru else 'Моделлар билан мослик' }}"
+                       href="{{ url_for('spare_parts.catalog_compatibility', pid=part.id) }}">🔗</a>
                     {% endif %}
                 </td>
             </tr>

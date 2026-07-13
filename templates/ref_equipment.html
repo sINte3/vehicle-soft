@@ -134,8 +134,19 @@
                         {% endfor %}
                     </select>
                 </div>
+                {# SPARE-STAGE3: canonical model picker (+ inline "add new"); it auto-fills the eq_type text below, which is still the field legacy readers use. #}
+                <div class="form-group"><label>{{ 'Модель' if lang == 'ru' else 'Модель' }}</label>
+                    <select name="model_id" class="form-control" onchange="onAddModelChange(this)">
+                        <option value="">{{ '— нет / вручную —' if lang == 'ru' else '— йўқ / қўлда —' }}</option>
+                        {% for m in equipment_models %}
+                        <option value="{{ m.id }}">{{ m.name }}</option>
+                        {% endfor %}
+                        <option value="__new__">{{ '➕ Новая модель…' if lang == 'ru' else '➕ Янги модель…' }}</option>
+                    </select>
+                    <input type="text" name="new_model_name" id="add-new-model-name" placeholder="{{ 'Название новой модели' if lang == 'ru' else 'Янги модель номи' }}" class="form-control" style="display:none; margin-top:4px;">
+                </div>
                 <div class="form-group"><label>{{ t('Тури') }}</label>
-                    <input type="text" name="eq_type" placeholder="Трактор МТЗ / Самосвал / Экскаватор..." class="form-control">
+                    <input type="text" name="eq_type" id="add-eq-type" placeholder="Трактор МТЗ / Самосвал / Экскаватор..." class="form-control">
                 </div>
                 <div class="form-group"><label>{{ t('Техника номи') }}</label>
                     <input type="text" name="name" placeholder="МТЗ 261 EA" required class="form-control">
@@ -188,6 +199,7 @@
                     data-org-id="{{ eq.organization_id }}"
                     data-category="{{ eq.category or '' }}"
                     data-eq-type="{{ eq.eq_type|default('', true)|e }}"
+                    data-model-id="{{ eq.model_id or '' }}"
                     data-name="{{ eq.name|default('', true)|e }}"
                     data-plate="{{ eq.plate|default('', true)|e }}"
                     data-default-unit="{{ eq.default_unit|default('', true)|e }}"
@@ -246,6 +258,12 @@
                                 <option value="">{{ t(' выберите категорию ') }}</option>
                             </select>
 
+                            {# SPARE-STAGE3: model picker in the shared edit row; options injected by JS (see populateRefEquipmentModelSelect). #}
+                            <select name="model_id" id="ref-eq-edit-model-id" class="form-control" onchange="onEditModelChange(this)">
+                                <option value="">{{ '— нет / вручную —' if lang == 'ru' else '— йўқ / қўлда —' }}</option>
+                                <option value="__new__">{{ '➕ Новая модель…' if lang == 'ru' else '➕ Янги модель…' }}</option>
+                            </select>
+                            <input type="text" name="new_model_name" id="ref-eq-edit-new-model-name" value="" placeholder="{{ 'Новая модель' if lang == 'ru' else 'Янги модель' }}" class="form-control" style="display:none;">
                             <input type="text" name="eq_type" id="ref-eq-edit-eq-type" value="" class="form-control">
                             <input type="text" name="name" id="ref-eq-edit-name" value="" required class="form-control">
                             <input type="text" name="plate" id="ref-eq-edit-plate" value="" required class="form-control">
@@ -293,6 +311,12 @@ function editEq(id) {
     setRefEquipmentField('ref-eq-edit-organization-id', row.dataset.orgId || '');
     setRefEquipmentField('ref-eq-edit-category', row.dataset.category || '');
     setRefEquipmentField('ref-eq-edit-eq-type', row.dataset.eqType || '');
+    // SPARE-STAGE3: preselect the current model; reset the inline "new model" box.
+    setRefEquipmentField('ref-eq-edit-new-model-name', '');
+    var editNewModelBox = document.getElementById('ref-eq-edit-new-model-name');
+    if (editNewModelBox) editNewModelBox.style.display = 'none';
+    var editModelSel = document.getElementById('ref-eq-edit-model-id');
+    if (editModelSel) editModelSel.value = row.dataset.modelId || '';
     setRefEquipmentField('ref-eq-edit-name', row.dataset.name || '');
     setRefEquipmentField('ref-eq-edit-plate', row.dataset.plate || '');
     setRefEquipmentField('ref-eq-edit-default-unit', row.dataset.defaultUnit || '');
@@ -365,6 +389,50 @@ function populateRefEquipmentEditSelects() {
     document.querySelectorAll('select.ref-equipment-category-select').forEach(function(sel) {
         populateRefEquipmentSelect(sel, REF_EQUIPMENT_CATEGORY_OPTIONS);
     });
+    populateRefEquipmentModelSelect();
+}
+
+// SPARE-STAGE3: canonical equipment-model options for the shared edit-row picker.
+const REF_EQUIPMENT_MODEL_OPTIONS = [
+{% for m in equipment_models %}
+    {"id": {{ m.id|tojson }}, "label": {{ m.name|tojson }}},
+{% endfor %}
+];
+
+function populateRefEquipmentModelSelect() {
+    var sel = document.getElementById('ref-eq-edit-model-id');
+    if (!sel || sel.getAttribute('data-ref-options-loaded') === '1') return;
+    // Insert model options between the placeholder (first) and "__new__" (last).
+    REF_EQUIPMENT_MODEL_OPTIONS.forEach(function(item) {
+        var opt = document.createElement('option');
+        opt.value = String(item.id);
+        opt.textContent = item.label || String(item.id);
+        sel.insertBefore(opt, sel.lastElementChild);
+    });
+    sel.setAttribute('data-ref-options-loaded', '1');
+}
+
+// SPARE-STAGE3: model picker -> auto-fill eq_type text (kept for legacy readers).
+function onAddModelChange(sel) {
+    var box = document.getElementById('add-new-model-name');
+    var eqt = document.getElementById('add-eq-type');
+    if (sel.value === '__new__') {
+        if (box) { box.style.display = ''; box.focus(); }
+    } else {
+        if (box) { box.style.display = 'none'; box.value = ''; }
+        if (sel.value && eqt) { eqt.value = sel.options[sel.selectedIndex].text; }
+    }
+}
+
+function onEditModelChange(sel) {
+    var box = document.getElementById('ref-eq-edit-new-model-name');
+    var eqt = document.getElementById('ref-eq-edit-eq-type');
+    if (sel.value === '__new__') {
+        if (box) { box.style.display = ''; box.focus(); }
+    } else {
+        if (box) { box.style.display = 'none'; box.value = ''; }
+        if (sel.value && eqt) { eqt.value = sel.options[sel.selectedIndex].text; }
+    }
 }
 
 document.addEventListener('DOMContentLoaded', populateRefEquipmentEditSelects);

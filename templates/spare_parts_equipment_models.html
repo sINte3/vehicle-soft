@@ -1,0 +1,160 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Модели техники' if is_ru else 'Техника моделлари' }}{% endblock %}
+{% block content %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Модели техники' if is_ru else 'Техника моделлари' }}</div>
+    <div class="vs-hero-sub">{{ 'Справочник моделей для совместимости запчастей. Переименуйте опечатки и объедините дубликаты в своём темпе — приложение работает и без завершения этой чистки.' if is_ru else 'Эҳтиёт қисмлар мослиги учун моделлар маълумотномаси. Хатоларни тузатинг ва дубликатларни ўз суръатингизда бирлаштиринг — бу тозалаш тугамасдан ҳам тизим ишлайверади.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('spare_parts.catalog') }}" class="vs-btn">{{ '← Каталог' if is_ru else '← Каталог' }}</a>
+  </div>
+</div>
+
+<div class="vs-alert is-info vs-mb">{{ 'Модели созданы автоматически из поля «Тип» техники (по одной на каждое различное значение, без объединения похожих). Это ручное решение — объединяйте здесь.' if is_ru else 'Моделлар техника «Тури» майдонидан автоматик яратилган (ҳар бир фарқли қиймат учун биттадан, ўхшашларни бирлаштирмасдан). Бу қўлда қарор — бу ерда бирлаштиринг.' }}</div>
+
+{# ─── Add / edit a model ─────────────────────────────────────────────── #}
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title" id="modelFormTitle">{{ 'Добавить модель' if is_ru else 'Модель қўшиш' }}</div>
+    </div>
+    <div class="vs-card-body">
+        <form method="post" action="{{ url_for('spare_parts.equipment_model_save') }}" class="vs-form-row">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="id" id="modelEditId" value="">
+            <div class="vs-field" style="flex:2; min-width:220px;">
+                <label class="vs-label">{{ 'Название (каноническое)' if is_ru else 'Номи (каноник)' }}</label>
+                <input type="text" name="name" id="modelName" class="vs-input" required>
+            </div>
+            <div class="vs-field" style="flex:1; min-width:170px;">
+                <label class="vs-label">{{ 'Название (узб.)' if is_ru else 'Номи (ўзб.)' }}</label>
+                <input type="text" name="name_uz" id="modelNameUz" class="vs-input">
+            </div>
+            <div class="vs-field" style="flex:1; min-width:150px;">
+                <label class="vs-label">{{ 'Производитель' if is_ru else 'Ишлаб чиқарувчи' }}</label>
+                <input type="text" name="manufacturer" id="modelManufacturer" class="vs-input" placeholder="New Holland">
+            </div>
+            <div class="vs-field" style="width:90px;">
+                <label class="vs-label">{{ 'Активна' if is_ru else 'Фаол' }}</label>
+                <input type="checkbox" name="is_active" id="modelActive" checked style="width:20px; height:20px; margin-top:8px;">
+            </div>
+            <div class="vs-field" style="flex:none;">
+                <label class="vs-label">&nbsp;</label>
+                <div class="vs-row">
+                    <button type="submit" class="vs-btn vs-btn-primary">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+                    <button type="button" class="vs-btn" onclick="resetModelForm()">{{ 'Сбросить' if is_ru else 'Тозалаш' }}</button>
+                </div>
+            </div>
+        </form>
+        <div class="vs-help vs-mt-sm">{{ 'При переименовании поле «Тип» на всей связанной технике обновится автоматически.' if is_ru else 'Қайта номлашда боғланган барча техниканинг «Тури» майдони автоматик янгиланади.' }}</div>
+    </div>
+</div>
+
+{# ─── Merge two models ───────────────────────────────────────────────── #}
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <div class="vs-card-title">{{ 'Объединить модели' if is_ru else 'Моделларни бирлаштириш' }}</div>
+    </div>
+    <div class="vs-card-body">
+        <form method="post" action="{{ url_for('spare_parts.equipment_model_merge') }}" class="vs-form-row"
+              onsubmit="return confirm('{{ 'Объединить выбранные модели? Действие переносит технику и совместимость на модель-приёмник.' if is_ru else 'Танланган моделларни бирлаштирасизми? Амал техника ва мосликни қабул қилувчи моделга кўчиради.' }}');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="vs-field" style="flex:1; min-width:220px;">
+                <label class="vs-label">{{ 'Что объединить (исчезнет)' if is_ru else 'Нимани бирлаштириш (йўқолади)' }}</label>
+                <select name="merged_id" class="vs-select" required>
+                    <option value="">{{ '— модель —' if is_ru else '— модель —' }}</option>
+                    {% for m in active_models %}
+                    <option value="{{ m.id }}">{{ m.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="vs-field" style="flex:none; align-self:flex-end; padding-bottom:8px;">→</div>
+            <div class="vs-field" style="flex:1; min-width:220px;">
+                <label class="vs-label">{{ 'Приёмник (останется)' if is_ru else 'Қабул қилувчи (қолади)' }}</label>
+                <select name="survivor_id" class="vs-select" required>
+                    <option value="">{{ '— модель —' if is_ru else '— модель —' }}</option>
+                    {% for m in active_models %}
+                    <option value="{{ m.id }}">{{ m.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="vs-field" style="flex:none;">
+                <label class="vs-label">&nbsp;</label>
+                <button type="submit" class="vs-btn">⇄ {{ 'Объединить' if is_ru else 'Бирлаштириш' }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{# ─── Model list ─────────────────────────────────────────────────────── #}
+<div class="vs-table-wrap">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ 'Всего моделей' if is_ru else 'Жами моделлар' }}: {{ models|length }}</span>
+    </div>
+    <div class="vs-table-scroll">
+    <table class="vs-table">
+        <thead>
+            <tr>
+                <th style="width:40px;">№</th>
+                <th>{{ 'Название' if is_ru else 'Номи' }}</th>
+                <th>{{ 'Узб.' if is_ru else 'Ўзб.' }}</th>
+                <th>{{ 'Производитель' if is_ru else 'Ишлаб чиқарувчи' }}</th>
+                <th class="right">{{ 'Техника' if is_ru else 'Техника' }}</th>
+                <th class="right">{{ 'Совмест.' if is_ru else 'Мослик' }}</th>
+                <th>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
+                <th>{{ 'Источник (eq_type)' if is_ru else 'Манба (eq_type)' }}</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in models %}
+            <tr class="{% if not m.is_active %}ref-eq-inactive{% endif %}">
+                <td>{{ loop.index }}</td>
+                <td style="font-weight:600;">{{ m.name }}</td>
+                <td class="text-sm vs-muted">{{ m.name_uz or '—' }}</td>
+                <td class="text-sm vs-muted">{{ m.manufacturer or '—' }}</td>
+                <td class="right">{{ eq_counts.get(m.id, 0) }}</td>
+                <td class="right">{{ compat_counts.get(m.id, 0) }}</td>
+                <td>
+                    {% if m.is_active %}
+                    <span class="vs-badge vs-badge-success vs-badge-sm">{{ 'активна' if is_ru else 'фаол' }}</span>
+                    {% else %}
+                    <span class="vs-badge vs-badge-sm">{{ 'неактивна' if is_ru else 'нофаол' }}</span>
+                    {% endif %}
+                </td>
+                <td class="text-sm vs-muted">{{ m.migrated_from_eq_type or '—' }}</td>
+                <td class="right">
+                    <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
+                            onclick='editModel({{ m.id }}, {{ m.name|tojson }}, {{ (m.name_uz or "")|tojson }}, {{ (m.manufacturer or "")|tojson }}, {{ (m.is_active|int) }})'>✏</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<script>
+function editModel(id, name, nameUz, manufacturer, isActive) {
+    document.getElementById('modelEditId').value = id;
+    document.getElementById('modelName').value = name || '';
+    document.getElementById('modelNameUz').value = nameUz || '';
+    document.getElementById('modelManufacturer').value = manufacturer || '';
+    document.getElementById('modelActive').checked = !!isActive;
+    document.getElementById('modelFormTitle').textContent =
+        {{ ('Редактировать модель' if is_ru else 'Моделни таҳрирлаш')|tojson }} + ' #' + id;
+    window.scrollTo({top: 0, behavior: 'smooth'});
+}
+function resetModelForm() {
+    document.getElementById('modelEditId').value = '';
+    document.getElementById('modelName').value = '';
+    document.getElementById('modelNameUz').value = '';
+    document.getElementById('modelManufacturer').value = '';
+    document.getElementById('modelActive').checked = true;
+    document.getElementById('modelFormTitle').textContent =
+        {{ ('Добавить модель' if is_ru else 'Модель қўшиш')|tojson }};
+}
+</script>
+{% endblock %}
