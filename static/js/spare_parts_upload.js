@@ -77,6 +77,10 @@
                 var img = document.createElement('img');
                 var url = URL.createObjectURL(file);
                 img.src = url;
+                /* [REASON]: SP-F-013 — meaningful alt (the original filename),
+                 * not an empty string, so screen readers announce which staged
+                 * file each preview thumbnail belongs to. */
+                img.alt = file.name;
                 img.onload = function () { URL.revokeObjectURL(url); };
                 thumb.appendChild(img);
             } else {
