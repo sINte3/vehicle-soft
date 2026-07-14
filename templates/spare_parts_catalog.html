@@ -9,11 +9,15 @@
     <div class="vs-hero-sub">{{ 'Справочник часто используемых запчастей для быстрого заполнения заявок.' if is_ru else 'Сўровларни тез тўлдириш учун кўп ишлатиладиган запчастлар маълумотномаси.' }}</div>
   </div>
   <div class="vs-row-end">
+    {# SP-F-015: links to manage-only screens hidden for read-only viewers (routes 403 anyway). #}
+    {% if can_manage %}
     {# SPARE-STAGE2: SKU management lives under the same catalog permission. #}
     <a href="{{ url_for('spare_parts.skus') }}" class="vs-btn">🏷️ {{ 'SKU — варианты поставки' if is_ru else 'SKU — таъминот вариантлари' }}</a>
-    {# SPARE-STAGE3: equipment-model reference, maintenance intervals, and the passive due list. #}
+    {# SPARE-STAGE3: equipment-model reference and maintenance intervals. #}
     <a href="{{ url_for('spare_parts.equipment_models') }}" class="vs-btn">🚜 {{ 'Модели техники' if is_ru else 'Техника моделлари' }}</a>
     <a href="{{ url_for('spare_parts.maintenance_norms') }}" class="vs-btn">🛠️ {{ 'Нормы (моточасы)' if is_ru else 'Нормалар (моточас)' }}</a>
+    {% endif %}
+    {# SP-F-011: the passive due list is readable by any base spare_parts user. #}
     <a href="{{ url_for('spare_parts.maintenance_due') }}" class="vs-btn">⏰ {{ 'Пора менять' if is_ru else 'Алмаштириш вақти' }}</a>
     <a href="{{ url_for('spare_parts.index') }}" class="vs-btn">{{ '← Заявки' if is_ru else '← Сўровлар' }}</a>
   </div>
@@ -22,7 +26,8 @@
 <div class="vs-alert is-info vs-mb">{{ 'Минимально обязательное поле — название. Артикул, единица измерения и категория помогают быстрее находить нужную деталь.' if is_ru else 'Камида номини киритиш мажбурий. Артикул, ўлчов бирлиги ва категория керакли детални тез топишга ёрдам беради.' }}</div>
 
 {# ─── SPARE-STAGE1: pending-review queue ─────────────────────────────── #}
-{% if pending_parts %}
+{# SP-F-015: manage-only (the route also skips loading pending_parts for read-only viewers). #}
+{% if can_manage and pending_parts %}
 <div class="vs-card vs-card-accent-warning vs-mb">
     <div class="vs-card-header">
         <div class="vs-card-title">⏳ {{ 'Очередь на проверку' if is_ru else 'Текширув навбати' }} ({{ pending_parts|length }})</div>
@@ -85,6 +90,8 @@
 </div>
 {% endif %}
 
+{# SP-F-015: "add new part" form is manage-only; the listing below stays visible to every base user. #}
+{% if can_manage %}
 <div class="vs-card vs-mb">
     <div class="vs-card-header">
         <div class="vs-card-title" id="catalogFormTitle">{{ 'Добавить новую запчасть' if is_ru else 'Янги қисм қўшиш' }}</div>
@@ -125,6 +132,7 @@
         </form>
     </div>
 </div>
+{% endif %}
 
 <div class="vs-row vs-mb" style="justify-content:space-between; align-items:flex-end;">
     <div class="vs-field" style="min-width:280px; flex:1;">
@@ -171,7 +179,8 @@
                     {% endif %}
                 </td>
                 <td class="right">
-                    {% if part.status == 'active' %}
+                    {# SP-F-015: per-row edit/compatibility actions are manage-only. #}
+                    {% if can_manage and part.status == 'active' %}
                     <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
                             onclick='editPart({{ part.id }}, {{ part.name|tojson }}, {{ (part.part_number or "")|tojson }}, {{ (part.unit or "")|tojson }}, {{ (part.category_id or "")|tojson }})'>✏</button>
                     {# SPARE-STAGE3: per-part compatibility editor (writes SparePartCompatibility rows). #}
@@ -193,6 +202,8 @@
     </div>
     <div class="vs-card-body">
         <div class="vs-soft vs-mb-sm" style="font-size:12.5px;">{{ 'Категории вида «узел» требуют фото при отправке заявки; «расходник» — нет.' if is_ru else '«Узел» туридаги категориялар сўров юборишда фото талаб қилади; «сарф материали» — йўқ.' }}</div>
+        {# SP-F-015: only the category FORM is manage-only; the categories listing below stays visible. #}
+        {% if can_manage %}
         <form method="post" action="{{ url_for('spare_parts.catalog_category_save') }}" class="vs-form-row vs-mb" id="categoryForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="catEditId" value="">
@@ -227,6 +238,7 @@
                 </div>
             </div>
         </form>
+        {% endif %}
         {% if categories %}
         <div class="vs-table-scroll">
         <table class="vs-table">
@@ -257,8 +269,11 @@
                         {% endif %}
                     </td>
                     <td class="right">
+                        {# SP-F-015: category edit button is manage-only. #}
+                        {% if can_manage %}
                         <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
                                 onclick='editCategory({{ cat.id }}, {{ cat.name_ru|tojson }}, {{ cat.name_uz|tojson }}, {{ cat.kind|tojson }}, {{ cat.sort_order or 0 }}, {{ 1 if cat.is_active else 0 }})'>✏</button>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}

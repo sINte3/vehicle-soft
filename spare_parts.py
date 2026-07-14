@@ -2580,20 +2580,25 @@ def act_pdf(act_id):
 @spare_parts_bp.route('/catalog')
 @module_required('spare_parts')
 def catalog():
-    # [REASON]: SPARE-STAGE1 — catalog management now sits behind the explicit
-    # 'spare_parts_catalog_manage' permission (admin passes automatically, so
-    # existing admin access is preserved; previously this was is_admin-only).
-    if not current_user.has_module_access('spare_parts_catalog_manage'):
-        abort(403)
+    # [REASON]: SP-F-015 — the GET page splits read from manage: any base
+    # spare_parts user may BROWSE the canonical catalog (they already see the
+    # same names through the request-form picker), while the pending-review
+    # queue, add/edit forms and category management stay behind
+    # spare_parts_catalog_manage (the POST routes below keep their own
+    # independent permission checks — only the read path changes).
+    can_manage = current_user.has_module_access('spare_parts_catalog_manage')
     parts = (SparePart.query
              .options(joinedload(SparePart.category_ref))
              .order_by(SparePart.name).all())
-    pending_parts = (SparePart.query
-                     .options(joinedload(SparePart.creator),
-                              joinedload(SparePart.source_item))
-                     .filter(SparePart.status == 'pending_review')
-                     .order_by(SparePart.created_at)
-                     .all())
+    pending_parts = []
+    if can_manage:
+        # No reason to query data the viewer cannot act on.
+        pending_parts = (SparePart.query
+                         .options(joinedload(SparePart.creator),
+                                  joinedload(SparePart.source_item))
+                         .filter(SparePart.status == 'pending_review')
+                         .order_by(SparePart.created_at)
+                         .all())
     merge_targets = [p for p in parts
                      if p.status == 'active' and p.is_active != False]  # noqa: E712
     categories = (SparePartCategory.query
@@ -2604,6 +2609,7 @@ def catalog():
                            pending_parts=pending_parts,
                            merge_targets=merge_targets,
                            categories=categories,
+                           can_manage=can_manage,
                            lang=_spare_lang())
 
 
