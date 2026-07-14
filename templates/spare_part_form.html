@@ -449,12 +449,20 @@ function checkRepeat(row) {
             let title = TEXT.repeatHistory;
             if (data.severity === 'red') { cls = 'is-red'; title = '⚠ ' + TEXT.repeatRed; }
             else if (data.severity === 'yellow') { cls = 'is-yellow'; title = '⚠ ' + TEXT.repeatYellow; }
-            let html = '<strong>' + title + (data.days_since !== null ? ' (' + data.days_since + ' ' + TEXT.daysAgo + ')' : '') + '</strong>';
+            // [REASON]: SP-F-006 — history rows are built as DOM nodes with
+            // textContent (same safe pattern as extraBox above), never as an
+            // innerHTML string: `unit` is stored free text, so a legacy value
+            // like '<img onerror=...>' must render as inert text, not markup.
+            box.textContent = '';   // replace, not append (two in-flight checks must not stack)
+            const strong = document.createElement('strong');
+            strong.textContent = title + (data.days_since !== null ? ' (' + data.days_since + ' ' + TEXT.daysAgo + ')' : '');
+            box.appendChild(strong);
             data.history.slice(0, 3).forEach(h => {
-                html += '<br>#' + h.request_id + ' · ' + h.request_date + ' · ' + h.quantity + ' ' + (h.unit || '');
+                box.appendChild(document.createElement('br'));
+                box.appendChild(document.createTextNode(
+                    '#' + h.request_id + ' · ' + h.request_date + ' · ' + h.quantity + ' ' + (h.unit || '')));
             });
             box.className = 'sp-repeat ' + cls;
-            box.innerHTML = html;
         })
         .catch(() => {});
 }
