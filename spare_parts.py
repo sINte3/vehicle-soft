@@ -3249,6 +3249,23 @@ def _reports_data(d_from, d_to, org_id=None, equipment_id=None, category_id=None
     }
 
 
+def _xlsx_safe(value):
+    """Neutralize spreadsheet formula injection in a user-controlled string.
+
+    [REASON]: SP-F-004 — Excel/LibreOffice treat a cell starting with = + - @
+    as a formula, so a part named '=1+1' (or worse, '=HYPERLINK(...)') typed
+    by any operator would execute when the exported report is opened. The
+    standard defense is a leading apostrophe: Excel shows the text verbatim
+    and never evaluates it. Applied ONLY to user-controlled strings; fixed
+    labels, ids, dates and numeric columns are left untouched.
+    """
+    if isinstance(value, str):
+        stripped = value.lstrip()
+        if stripped and stripped[0] in ('=', '+', '-', '@'):
+            return "'" + value
+    return value
+
+
 def _spare_reports_workbook(data, lang='uz'):
     """Build the 5-sheet Excel workbook for the spare parts reports.
 
@@ -3299,14 +3316,17 @@ def _spare_reports_workbook(data, lang='uz'):
                 width = max(width, min(len(val) + 2, 38))
             ws.column_dimensions[letter].width = width
 
+    # [REASON]: SP-F-004 — equipment/organization/part/unit names are operator
+    # -typed reference data and must be formula-neutralized in every sheet;
+    # the fixed '—'-prefixed fallbacks pass through _xlsx_safe unchanged.
     def eq_name(eq):
-        return eq.name if eq else L('— без техники —', '— техникасиз —')
+        return _xlsx_safe(eq.name) if eq else L('— без техники —', '— техникасиз —')
 
     def eq_plate(eq):
-        return (eq.plate or '') if eq else ''
+        return _xlsx_safe((eq.plate or '')) if eq else ''
 
     def org_name(org):
-        return (org.short_name or org.name) if org else '—'
+        return _xlsx_safe((org.short_name or org.name)) if org else '—'
 
     severity_labels = {
         'red': L('Красный (≤7 дней)', 'Қизил (≤7 кун)'),
@@ -3344,7 +3364,7 @@ def _spare_reports_workbook(data, lang='uz'):
                L('Сумма, сум', 'Сумма, сўм')])
     for r in data['by_category']:
         cat = r['category']
-        label = ((cat.name_ru if lang == 'ru' else cat.name_uz) if cat
+        label = (_xlsx_safe(cat.name_ru if lang == 'ru' else cat.name_uz) if cat
                  else L('— без категории —', '— категориясиз —'))
         ws.append([label, r['lines'], r['total']])
     ws.append([L('ИТОГО', 'ЖАМИ'), data['cost_lines_count'], data['grand_total']])
@@ -3370,7 +3390,7 @@ def _spare_reports_workbook(data, lang='uz'):
         ws.append(['#{}'.format(r['request_id']),
                    r['request_date'].strftime('%d.%m.%Y'),
                    org_name(r['organization']), eq_name(r['equipment']),
-                   r['part_name'],
+                   _xlsx_safe(r['part_name']),
                    severity_labels.get(r['severity'], r['severity']),
                    r['days_since']])
     style_table(ws)
@@ -3386,7 +3406,8 @@ def _spare_reports_workbook(data, lang='uz'):
         ws.append(['#{}'.format(r['request_id']),
                    r['request_date'].strftime('%d.%m.%Y'),
                    org_name(r['organization']), eq_name(r['equipment']),
-                   r['name'], r['quantity'], r['unit'], r['price'], r['total']])
+                   _xlsx_safe(r['name']), r['quantity'], _xlsx_safe(r['unit']),
+                   r['price'], r['total']])
     style_table(ws, money_cols=(8, 9))
 
     return wb
