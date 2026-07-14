@@ -3192,8 +3192,13 @@ def maintenance_due():
 
     [REASON]: SPARE-STAGE3 — deliberately notification-only. It never creates a
     draft request; the owner decided passive notification for this stage.
+
+    [REASON]: SP-F-011 — read-only due list, visible to any base spare_parts
+    user scoped to their organizations (the manual's documented split):
+    deliberately NO _require_catalog_manage() here, unlike the norm CRUD
+    routes above, which keep it — viewing "what is due" is operations,
+    editing the norms is catalog stewardship.
     """
-    _require_catalog_manage()
     org_ids = None if current_user.is_admin else current_user.get_org_ids()
     rows = _maintenance_due_rows(org_ids=org_ids)
     return render_template('spare_parts_maintenance_due.html',
