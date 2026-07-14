@@ -76,11 +76,12 @@
         <div class="vs-card-body">
             <div class="vs-form-row">
                 <div class="vs-field" style="width:170px;">
-                    <label class="vs-label">{{ 'Дата заявки' if is_ru else 'Сўров санаси' }}</label>
+                    {# SP-F-013: programmatic label associations (for=/id) — additive only. #}
+                    <label class="vs-label" for="requestDate">{{ 'Дата заявки' if is_ru else 'Сўров санаси' }}</label>
                     <input type="date" name="request_date" id="requestDate" class="vs-input" value="{{ today }}" required>
                 </div>
                 <div class="vs-field" style="flex:1; min-width:240px;">
-                    <label class="vs-label">{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
+                    <label class="vs-label" for="orgSelect">{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
                     <select name="organization_id" id="orgSelect" class="vs-select" required onchange="onOrgChange()">
                         <option value="">{{ '— выберите организацию —' if is_ru else '— ташкилотни танланг —' }}</option>
                         {% for org in organizations %}
@@ -90,7 +91,7 @@
                     <div class="vs-help">{{ 'Обязательное поле.' if is_ru else 'Мажбурий майдон.' }}</div>
                 </div>
                 <div class="vs-field" style="flex:2; min-width:300px;">
-                    <label class="vs-label">{{ 'Техника' if is_ru else 'Техника' }}</label>
+                    <label class="vs-label" for="eqSelect">{{ 'Техника' if is_ru else 'Техника' }}</label>
                     <select name="equipment_id" id="eqSelect" class="vs-select" onchange="onEquipmentChange()">
                         <option value="">{{ '— сначала выберите организацию —' if is_ru else '— аввал ташкилотни танланг —' }}</option>
                     </select>
@@ -99,8 +100,8 @@
                 </div>
             </div>
             <div class="vs-field vs-mt-sm">
-                <label class="vs-label">{{ 'Примечание к заявке' if is_ru else 'Сўров изоҳи' }}</label>
-                <textarea name="note" class="vs-textarea" rows="2" placeholder="{{ 'Например: срочно, причина замены, место установки...' if is_ru else 'Масалан: шошилинч, алмаштириш сабаби, ўрнатиш жойи...' }}"></textarea>
+                <label class="vs-label" for="requestNote">{{ 'Примечание к заявке' if is_ru else 'Сўров изоҳи' }}</label>
+                <textarea name="note" id="requestNote" class="vs-textarea" rows="2" placeholder="{{ 'Например: срочно, причина замены, место установки...' if is_ru else 'Масалан: шошилинч, алмаштириш сабаби, ўрнатиш жойи...' }}"></textarea>
             </div>
         </div>
     </div>
@@ -171,46 +172,97 @@ const TEXT = {
     noteName: {{ ('Комментарий' if is_ru else 'Изоҳ')|tojson }},
     chooseFiles: {{ ('Выбрать фото/видео' if is_ru else 'Фото/видео танлаш')|tojson }},
     uploadTooMany: {{ ('Максимум {max} файлов на позицию — лишние не добавлены.' if is_ru else 'Позицияга энг кўпи билан {max} та файл — ортиқчалари қўшилмади.')|tojson }},
+    uploadFileRejected: {{ ('«{name}» не добавлен — максимум {max} файлов на позицию.' if is_ru else '«{name}» қўшилмади — позицияга кўпи билан {max} та файл.')|tojson }},
     uploadTooLarge: {{ ('«{name}»: файл больше 50 МБ.' if is_ru else '«{name}»: файл 50 МБдан катта.')|tojson }},
     uploadLimitReached: {{ ('Достигнут лимит файлов для этой позиции.' if is_ru else 'Бу позиция учун файллар чегарасига етилди.')|tojson }},
     fuzzyLabel: {{ ('Похожие в каталоге:' if is_ru else 'Каталогдаги ўхшашлари:')|tojson }},
     skuPlaceholder: {{ ('— SKU (не обязательно) —' if is_ru else '— SKU (мажбурий эмас) —')|tojson }},
     skuLastPrice: {{ ('посл. цена' if is_ru else 'охирги нарх')|tojson }},
-    skuSum: {{ ('сум' if is_ru else 'сўм')|tojson }}
+    skuSum: {{ ('сум' if is_ru else 'сўм')|tojson }},
+    /* [REASON]: SP-F-013 — programmatic names for the per-row controls that
+       have no visible <label> (the table header carries the visual label). */
+    ariaPartNumber: {{ ('Артикульный номер' if is_ru else 'Артикул рақами')|tojson }},
+    ariaQty: {{ ('Количество' if is_ru else 'Миқдор')|tojson }},
+    ariaUnit: {{ ('Единица измерения' if is_ru else 'Ўлчов бирлиги')|tojson }},
+    ariaNote: {{ ('Примечание к позиции' if is_ru else 'Позиция изоҳи')|tojson }},
+    ariaSku: {{ ('Вариант поставки (SKU)' if is_ru else 'Таъминот варианти (SKU)')|tojson }},
+    ariaRemoveRow: {{ ('Удалить строку' if is_ru else 'Қаторни ўчириш')|tojson }},
+    ariaFiles: {{ ('Файлы фото/видео позиции' if is_ru else 'Позиция фото/видео файллари')|tojson }}
 };
 const EQUIP_URL = {{ url_for('spare_parts.api_equipment_by_org')|tojson }};
 const REPEAT_URL = {{ url_for('spare_parts.api_repeat_check')|tojson }};
 const CATALOG_SEARCH_URL = {{ url_for('spare_parts.api_catalog_search')|tojson }};
 const SKUS_URL = {{ url_for('spare_parts.api_skus_by_part')|tojson }};
+/* [REASON]: SP-F-024 — managed unit directory (code + localized label +
+   lowercase alt spellings). Empty when the units migration has not run:
+   the row template then falls back to the legacy free-text input. */
+const UNIT_OPTIONS = {{ (unit_options or [])|tojson }};
 
 let EQ_DATA = {};
+
+// [REASON]: SP-F-024 — the select element is emitted empty and populated
+// with DOM options (textContent), never by string-concatenating the
+// DB-sourced labels into innerHTML.
+function unitCellHtml() {
+    return UNIT_OPTIONS.length
+        ? '<select name="item_unit" class="vs-select" aria-label="' + TEXT.ariaUnit + '"></select>'
+        : '<input type="text" name="item_unit" class="vs-input" value="dona" aria-label="' + TEXT.ariaUnit + '">';
+}
+
+function populateUnitOptions(field) {
+    if (!field || field.tagName !== 'SELECT') return;
+    UNIT_OPTIONS.forEach(u => {
+        const o = document.createElement('option');
+        o.value = u.code;
+        o.textContent = u.label;
+        o.dataset.alt = u.alt || '';
+        if (u.code === 'dona') o.selected = true;   // today's default
+        field.appendChild(o);
+    });
+}
+
+/* Set a unit field from a catalog part's stored unit. For the select this
+   matches by code first, then by the alt spellings (legacy free-text catalog
+   values like 'шт'); an unrecognized value leaves the selection unchanged. */
+function setUnitValue(field, val) {
+    if (!field || !val) return;
+    if (field.tagName !== 'SELECT') { field.value = val; return; }
+    const v = String(val).trim().toLowerCase();
+    for (const o of field.options) {
+        if (o.value.toLowerCase() === v ||
+            (o.dataset.alt || '').split('|').indexOf(v) !== -1) {
+            field.value = o.value;
+            return;
+        }
+    }
+}
 
 function rowTemplate() {
     return `
         <td class="row-no"></td>
         <td>
-            <input type="text" name="item_name" class="vs-input" list="catalogParts" placeholder="${TEXT.photoName}" autocomplete="off" oninput="onPartInput(this)" onchange="onPartInput(this)">
+            <input type="text" name="item_name" class="vs-input" list="catalogParts" placeholder="${TEXT.photoName}" aria-label="${TEXT.photoName}" autocomplete="off" oninput="onPartInput(this)" onchange="onPartInput(this)">
             <input type="hidden" name="item_spare_part_id" value="">
             <div class="sp-hint"></div>
             <div class="sp-fuzzy"></div>
-            <select name="item_sku_id" class="vs-select sp-sku-select" style="display:none; margin-top:4px;" onchange="onSkuChange(this)"></select>
+            <select name="item_sku_id" class="vs-select sp-sku-select" style="display:none; margin-top:4px;" onchange="onSkuChange(this)" aria-label="${TEXT.ariaSku}"></select>
             <div class="sp-hint sp-sku-hint"></div>
             <div class="sp-repeat"></div>
             <div class="sp-extra"></div>
         </td>
-        <td><input type="text" name="item_part_number" class="vs-input" placeholder="000-000"></td>
-        <td><input type="number" name="item_quantity" class="vs-input" value="1" min="0.001" step="0.001"></td>
-        <td><input type="text" name="item_unit" class="vs-input" value="dona"></td>
-        <td><input type="text" name="item_note" class="vs-input" placeholder="${TEXT.noteName}"></td>
+        <td><input type="text" name="item_part_number" class="vs-input" placeholder="000-000" aria-label="${TEXT.ariaPartNumber}"></td>
+        <td><input type="number" name="item_quantity" class="vs-input" value="1" min="0.001" step="0.001" aria-label="${TEXT.ariaQty}"></td>
+        <td>${unitCellHtml()}</td>
+        <td><input type="text" name="item_note" class="vs-input" placeholder="${TEXT.noteName}" aria-label="${TEXT.ariaNote}"></td>
         <td>
             <div class="sp-upload" data-existing-count="0">
-                <input type="file" name="item_photo_0" accept="image/*,video/*" multiple class="sp-upload-input" style="display:none;">
+                <input type="file" name="item_photo_0" accept="image/*,video/*" multiple class="sp-upload-input" style="display:none;" aria-label="${TEXT.ariaFiles}">
                 <button type="button" class="vs-btn vs-btn-sm sp-upload-btn">📎 ${TEXT.chooseFiles}</button>
                 <div class="sp-upload-list"></div>
                 <div class="sp-upload-msg"></div>
             </div>
         </td>
-        <td class="right"><button type="button" onclick="removeRow(this)" class="vs-btn-icon" title="✕">✕</button></td>
+        <td class="right"><button type="button" onclick="removeRow(this)" class="vs-btn-icon" title="${TEXT.ariaRemoveRow}" aria-label="${TEXT.ariaRemoveRow}">✕</button></td>
     `;
 }
 
@@ -225,6 +277,8 @@ function initRowUpload(row) {
         maxSizeBytes: UPLOAD_MAX_SIZE_BYTES,
         text: {
             tooMany: TEXT.uploadTooMany.replace('{max}', UPLOAD_MAX_FILES),
+            // [REASON]: SP-F-022 — per-file rejection message naming the file.
+            fileRejected: TEXT.uploadFileRejected,
             tooLarge: TEXT.uploadTooLarge,
             limitReached: TEXT.uploadLimitReached,
         },
@@ -238,6 +292,7 @@ function addRow(focusName) {
     row.innerHTML = rowTemplate();
     tbody.appendChild(row);
     initRowUpload(row);
+    populateUnitOptions(row.querySelector('[name=item_unit]'));
     renumberRows();
     if (focusName !== false) row.querySelector('[name=item_name]').focus();
     return row;
@@ -304,7 +359,7 @@ function onPartInput(input) {
     if (opt) {
         hidden.value = opt.dataset.id || '';
         row.dataset.kind = opt.dataset.kind || '';
-        if (opt.dataset.unit && (!unitInput.value || unitInput.value === 'dona')) unitInput.value = opt.dataset.unit;
+        if (opt.dataset.unit && (!unitInput.value || unitInput.value === 'dona')) setUnitValue(unitInput, opt.dataset.unit);
         if (opt.dataset.partNumber && !partNumberInput.value) partNumberInput.value = opt.dataset.partNumber;
         const consumable = (opt.dataset.kind === 'consumable');
         hint.textContent = consumable ? TEXT.fromCatalogConsumable : TEXT.fromCatalog;
@@ -449,12 +504,20 @@ function checkRepeat(row) {
             let title = TEXT.repeatHistory;
             if (data.severity === 'red') { cls = 'is-red'; title = '⚠ ' + TEXT.repeatRed; }
             else if (data.severity === 'yellow') { cls = 'is-yellow'; title = '⚠ ' + TEXT.repeatYellow; }
-            let html = '<strong>' + title + (data.days_since !== null ? ' (' + data.days_since + ' ' + TEXT.daysAgo + ')' : '') + '</strong>';
+            // [REASON]: SP-F-006 — history rows are built as DOM nodes with
+            // textContent (same safe pattern as extraBox above), never as an
+            // innerHTML string: `unit` is stored free text, so a legacy value
+            // like '<img onerror=...>' must render as inert text, not markup.
+            box.textContent = '';   // replace, not append (two in-flight checks must not stack)
+            const strong = document.createElement('strong');
+            strong.textContent = title + (data.days_since !== null ? ' (' + data.days_since + ' ' + TEXT.daysAgo + ')' : '');
+            box.appendChild(strong);
             data.history.slice(0, 3).forEach(h => {
-                html += '<br>#' + h.request_id + ' · ' + h.request_date + ' · ' + h.quantity + ' ' + (h.unit || '');
+                box.appendChild(document.createElement('br'));
+                box.appendChild(document.createTextNode(
+                    '#' + h.request_id + ' · ' + h.request_date + ' · ' + h.quantity + ' ' + (h.unit || '')));
             });
             box.className = 'sp-repeat ' + cls;
-            box.innerHTML = html;
         })
         .catch(() => {});
 }

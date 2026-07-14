@@ -2,6 +2,7 @@
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Нормы (моточасы)' if is_ru else 'Нормалар (моточас)' }}{% endblock %}
 {% block content %}
+{# SP-F-013: programmatic label associations (for=/id, aria-label) — additive only. #}
 
 <div class="vs-hero vs-mb">
   <div>
@@ -25,7 +26,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="normEditId" value="">
             <div class="vs-field" style="flex:2; min-width:240px;">
-                <label class="vs-label">{{ 'Деталь (каталог)' if is_ru else 'Деталь (каталог)' }}</label>
+                <label class="vs-label" for="normPart">{{ 'Деталь (каталог)' if is_ru else 'Деталь (каталог)' }}</label>
                 <select name="spare_part_id" id="normPart" class="vs-select" required>
                     <option value="">{{ '— выберите деталь —' if is_ru else '— деталью танланг —' }}</option>
                     {% for p in parts %}
@@ -34,7 +35,7 @@
                 </select>
             </div>
             <div class="vs-field" style="flex:1; min-width:200px;">
-                <label class="vs-label">{{ 'Модель (необязательно)' if is_ru else 'Модель (ихтиёрий)' }}</label>
+                <label class="vs-label" for="normModel">{{ 'Модель (необязательно)' if is_ru else 'Модель (ихтиёрий)' }}</label>
                 <select name="equipment_model_id" id="normModel" class="vs-select">
                     <option value="">{{ '— все модели —' if is_ru else '— барча моделлар —' }}</option>
                     {% for m in models %}
@@ -43,11 +44,11 @@
                 </select>
             </div>
             <div class="vs-field" style="width:150px;">
-                <label class="vs-label">{{ 'Интервал, моточас' if is_ru else 'Интервал, моточас' }}</label>
+                <label class="vs-label" for="normInterval">{{ 'Интервал, моточас' if is_ru else 'Интервал, моточас' }}</label>
                 <input type="number" name="interval_hours" id="normInterval" class="vs-input" min="0" step="1" placeholder="250" required>
             </div>
             <div class="vs-field" style="width:90px;">
-                <label class="vs-label">{{ 'Активна' if is_ru else 'Фаол' }}</label>
+                <label class="vs-label" for="normActive">{{ 'Активна' if is_ru else 'Фаол' }}</label>
                 <input type="checkbox" name="is_active" id="normActive" checked style="width:20px; height:20px; margin-top:8px;">
             </div>
             <div class="vs-field" style="flex:none;">
@@ -92,12 +93,12 @@
                     {% endif %}
                 </td>
                 <td class="right">
-                    <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
+                    <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}" aria-label="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
                             onclick='editNorm({{ n.id }}, {{ n.spare_part_id }}, {{ (n.equipment_model_id or "")|tojson }}, {{ n.interval_hours|tojson }}, {{ (n.is_active|int) }})'>✏</button>
                     <form method="post" action="{{ url_for('spare_parts.maintenance_norm_delete', nid=n.id) }}" style="display:inline;"
                           onsubmit="return confirm('{{ 'Удалить норму?' if is_ru else 'Норма ўчирилсинми?' }}');">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="vs-btn-icon" title="{{ 'Удалить' if is_ru else 'Ўчириш' }}">🗑</button>
+                        <button type="submit" class="vs-btn-icon" title="{{ 'Удалить' if is_ru else 'Ўчириш' }}" aria-label="{{ 'Удалить' if is_ru else 'Ўчириш' }}">🗑</button>
                     </form>
                 </td>
             </tr>

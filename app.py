@@ -2065,6 +2065,18 @@ def create_app():
             resolved_model = EquipmentModel.query.get(model_id)
         if resolved_model is not None:
             eq_type = resolved_model.name
+        elif eid:
+            existing_eq = Equipment.query.get(eid)
+            if existing_eq and existing_eq.model_id and existing_eq.model:
+                # [REASON]: SP-F-018 — a linked model's name is authoritative for
+                # eq_type; a blank picker on already-model-linked equipment must
+                # never let a differently-typed eq_type field silently detach it
+                # from model_id (model_id only enters kw when a model resolves,
+                # so eq_type alone would diverge from the untouched link). To
+                # actually change the type, pick a different model (or a future
+                # explicit "unlink" action) — not just edit this text field
+                # while leaving the picker blank.
+                eq_type = existing_eq.model.name
         if not name:
             flash(ui_t('Техника номини киритинг', 'Введите название техники'), 'warning')
             return redirect(url_for('ref_equipment', org_id=org_id))
@@ -2888,6 +2900,11 @@ def create_app():
                 # migrate_spare_parts_stage2.py; this list only serves fresh installs.
                 ('spare_parts_inventory_manage', 'Эҳтиёт қисмлар: омбор ва қолдиқлар', 'Запчасти: склад и остатки'),
                 ('spare_parts_issue', 'Эҳтиёт қисмлар: омбордан бериш', 'Запчасти: выдача со склада'),
+                # [REASON]: SP-F-002 — existing DBs get this row (plus the
+                # auto-grant to issue/approve holders) from
+                # migrate_spare_parts_acts_permission.py; this list only
+                # serves fresh installs.
+                ('spare_parts_acts', 'Эҳтиёт қисмлар: далолатномаларни кўриш', 'Запчасти: просмотр актов списания'),
             ]:
                 db.session.add(AppModule(code=code, name_uz=name_uz, name_ru=name_ru))
             db.session.commit()

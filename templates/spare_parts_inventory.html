@@ -2,6 +2,7 @@
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти — склад' if is_ru else 'Эҳтиёт қисмлар — омбор' }}{% endblock %}
 {% block content %}
+{# SP-F-013: programmatic label associations (for=/id, aria-label) — additive only. #}
 
 <div class="vs-hero vs-mb">
   <div>
@@ -19,8 +20,8 @@
     <div class="vs-card-body">
         <form method="get" action="{{ url_for('spare_parts.inventory') }}" class="vs-form-row">
             <div class="vs-field" style="min-width:260px; flex:1;">
-                <label class="vs-label">{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
-                <select name="org_id" onchange="this.form.submit()" class="vs-select">
+                <label class="vs-label" for="invOrg">{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
+                <select name="org_id" id="invOrg" onchange="this.form.submit()" class="vs-select">
                     {% for org in organizations %}
                     <option value="{{ org.id }}" {% if org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
                     {% endfor %}
@@ -45,9 +46,9 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="organization_id" value="{{ org_id }}">
             <div class="vs-field" style="flex:1; min-width:240px;">
-                <label class="vs-label">{{ 'Название склада' if is_ru else 'Омбор номи' }}</label>
+                <label class="vs-label" for="whName">{{ 'Название склада' if is_ru else 'Омбор номи' }}</label>
                 {% set current_org = organizations|selectattr('id', 'equalto', org_id)|first %}
-                <input type="text" name="name" class="vs-input" value="{{ current_org.name if current_org else '' }}">
+                <input type="text" name="name" id="whName" class="vs-input" value="{{ current_org.name if current_org else '' }}">
             </div>
             <div class="vs-field" style="flex:none;">
                 <label class="vs-label">&nbsp;</label>
@@ -67,7 +68,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="warehouse_id" value="{{ warehouse.id }}">
             <div class="vs-field" style="flex:2; min-width:260px;">
-                <label class="vs-label">SKU</label>
+                <label class="vs-label" for="movSku">SKU</label>
                 <select name="sku_id" id="movSku" class="vs-select" required>
                     <option value="">{{ '— выберите SKU —' if is_ru else '— SKU танланг —' }}</option>
                     {% for sku in sku_options %}
@@ -77,7 +78,7 @@
                 <div class="vs-help">{{ 'Нет нужного SKU? Добавьте его на экране «SKU — варианты поставки».' if is_ru else 'Керакли SKU йўқми? Уни «SKU — таъминот вариантлари» экранида қўшинг.' }}</div>
             </div>
             <div class="vs-field" style="width:180px;">
-                <label class="vs-label">{{ 'Тип движения' if is_ru else 'Ҳаракат тури' }}</label>
+                <label class="vs-label" for="movType">{{ 'Тип движения' if is_ru else 'Ҳаракат тури' }}</label>
                 <select name="movement_type" id="movType" class="vs-select">
                     <option value="receipt">{{ movement_labels['receipt'][lang] }}</option>
                     <option value="adjustment">{{ movement_labels['adjustment'][lang] }}</option>
@@ -85,12 +86,12 @@
                 <div class="vs-help">{{ 'Корректировка может быть отрицательной.' if is_ru else 'Тузатиш манфий бўлиши мумкин.' }}</div>
             </div>
             <div class="vs-field" style="width:140px;">
-                <label class="vs-label">{{ 'Количество' if is_ru else 'Миқдор' }}</label>
+                <label class="vs-label" for="movQty">{{ 'Количество' if is_ru else 'Миқдор' }}</label>
                 <input type="number" name="quantity" id="movQty" class="vs-input" step="0.001" required>
             </div>
             <div class="vs-field" style="flex:1; min-width:180px;">
-                <label class="vs-label">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
-                <input type="text" name="note" class="vs-input" placeholder="{{ 'накладная, причина корректировки...' if is_ru else 'юк хати, тузатиш сабаби...' }}">
+                <label class="vs-label" for="movNote">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+                <input type="text" name="note" id="movNote" class="vs-input" placeholder="{{ 'накладная, причина корректировки...' if is_ru else 'юк хати, тузатиш сабаби...' }}">
             </div>
             <div class="vs-field" style="flex:none;">
                 <label class="vs-label">&nbsp;</label>

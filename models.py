@@ -757,6 +757,34 @@ class SparePartCategory(db.Model):
     )
 
 
+class SparePartUnit(db.Model):
+    """SP-F-024: managed bilingual directory of units of measure.
+
+    Owner decision (2026-07-14): units are a STRICT managed directory, not
+    free text. `code` is a short stable Latin key stored on request items and
+    catalog parts going forward ('dona' matches the value historical rows
+    already carry as the default); name_ru/name_uz are editable display
+    labels, so relabeling never breaks stored data. Historical unit values
+    are snapshots and are NEVER rewritten (see SparePartRequestItem) — the
+    directory only governs what the pickers offer going forward. Seeded by
+    migrate_spare_parts_units.py (which also auto-registers any extra legacy
+    values found in existing data so nothing historical becomes unpickable).
+    Follows the SparePartCategory reference-table shape.
+    """
+    __tablename__ = 'spare_part_units'
+    id         = db.Column(db.Integer, primary_key=True)
+    code       = db.Column(db.String(30), nullable=False)
+    name_ru    = db.Column(db.String(100), nullable=False)
+    name_uz    = db.Column(db.String(100), nullable=False)
+    is_active  = db.Column(db.Boolean, default=True)
+    sort_order = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.Index('uq_spare_part_units_code', 'code', unique=True),
+    )
+
+
 class SparePart(db.Model):
     __tablename__ = 'spare_parts'
     id          = db.Column(db.Integer, primary_key=True)
@@ -818,6 +846,15 @@ class SparePartSku(db.Model):
 
     __table_args__ = (
         db.Index('idx_spare_part_skus_spare_part_id', 'spare_part_id'),
+        # [REASON]: SP-F-008 — existing DBs additionally carry the partial
+        # expression unique index uq_spare_part_skus_normalized ON
+        # (spare_part_id, lower(trim(brand)), lower(trim(article_number)),
+        # lower(trim(supplier))) WHERE is_active = 1, created by
+        # migrate_spare_parts_sku_uniqueness.py (the source of truth for its
+        # definition). SQLAlchemy cannot portably express the lower(trim())
+        # + partial-WHERE combination in __table_args__, so it is deliberately
+        # NOT mirrored here; sku_save() pre-checks with the same normalization
+        # and handles the index's IntegrityError for the race case.
     )
 
     @property
@@ -946,7 +983,15 @@ class SparePartWriteOffAct(db.Model):
                                    cascade='all, delete-orphan')
 
     __table_args__ = (
-        db.Index('idx_spare_part_write_off_acts_request_id', 'request_id'),
+        # [REASON]: SP-F-019 — UNIQUE: 'issued' is terminal and unrepeatable,
+        # so a request can never legitimately have two acts; a concurrent
+        # double-issue now fails with IntegrityError on commit (handled by
+        # issue_request's existing rollback path) instead of silently creating
+        # a second act. Existing DBs get the unique index via
+        # migrate_spare_parts_acts_permission.py (duplicate-free confirmed,
+        # DQ-022: 0 on staging and production).
+        db.Index('idx_spare_part_write_off_acts_request_id', 'request_id',
+                 unique=True),
     )
 
 

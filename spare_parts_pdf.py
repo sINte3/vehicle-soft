@@ -14,6 +14,7 @@ assumption that breaks remotely-debugged deployments.
 """
 
 import os
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -144,13 +145,21 @@ def generate_write_off_act_pdf(act, dest_path, lang='ru'):
         Spacer(1, 6 * mm),
     ]
 
-    org_name = act.organization.name if act.organization else '—'
-    warehouse_name = act.warehouse.name if act.warehouse else labels['no_warehouse']
+    # [REASON]: SP-F-005 — Paragraph() parses its text as XML-like markup, so
+    # every DYNAMIC value interpolated into one must be escaped or an
+    # operator-typed name like '<b>test</b>' (or a broken tag that crashes the
+    # parser) would be interpreted as markup. The fixed application-controlled
+    # fragments (<b>...</b> labels, the SKU <br/>/<font> line below) are NOT
+    # escaped — they are the intended formatting.
+    org_name = escape(act.organization.name) if act.organization else '—'
+    warehouse_name = (escape(act.warehouse.name) if act.warehouse
+                      else labels['no_warehouse'])
     req = act.request
     equipment = req.equipment if req else None
     eq_label = '—'
     if equipment is not None:
-        eq_label = equipment.name + (' — ' + equipment.plate if equipment.plate else '')
+        eq_label = escape(
+            equipment.name + (' — ' + equipment.plate if equipment.plate else ''))
     issued_date = act.issued_date.strftime('%d.%m.%Y') if act.issued_date else '—'
 
     meta_rows = [
@@ -172,10 +181,12 @@ def generate_write_off_act_pdf(act, dest_path, lang='ru'):
     grand_total = 0.0
     has_total = False
     for idx, item in enumerate(act.items, start=1):
-        name_html = item.name
+        # [REASON]: SP-F-005 — name and sku_label are escaped SEPARATELY, then
+        # combined, so the application's own <br/>/<font> markup keeps working.
+        name_html = escape(item.name)
         if item.sku_label:
             name_html += '<br/><font size="7.5" color="#555555">SKU: {}</font>'.format(
-                item.sku_label)
+                escape(item.sku_label))
         if item.total is not None:
             grand_total += float(item.total)
             has_total = True
@@ -212,6 +223,10 @@ def generate_write_off_act_pdf(act, dest_path, lang='ru'):
 
     # Signature block: issuer name printed, receiver left blank — both with
     # physical signature lines (this is a paper document by requirement).
+    # [REASON]: SP-F-005 — issuer_name (and item.unit above) are deliberately
+    # NOT escaped: they go into plain Table cell strings, which reportlab
+    # draws verbatim without XML parsing; escaping would corrupt legitimate
+    # '&' characters into visible '&amp;'. Only Paragraph() values need it.
     issuer_name = ''
     if act.issuer:
         issuer_name = act.issuer.full_name or act.issuer.username or ''

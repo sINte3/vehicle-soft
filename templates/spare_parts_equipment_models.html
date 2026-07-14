@@ -2,6 +2,7 @@
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Модели техники' if is_ru else 'Техника моделлари' }}{% endblock %}
 {% block content %}
+{# SP-F-013: programmatic label associations (for=/id, aria-label) — additive only. #}
 
 <div class="vs-hero vs-mb">
   <div>
@@ -25,19 +26,19 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="modelEditId" value="">
             <div class="vs-field" style="flex:2; min-width:220px;">
-                <label class="vs-label">{{ 'Название (каноническое)' if is_ru else 'Номи (каноник)' }}</label>
+                <label class="vs-label" for="modelName">{{ 'Название (каноническое)' if is_ru else 'Номи (каноник)' }}</label>
                 <input type="text" name="name" id="modelName" class="vs-input" required>
             </div>
             <div class="vs-field" style="flex:1; min-width:170px;">
-                <label class="vs-label">{{ 'Название (узб.)' if is_ru else 'Номи (ўзб.)' }}</label>
+                <label class="vs-label" for="modelNameUz">{{ 'Название (узб.)' if is_ru else 'Номи (ўзб.)' }}</label>
                 <input type="text" name="name_uz" id="modelNameUz" class="vs-input">
             </div>
             <div class="vs-field" style="flex:1; min-width:150px;">
-                <label class="vs-label">{{ 'Производитель' if is_ru else 'Ишлаб чиқарувчи' }}</label>
+                <label class="vs-label" for="modelManufacturer">{{ 'Производитель' if is_ru else 'Ишлаб чиқарувчи' }}</label>
                 <input type="text" name="manufacturer" id="modelManufacturer" class="vs-input" placeholder="New Holland">
             </div>
             <div class="vs-field" style="width:90px;">
-                <label class="vs-label">{{ 'Активна' if is_ru else 'Фаол' }}</label>
+                <label class="vs-label" for="modelActive">{{ 'Активна' if is_ru else 'Фаол' }}</label>
                 <input type="checkbox" name="is_active" id="modelActive" checked style="width:20px; height:20px; margin-top:8px;">
             </div>
             <div class="vs-field" style="flex:none;">
@@ -62,8 +63,8 @@
               onsubmit="return confirm('{{ 'Объединить выбранные модели? Действие переносит технику и совместимость на модель-приёмник.' if is_ru else 'Танланган моделларни бирлаштирасизми? Амал техника ва мосликни қабул қилувчи моделга кўчиради.' }}');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="vs-field" style="flex:1; min-width:220px;">
-                <label class="vs-label">{{ 'Что объединить (исчезнет)' if is_ru else 'Нимани бирлаштириш (йўқолади)' }}</label>
-                <select name="merged_id" class="vs-select" required>
+                <label class="vs-label" for="mergeMerged">{{ 'Что объединить (исчезнет)' if is_ru else 'Нимани бирлаштириш (йўқолади)' }}</label>
+                <select name="merged_id" id="mergeMerged" class="vs-select" required>
                     <option value="">{{ '— модель —' if is_ru else '— модель —' }}</option>
                     {% for m in active_models %}
                     <option value="{{ m.id }}">{{ m.name }}</option>
@@ -72,8 +73,8 @@
             </div>
             <div class="vs-field" style="flex:none; align-self:flex-end; padding-bottom:8px;">→</div>
             <div class="vs-field" style="flex:1; min-width:220px;">
-                <label class="vs-label">{{ 'Приёмник (останется)' if is_ru else 'Қабул қилувчи (қолади)' }}</label>
-                <select name="survivor_id" class="vs-select" required>
+                <label class="vs-label" for="mergeSurvivor">{{ 'Приёмник (останется)' if is_ru else 'Қабул қилувчи (қолади)' }}</label>
+                <select name="survivor_id" id="mergeSurvivor" class="vs-select" required>
                     <option value="">{{ '— модель —' if is_ru else '— модель —' }}</option>
                     {% for m in active_models %}
                     <option value="{{ m.id }}">{{ m.name }}</option>
@@ -126,7 +127,7 @@
                 </td>
                 <td class="text-sm vs-muted">{{ m.migrated_from_eq_type or '—' }}</td>
                 <td class="right">
-                    <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
+                    <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}" aria-label="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
                             onclick='editModel({{ m.id }}, {{ m.name|tojson }}, {{ (m.name_uz or "")|tojson }}, {{ (m.manufacturer or "")|tojson }}, {{ (m.is_active|int) }})'>✏</button>
                 </td>
             </tr>

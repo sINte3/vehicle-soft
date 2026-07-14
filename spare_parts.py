@@ -1,4 +1,5 @@
 import io
+import math
 import os
 import re
 import uuid
@@ -8,14 +9,15 @@ from flask import (Blueprint, render_template, request, redirect, url_for, flash
                    abort, g, jsonify, current_app, send_from_directory, send_file)
 from flask_login import login_required, current_user
 from datetime import datetime, date, timedelta
-from sqlalchemy import func
+from sqlalchemy import func, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload
 
 from models import (db, SparePart, SparePartCategory, SparePartPriceAudit,
                     SparePartAttachment, SparePartInventory,
                     SparePartInventoryMovement, SparePartRequest,
                     SparePartRequestItem, SparePartSku, SparePartStatusHistory,
-                    SparePartWarehouse, SparePartWriteOffAct,
+                    SparePartUnit, SparePartWarehouse, SparePartWriteOffAct,
                     SparePartWriteOffActItem, Organization, Equipment,
                     EquipmentModel, SparePartCompatibility,
                     SparePartMaintenanceNorm, EngineHoursRecord,
@@ -234,12 +236,39 @@ def _parse_spare_date(value):
         raise ValueError('request_date')
 
 
+def _active_units():
+    """Active unit-directory rows for pickers, ordered like other references.
+
+    [REASON]: SP-F-024 — strict managed directory (owner decision 2026-07-14).
+    An EMPTY result (fresh install before migrate_spare_parts_units.py runs)
+    makes every caller fall back to the legacy free-text behavior, so the app
+    keeps working pre-migration and in dev environments.
+    """
+    return (SparePartUnit.query.filter_by(is_active=True)
+            .order_by(SparePartUnit.sort_order, SparePartUnit.id).all())
+
+
+def _unit_options(unit_rows):
+    """JSON-ready picker options: code + language-correct label + lowercase
+    alt spellings (code|name_ru|name_uz) for matching legacy catalog values
+    client-side."""
+    lang = _spare_lang()
+    return [{
+        'code': u.code,
+        'label': (u.name_ru if lang == 'ru' else u.name_uz),
+        'alt': '|'.join(x.lower() for x in (u.code, u.name_ru, u.name_uz)),
+    } for u in unit_rows]
+
+
 def _parse_spare_positive_qty(value):
     try:
         result = float(str(value).replace(',', '.'))
     except (TypeError, ValueError):
         raise ValueError('quantity')
-    if result <= 0:
+    # [REASON]: SP-F-016 — float() happily parses 'nan'/'inf', and NaN slips
+    # past every comparison (NaN <= 0 is False), so finiteness is an explicit
+    # extra condition on the existing check, not a new error category.
+    if not math.isfinite(result) or result <= 0:
         raise ValueError('quantity')
     return result
 
@@ -364,7 +393,8 @@ def _update_sku_price_stats(sku_id):
     sku.avg_price = round(sum(prices) / len(prices), 2)
 
 
-def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None):
+def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None,
+                         as_of_date=None, eligible_statuses=None):
     """Repeat-order warning engine.
 
     Returns {'severity': 'red'|'yellow'|None, 'days_since': int|None, 'history': [...]}.
@@ -373,18 +403,34 @@ def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None):
     within 90 days is surfaced to the operator/approver. <=7 days is 'red',
     <=30 days 'yellow', <=90 days history only. Rejected requests are excluded.
     This engine WARNS only -- it never blocks saving or submitting.
+
+    [REASON]: SP-F-009 — hybrid contract (owner decision 2026-07-14): the live
+    form/detail call sites pass neither new parameter, keeping today's broad
+    behavior byte-identical (all non-rejected statuses, anchored to today);
+    the REPORT passes both, making its repeat table strict and reproducible:
+      - as_of_date anchors the window and days_since to the examined line's
+        own request date instead of "today", so a report re-pulled later
+        shows the same numbers;
+      - eligible_statuses, when given, restricts matches to those statuses
+        AND to requests strictly BEFORE as_of_date (a historical request must
+        never be flagged because of a LATER one).
     """
     empty = {'severity': None, 'days_since': None, 'history': []}
     if not equipment_id or not spare_part_id:
         return empty
-    window_start = date.today() - timedelta(days=90)
+    as_of_date = as_of_date or date.today()
+    window_start = as_of_date - timedelta(days=90)
     q = (db.session.query(SparePartRequestItem, SparePartRequest)
          .join(SparePartRequest,
                SparePartRequestItem.request_id == SparePartRequest.id)
          .filter(SparePartRequest.equipment_id == equipment_id,
                  SparePartRequestItem.spare_part_id == spare_part_id,
-                 SparePartRequest.request_date >= window_start,
-                 SparePartRequest.status != 'rejected'))
+                 SparePartRequest.request_date >= window_start))
+    if eligible_statuses is not None:
+        q = q.filter(SparePartRequest.status.in_(eligible_statuses),
+                     SparePartRequest.request_date < as_of_date)
+    else:
+        q = q.filter(SparePartRequest.status != 'rejected')
     if exclude_request_id:
         q = q.filter(SparePartRequest.id != exclude_request_id)
     rows = q.order_by(SparePartRequest.request_date.desc(),
@@ -398,7 +444,7 @@ def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None):
         'quantity': item.quantity,
         'unit': item.unit or '',
     } for item, req in rows]
-    days_since = (date.today() - rows[0][1].request_date).days
+    days_since = (as_of_date - rows[0][1].request_date).days
     if days_since <= 7:
         severity = 'red'
     elif days_since <= 30:
@@ -415,6 +461,14 @@ def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None):
 def _fmt_sum_text(value):
     """1234567.0 -> '1 234 567' (same style as the fmt_sum Jinja filter in app.py)."""
     return '{:,.0f}'.format(float(value or 0)).replace(',', ' ')
+
+
+def _fmt_qty_text(value):
+    """Trim trailing zeros: 3.0 -> '3', 2.5 -> '2.5' (same as spare_parts_pdf)."""
+    value = float(value or 0)
+    if value == int(value):
+        return str(int(value))
+    return ('{:.3f}'.format(value)).rstrip('0').rstrip('.')
 
 
 def _month_start_back(d, months_back):
@@ -474,6 +528,12 @@ def _check_rule4_cost_anomaly(equipment_id, spare_part_id, exclude_request_id=No
     tables). No warning without at least one prior month of spend — a first-ever
     purchase in a category has nothing to compare against.
 
+    [REASON]: SP-F-023 — the baseline average divides by the number of prior
+    months that actually had spend (len(prior_months_with_data)), not by the
+    fixed RULE4_BASELINE_MONTHS window size: with real spend in only one of
+    the three prior months, dividing by three artificially diluted the
+    baseline to a third and made the anomaly trigger fire far too easily.
+
     [REASON]: SPARE-STAGE2-QA-FIX3 — 'issued' requests count exactly like
     'approved' ones (issued is reachable only from approved and means the money
     was actually spent), so both statuses feed the cost baseline.
@@ -504,6 +564,11 @@ def _check_rule4_cost_anomaly(equipment_id, spare_part_id, exclude_request_id=No
     prior_months_with_data = set()
     for price, quantity, req_date in q.all():
         cost = float(price or 0) * float(quantity or 0)
+        # [REASON]: SP-F-016 defense-in-depth — these are already-stored
+        # values, not raw input, but one corrupted NaN row must not poison
+        # the whole category baseline.
+        if not math.isfinite(cost):
+            continue
         if req_date >= month_start:
             current_total += cost
         else:
@@ -511,7 +576,7 @@ def _check_rule4_cost_anomaly(equipment_id, spare_part_id, exclude_request_id=No
             prior_months_with_data.add((req_date.year, req_date.month))
     if not prior_months_with_data or prior_total <= 0:
         return None
-    baseline_avg = prior_total / RULE4_BASELINE_MONTHS
+    baseline_avg = prior_total / len(prior_months_with_data)
     if current_total <= RULE4_COST_ANOMALY_MULTIPLIER * baseline_avg:
         return None
     category = part.category_ref
@@ -540,8 +605,14 @@ def _check_rule6_recent_rejection(equipment_id, spare_part_id, exclude_request_i
     The warning carries the rejection date and the reviewer's comment so the
     approver sees WHY it was rejected last time.
     """
-    cutoff_dt = datetime.utcnow() - timedelta(days=RULE6_REJECTED_LOOKBACK_DAYS)
     cutoff_date = date.today() - timedelta(days=RULE6_REJECTED_LOOKBACK_DAYS)
+    # [REASON]: SP-F-010 — both comparison paths use the same calendar-day
+    # granularity: cutoff_dt is midnight of the cutoff day, so a rejection at
+    # ANY time on that day matches, exactly like the whole-day request_date
+    # fallback. Previously reviewed_at was compared against an exact UTC
+    # timestamp while the fallback used whole days, so the boundary day
+    # behaved differently depending on which field was populated.
+    cutoff_dt = datetime.combine(cutoff_date, datetime.min.time())
     q = (db.session.query(SparePartRequest)
          .join(SparePartRequestItem,
                SparePartRequestItem.request_id == SparePartRequest.id)
@@ -748,10 +819,24 @@ def _validate_photo(fs):
         '«{}»: содержимое файла не соответствует указанному расширению').format(filename)
 
 
+def _remove_stored_files(paths):
+    """Best-effort removal of files written during a failed save.
+
+    [REASON]: SP-F-003 — same try/except-OSError style as the PDF cleanup in
+    issue_request: cleanup must never mask the original failure.
+    """
+    for full_path in paths or []:
+        try:
+            os.remove(full_path)
+        except OSError:
+            pass
+
+
 def _store_item_photo(fs, item_id, user_id):
     """Validate and persist one uploaded photo for an item.
 
-    Returns a bilingual error string, or None on success. Adds the
+    Returns (error, full_path): a bilingual error string (full_path None), or
+    (None, absolute path of the written file) on success. Adds the
     SparePartAttachment row without committing (caller commits).
 
     [REASON]: SPARE-STAGE1 — the on-disk name is built ONLY from item_id and a
@@ -761,26 +846,40 @@ def _store_item_photo(fs, item_id, user_id):
     """
     ext, err = _validate_photo(fs)
     if err:
-        return err
+        return err, None
     fname = '{}_{}{}'.format(item_id, uuid.uuid4().hex[:8], ext)
-    fs.save(os.path.join(_upload_dir(), fname))
-    db.session.add(SparePartAttachment(
-        item_id=item_id,
-        file_path=fname,
-        original_filename=(fs.filename or '')[:300],
-        file_size=os.path.getsize(os.path.join(_upload_dir(), fname)),
-        uploaded_by=user_id,
-    ))
-    return None
+    full_path = os.path.join(_upload_dir(), fname)
+    # [REASON]: SP-F-003 — if anything fails after bytes hit the disk (partial
+    # save on a full disk, a failing stat, a session error), the file must not
+    # survive as an orphan no row will ever reference.
+    try:
+        fs.save(full_path)
+        db.session.add(SparePartAttachment(
+            item_id=item_id,
+            file_path=fname,
+            original_filename=(fs.filename or '')[:300],
+            file_size=os.path.getsize(full_path),
+            uploaded_by=user_id,
+        ))
+    except Exception:
+        _remove_stored_files([full_path])
+        raise
+    return None, full_path
 
 
 def _store_attachments_for_item(files, item_id, user_id, existing_count):
     """Validate and store files for one item, up to MAX_ATTACHMENTS_PER_ITEM total.
 
-    Returns (stored_count, errors). Files beyond the per-item cap (existing
-    attachments + files already stored earlier in this same call) are
-    rejected with a clear bilingual error instead of being silently dropped
-    or truncated mid-file -- the caller's already-stored files are untouched.
+    Returns (stored_count, errors, written_paths). Files beyond the per-item
+    cap (existing attachments + files already stored earlier in this same
+    call) are rejected with a clear bilingual error instead of being silently
+    dropped or truncated mid-file -- the caller's already-stored files are
+    untouched.
+
+    [REASON]: SP-F-003 — written_paths lets the caller delete every file this
+    call produced if the surrounding request later fails before commit; on an
+    exception INSIDE this loop the already-written files of this call are
+    removed here before re-raising.
 
     [REASON]: MOBILE-UPLOAD-001 — shared by the create-request flow (always
     existing_count=0) and the detail-page add-more flow (existing_count is
@@ -789,19 +888,25 @@ def _store_attachments_for_item(files, item_id, user_id, existing_count):
     """
     errors = []
     stored = 0
-    for fs in files:
-        if existing_count + stored >= MAX_ATTACHMENTS_PER_ITEM:
-            errors.append(_spare_t(
-                '«{}»: позицияга энг кўпи билан {} та файл бириктириш мумкин',
-                '«{}»: к позиции можно прикрепить не более {} файлов'
-            ).format(fs.filename or '', MAX_ATTACHMENTS_PER_ITEM))
-            continue
-        err = _store_item_photo(fs, item_id, user_id)
-        if err:
-            errors.append(err)
-        else:
-            stored += 1
-    return stored, errors
+    written_paths = []
+    try:
+        for fs in files:
+            if existing_count + stored >= MAX_ATTACHMENTS_PER_ITEM:
+                errors.append(_spare_t(
+                    '«{}»: позицияга энг кўпи билан {} та файл бириктириш мумкин',
+                    '«{}»: к позиции можно прикрепить не более {} файлов'
+                ).format(fs.filename or '', MAX_ATTACHMENTS_PER_ITEM))
+                continue
+            err, full_path = _store_item_photo(fs, item_id, user_id)
+            if err:
+                errors.append(err)
+            else:
+                stored += 1
+                written_paths.append(full_path)
+    except Exception:
+        _remove_stored_files(written_paths)
+        raise
+    return stored, errors, written_paths
 
 
 def _store_submitted_item_photos(created_items):
@@ -811,19 +916,31 @@ def _store_submitted_item_photos(created_items):
     as item_photo_{form_index}. Invalid files are skipped and reported — if
     that leaves a mandatory photo/video missing, the submit gate keeps the
     request as a draft with its own explicit message.
+
+    Returns the list of absolute paths written, so the caller can remove them
+    if the request fails after this point but before commit (SP-F-003); an
+    exception inside this loop removes THIS call's earlier items' files
+    before re-raising.
     """
     errors = []
-    for item, prepared in created_items:
-        files = [fs for fs in
-                 request.files.getlist('item_photo_{}'.format(prepared['form_index']))
-                 if fs and fs.filename]
-        _, item_errors = _store_attachments_for_item(
-            files, item.id, current_user.id, existing_count=0)
-        errors.extend(item_errors)
+    written_paths = []
+    try:
+        for item, prepared in created_items:
+            files = [fs for fs in
+                     request.files.getlist('item_photo_{}'.format(prepared['form_index']))
+                     if fs and fs.filename]
+            _, item_errors, item_paths = _store_attachments_for_item(
+                files, item.id, current_user.id, existing_count=0)
+            errors.extend(item_errors)
+            written_paths.extend(item_paths)
+    except Exception:
+        _remove_stored_files(written_paths)
+        raise
     if errors:
         _spare_flash_errors(errors,
                             title_uz='Баъзи фотолар қабул қилинмади:',
                             title_ru='Некоторые фото не приняты:')
+    return written_paths
 
 
 def _approval_blockers(spr):
@@ -954,6 +1071,9 @@ def new_request():
                            today=date.today().isoformat(),
                            organizations=organizations,
                            catalog_parts=catalog_parts,
+                           # [REASON]: SP-F-024 — unit picker options; empty
+                           # list keeps the legacy free-text input.
+                           unit_options=_unit_options(_active_units()),
                            lang=_spare_lang())
 
 
@@ -999,6 +1119,12 @@ def save_request():
     # empty value = no SKU, which keeps the exact Stage 1 item behaviour).
     sku_ids = request.form.getlist('item_sku_id')
 
+    # [REASON]: SP-F-024 — strict unit directory: submitted values must be an
+    # active SparePartUnit.code. An empty directory (fresh install before
+    # migrate_spare_parts_units.py) keeps the legacy free-text acceptance so
+    # nothing breaks pre-migration.
+    valid_unit_codes = {u.code for u in _active_units()}
+
     prepared_items = []
     validation_errors = []
     for i, raw_name in enumerate(names):
@@ -1019,6 +1145,13 @@ def save_request():
             qty = _parse_spare_positive_qty(qty_raw)
         except ValueError:
             validation_errors.append(_spare_t('{}. қатор: миқдор мусбат бўлиши керак', '{} строка: количество должно быть больше нуля').format(row_no))
+            continue
+        # [REASON]: SP-F-024 — reject unknown units explicitly, never coerce
+        # silently to a default.
+        if valid_unit_codes and (unit or 'dona') not in valid_unit_codes:
+            validation_errors.append(_spare_t(
+                '{}. қатор: ўлчов бирлигини рўйхатдан танланг',
+                '{} строка: выберите единицу измерения из справочника').format(row_no))
             continue
 
         # Resolve the catalog link. A stale/merged/inactive id silently falls
@@ -1126,47 +1259,59 @@ def save_request():
             description='Pending-review catalog candidate auto-created from request item #{}'.format(item.id)
         )
 
-    _store_submitted_item_photos(created_items)
-    db.session.flush()
+    # [REASON]: SP-F-003 — everything between the first byte written to disk
+    # and the commit is one failure domain: if the transaction dies anywhere
+    # in this block, every attachment file written for it is removed again
+    # (best-effort), so no orphan files survive a failed save. The exception
+    # then propagates exactly as before — behavior is unchanged apart from
+    # the cleanup.
+    written_paths = []
+    try:
+        written_paths = _store_submitted_item_photos(created_items)
+        db.session.flush()
 
-    # [REASON]: SPARE-STAGE1 mandatory-photo rule — items in 'unit' (or not yet
-    # categorized) categories need at least one photo before submit. To avoid
-    # losing the operator's typed rows, a failed submit is kept as a draft with
-    # a clear bilingual error; photos can be added on the detail page.
-    if status == 'submitted':
-        missing = _items_missing_photos([item for item, _ in created_items])
-        if missing:
-            status = 'draft'
-            _spare_flash_errors(
-                missing,
-                title_uz='Сўров юборилмади, чорнов сифатида сақланди. Қуйидаги позицияларга камида битта фото керак:',
-                title_ru='Заявка не отправлена и сохранена как черновик. Этим позициям нужно хотя бы одно фото:',
-            )
+        # [REASON]: SPARE-STAGE1 mandatory-photo rule — items in 'unit' (or not yet
+        # categorized) categories need at least one photo before submit. To avoid
+        # losing the operator's typed rows, a failed submit is kept as a draft with
+        # a clear bilingual error; photos can be added on the detail page.
+        if status == 'submitted':
+            missing = _items_missing_photos([item for item, _ in created_items])
+            if missing:
+                status = 'draft'
+                _spare_flash_errors(
+                    missing,
+                    title_uz='Сўров юборилмади, чорнов сифатида сақланди. Қуйидаги позицияларга камида битта фото керак:',
+                    title_ru='Заявка не отправлена и сохранена как черновик. Этим позициям нужно хотя бы одно фото:',
+                )
 
-    if status == 'submitted':
-        spr.status = 'submitted'
+        if status == 'submitted':
+            spr.status = 'submitted'
 
-    _audit_spare(
-        'spare_part_request_created',
-        entity_type='spare_part_request',
-        entity_id=spr.id,
-        entity_label='Request #{}'.format(spr.id),
-        after=_request_snapshot(spr),
-        description='Spare part request created'
-    )
-    for item, _prepared in created_items:
         _audit_spare(
-            'spare_part_item_created',
-            entity_type='spare_part_request_item',
-            entity_id=item.id,
-            entity_label=item.name,
-            after=_item_snapshot(item),
-            description='Spare part request item created'
+            'spare_part_request_created',
+            entity_type='spare_part_request',
+            entity_id=spr.id,
+            entity_label='Request #{}'.format(spr.id),
+            after=_request_snapshot(spr),
+            description='Spare part request created'
         )
-    # [REASON]: FIX003A — Record status history before commit.
-    if status == 'submitted':
-        _add_status_history(spr.id, None, 'submitted', changed_by=current_user.id)
-    db.session.commit()
+        for item, _prepared in created_items:
+            _audit_spare(
+                'spare_part_item_created',
+                entity_type='spare_part_request_item',
+                entity_id=item.id,
+                entity_label=item.name,
+                after=_item_snapshot(item),
+                description='Spare part request item created'
+            )
+        # [REASON]: FIX003A — Record status history before commit.
+        if status == 'submitted':
+            _add_status_history(spr.id, None, 'submitted', changed_by=current_user.id)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        _remove_stored_files(written_paths)
+        raise
     if status == 'submitted':
         flash(_spare_t('Сўров юборилди', 'Заявка отправлена'), 'success')
         # [REASON]: BOT003 — Post-commit best-effort notification, never raises.
@@ -1385,7 +1530,9 @@ def item_price_set(rid, item_id):
     raw = (request.form.get('price', '') or '').strip()
     try:
         price = float(raw.replace(',', '.').replace(' ', ''))
-        if price < 0:
+        # [REASON]: SP-F-016 — reject 'nan'/'inf' the same way as a malformed
+        # number (NaN would pass the < 0 check and poison SKU price stats).
+        if not math.isfinite(price) or price < 0:
             raise ValueError()
     except (TypeError, ValueError):
         _spare_flash_errors([_spare_t('Нарх мусбат сон бўлиши керак',
@@ -1419,6 +1566,14 @@ def item_price_confirm(rid, item_id):
     if item.price is None:
         _spare_flash_errors([_spare_t('Аввал нархни киритинг', 'Сначала укажите цену')],
                             title_uz='Нарх тасдиқланмади:', title_ru='Цена не подтверждена:')
+        return redirect(url_for('spare_parts.detail', rid=rid))
+    # [REASON]: SP-F-007 — confirm is idempotent: a second confirm (stale tab,
+    # double click) is a no-op, otherwise it would write a duplicate
+    # price_audit row and double-count this price in the SKU's average via
+    # _update_sku_price_stats. Only a 'pending' price can be confirmed;
+    # rejected/returned prices leave the submitted state anyway.
+    if item.price_status != 'pending':
+        flash(_spare_t('Нарх аллақачон тасдиқланган', 'Цена уже подтверждена'), 'info')
         return redirect(url_for('spare_parts.detail', rid=rid))
     item.price_status = 'confirmed'
     write_price_audit(item.id, item.price, item.price, 'confirm', current_user.id)
@@ -1494,21 +1649,34 @@ def item_photo_upload(rid, item_id):
     # against what is actually stored right now.
     existing_count = SparePartAttachment.query.filter_by(item_id=item.id).count()
     files = [fs for fs in request.files.getlist('photo') if fs and fs.filename]
-    stored, errors = _store_attachments_for_item(
-        files, item.id, current_user.id, existing_count)
+    # [REASON]: SP-F-003 — same write-then-commit failure domain as
+    # save_request: this route shares the identical gap (files written, commit
+    # later, no surrounding try/except), so a failure between the two removes
+    # every file written by this call before propagating.
+    written_paths = []
+    stored = 0
+    errors = []
+    try:
+        stored, errors, written_paths = _store_attachments_for_item(
+            files, item.id, current_user.id, existing_count)
+        if stored:
+            _audit_spare(
+                'spare_part_item_photo_uploaded',
+                entity_type='spare_part_request_item',
+                entity_id=item.id,
+                entity_label=item.name,
+                description='{} photo(s) uploaded for item on request #{}'.format(stored, spr.id)
+            )
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+        _remove_stored_files(written_paths)
+        raise
     if errors:
         _spare_flash_errors(errors,
                             title_uz='Баъзи фотолар қабул қилинмади:',
                             title_ru='Некоторые фото не приняты:')
     if stored:
-        _audit_spare(
-            'spare_part_item_photo_uploaded',
-            entity_type='spare_part_request_item',
-            entity_id=item.id,
-            entity_label=item.name,
-            description='{} photo(s) uploaded for item on request #{}'.format(stored, spr.id)
-        )
-        db.session.commit()
         flash(_spare_t('Фото юкланди', 'Фото загружено'), 'success')
     elif not errors:
         flash(_spare_t('Файл танланмаган', 'Файл не выбран'), 'warning')
@@ -1804,6 +1972,29 @@ def sku_save():
                             title_ru='SKU не сохранён:')
         return redirect(url_for('spare_parts.skus'))
 
+    # [REASON]: SP-F-008 — owner decision: exact normalized duplicates are
+    # forbidden. This pre-check mirrors the partial unique index
+    # uq_spare_part_skus_normalized (same lower(trim(...)) on BOTH sides so
+    # SQLite's ASCII-only lower() semantics match the index exactly, same
+    # active-only scope) to show a friendly message for the common case; the
+    # index remains the real enforcement for the race case below.
+    will_be_active = (request.form.get('is_active') is not None) if sku_id else True
+    if will_be_active:
+        clash_q = (SparePartSku.query
+                   .filter(SparePartSku.spare_part_id == part.id,
+                           SparePartSku.is_active == True,  # noqa: E712 — mirrors the index WHERE is_active = 1
+                           func.lower(func.trim(SparePartSku.brand)) == func.lower(brand),
+                           func.lower(func.trim(SparePartSku.article_number)) == func.lower(article_number),
+                           func.lower(func.trim(SparePartSku.supplier)) == func.lower(supplier)))
+        if sku_id:
+            clash_q = clash_q.filter(SparePartSku.id != sku_id)
+        if clash_q.first() is not None:
+            _spare_flash_errors(
+                [_spare_t('Бу деталь учун бундай SKU аллақачон мавжуд',
+                          'Такой SKU уже существует для этой детали')],
+                title_uz='SKU сақланмади:', title_ru='SKU не сохранён:')
+            return redirect(url_for('spare_parts.skus'))
+
     created = False
     before = None
     if sku_id:
@@ -1832,7 +2023,21 @@ def sku_save():
         changes=diff_dict(before, after),
         description='Spare part SKU saved'
     )
-    db.session.commit()
+    # [REASON]: SP-F-008 — the race case: another save slipped past the
+    # pre-check; the unique index rejects it here and the user gets the same
+    # friendly duplicate message instead of a raw 500.
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        current_app.logger.warning(
+            'SKU save rejected by uq_spare_part_skus_normalized (race), part=%s',
+            part.id)
+        _spare_flash_errors(
+            [_spare_t('Бу деталь учун бундай SKU аллақачон мавжуд',
+                      'Такой SKU уже существует для этой детали')],
+            title_uz='SKU сақланмади:', title_ru='SKU не сохранён:')
+        return redirect(url_for('spare_parts.skus'))
     flash(_spare_t('SKU сақланди', 'SKU сохранён'), 'success')
     return redirect(url_for('spare_parts.skus'))
 
@@ -1853,17 +2058,29 @@ def _apply_inventory_movement(warehouse_id, sku_id, movement_type, quantity,
     transaction, so a multi-item action (Task 5 issue) stays all-or-nothing.
 
     Sign rules per type: receipt > 0; issue/write_off < 0; adjustment any
-    non-zero. The resulting balance MAY go negative: warehouses deliberately
-    start at zero (opening balances are a future task), so blocking negative
-    stock would block the whole issue workflow until real counts arrive.
+    non-zero.
 
-    Raises ValueError with a short reason code on invalid input.
+    [REASON]: SP-F-001 — the resulting balance must never go negative, and the
+    guard must be ATOMIC: a single conditional UPDATE ... WHERE quantity +
+    delta >= 0 (with RETURNING for the confirmed balance) instead of a
+    read-then-write pair, so two concurrent issues can never both pass a
+    Python-side check and drive the balance below zero. Deliberately NOT a
+    CHECK constraint — SQLite cannot add one to an existing table without a
+    full rebuild, unnecessary risk on the live WAL database. RETURNING is
+    available: SQLite >= 3.35 (production Python 3.14 bundles far newer).
+
+    Raises ValueError with a short reason code on invalid input;
+    'insufficient_stock' means the movement would make the balance negative.
     """
     if movement_type not in INV_MOVEMENT_TYPES:
         raise ValueError('movement_type')
     try:
         quantity = float(quantity)
     except (TypeError, ValueError):
+        raise ValueError('quantity')
+    # [REASON]: SP-F-016 — NaN/inf would corrupt the running balance; same
+    # error code as a malformed number.
+    if not math.isfinite(quantity):
         raise ValueError('quantity')
     if quantity == 0:
         raise ValueError('zero_quantity')
@@ -1877,16 +2094,35 @@ def _apply_inventory_movement(warehouse_id, sku_id, movement_type, quantity,
     if inv is None:
         # [REASON]: inventory rows are created lazily on first movement — no
         # zero-quantity seeding of every SKU × warehouse combination.
+        # [REASON]: SP-F-001 — a brand-new pair starts at 0, so a negative
+        # first movement can never be satisfied; reject before inserting.
+        if quantity < 0:
+            raise ValueError('insufficient_stock')
         sku = SparePartSku.query.get(sku_id)
         unit = (sku.spare_part.unit if sku and sku.spare_part else '') or 'dona'
+        new_qty = round(quantity, 3)
         inv = SparePartInventory(warehouse_id=warehouse_id, sku_id=sku_id,
-                                 quantity=0, unit=unit)
+                                 quantity=new_qty, unit=unit)
         db.session.add(inv)
         db.session.flush()
-
-    new_qty = round(float(inv.quantity or 0) + quantity, 3)
-    inv.quantity = new_qty
-    inv.updated_at = datetime.utcnow()
+    else:
+        inv_table = SparePartInventory.__table__
+        result = db.session.execute(
+            update(inv_table)
+            .where(inv_table.c.id == inv.id,
+                   inv_table.c.quantity + quantity >= 0)
+            .values(quantity=func.round(inv_table.c.quantity + quantity, 3),
+                    updated_at=datetime.utcnow())
+            .returning(inv_table.c.quantity)
+        )
+        row = result.first()
+        if row is None:
+            # Zero rows updated: the WHERE guard rejected the movement.
+            raise ValueError('insufficient_stock')
+        new_qty = float(row[0])
+        # The Core UPDATE bypassed the ORM — expire the in-session object so
+        # any later read in this transaction sees the confirmed balance.
+        db.session.expire(inv)
     movement = SparePartInventoryMovement(
         warehouse_id=warehouse_id,
         sku_id=sku_id,
@@ -2043,7 +2279,12 @@ def inventory_movement_create():
         errors.append(_spare_t('SKU танланг', 'Выберите SKU'))
     quantity = None
     try:
-        quantity = float(raw_qty)
+        parsed = float(raw_qty)
+        # [REASON]: SP-F-016 — 'nan'/'inf' rejected with the same message as
+        # a malformed number.
+        if not math.isfinite(parsed):
+            raise ValueError('quantity')
+        quantity = parsed
     except (TypeError, ValueError):
         errors.append(_spare_t('Миқдор сон бўлиши керак', 'Количество должно быть числом'))
     if quantity is not None:
@@ -2059,9 +2300,41 @@ def inventory_movement_create():
         return redirect(url_for('spare_parts.inventory',
                                 org_id=warehouse.organization_id))
 
-    movement = _apply_inventory_movement(
-        warehouse.id, sku.id, movement_type, quantity,
-        reference_type='manual', note=note, user_id=current_user.id)
+    # [REASON]: SP-F-001 pre-flight — a negative manual adjustment may not
+    # drive the balance below zero; friendly message instead of relying on the
+    # atomic guard's exception for the ordinary (non-race) case.
+    if movement_type == 'adjustment' and quantity < 0:
+        inv = SparePartInventory.query.filter_by(
+            warehouse_id=warehouse.id, sku_id=sku.id).first()
+        current_qty = float(inv.quantity or 0) if inv else 0.0
+        if current_qty + quantity < 0:
+            _spare_flash_errors(
+                [_spare_t('Омборда етарли қолдиқ йўқ (жорий қолдиқ: {})',
+                          'На складе недостаточно остатка (текущий остаток: {})'
+                          ).format(_fmt_qty_text(current_qty))],
+                title_uz='Ҳаракат сақланмади:', title_ru='Движение не сохранено:')
+            return redirect(url_for('spare_parts.inventory',
+                                    org_id=warehouse.organization_id))
+
+    try:
+        movement = _apply_inventory_movement(
+            warehouse.id, sku.id, movement_type, quantity,
+            reference_type='manual', note=note, user_id=current_user.id)
+    except ValueError as exc:
+        # [REASON]: SP-F-001 — race with another manual entry between the
+        # pre-flight above and the atomic UPDATE guard; a clean bilingual
+        # message instead of an unhandled 500.
+        db.session.rollback()
+        if str(exc) == 'insufficient_stock':
+            msg = _spare_t('Қолдиқ ўзгарди — саҳифани янгилаб, қайта уриниб кўринг',
+                           'Остаток изменился — обновите страницу и повторите')
+        else:
+            msg = _spare_t('Ҳаракат маълумотлари нотўғри',
+                           'Некорректные данные движения')
+        _spare_flash_errors([msg], title_uz='Ҳаракат сақланмади:',
+                            title_ru='Движение не сохранено:')
+        return redirect(url_for('spare_parts.inventory',
+                                org_id=warehouse.organization_id))
     _audit_spare(
         'spare_part_inventory_movement_created',
         entity_type='spare_part_inventory_movement',
@@ -2177,6 +2450,19 @@ def issue_request(rid):
         errors.append(_spare_t(
             'SKUсиз позициялар омбордан ҳисобдан чиқарилмайди — беришдан олдин буни тасдиқлаш шарт',
             'Позиции без SKU не будут списаны со склада — перед выдачей это нужно явно подтвердить'))
+    # [REASON]: SP-F-001 pre-flight — a friendly per-item shortage message
+    # BEFORE any transaction work, using the stock snapshot _issue_context()
+    # already computed. The atomic guard inside _apply_inventory_movement stays
+    # the real enforcement for the concurrent case below.
+    if ctx['sku_items'] and ctx['warehouse'] is not None:
+        for item in ctx['sku_items']:
+            available = float(ctx['stock'].get(item.sku_id) or 0)
+            needed = float(item.quantity or 0)
+            if available - needed < 0:
+                errors.append(_spare_t(
+                    '«{}»: омборда етарли қолдиқ йўқ (керак: {}, мавжуд: {})',
+                    '«{}»: на складе недостаточно остатка (нужно: {}, доступно: {})'
+                ).format(item.name, _fmt_qty_text(needed), _fmt_qty_text(available)))
     if errors:
         _spare_flash_errors(errors, title_uz='Бериб бўлмади:',
                             title_ru='Выдача не выполнена:')
@@ -2184,6 +2470,17 @@ def issue_request(rid):
 
     warehouse = ctx['warehouse']
     act_pdf_full_path = None
+
+    def _rollback_failed_issue():
+        # Shared failure path: roll everything back and remove the orphan PDF
+        # if it was written before the transaction died.
+        db.session.rollback()
+        if act_pdf_full_path and os.path.exists(act_pdf_full_path):
+            try:
+                os.remove(act_pdf_full_path)
+            except OSError:
+                pass
+
     try:
         # 1. Inventory movements for every SKU item (negative issue quantities).
         for item in ctx['sku_items']:
@@ -2235,6 +2532,24 @@ def issue_request(rid):
                      'act_number': {'before': None, 'after': act.act_number}},
             description='Request issued; write-off act {} created'.format(act.act_number)
         )
+        # [REASON]: SP-F-017 — the act is its own auditable entity (a numbered
+        # accounting document), so its creation gets a DISTINCT audit event in
+        # the same transaction, not just an act_number embedded in the request
+        # status change: an auditor filtering by entity/action must find every
+        # act without parsing another event's changes payload.
+        _audit_spare(
+            'spare_part_write_off_act_created',
+            entity_type='spare_part_write_off_act',
+            entity_id=act.id,
+            entity_label=act.act_number,
+            after={'id': act.id, 'act_number': act.act_number,
+                   'request_id': spr.id, 'organization_id': spr.organization_id,
+                   'warehouse_id': act.warehouse_id,
+                   'issued_date': _date_iso(act.issued_date),
+                   'items_count': len(spr.items)},
+            description='Write-off act {} created for request #{}'.format(
+                act.act_number, spr.id)
+        )
 
         # 4. Render the PDF inside the same transaction: a request must never
         # end up 'issued' without its printable act.
@@ -2245,14 +2560,29 @@ def issue_request(rid):
         act.pdf_path = fname
 
         db.session.commit()
+    except ValueError as exc:
+        # [REASON]: SP-F-001 — the true-concurrency path: another transaction
+        # consumed the stock between the pre-flight above and the atomic
+        # UPDATE guard. Distinct message so the issuer knows to reload, not
+        # to report a system error. Any other ValueError code is unexpected
+        # here and gets the generic treatment.
+        _rollback_failed_issue()
+        if str(exc) == 'insufficient_stock':
+            current_app.logger.warning(
+                'Issue rejected for request %s: stock changed concurrently', rid)
+            _spare_flash_errors(
+                [_spare_t('Қолдиқ ўзгарди — саҳифани янгилаб, қайта уриниб кўринг',
+                          'Остаток изменился — обновите страницу и повторите')],
+                title_uz='Бериб бўлмади:', title_ru='Выдача не выполнена:')
+        else:
+            current_app.logger.exception('Issue action failed for request %s', rid)
+            _spare_flash_errors(
+                [_spare_t('Ички хатолик — ҳеч нарса ўзгартирилмади',
+                          'Внутренняя ошибка — ничего не изменено')],
+                title_uz='Бериб бўлмади:', title_ru='Выдача не выполнена:')
+        return redirect(url_for('spare_parts.detail', rid=rid))
     except Exception:
-        db.session.rollback()
-        # Remove the orphan file if the PDF was written but the commit failed.
-        if act_pdf_full_path and os.path.exists(act_pdf_full_path):
-            try:
-                os.remove(act_pdf_full_path)
-            except OSError:
-                pass
+        _rollback_failed_issue()
         current_app.logger.exception('Issue action failed for request %s', rid)
         _spare_flash_errors(
             [_spare_t('Ички хатолик — ҳеч нарса ўзгартирилмади',
@@ -2277,6 +2607,13 @@ def act_detail(act_id):
     if spr is None:
         abort(404)
     _spare_check_request_access(spr)
+    # [REASON]: SP-F-002 — acts carry prices/quantities and were readable by
+    # any base spare_parts user; viewing them now needs the explicit
+    # spare_parts_acts permission (admin bypass via has_module_access, and
+    # migrate_spare_parts_acts_permission.py auto-grants it to existing
+    # issue/approve holders so no current workflow user loses access).
+    if not current_user.has_module_access('spare_parts_acts'):
+        abort(403)
     return render_template('spare_part_act.html',
                            act=act,
                            req=spr,
@@ -2293,6 +2630,10 @@ def act_pdf(act_id):
     # [REASON]: act PDFs are NOT served as raw static files; the same
     # org-scoped access check as the act/request detail applies to downloads.
     _spare_check_request_access(spr)
+    # [REASON]: SP-F-002 — same explicit permission as act_detail (this is the
+    # same document as a file).
+    if not current_user.has_module_access('spare_parts_acts'):
+        abort(403)
     # [REASON]: SPARE-STAGE2-QA-FIX1 — the act RECORD (number, items, prices,
     # organization, permanence/no-un-issue) is frozen at issue time and must
     # never change. Only the PRINTED rendering is regenerated fresh here, in the
@@ -2317,20 +2658,25 @@ def act_pdf(act_id):
 @spare_parts_bp.route('/catalog')
 @module_required('spare_parts')
 def catalog():
-    # [REASON]: SPARE-STAGE1 — catalog management now sits behind the explicit
-    # 'spare_parts_catalog_manage' permission (admin passes automatically, so
-    # existing admin access is preserved; previously this was is_admin-only).
-    if not current_user.has_module_access('spare_parts_catalog_manage'):
-        abort(403)
+    # [REASON]: SP-F-015 — the GET page splits read from manage: any base
+    # spare_parts user may BROWSE the canonical catalog (they already see the
+    # same names through the request-form picker), while the pending-review
+    # queue, add/edit forms and category management stay behind
+    # spare_parts_catalog_manage (the POST routes below keep their own
+    # independent permission checks — only the read path changes).
+    can_manage = current_user.has_module_access('spare_parts_catalog_manage')
     parts = (SparePart.query
              .options(joinedload(SparePart.category_ref))
              .order_by(SparePart.name).all())
-    pending_parts = (SparePart.query
-                     .options(joinedload(SparePart.creator),
-                              joinedload(SparePart.source_item))
-                     .filter(SparePart.status == 'pending_review')
-                     .order_by(SparePart.created_at)
-                     .all())
+    pending_parts = []
+    if can_manage:
+        # No reason to query data the viewer cannot act on.
+        pending_parts = (SparePart.query
+                         .options(joinedload(SparePart.creator),
+                                  joinedload(SparePart.source_item))
+                         .filter(SparePart.status == 'pending_review')
+                         .order_by(SparePart.created_at)
+                         .all())
     merge_targets = [p for p in parts
                      if p.status == 'active' and p.is_active != False]  # noqa: E712
     categories = (SparePartCategory.query
@@ -2341,6 +2687,10 @@ def catalog():
                            pending_parts=pending_parts,
                            merge_targets=merge_targets,
                            categories=categories,
+                           can_manage=can_manage,
+                           # [REASON]: SP-F-024 — unit picker for the manage
+                           # form; empty list keeps the legacy free-text input.
+                           units=_active_units(),
                            lang=_spare_lang())
 
 
@@ -2361,6 +2711,16 @@ def catalog_save():
 
     if not name:
         flash(_spare_t('Номини киритинг', 'Введите название'), 'warning')
+        return redirect(url_for('spare_parts.catalog'))
+
+    # [REASON]: SP-F-024 — same strict unit-directory rule as save_request
+    # (empty directory = legacy free-text fallback, no silent coercion).
+    valid_unit_codes = {u.code for u in _active_units()}
+    if valid_unit_codes and (unit or 'dona') not in valid_unit_codes:
+        _spare_flash_errors(
+            [_spare_t('Ўлчов бирлигини рўйхатдан танланг',
+                      'Выберите единицу измерения из справочника')],
+            title_uz='Сақланмади:', title_ru='Не сохранено:')
         return redirect(url_for('spare_parts.catalog'))
 
     created = False
@@ -2873,6 +3233,11 @@ def maintenance_norm_save():
     is_active = request.form.get('is_active') is not None
     try:
         interval_hours = float((request.form.get('interval_hours', '') or '').replace(',', '.'))
+        # [REASON]: SP-F-016 — NaN passes the <= 0 gate below (NaN <= 0 is
+        # False) and inf makes the norm unreachable garbage; both fold into
+        # the existing "must be > 0" rejection.
+        if not math.isfinite(interval_hours):
+            interval_hours = 0
     except ValueError:
         interval_hours = 0
     if not spare_part_id or not SparePart.query.get(spare_part_id):
@@ -2929,8 +3294,13 @@ def maintenance_due():
 
     [REASON]: SPARE-STAGE3 — deliberately notification-only. It never creates a
     draft request; the owner decided passive notification for this stage.
+
+    [REASON]: SP-F-011 — read-only due list, visible to any base spare_parts
+    user scoped to their organizations (the manual's documented split):
+    deliberately NO _require_catalog_manage() here, unlike the norm CRUD
+    routes above, which keep it — viewing "what is due" is operations,
+    editing the norms is catalog stewardship.
     """
-    _require_catalog_manage()
     org_ids = None if current_user.is_admin else current_user.get_org_ids()
     rows = _maintenance_due_rows(org_ids=org_ids)
     return render_template('spare_parts_maintenance_due.html',
@@ -3081,17 +3451,25 @@ def _reports_data(d_from, d_to, org_id=None, equipment_id=None, category_id=None
     grand_total = sum(_cost(item) for item, _req, _part in cost_lines)
 
     # Table 4: repeat-order warnings triggered in the period.
-    # [REASON]: SPARE-REPORTS — verbatim reuse of the SPARE-STAGE1 engine
-    # (_check_repeat_orders), not a reimplementation: severity/days_since are
-    # the engine's live view (anchored to today, 90-day window, red ≤7 /
-    # yellow ≤30, rejected prior requests excluded), i.e. exactly what the
-    # request detail page shows for the same item today.
+    # [REASON]: SP-F-009/SP-F-023 — hybrid contract (owner decision
+    # 2026-07-14): unlike the live form/detail (broad, today-anchored,
+    # unchanged), the REPORT's repeat table is strict and reproducible:
+    # examined lines and their matches are approved/issued only, and each
+    # line's days_since is computed against that line's own request date
+    # (as_of_date), never against "today" — so re-pulling a past period
+    # later shows identical numbers. Deliberately NOT reusing cost_lines'
+    # confirmed-price filter: repeat detection is about equipment/part
+    # recurrence, not cost.
     repeat_rows = []
     for item, req, _part in lines:
+        if req.status not in ('approved', 'issued'):
+            continue
         if not req.equipment_id or not item.spare_part_id:
             continue
         res = _check_repeat_orders(req.equipment_id, item.spare_part_id,
-                                   exclude_request_id=req.id)
+                                   exclude_request_id=req.id,
+                                   as_of_date=req.request_date,
+                                   eligible_statuses=('approved', 'issued'))
         if res['severity'] in ('red', 'yellow'):
             repeat_rows.append({
                 'request_id': req.id,
@@ -3130,6 +3508,23 @@ def _reports_data(d_from, d_to, org_id=None, equipment_id=None, category_id=None
         'repeat_rows': repeat_rows,
         'top_items': top_items,
     }
+
+
+def _xlsx_safe(value):
+    """Neutralize spreadsheet formula injection in a user-controlled string.
+
+    [REASON]: SP-F-004 — Excel/LibreOffice treat a cell starting with = + - @
+    as a formula, so a part named '=1+1' (or worse, '=HYPERLINK(...)') typed
+    by any operator would execute when the exported report is opened. The
+    standard defense is a leading apostrophe: Excel shows the text verbatim
+    and never evaluates it. Applied ONLY to user-controlled strings; fixed
+    labels, ids, dates and numeric columns are left untouched.
+    """
+    if isinstance(value, str):
+        stripped = value.lstrip()
+        if stripped and stripped[0] in ('=', '+', '-', '@'):
+            return "'" + value
+    return value
 
 
 def _spare_reports_workbook(data, lang='uz'):
@@ -3182,14 +3577,17 @@ def _spare_reports_workbook(data, lang='uz'):
                 width = max(width, min(len(val) + 2, 38))
             ws.column_dimensions[letter].width = width
 
+    # [REASON]: SP-F-004 — equipment/organization/part/unit names are operator
+    # -typed reference data and must be formula-neutralized in every sheet;
+    # the fixed '—'-prefixed fallbacks pass through _xlsx_safe unchanged.
     def eq_name(eq):
-        return eq.name if eq else L('— без техники —', '— техникасиз —')
+        return _xlsx_safe(eq.name) if eq else L('— без техники —', '— техникасиз —')
 
     def eq_plate(eq):
-        return (eq.plate or '') if eq else ''
+        return _xlsx_safe((eq.plate or '')) if eq else ''
 
     def org_name(org):
-        return (org.short_name or org.name) if org else '—'
+        return _xlsx_safe((org.short_name or org.name)) if org else '—'
 
     severity_labels = {
         'red': L('Красный (≤7 дней)', 'Қизил (≤7 кун)'),
@@ -3227,7 +3625,7 @@ def _spare_reports_workbook(data, lang='uz'):
                L('Сумма, сум', 'Сумма, сўм')])
     for r in data['by_category']:
         cat = r['category']
-        label = ((cat.name_ru if lang == 'ru' else cat.name_uz) if cat
+        label = (_xlsx_safe(cat.name_ru if lang == 'ru' else cat.name_uz) if cat
                  else L('— без категории —', '— категориясиз —'))
         ws.append([label, r['lines'], r['total']])
     ws.append([L('ИТОГО', 'ЖАМИ'), data['cost_lines_count'], data['grand_total']])
@@ -3253,7 +3651,7 @@ def _spare_reports_workbook(data, lang='uz'):
         ws.append(['#{}'.format(r['request_id']),
                    r['request_date'].strftime('%d.%m.%Y'),
                    org_name(r['organization']), eq_name(r['equipment']),
-                   r['part_name'],
+                   _xlsx_safe(r['part_name']),
                    severity_labels.get(r['severity'], r['severity']),
                    r['days_since']])
     style_table(ws)
@@ -3269,7 +3667,8 @@ def _spare_reports_workbook(data, lang='uz'):
         ws.append(['#{}'.format(r['request_id']),
                    r['request_date'].strftime('%d.%m.%Y'),
                    org_name(r['organization']), eq_name(r['equipment']),
-                   r['name'], r['quantity'], r['unit'], r['price'], r['total']])
+                   _xlsx_safe(r['name']), r['quantity'], _xlsx_safe(r['unit']),
+                   r['price'], r['total']])
     style_table(ws, money_cols=(8, 9))
 
     return wb

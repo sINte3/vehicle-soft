@@ -409,6 +409,7 @@
 /* MOBILE-UPLOAD-001: one widget per item row (each item has its own 5-file cap). */
 const UPLOAD_TEXT = {
     tooMany: {{ ('Максимум {max} файлов на позицию — лишние не добавлены.' if is_ru else 'Позицияга энг кўпи билан {max} та файл — ортиқчалари қўшилмади.')|tojson }},
+    fileRejected: {{ ('«{name}» не добавлен — максимум {max} файлов на позицию.' if is_ru else '«{name}» қўшилмади — позицияга кўпи билан {max} та файл.')|tojson }},
     tooLarge: {{ ('«{name}»: файл больше 50 МБ.' if is_ru else '«{name}»: файл 50 МБдан катта.')|tojson }},
     limitReached: {{ ('Достигнут лимит файлов для этой позиции.' if is_ru else 'Бу позиция учун файллар чегарасига етилди.')|tojson }}
 };
@@ -420,6 +421,8 @@ document.addEventListener('DOMContentLoaded', function () {
             maxSizeBytes: 50 * 1024 * 1024,
             text: {
                 tooMany: UPLOAD_TEXT.tooMany.replace('{max}', UPLOAD_MAX_FILES),
+                // [REASON]: SP-F-022 — per-file rejection message naming the file.
+                fileRejected: UPLOAD_TEXT.fileRejected,
                 tooLarge: UPLOAD_TEXT.tooLarge,
                 limitReached: UPLOAD_TEXT.limitReached,
             },
