@@ -365,7 +365,8 @@ def _update_sku_price_stats(sku_id):
     sku.avg_price = round(sum(prices) / len(prices), 2)
 
 
-def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None):
+def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None,
+                         as_of_date=None, eligible_statuses=None):
     """Repeat-order warning engine.
 
     Returns {'severity': 'red'|'yellow'|None, 'days_since': int|None, 'history': [...]}.
@@ -374,18 +375,34 @@ def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None):
     within 90 days is surfaced to the operator/approver. <=7 days is 'red',
     <=30 days 'yellow', <=90 days history only. Rejected requests are excluded.
     This engine WARNS only -- it never blocks saving or submitting.
+
+    [REASON]: SP-F-009 — hybrid contract (owner decision 2026-07-14): the live
+    form/detail call sites pass neither new parameter, keeping today's broad
+    behavior byte-identical (all non-rejected statuses, anchored to today);
+    the REPORT passes both, making its repeat table strict and reproducible:
+      - as_of_date anchors the window and days_since to the examined line's
+        own request date instead of "today", so a report re-pulled later
+        shows the same numbers;
+      - eligible_statuses, when given, restricts matches to those statuses
+        AND to requests strictly BEFORE as_of_date (a historical request must
+        never be flagged because of a LATER one).
     """
     empty = {'severity': None, 'days_since': None, 'history': []}
     if not equipment_id or not spare_part_id:
         return empty
-    window_start = date.today() - timedelta(days=90)
+    as_of_date = as_of_date or date.today()
+    window_start = as_of_date - timedelta(days=90)
     q = (db.session.query(SparePartRequestItem, SparePartRequest)
          .join(SparePartRequest,
                SparePartRequestItem.request_id == SparePartRequest.id)
          .filter(SparePartRequest.equipment_id == equipment_id,
                  SparePartRequestItem.spare_part_id == spare_part_id,
-                 SparePartRequest.request_date >= window_start,
-                 SparePartRequest.status != 'rejected'))
+                 SparePartRequest.request_date >= window_start))
+    if eligible_statuses is not None:
+        q = q.filter(SparePartRequest.status.in_(eligible_statuses),
+                     SparePartRequest.request_date < as_of_date)
+    else:
+        q = q.filter(SparePartRequest.status != 'rejected')
     if exclude_request_id:
         q = q.filter(SparePartRequest.id != exclude_request_id)
     rows = q.order_by(SparePartRequest.request_date.desc(),
@@ -399,7 +416,7 @@ def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None):
         'quantity': item.quantity,
         'unit': item.unit or '',
     } for item, req in rows]
-    days_since = (date.today() - rows[0][1].request_date).days
+    days_since = (as_of_date - rows[0][1].request_date).days
     if days_since <= 7:
         severity = 'red'
     elif days_since <= 30:
@@ -483,6 +500,12 @@ def _check_rule4_cost_anomaly(equipment_id, spare_part_id, exclude_request_id=No
     tables). No warning without at least one prior month of spend — a first-ever
     purchase in a category has nothing to compare against.
 
+    [REASON]: SP-F-023 — the baseline average divides by the number of prior
+    months that actually had spend (len(prior_months_with_data)), not by the
+    fixed RULE4_BASELINE_MONTHS window size: with real spend in only one of
+    the three prior months, dividing by three artificially diluted the
+    baseline to a third and made the anomaly trigger fire far too easily.
+
     [REASON]: SPARE-STAGE2-QA-FIX3 — 'issued' requests count exactly like
     'approved' ones (issued is reachable only from approved and means the money
     was actually spent), so both statuses feed the cost baseline.
@@ -520,7 +543,7 @@ def _check_rule4_cost_anomaly(equipment_id, spare_part_id, exclude_request_id=No
             prior_months_with_data.add((req_date.year, req_date.month))
     if not prior_months_with_data or prior_total <= 0:
         return None
-    baseline_avg = prior_total / RULE4_BASELINE_MONTHS
+    baseline_avg = prior_total / len(prior_months_with_data)
     if current_total <= RULE4_COST_ANOMALY_MULTIPLIER * baseline_avg:
         return None
     category = part.category_ref
@@ -549,8 +572,14 @@ def _check_rule6_recent_rejection(equipment_id, spare_part_id, exclude_request_i
     The warning carries the rejection date and the reviewer's comment so the
     approver sees WHY it was rejected last time.
     """
-    cutoff_dt = datetime.utcnow() - timedelta(days=RULE6_REJECTED_LOOKBACK_DAYS)
     cutoff_date = date.today() - timedelta(days=RULE6_REJECTED_LOOKBACK_DAYS)
+    # [REASON]: SP-F-010 — both comparison paths use the same calendar-day
+    # granularity: cutoff_dt is midnight of the cutoff day, so a rejection at
+    # ANY time on that day matches, exactly like the whole-day request_date
+    # fallback. Previously reviewed_at was compared against an exact UTC
+    # timestamp while the fallback used whole days, so the boundary day
+    # behaved differently depending on which field was populated.
+    cutoff_dt = datetime.combine(cutoff_date, datetime.min.time())
     q = (db.session.query(SparePartRequest)
          .join(SparePartRequestItem,
                SparePartRequestItem.request_id == SparePartRequest.id)
@@ -3315,17 +3344,25 @@ def _reports_data(d_from, d_to, org_id=None, equipment_id=None, category_id=None
     grand_total = sum(_cost(item) for item, _req, _part in cost_lines)
 
     # Table 4: repeat-order warnings triggered in the period.
-    # [REASON]: SPARE-REPORTS — verbatim reuse of the SPARE-STAGE1 engine
-    # (_check_repeat_orders), not a reimplementation: severity/days_since are
-    # the engine's live view (anchored to today, 90-day window, red ≤7 /
-    # yellow ≤30, rejected prior requests excluded), i.e. exactly what the
-    # request detail page shows for the same item today.
+    # [REASON]: SP-F-009/SP-F-023 — hybrid contract (owner decision
+    # 2026-07-14): unlike the live form/detail (broad, today-anchored,
+    # unchanged), the REPORT's repeat table is strict and reproducible:
+    # examined lines and their matches are approved/issued only, and each
+    # line's days_since is computed against that line's own request date
+    # (as_of_date), never against "today" — so re-pulling a past period
+    # later shows identical numbers. Deliberately NOT reusing cost_lines'
+    # confirmed-price filter: repeat detection is about equipment/part
+    # recurrence, not cost.
     repeat_rows = []
     for item, req, _part in lines:
+        if req.status not in ('approved', 'issued'):
+            continue
         if not req.equipment_id or not item.spare_part_id:
             continue
         res = _check_repeat_orders(req.equipment_id, item.spare_part_id,
-                                   exclude_request_id=req.id)
+                                   exclude_request_id=req.id,
+                                   as_of_date=req.request_date,
+                                   eligible_statuses=('approved', 'issued'))
         if res['severity'] in ('red', 'yellow'):
             repeat_rows.append({
                 'request_id': req.id,
