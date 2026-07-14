@@ -2492,6 +2492,24 @@ def issue_request(rid):
                      'act_number': {'before': None, 'after': act.act_number}},
             description='Request issued; write-off act {} created'.format(act.act_number)
         )
+        # [REASON]: SP-F-017 — the act is its own auditable entity (a numbered
+        # accounting document), so its creation gets a DISTINCT audit event in
+        # the same transaction, not just an act_number embedded in the request
+        # status change: an auditor filtering by entity/action must find every
+        # act without parsing another event's changes payload.
+        _audit_spare(
+            'spare_part_write_off_act_created',
+            entity_type='spare_part_write_off_act',
+            entity_id=act.id,
+            entity_label=act.act_number,
+            after={'id': act.id, 'act_number': act.act_number,
+                   'request_id': spr.id, 'organization_id': spr.organization_id,
+                   'warehouse_id': act.warehouse_id,
+                   'issued_date': _date_iso(act.issued_date),
+                   'items_count': len(spr.items)},
+            description='Write-off act {} created for request #{}'.format(
+                act.act_number, spr.id)
+        )
 
         # 4. Render the PDF inside the same transaction: a request must never
         # end up 'issued' without its printable act.
