@@ -946,7 +946,15 @@ class SparePartWriteOffAct(db.Model):
                                    cascade='all, delete-orphan')
 
     __table_args__ = (
-        db.Index('idx_spare_part_write_off_acts_request_id', 'request_id'),
+        # [REASON]: SP-F-019 — UNIQUE: 'issued' is terminal and unrepeatable,
+        # so a request can never legitimately have two acts; a concurrent
+        # double-issue now fails with IntegrityError on commit (handled by
+        # issue_request's existing rollback path) instead of silently creating
+        # a second act. Existing DBs get the unique index via
+        # migrate_spare_parts_acts_permission.py (duplicate-free confirmed,
+        # DQ-022: 0 on staging and production).
+        db.Index('idx_spare_part_write_off_acts_request_id', 'request_id',
+                 unique=True),
     )
 
 

@@ -2383,6 +2383,13 @@ def act_detail(act_id):
     if spr is None:
         abort(404)
     _spare_check_request_access(spr)
+    # [REASON]: SP-F-002 — acts carry prices/quantities and were readable by
+    # any base spare_parts user; viewing them now needs the explicit
+    # spare_parts_acts permission (admin bypass via has_module_access, and
+    # migrate_spare_parts_acts_permission.py auto-grants it to existing
+    # issue/approve holders so no current workflow user loses access).
+    if not current_user.has_module_access('spare_parts_acts'):
+        abort(403)
     return render_template('spare_part_act.html',
                            act=act,
                            req=spr,
@@ -2399,6 +2406,10 @@ def act_pdf(act_id):
     # [REASON]: act PDFs are NOT served as raw static files; the same
     # org-scoped access check as the act/request detail applies to downloads.
     _spare_check_request_access(spr)
+    # [REASON]: SP-F-002 — same explicit permission as act_detail (this is the
+    # same document as a file).
+    if not current_user.has_module_access('spare_parts_acts'):
+        abort(403)
     # [REASON]: SPARE-STAGE2-QA-FIX1 — the act RECORD (number, items, prices,
     # organization, permanence/no-un-issue) is frozen at issue time and must
     # never change. Only the PRINTED rendering is regenerated fresh here, in the

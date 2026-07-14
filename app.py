@@ -2888,6 +2888,11 @@ def create_app():
                 # migrate_spare_parts_stage2.py; this list only serves fresh installs.
                 ('spare_parts_inventory_manage', 'Эҳтиёт қисмлар: омбор ва қолдиқлар', 'Запчасти: склад и остатки'),
                 ('spare_parts_issue', 'Эҳтиёт қисмлар: омбордан бериш', 'Запчасти: выдача со склада'),
+                # [REASON]: SP-F-002 — existing DBs get this row (plus the
+                # auto-grant to issue/approve holders) from
+                # migrate_spare_parts_acts_permission.py; this list only
+                # serves fresh installs.
+                ('spare_parts_acts', 'Эҳтиёт қисмлар: далолатномаларни кўриш', 'Запчасти: просмотр актов списания'),
             ]:
                 db.session.add(AppModule(code=code, name_uz=name_uz, name_ru=name_ru))
             db.session.commit()
