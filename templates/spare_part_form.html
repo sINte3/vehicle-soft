@@ -183,8 +183,49 @@ const EQUIP_URL = {{ url_for('spare_parts.api_equipment_by_org')|tojson }};
 const REPEAT_URL = {{ url_for('spare_parts.api_repeat_check')|tojson }};
 const CATALOG_SEARCH_URL = {{ url_for('spare_parts.api_catalog_search')|tojson }};
 const SKUS_URL = {{ url_for('spare_parts.api_skus_by_part')|tojson }};
+/* [REASON]: SP-F-024 — managed unit directory (code + localized label +
+   lowercase alt spellings). Empty when the units migration has not run:
+   the row template then falls back to the legacy free-text input. */
+const UNIT_OPTIONS = {{ (unit_options or [])|tojson }};
 
 let EQ_DATA = {};
+
+// [REASON]: SP-F-024 — the select element is emitted empty and populated
+// with DOM options (textContent), never by string-concatenating the
+// DB-sourced labels into innerHTML.
+function unitCellHtml() {
+    return UNIT_OPTIONS.length
+        ? '<select name="item_unit" class="vs-select"></select>'
+        : '<input type="text" name="item_unit" class="vs-input" value="dona">';
+}
+
+function populateUnitOptions(field) {
+    if (!field || field.tagName !== 'SELECT') return;
+    UNIT_OPTIONS.forEach(u => {
+        const o = document.createElement('option');
+        o.value = u.code;
+        o.textContent = u.label;
+        o.dataset.alt = u.alt || '';
+        if (u.code === 'dona') o.selected = true;   // today's default
+        field.appendChild(o);
+    });
+}
+
+/* Set a unit field from a catalog part's stored unit. For the select this
+   matches by code first, then by the alt spellings (legacy free-text catalog
+   values like 'шт'); an unrecognized value leaves the selection unchanged. */
+function setUnitValue(field, val) {
+    if (!field || !val) return;
+    if (field.tagName !== 'SELECT') { field.value = val; return; }
+    const v = String(val).trim().toLowerCase();
+    for (const o of field.options) {
+        if (o.value.toLowerCase() === v ||
+            (o.dataset.alt || '').split('|').indexOf(v) !== -1) {
+            field.value = o.value;
+            return;
+        }
+    }
+}
 
 function rowTemplate() {
     return `
@@ -201,7 +242,7 @@ function rowTemplate() {
         </td>
         <td><input type="text" name="item_part_number" class="vs-input" placeholder="000-000"></td>
         <td><input type="number" name="item_quantity" class="vs-input" value="1" min="0.001" step="0.001"></td>
-        <td><input type="text" name="item_unit" class="vs-input" value="dona"></td>
+        <td>${unitCellHtml()}</td>
         <td><input type="text" name="item_note" class="vs-input" placeholder="${TEXT.noteName}"></td>
         <td>
             <div class="sp-upload" data-existing-count="0">
@@ -241,6 +282,7 @@ function addRow(focusName) {
     row.innerHTML = rowTemplate();
     tbody.appendChild(row);
     initRowUpload(row);
+    populateUnitOptions(row.querySelector('[name=item_unit]'));
     renumberRows();
     if (focusName !== false) row.querySelector('[name=item_name]').focus();
     return row;
@@ -307,7 +349,7 @@ function onPartInput(input) {
     if (opt) {
         hidden.value = opt.dataset.id || '';
         row.dataset.kind = opt.dataset.kind || '';
-        if (opt.dataset.unit && (!unitInput.value || unitInput.value === 'dona')) unitInput.value = opt.dataset.unit;
+        if (opt.dataset.unit && (!unitInput.value || unitInput.value === 'dona')) setUnitValue(unitInput, opt.dataset.unit);
         if (opt.dataset.partNumber && !partNumberInput.value) partNumberInput.value = opt.dataset.partNumber;
         const consumable = (opt.dataset.kind === 'consumable');
         hint.textContent = consumable ? TEXT.fromCatalogConsumable : TEXT.fromCatalog;

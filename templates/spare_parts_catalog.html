@@ -110,7 +110,16 @@
             </div>
             <div class="vs-field" style="width:120px;">
                 <label class="vs-label">{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</label>
+                {# SP-F-024: managed unit directory; free-text fallback pre-migration. #}
+                {% if units %}
+                <select name="unit" id="editUnit" class="vs-select">
+                    {% for u in units %}
+                    <option value="{{ u.code }}" data-alt="{{ (u.code ~ '|' ~ u.name_ru ~ '|' ~ u.name_uz)|lower }}"{% if u.code == 'dona' %} selected{% endif %}>{{ u.name_ru if is_ru else u.name_uz }}</option>
+                    {% endfor %}
+                </select>
+                {% else %}
                 <input type="text" name="unit" id="editUnit" class="vs-input" value="{{ 'шт' if is_ru else 'дона' }}">
+                {% endif %}
             </div>
             {# SPARE-STAGE1: managed category picker replaces the deprecated free-text field. #}
             <div class="vs-field" style="flex:1; min-width:170px;">
@@ -295,11 +304,31 @@ const CATALOG_TEXT = {
     shown: {{ ('Показано' if is_ru else 'Кўрсатилган')|tojson }}
 };
 const DEFAULT_UNIT = {{ ('шт' if is_ru else 'дона')|tojson }};
+
+/* [REASON]: SP-F-024 — the unit field may be a select (managed directory) or
+   the legacy text input (pre-migration). For the select, a legacy free-text
+   part unit ('шт', 'дона', ...) is matched via each option's alt spellings;
+   unknown values fall back to the 'dona' default. */
+function setEditUnit(val) {
+    const f = document.getElementById('editUnit');
+    if (!f) return;
+    if (f.tagName !== 'SELECT') { f.value = val || DEFAULT_UNIT; return; }
+    const v = String(val || 'dona').trim().toLowerCase();
+    for (const o of f.options) {
+        if (o.value.toLowerCase() === v ||
+            (o.dataset.alt || '').split('|').indexOf(v) !== -1) {
+            f.value = o.value;
+            return;
+        }
+    }
+    f.value = 'dona';
+}
+
 function editPart(id, name, partNum, unit, catId) {
     document.getElementById('editId').value = id;
     document.getElementById('editName').value = name;
     document.getElementById('editPartNum').value = partNum;
-    document.getElementById('editUnit').value = unit || DEFAULT_UNIT;
+    setEditUnit(unit);
     // SPARE-STAGE1: category is now a managed category_id select.
     document.getElementById('editCategory').value = catId || '';
     document.getElementById('catalogFormTitle').textContent = CATALOG_TEXT.editTitle;
@@ -330,7 +359,7 @@ function resetForm() {
     document.getElementById('editId').value = '';
     document.getElementById('editName').value = '';
     document.getElementById('editPartNum').value = '';
-    document.getElementById('editUnit').value = DEFAULT_UNIT;
+    setEditUnit(null);
     document.getElementById('editCategory').value = '';
     document.getElementById('catalogFormTitle').textContent = CATALOG_TEXT.addTitle;
     document.getElementById('editName').classList.remove('is-error');

@@ -757,6 +757,34 @@ class SparePartCategory(db.Model):
     )
 
 
+class SparePartUnit(db.Model):
+    """SP-F-024: managed bilingual directory of units of measure.
+
+    Owner decision (2026-07-14): units are a STRICT managed directory, not
+    free text. `code` is a short stable Latin key stored on request items and
+    catalog parts going forward ('dona' matches the value historical rows
+    already carry as the default); name_ru/name_uz are editable display
+    labels, so relabeling never breaks stored data. Historical unit values
+    are snapshots and are NEVER rewritten (see SparePartRequestItem) — the
+    directory only governs what the pickers offer going forward. Seeded by
+    migrate_spare_parts_units.py (which also auto-registers any extra legacy
+    values found in existing data so nothing historical becomes unpickable).
+    Follows the SparePartCategory reference-table shape.
+    """
+    __tablename__ = 'spare_part_units'
+    id         = db.Column(db.Integer, primary_key=True)
+    code       = db.Column(db.String(30), nullable=False)
+    name_ru    = db.Column(db.String(100), nullable=False)
+    name_uz    = db.Column(db.String(100), nullable=False)
+    is_active  = db.Column(db.Boolean, default=True)
+    sort_order = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.Index('uq_spare_part_units_code', 'code', unique=True),
+    )
+
+
 class SparePart(db.Model):
     __tablename__ = 'spare_parts'
     id          = db.Column(db.Integer, primary_key=True)

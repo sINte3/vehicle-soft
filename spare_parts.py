@@ -17,7 +17,7 @@ from models import (db, SparePart, SparePartCategory, SparePartPriceAudit,
                     SparePartAttachment, SparePartInventory,
                     SparePartInventoryMovement, SparePartRequest,
                     SparePartRequestItem, SparePartSku, SparePartStatusHistory,
-                    SparePartWarehouse, SparePartWriteOffAct,
+                    SparePartUnit, SparePartWarehouse, SparePartWriteOffAct,
                     SparePartWriteOffActItem, Organization, Equipment,
                     EquipmentModel, SparePartCompatibility,
                     SparePartMaintenanceNorm, EngineHoursRecord,
@@ -234,6 +234,30 @@ def _parse_spare_date(value):
         return datetime.strptime(value, '%Y-%m-%d').date()
     except (TypeError, ValueError):
         raise ValueError('request_date')
+
+
+def _active_units():
+    """Active unit-directory rows for pickers, ordered like other references.
+
+    [REASON]: SP-F-024 — strict managed directory (owner decision 2026-07-14).
+    An EMPTY result (fresh install before migrate_spare_parts_units.py runs)
+    makes every caller fall back to the legacy free-text behavior, so the app
+    keeps working pre-migration and in dev environments.
+    """
+    return (SparePartUnit.query.filter_by(is_active=True)
+            .order_by(SparePartUnit.sort_order, SparePartUnit.id).all())
+
+
+def _unit_options(unit_rows):
+    """JSON-ready picker options: code + language-correct label + lowercase
+    alt spellings (code|name_ru|name_uz) for matching legacy catalog values
+    client-side."""
+    lang = _spare_lang()
+    return [{
+        'code': u.code,
+        'label': (u.name_ru if lang == 'ru' else u.name_uz),
+        'alt': '|'.join(x.lower() for x in (u.code, u.name_ru, u.name_uz)),
+    } for u in unit_rows]
 
 
 def _parse_spare_positive_qty(value):
@@ -1047,6 +1071,9 @@ def new_request():
                            today=date.today().isoformat(),
                            organizations=organizations,
                            catalog_parts=catalog_parts,
+                           # [REASON]: SP-F-024 — unit picker options; empty
+                           # list keeps the legacy free-text input.
+                           unit_options=_unit_options(_active_units()),
                            lang=_spare_lang())
 
 
@@ -1092,6 +1119,12 @@ def save_request():
     # empty value = no SKU, which keeps the exact Stage 1 item behaviour).
     sku_ids = request.form.getlist('item_sku_id')
 
+    # [REASON]: SP-F-024 — strict unit directory: submitted values must be an
+    # active SparePartUnit.code. An empty directory (fresh install before
+    # migrate_spare_parts_units.py) keeps the legacy free-text acceptance so
+    # nothing breaks pre-migration.
+    valid_unit_codes = {u.code for u in _active_units()}
+
     prepared_items = []
     validation_errors = []
     for i, raw_name in enumerate(names):
@@ -1112,6 +1145,13 @@ def save_request():
             qty = _parse_spare_positive_qty(qty_raw)
         except ValueError:
             validation_errors.append(_spare_t('{}. қатор: миқдор мусбат бўлиши керак', '{} строка: количество должно быть больше нуля').format(row_no))
+            continue
+        # [REASON]: SP-F-024 — reject unknown units explicitly, never coerce
+        # silently to a default.
+        if valid_unit_codes and (unit or 'dona') not in valid_unit_codes:
+            validation_errors.append(_spare_t(
+                '{}. қатор: ўлчов бирлигини рўйхатдан танланг',
+                '{} строка: выберите единицу измерения из справочника').format(row_no))
             continue
 
         # Resolve the catalog link. A stale/merged/inactive id silently falls
@@ -2648,6 +2688,9 @@ def catalog():
                            merge_targets=merge_targets,
                            categories=categories,
                            can_manage=can_manage,
+                           # [REASON]: SP-F-024 — unit picker for the manage
+                           # form; empty list keeps the legacy free-text input.
+                           units=_active_units(),
                            lang=_spare_lang())
 
 
@@ -2668,6 +2711,16 @@ def catalog_save():
 
     if not name:
         flash(_spare_t('Номини киритинг', 'Введите название'), 'warning')
+        return redirect(url_for('spare_parts.catalog'))
+
+    # [REASON]: SP-F-024 — same strict unit-directory rule as save_request
+    # (empty directory = legacy free-text fallback, no silent coercion).
+    valid_unit_codes = {u.code for u in _active_units()}
+    if valid_unit_codes and (unit or 'dona') not in valid_unit_codes:
+        _spare_flash_errors(
+            [_spare_t('Ўлчов бирлигини рўйхатдан танланг',
+                      'Выберите единицу измерения из справочника')],
+            title_uz='Сақланмади:', title_ru='Не сохранено:')
         return redirect(url_for('spare_parts.catalog'))
 
     created = False
