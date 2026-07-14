@@ -1,4 +1,5 @@
 import io
+import math
 import os
 import re
 import uuid
@@ -240,7 +241,10 @@ def _parse_spare_positive_qty(value):
         result = float(str(value).replace(',', '.'))
     except (TypeError, ValueError):
         raise ValueError('quantity')
-    if result <= 0:
+    # [REASON]: SP-F-016 — float() happily parses 'nan'/'inf', and NaN slips
+    # past every comparison (NaN <= 0 is False), so finiteness is an explicit
+    # extra condition on the existing check, not a new error category.
+    if not math.isfinite(result) or result <= 0:
         raise ValueError('quantity')
     return result
 
@@ -536,6 +540,11 @@ def _check_rule4_cost_anomaly(equipment_id, spare_part_id, exclude_request_id=No
     prior_months_with_data = set()
     for price, quantity, req_date in q.all():
         cost = float(price or 0) * float(quantity or 0)
+        # [REASON]: SP-F-016 defense-in-depth — these are already-stored
+        # values, not raw input, but one corrupted NaN row must not poison
+        # the whole category baseline.
+        if not math.isfinite(cost):
+            continue
         if req_date >= month_start:
             current_total += cost
         else:
@@ -1481,7 +1490,9 @@ def item_price_set(rid, item_id):
     raw = (request.form.get('price', '') or '').strip()
     try:
         price = float(raw.replace(',', '.').replace(' ', ''))
-        if price < 0:
+        # [REASON]: SP-F-016 — reject 'nan'/'inf' the same way as a malformed
+        # number (NaN would pass the < 0 check and poison SKU price stats).
+        if not math.isfinite(price) or price < 0:
             raise ValueError()
     except (TypeError, ValueError):
         _spare_flash_errors([_spare_t('Нарх мусбат сон бўлиши керак',
@@ -2027,6 +2038,10 @@ def _apply_inventory_movement(warehouse_id, sku_id, movement_type, quantity,
         quantity = float(quantity)
     except (TypeError, ValueError):
         raise ValueError('quantity')
+    # [REASON]: SP-F-016 — NaN/inf would corrupt the running balance; same
+    # error code as a malformed number.
+    if not math.isfinite(quantity):
+        raise ValueError('quantity')
     if quantity == 0:
         raise ValueError('zero_quantity')
     if movement_type == 'receipt' and quantity < 0:
@@ -2224,7 +2239,12 @@ def inventory_movement_create():
         errors.append(_spare_t('SKU танланг', 'Выберите SKU'))
     quantity = None
     try:
-        quantity = float(raw_qty)
+        parsed = float(raw_qty)
+        # [REASON]: SP-F-016 — 'nan'/'inf' rejected with the same message as
+        # a malformed number.
+        if not math.isfinite(parsed):
+            raise ValueError('quantity')
+        quantity = parsed
     except (TypeError, ValueError):
         errors.append(_spare_t('Миқдор сон бўлиши керак', 'Количество должно быть числом'))
     if quantity is not None:
@@ -3142,6 +3162,11 @@ def maintenance_norm_save():
     is_active = request.form.get('is_active') is not None
     try:
         interval_hours = float((request.form.get('interval_hours', '') or '').replace(',', '.'))
+        # [REASON]: SP-F-016 — NaN passes the <= 0 gate below (NaN <= 0 is
+        # False) and inf makes the norm unreachable garbage; both fold into
+        # the existing "must be > 0" rejection.
+        if not math.isfinite(interval_hours):
+            interval_hours = 0
     except ValueError:
         interval_hours = 0
     if not spare_part_id or not SparePart.query.get(spare_part_id):
