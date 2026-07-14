@@ -1486,6 +1486,14 @@ def item_price_confirm(rid, item_id):
         _spare_flash_errors([_spare_t('Аввал нархни киритинг', 'Сначала укажите цену')],
                             title_uz='Нарх тасдиқланмади:', title_ru='Цена не подтверждена:')
         return redirect(url_for('spare_parts.detail', rid=rid))
+    # [REASON]: SP-F-007 — confirm is idempotent: a second confirm (stale tab,
+    # double click) is a no-op, otherwise it would write a duplicate
+    # price_audit row and double-count this price in the SKU's average via
+    # _update_sku_price_stats. Only a 'pending' price can be confirmed;
+    # rejected/returned prices leave the submitted state anyway.
+    if item.price_status != 'pending':
+        flash(_spare_t('Нарх аллақачон тасдиқланган', 'Цена уже подтверждена'), 'info')
+        return redirect(url_for('spare_parts.detail', rid=rid))
     item.price_status = 'confirmed'
     write_price_audit(item.id, item.price, item.price, 'confirm', current_user.id)
     # [REASON]: SPARE-STAGE2 — confirm is the only event that feeds SKU price
