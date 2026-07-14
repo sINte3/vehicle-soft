@@ -171,6 +171,7 @@ const TEXT = {
     noteName: {{ ('Комментарий' if is_ru else 'Изоҳ')|tojson }},
     chooseFiles: {{ ('Выбрать фото/видео' if is_ru else 'Фото/видео танлаш')|tojson }},
     uploadTooMany: {{ ('Максимум {max} файлов на позицию — лишние не добавлены.' if is_ru else 'Позицияга энг кўпи билан {max} та файл — ортиқчалари қўшилмади.')|tojson }},
+    uploadFileRejected: {{ ('«{name}» не добавлен — максимум {max} файлов на позицию.' if is_ru else '«{name}» қўшилмади — позицияга кўпи билан {max} та файл.')|tojson }},
     uploadTooLarge: {{ ('«{name}»: файл больше 50 МБ.' if is_ru else '«{name}»: файл 50 МБдан катта.')|tojson }},
     uploadLimitReached: {{ ('Достигнут лимит файлов для этой позиции.' if is_ru else 'Бу позиция учун файллар чегарасига етилди.')|tojson }},
     fuzzyLabel: {{ ('Похожие в каталоге:' if is_ru else 'Каталогдаги ўхшашлари:')|tojson }},
@@ -225,6 +226,8 @@ function initRowUpload(row) {
         maxSizeBytes: UPLOAD_MAX_SIZE_BYTES,
         text: {
             tooMany: TEXT.uploadTooMany.replace('{max}', UPLOAD_MAX_FILES),
+            // [REASON]: SP-F-022 — per-file rejection message naming the file.
+            fileRejected: TEXT.uploadFileRejected,
             tooLarge: TEXT.uploadTooLarge,
             limitReached: TEXT.uploadLimitReached,
         },

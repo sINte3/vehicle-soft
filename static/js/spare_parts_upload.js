@@ -126,7 +126,14 @@
         var errors = [];
         Array.prototype.forEach.call(picked, function (file) {
             if (remainingSlots(widget) <= 0) {
-                errors.push((opts.text.tooMany || '').replace('{max}', opts.maxFiles));
+                /* [REASON]: SP-F-022 — never truncate silently: the message
+                 * names WHICH file was not added (fileRejected has {name} and
+                 * {max} placeholders); tooMany is kept as a fallback for any
+                 * caller not yet passing the new text. The first files that
+                 * fit are still kept. */
+                var msg = opts.text.fileRejected || opts.text.tooMany || '';
+                errors.push(msg.replace('{name}', file.name)
+                               .replace('{max}', opts.maxFiles));
                 return;
             }
             if (opts.maxSizeBytes && file.size > opts.maxSizeBytes) {
