@@ -756,10 +756,24 @@ def _validate_photo(fs):
         '«{}»: содержимое файла не соответствует указанному расширению').format(filename)
 
 
+def _remove_stored_files(paths):
+    """Best-effort removal of files written during a failed save.
+
+    [REASON]: SP-F-003 — same try/except-OSError style as the PDF cleanup in
+    issue_request: cleanup must never mask the original failure.
+    """
+    for full_path in paths or []:
+        try:
+            os.remove(full_path)
+        except OSError:
+            pass
+
+
 def _store_item_photo(fs, item_id, user_id):
     """Validate and persist one uploaded photo for an item.
 
-    Returns a bilingual error string, or None on success. Adds the
+    Returns (error, full_path): a bilingual error string (full_path None), or
+    (None, absolute path of the written file) on success. Adds the
     SparePartAttachment row without committing (caller commits).
 
     [REASON]: SPARE-STAGE1 — the on-disk name is built ONLY from item_id and a
@@ -769,26 +783,40 @@ def _store_item_photo(fs, item_id, user_id):
     """
     ext, err = _validate_photo(fs)
     if err:
-        return err
+        return err, None
     fname = '{}_{}{}'.format(item_id, uuid.uuid4().hex[:8], ext)
-    fs.save(os.path.join(_upload_dir(), fname))
-    db.session.add(SparePartAttachment(
-        item_id=item_id,
-        file_path=fname,
-        original_filename=(fs.filename or '')[:300],
-        file_size=os.path.getsize(os.path.join(_upload_dir(), fname)),
-        uploaded_by=user_id,
-    ))
-    return None
+    full_path = os.path.join(_upload_dir(), fname)
+    # [REASON]: SP-F-003 — if anything fails after bytes hit the disk (partial
+    # save on a full disk, a failing stat, a session error), the file must not
+    # survive as an orphan no row will ever reference.
+    try:
+        fs.save(full_path)
+        db.session.add(SparePartAttachment(
+            item_id=item_id,
+            file_path=fname,
+            original_filename=(fs.filename or '')[:300],
+            file_size=os.path.getsize(full_path),
+            uploaded_by=user_id,
+        ))
+    except Exception:
+        _remove_stored_files([full_path])
+        raise
+    return None, full_path
 
 
 def _store_attachments_for_item(files, item_id, user_id, existing_count):
     """Validate and store files for one item, up to MAX_ATTACHMENTS_PER_ITEM total.
 
-    Returns (stored_count, errors). Files beyond the per-item cap (existing
-    attachments + files already stored earlier in this same call) are
-    rejected with a clear bilingual error instead of being silently dropped
-    or truncated mid-file -- the caller's already-stored files are untouched.
+    Returns (stored_count, errors, written_paths). Files beyond the per-item
+    cap (existing attachments + files already stored earlier in this same
+    call) are rejected with a clear bilingual error instead of being silently
+    dropped or truncated mid-file -- the caller's already-stored files are
+    untouched.
+
+    [REASON]: SP-F-003 — written_paths lets the caller delete every file this
+    call produced if the surrounding request later fails before commit; on an
+    exception INSIDE this loop the already-written files of this call are
+    removed here before re-raising.
 
     [REASON]: MOBILE-UPLOAD-001 — shared by the create-request flow (always
     existing_count=0) and the detail-page add-more flow (existing_count is
@@ -797,19 +825,25 @@ def _store_attachments_for_item(files, item_id, user_id, existing_count):
     """
     errors = []
     stored = 0
-    for fs in files:
-        if existing_count + stored >= MAX_ATTACHMENTS_PER_ITEM:
-            errors.append(_spare_t(
-                '«{}»: позицияга энг кўпи билан {} та файл бириктириш мумкин',
-                '«{}»: к позиции можно прикрепить не более {} файлов'
-            ).format(fs.filename or '', MAX_ATTACHMENTS_PER_ITEM))
-            continue
-        err = _store_item_photo(fs, item_id, user_id)
-        if err:
-            errors.append(err)
-        else:
-            stored += 1
-    return stored, errors
+    written_paths = []
+    try:
+        for fs in files:
+            if existing_count + stored >= MAX_ATTACHMENTS_PER_ITEM:
+                errors.append(_spare_t(
+                    '«{}»: позицияга энг кўпи билан {} та файл бириктириш мумкин',
+                    '«{}»: к позиции можно прикрепить не более {} файлов'
+                ).format(fs.filename or '', MAX_ATTACHMENTS_PER_ITEM))
+                continue
+            err, full_path = _store_item_photo(fs, item_id, user_id)
+            if err:
+                errors.append(err)
+            else:
+                stored += 1
+                written_paths.append(full_path)
+    except Exception:
+        _remove_stored_files(written_paths)
+        raise
+    return stored, errors, written_paths
 
 
 def _store_submitted_item_photos(created_items):
@@ -819,19 +853,31 @@ def _store_submitted_item_photos(created_items):
     as item_photo_{form_index}. Invalid files are skipped and reported — if
     that leaves a mandatory photo/video missing, the submit gate keeps the
     request as a draft with its own explicit message.
+
+    Returns the list of absolute paths written, so the caller can remove them
+    if the request fails after this point but before commit (SP-F-003); an
+    exception inside this loop removes THIS call's earlier items' files
+    before re-raising.
     """
     errors = []
-    for item, prepared in created_items:
-        files = [fs for fs in
-                 request.files.getlist('item_photo_{}'.format(prepared['form_index']))
-                 if fs and fs.filename]
-        _, item_errors = _store_attachments_for_item(
-            files, item.id, current_user.id, existing_count=0)
-        errors.extend(item_errors)
+    written_paths = []
+    try:
+        for item, prepared in created_items:
+            files = [fs for fs in
+                     request.files.getlist('item_photo_{}'.format(prepared['form_index']))
+                     if fs and fs.filename]
+            _, item_errors, item_paths = _store_attachments_for_item(
+                files, item.id, current_user.id, existing_count=0)
+            errors.extend(item_errors)
+            written_paths.extend(item_paths)
+    except Exception:
+        _remove_stored_files(written_paths)
+        raise
     if errors:
         _spare_flash_errors(errors,
                             title_uz='Баъзи фотолар қабул қилинмади:',
                             title_ru='Некоторые фото не приняты:')
+    return written_paths
 
 
 def _approval_blockers(spr):
@@ -1134,47 +1180,59 @@ def save_request():
             description='Pending-review catalog candidate auto-created from request item #{}'.format(item.id)
         )
 
-    _store_submitted_item_photos(created_items)
-    db.session.flush()
+    # [REASON]: SP-F-003 — everything between the first byte written to disk
+    # and the commit is one failure domain: if the transaction dies anywhere
+    # in this block, every attachment file written for it is removed again
+    # (best-effort), so no orphan files survive a failed save. The exception
+    # then propagates exactly as before — behavior is unchanged apart from
+    # the cleanup.
+    written_paths = []
+    try:
+        written_paths = _store_submitted_item_photos(created_items)
+        db.session.flush()
 
-    # [REASON]: SPARE-STAGE1 mandatory-photo rule — items in 'unit' (or not yet
-    # categorized) categories need at least one photo before submit. To avoid
-    # losing the operator's typed rows, a failed submit is kept as a draft with
-    # a clear bilingual error; photos can be added on the detail page.
-    if status == 'submitted':
-        missing = _items_missing_photos([item for item, _ in created_items])
-        if missing:
-            status = 'draft'
-            _spare_flash_errors(
-                missing,
-                title_uz='Сўров юборилмади, чорнов сифатида сақланди. Қуйидаги позицияларга камида битта фото керак:',
-                title_ru='Заявка не отправлена и сохранена как черновик. Этим позициям нужно хотя бы одно фото:',
-            )
+        # [REASON]: SPARE-STAGE1 mandatory-photo rule — items in 'unit' (or not yet
+        # categorized) categories need at least one photo before submit. To avoid
+        # losing the operator's typed rows, a failed submit is kept as a draft with
+        # a clear bilingual error; photos can be added on the detail page.
+        if status == 'submitted':
+            missing = _items_missing_photos([item for item, _ in created_items])
+            if missing:
+                status = 'draft'
+                _spare_flash_errors(
+                    missing,
+                    title_uz='Сўров юборилмади, чорнов сифатида сақланди. Қуйидаги позицияларга камида битта фото керак:',
+                    title_ru='Заявка не отправлена и сохранена как черновик. Этим позициям нужно хотя бы одно фото:',
+                )
 
-    if status == 'submitted':
-        spr.status = 'submitted'
+        if status == 'submitted':
+            spr.status = 'submitted'
 
-    _audit_spare(
-        'spare_part_request_created',
-        entity_type='spare_part_request',
-        entity_id=spr.id,
-        entity_label='Request #{}'.format(spr.id),
-        after=_request_snapshot(spr),
-        description='Spare part request created'
-    )
-    for item, _prepared in created_items:
         _audit_spare(
-            'spare_part_item_created',
-            entity_type='spare_part_request_item',
-            entity_id=item.id,
-            entity_label=item.name,
-            after=_item_snapshot(item),
-            description='Spare part request item created'
+            'spare_part_request_created',
+            entity_type='spare_part_request',
+            entity_id=spr.id,
+            entity_label='Request #{}'.format(spr.id),
+            after=_request_snapshot(spr),
+            description='Spare part request created'
         )
-    # [REASON]: FIX003A — Record status history before commit.
-    if status == 'submitted':
-        _add_status_history(spr.id, None, 'submitted', changed_by=current_user.id)
-    db.session.commit()
+        for item, _prepared in created_items:
+            _audit_spare(
+                'spare_part_item_created',
+                entity_type='spare_part_request_item',
+                entity_id=item.id,
+                entity_label=item.name,
+                after=_item_snapshot(item),
+                description='Spare part request item created'
+            )
+        # [REASON]: FIX003A — Record status history before commit.
+        if status == 'submitted':
+            _add_status_history(spr.id, None, 'submitted', changed_by=current_user.id)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        _remove_stored_files(written_paths)
+        raise
     if status == 'submitted':
         flash(_spare_t('Сўров юборилди', 'Заявка отправлена'), 'success')
         # [REASON]: BOT003 — Post-commit best-effort notification, never raises.
@@ -1502,21 +1560,34 @@ def item_photo_upload(rid, item_id):
     # against what is actually stored right now.
     existing_count = SparePartAttachment.query.filter_by(item_id=item.id).count()
     files = [fs for fs in request.files.getlist('photo') if fs and fs.filename]
-    stored, errors = _store_attachments_for_item(
-        files, item.id, current_user.id, existing_count)
+    # [REASON]: SP-F-003 — same write-then-commit failure domain as
+    # save_request: this route shares the identical gap (files written, commit
+    # later, no surrounding try/except), so a failure between the two removes
+    # every file written by this call before propagating.
+    written_paths = []
+    stored = 0
+    errors = []
+    try:
+        stored, errors, written_paths = _store_attachments_for_item(
+            files, item.id, current_user.id, existing_count)
+        if stored:
+            _audit_spare(
+                'spare_part_item_photo_uploaded',
+                entity_type='spare_part_request_item',
+                entity_id=item.id,
+                entity_label=item.name,
+                description='{} photo(s) uploaded for item on request #{}'.format(stored, spr.id)
+            )
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+        _remove_stored_files(written_paths)
+        raise
     if errors:
         _spare_flash_errors(errors,
                             title_uz='Баъзи фотолар қабул қилинмади:',
                             title_ru='Некоторые фото не приняты:')
     if stored:
-        _audit_spare(
-            'spare_part_item_photo_uploaded',
-            entity_type='spare_part_request_item',
-            entity_id=item.id,
-            entity_label=item.name,
-            description='{} photo(s) uploaded for item on request #{}'.format(stored, spr.id)
-        )
-        db.session.commit()
         flash(_spare_t('Фото юкланди', 'Фото загружено'), 'success')
     elif not errors:
         flash(_spare_t('Файл танланмаган', 'Файл не выбран'), 'warning')
