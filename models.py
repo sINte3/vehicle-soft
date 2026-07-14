@@ -818,6 +818,15 @@ class SparePartSku(db.Model):
 
     __table_args__ = (
         db.Index('idx_spare_part_skus_spare_part_id', 'spare_part_id'),
+        # [REASON]: SP-F-008 — existing DBs additionally carry the partial
+        # expression unique index uq_spare_part_skus_normalized ON
+        # (spare_part_id, lower(trim(brand)), lower(trim(article_number)),
+        # lower(trim(supplier))) WHERE is_active = 1, created by
+        # migrate_spare_parts_sku_uniqueness.py (the source of truth for its
+        # definition). SQLAlchemy cannot portably express the lower(trim())
+        # + partial-WHERE combination in __table_args__, so it is deliberately
+        # NOT mirrored here; sku_save() pre-checks with the same normalization
+        # and handles the index's IntegrityError for the race case.
     )
 
     @property

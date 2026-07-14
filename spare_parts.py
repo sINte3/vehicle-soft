@@ -9,6 +9,7 @@ from flask import (Blueprint, render_template, request, redirect, url_for, flash
 from flask_login import login_required, current_user
 from datetime import datetime, date, timedelta
 from sqlalchemy import func, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload
 
 from models import (db, SparePart, SparePartCategory, SparePartPriceAudit,
@@ -1891,6 +1892,29 @@ def sku_save():
                             title_ru='SKU не сохранён:')
         return redirect(url_for('spare_parts.skus'))
 
+    # [REASON]: SP-F-008 — owner decision: exact normalized duplicates are
+    # forbidden. This pre-check mirrors the partial unique index
+    # uq_spare_part_skus_normalized (same lower(trim(...)) on BOTH sides so
+    # SQLite's ASCII-only lower() semantics match the index exactly, same
+    # active-only scope) to show a friendly message for the common case; the
+    # index remains the real enforcement for the race case below.
+    will_be_active = (request.form.get('is_active') is not None) if sku_id else True
+    if will_be_active:
+        clash_q = (SparePartSku.query
+                   .filter(SparePartSku.spare_part_id == part.id,
+                           SparePartSku.is_active == True,  # noqa: E712 — mirrors the index WHERE is_active = 1
+                           func.lower(func.trim(SparePartSku.brand)) == func.lower(brand),
+                           func.lower(func.trim(SparePartSku.article_number)) == func.lower(article_number),
+                           func.lower(func.trim(SparePartSku.supplier)) == func.lower(supplier)))
+        if sku_id:
+            clash_q = clash_q.filter(SparePartSku.id != sku_id)
+        if clash_q.first() is not None:
+            _spare_flash_errors(
+                [_spare_t('Бу деталь учун бундай SKU аллақачон мавжуд',
+                          'Такой SKU уже существует для этой детали')],
+                title_uz='SKU сақланмади:', title_ru='SKU не сохранён:')
+            return redirect(url_for('spare_parts.skus'))
+
     created = False
     before = None
     if sku_id:
@@ -1919,7 +1943,21 @@ def sku_save():
         changes=diff_dict(before, after),
         description='Spare part SKU saved'
     )
-    db.session.commit()
+    # [REASON]: SP-F-008 — the race case: another save slipped past the
+    # pre-check; the unique index rejects it here and the user gets the same
+    # friendly duplicate message instead of a raw 500.
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        current_app.logger.warning(
+            'SKU save rejected by uq_spare_part_skus_normalized (race), part=%s',
+            part.id)
+        _spare_flash_errors(
+            [_spare_t('Бу деталь учун бундай SKU аллақачон мавжуд',
+                      'Такой SKU уже существует для этой детали')],
+            title_uz='SKU сақланмади:', title_ru='SKU не сохранён:')
+        return redirect(url_for('spare_parts.skus'))
     flash(_spare_t('SKU сақланди', 'SKU сохранён'), 'success')
     return redirect(url_for('spare_parts.skus'))
 
