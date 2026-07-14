@@ -8,7 +8,7 @@ from flask import (Blueprint, render_template, request, redirect, url_for, flash
                    abort, g, jsonify, current_app, send_from_directory, send_file)
 from flask_login import login_required, current_user
 from datetime import datetime, date, timedelta
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.orm import joinedload, selectinload
 
 from models import (db, SparePart, SparePartCategory, SparePartPriceAudit,
@@ -415,6 +415,14 @@ def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None):
 def _fmt_sum_text(value):
     """1234567.0 -> '1 234 567' (same style as the fmt_sum Jinja filter in app.py)."""
     return '{:,.0f}'.format(float(value or 0)).replace(',', ' ')
+
+
+def _fmt_qty_text(value):
+    """Trim trailing zeros: 3.0 -> '3', 2.5 -> '2.5' (same as spare_parts_pdf)."""
+    value = float(value or 0)
+    if value == int(value):
+        return str(int(value))
+    return ('{:.3f}'.format(value)).rstrip('0').rstrip('.')
 
 
 def _month_start_back(d, months_back):
@@ -1853,11 +1861,19 @@ def _apply_inventory_movement(warehouse_id, sku_id, movement_type, quantity,
     transaction, so a multi-item action (Task 5 issue) stays all-or-nothing.
 
     Sign rules per type: receipt > 0; issue/write_off < 0; adjustment any
-    non-zero. The resulting balance MAY go negative: warehouses deliberately
-    start at zero (opening balances are a future task), so blocking negative
-    stock would block the whole issue workflow until real counts arrive.
+    non-zero.
 
-    Raises ValueError with a short reason code on invalid input.
+    [REASON]: SP-F-001 — the resulting balance must never go negative, and the
+    guard must be ATOMIC: a single conditional UPDATE ... WHERE quantity +
+    delta >= 0 (with RETURNING for the confirmed balance) instead of a
+    read-then-write pair, so two concurrent issues can never both pass a
+    Python-side check and drive the balance below zero. Deliberately NOT a
+    CHECK constraint — SQLite cannot add one to an existing table without a
+    full rebuild, unnecessary risk on the live WAL database. RETURNING is
+    available: SQLite >= 3.35 (production Python 3.14 bundles far newer).
+
+    Raises ValueError with a short reason code on invalid input;
+    'insufficient_stock' means the movement would make the balance negative.
     """
     if movement_type not in INV_MOVEMENT_TYPES:
         raise ValueError('movement_type')
@@ -1877,16 +1893,35 @@ def _apply_inventory_movement(warehouse_id, sku_id, movement_type, quantity,
     if inv is None:
         # [REASON]: inventory rows are created lazily on first movement — no
         # zero-quantity seeding of every SKU × warehouse combination.
+        # [REASON]: SP-F-001 — a brand-new pair starts at 0, so a negative
+        # first movement can never be satisfied; reject before inserting.
+        if quantity < 0:
+            raise ValueError('insufficient_stock')
         sku = SparePartSku.query.get(sku_id)
         unit = (sku.spare_part.unit if sku and sku.spare_part else '') or 'dona'
+        new_qty = round(quantity, 3)
         inv = SparePartInventory(warehouse_id=warehouse_id, sku_id=sku_id,
-                                 quantity=0, unit=unit)
+                                 quantity=new_qty, unit=unit)
         db.session.add(inv)
         db.session.flush()
-
-    new_qty = round(float(inv.quantity or 0) + quantity, 3)
-    inv.quantity = new_qty
-    inv.updated_at = datetime.utcnow()
+    else:
+        inv_table = SparePartInventory.__table__
+        result = db.session.execute(
+            update(inv_table)
+            .where(inv_table.c.id == inv.id,
+                   inv_table.c.quantity + quantity >= 0)
+            .values(quantity=func.round(inv_table.c.quantity + quantity, 3),
+                    updated_at=datetime.utcnow())
+            .returning(inv_table.c.quantity)
+        )
+        row = result.first()
+        if row is None:
+            # Zero rows updated: the WHERE guard rejected the movement.
+            raise ValueError('insufficient_stock')
+        new_qty = float(row[0])
+        # The Core UPDATE bypassed the ORM — expire the in-session object so
+        # any later read in this transaction sees the confirmed balance.
+        db.session.expire(inv)
     movement = SparePartInventoryMovement(
         warehouse_id=warehouse_id,
         sku_id=sku_id,
@@ -2059,9 +2094,41 @@ def inventory_movement_create():
         return redirect(url_for('spare_parts.inventory',
                                 org_id=warehouse.organization_id))
 
-    movement = _apply_inventory_movement(
-        warehouse.id, sku.id, movement_type, quantity,
-        reference_type='manual', note=note, user_id=current_user.id)
+    # [REASON]: SP-F-001 pre-flight — a negative manual adjustment may not
+    # drive the balance below zero; friendly message instead of relying on the
+    # atomic guard's exception for the ordinary (non-race) case.
+    if movement_type == 'adjustment' and quantity < 0:
+        inv = SparePartInventory.query.filter_by(
+            warehouse_id=warehouse.id, sku_id=sku.id).first()
+        current_qty = float(inv.quantity or 0) if inv else 0.0
+        if current_qty + quantity < 0:
+            _spare_flash_errors(
+                [_spare_t('Омборда етарли қолдиқ йўқ (жорий қолдиқ: {})',
+                          'На складе недостаточно остатка (текущий остаток: {})'
+                          ).format(_fmt_qty_text(current_qty))],
+                title_uz='Ҳаракат сақланмади:', title_ru='Движение не сохранено:')
+            return redirect(url_for('spare_parts.inventory',
+                                    org_id=warehouse.organization_id))
+
+    try:
+        movement = _apply_inventory_movement(
+            warehouse.id, sku.id, movement_type, quantity,
+            reference_type='manual', note=note, user_id=current_user.id)
+    except ValueError as exc:
+        # [REASON]: SP-F-001 — race with another manual entry between the
+        # pre-flight above and the atomic UPDATE guard; a clean bilingual
+        # message instead of an unhandled 500.
+        db.session.rollback()
+        if str(exc) == 'insufficient_stock':
+            msg = _spare_t('Қолдиқ ўзгарди — саҳифани янгилаб, қайта уриниб кўринг',
+                           'Остаток изменился — обновите страницу и повторите')
+        else:
+            msg = _spare_t('Ҳаракат маълумотлари нотўғри',
+                           'Некорректные данные движения')
+        _spare_flash_errors([msg], title_uz='Ҳаракат сақланмади:',
+                            title_ru='Движение не сохранено:')
+        return redirect(url_for('spare_parts.inventory',
+                                org_id=warehouse.organization_id))
     _audit_spare(
         'spare_part_inventory_movement_created',
         entity_type='spare_part_inventory_movement',
@@ -2177,6 +2244,19 @@ def issue_request(rid):
         errors.append(_spare_t(
             'SKUсиз позициялар омбордан ҳисобдан чиқарилмайди — беришдан олдин буни тасдиқлаш шарт',
             'Позиции без SKU не будут списаны со склада — перед выдачей это нужно явно подтвердить'))
+    # [REASON]: SP-F-001 pre-flight — a friendly per-item shortage message
+    # BEFORE any transaction work, using the stock snapshot _issue_context()
+    # already computed. The atomic guard inside _apply_inventory_movement stays
+    # the real enforcement for the concurrent case below.
+    if ctx['sku_items'] and ctx['warehouse'] is not None:
+        for item in ctx['sku_items']:
+            available = float(ctx['stock'].get(item.sku_id) or 0)
+            needed = float(item.quantity or 0)
+            if available - needed < 0:
+                errors.append(_spare_t(
+                    '«{}»: омборда етарли қолдиқ йўқ (керак: {}, мавжуд: {})',
+                    '«{}»: на складе недостаточно остатка (нужно: {}, доступно: {})'
+                ).format(item.name, _fmt_qty_text(needed), _fmt_qty_text(available)))
     if errors:
         _spare_flash_errors(errors, title_uz='Бериб бўлмади:',
                             title_ru='Выдача не выполнена:')
@@ -2184,6 +2264,17 @@ def issue_request(rid):
 
     warehouse = ctx['warehouse']
     act_pdf_full_path = None
+
+    def _rollback_failed_issue():
+        # Shared failure path: roll everything back and remove the orphan PDF
+        # if it was written before the transaction died.
+        db.session.rollback()
+        if act_pdf_full_path and os.path.exists(act_pdf_full_path):
+            try:
+                os.remove(act_pdf_full_path)
+            except OSError:
+                pass
+
     try:
         # 1. Inventory movements for every SKU item (negative issue quantities).
         for item in ctx['sku_items']:
@@ -2245,14 +2336,29 @@ def issue_request(rid):
         act.pdf_path = fname
 
         db.session.commit()
+    except ValueError as exc:
+        # [REASON]: SP-F-001 — the true-concurrency path: another transaction
+        # consumed the stock between the pre-flight above and the atomic
+        # UPDATE guard. Distinct message so the issuer knows to reload, not
+        # to report a system error. Any other ValueError code is unexpected
+        # here and gets the generic treatment.
+        _rollback_failed_issue()
+        if str(exc) == 'insufficient_stock':
+            current_app.logger.warning(
+                'Issue rejected for request %s: stock changed concurrently', rid)
+            _spare_flash_errors(
+                [_spare_t('Қолдиқ ўзгарди — саҳифани янгилаб, қайта уриниб кўринг',
+                          'Остаток изменился — обновите страницу и повторите')],
+                title_uz='Бериб бўлмади:', title_ru='Выдача не выполнена:')
+        else:
+            current_app.logger.exception('Issue action failed for request %s', rid)
+            _spare_flash_errors(
+                [_spare_t('Ички хатолик — ҳеч нарса ўзгартирилмади',
+                          'Внутренняя ошибка — ничего не изменено')],
+                title_uz='Бериб бўлмади:', title_ru='Выдача не выполнена:')
+        return redirect(url_for('spare_parts.detail', rid=rid))
     except Exception:
-        db.session.rollback()
-        # Remove the orphan file if the PDF was written but the commit failed.
-        if act_pdf_full_path and os.path.exists(act_pdf_full_path):
-            try:
-                os.remove(act_pdf_full_path)
-            except OSError:
-                pass
+        _rollback_failed_issue()
         current_app.logger.exception('Issue action failed for request %s', rid)
         _spare_flash_errors(
             [_spare_t('Ички хатолик — ҳеч нарса ўзгартирилмади',
