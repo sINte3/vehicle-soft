@@ -32,6 +32,9 @@
 
 {# ===== AUTHENTICATED SHELL ===== #}
 {% set current = request.endpoint or '' %}
+{# CYCLE-2-3 Part 3 (SP-F-004/RE-SP-004): skip-to-content link — first
+   focusable element on the page, visually hidden until keyboard focus. #}
+<a href="#vsContent" class="vs-skip-link">{{ 'Перейти к содержимому' if g.lang == 'ru' else 'Мазмунга ўтиш' }}</a>
 <div class="vs-shell">
 
   {# ====== SIDEBAR ====== #}
@@ -187,7 +190,7 @@
   <div class="vs-main">
 
     <header class="vs-topbar">
-      <button class="vs-topbar-burger" type="button" onclick="document.getElementById('vsSidebar').classList.toggle('is-collapsed')" title="{{ 'Меню' if g.lang == 'ru' else 'Меню' }}">
+      <button class="vs-topbar-burger" type="button" onclick="document.getElementById('vsSidebar').classList.toggle('is-collapsed')" title="{{ 'Меню' if g.lang == 'ru' else 'Меню' }}" aria-label="{{ 'Меню' }}">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
 
@@ -197,7 +200,9 @@
           <span class="vs-crumb-sep">/</span>
           <span>{% block crumb %}{{ self.title() }}{% endblock %}</span>
         </div>
-        <div class="vs-screen-title">{% block screen_title %}{{ self.title() }}{% endblock %}</div>
+        {# CYCLE-2-3 Part 3: tabindex="-1" makes the page heading programmatically
+           focusable so focus lands on the content title on every load. #}
+        <div class="vs-screen-title" id="vsScreenTitle" tabindex="-1">{% block screen_title %}{{ self.title() }}{% endblock %}</div>
       </div>
 
       <div class="vs-spacer"></div>
@@ -226,7 +231,7 @@
       </a>
     </header>
 
-    <main class="vs-content">
+    <main class="vs-content" id="vsContent" tabindex="-1">
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
           <div class="vs-stack-sm vs-mb">
@@ -246,6 +251,18 @@
 
 {% block scripts %}{% endblock %}
 <script>
+/* CYCLE-2-3 Part 3: server-rendered app — on each page load move focus to the
+   page heading so keyboard/screen-reader users land on the content, not on
+   the browser default. preventScroll keeps the viewport where the browser
+   put it. Skipped when the URL targets an in-page anchor. */
+document.addEventListener('DOMContentLoaded', function () {
+    if (window.location.hash) return;
+    var title = document.getElementById('vsScreenTitle');
+    if (title && typeof title.focus === 'function') {
+        try { title.focus({preventScroll: true}); } catch (e) { title.focus(); }
+    }
+});
+
 function initMultiselect(wrapperId, triggerLabel) {
     var wrap = document.getElementById(wrapperId);
     if (!wrap) return;
