@@ -107,8 +107,9 @@
                     {% endif %}
                 </td>
                 <td class="right">
-                    <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}" aria-label="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
-                            onclick='editSku({{ sku.id }}, {{ sku.spare_part_id }}, {{ (sku.brand or "")|tojson }}, {{ (sku.article_number or "")|tojson }}, {{ (sku.supplier or "")|tojson }}, {{ 1 if sku.is_active else 0 }})'>✏</button>
+                    {# CYCLE-2-3 Part 2: primary row actions carry visible text, not just an icon. #}
+                    <button class="vs-btn vs-btn-sm"
+                            onclick='editSku({{ sku.id }}, {{ sku.spare_part_id }}, {{ (sku.brand or "")|tojson }}, {{ (sku.article_number or "")|tojson }}, {{ (sku.supplier or "")|tojson }}, {{ 1 if sku.is_active else 0 }})'>✏ {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
                 </td>
             </tr>
             {% endfor %}

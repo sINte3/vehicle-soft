@@ -93,12 +93,13 @@
                     {% endif %}
                 </td>
                 <td class="right">
-                    <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}" aria-label="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
-                            onclick='editNorm({{ n.id }}, {{ n.spare_part_id }}, {{ (n.equipment_model_id or "")|tojson }}, {{ n.interval_hours|tojson }}, {{ (n.is_active|int) }})'>✏</button>
+                    {# CYCLE-2-3 Part 2: primary row actions carry visible text, not just an icon. #}
+                    <button class="vs-btn vs-btn-sm"
+                            onclick='editNorm({{ n.id }}, {{ n.spare_part_id }}, {{ (n.equipment_model_id or "")|tojson }}, {{ n.interval_hours|tojson }}, {{ (n.is_active|int) }})'>✏ {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
                     <form method="post" action="{{ url_for('spare_parts.maintenance_norm_delete', nid=n.id) }}" style="display:inline;"
                           onsubmit="return confirm('{{ 'Удалить норму?' if is_ru else 'Норма ўчирилсинми?' }}');">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="vs-btn-icon" title="{{ 'Удалить' if is_ru else 'Ўчириш' }}" aria-label="{{ 'Удалить' if is_ru else 'Ўчириш' }}">🗑</button>
+                        <button type="submit" class="vs-btn vs-btn-sm vs-btn-danger">🗑 {{ 'Удалить' if is_ru else 'Ўчириш' }}</button>
                     </form>
                 </td>
             </tr>

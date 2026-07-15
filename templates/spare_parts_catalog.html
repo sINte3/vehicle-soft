@@ -191,11 +191,12 @@
                 <td class="right">
                     {# SP-F-015: per-row edit/compatibility actions are manage-only. #}
                     {% if can_manage and part.status == 'active' %}
-                    <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}" aria-label="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
-                            onclick='editPart({{ part.id }}, {{ part.name|tojson }}, {{ (part.part_number or "")|tojson }}, {{ (part.unit or "")|tojson }}, {{ (part.category_id or "")|tojson }})'>✏</button>
+                    {# CYCLE-2-3 Part 2: primary row actions carry visible text, not just an icon. #}
+                    <button class="vs-btn vs-btn-sm"
+                            onclick='editPart({{ part.id }}, {{ part.name|tojson }}, {{ (part.part_number or "")|tojson }}, {{ (part.unit or "")|tojson }}, {{ (part.category_id or "")|tojson }})'>✏ {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
                     {# SPARE-STAGE3: per-part compatibility editor (writes SparePartCompatibility rows). #}
-                    <a class="vs-btn-icon" title="{{ 'Совместимость с моделями' if is_ru else 'Моделлар билан мослик' }}" aria-label="{{ 'Совместимость с моделями' if is_ru else 'Моделлар билан мослик' }}"
-                       href="{{ url_for('spare_parts.catalog_compatibility', pid=part.id) }}">🔗</a>
+                    <a class="vs-btn vs-btn-sm"
+                       href="{{ url_for('spare_parts.catalog_compatibility', pid=part.id) }}">🔗 {{ 'Совместимость' if is_ru else 'Мослик' }}</a>
                     {% endif %}
                 </td>
             </tr>
@@ -281,8 +282,9 @@
                     <td class="right">
                         {# SP-F-015: category edit button is manage-only. #}
                         {% if can_manage %}
-                        <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}" aria-label="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
-                                onclick='editCategory({{ cat.id }}, {{ cat.name_ru|tojson }}, {{ cat.name_uz|tojson }}, {{ cat.kind|tojson }}, {{ cat.sort_order or 0 }}, {{ 1 if cat.is_active else 0 }})'>✏</button>
+                        {# CYCLE-2-3 Part 2: primary row actions carry visible text, not just an icon. #}
+                        <button class="vs-btn vs-btn-sm"
+                                onclick='editCategory({{ cat.id }}, {{ cat.name_ru|tojson }}, {{ cat.name_uz|tojson }}, {{ cat.kind|tojson }}, {{ cat.sort_order or 0 }}, {{ 1 if cat.is_active else 0 }})'>✏ {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
                         {% endif %}
                     </td>
                 </tr>

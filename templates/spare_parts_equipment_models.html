@@ -127,8 +127,9 @@
                 </td>
                 <td class="text-sm vs-muted">{{ m.migrated_from_eq_type or '—' }}</td>
                 <td class="right">
-                    <button class="vs-btn-icon" title="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}" aria-label="{{ 'Редактировать' if is_ru else 'Таҳрирлаш' }}"
-                            onclick='editModel({{ m.id }}, {{ m.name|tojson }}, {{ (m.name_uz or "")|tojson }}, {{ (m.manufacturer or "")|tojson }}, {{ (m.is_active|int) }})'>✏</button>
+                    {# CYCLE-2-3 Part 2: primary row actions carry visible text, not just an icon. #}
+                    <button class="vs-btn vs-btn-sm"
+                            onclick='editModel({{ m.id }}, {{ m.name|tojson }}, {{ (m.name_uz or "")|tojson }}, {{ (m.manufacturer or "")|tojson }}, {{ (m.is_active|int) }})'>✏ {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
                 </td>
             </tr>
             {% endfor %}
