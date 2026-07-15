@@ -10,7 +10,7 @@ from flask import (Blueprint, render_template, request, redirect, url_for, flash
 from flask_login import login_required, current_user
 from datetime import datetime, date, timedelta
 from sqlalchemy import func, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload
 
 from models import (db, SparePart, SparePartCategory, SparePartPriceAudit,
@@ -244,8 +244,25 @@ def _active_units():
     makes every caller fall back to the legacy free-text behavior, so the app
     keeps working pre-migration and in dev environments.
     """
-    return (SparePartUnit.query.filter_by(is_active=True)
-            .order_by(SparePartUnit.sort_order, SparePartUnit.id).all())
+    try:
+        return (SparePartUnit.query.filter_by(is_active=True)
+                .order_by(SparePartUnit.sort_order, SparePartUnit.id).all())
+    except OperationalError as exc:
+        # [REASON]: RE-SP-009 — deploy-order safety net, NOT normal operation:
+        # if code that queries spare_part_units runs before
+        # migrate_spare_parts_units.py (misordered deploy), or a rollback
+        # drops the table before the code stops querying it, the request
+        # form/catalog routes must degrade to the same legacy free-text
+        # fallback an empty directory already takes instead of 500-ing.
+        # Deliberately narrow: ONLY the SQLite "no such table" condition is
+        # swallowed; any other database error still surfaces.
+        if 'no such table' in str(exc.orig or exc).lower():
+            db.session.rollback()
+            current_app.logger.warning(
+                'spare_part_units table missing — falling back to free-text '
+                'units (deploy/rollback transition window?)')
+            return []
+        raise
 
 
 def _unit_options(unit_rows):

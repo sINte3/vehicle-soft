@@ -40,12 +40,21 @@ Run (service must be STOPPED first to avoid SQLite write conflicts):
   "C:\\Program Files\\Python314\\python.exe" migrate_spare_parts_units.py
   .\\nssm.exe start TransportReport
 
-Rollback:
-  DROP TABLE IF EXISTS spare_part_units;
-  DELETE FROM schema_migrations WHERE name = 'SPARE_PARTS_UNITS';
-  (The application code falls back to free-text unit entry when the
-   directory is missing/empty, so dropping the table restores the old
-   behavior without further code rollback.)
+Deploy / rollback ORDER (RE-SP-009 — this order is mandatory):
+
+  Deploy:   apply migrate_spare_parts_units.py FIRST, then deploy code
+            that queries SparePartUnit.
+  Rollback: deploy code that no longer queries SparePartUnit FIRST, then:
+              DROP TABLE IF EXISTS spare_part_units;
+              DELETE FROM schema_migrations WHERE name = 'SPARE_PARTS_UNITS';
+
+  An EMPTY existing table yields the legacy free-text behavior by design.
+  A MISSING table is different: _active_units() in spare_parts.py carries a
+  narrow "no such table" safety net (added by RE-SP-009) that returns the
+  same free-text fallback instead of a 500 — but that net exists ONLY for
+  the transitional deploy/rollback window described above, not as a
+  supported steady state. Intended steady state: table present, directory
+  authoritative.
 """
 
 import os
