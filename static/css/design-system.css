@@ -540,6 +540,11 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   font-size: 19px; font-weight: 800; letter-spacing: -.4px;
   font-variant-numeric: tabular-nums;
 }
+/* CYCLE-2-3 Part 6: a long single word (uppercase RU/UZ label, wide number)
+   must wrap inside its stat card instead of spilling out of the grid cell
+   and widening the whole document at narrow viewports. */
+.vs-stat { min-width: 0; }
+.vs-stat-label, .vs-stat-value { overflow-wrap: anywhere; }
 .vs-stat-value.is-success { color: var(--vs-success); }
 .vs-stat-value.is-info    { color: var(--vs-info); }
 .vs-stat-value.is-purple  { color: var(--vs-purple); }
@@ -567,6 +572,12 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   overflow: hidden;
 }
 .vs-table-wrap .vs-table-scroll { overflow-x: auto; }
+/* CYCLE-2-3 Part 6: the scroll container must contain wide tables EVERYWHERE
+   it is used, not only inside .vs-table-wrap — reports/detail cards wrap
+   their tables in .vs-table-scroll inside .vs-card-body, and without this
+   rule a wide table forced a document-level horizontal scrollbar at
+   390/1024px instead of scrolling locally. */
+.vs-table-scroll { overflow-x: auto; max-width: 100%; }
 
 .vs-table {
   width: 100%;
@@ -738,6 +749,40 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   .vs-sidebar .vs-side-section,
   .vs-sidebar .vs-side-brand-meta { display: none; }
   :root { --vs-content-pad: 16px; }
+}
+
+/* CYCLE-2-3 Part 6: below 768px the sidebar leaves the flow entirely and
+   becomes an off-canvas overlay toggled by the existing topbar burger
+   (base_next.html vsToggleSidebar). Full labels are restored inside the
+   overlay — the 900px icon-collapse above only makes sense while the
+   sidebar still occupies horizontal space. The #vsSidebar id and the
+   desktop is-collapsed behavior are untouched. */
+@media (max-width: 768px) {
+  .vs-sidebar {
+    position: fixed; left: 0; top: 0; bottom: 0;
+    height: 100vh;
+    z-index: 120;
+    transform: translateX(-105%);
+    transition: transform .2s ease;
+  }
+  .vs-sidebar,
+  .vs-sidebar.is-collapsed { width: var(--vs-side-w); }
+  .vs-sidebar .vs-side-label,
+  .vs-sidebar .vs-side-section,
+  .vs-sidebar .vs-side-brand-meta,
+  .vs-sidebar.is-collapsed .vs-side-label,
+  .vs-sidebar.is-collapsed .vs-side-section,
+  .vs-sidebar.is-collapsed .vs-side-brand-meta { display: block; }
+  .vs-sidebar.is-open {
+    transform: translateX(0);
+    box-shadow: 0 0 44px rgba(0, 0, 0, .35);
+  }
+  .vs-side-backdrop {
+    display: none;
+    position: fixed; inset: 0; z-index: 110;
+    background: rgba(15, 23, 42, .45);
+  }
+  .vs-side-backdrop.is-visible { display: block; }
 }
 
 /* ---------- 15. ICONS (size + stroke conventions) -------------------- */
