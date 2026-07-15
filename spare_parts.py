@@ -1946,6 +1946,43 @@ def skus():
                            lang=_spare_lang())
 
 
+def _sku_normalized_clash(spare_part_id, brand, article_number, supplier,
+                          exclude_id=None):
+    """True when an ACTIVE SKU with the same normalized identity exists.
+
+    [REASON]: SP-F-008 — owner decision: exact normalized duplicates are
+    forbidden. This pre-check mirrors the partial unique index
+    uq_spare_part_skus_normalized (same lower(trim(...)) on BOTH sides so
+    SQLite's ASCII-only lower() semantics match the index exactly, same
+    active-only scope) to show a friendly message for the common case; the
+    index remains the real enforcement for the race case (RE-SP-002).
+    """
+    clash_q = (SparePartSku.query
+               .filter(SparePartSku.spare_part_id == spare_part_id,
+                       SparePartSku.is_active == True,  # noqa: E712 — mirrors the index WHERE is_active = 1
+                       func.lower(func.trim(SparePartSku.brand)) == func.lower(brand),
+                       func.lower(func.trim(SparePartSku.article_number)) == func.lower(article_number),
+                       func.lower(func.trim(SparePartSku.supplier)) == func.lower(supplier)))
+    if exclude_id:
+        clash_q = clash_q.filter(SparePartSku.id != exclude_id)
+    return clash_q.first() is not None
+
+
+def _sku_duplicate_response(part_id, race=False):
+    """Shared friendly-duplicate response for BOTH the pre-check path and the
+    IntegrityError race path, so the two converge on identical user-visible
+    behavior (RE-SP-002)."""
+    if race:
+        current_app.logger.warning(
+            'SKU save rejected by uq_spare_part_skus_normalized (race), part=%s',
+            part_id)
+    _spare_flash_errors(
+        [_spare_t('Бу деталь учун бундай SKU аллақачон мавжуд',
+                  'Такой SKU уже существует для этой детали')],
+        title_uz='SKU сақланмади:', title_ru='SKU не сохранён:')
+    return redirect(url_for('spare_parts.skus'))
+
+
 @spare_parts_bp.route('/skus/save', methods=['POST'])
 @module_required('spare_parts')
 def sku_save():
@@ -1972,72 +2009,57 @@ def sku_save():
                             title_ru='SKU не сохранён:')
         return redirect(url_for('spare_parts.skus'))
 
-    # [REASON]: SP-F-008 — owner decision: exact normalized duplicates are
-    # forbidden. This pre-check mirrors the partial unique index
-    # uq_spare_part_skus_normalized (same lower(trim(...)) on BOTH sides so
-    # SQLite's ASCII-only lower() semantics match the index exactly, same
-    # active-only scope) to show a friendly message for the common case; the
-    # index remains the real enforcement for the race case below.
+    # Friendly pre-check for the common duplicate case (see
+    # _sku_normalized_clash); the IntegrityError handler below is the safety
+    # net for the race, not a replacement (RE-SP-002).
     will_be_active = (request.form.get('is_active') is not None) if sku_id else True
-    if will_be_active:
-        clash_q = (SparePartSku.query
-                   .filter(SparePartSku.spare_part_id == part.id,
-                           SparePartSku.is_active == True,  # noqa: E712 — mirrors the index WHERE is_active = 1
-                           func.lower(func.trim(SparePartSku.brand)) == func.lower(brand),
-                           func.lower(func.trim(SparePartSku.article_number)) == func.lower(article_number),
-                           func.lower(func.trim(SparePartSku.supplier)) == func.lower(supplier)))
-        if sku_id:
-            clash_q = clash_q.filter(SparePartSku.id != sku_id)
-        if clash_q.first() is not None:
-            _spare_flash_errors(
-                [_spare_t('Бу деталь учун бундай SKU аллақачон мавжуд',
-                          'Такой SKU уже существует для этой детали')],
-                title_uz='SKU сақланмади:', title_ru='SKU не сохранён:')
-            return redirect(url_for('spare_parts.skus'))
+    if will_be_active and _sku_normalized_clash(part.id, brand, article_number,
+                                                supplier, exclude_id=sku_id):
+        return _sku_duplicate_response(part.id, race=False)
 
-    created = False
-    before = None
-    if sku_id:
-        sku = SparePartSku.query.get_or_404(sku_id)
-        before = _sku_snapshot(sku)
-        sku.spare_part_id = part.id
-        sku.brand = brand
-        sku.article_number = article_number
-        sku.supplier = supplier
-        sku.is_active = request.form.get('is_active') is not None
-    else:
-        sku = SparePartSku(spare_part_id=part.id, brand=brand,
-                           article_number=article_number, supplier=supplier,
-                           created_by=current_user.id)
-        db.session.add(sku)
-        created = True
-    db.session.flush()
-    after = _sku_snapshot(sku)
-    _audit_spare(
-        'spare_part_sku_created' if created else 'spare_part_sku_updated',
-        entity_type='spare_part_sku',
-        entity_id=sku.id,
-        entity_label='{} — {}'.format(part.name, sku.label),
-        before=before,
-        after=after,
-        changes=diff_dict(before, after),
-        description='Spare part SKU saved'
-    )
-    # [REASON]: SP-F-008 — the race case: another save slipped past the
-    # pre-check; the unique index rejects it here and the user gets the same
-    # friendly duplicate message instead of a raw 500.
+    # [REASON]: RE-SP-002 — the WHOLE insert/update including flush() must sit
+    # inside one IntegrityError boundary. flush() is where SQLite actually
+    # executes the INSERT/UPDATE, so under a true race (two saves pass the
+    # pre-check before either flushes) uq_spare_part_skus_normalized raises at
+    # flush(), not at commit(); a try around commit() alone lets that escape
+    # as an HTTP 500 with a dirty session.
     try:
+        created = False
+        before = None
+        if sku_id:
+            sku = SparePartSku.query.get_or_404(sku_id)
+            before = _sku_snapshot(sku)
+            sku.spare_part_id = part.id
+            sku.brand = brand
+            sku.article_number = article_number
+            sku.supplier = supplier
+            sku.is_active = request.form.get('is_active') is not None
+        else:
+            sku = SparePartSku(spare_part_id=part.id, brand=brand,
+                               article_number=article_number, supplier=supplier,
+                               created_by=current_user.id)
+            db.session.add(sku)
+            created = True
+        db.session.flush()
+        after = _sku_snapshot(sku)
+        _audit_spare(
+            'spare_part_sku_created' if created else 'spare_part_sku_updated',
+            entity_type='spare_part_sku',
+            entity_id=sku.id,
+            entity_label='{} — {}'.format(part.name, sku.label),
+            before=before,
+            after=after,
+            changes=diff_dict(before, after),
+            description='Spare part SKU saved'
+        )
         db.session.commit()
     except IntegrityError:
+        # [REASON]: SP-F-008/RE-SP-002 — the race safety net: rollback() clears
+        # the half-flushed state so the session serves the next request
+        # normally, and the user sees the exact same friendly duplicate
+        # message as the pre-check path.
         db.session.rollback()
-        current_app.logger.warning(
-            'SKU save rejected by uq_spare_part_skus_normalized (race), part=%s',
-            part.id)
-        _spare_flash_errors(
-            [_spare_t('Бу деталь учун бундай SKU аллақачон мавжуд',
-                      'Такой SKU уже существует для этой детали')],
-            title_uz='SKU сақланмади:', title_ru='SKU не сохранён:')
-        return redirect(url_for('spare_parts.skus'))
+        return _sku_duplicate_response(part.id, race=True)
     flash(_spare_t('SKU сақланди', 'SKU сохранён'), 'success')
     return redirect(url_for('spare_parts.skus'))
 
