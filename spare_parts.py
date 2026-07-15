@@ -1361,6 +1361,18 @@ def detail(rid):
     can_edit_photos = (current_user.can_edit
                        and spr.created_by == current_user.id
                        and spr.status in ('draft', 'returned_for_revision'))
+    # [REASON]: RE-SP-001 (4b) — a DB row whose file is gone from disk must be
+    # a VISIBLE bilingual "file unavailable" status, not a silent broken
+    # image. Display-only: the row is never altered or deleted here (issued
+    # requests are immutable evidence; repair happens only through the
+    # owner-approved reconciliation manifest process).
+    upload_dir = _upload_dir()
+    missing_attachment_ids = set()
+    for item in spr.items:
+        for att in (item.attachments or []):
+            fname = os.path.basename(att.file_path or '')
+            if not fname or not os.path.isfile(os.path.join(upload_dir, fname)):
+                missing_attachment_ids.add(att.id)
     # [REASON]: SPARE-STAGE2 — the warn-only rules must be visible to the
     # reviewer at approval time, not only to the operator while typing the
     # request. Computed per item while the request is under review; rules 1-2
@@ -1389,6 +1401,7 @@ def detail(rid):
                            issue_ctx=issue_ctx,
                            acts=acts,
                            item_warnings=item_warnings,
+                           missing_attachment_ids=missing_attachment_ids,
                            lang=lang)
 
 

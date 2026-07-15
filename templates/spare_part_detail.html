@@ -141,7 +141,10 @@
                     {% set video_exts = ['mp4', 'mov', 'webm', 'avi', 'mkv'] %}
                     {% for att in item.attachments %}
                     {% set att_ext = (att.file_path.rsplit('.', 1)[-1]|lower) if '.' in att.file_path else '' %}
-                    {% if att_ext in video_exts %}
+                    {# RE-SP-001 (4b): the referenced file is gone from disk — show an honest bilingual status instead of a broken image/player. Display-only, the DB row stays untouched. #}
+                    {% if att.id in missing_attachment_ids %}
+                    <span class="vs-badge vs-badge-sm" style="color:var(--danger); border:1px dashed var(--danger); border-radius:6px; padding:2px 6px; margin:1px;" title="{{ att.original_filename }}">⚠ {{ 'Файл недоступен' if is_ru else 'Файл мавжуд эмас' }}</span>
+                    {% elif att_ext in video_exts %}
                     <video controls preload="metadata" style="height:60px; border-radius:6px; margin:1px; border:1px solid var(--border); vertical-align:middle;" title="{{ att.original_filename }}">
                         <source src="{{ url_for('spare_parts.attachment_file', att_id=att.id) }}">
                     </video>
