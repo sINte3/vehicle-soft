@@ -411,6 +411,37 @@ def _audit_spare(action, entity_type='', entity_id=None, entity_label='', before
     )
 
 
+def _deny_spare(attempted, entity_type='', entity_id=None, entity_label=''):
+    """Record a permission-denied attempt on a financially significant spare
+    parts action, then abort(403).
+
+    [REASON]: CYCLE-2-3 Part 8 — forward-going audit contract completion:
+    denials on money-relevant actions (viewing acts, issuing stock,
+    approving/rejecting requests, price actions, catalog mutations) now
+    leave a forensic trail. Deliberately NOT applied to every possible 403
+    (org-scope checks, harmless read screens) — only where an owner would
+    investigate who tried. Commits its own row because the request ends in
+    abort(403) and no later caller commit will run; a logging failure never
+    masks the 403 itself.
+    """
+    try:
+        log_audit(
+            db,
+            action='spare_parts_access_denied',
+            entity_type=entity_type,
+            entity_id=entity_id,
+            entity_label=entity_label,
+            module='spare_parts',
+            status='denied',
+            description='Permission denied: ' + attempted,
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception('audit write failed for denied %s', attempted)
+    abort(403)
+
+
 # ─── SPARE-STAGE1: price audit / repeat-order / photo-gate helpers ────────────
 
 def write_price_audit(item_id, old_price, new_price, action, user_id):
@@ -1538,7 +1569,10 @@ def approve_request(rid):
     # 'spare_parts_approve' permission; has_module_access() keeps the admin
     # bypass, so admins retain access and nobody else gains it automatically.
     if not current_user.has_module_access('spare_parts_approve'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('approve request #{}'.format(rid),
+                    entity_type='spare_part_request', entity_id=rid,
+                    entity_label='Request #{}'.format(rid))
     spr = SparePartRequest.query.get_or_404(rid)
     _spare_check_request_access(spr)
     if spr.status != 'submitted':
@@ -1585,7 +1619,10 @@ def approve_request(rid):
 def reject_request(rid):
     # [REASON]: SPARE-STAGE1 — same permission as approval (see approve_request).
     if not current_user.has_module_access('spare_parts_approve'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('reject request #{}'.format(rid),
+                    entity_type='spare_part_request', entity_id=rid,
+                    entity_label='Request #{}'.format(rid))
     spr = SparePartRequest.query.get_or_404(rid)
     _spare_check_request_access(spr)
     if spr.status != 'submitted':
@@ -1626,7 +1663,9 @@ def _price_action_target(rid, item_id):
     # [REASON]: SPARE-STAGE1 — price actions require the explicit
     # 'spare_parts_price_confirm' permission (admin passes automatically).
     if not current_user.has_module_access('spare_parts_price_confirm'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('price action on request #{} item #{}'.format(rid, item_id),
+                    entity_type='spare_part_request_item', entity_id=item_id)
     # Prices are set/confirmed while the request is under review.
     if spr.status != 'submitted':
         abort(400)
@@ -2109,7 +2148,8 @@ def _sku_duplicate_response(part_id, race=False):
 @module_required('spare_parts')
 def sku_save():
     if not current_user.has_module_access('spare_parts_catalog_manage'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('save SKU', entity_type='spare_part_sku')
     sku_id = request.form.get('id', type=int)
     spare_part_id = request.form.get('spare_part_id', type=int)
     brand = (request.form.get('brand', '') or '').strip()
@@ -2403,7 +2443,9 @@ def inventory_warehouse_create():
 def inventory_movement_create():
     """Manual receipt / adjustment entry."""
     if not current_user.has_module_access('spare_parts_inventory_manage'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('create inventory movement',
+                    entity_type='spare_part_inventory_movement')
     warehouse_id = request.form.get('warehouse_id', type=int)
     warehouse = SparePartWarehouse.query.get_or_404(warehouse_id)
     if not current_user.can_access_org(warehouse.organization_id):
@@ -2572,7 +2614,10 @@ def issue_request(rid):
     # matching the real-world split between "approve the purchase" and
     # "physically hand it over from the warehouse".
     if not current_user.has_module_access('spare_parts_issue'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('issue request #{}'.format(rid),
+                    entity_type='spare_part_request', entity_id=rid,
+                    entity_label='Request #{}'.format(rid))
     spr = SparePartRequest.query.get_or_404(rid)
     _spare_check_request_access(spr)
     # [REASON]: 'issued' is reachable ONLY from 'approved' — never from any
@@ -2759,7 +2804,10 @@ def act_detail(act_id):
     # migrate_spare_parts_acts_permission.py auto-grants it to existing
     # issue/approve holders so no current workflow user loses access).
     if not current_user.has_module_access('spare_parts_acts'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('view act #{}'.format(act_id),
+                    entity_type='spare_part_write_off_act', entity_id=act_id,
+                    entity_label=act.act_number)
     return render_template('spare_part_act.html',
                            act=act,
                            req=spr,
@@ -2779,7 +2827,10 @@ def act_pdf(act_id):
     # [REASON]: SP-F-002 — same explicit permission as act_detail (this is the
     # same document as a file).
     if not current_user.has_module_access('spare_parts_acts'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('download act PDF #{}'.format(act_id),
+                    entity_type='spare_part_write_off_act', entity_id=act_id,
+                    entity_label=act.act_number)
     # [REASON]: SPARE-STAGE2-QA-FIX1 — the act RECORD (number, items, prices,
     # organization, permanence/no-un-issue) is frozen at issue time and must
     # never change. Only the PRINTED rendering is regenerated fresh here, in the
@@ -2817,7 +2868,8 @@ def acts_index():
     scoping), no existing route changes.
     """
     if not current_user.has_module_access('spare_parts_acts'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('browse acts index', entity_type='spare_part_write_off_act')
 
     org_id = request.args.get('org_id', type=int)
     date_from_s = request.args.get('date_from', '')
@@ -2923,7 +2975,8 @@ def catalog():
 @module_required('spare_parts')
 def catalog_save():
     if not current_user.has_module_access('spare_parts_catalog_manage'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('save catalog part', entity_type='spare_part_catalog')
     pid = request.form.get('id', type=int)
     name = request.form.get('name', '').strip()
     # [REASON]: CYCLE-2-3 Part 7 — optional Uzbek alias; empty means "not
@@ -2995,7 +3048,9 @@ def catalog_name_uz_save(pid):
     Same spare_parts_catalog_manage gate as every other catalog mutation.
     """
     if not current_user.has_module_access('spare_parts_catalog_manage'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('save catalog part Uzbek alias #{}'.format(pid),
+                    entity_type='spare_part_catalog', entity_id=pid)
     part = SparePart.query.get_or_404(pid)
     before = _catalog_snapshot(part)
     part.name_uz = (request.form.get('name_uz', '') or '').strip() or None
@@ -3019,7 +3074,8 @@ def catalog_name_uz_save(pid):
 @module_required('spare_parts')
 def catalog_category_save():
     if not current_user.has_module_access('spare_parts_catalog_manage'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('save catalog category', entity_type='spare_part_category')
     cid = request.form.get('id', type=int)
     name_ru = (request.form.get('name_ru', '') or '').strip()
     name_uz = (request.form.get('name_uz', '') or '').strip()
@@ -3065,7 +3121,9 @@ def catalog_category_save():
 def catalog_review_approve(pid):
     """Approve a pending_review candidate as a new canonical catalog entry."""
     if not current_user.has_module_access('spare_parts_catalog_manage'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('approve catalog candidate #{}'.format(pid),
+                    entity_type='spare_part_catalog', entity_id=pid)
     part = SparePart.query.get_or_404(pid)
     if part.status != 'pending_review':
         abort(400)
@@ -3102,7 +3160,9 @@ def catalog_review_approve(pid):
 def catalog_review_merge(pid):
     """Merge a pending_review candidate into an existing canonical entry."""
     if not current_user.has_module_access('spare_parts_catalog_manage'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('merge catalog candidate #{}'.format(pid),
+                    entity_type='spare_part_catalog', entity_id=pid)
     part = SparePart.query.get_or_404(pid)
     if part.status != 'pending_review':
         abort(400)
