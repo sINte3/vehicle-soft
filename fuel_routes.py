@@ -116,6 +116,12 @@ TOPAZ_AUDIT_ACTOR = SimpleNamespace(
     role='system',
 )
 
+# [FUEL-SYNC-013] Known Topaz technical/service cards that must never be
+# counted as vehicle fuel consumption. CardID 30 = "ПЕРЕЛИВ" — a Topaz-
+# generated counter-mismatch reconciliation record, not a real dispensing
+# event. Add more IDs here if similar technical cards are discovered later.
+EXCLUDED_CARD_NUMBERS = {'30'}
+
 
 def _iso_date(value):
     return value.isoformat() if value else None
@@ -2374,11 +2380,22 @@ def _perform_fuel_sync():
     new_count = 0
     dup_count = 0
     unknown_count = 0
+    excluded_count = 0
+    possible_dup_count = 0
     errors = []
     # Station is resolved per transaction by Topaz ID and transaction datetime.
 
     for txn in transactions:
         try:
+            # [FUEL-SYNC-013]: Technical/service cards (ПЕРЕЛИВ) are Topaz
+            # counter-reconciliation records, not real fuel dispensing. They
+            # must never enter fuel_transactions2 for any station, so this
+            # check runs before station resolution and dedup/insert logic.
+            card_number = str(txn.get('card_number', '') or '')
+            if card_number in EXCLUDED_CARD_NUMBERS:
+                excluded_count += 1
+                continue
+
             col_id = int(txn.get('topaz_col_id') or 0)
             txn_dt = parse_topaz_txn_datetime(txn.get('txn_datetime', ''))
             station = resolve_fuel_station_for_topaz(col_id, txn_dt)
@@ -2404,14 +2421,37 @@ def _perform_fuel_sync():
                     dup_count += 1
                     continue
 
+            quantity = float(txn.get('quantity', 0) or 0)
+
+            # [FUEL-SYNC-013]: Soft duplicate-content check. Same station/card/
+            # quantity/datetime under a *different* topaz_txn_id usually means
+            # the terminal re-issued a transaction ID after an offline resync.
+            # A genuine coincidence is possible, so the row is still inserted —
+            # we only warn (greppable tag) and surface a response counter.
+            content_dup = (FuelTransaction2.query
+                           .filter(FuelTransaction2.station_id == station.id,
+                                   FuelTransaction2.card_number == card_number,
+                                   FuelTransaction2.quantity == quantity,
+                                   FuelTransaction2.txn_datetime == txn_dt,
+                                   FuelTransaction2.topaz_txn_id != topaz_txn_id)
+                           .first())
+            if content_dup:
+                current_app.logger.warning(
+                    "FUEL_SYNC_POSSIBLE_DUP station_id=%s card_number=%s "
+                    "txn_datetime=%s quantity=%s existing_txn_id=%s new_txn_id=%s",
+                    station.id, card_number, txn_dt, quantity,
+                    content_dup.topaz_txn_id, topaz_txn_id,
+                )
+                possible_dup_count += 1
+
             t = FuelTransaction2(
                 station_id=station.id,
                 topaz_txn_id=topaz_txn_id,
                 topaz_col_id=col_id,
                 txn_datetime=txn_dt,
-                card_number=str(txn.get('card_number', '') or ''),
+                card_number=card_number,
                 fuel_type='ДТ',
-                quantity=float(txn.get('quantity', 0) or 0),
+                quantity=quantity,
                 price_per_liter=0,
                 amount=float(txn.get('amount', 0) or 0),
             )
@@ -2431,6 +2471,8 @@ def _perform_fuel_sync():
             'transactions_new': new_count,
             'transactions_dup': dup_count,
             'unknown_stations': unknown_count,
+            'transactions_excluded': excluded_count,
+            'possible_duplicates': possible_dup_count,
             'errors_count': len(errors),
             'db_error': str(e),
         }
@@ -2468,6 +2510,8 @@ def _perform_fuel_sync():
         'transactions_new': new_count,
         'transactions_dup': dup_count,
         'unknown_stations': unknown_count,
+        'transactions_excluded': excluded_count,
+        'possible_duplicates': possible_dup_count,
         'errors_count': len(errors),
         'status': log.status,
     }
@@ -2489,6 +2533,8 @@ def _perform_fuel_sync():
         new=new_count,
         duplicates=dup_count,
         unknown=unknown_count,
+        excluded=excluded_count,
+        possible_duplicates=possible_dup_count,
     )
 
 
