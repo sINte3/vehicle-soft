@@ -26,6 +26,14 @@ Safe / idempotent:
   - Registers itself in schema_migrations and skips on re-run.
   - Does not touch or delete any existing business data.
 
+Hardened (RE-SP-011):
+  - FAILS LOUDLY (and records nothing) if a prerequisite table is missing
+    (app_modules, user_module_permissions, spare_part_write_off_acts) —
+    previously a fresh/misordered install skipped the work but still wrote
+    the schema_migrations row, so the later correct rerun became a no-op.
+  - Verifies its postconditions (module row present, index UNIQUE,
+    auto-grant coverage complete) BEFORE recording itself.
+
 Run (service must be STOPPED first to avoid SQLite write conflicts):
 
   cd C:\\transport-report
@@ -84,14 +92,61 @@ ENSURE_REGISTRY = """
 """
 
 
-def _seed_modules(cur):
+PREREQUISITE_TABLES = ('app_modules', 'user_module_permissions',
+                       'spare_part_write_off_acts')
+
+
+def _table_exists(cur, name):
     cur.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='app_modules'"
-    )
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,))
+    return cur.fetchone() is not None
+
+
+def _assert_prerequisites(cur):
+    # [REASON]: RE-SP-011 — fail loudly instead of silently registering: the
+    # old per-step "table not found, skipped" returns let run() record the
+    # migration as applied on a fresh/misordered install, and the idempotent
+    # rerun then skipped the real work forever.
+    missing = [t for t in PREREQUISITE_TABLES if not _table_exists(cur, t)]
+    if missing:
+        raise RuntimeError(
+            "prerequisite table(s) missing: {} -- run the earlier spare "
+            "parts migrations (stage1/stage2/stage3) first; NOT recording "
+            "this migration".format(', '.join(missing)))
+
+
+def _assert_postconditions(cur):
+    # [REASON]: RE-SP-011 — only a verified-complete run may be recorded in
+    # schema_migrations.
+    problems = []
+    cur.execute("SELECT 1 FROM app_modules WHERE code='spare_parts_acts'")
     if cur.fetchone() is None:
-        print("  app_modules table not found, module seed skipped "
-              "(fresh install seeds via app start)")
-        return
+        problems.append("app_modules row 'spare_parts_acts' missing")
+    cur.execute("PRAGMA index_list(spare_part_write_off_acts)")
+    idx = {row[1]: row[2] for row in cur.fetchall()}  # name -> unique flag
+    if idx.get('idx_spare_part_write_off_acts_request_id') != 1:
+        problems.append("idx_spare_part_write_off_acts_request_id missing "
+                        "or not UNIQUE")
+    cur.execute("""
+        SELECT COUNT(DISTINCT p.user_id) FROM user_module_permissions p
+        WHERE p.module_code IN ('spare_parts_issue', 'spare_parts_approve')
+          AND p.has_access = 1
+          AND NOT EXISTS (
+            SELECT 1 FROM user_module_permissions a
+            WHERE a.user_id = p.user_id
+              AND a.module_code = 'spare_parts_acts' AND a.has_access = 1)
+    """)
+    ungranted = cur.fetchone()[0]
+    if ungranted:
+        problems.append("{} issue/approve holder(s) still lack "
+                        "spare_parts_acts".format(ungranted))
+    if problems:
+        raise RuntimeError(
+            "postcondition check failed: {} -- NOT recording this "
+            "migration".format('; '.join(problems)))
+
+
+def _seed_modules(cur):
     for code, name_uz, name_ru in NEW_MODULES:
         cur.execute(
             "INSERT OR IGNORE INTO app_modules (code, name_uz, name_ru, is_active) "
@@ -102,13 +157,6 @@ def _seed_modules(cur):
 
 
 def _auto_grant(cur):
-    cur.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' "
-        "AND name='user_module_permissions'"
-    )
-    if cur.fetchone() is None:
-        print("  user_module_permissions table not found, auto-grant skipped")
-        return
     cur.execute(AUTO_GRANT_SQL)
     granted = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
     cur.execute(
@@ -123,13 +171,6 @@ def _auto_grant(cur):
 
 
 def _make_request_id_index_unique(cur):
-    cur.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' "
-        "AND name='spare_part_write_off_acts'"
-    )
-    if cur.fetchone() is None:
-        print("  spare_part_write_off_acts table not found, index step skipped")
-        return
     # [REASON]: SP-F-019 -- defensive re-verification even though DQ-022
     # confirmed zero duplicates: if data changed between the check and this
     # run, abort with a readable message instead of failing mid-DDL.
@@ -202,6 +243,8 @@ def run():
             print("Migration {} already applied. Skipping.".format(MIGRATION_ID))
             return
 
+        _assert_prerequisites(cur)
+
         print("Seeding permission module row...")
         _seed_modules(cur)
 
@@ -211,6 +254,7 @@ def run():
         print("Making write-off act request_id index UNIQUE...")
         _make_request_id_index_unique(cur)
 
+        _assert_postconditions(cur)
         _record_migration(cur)
         con.commit()
         print("Migration {} applied successfully.".format(MIGRATION_ID))

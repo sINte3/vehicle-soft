@@ -28,6 +28,13 @@ Safe / idempotent:
   - Registers itself in schema_migrations and skips on re-run.
   - Does not touch or delete any existing business data.
 
+Hardened (RE-SP-011):
+  - FAILS LOUDLY (and records nothing) if spare_part_skus is missing —
+    previously a fresh/misordered install skipped the index creation but
+    still wrote the schema_migrations row, so the later correct rerun
+    became a no-op.
+  - Verifies the index exists and is UNIQUE BEFORE recording itself.
+
 Run (service must be STOPPED first to avoid SQLite write conflicts):
 
   cd C:\\transport-report
@@ -129,28 +136,41 @@ def run():
             print("Migration {} already applied. Skipping.".format(MIGRATION_ID))
             return
 
+        # [REASON]: RE-SP-011 -- fail loudly instead of silently registering:
+        # the old "table not found, skipped" branch still recorded the
+        # migration as applied, so the later correct rerun became a no-op.
         cur.execute(
             "SELECT name FROM sqlite_master WHERE type='table' "
             "AND name='spare_part_skus'"
         )
         if cur.fetchone() is None:
-            print("  spare_part_skus table not found (Stage 2 not applied?), "
-                  "index step skipped")
-        else:
-            # [REASON]: SP-F-008 -- defensive re-verification even though
-            # DQ-034 confirmed zero duplicate groups: abort readably instead
-            # of failing mid-DDL if the data changed since the check.
-            cur.execute(DUPLICATE_CHECK)
-            dupes = cur.fetchall()
-            if dupes:
-                raise RuntimeError(
-                    "cannot create unique index -- normalized duplicate SKU "
-                    "groups exist: {}".format(
-                        '; '.join('part #{} [{}|{}|{}] x{}'.format(*d)
-                                  for d in dupes)))
-            print("Creating normalized active-only unique index...")
-            cur.execute(CREATE_INDEX)
-            print("  uq_spare_part_skus_normalized ensured")
+            raise RuntimeError(
+                "prerequisite table spare_part_skus missing (Stage 2 not "
+                "applied?) -- run migrate_spare_parts_stage2.py first; NOT "
+                "recording this migration")
+
+        # [REASON]: SP-F-008 -- defensive re-verification even though
+        # DQ-034 confirmed zero duplicate groups: abort readably instead
+        # of failing mid-DDL if the data changed since the check.
+        cur.execute(DUPLICATE_CHECK)
+        dupes = cur.fetchall()
+        if dupes:
+            raise RuntimeError(
+                "cannot create unique index -- normalized duplicate SKU "
+                "groups exist: {}".format(
+                    '; '.join('part #{} [{}|{}|{}] x{}'.format(*d)
+                              for d in dupes)))
+        print("Creating normalized active-only unique index...")
+        cur.execute(CREATE_INDEX)
+        print("  uq_spare_part_skus_normalized ensured")
+
+        # [REASON]: RE-SP-011 -- only a verified-complete run may be recorded.
+        cur.execute("PRAGMA index_list(spare_part_skus)")
+        idx = {row[1]: row[2] for row in cur.fetchall()}  # name -> unique flag
+        if idx.get('uq_spare_part_skus_normalized') != 1:
+            raise RuntimeError(
+                "postcondition check failed: uq_spare_part_skus_normalized "
+                "missing or not UNIQUE -- NOT recording this migration")
 
         _record_migration(cur)
         con.commit()
