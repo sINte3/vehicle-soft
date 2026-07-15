@@ -2761,6 +2761,82 @@ def act_pdf(act_id):
                      download_name='{}.pdf'.format(act.act_number))
 
 
+# ─── CYCLE-2-3 Part 5: acts index ─────────────────────────────────────────────
+
+@spare_parts_bp.route('/acts')
+@module_required('spare_parts')
+def acts_index():
+    """Standalone browsable list of write-off acts.
+
+    [REASON]: CYCLE-2-3 Part 5 — until now acts were reachable ONLY from
+    their request's detail page; an operator with the spare_parts_acts
+    permission had no way to browse issue history without hunting through
+    individual requests. Purely additive: gated exactly like act_detail/
+    act_pdf (base module + explicit spare_parts_acts permission + org
+    scoping), no existing route changes.
+    """
+    if not current_user.has_module_access('spare_parts_acts'):
+        abort(403)
+
+    org_id = request.args.get('org_id', type=int)
+    date_from_s = request.args.get('date_from', '')
+    date_to_s = request.args.get('date_to', '')
+
+    q = (SparePartWriteOffAct.query
+         .options(joinedload(SparePartWriteOffAct.organization),
+                  joinedload(SparePartWriteOffAct.issuer),
+                  joinedload(SparePartWriteOffAct.request)
+                  .joinedload(SparePartRequest.equipment),
+                  selectinload(SparePartWriteOffAct.items)))
+    # Same org scoping rule as the request list: non-admins see only the
+    # organizations assigned to them.
+    user_org_ids = _spare_user_org_ids()
+    if user_org_ids is not None:
+        q = q.filter(SparePartWriteOffAct.organization_id.in_(user_org_ids))
+    if org_id:
+        if not current_user.can_access_org(org_id):
+            abort(403)
+        q = q.filter(SparePartWriteOffAct.organization_id == org_id)
+    # Lenient date filters, same style as index(): a malformed value is
+    # ignored rather than failing the page.
+    if date_from_s:
+        try:
+            q = q.filter(SparePartWriteOffAct.issued_date
+                         >= datetime.strptime(date_from_s, '%Y-%m-%d').date())
+        except ValueError:
+            pass
+    if date_to_s:
+        try:
+            q = q.filter(SparePartWriteOffAct.issued_date
+                         <= datetime.strptime(date_to_s, '%Y-%m-%d').date())
+        except ValueError:
+            pass
+    acts = q.order_by(SparePartWriteOffAct.issued_date.desc(),
+                      SparePartWriteOffAct.id.desc()).all()
+
+    # Per-act grand total over snapshotted item totals (None = no confirmed
+    # price at issue time), same summation rule as spare_part_act.html.
+    act_totals = {
+        act.id: sum(float(i.total) for i in act.items if i.total is not None)
+        for act in acts
+    }
+
+    if user_org_ids is None:
+        organizations = Organization.query.order_by(Organization.sort_order).all()
+    else:
+        organizations = (Organization.query
+                         .filter(Organization.id.in_(user_org_ids))
+                         .order_by(Organization.sort_order).all())
+    return render_template('spare_parts_acts.html',
+                           acts=acts,
+                           act_totals=act_totals,
+                           org_id=org_id,
+                           date_from_s=date_from_s,
+                           date_to_s=date_to_s,
+                           organizations=organizations,
+                           lang=_spare_lang())
+
+
 # ─── Catalog ──────────────────────────────────────────────────────────────────
 
 @spare_parts_bp.route('/catalog')

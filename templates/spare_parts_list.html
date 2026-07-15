@@ -20,6 +20,10 @@
     <a href="{{ url_for('spare_parts.inventory') }}" class="vs-btn">📦 {{ 'Склад' if is_ru else 'Омбор' }}</a>
     {% endif %}
     {% if current_user.has_module_access('spare_parts_reports') %}<a href="{{ url_for('spare_parts.reports') }}" class="vs-btn">📊 {{ 'Отчёты' if is_ru else 'Ҳисоботлар' }}</a>{% endif %}
+    {# CYCLE-2-3 Part 5: acts index — same conditional-link pattern as the other toolbar screens (SP-F-021). #}
+    {% if current_user.has_module_access('spare_parts_acts') %}
+    <a href="{{ url_for('spare_parts.acts_index') }}" class="vs-btn">🧾 {{ 'Акты списания' if is_ru else 'Далолатномалар' }}</a>
+    {% endif %}
     {# SPARE-STAGE3: passive maintenance-due list (reuses the catalog-manage permission). #}
     {% if current_user.has_module_access('spare_parts_catalog_manage') %}
     <a href="{{ url_for('spare_parts.maintenance_due') }}" class="vs-btn">⏰ {{ 'Пора менять' if is_ru else 'Алмаштириш вақти' }}</a>

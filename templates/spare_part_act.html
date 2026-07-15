@@ -15,6 +15,8 @@
     <a href="{{ url_for('spare_parts.act_pdf', act_id=act.id, lang='ru') }}" target="_blank" class="vs-btn">{{ 'Скачать (RU)' if is_ru else 'Юклаш (RU)' }}</a>
     <a href="{{ url_for('spare_parts.act_pdf', act_id=act.id, lang='uz') }}" target="_blank" class="vs-btn">{{ 'Скачать (UZ)' if is_ru else 'Юклаш (UZ)' }}</a>
     <a href="{{ url_for('spare_parts.detail', rid=act.request_id) }}" class="vs-btn">{{ '← Заявка' if is_ru else '← Сўров' }} #{{ act.request_id }}</a>
+    {# CYCLE-2-3 Part 5: back to the standalone acts index (same permission as this page). #}
+    <a href="{{ url_for('spare_parts.acts_index') }}" class="vs-btn">🧾 {{ 'Все акты' if is_ru else 'Барча далолатномалар' }}</a>
   </div>
 </div>
 
