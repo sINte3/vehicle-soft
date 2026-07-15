@@ -20,6 +20,16 @@
 .sp-warn { margin-top:4px; padding:6px 8px; border-radius:6px; font-size:12px; line-height:1.4; }
 .sp-warn.is-red { background:var(--danger-light); color:var(--danger); border:1px solid var(--danger); }
 .sp-warn.is-yellow { background:var(--warn-light); color:var(--warn); border:1px solid var(--warn); }
+/* CYCLE-2-3 Part 4 (RE-SP-008/SP-F-022): keyboard-accessible attachment lightbox. */
+.sp-lightbox { position:fixed; inset:0; z-index:100; display:none; align-items:center; justify-content:center; background:rgba(15,23,42,.78); padding:24px; }
+.sp-lightbox.is-open { display:flex; }
+.sp-lightbox-panel { background:var(--surface, #fff); border-radius:10px; max-width:min(92vw, 980px); max-height:92vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 18px 50px rgba(0,0,0,.4); }
+.sp-lightbox-head { display:flex; align-items:center; gap:12px; padding:10px 14px; border-bottom:1px solid var(--border, #e3e8ef); }
+.sp-lightbox-meta { flex:1; min-width:0; }
+.sp-lightbox-name { font-weight:600; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sp-lightbox-size { font-size:11.5px; color:var(--text2, #6b7a90); }
+.sp-lightbox-body { overflow:auto; display:flex; align-items:center; justify-content:center; padding:12px; }
+.sp-lightbox-body img { max-width:100%; max-height:calc(92vh - 90px); border-radius:6px; }
 </style>
 
 {% set eq_label = req.equipment.name ~ ((' — ' ~ req.equipment.plate) if req.equipment and req.equipment.plate else '') if req.equipment else '—' %}
@@ -150,8 +160,14 @@
                         <source src="{{ url_for('spare_parts.attachment_file', att_id=att.id) }}">
                     </video>
                     {% else %}
-                    <a href="{{ url_for('spare_parts.attachment_file', att_id=att.id) }}" target="_blank" title="{{ att.original_filename }}">
-                        <img src="{{ url_for('spare_parts.attachment_file', att_id=att.id) }}" alt="" style="height:42px; border-radius:6px; margin:1px; border:1px solid var(--border);">
+                    {# CYCLE-2-3 Part 4 (RE-SP-008/SP-F-022): a present image thumbnail opens the
+                       keyboard-accessible lightbox (JS below); href stays as a no-JS fallback.
+                       The missing-file badge above deliberately never becomes interactive. #}
+                    <a href="{{ url_for('spare_parts.attachment_file', att_id=att.id) }}" target="_blank" title="{{ att.original_filename }}"
+                       class="sp-att-link"
+                       data-filename="{{ att.original_filename }}"
+                       data-size="{{ att.file_size or 0 }}">
+                        <img src="{{ url_for('spare_parts.attachment_file', att_id=att.id) }}" alt="{{ att.original_filename }}" style="height:42px; border-radius:6px; margin:1px; border:1px solid var(--border);">
                     </a>
                     {% endif %}
                     {% else %}
@@ -407,6 +423,23 @@
 </div>
 {% endif %}
 
+{# CYCLE-2-3 Part 4: attachment lightbox dialog (hidden until a thumbnail is activated). #}
+<div class="sp-lightbox" id="spLightbox" role="dialog" aria-modal="true" aria-label="{{ 'Просмотр вложения' if is_ru else 'Иловани кўриш' }}">
+    <div class="sp-lightbox-panel">
+        <div class="sp-lightbox-head">
+            <div class="sp-lightbox-meta">
+                <div class="sp-lightbox-name" id="spLightboxName"></div>
+                <div class="sp-lightbox-size" id="spLightboxSize"></div>
+            </div>
+            <a href="#" target="_blank" class="vs-btn vs-btn-sm" id="spLightboxOpen">⬇ {{ 'Оригинал' if is_ru else 'Асл файл' }}</a>
+            <button type="button" class="vs-btn vs-btn-sm" id="spLightboxClose">✕ {{ 'Закрыть' if is_ru else 'Ёпиш' }}</button>
+        </div>
+        <div class="sp-lightbox-body">
+            <img id="spLightboxImg" src="" alt="">
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 {% block scripts %}
 <script src="{{ static_v('js/spare_parts_upload.js') }}"></script>
@@ -467,6 +500,75 @@ function priceRejectConfirm(form) {
     form.querySelector('[name=comment]').value = comment;
     return true;
 }
+
+/* CYCLE-2-3 Part 4 (RE-SP-008/SP-F-022): keyboard-accessible attachment
+   lightbox. Click or Enter on a present image thumbnail opens the overlay
+   with the full image, original filename and file size; Escape (or the
+   close button / backdrop click) closes it; Tab is trapped inside the
+   dialog while open and focus returns to the triggering thumbnail on
+   close. The "file unavailable" badge is a plain span and never opens it. */
+(function () {
+    const box = document.getElementById('spLightbox');
+    if (!box) return;
+    const imgEl = document.getElementById('spLightboxImg');
+    const nameEl = document.getElementById('spLightboxName');
+    const sizeEl = document.getElementById('spLightboxSize');
+    const openEl = document.getElementById('spLightboxOpen');
+    const closeEl = document.getElementById('spLightboxClose');
+    let returnTo = null;
+
+    function fmtSize(bytes) {
+        bytes = parseInt(bytes, 10) || 0;
+        if (!bytes) return '';
+        if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' {{ 'МБ' }}';
+        if (bytes >= 1024) return (bytes / 1024).toFixed(0) + ' {{ 'КБ' }}';
+        return bytes + ' {{ 'Б' }}';
+    }
+
+    function open(link) {
+        returnTo = link;
+        imgEl.src = link.getAttribute('href');
+        imgEl.alt = link.dataset.filename || '';
+        nameEl.textContent = link.dataset.filename || '';
+        sizeEl.textContent = fmtSize(link.dataset.size);
+        openEl.href = link.getAttribute('href');
+        box.classList.add('is-open');
+        closeEl.focus();
+    }
+
+    function close() {
+        box.classList.remove('is-open');
+        imgEl.src = '';
+        if (returnTo && typeof returnTo.focus === 'function') returnTo.focus();
+        returnTo = null;
+    }
+
+    document.querySelectorAll('.sp-att-link').forEach(function (link) {
+        link.addEventListener('click', function (e) {
+            e.preventDefault();   // href stays as the no-JS fallback only
+            open(link);
+        });
+    });
+    closeEl.addEventListener('click', close);
+    box.addEventListener('click', function (e) {
+        if (e.target === box) close();   // backdrop click
+    });
+    document.addEventListener('keydown', function (e) {
+        if (!box.classList.contains('is-open')) return;
+        if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+        if (e.key === 'Tab') {
+            // Two focusable controls: the original-file link and close button.
+            const focusables = [openEl, closeEl];
+            const idx = focusables.indexOf(document.activeElement);
+            e.preventDefault();
+            if (e.shiftKey) {
+                focusables[(idx <= 0 ? focusables.length : idx) - 1].focus();
+            } else {
+                focusables[(idx + 1) % focusables.length].focus();
+            }
+        }
+    });
+})();
 
 /* SPARE-STAGE1: last confirmed prices hint (AJAX). */
 document.addEventListener('DOMContentLoaded', function () {
