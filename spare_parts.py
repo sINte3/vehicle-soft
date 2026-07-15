@@ -383,6 +383,7 @@ def _catalog_snapshot(part):
     return {
         'id': getattr(part, 'id', None),
         'name': getattr(part, 'name', ''),
+        'name_uz': getattr(part, 'name_uz', None),
         'part_number': getattr(part, 'part_number', ''),
         'unit': getattr(part, 'unit', ''),
         'category': getattr(part, 'category', ''),
@@ -722,6 +723,37 @@ def _model_display_name(model):
     if _spare_lang() == 'uz' and (model.name_uz or '').strip():
         return model.name_uz
     return model.name or ''
+
+
+def _part_display_name(part, fallback=''):
+    """Catalog part label honouring the viewer's language.
+
+    [REASON]: CYCLE-2-3 Part 7 — the Uzbek interface shows name_uz when the
+    owner has filled it in, and falls back to the canonical (Russian) `name`
+    otherwise. This fallback is the intended long-term behavior, not a bug:
+    translations arrive over time through the catalog UI and a missing one
+    must never blank a part name. Same shape as _model_display_name above.
+    """
+    if part is None:
+        return fallback
+    if _spare_lang() == 'uz' and (getattr(part, 'name_uz', '') or '').strip():
+        return part.name_uz
+    return part.name or fallback
+
+
+def _snapshot_display_name(snapshot_name, part, lang=None):
+    """Display override for a STORED snapshot name (request/act item rows).
+
+    [REASON]: CYCLE-2-3 Part 7 — only the Uzbek interface with a non-empty
+    catalog alias overrides the snapshot; in every other case the snapshot
+    is returned byte-identical, so Russian output and unlinked free-text
+    items are completely unchanged. Stored values are never rewritten.
+    """
+    lang = lang or _spare_lang()
+    if (lang == 'uz' and part is not None
+            and (getattr(part, 'name_uz', '') or '').strip()):
+        return part.name_uz
+    return snapshot_name
 
 
 def _check_rule5_incompatibility(equipment_id, spare_part_id, exclude_request_id=None):
@@ -1911,14 +1943,20 @@ def _search_catalog_parts(query, limit=FUZZY_SEARCH_MAX_RESULTS):
              .all())
     exact, substr, fuzzy = [], [], []
     for part in parts:
-        name_norm = _norm_search_text(part.name)
-        if not name_norm:
+        # [REASON]: CYCLE-2-3 Part 7 — the query is matched against BOTH the
+        # canonical name and the optional Uzbek alias (best score wins), so
+        # a part found by its Uzbek alias still resolves to the same catalog
+        # entry. Parts without an alias behave exactly as before.
+        norms = [n for n in (_norm_search_text(part.name),
+                             _norm_search_text(getattr(part, 'name_uz', '') or ''))
+                 if n]
+        if not norms:
             continue
-        if name_norm == query_norm:
+        if any(n == query_norm for n in norms):
             exact.append((part, 'exact', 1.0))
             continue
-        score = _fuzzy_score(query_norm, name_norm)
-        if query_norm in name_norm:
+        score = max(_fuzzy_score(query_norm, n) for n in norms)
+        if any(query_norm in n for n in norms):
             substr.append((part, 'substring', score))
         elif score >= FUZZY_MATCH_MIN_RATIO:
             fuzzy.append((part, 'fuzzy', score))
@@ -1941,8 +1979,11 @@ def api_catalog_search():
         return jsonify([])
     return jsonify([
         {
+            # [REASON]: CYCLE-2-3 Part 7 — suggestions show the viewer's
+            # language (alias in uz when set); clicking one re-runs the
+            # form's exact-match flow against the same display value.
             'id': part.id,
-            'name': part.name,
+            'name': _part_display_name(part),
             'part_number': part.part_number or '',
             'unit': part.unit or 'dona',
             'kind': (part.category_ref.kind if part.category_ref else ''),
@@ -2885,6 +2926,9 @@ def catalog_save():
         abort(403)
     pid = request.form.get('id', type=int)
     name = request.form.get('name', '').strip()
+    # [REASON]: CYCLE-2-3 Part 7 — optional Uzbek alias; empty means "not
+    # translated yet" and is stored as NULL so displays fall back to name.
+    name_uz = (request.form.get('name_uz', '') or '').strip() or None
     part_number = request.form.get('part_number', '').strip()
     unit = request.form.get('unit', 'dona').strip()
     # [REASON]: SPARE-STAGE1 — the form now sends category_id (managed
@@ -2913,12 +2957,14 @@ def catalog_save():
         part = SparePart.query.get_or_404(pid)
         before = _catalog_snapshot(part)
         part.name = name
+        part.name_uz = name_uz
         part.part_number = part_number
         part.unit = unit
         part.category_id = category_id
     else:
-        part = SparePart(name=name, part_number=part_number, unit=unit,
-                         category_id=category_id, created_by=current_user.id)
+        part = SparePart(name=name, name_uz=name_uz, part_number=part_number,
+                         unit=unit, category_id=category_id,
+                         created_by=current_user.id)
         db.session.add(part)
         created = True
     db.session.flush()
@@ -2932,6 +2978,37 @@ def catalog_save():
         after=after,
         changes=diff_dict(before, after),
         description='Spare part catalog saved'
+    )
+    db.session.commit()
+    flash(_spare_t('Сақланди', 'Сохранено'), 'success')
+    return redirect(url_for('spare_parts.catalog'))
+
+
+@spare_parts_bp.route('/catalog/<int:pid>/name-uz', methods=['POST'])
+@module_required('spare_parts')
+def catalog_name_uz_save(pid):
+    """Inline per-row edit of a part's Uzbek alias (CYCLE-2-3 Part 7).
+
+    [REASON]: the owner fills translations in over time; a dedicated
+    single-field route lets the catalog table offer one text input per row
+    without round-tripping every other field through the main edit form.
+    Same spare_parts_catalog_manage gate as every other catalog mutation.
+    """
+    if not current_user.has_module_access('spare_parts_catalog_manage'):
+        abort(403)
+    part = SparePart.query.get_or_404(pid)
+    before = _catalog_snapshot(part)
+    part.name_uz = (request.form.get('name_uz', '') or '').strip() or None
+    after = _catalog_snapshot(part)
+    _audit_spare(
+        'spare_part_catalog_updated',
+        entity_type='spare_part_catalog',
+        entity_id=part.id,
+        entity_label=part.name,
+        before=before,
+        after=after,
+        changes=diff_dict(before, after),
+        description='Spare part Uzbek alias saved'
     )
     db.session.commit()
     flash(_spare_t('Сақланди', 'Сохранено'), 'success')
@@ -3645,7 +3722,7 @@ def _reports_data(d_from, d_to, org_id=None, equipment_id=None, category_id=None
     # confirmed-price filter: repeat detection is about equipment/part
     # recurrence, not cost.
     repeat_rows = []
-    for item, req, _part in lines:
+    for item, req, part in lines:
         if req.status not in ('approved', 'issued'):
             continue
         if not req.equipment_id or not item.spare_part_id:
@@ -3660,7 +3737,9 @@ def _reports_data(d_from, d_to, org_id=None, equipment_id=None, category_id=None
                 'request_date': req.request_date,
                 'equipment': eq_map.get(req.equipment_id),
                 'organization': org_map.get(req.organization_id),
-                'part_name': item.name,
+                # [REASON]: CYCLE-2-3 Part 7 — Uzbek alias override at
+                # display time only; RU output stays the stored snapshot.
+                'part_name': _snapshot_display_name(item.name, part),
                 'severity': res['severity'],
                 'days_since': res['days_since'],
             })
@@ -3674,14 +3753,16 @@ def _reports_data(d_from, d_to, org_id=None, equipment_id=None, category_id=None
         'request_date': req.request_date,
         'organization': org_map.get(req.organization_id),
         'equipment': eq_map.get(req.equipment_id),
-        'name': item.name,
+        # [REASON]: CYCLE-2-3 Part 7 — Uzbek alias override at display time
+        # only; RU output stays the stored snapshot.
+        'name': _snapshot_display_name(item.name, part),
         'quantity': item.quantity,
         # [REASON]: RE-SP-010 — display-time localization; the stored
         # item.unit snapshot is untouched. Unknown codes pass through raw.
         'unit': _unit_label(item.unit or ''),
         'price': item.price,
         'total': _cost(item),
-    } for item, req, _part in top_lines]
+    } for item, req, part in top_lines]
 
     return {
         'd_from': d_from,

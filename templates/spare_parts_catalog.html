@@ -104,6 +104,11 @@
                 <label class="vs-label" for="editName">{{ 'Название' if is_ru else 'Номи' }}</label>
                 <input type="text" name="name" id="editName" class="vs-input" placeholder="{{ 'Название детали' if is_ru else 'Деталь номи' }}" required>
             </div>
+            {# CYCLE-2-3 Part 7: optional Uzbek alias; empty = fall back to the canonical name. #}
+            <div class="vs-field" style="flex:2; min-width:200px;">
+                <label class="vs-label" for="editNameUz">{{ 'Название (узб.)' if is_ru else 'Номи (ўзбекча)' }}</label>
+                <input type="text" name="name_uz" id="editNameUz" class="vs-input" placeholder="{{ 'необязательно' if is_ru else 'ихтиёрий' }}">
+            </div>
             <div class="vs-field" style="flex:1; min-width:150px;">
                 <label class="vs-label" for="editPartNum">{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</label>
                 <input type="text" name="part_number" id="editPartNum" class="vs-input" placeholder="000-000">
@@ -161,6 +166,8 @@
             <tr>
                 <th style="width:40px;">№</th>
                 <th>{{ 'Название' if is_ru else 'Номи' }}</th>
+                {# CYCLE-2-3 Part 7: inline-editable Uzbek alias column (manage-only editing). #}
+                {% if can_manage %}<th>{{ 'Название (узб.)' if is_ru else 'Номи (ўзбекча)' }}</th>{% endif %}
                 <th>{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</th>
                 <th>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
                 <th>{{ 'Категория' if is_ru else 'Категория' }}</th>
@@ -171,9 +178,21 @@
         <tbody>
             {% for part in parts %}
             {% set cat_label = (part.category_ref.name_ru if is_ru else part.category_ref.name_uz) if part.category_ref else (part.category or '—') %}
-            <tr class="catalog-row" data-part-id="{{ part.id }}" data-search="{{ (part.name ~ ' ' ~ (part.part_number or '') ~ ' ' ~ (part.unit or '') ~ ' ' ~ cat_label)|lower }}">
+            {# CYCLE-2-3 Part 7: the Uzbek interface shows the alias when set (fallback to the canonical name); search matches both. #}
+            {% set display_name = part.name_uz if (not is_ru) and (part.name_uz or '').strip() else part.name %}
+            <tr class="catalog-row" data-part-id="{{ part.id }}" data-search="{{ (part.name ~ ' ' ~ (part.name_uz or '') ~ ' ' ~ (part.part_number or '') ~ ' ' ~ (part.unit or '') ~ ' ' ~ cat_label)|lower }}">
                 <td>{{ loop.index }}</td>
-                <td style="font-weight:600;">{{ part.name }}</td>
+                <td style="font-weight:600;">{{ display_name }}</td>
+                {% if can_manage %}
+                <td>
+                    {# CYCLE-2-3 Part 7: one text input per row — the owner fills translations in over time. #}
+                    <form method="post" action="{{ url_for('spare_parts.catalog_name_uz_save', pid=part.id) }}" class="vs-row" style="gap:4px; flex-wrap:nowrap;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="text" name="name_uz" class="vs-input" value="{{ part.name_uz or '' }}" placeholder="—" style="min-width:140px; padding:5px 8px; font-size:12px;" aria-label="{{ 'Название (узб.) для' if is_ru else 'Номи (ўзбекча):' }} {{ part.name }}">
+                        <button type="submit" class="vs-btn vs-btn-sm">💾 {{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+                    </form>
+                </td>
+                {% endif %}
                 <td class="text-sm vs-muted">{{ part.part_number or '—' }}</td>
                 {# RE-SP-010: localized unit word; unknown/legacy codes render raw. #}
                 <td>{{ part.unit|spare_unit_label or ('шт' if is_ru else 'дона') }}</td>
@@ -193,7 +212,7 @@
                     {% if can_manage and part.status == 'active' %}
                     {# CYCLE-2-3 Part 2: primary row actions carry visible text, not just an icon. #}
                     <button class="vs-btn vs-btn-sm"
-                            onclick='editPart({{ part.id }}, {{ part.name|tojson }}, {{ (part.part_number or "")|tojson }}, {{ (part.unit or "")|tojson }}, {{ (part.category_id or "")|tojson }})'>✏ {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
+                            onclick='editPart({{ part.id }}, {{ part.name|tojson }}, {{ (part.name_uz or "")|tojson }}, {{ (part.part_number or "")|tojson }}, {{ (part.unit or "")|tojson }}, {{ (part.category_id or "")|tojson }})'>✏ {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
                     {# SPARE-STAGE3: per-part compatibility editor (writes SparePartCompatibility rows). #}
                     <a class="vs-btn vs-btn-sm"
                        href="{{ url_for('spare_parts.catalog_compatibility', pid=part.id) }}">🔗 {{ 'Совместимость' if is_ru else 'Мослик' }}</a>
@@ -327,9 +346,11 @@ function setEditUnit(val) {
     f.value = 'dona';
 }
 
-function editPart(id, name, partNum, unit, catId) {
+function editPart(id, name, nameUz, partNum, unit, catId) {
     document.getElementById('editId').value = id;
     document.getElementById('editName').value = name;
+    // CYCLE-2-3 Part 7: optional Uzbek alias travels through the edit form.
+    document.getElementById('editNameUz').value = nameUz || '';
     document.getElementById('editPartNum').value = partNum;
     setEditUnit(unit);
     // SPARE-STAGE1: category is now a managed category_id select.
@@ -361,6 +382,7 @@ function resetCategoryForm() {
 function resetForm() {
     document.getElementById('editId').value = '';
     document.getElementById('editName').value = '';
+    document.getElementById('editNameUz').value = '';
     document.getElementById('editPartNum').value = '';
     setEditUnit(null);
     document.getElementById('editCategory').value = '';

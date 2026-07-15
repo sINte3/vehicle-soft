@@ -187,9 +187,19 @@ def generate_write_off_act_pdf(act, dest_path, lang='ru', unit_labels=None):
     grand_total = 0.0
     has_total = False
     for idx, item in enumerate(act.items, start=1):
+        # [REASON]: CYCLE-2-3 Part 7 — display-time Uzbek alias: only the
+        # uz rendering with a non-empty catalog name_uz overrides the
+        # snapshotted item.name; the stored snapshot itself is never
+        # rewritten and every other case renders it byte-identical.
+        display_name = item.name
+        if lang == 'uz':
+            req_item = getattr(item, 'request_item', None)
+            part = getattr(req_item, 'spare_part', None) if req_item else None
+            if part is not None and (getattr(part, 'name_uz', '') or '').strip():
+                display_name = part.name_uz
         # [REASON]: SP-F-005 — name and sku_label are escaped SEPARATELY, then
         # combined, so the application's own <br/>/<font> markup keeps working.
-        name_html = escape(item.name)
+        name_html = escape(display_name)
         if item.sku_label:
             name_html += '<br/><font size="7.5" color="#555555">SKU: {}</font>'.format(
                 escape(item.sku_label))

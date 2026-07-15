@@ -789,6 +789,12 @@ class SparePart(db.Model):
     __tablename__ = 'spare_parts'
     id          = db.Column(db.Integer, primary_key=True)
     name        = db.Column(db.String(300), nullable=False)
+    # [REASON]: CYCLE-2-3 Part 7 — optional Uzbek display alias for the
+    # canonical (Russian) name. Nullable by design: translations are filled
+    # in over time by the owner through the catalog UI; every display site
+    # falls back to `name` when name_uz is empty, so a missing translation
+    # can never blank a part name. Added by migrate_spare_parts_name_uz.py.
+    name_uz     = db.Column(db.String(300), nullable=True)
     part_number = db.Column(db.String(100), default='')
     unit        = db.Column(db.String(30), default='dona')
     # [REASON]: SPARE-STAGE1 — free-text `category` is deprecated in favour of
@@ -1016,6 +1022,13 @@ class SparePartWriteOffActItem(db.Model):
     unit            = db.Column(db.String(30), default='dona')
     price           = db.Column(db.Float, nullable=True)
     total           = db.Column(db.Float, nullable=True)
+
+    # [REASON]: CYCLE-2-3 Part 7 — read-only link back to the live request
+    # item so display-time rendering (act PDF) can resolve the catalog
+    # part's Uzbek alias. The snapshotted columns above remain the stored
+    # record; this relationship is never used to rewrite them.
+    request_item = db.relationship('SparePartRequestItem',
+                                   foreign_keys=[request_item_id])
 
     __table_args__ = (
         db.Index('idx_spare_part_write_off_act_items_act_id', 'act_id'),

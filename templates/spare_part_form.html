@@ -133,9 +133,14 @@
 </form>
 
 <datalist id="catalogParts">
+    {# CYCLE-2-3 Part 7: the picker offers the viewer's language (Uzbek alias
+       when set, canonical name otherwise); data-alt keeps the canonical
+       spelling matchable so a name typed in the other language still
+       resolves to the same catalog entry. #}
     {% for part in catalog_parts %}
-    <option value="{{ part.name }}"
+    <option value="{{ part.name_uz if (not is_ru) and (part.name_uz or '').strip() else part.name }}"
             data-id="{{ part.id }}"
+            data-alt="{{ part.name|lower }}"
             data-unit="{{ part.unit or 'dona' }}"
             data-part-number="{{ part.part_number or '' }}"
             data-kind="{{ part.category_ref.kind if part.category_ref else '' }}"></option>
@@ -344,7 +349,10 @@ function matchCatalogOption(value) {
     if (!v) return null;
     const opts = document.getElementById('catalogParts').options;
     for (let i = 0; i < opts.length; i++) {
-        if ((opts[i].value || '').trim().toLowerCase() === v) return opts[i];
+        // CYCLE-2-3 Part 7: match the displayed value OR the canonical
+        // spelling (data-alt), so either language resolves the same part.
+        if ((opts[i].value || '').trim().toLowerCase() === v ||
+            (opts[i].dataset.alt || '') === v) return opts[i];
     }
     return null;
 }
