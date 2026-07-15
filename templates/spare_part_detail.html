@@ -128,7 +128,8 @@
                 </td>
                 <td class="text-sm vs-muted">{{ item.part_number or '—' }}</td>
                 <td class="right" style="font-weight:600;">{{ item.quantity }}</td>
-                <td>{{ item.unit or ('шт' if is_ru else 'дона') }}</td>
+                {# RE-SP-010: localized unit word; unknown/legacy codes render raw. #}
+                <td>{{ item.unit|spare_unit_label or ('шт' if is_ru else 'дона') }}</td>
                 <td class="right" style="font-weight:600;">
                     {% if item.price is not none %}{{ item.price|fmt_sum or item.price }}{% else %}—{% endif %}
                     {% if item.price_setter %}<div class="vs-soft" style="font-size:10.5px;">{{ item.price_setter.username }}{% if item.price_set_at %} · {{ item.price_set_at.strftime('%d.%m %H:%M') }}{% endif %}</div>{% endif %}
@@ -256,7 +257,7 @@
                 <tr>
                     <td style="font-weight:600;">{{ item.name }}</td>
                     <td class="text-sm vs-muted">{{ item.sku.label if item.sku else '—' }}</td>
-                    <td class="right">{{ item.quantity }} {{ item.unit or '' }}</td>
+                    <td class="right">{{ item.quantity }} {{ item.unit|spare_unit_label or '' }}</td>
                     <td class="right" style="color:{{ 'var(--danger)' if (stock_now is none or stock_now < item.quantity) else 'var(--text)' }};">
                         {{ stock_now if stock_now is not none else 0 }}
                         {% if stock_now is none or stock_now < item.quantity %}
@@ -279,7 +280,7 @@
                 <strong>{{ 'Позиции без SKU — не будут списаны со склада:' if is_ru else 'SKUсиз позициялар — омбордан ҳисобдан чиқарилмайди:' }}</strong>
                 <ul style="margin:6px 0 8px 18px; padding:0;">
                     {% for item in issue_ctx.no_sku_items %}
-                    <li>{{ item.name }} — {{ item.quantity }} {{ item.unit or '' }}</li>
+                    <li>{{ item.name }} — {{ item.quantity }} {{ item.unit|spare_unit_label or '' }}</li>
                     {% endfor %}
                 </ul>
                 <label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer;">

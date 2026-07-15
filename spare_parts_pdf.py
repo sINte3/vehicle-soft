@@ -108,14 +108,20 @@ _L = {
 }
 
 
-def generate_write_off_act_pdf(act, dest_path, lang='ru'):
+def generate_write_off_act_pdf(act, dest_path, lang='ru', unit_labels=None):
     """Render one SparePartWriteOffAct (with .items loaded) to dest_path.
 
     Designed as a real printable paper document: header, items table with a
     grand total, and physical signature lines at the bottom. Raises on any
     failure — the caller runs inside the issue transaction and must roll the
     whole issue action back if the act cannot be produced.
+
+    [REASON]: RE-SP-010 — unit_labels is an optional {code: localized word}
+    map (built by the caller, which has DB access; this module has none).
+    A code missing from the map renders as the raw stored code — display
+    translation only, snapshots stay untouched.
     """
+    unit_labels = unit_labels or {}
     _register_fonts()
     labels = _L['uz' if lang == 'uz' else 'ru']
 
@@ -194,7 +200,7 @@ def generate_write_off_act_pdf(act, dest_path, lang='ru'):
             str(idx),
             Paragraph(name_html, cell_style),
             _fmt_qty(item.quantity),
-            item.unit or '—',
+            unit_labels.get(item.unit, item.unit) or '—',
             _fmt_money(item.price),
             _fmt_money(item.total),
         ])

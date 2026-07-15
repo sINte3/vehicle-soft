@@ -175,7 +175,8 @@
                 <td>{{ loop.index }}</td>
                 <td style="font-weight:600;">{{ part.name }}</td>
                 <td class="text-sm vs-muted">{{ part.part_number or '—' }}</td>
-                <td>{{ part.unit or ('шт' if is_ru else 'дона') }}</td>
+                {# RE-SP-010: localized unit word; unknown/legacy codes render raw. #}
+                <td>{{ part.unit|spare_unit_label or ('шт' if is_ru else 'дона') }}</td>
                 <td class="text-sm vs-muted">{{ cat_label }}</td>
                 <td>
                     {# SPARE-STAGE1: catalog entry lifecycle status #}

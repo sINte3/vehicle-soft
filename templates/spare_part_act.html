@@ -53,7 +53,8 @@
                 <td style="font-weight:600;">{{ item.name }}</td>
                 <td class="text-sm vs-muted">{{ item.sku_label or '—' }}</td>
                 <td class="right" style="font-weight:600;">{{ item.quantity }}</td>
-                <td>{{ item.unit or '—' }}</td>
+                {# RE-SP-010: localized unit word; unknown/legacy codes render raw. #}
+                <td>{{ item.unit|spare_unit_label or '—' }}</td>
                 <td class="right">{{ item.price|fmt_sum if item.price is not none else '—' }}</td>
                 <td class="right" style="font-weight:600;">{{ item.total|fmt_sum if item.total is not none else '—' }}</td>
             </tr>

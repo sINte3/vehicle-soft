@@ -265,6 +265,57 @@ def _active_units():
         raise
 
 
+def _unit_labels_map(lang=None):
+    """Unit code -> localized display label ({'dona': 'шт', ...}) for `lang`
+    (defaults to the current UI language). Cached per request+language in g.
+
+    [REASON]: RE-SP-010 — output documents (PDF act, Excel report, detail
+    tables) showed the raw stored code (e.g. `dona`) instead of the
+    directory's localized word. This map covers ALL directory rows, active or
+    not: a deactivated unit must still render readably on historical rows.
+    Reuses the RE-SP-009 "no such table" deploy-window guard so rendering
+    degrades to raw codes instead of 500-ing pre-migration.
+    """
+    lang = lang or _spare_lang()
+    cache = getattr(g, '_spare_unit_labels', None)
+    if cache is None:
+        cache = {}
+        g._spare_unit_labels = cache
+    if lang in cache:
+        return cache[lang]
+    try:
+        rows = SparePartUnit.query.all()
+    except OperationalError as exc:
+        if 'no such table' in str(exc.orig or exc).lower():
+            db.session.rollback()
+            rows = []
+        else:
+            raise
+    labels = {u.code: (u.name_ru if lang == 'ru' else u.name_uz) for u in rows}
+    cache[lang] = labels
+    return labels
+
+
+def _unit_label(code, lang=None):
+    """Localized display word for a stored unit code.
+
+    [REASON]: RE-SP-010 — display-time translation ONLY (stored values are
+    never rewritten). An unknown/legacy code (free-text era value, or an
+    empty directory pre-migration) falls back to the raw code unchanged —
+    never raises, never blanks a value out.
+    """
+    code = (code or '').strip()
+    if not code:
+        return code
+    return _unit_labels_map(lang).get(code) or code
+
+
+@spare_parts_bp.app_template_filter('spare_unit_label')
+def _spare_unit_label_filter(code):
+    # Template-side entry point for _unit_label (detail/act/catalog tables).
+    return _unit_label(code)
+
+
 def _unit_options(unit_rows):
     """JSON-ready picker options: code + language-correct label + lowercase
     alt spellings (code|name_ru|name_uz) for matching legacy catalog values
@@ -2608,7 +2659,9 @@ def issue_request(rid):
         from spare_parts_pdf import generate_write_off_act_pdf
         fname = '{}_{}.pdf'.format(act.id, act.act_number)
         act_pdf_full_path = os.path.join(_acts_dir(), fname)
-        generate_write_off_act_pdf(act, act_pdf_full_path, lang=_spare_lang())
+        # [REASON]: RE-SP-010 — localized unit words in the printed act.
+        generate_write_off_act_pdf(act, act_pdf_full_path, lang=_spare_lang(),
+                                   unit_labels=_unit_labels_map())
         act.pdf_path = fname
 
         db.session.commit()
@@ -2699,7 +2752,10 @@ def act_pdf(act_id):
         lang = _spare_lang()
     from spare_parts_pdf import generate_write_off_act_pdf
     buffer = io.BytesIO()
-    generate_write_off_act_pdf(act, buffer, lang=lang)
+    # [REASON]: RE-SP-010 — unit labels follow the same explicit-lang rule as
+    # the rest of this regenerated rendering (?lang= override included).
+    generate_write_off_act_pdf(act, buffer, lang=lang,
+                               unit_labels=_unit_labels_map(lang))
     buffer.seek(0)
     return send_file(buffer, mimetype='application/pdf',
                      download_name='{}.pdf'.format(act.act_number))
@@ -3544,7 +3600,9 @@ def _reports_data(d_from, d_to, org_id=None, equipment_id=None, category_id=None
         'equipment': eq_map.get(req.equipment_id),
         'name': item.name,
         'quantity': item.quantity,
-        'unit': item.unit or '',
+        # [REASON]: RE-SP-010 — display-time localization; the stored
+        # item.unit snapshot is untouched. Unknown codes pass through raw.
+        'unit': _unit_label(item.unit or ''),
         'price': item.price,
         'total': _cost(item),
     } for item, req, _part in top_lines]
