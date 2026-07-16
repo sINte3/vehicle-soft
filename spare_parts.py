@@ -1,3 +1,4 @@
+import bisect
 import io
 import math
 import os
@@ -265,6 +266,57 @@ def _active_units():
         raise
 
 
+def _unit_labels_map(lang=None):
+    """Unit code -> localized display label ({'dona': 'шт', ...}) for `lang`
+    (defaults to the current UI language). Cached per request+language in g.
+
+    [REASON]: RE-SP-010 — output documents (PDF act, Excel report, detail
+    tables) showed the raw stored code (e.g. `dona`) instead of the
+    directory's localized word. This map covers ALL directory rows, active or
+    not: a deactivated unit must still render readably on historical rows.
+    Reuses the RE-SP-009 "no such table" deploy-window guard so rendering
+    degrades to raw codes instead of 500-ing pre-migration.
+    """
+    lang = lang or _spare_lang()
+    cache = getattr(g, '_spare_unit_labels', None)
+    if cache is None:
+        cache = {}
+        g._spare_unit_labels = cache
+    if lang in cache:
+        return cache[lang]
+    try:
+        rows = SparePartUnit.query.all()
+    except OperationalError as exc:
+        if 'no such table' in str(exc.orig or exc).lower():
+            db.session.rollback()
+            rows = []
+        else:
+            raise
+    labels = {u.code: (u.name_ru if lang == 'ru' else u.name_uz) for u in rows}
+    cache[lang] = labels
+    return labels
+
+
+def _unit_label(code, lang=None):
+    """Localized display word for a stored unit code.
+
+    [REASON]: RE-SP-010 — display-time translation ONLY (stored values are
+    never rewritten). An unknown/legacy code (free-text era value, or an
+    empty directory pre-migration) falls back to the raw code unchanged —
+    never raises, never blanks a value out.
+    """
+    code = (code or '').strip()
+    if not code:
+        return code
+    return _unit_labels_map(lang).get(code) or code
+
+
+@spare_parts_bp.app_template_filter('spare_unit_label')
+def _spare_unit_label_filter(code):
+    # Template-side entry point for _unit_label (detail/act/catalog tables).
+    return _unit_label(code)
+
+
 def _unit_options(unit_rows):
     """JSON-ready picker options: code + language-correct label + lowercase
     alt spellings (code|name_ru|name_uz) for matching legacy catalog values
@@ -332,6 +384,7 @@ def _catalog_snapshot(part):
     return {
         'id': getattr(part, 'id', None),
         'name': getattr(part, 'name', ''),
+        'name_uz': getattr(part, 'name_uz', None),
         'part_number': getattr(part, 'part_number', ''),
         'unit': getattr(part, 'unit', ''),
         'category': getattr(part, 'category', ''),
@@ -357,6 +410,37 @@ def _audit_spare(action, entity_type='', entity_id=None, entity_label='', before
         changes=changes,
         description=description,
     )
+
+
+def _deny_spare(attempted, entity_type='', entity_id=None, entity_label=''):
+    """Record a permission-denied attempt on a financially significant spare
+    parts action, then abort(403).
+
+    [REASON]: CYCLE-2-3 Part 8 — forward-going audit contract completion:
+    denials on money-relevant actions (viewing acts, issuing stock,
+    approving/rejecting requests, price actions, catalog mutations) now
+    leave a forensic trail. Deliberately NOT applied to every possible 403
+    (org-scope checks, harmless read screens) — only where an owner would
+    investigate who tried. Commits its own row because the request ends in
+    abort(403) and no later caller commit will run; a logging failure never
+    masks the 403 itself.
+    """
+    try:
+        log_audit(
+            db,
+            action='spare_parts_access_denied',
+            entity_type=entity_type,
+            entity_id=entity_id,
+            entity_label=entity_label,
+            module='spare_parts',
+            status='denied',
+            description='Permission denied: ' + attempted,
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception('audit write failed for denied %s', attempted)
+    abort(403)
 
 
 # ─── SPARE-STAGE1: price audit / repeat-order / photo-gate helpers ────────────
@@ -494,6 +578,28 @@ def _month_start_back(d, months_back):
     return date(total // 12, total % 12 + 1, 1)
 
 
+def _rule3_result(request_dates):
+    """Build the rule-3 warning dict from matched request dates (newest first).
+
+    [REASON]: CYCLE-2-3 Part 9 — shared by the per-pair query path and the
+    batched path so both produce identical dicts by construction.
+    """
+    if len(request_dates) <= RULE3_MAX_OCCURRENCES_90D:
+        return None
+    shown = [d.strftime('%d.%m.%Y') for d in request_dates[:8]]
+    dates_text = ', '.join(shown) + ('…' if len(request_dates) > 8 else '')
+    return {
+        'rule': 3,
+        'severity': 'yellow',
+        'count': len(request_dates),
+        'dates': [d.isoformat() for d in request_dates],
+        'message': _spare_t(
+            'Охирги {} кунда бу эҳтиёт қисм ушбу техника учун {} марта тасдиқланган: {}',
+            'За последние {} дней эта деталь для этой техники уже утверждалась {} раз: {}'
+        ).format(RULE3_WINDOW_DAYS, len(request_dates), dates_text),
+    }
+
+
 def _check_rule3_frequency(equipment_id, spare_part_id, exclude_request_id=None):
     """Rule 3 — frequency: same equipment + same canonical part on more than
     RULE3_MAX_OCCURRENCES_90D approved requests in the trailing window.
@@ -518,68 +624,27 @@ def _check_rule3_frequency(equipment_id, spare_part_id, exclude_request_id=None)
     if exclude_request_id:
         q = q.filter(SparePartRequest.id != exclude_request_id)
     # distinct: the same part listed twice on one request counts once.
-    rows = q.distinct().order_by(SparePartRequest.request_date.desc()).all()
-    if len(rows) <= RULE3_MAX_OCCURRENCES_90D:
-        return None
-    shown = [r.request_date.strftime('%d.%m.%Y') for r in rows[:8]]
-    dates_text = ', '.join(shown) + ('…' if len(rows) > 8 else '')
-    return {
-        'rule': 3,
-        'severity': 'yellow',
-        'count': len(rows),
-        'dates': [r.request_date.isoformat() for r in rows],
-        'message': _spare_t(
-            'Охирги {} кунда бу эҳтиёт қисм ушбу техника учун {} марта тасдиқланган: {}',
-            'За последние {} дней эта деталь для этой техники уже утверждалась {} раз: {}'
-        ).format(RULE3_WINDOW_DAYS, len(rows), dates_text),
-    }
+    # [REASON]: CYCLE-2-3 Part 9 — the id.desc() tiebreaker makes same-date
+    # ordering deterministic (previously unspecified by SQLite), so the
+    # per-pair and batched paths cannot disagree on cosmetic date order.
+    rows = q.distinct().order_by(SparePartRequest.request_date.desc(),
+                                 SparePartRequest.id.desc()).all()
+    return _rule3_result([r.request_date for r in rows])
 
 
-def _check_rule4_cost_anomaly(equipment_id, spare_part_id, exclude_request_id=None):
-    """Rule 4 — category cost anomaly: current calendar month approved+confirmed
-    spend for this equipment in this item's category vs the average of the
-    RULE4_BASELINE_MONTHS months before the current one.
+def _rule4_result(part, cost_rows, today):
+    """Build the rule-4 warning dict from that category's (price, quantity,
+    request_date) rows in the baseline-to-current window.
 
-    [REASON]: SPARE-STAGE2 — spend counts only authorized money (approved or
-    issued request + confirmed price, same rule as the SPARE-REPORTS cost
-    tables). No warning without at least one prior month of spend — a first-ever
-    purchase in a category has nothing to compare against.
-
-    [REASON]: SP-F-023 — the baseline average divides by the number of prior
-    months that actually had spend (len(prior_months_with_data)), not by the
-    fixed RULE4_BASELINE_MONTHS window size: with real spend in only one of
-    the three prior months, dividing by three artificially diluted the
-    baseline to a third and made the anomaly trigger fire far too easily.
-
-    [REASON]: SPARE-STAGE2-QA-FIX3 — 'issued' requests count exactly like
-    'approved' ones (issued is reachable only from approved and means the money
-    was actually spent), so both statuses feed the cost baseline.
+    [REASON]: CYCLE-2-3 Part 9 — shared by the per-pair query path and the
+    batched path so both produce identical dicts by construction. Contains
+    the entire original aggregation, unchanged.
     """
-    part = SparePart.query.get(spare_part_id)
-    if part is None or part.category_id is None:
-        return None
-    today = date.today()
     month_start = today.replace(day=1)
-    next_month_start = _month_start_back(today, -1)
-    baseline_start = _month_start_back(today, RULE4_BASELINE_MONTHS)
-    q = (db.session.query(SparePartRequestItem.price,
-                          SparePartRequestItem.quantity,
-                          SparePartRequest.request_date)
-         .join(SparePartRequest,
-               SparePartRequestItem.request_id == SparePartRequest.id)
-         .join(SparePart, SparePartRequestItem.spare_part_id == SparePart.id)
-         .filter(SparePartRequest.equipment_id == equipment_id,
-                 SparePart.category_id == part.category_id,
-                 SparePartRequest.status.in_(('approved', 'issued')),
-                 SparePartRequestItem.price_status == 'confirmed',
-                 SparePartRequest.request_date >= baseline_start,
-                 SparePartRequest.request_date < next_month_start))
-    if exclude_request_id:
-        q = q.filter(SparePartRequest.id != exclude_request_id)
     current_total = 0.0
     prior_total = 0.0
     prior_months_with_data = set()
-    for price, quantity, req_date in q.all():
+    for price, quantity, req_date in cost_rows:
         cost = float(price or 0) * float(quantity or 0)
         # [REASON]: SP-F-016 defense-in-depth — these are already-stored
         # values, not raw input, but one corrupted NaN row must not poison
@@ -615,36 +680,55 @@ def _check_rule4_cost_anomaly(equipment_id, spare_part_id, exclude_request_id=No
     }
 
 
-def _check_rule6_recent_rejection(equipment_id, spare_part_id, exclude_request_id=None):
-    """Rule 6 — recently rejected, resubmitted: same equipment + same part was
-    on a request rejected within the trailing RULE6_REJECTED_LOOKBACK_DAYS.
+def _check_rule4_cost_anomaly(equipment_id, spare_part_id, exclude_request_id=None):
+    """Rule 4 — category cost anomaly: current calendar month approved+confirmed
+    spend for this equipment in this item's category vs the average of the
+    RULE4_BASELINE_MONTHS months before the current one.
 
-    The warning carries the rejection date and the reviewer's comment so the
-    approver sees WHY it was rejected last time.
+    [REASON]: SPARE-STAGE2 — spend counts only authorized money (approved or
+    issued request + confirmed price, same rule as the SPARE-REPORTS cost
+    tables). No warning without at least one prior month of spend — a first-ever
+    purchase in a category has nothing to compare against.
+
+    [REASON]: SP-F-023 — the baseline average divides by the number of prior
+    months that actually had spend (len(prior_months_with_data)), not by the
+    fixed RULE4_BASELINE_MONTHS window size: with real spend in only one of
+    the three prior months, dividing by three artificially diluted the
+    baseline to a third and made the anomaly trigger fire far too easily.
+
+    [REASON]: SPARE-STAGE2-QA-FIX3 — 'issued' requests count exactly like
+    'approved' ones (issued is reachable only from approved and means the money
+    was actually spent), so both statuses feed the cost baseline.
     """
-    cutoff_date = date.today() - timedelta(days=RULE6_REJECTED_LOOKBACK_DAYS)
-    # [REASON]: SP-F-010 — both comparison paths use the same calendar-day
-    # granularity: cutoff_dt is midnight of the cutoff day, so a rejection at
-    # ANY time on that day matches, exactly like the whole-day request_date
-    # fallback. Previously reviewed_at was compared against an exact UTC
-    # timestamp while the fallback used whole days, so the boundary day
-    # behaved differently depending on which field was populated.
-    cutoff_dt = datetime.combine(cutoff_date, datetime.min.time())
-    q = (db.session.query(SparePartRequest)
-         .join(SparePartRequestItem,
+    part = SparePart.query.get(spare_part_id)
+    if part is None or part.category_id is None:
+        return None
+    today = date.today()
+    next_month_start = _month_start_back(today, -1)
+    baseline_start = _month_start_back(today, RULE4_BASELINE_MONTHS)
+    q = (db.session.query(SparePartRequestItem.price,
+                          SparePartRequestItem.quantity,
+                          SparePartRequest.request_date)
+         .join(SparePartRequest,
                SparePartRequestItem.request_id == SparePartRequest.id)
+         .join(SparePart, SparePartRequestItem.spare_part_id == SparePart.id)
          .filter(SparePartRequest.equipment_id == equipment_id,
-                 SparePartRequestItem.spare_part_id == spare_part_id,
-                 SparePartRequest.status == 'rejected',
-                 # [REASON]: reviewed_at is when the rejection actually happened;
-                 # request_date is only the fallback for legacy rows without it.
-                 db.or_(SparePartRequest.reviewed_at >= cutoff_dt,
-                        db.and_(SparePartRequest.reviewed_at.is_(None),
-                                SparePartRequest.request_date >= cutoff_date))))
+                 SparePart.category_id == part.category_id,
+                 SparePartRequest.status.in_(('approved', 'issued')),
+                 SparePartRequestItem.price_status == 'confirmed',
+                 SparePartRequest.request_date >= baseline_start,
+                 SparePartRequest.request_date < next_month_start))
     if exclude_request_id:
         q = q.filter(SparePartRequest.id != exclude_request_id)
-    rejected = q.order_by(SparePartRequest.reviewed_at.desc(),
-                          SparePartRequest.id.desc()).first()
+    return _rule4_result(part, q.all(), today)
+
+
+def _rule6_result(rejected):
+    """Build the rule-6 warning dict from the most recent matching rejection.
+
+    [REASON]: CYCLE-2-3 Part 9 — shared by the per-pair query path and the
+    batched path so both produce identical dicts by construction.
+    """
     if rejected is None:
         return None
     rejected_on = (rejected.reviewed_at.date() if rejected.reviewed_at
@@ -664,6 +748,45 @@ def _check_rule6_recent_rejection(equipment_id, spare_part_id, exclude_request_i
     }
 
 
+def _rule6_cutoffs(today=None):
+    """(cutoff_dt, cutoff_date) pair for rule 6 — one definition for both paths."""
+    cutoff_date = (today or date.today()) - timedelta(days=RULE6_REJECTED_LOOKBACK_DAYS)
+    # [REASON]: SP-F-010 — both comparison paths use the same calendar-day
+    # granularity: cutoff_dt is midnight of the cutoff day, so a rejection at
+    # ANY time on that day matches, exactly like the whole-day request_date
+    # fallback. Previously reviewed_at was compared against an exact UTC
+    # timestamp while the fallback used whole days, so the boundary day
+    # behaved differently depending on which field was populated.
+    cutoff_dt = datetime.combine(cutoff_date, datetime.min.time())
+    return cutoff_dt, cutoff_date
+
+
+def _check_rule6_recent_rejection(equipment_id, spare_part_id, exclude_request_id=None):
+    """Rule 6 — recently rejected, resubmitted: same equipment + same part was
+    on a request rejected within the trailing RULE6_REJECTED_LOOKBACK_DAYS.
+
+    The warning carries the rejection date and the reviewer's comment so the
+    approver sees WHY it was rejected last time.
+    """
+    cutoff_dt, cutoff_date = _rule6_cutoffs()
+    q = (db.session.query(SparePartRequest)
+         .join(SparePartRequestItem,
+               SparePartRequestItem.request_id == SparePartRequest.id)
+         .filter(SparePartRequest.equipment_id == equipment_id,
+                 SparePartRequestItem.spare_part_id == spare_part_id,
+                 SparePartRequest.status == 'rejected',
+                 # [REASON]: reviewed_at is when the rejection actually happened;
+                 # request_date is only the fallback for legacy rows without it.
+                 db.or_(SparePartRequest.reviewed_at >= cutoff_dt,
+                        db.and_(SparePartRequest.reviewed_at.is_(None),
+                                SparePartRequest.request_date >= cutoff_date))))
+    if exclude_request_id:
+        q = q.filter(SparePartRequest.id != exclude_request_id)
+    rejected = q.order_by(SparePartRequest.reviewed_at.desc(),
+                          SparePartRequest.id.desc()).first()
+    return _rule6_result(rejected)
+
+
 def _model_display_name(model):
     """Model label honouring the viewer's language (name_uz when set + uz)."""
     if model is None:
@@ -671,6 +794,37 @@ def _model_display_name(model):
     if _spare_lang() == 'uz' and (model.name_uz or '').strip():
         return model.name_uz
     return model.name or ''
+
+
+def _part_display_name(part, fallback=''):
+    """Catalog part label honouring the viewer's language.
+
+    [REASON]: CYCLE-2-3 Part 7 — the Uzbek interface shows name_uz when the
+    owner has filled it in, and falls back to the canonical (Russian) `name`
+    otherwise. This fallback is the intended long-term behavior, not a bug:
+    translations arrive over time through the catalog UI and a missing one
+    must never blank a part name. Same shape as _model_display_name above.
+    """
+    if part is None:
+        return fallback
+    if _spare_lang() == 'uz' and (getattr(part, 'name_uz', '') or '').strip():
+        return part.name_uz
+    return part.name or fallback
+
+
+def _snapshot_display_name(snapshot_name, part, lang=None):
+    """Display override for a STORED snapshot name (request/act item rows).
+
+    [REASON]: CYCLE-2-3 Part 7 — only the Uzbek interface with a non-empty
+    catalog alias overrides the snapshot; in every other case the snapshot
+    is returned byte-identical, so Russian output and unlinked free-text
+    items are completely unchanged. Stored values are never rewritten.
+    """
+    lang = lang or _spare_lang()
+    if (lang == 'uz' and part is not None
+            and (getattr(part, 'name_uz', '') or '').strip()):
+        return part.name_uz
+    return snapshot_name
 
 
 def _check_rule5_incompatibility(equipment_id, spare_part_id, exclude_request_id=None):
@@ -711,6 +865,15 @@ def _check_rule5_incompatibility(equipment_id, spare_part_id, exclude_request_id
     if model_id in compatible_ids:
         return None
     model = EquipmentModel.query.get(model_id)
+    return _rule5_result(model_id, model)
+
+
+def _rule5_result(model_id, model):
+    """Build the rule-5 warning dict for a known-incompatible model.
+
+    [REASON]: CYCLE-2-3 Part 9 — shared by the per-pair query path and the
+    batched path so both produce identical dicts by construction.
+    """
     model_name = _model_display_name(model) or ('#%s' % model_id)
     return {
         'rule': 5,
@@ -744,6 +907,175 @@ def _check_extra_warnings(equipment_id, spare_part_id, exclude_request_id=None):
         if result:
             warnings.append(result)
     return warnings
+
+
+# ─── CYCLE-2-3 Part 9: batched warning engines ────────────────────────────────
+# [REASON]: the detail page ran _check_repeat_orders + 4 rule queries PER
+# ITEM (N+1). The batched versions below run a FIXED number of queries for
+# any item count and feed the exact same result-builder functions
+# (_rule3_result/_rule4_result/_rule5_result/_rule6_result) as the per-pair
+# engines, so their output is identical by construction; equivalence against
+# the per-item originals is additionally asserted by tests and the
+# scripts/spare_parts_nplus1_benchmark.py synthetic-volume run.
+
+def _check_repeat_orders_batch(equipment_id, spare_part_ids, exclude_request_id=None):
+    """Rules 1-2 for MANY parts of one request in a single query.
+
+    Returns {spare_part_id: result-dict} with exactly the dict shape of
+    _check_repeat_orders (today-anchored, non-rejected — the live detail
+    contract; the report's strict/reproducible variant has its own batch in
+    _reports_repeat_rows). Parts with no matches map to the empty result.
+    """
+    empty = {'severity': None, 'days_since': None, 'history': []}
+    results = {pid: dict(empty, history=[]) for pid in spare_part_ids}
+    if not equipment_id or not spare_part_ids:
+        return results
+    as_of_date = date.today()
+    window_start = as_of_date - timedelta(days=90)
+    q = (db.session.query(SparePartRequestItem, SparePartRequest)
+         .join(SparePartRequest,
+               SparePartRequestItem.request_id == SparePartRequest.id)
+         .filter(SparePartRequest.equipment_id == equipment_id,
+                 SparePartRequestItem.spare_part_id.in_(set(spare_part_ids)),
+                 SparePartRequest.request_date >= window_start,
+                 SparePartRequest.status != 'rejected'))
+    if exclude_request_id:
+        q = q.filter(SparePartRequest.id != exclude_request_id)
+    rows = q.order_by(SparePartRequest.request_date.desc(),
+                      SparePartRequest.id.desc()).all()
+    grouped = {}
+    for item, req in rows:
+        grouped.setdefault(item.spare_part_id, []).append((item, req))
+    for pid, pair_rows in grouped.items():
+        history = [{
+            'request_id': req.id,
+            'request_date': _date_iso(req.request_date),
+            'status': req.status,
+            'quantity': item.quantity,
+            'unit': item.unit or '',
+        } for item, req in pair_rows]
+        days_since = (as_of_date - pair_rows[0][1].request_date).days
+        if days_since <= 7:
+            severity = 'red'
+        elif days_since <= 30:
+            severity = 'yellow'
+        else:
+            severity = None
+        results[pid] = {'severity': severity, 'days_since': days_since,
+                        'history': history}
+    return results
+
+
+def _check_extra_warnings_batch(equipment_id, spare_part_ids, exclude_request_id=None):
+    """Rules 3/4/5/6 for MANY parts of one request in a fixed number of queries.
+
+    Returns {spare_part_id: [warning dicts]} equal to calling
+    _check_extra_warnings once per part (same per-part rule order 5,3,4,6).
+    """
+    spare_part_ids = [pid for pid in dict.fromkeys(spare_part_ids) if pid]
+    if not equipment_id or not spare_part_ids:
+        return {pid: [] for pid in spare_part_ids}
+    today = date.today()
+    parts = {p.id: p for p in
+             SparePart.query.options(joinedload(SparePart.category_ref))
+             .filter(SparePart.id.in_(spare_part_ids)).all()}
+
+    # Rule 5 — compatibility rows for every part at once; equipment/model
+    # resolved once (they are the same for every item of the request).
+    compat = {}
+    for pid, model_id in (db.session.query(
+            SparePartCompatibility.spare_part_id,
+            SparePartCompatibility.equipment_model_id)
+            .filter(SparePartCompatibility.spare_part_id.in_(spare_part_ids)).all()):
+        compat.setdefault(pid, set()).add(model_id)
+    eq = Equipment.query.get(equipment_id)
+    eq_model_id = eq.model_id if eq else None
+    eq_model = EquipmentModel.query.get(eq_model_id) if eq_model_id else None
+
+    # Rule 3 — distinct (request, date) matches for every part at once.
+    r3_window_start = today - timedelta(days=RULE3_WINDOW_DAYS)
+    r3_q = (db.session.query(SparePartRequest.id,
+                             SparePartRequest.request_date,
+                             SparePartRequestItem.spare_part_id)
+            .join(SparePartRequestItem,
+                  SparePartRequestItem.request_id == SparePartRequest.id)
+            .filter(SparePartRequest.equipment_id == equipment_id,
+                    SparePartRequestItem.spare_part_id.in_(spare_part_ids),
+                    SparePartRequest.request_date >= r3_window_start,
+                    SparePartRequest.status.in_(('approved', 'issued'))))
+    if exclude_request_id:
+        r3_q = r3_q.filter(SparePartRequest.id != exclude_request_id)
+    r3_rows = {}
+    for rid_, rdate, pid in r3_q.distinct().all():
+        r3_rows.setdefault(pid, []).append((rdate, rid_))
+    for pid in r3_rows:
+        r3_rows[pid].sort(key=lambda t: (t[0], t[1]), reverse=True)
+
+    # Rule 4 — one cost query covering every category the items belong to.
+    cat_ids = {p.category_id for p in parts.values() if p.category_id is not None}
+    r4_rows = {}
+    if cat_ids:
+        next_month_start = _month_start_back(today, -1)
+        baseline_start = _month_start_back(today, RULE4_BASELINE_MONTHS)
+        r4_q = (db.session.query(SparePartRequestItem.price,
+                                 SparePartRequestItem.quantity,
+                                 SparePartRequest.request_date,
+                                 SparePart.category_id)
+                .join(SparePartRequest,
+                      SparePartRequestItem.request_id == SparePartRequest.id)
+                .join(SparePart, SparePartRequestItem.spare_part_id == SparePart.id)
+                .filter(SparePartRequest.equipment_id == equipment_id,
+                        SparePart.category_id.in_(cat_ids),
+                        SparePartRequest.status.in_(('approved', 'issued')),
+                        SparePartRequestItem.price_status == 'confirmed',
+                        SparePartRequest.request_date >= baseline_start,
+                        SparePartRequest.request_date < next_month_start))
+        if exclude_request_id:
+            r4_q = r4_q.filter(SparePartRequest.id != exclude_request_id)
+        for price, quantity, req_date, cat_id in r4_q.all():
+            r4_rows.setdefault(cat_id, []).append((price, quantity, req_date))
+
+    # Rule 6 — all matching rejections for every part at once; newest per part.
+    cutoff_dt, cutoff_date = _rule6_cutoffs(today)
+    r6_q = (db.session.query(SparePartRequest, SparePartRequestItem.spare_part_id)
+            .join(SparePartRequestItem,
+                  SparePartRequestItem.request_id == SparePartRequest.id)
+            .filter(SparePartRequest.equipment_id == equipment_id,
+                    SparePartRequestItem.spare_part_id.in_(spare_part_ids),
+                    SparePartRequest.status == 'rejected',
+                    db.or_(SparePartRequest.reviewed_at >= cutoff_dt,
+                           db.and_(SparePartRequest.reviewed_at.is_(None),
+                                   SparePartRequest.request_date >= cutoff_date))))
+    if exclude_request_id:
+        r6_q = r6_q.filter(SparePartRequest.id != exclude_request_id)
+    r6_latest = {}
+    for req, pid in r6_q.all():
+        # Same pick as ORDER BY reviewed_at DESC, id DESC LIMIT 1 (SQLite
+        # sorts NULL reviewed_at last in DESC order).
+        key = (req.reviewed_at is not None, req.reviewed_at or datetime.min, req.id)
+        if pid not in r6_latest or key > r6_latest[pid][0]:
+            r6_latest[pid] = (key, req)
+
+    results = {}
+    for pid in spare_part_ids:
+        part = parts.get(pid)
+        warnings = []
+        # Rule 5 — same silence conditions as _check_rule5_incompatibility.
+        compatible_ids = compat.get(pid)
+        if compatible_ids and eq_model_id and eq_model_id not in compatible_ids:
+            warnings.append(_rule5_result(eq_model_id, eq_model))
+        r3 = _rule3_result([d for d, _rid in r3_rows.get(pid, [])])
+        if r3:
+            warnings.append(r3)
+        if part is not None and part.category_id is not None:
+            r4 = _rule4_result(part, r4_rows.get(part.category_id, []), today)
+            if r4:
+                warnings.append(r4)
+        r6 = _rule6_result(r6_latest[pid][1] if pid in r6_latest else None)
+        if r6:
+            warnings.append(r6)
+        results[pid] = warnings
+    return results
 
 
 def _photo_required(item):
@@ -1378,14 +1710,21 @@ def detail(rid):
     # request. Computed per item while the request is under review; rules 1-2
     # come from the untouched SPARE-STAGE1 engine, 3/4/6 from the new checks.
     item_warnings = {}
-    if spr.status == 'submitted' and (can_price or can_approve):
+    if spr.status == 'submitted' and (can_price or can_approve) and spr.equipment_id:
+        # [REASON]: CYCLE-2-3 Part 9 — batched: a fixed number of queries for
+        # the whole request instead of ~5 queries per item. Output equality
+        # with the per-item engines is covered by tests.
+        part_ids = [item.spare_part_id for item in spr.items if item.spare_part_id]
+        base_map = _check_repeat_orders_batch(spr.equipment_id, part_ids,
+                                              exclude_request_id=spr.id)
+        extra_map = _check_extra_warnings_batch(spr.equipment_id, part_ids,
+                                                exclude_request_id=spr.id)
         for item in spr.items:
-            if not spr.equipment_id or not item.spare_part_id:
+            if not item.spare_part_id:
                 continue
-            base = _check_repeat_orders(spr.equipment_id, item.spare_part_id,
-                                        exclude_request_id=spr.id)
-            extra = _check_extra_warnings(spr.equipment_id, item.spare_part_id,
-                                          exclude_request_id=spr.id)
+            base = base_map.get(item.spare_part_id) or {
+                'severity': None, 'days_since': None, 'history': []}
+            extra = extra_map.get(item.spare_part_id, [])
             if base['severity'] or extra:
                 item_warnings[item.id] = {'base': base, 'extra': extra}
     return render_template('spare_part_detail.html',
@@ -1455,7 +1794,10 @@ def approve_request(rid):
     # 'spare_parts_approve' permission; has_module_access() keeps the admin
     # bypass, so admins retain access and nobody else gains it automatically.
     if not current_user.has_module_access('spare_parts_approve'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('approve request #{}'.format(rid),
+                    entity_type='spare_part_request', entity_id=rid,
+                    entity_label='Request #{}'.format(rid))
     spr = SparePartRequest.query.get_or_404(rid)
     _spare_check_request_access(spr)
     if spr.status != 'submitted':
@@ -1502,7 +1844,10 @@ def approve_request(rid):
 def reject_request(rid):
     # [REASON]: SPARE-STAGE1 — same permission as approval (see approve_request).
     if not current_user.has_module_access('spare_parts_approve'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('reject request #{}'.format(rid),
+                    entity_type='spare_part_request', entity_id=rid,
+                    entity_label='Request #{}'.format(rid))
     spr = SparePartRequest.query.get_or_404(rid)
     _spare_check_request_access(spr)
     if spr.status != 'submitted':
@@ -1543,7 +1888,9 @@ def _price_action_target(rid, item_id):
     # [REASON]: SPARE-STAGE1 — price actions require the explicit
     # 'spare_parts_price_confirm' permission (admin passes automatically).
     if not current_user.has_module_access('spare_parts_price_confirm'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('price action on request #{} item #{}'.format(rid, item_id),
+                    entity_type='spare_part_request_item', entity_id=item_id)
     # Prices are set/confirmed while the request is under review.
     if spr.status != 'submitted':
         abort(400)
@@ -1860,14 +2207,20 @@ def _search_catalog_parts(query, limit=FUZZY_SEARCH_MAX_RESULTS):
              .all())
     exact, substr, fuzzy = [], [], []
     for part in parts:
-        name_norm = _norm_search_text(part.name)
-        if not name_norm:
+        # [REASON]: CYCLE-2-3 Part 7 — the query is matched against BOTH the
+        # canonical name and the optional Uzbek alias (best score wins), so
+        # a part found by its Uzbek alias still resolves to the same catalog
+        # entry. Parts without an alias behave exactly as before.
+        norms = [n for n in (_norm_search_text(part.name),
+                             _norm_search_text(getattr(part, 'name_uz', '') or ''))
+                 if n]
+        if not norms:
             continue
-        if name_norm == query_norm:
+        if any(n == query_norm for n in norms):
             exact.append((part, 'exact', 1.0))
             continue
-        score = _fuzzy_score(query_norm, name_norm)
-        if query_norm in name_norm:
+        score = max(_fuzzy_score(query_norm, n) for n in norms)
+        if any(query_norm in n for n in norms):
             substr.append((part, 'substring', score))
         elif score >= FUZZY_MATCH_MIN_RATIO:
             fuzzy.append((part, 'fuzzy', score))
@@ -1890,8 +2243,11 @@ def api_catalog_search():
         return jsonify([])
     return jsonify([
         {
+            # [REASON]: CYCLE-2-3 Part 7 — suggestions show the viewer's
+            # language (alias in uz when set); clicking one re-runs the
+            # form's exact-match flow against the same display value.
             'id': part.id,
-            'name': part.name,
+            'name': _part_display_name(part),
             'part_number': part.part_number or '',
             'unit': part.unit or 'dona',
             'kind': (part.category_ref.kind if part.category_ref else ''),
@@ -2017,7 +2373,8 @@ def _sku_duplicate_response(part_id, race=False):
 @module_required('spare_parts')
 def sku_save():
     if not current_user.has_module_access('spare_parts_catalog_manage'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('save SKU', entity_type='spare_part_sku')
     sku_id = request.form.get('id', type=int)
     spare_part_id = request.form.get('spare_part_id', type=int)
     brand = (request.form.get('brand', '') or '').strip()
@@ -2311,7 +2668,9 @@ def inventory_warehouse_create():
 def inventory_movement_create():
     """Manual receipt / adjustment entry."""
     if not current_user.has_module_access('spare_parts_inventory_manage'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('create inventory movement',
+                    entity_type='spare_part_inventory_movement')
     warehouse_id = request.form.get('warehouse_id', type=int)
     warehouse = SparePartWarehouse.query.get_or_404(warehouse_id)
     if not current_user.can_access_org(warehouse.organization_id):
@@ -2480,7 +2839,10 @@ def issue_request(rid):
     # matching the real-world split between "approve the purchase" and
     # "physically hand it over from the warehouse".
     if not current_user.has_module_access('spare_parts_issue'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('issue request #{}'.format(rid),
+                    entity_type='spare_part_request', entity_id=rid,
+                    entity_label='Request #{}'.format(rid))
     spr = SparePartRequest.query.get_or_404(rid)
     _spare_check_request_access(spr)
     # [REASON]: 'issued' is reachable ONLY from 'approved' — never from any
@@ -2608,7 +2970,9 @@ def issue_request(rid):
         from spare_parts_pdf import generate_write_off_act_pdf
         fname = '{}_{}.pdf'.format(act.id, act.act_number)
         act_pdf_full_path = os.path.join(_acts_dir(), fname)
-        generate_write_off_act_pdf(act, act_pdf_full_path, lang=_spare_lang())
+        # [REASON]: RE-SP-010 — localized unit words in the printed act.
+        generate_write_off_act_pdf(act, act_pdf_full_path, lang=_spare_lang(),
+                                   unit_labels=_unit_labels_map())
         act.pdf_path = fname
 
         db.session.commit()
@@ -2665,7 +3029,10 @@ def act_detail(act_id):
     # migrate_spare_parts_acts_permission.py auto-grants it to existing
     # issue/approve holders so no current workflow user loses access).
     if not current_user.has_module_access('spare_parts_acts'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('view act #{}'.format(act_id),
+                    entity_type='spare_part_write_off_act', entity_id=act_id,
+                    entity_label=act.act_number)
     return render_template('spare_part_act.html',
                            act=act,
                            req=spr,
@@ -2685,7 +3052,10 @@ def act_pdf(act_id):
     # [REASON]: SP-F-002 — same explicit permission as act_detail (this is the
     # same document as a file).
     if not current_user.has_module_access('spare_parts_acts'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('download act PDF #{}'.format(act_id),
+                    entity_type='spare_part_write_off_act', entity_id=act_id,
+                    entity_label=act.act_number)
     # [REASON]: SPARE-STAGE2-QA-FIX1 — the act RECORD (number, items, prices,
     # organization, permanence/no-un-issue) is frozen at issue time and must
     # never change. Only the PRINTED rendering is regenerated fresh here, in the
@@ -2699,10 +3069,90 @@ def act_pdf(act_id):
         lang = _spare_lang()
     from spare_parts_pdf import generate_write_off_act_pdf
     buffer = io.BytesIO()
-    generate_write_off_act_pdf(act, buffer, lang=lang)
+    # [REASON]: RE-SP-010 — unit labels follow the same explicit-lang rule as
+    # the rest of this regenerated rendering (?lang= override included).
+    generate_write_off_act_pdf(act, buffer, lang=lang,
+                               unit_labels=_unit_labels_map(lang))
     buffer.seek(0)
     return send_file(buffer, mimetype='application/pdf',
                      download_name='{}.pdf'.format(act.act_number))
+
+
+# ─── CYCLE-2-3 Part 5: acts index ─────────────────────────────────────────────
+
+@spare_parts_bp.route('/acts')
+@module_required('spare_parts')
+def acts_index():
+    """Standalone browsable list of write-off acts.
+
+    [REASON]: CYCLE-2-3 Part 5 — until now acts were reachable ONLY from
+    their request's detail page; an operator with the spare_parts_acts
+    permission had no way to browse issue history without hunting through
+    individual requests. Purely additive: gated exactly like act_detail/
+    act_pdf (base module + explicit spare_parts_acts permission + org
+    scoping), no existing route changes.
+    """
+    if not current_user.has_module_access('spare_parts_acts'):
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('browse acts index', entity_type='spare_part_write_off_act')
+
+    org_id = request.args.get('org_id', type=int)
+    date_from_s = request.args.get('date_from', '')
+    date_to_s = request.args.get('date_to', '')
+
+    q = (SparePartWriteOffAct.query
+         .options(joinedload(SparePartWriteOffAct.organization),
+                  joinedload(SparePartWriteOffAct.issuer),
+                  joinedload(SparePartWriteOffAct.request)
+                  .joinedload(SparePartRequest.equipment),
+                  selectinload(SparePartWriteOffAct.items)))
+    # Same org scoping rule as the request list: non-admins see only the
+    # organizations assigned to them.
+    user_org_ids = _spare_user_org_ids()
+    if user_org_ids is not None:
+        q = q.filter(SparePartWriteOffAct.organization_id.in_(user_org_ids))
+    if org_id:
+        if not current_user.can_access_org(org_id):
+            abort(403)
+        q = q.filter(SparePartWriteOffAct.organization_id == org_id)
+    # Lenient date filters, same style as index(): a malformed value is
+    # ignored rather than failing the page.
+    if date_from_s:
+        try:
+            q = q.filter(SparePartWriteOffAct.issued_date
+                         >= datetime.strptime(date_from_s, '%Y-%m-%d').date())
+        except ValueError:
+            pass
+    if date_to_s:
+        try:
+            q = q.filter(SparePartWriteOffAct.issued_date
+                         <= datetime.strptime(date_to_s, '%Y-%m-%d').date())
+        except ValueError:
+            pass
+    acts = q.order_by(SparePartWriteOffAct.issued_date.desc(),
+                      SparePartWriteOffAct.id.desc()).all()
+
+    # Per-act grand total over snapshotted item totals (None = no confirmed
+    # price at issue time), same summation rule as spare_part_act.html.
+    act_totals = {
+        act.id: sum(float(i.total) for i in act.items if i.total is not None)
+        for act in acts
+    }
+
+    if user_org_ids is None:
+        organizations = Organization.query.order_by(Organization.sort_order).all()
+    else:
+        organizations = (Organization.query
+                         .filter(Organization.id.in_(user_org_ids))
+                         .order_by(Organization.sort_order).all())
+    return render_template('spare_parts_acts.html',
+                           acts=acts,
+                           act_totals=act_totals,
+                           org_id=org_id,
+                           date_from_s=date_from_s,
+                           date_to_s=date_to_s,
+                           organizations=organizations,
+                           lang=_spare_lang())
 
 
 # ─── Catalog ──────────────────────────────────────────────────────────────────
@@ -2750,9 +3200,13 @@ def catalog():
 @module_required('spare_parts')
 def catalog_save():
     if not current_user.has_module_access('spare_parts_catalog_manage'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('save catalog part', entity_type='spare_part_catalog')
     pid = request.form.get('id', type=int)
     name = request.form.get('name', '').strip()
+    # [REASON]: CYCLE-2-3 Part 7 — optional Uzbek alias; empty means "not
+    # translated yet" and is stored as NULL so displays fall back to name.
+    name_uz = (request.form.get('name_uz', '') or '').strip() or None
     part_number = request.form.get('part_number', '').strip()
     unit = request.form.get('unit', 'dona').strip()
     # [REASON]: SPARE-STAGE1 — the form now sends category_id (managed
@@ -2781,12 +3235,14 @@ def catalog_save():
         part = SparePart.query.get_or_404(pid)
         before = _catalog_snapshot(part)
         part.name = name
+        part.name_uz = name_uz
         part.part_number = part_number
         part.unit = unit
         part.category_id = category_id
     else:
-        part = SparePart(name=name, part_number=part_number, unit=unit,
-                         category_id=category_id, created_by=current_user.id)
+        part = SparePart(name=name, name_uz=name_uz, part_number=part_number,
+                         unit=unit, category_id=category_id,
+                         created_by=current_user.id)
         db.session.add(part)
         created = True
     db.session.flush()
@@ -2806,11 +3262,45 @@ def catalog_save():
     return redirect(url_for('spare_parts.catalog'))
 
 
+@spare_parts_bp.route('/catalog/<int:pid>/name-uz', methods=['POST'])
+@module_required('spare_parts')
+def catalog_name_uz_save(pid):
+    """Inline per-row edit of a part's Uzbek alias (CYCLE-2-3 Part 7).
+
+    [REASON]: the owner fills translations in over time; a dedicated
+    single-field route lets the catalog table offer one text input per row
+    without round-tripping every other field through the main edit form.
+    Same spare_parts_catalog_manage gate as every other catalog mutation.
+    """
+    if not current_user.has_module_access('spare_parts_catalog_manage'):
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('save catalog part Uzbek alias #{}'.format(pid),
+                    entity_type='spare_part_catalog', entity_id=pid)
+    part = SparePart.query.get_or_404(pid)
+    before = _catalog_snapshot(part)
+    part.name_uz = (request.form.get('name_uz', '') or '').strip() or None
+    after = _catalog_snapshot(part)
+    _audit_spare(
+        'spare_part_catalog_updated',
+        entity_type='spare_part_catalog',
+        entity_id=part.id,
+        entity_label=part.name,
+        before=before,
+        after=after,
+        changes=diff_dict(before, after),
+        description='Spare part Uzbek alias saved'
+    )
+    db.session.commit()
+    flash(_spare_t('Сақланди', 'Сохранено'), 'success')
+    return redirect(url_for('spare_parts.catalog'))
+
+
 @spare_parts_bp.route('/catalog/categories/save', methods=['POST'])
 @module_required('spare_parts')
 def catalog_category_save():
     if not current_user.has_module_access('spare_parts_catalog_manage'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('save catalog category', entity_type='spare_part_category')
     cid = request.form.get('id', type=int)
     name_ru = (request.form.get('name_ru', '') or '').strip()
     name_uz = (request.form.get('name_uz', '') or '').strip()
@@ -2856,7 +3346,9 @@ def catalog_category_save():
 def catalog_review_approve(pid):
     """Approve a pending_review candidate as a new canonical catalog entry."""
     if not current_user.has_module_access('spare_parts_catalog_manage'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('approve catalog candidate #{}'.format(pid),
+                    entity_type='spare_part_catalog', entity_id=pid)
     part = SparePart.query.get_or_404(pid)
     if part.status != 'pending_review':
         abort(400)
@@ -2893,7 +3385,9 @@ def catalog_review_approve(pid):
 def catalog_review_merge(pid):
     """Merge a pending_review candidate into an existing canonical entry."""
     if not current_user.has_module_access('spare_parts_catalog_manage'):
-        abort(403)
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('merge catalog candidate #{}'.format(pid),
+                    entity_type='spare_part_catalog', entity_id=pid)
     part = SparePart.query.get_or_404(pid)
     if part.status != 'pending_review':
         abort(400)
@@ -3208,36 +3702,97 @@ def _maintenance_due_rows(org_ids=None):
              .options(joinedload(SparePartMaintenanceNorm.spare_part),
                       joinedload(SparePartMaintenanceNorm.equipment_model))
              .all())
+    norms = [n for n in norms if n.interval_hours and n.interval_hours > 0]
+    if not norms:
+        return due
+    part_ids = {n.spare_part_id for n in norms}
+
+    # [REASON]: CYCLE-2-3 Part 9 — batched: previously every norm ran its own
+    # anchor-set query and every candidate machine two more queries (last
+    # replacement date + hours since), i.e. 1 + N_norms + 2×N_pairs queries.
+    # Now: ONE grouped query yields every (equipment, part) pair's newest
+    # issue date (the anchor), and ONE more fetches the per-day engine-hour
+    # totals of the anchored machines after the oldest anchor; per-pair
+    # "hours strictly after the anchor" is then a suffix-sum lookup in
+    # Python. The anchor-only/never-issued silence rule is preserved because
+    # pairs without an act never appear in the anchor query. Output equality
+    # with the per-pair helpers is asserted by tests.
+    anchor_rows = (db.session.query(
+            SparePartRequest.equipment_id,
+            SparePartRequestItem.spare_part_id,
+            func.max(SparePartWriteOffAct.issued_date))
+        .join(SparePartWriteOffAct,
+              SparePartWriteOffAct.request_id == SparePartRequest.id)
+        .join(SparePartWriteOffActItem,
+              SparePartWriteOffActItem.act_id == SparePartWriteOffAct.id)
+        .join(SparePartRequestItem,
+              SparePartWriteOffActItem.request_item_id == SparePartRequestItem.id)
+        .filter(SparePartRequestItem.spare_part_id.in_(part_ids),
+                SparePartRequest.equipment_id.isnot(None))
+        .group_by(SparePartRequest.equipment_id,
+                  SparePartRequestItem.spare_part_id)
+        .all())
+    # (equipment_id, part_id) -> anchor date
+    pair_anchor = {(eq_id, part_id): anchor
+                   for eq_id, part_id, anchor in anchor_rows}
+    if not pair_anchor:
+        return due
+    anchored_eq_ids = {eq_id for eq_id, _p in pair_anchor}
+    min_anchor = min(pair_anchor.values())
+    day_rows = (db.session.query(EngineHoursRecord.equipment_id,
+                                 EngineHoursRecord.work_date,
+                                 func.sum(EngineHoursRecord.engine_hours))
+                .filter(EngineHoursRecord.equipment_id.in_(anchored_eq_ids),
+                        EngineHoursRecord.work_date > min_anchor)
+                .group_by(EngineHoursRecord.equipment_id,
+                          EngineHoursRecord.work_date)
+                .all())
+    per_eq_days = {}
+    for eq_id, work_date, day_hours in day_rows:
+        per_eq_days.setdefault(eq_id, []).append((work_date, float(day_hours or 0.0)))
+    # Per equipment: dates ascending + suffix sums, so "hours after anchor"
+    # is one bisect instead of one SUM query per (equipment, part) pair.
+    per_eq_index = {}
+    for eq_id, days in per_eq_days.items():
+        days.sort()
+        dates = [d for d, _h in days]
+        suffix = [0.0] * (len(days) + 1)
+        for i in range(len(days) - 1, -1, -1):
+            suffix[i] = suffix[i + 1] + days[i][1]
+        per_eq_index[eq_id] = (dates, suffix)
+
+    def _hours_after(eq_id, anchor):
+        dates_suffix = per_eq_index.get(eq_id)
+        if not dates_suffix:
+            return 0.0
+        dates, suffix = dates_suffix
+        return suffix[bisect.bisect_right(dates, anchor)]
+
+    pair_data = {key: (anchor, _hours_after(key[0], anchor))
+                 for key, anchor in pair_anchor.items()}
+
+    # One equipment fetch for every anchored machine; the per-norm
+    # active/model/org filters are applied per pair below, exactly as the
+    # per-norm SQL filters did. joinedload keeps eq.model from lazy-loading
+    # per row in the template.
+    eq_map = {e.id: e for e in
+              Equipment.query.options(joinedload(Equipment.model))
+              .filter(Equipment.id.in_({eq_id for eq_id, _p in pair_data}))
+              .all()}
+
     for norm in norms:
-        if not norm.interval_hours or norm.interval_hours <= 0:
-            continue
-        # Candidate machines = those ever issued this part (i.e. have an anchor),
-        # optionally narrowed to the norm's model. Anchor-set query keeps this
-        # naturally silent for parts never issued anywhere.
-        anchor_eq_q = (db.session.query(SparePartRequest.equipment_id)
-                       .join(SparePartWriteOffAct,
-                             SparePartWriteOffAct.request_id == SparePartRequest.id)
-                       .join(SparePartWriteOffActItem,
-                             SparePartWriteOffActItem.act_id == SparePartWriteOffAct.id)
-                       .join(SparePartRequestItem,
-                             SparePartWriteOffActItem.request_item_id == SparePartRequestItem.id)
-                       .filter(SparePartRequestItem.spare_part_id == norm.spare_part_id,
-                               SparePartRequest.equipment_id.isnot(None))
-                       .distinct())
-        eq_ids = [r[0] for r in anchor_eq_q.all()]
-        if not eq_ids:
-            continue
-        eq_q = Equipment.query.filter(Equipment.id.in_(eq_ids),
-                                      Equipment.is_active.is_(True))
-        if norm.equipment_model_id:
-            eq_q = eq_q.filter(Equipment.model_id == norm.equipment_model_id)
-        if org_ids is not None:
-            eq_q = eq_q.filter(Equipment.organization_id.in_(org_ids))
-        for eq in eq_q.all():
-            anchor = _last_replacement_date(eq.id, norm.spare_part_id)
-            if anchor is None:
+        # Ascending id order mirrors the original per-norm query's row order
+        # so equal-overdue ties sort identically after the stable sort below.
+        for eq_id in sorted(eq_id for (eq_id, part_id) in pair_data
+                            if part_id == norm.spare_part_id):
+            eq = eq_map.get(eq_id)
+            if eq is None or eq.is_active is not True:
                 continue
-            hours_since = _hours_since_replacement(eq.id, anchor)
+            if norm.equipment_model_id and eq.model_id != norm.equipment_model_id:
+                continue
+            if org_ids is not None and eq.organization_id not in org_ids:
+                continue
+            anchor, hours_since = pair_data[(eq_id, norm.spare_part_id)]
             if hours_since < norm.interval_hours:
                 continue
             due.append({
@@ -3512,25 +4067,68 @@ def _reports_data(d_from, d_to, org_id=None, equipment_id=None, category_id=None
     # later shows identical numbers. Deliberately NOT reusing cost_lines'
     # confirmed-price filter: repeat detection is about equipment/part
     # recurrence, not cost.
+    # [REASON]: CYCLE-2-3 Part 9 — batched: ONE candidate query for the whole
+    # report instead of one _check_repeat_orders query per examined line.
+    # The per-line window/status/exclusion semantics (SP-F-009 hybrid
+    # contract) are re-applied in Python over the shared candidate set, so
+    # the resulting rows are identical to the per-line queries; equality is
+    # asserted by tests against the original per-line implementation.
+    examined = [(item, req, part) for item, req, part in lines
+                if req.status in ('approved', 'issued')
+                and req.equipment_id and item.spare_part_id]
+    candidates = {}
+    if examined:
+        min_window_start = min(req.request_date for _i, req, _p in examined) \
+            - timedelta(days=90)
+        pair_eq_ids = {req.equipment_id for _i, req, _p in examined}
+        pair_part_ids = {item.spare_part_id for item, _r, _p in examined}
+        cand_rows = (db.session.query(SparePartRequest.equipment_id,
+                                      SparePartRequestItem.spare_part_id,
+                                      SparePartRequest.id,
+                                      SparePartRequest.request_date)
+                     .join(SparePartRequestItem,
+                           SparePartRequestItem.request_id == SparePartRequest.id)
+                     .filter(SparePartRequest.equipment_id.in_(pair_eq_ids),
+                             SparePartRequestItem.spare_part_id.in_(pair_part_ids),
+                             SparePartRequest.status.in_(('approved', 'issued')),
+                             SparePartRequest.request_date >= min_window_start)
+                     .distinct().all())
+        for eq_id, part_id, cand_req_id, cand_date in cand_rows:
+            candidates.setdefault((eq_id, part_id), []).append(
+                (cand_date, cand_req_id))
+        for pair_rows in candidates.values():
+            pair_rows.sort(reverse=True)   # newest first, same as ORDER BY
+
     repeat_rows = []
-    for item, req, _part in lines:
-        if req.status not in ('approved', 'issued'):
+    for item, req, part in examined:
+        as_of = req.request_date
+        window_start = as_of - timedelta(days=90)
+        # Exact per-line re-application of the strict report contract:
+        # eligible statuses only (already in SQL), window anchored to the
+        # line's own date, strictly-earlier requests, self excluded.
+        matches = [(d, rid_) for d, rid_ in candidates.get(
+                       (req.equipment_id, item.spare_part_id), [])
+                   if d >= window_start and d < as_of and rid_ != req.id]
+        if not matches:
             continue
-        if not req.equipment_id or not item.spare_part_id:
-            continue
-        res = _check_repeat_orders(req.equipment_id, item.spare_part_id,
-                                   exclude_request_id=req.id,
-                                   as_of_date=req.request_date,
-                                   eligible_statuses=('approved', 'issued'))
-        if res['severity'] in ('red', 'yellow'):
+        days_since = (as_of - matches[0][0]).days
+        if days_since <= 7:
+            severity = 'red'
+        elif days_since <= 30:
+            severity = 'yellow'
+        else:
+            severity = None
+        if severity in ('red', 'yellow'):
             repeat_rows.append({
                 'request_id': req.id,
                 'request_date': req.request_date,
                 'equipment': eq_map.get(req.equipment_id),
                 'organization': org_map.get(req.organization_id),
-                'part_name': item.name,
-                'severity': res['severity'],
-                'days_since': res['days_since'],
+                # [REASON]: CYCLE-2-3 Part 7 — Uzbek alias override at
+                # display time only; RU output stays the stored snapshot.
+                'part_name': _snapshot_display_name(item.name, part),
+                'severity': severity,
+                'days_since': days_since,
             })
     repeat_rows.sort(key=lambda r: (0 if r['severity'] == 'red' else 1,
                                     r['days_since'] if r['days_since'] is not None else 999))
@@ -3542,12 +4140,16 @@ def _reports_data(d_from, d_to, org_id=None, equipment_id=None, category_id=None
         'request_date': req.request_date,
         'organization': org_map.get(req.organization_id),
         'equipment': eq_map.get(req.equipment_id),
-        'name': item.name,
+        # [REASON]: CYCLE-2-3 Part 7 — Uzbek alias override at display time
+        # only; RU output stays the stored snapshot.
+        'name': _snapshot_display_name(item.name, part),
         'quantity': item.quantity,
-        'unit': item.unit or '',
+        # [REASON]: RE-SP-010 — display-time localization; the stored
+        # item.unit snapshot is untouched. Unknown codes pass through raw.
+        'unit': _unit_label(item.unit or ''),
         'price': item.price,
         'total': _cost(item),
-    } for item, req, _part in top_lines]
+    } for item, req, part in top_lines]
 
     return {
         'd_from': d_from,

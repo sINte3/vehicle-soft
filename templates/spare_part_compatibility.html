@@ -28,7 +28,8 @@
         <div class="vs-card-body">
             {% if models %}
             <div style="margin-bottom:10px;">
-                <input type="text" id="compatFilter" class="vs-input" placeholder="{{ 'Фильтр моделей…' if is_ru else 'Моделларни сараланг…' }}" oninput="filterCompat()">
+                {# CYCLE-2-3 Part 3: programmatic name for the filter input — additive only. #}
+                <input type="text" id="compatFilter" class="vs-input" placeholder="{{ 'Фильтр моделей…' if is_ru else 'Моделларни сараланг…' }}" aria-label="{{ 'Фильтр моделей' if is_ru else 'Моделларни саралаш' }}" oninput="filterCompat()">
             </div>
             <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:6px;">
                 {% for m in models %}

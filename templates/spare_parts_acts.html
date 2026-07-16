@@ -1,0 +1,94 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Запчасти — акты списания' if is_ru else 'Эҳтиёт қисмлар — далолатномалар' }}{% endblock %}
+{% block content %}
+{# CYCLE-2-3 Part 5: standalone acts index, mirroring spare_parts_list.html. #}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Акты списания запчастей' if is_ru else 'Эҳтиёт қисмлар далолатномалари' }}</div>
+    <div class="vs-hero-sub">{{ 'История выдач: фильтруйте акты по организации и датам, открывайте акт для просмотра и печати PDF.' if is_ru else 'Беришлар тарихи: далолатномаларни ташкилот ва сана бўйича сараланг, кўриш ва PDF чоп этиш учун очинг.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('spare_parts.index') }}" class="vs-btn">{{ '← Заявки' if is_ru else '← Сўровлар' }}</a>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+    <div class="vs-card-body">
+        <form method="get" action="{{ url_for('spare_parts.acts_index') }}" class="vs-form-row">
+            <div class="vs-field" style="min-width:220px; flex:1;">
+                <label class="vs-label" for="actsOrgFilter">{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
+                <select name="org_id" id="actsOrgFilter" onchange="this.form.submit()" class="vs-select">
+                    <option value="">{{ '— все организации —' if is_ru else '— барча ташкилотлар —' }}</option>
+                    {% for org in organizations %}
+                    <option value="{{ org.id }}" {% if org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="vs-field" style="width:160px;">
+                <label class="vs-label" for="actsDateFrom">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
+                <input type="date" name="date_from" id="actsDateFrom" class="vs-input" value="{{ date_from_s }}">
+            </div>
+            <div class="vs-field" style="width:160px;">
+                <label class="vs-label" for="actsDateTo">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
+                <input type="date" name="date_to" id="actsDateTo" class="vs-input" value="{{ date_to_s }}">
+            </div>
+            <div class="vs-field" style="flex:none;">
+                <label class="vs-label">&nbsp;</label>
+                <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="vs-table-wrap">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ 'Список актов' if is_ru else 'Далолатномалар рўйхати' }}</span>
+        <span class="vs-soft" style="font-size:12px;">{{ 'На странице' if is_ru else 'Саҳифада' }}: {{ acts|length }}</span>
+    </div>
+    {% if acts %}
+    <div class="vs-table-scroll">
+    <table class="vs-table">
+        <thead>
+            <tr>
+                <th>{{ 'Номер акта' if is_ru else 'Далолатнома рақами' }}</th>
+                <th>{{ 'Дата' if is_ru else 'Сана' }}</th>
+                <th>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
+                <th>{{ 'Техника' if is_ru else 'Техника' }}</th>
+                <th class="right">{{ 'Позиций' if is_ru else 'Позициялар' }}</th>
+                <th class="right">{{ 'Сумма, сум' if is_ru else 'Сумма, сўм' }}</th>
+                <th>{{ 'Выдал' if is_ru else 'Берди' }}</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for act in acts %}
+            {% set req = act.request %}
+            {% set eq_label = req.equipment.name ~ ((' — ' ~ req.equipment.plate) if req.equipment and req.equipment.plate else '') if req and req.equipment else '—' %}
+            <tr>
+                <td style="font-weight:700;">{{ act.act_number }}</td>
+                <td>{{ act.issued_date.strftime('%d.%m.%Y') }}</td>
+                <td>{{ (act.organization.short_name or act.organization.name) if act.organization else '—' }}</td>
+                <td class="text-sm vs-muted">{{ eq_label }}</td>
+                <td class="right" style="font-weight:600;">{{ act.items|length }}</td>
+                <td class="right" style="font-weight:600;">{{ act_totals.get(act.id, 0)|fmt_sum or '0' }}</td>
+                <td class="text-sm vs-muted">{{ (act.issuer.full_name or act.issuer.username) if act.issuer else '—' }}</td>
+                <td class="right">
+                    <a href="{{ url_for('spare_parts.act_detail', act_id=act.id) }}" class="vs-btn vs-btn-sm">{{ 'Открыть' if is_ru else 'Очиш' }}</a>
+                    <a href="{{ url_for('spare_parts.act_pdf', act_id=act.id) }}" target="_blank" class="vs-btn vs-btn-sm">⬇ PDF</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="vs-empty">
+        <div class="vs-empty-ico">🧾</div>
+        <div class="vs-empty-title">{{ 'Актов нет' if is_ru else 'Далолатнома йўқ' }}</div>
+        <div class="vs-empty-sub">{{ 'Акт создаётся автоматически при выдаче утверждённой заявки.' if is_ru else 'Далолатнома тасдиқланган сўров берилганда автоматик яратилади.' }}</div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

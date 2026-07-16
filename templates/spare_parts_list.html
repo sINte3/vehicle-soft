@@ -20,6 +20,10 @@
     <a href="{{ url_for('spare_parts.inventory') }}" class="vs-btn">📦 {{ 'Склад' if is_ru else 'Омбор' }}</a>
     {% endif %}
     {% if current_user.has_module_access('spare_parts_reports') %}<a href="{{ url_for('spare_parts.reports') }}" class="vs-btn">📊 {{ 'Отчёты' if is_ru else 'Ҳисоботлар' }}</a>{% endif %}
+    {# CYCLE-2-3 Part 5: acts index — same conditional-link pattern as the other toolbar screens (SP-F-021). #}
+    {% if current_user.has_module_access('spare_parts_acts') %}
+    <a href="{{ url_for('spare_parts.acts_index') }}" class="vs-btn">🧾 {{ 'Акты списания' if is_ru else 'Далолатномалар' }}</a>
+    {% endif %}
     {# SPARE-STAGE3: passive maintenance-due list (reuses the catalog-manage permission). #}
     {% if current_user.has_module_access('spare_parts_catalog_manage') %}
     <a href="{{ url_for('spare_parts.maintenance_due') }}" class="vs-btn">⏰ {{ 'Пора менять' if is_ru else 'Алмаштириш вақти' }}</a>
@@ -46,9 +50,10 @@
     <div class="vs-card-body">
         <form method="get" action="{{ url_for('spare_parts.index') }}" class="vs-form-row">
             {% if status_filter %}<input type="hidden" name="status" value="{{ status_filter }}">{% endif %}
+            {# CYCLE-2-3 Part 3 (SP-F-004/RE-SP-004): programmatic label associations (for=/id) — additive only. #}
             <div class="vs-field" style="min-width:220px; flex:1;">
-                <label class="vs-label">{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
-                <select name="org_id" onchange="this.form.submit()" class="vs-select">
+                <label class="vs-label" for="listOrgFilter">{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
+                <select name="org_id" id="listOrgFilter" onchange="this.form.submit()" class="vs-select">
                     <option value="">{{ '— все организации —' if is_ru else '— барча ташкилотлар —' }}</option>
                     {% for org in organizations %}
                     <option value="{{ org.id }}" {% if org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
@@ -56,12 +61,12 @@
                 </select>
             </div>
             <div class="vs-field" style="width:160px;">
-                <label class="vs-label">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
-                <input type="date" name="date_from" class="vs-input" value="{{ date_from_s }}">
+                <label class="vs-label" for="listDateFrom">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
+                <input type="date" name="date_from" id="listDateFrom" class="vs-input" value="{{ date_from_s }}">
             </div>
             <div class="vs-field" style="width:160px;">
-                <label class="vs-label">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
-                <input type="date" name="date_to" class="vs-input" value="{{ date_to_s }}">
+                <label class="vs-label" for="listDateTo">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
+                <input type="date" name="date_to" id="listDateTo" class="vs-input" value="{{ date_to_s }}">
             </div>
             <div class="vs-field" style="flex:none;">
                 <label class="vs-label">&nbsp;</label>
@@ -73,11 +78,11 @@
 
 <div class="vs-row vs-mb" style="justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:12px;">
     <div class="vs-field" style="min-width:260px; flex:1;">
-        <label class="vs-label">{{ 'Поиск' if is_ru else 'Қидириш' }}</label>
+        <label class="vs-label" for="spareRequestSearch">{{ 'Поиск' if is_ru else 'Қидириш' }}</label>
         <input type="text" id="spareRequestSearch" class="vs-input" placeholder="{{ 'Поиск по номеру, организации, технике, автору' if is_ru else 'Рақам, ташкилот, техника, муаллиф бўйича қидириш' }}" oninput="filterSpareRequests()">
     </div>
     <div class="vs-field" style="min-width:200px;">
-        <label class="vs-label">{{ 'Статус' if is_ru else 'Ҳолат' }}</label>
+        <label class="vs-label" for="clientStatusFilter">{{ 'Статус' if is_ru else 'Ҳолат' }}</label>
         <select id="clientStatusFilter" onchange="filterSpareRequests()" class="vs-select">
             <option value="all">{{ 'Все статусы' if is_ru else 'Барча ҳолатлар' }}</option>
             {% for s, labels in status_labels.items() %}

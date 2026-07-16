@@ -20,16 +20,17 @@
 <div class="vs-card vs-mb">
     <div class="vs-card-body">
         <form method="get" action="{{ url_for('spare_parts.reports') }}" class="vs-form-row">
+            {# CYCLE-2-3 Part 3 (SP-F-004/RE-SP-004): programmatic label associations (for=/id) — additive only. #}
             <div class="vs-field" style="width:160px;">
-                <label class="vs-label">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
-                <input type="date" name="date_from" class="vs-input" value="{{ date_from_s }}">
+                <label class="vs-label" for="repDateFrom">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
+                <input type="date" name="date_from" id="repDateFrom" class="vs-input" value="{{ date_from_s }}">
             </div>
             <div class="vs-field" style="width:160px;">
-                <label class="vs-label">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
-                <input type="date" name="date_to" class="vs-input" value="{{ date_to_s }}">
+                <label class="vs-label" for="repDateTo">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
+                <input type="date" name="date_to" id="repDateTo" class="vs-input" value="{{ date_to_s }}">
             </div>
             <div class="vs-field" style="min-width:210px; flex:1;">
-                <label class="vs-label">{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
+                <label class="vs-label" for="orgSelect">{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
                 <select name="org_id" id="orgSelect" class="vs-select" onchange="onOrgChange()">
                     <option value="">{{ '— все организации —' if is_ru else '— барча ташкилотлар —' }}</option>
                     {% for org in organizations %}
@@ -38,7 +39,7 @@
                 </select>
             </div>
             <div class="vs-field" style="min-width:210px; flex:1;">
-                <label class="vs-label">{{ 'Техника' if is_ru else 'Техника' }}</label>
+                <label class="vs-label" for="eqSelect">{{ 'Техника' if is_ru else 'Техника' }}</label>
                 <select name="equipment_id" id="eqSelect" class="vs-select">
                     <option value="">{{ '— вся техника —' if is_ru else '— барча техника —' }}</option>
                     {% for eq in equipment_options %}
@@ -47,8 +48,8 @@
                 </select>
             </div>
             <div class="vs-field" style="min-width:190px;">
-                <label class="vs-label">{{ 'Категория' if is_ru else 'Категория' }}</label>
-                <select name="category_id" class="vs-select">
+                <label class="vs-label" for="repCategory">{{ 'Категория' if is_ru else 'Категория' }}</label>
+                <select name="category_id" id="repCategory" class="vs-select">
                     <option value="">{{ '— все категории —' if is_ru else '— барча категориялар —' }}</option>
                     {% for cat in categories %}
                     <option value="{{ cat.id }}" {% if category_id == cat.id %}selected{% endif %}>{{ cat.name_ru if is_ru else cat.name_uz }}</option>

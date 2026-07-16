@@ -126,7 +126,8 @@
                 <td style="font-weight:600;">{{ row.sku.spare_part.name if row.sku and row.sku.spare_part else '—' }}</td>
                 <td class="text-sm vs-muted">{{ row.sku.label if row.sku else '—' }}</td>
                 <td class="right" style="font-weight:700; color:{{ 'var(--danger)' if row.quantity < 0 else 'var(--text)' }};">{{ row.quantity }}</td>
-                <td>{{ row.unit or 'dona' }}</td>
+                {# RE-SP-010: localized unit word; unknown/legacy codes render raw. #}
+                <td>{{ row.unit|spare_unit_label or ('шт' if is_ru else 'дона') }}</td>
                 <td class="text-sm vs-muted">{{ row.updated_at.strftime('%d.%m.%Y %H:%M') if row.updated_at else '—' }}</td>
             </tr>
             {% endfor %}

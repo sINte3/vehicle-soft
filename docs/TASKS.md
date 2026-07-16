@@ -3210,3 +3210,45 @@ Release record:
 
 - FUEL-REPORT-011: fuel balance report, Excel export, manual expenses, May manual expense correction, June Topaz CSV backfill, production QA.
 - See: docs/RELEASE_FUEL_REPORT_011_BALANCE_REPORT_20260622.md
+
+## SPARE-PARTS-CYCLE-2-3 — accessibility/UX hardening and data/scale maturity
+
+Status: implemented on branch `claude/session-un5unw` (2026-07-15), awaiting
+staging QA per acceptance criteria in the task file.
+
+Nine independent, ordered commits (revert at commit granularity):
+
+1. Part 1 (RE-SP-010): localized unit labels in PDF/Excel/screen output
+   (`_unit_label`, `spare_unit_label` Jinja filter; raw-code fallback).
+2. Part 2: explicit bilingual text on icon-only primary action buttons
+   (price save 💾, per-row edit/delete/compatibility actions).
+3. Part 3: skip-to-content link, focus-to-heading on load, remaining
+   filter label associations (SP-F-004/RE-SP-004 remainder closed).
+4. Part 4 (RE-SP-008/SP-F-022): keyboard-accessible attachment lightbox
+   on request detail; missing-file badge stays non-interactive.
+5. Part 5: standalone acts index `/spare-parts/acts` (gated like
+   act_detail/act_pdf, org+date filters, toolbar links).
+6. Part 6: responsive containment at 390/1024/1440 (unscoped
+   .vs-table-scroll, stat-card word wrap) + off-canvas sidebar overlay
+   below 768px. Verified with headless-Chromium screenshots.
+7. Part 7: nullable `spare_parts.name_uz` via
+   `migrate_spare_parts_name_uz.py` (RE-SP-011 hardened pattern);
+   Uzbek-interface fallback display across catalog/picker/PDF/Excel/
+   reports; inline per-row translation editor; search matches both names.
+   Translation data itself deliberately NOT included.
+8. Part 8: `_deny_spare` — audit rows for permission denials on
+   financially significant actions (acts, issue, approve/reject, price,
+   catalog/SKU/inventory mutations). No historical backfill (explicit
+   owner decision — creation timestamps already exist on the rows).
+9. Part 9: batched N+1 fixes with identical-output proof
+   (tests/test_cycle23_nplus1.py) and synthetic-volume benchmark
+   (scripts/spare_parts_nplus1_benchmark.py): report repeat pass
+   2206→6 queries, maintenance due 2239→4 queries (59.5s→0.34s),
+   15-item detail 72→7 queries.
+
+Explicitly out of scope (deferred): module dashboard/lifecycle component
+(needs a design mockup first), bulk Uzbek translation of the 238 existing
+part names, QA role/account matrix.
+
+Migration: `migrate_spare_parts_name_uz.py` (additive nullable column;
+safe to leave in place on code rollback).
