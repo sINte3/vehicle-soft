@@ -283,17 +283,13 @@ document.addEventListener('keydown', function (e) {
     if (sb && sb.classList.contains('is-open')) vsCloseSidebar();
 });
 
-/* CYCLE-2-3 Part 3: server-rendered app — on each page load move focus to the
-   page heading so keyboard/screen-reader users land on the content, not on
-   the browser default. preventScroll keeps the viewport where the browser
-   put it. Skipped when the URL targets an in-page anchor. */
-document.addEventListener('DOMContentLoaded', function () {
-    if (window.location.hash) return;
-    var title = document.getElementById('vsScreenTitle');
-    if (title && typeof title.focus === 'function') {
-        try { title.focus({preventScroll: true}); } catch (e) { title.focus(); }
-    }
-});
+/* [REASON]: CYCLE-2-3-HOTFIX F-001 — do NOT auto-focus #vsScreenTitle on
+   DOMContentLoaded. This is a traditional server-rendered multi-page app:
+   on every full navigation the browser already puts focus at the top of the
+   document, so the first Tab reaches the skip link (.vs-skip-link). The
+   removed auto-focus script moved focus past the skip link before the
+   user's first Tab, breaking skip-link discoverability. #vsScreenTitle
+   keeps tabindex="-1" only as the skip-link/anchor focus target. */
 
 function initMultiselect(wrapperId, triggerLabel) {
     var wrap = document.getElementById(wrapperId);
