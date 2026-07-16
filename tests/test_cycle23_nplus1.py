@@ -14,7 +14,9 @@ from datetime import date, datetime, timedelta
 
 from flask import g
 
-from tests.harness import app, db, reset_db, create_admin, create_org
+from sqlalchemy import event
+
+from tests.harness import app, db, reset_db, create_admin, create_org, login
 from models import (Equipment, EquipmentModel, EngineHoursRecord, SparePart,
                     SparePartCategory, SparePartCompatibility,
                     SparePartMaintenanceNorm, SparePartRequest,
@@ -305,6 +307,82 @@ class NPlusOneEquivalenceTests(unittest.TestCase):
                 self.assertEqual(strip(ref), strip(got))
         finally:
             ctx.pop()
+
+
+class ActPdfQueryCountTests(unittest.TestCase):
+    """CYCLE-2-3-HOTFIX F-002: Uzbek act PDF rendering must not scale its
+    query count with the number of act lines (the name_uz resolution walks
+    item.request_item.spare_part per line — that chain must be eager-loaded).
+    """
+
+    def setUp(self):
+        reset_db()
+        self.admin_id = create_admin()
+        self.org_id = create_org()
+
+    def _make_act(self, n_items, seq):
+        with app.app_context():
+            req = SparePartRequest(request_date=date(2026, 7, 1),
+                                   organization_id=self.org_id,
+                                   status='issued', created_by=self.admin_id)
+            db.session.add(req)
+            db.session.flush()
+            act = SparePartWriteOffAct(
+                act_number='SPW-2026-{:05d}'.format(seq),
+                request_id=req.id, organization_id=self.org_id,
+                issued_date=date(2026, 7, 2), issued_by=self.admin_id)
+            db.session.add(act)
+            db.session.flush()
+            for i in range(n_items):
+                part = SparePart(name='Деталь {} {}'.format(seq, i),
+                                 name_uz='Эҳтиёт қисм {} {}'.format(seq, i),
+                                 status='active')
+                db.session.add(part)
+                db.session.flush()
+                item = SparePartRequestItem(
+                    request_id=req.id, spare_part_id=part.id,
+                    name=part.name, quantity=2, unit='dona',
+                    price=15000, price_status='confirmed')
+                db.session.add(item)
+                db.session.flush()
+                db.session.add(SparePartWriteOffActItem(
+                    act_id=act.id, request_item_id=item.id, name=item.name,
+                    quantity=item.quantity, unit=item.unit,
+                    price=item.price, total=item.price * item.quantity))
+            db.session.commit()
+            return act.id
+
+    def _pdf_query_count(self, act_id):
+        queries = []
+
+        def count(conn, cursor, statement, parameters, context, executemany):
+            queries.append(statement)
+
+        with app.app_context():
+            engine = db.engine
+        client = app.test_client()
+        login(client, self.admin_id)
+        event.listen(engine, 'before_cursor_execute', count)
+        try:
+            resp = client.get('/spare-parts/acts/{}/pdf?lang=uz'.format(act_id))
+        finally:
+            event.remove(engine, 'before_cursor_execute', count)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.mimetype, 'application/pdf')
+        return len(queries)
+
+    def test_uzbek_act_pdf_query_count_is_bounded_and_non_scaling(self):
+        act_1 = self._make_act(1, seq=1)
+        act_10 = self._make_act(10, seq=2)
+        q1 = self._pdf_query_count(act_1)
+        q10 = self._pdf_query_count(act_10)
+        # Same fixed number of queries whether the act has 1 or 10 lines
+        # (a per-line lazy load would add ~2 queries per extra line), and
+        # comfortably under a small absolute ceiling.
+        self.assertEqual(q1, q10,
+                         'PDF query count scales with item count: '
+                         '{} vs {}'.format(q1, q10))
+        self.assertLessEqual(q10, 10, 'PDF query count too high: {}'.format(q10))
 
 
 if __name__ == '__main__':
