@@ -3017,7 +3017,14 @@ def issue_request(rid):
 @spare_parts_bp.route('/acts/<int:act_id>')
 @module_required('spare_parts')
 def act_detail(act_id):
-    act = SparePartWriteOffAct.query.get_or_404(act_id)
+    # [REASON]: CYCLE-2-3-HOTFIX F-002 — same eager-loaded chain as act_pdf
+    # (see comment there); this page renders the same per-line item list.
+    act = (SparePartWriteOffAct.query
+           .options(selectinload(SparePartWriteOffAct.items)
+                    .joinedload(SparePartWriteOffActItem.request_item)
+                    .joinedload(SparePartRequestItem.spare_part))
+           .filter(SparePartWriteOffAct.id == act_id)
+           .first_or_404())
     # Same org-scoped access rule as the request it belongs to.
     spr = act.request
     if spr is None:
@@ -3042,7 +3049,17 @@ def act_detail(act_id):
 @spare_parts_bp.route('/acts/<int:act_id>/pdf')
 @module_required('spare_parts')
 def act_pdf(act_id):
-    act = SparePartWriteOffAct.query.get_or_404(act_id)
+    # [REASON]: CYCLE-2-3-HOTFIX F-002 — since Part 7 the PDF renderer walks
+    # item.request_item.spare_part per act line to resolve the Uzbek alias
+    # (name_uz); a bare get_or_404 made that N+1 (one query per line). Eager-
+    # load the whole rendering chain in a fixed number of queries. Rendered
+    # output is unchanged — only the query pattern.
+    act = (SparePartWriteOffAct.query
+           .options(selectinload(SparePartWriteOffAct.items)
+                    .joinedload(SparePartWriteOffActItem.request_item)
+                    .joinedload(SparePartRequestItem.spare_part))
+           .filter(SparePartWriteOffAct.id == act_id)
+           .first_or_404())
     spr = act.request
     if spr is None:
         abort(404)
