@@ -21,7 +21,7 @@ from models import (db, SparePart, SparePartCategory, SparePartPriceAudit,
                     SparePartUnit, SparePartWarehouse, SparePartWriteOffAct,
                     SparePartWriteOffActItem, Organization, Equipment,
                     EquipmentModel, SparePartCompatibility,
-                    SparePartMaintenanceNorm, EngineHoursRecord,
+                    SparePartMaintenanceNorm, EngineHoursRecord, User,
                     module_required)
 from sec003a_ext import log_audit, diff_dict
 
@@ -1783,6 +1783,114 @@ def detail(rid):
             extra = extra_map.get(item.spare_part_id, [])
             if base['severity'] or extra:
                 item_warnings[item.id] = {'base': base, 'extra': extra}
+
+    # ── SP-DETAIL-002: next-action resolver (read-only; every action still POSTs
+    #    to its existing route or scrolls to its existing card — this only decides
+    #    which single action is surfaced as primary for THIS user right now). ──
+    is_owner = (current_user.id == spr.created_by)
+    any_unpriced = any(i.price_status != 'confirmed' for i in spr.items)
+    next_action = None
+    waiting_for = None
+    if spr.status in ('draft', 'returned_for_revision') and is_owner:
+        # One-click POST in the block (matches the existing submit button's gate).
+        next_action = {
+            'kind': 'submit',
+            'route': url_for('spare_parts.submit_request', rid=spr.id),
+            'label': (_spare_t('Тузатиб, қайта юбориш', 'Исправить и отправить')
+                      if spr.status == 'returned_for_revision'
+                      else _spare_t('Кўриб чиқишга юбориш', 'Отправить на рассмотрение')),
+        }
+    elif spr.status == 'submitted' and can_price and any_unpriced:
+        next_action = {
+            'kind': 'scroll', 'target': 'sp-action-price',
+            'label': _spare_t('Нарх қўйиш/тасдиқлаш', 'Проставить/подтвердить цену'),
+        }
+    elif spr.status == 'submitted' and can_approve and not _approval_blockers(spr):
+        next_action = {
+            'kind': 'scroll', 'target': 'sp-action-approve',
+            'label': _spare_t('Тасдиқлаш', 'Утвердить'),
+            'secondary': _spare_t('Рад этиш', 'Отклонить'),
+        }
+    elif spr.status == 'approved' and can_issue:
+        next_action = {
+            'kind': 'scroll', 'target': 'sp-action-issue',
+            'label': _spare_t('Омбордан бериш', 'Выдать со склада'),
+        }
+
+    if next_action is None and spr.status not in ('rejected', 'issued'):
+        if spr.status == 'draft':
+            waiting_for = _spare_t('Оператор черновикни юборади', 'Оператор отправит заявку')
+        elif spr.status == 'returned_for_revision':
+            waiting_for = _spare_t('Оператор тузатиб юборади', 'Оператор исправит и отправит')
+        elif spr.status == 'submitted':
+            if any_unpriced:
+                waiting_for = _spare_t('Нарх тасдиқланиши', 'Подтверждение цены')
+            elif _approval_blockers(spr):
+                waiting_for = _spare_t('Каталог текшируви', 'Проверка каталога')
+            else:
+                waiting_for = _spare_t('Администратор қарори', 'Решение администратора')
+        elif spr.status == 'approved':
+            waiting_for = _spare_t('Омбордан бериш', 'Выдача со склада')
+
+    # ── SP-DETAIL-002: status stepper (draft→submitted→approved→issued; returned
+    #    and rejected are side states). Pure presentation data. ──
+    _step_defs = [
+        ('draft',     {'uz': 'Чорнов',       'ru': 'Черновик'}),
+        ('submitted', {'uz': 'Юборилган',    'ru': 'Отправлено'}),
+        ('approved',  {'uz': 'Тасдиқланган', 'ru': 'Утверждено'}),
+        ('issued',    {'uz': 'Берилган',     'ru': 'Выдано'}),
+    ]
+    if spr.status == 'returned_for_revision':
+        _reached = 'submitted'; _side = 'returned'
+    elif spr.status == 'rejected':
+        _reached = 'submitted'; _side = 'rejected'
+    else:
+        _reached = spr.status; _side = None
+    _order = [k for k, _ in _step_defs]
+    _cur_idx = _order.index(_reached) if _reached in _order else 0
+    steps = []
+    for i, (key, label) in enumerate(_step_defs):
+        state = 'done' if i < _cur_idx else ('current' if i == _cur_idx else 'future')
+        steps.append({'key': key, 'label': label, 'state': state})
+    stepper = {'steps': steps, 'side': _side}
+
+    # ── SP-DETAIL-002: unified event timeline (created + status history + price
+    #    audit + attachments), oldest → newest. No schema change; actors resolved
+    #    here so the template stays presentation-only. ──
+    def _uname(u):
+        return (u.full_name or u.username) if u else _spare_t('номаълум', 'неизвестно')
+    hist = (SparePartStatusHistory.query
+            .filter_by(request_id=spr.id)
+            .order_by(SparePartStatusHistory.changed_at.asc(),
+                      SparePartStatusHistory.id.asc()).all())
+    _hist_ids = {h.changed_by for h in hist if h.changed_by}
+    _hist_users = ({u.id: u for u in User.query.filter(User.id.in_(_hist_ids)).all()}
+                   if _hist_ids else {})
+    price_events = (SparePartPriceAudit.query
+                    .join(SparePartRequestItem,
+                          SparePartPriceAudit.item_id == SparePartRequestItem.id)
+                    .filter(SparePartRequestItem.request_id == spr.id)
+                    .order_by(SparePartPriceAudit.changed_at.asc(),
+                              SparePartPriceAudit.id.asc()).all())
+    timeline = []
+    timeline.append({'ts': spr.created_at, 'type': 'created', 'actor': _uname(spr.creator)})
+    for h in hist:
+        timeline.append({'ts': h.changed_at, 'type': 'status',
+                         'actor': _uname(_hist_users.get(h.changed_by)),
+                         'old_status': h.old_status, 'new_status': h.new_status,
+                         'comment': h.comment or ''})
+    for a in price_events:
+        timeline.append({'ts': a.changed_at, 'type': 'price', 'actor': _uname(a.user),
+                         'price_action': a.action,
+                         'old_price': a.old_price, 'new_price': a.new_price,
+                         'item_name': (a.item.name if a.item else '')})
+    for item in spr.items:
+        for att in (item.attachments or []):
+            timeline.append({'ts': att.uploaded_at, 'type': 'attachment',
+                             'actor': _uname(att.uploader),
+                             'filename': (att.original_filename or ''),
+                             'item_name': item.name})
+    timeline.sort(key=lambda e: e['ts'] or spr.created_at)
     return render_template('spare_part_detail.html',
                            req=spr,
                            status_labels=STATUS_LABELS,
@@ -1797,7 +1905,11 @@ def detail(rid):
                            acts=acts,
                            item_warnings=item_warnings,
                            missing_attachment_ids=missing_attachment_ids,
-                           lang=lang)
+                           lang=lang,
+                           next_action=next_action,
+                           waiting_for=waiting_for,
+                           stepper=stepper,
+                           timeline=timeline)
 
 
 @spare_parts_bp.route('/<int:rid>/submit', methods=['POST'])

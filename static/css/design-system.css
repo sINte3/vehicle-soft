@@ -1171,3 +1171,104 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
   --shadow:        var(--vs-shadow);
 }
 /* END COMPATIBILITY LAYER */
+
+/* =====================================================================
+   SP-DETAIL-002 — spare-part request card components (additive only):
+   .vs-nextaction (single most-relevant action panel), .vs-stepper
+   (status scale), .vs-timeline (unified event history), .vs-card.is-flash
+   (scroll-target highlight). New classes only — no rule above changes.
+   ===================================================================== */
+
+/* Next-action panel — one prominent primary control per (status × rights). */
+.vs-nextaction {
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-lg);
+  box-shadow: var(--vs-shadow);
+  padding: 14px 18px;
+}
+.vs-nextaction-wait {
+  display: inline-flex; align-items: center; gap: 8px;
+  color: var(--vs-text-muted);
+  font-size: var(--vs-fs-md);
+}
+@media (max-width: 640px) {
+  /* Full-width primary on phones (submit form and scroll anchor alike). */
+  .vs-nextaction form { width: 100%; }
+  .vs-nextaction .vs-btn-lg { width: 100%; justify-content: center; }
+}
+
+/* Status stepper — draft → submitted → approved → issued. Wraps on narrow
+   screens instead of overflowing; returned/rejected are not extra steps but
+   a side chip rendered after the row. */
+.vs-stepper {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 8px 6px;
+}
+.vs-step { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.vs-step-dot {
+  width: 22px; height: 22px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  font-size: 12px; font-weight: 700; line-height: 1;
+  background: var(--vs-surface); color: var(--vs-text-soft);
+  border: 2px solid var(--vs-border);
+}
+.vs-step-label { font-size: var(--vs-fs-sm); color: var(--vs-text-muted); white-space: nowrap; }
+.vs-step.is-done .vs-step-dot { background: var(--vs-brand-green); border-color: var(--vs-brand-green); color: #fff; }
+.vs-step.is-done .vs-step-label { color: var(--vs-text); }
+.vs-step.is-current .vs-step-dot { background: var(--vs-primary); border-color: var(--vs-primary); color: #fff; box-shadow: var(--vs-ring-primary); }
+.vs-step.is-current .vs-step-label { color: var(--vs-text); font-weight: 700; }
+.vs-step.is-future .vs-step-dot { background: var(--vs-surface-2); }
+.vs-step-line { flex: 1 1 16px; min-width: 10px; max-width: 56px; height: 2px; border-radius: 1px; background: var(--vs-border-2); }
+.vs-step-line.is-done { background: var(--vs-brand-green); }
+.vs-stepper-side {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--vs-r-pill);
+  font-size: var(--vs-fs-sm); font-weight: 700;
+  white-space: nowrap;
+}
+.vs-stepper-side.is-returned { color: var(--vs-warning); background: var(--vs-warning-bg); }
+.vs-stepper-side.is-rejected { color: var(--vs-danger); background: var(--vs-danger-bg); }
+@media (max-width: 480px) {
+  /* All four steps fit one ~380px row: dot above a small centered label
+     (4×76px labels + 3 connectors + gaps < 380px), wrap stays as fallback. */
+  .vs-stepper { align-items: flex-start; }
+  .vs-step { flex-direction: column; gap: 3px; }
+  .vs-step-label { white-space: normal; text-align: center; max-width: 76px; font-size: var(--vs-fs-xs); line-height: 1.25; }
+  .vs-step-line { margin-top: 10px; }
+}
+
+/* Unified event timeline — vertical list with a connecting rule; the dot
+   color is set inline by the template per event type. */
+.vs-timeline { display: flex; flex-direction: column; }
+.vs-timeline-item { position: relative; display: flex; gap: 10px; padding-bottom: 14px; }
+.vs-timeline-item::before {
+  content: ''; position: absolute;
+  left: 5px; top: 16px; bottom: 0;
+  width: 2px; background: var(--vs-border-2);
+}
+.vs-timeline-item:last-child { padding-bottom: 0; }
+.vs-timeline-item:last-child::before { display: none; }
+.vs-timeline-dot {
+  position: relative; z-index: 1;
+  width: 12px; height: 12px; flex: none;
+  margin-top: 3px;
+  border-radius: 50%;
+  background: var(--vs-info);
+  box-shadow: 0 0 0 2px var(--vs-surface);
+}
+.vs-timeline-item > div:last-child { flex: 1; min-width: 0; }
+.vs-timeline-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.vs-timeline-time { color: var(--vs-text-soft); font-size: var(--vs-fs-xs); }
+.vs-timeline-body { margin-top: 1px; font-size: var(--vs-fs); overflow-wrap: anywhere; }
+
+/* Scroll-target highlight — next-action anchors flash the card they lead to.
+   Ends on the .vs-card resting shadow so there is no pop when it finishes. */
+.vs-card.is-flash { animation: vs-card-flash 1.5s ease-out; }
+@keyframes vs-card-flash {
+  0%   { box-shadow: var(--vs-ring-primary), var(--vs-shadow-lg); }
+  70%  { box-shadow: var(--vs-ring-primary), var(--vs-shadow-sm); }
+  100% { box-shadow: var(--vs-shadow-sm); }
+}

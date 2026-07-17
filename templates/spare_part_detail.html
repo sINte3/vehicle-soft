@@ -34,8 +34,6 @@
 </style>
 
 {% set eq_label = req.equipment.name ~ ((' — ' ~ req.equipment.plate) if req.equipment and req.equipment.plate else '') if req.equipment else '—' %}
-{# SPARE-STAGE1: .get() with fallback — status now also includes returned_for_revision. #}
-{% set status_alert_kind = {'draft': 'is-warning', 'submitted': 'is-info', 'returned_for_revision': 'is-warning', 'approved': 'is-success', 'rejected': 'is-danger', 'issued': 'is-success'}.get(req.status, 'is-info') %}
 
 <div class="vs-hero vs-mb">
   <div>
@@ -48,19 +46,50 @@
   </div>
 </div>
 
-{% if req.status == 'draft' %}
-<div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Черновик ещё не отправлен администратору. Его можно отправить на рассмотрение.' if is_ru else 'Чорнов ҳали администраторга юборилмаган. Уни кўриб чиқишга юбориш мумкин.' }}</div>
-{% elif req.status == 'submitted' %}
-<div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Заявка отправлена и ожидает решения администратора.' if is_ru else 'Сўров юборилган ва администратор қарорини кутмоқда.' }}</div>
-{% elif req.status == 'returned_for_revision' %}
-<div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Заявка возвращена на доработку (цена отклонена или возвращена). Исправьте позиции/фото и отправьте повторно.' if is_ru else 'Сўров қайта ишлашга қайтарилган (нарх рад этилган ёки қайтарилган). Позиция/фотоларни тузатиб, қайта юборинг.' }}</div>
-{% elif req.status == 'approved' %}
-<div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Заявка утверждена.' if is_ru else 'Сўров тасдиқланган.' }}</div>
-{% elif req.status == 'rejected' %}
-<div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Заявка отклонена. Смотрите комментарий рассмотрения, если он указан.' if is_ru else 'Сўров рад этилган. Агар изоҳ берилган бўлса, кўриб чиқиш изоҳини кўринг.' }}</div>
-{% elif req.status == 'issued' %}
-<div class="vs-alert {{ status_alert_kind }} vs-mb">{{ 'Заявка выдана со склада. Акт списания сформирован — ссылка ниже.' if is_ru else 'Сўров омбордан берилган. Ҳисобдан чиқариш далолатномаси шакллантирилган — ҳавола қуйида.' }}</div>
+{# SP-DETAIL-002: single most-relevant action for the current user + status #}
+{% if next_action or waiting_for or req.status in ('rejected', 'issued') %}
+<div class="vs-nextaction vs-mb">
+  <div class="vs-label" style="margin-bottom:8px;">{{ 'Следующее действие' if is_ru else 'Кейинги амал' }}</div>
+  {% if next_action %}
+    <div class="vs-row" style="gap:10px; align-items:center; flex-wrap:wrap;">
+    {% if next_action.kind == 'submit' %}
+      <form method="post" action="{{ next_action.route }}"
+            onsubmit="return confirm({{ ('Отправить заявку на рассмотрение?' if is_ru else 'Сўровни кўриб чиқишга юборишни тасдиқлайсизми?')|tojson }})">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="vs-btn vs-btn-lg vs-btn-primary">📤 {{ next_action.label }}</button>
+      </form>
+    {% else %}
+      <a href="#{{ next_action.target }}" class="vs-btn vs-btn-lg vs-btn-primary sp-scroll-to"
+         data-target="{{ next_action.target }}">{{ next_action.label }}</a>
+      {% if next_action.secondary %}
+      <a href="#{{ next_action.target }}" class="vs-btn vs-btn-sm sp-scroll-to"
+         data-target="{{ next_action.target }}">{{ next_action.secondary }}</a>
+      {% endif %}
+    {% endif %}
+    </div>
+  {% elif waiting_for %}
+    <div class="vs-nextaction-wait">⏳ {{ 'Ожидает' if is_ru else 'Кутилмоқда' }}: {{ waiting_for }}</div>
+  {% else %}
+    <div class="vs-nextaction-wait">{{ ('Заявка завершена — действий нет.' if is_ru else 'Сўров якунланган — амал йўқ.') if req.status == 'issued' else ('Заявка отклонена — действий нет.' if is_ru else 'Сўров рад этилган — амал йўқ.') }}</div>
+  {% endif %}
+</div>
 {% endif %}
+
+{# SP-DETAIL-002: status stepper #}
+<div class="vs-stepper vs-mb" role="list" aria-label="{{ 'Статус заявки' if is_ru else 'Сўров ҳолати' }}">
+  {% for s in stepper.steps %}
+  <div class="vs-step is-{{ s.state }}" role="listitem">
+    <div class="vs-step-dot">{{ '✓' if s.state == 'done' else '' }}</div>
+    <div class="vs-step-label">{{ s.label.ru if is_ru else s.label.uz }}</div>
+  </div>
+  {% if not loop.last %}<div class="vs-step-line is-{{ s.state }}"></div>{% endif %}
+  {% endfor %}
+  {% if stepper.side == 'returned' %}
+  <div class="vs-stepper-side is-returned">↩ {{ 'На доработке' if is_ru else 'Қайта ишлашга қайтарилган' }}</div>
+  {% elif stepper.side == 'rejected' %}
+  <div class="vs-stepper-side is-rejected">✕ {{ 'Отклонено' if is_ru else 'Рад этилган' }}</div>
+  {% endif %}
+</div>
 
 <div class="vs-stat-grid vs-mb">
     <div class="vs-stat"><div class="vs-stat-label">{{ 'Дата' if is_ru else 'Сана' }}</div><div class="vs-stat-value" style="font-size:14px;">{{ req.request_date.strftime('%d.%m.%Y') }}</div></div>
@@ -85,18 +114,6 @@
         <div>{{ req.note or '—' }}</div>
     </div>
 </div>
-
-{% if req.reviewer or req.review_comment %}
-<div class="vs-card vs-mb">
-    <div class="vs-card-header">
-        <div class="vs-card-title">{{ 'Результат рассмотрения' if is_ru else 'Кўриб чиқиш натижаси' }}</div>
-    </div>
-    <div class="vs-card-body">
-        <div><strong>{{ status_labels[req.status][lang] }}</strong>{% if req.reviewer %} — {{ req.reviewer.username }}{% endif %}{% if req.reviewed_at %} ({{ req.reviewed_at.strftime('%d.%m.%Y %H:%M') }}){% endif %}</div>
-        {% if req.review_comment %}<div style="margin-top:8px;">{{ req.review_comment }}</div>{% endif %}
-    </div>
-</div>
-{% endif %}
 
 <div class="vs-table-wrap vs-mb">
     <div class="vs-card-header">
@@ -243,7 +260,7 @@
 
 {# ─── SPARE-STAGE2: issue action (approved -> issued, spare_parts_issue) ── #}
 {% if can_issue %}
-<div class="vs-card vs-mb">
+<div class="vs-card vs-mb" id="sp-action-issue">
     <div class="vs-card-header">
         <div class="vs-card-title">📦 {{ 'Выдача со склада' if is_ru else 'Омбордан бериш' }}</div>
     </div>
@@ -312,19 +329,9 @@
 </div>
 {% endif %}
 
-{# SPARE-STAGE1: resubmit is also allowed from returned_for_revision. #}
-{% if req.status in ('draft', 'returned_for_revision') and current_user.id == req.created_by %}
-<div class="vs-row vs-mb">
-    <form method="post" action="{{ url_for('spare_parts.submit_request', rid=req.id) }}" onsubmit="return confirm({{ ('Отправить заявку на рассмотрение?' if is_ru else 'Сўровни кўриб чиқишга юборишни тасдиқлайсизми?')|tojson }})">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="vs-btn vs-btn-primary">📤 {{ 'Отправить на рассмотрение' if is_ru else 'Кўриб чиқишга юбориш' }}</button>
-    </form>
-</div>
-{% endif %}
-
 {# ─── SPARE-STAGE1: price review (spare_parts_price_confirm) ─────────── #}
 {% if can_price %}
-<div class="vs-card vs-mb">
+<div class="vs-card vs-mb" id="sp-action-price">
     <div class="vs-card-header">
         <div class="vs-card-title">{{ 'Проверка цен' if is_ru else 'Нархларни текшириш' }}</div>
     </div>
@@ -399,7 +406,7 @@
 {% endif %}
 
 {% if can_approve %}
-<div class="vs-card vs-mb">
+<div class="vs-card vs-mb" id="sp-action-approve">
     <div class="vs-card-header">
         <div class="vs-card-title">{{ 'Рассмотрение заявки' if is_ru else 'Сўровни кўриб чиқиш' }}</div>
     </div>
@@ -423,6 +430,48 @@
     </div>
 </div>
 {% endif %}
+
+{# SP-DETAIL-002: unified event timeline (created + status + price + attachments) #}
+<div class="vs-card vs-mb" id="sp-timeline">
+  <div class="vs-card-header">
+    <div class="vs-card-title">🕑 {{ 'История заявки' if is_ru else 'Сўров тарихи' }}</div>
+    <span class="vs-soft" style="font-size:12px;">{{ timeline|length }}</span>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-timeline">
+    {% for e in timeline %}
+      {% set dot = 'var(--vs-info)' %}
+      {% if e.type == 'status' %}{% set dot = status_colors.get(e.new_status, 'var(--vs-info)') %}
+      {% elif e.type == 'price' %}{% set dot = ('var(--vs-danger)' if e.price_action == 'reject' else ('var(--vs-warning)' if e.price_action == 'return' else 'var(--vs-brand-green)')) %}
+      {% elif e.type == 'attachment' %}{% set dot = 'var(--vs-text-muted)' %}{% endif %}
+      <div class="vs-timeline-item">
+        <div class="vs-timeline-dot" style="background:{{ dot }};"></div>
+        <div>
+          <div class="vs-timeline-head">
+            <strong>{{ e.actor }}</strong>
+            <span class="vs-timeline-time">{{ e.ts.strftime('%d.%m.%Y %H:%M') if e.ts else '' }}</span>
+          </div>
+          <div class="vs-timeline-body">
+          {% if e.type == 'created' %}
+            {{ 'Заявка создана' if is_ru else 'Сўров яратилди' }}
+          {% elif e.type == 'status' %}
+            {% if e.old_status %}{{ status_labels[e.old_status][lang] }} → {% endif %}<strong>{{ status_labels[e.new_status][lang] }}</strong>
+            {% if e.comment %}<div class="vs-soft" style="font-size:12px; margin-top:2px;">{{ e.comment }}</div>{% endif %}
+          {% elif e.type == 'price' %}
+            {% set pa = {'set': ('Нарх киритилди','Цена указана'), 'confirm': ('Нарх тасдиқланди','Цена подтверждена'), 'reject': ('Нарх рад этилди','Цена отклонена'), 'return': ('Нарх қайтарилди','Цена возвращена')} %}
+            {{ (pa[e.price_action][1] if is_ru else pa[e.price_action][0]) if e.price_action in pa else e.price_action }}
+            <span class="vs-soft" style="font-size:12px;">— «{{ e.item_name }}»: {{ e.old_price|fmt_sum if e.old_price is not none else '—' }} → {{ e.new_price|fmt_sum if e.new_price is not none else '—' }}</span>
+          {% elif e.type == 'attachment' %}
+            {{ 'Добавлен файл' if is_ru else 'Файл қўшилди' }}
+            <span class="vs-soft" style="font-size:12px;">— «{{ e.item_name }}»: {{ e.filename or '—' }}</span>
+          {% endif %}
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+    </div>
+  </div>
+</div>
 
 {# CYCLE-2-3 Part 4: attachment lightbox dialog (hidden until a thumbnail is activated). #}
 <div class="sp-lightbox" id="spLightbox" role="dialog" aria-modal="true" aria-label="{{ 'Просмотр вложения' if is_ru else 'Иловани кўриш' }}">
@@ -588,6 +637,19 @@ document.addEventListener('DOMContentLoaded', function () {
             })
             .catch(() => { cell.textContent = noData; });
     });
+});
+
+/* SP-DETAIL-002: next-action buttons scroll to and briefly flash the target card. */
+document.querySelectorAll('.sp-scroll-to').forEach(function (el) {
+  el.addEventListener('click', function (e) {
+    var id = el.dataset.target;
+    var card = id && document.getElementById(id);
+    if (!card) return;                 // href="#id" stays as fallback
+    e.preventDefault();
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.classList.remove('is-flash'); void card.offsetWidth; card.classList.add('is-flash');
+    setTimeout(function () { card.classList.remove('is-flash'); }, 1600);
+  });
 });
 </script>
 {% endblock %}
