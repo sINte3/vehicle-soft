@@ -2,6 +2,7 @@
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти' if is_ru else 'Эҳтиёт қисмлар' }} — {{ 'Заявка' if is_ru else 'Сўров' }} #{{ req.id }}{% endblock %}
 {% block content %}
+{% include '_spare_nav.html' %}
 
 <style>
 /* MOBILE-UPLOAD-001: vs-* styled multi-file photo/video widget (see static/js/spare_parts_upload.js). */

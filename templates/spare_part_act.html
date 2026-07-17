@@ -2,12 +2,16 @@
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Акт списания' if is_ru else 'Ҳисобдан чиқариш далолатномаси' }} {{ act.act_number }}{% endblock %}
 {% block content %}
+{% include '_spare_nav.html' %}
 
 <div class="vs-hero vs-mb">
   <div>
     <div class="vs-hero-title">🧾 {{ 'Акт списания' if is_ru else 'Ҳисобдан чиқариш далолатномаси' }} {{ act.act_number }}</div>
     <div class="vs-hero-sub">{{ 'Акт сформирован при выдаче заявки и является постоянным документом — изменение или отмена не предусмотрены.' if is_ru else 'Далолатнома сўров берилганда шакллантирилган ва доимий ҳужжат ҳисобланади — ўзгартириш ёки бекор қилиш кўзда тутилмаган.' }}</div>
   </div>
+  {# SP-DESK-001: «Все акты» moved to the shared tab strip (Акты tab is active
+     here); the act keeps its PDF actions and its contextual back link to the
+     request it was issued for. #}
   <div class="vs-row-end">
     <a href="{{ url_for('spare_parts.act_pdf', act_id=act.id) }}" target="_blank" class="vs-btn vs-btn-primary">⬇ {{ 'Скачать / печать PDF' if is_ru else 'PDF юклаш / чоп этиш' }}</a>
     {# [REASON]: SPARE-STAGE2-QA-FIX1 — explicit per-language download links so the
@@ -15,8 +19,6 @@
     <a href="{{ url_for('spare_parts.act_pdf', act_id=act.id, lang='ru') }}" target="_blank" class="vs-btn">{{ 'Скачать (RU)' if is_ru else 'Юклаш (RU)' }}</a>
     <a href="{{ url_for('spare_parts.act_pdf', act_id=act.id, lang='uz') }}" target="_blank" class="vs-btn">{{ 'Скачать (UZ)' if is_ru else 'Юклаш (UZ)' }}</a>
     <a href="{{ url_for('spare_parts.detail', rid=act.request_id) }}" class="vs-btn">{{ '← Заявка' if is_ru else '← Сўров' }} #{{ act.request_id }}</a>
-    {# CYCLE-2-3 Part 5: back to the standalone acts index (same permission as this page). #}
-    <a href="{{ url_for('spare_parts.acts_index') }}" class="vs-btn">🧾 {{ 'Все акты' if is_ru else 'Барча далолатномалар' }}</a>
   </div>
 </div>
 

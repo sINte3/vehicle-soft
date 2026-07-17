@@ -2,16 +2,14 @@
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти — SKU' if is_ru else 'Эҳтиёт қисмлар — SKU' }}{% endblock %}
 {% block content %}
+{% include '_spare_nav.html' %}
 {# SP-F-013: programmatic label associations (for=/id, aria-label) — additive only. #}
 
+{# SP-DESK-001: the old cross-navigation cluster moved to the shared tab strip. #}
 <div class="vs-hero vs-mb">
   <div>
     <div class="vs-hero-title">{{ 'SKU — варианты поставки' if is_ru else 'SKU — таъминот вариантлари' }}</div>
     <div class="vs-hero-sub">{{ 'Конкретные варианты (бренд, артикул, поставщик) для записей каталога. Цены обновляются автоматически при подтверждении цен в заявках.' if is_ru else 'Каталог ёзувлари учун аниқ вариантлар (бренд, артикул, таъминотчи). Нархлар сўровларда нарх тасдиқланганда автоматик янгиланади.' }}</div>
-  </div>
-  <div class="vs-row-end">
-    <a href="{{ url_for('spare_parts.catalog') }}" class="vs-btn">{{ '← Каталог' if is_ru else '← Каталог' }}</a>
-    <a href="{{ url_for('spare_parts.index') }}" class="vs-btn">{{ 'Заявки' if is_ru else 'Сўровлар' }}</a>
   </div>
 </div>
 

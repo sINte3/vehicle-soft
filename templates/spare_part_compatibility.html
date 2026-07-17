@@ -2,6 +2,7 @@
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Совместимость' if is_ru else 'Мослик' }} — {{ part.name }}{% endblock %}
 {% block content %}
+{% include '_spare_nav.html' %}
 
 <div class="vs-hero vs-mb">
   <div>
