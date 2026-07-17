@@ -1,0 +1,176 @@
+{% extends g.base_template %}
+{% set is_ru = (g.lang == 'ru') %}
+{% block title %}{{ 'Рабочий стол — запчасти' if is_ru else 'Иш столи — эҳтиёт қисмлар' }}{% endblock %}
+{% block content %}
+{% include '_spare_nav.html' %}
+
+<style>
+/* SP-DESK-001 scoped styles: calm zero-state and secondary-section scale.
+   Zero is a normal, quiet state on this page — muted, never alarming. */
+.sp-desk-zero { color: var(--vs-text-soft); }
+.sp-desk-my .vs-kpi-value { font-size: 24px; }
+</style>
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Рабочий стол — запчасти' if is_ru else 'Иш столи — эҳтиёт қисмлар' }}</div>
+    <div class="vs-hero-sub">{{ 'Очереди по вашим правам — что требует действия сейчас.' if is_ru else 'Ҳуқуқларингиз бўйича навбатлар — ҳозир нима амал талаб қилади.' }}</div>
+  </div>
+</div>
+
+{# ─── SECTION 1 — «Требуют действия»: the dominant block ──────────────────
+   Every tile is gated by the SAME permission that guards its target page,
+   and permitted tiles stay visible at 0 so the user learns their full set
+   of queues and the grid never jumps. #}
+{% set can_price   = current_user.has_module_access('spare_parts_price_confirm') %}
+{% set can_approve = current_user.has_module_access('spare_parts_approve') %}
+{% set can_catalog = current_user.has_module_access('spare_parts_catalog_manage') %}
+{% set can_issue   = current_user.has_module_access('spare_parts_issue') %}
+
+{% if can_price or can_approve or can_catalog or can_issue %}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <div class="vs-card-title">{{ 'Требуют действия' if is_ru else 'Амал талаб қилади' }}</div>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-kpi-grid">
+
+      {% if can_price %}
+      <div class="vs-kpi">
+        <div class="vs-kpi-head">
+          <div class="vs-kpi-label">{{ 'Ждут цены' if is_ru else 'Нарх кутмоқда' }}</div>
+          <a class="vs-kpi-link" href="{{ url_for('spare_parts.index', status='submitted') }}">{{ 'Открыть →' if is_ru else 'Очиш →' }}</a>
+        </div>
+        <div class="vs-kpi-main">
+          <div class="vs-kpi-value{% if not counts.awaiting_price %} sp-desk-zero{% endif %}">{{ counts.awaiting_price }}</div>
+          <div class="vs-kpi-cap">{{ 'нужно подтвердить цену' if is_ru else 'нархни тасдиқлаш керак' }}</div>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if can_approve %}
+      <div class="vs-kpi">
+        <div class="vs-kpi-head">
+          <div class="vs-kpi-label">{{ 'Ждут утверждения' if is_ru else 'Тасдиқ кутмоқда' }}</div>
+          <a class="vs-kpi-link" href="{{ url_for('spare_parts.index', status='submitted') }}">{{ 'Открыть →' if is_ru else 'Очиш →' }}</a>
+        </div>
+        <div class="vs-kpi-main">
+          <div class="vs-kpi-value{% if not counts.awaiting_approval %} sp-desk-zero{% endif %}">{{ counts.awaiting_approval }}</div>
+          <div class="vs-kpi-cap">{{ 'готовы к утверждению' if is_ru else 'тасдиқлашга тайёр' }}</div>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if can_catalog %}
+      <div class="vs-kpi">
+        <div class="vs-kpi-head">
+          <div class="vs-kpi-label">{{ 'Детали на классификацию' if is_ru else 'Таснифлаш кутмоқда' }}</div>
+          <a class="vs-kpi-link" href="{{ url_for('spare_parts.catalog') }}">{{ 'Открыть →' if is_ru else 'Очиш →' }}</a>
+        </div>
+        <div class="vs-kpi-main">
+          <div class="vs-kpi-value{% if not counts.needs_classification %} sp-desk-zero{% endif %}">{{ counts.needs_classification }}</div>
+          <div class="vs-kpi-cap">{{ 'новые записи каталога' if is_ru else 'янги каталог ёзувлари' }}</div>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if can_issue %}
+      {# The single colour cue on this page: goods physically ready to hand
+         over — accent only while the queue is non-empty. #}
+      <div class="vs-kpi{% if counts.ready_to_issue %} vs-card-accent-success{% endif %}">
+        <div class="vs-kpi-head">
+          <div class="vs-kpi-label">{{ 'Готовы к выдаче' if is_ru else 'Беришга тайёр' }}</div>
+          <a class="vs-kpi-link" href="{{ url_for('spare_parts.index', status='approved') }}">{{ 'Открыть →' if is_ru else 'Очиш →' }}</a>
+        </div>
+        <div class="vs-kpi-main">
+          <div class="vs-kpi-value{% if not counts.ready_to_issue %} sp-desk-zero{% endif %}">{{ counts.ready_to_issue }}</div>
+          <div class="vs-kpi-cap">{{ 'утверждены, ждут выдачи' if is_ru else 'тасдиқланган, беришни кутмоқда' }}</div>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if can_catalog %}
+      <div class="vs-kpi">
+        <div class="vs-kpi-head">
+          <div class="vs-kpi-label">{{ 'Пора менять' if is_ru else 'Алмаштириш вақти' }}</div>
+          <a class="vs-kpi-link" href="{{ url_for('spare_parts.maintenance_due') }}">{{ 'Открыть →' if is_ru else 'Очиш →' }}</a>
+        </div>
+        <div class="vs-kpi-main">
+          <div class="vs-kpi-value{% if not counts.due_maintenance %} sp-desk-zero{% endif %}">{{ counts.due_maintenance }}</div>
+          <div class="vs-kpi-cap">{{ 'по моточасам Wialon' if is_ru else 'Wialon моточаси бўйича' }}</div>
+        </div>
+      </div>
+      {% endif %}
+
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="vs-empty vs-mb">
+  <div class="vs-empty-title">{{ 'Нет очередей, требующих вашего действия.' if is_ru else 'Сиздан амал талаб қиладиган навбат йўқ.' }}</div>
+</div>
+{% endif %}
+
+{# ─── SECTION 2 — «Мои заявки»: operator's own work (secondary) ─────────── #}
+{% if current_user.can_edit %}
+<div class="vs-card vs-mb sp-desk-my">
+  <div class="vs-card-header">
+    <div class="vs-card-title">{{ 'Мои заявки' if is_ru else 'Менинг сўровларим' }}</div>
+    <a href="{{ url_for('spare_parts.new_request') }}" class="vs-btn vs-btn-primary">{{ '+ Новая заявка' if is_ru else '+ Янги сўров' }}</a>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-kpi-grid">
+
+      <div class="vs-kpi">
+        <div class="vs-kpi-head">
+          <div class="vs-kpi-label">{{ 'Черновики' if is_ru else 'Чорновлар' }}</div>
+          <a class="vs-kpi-link" href="{{ url_for('spare_parts.index', status='draft') }}">{{ 'Открыть →' if is_ru else 'Очиш →' }}</a>
+        </div>
+        <div class="vs-kpi-main">
+          <div class="vs-kpi-value{% if not counts.my_drafts %} sp-desk-zero{% endif %}">{{ counts.my_drafts }}</div>
+          <div class="vs-kpi-cap">{{ 'не отправлены' if is_ru else 'юборилмаган' }}</div>
+        </div>
+      </div>
+
+      <div class="vs-kpi">
+        <div class="vs-kpi-head">
+          <div class="vs-kpi-label">{{ 'На доработке' if is_ru else 'Қайта ишлашга қайтарилган' }}</div>
+          <a class="vs-kpi-link" href="{{ url_for('spare_parts.index', status='returned_for_revision') }}">{{ 'Открыть →' if is_ru else 'Очиш →' }}</a>
+        </div>
+        <div class="vs-kpi-main">
+          <div class="vs-kpi-value{% if not counts.my_returned %} sp-desk-zero{% endif %}">{{ counts.my_returned }}</div>
+          <div class="vs-kpi-cap">{{ 'возвращены вам' if is_ru else 'сизга қайтарилган' }}</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ─── SECTION 3 — «Быстрые действия»: compact footer row ────────────────── #}
+{% set qa_inventory = current_user.has_module_access('spare_parts_inventory_manage') %}
+{% set qa_acts      = current_user.has_module_access('spare_parts_acts') %}
+{% set qa_reports   = current_user.has_module_access('spare_parts_reports') %}
+{% if qa_inventory or qa_acts or qa_reports %}
+<div class="vs-card">
+  <div class="vs-card-header">
+    <div class="vs-card-title">{{ 'Быстрые действия' if is_ru else 'Тезкор амаллар' }}</div>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-row">
+      {% if qa_inventory %}
+      <a href="{{ url_for('spare_parts.inventory') }}" class="vs-btn">{{ 'Склад' if is_ru else 'Омбор' }}</a>
+      {% endif %}
+      {% if qa_acts %}
+      <a href="{{ url_for('spare_parts.acts_index') }}" class="vs-btn">{{ 'Акты списания' if is_ru else 'Далолатномалар' }}</a>
+      {% endif %}
+      {% if qa_reports %}
+      <a href="{{ url_for('spare_parts.reports') }}" class="vs-btn">{{ 'Отчёты' if is_ru else 'Ҳисоботлар' }}</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
