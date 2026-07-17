@@ -9,6 +9,12 @@
    Zero is a normal, quiet state on this page — muted, never alarming. */
 .sp-desk-zero { color: var(--vs-text-soft); }
 .sp-desk-my .vs-kpi-value { font-size: 24px; }
+/* [REASON]: design-system.css declares .vs-kpi AFTER .vs-card-accent-*, so
+   the tile's `border:` shorthand silently resets the accent's border-left at
+   equal specificity. Restore the intended cue here (page-scoped, higher
+   specificity) instead of editing design-system.css, which would change how
+   the main dashboard renders — out of scope for SP-DESK-001. */
+.vs-kpi.vs-card-accent-success { border-left: 4px solid var(--vs-brand-green); }
 </style>
 
 <div class="vs-hero vs-mb">
