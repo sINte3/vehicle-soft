@@ -97,7 +97,9 @@
          without spare_parts access saw the link, clicked it and got 403 (no
          data exposed, but a misleading affordance). #}
       {% if current_user.has_module_access('spare_parts') %}
-      <a href="{{ url_for('spare_parts.index') }}" class="vs-side-link{% if current and current.startswith('spare_parts.') %} is-active{% endif %}">
+      {# SP-DESK-001: the module entry point is the role-aware desk; the
+         requests list stays at spare_parts.index and is one tab away. #}
+      <a href="{{ url_for('spare_parts.desk') }}" class="vs-side-link{% if current and current.startswith('spare_parts.') %} is-active{% endif %}">
         <span class="vs-side-icon">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.65 1.65 0 0 0-1.8-.3 1.65 1.65 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.65 1.65 0 0 0-1-1.5 1.65 1.65 0 0 0-1.8.3l-.1.1A2 2 0 1 1 4.4 17l.1-.1a1.65 1.65 0 0 0 .3-1.8 1.65 1.65 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.65 1.65 0 0 0 1.5-1 1.65 1.65 0 0 0-.3-1.8l-.1-.1A2 2 0 1 1 7 4.4l.1.1a1.65 1.65 0 0 0 1.8.3H9a1.65 1.65 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.65 1.65 0 0 0 1 1.5 1.65 1.65 0 0 0 1.8-.3l.1-.1A2 2 0 1 1 19.6 7l-.1.1a1.65 1.65 0 0 0-.3 1.8V9a1.65 1.65 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.65 1.65 0 0 0-1.5 1z"/></svg>
         </span>

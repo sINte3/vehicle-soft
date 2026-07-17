@@ -2,14 +2,16 @@
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти — отчёты' if is_ru else 'Эҳтиёт қисмлар — ҳисоботлар' }}{% endblock %}
 {% block content %}
+{% include '_spare_nav.html' %}
 
 <div class="vs-hero vs-mb">
   <div>
     <div class="vs-hero-title">{{ 'Отчёты по запчастям' if is_ru else 'Эҳтиёт қисмлар ҳисоботлари' }}</div>
     <div class="vs-hero-sub">{{ 'Затраты по технике, организациям и категориям, повторные заказы и самые дорогие позиции за период.' if is_ru else 'Давр учун техника, ташкилот ва категория бўйича харажатлар, такрорий сўровлар ва энг қиммат позициялар.' }}</div>
   </div>
+  {# SP-DESK-001: cross-navigation moved to the shared tab strip; only the
+     page's own primary action stays in the hero. #}
   <div class="vs-row-end">
-    <a href="{{ url_for('spare_parts.index') }}" class="vs-btn">{{ '← Заявки' if is_ru else '← Сўровлар' }}</a>
     <a href="{{ url_for('spare_parts.reports_export', date_from=date_from_s, date_to=date_to_s, org_id=org_id, equipment_id=equipment_id, category_id=category_id) }}" class="vs-btn vs-btn-primary">⬇ {{ 'Скачать Excel' if is_ru else 'Excel юклаб олиш' }}</a>
   </div>
 </div>

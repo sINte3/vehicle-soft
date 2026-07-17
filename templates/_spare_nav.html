@@ -1,0 +1,102 @@
+{# ===========================================================================
+   templates/_spare_nav.html — SP-DESK-001: shared work-first tab strip for
+   every Spare Parts module page. Include as the FIRST element inside
+   {% block content %}. Uses only vs-* components + a small scoped style
+   block below (no new CSS file, no JS framework).
+
+   Tabs are gated by the SAME existing module permissions that guard the
+   target pages, so a user never sees a tab that would 403. Active state is
+   computed from request.endpoint (spare pages do not set the `current`
+   variable base_next.html uses for the sidebar).
+   =========================================================================== #}
+{% set is_ru = (g.lang == 'ru') %}
+{% set sp_ep = request.endpoint or '' %}
+{% set sp_refs_active = sp_ep in ('spare_parts.catalog', 'spare_parts.skus',
+                                  'spare_parts.equipment_models',
+                                  'spare_parts.catalog_compatibility',
+                                  'spare_parts.maintenance_norms') %}
+<style>
+/* SP-DESK-001 scoped styles: pills-as-links + <details> reference dropdown. */
+.sp-nav .vs-pill { text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+.sp-nav .vs-pill:hover { text-decoration: none; }
+/* The wrapper (not the <details>) is the positioning context: the open menu
+   is a full-width panel under the whole strip, so it can never overflow the
+   viewport no matter where the wrapped pill row places the trigger. */
+.sp-nav { position: relative; }
+.sp-nav details { display: inline-flex; }
+.sp-nav summary { list-style: none; }
+.sp-nav summary::-webkit-details-marker { display: none; }
+.sp-nav summary::marker { display: none; content: ''; }
+.sp-nav .sp-nav-caret { font-size: 10px; line-height: 1; transition: transform var(--vs-t-fast); }
+.sp-nav details[open] .sp-nav-caret { transform: rotate(180deg); }
+.sp-nav .sp-nav-menu {
+  left: 0; right: 0;
+  display: flex; flex-wrap: wrap; gap: 2px;
+}
+.sp-nav .sp-nav-menu .vs-menu-item { width: auto; text-decoration: none; }
+.sp-nav .sp-nav-menu .vs-menu-item.is-current { color: var(--vs-primary); font-weight: 700; }
+</style>
+<nav class="vs-pills sp-nav vs-mb" aria-label="{{ 'Разделы модуля запчастей' if is_ru else 'Эҳтиёт қисмлар модули бўлимлари' }}">
+
+  <a href="{{ url_for('spare_parts.desk') }}"
+     class="vs-pill{% if sp_ep == 'spare_parts.desk' %} is-active{% endif %}">{{ 'Рабочий стол' if is_ru else 'Иш столи' }}</a>
+
+  <a href="{{ url_for('spare_parts.index') }}"
+     class="vs-pill{% if sp_ep in ('spare_parts.index', 'spare_parts.new_request', 'spare_parts.detail') %} is-active{% endif %}">{{ 'Заявки' if is_ru else 'Сўровлар' }}</a>
+
+  {% if current_user.has_module_access('spare_parts_inventory_manage') %}
+  <a href="{{ url_for('spare_parts.inventory') }}"
+     class="vs-pill{% if sp_ep == 'spare_parts.inventory' %} is-active{% endif %}">{{ 'Склад' if is_ru else 'Омбор' }}</a>
+  {% endif %}
+
+  {% if current_user.has_module_access('spare_parts_acts') %}
+  <a href="{{ url_for('spare_parts.acts_index') }}"
+     class="vs-pill{% if sp_ep in ('spare_parts.acts_index', 'spare_parts.act_detail') %} is-active{% endif %}">{{ 'Акты' if is_ru else 'Далолатномалар' }}</a>
+  {% endif %}
+
+  {% if current_user.has_module_access('spare_parts_catalog_manage') %}
+  <a href="{{ url_for('spare_parts.maintenance_due') }}"
+     class="vs-pill{% if sp_ep == 'spare_parts.maintenance_due' %} is-active{% endif %}">{{ 'Пора менять' if is_ru else 'Алмаштириш вақти' }}</a>
+  {% endif %}
+
+  {% if current_user.has_module_access('spare_parts_reports') %}
+  <a href="{{ url_for('spare_parts.reports') }}"
+     class="vs-pill{% if sp_ep == 'spare_parts.reports' %} is-active{% endif %}">{{ 'Отчёты' if is_ru else 'Ҳисоботлар' }}</a>
+  {% endif %}
+
+  {% if current_user.has_module_access('spare_parts_catalog_manage') %}
+  <details class="sp-nav-refs" id="spNavRefs">
+    <summary class="vs-pill{% if sp_refs_active %} is-active{% endif %}">{{ 'Справочники' if is_ru else 'Маълумотномалар' }} <span class="sp-nav-caret" aria-hidden="true">▾</span></summary>
+    <div class="vs-menu sp-nav-menu">
+      <a class="vs-menu-item{% if sp_ep in ('spare_parts.catalog', 'spare_parts.catalog_compatibility') %} is-current{% endif %}"
+         href="{{ url_for('spare_parts.catalog') }}">Каталог</a>
+      <a class="vs-menu-item{% if sp_ep == 'spare_parts.skus' %} is-current{% endif %}"
+         href="{{ url_for('spare_parts.skus') }}">SKU</a>
+      <a class="vs-menu-item{% if sp_ep == 'spare_parts.equipment_models' %} is-current{% endif %}"
+         href="{{ url_for('spare_parts.equipment_models') }}">{{ 'Модели техники' if is_ru else 'Техника моделлари' }}</a>
+      <a class="vs-menu-item{% if sp_ep == 'spare_parts.maintenance_norms' %} is-current{% endif %}"
+         href="{{ url_for('spare_parts.maintenance_norms') }}">{{ 'Нормы' if is_ru else 'Нормалар' }}</a>
+    </div>
+  </details>
+  {% endif %}
+
+</nav>
+<script>
+/* SP-DESK-001: close the reference dropdown on outside click / Escape.
+   Plain-vanilla, no framework; <details>/<summary> stays fully usable
+   (focusable, Enter/Space) even with JS disabled. */
+(function () {
+    var refs = document.getElementById('spNavRefs');
+    if (!refs) return;
+    document.addEventListener('click', function (e) {
+        if (!refs.contains(e.target)) refs.removeAttribute('open');
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && refs.hasAttribute('open')) {
+            refs.removeAttribute('open');
+            var s = refs.querySelector('summary');
+            if (s) s.focus();
+        }
+    });
+})();
+</script>

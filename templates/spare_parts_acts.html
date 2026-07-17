@@ -2,15 +2,14 @@
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти — акты списания' if is_ru else 'Эҳтиёт қисмлар — далолатномалар' }}{% endblock %}
 {% block content %}
+{% include '_spare_nav.html' %}
 {# CYCLE-2-3 Part 5: standalone acts index, mirroring spare_parts_list.html. #}
 
+{# SP-DESK-001: the old cross-navigation cluster moved to the shared tab strip. #}
 <div class="vs-hero vs-mb">
   <div>
     <div class="vs-hero-title">{{ 'Акты списания запчастей' if is_ru else 'Эҳтиёт қисмлар далолатномалари' }}</div>
     <div class="vs-hero-sub">{{ 'История выдач: фильтруйте акты по организации и датам, открывайте акт для просмотра и печати PDF.' if is_ru else 'Беришлар тарихи: далолатномаларни ташкилот ва сана бўйича сараланг, кўриш ва PDF чоп этиш учун очинг.' }}</div>
-  </div>
-  <div class="vs-row-end">
-    <a href="{{ url_for('spare_parts.index') }}" class="vs-btn">{{ '← Заявки' if is_ru else '← Сўровлар' }}</a>
   </div>
 </div>
 

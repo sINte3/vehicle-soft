@@ -2,6 +2,7 @@
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти — новая заявка' if is_ru else 'Эҳтиёт қисмлар — янги сўров' }}{% endblock %}
 {% block content %}
+{% include '_spare_nav.html' %}
 
 <style>
 /* SPARE-STAGE1 scoped helpers for the request form (vs-* components elsewhere). */

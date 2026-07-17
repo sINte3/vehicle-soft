@@ -10,7 +10,7 @@ from flask import (Blueprint, render_template, request, redirect, url_for, flash
                    abort, g, jsonify, current_app, send_from_directory, send_file)
 from flask_login import login_required, current_user
 from datetime import datetime, date, timedelta
-from sqlalchemy import func, update
+from sqlalchemy import and_, exists, func, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -1390,6 +1390,62 @@ def index():
                            status_labels=STATUS_LABELS,
                            status_colors=STATUS_COLORS,
                            lang=lang)
+
+
+@spare_parts_bp.route('/desk')
+@module_required('spare_parts')
+def desk():
+    """SP-DESK-001: role-aware operator workspace («Рабочий стол»).
+
+    Read-only home page for the module: per-permission action queues with
+    live counts. Built ONLY on existing statuses/permissions — no schema
+    change, no new permission codes, and index() stays the requests list.
+    """
+    org_ids = _spare_user_org_ids()          # None => admin/all orgs
+    uid = current_user.id
+
+    R = SparePartRequest
+    I = SparePartRequestItem
+    P = SparePart
+
+    def _scoped(q):
+        # [REASON]: SEC003F org scoping — non-admin queue counts must match
+        # what the user can actually open through index()/detail().
+        return q if org_ids is None else q.filter(R.organization_id.in_(org_ids))
+
+    # [REASON]: SP-DESK-001 — aggregate/EXISTS only (PERF-SPARE-001 rule: no
+    # per-request Python loops on this hot page). A submitted request needs
+    # pricing while ANY item is unconfirmed; it is ready for approval only
+    # when fully priced AND no item points at a pending_review catalog part.
+    unpriced = exists().where(and_(I.request_id == R.id,
+                                   I.price_status != 'confirmed'))
+    pending_part = exists().where(and_(I.request_id == R.id,
+                                       I.spare_part_id == P.id,
+                                       P.status == 'pending_review'))
+
+    submitted = _scoped(R.query.filter(R.status == 'submitted'))
+
+    counts = {
+        # «Требуют действия». awaiting_price + awaiting_approval need NOT
+        # equal total submitted: a fully priced request whose item still sits
+        # in the classification queue counts in neither — it is blocked on
+        # catalog work, surfaced by the needs_classification tile instead.
+        'awaiting_price':       submitted.filter(unpriced).count(),
+        'awaiting_approval':    submitted.filter(~unpriced).filter(~pending_part).count(),
+        # Catalog parts are global reference data, deliberately NOT org-scoped.
+        'needs_classification': P.query.filter(P.status == 'pending_review').count(),
+        'ready_to_issue':       _scoped(R.query.filter(R.status == 'approved')).count(),
+        'due_maintenance':      len(_maintenance_due_rows(org_ids=org_ids)),
+        # «Мои заявки»
+        'my_drafts':            _scoped(R.query.filter(R.status == 'draft',
+                                                       R.created_by == uid)).count(),
+        'my_returned':          _scoped(R.query.filter(R.status == 'returned_for_revision',
+                                                       R.created_by == uid)).count(),
+    }
+
+    return render_template('spare_parts_desk.html',
+                           counts=counts,
+                           lang=_spare_lang())
 
 
 @spare_parts_bp.route('/new')

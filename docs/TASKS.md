@@ -3252,3 +3252,32 @@ part names, QA role/account matrix.
 
 Migration: `migrate_spare_parts_name_uz.py` (additive nullable column;
 safe to leave in place on code rollback).
+
+## SP-DESK-001 — Operator workspace («Рабочий стол») + work-first module navigation
+
+Status: implemented on branch `claude/session-wq29yw` (2026-07-17), awaiting
+staging QA per acceptance criteria in the task file (SP-DESK-001 spec).
+This delivers the "module dashboard" item deferred from SPARE-PARTS-CYCLE-2-3,
+now against a written spec.
+
+Three independent, ordered commits (revert at commit granularity — reverting
+3, then 2, then 1 unwinds cleanly; see spec §10):
+
+1. `templates/_spare_nav.html` — shared permission-gated tab strip
+   (Рабочий стол · Заявки · Склад · Акты · Пора менять · Отчёты ·
+   Справочники ▾ with Каталог/SKU/Модели техники/Нормы). Active tab from
+   `request.endpoint`; inert until included.
+2. `/spare-parts/desk` (`spare_parts.desk`) + `spare_parts_desk.html` +
+   sidebar «Запчасти» now opens the desk. Counts are aggregate/EXISTS,
+   org-scoped via `_spare_user_org_ids()`: awaiting-price / awaiting-approval
+   (fully-priced-but-pending_review-part counts in neither — blocked on
+   catalog), classification queue (global), ready-to-issue, maintenance-due
+   (Stage-3 helper), own drafts/returned. `index()` query byte-identical.
+3. Tab strip included first-in-content on all 13 module templates; ad-hoc
+   cross-navigation clusters removed from list/reference heroes (page
+   primary actions kept: «+ Новая заявка», «⬇ Скачать Excel»); detail pages
+   keep one contextual back link (act page drops only «Все акты»).
+
+No migration, no schema change, no new permission codes, no lifecycle-route
+changes. Full test suite 65 OK; per-role render sweep (admin / operator /
+viewer / price-confirm-only / no-access 403) in RU+UZ passed locally.
