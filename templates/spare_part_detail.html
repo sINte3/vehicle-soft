@@ -115,18 +115,6 @@
     </div>
 </div>
 
-{% if req.reviewer or req.review_comment %}
-<div class="vs-card vs-mb">
-    <div class="vs-card-header">
-        <div class="vs-card-title">{{ 'Результат рассмотрения' if is_ru else 'Кўриб чиқиш натижаси' }}</div>
-    </div>
-    <div class="vs-card-body">
-        <div><strong>{{ status_labels[req.status][lang] }}</strong>{% if req.reviewer %} — {{ req.reviewer.username }}{% endif %}{% if req.reviewed_at %} ({{ req.reviewed_at.strftime('%d.%m.%Y %H:%M') }}){% endif %}</div>
-        {% if req.review_comment %}<div style="margin-top:8px;">{{ req.review_comment }}</div>{% endif %}
-    </div>
-</div>
-{% endif %}
-
 <div class="vs-table-wrap vs-mb">
     <div class="vs-card-header">
         <span class="vs-card-title">{{ 'Позиции заявки' if is_ru else 'Сўров позициялари' }}</span>
@@ -442,6 +430,48 @@
     </div>
 </div>
 {% endif %}
+
+{# SP-DETAIL-002: unified event timeline (created + status + price + attachments) #}
+<div class="vs-card vs-mb" id="sp-timeline">
+  <div class="vs-card-header">
+    <div class="vs-card-title">🕑 {{ 'История заявки' if is_ru else 'Сўров тарихи' }}</div>
+    <span class="vs-soft" style="font-size:12px;">{{ timeline|length }}</span>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-timeline">
+    {% for e in timeline %}
+      {% set dot = 'var(--vs-info)' %}
+      {% if e.type == 'status' %}{% set dot = status_colors.get(e.new_status, 'var(--vs-info)') %}
+      {% elif e.type == 'price' %}{% set dot = ('var(--vs-danger)' if e.price_action == 'reject' else ('var(--vs-warning)' if e.price_action == 'return' else 'var(--vs-brand-green)')) %}
+      {% elif e.type == 'attachment' %}{% set dot = 'var(--vs-text-muted)' %}{% endif %}
+      <div class="vs-timeline-item">
+        <div class="vs-timeline-dot" style="background:{{ dot }};"></div>
+        <div>
+          <div class="vs-timeline-head">
+            <strong>{{ e.actor }}</strong>
+            <span class="vs-timeline-time">{{ e.ts.strftime('%d.%m.%Y %H:%M') if e.ts else '' }}</span>
+          </div>
+          <div class="vs-timeline-body">
+          {% if e.type == 'created' %}
+            {{ 'Заявка создана' if is_ru else 'Сўров яратилди' }}
+          {% elif e.type == 'status' %}
+            {% if e.old_status %}{{ status_labels[e.old_status][lang] }} → {% endif %}<strong>{{ status_labels[e.new_status][lang] }}</strong>
+            {% if e.comment %}<div class="vs-soft" style="font-size:12px; margin-top:2px;">{{ e.comment }}</div>{% endif %}
+          {% elif e.type == 'price' %}
+            {% set pa = {'set': ('Нарх киритилди','Цена указана'), 'confirm': ('Нарх тасдиқланди','Цена подтверждена'), 'reject': ('Нарх рад этилди','Цена отклонена'), 'return': ('Нарх қайтарилди','Цена возвращена')} %}
+            {{ (pa[e.price_action][1] if is_ru else pa[e.price_action][0]) if e.price_action in pa else e.price_action }}
+            <span class="vs-soft" style="font-size:12px;">— «{{ e.item_name }}»: {{ e.old_price|fmt_sum if e.old_price is not none else '—' }} → {{ e.new_price|fmt_sum if e.new_price is not none else '—' }}</span>
+          {% elif e.type == 'attachment' %}
+            {{ 'Добавлен файл' if is_ru else 'Файл қўшилди' }}
+            <span class="vs-soft" style="font-size:12px;">— «{{ e.item_name }}»: {{ e.filename or '—' }}</span>
+          {% endif %}
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+    </div>
+  </div>
+</div>
 
 {# CYCLE-2-3 Part 4: attachment lightbox dialog (hidden until a thumbnail is activated). #}
 <div class="sp-lightbox" id="spLightbox" role="dialog" aria-modal="true" aria-label="{{ 'Просмотр вложения' if is_ru else 'Иловани кўриш' }}">
