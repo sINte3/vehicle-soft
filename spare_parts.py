@@ -1430,10 +1430,18 @@ def desk():
     # right now; the rest of the approved queue waits for stock. Correlated
     # EXISTS only (PERF-SPARE-001: no Python loop over requests), and the two
     # tiles partition the approved queue exactly.
+    # Coverage compares the reservation row against its OWN snapshot, not the
+    # live item: requested_quantity is written with the same round(..., 3) as
+    # quantity, so the comparison is self-consistent, whereas item.quantity is
+    # the raw stored float — a >3-decimal quantity (possible via non-browser
+    # callers; _parse_spare_positive_qty does not round) would otherwise
+    # compare as under-covered forever. The snapshot cannot drift from the
+    # item it describes: request items are immutable after creation (there is
+    # no edit route — save_request only creates).
     RES = SparePartReservation
     item_covered = exists().where(and_(RES.request_item_id == I.id,
                                        RES.status == 'active',
-                                       RES.quantity >= I.quantity))
+                                       RES.quantity >= RES.requested_quantity))
     under_covered = exists().where(and_(I.request_id == R.id,
                                         I.sku_id.isnot(None),
                                         ~item_covered))
