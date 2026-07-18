@@ -1,0 +1,91 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Требуется закупка' if is_ru else 'Харид талаб қилинади' }}{% endblock %}
+{% block content %}
+{% include '_spare_nav.html' %}
+
+{# SP-MINSTOCK-004: read-only purchase queue — one number per (warehouse,
+   SKU), merged from outstanding approved demand and shortfall below the
+   minimum level. Nothing on this screen writes anything. #}
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Требуется закупка' if is_ru else 'Харид талаб қилинади' }}</div>
+    <div class="vs-hero-sub">{{ 'Что нужно закупить по складам ваших организаций.' if is_ru else 'Ташкилотларингиз омборлари бўйича нима харид қилиш кераклиги.' }}</div>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+    <div class="vs-card-body">
+        <form method="get" action="{{ url_for('spare_parts.purchase_queue') }}" class="vs-form-row">
+            <div class="vs-field" style="min-width:260px; flex:1;">
+                <label class="vs-label" for="pqOrg">{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
+                {# Default is ALL accessible organizations — the empty option
+                   (dash) is the default, org_id only narrows. #}
+                <select name="org_id" id="pqOrg" onchange="this.form.submit()" class="vs-select">
+                    <option value="">—</option>
+                    {% for org in organizations %}
+                    <option value="{{ org.id }}" {% if org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if rows %}
+<div class="vs-table-wrap">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ 'Требуется закупка' if is_ru else 'Харид талаб қилинади' }}</span>
+        <span class="vs-soft" style="font-size:12px;">{{ rows|length }}</span>
+    </div>
+    <div class="vs-table-scroll">
+    <table class="vs-table">
+        <thead>
+            <tr>
+                <th style="width:40px;">№</th>
+                <th>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
+                <th>{{ 'Запчасть' if is_ru else 'Эҳтиёт қисм' }}</th>
+                <th>SKU</th>
+                <th class="right">{{ 'Остаток' if is_ru else 'Қолдиқ' }}</th>
+                <th class="right">{{ 'Под заявки' if is_ru else 'Сўровлар учун' }}</th>
+                <th class="right">Минимум</th>
+                <th class="right">{{ 'Нужно закупить' if is_ru else 'Харид қилиш керак' }}</th>
+                <th>{{ 'Почему' if is_ru else 'Сабаби' }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td class="text-sm">{{ row.organization_name }}</td>
+                <td style="font-weight:600;">{{ row.part_name or '—' }}</td>
+                <td class="text-sm vs-muted">{{ row.sku_label }}</td>
+                <td class="right{% if not row.on_hand %} vs-muted{% endif %}">{{ row.on_hand }}</td>
+                <td class="right{% if not row.demand %} vs-muted{% endif %}">{{ row.demand }}</td>
+                <td class="right{% if not row.min_level %} vs-muted{% endif %}">{{ row.min_level }}</td>
+                <td class="right" style="font-weight:700;">
+                    {{ row.need_total }} {{ row.unit|spare_unit_label }}
+                    {% if row.reason == 'both' %}
+                    {# Breakdown of the two sources of need (numbers only). #}
+                    <div class="vs-soft" style="font-size:11px;">{{ row.need_requests }} + {{ row.need_min }}</div>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if row.reason == 'both' %}<span class="vs-badge vs-badge-purple vs-badge-sm">{{ 'Заявки + минимум' if is_ru else 'Сўровлар + минимум' }}</span>
+                    {% elif row.reason == 'requests' %}<span class="vs-badge vs-badge-info vs-badge-sm">{{ 'Под заявки' if is_ru else 'Сўровлар бўйича' }}</span>
+                    {% else %}<span class="vs-badge vs-badge-warning vs-badge-sm">{{ 'Ниже минимума' if is_ru else 'Минимумдан паст' }}</span>{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% else %}
+<div class="vs-empty">
+    <div class="vs-empty-ico">🛒</div>
+    <div class="vs-empty-title">{{ 'Ничего закупать не нужно' if is_ru else 'Ҳозирча харид қилиш шарт эмас' }}</div>
+    <div class="vs-empty-sub">{{ 'Остатков хватает на все утверждённые заявки и на неснижаемый остаток.' if is_ru else 'Барча тасдиқланган сўровлар ва энг кам қолдиқ учун захира етарли.' }}</div>
+</div>
+{% endif %}
+{% endblock %}
