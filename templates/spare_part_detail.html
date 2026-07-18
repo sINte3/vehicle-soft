@@ -283,21 +283,38 @@
                 <th>{{ 'Позиция' if is_ru else 'Позиция' }}</th>
                 <th>SKU</th>
                 <th class="right">{{ 'Кол-во' if is_ru else 'Миқдор' }}</th>
-                <th class="right">{{ 'Остаток сейчас' if is_ru else 'Ҳозирги қолдиқ' }}</th>
+                <th class="right">{{ 'Остаток' if is_ru else 'Қолдиқ' }}</th>
+                <th class="right">{{ 'Резерв других' if is_ru else 'Бошқаларнинг захираси' }}</th>
+                <th class="right">{{ 'Доступно' if is_ru else 'Мавжуд' }}</th>
+                <th class="right">{{ 'Ваш резерв' if is_ru else 'Сизнинг захирангиз' }}</th>
             </tr></thead>
             <tbody>
                 {% for item in issue_ctx.sku_items %}
-                {% set stock_now = issue_ctx.stock.get(item.sku_id) %}
+                {# SP-RESERVE-003: availability is per SKU (other requests'
+                   reserves excluded from "Доступно"); the shortage cue is
+                   driven by availability vs the COMBINED need of this
+                   request's items on the same SKU, matching the server-side
+                   pre-flight. #}
+                {% set av = issue_ctx.availability.get(item.sku_id) %}
+                {% set av_on_hand = av.on_hand if av else 0 %}
+                {% set av_reserved = av.reserved if av else 0 %}
+                {% set av_available = av.available if av else 0 %}
+                {% set av_own = av.own_reserved if av else 0 %}
+                {% set sku_needed = issue_ctx.needed_by_sku.get(item.sku_id, item.quantity) %}
+                {% set short_here = av_available < sku_needed %}
                 <tr>
                     <td style="font-weight:600;">{{ item.name }}</td>
                     <td class="text-sm vs-muted">{{ item.sku.label if item.sku else '—' }}</td>
                     <td class="right">{{ item.quantity }} {{ item.unit|spare_unit_label or '' }}</td>
-                    <td class="right" style="color:{{ 'var(--danger)' if (stock_now is none or stock_now < item.quantity) else 'var(--text)' }};">
-                        {{ stock_now if stock_now is not none else 0 }}
-                        {% if stock_now is none or stock_now < item.quantity %}
+                    <td class="right">{{ av_on_hand }}</td>
+                    <td class="right{% if not av_reserved %} vs-muted{% endif %}">{{ av_reserved }}</td>
+                    <td class="right" style="color:{{ 'var(--danger)' if (short_here or av_available < 0) else 'var(--text)' }};">
+                        {{ av_available }}
+                        {% if short_here %}
                         <div class="vs-soft" style="font-size:10.5px;">{{ 'уйдёт в минус' if is_ru else 'минусга тушади' }}</div>
                         {% endif %}
                     </td>
+                    <td class="right{% if not av_own %} vs-muted{% endif %}">{{ av_own }}</td>
                 </tr>
                 {% endfor %}
             </tbody>

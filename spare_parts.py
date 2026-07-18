@@ -3172,8 +3172,12 @@ def _issue_context(spr):
     """Data the detail page needs to offer the issue action.
 
     Returns dict with: sku_items / no_sku_items, the organization's warehouse
-    (or None), and current stock per SKU item so the issuer sees what will be
-    deducted (and what would go negative) BEFORE confirming.
+    (or None), current stock per SKU item so the issuer sees what will be
+    deducted (and what would go negative) BEFORE confirming, plus
+    SP-RESERVE-003 keys: 'availability' ({sku_id: {'on_hand', 'reserved',
+    'available', 'own_reserved'}}, where 'reserved'/'available' count OTHER
+    requests' active reservations only) and 'needed_by_sku' (this request's
+    quantity aggregated per SKU across items).
     """
     sku_items = [i for i in spr.items if i.sku_id]
     no_sku_items = [i for i in spr.items if not i.sku_id]
@@ -3186,11 +3190,37 @@ def _issue_context(spr):
                         SparePartInventory.sku_id.in_([i.sku_id for i in sku_items]))
                 .all())
         stock = {r.sku_id: r.quantity for r in rows}
+    # [REASON]: SP-RESERVE-003 — per-SKU aggregation (two items pointing at
+    # the same SKU are checked and displayed against their combined need),
+    # in first-appearance order so pre-flight messages stay deterministic.
+    needed_by_sku = {}
+    for item in sku_items:
+        needed_by_sku[item.sku_id] = round(
+            needed_by_sku.get(item.sku_id, 0.0) + float(item.quantity or 0), 3)
+    availability = {}
+    if warehouse and sku_items:
+        # [REASON]: SP-RESERVE-003 — exclude_request_id makes 'reserved' and
+        # 'available' count OTHER requests only, so a request's own standing
+        # reserve never blocks its own issue; 'own_reserved' is surfaced
+        # separately for display and the under-reserved hint.
+        availability = _availability_map(warehouse.id, list(needed_by_sku),
+                                         exclude_request_id=spr.id)
+        own_rows = (db.session.query(SparePartReservation.sku_id,
+                                     func.sum(SparePartReservation.quantity))
+                    .filter(SparePartReservation.request_id == spr.id,
+                            SparePartReservation.warehouse_id == warehouse.id,
+                            SparePartReservation.status == 'active')
+                    .group_by(SparePartReservation.sku_id).all())
+        own = {sku_id: round(float(total or 0), 3) for sku_id, total in own_rows}
+        for sku_id, info in availability.items():
+            info['own_reserved'] = own.get(sku_id, 0.0)
     return {
         'sku_items': sku_items,
         'no_sku_items': no_sku_items,
         'warehouse': warehouse,
         'stock': stock,
+        'availability': availability,
+        'needed_by_sku': needed_by_sku,
     }
 
 
@@ -3232,19 +3262,37 @@ def issue_request(rid):
         errors.append(_spare_t(
             'SKUсиз позициялар омбордан ҳисобдан чиқарилмайди — беришдан олдин буни тасдиқлаш шарт',
             'Позиции без SKU не будут списаны со склада — перед выдачей это нужно явно подтвердить'))
-    # [REASON]: SP-F-001 pre-flight — a friendly per-item shortage message
-    # BEFORE any transaction work, using the stock snapshot _issue_context()
-    # already computed. The atomic guard inside _apply_inventory_movement stays
-    # the real enforcement for the concurrent case below.
+    # [REASON]: SP-F-001 pre-flight — a friendly shortage message BEFORE any
+    # transaction work. SP-RESERVE-003: aggregated per SKU (two items on the
+    # same SKU are checked against their combined need) and against
+    # AVAILABILITY = on-hand minus OTHER requests' active reservations, so a
+    # part already promised to another approved request cannot be issued past
+    # it — while this request's own reserve never blocks its own issue. The
+    # atomic guard inside _apply_inventory_movement stays the real
+    # enforcement for the concurrent case below.
     if ctx['sku_items'] and ctx['warehouse'] is not None:
-        for item in ctx['sku_items']:
-            available = float(ctx['stock'].get(item.sku_id) or 0)
-            needed = float(item.quantity or 0)
+        for sku_id, needed in ctx['needed_by_sku'].items():
+            info = ctx['availability'].get(sku_id) or {
+                'on_hand': 0.0, 'reserved': 0.0, 'available': 0.0,
+                'own_reserved': 0.0}
+            available = float(info['available'])
             if available - needed < 0:
-                errors.append(_spare_t(
+                item_name = next((i.name for i in ctx['sku_items']
+                                  if i.sku_id == sku_id), '')
+                msg = _spare_t(
                     '«{}»: омборда етарли қолдиқ йўқ (керак: {}, мавжуд: {})',
                     '«{}»: на складе недостаточно остатка (нужно: {}, доступно: {})'
-                ).format(item.name, _fmt_qty_text(needed), _fmt_qty_text(available)))
+                ).format(item_name, _fmt_qty_text(needed), _fmt_qty_text(available))
+                # [REASON]: SP-RESERVE-003 — when the request itself is
+                # under-reserved, say so explicitly: the issuer must see the
+                # part was never fully promised to THIS request, as opposed
+                # to stock having drained afterwards.
+                if float(info['own_reserved']) + 0.001 < needed:
+                    msg += _spare_t(
+                        ' — сўров захираси кераклидан кам (захираланган: {})',
+                        ' — резерв заявки меньше требуемого (зарезервировано: {})'
+                    ).format(_fmt_qty_text(info['own_reserved']))
+                errors.append(msg)
     if errors:
         _spare_flash_errors(errors, title_uz='Бериб бўлмади:',
                             title_ru='Выдача не выполнена:')
@@ -3270,6 +3318,12 @@ def issue_request(rid):
                 warehouse.id, item.sku_id, 'issue', -float(item.quantity or 0),
                 reference_type='request_item', reference_id=item.id,
                 note='Request #{}'.format(spr.id), user_id=current_user.id)
+
+        # [REASON]: SP-RESERVE-003 — the claim is fulfilled the moment the
+        # stock physically leaves: consume this request's active reservations
+        # INSIDE the same transaction, so a failed issue (rollback below)
+        # leaves them active and nothing is partially applied.
+        _consume_reservations_for_request(spr.id, current_user.id)
 
         # 2. The act with MAX+1 numbering and snapshotted items.
         issued_date = date.today()
