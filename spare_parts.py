@@ -1424,7 +1424,22 @@ def desk():
                                        I.spare_part_id == P.id,
                                        P.status == 'pending_review'))
 
+    # [REASON]: SP-RESERVE-003 — «Готовы к выдаче» must stop lying: a SKU
+    # item is covered iff an ACTIVE reservation holds its full quantity, and
+    # only requests with no under-covered SKU item are physically issuable
+    # right now; the rest of the approved queue waits for stock. Correlated
+    # EXISTS only (PERF-SPARE-001: no Python loop over requests), and the two
+    # tiles partition the approved queue exactly.
+    RES = SparePartReservation
+    item_covered = exists().where(and_(RES.request_item_id == I.id,
+                                       RES.status == 'active',
+                                       RES.quantity >= I.quantity))
+    under_covered = exists().where(and_(I.request_id == R.id,
+                                        I.sku_id.isnot(None),
+                                        ~item_covered))
+
     submitted = _scoped(R.query.filter(R.status == 'submitted'))
+    approved = _scoped(R.query.filter(R.status == 'approved'))
 
     counts = {
         # «Требуют действия». awaiting_price + awaiting_approval need NOT
@@ -1435,7 +1450,8 @@ def desk():
         'awaiting_approval':    submitted.filter(~unpriced).filter(~pending_part).count(),
         # Catalog parts are global reference data, deliberately NOT org-scoped.
         'needs_classification': P.query.filter(P.status == 'pending_review').count(),
-        'ready_to_issue':       _scoped(R.query.filter(R.status == 'approved')).count(),
+        'ready_to_issue':       approved.filter(~under_covered).count(),
+        'awaiting_stock':       approved.filter(under_covered).count(),
         'due_maintenance':      len(_maintenance_due_rows(org_ids=org_ids)),
         # «Мои заявки»
         'my_drafts':            _scoped(R.query.filter(R.status == 'draft',
