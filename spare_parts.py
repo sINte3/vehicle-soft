@@ -16,7 +16,8 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from models import (db, SparePart, SparePartCategory, SparePartPriceAudit,
                     SparePartAttachment, SparePartInventory,
-                    SparePartInventoryMovement, SparePartRequest,
+                    SparePartInventoryMovement, SparePartMinLevel,
+                    SparePartRequest,
                     SparePartRequestItem, SparePartReservation,
                     SparePartSku, SparePartStatusHistory,
                     SparePartUnit, SparePartWarehouse, SparePartWriteOffAct,
@@ -2946,6 +2947,168 @@ def _spare_orgs_for_user():
     if user_org_ids is not None:
         q = q.filter(Organization.id.in_(user_org_ids))
     return q.all()
+
+
+# ─── SP-MINSTOCK-004: minimum stock levels + purchase queue ──────────────────
+
+def _min_levels_map(warehouse_ids):
+    """{(warehouse_id, sku_id): min_quantity} for the given warehouses.
+
+    One query regardless of how many pairs come back; quantities are rounded
+    to the module-wide 3 decimals.
+    """
+    warehouse_ids = [w for w in (warehouse_ids or []) if w]
+    if not warehouse_ids:
+        return {}
+    rows = (db.session.query(SparePartMinLevel.warehouse_id,
+                             SparePartMinLevel.sku_id,
+                             SparePartMinLevel.min_quantity)
+            .filter(SparePartMinLevel.warehouse_id.in_(warehouse_ids))
+            .all())
+    return {(wh_id, sku_id): round(float(qty or 0), 3)
+            for wh_id, sku_id, qty in rows}
+
+
+def _purchase_queue_rows(org_ids=None, org_id=None):
+    """Rows of the «Требуется закупка» queue: what has to be BOUGHT, merged
+    from two sources of need per (warehouse, SKU) pair.
+
+    Per pair:
+        on_hand   = spare_part_inventory.quantity          (0 if no row)
+        demand    = SUM(active reservations.requested_quantity)
+        min_level = spare_part_min_levels.min_quantity     (0 if no row)
+
+        need_total    = max(0, demand + min_level - on_hand)
+        need_requests = max(0, demand - on_hand)
+        need_min      = need_total - need_requests
+
+    A pair appears iff need_total > 0.001.
+
+    [REASON]: demand uses requested_quantity, NOT the granted reservation
+    quantity — quantity is frozen at approval time and goes stale the moment
+    a receipt is booked, whereas requested_quantity is the outstanding demand
+    of the approved request against LIVE on_hand. The minimum is added ON TOP
+    of demand (not compared to on_hand alone) because it is what must remain
+    after the approved demand has been issued — otherwise the safety stock
+    would be consumed by the first issue.
+
+    [REASON]: PERF-SPARE-001 — fixed number of queries independent of the
+    number of rows returned: (1) in-scope warehouses + their organizations,
+    (2) grouped active reservations, (3) min levels, (4) inventory restricted
+    to the candidate pairs' SKU ids, (5) SKU + canonical part display data.
+    Candidate pairs are the union of pairs seen in (2) and (3) — a pair with
+    only an inventory row has no demand and no minimum, so need_total is 0 by
+    construction and it is never even considered. The dict merge below runs
+    over that bounded candidate set (a few hundred pairs at most), with no
+    query and no lazy relationship access inside the loop.
+
+    org_ids: None for admin/all orgs, else the user's organization ids
+    (the _spare_user_org_ids() contract). org_id narrows to one organization;
+    callers are responsible for the access check, but an org_id outside
+    org_ids yields [] as defence in depth.
+    """
+    if org_id and org_ids is not None and org_id not in org_ids:
+        return []
+    wh_q = (SparePartWarehouse.query
+            .options(joinedload(SparePartWarehouse.organization)))
+    if org_id:
+        wh_q = wh_q.filter(SparePartWarehouse.organization_id == org_id)
+    elif org_ids is not None:
+        if not org_ids:
+            return []
+        wh_q = wh_q.filter(SparePartWarehouse.organization_id.in_(org_ids))
+    warehouses = wh_q.all()                                          # query 1
+    if not warehouses:
+        return []
+    wh_by_id = {w.id: w for w in warehouses}
+    wh_ids = list(wh_by_id)
+
+    demand_rows = (db.session.query(
+        SparePartReservation.warehouse_id,
+        SparePartReservation.sku_id,
+        func.sum(SparePartReservation.requested_quantity))
+        .filter(SparePartReservation.warehouse_id.in_(wh_ids),
+                SparePartReservation.status == 'active')
+        .group_by(SparePartReservation.warehouse_id,
+                  SparePartReservation.sku_id)
+        .all())                                                      # query 2
+    demand = {(wh_id, sku_id): round(float(total or 0), 3)
+              for wh_id, sku_id, total in demand_rows}
+
+    min_levels = _min_levels_map(wh_ids)                             # query 3
+
+    candidates = set(demand) | set(min_levels)
+    if not candidates:
+        return []
+    sku_ids = {sku_id for _wh_id, sku_id in candidates}
+
+    inv_rows = (db.session.query(SparePartInventory.warehouse_id,
+                                 SparePartInventory.sku_id,
+                                 SparePartInventory.quantity,
+                                 SparePartInventory.unit)
+                .filter(SparePartInventory.warehouse_id.in_(wh_ids),
+                        SparePartInventory.sku_id.in_(sku_ids))
+                .all())                                              # query 4
+    on_hand = {(wh_id, sku_id): float(qty or 0)
+               for wh_id, sku_id, qty, _unit in inv_rows}
+    inv_unit = {(wh_id, sku_id): (unit or '')
+                for wh_id, sku_id, _qty, unit in inv_rows}
+
+    skus = (SparePartSku.query
+            .options(joinedload(SparePartSku.spare_part))
+            .filter(SparePartSku.id.in_(sku_ids))
+            .all())                                                  # query 5
+    sku_by_id = {s.id: s for s in skus}
+
+    keyed = []
+    for wh_id, sku_id in candidates:
+        pair_demand = demand.get((wh_id, sku_id), 0.0)
+        pair_min = min_levels.get((wh_id, sku_id), 0.0)
+        pair_on_hand = on_hand.get((wh_id, sku_id), 0.0)
+        need_total = round(max(0.0, pair_demand + pair_min - pair_on_hand), 3)
+        if need_total <= 0.001:
+            continue
+        need_requests = round(max(0.0, pair_demand - pair_on_hand), 3)
+        need_min = round(need_total - need_requests, 3)
+        # Reason code for the «Почему» column — derived, never stored.
+        if need_requests > 0.001 and need_min > 0.001:
+            reason = 'both'
+        elif need_requests > 0.001:
+            reason = 'requests'
+        else:
+            reason = 'min'
+        warehouse = wh_by_id[wh_id]
+        org = warehouse.organization
+        sku = sku_by_id.get(sku_id)
+        part = sku.spare_part if sku else None
+        # Unit: inventory row's unit when present, else the canonical part's,
+        # else 'dona' — same resolution as the warehouse screen.
+        unit = (inv_unit.get((wh_id, sku_id))
+                or (getattr(part, 'unit', '') if part else '') or 'dona')
+        row = {
+            'organization_id': warehouse.organization_id,
+            'organization_name': org.name if org else '',
+            'part_name': _part_display_name(part, fallback=''),
+            'sku_label': sku.label if sku else '#{}'.format(sku_id),
+            'unit': unit,
+            'on_hand': round(pair_on_hand, 3),
+            'demand': pair_demand,
+            'min_level': pair_min,
+            'need_requests': need_requests,
+            'need_min': need_min,
+            'need_total': need_total,
+            'reason': reason,
+        }
+        # Sort: organization sort_order, then canonical part name, then SKU
+        # label (org name breaks sort_order ties so organizations never
+        # interleave). Canonical name — NOT the display alias — so the order
+        # is stable across UI languages.
+        keyed.append((((org.sort_order if org else 0) or 0,
+                       row['organization_name'],
+                       ((part.name if part else '') or '').lower(),
+                       row['sku_label'].lower()), row))
+    keyed.sort(key=lambda pair: pair[0])
+    return [row for _key, row in keyed]
 
 
 @spare_parts_bp.route('/inventory')
