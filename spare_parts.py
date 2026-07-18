@@ -1462,6 +1462,12 @@ def desk():
         'ready_to_issue':       approved.filter(~under_covered).count(),
         'awaiting_stock':       approved.filter(under_covered).count(),
         'due_maintenance':      len(_maintenance_due_rows(org_ids=org_ids)),
+        # [REASON]: SP-MINSTOCK-004 — same "helper returns rows, tile counts
+        # them" shape as due_maintenance above; _purchase_queue_rows is a
+        # fixed five-query aggregate with a bounded dict merge, so the
+        # PERF-SPARE-001 rule (no per-request Python loop on this hot page)
+        # still holds.
+        'purchase_needed':      len(_purchase_queue_rows(org_ids=org_ids)),
         # «Мои заявки»
         'my_drafts':            _scoped(R.query.filter(R.status == 'draft',
                                                        R.created_by == uid)).count(),
