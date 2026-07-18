@@ -3504,6 +3504,38 @@ def inventory_reservation_release(res_id):
                             org_id=warehouse.organization_id))
 
 
+@spare_parts_bp.route('/purchase-queue')
+@module_required('spare_parts')
+def purchase_queue():
+    """SP-MINSTOCK-004: read-only «Требуется закупка» queue.
+
+    One screen where a purchaser sees everything that has to be bought,
+    merged per (warehouse, SKU) from outstanding approved demand and
+    shortfall below the minimum level (see _purchase_queue_rows).
+
+    [REASON]: read gate — the screen is for whoever buys or authorizes
+    buying: warehouse keepers (spare_parts_inventory_manage) and approvers
+    (spare_parts_approve). Plain abort(403), NOT _deny_spare: this is a read
+    screen, and the denial trail is reserved for money-relevant actions (see
+    the comment on _deny_spare). No new permission codes.
+
+    [REASON]: the default scope is ALL accessible organizations, not the
+    first one — a purchaser buys for the holding; org_id only narrows.
+    """
+    if not (current_user.has_module_access('spare_parts_inventory_manage')
+            or current_user.has_module_access('spare_parts_approve')):
+        abort(403)
+    org_id = request.args.get('org_id', type=int)
+    if org_id and not current_user.can_access_org(org_id):
+        abort(403)
+    rows = _purchase_queue_rows(org_ids=_spare_user_org_ids(), org_id=org_id)
+    return render_template('spare_parts_purchase_queue.html',
+                           rows=rows,
+                           organizations=_spare_orgs_for_user(),
+                           org_id=org_id,
+                           lang=_spare_lang())
+
+
 # ─── SPARE-STAGE2: issue + write-off acts ─────────────────────────────────────
 
 def _acts_dir():
