@@ -5,6 +5,13 @@
 {% include '_spare_nav.html' %}
 {# SP-F-013: programmatic label associations (for=/id, aria-label) — additive only. #}
 
+<style>
+/* SP-RESERVE-003 scoped styles: inline release form in the active
+   reservations table (design-system.css must not be edited). */
+.sp-res-release-form { display:flex; gap:6px; justify-content:flex-end; align-items:center; }
+.sp-res-note { width:150px; font-size:12px; padding:4px 6px; }
+</style>
+
 {# SP-DESK-001: the old cross-navigation cluster moved to the shared tab strip. #}
 <div class="vs-hero vs-mb">
   <div>
@@ -114,17 +121,27 @@
                 <th>{{ 'Запчасть' if is_ru else 'Эҳтиёт қисм' }}</th>
                 <th>SKU</th>
                 <th class="right">{{ 'Остаток' if is_ru else 'Қолдиқ' }}</th>
+                <th class="right">{{ 'Зарезервировано' if is_ru else 'Захираланган' }}</th>
+                <th class="right">{{ 'Доступно' if is_ru else 'Мавжуд' }}</th>
                 <th>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
                 <th>{{ 'Обновлено' if is_ru else 'Янгиланган' }}</th>
             </tr>
         </thead>
         <tbody>
             {% for row in inventory_rows %}
+            {# SP-RESERVE-003: available = on-hand − active reservations.
+               A negative available is legitimate (a manual negative
+               adjustment wins over a standing reserve) and is shown in the
+               danger colour, never blocked or auto-corrected. #}
+            {% set res_qty = reserved_map.get(row.sku_id, 0) %}
+            {% set avail_qty = ((row.quantity or 0) - res_qty)|round(3) %}
             <tr>
                 <td>{{ loop.index }}</td>
                 <td style="font-weight:600;">{{ row.sku.spare_part.name if row.sku and row.sku.spare_part else '—' }}</td>
                 <td class="text-sm vs-muted">{{ row.sku.label if row.sku else '—' }}</td>
                 <td class="right" style="font-weight:700; color:{{ 'var(--danger)' if row.quantity < 0 else 'var(--text)' }};">{{ row.quantity }}</td>
+                <td class="right{% if not res_qty %} vs-muted{% endif %}">{{ res_qty }}</td>
+                <td class="right" style="font-weight:700; color:{{ 'var(--danger)' if avail_qty < 0 else 'var(--text)' }};">{{ avail_qty }}</td>
                 {# RE-SP-010: localized unit word; unknown/legacy codes render raw. #}
                 <td>{{ row.unit|spare_unit_label or ('шт' if is_ru else 'дона') }}</td>
                 <td class="text-sm vs-muted">{{ row.updated_at.strftime('%d.%m.%Y %H:%M') if row.updated_at else '—' }}</td>
@@ -138,6 +155,64 @@
         <div class="vs-empty-ico">📦</div>
         <div class="vs-empty-title">{{ 'Остатков пока нет' if is_ru else 'Ҳозирча қолдиқ йўқ' }}</div>
         <div class="vs-empty-sub">{{ 'Строки появляются после первого прихода или корректировки.' if is_ru else 'Қаторлар биринчи кирим ёки тузатишдан кейин пайдо бўлади.' }}</div>
+    </div>
+    {% endif %}
+</div>
+
+{# SP-RESERVE-003: active reservations with the manual release action — the
+   only exit for the claim of an approved-but-abandoned request. Releasing
+   does NOT change the request's status. #}
+{% set can_release = current_user.has_module_access('spare_parts_inventory_manage') %}
+<div class="vs-table-wrap vs-mb">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ 'Активные резервы' if is_ru else 'Фаол захиралар' }}</span>
+        <span class="vs-soft" style="font-size:12px;">{{ reservations|length }}</span>
+    </div>
+    {% if reservations %}
+    <div class="vs-table-scroll">
+    <table class="vs-table">
+        <thead>
+            <tr>
+                <th>{{ 'Запчасть' if is_ru else 'Эҳтиёт қисм' }}</th>
+                <th>SKU</th>
+                <th>{{ 'Заявка' if is_ru else 'Сўров' }}</th>
+                <th class="right">{{ 'Резерв / запрошено' if is_ru else 'Захира / сўралган' }}</th>
+                <th>{{ 'Дата' if is_ru else 'Сана' }}</th>
+                <th>{{ 'Кто утвердил' if is_ru else 'Ким тасдиқлаган' }}</th>
+                {% if can_release %}
+                <th class="right">{{ 'Снятие резерва' if is_ru else 'Захирани бўшатиш' }}</th>
+                {% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for res in reservations %}
+            <tr>
+                <td style="font-weight:600;">{{ res.sku.spare_part.name if res.sku and res.sku.spare_part else '—' }}</td>
+                <td class="text-sm vs-muted">{{ res.sku.label if res.sku else '—' }}</td>
+                <td><a href="{{ url_for('spare_parts.detail', rid=res.request_id) }}">{{ 'Заявка' if is_ru else 'Сўров' }} #{{ res.request_id }}</a></td>
+                {# Reserved short of requested is the "waiting for stock" case — warn colour. #}
+                <td class="right" style="font-weight:600;{% if res.quantity < res.requested_quantity %} color:var(--warn);{% endif %}">{{ res.quantity }} / {{ res.requested_quantity }}</td>
+                <td class="text-sm vs-muted">{{ res.created_at.strftime('%d.%m.%Y %H:%M') if res.created_at else '—' }}</td>
+                <td class="text-sm vs-muted">{{ res.creator.username if res.creator else '—' }}</td>
+                {% if can_release %}
+                <td class="right">
+                    <form method="post" action="{{ url_for('spare_parts.inventory_reservation_release', res_id=res.id) }}" class="sp-res-release-form" onsubmit="return confirm({{ ('Снять резерв? Заявка останется утверждённой, остаток не изменится.' if is_ru else 'Захира бўшатилсинми? Сўров тасдиқланганича қолади, қолдиқ ўзгармайди.')|tojson }})">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="text" name="note" class="vs-input sp-res-note" placeholder="{{ 'причина снятия...' if is_ru else 'бўшатиш сабаби...' }}" aria-label="{{ 'Причина снятия резерва' if is_ru else 'Захирани бўшатиш сабаби' }}">
+                        <button type="submit" class="vs-btn vs-btn-sm">{{ 'Снять' if is_ru else 'Бўшатиш' }}</button>
+                    </form>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="vs-empty">
+        <div class="vs-empty-ico">🔒</div>
+        <div class="vs-empty-title">{{ 'Активных резервов нет' if is_ru else 'Фаол захиралар йўқ' }}</div>
+        <div class="vs-empty-sub">{{ 'Резерв создаётся при утверждении заявки и снимается при выдаче.' if is_ru else 'Захира сўров тасдиқланганда яратилади ва беришда ечилади.' }}</div>
     </div>
     {% endif %}
 </div>

@@ -17,7 +17,8 @@ from sqlalchemy.orm import joinedload, selectinload
 from models import (db, SparePart, SparePartCategory, SparePartPriceAudit,
                     SparePartAttachment, SparePartInventory,
                     SparePartInventoryMovement, SparePartRequest,
-                    SparePartRequestItem, SparePartSku, SparePartStatusHistory,
+                    SparePartRequestItem, SparePartReservation,
+                    SparePartSku, SparePartStatusHistory,
                     SparePartUnit, SparePartWarehouse, SparePartWriteOffAct,
                     SparePartWriteOffActItem, Organization, Equipment,
                     EquipmentModel, SparePartCompatibility,
@@ -1423,7 +1424,30 @@ def desk():
                                        I.spare_part_id == P.id,
                                        P.status == 'pending_review'))
 
+    # [REASON]: SP-RESERVE-003 — «Готовы к выдаче» must stop lying: a SKU
+    # item is covered iff an ACTIVE reservation holds its full quantity, and
+    # only requests with no under-covered SKU item are physically issuable
+    # right now; the rest of the approved queue waits for stock. Correlated
+    # EXISTS only (PERF-SPARE-001: no Python loop over requests), and the two
+    # tiles partition the approved queue exactly.
+    # Coverage compares the reservation row against its OWN snapshot, not the
+    # live item: requested_quantity is written with the same round(..., 3) as
+    # quantity, so the comparison is self-consistent, whereas item.quantity is
+    # the raw stored float — a >3-decimal quantity (possible via non-browser
+    # callers; _parse_spare_positive_qty does not round) would otherwise
+    # compare as under-covered forever. The snapshot cannot drift from the
+    # item it describes: request items are immutable after creation (there is
+    # no edit route — save_request only creates).
+    RES = SparePartReservation
+    item_covered = exists().where(and_(RES.request_item_id == I.id,
+                                       RES.status == 'active',
+                                       RES.quantity >= RES.requested_quantity))
+    under_covered = exists().where(and_(I.request_id == R.id,
+                                        I.sku_id.isnot(None),
+                                        ~item_covered))
+
     submitted = _scoped(R.query.filter(R.status == 'submitted'))
+    approved = _scoped(R.query.filter(R.status == 'approved'))
 
     counts = {
         # «Требуют действия». awaiting_price + awaiting_approval need NOT
@@ -1434,7 +1458,8 @@ def desk():
         'awaiting_approval':    submitted.filter(~unpriced).filter(~pending_part).count(),
         # Catalog parts are global reference data, deliberately NOT org-scoped.
         'needs_classification': P.query.filter(P.status == 'pending_review').count(),
-        'ready_to_issue':       _scoped(R.query.filter(R.status == 'approved')).count(),
+        'ready_to_issue':       approved.filter(~under_covered).count(),
+        'awaiting_stock':       approved.filter(under_covered).count(),
         'due_maintenance':      len(_maintenance_due_rows(org_ids=org_ids)),
         # «Мои заявки»
         'my_drafts':            _scoped(R.query.filter(R.status == 'draft',
@@ -1999,8 +2024,49 @@ def approve_request(rid):
     )
     # [REASON]: FIX003A — Record status history before commit.
     _add_status_history(spr.id, old_status, 'approved', comment=spr.review_comment or '', changed_by=current_user.id)
+    # [REASON]: SP-RESERVE-003 — reserve stock in the SAME transaction as the
+    # status change: either the request becomes approved together with its
+    # reservation rows, or neither happens. Soft by design — approval is never
+    # blocked by stock (see _create_reservations_for_request); shortages only
+    # produce the post-commit warning below.
+    shortages = _create_reservations_for_request(spr, current_user.id)
+    sku_items = [i for i in spr.items if i.sku_id]
+    total_needed = round(sum(round(float(i.quantity or 0), 3)
+                             for i in sku_items), 3)
+    total_short = round(sum(s['short'] for s in (shortages or [])), 3)
+    reservation_wh = SparePartWarehouse.query.filter_by(
+        organization_id=spr.organization_id).first()
+    _audit_spare(
+        'spare_part_reservations_created',
+        entity_type='spare_part_request',
+        entity_id=spr.id,
+        entity_label='Request #{}'.format(spr.id),
+        after={'warehouse_id': reservation_wh.id if reservation_wh else None,
+               'rows': len(sku_items) if shortages is not None else 0,
+               'total_reserved': (round(total_needed - total_short, 3)
+                                  if shortages is not None else 0),
+               'total_short': total_short},
+        description='Reservations created on approval of request #{}'.format(spr.id)
+    )
     db.session.commit()
     flash(_spare_t('Сўров тасдиқланди', 'Заявка утверждена'), 'success')
+    # [REASON]: SP-RESERVE-003 — non-blocking notices about the reservation
+    # outcome, shown alongside (never instead of) the success flash.
+    if shortages is None and sku_items:
+        flash(_spare_t('Захира яратилмади: ташкилотда эҳтиёт қисмлар омбори йўқ.',
+                       'Резерв не создан: у организации нет склада запчастей.'),
+              'info')
+    elif shortages:
+        _spare_flash_errors(
+            [_spare_t('«{}»: керак {}, захираланган {}, етишмайди {}',
+                      '«{}»: нужно {}, зарезервировано {}, не хватает {}'
+                      ).format(s['item'].name,
+                               _fmt_qty_text(s['needed']),
+                               _fmt_qty_text(s['reserved']),
+                               _fmt_qty_text(s['short']))
+             for s in shortages],
+            title_uz='Сўров тасдиқланди, лекин омбор ҳаммасига етмади:',
+            title_ru='Заявка утверждена, но склада хватило не на всё:')
     # [REASON]: BOT003 — Post-commit best-effort notification, never raises.
     if _BOT003_AVAILABLE:
         enqueue_spare_request_status_best_effort(spr.id, 'spare_request_approved')
@@ -2715,6 +2781,164 @@ def _apply_inventory_movement(warehouse_id, sku_id, movement_type, quantity,
     return movement
 
 
+# ─── SP-RESERVE-003: reservations ─────────────────────────────────────────────
+
+RESERVATION_STATUSES = ('active', 'consumed', 'released')
+
+
+def _reserved_totals(warehouse_id, sku_ids, exclude_request_id=None):
+    """Sum of ACTIVE reserved quantity per sku_id on one warehouse.
+
+    [REASON]: SP-RESERVE-003 — one GROUP BY query, never a per-SKU loop;
+    exclude_request_id removes that request's own claims so its own reserve
+    never blocks its own issue.
+    """
+    sku_ids = [s for s in (sku_ids or []) if s]
+    if not sku_ids:
+        return {}
+    q = (db.session.query(SparePartReservation.sku_id,
+                          func.sum(SparePartReservation.quantity))
+         .filter(SparePartReservation.warehouse_id == warehouse_id,
+                 SparePartReservation.sku_id.in_(sku_ids),
+                 SparePartReservation.status == 'active'))
+    if exclude_request_id is not None:
+        q = q.filter(SparePartReservation.request_id != exclude_request_id)
+    return {sku_id: round(float(total or 0), 3)
+            for sku_id, total in q.group_by(SparePartReservation.sku_id).all()}
+
+
+def _availability_map(warehouse_id, sku_ids, exclude_request_id=None):
+    """{sku_id: {'on_hand', 'reserved', 'available'}} for one warehouse.
+
+    [REASON]: SP-RESERVE-003 — available = on-hand minus active reservations
+    (of OTHER requests when exclude_request_id is given). Derived on read,
+    never stored; on-hand itself stays untouched by reservations (a
+    reservation is not a stock movement). Available may legitimately be
+    negative: a manual negative adjustment wins over a standing reserve and
+    is displayed, not auto-corrected. Two queries total.
+    """
+    sku_ids = [s for s in (sku_ids or []) if s]
+    if not sku_ids:
+        return {}
+    reserved = _reserved_totals(warehouse_id, sku_ids,
+                                exclude_request_id=exclude_request_id)
+    inv_rows = (SparePartInventory.query
+                .filter(SparePartInventory.warehouse_id == warehouse_id,
+                        SparePartInventory.sku_id.in_(sku_ids))
+                .all())
+    on_hand = {r.sku_id: float(r.quantity or 0) for r in inv_rows}
+    out = {}
+    for sku_id in sku_ids:
+        oh = on_hand.get(sku_id, 0.0)
+        rv = reserved.get(sku_id, 0.0)
+        out[sku_id] = {'on_hand': oh, 'reserved': rv,
+                       'available': round(oh - rv, 3)}
+    return out
+
+
+def _create_reservations_for_request(spr, user_id):
+    """Create one reservation row per SKU item of a freshly approved request.
+
+    Returns None when the organization has no warehouse (nothing created —
+    the caller distinguishes "no warehouse" from "no shortages"), else the
+    list of shortage dicts {'item', 'needed', 'reserved', 'short'}.
+
+    [REASON]: SP-RESERVE-003 — reservation is SOFT: approval is never blocked
+    by stock ("approved" means the purchase is authorized; the part often is
+    not in stock yet, and that is the normal case). Each item gets
+    min(needed, remaining available) with a running per-SKU decrement so two
+    items pointing at the same SKU can never both be granted the full stock;
+    a row is written even when nothing could be reserved (quantity 0) so the
+    shortage itself is recorded at decision time. Advisory only: the atomic
+    guard inside _apply_inventory_movement remains the real enforcement at
+    issue time. Two near-simultaneous approvals could in theory over-reserve;
+    this single-Waitress low-concurrency app already accepts the same race
+    class for act numbering, so deliberately no locking/retries here — the
+    reservation is computed inside the same transaction as the status change
+    (caller owns the commit; this helper only session.add()s).
+    """
+    warehouse = SparePartWarehouse.query.filter_by(
+        organization_id=spr.organization_id).first()
+    if warehouse is None:
+        return None
+    # [REASON]: items with sku_id NULL are outside the mechanism entirely —
+    # no reservation row, no availability check (their explicit
+    # confirm_no_sku gate at issue time is unchanged).
+    sku_items = sorted((i for i in spr.items if i.sku_id), key=lambda i: i.id)
+    if not sku_items:
+        return []
+    sku_ids = {i.sku_id for i in sku_items}
+    availability = _availability_map(warehouse.id, sku_ids,
+                                     exclude_request_id=spr.id)
+    # Running grantable balance per SKU; a negative available grants nothing.
+    remaining = {sku_id: max(0.0, availability[sku_id]['available'])
+                 for sku_id in sku_ids}
+    shortages = []
+    for item in sku_items:
+        needed = round(float(item.quantity or 0), 3)
+        granted = round(max(0.0, min(needed, remaining.get(item.sku_id, 0.0))), 3)
+        remaining[item.sku_id] = remaining.get(item.sku_id, 0.0) - granted
+        db.session.add(SparePartReservation(
+            request_id=spr.id,
+            request_item_id=item.id,
+            warehouse_id=warehouse.id,
+            sku_id=item.sku_id,
+            quantity=granted,
+            requested_quantity=needed,
+            status='active',
+            created_by=user_id,
+        ))
+        short = round(needed - granted, 3)
+        if short > 0:
+            shortages.append({'item': item, 'needed': needed,
+                              'reserved': granted, 'short': short})
+    return shortages
+
+
+def _consume_reservations_for_request(request_id, user_id):
+    """Flip every ACTIVE reservation of a request to 'consumed'.
+
+    [REASON]: SP-RESERVE-003 — called inside the issue transaction, after the
+    stock movements succeed: the claim is fulfilled the moment the stock
+    physically leaves. No commit here — a failed issue rolls the flip back
+    together with everything else.
+    """
+    rows = (SparePartReservation.query
+            .filter_by(request_id=request_id, status='active')
+            .all())
+    now = datetime.utcnow()
+    for row in rows:
+        row.status = 'consumed'
+        row.closed_at = now
+        row.closed_by = user_id
+    return rows
+
+
+def _release_reservations(reservation_ids, user_id, note=''):
+    """Flip the given ACTIVE reservations to 'released'; returns affected rows.
+
+    [REASON]: SP-RESERVE-003 — the manual escape hatch for an
+    approved-but-abandoned request: 'approved' has no other exit (reject and
+    the price routes only accept 'submitted'), so freeing the claim is a
+    warehouse-screen action recording who/when/why. Rows not currently
+    active are ignored, never rewritten. No commit — caller owns the
+    transaction.
+    """
+    if not reservation_ids:
+        return []
+    rows = (SparePartReservation.query
+            .filter(SparePartReservation.id.in_(reservation_ids),
+                    SparePartReservation.status == 'active')
+            .all())
+    now = datetime.utcnow()
+    for row in rows:
+        row.status = 'released'
+        row.closed_at = now
+        row.closed_by = user_id
+        row.close_note = (note or '')[:300]
+    return rows
+
+
 def _spare_orgs_for_user():
     """Organizations the current user may see, ordered like the rest of the module."""
     user_org_ids = _spare_user_org_ids()
@@ -2775,6 +2999,33 @@ def inventory():
         for m in movements:
             if m.reference_type == 'request_item' and m.reference_id in item_to_req:
                 movement_request_no[m.id] = item_to_req[m.reference_id]
+    # [REASON]: SP-RESERVE-003 — the balances table shows three numbers
+    # (on-hand / reserved / available = on-hand − reserved); reserved totals
+    # come from ONE grouped query over the warehouse's active reservations,
+    # never a per-row loop. The active reservation list below the balances
+    # is the manual-release surface ('approved' has no other exit).
+    reserved_map = {}
+    reservations = []
+    if warehouse:
+        reserved_rows = (db.session.query(SparePartReservation.sku_id,
+                                          func.sum(SparePartReservation.quantity))
+                         .filter(SparePartReservation.warehouse_id == warehouse.id,
+                                 SparePartReservation.status == 'active')
+                         .group_by(SparePartReservation.sku_id)
+                         .all())
+        reserved_map = {sku_id: round(float(total or 0), 3)
+                        for sku_id, total in reserved_rows}
+        reservations = (SparePartReservation.query
+                        .options(joinedload(SparePartReservation.request),
+                                 joinedload(SparePartReservation.item),
+                                 joinedload(SparePartReservation.sku)
+                                 .joinedload(SparePartSku.spare_part),
+                                 joinedload(SparePartReservation.creator))
+                        .filter(SparePartReservation.warehouse_id == warehouse.id,
+                                SparePartReservation.status == 'active')
+                        .order_by(SparePartReservation.created_at.desc(),
+                                  SparePartReservation.id.desc())
+                        .all())
     # SKU picker for the manual movement form: all active SKUs, labelled with
     # their canonical part name.
     sku_options = (SparePartSku.query
@@ -2788,6 +3039,8 @@ def inventory():
                            org_id=org_id,
                            warehouse=warehouse,
                            inventory_rows=inventory_rows,
+                           reserved_map=reserved_map,
+                           reservations=reservations,
                            movements=movements,
                            movement_request_no=movement_request_no,
                            sku_options=sku_options,
@@ -2932,6 +3185,50 @@ def inventory_movement_create():
                             org_id=warehouse.organization_id))
 
 
+@spare_parts_bp.route('/inventory/reservations/<int:res_id>/release', methods=['POST'])
+@module_required('spare_parts')
+def inventory_reservation_release(res_id):
+    """Manually release one active reservation from the warehouse screen.
+
+    [REASON]: SP-RESERVE-003 — the only way to free the claim of an
+    approved-but-abandoned request: 'approved' has no other exit (reject and
+    the price routes only accept 'submitted'). Does NOT change the request's
+    status — only the claim is dropped, recording who/when/why.
+    """
+    # [REASON]: same permission primitive as the rest of the warehouse screen
+    # (no new permission codes), with the CYCLE-2-3 Part 8 denial trail.
+    if not current_user.has_module_access('spare_parts_inventory_manage'):
+        _deny_spare('release reservation #{}'.format(res_id),
+                    entity_type='spare_part_reservation', entity_id=res_id,
+                    entity_label='Reservation #{}'.format(res_id))
+    res = SparePartReservation.query.get_or_404(res_id)
+    if res.status != 'active':
+        abort(400)
+    warehouse = res.warehouse
+    _spare_check_org_access(warehouse.organization_id if warehouse else None)
+    _release_reservations([res.id], current_user.id,
+                          note=request.form.get('note', ''))
+    _audit_spare(
+        'spare_part_reservation_released',
+        entity_type='spare_part_reservation',
+        entity_id=res.id,
+        entity_label='Reservation #{} (request #{})'.format(res.id, res.request_id),
+        after={'request_id': res.request_id,
+               'request_item_id': res.request_item_id,
+               'warehouse_id': res.warehouse_id,
+               'sku_id': res.sku_id,
+               'quantity': res.quantity,
+               'requested_quantity': res.requested_quantity,
+               'note': res.close_note},
+        description='Reservation released from warehouse screen'
+    )
+    db.session.commit()
+    flash(_spare_t('Захира бўшатилди. Сўров ҳолати ўзгармади.',
+                   'Резерв снят. Статус заявки не изменился.'), 'success')
+    return redirect(url_for('spare_parts.inventory',
+                            org_id=warehouse.organization_id))
+
+
 # ─── SPARE-STAGE2: issue + write-off acts ─────────────────────────────────────
 
 def _acts_dir():
@@ -2972,8 +3269,12 @@ def _issue_context(spr):
     """Data the detail page needs to offer the issue action.
 
     Returns dict with: sku_items / no_sku_items, the organization's warehouse
-    (or None), and current stock per SKU item so the issuer sees what will be
-    deducted (and what would go negative) BEFORE confirming.
+    (or None), current stock per SKU item so the issuer sees what will be
+    deducted (and what would go negative) BEFORE confirming, plus
+    SP-RESERVE-003 keys: 'availability' ({sku_id: {'on_hand', 'reserved',
+    'available', 'own_reserved'}}, where 'reserved'/'available' count OTHER
+    requests' active reservations only) and 'needed_by_sku' (this request's
+    quantity aggregated per SKU across items).
     """
     sku_items = [i for i in spr.items if i.sku_id]
     no_sku_items = [i for i in spr.items if not i.sku_id]
@@ -2986,11 +3287,37 @@ def _issue_context(spr):
                         SparePartInventory.sku_id.in_([i.sku_id for i in sku_items]))
                 .all())
         stock = {r.sku_id: r.quantity for r in rows}
+    # [REASON]: SP-RESERVE-003 — per-SKU aggregation (two items pointing at
+    # the same SKU are checked and displayed against their combined need),
+    # in first-appearance order so pre-flight messages stay deterministic.
+    needed_by_sku = {}
+    for item in sku_items:
+        needed_by_sku[item.sku_id] = round(
+            needed_by_sku.get(item.sku_id, 0.0) + float(item.quantity or 0), 3)
+    availability = {}
+    if warehouse and sku_items:
+        # [REASON]: SP-RESERVE-003 — exclude_request_id makes 'reserved' and
+        # 'available' count OTHER requests only, so a request's own standing
+        # reserve never blocks its own issue; 'own_reserved' is surfaced
+        # separately for display and the under-reserved hint.
+        availability = _availability_map(warehouse.id, list(needed_by_sku),
+                                         exclude_request_id=spr.id)
+        own_rows = (db.session.query(SparePartReservation.sku_id,
+                                     func.sum(SparePartReservation.quantity))
+                    .filter(SparePartReservation.request_id == spr.id,
+                            SparePartReservation.warehouse_id == warehouse.id,
+                            SparePartReservation.status == 'active')
+                    .group_by(SparePartReservation.sku_id).all())
+        own = {sku_id: round(float(total or 0), 3) for sku_id, total in own_rows}
+        for sku_id, info in availability.items():
+            info['own_reserved'] = own.get(sku_id, 0.0)
     return {
         'sku_items': sku_items,
         'no_sku_items': no_sku_items,
         'warehouse': warehouse,
         'stock': stock,
+        'availability': availability,
+        'needed_by_sku': needed_by_sku,
     }
 
 
@@ -3032,19 +3359,37 @@ def issue_request(rid):
         errors.append(_spare_t(
             'SKUсиз позициялар омбордан ҳисобдан чиқарилмайди — беришдан олдин буни тасдиқлаш шарт',
             'Позиции без SKU не будут списаны со склада — перед выдачей это нужно явно подтвердить'))
-    # [REASON]: SP-F-001 pre-flight — a friendly per-item shortage message
-    # BEFORE any transaction work, using the stock snapshot _issue_context()
-    # already computed. The atomic guard inside _apply_inventory_movement stays
-    # the real enforcement for the concurrent case below.
+    # [REASON]: SP-F-001 pre-flight — a friendly shortage message BEFORE any
+    # transaction work. SP-RESERVE-003: aggregated per SKU (two items on the
+    # same SKU are checked against their combined need) and against
+    # AVAILABILITY = on-hand minus OTHER requests' active reservations, so a
+    # part already promised to another approved request cannot be issued past
+    # it — while this request's own reserve never blocks its own issue. The
+    # atomic guard inside _apply_inventory_movement stays the real
+    # enforcement for the concurrent case below.
     if ctx['sku_items'] and ctx['warehouse'] is not None:
-        for item in ctx['sku_items']:
-            available = float(ctx['stock'].get(item.sku_id) or 0)
-            needed = float(item.quantity or 0)
+        for sku_id, needed in ctx['needed_by_sku'].items():
+            info = ctx['availability'].get(sku_id) or {
+                'on_hand': 0.0, 'reserved': 0.0, 'available': 0.0,
+                'own_reserved': 0.0}
+            available = float(info['available'])
             if available - needed < 0:
-                errors.append(_spare_t(
+                item_name = next((i.name for i in ctx['sku_items']
+                                  if i.sku_id == sku_id), '')
+                msg = _spare_t(
                     '«{}»: омборда етарли қолдиқ йўқ (керак: {}, мавжуд: {})',
                     '«{}»: на складе недостаточно остатка (нужно: {}, доступно: {})'
-                ).format(item.name, _fmt_qty_text(needed), _fmt_qty_text(available)))
+                ).format(item_name, _fmt_qty_text(needed), _fmt_qty_text(available))
+                # [REASON]: SP-RESERVE-003 — when the request itself is
+                # under-reserved, say so explicitly: the issuer must see the
+                # part was never fully promised to THIS request, as opposed
+                # to stock having drained afterwards.
+                if float(info['own_reserved']) + 0.001 < needed:
+                    msg += _spare_t(
+                        ' — сўров захираси кераклидан кам (захираланган: {})',
+                        ' — резерв заявки меньше требуемого (зарезервировано: {})'
+                    ).format(_fmt_qty_text(info['own_reserved']))
+                errors.append(msg)
     if errors:
         _spare_flash_errors(errors, title_uz='Бериб бўлмади:',
                             title_ru='Выдача не выполнена:')
@@ -3070,6 +3415,12 @@ def issue_request(rid):
                 warehouse.id, item.sku_id, 'issue', -float(item.quantity or 0),
                 reference_type='request_item', reference_id=item.id,
                 note='Request #{}'.format(spr.id), user_id=current_user.id)
+
+        # [REASON]: SP-RESERVE-003 — the claim is fulfilled the moment the
+        # stock physically leaves: consume this request's active reservations
+        # INSIDE the same transaction, so a failed issue (rollback below)
+        # leaves them active and nothing is partially applied.
+        _consume_reservations_for_request(spr.id, current_user.id)
 
         # 2. The act with MAX+1 numbering and snapshotted items.
         issued_date = date.today()

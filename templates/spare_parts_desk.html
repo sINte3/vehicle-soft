@@ -95,6 +95,22 @@
       </div>
       {% endif %}
 
+      {% if can_issue %}
+      {# SP-RESERVE-003: approved but not fully reserved — waiting for stock,
+         not issuable right now. Deliberately no accent colour: waiting is a
+         calm state, not a call to action. #}
+      <div class="vs-kpi">
+        <div class="vs-kpi-head">
+          <div class="vs-kpi-label">{{ 'Ждут поступления' if is_ru else 'Келишини кутмоқда' }}</div>
+          <a class="vs-kpi-link" href="{{ url_for('spare_parts.index', status='approved') }}">{{ 'Открыть →' if is_ru else 'Очиш →' }}</a>
+        </div>
+        <div class="vs-kpi-main">
+          <div class="vs-kpi-value{% if not counts.awaiting_stock %} sp-desk-zero{% endif %}">{{ counts.awaiting_stock }}</div>
+          <div class="vs-kpi-cap">{{ 'утверждены, склада не хватает' if is_ru else 'тасдиқланган, омбор етмайди' }}</div>
+        </div>
+      </div>
+      {% endif %}
+
       {% if can_catalog %}
       <div class="vs-kpi">
         <div class="vs-kpi-head">

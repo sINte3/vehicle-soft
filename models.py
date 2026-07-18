@@ -956,6 +956,71 @@ class SparePartInventoryMovement(db.Model):
     )
 
 
+class SparePartReservation(db.Model):
+    """SP-RESERVE-003: a claim on warehouse stock held by an approved request item.
+
+    [REASON]: A reservation is NOT a stock movement — approving a request does
+    not change spare_part_inventory.quantity, only the claim on it. That is why
+    these rows live in their own table and are never written through
+    spare_parts._apply_inventory_movement: the module's core invariant (a
+    pair's movements always sum to its on-hand quantity) stays intact and
+    unambiguous, and "available" is always derived as on-hand minus the sum of
+    active reservations.
+
+    [REASON]: One row per request ITEM with a non-null sku_id, ALWAYS created
+    at approval time — even when nothing could be reserved (quantity = 0). The
+    row snapshots both requested_quantity and the actually granted quantity, so
+    a shortage is recorded explicitly at the moment of the approval decision
+    (feeding the future purchase-queue increment) and the desk counters can be
+    a single SQL EXISTS over these rows instead of a Python loop.
+
+    [REASON]: Reservations are advisory, not enforcement. Two near-simultaneous
+    approvals could in theory over-reserve a SKU; the atomic conditional UPDATE
+    inside _apply_inventory_movement remains the real guard against negative
+    stock at issue time. This app runs a single Waitress instance with a
+    handful of users and already accepts the same class of race for act
+    numbering, so no locking/retry machinery is added here.
+
+    Lifecycle: active -> consumed (request issued) | released (manual release
+    from the warehouse screen — 'approved' has no other exit for an abandoned
+    request). The partial unique index makes a second ACTIVE row for the same
+    item impossible at the database level.
+    """
+    __tablename__ = 'spare_part_reservations'
+    id                 = db.Column(db.Integer, primary_key=True)
+    request_id         = db.Column(db.Integer, db.ForeignKey('spare_part_requests.id'), nullable=False)
+    request_item_id    = db.Column(db.Integer, db.ForeignKey('spare_part_request_items.id'), nullable=False)
+    warehouse_id       = db.Column(db.Integer, db.ForeignKey('spare_part_warehouses.id'), nullable=False)
+    sku_id             = db.Column(db.Integer, db.ForeignKey('spare_part_skus.id'), nullable=False)
+    quantity           = db.Column(db.Float, nullable=False, default=0)   # actually reserved, >= 0
+    requested_quantity = db.Column(db.Float, nullable=False, default=0)   # snapshot of item.quantity
+    status             = db.Column(db.String(20), nullable=False, default='active')  # active/consumed/released
+    created_at         = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by         = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    closed_at          = db.Column(db.DateTime, nullable=True)
+    closed_by          = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    close_note         = db.Column(db.String(300), nullable=False, default='')
+
+    request   = db.relationship('SparePartRequest',
+                                backref=db.backref('reservations', lazy='select'))
+    item      = db.relationship('SparePartRequestItem', foreign_keys=[request_item_id])
+    warehouse = db.relationship('SparePartWarehouse')
+    sku       = db.relationship('SparePartSku')
+    creator   = db.relationship('User', foreign_keys=[created_by])
+    closer    = db.relationship('User', foreign_keys=[closed_by])
+
+    __table_args__ = (
+        db.Index('idx_spare_part_reservations_wh_sku_status',
+                 'warehouse_id', 'sku_id', 'status'),
+        db.Index('idx_spare_part_reservations_request_id', 'request_id'),
+        # [REASON]: partial UNIQUE — at most one ACTIVE reservation per request
+        # item, enforced by the database itself; consumed/released history rows
+        # for the same item remain possible.
+        db.Index('uq_spare_part_reservations_active_item', 'request_item_id',
+                 unique=True, sqlite_where=db.text("status = 'active'")),
+    )
+
+
 class SparePartWriteOffAct(db.Model):
     """SPARE-STAGE2: write-off act generated when an approved request is issued.
 
@@ -1152,6 +1217,10 @@ db.Index('idx_spare_part_requests_equipment_id_date', SparePartRequest.equipment
 # [REASON]: SPARE-STAGE2 — the SKU price-stats recompute scans confirm audit
 # rows of all items referencing one SKU.
 db.Index('idx_spare_part_request_items_sku_id', SparePartRequestItem.sku_id)
+# [REASON]: SP-RESERVE-003 — the desk's coverage EXISTS correlates items by
+# request_id; without this index SQLite full-scans the items table once per
+# approved request (measured ~50 ms vs ~1.4 ms per counter at staging scale).
+db.Index('idx_spare_part_request_items_request_id', SparePartRequestItem.request_id)
 
 
 class SparePartPriceAudit(db.Model):
