@@ -49,6 +49,14 @@
      class="vs-pill{% if sp_ep == 'spare_parts.inventory' %} is-active{% endif %}">{{ 'Склад' if is_ru else 'Омбор' }}</a>
   {% endif %}
 
+  {# SP-MINSTOCK-004: same gate as the purchase_queue route itself, so the
+     pill never leads to a 403. #}
+  {% if current_user.has_module_access('spare_parts_inventory_manage')
+        or current_user.has_module_access('spare_parts_approve') %}
+  <a href="{{ url_for('spare_parts.purchase_queue') }}"
+     class="vs-pill{% if sp_ep == 'spare_parts.purchase_queue' %} is-active{% endif %}">{{ 'Закупка' if is_ru else 'Харид' }}</a>
+  {% endif %}
+
   {% if current_user.has_module_access('spare_parts_acts') %}
   <a href="{{ url_for('spare_parts.acts_index') }}"
      class="vs-pill{% if sp_ep in ('spare_parts.acts_index', 'spare_parts.act_detail') %} is-active{% endif %}">{{ 'Акты' if is_ru else 'Далолатномалар' }}</a>
