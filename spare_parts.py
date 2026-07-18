@@ -2000,8 +2000,49 @@ def approve_request(rid):
     )
     # [REASON]: FIX003A — Record status history before commit.
     _add_status_history(spr.id, old_status, 'approved', comment=spr.review_comment or '', changed_by=current_user.id)
+    # [REASON]: SP-RESERVE-003 — reserve stock in the SAME transaction as the
+    # status change: either the request becomes approved together with its
+    # reservation rows, or neither happens. Soft by design — approval is never
+    # blocked by stock (see _create_reservations_for_request); shortages only
+    # produce the post-commit warning below.
+    shortages = _create_reservations_for_request(spr, current_user.id)
+    sku_items = [i for i in spr.items if i.sku_id]
+    total_needed = round(sum(round(float(i.quantity or 0), 3)
+                             for i in sku_items), 3)
+    total_short = round(sum(s['short'] for s in (shortages or [])), 3)
+    reservation_wh = SparePartWarehouse.query.filter_by(
+        organization_id=spr.organization_id).first()
+    _audit_spare(
+        'spare_part_reservations_created',
+        entity_type='spare_part_request',
+        entity_id=spr.id,
+        entity_label='Request #{}'.format(spr.id),
+        after={'warehouse_id': reservation_wh.id if reservation_wh else None,
+               'rows': len(sku_items) if shortages is not None else 0,
+               'total_reserved': (round(total_needed - total_short, 3)
+                                  if shortages is not None else 0),
+               'total_short': total_short},
+        description='Reservations created on approval of request #{}'.format(spr.id)
+    )
     db.session.commit()
     flash(_spare_t('Сўров тасдиқланди', 'Заявка утверждена'), 'success')
+    # [REASON]: SP-RESERVE-003 — non-blocking notices about the reservation
+    # outcome, shown alongside (never instead of) the success flash.
+    if shortages is None and sku_items:
+        flash(_spare_t('Захира яратилмади: ташкилотда эҳтиёт қисмлар омбори йўқ.',
+                       'Резерв не создан: у организации нет склада запчастей.'),
+              'info')
+    elif shortages:
+        _spare_flash_errors(
+            [_spare_t('«{}»: керак {}, захираланган {}, етишмайди {}',
+                      '«{}»: нужно {}, зарезервировано {}, не хватает {}'
+                      ).format(s['item'].name,
+                               _fmt_qty_text(s['needed']),
+                               _fmt_qty_text(s['reserved']),
+                               _fmt_qty_text(s['short']))
+             for s in shortages],
+            title_uz='Сўров тасдиқланди, лекин омбор ҳаммасига етмади:',
+            title_ru='Заявка утверждена, но склада хватило не на всё:')
     # [REASON]: BOT003 — Post-commit best-effort notification, never raises.
     if _BOT003_AVAILABLE:
         enqueue_spare_request_status_best_effort(spr.id, 'spare_request_approved')
