@@ -25,7 +25,17 @@ Known confirmed gaps to include in the audit as starting evidence:
 - templates/audit_logs.html — Phase 7 gave it form-control only; full
   visual pass explicitly deferred.
 
-### Next: Заявки/Наряды (Orders / Work-requests) MVP — mobile-first. To be specced in a fresh chat (see project roadmap).
+### Next: spare-parts borrowing track, increment 3 — reservations and available stock
+
+Three stock figures per SKU (На складе / Зарезервировано / Доступно = склад −
+резерв), auto-reserve on approval, release on cancel. Touches the warehouse
+tables — unlike increments 1-2 this one WILL need a schema migration, so it
+gets its own spec, staging validation and rollback plan.
+
+Increments 1-2 of the track are done and sitting on staging: SP-DESK-001
+(operator workspace) and SP-DETAIL-002 (request card redesign) — see their
+sections below. The standalone «Заявки/Наряды» MVP is tracked outside this
+track and is not the next item here.
 
 ## Recently completed / appears completed
 
@@ -3255,8 +3265,10 @@ safe to leave in place on code rollback).
 
 ## SP-DESK-001 — Operator workspace («Рабочий стол») + work-first module navigation
 
-Status: implemented on branch `claude/session-wq29yw` (2026-07-17), awaiting
-staging QA per acceptance criteria in the task file (SP-DESK-001 spec).
+Status: **completed 2026-07-17** — merged as PR #11 (`b8cfc3e → 7d7c1f4`,
+fast-forward), deployed to staging and runtime-validated by the browser QA
+agent against the acceptance criteria in the task file (SP-DESK-001 spec).
+Production deliberately untouched (bundle deploy later).
 This delivers the "module dashboard" item deferred from SPARE-PARTS-CYCLE-2-3,
 now against a written spec.
 
@@ -3281,3 +3293,58 @@ Three independent, ordered commits (revert at commit granularity — reverting
 No migration, no schema change, no new permission codes, no lifecycle-route
 changes. Full test suite 65 OK; per-role render sweep (admin / operator /
 viewer / price-confirm-only / no-access 403) in RU+UZ passed locally.
+
+## SP-DETAIL-002 — Request card redesign (next-action block, status stepper, unified event timeline)
+
+Status: implemented on branch `sp-detail-002-request-card` (HEAD `321d022`,
+PR #12, 2026-07-18); deployed to staging and self-validated by the owner across
+all six statuses. **Merge into `main` still pending.** Increment 2 of the
+spare-parts borrowing track (increment 1 = SP-DESK-001).
+
+Goal: turn the request page into one managed card where it is immediately clear
+WHAT to do next and WHERE the request is in the process.
+
+Four ordered commits — **revert strictly in reverse order (4 -> 3 -> 2 -> 1)**.
+Reverting a middle commit on its own leaves the template referencing context the
+route no longer provides:
+
+1. `static/css/design-system.css` — append-only components built on the existing
+   `--vs-*` tokens: `.vs-nextaction`, `.vs-stepper` (with `.vs-step`,
+   `.vs-step-dot`, `.vs-step-line`, `.vs-stepper-side`), `.vs-timeline`,
+   `.vs-card.is-flash`. No existing rule modified.
+2. `spare_parts.py` — `detail()` only (plus `User` added to the models import):
+   computes `next_action` / `waiting_for` (status x permissions, reusing the
+   existing `can_price` / `can_approve` / `can_issue` flags and the server-side
+   `_approval_blockers()` gate so the UI never offers an action the server would
+   reject), `stepper`, and `timeline` (created event + `SparePartStatusHistory` +
+   `SparePartPriceAudit` + attachments, merged and sorted; actor names resolved
+   here because status history has no `User` relationship). Existing
+   `render_template` kwargs preserved.
+3. `templates/spare_part_detail.html` — next-action block + stepper inserted after
+   the hero; removed the six per-status alert boxes and the standalone submit row;
+   added `id="sp-action-price" | "sp-action-approve" | "sp-action-issue"` anchors to
+   the three existing action cards; scroll-and-flash JS appended in the scripts
+   block. Multi-field forms (price, approval, issue) are NOT lifted into the top
+   block — the primary button scrolls to and highlights the existing card.
+4. `templates/spare_part_detail.html` — unified «История заявки» timeline card
+   inserted before the lightbox; removed the «Результат рассмотрения» card (its
+   content now appears as approve/reject events in the timeline).
+
+No migration, no schema change, no new permission codes. All eight lifecycle
+routes (`submit_request`, `approve_request`, `reject_request`, `issue_request`,
+`item_price_set`, `item_price_confirm`, `item_price_reject`,
+`item_photo_upload`) verified hash-identical before/after; template Jinja-parses
+with balanced blocks and `<div>` 110/110; no leftover references to the removed
+`status_alert_kind` variable.
+
+Staging validation (owner, admin account, 2026-07-18): #517 draft owned by
+someone else (waiting line), #524 submitted fully priced (Утвердить + Отклонить),
+#521 returned_for_revision (waiting line + amber side chip), #525 approved
+(Выдать со склада), #518 rejected (red side chip, no action), #20 issued (all
+four steps closed, 7-event timeline, write-off act intact). HTML and formula
+literals present in audit test data render escaped inside the new timeline.
+
+Still unverified — carry into the next pass, non-blocking: the `kind='submit'`
+POST branch on the owner's OWN draft; the price branch on a submitted request
+that still has an unpriced item; actual scroll-and-flash behaviour; the 380px
+layout; the Uzbek language toggle.
