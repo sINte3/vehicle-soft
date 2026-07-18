@@ -1425,27 +1425,49 @@ def desk():
                                        I.spare_part_id == P.id,
                                        P.status == 'pending_review'))
 
-    # [REASON]: SP-RESERVE-003 — «Готовы к выдаче» must stop lying: a SKU
-    # item is covered iff an ACTIVE reservation holds its full quantity, and
-    # only requests with no under-covered SKU item are physically issuable
-    # right now; the rest of the approved queue waits for stock. Correlated
-    # EXISTS only (PERF-SPARE-001: no Python loop over requests), and the two
-    # tiles partition the approved queue exactly.
-    # Coverage compares the reservation row against its OWN snapshot, not the
-    # live item: requested_quantity is written with the same round(..., 3) as
-    # quantity, so the comparison is self-consistent, whereas item.quantity is
-    # the raw stored float — a >3-decimal quantity (possible via non-browser
-    # callers; _parse_spare_positive_qty does not round) would otherwise
-    # compare as under-covered forever. The snapshot cannot drift from the
-    # item it describes: request items are immutable after creation (there is
-    # no edit route — save_request only creates).
+    # [REASON]: SP-RESERVE-003 + SP-MINSTOCK-004 — «Готовы к выдаче» /
+    # «Ждут поступления» must partition the approved queue truthfully. A SKU
+    # item counts as covered when EITHER its ACTIVE reservation holds its
+    # full snapshot quantity OR the organization's warehouse currently holds
+    # enough on hand: RES.quantity is frozen at approval time and never
+    # recomputed when stock later arrives, so reservation-only coverage left
+    # a request stuck in «Ждут поступления» forever once its parts came in
+    # (issuing already worked — _issue_context recomputes availability live —
+    # but the two tiles lied, and would contradict the purchase queue).
+    # Correlated EXISTS only (PERF-SPARE-001: no Python loop over requests).
+    # The reservation branch still compares the row against its OWN snapshot
+    # (requested_quantity is written with the same round(..., 3) as quantity,
+    # so it is self-consistent, and request items are immutable after
+    # creation — save_request only creates, there is no edit route).
+    # [REASON]: accepted limitation of the stock branch — two approved
+    # requests competing for the same SKU can now BOTH appear ready while
+    # stock covers only one of them. That error is transient (it resolves
+    # the moment either request is issued) and the real guard remains the
+    # atomic quantity + delta >= 0 check inside _apply_inventory_movement,
+    # whereas the error being fixed was permanent and grew over time. Note
+    # also that the stock branch compares against I.quantity (the raw stored
+    # float, not a rounded snapshot), so an item with more than 3 decimals
+    # simply falls back to the reservation branch.
     RES = SparePartReservation
-    item_covered = exists().where(and_(RES.request_item_id == I.id,
-                                       RES.status == 'active',
-                                       RES.quantity >= RES.requested_quantity))
+    INV = SparePartInventory
+    WH = SparePartWarehouse
+    covered_by_reservation = exists().where(and_(RES.request_item_id == I.id,
+                                                 RES.status == 'active',
+                                                 RES.quantity >= RES.requested_quantity))
+    # [REASON]: .correlate(R, I) is REQUIRED, not decorative: without it
+    # SQLAlchemy re-introduces spare_part_requests into the innermost FROM
+    # (auto-correlation only reaches the immediately enclosing SELECT), which
+    # would silently turn the check into "ANY request's organization has the
+    # stock". With it, only WH and INV stay in the subquery's FROM while R
+    # and I correlate to the enclosing queries — verified on the compiled SQL.
+    covered_by_stock = exists().where(and_(WH.organization_id == R.organization_id,
+                                           INV.warehouse_id == WH.id,
+                                           INV.sku_id == I.sku_id,
+                                           INV.quantity >= I.quantity)).correlate(R, I)
     under_covered = exists().where(and_(I.request_id == R.id,
                                         I.sku_id.isnot(None),
-                                        ~item_covered))
+                                        ~covered_by_reservation,
+                                        ~covered_by_stock))
 
     submitted = _scoped(R.query.filter(R.status == 'submitted'))
     approved = _scoped(R.query.filter(R.status == 'approved'))
