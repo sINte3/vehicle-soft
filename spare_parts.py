@@ -3197,6 +3197,18 @@ def inventory():
                                   SparePartSku.is_active.is_(None)))
                    .all())
     sku_options.sort(key=lambda s: ((s.spare_part.name if s.spare_part else ''), s.label))
+    # [REASON]: SP-MINSTOCK-004 — minimums of the selected warehouse, keyed by
+    # sku_id for the balances-table «Мин.» column and the min-levels card. One
+    # query with the display relations eager-loaded, so the template loop
+    # never triggers a lazy SELECT. Empty dict when there is no warehouse.
+    min_levels = {}
+    if warehouse:
+        min_rows = (SparePartMinLevel.query
+                    .options(joinedload(SparePartMinLevel.sku)
+                             .joinedload(SparePartSku.spare_part))
+                    .filter_by(warehouse_id=warehouse.id)
+                    .all())
+        min_levels = {r.sku_id: r for r in min_rows}
     return render_template('spare_parts_inventory.html',
                            organizations=organizations,
                            org_id=org_id,
@@ -3208,6 +3220,7 @@ def inventory():
                            movement_request_no=movement_request_no,
                            sku_options=sku_options,
                            movement_labels=INV_MOVEMENT_LABELS,
+                           min_levels=min_levels,
                            lang=_spare_lang())
 
 
@@ -3344,6 +3357,105 @@ def inventory_movement_create():
     flash(_spare_t('Ҳаракат сақланди. Янги қолдиқ: {}',
                    'Движение сохранено. Новый остаток: {}').format(movement.balance_after),
           'success')
+    return redirect(url_for('spare_parts.inventory',
+                            org_id=warehouse.organization_id))
+
+
+@spare_parts_bp.route('/inventory/min-level', methods=['POST'])
+@module_required('spare_parts')
+def inventory_min_level_save():
+    """Set or clear the minimum (safety) stock level of one (warehouse, SKU).
+
+    [REASON]: SP-MINSTOCK-004 — writes ONLY spare_part_min_levels. A minimum
+    is reference data, not stock: spare_part_inventory.quantity and the
+    movement journal are untouched, so the module invariant (quantity is
+    written only through _apply_inventory_movement) stays intact.
+    min_quantity = 0 is never stored — clearing a minimum DELETES the row,
+    and clearing a pair that has no row is a silent no-op with the same
+    user message, so a double-clear never errors.
+    """
+    if not current_user.has_module_access('spare_parts_inventory_manage'):
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('set minimum stock level', entity_type='spare_part_min_level')
+    warehouse_id = request.form.get('warehouse_id', type=int)
+    warehouse = SparePartWarehouse.query.get(warehouse_id) if warehouse_id else None
+    if warehouse is None:
+        _spare_flash_errors([_spare_t('Омбор топилмади', 'Склад не найден')],
+                            title_uz='Минимум сақланмади:',
+                            title_ru='Минимум не сохранён:')
+        return redirect(url_for('spare_parts.inventory'))
+    if not current_user.can_access_org(warehouse.organization_id):
+        abort(403)
+    sku_id = request.form.get('sku_id', type=int)
+    sku = SparePartSku.query.get(sku_id) if sku_id else None
+    if sku is None:
+        _spare_flash_errors([_spare_t('SKU топилмади', 'SKU не найден')],
+                            title_uz='Минимум сақланмади:',
+                            title_ru='Минимум не сохранён:')
+        return redirect(url_for('spare_parts.inventory',
+                                org_id=warehouse.organization_id))
+    raw_qty = (request.form.get('min_quantity', '') or '').strip().replace(',', '.')
+    try:
+        min_quantity = float(raw_qty)
+        # [REASON]: SP-F-016 — float() happily parses 'nan'/'inf', and NaN
+        # slips past every comparison, so finiteness is an explicit condition
+        # on top of the >= 0 check, not a separate error category.
+        if not math.isfinite(min_quantity) or min_quantity < 0:
+            raise ValueError('min_quantity')
+    except (TypeError, ValueError):
+        _spare_flash_errors(
+            [_spare_t('Миқдор нолдан кичик бўлмаган сон бўлиши керак',
+                      'Количество должно быть числом не меньше нуля')],
+            title_uz='Минимум сақланмади:', title_ru='Минимум не сохранён:')
+        return redirect(url_for('spare_parts.inventory',
+                                org_id=warehouse.organization_id))
+    min_quantity = round(min_quantity, 3)
+    note = (request.form.get('note', '') or '').strip()[:300]
+
+    row = (SparePartMinLevel.query
+           .filter_by(warehouse_id=warehouse.id, sku_id=sku.id).first())
+    entity_label = '{} / {}'.format(
+        sku.spare_part.name if sku.spare_part else '?', sku.label)
+    before = ({'warehouse_id': row.warehouse_id, 'sku_id': row.sku_id,
+               'min_quantity': row.min_quantity, 'note': row.note}
+              if row is not None else None)
+
+    if min_quantity == 0:
+        if row is not None:
+            row_id = row.id
+            db.session.delete(row)
+            _audit_spare('spare_part_min_level_cleared',
+                         entity_type='spare_part_min_level',
+                         entity_id=row_id,
+                         entity_label=entity_label,
+                         before=before,
+                         after=None,
+                         description='Minimum stock level cleared')
+        db.session.commit()
+        flash(_spare_t('Минимум олиб ташланди', 'Минимум снят'), 'success')
+        return redirect(url_for('spare_parts.inventory',
+                                org_id=warehouse.organization_id))
+
+    if row is None:
+        row = SparePartMinLevel(warehouse_id=warehouse.id, sku_id=sku.id,
+                                min_quantity=min_quantity, note=note,
+                                updated_by=current_user.id)
+        db.session.add(row)
+        db.session.flush()
+    else:
+        row.min_quantity = min_quantity
+        row.note = note
+        row.updated_by = current_user.id
+    _audit_spare('spare_part_min_level_set',
+                 entity_type='spare_part_min_level',
+                 entity_id=row.id,
+                 entity_label=entity_label,
+                 before=before,
+                 after={'warehouse_id': warehouse.id, 'sku_id': sku.id,
+                        'min_quantity': min_quantity, 'note': note},
+                 description='Minimum stock level set')
+    db.session.commit()
+    flash(_spare_t('Минимум сақланди', 'Минимум сохранён'), 'success')
     return redirect(url_for('spare_parts.inventory',
                             org_id=warehouse.organization_id))
 
