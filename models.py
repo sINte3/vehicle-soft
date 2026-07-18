@@ -1021,6 +1021,35 @@ class SparePartReservation(db.Model):
     )
 
 
+class SparePartMinLevel(db.Model):
+    """SP-MINSTOCK-004: minimum (safety) stock level per (warehouse, SKU).
+
+    [REASON]: Minimums live in their OWN table, not as a column on
+    spare_part_inventory: an inventory row is created lazily on the first
+    movement (see SparePartInventory), so a minimum for a SKU that has never
+    been received at the warehouse would have nowhere to live. min_quantity=0
+    is never stored — clearing a minimum DELETES the row
+    (spare_parts.inventory_min_level_save), so "no row" and "no minimum" are
+    the same thing and the purchase queue never scans zero-level noise.
+    """
+    __tablename__ = 'spare_part_min_levels'
+    id           = db.Column(db.Integer, primary_key=True)
+    warehouse_id = db.Column(db.Integer, db.ForeignKey('spare_part_warehouses.id'), nullable=False)
+    sku_id       = db.Column(db.Integer, db.ForeignKey('spare_part_skus.id'), nullable=False)
+    min_quantity = db.Column(db.Float, nullable=False, default=0)
+    note         = db.Column(db.String(300), nullable=False, default='')
+    updated_at   = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_by   = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+
+    warehouse = db.relationship('SparePartWarehouse')
+    sku       = db.relationship('SparePartSku')
+    editor    = db.relationship('User', foreign_keys=[updated_by])
+
+    __table_args__ = (
+        db.UniqueConstraint('warehouse_id', 'sku_id', name='uq_spare_part_min_levels_wh_sku'),
+    )
+
+
 class SparePartWriteOffAct(db.Model):
     """SPARE-STAGE2: write-off act generated when an approved request is issued.
 

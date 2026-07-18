@@ -123,6 +123,8 @@
                 <th class="right">{{ 'Остаток' if is_ru else 'Қолдиқ' }}</th>
                 <th class="right">{{ 'Зарезервировано' if is_ru else 'Захираланган' }}</th>
                 <th class="right">{{ 'Доступно' if is_ru else 'Мавжуд' }}</th>
+                {# SP-MINSTOCK-004: minimum level of the pair (dash when not set). #}
+                <th class="right">Мин.</th>
                 <th>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
                 <th>{{ 'Обновлено' if is_ru else 'Янгиланган' }}</th>
             </tr>
@@ -135,6 +137,7 @@
                danger colour, never blocked or auto-corrected. #}
             {% set res_qty = reserved_map.get(row.sku_id, 0) %}
             {% set avail_qty = ((row.quantity or 0) - res_qty)|round(3) %}
+            {% set min_row = min_levels.get(row.sku_id) %}
             <tr>
                 <td>{{ loop.index }}</td>
                 <td style="font-weight:600;">{{ row.sku.spare_part.name if row.sku and row.sku.spare_part else '—' }}</td>
@@ -142,6 +145,7 @@
                 <td class="right" style="font-weight:700; color:{{ 'var(--danger)' if row.quantity < 0 else 'var(--text)' }};">{{ row.quantity }}</td>
                 <td class="right{% if not res_qty %} vs-muted{% endif %}">{{ res_qty }}</td>
                 <td class="right" style="font-weight:700; color:{{ 'var(--danger)' if avail_qty < 0 else 'var(--text)' }};">{{ avail_qty }}</td>
+                <td class="right{% if not min_row %} vs-muted{% endif %}">{{ min_row.min_quantity if min_row else '—' }}</td>
                 {# RE-SP-010: localized unit word; unknown/legacy codes render raw. #}
                 <td>{{ row.unit|spare_unit_label or ('шт' if is_ru else 'дона') }}</td>
                 <td class="text-sm vs-muted">{{ row.updated_at.strftime('%d.%m.%Y %H:%M') if row.updated_at else '—' }}</td>
@@ -157,6 +161,71 @@
         <div class="vs-empty-sub">{{ 'Строки появляются после первого прихода или корректировки.' if is_ru else 'Қаторлар биринчи кирим ёки тузатишдан кейин пайдо бўлади.' }}</div>
     </div>
     {% endif %}
+</div>
+
+{# SP-MINSTOCK-004: minimum (safety) stock levels — reference data feeding
+   the «Требуется закупка» queue, NOT stock: nothing here changes
+   spare_part_inventory.quantity. Zero is never stored — clearing deletes
+   the row (see inventory_min_level_save). #}
+<div class="vs-card vs-mb">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ 'Неснижаемые остатки' if is_ru else 'Энг кам қолдиқлар' }}</span>
+        <span class="vs-soft" style="font-size:12px;">{{ min_levels|length }}</span>
+    </div>
+    <div class="vs-card-body">
+        <form method="post" action="{{ url_for('spare_parts.inventory_min_level_save') }}" class="vs-form-row vs-mb">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="warehouse_id" value="{{ warehouse.id }}">
+            <div class="vs-field" style="flex:2; min-width:260px;">
+                <label class="vs-label" for="minSku">SKU</label>
+                <select name="sku_id" id="minSku" class="vs-select" required>
+                    <option value="">{{ '— выберите SKU —' if is_ru else '— SKU танланг —' }}</option>
+                    {% for sku in sku_options %}
+                    <option value="{{ sku.id }}">{{ sku.spare_part.name if sku.spare_part else '?' }} — {{ sku.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="vs-field" style="width:180px;">
+                <label class="vs-label" for="minQty">{{ 'Неснижаемый остаток' if is_ru else 'Энг кам қолдиқ' }}</label>
+                <input type="number" name="min_quantity" id="minQty" class="vs-input" step="0.001" min="0" required>
+                <div class="vs-help">{{ 'Введите 0, чтобы снять минимум.' if is_ru else 'Минимумни олиб ташлаш учун 0 киритинг.' }}</div>
+            </div>
+            <div class="vs-field" style="flex:1; min-width:180px;">
+                <label class="vs-label" for="minNote">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+                <input type="text" name="note" id="minNote" class="vs-input" maxlength="300">
+            </div>
+            <div class="vs-field" style="flex:none;">
+                <label class="vs-label">&nbsp;</label>
+                <button type="submit" class="vs-btn vs-btn-primary">{{ 'Установить минимум' if is_ru else 'Минимумни белгилаш' }}</button>
+            </div>
+        </form>
+        {% if min_levels %}
+        <div class="vs-table-scroll">
+        <table class="vs-table">
+            <thead>
+                <tr>
+                    <th>{{ 'Запчасть' if is_ru else 'Эҳтиёт қисм' }}</th>
+                    <th>SKU</th>
+                    <th class="right">Минимум</th>
+                    <th>{{ 'Примечание' if is_ru else 'Изоҳ' }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ml in min_levels.values()|sort(attribute='sku.spare_part.name,sku.label') %}
+                <tr>
+                    <td style="font-weight:600;">{{ ml.sku.spare_part.name if ml.sku and ml.sku.spare_part else '—' }}</td>
+                    <td class="text-sm vs-muted">{{ ml.sku.label if ml.sku else '—' }}</td>
+                    <td class="right" style="font-weight:700;">{{ ml.min_quantity }}</td>
+                    <td class="text-sm vs-muted">{{ ml.note or '—' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <div class="vs-soft" style="font-size:12.5px;">{{ 'Минимумы для этого склада не заданы' if is_ru else 'Бу омбор учун минимумлар белгиланмаган' }}</div>
+        {% endif %}
+    </div>
 </div>
 
 {# SP-RESERVE-003: active reservations with the manual release action — the

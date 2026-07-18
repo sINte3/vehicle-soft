@@ -32,8 +32,10 @@
 {% set can_approve = current_user.has_module_access('spare_parts_approve') %}
 {% set can_catalog = current_user.has_module_access('spare_parts_catalog_manage') %}
 {% set can_issue   = current_user.has_module_access('spare_parts_issue') %}
+{# SP-MINSTOCK-004: same gate as the purchase_queue screen and nav pill. #}
+{% set can_purchase = can_approve or current_user.has_module_access('spare_parts_inventory_manage') %}
 
-{% if can_price or can_approve or can_catalog or can_issue %}
+{% if can_price or can_approve or can_catalog or can_issue or can_purchase %}
 <div class="vs-card vs-mb">
   <div class="vs-card-header">
     <div class="vs-card-title">{{ 'Требуют действия' if is_ru else 'Амал талаб қилади' }}</div>
@@ -107,6 +109,23 @@
         <div class="vs-kpi-main">
           <div class="vs-kpi-value{% if not counts.awaiting_stock %} sp-desk-zero{% endif %}">{{ counts.awaiting_stock }}</div>
           <div class="vs-kpi-cap">{{ 'утверждены, склада не хватает' if is_ru else 'тасдиқланган, омбор етмайди' }}</div>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if can_purchase %}
+      {# SP-MINSTOCK-004: what has to be BOUGHT across the accessible
+         organizations — outstanding approved demand plus minimum-level
+         shortfall, per (warehouse, SKU). Deliberately NO accent colour:
+         the page keeps exactly one colour cue, on «Готовы к выдаче». #}
+      <div class="vs-kpi">
+        <div class="vs-kpi-head">
+          <div class="vs-kpi-label">{{ 'Требуется закупка' if is_ru else 'Харид талаб қилинади' }}</div>
+          <a class="vs-kpi-link" href="{{ url_for('spare_parts.purchase_queue') }}">{{ 'Открыть →' if is_ru else 'Очиш →' }}</a>
+        </div>
+        <div class="vs-kpi-main">
+          <div class="vs-kpi-value{% if not counts.purchase_needed %} sp-desk-zero{% endif %}">{{ counts.purchase_needed }}</div>
+          <div class="vs-kpi-cap">{{ 'нужно закупить позиций' if is_ru else 'харид қилиш керак бўлган позициялар' }}</div>
         </div>
       </div>
       {% endif %}

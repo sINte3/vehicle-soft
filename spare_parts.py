@@ -16,7 +16,8 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from models import (db, SparePart, SparePartCategory, SparePartPriceAudit,
                     SparePartAttachment, SparePartInventory,
-                    SparePartInventoryMovement, SparePartRequest,
+                    SparePartInventoryMovement, SparePartMinLevel,
+                    SparePartRequest,
                     SparePartRequestItem, SparePartReservation,
                     SparePartSku, SparePartStatusHistory,
                     SparePartUnit, SparePartWarehouse, SparePartWriteOffAct,
@@ -1424,27 +1425,49 @@ def desk():
                                        I.spare_part_id == P.id,
                                        P.status == 'pending_review'))
 
-    # [REASON]: SP-RESERVE-003 — «Готовы к выдаче» must stop lying: a SKU
-    # item is covered iff an ACTIVE reservation holds its full quantity, and
-    # only requests with no under-covered SKU item are physically issuable
-    # right now; the rest of the approved queue waits for stock. Correlated
-    # EXISTS only (PERF-SPARE-001: no Python loop over requests), and the two
-    # tiles partition the approved queue exactly.
-    # Coverage compares the reservation row against its OWN snapshot, not the
-    # live item: requested_quantity is written with the same round(..., 3) as
-    # quantity, so the comparison is self-consistent, whereas item.quantity is
-    # the raw stored float — a >3-decimal quantity (possible via non-browser
-    # callers; _parse_spare_positive_qty does not round) would otherwise
-    # compare as under-covered forever. The snapshot cannot drift from the
-    # item it describes: request items are immutable after creation (there is
-    # no edit route — save_request only creates).
+    # [REASON]: SP-RESERVE-003 + SP-MINSTOCK-004 — «Готовы к выдаче» /
+    # «Ждут поступления» must partition the approved queue truthfully. A SKU
+    # item counts as covered when EITHER its ACTIVE reservation holds its
+    # full snapshot quantity OR the organization's warehouse currently holds
+    # enough on hand: RES.quantity is frozen at approval time and never
+    # recomputed when stock later arrives, so reservation-only coverage left
+    # a request stuck in «Ждут поступления» forever once its parts came in
+    # (issuing already worked — _issue_context recomputes availability live —
+    # but the two tiles lied, and would contradict the purchase queue).
+    # Correlated EXISTS only (PERF-SPARE-001: no Python loop over requests).
+    # The reservation branch still compares the row against its OWN snapshot
+    # (requested_quantity is written with the same round(..., 3) as quantity,
+    # so it is self-consistent, and request items are immutable after
+    # creation — save_request only creates, there is no edit route).
+    # [REASON]: accepted limitation of the stock branch — two approved
+    # requests competing for the same SKU can now BOTH appear ready while
+    # stock covers only one of them. That error is transient (it resolves
+    # the moment either request is issued) and the real guard remains the
+    # atomic quantity + delta >= 0 check inside _apply_inventory_movement,
+    # whereas the error being fixed was permanent and grew over time. Note
+    # also that the stock branch compares against I.quantity (the raw stored
+    # float, not a rounded snapshot), so an item with more than 3 decimals
+    # simply falls back to the reservation branch.
     RES = SparePartReservation
-    item_covered = exists().where(and_(RES.request_item_id == I.id,
-                                       RES.status == 'active',
-                                       RES.quantity >= RES.requested_quantity))
+    INV = SparePartInventory
+    WH = SparePartWarehouse
+    covered_by_reservation = exists().where(and_(RES.request_item_id == I.id,
+                                                 RES.status == 'active',
+                                                 RES.quantity >= RES.requested_quantity))
+    # [REASON]: .correlate(R, I) is REQUIRED, not decorative: without it
+    # SQLAlchemy re-introduces spare_part_requests into the innermost FROM
+    # (auto-correlation only reaches the immediately enclosing SELECT), which
+    # would silently turn the check into "ANY request's organization has the
+    # stock". With it, only WH and INV stay in the subquery's FROM while R
+    # and I correlate to the enclosing queries — verified on the compiled SQL.
+    covered_by_stock = exists().where(and_(WH.organization_id == R.organization_id,
+                                           INV.warehouse_id == WH.id,
+                                           INV.sku_id == I.sku_id,
+                                           INV.quantity >= I.quantity)).correlate(R, I)
     under_covered = exists().where(and_(I.request_id == R.id,
                                         I.sku_id.isnot(None),
-                                        ~item_covered))
+                                        ~covered_by_reservation,
+                                        ~covered_by_stock))
 
     submitted = _scoped(R.query.filter(R.status == 'submitted'))
     approved = _scoped(R.query.filter(R.status == 'approved'))
@@ -1461,6 +1484,12 @@ def desk():
         'ready_to_issue':       approved.filter(~under_covered).count(),
         'awaiting_stock':       approved.filter(under_covered).count(),
         'due_maintenance':      len(_maintenance_due_rows(org_ids=org_ids)),
+        # [REASON]: SP-MINSTOCK-004 — same "helper returns rows, tile counts
+        # them" shape as due_maintenance above; _purchase_queue_rows is a
+        # fixed five-query aggregate with a bounded dict merge, so the
+        # PERF-SPARE-001 rule (no per-request Python loop on this hot page)
+        # still holds.
+        'purchase_needed':      len(_purchase_queue_rows(org_ids=org_ids)),
         # «Мои заявки»
         'my_drafts':            _scoped(R.query.filter(R.status == 'draft',
                                                        R.created_by == uid)).count(),
@@ -2948,6 +2977,168 @@ def _spare_orgs_for_user():
     return q.all()
 
 
+# ─── SP-MINSTOCK-004: minimum stock levels + purchase queue ──────────────────
+
+def _min_levels_map(warehouse_ids):
+    """{(warehouse_id, sku_id): min_quantity} for the given warehouses.
+
+    One query regardless of how many pairs come back; quantities are rounded
+    to the module-wide 3 decimals.
+    """
+    warehouse_ids = [w for w in (warehouse_ids or []) if w]
+    if not warehouse_ids:
+        return {}
+    rows = (db.session.query(SparePartMinLevel.warehouse_id,
+                             SparePartMinLevel.sku_id,
+                             SparePartMinLevel.min_quantity)
+            .filter(SparePartMinLevel.warehouse_id.in_(warehouse_ids))
+            .all())
+    return {(wh_id, sku_id): round(float(qty or 0), 3)
+            for wh_id, sku_id, qty in rows}
+
+
+def _purchase_queue_rows(org_ids=None, org_id=None):
+    """Rows of the «Требуется закупка» queue: what has to be BOUGHT, merged
+    from two sources of need per (warehouse, SKU) pair.
+
+    Per pair:
+        on_hand   = spare_part_inventory.quantity          (0 if no row)
+        demand    = SUM(active reservations.requested_quantity)
+        min_level = spare_part_min_levels.min_quantity     (0 if no row)
+
+        need_total    = max(0, demand + min_level - on_hand)
+        need_requests = max(0, demand - on_hand)
+        need_min      = need_total - need_requests
+
+    A pair appears iff need_total > 0.001.
+
+    [REASON]: demand uses requested_quantity, NOT the granted reservation
+    quantity — quantity is frozen at approval time and goes stale the moment
+    a receipt is booked, whereas requested_quantity is the outstanding demand
+    of the approved request against LIVE on_hand. The minimum is added ON TOP
+    of demand (not compared to on_hand alone) because it is what must remain
+    after the approved demand has been issued — otherwise the safety stock
+    would be consumed by the first issue.
+
+    [REASON]: PERF-SPARE-001 — fixed number of queries independent of the
+    number of rows returned: (1) in-scope warehouses + their organizations,
+    (2) grouped active reservations, (3) min levels, (4) inventory restricted
+    to the candidate pairs' SKU ids, (5) SKU + canonical part display data.
+    Candidate pairs are the union of pairs seen in (2) and (3) — a pair with
+    only an inventory row has no demand and no minimum, so need_total is 0 by
+    construction and it is never even considered. The dict merge below runs
+    over that bounded candidate set (a few hundred pairs at most), with no
+    query and no lazy relationship access inside the loop.
+
+    org_ids: None for admin/all orgs, else the user's organization ids
+    (the _spare_user_org_ids() contract). org_id narrows to one organization;
+    callers are responsible for the access check, but an org_id outside
+    org_ids yields [] as defence in depth.
+    """
+    if org_id and org_ids is not None and org_id not in org_ids:
+        return []
+    wh_q = (SparePartWarehouse.query
+            .options(joinedload(SparePartWarehouse.organization)))
+    if org_id:
+        wh_q = wh_q.filter(SparePartWarehouse.organization_id == org_id)
+    elif org_ids is not None:
+        if not org_ids:
+            return []
+        wh_q = wh_q.filter(SparePartWarehouse.organization_id.in_(org_ids))
+    warehouses = wh_q.all()                                          # query 1
+    if not warehouses:
+        return []
+    wh_by_id = {w.id: w for w in warehouses}
+    wh_ids = list(wh_by_id)
+
+    demand_rows = (db.session.query(
+        SparePartReservation.warehouse_id,
+        SparePartReservation.sku_id,
+        func.sum(SparePartReservation.requested_quantity))
+        .filter(SparePartReservation.warehouse_id.in_(wh_ids),
+                SparePartReservation.status == 'active')
+        .group_by(SparePartReservation.warehouse_id,
+                  SparePartReservation.sku_id)
+        .all())                                                      # query 2
+    demand = {(wh_id, sku_id): round(float(total or 0), 3)
+              for wh_id, sku_id, total in demand_rows}
+
+    min_levels = _min_levels_map(wh_ids)                             # query 3
+
+    candidates = set(demand) | set(min_levels)
+    if not candidates:
+        return []
+    sku_ids = {sku_id for _wh_id, sku_id in candidates}
+
+    inv_rows = (db.session.query(SparePartInventory.warehouse_id,
+                                 SparePartInventory.sku_id,
+                                 SparePartInventory.quantity,
+                                 SparePartInventory.unit)
+                .filter(SparePartInventory.warehouse_id.in_(wh_ids),
+                        SparePartInventory.sku_id.in_(sku_ids))
+                .all())                                              # query 4
+    on_hand = {(wh_id, sku_id): float(qty or 0)
+               for wh_id, sku_id, qty, _unit in inv_rows}
+    inv_unit = {(wh_id, sku_id): (unit or '')
+                for wh_id, sku_id, _qty, unit in inv_rows}
+
+    skus = (SparePartSku.query
+            .options(joinedload(SparePartSku.spare_part))
+            .filter(SparePartSku.id.in_(sku_ids))
+            .all())                                                  # query 5
+    sku_by_id = {s.id: s for s in skus}
+
+    keyed = []
+    for wh_id, sku_id in candidates:
+        pair_demand = demand.get((wh_id, sku_id), 0.0)
+        pair_min = min_levels.get((wh_id, sku_id), 0.0)
+        pair_on_hand = on_hand.get((wh_id, sku_id), 0.0)
+        need_total = round(max(0.0, pair_demand + pair_min - pair_on_hand), 3)
+        if need_total <= 0.001:
+            continue
+        need_requests = round(max(0.0, pair_demand - pair_on_hand), 3)
+        need_min = round(need_total - need_requests, 3)
+        # Reason code for the «Почему» column — derived, never stored.
+        if need_requests > 0.001 and need_min > 0.001:
+            reason = 'both'
+        elif need_requests > 0.001:
+            reason = 'requests'
+        else:
+            reason = 'min'
+        warehouse = wh_by_id[wh_id]
+        org = warehouse.organization
+        sku = sku_by_id.get(sku_id)
+        part = sku.spare_part if sku else None
+        # Unit: inventory row's unit when present, else the canonical part's,
+        # else 'dona' — same resolution as the warehouse screen.
+        unit = (inv_unit.get((wh_id, sku_id))
+                or (getattr(part, 'unit', '') if part else '') or 'dona')
+        row = {
+            'organization_id': warehouse.organization_id,
+            'organization_name': org.name if org else '',
+            'part_name': _part_display_name(part, fallback=''),
+            'sku_label': sku.label if sku else '#{}'.format(sku_id),
+            'unit': unit,
+            'on_hand': round(pair_on_hand, 3),
+            'demand': pair_demand,
+            'min_level': pair_min,
+            'need_requests': need_requests,
+            'need_min': need_min,
+            'need_total': need_total,
+            'reason': reason,
+        }
+        # Sort: organization sort_order, then canonical part name, then SKU
+        # label (org name breaks sort_order ties so organizations never
+        # interleave). Canonical name — NOT the display alias — so the order
+        # is stable across UI languages.
+        keyed.append((((org.sort_order if org else 0) or 0,
+                       row['organization_name'],
+                       ((part.name if part else '') or '').lower(),
+                       row['sku_label'].lower()), row))
+    keyed.sort(key=lambda pair: pair[0])
+    return [row for _key, row in keyed]
+
+
 @spare_parts_bp.route('/inventory')
 @module_required('spare_parts')
 def inventory():
@@ -3034,6 +3225,18 @@ def inventory():
                                   SparePartSku.is_active.is_(None)))
                    .all())
     sku_options.sort(key=lambda s: ((s.spare_part.name if s.spare_part else ''), s.label))
+    # [REASON]: SP-MINSTOCK-004 — minimums of the selected warehouse, keyed by
+    # sku_id for the balances-table «Мин.» column and the min-levels card. One
+    # query with the display relations eager-loaded, so the template loop
+    # never triggers a lazy SELECT. Empty dict when there is no warehouse.
+    min_levels = {}
+    if warehouse:
+        min_rows = (SparePartMinLevel.query
+                    .options(joinedload(SparePartMinLevel.sku)
+                             .joinedload(SparePartSku.spare_part))
+                    .filter_by(warehouse_id=warehouse.id)
+                    .all())
+        min_levels = {r.sku_id: r for r in min_rows}
     return render_template('spare_parts_inventory.html',
                            organizations=organizations,
                            org_id=org_id,
@@ -3045,6 +3248,7 @@ def inventory():
                            movement_request_no=movement_request_no,
                            sku_options=sku_options,
                            movement_labels=INV_MOVEMENT_LABELS,
+                           min_levels=min_levels,
                            lang=_spare_lang())
 
 
@@ -3185,6 +3389,105 @@ def inventory_movement_create():
                             org_id=warehouse.organization_id))
 
 
+@spare_parts_bp.route('/inventory/min-level', methods=['POST'])
+@module_required('spare_parts')
+def inventory_min_level_save():
+    """Set or clear the minimum (safety) stock level of one (warehouse, SKU).
+
+    [REASON]: SP-MINSTOCK-004 — writes ONLY spare_part_min_levels. A minimum
+    is reference data, not stock: spare_part_inventory.quantity and the
+    movement journal are untouched, so the module invariant (quantity is
+    written only through _apply_inventory_movement) stays intact.
+    min_quantity = 0 is never stored — clearing a minimum DELETES the row,
+    and clearing a pair that has no row is a silent no-op with the same
+    user message, so a double-clear never errors.
+    """
+    if not current_user.has_module_access('spare_parts_inventory_manage'):
+        # CYCLE-2-3 Part 8: forward-going denial trail (see _deny_spare).
+        _deny_spare('set minimum stock level', entity_type='spare_part_min_level')
+    warehouse_id = request.form.get('warehouse_id', type=int)
+    warehouse = SparePartWarehouse.query.get(warehouse_id) if warehouse_id else None
+    if warehouse is None:
+        _spare_flash_errors([_spare_t('Омбор топилмади', 'Склад не найден')],
+                            title_uz='Минимум сақланмади:',
+                            title_ru='Минимум не сохранён:')
+        return redirect(url_for('spare_parts.inventory'))
+    if not current_user.can_access_org(warehouse.organization_id):
+        abort(403)
+    sku_id = request.form.get('sku_id', type=int)
+    sku = SparePartSku.query.get(sku_id) if sku_id else None
+    if sku is None:
+        _spare_flash_errors([_spare_t('SKU топилмади', 'SKU не найден')],
+                            title_uz='Минимум сақланмади:',
+                            title_ru='Минимум не сохранён:')
+        return redirect(url_for('spare_parts.inventory',
+                                org_id=warehouse.organization_id))
+    raw_qty = (request.form.get('min_quantity', '') or '').strip().replace(',', '.')
+    try:
+        min_quantity = float(raw_qty)
+        # [REASON]: SP-F-016 — float() happily parses 'nan'/'inf', and NaN
+        # slips past every comparison, so finiteness is an explicit condition
+        # on top of the >= 0 check, not a separate error category.
+        if not math.isfinite(min_quantity) or min_quantity < 0:
+            raise ValueError('min_quantity')
+    except (TypeError, ValueError):
+        _spare_flash_errors(
+            [_spare_t('Миқдор нолдан кичик бўлмаган сон бўлиши керак',
+                      'Количество должно быть числом не меньше нуля')],
+            title_uz='Минимум сақланмади:', title_ru='Минимум не сохранён:')
+        return redirect(url_for('spare_parts.inventory',
+                                org_id=warehouse.organization_id))
+    min_quantity = round(min_quantity, 3)
+    note = (request.form.get('note', '') or '').strip()[:300]
+
+    row = (SparePartMinLevel.query
+           .filter_by(warehouse_id=warehouse.id, sku_id=sku.id).first())
+    entity_label = '{} / {}'.format(
+        sku.spare_part.name if sku.spare_part else '?', sku.label)
+    before = ({'warehouse_id': row.warehouse_id, 'sku_id': row.sku_id,
+               'min_quantity': row.min_quantity, 'note': row.note}
+              if row is not None else None)
+
+    if min_quantity == 0:
+        if row is not None:
+            row_id = row.id
+            db.session.delete(row)
+            _audit_spare('spare_part_min_level_cleared',
+                         entity_type='spare_part_min_level',
+                         entity_id=row_id,
+                         entity_label=entity_label,
+                         before=before,
+                         after=None,
+                         description='Minimum stock level cleared')
+        db.session.commit()
+        flash(_spare_t('Минимум олиб ташланди', 'Минимум снят'), 'success')
+        return redirect(url_for('spare_parts.inventory',
+                                org_id=warehouse.organization_id))
+
+    if row is None:
+        row = SparePartMinLevel(warehouse_id=warehouse.id, sku_id=sku.id,
+                                min_quantity=min_quantity, note=note,
+                                updated_by=current_user.id)
+        db.session.add(row)
+        db.session.flush()
+    else:
+        row.min_quantity = min_quantity
+        row.note = note
+        row.updated_by = current_user.id
+    _audit_spare('spare_part_min_level_set',
+                 entity_type='spare_part_min_level',
+                 entity_id=row.id,
+                 entity_label=entity_label,
+                 before=before,
+                 after={'warehouse_id': warehouse.id, 'sku_id': sku.id,
+                        'min_quantity': min_quantity, 'note': note},
+                 description='Minimum stock level set')
+    db.session.commit()
+    flash(_spare_t('Минимум сақланди', 'Минимум сохранён'), 'success')
+    return redirect(url_for('spare_parts.inventory',
+                            org_id=warehouse.organization_id))
+
+
 @spare_parts_bp.route('/inventory/reservations/<int:res_id>/release', methods=['POST'])
 @module_required('spare_parts')
 def inventory_reservation_release(res_id):
@@ -3227,6 +3530,38 @@ def inventory_reservation_release(res_id):
                    'Резерв снят. Статус заявки не изменился.'), 'success')
     return redirect(url_for('spare_parts.inventory',
                             org_id=warehouse.organization_id))
+
+
+@spare_parts_bp.route('/purchase-queue')
+@module_required('spare_parts')
+def purchase_queue():
+    """SP-MINSTOCK-004: read-only «Требуется закупка» queue.
+
+    One screen where a purchaser sees everything that has to be bought,
+    merged per (warehouse, SKU) from outstanding approved demand and
+    shortfall below the minimum level (see _purchase_queue_rows).
+
+    [REASON]: read gate — the screen is for whoever buys or authorizes
+    buying: warehouse keepers (spare_parts_inventory_manage) and approvers
+    (spare_parts_approve). Plain abort(403), NOT _deny_spare: this is a read
+    screen, and the denial trail is reserved for money-relevant actions (see
+    the comment on _deny_spare). No new permission codes.
+
+    [REASON]: the default scope is ALL accessible organizations, not the
+    first one — a purchaser buys for the holding; org_id only narrows.
+    """
+    if not (current_user.has_module_access('spare_parts_inventory_manage')
+            or current_user.has_module_access('spare_parts_approve')):
+        abort(403)
+    org_id = request.args.get('org_id', type=int)
+    if org_id and not current_user.can_access_org(org_id):
+        abort(403)
+    rows = _purchase_queue_rows(org_ids=_spare_user_org_ids(), org_id=org_id)
+    return render_template('spare_parts_purchase_queue.html',
+                           rows=rows,
+                           organizations=_spare_orgs_for_user(),
+                           org_id=org_id,
+                           lang=_spare_lang())
 
 
 # ─── SPARE-STAGE2: issue + write-off acts ─────────────────────────────────────
