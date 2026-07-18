@@ -2,10 +2,13 @@
 """Migration SPARE_PARTS_RESERVATIONS -- SP-RESERVE-003.
 
 Creates the spare_part_reservations table (a claim on warehouse stock held
-by an approved request item) plus its three indexes, and backfills one
-reservation row per SKU item of every already-approved request so existing
-approved requests do not appear falsely issuable the moment the feature
-ships.
+by an approved request item) plus its three indexes, adds the performance
+index idx_spare_part_request_items_request_id on the pre-existing
+spare_part_request_items table (the desk's coverage query correlates items
+by request_id; SQLite does not index foreign keys automatically), and
+backfills one reservation row per SKU item of every already-approved
+request so existing approved requests do not appear falsely issuable the
+moment the feature ships.
 
 Backfill rules (FIFO, oldest approved request first by request_date, id):
   - Only items with a non-null sku_id, and only when the request's
@@ -29,7 +32,10 @@ Safe / idempotent:
     (spare_part_reservations). It never modifies, updates or deletes a
     single row of any pre-existing table: pre-existing tables are only read
     (SELECT); the only writes are INSERTs into the new table and the
-    INSERT of its own registration row into schema_migrations.
+    INSERT of its own registration row into schema_migrations. The one
+    piece of DDL touching a pre-existing table is the CREATE INDEX on
+    spare_part_request_items -- and an index is not a row: it changes no
+    stored data, only how it is looked up.
 
 Hardened (RE-SP-011 pattern, same as migrate_spare_parts_name_uz):
   - FAILS LOUDLY (and records nothing) if any prerequisite table is missing
@@ -56,7 +62,12 @@ Rollback:
   pre-existing row is ever modified, so there is nothing else to undo:
 
     DROP TABLE IF EXISTS spare_part_reservations;
+    DROP INDEX IF EXISTS idx_spare_part_request_items_request_id;
     DELETE FROM schema_migrations WHERE name = 'SPARE_PARTS_RESERVATIONS';
+
+  The DROP INDEX line is OPTIONAL: an unused index changes no query result
+  and only costs a little write time, so it is safe to leave in place even
+  if the application code is rolled back.
 """
 
 import os
@@ -118,6 +129,15 @@ CREATE_INDEXES = [
     ("uq_spare_part_reservations_active_item",
      "CREATE UNIQUE INDEX IF NOT EXISTS uq_spare_part_reservations_active_item"
      " ON spare_part_reservations (request_item_id) WHERE status = 'active'"),
+    # [REASON]: SP-RESERVE-003 addendum -- the desk's coverage EXISTS
+    # correlates items by request_id; without this index SQLite full-scans
+    # the items table once per approved request (measured ~50 ms vs ~1.4 ms
+    # per counter at staging scale). The ONLY DDL touching a pre-existing
+    # table, and an index is not a row: the "no pre-existing row is ever
+    # modified" guarantee of this migration still holds.
+    ("idx_spare_part_request_items_request_id",
+     "CREATE INDEX IF NOT EXISTS idx_spare_part_request_items_request_id"
+     " ON spare_part_request_items (request_id)"),
 ]
 
 PREREQUISITE_TABLES = (
@@ -171,7 +191,8 @@ def _create_table_and_indexes(cur):
     cur.execute(CREATE_RESERVATIONS)
     for _name, ddl in CREATE_INDEXES:
         cur.execute(ddl)
-    print("  table spare_part_reservations and 3 indexes ensured")
+    print("  table spare_part_reservations, its 3 indexes and"
+          " idx_spare_part_request_items_request_id ensured")
 
 
 def _backfill(cur):

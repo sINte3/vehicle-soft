@@ -1217,6 +1217,10 @@ db.Index('idx_spare_part_requests_equipment_id_date', SparePartRequest.equipment
 # [REASON]: SPARE-STAGE2 — the SKU price-stats recompute scans confirm audit
 # rows of all items referencing one SKU.
 db.Index('idx_spare_part_request_items_sku_id', SparePartRequestItem.sku_id)
+# [REASON]: SP-RESERVE-003 — the desk's coverage EXISTS correlates items by
+# request_id; without this index SQLite full-scans the items table once per
+# approved request (measured ~50 ms vs ~1.4 ms per counter at staging scale).
+db.Index('idx_spare_part_request_items_request_id', SparePartRequestItem.request_id)
 
 
 class SparePartPriceAudit(db.Model):
