@@ -2975,6 +2975,33 @@ def inventory():
         for m in movements:
             if m.reference_type == 'request_item' and m.reference_id in item_to_req:
                 movement_request_no[m.id] = item_to_req[m.reference_id]
+    # [REASON]: SP-RESERVE-003 — the balances table shows three numbers
+    # (on-hand / reserved / available = on-hand − reserved); reserved totals
+    # come from ONE grouped query over the warehouse's active reservations,
+    # never a per-row loop. The active reservation list below the balances
+    # is the manual-release surface ('approved' has no other exit).
+    reserved_map = {}
+    reservations = []
+    if warehouse:
+        reserved_rows = (db.session.query(SparePartReservation.sku_id,
+                                          func.sum(SparePartReservation.quantity))
+                         .filter(SparePartReservation.warehouse_id == warehouse.id,
+                                 SparePartReservation.status == 'active')
+                         .group_by(SparePartReservation.sku_id)
+                         .all())
+        reserved_map = {sku_id: round(float(total or 0), 3)
+                        for sku_id, total in reserved_rows}
+        reservations = (SparePartReservation.query
+                        .options(joinedload(SparePartReservation.request),
+                                 joinedload(SparePartReservation.item),
+                                 joinedload(SparePartReservation.sku)
+                                 .joinedload(SparePartSku.spare_part),
+                                 joinedload(SparePartReservation.creator))
+                        .filter(SparePartReservation.warehouse_id == warehouse.id,
+                                SparePartReservation.status == 'active')
+                        .order_by(SparePartReservation.created_at.desc(),
+                                  SparePartReservation.id.desc())
+                        .all())
     # SKU picker for the manual movement form: all active SKUs, labelled with
     # their canonical part name.
     sku_options = (SparePartSku.query
@@ -2988,6 +3015,8 @@ def inventory():
                            org_id=org_id,
                            warehouse=warehouse,
                            inventory_rows=inventory_rows,
+                           reserved_map=reserved_map,
+                           reservations=reservations,
                            movements=movements,
                            movement_request_no=movement_request_no,
                            sku_options=sku_options,
@@ -3128,6 +3157,50 @@ def inventory_movement_create():
     flash(_spare_t('Ҳаракат сақланди. Янги қолдиқ: {}',
                    'Движение сохранено. Новый остаток: {}').format(movement.balance_after),
           'success')
+    return redirect(url_for('spare_parts.inventory',
+                            org_id=warehouse.organization_id))
+
+
+@spare_parts_bp.route('/inventory/reservations/<int:res_id>/release', methods=['POST'])
+@module_required('spare_parts')
+def inventory_reservation_release(res_id):
+    """Manually release one active reservation from the warehouse screen.
+
+    [REASON]: SP-RESERVE-003 — the only way to free the claim of an
+    approved-but-abandoned request: 'approved' has no other exit (reject and
+    the price routes only accept 'submitted'). Does NOT change the request's
+    status — only the claim is dropped, recording who/when/why.
+    """
+    # [REASON]: same permission primitive as the rest of the warehouse screen
+    # (no new permission codes), with the CYCLE-2-3 Part 8 denial trail.
+    if not current_user.has_module_access('spare_parts_inventory_manage'):
+        _deny_spare('release reservation #{}'.format(res_id),
+                    entity_type='spare_part_reservation', entity_id=res_id,
+                    entity_label='Reservation #{}'.format(res_id))
+    res = SparePartReservation.query.get_or_404(res_id)
+    if res.status != 'active':
+        abort(400)
+    warehouse = res.warehouse
+    _spare_check_org_access(warehouse.organization_id if warehouse else None)
+    _release_reservations([res.id], current_user.id,
+                          note=request.form.get('note', ''))
+    _audit_spare(
+        'spare_part_reservation_released',
+        entity_type='spare_part_reservation',
+        entity_id=res.id,
+        entity_label='Reservation #{} (request #{})'.format(res.id, res.request_id),
+        after={'request_id': res.request_id,
+               'request_item_id': res.request_item_id,
+               'warehouse_id': res.warehouse_id,
+               'sku_id': res.sku_id,
+               'quantity': res.quantity,
+               'requested_quantity': res.requested_quantity,
+               'note': res.close_note},
+        description='Reservation released from warehouse screen'
+    )
+    db.session.commit()
+    flash(_spare_t('Захира бўшатилди. Сўров ҳолати ўзгармади.',
+                   'Резерв снят. Статус заявки не изменился.'), 'success')
     return redirect(url_for('spare_parts.inventory',
                             org_id=warehouse.organization_id))
 
