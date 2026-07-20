@@ -3142,6 +3142,138 @@ def _purchase_queue_rows(org_ids=None, org_id=None):
     return [row for _key, row in keyed]
 
 
+def _purchase_queue_workbook(rows, lang='uz'):
+    """One-sheet Excel workbook of the «Требуется закупка» purchase queue.
+
+    SP-PQEXPORT-005: mirrors the on-screen table column-for-column (same
+    source keys, same pre-sorted row order, same reason wording), plus two
+    informational estimate columns fed by SparePartSku.last_price and a
+    totals row. Pure builder: takes _purchase_queue_rows() output and
+    returns the Workbook — builds nothing else, sends nothing.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
+
+    # [REASON]: money format is excel_export.py's NUM_FMT ('#,##0' — сум
+    # amounts carry no kopecks, same as fmt_sum in the templates). Applied
+    # ONLY to the two price columns; quantity columns keep the general
+    # format so 4 renders as 4 and 1.5 as 1.5, exactly as on screen.
+    money_fmt = '#,##0'
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    ws = wb.create_sheet(L('Требуется закупка', 'Харид талаб қилинади'))
+
+    header_fill = PatternFill('solid', fgColor='D9EAD3')
+    header_font = Font(bold=True)
+    total_font = Font(bold=True)
+    thin = Side(style='thin', color='D9D9D9')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    # [REASON]: deliberate duplication of _spare_reports_workbook's nested
+    # styling helper — that builder is a shipped export and out of scope for
+    # this increment, so nothing is extracted, refactored or imported.
+    def style_sheet(ws, money_cols=()):
+        ws.freeze_panes = 'A2'
+        ws.sheet_view.showGridLines = False
+        max_col = ws.max_column
+        max_row = ws.max_row
+        for cell in ws[1]:
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center', vertical='center',
+                                       wrap_text=True)
+        for row in ws.iter_rows(min_row=1, max_row=max_row, max_col=max_col):
+            for cell in row:
+                cell.border = border
+                if cell.row > 1 and cell.column in money_cols \
+                        and isinstance(cell.value, (int, float)):
+                    cell.number_format = money_fmt
+        for col in range(1, max_col + 1):
+            letter = get_column_letter(col)
+            width = 10
+            for cell in ws[letter]:
+                val = '' if cell.value is None else str(cell.value)
+                width = max(width, min(len(val) + 2, 38))
+            ws.column_dimensions[letter].width = width
+
+    ws.append(['№',
+               L('Организация', 'Ташкилот'),
+               L('Запчасть', 'Эҳтиёт қисм'),
+               'SKU',
+               L('Ед. изм.', 'Ўлчов бирлиги'),
+               L('Остаток', 'Қолдиқ'),
+               L('Под заявки', 'Сўровлар учун'),
+               'Минимум',
+               L('Нужно закупить', 'Харид қилиш керак'),
+               L('в т.ч. под заявки', 'шундан сўровлар учун'),
+               L('в т.ч. под минимум', 'шундан минимум учун'),
+               L('Почему', 'Сабаби'),
+               L('Последняя цена, сум', 'Охирги нарх, сўм'),
+               L('Сумма (оценочно), сум', 'Сумма (тахминий), сўм')])
+
+    # Badge wording copied verbatim from spare_parts_purchase_queue.html —
+    # the 'requests' label deliberately differs from the column-7 header
+    # («Сўровлар учун» in the header vs «Сўровлар бўйича» in the badge).
+    reason_labels = {
+        'both': L('Заявки + минимум', 'Сўровлар + минимум'),
+        'requests': L('Под заявки', 'Сўровлар бўйича'),
+    }
+    reason_min = L('Ниже минимума', 'Минимумдан паст')
+
+    total_estimate = 0.0
+    priced_count = 0
+    for idx, row in enumerate(rows, start=1):
+        last_price = row.get('last_price')
+        estimate = None
+        if last_price is not None:
+            estimate = row['need_total'] * last_price
+            total_estimate += estimate
+            priced_count += 1
+        ws.append([idx,
+                   _xlsx_safe(row['organization_name']),
+                   _xlsx_safe(row['part_name'] or '—'),
+                   _xlsx_safe(row['sku_label']),
+                   _xlsx_safe(_unit_label(row['unit'], lang)),
+                   row['on_hand'],
+                   row['demand'],
+                   row['min_level'],
+                   row['need_total'],
+                   row['need_requests'],
+                   row['need_min'],
+                   reason_labels.get(row['reason'], reason_min),
+                   last_price,
+                   estimate])
+
+    # [REASON]: an empty cell reads as "no data", a zero reads as "free" —
+    # a missing last_price leaves the price/estimate cells (and the grand
+    # total when nothing at all is priced) empty, never 0.
+    totals = [L('ИТОГО', 'ЖАМИ'),
+              L('Позиций: {}', 'Позициялар: {}').format(len(rows))]
+    totals += [''] * 11
+    totals.append(total_estimate if priced_count else None)
+    ws.append(totals)
+    for cell in ws[ws.max_row]:
+        cell.font = total_font
+
+    unpriced = len(rows) - priced_count
+    if unpriced:
+        ws.append([L('Оценка неполная: у {} позиций нет последней цены.',
+                     'Баҳо тўлиқ эмас: {} та позицияда охирги нарх йўқ.')
+                   .format(unpriced)])
+
+    style_sheet(ws, money_cols=(13, 14))
+    # [REASON]: the note row's sentence sits in column 1, and the shared
+    # width rule would stretch the narrow «№» column to the 38-char cap;
+    # pin A and let the note overflow into the adjacent empty cells.
+    ws.column_dimensions['A'].width = 6
+    return wb
+
+
 @spare_parts_bp.route('/inventory')
 @module_required('spare_parts')
 def inventory():
