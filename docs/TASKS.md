@@ -25,17 +25,20 @@ Known confirmed gaps to include in the audit as starting evidence:
 - templates/audit_logs.html — Phase 7 gave it form-control only; full
   visual pass explicitly deferred.
 
-### Next: spare-parts borrowing track, increment 3 — reservations and available stock
+### Next: spare-parts borrowing track, increment 5 — Excel export of the purchase queue
 
-Three stock figures per SKU (На складе / Зарезервировано / Доступно = склад −
-резерв), auto-reserve on approval, release on cancel. Touches the warehouse
-tables — unlike increments 1-2 this one WILL need a schema migration, so it
-gets its own spec, staging validation and rollback plan.
+Export the «Требуется закупка» queue to Excel for the supply department. Owner
+decision when increment 4 was scoped: the export is a separate increment so
+increment 4 stays small. Read-only, no schema change expected — the data is
+already computed by `_purchase_queue_rows()`; the work is the workbook format,
+the bilingual headers and the org filter carrying over into the file name.
 
-Increments 1-2 of the track are done and sitting on staging: SP-DESK-001
-(operator workspace) and SP-DETAIL-002 (request card redesign) — see their
-sections below. The standalone «Заявки/Наряды» MVP is tracked outside this
-track and is not the next item here.
+Increments 1-4 of the track are done and merged into `main`: SP-DESK-001
+(operator workspace, PR #11), SP-DETAIL-002 (request card redesign, PR #12),
+SP-RESERVE-003 (reservations and available stock, PR #13), SP-MINSTOCK-004
+(minimum stock levels and purchase queue, PR #14) — see their sections below.
+The standalone «Заявки/Наряды» MVP is tracked outside this track and is not the
+next item here.
 
 ## Recently completed / appears completed
 
@@ -479,6 +482,39 @@ Blocker:
 - Needs formal accounting rules from finance/accounting responsible person.
 
 ## Backlog
+
+### UI-FONT-LOCAL-001 - Self-host Golos Text, drop the external font CDN
+
+Priority: P2 (raised from P3 after runtime evidence)
+Status: backlog
+
+- `templates/base_next.html` lines 13-16 preconnect to `fonts.googleapis.com` /
+  `fonts.gstatic.com` and pull `Golos Text` as a stylesheet on EVERY page load.
+- Runtime evidence (QA run 2026-07-18, staging): the request is issued on every
+  navigation and fails — console shows
+  `Failed to load resource: net::ERR_BLOCKED_BY_CLIENT` for the css2 URL. The
+  page then falls back to `system-ui` from the `--vs-font` stack.
+- Why this matters more than cosmetics: the whole product proposition is
+  on-premises, «данные не покидают сеть». An outbound request to Google on every
+  page contradicts that, and if the holding network blocks or delays it, the
+  entire design system has been rendering in a fallback face all along.
+- Task: bundle the Golos Text woff2 files into `static/fonts/` next to the
+  DejaVu TTFs already used for PDF, declare `@font-face` in `design-system.css`,
+  remove the three external tags. Verify on staging that the console is clean and
+  the rendered face actually changes.
+
+### SP-UNIT-L10N-001 - Latin `dona` in the repeat-order hint
+
+Priority: P3
+Status: backlog
+
+- The repeat-order hint on the new-request form renders the unit as Latin `dona`
+  in the Uzbek interface. Uzbek is Cyrillic only.
+- Found by QA during increment 3; out of scope of that increment and of
+  increment 4.
+- Task: route the unit through the existing bilingual unit label helper instead
+  of the raw stored code.
+
 
 ### FUEL-CARDS-SYNC - Automate Topaz card directory sync to production
 
@@ -3294,12 +3330,151 @@ No migration, no schema change, no new permission codes, no lifecycle-route
 changes. Full test suite 65 OK; per-role render sweep (admin / operator /
 viewer / price-confirm-only / no-access 403) in RU+UZ passed locally.
 
+## SP-MINSTOCK-004 — Minimum stock levels and the «Требуется закупка» purchase queue
+
+Status: **merged into `main` (PR #14, merge commit `f956296`, ten commits),
+deployed to staging, browser-QA validated 2026-07-18.** Increment 4 of the
+spare-parts borrowing track. Production deployment deliberately deferred —
+production stays frozen at `ed8ca9c` until the bundle deploy.
+
+Goal: the module knew what was missing for one specific approved request
+(increment 3 wrote the shortage into the reservation row) but not what was
+missing in general. No concept of safety stock, no screen for a purchaser.
+
+Core design decision: `SparePartReservation.quantity` is written exactly once,
+at approval, and is never recomputed when stock arrives — so the stored shortage
+goes stale. The queue is therefore a LIVE derivation per (warehouse, SKU):
+
+    demand = SUM(requested_quantity) over active reservations
+    need   = max(0, demand + min_level - on_hand)
+
+`min_level` is added to demand rather than compared against stock on its own:
+safety stock must remain AFTER approved demand is issued. Split for the reason
+column: `need_requests = max(0, demand - on_hand)`,
+`need_min = need - need_requests`. A row is listed iff `need > 0.001`.
+Reservations are read-only in this increment.
+
+Ten ordered commits — **revert strictly in reverse order (10 -> 1)**; code
+rollback is separate from data rollback:
+
+1. `models.py` — `SparePartMinLevel` (additive only).
+2. `migrate_spare_parts_min_levels.py` — migration `SPARE_PARTS_MIN_LEVELS`.
+3. `spare_parts.py` — `_min_levels_map()` and `_purchase_queue_rows()`.
+4. `spare_parts.py` — `inventory_min_level_save` route + `min_levels` in the
+   `inventory()` context.
+5. `templates/spare_parts_inventory.html` — «Мин.» column + «Неснижаемые
+   остатки» card and form.
+6. `spare_parts.py` — `purchase_queue` route.
+7. `templates/spare_parts_purchase_queue.html` — new screen.
+8. `templates/_spare_nav.html` — «Закупка» pill.
+9. `spare_parts.py` + `templates/spare_parts_desk.html` — «Требуется закупка»
+   tile.
+10. `spare_parts.py` — desk coverage fix: an item counts as covered when its
+    reservation covers it OR the organization's warehouse currently holds
+    enough stock.
+
+Data rollback:
+
+    DROP TABLE IF EXISTS spare_part_min_levels;
+    DELETE FROM schema_migrations WHERE name = 'SPARE_PARTS_MIN_LEVELS';
+
+Minimums live in their own table rather than as a column on
+`spare_part_inventory` because an inventory row is created lazily on first
+movement — a minimum for a never-received SKU would have nowhere to live.
+`min_quantity = 0` is not stored; clearing deletes the row.
+
+No new permission codes: the queue screen is gated by
+`spare_parts_inventory_manage` OR `spare_parts_approve`, editing a minimum by
+`spare_parts_inventory_manage` alone. `design-system.css` untouched; extra
+styling is page-scoped, following the existing precedent.
+
+Caught at diff review and reproduced independently: without an explicit
+`.correlate(R, I)` SQLAlchemy pulled `spare_part_requests` into the innermost
+FROM of the stock-coverage subquery, so ANOTHER organization's warehouse counted
+as your own. Silent wrong data, not a crash. Fixed in commit 10.
+
+Pre-merge instrumental review against the real sources: AST hashes of the
+fourteen protected functions byte-identical to `fc4b924`; exactly six changed or
+new functions in `spare_parts.py`; migration run on a synthetic DB for
+idempotency, loud failure without prerequisites and `PRAGMA table_info` identity
+with `db.create_all()`; the formula checked on seven cases including the stale
+reservation case; `<div>` balance, Jinja parse and `<th>`/`<td>` counts in every
+changed template; no Latin in Uzbek literals, all five new `_spare_t()` calls
+with Uzbek first.
+
+Staging validation (Codex CLI + Playwright MCP, staging only, 2026-07-18): ten
+scenarios, no Blocker and no Major. Headline result — a receipt of 2 units on
+`Corteco / C-0548` at «Когон ПТЗ» removed the row from the queue and moved the
+desk tiles 32->31, 57->56, 274->275; the two tiles partition the approved queue
+exactly (331 both before and after). Arithmetic exact: stock 4, demand 5,
+minimum 10 -> need 11 with breakdown `1.0 + 10.0`; raising the minimum by 990
+raised the need by exactly 990.
+
+QA findings F-01 (organization sort order) and F-02 (Latin script in the Uzbek
+interface) were checked against the source and rejected — sorting follows
+`Organization.sort_order` as specified and as everywhere else in the module, and
+the Latin strings are catalog data (brands, SKU articles, suppliers, usernames,
+free-text notes) rather than interface chrome. F-03 accepted and filed as
+`UI-FONT-LOCAL-001`.
+
+Known accepted limitation, documented in a `[REASON]` comment: two approved
+requests competing for the same SKU can both show as ready when stock covers
+only one. Transient (resolves on the first issue) and guarded at issue time by
+the atomic `quantity + delta >= 0` check; the defect it replaces was permanent
+and accumulating.
+
+Still unverified, non-blocking: the Uzbek reason badges «Сўровлар + минимум» and
+«Минимумдан паст» never appeared during the run (no qualifying rows remained
+after the minimum was cleared) — one minute of manual checking closes it; and
+the Russian variant of the empty state (reached in Uzbek only).
+
+## SP-RESERVE-003 — Reservations and available stock
+
+Status: **merged into `main` (PR #13, merge commit `fc4b924`, nine commits) and
+deployed to staging.** Increment 3 of the spare-parts borrowing track. Migration
+`SPARE_PARTS_RESERVATIONS`.
+
+**This section was reconstructed on 2026-07-18** while closing increment 4: the
+original doc edits for this increment were written but never committed, and were
+overwritten by `git reset --hard` during the increment 4 deployment (copy kept in
+`D:\transport-report-backups\staging_worktree_20260718\`). Rebuilt from the
+handoff prompt and from reading the real source at `fc4b924`.
+
+- `spare_part_reservations`: one row per request item, `quantity` (actually
+  reserved) and `requested_quantity` (snapshot of what was asked), statuses
+  `active` / `consumed` / `released`, who created and closed it and why.
+  Partial UNIQUE on `request_item_id WHERE status='active'`.
+- A reservation is NOT a stock movement. `_apply_inventory_movement` remains the
+  single writer of `spare_part_inventory.quantity`.
+- Soft reservation: approval is never blocked by a shortage.
+  `min(needed, available)` is reserved, the shortfall is warned about and stored
+  on the reservation row.
+- Issuing computes availability as stock minus OTHER requests' reservations, so
+  a request's own reservation never blocks its own issue; the reservation is
+  consumed inside the same transaction as the write-off.
+- Manual release on the warehouse screen (`spare_parts_inventory_manage`) is the
+  only way out for an approved but abandoned request — `approved` is a dead end
+  in code.
+- Warehouse screen gained Остаток / Зарезервировано / Доступно plus an active
+  reservations card; the desk gained «Ждут поступления» next to «Готовы к
+  выдаче», both as one correlated EXISTS with no Python loop.
+- Migration created the table, three indexes and
+  `idx_spare_part_request_items_request_id`, then FIFO-backfilled: 330 approved
+  requests, 125 covered, 37 skipped (organization has no warehouse), 128
+  reservation rows, 39 positions short.
+
+Consequence surfaced by increment 4: because `quantity` is written once and never
+topped up on receipt, the stored shortage goes stale and the desk tiles built on
+it would hang forever. Fixed by commit 10 of SP-MINSTOCK-004. The field itself is
+deliberately left as an approval-time snapshot.
+
+
 ## SP-DETAIL-002 — Request card redesign (next-action block, status stepper, unified event timeline)
 
-Status: implemented on branch `sp-detail-002-request-card` (HEAD `321d022`,
-PR #12, 2026-07-18); deployed to staging and self-validated by the owner across
-all six statuses. **Merge into `main` still pending.** Increment 2 of the
-spare-parts borrowing track (increment 1 = SP-DESK-001).
+Status: **merged into `main` (PR #12, `ab5c5b2`) and deployed to staging.**
+Implemented on branch `sp-detail-002-request-card` (HEAD `321d022`,
+2026-07-18); self-validated by the owner across all six statuses.
+Increment 2 of the spare-parts borrowing track (increment 1 = SP-DESK-001).
 
 Goal: turn the request page into one managed card where it is immediately clear
 WHAT to do next and WHERE the request is in the process.
