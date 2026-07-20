@@ -12,6 +12,12 @@
     <div class="vs-hero-title">{{ 'Требуется закупка' if is_ru else 'Харид талаб қилинади' }}</div>
     <div class="vs-hero-sub">{{ 'Что нужно закупить по складам ваших организаций.' if is_ru else 'Ташкилотларингиз омборлари бўйича нима харид қилиш кераклиги.' }}</div>
   </div>
+  {% if rows %}
+  <div>
+    <a class="vs-btn vs-btn-sm"
+       href="{{ url_for('spare_parts.purchase_queue_export', org_id=org_id) }}">⬇ {{ 'Экспорт в Excel' if is_ru else "Excel'га юклаш" }}</a>
+  </div>
+  {% endif %}
 </div>
 
 <div class="vs-card vs-mb">
