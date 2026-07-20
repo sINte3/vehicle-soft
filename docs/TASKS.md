@@ -25,20 +25,19 @@ Known confirmed gaps to include in the audit as starting evidence:
 - templates/audit_logs.html — Phase 7 gave it form-control only; full
   visual pass explicitly deferred.
 
-### Next: spare-parts borrowing track, increment 5 — Excel export of the purchase queue
+### Next: spare-parts borrowing track — increment 6 not yet scoped
 
-Export the «Требуется закупка» queue to Excel for the supply department. Owner
-decision when increment 4 was scoped: the export is a separate increment so
-increment 4 stays small. Read-only, no schema change expected — the data is
-already computed by `_purchase_queue_rows()`; the work is the workbook format,
-the bilingual headers and the org filter carrying over into the file name.
+Increments 1-5 are done and merged into `main`: SP-DESK-001 (operator workspace,
+PR #11), SP-DETAIL-002 (request card redesign, PR #12), SP-RESERVE-003
+(reservations and available stock, PR #13), SP-MINSTOCK-004 (minimum stock levels
+and purchase queue, PR #14), SP-PQEXPORT-005 (Excel export of the purchase queue,
+PR #15) — see their sections below.
 
-Increments 1-4 of the track are done and merged into `main`: SP-DESK-001
-(operator workspace, PR #11), SP-DETAIL-002 (request card redesign, PR #12),
-SP-RESERVE-003 (reservations and available stock, PR #13), SP-MINSTOCK-004
-(minimum stock levels and purchase queue, PR #14) — see their sections below.
-The standalone «Заявки/Наряды» MVP is tracked outside this track and is not the
-next item here.
+What comes sixth is the owner's call and is deliberately not scoped here.
+Unprioritised candidates accumulated during the track: releasing a reservation
+when an approved request is rejected, price history on the SKU screen, bulk
+approval of requests. The standalone «Заявки/Наряды» MVP is tracked outside this
+track and is not the next item here.
 
 ## Recently completed / appears completed
 
@@ -514,6 +513,24 @@ Status: backlog
   increment 4.
 - Task: route the unit through the existing bilingual unit label helper instead
   of the raw stored code.
+
+
+### INFRA-HTTPS-001 - Serve the app over HTTPS on the internal network
+
+Priority: P2
+Status: backlog
+
+- The app is served over plain HTTP (`http://10.103.25.14:5050` / `:5051`). Chrome
+  blocks downloads initiated from an HTTP page as "insecure downloads" and demands
+  an extra confirmation click on every single file.
+- Observed 2026-07-20 on staging while validating SP-PQEXPORT-005: «Незащищённое
+  скачивание заблокировано», the download proceeds only after clicking «Сохранить».
+- NOT introduced by SP-PQEXPORT-005 — the same friction already applies to the
+  eight-sheet Excel report, the write-off act PDFs and every other download. The
+  export button only added another surface and made it visible.
+- Options: an internal CA certificate plus HTTPS in front of Waitress, or a Chrome
+  domain policy exempting the host. Infrastructure work, outside the spare-parts
+  track.
 
 
 ### FUEL-CARDS-SYNC - Automate Topaz card directory sync to production
@@ -3329,6 +3346,66 @@ Three independent, ordered commits (revert at commit granularity — reverting
 No migration, no schema change, no new permission codes, no lifecycle-route
 changes. Full test suite 65 OK; per-role render sweep (admin / operator /
 viewer / price-confirm-only / no-access 403) in RU+UZ passed locally.
+
+## SP-PQEXPORT-005 — Excel export of the «Требуется закупка» purchase queue
+
+Status: **merged into `main` (PR #15, merge commit `5157b1c`, five commits),
+deployed to staging, owner-validated 2026-07-20.** Increment 5 of the spare-parts
+borrowing track. Production stays frozen at `ed8ca9c`.
+
+No schema change, no migration, no new permission code, no new dependency, no CSS
+change. Purely additive: +173 lines, 0 deletions, 2 files.
+
+Five ordered commits — **revert strictly in reverse order (5 -> 1)**. There is no
+data rollback: the feature writes nothing to the database. Reverting commit 5
+alone is safe (a cosmetic string). Reverting 4 alone leaves the route reachable
+but unlinked, which is the safe partial rollback. Never revert 3 before 4 — the
+template would raise BuildError on every render.
+
+1. `spare_parts.py` — carry `last_price` on purchase queue rows (one line; the SKU
+   object is already loaded in the loop, zero new queries).
+2. `spare_parts.py` — `_purchase_queue_workbook(rows, lang)`, a pure builder.
+3. `spare_parts.py` — `purchase_queue_export()` route.
+4. `templates/spare_parts_purchase_queue.html` — export button in the hero.
+5. `spare_parts.py` — RU numeral agreement fix in the incomplete-estimate note.
+
+Fourteen columns mirroring the screen plus a unit column, the two breakdown
+columns and two estimate columns. The unit is a separate column rather than being
+concatenated into the quantity: concatenation would turn a number into text and
+break both the number format and the totals row. The breakdown columns are filled
+for every row although the screen shows the split only when `reason == 'both'` —
+a purchaser needs to see how much of the need is safety stock versus outstanding
+requests. A missing `last_price` leaves the price and estimate cells empty, never
+zero; the same applies to the grand-total estimate when nothing is priced.
+
+`_spare_reports_workbook`'s nested styling helper was deliberately NOT extracted
+or reused — that builder is a shipped export and out of scope for this increment.
+The duplication carries a `[REASON]` comment. Column A is pinned to width 6 after
+styling, because the note row puts a long sentence in column 1 and the shared
+width rule would otherwise stretch the «№» column to the 38-char cap.
+
+Pre-merge instrumental review against the real files: AST comparison of every
+function in `spare_parts.py` against `f956296` — 137 functions before, 141 after,
+none removed, exactly one changed (`_purchase_queue_rows`), differing by exactly
+one dict key with queries, arithmetic and sort key untouched; `<div>` balance
+15/15 -> 16/16; Jinja parse clean with the apostrophe-bearing Uzbek literal
+intact; the workbook builder executed independently on synthetic rows covering
+both locales, all three reason branches, formula injection with a save/reload
+round-trip, the empty queue and row ordering.
+
+Staging validation (owner self-check, no browser agent): 31 file rows against 31
+on screen in the same order; the org filter narrowed the file to 3 rows; all three
+reason branches confirmed with live data after setting minimums — stock 4, demand
+5, minimum 10 -> need 11 split 1 + 10, estimate 11 x 100 000; and a demand-free
+row with minimum 4 -> «Минимумдан паст», split 0 + 4. That also closes the Uzbek
+reason-badge tail left open by increment 4. Units rendered as words, never the raw
+`dona`. Test minimums were cleared afterwards.
+
+Still unverified, non-blocking: the 403 paths (no reduced-permission service
+account exists — the same standing TODO as in earlier increments; the gate is
+copied verbatim from the screen route and was read in the source), and
+formula-injection neutralisation on live data (no part named like `=1+1` was in
+the queue; confirmed synthetically with a save/reload round-trip).
 
 ## SP-MINSTOCK-004 — Minimum stock levels and the «Требуется закупка» purchase queue
 
