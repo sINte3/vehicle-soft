@@ -3699,6 +3699,38 @@ def purchase_queue():
                            lang=_spare_lang())
 
 
+@spare_parts_bp.route('/purchase-queue/export')
+@module_required('spare_parts')
+def purchase_queue_export():
+    """SP-PQEXPORT-005: the purchase queue as an .xlsx download.
+
+    Same gate as the purchase-queue screen (this is the same data, as a
+    file): keepers and approvers, plain abort(403) — read surface, NOT
+    _deny_spare, and no new permission code.
+    """
+    if not (current_user.has_module_access('spare_parts_inventory_manage')
+            or current_user.has_module_access('spare_parts_approve')):
+        abort(403)
+    org_id = request.args.get('org_id', type=int)
+    if org_id and not current_user.can_access_org(org_id):
+        abort(403)
+    lang = _spare_lang()
+    rows = _purchase_queue_rows(org_ids=_spare_user_org_ids(), org_id=org_id)
+    wb = _purchase_queue_workbook(rows, lang=lang)
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    # ASCII-only filename (Windows + browser safety), reports_export naming.
+    prefix = 'Purchase_queue' if lang == 'ru' else 'Xarid_navbati'
+    fname = '{}_{}.xlsx'.format(prefix, datetime.now().strftime('%d_%m_%Y'))
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=fname,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+
+
 # ─── SPARE-STAGE2: issue + write-off acts ─────────────────────────────────────
 
 def _acts_dir():
