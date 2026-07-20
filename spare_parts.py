@@ -3262,7 +3262,7 @@ def _purchase_queue_workbook(rows, lang='uz'):
 
     unpriced = len(rows) - priced_count
     if unpriced:
-        ws.append([L('Оценка неполная: у {} позиций нет последней цены.',
+        ws.append([L('Оценка неполная. Позиций без последней цены: {}',
                      'Баҳо тўлиқ эмас: {} та позицияда охирги нарх йўқ.')
                    .format(unpriced)])
 
