@@ -3034,6 +3034,8 @@ def _purchase_queue_rows(org_ids=None, org_id=None):
     (the _spare_user_org_ids() contract). org_id narrows to one organization;
     callers are responsible for the access check, but an org_id outside
     org_ids yields [] as defence in depth.
+    last_price is carried for the Excel export only and is informational —
+    SparePartPriceAudit + price_status still govern what a request pays.
     """
     if org_id and org_ids is not None and org_id not in org_ids:
         return []
@@ -3118,6 +3120,7 @@ def _purchase_queue_rows(org_ids=None, org_id=None):
             'organization_name': org.name if org else '',
             'part_name': _part_display_name(part, fallback=''),
             'sku_label': sku.label if sku else '#{}'.format(sku_id),
+            'last_price': (float(sku.last_price) if sku and sku.last_price is not None else None),
             'unit': unit,
             'on_hand': round(pair_on_hand, 3),
             'demand': pair_demand,
