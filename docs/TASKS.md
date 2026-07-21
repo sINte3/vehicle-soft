@@ -41,6 +41,22 @@ track and is not the next item here.
 
 ## Recently completed / appears completed
 
+### DEPLOY-SP-BUNDLE-001 — Production deploy of PR #8..#15
+
+Priority: P1
+Status: **completed 2026-07-21 (production)**
+
+Changes made:
+- Production `17b20ea` -> `20eb172`, tag `v1.1-production-2026-07-21`. Production and staging now match on code.
+- Branches had diverged: `git merge-base --is-ancestor HEAD origin/main` returned 1, so `update.bat` (which runs `git pull --ff-only` after stopping the service) would have failed mid-deploy. The divergence was two docs-only commits; resolved with `git reset --hard origin/main` after preserving `docs/AGENT_STATE.md` to `C:\transport-report-backups\before_update\AGENT_STATE_prod_17b20ea.md`.
+- Six migrations applied in order: SPARE_PARTS_UNITS, SPARE_PARTS_ACTS_PERMISSION, SPARE_PARTS_SKU_UNIQUENESS, SPARE_PARTS_NAME_UZ, SPARE_PARTS_RESERVATIONS, SPARE_PARTS_MIN_LEVELS. Registry 20 -> 26 rows. SPARE_PARTS_NAME_UZ is order-critical: it must run before the service starts, otherwise every catalog query raises `no such column: name_uz`.
+- Repaired a week-old schema drift: production had been running PR #6 code without three of its migrations — empty units directory, missing `spare_parts_acts` permission for 6 users, missing unique indexes. `db.create_all()` masked it by creating the missing table empty.
+- Reservations backfill inserted 0 rows (the single approved request belongs to an organization with no warehouse) — matched the pre-flight forecast exactly.
+- SHA-256 of all six migration scripts verified against the reviewed versions after the reset, before running any of them.
+- Backup before deploy: `transport_20260721_111642_before_update.db` (integrity ok, 140,095,488 bytes), taken with all three services stopped and an exclusive-lock check passing.
+- Smoke green: general regression (entry, report + Excel in both locales, fuel, equipment reference, admin, UZ/RU switch) and spare parts (desk, request card, catalog, warehouse, purchase queue, acts, Uzbek act PDF with the unit label rendered as «дона»).
+- Not verified on production: setting a minimum stock level — the SKU dropdown is empty because the only production SKU is inactive. Validated on staging during increment 4 QA.
+
 ### FUEL-REPORT-012H-C - Topaz card directory sync
 
 Priority: P1
@@ -481,6 +497,87 @@ Blocker:
 - Needs formal accounting rules from finance/accounting responsible person.
 
 ## Backlog
+
+### DEPLOY-DRIFT-001 — Detect migration drift automatically
+
+Priority: P1
+Status: open
+
+Production ran PR #6 code for a week without three of its migrations and nothing
+reported it. `db.create_all()` hides the failure by creating missing tables
+empty, so the application starts cleanly while the units directory is empty and
+a permission row is absent. Add a post-deploy step that compares
+`schema_migrations` against the `migrate_*.py` files present in the working tree
+and fails loudly on a gap. The two read-only pre-flight scripts written for
+DEPLOY-SP-BUNDLE-001 (`preflight_prod_state.py`, `preflight_prod_drift.py`) plus
+`check_db_lock.py` currently live untracked in `C:\transport-report` — commit
+them as the starting point.
+
+### DOC-RELEASE-PROC-001 — Fix RELEASE_AND_BACKUP_PROCEDURE.md
+
+Priority: P2
+Status: open
+
+Defects found while using it for DEPLOY-SP-BUNDLE-001:
+- the pre-update checklist looks for `migrate_NNN_*.py` and would miss every
+  `migrate_spare_parts_*.py` — all six migrations of this release were invisible
+  to that check;
+- the rollback uses `git checkout <commit> -- .`, which restores files but leaves
+  HEAD on the new commit, so worktree and history disagree and the next
+  `git pull --ff-only` behaves unpredictably. Use `git reset --hard <commit>`;
+- `update.bat` prints the old server URL `10.103.25.200`;
+- the syntax-check list omits `spare_parts_pdf.py`;
+- nothing warns that `git pull --ff-only` fails outright on a diverged
+  production history, which is exactly what happened.
+
+### DEPLOY-BOTS-001 — Document the bot services in the deploy procedure
+
+Priority: P3
+Status: open
+
+`TransportBot` and `TransportBot003` run from `C:\transport-report` and share
+`instance\transport.db`, so they must be stopped before migrations and started
+after. The standard procedure never mentions them. Add them, and add an
+exclusive-lock check (`check_db_lock.py`) as a pre-migration gate.
+
+### BOT-DNS-001 — Telegram bot DNS failures
+
+Priority: P3
+Status: open
+
+`logs\bot_error.log` contains 174 occurrences of
+`telegram.error.NetworkError: httpx.ConnectError: [Errno 11001] getaddrinfo failed`.
+Chronic, predates the 2026-07-21 release; the bot recovers and keeps polling.
+Investigate DNS resolution on the server rather than the bot code.
+
+### UI-REPORT-UZ-001 — Report screen keeps Russian strings in Uzbek mode
+
+Priority: P3
+Status: open
+
+On `/report` in UZ mode the subtitle («Сводный просмотр транспортных работ…»)
+and the filter chips («Организации», «Записей», «Техники») stay Russian while
+the rest of the page is Uzbek. Pre-existing: `templates/report.html` is not in
+the `17b20ea..20eb172` diff. Verify against staging before fixing.
+
+### UI-404-LANG-001 — 404 page ignores the selected language
+
+Priority: P3
+Status: open
+
+The 404 page renders Uzbek body text («Саҳифа топилмади», «Керакли бўлимга
+қайтинг…») even when RU is selected; only the button follows the language.
+Pre-existing, `templates/404.html` is not in the release diff.
+
+### EXPORT-SHEETNAME-001 — Russian Excel export has Uzbek sheet-name suffixes
+
+Priority: P3
+Status: open
+
+In the RU workbook the sheet names read «Пропашныелар», «Мотоциклыы»,
+«Спецтехникалар», «Грузовойехник» — Uzbek plural suffixes glued onto Russian
+category names, plus truncation. The UZ workbook is correct. `excel_export.py`
+is not in the release diff, so this is pre-existing.
 
 ### UI-FONT-LOCAL-001 - Self-host Golos Text, drop the external font CDN
 
