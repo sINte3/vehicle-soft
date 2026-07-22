@@ -52,11 +52,7 @@
                 <th>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
                 <th>{{ 'Запчасть' if is_ru else 'Эҳтиёт қисм' }}</th>
                 <th>SKU</th>
-                <th class="right">{{ 'Остаток' if is_ru else 'Қолдиқ' }}</th>
-                <th class="right">{{ 'Под заявки' if is_ru else 'Сўровлар учун' }}</th>
-                <th class="right">Минимум</th>
                 <th class="right">{{ 'Нужно закупить' if is_ru else 'Харид қилиш керак' }}</th>
-                <th>{{ 'Почему' if is_ru else 'Сабаби' }}</th>
             </tr>
         </thead>
         <tbody>
@@ -66,20 +62,18 @@
                 <td class="text-sm">{{ row.organization_name }}</td>
                 <td style="font-weight:600;">{{ row.part_name or '—' }}</td>
                 <td class="text-sm vs-muted">{{ row.sku_label }}</td>
-                <td class="right{% if not row.on_hand %} vs-muted{% endif %}">{{ row.on_hand }}</td>
-                <td class="right{% if not row.demand %} vs-muted{% endif %}">{{ row.demand }}</td>
-                <td class="right{% if not row.min_level %} vs-muted{% endif %}">{{ row.min_level }}</td>
-                <td class="right" style="font-weight:700;">
+                <td class="right" style="font-weight:700; font-size:15px;">
+                    {# [REASON]: SP-POLISH-006 — management reads this screen for
+                       the answer (how much to buy), not the formula: the raw
+                       Остаток/Под заявки/Минимум columns and reason badges are
+                       replaced by one number plus a plain-language explanation.
+                       The on-hand fragment is always shown; zero-valued
+                       demand/minimum fragments are omitted to keep it readable. #}
+                    {% set explain = [('на складе ' if is_ru else 'омборда ') ~ row.on_hand] %}
+                    {% if row.demand > 0 %}{% set explain = explain + [('обещано по заявкам ' if is_ru else 'сўровлар учун ') ~ row.demand] %}{% endif %}
+                    {% if row.min_level > 0 %}{% set explain = explain + [('неснижаемый запас ' if is_ru else 'энг кам захира ') ~ row.min_level] %}{% endif %}
                     {{ row.need_total }} {{ row.unit|spare_unit_label }}
-                    {% if row.reason == 'both' %}
-                    {# Breakdown of the two sources of need (numbers only). #}
-                    <div class="vs-soft" style="font-size:11px;">{{ row.need_requests }} + {{ row.need_min }}</div>
-                    {% endif %}
-                </td>
-                <td>
-                    {% if row.reason == 'both' %}<span class="vs-badge vs-badge-purple vs-badge-sm">{{ 'Заявки + минимум' if is_ru else 'Сўровлар + минимум' }}</span>
-                    {% elif row.reason == 'requests' %}<span class="vs-badge vs-badge-info vs-badge-sm">{{ 'Под заявки' if is_ru else 'Сўровлар бўйича' }}</span>
-                    {% else %}<span class="vs-badge vs-badge-warning vs-badge-sm">{{ 'Ниже минимума' if is_ru else 'Минимумдан паст' }}</span>{% endif %}
+                    <div class="vs-soft" style="font-size:12px; font-weight:400;">{{ explain|join(', ') }}</div>
                 </td>
             </tr>
             {% endfor %}
