@@ -171,7 +171,7 @@ def generate_write_off_act_pdf(act, dest_path, lang='ru', unit_labels=None):
     meta_rows = [
         (labels['organization'], org_name),
         (labels['warehouse'], warehouse_name),
-        (labels['request'], '#{}'.format(act.request_id)),
+        (labels['request'], '№{}'.format(act.request_id)),
         (labels['equipment'], eq_label),
         (labels['date'], issued_date),
     ]

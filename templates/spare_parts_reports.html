@@ -237,7 +237,7 @@
             <tbody>
                 {% for r in data.repeat_rows %}
                 <tr>
-                    <td style="font-weight:700;"><a href="{{ url_for('spare_parts.detail', rid=r.request_id) }}">#{{ r.request_id }}</a></td>
+                    <td style="font-weight:700;"><a href="{{ url_for('spare_parts.detail', rid=r.request_id) }}">№{{ r.request_id }}</a></td>
                     <td>{{ r.request_date.strftime('%d.%m.%Y') }}</td>
                     <td class="text-sm vs-muted">{{ (r.organization.short_name or r.organization.name) if r.organization else '—' }}</td>
                     <td class="text-sm">{{ r.equipment.name if r.equipment else '—' }}{% if r.equipment and r.equipment.plate %} <span class="vs-muted">— {{ r.equipment.plate }}</span>{% endif %}</td>
@@ -288,7 +288,7 @@
                 {% for r in data.top_items %}
                 <tr>
                     <td>{{ loop.index }}</td>
-                    <td style="font-weight:700;"><a href="{{ url_for('spare_parts.detail', rid=r.request_id) }}">#{{ r.request_id }}</a></td>
+                    <td style="font-weight:700;"><a href="{{ url_for('spare_parts.detail', rid=r.request_id) }}">№{{ r.request_id }}</a></td>
                     <td>{{ r.request_date.strftime('%d.%m.%Y') }}</td>
                     <td class="text-sm vs-muted">{{ (r.organization.short_name or r.organization.name) if r.organization else '—' }}</td>
                     <td class="text-sm">{{ r.equipment.name if r.equipment else '—' }}</td>

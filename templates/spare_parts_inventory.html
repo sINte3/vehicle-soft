@@ -258,7 +258,7 @@
             <tr>
                 <td style="font-weight:600;">{{ res.sku.spare_part.name if res.sku and res.sku.spare_part else '—' }}</td>
                 <td class="text-sm vs-muted">{{ res.sku.label if res.sku else '—' }}</td>
-                <td><a href="{{ url_for('spare_parts.detail', rid=res.request_id) }}">{{ 'Заявка' if is_ru else 'Сўров' }} #{{ res.request_id }}</a></td>
+                <td><a href="{{ url_for('spare_parts.detail', rid=res.request_id) }}">{{ 'Заявка' if is_ru else 'Сўров' }} №{{ res.request_id }}</a></td>
                 {# Reserved short of requested is the "waiting for stock" case — warn colour. #}
                 <td class="right" style="font-weight:600;{% if res.quantity < res.requested_quantity %} color:var(--warn);{% endif %}">{{ res.quantity }} / {{ res.requested_quantity }}</td>
                 <td class="text-sm vs-muted">{{ res.created_at.strftime('%d.%m.%Y %H:%M') if res.created_at else '—' }}</td>
@@ -321,7 +321,7 @@
                        request number (resolved in the route), not the request-item
                        PK that reference_id holds. #}
                     {% if m.reference_type == 'request_item' and movement_request_no.get(m.id) %}
-                    {{ 'Заявка' if is_ru else 'Сўров' }} #{{ movement_request_no[m.id] }}
+                    {{ 'Заявка' if is_ru else 'Сўров' }} №{{ movement_request_no[m.id] }}
                     {% else %}{{ m.note or ('вручную' if is_ru else 'қўлда') }}{% endif %}
                 </td>
                 <td class="text-sm vs-muted">{{ m.creator.username if m.creator else '—' }}</td>
