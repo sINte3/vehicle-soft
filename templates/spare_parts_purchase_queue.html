@@ -1,5 +1,9 @@
 {% extends g.base_template %}
 {% set is_ru = (lang == 'ru') %}
+{# [REASON]: SP-POLISH-006 amendment — quantities are floats in the route rows;
+   integer-valued ones must read as «12», not «12.0», while genuinely
+   fractional values (0.5) keep their decimals. #}
+{% macro qty(v) %}{{ v|int if v == v|int else v }}{% endmacro %}
 {% block title %}{{ 'Требуется закупка' if is_ru else 'Харид талаб қилинади' }}{% endblock %}
 {% block content %}
 {% include '_spare_nav.html' %}
@@ -69,10 +73,10 @@
                        replaced by one number plus a plain-language explanation.
                        The on-hand fragment is always shown; zero-valued
                        demand/minimum fragments are omitted to keep it readable. #}
-                    {% set explain = [('на складе ' if is_ru else 'омборда ') ~ row.on_hand] %}
-                    {% if row.demand > 0 %}{% set explain = explain + [('обещано по заявкам ' if is_ru else 'сўровлар учун ') ~ row.demand] %}{% endif %}
-                    {% if row.min_level > 0 %}{% set explain = explain + [('неснижаемый запас ' if is_ru else 'энг кам захира ') ~ row.min_level] %}{% endif %}
-                    {{ row.need_total }} {{ row.unit|spare_unit_label }}
+                    {% set explain = [('на складе ' if is_ru else 'омборда ') ~ qty(row.on_hand)] %}
+                    {% if row.demand > 0 %}{% set explain = explain + [('обещано по заявкам ' if is_ru else 'сўровлар учун ') ~ qty(row.demand)] %}{% endif %}
+                    {% if row.min_level > 0 %}{% set explain = explain + [('неснижаемый запас ' if is_ru else 'энг кам захира ') ~ qty(row.min_level)] %}{% endif %}
+                    {{ qty(row.need_total) }} {{ row.unit|spare_unit_label }}
                     <div class="vs-soft" style="font-size:12px; font-weight:400;">{{ explain|join(', ') }}</div>
                 </td>
             </tr>
