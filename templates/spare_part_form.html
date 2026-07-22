@@ -524,7 +524,7 @@ function checkRepeat(row) {
             data.history.slice(0, 3).forEach(h => {
                 box.appendChild(document.createElement('br'));
                 box.appendChild(document.createTextNode(
-                    '#' + h.request_id + ' · ' + h.request_date + ' · ' + h.quantity + ' ' + (h.unit || '')));
+                    '№' + h.request_id + ' · ' + h.request_date + ' · ' + h.quantity + ' ' + (h.unit || '')));
             });
             box.className = 'sp-repeat ' + cls;
         })

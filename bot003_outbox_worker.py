@@ -335,7 +335,7 @@ def _build_notification_text(payload):
     lines.append("")
 
     if request_id:
-        lines.append("\U0001F4CB ID: #{}".format(request_id))
+        lines.append("\U0001F4CB ID: №{}".format(request_id))
     if request_number:
         lines.append("\U0001F4CB Raqam: {}".format(request_number))
     if organization_name:

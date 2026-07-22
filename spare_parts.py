@@ -744,8 +744,8 @@ def _rule6_result(rejected):
         'rejected_date': rejected_on.isoformat(),
         'comment': comment,
         'message': _spare_t(
-            'Бу эҳтиёт қисм бўйича #{} сўров {} куни рад этилган. Изоҳ: {}',
-            'Похожая заявка #{} на эту деталь была отклонена {}. Комментарий: {}'
+            'Бу эҳтиёт қисм бўйича №{} сўров {} куни рад этилган. Изоҳ: {}',
+            'Похожая заявка №{} на эту деталь была отклонена {}. Комментарий: {}'
         ).format(rejected.id, rejected_on.strftime('%d.%m.%Y'), comment_text),
     }
 
@@ -5340,7 +5340,7 @@ def _spare_reports_workbook(data, lang='uz'):
                L('Запчасть', 'Эҳтиёт қисм'), L('Уровень', 'Даража'),
                L('Дней с прошлого заказа', 'Олдинги сўровдан кунлар')])
     for r in data['repeat_rows']:
-        ws.append(['#{}'.format(r['request_id']),
+        ws.append(['№{}'.format(r['request_id']),
                    r['request_date'].strftime('%d.%m.%Y'),
                    org_name(r['organization']), eq_name(r['equipment']),
                    _xlsx_safe(r['part_name']),
@@ -5356,7 +5356,7 @@ def _spare_reports_workbook(data, lang='uz'):
                L('Ед. изм.', 'Ўлчов бирлиги'), L('Цена, сум', 'Нарх, сўм'),
                L('Сумма, сум', 'Сумма, сўм')])
     for r in data['top_items']:
-        ws.append(['#{}'.format(r['request_id']),
+        ws.append(['№{}'.format(r['request_id']),
                    r['request_date'].strftime('%d.%m.%Y'),
                    org_name(r['organization']), eq_name(r['equipment']),
                    _xlsx_safe(r['name']), r['quantity'], _xlsx_safe(r['unit']),

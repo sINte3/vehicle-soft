@@ -135,7 +135,7 @@ def format_request_list(requests: list, title: str = "Последние зая�
         req_date = (_safe_str(r, "request_date") or "")[:10]
 
         lines.append(
-            f"  ▪ <b>#{rid}</b> [{_esc(status)}] {req_date}\n"
+            f"  ▪ <b>№{rid}</b> [{_esc(status)}] {req_date}\n"
             f"    Орг: {_esc(org)} | Техника: {_esc(eq)} | Позиций: {items_count}"
         )
     return "\n".join(lines)

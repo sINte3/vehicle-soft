@@ -43,7 +43,7 @@
                     <td class="text-sm vs-muted">{{ pp.part_number or '—' }}</td>
                     <td class="text-sm">
                         {% if pp.source_item %}
-                        <a href="{{ url_for('spare_parts.detail', rid=pp.source_item.request_id) }}">{{ 'Заявка' if is_ru else 'Сўров' }} #{{ pp.source_item.request_id }}</a>
+                        <a href="{{ url_for('spare_parts.detail', rid=pp.source_item.request_id) }}">{{ 'Заявка' if is_ru else 'Сўров' }} №{{ pp.source_item.request_id }}</a>
                         {% else %}—{% endif %}
                     </td>
                     <td>

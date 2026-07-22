@@ -105,7 +105,7 @@
             {% set eq_label = req.equipment.name ~ ((' — ' ~ req.equipment.plate) if req.equipment and req.equipment.plate else '') if req.equipment else '—' %}
             {% set org_label = req.organization.short_name or req.organization.name %}
             <tr class="spare-request-row" data-status="{{ req.status }}" data-search="{{ (req.id|string ~ ' ' ~ org_label ~ ' ' ~ eq_label ~ ' ' ~ (req.creator.username if req.creator else ''))|lower }}">
-                <td style="font-weight:700;">#{{ req.id }}</td>
+                <td style="font-weight:700;">№{{ req.id }}</td>
                 <td>{{ req.request_date.strftime('%d.%m.%Y') }}</td>
                 <td>{{ org_label }}</td>
                 <td class="text-sm vs-muted">{{ eq_label }}</td>
