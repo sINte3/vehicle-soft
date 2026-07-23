@@ -1875,10 +1875,15 @@ def dashboard():
                    .limit(30).all())
 
     # Статистика за сегодня
-    today_total = (db.session.query(func.coalesce(func.sum(FuelTransaction2.quantity), 0))
-                   .filter(FuelTransaction2.txn_datetime >= datetime.combine(date.today(), datetime.min.time()),
-                           FuelTransaction2.txn_datetime < datetime.combine(date.today() + timedelta(days=1), datetime.min.time()))
-                   .scalar())
+    # [REASON]: FUEL-MANUAL-EXP-A3 — the "Выдано сегодня" tile must equal the sum
+    # of the per-warehouse "Сегодня выдано" column exactly. Summing the same
+    # today_expense values get_all_balances() already produced guarantees that by
+    # construction: same warehouse set (fuel_warehouse_query_for_ui, not every
+    # warehouse) and same figure (Topaz issues + today's manual expenses, folded
+    # in by _fuel_today_expense_map). The old inline query summed FuelTransaction2
+    # over all warehouses and ignored manual expenses, so it could disagree with
+    # the table. Adds no query.
+    today_total = sum((row['today_expense'] or 0) for row in balance_rows)
 
     return render_template('fuel/dashboard.html',
                            balance_rows=balance_rows,
