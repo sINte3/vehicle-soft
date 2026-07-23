@@ -1270,6 +1270,10 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         # [REASON]: FUEL-MANUAL-EXP-A2 — manual (non-Topaz) expense kept as its
         # own total so it stays visible and never hides inside the Topaz figure.
         'manual': 0.0,
+        # [REASON]: FUEL-CARD-CLASS — external (third-party) fuel netted out of the
+        # Topaz issue figure, kept as its own reference total. Never part of the
+        # balance arithmetic; the closing already reflects the netted Topaz figure.
+        'external': 0.0,
         'ending': 0.0,
         'warehouses': len(warehouses),
         'stations': 0,
@@ -1299,6 +1303,11 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
     # populated when no station filter is active (a per-station view excludes
     # manual expenses, which belong to a warehouse and have no station).
     before_manual_lower_bounds = {}
+    # [REASON]: FUEL-CARD-CLASS — external-fuel lower bounds for the opening,
+    # mirroring receipts/issues above. Unlike manual expense, external fuel *is*
+    # tied to a station, so this is populated even when a station filter is
+    # active (the helper receives station_id and filters accordingly).
+    before_external_lower_bounds = {}
 
     for wh_id, ib in initial_by_wh.items():
         if d_from <= ib.balance_date:
@@ -1319,6 +1328,8 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
 
         if not station_id:
             before_manual_lower_bounds[(wh_id, 'ДТ')] = ib.balance_date
+
+        before_external_lower_bounds[(wh_id, 'ДТ')] = ib.balance_date
 
     receipts_before_by_wh = {}
     if before_receipt_conditions:
@@ -1374,6 +1385,28 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             warehouse_ids, fuel_type='ДТ', date_from=d_from, date_to=d_to)
         period_manual_by_wh = {wh_id: litres for (wh_id, _ft), litres in period_manual_map.items()}
 
+    # [REASON]: FUEL-CARD-CLASS — external fuel before the period (for the opening,
+    # added back over [max(balance_date, rule_start), d_from)) and within the
+    # period (for the closing, netted out of the Topaz issue figure over
+    # [max(d_from, rule_start), d_to]). Each is one grouped query via the shared
+    # helper. Unlike manual expense, external fuel is computed even under a station
+    # filter, with station_id passed through.
+    external_before_by_wh = {}
+    if before_external_lower_bounds:
+        before_external_map = _fuel_external_expense_map(
+            warehouse_ids, fuel_type='ДТ',
+            date_to=d_from - timedelta(days=1),
+            lower_bounds=before_external_lower_bounds,
+            station_id=station_id)
+        external_before_by_wh = {wh_id: litres for (wh_id, _ft), litres in before_external_map.items()}
+
+    period_external_by_wh = {}
+    if warehouse_ids:
+        period_external_map = _fuel_external_expense_map(
+            warehouse_ids, fuel_type='ДТ', date_from=d_from, date_to=d_to,
+            station_id=station_id)
+        period_external_by_wh = {wh_id: litres for (wh_id, _ft), litres in period_external_map.items()}
+
     tx_stats_by_wh = {}
     if warehouse_ids:
         tx_stats_q = (db.session.query(
@@ -1410,24 +1443,34 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         elif d_from <= initial_balance.balance_date:
             opening = float(initial_balance.quantity or 0)
         else:
+            # [REASON]: FUEL-CARD-CLASS — issues_before includes the external
+            # card's withdrawals, which are not our expense from the rule start,
+            # so add them back over [max(balance_date, rule_start), d_from).
             opening = round(
                 float(initial_balance.quantity or 0)
                 + receipts_before_by_wh.get(wh.id, 0.0)
                 - issues_before_by_wh.get(wh.id, 0.0)
-                - manual_before_by_wh.get(wh.id, 0.0),
+                - manual_before_by_wh.get(wh.id, 0.0)
+                + external_before_by_wh.get(wh.id, 0.0),
                 2,
             )
 
         receipts = period_receipts_by_wh.get(wh.id, 0.0)
         tx_stats = tx_stats_by_wh.get(wh.id, {})
-        issued = float(tx_stats.get('issued') or 0)
+        # [REASON]: FUEL-CARD-CLASS — the «Выдача Topaz» figure is net of the
+        # external card, because that is what is subtracted from the balance.
+        # external is kept beside it as a reference; issued + external equals the
+        # raw Topaz sum to the cent.
+        external = round(period_external_by_wh.get(wh.id, 0.0), 2)
+        issued = round(float(tx_stats.get('issued') or 0) - external, 2)
         manual = period_manual_by_wh.get(wh.id, 0.0)
         tx_count = int(tx_stats.get('tx_count') or 0)
         stations_count = int(stations_count_by_wh.get(wh.id, 0))
         last_txn = last_txn_by_wh.get(wh.id)
 
         # [REASON]: FUEL-MANUAL-EXP-A2 — closing mirrors the balance report:
-        # opening + receipts − Topaz issues − manual expense.
+        # opening + receipts − Topaz issues − manual expense. The Topaz issues
+        # figure (issued) is now net of external fuel (FUEL-CARD-CLASS).
         ending = None if opening is None else round(opening + receipts - issued - manual, 2)
 
         if opening is None:
@@ -1440,6 +1483,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         totals['receipts'] += receipts
         totals['issued'] += issued
         totals['manual'] += manual
+        totals['external'] += external
         totals['transactions'] += tx_count
         totals['stations'] += stations_count
 
@@ -1449,6 +1493,9 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             'receipts': receipts,
             'issued': issued,
             'manual': manual,
+            # [REASON]: FUEL-CARD-CLASS — external fuel as a reference column
+            # beside «Выдача Topaz»; not part of the balance arithmetic.
+            'external': external,
             'ending': ending,
             'initial_balance': initial_balance,
             'stations_count': stations_count,
@@ -1737,6 +1784,7 @@ def _fuel_report_workbook(data, lang='uz'):
         (L('Начальный остаток, л', 'Бошланғич қолдиқ, л'), data['totals']['opening']),
         (L('Приход, л', 'Кирим, л'), data['totals']['receipts']),
         (L('Выдача Topaz, л', 'Topaz бериш, л'), data['totals']['issued']),
+        (L('Стороннее топливо, л', 'Бегона ёқилғи, л'), data['totals'].get('external', 0)),
         (L('Ручной расход, л', 'Қўлда киритилган сарф, л'), data['totals'].get('manual', 0)),
         (L('Расчётный остаток, л', 'Ҳисобий қолдиқ, л'), data['totals']['ending']),
         (L('Склады', 'Омборлар'), data['totals']['warehouses']),
@@ -1767,10 +1815,10 @@ def _fuel_report_workbook(data, lang='uz'):
     style_table(ws)
 
     ws = wb.create_sheet(_safe_ws_title(L('Склады', 'Омборлар'), used))
-    ws.append([L('Склад', 'Омбор'), L('АЗС', 'АЗС'), L('Начальный остаток', 'Бошланғич қолдиқ'), L('Приход', 'Кирим'), L('Выдача Topaz', 'Topaz бериш'), L('Ручной расход', 'Қўлда киритилган сарф'), L('Расчётный остаток', 'Ҳисобий қолдиқ'), L('Транзакций', 'Транзакциялар'), L('Последняя выдача', 'Охирги бериш')])
+    ws.append([L('Склад', 'Омбор'), L('АЗС', 'АЗС'), L('Начальный остаток', 'Бошланғич қолдиқ'), L('Приход', 'Кирим'), L('Выдача Topaz', 'Topaz бериш'), L('Стороннее топливо', 'Бегона ёқилғи'), L('Ручной расход', 'Қўлда киритилган сарф'), L('Расчётный остаток', 'Ҳисобий қолдиқ'), L('Транзакций', 'Транзакциялар'), L('Последняя выдача', 'Охирги бериш')])
     for r in data['warehouse_rows']:
         last = r['last_txn'].txn_datetime.strftime('%d.%m.%Y %H:%M') if r['last_txn'] else ''
-        ws.append([r['warehouse'].name, r['stations_count'], r['opening'], r['receipts'], r['issued'], r.get('manual', 0), r['ending'], r['tx_count'], last])
+        ws.append([r['warehouse'].name, r['stations_count'], r['opening'], r['receipts'], r['issued'], r.get('external', 0), r.get('manual', 0), r['ending'], r['tx_count'], last])
     style_table(ws)
 
     ws = wb.create_sheet(_safe_ws_title(L('АЗС', 'АЗС'), used))
