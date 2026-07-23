@@ -2652,8 +2652,8 @@ def sku_save():
     # A SKU with no brand, no article and no supplier identifies nothing.
     if not (brand or article_number or supplier):
         errors.append(_spare_t(
-            'Камида битта майдонни тўлдиринг: бренд, артикул ёки таъминотчи',
-            'Заполните хотя бы одно поле: бренд, артикул или поставщик'))
+            'Камида битта майдонни тўлдиринг: бренд, каталог рақами ёки таъминотчи',
+            'Заполните хотя бы одно поле: бренд, номер каталога или поставщик'))
     if errors:
         _spare_flash_errors(errors, title_uz='Артикул сақланмади:',
                             title_ru='Артикул не сохранён:')

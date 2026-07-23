@@ -9,7 +9,7 @@
 <div class="vs-hero vs-mb">
   <div>
     <div class="vs-hero-title">{{ 'Артикул — варианты поставки' if is_ru else 'Артикул — таъминот вариантлари' }}</div>
-    <div class="vs-hero-sub">{{ 'Конкретные варианты (бренд, артикул, поставщик) для записей каталога. Цены обновляются автоматически при подтверждении цен в заявках.' if is_ru else 'Каталог ёзувлари учун аниқ вариантлар (бренд, артикул, таъминотчи). Нархлар сўровларда нарх тасдиқланганда автоматик янгиланади.' }}</div>
+    <div class="vs-hero-sub">{{ 'Конкретные варианты (бренд, номер каталога, поставщик) для записей каталога. Цены обновляются автоматически при подтверждении цен в заявках.' if is_ru else 'Каталог ёзувлари учун аниқ вариантлар (бренд, каталог рақами, таъминотчи). Нархлар сўровларда нарх тасдиқланганда автоматик янгиланади.' }}</div>
   </div>
 </div>
 
@@ -37,7 +37,7 @@
                 <input type="text" name="brand" id="skuBrand" class="vs-input" placeholder="Bosch">
             </div>
             <div class="vs-field" style="flex:1; min-width:150px;">
-                <label class="vs-label" for="skuArticle">{{ 'Артикул' if is_ru else 'Артикул' }}</label>
+                <label class="vs-label" for="skuArticle">{{ 'Номер каталога' if is_ru else 'Каталог рақами' }}</label>
                 <input type="text" name="article_number" id="skuArticle" class="vs-input" placeholder="0986452041">
             </div>
             <div class="vs-field" style="flex:1; min-width:150px;">
@@ -56,14 +56,14 @@
                 </div>
             </div>
         </form>
-        <div class="vs-help vs-mt-sm">{{ 'Заполните хотя бы одно из полей: бренд, артикул или поставщик.' if is_ru else 'Камида битта майдонни тўлдиринг: бренд, артикул ёки таъминотчи.' }}</div>
+        <div class="vs-help vs-mt-sm">{{ 'Заполните хотя бы одно из полей: бренд, номер каталога или поставщик.' if is_ru else 'Камида битта майдонни тўлдиринг: бренд, каталог рақами ёки таъминотчи.' }}</div>
     </div>
 </div>
 
 <div class="vs-row vs-mb" style="justify-content:space-between; align-items:flex-end;">
     <div class="vs-field" style="min-width:280px; flex:1;">
         <label class="vs-label" for="skuSearch">{{ 'Поиск' if is_ru else 'Қидириш' }}</label>
-        <input type="text" id="skuSearch" class="vs-input" placeholder="{{ 'Поиск по запчасти, бренду, артикулу, поставщику' if is_ru else 'Эҳтиёт қисм, бренд, артикул, таъминотчи бўйича қидириш' }}" oninput="filterSkus()">
+        <input type="text" id="skuSearch" class="vs-input" placeholder="{{ 'Поиск по запчасти, бренду, номеру каталога, поставщику' if is_ru else 'Эҳтиёт қисм, бренд, каталог рақами, таъминотчи бўйича қидириш' }}" oninput="filterSkus()">
     </div>
     <div class="vs-soft" id="skuCounter" style="font-size:12.5px;">{{ 'Показано' if is_ru else 'Кўрсатилган' }}: {{ sku_rows|length }}</div>
 </div>
@@ -79,7 +79,7 @@
                 <th style="width:40px;">№</th>
                 <th>{{ 'Запчасть' if is_ru else 'Эҳтиёт қисм' }}</th>
                 <th>{{ 'Бренд' if is_ru else 'Бренд' }}</th>
-                <th>{{ 'Артикул' if is_ru else 'Артикул' }}</th>
+                <th>{{ 'Номер каталога' if is_ru else 'Каталог рақами' }}</th>
                 <th>{{ 'Поставщик' if is_ru else 'Таъминотчи' }}</th>
                 <th class="right">{{ 'Посл. цена' if is_ru else 'Охирги нарх' }}</th>
                 <th class="right">{{ 'Средн. цена' if is_ru else 'Ўртача нарх' }}</th>
@@ -129,7 +129,7 @@ const SKU_TEXT = {
     addTitle: {{ ('Добавить артикул' if is_ru else 'Янги артикул қўшиш')|tojson }},
     editTitle: {{ ('Редактирование артикула' if is_ru else 'Артикулни таҳрирлаш')|tojson }},
     requiredPart: {{ ('Выберите запчасть из каталога.' if is_ru else 'Каталогдан эҳтиёт қисмни танланг.')|tojson }},
-    requiredOneField: {{ ('Заполните хотя бы одно поле: бренд, артикул или поставщик.' if is_ru else 'Камида битта майдонни тўлдиринг: бренд, артикул ёки таъминотчи.')|tojson }},
+    requiredOneField: {{ ('Заполните хотя бы одно поле: бренд, номер каталога или поставщик.' if is_ru else 'Камида битта майдонни тўлдиринг: бренд, каталог рақами ёки таъминотчи.')|tojson }},
     shown: {{ ('Показано' if is_ru else 'Кўрсатилган')|tojson }}
 };
 function editSku(id, partId, brand, article, supplier, isActive) {
