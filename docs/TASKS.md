@@ -89,6 +89,69 @@ Parallel track, runs alongside the increments. Decisions and findings so far:
 
 ## Recently completed / appears completed
 
+### FUEL-SYNC-013 — Topaz sync robustness (PR #7)
+
+Priority: P1
+Status: **COMPLETED 2026-07-22** — merged `87863cd`, deployed to staging and
+production, validated on staging with real HTTP.
+
+Expenses from some fuel stations never reached the application; reconciliation
+against 1C and against the manual ledger disagreed. Four independent causes,
+each confirmed by evidence rather than reasoning:
+
+- **Watermark bug in `topaz_agent.py`.** The agent stored
+  `last_sync = datetime.now()` while querying `WHERE "Date" > last_sync`, where
+  `Date` is the dispensing date. A terminal that buffers offline uploads the
+  records later carrying their original date, already behind the watermark, so
+  they were lost permanently. Confirmed empirically: a manual
+  `--since 2026-05-01` run recovered 18 lost transactions. Fix:
+  `SYNC_BUFFER_DAYS = 3`; the watermark is stored as `now() - 3 days` in both
+  success branches, the failure branch untouched.
+- **Station 934451 was missing from `KNOWN_TOPAZ_IDS`**, so the agent dropped
+  its transactions at the source. Fix: added to the allowlist.
+- **Card ПЕРЕЛИВ = `CardID 30`** is a Topaz counter-reconciliation record, not
+  a dispensing event; it surfaced as a single `-1,804,674.55 L` row on 934451.
+  Fix: `EXCLUDED_CARD_NUMBERS = {'30'}` in `_perform_fuel_sync`, checked before
+  station resolution. Post-hoc check: 23 historical rows with `card_number='30'`
+  across 8 stations between 2020 and April 2026, so the card is network-wide and
+  a global exclusion is correct; none in 2026-05-01..2026-07-20.
+- **Backfill x agent duplicates.** The June CSV backfill assigned synthetic
+  `topaz_txn_id` values (`csv_backfill_<topaz_id>_<time>_<seq>`); a re-sync found
+  the same dispensing events in Firebird and inserted them again under the real
+  numeric ID, which dedup on `(station_id, topaz_txn_id)` could not catch.
+  Removed 4 rows (ids 392928, 392930, 392935, 392938). Forward fix: a **soft**
+  `content_dup` check — a match on
+  `(station_id, card_number, quantity, txn_datetime)` under a different
+  `topaz_txn_id` does not block the insert, but logs the greppable tag
+  `FUEL_SYNC_POSSIBLE_DUP` and increments a `possible_duplicates` response
+  counter.
+
+Code: `fuel_routes.py` +48/-2, branch `claude/fuel-sync-robustness-v8ga1v`,
+commit `3f6ce2d`, merge `87863cd`. New `/fuel/api/fuel_sync` response fields:
+`excluded`, `possible_duplicates`. Diff reviewed against the real file, not
+against Fable's summary.
+
+`topaz_agent.py` is never committed (plaintext credentials). The patched copy
+exists only on the Topaz host `10.103.40.140` as `C:\topaz_agent.py`; the
+previous version is backed up as `C:\topaz_agent_v4_backup.py`. A host rebuild
+loses the watermark fix and the allowlist unless the file is carried over by
+hand.
+
+Staging validation (`test_fuel_sync_013.py`, real HTTP to
+`:5051/fuel/api/fuel_sync`) — ALL PASS: card 30 excluded, soft duplicate (both
+rows inserted, one warning, counter incremented), replay idempotent.
+
+One-off production operations after deployment: 234 `csv_backfill_934451_*`
+rows removed (16,449.04 L — station 934451 had never synced with a live agent,
+its whole history was synthetic); first real sync `--since 2026-06-01` brought
+446 new transactions with `possible_dup=0` in every batch. Database backups
+taken beforehand: `transport_20260715_112142.db`, `transport_20260722_160558.db`.
+
+Result: for 2026-05-01..2026-07-20 expenses, **10 of 12 warehouses now
+reconcile to the cent**. Benzovoz Isuzu moved from -17,732.56 L to +47.08;
+Peshku MTP from -75.28 to +0.20. The two remaining gaps are accounting
+questions, not sync bugs — see FUEL-RESERVE and FUEL-CARD-CLASS below.
+
 ### SP-POLISH-006 — Purchase queue readability + `№` request numbering (PR #16)
 
 Priority: P2
@@ -761,6 +824,233 @@ Status: backlog
   track.
 
 
+### FUEL-MANUAL-EXP - Manual fuel expense (admin, mandatory comment)
+
+Priority: P1
+Status: next increment of the AZS/fuel track (increment A)
+
+Some fuel leaves the tank **bypassing the dispenser** — filled straight from the
+vessel. Confirmed cases from the operator: Vobkent 2026-05-25 / 06-10 / 06-14,
+4240 L each into a tanker (4240 L is the tanker's capacity);
+Pakhtasanoattrans 2026-06-20, two tankers at 4240 = 8480 L where the pump could
+not keep up and 744.7 L was topped up directly from the vessel;
+Pakhtasanoattrans 2026-05-07, 380 L returned into the vessel (a receipt, not an
+expense).
+
+**Half of this already exists.** Table `fuel_manual_expenses` is present and the
+balance report already consumes it, both in period totals and in the daily
+breakdown (`_fuel_report_sum_manual_expenses`,
+`_fuel_report_daily_manual_expenses`, tagged `FUEL-REPORT-011G` in
+`fuel_routes.py`). Missing: the model in `models.py`, every route, every form.
+**The report calculation must not be touched.**
+
+Trap to respect: both report helpers wrap their SQL in `try/except` and return
+**0 silently** when the table is absent. A staging run can therefore look
+healthy while under-reporting. Verify the table exists explicitly, do not judge
+by the screen.
+
+Schema confirmed on both servers by `fuel_diag_001.py` on 2026-07-23: `id`,
+`warehouse_id`, `expense_date`, `fuel_type` (default 'ДТ'), `quantity`, `note`
+(nullable today), `source` (default 'manual'), `is_deleted`, `created_at`,
+`updated_at`. Missing: the author of the record. A migration must add
+`created_by_id` (FK `users`) and, for soft deletion, `deleted_by_id` +
+`deleted_at`.
+
+**Two facts the diagnostics changed.** First, the table is **not empty and is
+already affecting production numbers**: two rows for warehouse 19 «Варахшо чул»,
+1579.0 L on 2026-05-07 and 1035.0 L on 2026-05-08, 2614.0 L together, both with
+`source='manual'`. Staging carries the identical pair. The earlier note that the
+table was empty is out of date. Therefore `created_by_id` **must be nullable** —
+these rows have no author and must not be destroyed or backfilled with a fake
+one.
+
+Second, `fuel_manual_expenses` **is absent from `schema_migrations`** on both
+servers (26 registered migrations, none of them this table). It was created by
+hand, outside the migration system — the same class of schema drift that the
+2026-07-21 deploy uncovered in the spare-parts module. The new migration must be
+idempotent, must cope with the table and its rows already existing, and must
+register itself through `migration_utils` so the registry stops lying.
+
+Increment boundary: `FuelManualExpense` model; CRUD routes; form; admin-only
+access; mandatory comment enforced in the application layer; soft delete only,
+with a reason; bilingual strings; manual expenses listed in the balance-report
+drill-down so the origin of every figure is visible.
+
+### FUEL-CARD-CLASS - Exclude third-party (farmer) fuel by card, from a date
+
+Priority: P1
+Status: AZS/fuel track, increment C — depends on FUEL-MANUAL-EXP
+
+Card **VIP_ИЖОРА ВОБКЕНТ** dispenses **farmers' own** diesel: they buy it, store
+it in our vessels by arrangement, and draw it through our station. The fuel is
+not ours but is currently deducted from our balance.
+
+Facts: `fuel_cards` id=3599, `topaz_card_id='3978'`,
+`rfid_code='0000000000-000000843787364'`, enabled. `card_number` in
+`fuel_transactions2` holds the Firebird **CardID**, not the RFID — proved by a
+backfill-vs-agent duplicate where the same 100.0 L fill on 2026-06-05 16:31:54
+was written once as the RFID and once as `3978`. Volume: Vobkent PTM 1007
+transactions / 189,209.35 L lifetime; Hargush PTM 4 transactions / 1620 L;
+14,204 L in 2026-05-01..2026-07-20.
+
+Owner decision: a farmer-fuel **balance is not needed** — excluding the expense
+is enough. Farmer receipts are not recorded anywhere in the system (the
+attendant keeps a paper notebook).
+
+**Critical: the exclusion must carry a start date.** Excluding 189,000 L of
+history retroactively would rewrite every past report.
+
+**Architectural note.** This must not copy the card-30 mechanism.
+`EXCLUDED_CARD_NUMBERS` drops the row at ingest, before station resolution, so
+it never reaches the database — correct for ПЕРЕЛИВ, which is not a dispensing
+event at all. Farmer fuel is a real dispensing of real fuel, so it must stay in
+`fuel_transactions2` and be filtered **at the report layer**, date-bounded, with
+a separate reference column «in which third-party».
+
+Known exception: 2026-06-10, 2500 L of **our** fuel went out on this card by
+management instruction (farmer Farkhod aka had no card of his own). That day
+must be closed with a manual expense and a comment — hence the dependency on
+FUEL-MANUAL-EXP.
+
+### FUEL-RESERVE - «Резерв» / «Захира» off-balance warehouse
+
+Priority: P1
+Status: AZS/fuel track, increment B in owner's order (A -> C -> B)
+
+Pakhtasanoattrans keeps an off-balance reserve they call «Захира». When the
+cluster has no cash or a delivery slips, fuel moves from the reserve to
+subordinate organisations so work does not stop; once resupplied the fuel
+returns and the receiving organisation is invoiced for the transferred volume
+without a second physical issue. Tracked only in Excel, outside accounting,
+monitored by cluster management.
+
+Facts: Захира is **not a separate vessel** — the fuel sits in
+Pakhtasanoattrans's common tanks, and its expense physically leaves through the
+same dispenser, so it is **already counted** in Pakhtasanoattrans's expense.
+Verified on data: on 2026-07-04 the program and the manual ledger agree exactly
+(4340.00 both), and the Захира share (4300.00) fits entirely inside that day;
+same on 2026-07-06 (2239.79 both, Захира 1926.44).
+
+**Card 198 is NOT a reserve card — this hypothesis is refuted, do not reopen it.**
+It was inferred from two days and `fuel_diag_001.py` disproved it on 2026-07-23:
+
+- In the card directory it is `id=172, topaz_card_id='198'`, display name
+  **`VIP PAXTATRANS`** — a general Pakhtatrans card.
+- 1662 transactions and ~3,154,000 L since 2020-06-09, across three warehouses
+  (Транс 2 825241: 982 ops / 3,070,332.44 L; Транс 1 811971: 666 ops /
+  83,494.06 L; Бензовоз Исузу 812301: 14 ops / 595.77 L).
+- July 2026 card-198 volume is **41,703.09 L against the Zahira ledger's
+  6286.44 L** — a 35,416.65 L gap.
+- Over 2026-05-01..2026-07-23 it accounts for 151,199.13 L at Pakhtasanoattrans,
+  the largest card there by an order of magnitude — it is the bulk/tanker card
+  for ordinary operations.
+- The two days that appeared to confirm the theory did so by coincidence: on
+  2026-07-04 and 2026-07-06 the only card-198 activity happened to be the
+  reserve transfers. On 07-03, 07-11, 07-14, 07-15, 07-16 the same card moved
+  4240 L loads that do not appear in the Zahira ledger at all.
+
+**Consequence: attribution must be manual, per transaction.** The increment
+needs an admin screen listing Pakhtasanoattrans expense rows for a period with a
+way to mark individual transactions as belonging to the reserve, plus a record
+of who marked what and when. Volume makes this cheap — July had six reserve
+transactions, so this is a handful of clicks a month, not a data-entry burden.
+Do not attempt a rule keyed on the card, and do not key it on the 4240 L amount
+either: 4240 is the tanker's capacity and appears on non-reserve days too.
+
+A secondary question for the owner falls out of the same data: the operator's
+Excel may be incomplete, since card 198 moved several 4240 L tanker loads in
+July that the ledger does not mention.
+
+Owner decisions: a **separate warehouse**; names «Резерв» (RU) / «Захира» (UZ),
+both Cyrillic; visible to everyone who can see fuel, no separate permission;
+our reports with a full breakdown are the source of truth, not the operator's
+ledger, which has confirmed errors (2026-06-02 «+40», 2026-06-18 «+2000», both
+annotated by the operator as manual-ledger mistakes).
+
+**Mandatory: card-198 transactions must be MOVED, not copied** — removed from
+Pakhtasanoattrans's expense and attributed to the reserve. Standing up the
+reserve with its own expense without removing it from Pakhta would count the
+same litres twice.
+
+**Blocker discovered in code, must be inside this increment's scope.**
+`fuel_warehouse_query_for_ui()` returns a warehouse only when it owns a station
+whose `topaz_id` is in the hardcoded `FUEL_TARGET_TOPAZ_IDS` set. The reserve
+has no physical station and never will, so a warehouse created the obvious way
+is **invisible everywhere**: balance report, receipts, dashboard. The filter has
+to gain an explicit visibility flag; the same helper is used by
+`fuel_apply_warehouse_filter_for_ui`, so the change is shared-code and needs a
+careful diff review.
+
+Excel baseline (`Захира.xlsx`, sheet `трес`, Uzbek: `Сана`, `Ёзув мазмуни`,
+`чиқим`, `кирим`): opening 10,429 L on 2026-05-01; no movement in May or June;
+July — 07-01 Tudakul (engine) 60, 07-04 Rizdentsiya (excavator) 60, 07-04 Chorva
+4240, 07-06 Servis **1926.44** (the sheet says 1900). Corrected July expense
+6286.44 L, closing 4142.56 L (the sheet says 4169 because of the same error).
+Transfers are already entered on the receiving side: 4240 L received at Chorva
+AZS on 2026-07-04, 1926 L at Peshku MTP on 2026-07-06.
+
+Business effect today: Захира's expense is deducted from Pakhtasanoattrans's
+recorded balance, pushing them roughly 16,000 L negative where accounting shows
+about 6,000 L negative. The ~10,000 L difference is the reserve's expense.
+
+Open questions for the owner: who marks the reserve transactions and how often;
+the reserve's opening balance (10,429 L at 2026-05-01, or is there earlier
+history); which organisation the reserve hangs off, given the open
+`AZS-ORG-REFACTOR` duplicate org ids 20-24; and how a reserve receipt (fuel
+returned) is recorded — an ordinary `FuelReceipt2` or a distinct operation type.
+
+### FUEL-HARGUSH-001 - Hargush PTM missing from the balance report
+
+Priority: P3
+Status: **RESOLVED 2026-07-23 — not a bug, no code change**
+
+Diagnosed with `fuel_diag_001.py` against production. Everything is wired
+correctly: station id 13, `topaz_id` 935511, warehouse 18 «Харгуш ПТМ», active,
+`FuelInitialBalance` 0.0 L dated 2026-05-01, and `935511` is present in
+`FUEL_TARGET_TOPAZ_IDS`.
+
+The station simply stopped producing data: 15,840 transactions between
+2021-04-06 and **2025-03-18**, and nothing since. For any 2026 reporting period
+the warehouse has opening 0, receipts 0, expenses 0, closing 0, and
+`_fuel_report_build_rows` drops all-zero rows when `show_zero` is off. The
+report is behaving as designed.
+
+To close for good: confirm with the owner whether the station is decommissioned
+and, if so, set `valid_to` on it so its status is explicit rather than implied
+by an absence of rows. Note the same query shows card 3978 last appearing here
+in 2024-11 — consistent with the site going quiet, not with a sync fault.
+
+### UI-CARD-NAME - Show card display_name instead of the raw number
+
+Priority: P2
+Status: backlog
+
+The balance report and the exports print the raw `card_number` (`3978`) instead
+of the `display_name` from the directory (`VIP_ИЖОРА ВОБКЕНТ`), although the
+directory is populated (4885 cards / 9770 aliases) and `_resolve_card_names` /
+`_card_display_name` already exist in `fuel_routes.py` and are used by the
+station-issues report. This slows every reconciliation.
+
+### FUEL-RECEIPTS-500 - /fuel/receipts crashed on an undefined L_add
+
+Priority: P2
+Status: **appears already fixed — verify which build produced the log entries**
+
+`error.log` carried `jinja2 UndefinedError -> TypeError: Object of type
+Undefined is not JSON serializable` at `templates/fuel/receipts.html:163`,
+`const LAdd = {{ L_add|tojson }}`. Root cause is the documented Jinja trap: the
+`{% set L_* %}` declarations live inside `{% block content %}`, and a sibling
+`{% block scripts %}` cannot see them.
+
+The current template no longer has the defect — `L_add` and `L_editing` are
+re-declared at the top of `{% block scripts %}`, immediately before use, and the
+`const LAdd` line now sits at line 377, not 163. So the log entries predate the
+fix. To close: confirm the deployed production copy matches, load
+`/fuel/receipts` in both languages, and check no new occurrences appear in
+`error.log`. Two unrelated `TemplateNotFound` entries in the same log —
+`audit_logs.html`, `change_temporary_password.html` — are separate and still
+unexplained.
+
 ### FUEL-CARDS-SYNC - Automate Topaz card directory sync to production
 
 Priority: P2
@@ -772,8 +1062,23 @@ Status: backlog
 
 ### SEC-TOKEN-ROT - Rotate FUEL_API_TOKEN and Firebird credentials
 
-Priority: P2
-Status: backlog
+Priority: P0 — raised from P2 on 2026-07-22
+Status: open, not done — do this before any further fuel work
+
+- **The live production token was disclosed in a chat transcript** together with
+  the full text of `topaz_agent.py`. Anyone holding it can POST arbitrary fuel
+  transactions into production via `/fuel/api/fuel_sync`: the endpoint is
+  CSRF-exempt by design and authenticates on the token alone, with no user
+  login (`_perform_fuel_sync` compares it with `hmac.compare_digest`, and that
+  is the entire check).
+- No code change is required — `config.py` reads `FUEL_API_TOKEN` from the
+  environment with no fallback.
+- Procedure: generate `secrets.token_urlsafe(24)` -> `setx /M` on the Vehicle
+  Soft server -> update the value in `C:\topaz_agent.py` on the Topaz host ->
+  restart `TransportReport` and `TransportReportStaging` -> run one agent sync
+  and confirm HTTP 200 rather than 401.
+- Staging already carries a separate token, added manually on 2026-07-22 after
+  it was found missing from the NSSM environment block.
 
 - topaz_agent.py on the Topaz host stores the Firebird password and API token in plaintext; the same token authenticates fuel_sync and card_sync over plain HTTP on the LAN.
 - Task: rotate value, update topaz_agent.py + server env via nssm edit (do not overwrite other vars), confirm the token is not committed anywhere in the vehicle-soft git history.
