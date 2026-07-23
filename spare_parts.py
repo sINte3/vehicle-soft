@@ -3174,9 +3174,10 @@ def _purchase_queue_workbook(rows, lang='uz'):
     thin = Side(style='thin', color='D9D9D9')
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    # [REASON]: deliberate duplication of _spare_reports_workbook's nested
-    # styling helper — that builder is a shipped export and out of scope for
-    # this increment, so nothing is extracted, refactored or imported.
+    # [REASON]: deliberate duplication of the reports styling helper (today
+    # _spare_report_styler) — this builder is a shipped export and out of
+    # scope for that increment, so nothing is extracted, refactored or
+    # imported here.
     def style_sheet(ws, money_cols=()):
         ws.freeze_panes = 'A2'
         ws.sheet_view.showGridLines = False
@@ -3720,7 +3721,8 @@ def purchase_queue_export():
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
-    # ASCII-only filename (Windows + browser safety), reports_export naming.
+    # ASCII-only filename (Windows + browser safety), same naming rule as the
+    # spare parts report exports (_report_export_filename).
     prefix = 'Purchase_queue' if lang == 'ru' else 'Xarid_navbati'
     fname = '{}_{}.xlsx'.format(prefix, datetime.now().strftime('%d_%m_%Y'))
     return send_file(
@@ -5286,15 +5288,17 @@ def _xlsx_safe(value):
     return value
 
 
-def _spare_reports_workbook(data, lang='uz'):
-    """Build the 5-sheet Excel workbook for the spare parts reports.
+def _spare_report_styler(lang):
+    """Shared openpyxl styling for the five single-report workbooks.
 
-    Follows the styling conventions of fuel_routes._fuel_report_workbook
-    (bold filled header row, frozen header, borders, auto column widths).
+    [REASON]: REPORTS-SPLIT — extracted verbatim from _spare_reports_workbook
+    (the removed combined 5-sheet builder) so the five per-report files keep
+    the exact look of the former five sheets: same header fill and font, same
+    borders, same frozen header row, same money format, same auto widths.
     """
-    from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
+    from types import SimpleNamespace
 
     def L(ru, uz):
         return ru if lang == 'ru' else uz
@@ -5304,8 +5308,6 @@ def _spare_reports_workbook(data, lang='uz'):
     # in templates), not the fuel report's '#,##0.00' liters format.
     money_fmt = '#,##0'
 
-    wb = Workbook()
-    wb.remove(wb.active)
     header_fill = PatternFill('solid', fgColor='D9EAD3')
     header_font = Font(bold=True)
     total_font = Font(bold=True)
@@ -5353,84 +5355,146 @@ def _spare_reports_workbook(data, lang='uz'):
         'yellow': L('Жёлтый (≤30 дней)', 'Сариқ (≤30 кун)'),
     }
 
-    # Sheet 1: costs by equipment.
-    ws = wb.create_sheet(L('Затраты по технике', 'Техника бўйича харажатлар'))
-    ws.append([L('Техника', 'Техника'), L('Гос. номер', 'Давлат рақами'),
-               L('Организация', 'Ташкилот'), L('Позиций', 'Позициялар'),
-               L('Сумма, сум', 'Сумма, сўм')])
+    return SimpleNamespace(L=L, total_font=total_font, style_table=style_table,
+                           eq_name=eq_name, eq_plate=eq_plate,
+                           org_name=org_name, severity_labels=severity_labels)
+
+
+def _report_xlsx_by_equipment(data, lang):
+    """One-sheet workbook: costs by equipment (former sheet 1, cell for cell)."""
+    from openpyxl import Workbook
+    st = _spare_report_styler(lang)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = st.L('Затраты по технике', 'Техника бўйича харажатлар')
+    ws.append([st.L('Техника', 'Техника'), st.L('Гос. номер', 'Давлат рақами'),
+               st.L('Организация', 'Ташкилот'), st.L('Позиций', 'Позициялар'),
+               st.L('Сумма, сум', 'Сумма, сўм')])
     for r in data['by_equipment']:
-        ws.append([eq_name(r['equipment']), eq_plate(r['equipment']),
-                   org_name(r['organization']), r['lines'], r['total']])
-    ws.append([L('ИТОГО', 'ЖАМИ'), '', '', data['cost_lines_count'],
+        ws.append([st.eq_name(r['equipment']), st.eq_plate(r['equipment']),
+                   st.org_name(r['organization']), r['lines'], r['total']])
+    ws.append([st.L('ИТОГО', 'ЖАМИ'), '', '', data['cost_lines_count'],
                data['grand_total']])
     for cell in ws[ws.max_row]:
-        cell.font = total_font
-    style_table(ws, money_cols=(5,))
+        cell.font = st.total_font
+    st.style_table(ws, money_cols=(5,))
+    return wb
 
-    # Sheet 2: costs by organization.
-    ws = wb.create_sheet(L('Затраты по организациям', 'Ташкилотлар бўйича харажатлар'))
-    ws.append([L('Организация', 'Ташкилот'), L('Позиций', 'Позициялар'),
-               L('Сумма, сум', 'Сумма, сўм')])
+
+def _report_xlsx_by_organization(data, lang):
+    """One-sheet workbook: costs by organization (former sheet 2, cell for cell)."""
+    from openpyxl import Workbook
+    st = _spare_report_styler(lang)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = st.L('Затраты по организациям', 'Ташкилотлар бўйича харажатлар')
+    ws.append([st.L('Организация', 'Ташкилот'), st.L('Позиций', 'Позициялар'),
+               st.L('Сумма, сум', 'Сумма, сўм')])
     for r in data['by_organization']:
-        ws.append([org_name(r['organization']), r['lines'], r['total']])
-    ws.append([L('ИТОГО', 'ЖАМИ'), data['cost_lines_count'], data['grand_total']])
+        ws.append([st.org_name(r['organization']), r['lines'], r['total']])
+    ws.append([st.L('ИТОГО', 'ЖАМИ'), data['cost_lines_count'], data['grand_total']])
     for cell in ws[ws.max_row]:
-        cell.font = total_font
-    style_table(ws, money_cols=(3,))
+        cell.font = st.total_font
+    st.style_table(ws, money_cols=(3,))
+    return wb
 
-    # Sheet 3: costs by catalog category.
-    ws = wb.create_sheet(L('Затраты по категориям', 'Категориялар бўйича харажатлар'))
-    ws.append([L('Категория', 'Категория'), L('Позиций', 'Позициялар'),
-               L('Сумма, сум', 'Сумма, сўм')])
+
+def _report_xlsx_by_category(data, lang):
+    """One-sheet workbook: costs by catalog category (former sheet 3, cell for cell)."""
+    from openpyxl import Workbook
+    st = _spare_report_styler(lang)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = st.L('Затраты по категориям', 'Категориялар бўйича харажатлар')
+    ws.append([st.L('Категория', 'Категория'), st.L('Позиций', 'Позициялар'),
+               st.L('Сумма, сум', 'Сумма, сўм')])
     for r in data['by_category']:
         cat = r['category']
         label = (_xlsx_safe(cat.name_ru if lang == 'ru' else cat.name_uz) if cat
-                 else L('— без категории —', '— категориясиз —'))
+                 else st.L('— без категории —', '— категориясиз —'))
         ws.append([label, r['lines'], r['total']])
-    ws.append([L('ИТОГО', 'ЖАМИ'), data['cost_lines_count'], data['grand_total']])
+    ws.append([st.L('ИТОГО', 'ЖАМИ'), data['cost_lines_count'], data['grand_total']])
     for cell in ws[ws.max_row]:
-        cell.font = total_font
-    style_table(ws, money_cols=(3,))
+        cell.font = st.total_font
+    st.style_table(ws, money_cols=(3,))
+    return wb
 
-    # Sheet 4: repeat-order warnings.
+
+def _report_xlsx_repeat_orders(data, lang):
+    """One-sheet workbook: repeat-order warnings (former sheet 4, cell for cell)."""
+    from openpyxl import Workbook
+    st = _spare_report_styler(lang)
+    wb = Workbook()
+    ws = wb.active
     # [REASON]: MOBILE-UPLOAD-001/i18n — Excel worksheet names are capped at
     # 31 characters and cannot contain : \ / ? * [ ]. The on-screen card
     # title for this table also carries a "(red <=7d, yellow <=30d)"
     # parenthetical, which alone pushes the RU/UZ pair to 49/47 characters.
     # That detail is already shown per-row via the Уровень/Даража column
-    # (severity_labels below), so the sheet name reuses only the base
-    # RU/UZ title without the parenthetical -- still the exact label pair
-    # used on screen, just without the redundant, over-length suffix.
-    ws = wb.create_sheet(L('Повторные заказы', 'Такрорий сўровлар'))
-    ws.append([L('Заявка', 'Сўров'), L('Дата', 'Сана'),
-               L('Организация', 'Ташкилот'), L('Техника', 'Техника'),
-               L('Запчасть', 'Эҳтиёт қисм'), L('Уровень', 'Даража'),
-               L('Дней с прошлого заказа', 'Олдинги сўровдан кунлар')])
+    # (severity_labels), so the sheet name reuses only the base RU/UZ title
+    # without the parenthetical -- still the exact label pair used on screen,
+    # just without the redundant, over-length suffix.
+    ws.title = st.L('Повторные заказы', 'Такрорий сўровлар')
+    ws.append([st.L('Заявка', 'Сўров'), st.L('Дата', 'Сана'),
+               st.L('Организация', 'Ташкилот'), st.L('Техника', 'Техника'),
+               st.L('Запчасть', 'Эҳтиёт қисм'), st.L('Уровень', 'Даража'),
+               st.L('Дней с прошлого заказа', 'Олдинги сўровдан кунлар')])
     for r in data['repeat_rows']:
         ws.append(['№{}'.format(r['request_id']),
                    r['request_date'].strftime('%d.%m.%Y'),
-                   org_name(r['organization']), eq_name(r['equipment']),
+                   st.org_name(r['organization']), st.eq_name(r['equipment']),
                    _xlsx_safe(r['part_name']),
-                   severity_labels.get(r['severity'], r['severity']),
+                   st.severity_labels.get(r['severity'], r['severity']),
                    r['days_since']])
-    style_table(ws)
+    st.style_table(ws)
+    return wb
 
-    # Sheet 5: top-20 most expensive line items.
-    ws = wb.create_sheet(L('Топ-20 самых дорогих позиций', 'Топ-20 энг қиммат позициялар'))
-    ws.append([L('Заявка', 'Сўров'), L('Дата', 'Сана'),
-               L('Организация', 'Ташкилот'), L('Техника', 'Техника'),
-               L('Запчасть', 'Эҳтиёт қисм'), L('Кол-во', 'Миқдор'),
-               L('Ед. изм.', 'Ўлчов бирлиги'), L('Цена, сум', 'Нарх, сўм'),
-               L('Сумма, сум', 'Сумма, сўм')])
+
+def _report_xlsx_top_items(data, lang):
+    """One-sheet workbook: top-20 most expensive items (former sheet 5, cell for cell)."""
+    from openpyxl import Workbook
+    st = _spare_report_styler(lang)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = st.L('Топ-20 самых дорогих позиций', 'Топ-20 энг қиммат позициялар')
+    ws.append([st.L('Заявка', 'Сўров'), st.L('Дата', 'Сана'),
+               st.L('Организация', 'Ташкилот'), st.L('Техника', 'Техника'),
+               st.L('Запчасть', 'Эҳтиёт қисм'), st.L('Кол-во', 'Миқдор'),
+               st.L('Ед. изм.', 'Ўлчов бирлиги'), st.L('Цена, сум', 'Нарх, сўм'),
+               st.L('Сумма, сум', 'Сумма, сўм')])
     for r in data['top_items']:
         ws.append(['№{}'.format(r['request_id']),
                    r['request_date'].strftime('%d.%m.%Y'),
-                   org_name(r['organization']), eq_name(r['equipment']),
+                   st.org_name(r['organization']), st.eq_name(r['equipment']),
                    _xlsx_safe(r['name']), r['quantity'], _xlsx_safe(r['unit']),
                    r['price'], r['total']])
-    style_table(ws, money_cols=(8, 9))
-
+    st.style_table(ws, money_cols=(8, 9))
     return wb
+
+
+# [REASON]: REPORTS-SPLIT — the builder dispatch lives OUTSIDE _REPORT_SPECS so
+# the registry stays data-only (its records are passed into templates as tile
+# context); the key set must mirror _REPORT_SPECS exactly.
+_REPORT_XLSX_BUILDERS = {
+    'by-equipment': _report_xlsx_by_equipment,
+    'by-organization': _report_xlsx_by_organization,
+    'by-category': _report_xlsx_by_category,
+    'repeat-orders': _report_xlsx_repeat_orders,
+    'top-items': _report_xlsx_top_items,
+}
+
+
+def _report_export_filename(key, d_from, d_to, lang, ext):
+    """ASCII-only export file name: {prefix}_{slug}_{dd_mm_yyyy}_{dd_mm_yyyy}.{ext}.
+
+    [REASON]: Windows + browser safety, same rule as purchase_queue_export;
+    the RU/UZ prefix pair is unchanged from the removed combined-file export.
+    """
+    prefix = ('Spare_parts_report' if lang == 'ru'
+              else 'Ehtiyot_qismlar_hisoboti')
+    slug = key.replace('-', '_')
+    return '{}_{}_{}_{}.{}'.format(prefix, slug, d_from.strftime('%d_%m_%Y'),
+                                   d_to.strftime('%d_%m_%Y'), ext)
 
 
 @spare_parts_bp.route('/reports')
@@ -5500,30 +5564,24 @@ def report_page(key):
                            lang=_spare_lang())
 
 
-@spare_parts_bp.route('/reports/export')
+@spare_parts_bp.route('/reports/<key>/export.xlsx')
 @module_required('spare_parts')
-def reports_export():
-    # Same gate as the reports screen (this is the same data, as a file).
+def report_export_xlsx(key):
+    # Same gate as the report page (this is the same data, as a file).
     if not current_user.has_module_access('spare_parts_reports'):
         abort(403)
+    _report_spec_or_404(key)
     d_from, d_to, org_id, equipment_id, category_id = _reports_filters()
     data = _reports_data(d_from, d_to, org_id=org_id,
                          equipment_id=equipment_id, category_id=category_id)
-    wb = _spare_reports_workbook(data, lang=_spare_lang())
-    # Local imports mirror fuel_routes.balance_report_export — keeps this
-    # change additive (module-level flask import line untouched).
-    from io import BytesIO
-    from flask import send_file
-    buffer = BytesIO()
+    lang = _spare_lang()
+    wb = _REPORT_XLSX_BUILDERS[key](data, lang)
+    buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
-    prefix = ('Spare_parts_report' if _spare_lang() == 'ru'
-              else 'Ehtiyot_qismlar_hisoboti')
-    fname = '{}_{}_{}.xlsx'.format(prefix, d_from.strftime('%d_%m_%Y'),
-                                   d_to.strftime('%d_%m_%Y'))
     return send_file(
         buffer,
         as_attachment=True,
-        download_name=fname,
+        download_name=_report_export_filename(key, d_from, d_to, lang, 'xlsx'),
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
