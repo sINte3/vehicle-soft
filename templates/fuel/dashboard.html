@@ -64,6 +64,7 @@
 {% set L_warehouses = 'Склады' if lang == 'ru' else 'Омборлар' %}
 {% set L_initial = 'Начальные остатки' if lang == 'ru' else 'Бошл. қолдиқлар' %}
 {% set L_manual_exp = 'Ручной расход' if lang == 'ru' else 'Қўлда киритилган сарф' %}
+{% set L_reserve_transfers = 'Передачи в резерв' if lang == 'ru' else 'Резервга ўтказишлар' %}
 {% set L_today = 'Выдано сегодня' if lang == 'ru' else 'Бугун берилди' %}
 {% set L_warehouse_count = 'Складов' if lang == 'ru' else 'Омборлар сони' %}
 {% set L_active_stations = 'Активных АЗС' if lang == 'ru' else 'Фаол АЗС' %}
@@ -227,6 +228,8 @@
         <a href="{{ url_for('fuel.warehouses') }}" class="btn btn-secondary btn-sm">{{ L_warehouses }}</a>
         <a href="{{ url_for('fuel.initial_balance') }}" class="btn btn-secondary btn-sm">{{ L_initial }}</a>
         <a href="{{ url_for('fuel.manual_expenses') }}" class="btn btn-secondary btn-sm">{{ L_manual_exp }}</a>
+        {# FUEL-RESERVE: reserve-transfer marking, admin-only like the manual-expense entry beside it #}
+        <a href="{{ url_for('fuel.reserve_transfers') }}" class="btn btn-secondary btn-sm">{{ L_reserve_transfers }}</a>
         {% endif %}
     </div>
 </div>

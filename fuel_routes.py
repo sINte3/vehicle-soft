@@ -27,6 +27,7 @@ from models import (
     FuelReceipt2, FuelManualExpense, FuelTransaction2, FuelSyncLog2,
     FuelWarningReview,
     FuelCard, FuelCardAlias, FuelCardSyncLog,
+    FuelTransactionReattribution,
     module_required,
 )
 
@@ -134,6 +135,36 @@ EXTERNAL_FUEL_CARDS = {
     '3978': date(2026, 5, 1),   # VIP_ИЖОРА ВОБКЕНТ
 }
 
+# [REASON]: FUEL-RESERVE — the reserve warehouse is matched on this exact
+# Cyrillic name (the Russian label; «Захира» is the Uzbek UI label). Same value
+# as migrate_fuel_reserve_warehouse.RESERVE_WAREHOUSE_NAME.
+RESERVE_WAREHOUSE_NAME = 'Резерв'
+
+# [REASON]: FUEL-RESERVE — the Pakhtasanoattrans warehouse (default marking
+# source) is resolved from these station topaz_ids, never a hardcoded warehouse
+# id (AZS-ORG-REFACTOR duplicate org ids). Same ids the migration uses.
+RESERVE_SOURCE_TOPAZ_IDS = (811971, 825241)
+
+
+def _is_external_fuel_txn(card_number, txn_dt):
+    """True when a transaction is external fuel (EXTERNAL_FUEL_CARDS) on/after
+    that card's start date.
+
+    [REASON]: FUEL-RESERVE §7 edge case — a transaction already excluded as
+    external fuel must never also be reattributed to the reserve, or the litres
+    move twice. This is the single rule both the marking screen (refuse to mark)
+    and the reattribution maps (exclude) consult, so the rule lives in code, not
+    in the data. Reads EXTERNAL_FUEL_CARDS but never mutates it.
+    """
+    if not card_number:
+        return False
+    start = EXTERNAL_FUEL_CARDS.get(str(card_number).strip())
+    if not start:
+        return False
+    if txn_dt is None:
+        return False
+    return txn_dt >= datetime.combine(start, datetime.min.time())
+
 
 def _iso_date(value):
     return value.isoformat() if value else None
@@ -234,6 +265,27 @@ def _fuel_manual_expense_snapshot(expense):
         'source': getattr(expense, 'source', '') or '',
         'is_deleted': int(getattr(expense, 'is_deleted', 0) or 0),
         'deleted_by': getattr(expense, 'deleted_by', None),
+        'deleted_at': deleted_at.isoformat() if deleted_at else None,
+    }
+
+
+def _fuel_reattribution_snapshot(mark):
+    # [REASON]: FUEL-RESERVE — audit snapshot for a reserve mark, placed beside
+    # _fuel_manual_expense_snapshot and shaped like it (soft-delete fields
+    # included) so _audit_fuel records the full before/after of a mark or unmark.
+    if not mark:
+        return None
+    created_at = getattr(mark, 'created_at', None)
+    deleted_at = getattr(mark, 'deleted_at', None)
+    return {
+        'id': getattr(mark, 'id', None),
+        'transaction_id': getattr(mark, 'transaction_id', None),
+        'target_warehouse_id': getattr(mark, 'target_warehouse_id', None),
+        'note': getattr(mark, 'note', '') or '',
+        'created_by': getattr(mark, 'created_by', None),
+        'created_at': created_at.isoformat() if created_at else None,
+        'is_deleted': int(getattr(mark, 'is_deleted', 0) or 0),
+        'deleted_by': getattr(mark, 'deleted_by', None),
         'deleted_at': deleted_at.isoformat() if deleted_at else None,
     }
 
@@ -2637,6 +2689,271 @@ def delete_manual_expense(expense_id):
                  'Расход удалён. Баланс пересчитается автоматически.'),
           'warning')
     return redirect(url_for('fuel.manual_expenses'))
+
+
+# ─── FUEL-RESERVE: Reserve transfers (Передачи в резерв / Резервга ўтказишлар) ─
+
+def _fuel_reserve_warehouse():
+    """Return the reserve («Резерв») FuelWarehouse, or None if not created yet.
+
+    Matched on the exact name and show_in_ui=1, exactly as the migration created
+    it. Returns None on a database where the migration has not run — the route
+    handles that with a bilingual message rather than a 500.
+    """
+    return (FuelWarehouse.query
+            .filter(FuelWarehouse.name == RESERVE_WAREHOUSE_NAME,
+                    FuelWarehouse.show_in_ui == 1)
+            .order_by(FuelWarehouse.id)
+            .first())
+
+
+def _fuel_default_source_warehouse_id():
+    """Warehouse id of Pakhtasanoattrans (the default marking source).
+
+    Resolved from RESERVE_SOURCE_TOPAZ_IDS, never a hardcoded warehouse id.
+    Returns None if no station carries one of those topaz ids.
+    """
+    row = (db.session.query(FuelStation2.warehouse_id)
+           .filter(FuelStation2.topaz_id.in_(RESERVE_SOURCE_TOPAZ_IDS),
+                   FuelStation2.warehouse_id.isnot(None))
+           .first())
+    return int(row[0]) if row and row[0] is not None else None
+
+
+@fuel_bp.route('/reserve-transfers')
+@module_required('fuel')
+@admin_required_fuel
+def reserve_transfers():
+    # [REASON]: FUEL-RESERVE — lists the source warehouse's Topaz transactions for
+    # a period so an admin can mark the ones that were actually reserve issues.
+    # Attribution cannot be automated (the card-198 hypothesis was refuted), so
+    # this is the human step. Admin-only via @admin_required_fuel; visible to the
+    # fuel module via @module_required('fuel').
+    today = date.today()
+    default_from = today.replace(day=1)
+    d_from = _fuel_report_parse_date(request.args.get('start_date'), default_from)
+    d_to = _fuel_report_parse_date(request.args.get('end_date'), today)
+    if d_to < d_from:
+        d_from, d_to = d_to, d_from
+
+    reserve = _fuel_reserve_warehouse()
+
+    # Source warehouse: default Pakhtasanoattrans; never the reserve itself.
+    warehouses = [w for w in fuel_warehouse_query_for_ui().order_by(FuelWarehouse.name).all()
+                  if not (reserve and w.id == reserve.id)]
+    valid_ids = {w.id for w in warehouses}
+
+    source_wh_id = request.args.get('warehouse_id', type=int)
+    if source_wh_id not in valid_ids:
+        source_wh_id = _fuel_default_source_warehouse_id()
+        if source_wh_id not in valid_ids:
+            source_wh_id = warehouses[0].id if warehouses else None
+
+    start_dt = datetime.combine(d_from, datetime.min.time())
+    end_dt_exclusive = datetime.combine(d_to + timedelta(days=1), datetime.min.time())
+
+    txns = []
+    if source_wh_id:
+        txns = (FuelTransaction2.query
+                .options(joinedload(FuelTransaction2.station))
+                .join(FuelStation2, FuelStation2.id == FuelTransaction2.station_id)
+                .filter(FuelStation2.warehouse_id == source_wh_id,
+                        FuelTransaction2.txn_datetime >= start_dt,
+                        FuelTransaction2.txn_datetime < end_dt_exclusive)
+                .order_by(FuelTransaction2.txn_datetime.desc(),
+                          FuelTransaction2.id.desc())
+                .all())
+
+    # Active marks for the listed transactions — one query, keyed by txn id.
+    txn_ids = [t.id for t in txns]
+    marks_by_txn = {}
+    if txn_ids:
+        for m in (FuelTransactionReattribution.query
+                  .filter(FuelTransactionReattribution.transaction_id.in_(txn_ids),
+                          func.coalesce(FuelTransactionReattribution.is_deleted, 0) == 0)
+                  .all()):
+            marks_by_txn[m.transaction_id] = m
+
+    # Marker display names — one query.
+    marker_ids = {m.created_by for m in marks_by_txn.values() if m.created_by}
+    markers = {}
+    if marker_ids:
+        for u in User.query.filter(User.id.in_(list(marker_ids))).all():
+            markers[u.id] = u.full_name or u.username
+
+    card_names = _resolve_card_names(txns)
+
+    rows = []
+    for t in txns:
+        mark = marks_by_txn.get(t.id)
+        rows.append({
+            'txn': t,
+            'card_name': _card_display_name(t.card_number, card_names),
+            'mark': mark,
+            'marker_name': markers.get(mark.created_by, '—') if (mark and mark.created_by) else '—',
+            'is_external': _is_external_fuel_txn(t.card_number, t.txn_datetime),
+        })
+
+    # [REASON]: FUEL-RESERVE — running total of litres marked into the reserve for
+    # the WHOLE period (all sources), so the operator can compare against the
+    # Zahira sheet directly. One grouped query, never a per-row loop.
+    period_marked_total = float(
+        db.session.query(func.coalesce(func.sum(FuelTransaction2.quantity), 0))
+        .join(FuelTransactionReattribution,
+              FuelTransactionReattribution.transaction_id == FuelTransaction2.id)
+        .filter(func.coalesce(FuelTransactionReattribution.is_deleted, 0) == 0,
+                FuelTransaction2.txn_datetime >= start_dt,
+                FuelTransaction2.txn_datetime < end_dt_exclusive)
+        .scalar() or 0)
+
+    return render_template('fuel/reserve_transfers.html',
+                           rows=rows,
+                           warehouses=warehouses,
+                           reserve=reserve,
+                           source_wh_id=source_wh_id,
+                           d_from=d_from, d_to=d_to,
+                           period_marked_total=period_marked_total)
+
+
+@fuel_bp.route('/reserve-transfers/mark', methods=['POST'])
+@module_required('fuel')
+@admin_required_fuel
+def reserve_transfer_mark():
+    txn_id = request.form.get('transaction_id', type=int)
+    note = (request.form.get('note') or '').strip()
+    redirect_args = _reserve_transfers_redirect_args()
+
+    txn = FuelTransaction2.query.get(txn_id) if txn_id else None
+    if not txn:
+        flash(fuel_t('Операция топилмади.', 'Операция не найдена.'), 'warning')
+        return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+    # [REASON]: FUEL-RESERVE — note is mandatory in the application layer: the
+    # mark must record where the fuel was transferred.
+    if not note:
+        flash(fuel_t('Изоҳ мажбурий: ёқилғи қаерга ўтказилганини ёзинг.',
+                     'Примечание обязательно: укажите, куда передано топливо.'),
+              'warning')
+        return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+    # [REASON]: FUEL-RESERVE §7 — an external-fuel transaction must never be
+    # reattributed, or the litres move twice. Refuse with a bilingual message.
+    if _is_external_fuel_txn(txn.card_number, txn.txn_datetime):
+        flash(fuel_t('Бегона ёқилғи операциясини резервга ўтказиб бўлмайди.',
+                     'Операцию со сторонним топливом нельзя передать в резерв.'),
+              'warning')
+        return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+    # [REASON]: FUEL-RESERVE — one active mark per transaction. The partial unique
+    # index is the real guard; this pre-check gives a clean bilingual message.
+    existing = (FuelTransactionReattribution.query
+                .filter(FuelTransactionReattribution.transaction_id == txn.id,
+                        func.coalesce(FuelTransactionReattribution.is_deleted, 0) == 0)
+                .first())
+    if existing:
+        flash(fuel_t('Бу операция аллақачон белгиланган.',
+                     'Эта операция уже отмечена.'), 'warning')
+        return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+    reserve = _fuel_reserve_warehouse()
+    if not reserve:
+        flash(fuel_t('Резерв омбори топилмади. Аввал миграцияни ишга туширинг.',
+                     'Склад «Резерв» не найден. Сначала выполните миграцию.'),
+              'warning')
+        return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+    mark = FuelTransactionReattribution(
+        transaction_id=txn.id,
+        target_warehouse_id=reserve.id,
+        note=note,
+        created_by=current_user.id,
+    )
+    db.session.add(mark)
+    try:
+        db.session.flush()
+    except Exception:
+        # [REASON]: FUEL-RESERVE — the partial unique index rejected a concurrent
+        # second active mark. Roll back and report it as already marked.
+        db.session.rollback()
+        flash(fuel_t('Бу операция аллақачон белгиланган.',
+                     'Эта операция уже отмечена.'), 'warning')
+        return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+    after = _fuel_reattribution_snapshot(mark)
+    _audit_fuel(
+        'fuel_reserve_transfer_marked',
+        entity_type='fuel_transaction_reattribution',
+        entity_id=mark.id,
+        entity_label=f'txn {txn.id} → {reserve.name} {txn.quantity}',
+        before=None,
+        after=after,
+        description='Fuel transaction marked as reserve transfer',
+    )
+    db.session.commit()
+    flash(fuel_t('Операция резервга ўтказилди.',
+                 'Операция передана в резерв.'), 'success')
+    return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+
+@fuel_bp.route('/reserve-transfers/unmark/<int:mark_id>', methods=['POST'])
+@module_required('fuel')
+@admin_required_fuel
+def reserve_transfer_unmark(mark_id):
+    redirect_args = _reserve_transfers_redirect_args()
+    mark = FuelTransactionReattribution.query.get_or_404(mark_id)
+
+    if mark.is_deleted:
+        flash(fuel_t('Бу белги аллақачон олиб ташланган.',
+                     'Эта отметка уже снята.'), 'warning')
+        return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+    reason = (request.form.get('reason') or '').strip()
+    if not reason:
+        flash(fuel_t('Белгини олиб ташлаш сабабини кўрсатинг.',
+                     'Укажите причину снятия отметки.'), 'warning')
+        return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+    before = _fuel_reattribution_snapshot(mark)
+    # [REASON]: FUEL-RESERVE — SOFT delete only: the row stays, and the report
+    # layer drops it via coalesce(is_deleted, 0) = 0. Never db.session.delete()
+    # a mark; its mark/unmark history must survive.
+    mark.is_deleted = 1
+    mark.deleted_by = current_user.id
+    mark.deleted_at = datetime.utcnow()
+    # [REASON]: FUEL-RESERVE — the reason is APPENDED to the note, never
+    # overwriting it, so the original attribution note stays readable.
+    existing_note = (mark.note or '').strip()
+    reason_line = fuel_t('Белгини олиб ташлаш сабаби', 'Причина снятия отметки') + ': ' + reason
+    mark.note = (existing_note + '\n' + reason_line) if existing_note else reason_line
+
+    after = _fuel_reattribution_snapshot(mark)
+    _audit_fuel(
+        'fuel_reserve_transfer_unmarked',
+        entity_type='fuel_transaction_reattribution',
+        entity_id=mark.id,
+        entity_label=f'txn {mark.transaction_id}',
+        before=before,
+        after=after,
+        description='Fuel reserve transfer mark soft-removed',
+    )
+    db.session.commit()
+    flash(fuel_t('Белги олиб ташланди.', 'Отметка снята.'), 'warning')
+    return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+
+def _reserve_transfers_redirect_args():
+    """Preserve the marking screen's filters across a mark/unmark POST."""
+    args = {}
+    start = (request.form.get('start_date') or '').strip()
+    end = (request.form.get('end_date') or '').strip()
+    wh = request.form.get('warehouse_id', type=int)
+    if start:
+        args['start_date'] = start
+    if end:
+        args['end_date'] = end
+    if wh:
+        args['warehouse_id'] = wh
+    return args
 
 
 # ─── Transactions (Расходы из Топаз) ──────────────────────────────────
