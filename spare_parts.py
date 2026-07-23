@@ -5202,6 +5202,73 @@ def _reports_data(d_from, d_to, org_id=None, equipment_id=None, category_id=None
     }
 
 
+# [REASON]: REPORTS-SPLIT — the five report tables used to live on one page.
+# Owner decision 2026-07-23: each becomes its own page reached from a launcher.
+# A single dispatch table + one parameterized route replaces five near-identical
+# routes and five near-identical templates; the data layer is untouched —
+# every page calls _reports_data() in full and renders one slice of it.
+# is_cost gates the cost-rule alert and the money stat strip on a report page
+# (repeat-orders is deliberately NOT filtered by confirmed prices — see the
+# [REASON] inside _reports_data — so money UI above it would mislead);
+# landscape drives the PDF page orientation.
+_REPORT_SPECS = {
+    'by-equipment': {
+        'data_key': 'by_equipment',
+        'title_ru': 'Затраты по технике',
+        'title_uz': 'Техника бўйича харажатлар',
+        'subtitle_ru': 'Сумма по каждой единице техники за период',
+        'subtitle_uz': 'Давр учун ҳар бир техника бўйича сумма',
+        'is_cost': True,
+        'landscape': False,
+    },
+    'by-organization': {
+        'data_key': 'by_organization',
+        'title_ru': 'Затраты по организациям',
+        'title_uz': 'Ташкилотлар бўйича харажатлар',
+        'subtitle_ru': 'Сумма по организациям за период',
+        'subtitle_uz': 'Давр учун ташкилотлар бўйича сумма',
+        'is_cost': True,
+        'landscape': False,
+    },
+    'by-category': {
+        'data_key': 'by_category',
+        'title_ru': 'Затраты по категориям',
+        'title_uz': 'Категориялар бўйича харажатлар',
+        'subtitle_ru': 'Сумма по категориям каталога за период',
+        'subtitle_uz': 'Давр учун каталог категориялари бўйича сумма',
+        'is_cost': True,
+        'landscape': False,
+    },
+    'repeat-orders': {
+        'data_key': 'repeat_rows',
+        'title_ru': 'Повторные заказы',
+        'title_uz': 'Такрорий сўровлар',
+        'subtitle_ru': 'Повторные заказы одной запчасти на одну технику',
+        'subtitle_uz': 'Бир техникага бир хил эҳтиёт қисмнинг такрорий сўровлари',
+        'is_cost': False,
+        'landscape': True,
+    },
+    'top-items': {
+        'data_key': 'top_items',
+        'title_ru': 'Топ-20 самых дорогих позиций',
+        'title_uz': 'Топ-20 энг қиммат позициялар',
+        'subtitle_ru': 'Двадцать самых дорогих позиций за период',
+        'subtitle_uz': 'Давр учун йигирмата энг қиммат позиция',
+        'is_cost': True,
+        'landscape': True,
+    },
+}
+_REPORT_ORDER = ('by-equipment', 'by-organization', 'by-category',
+                 'repeat-orders', 'top-items')
+
+
+def _report_spec_or_404(key):
+    spec = _REPORT_SPECS.get(key)
+    if spec is None:
+        abort(404)
+    return spec
+
+
 def _xlsx_safe(value):
     """Neutralize spreadsheet formula injection in a user-controlled string.
 
@@ -5374,7 +5441,28 @@ def reports():
     # SPARE-STAGE1 permissions (has_module_access keeps the admin bypass).
     if not current_user.has_module_access('spare_parts_reports'):
         abort(403)
+    # [REASON]: REPORTS-SPLIT — the launcher is deliberately data-free (five
+    # tiles, no filters, no report queries). The route name spare_parts.reports
+    # and the /reports URL must stay exactly as they are: _spare_nav.html and
+    # the desk quick actions link them, and those files are out of scope.
+    lang = _spare_lang()
+    tiles = [dict(_REPORT_SPECS[k], key=k) for k in _REPORT_ORDER]
+    return render_template('spare_parts_reports.html', tiles=tiles, lang=lang)
+
+
+@spare_parts_bp.route('/reports/<key>')
+@module_required('spare_parts')
+def report_page(key):
+    # Same gate as the launcher (this is the same data, one slice per page).
+    if not current_user.has_module_access('spare_parts_reports'):
+        abort(403)
+    spec = _report_spec_or_404(key)
     d_from, d_to, org_id, equipment_id, category_id = _reports_filters()
+    # [REASON]: REPORTS-SPLIT — every report page calls _reports_data() in full
+    # and renders one slice of the result. Four fifths of the computation is
+    # discarded on purpose (owner-accepted cost): splitting _reports_data into
+    # five functions would mean touching the cost rule and the batched
+    # repeat-order detector, which is out of scope for this increment.
     data = _reports_data(d_from, d_to, org_id=org_id,
                          equipment_id=equipment_id, category_id=category_id)
 
@@ -5397,7 +5485,9 @@ def reports():
                              .order_by(Equipment.name, Equipment.plate).all())
     else:
         equipment_options = []
-    return render_template('spare_parts_reports.html',
+    return render_template('spare_parts_report_page.html',
+                           key=key,
+                           spec=spec,
                            data=data,
                            date_from_s=d_from.isoformat(),
                            date_to_s=d_to.isoformat(),

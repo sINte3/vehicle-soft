@@ -34,7 +34,9 @@ class A11yTests(unittest.TestCase):
             self.assertIn('id="{}"'.format(fid), html)
 
     def test_reports_filters_have_label_associations(self):
-        html = self._get('/spare-parts/reports')
+        # REPORTS-SPLIT: the filter form moved from the /reports launcher to
+        # the per-report pages; the label associations it protects live there.
+        html = self._get('/spare-parts/reports/by-equipment')
         for fid in ('repDateFrom', 'repDateTo', 'orgSelect', 'eqSelect',
                     'repCategory'):
             self.assertIn('for="{}"'.format(fid), html)
@@ -99,7 +101,10 @@ class A11yTests(unittest.TestCase):
     def test_no_unlabeled_controls_on_list_and_reports(self):
         # Same rule as the repo-side template sweep: every rendered
         # non-hidden input/select/textarea needs a label-for or aria-label.
+        # REPORTS-SPLIT: /reports is now a control-free launcher (kept in the
+        # sweep as a guard); the filter form lives on the per-report pages.
         for path in ('/spare-parts/', '/spare-parts/reports',
+                     '/spare-parts/reports/by-equipment',
                      '/spare-parts/maintenance', '/spare-parts/maintenance-norms'):
             html = self._get(path)
             label_for = set(re.findall(r'<label[^>]*\bfor="([^"]+)"', html))
