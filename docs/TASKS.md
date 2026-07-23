@@ -25,32 +25,27 @@ Known confirmed gaps to include in the audit as starting evidence:
 - templates/audit_logs.html — Phase 7 gave it form-control only; full
   visual pass explicitly deferred.
 
-### Next: spare-parts borrowing track — increment 7 (scoped 2026-07-23)
+### Next: spare-parts borrowing track — increment 8 (not scoped yet)
 
-Increments 1-6 are done and merged into `main`: SP-DESK-001 (operator workspace,
+Increments 1-7 are done and merged into `main`: SP-DESK-001 (operator workspace,
 PR #11), SP-DETAIL-002 (request card redesign, PR #12), SP-RESERVE-003
 (reservations and available stock, PR #13), SP-MINSTOCK-004 (minimum stock levels
 and purchase queue, PR #14), SP-PQEXPORT-005 (Excel export of the purchase queue,
-PR #15), SP-POLISH-006 (purchase queue readability and `№` numbering, PR #16) —
-see their sections below.
+PR #15), SP-POLISH-006 (purchase queue readability and `№` numbering, PR #16),
+SP-REPORTS-007 (report launcher, per-report Excel and PDF, «SKU» → «Артикул»,
+PR #17 + #18 + #19) — see their sections below.
 
-Increment 7 pairs two owner-approved items:
+Increment 8 is **not scoped**. Nothing is chosen; the owner picks the next item.
 
-- **REPORTS-SPLIT** — split the spare-parts reports screen. Today `/reports`
-  renders five stacked tables in one long page (cost by equipment, by
-  organization, by category, repeat orders, top-20). All five come from a single
-  `_reports_data(d_from, d_to, org_id, equipment_id, category_id)` call, filters
-  are parsed by `_reports_filters()`, and the Excel file is built by
-  `_spare_reports_workbook(data, lang)`. Boundary: this is a presentation
-  change only — `_reports_data` and the cost rule (`status in ('approved',
-  'issued')` AND `price_status == 'confirmed'`, line cost = price * quantity)
-  must not be touched. Open owner questions, not yet asked: tabs inside one page
-  or separate pages; whether the Excel export stays one file; which table opens
-  by default.
-- **SKU-RENAME-001** — see its backlog entry below.
+Before starting increment 8, two things from increment 7 must be closed:
+
+1. The remaining staging checks listed in `SP-REPORTS-007` below — roughly
+   25 of the 37 checklist items, including all of PR #19.
+2. The production deploy of PR #17 + #18 + #19, which also requires running
+   `add_unit_sqm.py --apply` on production.
 
 Unprioritised candidates still accumulated during the track: releasing a
-reservation when an approved request is rejected, price history on the SKU
+reservation when an approved request is rejected, price history on the article
 screen, bulk approval of requests. The standalone «Заявки/Наряды» MVP is tracked
 outside this track and is not the next item here.
 
@@ -88,6 +83,79 @@ Parallel track, runs alongside the increments. Decisions and findings so far:
   earlier truncated export produced a wrong conclusion about warehouse counts.
 
 ## Recently completed / appears completed
+
+### SP-REPORTS-007 — Report launcher, per-report Excel and PDF, «SKU» → «Артикул» (PR #17, #18, #19)
+
+Priority: P2
+Status: **merged and deployed to staging 2026-07-23; NOT on production; staging QA partially done**
+
+Increment 7 of the spare-parts borrowing track. Code, templates and CSS only:
+no schema change, no migration, `schema_migrations` stays at 26 rows.
+
+Owner decisions taken at the start: a launcher with five tiles instead of tabs;
+one Excel file per report instead of the combined five-sheet workbook; PDF
+included in this increment rather than deferred; the old `/reports/export`
+route removed.
+
+Commits, in apply order:
+
+1. `cc63402` (PR #17) — `_REPORT_SPECS` registry, `/reports/<key>` route,
+   launcher template rewritten, `spare_parts_report_page.html` added, tile CSS
+   appended at the end of `design-system.css`. Unknown key → 404.
+2. `78ac8f8` (PR #17) — `_spare_reports_workbook` split into
+   `_spare_report_styler` plus five single-sheet builders,
+   `/reports/<key>/export.xlsx` added, `reports_export()` deleted.
+3. `4d44770` (PR #17) — `generate_report_pdf()` in `spare_parts_pdf.py` and
+   `/reports/<key>/export.pdf`. Reuses `_register_fonts()`; no new font
+   registration anywhere, no external request.
+4. `eacc82f` (PR #17) — `SKU-RENAME-001`: 70+ display strings across two Python
+   files and seven templates. Identifiers untouched.
+5. `27cfc77` (PR #18) — `FIELD-CATNO-001`: the SKU record's own `article` field
+   label becomes «Номер каталога» / «Каталог рақами», resolving the collision
+   created by step 4.
+6. `d88ae21` (PR #18) — `_reports_filters` docstring stops naming the deleted
+   `reports_export`. Docstring only; the body stays byte-identical.
+7. `682cd0c` (PR #19) — `_fit_col_widths()`: a PDF column is never narrower
+   than the longest word of its header. Fixes four mid-word breaks
+   (`Позиций`, `Кол-во`, `Миқдор`, `бирлиги`). `col_weights` unchanged.
+8. `25d79e4` (PR #19) — launcher 3+2, larger tiles, one accent icon per tile
+   as inline SVG, `⚠` prefix dropped.
+
+Rollback: strictly reverse order within each PR, and PR #19 → #18 → #17 across
+them. No data rollback needed. To drop the whole increment on a deployed box:
+`git reset --hard 0ceea30` (the PR #16 merge, which is what production runs)
+plus a service restart.
+
+Deliberate asymmetries, recorded so nobody "fixes" them later:
+
+- the top-items PDF carries a `№` rank column that its `.xlsx` does not;
+- `repeat-orders` shows no money alert and no money stat cells, because
+  `_reports_data` deliberately does not price-filter that table;
+- every report page and export calls `_reports_data` in full and uses one
+  slice of it — four fifths of the computation is discarded on purpose.
+
+Verified instrumentally before merge: AST hashes of `_reports_filters`,
+`_reports_data`, `_reports_parse_date` and `_xlsx_safe` identical to `main`;
+all five table blocks in the new page hash-identical to the old cards; filter
+form identical except `action=`; `<div>` balance 54/54 and 9/9; identifier
+counts unchanged (`SparePartSku` 37/37, `sku_id` 111/111, `sku_label` 4/4);
+CSS an append-only tail block; no external URL added. The `_fit_col_widths`
+algorithm was re-derived independently in reportlab and reproduced all four
+defects and their fix, with column-width sums matching the page width exactly.
+
+Verified on staging from the artefacts themselves: eight `.xlsx` each with one
+correctly named sheet and matching totals (97 883 791.34 / 50 positions), eight
+`.pdf` with correct orientation, **both DejaVu fonts embedded** (`/FontFile2`),
+Uzbek `ў қ ғ ҳ` rendering as real letters, and the header row repeating on
+page 2 of both two-page files.
+
+**Still open — carry into the next chat:** roughly 25 of the 37 checks in
+`RUNBOOK_INC7_STAGING.md`, namely filter persistence and the equipment
+repopulation, 403 without `spare_parts_reports`, 404 on an unknown key and on
+the removed `/reports/export`, the empty-period state, the whole rename section
+(nav item, `/skus` screen after `FIELD-CATNO-001`, the act PDF, the purchase
+queue Excel column), the whole regression section, and **all of PR #19**, which
+has not been exercised on staging at all.
 
 ### FUEL-SYNC-013 — Topaz sync robustness (PR #7)
 
@@ -642,7 +710,9 @@ Blocker:
 ### SKU-RENAME-001 — Replace the visible term «SKU» with «Артикул»
 
 Priority: P2
-Status: open — scheduled into increment 7, paired with REPORTS-SPLIT
+Status: **completed 2026-07-23** — shipped as commit `eacc82f` in PR #17,
+with the follow-up `FIELD-CATNO-001` (`27cfc77`, PR #18). See SP-REPORTS-007
+under «Recently completed». Kept here for the rejected-alternatives record.
 
 Owner decision 2026-07-23. Management does not read «SKU»; the visible label
 becomes «Артикул» (Uzbek: «Артикул», Cyrillic).
@@ -665,15 +735,65 @@ repository and list every changed occurrence in the PR description.
 ### UNIT-SQM-001 — Add the «кв. метр» unit to the units directory
 
 Priority: P3
-Status: open
+Status: **applied on staging 2026-07-23 — PRODUCTION STILL PENDING**
 
 Found while preparing the 1C stock import (PILOT-1C-001): wire mesh is measured
 in square metres, and the `spare_part_units` directory has no such row. Units are
 a managed DB directory (`SparePartUnit`: code, name_ru, name_uz, is_active,
 sort_order), not a list in code, so this is a data change, not a code change.
-Proposed row: code `kv_metr`, RU «кв. метр», UZ «кв. метр» (Cyrillic).
-Unverified: whether the units directory has an edit screen under the spare-parts
-«Справочники» menu — check there first; if not, a one-off insert script.
+Row added: code `kv_metr`, RU «кв. метр», UZ «кв. метр» (Cyrillic),
+`sort_order` 60, `id=6` on staging.
+
+Resolved: there is **no** edit screen for the units directory — `spare_parts.py`
+exposes no route for `spare_part_units`, and the «Справочники» submenu holds only
+Каталог, Артикул, Модели техники, Нормы. The row was therefore inserted with a
+one-off idempotent script, `add_unit_sqm.py`, run from the application root
+(untracked, not a migration — it writes no `schema_migrations` row).
+
+**Production has not been done.** Run `add_unit_sqm.py` there (dry-run first,
+then `--apply`) as part of the increment-7 production deploy, otherwise the 1C
+stock entry will hit the missing unit again.
+
+Data rollback: `DELETE FROM spare_part_units WHERE code = 'kv_metr'`, but only
+while no request item or catalog row stores that code.
+
+### REPORT-LABEL-DRIFT-001 — Report column labels are written twice
+
+Priority: P3
+Status: open
+
+After SP-REPORTS-007 the header labels of every report exist in two places: the
+five `_report_xlsx_*` builders and `_report_pdf_table`. The comment there says
+the duplication keeps the formats from drifting, but duplication is exactly the
+mechanism of drift — change a header in one place and the other silently keeps
+the old wording. Pull the label sets into one structure both consume. Note the
+one intentional difference that must survive the refactor: the top-items PDF
+has a `№` rank column and its `.xlsx` does not.
+
+### UI-ACCENT-DUP-001 — `--vs-info` is the same colour as `--vs-primary`
+
+Priority: P3
+Status: open
+
+In `design-system.css` `--vs-info` is `#2563eb`, identical to `--vs-primary`,
+and `--vs-info-bg` (`#eaf1fe`) is identical to `--vs-primary-soft`. The five
+report launcher tiles were given five semantic accents but render in four
+colours: «Затраты по технике» and «Затраты по организациям» share the same blue.
+Either give `--vs-info` its own hue, or add a fifth accent for the tiles. Any
+new colour belongs in the token layer, not inline in a component.
+
+### DEMO-CLEANUP-002 — Agent-created equipment is not covered by the demo cleanup
+
+Priority: P2
+Status: open
+
+Staging carries equipment rows named `CODEX-SOL-SPARE-20260713-140035` and
+`CODEX-SOL-REAUDIT-20260714-192904`, created by an earlier browser QA agent.
+They show up in the by-equipment report. `seed_demo_orm.py --cleanup` keys off
+the `DEMO-2026H1` marker on spare-part requests and will not touch equipment,
+so the pre-production cleanup list must be widened beyond that marker. Related
+leftovers already recorded elsewhere: the `REGR-TEST-` / `REGR2-TEST-` requests
+and the irreversible +2.0 stock receipt from the SP-MINSTOCK-004 QA run.
 
 ### PLATE-NORM-001 — Normalise licence plates for search and matching
 
