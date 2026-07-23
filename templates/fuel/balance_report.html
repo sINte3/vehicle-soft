@@ -22,6 +22,9 @@
 {# FUEL-CARD-CLASS: external (third-party) fuel — reference column, not part of the balance #}
 {% set L_external = 'Стороннее топливо' if lang == 'ru' else 'Бегона ёқилғи' %}
 {% set L_external_note = 'Стороннее топливо — топливо других владельцев, которое хранится в наших ёмкостях и выдаётся через нашу колонку. С 1 мая 2026 года оно не входит в наш расход и показывается только справочно.' if lang == 'ru' else 'Бегона ёқилғи — бошқа эгаларнинг ёқилғиси, у бизнинг идишларимизда сақланади ва бизнинг колонкамиз орқали берилади. 2026 йил 1 майдан бошлаб у бизнинг сарфимизга кирмайди ва фақат маълумот учун кўрсатилади.' %}
+{# FUEL-RESERVE: reserve transfer — reference column, netted out of «Выдача Topaz» like external #}
+{% set L_reserve = 'Передано в резерв' if lang == 'ru' else 'Резервга берилган' %}
+{% set L_reserve_note = 'Резерв — забалансовый запас Пахтасаноаттранса. Топливо стоит в общих ёмкостях и выдаётся через ту же колонку, поэтому операции отмечаются вручную.' if lang == 'ru' else 'Резерв — Пахтасаноаттранснинг балансдан ташқари захираси. Ёқилғи умумий идишларда туради ва ўша колонкадан берилади, шунинг учун операциялар қўлда белгиланади.' %}
 {% set L_closing = 'Текущий остаток' if lang == 'ru' else 'Жорий қолдиқ' %}
 {% set L_table_desc = 'Расход за период разделён на выдачи Topaz и ручной расход. В дневных колонках они показаны одной суммой.' if lang == 'ru' else 'Давр бўйича сарф Topaz бериш ва қўлда киритилган сарфга ажратилган. Кунлик устунларда улар битта сумма сифатида кўрсатилади.' %}
 {% set L_wh_count = 'Складов:' if lang == 'ru' else 'Омборлар:' %}
@@ -85,7 +88,7 @@
     </form>
 </div>
 
-<div style="display:grid; grid-template-columns:repeat(6, minmax(150px, 1fr)); gap:12px; margin-bottom:16px;">
+<div style="display:grid; grid-template-columns:repeat(7, minmax(140px, 1fr)); gap:12px; margin-bottom:16px;">
     <div class="card" style="padding:16px;">
         <div class="text-muted">{{ L_opening }}</div>
         <div style="font-size:22px; font-weight:700; margin-top:6px;">{{ "%.2f"|format(totals.opening) }} л</div>
@@ -107,6 +110,11 @@
         <div class="text-muted">{{ L_manual }}</div>
         <div style="font-size:22px; font-weight:700; margin-top:6px;">{{ "%.2f"|format(totals.manual_expenses) }} л</div>
     </div>
+    {# FUEL-RESERVE: reference tile, styled muted like external #}
+    <div class="card" style="padding:16px;" title="{{ L_reserve_note }}">
+        <div class="text-muted">{{ L_reserve }}</div>
+        <div class="text-muted" style="font-size:22px; font-weight:700; margin-top:6px;">{{ "%.2f"|format(totals.reserve_out or 0) }} л</div>
+    </div>
     <div class="card" style="padding:16px;">
         <div class="text-muted">{{ L_closing }}</div>
         <div style="font-size:22px; font-weight:700; margin-top:6px; {% if totals.closing < 0 %}color:var(--danger);{% endif %}">
@@ -126,6 +134,10 @@
             <div class="text-muted" style="margin-top:4px; font-size:12px;">
                 {{ L_external_note }}
             </div>
+            {# FUEL-RESERVE: explain the reserve reference column #}
+            <div class="text-muted" style="margin-top:4px; font-size:12px;">
+                {{ L_reserve_note }}
+            </div>
         </div>
         <div class="text-muted">{{ L_wh_count }} {{ rows|length }}</div>
     </div>
@@ -142,6 +154,8 @@
                     <th rowspan="2" style="vertical-align:middle;">{{ L_topaz }}</th>
                     <th rowspan="2" class="text-muted" style="vertical-align:middle;" title="{{ L_external_note }}">{{ L_external }}</th>
                     <th rowspan="2" style="vertical-align:middle;">{{ L_manual }}</th>
+                    {# FUEL-RESERVE: reference column, muted like external #}
+                    <th rowspan="2" class="text-muted" style="vertical-align:middle;" title="{{ L_reserve_note }}">{{ L_reserve }}</th>
                     <th rowspan="2" style="vertical-align:middle;">{{ L_closing }}</th>
                     {% for item in date_items %}
                     <th colspan="2" class="text-center">{{ item.label }}</th>
@@ -173,6 +187,14 @@
                         {{ "%.2f"|format(row.manual_expenses or 0) }}
                         {%- endif -%}
                     </td>
+                    {# FUEL-RESERVE: non-zero reserve transfer drills into the marking screen pre-filtered by warehouse and period, same markup as the manual drill-down; admin-only because that page is admin-only #}
+                    <td class="text-right text-muted">
+                        {%- if row.reserve_out and current_user.is_admin -%}
+                        <a href="{{ url_for('fuel.reserve_transfers', warehouse_id=row.warehouse_id, start_date=start_date.isoformat(), end_date=end_date.isoformat()) }}" title="{{ L_reserve }}">{{ "%.2f"|format(row.reserve_out) }}</a>
+                        {%- else -%}
+                        {{ "%.2f"|format(row.reserve_out or 0) }}
+                        {%- endif -%}
+                    </td>
                     <td class="text-right"><strong>{{ "%.2f"|format(row.closing) }}</strong></td>
                     {% for item in date_items %}
                     {% set daily = row.daily[item.key] %}
@@ -190,6 +212,7 @@
                     <th class="text-right">{{ "%.2f"|format(totals.topaz_expenses) }}</th>
                     <th class="text-right text-muted">{{ "%.2f"|format(totals.external_expenses or 0) }}</th>
                     <th class="text-right">{{ "%.2f"|format(totals.manual_expenses) }}</th>
+                    <th class="text-right text-muted">{{ "%.2f"|format(totals.reserve_out or 0) }}</th>
                     <th class="text-right">{{ "%.2f"|format(totals.closing) }}</th>
                     {% for item in date_items %}
                     <th></th>

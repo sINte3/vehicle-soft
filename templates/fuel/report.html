@@ -176,6 +176,9 @@ form.fuel002d-filter-form {
 {# FUEL-CARD-CLASS: external (third-party) fuel — reference column, not part of the balance #}
 {% set L_external = 'Стороннее топливо' if lang == 'ru' else 'Бегона ёқилғи' %}
 {% set L_external_note = 'Стороннее топливо — топливо других владельцев, которое хранится в наших ёмкостях и выдаётся через нашу колонку. С 1 мая 2026 года оно не входит в наш расход и показывается только справочно.' if lang == 'ru' else 'Бегона ёқилғи — бошқа эгаларнинг ёқилғиси, у бизнинг идишларимизда сақланади ва бизнинг колонкамиз орқали берилади. 2026 йил 1 майдан бошлаб у бизнинг сарфимизга кирмайди ва фақат маълумот учун кўрсатилади.' %}
+{# FUEL-RESERVE: reserve transfer — reference column, netted out of «Выдача Topaz» like external #}
+{% set L_reserve = 'Передано в резерв' if lang == 'ru' else 'Резервга берилган' %}
+{% set L_reserve_note = 'Резерв — забалансовый запас Пахтасаноаттранса. Топливо стоит в общих ёмкостях и выдаётся через ту же колонку, поэтому операции отмечаются вручную.' if lang == 'ru' else 'Резерв — Пахтасаноаттранснинг балансдан ташқари захираси. Ёқилғи умумий идишларда туради ва ўша колонкадан берилади, шунинг учун операциялар қўлда белгиланади.' %}
 {% set L_ending = 'Расчётный остаток' if lang == 'ru' else 'Ҳисобий қолдиқ' %}
 {% set L_station_note = 'Выбран фильтр по АЗС: ручной расход относится к складу и в режиме одной АЗС не учитывается.' if lang == 'ru' else 'АЗС бўйича фильтр танланган: қўлда киритилган сарф омборга тегишли ва битта АЗС режимида ҳисобга олинмайди.' %}
 {% set L_tx = 'Транзакции' if lang == 'ru' else 'Транзакциялар' %}
@@ -337,6 +340,8 @@ form.fuel002d-filter-form {
     <div class="stat-card"><div class="label">{{ L_issued }}</div><div class="value" style="color:var(--danger);">-{{ '%.0f'|format(totals.issued) }} л</div></div>
     <div class="stat-card"><div class="label">{{ L_external }}</div><div class="value text-muted" title="{{ L_external_note }}">{{ '%.0f'|format(totals.external or 0) }} л</div></div>
     <div class="stat-card"><div class="label">{{ L_manual }}</div><div class="value" style="color:var(--danger);">-{{ '%.0f'|format(totals.manual) }} л</div></div>
+    {# FUEL-RESERVE: reference tile, muted like external #}
+    <div class="stat-card"><div class="label">{{ L_reserve }}</div><div class="value text-muted" title="{{ L_reserve_note }}">{{ '%.0f'|format(totals.reserve_out or 0) }} л</div></div>
     <div class="stat-card"><div class="label">{{ L_ending }}</div><div class="value">{{ '%.0f'|format(totals.ending) }} л</div></div>
     <div class="stat-card"><div class="label">{{ L_tx }}</div><div class="value">{{ totals.transactions }}</div></div>
     <div class="stat-card"><div class="label">{{ L_sync_unknown }}</div><div class="value" {% if sync_summary.unknown %}style="color:var(--danger);"{% endif %}>{{ sync_summary.unknown }}</div></div>
@@ -376,7 +381,7 @@ form.fuel002d-filter-form {
 <table id="warehouseReportTable" class="fuel002d-report-table">
         <thead>
             <tr>
-                <th>{{ L_wh }}</th><th class="text-center">{{ L_station }}</th><th class="text-right">{{ L_opening }}</th><th class="text-right">{{ L_receipts }}</th><th class="text-right">{{ L_issued }}</th><th class="text-right text-muted" title="{{ L_external_note }}">{{ L_external }}</th><th class="text-right">{{ L_manual }}</th><th class="text-right">{{ L_ending }}</th><th class="text-right">{{ L_tx }}</th><th>{{ L_status }}</th><th>{{ L_last }}</th>
+                <th>{{ L_wh }}</th><th class="text-center">{{ L_station }}</th><th class="text-right">{{ L_opening }}</th><th class="text-right">{{ L_receipts }}</th><th class="text-right">{{ L_issued }}</th><th class="text-right text-muted" title="{{ L_external_note }}">{{ L_external }}</th><th class="text-right">{{ L_manual }}</th><th class="text-right text-muted" title="{{ L_reserve_note }}">{{ L_reserve }}</th><th class="text-right">{{ L_ending }}</th><th class="text-right">{{ L_tx }}</th><th>{{ L_status }}</th><th>{{ L_last }}</th>
             </tr>
         </thead>
         <tbody>
@@ -393,6 +398,14 @@ form.fuel002d-filter-form {
                 <a href="{{ url_for('fuel.manual_expenses', warehouse_id=r.warehouse.id, date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" title="{{ L_manual }}">{{ '%.2f'|format(r.manual) }}</a>
                 {%- else -%}
                 {{ '%.2f'|format(r.manual or 0) }}
+                {%- endif -%}
+            </td>
+            {# FUEL-RESERVE: non-zero reserve transfer drills into the marking screen pre-filtered by warehouse and period; admin-only because that page is admin-only #}
+            <td class="text-right text-muted">
+                {%- if r.reserve_out and current_user.is_admin -%}
+                <a href="{{ url_for('fuel.reserve_transfers', warehouse_id=r.warehouse.id, start_date=d_from.isoformat(), end_date=d_to.isoformat()) }}" title="{{ L_reserve }}">{{ '%.2f'|format(r.reserve_out) }}</a>
+                {%- else -%}
+                {{ '%.2f'|format(r.reserve_out or 0) }}
                 {%- endif -%}
             </td>
             <td class="text-right" style="font-weight:700;">{% if r.ending is none %}—{% else %}{{ '%.2f'|format(r.ending) }}{% endif %}</td>

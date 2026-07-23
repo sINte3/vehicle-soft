@@ -2015,6 +2015,7 @@ def _fuel_report_workbook(data, lang='uz'):
         (L('Выдача Topaz, л', 'Topaz бериш, л'), data['totals']['issued']),
         (L('Стороннее топливо, л', 'Бегона ёқилғи, л'), data['totals'].get('external', 0)),
         (L('Ручной расход, л', 'Қўлда киритилган сарф, л'), data['totals'].get('manual', 0)),
+        (L('Передано в резерв, л', 'Резервга берилган, л'), data['totals'].get('reserve_out', 0)),
         (L('Расчётный остаток, л', 'Ҳисобий қолдиқ, л'), data['totals']['ending']),
         (L('Склады', 'Омборлар'), data['totals']['warehouses']),
         (L('АЗС', 'АЗС'), data['totals']['stations']),
@@ -2044,10 +2045,10 @@ def _fuel_report_workbook(data, lang='uz'):
     style_table(ws)
 
     ws = wb.create_sheet(_safe_ws_title(L('Склады', 'Омборлар'), used))
-    ws.append([L('Склад', 'Омбор'), L('АЗС', 'АЗС'), L('Начальный остаток', 'Бошланғич қолдиқ'), L('Приход', 'Кирим'), L('Выдача Topaz', 'Topaz бериш'), L('Стороннее топливо', 'Бегона ёқилғи'), L('Ручной расход', 'Қўлда киритилган сарф'), L('Расчётный остаток', 'Ҳисобий қолдиқ'), L('Транзакций', 'Транзакциялар'), L('Последняя выдача', 'Охирги бериш')])
+    ws.append([L('Склад', 'Омбор'), L('АЗС', 'АЗС'), L('Начальный остаток', 'Бошланғич қолдиқ'), L('Приход', 'Кирим'), L('Выдача Topaz', 'Topaz бериш'), L('Стороннее топливо', 'Бегона ёқилғи'), L('Ручной расход', 'Қўлда киритилган сарф'), L('Передано в резерв', 'Резервга берилган'), L('Расчётный остаток', 'Ҳисобий қолдиқ'), L('Транзакций', 'Транзакциялар'), L('Последняя выдача', 'Охирги бериш')])
     for r in data['warehouse_rows']:
         last = r['last_txn'].txn_datetime.strftime('%d.%m.%Y %H:%M') if r['last_txn'] else ''
-        ws.append([r['warehouse'].name, r['stations_count'], r['opening'], r['receipts'], r['issued'], r.get('external', 0), r.get('manual', 0), r['ending'], r['tx_count'], last])
+        ws.append([r['warehouse'].name, r['stations_count'], r['opening'], r['receipts'], r['issued'], r.get('external', 0), r.get('manual', 0), r.get('reserve_out', 0), r['ending'], r['tx_count'], last])
     style_table(ws)
 
     ws = wb.create_sheet(_safe_ws_title(L('АЗС', 'АЗС'), used))
@@ -4375,9 +4376,11 @@ def balance_report_export():
     # [REASON]: FUEL-MANUAL-EXP-A3 — split the single "Расход" column into
     # "Выдача Topaz" + "Ручной расход" so the export matches the page and
     # /fuel/report. FUEL-CARD-CLASS then inserts "Стороннее топливо" as a
-    # reference column beside "Выдача Topaz". Each addition shifts the day blocks
-    # below one position further right; every index derives from len(base_headers)
-    # so it follows automatically.
+    # reference column beside "Выдача Topaz"; FUEL-RESERVE inserts "Передано в
+    # резерв" beside "Ручной расход". Each addition shifts the day blocks below
+    # one position further right; day_start_col derives from len(base_headers) so
+    # it follows automatically, but every hard-coded cell index below was
+    # re-checked against this list.
     base_headers = [
         "№",
         "Организация",
@@ -4387,6 +4390,7 @@ def balance_report_export():
         "Выдача Topaz",
         "Стороннее топливо",
         "Ручной расход",
+        "Передано в резерв",
         "Текущий остаток",
     ]
 
@@ -4419,13 +4423,14 @@ def balance_report_export():
         ws.cell(row=r, column=3).value = row["warehouse"]
         ws.cell(row=r, column=4).value = row["opening"]
         ws.cell(row=r, column=5).value = row["receipts"]
-        # [REASON]: FUEL-MANUAL-EXP-A3 / FUEL-CARD-CLASS — Topaz (net), external
-        # fuel (reference) and manual expense in their own columns; closing is
-        # col 9.
+        # [REASON]: FUEL-MANUAL-EXP-A3 / FUEL-CARD-CLASS / FUEL-RESERVE — Topaz
+        # (net), external fuel (reference), manual expense and reserve transfer
+        # (reference) in their own columns; closing is col 10.
         ws.cell(row=r, column=6).value = row["topaz_expenses"]
         ws.cell(row=r, column=7).value = row["external_expenses"]
         ws.cell(row=r, column=8).value = row["manual_expenses"]
-        ws.cell(row=r, column=9).value = row["closing"]
+        ws.cell(row=r, column=9).value = row["reserve_out"]
+        ws.cell(row=r, column=10).value = row["closing"]
 
         col = day_start_col
         for item in date_items:
@@ -4441,7 +4446,8 @@ def balance_report_export():
     ws.cell(row=total_row, column=6).value = totals["topaz_expenses"]
     ws.cell(row=total_row, column=7).value = totals["external_expenses"]
     ws.cell(row=total_row, column=8).value = totals["manual_expenses"]
-    ws.cell(row=total_row, column=9).value = totals["closing"]
+    ws.cell(row=total_row, column=9).value = totals["reserve_out"]
+    ws.cell(row=total_row, column=10).value = totals["closing"]
 
     thin = Side(style="thin", color="D1D5DB")
     header_fill = PatternFill("solid", fgColor="E5E7EB")
@@ -4467,17 +4473,18 @@ def balance_report_export():
         for row_idx in range(5, total_row + 1):
             ws.cell(row=row_idx, column=col_idx).number_format = '#,##0.00'
 
-    # [REASON]: FUEL-CARD-CLASS — style the external-fuel reference column (col 7)
-    # muted so it does not read as part of the balance arithmetic. The header keeps
-    # its fill; only the font colour changes.
-    ext_col = 7
-    ws.cell(row=3, column=ext_col).font = Font(bold=True, italic=True, color="6B7280")
-    for row_idx in range(5, total_row):
-        ws.cell(row=row_idx, column=ext_col).font = Font(italic=True, color="6B7280")
+    # [REASON]: FUEL-CARD-CLASS / FUEL-RESERVE — style the external-fuel (col 7)
+    # and reserve-transfer (col 9) reference columns muted so they do not read as
+    # part of the balance arithmetic. The header keeps its fill; only the font
+    # colour changes.
+    for ref_col in (7, 9):
+        ws.cell(row=3, column=ref_col).font = Font(bold=True, italic=True, color="6B7280")
+        for row_idx in range(5, total_row):
+            ws.cell(row=row_idx, column=ref_col).font = Font(italic=True, color="6B7280")
 
-    # [REASON]: FUEL-MANUAL-EXP-A3 / FUEL-CARD-CLASS — col 6 Выдача Topaz, col 7
-    # Стороннее топливо, col 8 Ручной расход, col 9 Текущий остаток; day blocks
-    # begin at day_start_col.
+    # [REASON]: FUEL-MANUAL-EXP-A3 / FUEL-CARD-CLASS / FUEL-RESERVE — col 6 Выдача
+    # Topaz, col 7 Стороннее топливо, col 8 Ручной расход, col 9 Передано в
+    # резерв, col 10 Текущий остаток; day blocks begin at day_start_col.
     widths = {
         1: 5,
         2: 28,
@@ -4488,6 +4495,7 @@ def balance_report_export():
         7: 16,
         8: 14,
         9: 16,
+        10: 16,
     }
     for col_idx, width in widths.items():
         ws.column_dimensions[get_column_letter(col_idx)].width = width
