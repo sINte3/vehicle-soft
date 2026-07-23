@@ -3265,6 +3265,11 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Ð”Ð
         "opening": 0.0,
         "receipts": 0.0,
         "expenses": 0.0,
+        # [REASON]: FUEL-MANUAL-EXP-A3 â€” the combined "expenses" total stays as the
+        # cross-check; these two split it into its Topaz and manual components so
+        # balance_report presents the expense exactly like /fuel/report does.
+        "topaz_expenses": 0.0,
+        "manual_expenses": 0.0,
         "closing": 0.0,
     }
 
@@ -3357,6 +3362,11 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Ð”Ð
             "opening": round(opening, 2),
             "receipts": round(period_receipts, 2),
             "expenses": round(period_expenses, 2),
+            # [REASON]: FUEL-MANUAL-EXP-A3 â€” Topaz issues and manual expense as
+            # separate presentation columns; their sum equals "expenses" to the
+            # cent. "expenses" is unchanged and still drives closing.
+            "topaz_expenses": round(period_topaz_expenses, 2),
+            "manual_expenses": round(period_manual_expenses, 2),
             "closing": round(closing, 2),
             "daily": daily,
         }
@@ -3366,6 +3376,8 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Ð”Ð
         totals["opening"] += row["opening"]
         totals["receipts"] += row["receipts"]
         totals["expenses"] += row["expenses"]
+        totals["topaz_expenses"] += row["topaz_expenses"]
+        totals["manual_expenses"] += row["manual_expenses"]
         totals["closing"] += row["closing"]
 
     for k in totals:
