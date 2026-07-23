@@ -2626,9 +2626,9 @@ def _sku_duplicate_response(part_id, race=False):
             'SKU save rejected by uq_spare_part_skus_normalized (race), part=%s',
             part_id)
     _spare_flash_errors(
-        [_spare_t('Бу деталь учун бундай SKU аллақачон мавжуд',
-                  'Такой SKU уже существует для этой детали')],
-        title_uz='SKU сақланмади:', title_ru='SKU не сохранён:')
+        [_spare_t('Бу деталь учун бундай артикул аллақачон мавжуд',
+                  'Такой артикул уже существует для этой детали')],
+        title_uz='Артикул сақланмади:', title_ru='Артикул не сохранён:')
     return redirect(url_for('spare_parts.skus'))
 
 
@@ -2655,8 +2655,8 @@ def sku_save():
             'Камида битта майдонни тўлдиринг: бренд, артикул ёки таъминотчи',
             'Заполните хотя бы одно поле: бренд, артикул или поставщик'))
     if errors:
-        _spare_flash_errors(errors, title_uz='SKU сақланмади:',
-                            title_ru='SKU не сохранён:')
+        _spare_flash_errors(errors, title_uz='Артикул сақланмади:',
+                            title_ru='Артикул не сохранён:')
         return redirect(url_for('spare_parts.skus'))
 
     # Friendly pre-check for the common duplicate case (see
@@ -2710,7 +2710,7 @@ def sku_save():
         # message as the pre-check path.
         db.session.rollback()
         return _sku_duplicate_response(part.id, race=True)
-    flash(_spare_t('SKU сақланди', 'SKU сохранён'), 'success')
+    flash(_spare_t('Артикул сақланди', 'Артикул сохранён'), 'success')
     return redirect(url_for('spare_parts.skus'))
 
 
@@ -3174,9 +3174,10 @@ def _purchase_queue_workbook(rows, lang='uz'):
     thin = Side(style='thin', color='D9D9D9')
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    # [REASON]: deliberate duplication of _spare_reports_workbook's nested
-    # styling helper — that builder is a shipped export and out of scope for
-    # this increment, so nothing is extracted, refactored or imported.
+    # [REASON]: deliberate duplication of the reports styling helper (today
+    # _spare_report_styler) — this builder is a shipped export and out of
+    # scope for that increment, so nothing is extracted, refactored or
+    # imported here.
     def style_sheet(ws, money_cols=()):
         ws.freeze_panes = 'A2'
         ws.sheet_view.showGridLines = False
@@ -3204,7 +3205,7 @@ def _purchase_queue_workbook(rows, lang='uz'):
     ws.append(['№',
                L('Организация', 'Ташкилот'),
                L('Запчасть', 'Эҳтиёт қисм'),
-               'SKU',
+               'Артикул',
                L('Ед. изм.', 'Ўлчов бирлиги'),
                L('Остаток', 'Қолдиқ'),
                L('Под заявки', 'Сўровлар учун'),
@@ -3447,7 +3448,7 @@ def inventory_movement_create():
 
     errors = []
     if sku is None or sku.is_active == False:  # noqa: E712
-        errors.append(_spare_t('SKU танланг', 'Выберите SKU'))
+        errors.append(_spare_t('Артикулни танланг', 'Выберите артикул'))
     quantity = None
     try:
         parsed = float(raw_qty)
@@ -3552,7 +3553,7 @@ def inventory_min_level_save():
     sku_id = request.form.get('sku_id', type=int)
     sku = SparePartSku.query.get(sku_id) if sku_id else None
     if sku is None:
-        _spare_flash_errors([_spare_t('SKU топилмади', 'SKU не найден')],
+        _spare_flash_errors([_spare_t('Артикул топилмади', 'Артикул не найден')],
                             title_uz='Минимум сақланмади:',
                             title_ru='Минимум не сохранён:')
         return redirect(url_for('spare_parts.inventory',
@@ -3720,7 +3721,8 @@ def purchase_queue_export():
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
-    # ASCII-only filename (Windows + browser safety), reports_export naming.
+    # ASCII-only filename (Windows + browser safety), same naming rule as the
+    # spare parts report exports (_report_export_filename).
     prefix = 'Purchase_queue' if lang == 'ru' else 'Xarid_navbati'
     fname = '{}_{}.xlsx'.format(prefix, datetime.now().strftime('%d_%m_%Y'))
     return send_file(
@@ -3859,8 +3861,8 @@ def issue_request(rid):
     # rule holds even if the client-side UI is bypassed.
     if ctx['no_sku_items'] and request.form.get('confirm_no_sku') != '1':
         errors.append(_spare_t(
-            'SKUсиз позициялар омбордан ҳисобдан чиқарилмайди — беришдан олдин буни тасдиқлаш шарт',
-            'Позиции без SKU не будут списаны со склада — перед выдачей это нужно явно подтвердить'))
+            'Артикулсиз позициялар омбордан ҳисобдан чиқарилмайди — беришдан олдин буни тасдиқлаш шарт',
+            'Позиции без артикула не будут списаны со склада — перед выдачей это нужно явно подтвердить'))
     # [REASON]: SP-F-001 pre-flight — a friendly shortage message BEFORE any
     # transaction work. SP-RESERVE-003: aggregated per SKU (two items on the
     # same SKU are checked against their combined need) and against
@@ -5202,6 +5204,73 @@ def _reports_data(d_from, d_to, org_id=None, equipment_id=None, category_id=None
     }
 
 
+# [REASON]: REPORTS-SPLIT — the five report tables used to live on one page.
+# Owner decision 2026-07-23: each becomes its own page reached from a launcher.
+# A single dispatch table + one parameterized route replaces five near-identical
+# routes and five near-identical templates; the data layer is untouched —
+# every page calls _reports_data() in full and renders one slice of it.
+# is_cost gates the cost-rule alert and the money stat strip on a report page
+# (repeat-orders is deliberately NOT filtered by confirmed prices — see the
+# [REASON] inside _reports_data — so money UI above it would mislead);
+# landscape drives the PDF page orientation.
+_REPORT_SPECS = {
+    'by-equipment': {
+        'data_key': 'by_equipment',
+        'title_ru': 'Затраты по технике',
+        'title_uz': 'Техника бўйича харажатлар',
+        'subtitle_ru': 'Сумма по каждой единице техники за период',
+        'subtitle_uz': 'Давр учун ҳар бир техника бўйича сумма',
+        'is_cost': True,
+        'landscape': False,
+    },
+    'by-organization': {
+        'data_key': 'by_organization',
+        'title_ru': 'Затраты по организациям',
+        'title_uz': 'Ташкилотлар бўйича харажатлар',
+        'subtitle_ru': 'Сумма по организациям за период',
+        'subtitle_uz': 'Давр учун ташкилотлар бўйича сумма',
+        'is_cost': True,
+        'landscape': False,
+    },
+    'by-category': {
+        'data_key': 'by_category',
+        'title_ru': 'Затраты по категориям',
+        'title_uz': 'Категориялар бўйича харажатлар',
+        'subtitle_ru': 'Сумма по категориям каталога за период',
+        'subtitle_uz': 'Давр учун каталог категориялари бўйича сумма',
+        'is_cost': True,
+        'landscape': False,
+    },
+    'repeat-orders': {
+        'data_key': 'repeat_rows',
+        'title_ru': 'Повторные заказы',
+        'title_uz': 'Такрорий сўровлар',
+        'subtitle_ru': 'Повторные заказы одной запчасти на одну технику',
+        'subtitle_uz': 'Бир техникага бир хил эҳтиёт қисмнинг такрорий сўровлари',
+        'is_cost': False,
+        'landscape': True,
+    },
+    'top-items': {
+        'data_key': 'top_items',
+        'title_ru': 'Топ-20 самых дорогих позиций',
+        'title_uz': 'Топ-20 энг қиммат позициялар',
+        'subtitle_ru': 'Двадцать самых дорогих позиций за период',
+        'subtitle_uz': 'Давр учун йигирмата энг қиммат позиция',
+        'is_cost': True,
+        'landscape': True,
+    },
+}
+_REPORT_ORDER = ('by-equipment', 'by-organization', 'by-category',
+                 'repeat-orders', 'top-items')
+
+
+def _report_spec_or_404(key):
+    spec = _REPORT_SPECS.get(key)
+    if spec is None:
+        abort(404)
+    return spec
+
+
 def _xlsx_safe(value):
     """Neutralize spreadsheet formula injection in a user-controlled string.
 
@@ -5219,15 +5288,17 @@ def _xlsx_safe(value):
     return value
 
 
-def _spare_reports_workbook(data, lang='uz'):
-    """Build the 5-sheet Excel workbook for the spare parts reports.
+def _spare_report_styler(lang):
+    """Shared openpyxl styling for the five single-report workbooks.
 
-    Follows the styling conventions of fuel_routes._fuel_report_workbook
-    (bold filled header row, frozen header, borders, auto column widths).
+    [REASON]: REPORTS-SPLIT — extracted verbatim from _spare_reports_workbook
+    (the removed combined 5-sheet builder) so the five per-report files keep
+    the exact look of the former five sheets: same header fill and font, same
+    borders, same frozen header row, same money format, same auto widths.
     """
-    from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
+    from types import SimpleNamespace
 
     def L(ru, uz):
         return ru if lang == 'ru' else uz
@@ -5237,8 +5308,6 @@ def _spare_reports_workbook(data, lang='uz'):
     # in templates), not the fuel report's '#,##0.00' liters format.
     money_fmt = '#,##0'
 
-    wb = Workbook()
-    wb.remove(wb.active)
     header_fill = PatternFill('solid', fgColor='D9EAD3')
     header_font = Font(bold=True)
     total_font = Font(bold=True)
@@ -5286,84 +5355,297 @@ def _spare_reports_workbook(data, lang='uz'):
         'yellow': L('Жёлтый (≤30 дней)', 'Сариқ (≤30 кун)'),
     }
 
-    # Sheet 1: costs by equipment.
-    ws = wb.create_sheet(L('Затраты по технике', 'Техника бўйича харажатлар'))
-    ws.append([L('Техника', 'Техника'), L('Гос. номер', 'Давлат рақами'),
-               L('Организация', 'Ташкилот'), L('Позиций', 'Позициялар'),
-               L('Сумма, сум', 'Сумма, сўм')])
+    return SimpleNamespace(L=L, total_font=total_font, style_table=style_table,
+                           eq_name=eq_name, eq_plate=eq_plate,
+                           org_name=org_name, severity_labels=severity_labels)
+
+
+def _report_xlsx_by_equipment(data, lang):
+    """One-sheet workbook: costs by equipment (former sheet 1, cell for cell)."""
+    from openpyxl import Workbook
+    st = _spare_report_styler(lang)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = st.L('Затраты по технике', 'Техника бўйича харажатлар')
+    ws.append([st.L('Техника', 'Техника'), st.L('Гос. номер', 'Давлат рақами'),
+               st.L('Организация', 'Ташкилот'), st.L('Позиций', 'Позициялар'),
+               st.L('Сумма, сум', 'Сумма, сўм')])
     for r in data['by_equipment']:
-        ws.append([eq_name(r['equipment']), eq_plate(r['equipment']),
-                   org_name(r['organization']), r['lines'], r['total']])
-    ws.append([L('ИТОГО', 'ЖАМИ'), '', '', data['cost_lines_count'],
+        ws.append([st.eq_name(r['equipment']), st.eq_plate(r['equipment']),
+                   st.org_name(r['organization']), r['lines'], r['total']])
+    ws.append([st.L('ИТОГО', 'ЖАМИ'), '', '', data['cost_lines_count'],
                data['grand_total']])
     for cell in ws[ws.max_row]:
-        cell.font = total_font
-    style_table(ws, money_cols=(5,))
+        cell.font = st.total_font
+    st.style_table(ws, money_cols=(5,))
+    return wb
 
-    # Sheet 2: costs by organization.
-    ws = wb.create_sheet(L('Затраты по организациям', 'Ташкилотлар бўйича харажатлар'))
-    ws.append([L('Организация', 'Ташкилот'), L('Позиций', 'Позициялар'),
-               L('Сумма, сум', 'Сумма, сўм')])
+
+def _report_xlsx_by_organization(data, lang):
+    """One-sheet workbook: costs by organization (former sheet 2, cell for cell)."""
+    from openpyxl import Workbook
+    st = _spare_report_styler(lang)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = st.L('Затраты по организациям', 'Ташкилотлар бўйича харажатлар')
+    ws.append([st.L('Организация', 'Ташкилот'), st.L('Позиций', 'Позициялар'),
+               st.L('Сумма, сум', 'Сумма, сўм')])
     for r in data['by_organization']:
-        ws.append([org_name(r['organization']), r['lines'], r['total']])
-    ws.append([L('ИТОГО', 'ЖАМИ'), data['cost_lines_count'], data['grand_total']])
+        ws.append([st.org_name(r['organization']), r['lines'], r['total']])
+    ws.append([st.L('ИТОГО', 'ЖАМИ'), data['cost_lines_count'], data['grand_total']])
     for cell in ws[ws.max_row]:
-        cell.font = total_font
-    style_table(ws, money_cols=(3,))
+        cell.font = st.total_font
+    st.style_table(ws, money_cols=(3,))
+    return wb
 
-    # Sheet 3: costs by catalog category.
-    ws = wb.create_sheet(L('Затраты по категориям', 'Категориялар бўйича харажатлар'))
-    ws.append([L('Категория', 'Категория'), L('Позиций', 'Позициялар'),
-               L('Сумма, сум', 'Сумма, сўм')])
+
+def _report_xlsx_by_category(data, lang):
+    """One-sheet workbook: costs by catalog category (former sheet 3, cell for cell)."""
+    from openpyxl import Workbook
+    st = _spare_report_styler(lang)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = st.L('Затраты по категориям', 'Категориялар бўйича харажатлар')
+    ws.append([st.L('Категория', 'Категория'), st.L('Позиций', 'Позициялар'),
+               st.L('Сумма, сум', 'Сумма, сўм')])
     for r in data['by_category']:
         cat = r['category']
         label = (_xlsx_safe(cat.name_ru if lang == 'ru' else cat.name_uz) if cat
-                 else L('— без категории —', '— категориясиз —'))
+                 else st.L('— без категории —', '— категориясиз —'))
         ws.append([label, r['lines'], r['total']])
-    ws.append([L('ИТОГО', 'ЖАМИ'), data['cost_lines_count'], data['grand_total']])
+    ws.append([st.L('ИТОГО', 'ЖАМИ'), data['cost_lines_count'], data['grand_total']])
     for cell in ws[ws.max_row]:
-        cell.font = total_font
-    style_table(ws, money_cols=(3,))
+        cell.font = st.total_font
+    st.style_table(ws, money_cols=(3,))
+    return wb
 
-    # Sheet 4: repeat-order warnings.
+
+def _report_xlsx_repeat_orders(data, lang):
+    """One-sheet workbook: repeat-order warnings (former sheet 4, cell for cell)."""
+    from openpyxl import Workbook
+    st = _spare_report_styler(lang)
+    wb = Workbook()
+    ws = wb.active
     # [REASON]: MOBILE-UPLOAD-001/i18n — Excel worksheet names are capped at
     # 31 characters and cannot contain : \ / ? * [ ]. The on-screen card
     # title for this table also carries a "(red <=7d, yellow <=30d)"
     # parenthetical, which alone pushes the RU/UZ pair to 49/47 characters.
     # That detail is already shown per-row via the Уровень/Даража column
-    # (severity_labels below), so the sheet name reuses only the base
-    # RU/UZ title without the parenthetical -- still the exact label pair
-    # used on screen, just without the redundant, over-length suffix.
-    ws = wb.create_sheet(L('Повторные заказы', 'Такрорий сўровлар'))
-    ws.append([L('Заявка', 'Сўров'), L('Дата', 'Сана'),
-               L('Организация', 'Ташкилот'), L('Техника', 'Техника'),
-               L('Запчасть', 'Эҳтиёт қисм'), L('Уровень', 'Даража'),
-               L('Дней с прошлого заказа', 'Олдинги сўровдан кунлар')])
+    # (severity_labels), so the sheet name reuses only the base RU/UZ title
+    # without the parenthetical -- still the exact label pair used on screen,
+    # just without the redundant, over-length suffix.
+    ws.title = st.L('Повторные заказы', 'Такрорий сўровлар')
+    ws.append([st.L('Заявка', 'Сўров'), st.L('Дата', 'Сана'),
+               st.L('Организация', 'Ташкилот'), st.L('Техника', 'Техника'),
+               st.L('Запчасть', 'Эҳтиёт қисм'), st.L('Уровень', 'Даража'),
+               st.L('Дней с прошлого заказа', 'Олдинги сўровдан кунлар')])
     for r in data['repeat_rows']:
         ws.append(['№{}'.format(r['request_id']),
                    r['request_date'].strftime('%d.%m.%Y'),
-                   org_name(r['organization']), eq_name(r['equipment']),
+                   st.org_name(r['organization']), st.eq_name(r['equipment']),
                    _xlsx_safe(r['part_name']),
-                   severity_labels.get(r['severity'], r['severity']),
+                   st.severity_labels.get(r['severity'], r['severity']),
                    r['days_since']])
-    style_table(ws)
+    st.style_table(ws)
+    return wb
 
-    # Sheet 5: top-20 most expensive line items.
-    ws = wb.create_sheet(L('Топ-20 самых дорогих позиций', 'Топ-20 энг қиммат позициялар'))
-    ws.append([L('Заявка', 'Сўров'), L('Дата', 'Сана'),
-               L('Организация', 'Ташкилот'), L('Техника', 'Техника'),
-               L('Запчасть', 'Эҳтиёт қисм'), L('Кол-во', 'Миқдор'),
-               L('Ед. изм.', 'Ўлчов бирлиги'), L('Цена, сум', 'Нарх, сўм'),
-               L('Сумма, сум', 'Сумма, сўм')])
+
+def _report_xlsx_top_items(data, lang):
+    """One-sheet workbook: top-20 most expensive items (former sheet 5, cell for cell)."""
+    from openpyxl import Workbook
+    st = _spare_report_styler(lang)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = st.L('Топ-20 самых дорогих позиций', 'Топ-20 энг қиммат позициялар')
+    ws.append([st.L('Заявка', 'Сўров'), st.L('Дата', 'Сана'),
+               st.L('Организация', 'Ташкилот'), st.L('Техника', 'Техника'),
+               st.L('Запчасть', 'Эҳтиёт қисм'), st.L('Кол-во', 'Миқдор'),
+               st.L('Ед. изм.', 'Ўлчов бирлиги'), st.L('Цена, сум', 'Нарх, сўм'),
+               st.L('Сумма, сум', 'Сумма, сўм')])
     for r in data['top_items']:
         ws.append(['№{}'.format(r['request_id']),
                    r['request_date'].strftime('%d.%m.%Y'),
-                   org_name(r['organization']), eq_name(r['equipment']),
+                   st.org_name(r['organization']), st.eq_name(r['equipment']),
                    _xlsx_safe(r['name']), r['quantity'], _xlsx_safe(r['unit']),
                    r['price'], r['total']])
-    style_table(ws, money_cols=(8, 9))
-
+    st.style_table(ws, money_cols=(8, 9))
     return wb
+
+
+# [REASON]: REPORTS-SPLIT — the builder dispatch lives OUTSIDE _REPORT_SPECS so
+# the registry stays data-only (its records are passed into templates as tile
+# context); the key set must mirror _REPORT_SPECS exactly.
+_REPORT_XLSX_BUILDERS = {
+    'by-equipment': _report_xlsx_by_equipment,
+    'by-organization': _report_xlsx_by_organization,
+    'by-category': _report_xlsx_by_category,
+    'repeat-orders': _report_xlsx_repeat_orders,
+    'top-items': _report_xlsx_top_items,
+}
+
+
+def _report_export_filename(key, d_from, d_to, lang, ext):
+    """ASCII-only export file name: {prefix}_{slug}_{dd_mm_yyyy}_{dd_mm_yyyy}.{ext}.
+
+    [REASON]: Windows + browser safety, same rule as purchase_queue_export;
+    the RU/UZ prefix pair is unchanged from the removed combined-file export.
+    """
+    prefix = ('Spare_parts_report' if lang == 'ru'
+              else 'Ehtiyot_qismlar_hisoboti')
+    slug = key.replace('-', '_')
+    return '{}_{}_{}_{}.{}'.format(prefix, slug, d_from.strftime('%d_%m_%Y'),
+                                   d_to.strftime('%d_%m_%Y'), ext)
+
+
+def _report_pdf_table(key, data, lang):
+    """Columns, rows and layout hints for one report's PDF table.
+
+    [REASON]: REPORTS-SPLIT — header labels are the exact strings of the
+    corresponding .xlsx builder, so the two formats never drift. Cell text is
+    built plain: no _xlsx_safe apostrophe (that guard is Excel-specific), the
+    PDF renderer applies the SP-F-005 escape() rule to the wrap_cols instead.
+    Money and quantities go through the PDF module's _fmt_money/_fmt_qty so
+    numbers look the same as in the write-off act.
+    """
+    from spare_parts_pdf import _fmt_money, _fmt_qty
+
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
+
+    def eq_name(eq):
+        return eq.name if eq else L('— без техники —', '— техникасиз —')
+
+    def eq_plate(eq):
+        return (eq.plate or '') if eq else ''
+
+    def org_name(org):
+        return (org.short_name or org.name) if org else '—'
+
+    severity_labels = {
+        'red': L('Красный (≤7 дней)', 'Қизил (≤7 кун)'),
+        'yellow': L('Жёлтый (≤30 дней)', 'Сариқ (≤30 кун)'),
+    }
+
+    if key == 'by-equipment':
+        return {
+            'columns': [L('Техника', 'Техника'), L('Гос. номер', 'Давлат рақами'),
+                        L('Организация', 'Ташкилот'), L('Позиций', 'Позициялар'),
+                        L('Сумма, сум', 'Сумма, сўм')],
+            'rows': [[eq_name(r['equipment']), eq_plate(r['equipment']),
+                      org_name(r['organization']), str(r['lines']),
+                      _fmt_money(r['total'])]
+                     for r in data['by_equipment']],
+            'totals_row': [L('ИТОГО', 'ЖАМИ'), '', '',
+                           str(data['cost_lines_count']),
+                           _fmt_money(data['grand_total'])],
+            'col_weights': (3.0, 1.3, 2.2, 1.0, 1.6),
+            'numeric_cols': (3, 4),
+            'wrap_cols': (0, 2),
+        }
+    if key == 'by-organization':
+        return {
+            'columns': [L('Организация', 'Ташкилот'), L('Позиций', 'Позициялар'),
+                        L('Сумма, сум', 'Сумма, сўм')],
+            'rows': [[org_name(r['organization']), str(r['lines']),
+                      _fmt_money(r['total'])]
+                     for r in data['by_organization']],
+            'totals_row': [L('ИТОГО', 'ЖАМИ'), str(data['cost_lines_count']),
+                           _fmt_money(data['grand_total'])],
+            'col_weights': (3.6, 1.0, 1.6),
+            'numeric_cols': (1, 2),
+            'wrap_cols': (0,),
+        }
+    if key == 'by-category':
+        rows = []
+        for r in data['by_category']:
+            cat = r['category']
+            label = ((cat.name_ru if lang == 'ru' else cat.name_uz) if cat
+                     else L('— без категории —', '— категориясиз —'))
+            rows.append([label, str(r['lines']), _fmt_money(r['total'])])
+        return {
+            'columns': [L('Категория', 'Категория'), L('Позиций', 'Позициялар'),
+                        L('Сумма, сум', 'Сумма, сўм')],
+            'rows': rows,
+            'totals_row': [L('ИТОГО', 'ЖАМИ'), str(data['cost_lines_count']),
+                           _fmt_money(data['grand_total'])],
+            'col_weights': (3.6, 1.0, 1.6),
+            'numeric_cols': (1, 2),
+            'wrap_cols': (0,),
+        }
+    if key == 'repeat-orders':
+        return {
+            'columns': [L('Заявка', 'Сўров'), L('Дата', 'Сана'),
+                        L('Организация', 'Ташкилот'), L('Техника', 'Техника'),
+                        L('Запчасть', 'Эҳтиёт қисм'), L('Уровень', 'Даража'),
+                        L('Дней с прошлого заказа', 'Олдинги сўровдан кунлар')],
+            'rows': [['№{}'.format(r['request_id']),
+                      r['request_date'].strftime('%d.%m.%Y'),
+                      org_name(r['organization']), eq_name(r['equipment']),
+                      r['part_name'],
+                      severity_labels.get(r['severity'], r['severity']),
+                      str(r['days_since'])]
+                     for r in data['repeat_rows']],
+            'totals_row': None,
+            'col_weights': (1.0, 1.1, 2.0, 2.4, 2.8, 1.6, 1.4),
+            'numeric_cols': (6,),
+            'wrap_cols': (2, 3, 4),
+        }
+    # top-items
+    # [REASON]: REPORTS-SPLIT — the top-20 PDF carries the № rank column of
+    # the on-screen table (a printed ranking without rank numbers is
+    # unreadable); the other four PDFs mirror their xlsx column sets exactly.
+    return {
+        'columns': ['№', L('Заявка', 'Сўров'), L('Дата', 'Сана'),
+                    L('Организация', 'Ташкилот'), L('Техника', 'Техника'),
+                    L('Запчасть', 'Эҳтиёт қисм'), L('Кол-во', 'Миқдор'),
+                    L('Ед. изм.', 'Ўлчов бирлиги'), L('Цена, сум', 'Нарх, сўм'),
+                    L('Сумма, сум', 'Сумма, сўм')],
+        'rows': [[str(i), '№{}'.format(r['request_id']),
+                  r['request_date'].strftime('%d.%m.%Y'),
+                  org_name(r['organization']), eq_name(r['equipment']),
+                  r['name'], _fmt_qty(r['quantity']), r['unit'] or '',
+                  _fmt_money(r['price']), _fmt_money(r['total'])]
+                 for i, r in enumerate(data['top_items'], start=1)],
+        'totals_row': None,
+        'col_weights': (0.5, 0.9, 1.0, 1.7, 1.9, 2.4, 0.8, 0.9, 1.3, 1.4),
+        'numeric_cols': (6, 8, 9),
+        'wrap_cols': (3, 4, 5),
+    }
+
+
+def _report_pdf_subtitles(d_from, d_to, org_id, equipment_id, category_id, lang):
+    """Header lines under the PDF title: period, applied filters, timestamp.
+
+    [REASON]: REPORTS-SPLIT — built HERE because spare_parts_pdf has no DB
+    access (same rule as unit_labels in the act renderer): the filter ids are
+    resolved to display names via the ORM. Values are escaped inside the
+    renderer (SP-F-005), not here — escaping twice would show '&amp;'.
+    """
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
+
+    period = '{}: {} — {}'.format(L('Период', 'Давр'),
+                                  d_from.strftime('%d.%m.%Y'),
+                                  d_to.strftime('%d.%m.%Y'))
+
+    unset = L('все', 'барчаси')
+    org = Organization.query.get(org_id) if org_id else None
+    org_label = (org.short_name or org.name) if org else unset
+    eq = Equipment.query.get(equipment_id) if equipment_id else None
+    eq_label = unset
+    if eq is not None:
+        eq_label = eq.name + (' — ' + eq.plate if eq.plate else '')
+    cat = SparePartCategory.query.get(category_id) if category_id else None
+    cat_label = ((cat.name_ru if lang == 'ru' else cat.name_uz) if cat
+                 else unset)
+    filters = '{}: {} · {}: {} · {}: {}'.format(
+        L('Организация', 'Ташкилот'), org_label,
+        L('Техника', 'Техника'), eq_label,
+        L('Категория', 'Категория'), cat_label)
+
+    generated = '{}: {}'.format(L('Сформирован', 'Шакллантирилди'),
+                                datetime.now().strftime('%d.%m.%Y %H:%M'))
+    return [period, filters, generated]
 
 
 @spare_parts_bp.route('/reports')
@@ -5374,7 +5656,28 @@ def reports():
     # SPARE-STAGE1 permissions (has_module_access keeps the admin bypass).
     if not current_user.has_module_access('spare_parts_reports'):
         abort(403)
+    # [REASON]: REPORTS-SPLIT — the launcher is deliberately data-free (five
+    # tiles, no filters, no report queries). The route name spare_parts.reports
+    # and the /reports URL must stay exactly as they are: _spare_nav.html and
+    # the desk quick actions link them, and those files are out of scope.
+    lang = _spare_lang()
+    tiles = [dict(_REPORT_SPECS[k], key=k) for k in _REPORT_ORDER]
+    return render_template('spare_parts_reports.html', tiles=tiles, lang=lang)
+
+
+@spare_parts_bp.route('/reports/<key>')
+@module_required('spare_parts')
+def report_page(key):
+    # Same gate as the launcher (this is the same data, one slice per page).
+    if not current_user.has_module_access('spare_parts_reports'):
+        abort(403)
+    spec = _report_spec_or_404(key)
     d_from, d_to, org_id, equipment_id, category_id = _reports_filters()
+    # [REASON]: REPORTS-SPLIT — every report page calls _reports_data() in full
+    # and renders one slice of the result. Four fifths of the computation is
+    # discarded on purpose (owner-accepted cost): splitting _reports_data into
+    # five functions would mean touching the cost rule and the batched
+    # repeat-order detector, which is out of scope for this increment.
     data = _reports_data(d_from, d_to, org_id=org_id,
                          equipment_id=equipment_id, category_id=category_id)
 
@@ -5397,7 +5700,9 @@ def reports():
                              .order_by(Equipment.name, Equipment.plate).all())
     else:
         equipment_options = []
-    return render_template('spare_parts_reports.html',
+    return render_template('spare_parts_report_page.html',
+                           key=key,
+                           spec=spec,
                            data=data,
                            date_from_s=d_from.isoformat(),
                            date_to_s=d_to.isoformat(),
@@ -5410,30 +5715,50 @@ def reports():
                            lang=_spare_lang())
 
 
-@spare_parts_bp.route('/reports/export')
+@spare_parts_bp.route('/reports/<key>/export.xlsx')
 @module_required('spare_parts')
-def reports_export():
-    # Same gate as the reports screen (this is the same data, as a file).
+def report_export_xlsx(key):
+    # Same gate as the report page (this is the same data, as a file).
     if not current_user.has_module_access('spare_parts_reports'):
         abort(403)
+    _report_spec_or_404(key)
     d_from, d_to, org_id, equipment_id, category_id = _reports_filters()
     data = _reports_data(d_from, d_to, org_id=org_id,
                          equipment_id=equipment_id, category_id=category_id)
-    wb = _spare_reports_workbook(data, lang=_spare_lang())
-    # Local imports mirror fuel_routes.balance_report_export — keeps this
-    # change additive (module-level flask import line untouched).
-    from io import BytesIO
-    from flask import send_file
-    buffer = BytesIO()
+    lang = _spare_lang()
+    wb = _REPORT_XLSX_BUILDERS[key](data, lang)
+    buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
-    prefix = ('Spare_parts_report' if _spare_lang() == 'ru'
-              else 'Ehtiyot_qismlar_hisoboti')
-    fname = '{}_{}_{}.xlsx'.format(prefix, d_from.strftime('%d_%m_%Y'),
-                                   d_to.strftime('%d_%m_%Y'))
     return send_file(
         buffer,
         as_attachment=True,
-        download_name=fname,
+        download_name=_report_export_filename(key, d_from, d_to, lang, 'xlsx'),
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
+
+
+@spare_parts_bp.route('/reports/<key>/export.pdf')
+@module_required('spare_parts')
+def report_export_pdf(key):
+    # Same gate as the report page (this is the same data, as a file).
+    if not current_user.has_module_access('spare_parts_reports'):
+        abort(403)
+    spec = _report_spec_or_404(key)
+    d_from, d_to, org_id, equipment_id, category_id = _reports_filters()
+    data = _reports_data(d_from, d_to, org_id=org_id,
+                         equipment_id=equipment_id, category_id=category_id)
+    lang = _spare_lang()
+    table = _report_pdf_table(key, data, lang)
+    # Local import mirrors act_pdf — reportlab stays off the module import path.
+    from spare_parts_pdf import generate_report_pdf
+    buffer = io.BytesIO()
+    generate_report_pdf(buffer, key,
+                        spec['title_ru'] if lang == 'ru' else spec['title_uz'],
+                        _report_pdf_subtitles(d_from, d_to, org_id,
+                                              equipment_id, category_id, lang),
+                        landscape_page=spec['landscape'], lang=lang, **table)
+    buffer.seek(0)
+    return send_file(buffer, mimetype='application/pdf', as_attachment=True,
+                     download_name=_report_export_filename(key, d_from, d_to,
+                                                           lang, 'pdf'))

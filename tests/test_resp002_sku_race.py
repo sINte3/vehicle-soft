@@ -58,7 +58,7 @@ class SkuRaceTestCase(unittest.TestCase):
         resp = self._save_sku(brand='  bosch ', article=' f026402062',
                               supplier='ooo detal ')
         self.assertEqual(resp.status_code, 302)
-        self.assertIn('SKU аллақачон мавжуд', _flashed(self.client))
+        self.assertIn('артикул аллақачон мавжуд', _flashed(self.client))
         self.assertEqual(self._active_sku_count(), 1)
 
     def test_forced_race_gets_friendly_error_not_500(self):
@@ -69,7 +69,7 @@ class SkuRaceTestCase(unittest.TestCase):
                                return_value=False):
             resp = self._save_sku()
         self.assertEqual(resp.status_code, 302)  # NOT a 500
-        self.assertIn('SKU аллақачон мавжуд', _flashed(self.client))
+        self.assertIn('артикул аллақачон мавжуд', _flashed(self.client))
         self.assertEqual(self._active_sku_count(), 1)
 
     def test_session_usable_after_handled_conflict(self):
@@ -81,7 +81,8 @@ class SkuRaceTestCase(unittest.TestCase):
         resp = self._save_sku(brand='MANN', article='W914/2', supplier='')
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(self._active_sku_count(), 2)
-        self.assertIn('SKU', _flashed(self.client))
+        # SKU-RENAME-001: the visible term is «Артикул» now (identifiers stay).
+        self.assertIn('Артикул', _flashed(self.client))
 
 
 if __name__ == '__main__':

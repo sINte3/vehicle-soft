@@ -148,7 +148,7 @@
                     {% endif %}
                     {# SPARE-STAGE2: chosen SKU (brand / article / supplier) #}
                     {% if item.sku %}
-                    <div class="vs-soft" style="font-size:11px; font-weight:400;">SKU: {{ item.sku.label }}</div>
+                    <div class="vs-soft" style="font-size:11px; font-weight:400;">Артикул: {{ item.sku.label }}</div>
                     {% endif %}
                 </td>
                 <td class="text-sm vs-muted">
@@ -265,7 +265,7 @@
         <div class="vs-card-title">📦 {{ 'Выдача со склада' if is_ru else 'Омбордан бериш' }}</div>
     </div>
     <div class="vs-card-body">
-        <div class="vs-soft vs-mb-sm" style="font-size:12.5px;">{{ 'Выдача спишет позиции с SKU со склада организации, создаст акт списания (PDF) и переведёт заявку в статус «Выдано». Действие необратимо.' if is_ru else 'Бериш SKU танланган позицияларни ташкилот омборидан ҳисобдан чиқаради, далолатнома (PDF) яратади ва сўровни «Берилган» ҳолатига ўтказади. Амал қайтарилмайди.' }}</div>
+        <div class="vs-soft vs-mb-sm" style="font-size:12.5px;">{{ 'Выдача спишет позиции с артикулом со склада организации, создаст акт списания (PDF) и переведёт заявку в статус «Выдано». Действие необратимо.' if is_ru else 'Бериш артикул танланган позицияларни ташкилот омборидан ҳисобдан чиқаради, далолатнома (PDF) яратади ва сўровни «Берилган» ҳолатига ўтказади. Амал қайтарилмайди.' }}</div>
 
         {% if issue_ctx.sku_items and not issue_ctx.warehouse %}
         <div class="vs-alert is-danger vs-mb">{{ 'У организации нет склада запчастей — сначала создайте его на экране «Склад».' if is_ru else 'Ташкилотда эҳтиёт қисмлар омбори йўқ — аввал уни «Омбор» экранида яратинг.' }}
@@ -281,7 +281,7 @@
         <table class="vs-table">
             <thead><tr>
                 <th>{{ 'Позиция' if is_ru else 'Позиция' }}</th>
-                <th>SKU</th>
+                <th>Артикул</th>
                 <th class="right">{{ 'Кол-во' if is_ru else 'Миқдор' }}</th>
                 <th class="right">{{ 'Остаток' if is_ru else 'Қолдиқ' }}</th>
                 <th class="right">{{ 'Резерв других' if is_ru else 'Бошқаларнинг захираси' }}</th>
@@ -328,7 +328,7 @@
             {# [REASON]: SPARE-STAGE2 — untracked items are issued only with an
                explicit confirmation; the checkbox mirrors the server-side gate. #}
             <div class="vs-alert is-warning vs-mb">
-                <strong>{{ 'Позиции без SKU — не будут списаны со склада:' if is_ru else 'SKUсиз позициялар — омбордан ҳисобдан чиқарилмайди:' }}</strong>
+                <strong>{{ 'Позиции без артикула — не будут списаны со склада:' if is_ru else 'Артикулсиз позициялар — омбордан ҳисобдан чиқарилмайди:' }}</strong>
                 <ul style="margin:6px 0 8px 18px; padding:0;">
                     {% for item in issue_ctx.no_sku_items %}
                     <li>{{ item.name }} — {{ item.quantity }} {{ item.unit|spare_unit_label or '' }}</li>
@@ -373,7 +373,7 @@
                         <div><span class="vs-badge vs-badge-sm" style="color:{{ price_status_colors.get(item.price_status, 'var(--text2)') }};">{{ price_status_labels[item.price_status][lang] if item.price_status in price_status_labels else item.price_status }}</span></div>
                         {# SPARE-STAGE2: chosen SKU context for the price reviewer #}
                         {% if item.sku %}
-                        <div class="vs-soft" style="font-size:11px; font-weight:400;">SKU: {{ item.sku.label }}</div>
+                        <div class="vs-soft" style="font-size:11px; font-weight:400;">Артикул: {{ item.sku.label }}</div>
                         {% endif %}
                     </td>
                     <td>
@@ -384,12 +384,12 @@
                         {% set suggested = item.sku.last_price if (item.price is none and item.sku and item.sku.last_price is not none) else none %}
                         <form method="post" action="{{ url_for('spare_parts.item_price_set', rid=req.id, item_id=item.id) }}" class="vs-row" style="gap:6px;">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <input type="number" name="price" class="vs-input" step="0.01" min="0" value="{{ item.price if item.price is not none else (suggested if suggested is not none else '') }}" style="width:130px;" aria-label="{{ 'Цена позиции' if is_ru else 'Позиция нархи' }}"{% if suggested is not none %} title="{{ 'Подсказка из SKU (последняя подтверждённая цена) — сохраните и подтвердите' if is_ru else 'SKU кўрсатмаси (охирги тасдиқланган нарх) — сақланг ва тасдиқланг' }}"{% endif %}>
+                            <input type="number" name="price" class="vs-input" step="0.01" min="0" value="{{ item.price if item.price is not none else (suggested if suggested is not none else '') }}" style="width:130px;" aria-label="{{ 'Цена позиции' if is_ru else 'Позиция нархи' }}"{% if suggested is not none %} title="{{ 'Подсказка из артикула (последняя подтверждённая цена) — сохраните и подтвердите' if is_ru else 'Артикул кўрсатмаси (охирги тасдиқланган нарх) — сақланг ва тасдиқланг' }}"{% endif %}>
                             {# CYCLE-2-3 Part 2: same explicit-text treatment as the confirm button. #}
                             <button type="submit" class="vs-btn vs-btn-sm">💾 {{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
                         </form>
                         {% if suggested is not none %}
-                        <div class="vs-soft" style="font-size:10.5px;">{{ 'подсказка из SKU' if is_ru else 'SKU кўрсатмаси' }}</div>
+                        <div class="vs-soft" style="font-size:10.5px;">{{ 'подсказка из артикула' if is_ru else 'артикул кўрсатмаси' }}</div>
                         {% endif %}
                     </td>
                     <td class="text-sm vs-muted price-hint" data-part-id="{{ item.spare_part_id or '' }}">…</td>
@@ -540,7 +540,7 @@ document.addEventListener('DOMContentLoaded', function () {
 function confirmIssue() {
     const cb = document.getElementById('confirmNoSku');
     if (cb && !cb.checked) {
-        alert({{ ('Отметьте подтверждение по позициям без SKU.' if is_ru else 'SKUсиз позициялар бўйича тасдиқни белгиланг.')|tojson }});
+        alert({{ ('Отметьте подтверждение по позициям без артикула.' if is_ru else 'Артикулсиз позициялар бўйича тасдиқни белгиланг.')|tojson }});
         return false;
     }
     return confirm({{ ('Выдать заявку и сформировать акт списания? Действие необратимо.' if is_ru else 'Сўровни бериб, далолатнома яратилсинми? Амал қайтарилмайди.')|tojson }});
