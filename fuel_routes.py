@@ -3461,17 +3461,24 @@ def balance_report_export():
     ws = wb.active
     ws.title = "ФАКТ"
 
+    # [REASON]: FUEL-MANUAL-EXP-A3 — split the single "Расход" column into
+    # "Выдача Topaz" + "Ручной расход" so the export matches the page and
+    # /fuel/report. This adds one base column, so the day blocks below start one
+    # position further right; every index derives from len(base_headers) so it
+    # follows automatically.
     base_headers = [
         "№",
         "Организация",
         "Склад",
         f"Остаток на {start_date.strftime('%d/%m/%Y')}",
         "Приход",
-        "Расход",
+        "Выдача Topaz",
+        "Ручной расход",
         "Текущий остаток",
     ]
 
     max_col = len(base_headers) + len(date_items) * 2
+    day_start_col = len(base_headers) + 1
 
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max_col)
     ws.cell(row=1, column=1).value = f"Отчёт по остаткам топлива за период {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"
@@ -3482,7 +3489,7 @@ def balance_report_export():
         ws.cell(row=3, column=col).value = title
         ws.merge_cells(start_row=3, start_column=col, end_row=4, end_column=col)
 
-    col = len(base_headers) + 1
+    col = day_start_col
     for item in date_items:
         ws.merge_cells(start_row=3, start_column=col, end_row=3, end_column=col + 1)
         ws.cell(row=3, column=col).value = item["date"]
@@ -3499,10 +3506,13 @@ def balance_report_export():
         ws.cell(row=r, column=3).value = row["warehouse"]
         ws.cell(row=r, column=4).value = row["opening"]
         ws.cell(row=r, column=5).value = row["receipts"]
-        ws.cell(row=r, column=6).value = row["expenses"]
-        ws.cell(row=r, column=7).value = row["closing"]
+        # [REASON]: FUEL-MANUAL-EXP-A3 — Topaz and manual expense in their own
+        # columns; closing shifts from col 7 to col 8.
+        ws.cell(row=r, column=6).value = row["topaz_expenses"]
+        ws.cell(row=r, column=7).value = row["manual_expenses"]
+        ws.cell(row=r, column=8).value = row["closing"]
 
-        col = 8
+        col = day_start_col
         for item in date_items:
             daily = row["daily"][item["key"]]
             ws.cell(row=r, column=col).value = daily["receipts"] if daily["receipts"] else None
@@ -3513,8 +3523,9 @@ def balance_report_export():
     ws.cell(row=total_row, column=2).value = "ИТОГО"
     ws.cell(row=total_row, column=4).value = totals["opening"]
     ws.cell(row=total_row, column=5).value = totals["receipts"]
-    ws.cell(row=total_row, column=6).value = totals["expenses"]
-    ws.cell(row=total_row, column=7).value = totals["closing"]
+    ws.cell(row=total_row, column=6).value = totals["topaz_expenses"]
+    ws.cell(row=total_row, column=7).value = totals["manual_expenses"]
+    ws.cell(row=total_row, column=8).value = totals["closing"]
 
     thin = Side(style="thin", color="D1D5DB")
     header_fill = PatternFill("solid", fgColor="E5E7EB")
@@ -3540,6 +3551,8 @@ def balance_report_export():
         for row_idx in range(5, total_row + 1):
             ws.cell(row=row_idx, column=col_idx).number_format = '#,##0.00'
 
+    # [REASON]: FUEL-MANUAL-EXP-A3 — col 6 Выдача Topaz, col 7 Ручной расход,
+    # col 8 Текущий остаток; day blocks begin at day_start_col.
     widths = {
         1: 5,
         2: 28,
@@ -3547,15 +3560,16 @@ def balance_report_export():
         4: 16,
         5: 14,
         6: 14,
-        7: 16,
+        7: 14,
+        8: 16,
     }
     for col_idx, width in widths.items():
         ws.column_dimensions[get_column_letter(col_idx)].width = width
 
-    for col_idx in range(8, max_col + 1):
+    for col_idx in range(day_start_col, max_col + 1):
         ws.column_dimensions[get_column_letter(col_idx)].width = 11
 
-    ws.freeze_panes = "H5"
+    ws.freeze_panes = f"{get_column_letter(day_start_col)}5"
     ws.auto_filter.ref = f"A4:{get_column_letter(max_col)}{total_row}"
 
     output = BytesIO()
