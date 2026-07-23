@@ -123,6 +123,17 @@ TOPAZ_AUDIT_ACTOR = SimpleNamespace(
 # event. Add more IDs here if similar technical cards are discovered later.
 EXCLUDED_CARD_NUMBERS = {'30'}
 
+# [REASON]: FUEL-CARD-CLASS — third-party fuel. These cards dispense fuel that
+# belongs to someone else (farmers store their own diesel in our vessels and
+# draw it through our station). Their deliveries into the vessel are not
+# recorded in the system, so counting their withdrawals as our expense
+# understates our balance. Excluded from balance arithmetic from the given date
+# onward, reported separately, and never dropped at ingest — unlike
+# EXCLUDED_CARD_NUMBERS above, these are real dispensing events.
+EXTERNAL_FUEL_CARDS = {
+    '3978': date(2026, 5, 1),   # VIP_ИЖОРА ВОБКЕНТ
+}
+
 
 def _iso_date(value):
     return value.isoformat() if value else None
@@ -790,6 +801,105 @@ def _fuel_manual_expense_map(warehouse_ids, fuel_type=None, date_from=None,
 
     rows = q.group_by(FuelManualExpense.warehouse_id,
                       FuelManualExpense.fuel_type).all()
+    return {(int(wh_id), ft): float(total or 0) for wh_id, ft, total in rows}
+
+
+# [REASON]: FUEL-CARD-CLASS — one grouped query for external-fuel Topaz issues
+# (the EXTERNAL_FUEL_CARDS cards). These rows stay in fuel_transactions2 and are
+# never dropped at ingest; here we sum how much of the Topaz issue figure must be
+# netted out of our balance, each card counted only from its own start date. This
+# is the single shared source every fuel balance surface uses so they all agree;
+# the dashboard renders many warehouses, so it must never be called per-warehouse
+# in a loop (acceptance criterion: no N+1). Empty rule or empty warehouse list
+# returns an empty dict without touching the database, mirroring
+# _fuel_manual_expense_map above.
+def _fuel_external_expense_map(warehouse_ids, fuel_type=None, date_from=None,
+                              date_to=None, lower_bounds=None, station_id=None):
+    """Return {(warehouse_id, fuel_type): litres} of external-card Topaz issues.
+
+    Mirrors _fuel_manual_expense_map's shape and window modes, but reads
+    FuelTransaction2 (joined to FuelStation2 for the warehouse) and only the
+    cards named in EXTERNAL_FUEL_CARDS. The effective lower bound for a card is
+    always ``max(window_lower_bound, card_start_date)`` — the rule never reaches
+    before a card's start date, and a caller's window never reaches before its
+    own lower bound (see section 5 of the task).
+
+    Global window (default): ``date_from`` / ``date_to`` are inclusive date
+    bounds applied to every warehouse; either may be omitted. ``fuel_type``
+    filters when given.
+
+    Per-warehouse window: pass ``lower_bounds={(warehouse_id, fuel_type): date}``
+    to apply that pair's date as the window lower bound, exactly as
+    _fuel_balance_map needs so each warehouse honours its own initial-balance
+    date. In this mode ``date_to`` still applies as a global inclusive upper
+    bound, ``date_from`` / ``fuel_type`` are ignored, and only the pairs present
+    in ``lower_bounds`` are queried.
+
+    ``station_id`` restricts to a single station (an external-fuel transaction
+    *is* tied to a station, unlike a manual expense).
+
+    Transactions are keyed on ``txn_datetime`` (a datetime), so an inclusive
+    lower date ``d`` becomes ``>= datetime.combine(d, min.time())`` and an
+    inclusive upper date ``d`` becomes ``< datetime.combine(d + 1 day,
+    min.time())`` — getting this wrong loses or double-counts a boundary day.
+    """
+    ids = [int(x) for x in (warehouse_ids or []) if x]
+    if not ids or not EXTERNAL_FUEL_CARDS:
+        return {}
+
+    def _low(d):
+        return datetime.combine(d, datetime.min.time())
+
+    upper_exclusive = (datetime.combine(date_to + timedelta(days=1), datetime.min.time())
+                       if date_to is not None else None)
+
+    q = (db.session.query(
+            FuelStation2.warehouse_id,
+            FuelTransaction2.fuel_type,
+            func.coalesce(func.sum(FuelTransaction2.quantity), 0))
+         .join(FuelTransaction2, FuelTransaction2.station_id == FuelStation2.id)
+         .filter(FuelStation2.warehouse_id.in_(ids),
+                 FuelTransaction2.card_number.in_(list(EXTERNAL_FUEL_CARDS.keys()))))
+
+    if station_id:
+        q = q.filter(FuelTransaction2.station_id == station_id)
+
+    conditions = []
+    if lower_bounds:
+        id_set = set(ids)
+        for (wh_id, ft), bound in lower_bounds.items():
+            if int(wh_id) not in id_set:
+                continue
+            for card, start in EXTERNAL_FUEL_CARDS.items():
+                effective = bound if bound >= start else start
+                cond = and_(
+                    FuelStation2.warehouse_id == wh_id,
+                    FuelTransaction2.fuel_type == ft,
+                    FuelTransaction2.card_number == card,
+                    FuelTransaction2.txn_datetime >= _low(effective),
+                )
+                if upper_exclusive is not None:
+                    cond = and_(cond, FuelTransaction2.txn_datetime < upper_exclusive)
+                conditions.append(cond)
+        if not conditions:
+            return {}
+        q = q.filter(or_(*conditions))
+    else:
+        if fuel_type:
+            q = q.filter(FuelTransaction2.fuel_type == fuel_type)
+        for card, start in EXTERNAL_FUEL_CARDS.items():
+            effective = start if (date_from is None or date_from <= start) else date_from
+            cond = and_(
+                FuelTransaction2.card_number == card,
+                FuelTransaction2.txn_datetime >= _low(effective),
+            )
+            if upper_exclusive is not None:
+                cond = and_(cond, FuelTransaction2.txn_datetime < upper_exclusive)
+            conditions.append(cond)
+        q = q.filter(or_(*conditions))
+
+    rows = q.group_by(FuelStation2.warehouse_id,
+                      FuelTransaction2.fuel_type).all()
     return {(int(wh_id), ft): float(total or 0) for wh_id, ft, total in rows}
 
 
