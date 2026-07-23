@@ -693,6 +693,17 @@ def _fuel_balance_map(warehouse_ids, fuel_type=None):
             for wh_id, ft, total in expense_rows
         }
 
+    # [REASON]: FUEL-MANUAL-EXP-A2 — manual expenses must be subtracted here too,
+    # or the dashboard/get_warehouse_balance figures disagree with the balance
+    # report. Same per-(warehouse, fuel_type) lower bound as receipts and Topaz
+    # issues above (expense_date >= that pair's balance_date, no upper bound), via
+    # one grouped query — never a per-warehouse loop.
+    manual_lower_bounds = {
+        (wh_id, ft): ib.balance_date
+        for (wh_id, ft), ib in initial_map.items()
+    }
+    manual_sums = _fuel_manual_expense_map(ids, lower_bounds=manual_lower_bounds)
+
     for wh_id in ids:
         ftypes = fuel_types_by_wh.get(wh_id)
 
@@ -712,7 +723,8 @@ def _fuel_balance_map(warehouse_ids, fuel_type=None):
 
             receipts = receipt_sums.get((wh_id, ft), 0.0)
             expenses = expense_sums.get((wh_id, ft), 0.0)
-            result[wh_id][ft] = round(float(ib.quantity or 0) + receipts - expenses, 2)
+            manual = manual_sums.get((wh_id, ft), 0.0)
+            result[wh_id][ft] = round(float(ib.quantity or 0) + receipts - expenses - manual, 2)
 
     return result
 
@@ -817,7 +829,17 @@ def _fuel_today_expense_map(warehouse_ids):
         .group_by(FuelStation2.warehouse_id)
         .all())
 
-    return {int(wh_id): float(total or 0) for wh_id, total in rows}
+    result = {int(wh_id): float(total or 0) for wh_id, total in rows}
+
+    # [REASON]: FUEL-MANUAL-EXP-A2 — "Выдано сегодня" must also count diesel
+    # released manually today, not only Topaz issues. One grouped query for
+    # today's manual expenses, folded into the same per-warehouse total.
+    today = date.today()
+    manual_today = _fuel_manual_expense_map(ids, date_from=today, date_to=today)
+    for (wh_id, _ft), litres in manual_today.items():
+        result[wh_id] = result.get(wh_id, 0.0) + litres
+
+    return result
 
 
 def _fuel_latest_txn_map(warehouse_ids, start_dt=None, end_dt=None, station_id=None):
