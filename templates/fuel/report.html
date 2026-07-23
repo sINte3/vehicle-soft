@@ -172,7 +172,9 @@ form.fuel002d-filter-form {
 {% set L_opening = 'Начальный остаток' if lang == 'ru' else 'Бошланғич қолдиқ' %}
 {% set L_receipts = 'Приход' if lang == 'ru' else 'Кирим' %}
 {% set L_issued = 'Выдача Topaz' if lang == 'ru' else 'Topaz бериш' %}
+{% set L_manual = 'Ручной расход' if lang == 'ru' else 'Қўлда киритилган сарф' %}
 {% set L_ending = 'Расчётный остаток' if lang == 'ru' else 'Ҳисобий қолдиқ' %}
+{% set L_station_note = 'Выбран фильтр по АЗС: ручной расход относится к складу и в режиме одной АЗС не учитывается.' if lang == 'ru' else 'АЗС бўйича фильтр танланган: қўлда киритилган сарф омборга тегишли ва битта АЗС режимида ҳисобга олинмайди.' %}
 {% set L_tx = 'Транзакции' if lang == 'ru' else 'Транзакциялар' %}
 {% set L_sync_unknown = 'Неизвестные АЗС' if lang == 'ru' else 'Номаълум АЗС' %}
 {% set L_warehouses = 'По складам' if lang == 'ru' else 'Омборлар бўйича' %}
@@ -196,7 +198,7 @@ form.fuel002d-filter-form {
 {% set L_status = 'Статус' if lang == 'ru' else 'Ҳолат' %}
 {% set L_error = 'Ошибка' if lang == 'ru' else 'Хато' %}
 {% set L_search = 'Поиск по складу, АЗС, карте или Topaz ID' if lang == 'ru' else 'Омбор, АЗС, карта ёки Topaz ID бўйича қидириш' %}
-{% set L_rule = 'Формула: остаток на начало периода + приход − выдачи Topaz. Цены и суммы не используются.' if lang == 'ru' else 'Формула: давр бошидаги қолдиқ + кирим − Topaz беришлари. Нарх ва сумма ишлатилмайди.' %}
+{% set L_rule = 'Формула: остаток на начало периода + приход − выдачи Topaz − ручной расход. Цены и суммы не используются.' if lang == 'ru' else 'Формула: давр бошидаги қолдиқ + кирим − Topaz бериш − қўлда киритилган сарф. Нарх ва сумма ишлатилмайди.' %}
 {% set L_warnings = 'Проблемы и предупреждения' if lang == 'ru' else 'Муаммолар ва огоҳлантиришлар' %}
 {% set L_no_warnings = 'Критических проблем по выбранному периоду не найдено.' if lang == 'ru' else 'Танланган давр бўйича критик муаммолар топилмади.' %}
 {% set L_warning_rule = 'Проверяются отрицательные остатки, отсутствующие начальные остатки, проблемы синхронизации, отключённые АЗС с выдачами и крупные выдачи.' if lang == 'ru' else 'Манфий қолдиқлар, бошланғич қолдиқсиз омборлар, синхронизация муаммолари, ўчирилган АЗСдаги беришлар ва йирик беришлар текширилади.' %}
@@ -251,6 +253,10 @@ form.fuel002d-filter-form {
 </div>
 
 <div class="fuel-report-note"><strong>ДТ.</strong> {{ L_rule }}</div>
+
+{% if selected_station_id %}
+<div class="fuel-report-note" style="border-left-color:var(--warn); background:var(--warn-light); color:var(--warn);">{{ L_station_note }}</div>
+{% endif %}
 
 <div class="card" style="margin-bottom:16px;">
     <div class="card-body">
@@ -326,6 +332,7 @@ form.fuel002d-filter-form {
     <div class="stat-card"><div class="label">{{ L_opening }}</div><div class="value">{{ '%.0f'|format(totals.opening) }} л</div></div>
     <div class="stat-card"><div class="label">{{ L_receipts }}</div><div class="value" style="color:var(--accent);">+{{ '%.0f'|format(totals.receipts) }} л</div></div>
     <div class="stat-card"><div class="label">{{ L_issued }}</div><div class="value" style="color:var(--danger);">-{{ '%.0f'|format(totals.issued) }} л</div></div>
+    <div class="stat-card"><div class="label">{{ L_manual }}</div><div class="value" style="color:var(--danger);">-{{ '%.0f'|format(totals.manual) }} л</div></div>
     <div class="stat-card"><div class="label">{{ L_ending }}</div><div class="value">{{ '%.0f'|format(totals.ending) }} л</div></div>
     <div class="stat-card"><div class="label">{{ L_tx }}</div><div class="value">{{ totals.transactions }}</div></div>
     <div class="stat-card"><div class="label">{{ L_sync_unknown }}</div><div class="value" {% if sync_summary.unknown %}style="color:var(--danger);"{% endif %}>{{ sync_summary.unknown }}</div></div>
@@ -365,7 +372,7 @@ form.fuel002d-filter-form {
 <table id="warehouseReportTable" class="fuel002d-report-table">
         <thead>
             <tr>
-                <th>{{ L_wh }}</th><th class="text-center">{{ L_station }}</th><th class="text-right">{{ L_opening }}</th><th class="text-right">{{ L_receipts }}</th><th class="text-right">{{ L_issued }}</th><th class="text-right">{{ L_ending }}</th><th class="text-right">{{ L_tx }}</th><th>{{ L_status }}</th><th>{{ L_last }}</th>
+                <th>{{ L_wh }}</th><th class="text-center">{{ L_station }}</th><th class="text-right">{{ L_opening }}</th><th class="text-right">{{ L_receipts }}</th><th class="text-right">{{ L_issued }}</th><th class="text-right">{{ L_manual }}</th><th class="text-right">{{ L_ending }}</th><th class="text-right">{{ L_tx }}</th><th>{{ L_status }}</th><th>{{ L_last }}</th>
             </tr>
         </thead>
         <tbody>
@@ -376,6 +383,13 @@ form.fuel002d-filter-form {
             <td class="text-right">{% if r.opening is none %}<span class="fuel-status warn">{{ L_missing }}</span>{% else %}{{ '%.2f'|format(r.opening) }}{% endif %}</td>
             <td class="text-right" style="color:var(--accent);">{{ '%.2f'|format(r.receipts) }}</td>
             <td class="text-right" style="color:var(--danger);">{{ '%.2f'|format(r.issued) }}</td>
+            <td class="text-right" style="color:var(--danger);">
+                {%- if r.manual and current_user.is_admin -%}
+                <a href="{{ url_for('fuel.manual_expenses', warehouse_id=r.warehouse.id, date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" title="{{ L_manual }}">{{ '%.2f'|format(r.manual) }}</a>
+                {%- else -%}
+                {{ '%.2f'|format(r.manual or 0) }}
+                {%- endif -%}
+            </td>
             <td class="text-right" style="font-weight:700;">{% if r.ending is none %}—{% else %}{{ '%.2f'|format(r.ending) }}{% endif %}</td>
             <td class="text-right">{{ r.tx_count }}</td>
             <td>{% if r.ending is none %}<span class="fuel-status warn">{{ L_missing }}</span>{% elif r.ending < 0 %}<span class="fuel-status danger">{{ L_negative }}</span>{% else %}<span class="fuel-status ok">OK</span>{% endif %}</td>
