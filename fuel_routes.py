@@ -717,6 +717,70 @@ def _fuel_balance_map(warehouse_ids, fuel_type=None):
     return result
 
 
+# [REASON]: FUEL-MANUAL-EXP-A2 — one grouped query for manual fuel expenses
+# (diesel released from a warehouse bypassing the dispenser, which Topaz never
+# sees). Soft-deleted rows are always excluded, matching the balance report
+# reference implementation. This is the single shared source every fuel balance
+# surface uses so all of them agree; the dashboard renders up to ~29 warehouses,
+# so it must never be called per-warehouse in a loop (acceptance criterion: no N+1).
+def _fuel_manual_expense_map(warehouse_ids, fuel_type=None, date_from=None,
+                             date_to=None, lower_bounds=None):
+    """Return {(warehouse_id, fuel_type): litres} of non-deleted manual expenses.
+
+    Global window (default): ``date_from`` / ``date_to`` are inclusive
+    ``expense_date`` bounds applied to every warehouse. Either may be omitted.
+
+    Per-warehouse window: pass ``lower_bounds={(warehouse_id, fuel_type): date}``
+    to apply ``expense_date >= date`` per (warehouse, fuel_type). This is what
+    _fuel_balance_map needs so each warehouse honours its own initial-balance
+    date, exactly as receipts and Topaz issues already do there. In this mode
+    ``date_to`` still applies as a global inclusive upper bound (used for the
+    "before the period" opening adjustment in the report), ``date_from`` is
+    ignored, and only the pairs present in ``lower_bounds`` are queried.
+
+    Empty warehouse list (or, in per-warehouse mode, no matching bounds) returns
+    an empty dict without touching the database.
+    """
+    ids = [int(x) for x in (warehouse_ids or []) if x]
+    if not ids:
+        return {}
+
+    q = (db.session.query(
+            FuelManualExpense.warehouse_id,
+            FuelManualExpense.fuel_type,
+            func.coalesce(func.sum(FuelManualExpense.quantity), 0))
+         .filter(FuelManualExpense.warehouse_id.in_(ids),
+                 func.coalesce(FuelManualExpense.is_deleted, 0) == 0))
+
+    if lower_bounds:
+        id_set = set(ids)
+        conditions = []
+        for (wh_id, ft), bound in lower_bounds.items():
+            if int(wh_id) not in id_set:
+                continue
+            conditions.append(and_(
+                FuelManualExpense.warehouse_id == wh_id,
+                FuelManualExpense.fuel_type == ft,
+                FuelManualExpense.expense_date >= bound,
+            ))
+        if not conditions:
+            return {}
+        q = q.filter(or_(*conditions))
+        if date_to is not None:
+            q = q.filter(FuelManualExpense.expense_date <= date_to)
+    else:
+        if fuel_type:
+            q = q.filter(FuelManualExpense.fuel_type == fuel_type)
+        if date_from is not None:
+            q = q.filter(FuelManualExpense.expense_date >= date_from)
+        if date_to is not None:
+            q = q.filter(FuelManualExpense.expense_date <= date_to)
+
+    rows = q.group_by(FuelManualExpense.warehouse_id,
+                      FuelManualExpense.fuel_type).all()
+    return {(int(wh_id), ft): float(total or 0) for wh_id, ft, total in rows}
+
+
 def _fuel_station_count_map(warehouse_ids, active_only=False):
     ids = [int(x) for x in (warehouse_ids or []) if x]
     if not ids:
