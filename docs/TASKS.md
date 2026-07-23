@@ -947,7 +947,10 @@ Status: backlog
 ### FUEL-MANUAL-EXP - Manual fuel expense (admin, mandatory comment)
 
 Priority: P1
-Status: next increment of the AZS/fuel track (increment A)
+Status: **COMPLETED 2026-07-23** — PR #20 (`68daee3`), plus PR #21 (`8e77998`)
+and PR #22 (`c548c71`) for cross-screen consistency. Deployed to staging and
+production, migration `FUEL_MANUAL_EXPENSES_AUTHOR` applied, verified on real
+data. See AGENT_STATE.md, entry of 2026-07-23.
 
 Some fuel leaves the tank **bypassing the dispenser** — filled straight from the
 vessel. Confirmed cases from the operator: Vobkent 2026-05-25 / 06-10 / 06-14,
@@ -999,7 +1002,10 @@ drill-down so the origin of every figure is visible.
 ### FUEL-CARD-CLASS - Exclude third-party (farmer) fuel by card, from a date
 
 Priority: P1
-Status: AZS/fuel track, increment C — depends on FUEL-MANUAL-EXP
+Status: **COMPLETED 2026-07-23** — PR #23 (`c323745`), deployed to staging and
+production. Rule lives in `EXTERNAL_FUEL_CARDS = {'3978': date(2026, 5, 1)}`.
+Verified against a 1C export of the same card for 2026-05-01..2026-07-22:
+16,674.85 L in both, to the cent.
 
 Card **VIP_ИЖОРА ВОБКЕНТ** dispenses **farmers' own** diesel: they buy it, store
 it in our vessels by arrangement, and draw it through our station. The fuel is
@@ -1035,7 +1041,13 @@ FUEL-MANUAL-EXP.
 ### FUEL-RESERVE - «Резерв» / «Захира» off-balance warehouse
 
 Priority: P1
-Status: AZS/fuel track, increment B in owner's order (A -> C -> B)
+Status: **next increment of the AZS/fuel track.** Owner's answers, 2026-07-23:
+opening balance 10,429 L dated 2026-05-01; the warehouse hangs off
+Pakhtasanoattrans; a return of fuel is recorded as an ordinary receipt with a
+comment, no dedicated operation type; and the tanker loads on card 198 that do
+not appear in the Zahira ledger are **unrelated to the reserve** — the ledger is
+not incomplete. Attribution must be manual per transaction (see the refutation
+of the card-198 hypothesis below).
 
 Pakhtasanoattrans keeps an off-balance reserve they call «Захира». When the
 cluster has no cash or a delivery slips, fuel moves from the reserve to
@@ -1154,7 +1166,8 @@ station-issues report. This slows every reconciliation.
 ### FUEL-RECEIPTS-500 - /fuel/receipts crashed on an undefined L_add
 
 Priority: P2
-Status: **appears already fixed — verify which build produced the log entries**
+Status: **CLOSED 2026-07-23** — the defect is absent from the current template
+and the log entries predate the fix. The page is in daily use on production.
 
 `error.log` carried `jinja2 UndefinedError -> TypeError: Object of type
 Undefined is not JSON serializable` at `templates/fuel/receipts.html:163`,
@@ -1182,8 +1195,12 @@ Status: backlog
 
 ### SEC-TOKEN-ROT - Rotate FUEL_API_TOKEN and Firebird credentials
 
-Priority: P0 — raised from P2 on 2026-07-22
-Status: open, not done — do this before any further fuel work
+Priority: P0 by severity — **risk accepted by the owner on 2026-07-23**
+Status: will not be done. The owner decided against rotating the token. Recorded
+here deliberately rather than deleted, so nobody later assumes it was forgotten.
+The exposure stands: anyone holding the leaked value can write arbitrary fuel
+transactions into production through `/fuel/api/fuel_sync` with no user login.
+Reversible at any time — the procedure below still applies and takes minutes.
 
 - **The live production token was disclosed in a chat transcript** together with
   the full text of `topaz_agent.py`. Anyone holding it can POST arbitrary fuel
