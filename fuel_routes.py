@@ -1875,10 +1875,15 @@ def dashboard():
                    .limit(30).all())
 
     # Статистика за сегодня
-    today_total = (db.session.query(func.coalesce(func.sum(FuelTransaction2.quantity), 0))
-                   .filter(FuelTransaction2.txn_datetime >= datetime.combine(date.today(), datetime.min.time()),
-                           FuelTransaction2.txn_datetime < datetime.combine(date.today() + timedelta(days=1), datetime.min.time()))
-                   .scalar())
+    # [REASON]: FUEL-MANUAL-EXP-A3 — the "Выдано сегодня" tile must equal the sum
+    # of the per-warehouse "Сегодня выдано" column exactly. Summing the same
+    # today_expense values get_all_balances() already produced guarantees that by
+    # construction: same warehouse set (fuel_warehouse_query_for_ui, not every
+    # warehouse) and same figure (Topaz issues + today's manual expenses, folded
+    # in by _fuel_today_expense_map). The old inline query summed FuelTransaction2
+    # over all warehouses and ignored manual expenses, so it could disagree with
+    # the table. Adds no query.
+    today_total = sum((row['today_expense'] or 0) for row in balance_rows)
 
     return render_template('fuel/dashboard.html',
                            balance_rows=balance_rows,
@@ -3260,6 +3265,11 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
         "opening": 0.0,
         "receipts": 0.0,
         "expenses": 0.0,
+        # [REASON]: FUEL-MANUAL-EXP-A3 — the combined "expenses" total stays as the
+        # cross-check; these two split it into its Topaz and manual components so
+        # balance_report presents the expense exactly like /fuel/report does.
+        "topaz_expenses": 0.0,
+        "manual_expenses": 0.0,
         "closing": 0.0,
     }
 
@@ -3352,6 +3362,11 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
             "opening": round(opening, 2),
             "receipts": round(period_receipts, 2),
             "expenses": round(period_expenses, 2),
+            # [REASON]: FUEL-MANUAL-EXP-A3 — Topaz issues and manual expense as
+            # separate presentation columns; their sum equals "expenses" to the
+            # cent. "expenses" is unchanged and still drives closing.
+            "topaz_expenses": round(period_topaz_expenses, 2),
+            "manual_expenses": round(period_manual_expenses, 2),
             "closing": round(closing, 2),
             "daily": daily,
         }
@@ -3361,6 +3376,8 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
         totals["opening"] += row["opening"]
         totals["receipts"] += row["receipts"]
         totals["expenses"] += row["expenses"]
+        totals["topaz_expenses"] += row["topaz_expenses"]
+        totals["manual_expenses"] += row["manual_expenses"]
         totals["closing"] += row["closing"]
 
     for k in totals:
@@ -3444,17 +3461,24 @@ def balance_report_export():
     ws = wb.active
     ws.title = "ФАКТ"
 
+    # [REASON]: FUEL-MANUAL-EXP-A3 — split the single "Расход" column into
+    # "Выдача Topaz" + "Ручной расход" so the export matches the page and
+    # /fuel/report. This adds one base column, so the day blocks below start one
+    # position further right; every index derives from len(base_headers) so it
+    # follows automatically.
     base_headers = [
         "№",
         "Организация",
         "Склад",
         f"Остаток на {start_date.strftime('%d/%m/%Y')}",
         "Приход",
-        "Расход",
+        "Выдача Topaz",
+        "Ручной расход",
         "Текущий остаток",
     ]
 
     max_col = len(base_headers) + len(date_items) * 2
+    day_start_col = len(base_headers) + 1
 
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max_col)
     ws.cell(row=1, column=1).value = f"Отчёт по остаткам топлива за период {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"
@@ -3465,7 +3489,7 @@ def balance_report_export():
         ws.cell(row=3, column=col).value = title
         ws.merge_cells(start_row=3, start_column=col, end_row=4, end_column=col)
 
-    col = len(base_headers) + 1
+    col = day_start_col
     for item in date_items:
         ws.merge_cells(start_row=3, start_column=col, end_row=3, end_column=col + 1)
         ws.cell(row=3, column=col).value = item["date"]
@@ -3482,10 +3506,13 @@ def balance_report_export():
         ws.cell(row=r, column=3).value = row["warehouse"]
         ws.cell(row=r, column=4).value = row["opening"]
         ws.cell(row=r, column=5).value = row["receipts"]
-        ws.cell(row=r, column=6).value = row["expenses"]
-        ws.cell(row=r, column=7).value = row["closing"]
+        # [REASON]: FUEL-MANUAL-EXP-A3 — Topaz and manual expense in their own
+        # columns; closing shifts from col 7 to col 8.
+        ws.cell(row=r, column=6).value = row["topaz_expenses"]
+        ws.cell(row=r, column=7).value = row["manual_expenses"]
+        ws.cell(row=r, column=8).value = row["closing"]
 
-        col = 8
+        col = day_start_col
         for item in date_items:
             daily = row["daily"][item["key"]]
             ws.cell(row=r, column=col).value = daily["receipts"] if daily["receipts"] else None
@@ -3496,8 +3523,9 @@ def balance_report_export():
     ws.cell(row=total_row, column=2).value = "ИТОГО"
     ws.cell(row=total_row, column=4).value = totals["opening"]
     ws.cell(row=total_row, column=5).value = totals["receipts"]
-    ws.cell(row=total_row, column=6).value = totals["expenses"]
-    ws.cell(row=total_row, column=7).value = totals["closing"]
+    ws.cell(row=total_row, column=6).value = totals["topaz_expenses"]
+    ws.cell(row=total_row, column=7).value = totals["manual_expenses"]
+    ws.cell(row=total_row, column=8).value = totals["closing"]
 
     thin = Side(style="thin", color="D1D5DB")
     header_fill = PatternFill("solid", fgColor="E5E7EB")
@@ -3523,6 +3551,8 @@ def balance_report_export():
         for row_idx in range(5, total_row + 1):
             ws.cell(row=row_idx, column=col_idx).number_format = '#,##0.00'
 
+    # [REASON]: FUEL-MANUAL-EXP-A3 — col 6 Выдача Topaz, col 7 Ручной расход,
+    # col 8 Текущий остаток; day blocks begin at day_start_col.
     widths = {
         1: 5,
         2: 28,
@@ -3530,15 +3560,16 @@ def balance_report_export():
         4: 16,
         5: 14,
         6: 14,
-        7: 16,
+        7: 14,
+        8: 16,
     }
     for col_idx, width in widths.items():
         ws.column_dimensions[get_column_letter(col_idx)].width = width
 
-    for col_idx in range(8, max_col + 1):
+    for col_idx in range(day_start_col, max_col + 1):
         ws.column_dimensions[get_column_letter(col_idx)].width = 11
 
-    ws.freeze_panes = "H5"
+    ws.freeze_panes = f"{get_column_letter(day_start_col)}5"
     ws.auto_filter.ref = f"A4:{get_column_letter(max_col)}{total_row}"
 
     output = BytesIO()

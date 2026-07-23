@@ -16,9 +16,11 @@
 {% set L_download_excel = 'Скачать Excel' if lang == 'ru' else 'Excelни юклаб олиш' %}
 {% set L_opening = 'Остаток на начало' if lang == 'ru' else 'Бошланғич қолдиқ' %}
 {% set L_receipts_period = 'Приход за период' if lang == 'ru' else 'Давр учун кирим' %}
-{% set L_expenses_total = 'Расход Topaz + ручной' if lang == 'ru' else 'Topaz + қўлда сарф' %}
+{# FUEL-MANUAL-EXP-A3: same labels PR #21 introduced on /fuel/report so the two pages read identically #}
+{% set L_topaz = 'Выдача Topaz' if lang == 'ru' else 'Topaz бериш' %}
+{% set L_manual = 'Ручной расход' if lang == 'ru' else 'Қўлда киритилган сарф' %}
 {% set L_closing = 'Текущий остаток' if lang == 'ru' else 'Жорий қолдиқ' %}
-{% set L_table_desc = 'Формат близок к Excel-образцу: организация, склад, остаток, приход, расход и дневная детализация. Ручные расходы учитываются в общей колонке «Расход».' if lang == 'ru' else 'Формат Excel намунасига яқин: ташкилот, омбор, қолдиқ, кирим, сарф ва кунлик тафсилот. Қўлда киритилган сарфлар умумий «Сарф» устунида ҳисобга олинади.' %}
+{% set L_table_desc = 'Расход за период разделён на выдачи Topaz и ручной расход. В дневных колонках они показаны одной суммой.' if lang == 'ru' else 'Давр бўйича сарф Topaz бериш ва қўлда киритилган сарфга ажратилган. Кунлик устунларда улар битта сумма сифатида кўрсатилади.' %}
 {% set L_wh_count = 'Складов:' if lang == 'ru' else 'Омборлар:' %}
 {% set L_num = '№' if lang == 'ru' else '№' %}
 {% set L_org = 'Организация' if lang == 'ru' else 'Ташкилот' %}
@@ -80,7 +82,7 @@
     </form>
 </div>
 
-<div style="display:grid; grid-template-columns:repeat(4, minmax(180px, 1fr)); gap:12px; margin-bottom:16px;">
+<div style="display:grid; grid-template-columns:repeat(5, minmax(160px, 1fr)); gap:12px; margin-bottom:16px;">
     <div class="card" style="padding:16px;">
         <div class="text-muted">{{ L_opening }}</div>
         <div style="font-size:22px; font-weight:700; margin-top:6px;">{{ "%.2f"|format(totals.opening) }} л</div>
@@ -90,8 +92,12 @@
         <div style="font-size:22px; font-weight:700; margin-top:6px;">{{ "%.2f"|format(totals.receipts) }} л</div>
     </div>
     <div class="card" style="padding:16px;">
-        <div class="text-muted">{{ L_expenses_total }}</div>
-        <div style="font-size:22px; font-weight:700; margin-top:6px;">{{ "%.2f"|format(totals.expenses) }} л</div>
+        <div class="text-muted">{{ L_topaz }}</div>
+        <div style="font-size:22px; font-weight:700; margin-top:6px;">{{ "%.2f"|format(totals.topaz_expenses) }} л</div>
+    </div>
+    <div class="card" style="padding:16px;">
+        <div class="text-muted">{{ L_manual }}</div>
+        <div style="font-size:22px; font-weight:700; margin-top:6px;">{{ "%.2f"|format(totals.manual_expenses) }} л</div>
     </div>
     <div class="card" style="padding:16px;">
         <div class="text-muted">{{ L_closing }}</div>
@@ -121,7 +127,8 @@
                     <th rowspan="2" style="vertical-align:middle; min-width:170px;">{{ L_wh }}</th>
                     <th rowspan="2" style="vertical-align:middle;">{% if lang == 'ru' %}Остаток на {{ start_date.strftime('%d/%m/%Y') }}{% else %}{{ start_date.strftime('%d/%m/%Y') }} даги қолдиқ{% endif %}</th>
                     <th rowspan="2" style="vertical-align:middle;">{{ L_receipts }}</th>
-                    <th rowspan="2" style="vertical-align:middle;">{{ L_expense }}</th>
+                    <th rowspan="2" style="vertical-align:middle;">{{ L_topaz }}</th>
+                    <th rowspan="2" style="vertical-align:middle;">{{ L_manual }}</th>
                     <th rowspan="2" style="vertical-align:middle;">{{ L_closing }}</th>
                     {% for item in date_items %}
                     <th colspan="2" class="text-center">{{ item.label }}</th>
@@ -142,7 +149,15 @@
                     <td>{{ row.warehouse }}</td>
                     <td class="text-right">{{ "%.2f"|format(row.opening) }}</td>
                     <td class="text-right">{{ "%.2f"|format(row.receipts) }}</td>
-                    <td class="text-right">{{ "%.2f"|format(row.expenses) }}</td>
+                    <td class="text-right">{{ "%.2f"|format(row.topaz_expenses) }}</td>
+                    {# FUEL-MANUAL-EXP-A3: non-zero manual figure drills into the manual-expenses list, same markup as PR #21 on /fuel/report; admin-only because that page is admin-only #}
+                    <td class="text-right">
+                        {%- if row.manual_expenses and current_user.is_admin -%}
+                        <a href="{{ url_for('fuel.manual_expenses', warehouse_id=row.warehouse_id, date_from=start_date.isoformat(), date_to=end_date.isoformat()) }}" title="{{ L_manual }}">{{ "%.2f"|format(row.manual_expenses) }}</a>
+                        {%- else -%}
+                        {{ "%.2f"|format(row.manual_expenses or 0) }}
+                        {%- endif -%}
+                    </td>
                     <td class="text-right"><strong>{{ "%.2f"|format(row.closing) }}</strong></td>
                     {% for item in date_items %}
                     {% set daily = row.daily[item.key] %}
@@ -157,7 +172,8 @@
                     <th colspan="3">{{ L_total }}</th>
                     <th class="text-right">{{ "%.2f"|format(totals.opening) }}</th>
                     <th class="text-right">{{ "%.2f"|format(totals.receipts) }}</th>
-                    <th class="text-right">{{ "%.2f"|format(totals.expenses) }}</th>
+                    <th class="text-right">{{ "%.2f"|format(totals.topaz_expenses) }}</th>
+                    <th class="text-right">{{ "%.2f"|format(totals.manual_expenses) }}</th>
                     <th class="text-right">{{ "%.2f"|format(totals.closing) }}</th>
                     {% for item in date_items %}
                     <th></th>
