@@ -1,0 +1,201 @@
+{% extends g.base_template %}
+{% block title %}АЗС — {{ 'Ручной расход' if lang == 'ru' else 'Қўлда киритилган сарф' }}{% endblock %}
+{% block content %}
+
+{% set is_ru = (lang == 'ru') %}
+{% set L_title = 'Ручной расход' if is_ru else 'Қўлда киритилган сарф' %}
+{% set L_back = '← Дашборд' if is_ru else '← Дашборд' %}
+{% set L_info = 'Ручной расход — дизтопливо, отпущенное со склада мимо ТРК (например, налив из ёмкости в автоцистерну). Топаз такие выдачи не видит, поэтому они вводятся вручную и автоматически уменьшают остаток склада в отчёте по балансу.' if is_ru else 'Қўлда киритилган сарф — омбордан ТРК (колонка)дан четлаб берилган дизель ёқилғиси (масалан, идишдан автоцистернага қуйиш). Топаз бундай беришларни кўрмайди, шунинг учун улар қўлда киритилади ва баланс ҳисоботида омбор қолдиғини автоматик камайтиради.' %}
+{% set L_add = 'Добавить' if is_ru else 'Қўшиш' %}
+{% set L_edit = 'Изменить' if is_ru else 'Ўзгартириш' %}
+{% set L_date = 'Дата' if is_ru else 'Сана' %}
+{% set L_wh = 'Склад' if is_ru else 'Омбор' %}
+{% set L_select = '— выберите —' if is_ru else '— танланг —' %}
+{% set L_fuel = 'Вид топлива' if is_ru else 'Ёқилғи тури' %}
+{% set L_qty = 'Количество, л' if is_ru else 'Миқдори, л' %}
+{% set L_note = 'Примечание' if is_ru else 'Изоҳ' %}
+{% set L_author = 'Кто внёс' if is_ru else 'Киритган' %}
+{% set L_created = 'Внесено' if is_ru else 'Киритилган вақти' %}
+{% set L_actions = 'Действия' if is_ru else 'Амаллар' %}
+{% set L_reason = 'Причина удаления' if is_ru else 'Ўчириш сабаби' %}
+{% set L_save = 'Сохранить' if is_ru else 'Сақлаш' %}
+{% set L_clear = 'Очистить' if is_ru else 'Тозалаш' %}
+{% set L_from = 'С' if is_ru else 'Дан' %}
+{% set L_to = 'По' if is_ru else 'Гача' %}
+{% set L_all = '— все —' if is_ru else '— барчаси —' %}
+{% set L_show = 'Показать' if is_ru else 'Кўрсатиш' %}
+{% set L_total = 'Итого' if is_ru else 'Жами' %}
+{% set L_empty = 'За этот период ручных расходов нет.' if is_ru else 'Бу давр учун қўлда киритилган сарф йўқ.' %}
+{% set L_confirm_delete = 'Удалить запись? Баланс пересчитается автоматически.' if is_ru else 'Ёзув ўчирилсинми? Баланс автоматик қайта ҳисобланади.' %}
+{% set L_note_hint = 'Примечание обязательно: укажите, на что израсходовано топливо.' if is_ru else 'Изоҳ мажбурий: ёқилғи нима учун сарфланганини ёзинг.' %}
+{% set L_qty_hint = 'Введите литры. Значение должно быть больше 0.' if is_ru else 'Литрни киритинг. Қиймат 0 дан катта бўлиши керак.' %}
+
+<style>
+.fuel-pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700; background:var(--info-light); color:var(--info); }
+</style>
+
+<div style="display:flex; justify-content:flex-end; margin-bottom:12px;">
+    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ L_back }}</a>
+</div>
+
+<div class="card" style="margin-bottom:16px; border-left:3px solid var(--info);">
+    <div class="card-body" style="padding:12px 16px; font-size:13px; color:var(--info);">
+        {{ L_info }}
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+    <div class="card-header"><span id="meFormTitle">{{ L_add }}</span></div>
+    <div class="card-body">
+        <form method="post" action="{{ url_for('fuel.save_manual_expense') }}" class="form-inline" id="meForm">
+            {% if csrf_token is defined %}
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% endif %}
+            <input type="hidden" name="id" id="meId" value="">
+
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ L_date }}</label>
+                <input type="date" name="expense_date" id="meDate" value="{{ today.isoformat() }}" required class="form-control">
+            </div>
+
+            <div class="form-group" style="margin-bottom:0; flex:2;">
+                <label>{{ L_wh }}</label>
+                <select name="warehouse_id" id="meWarehouse" required class="form-control">
+                    <option value="">{{ L_select }}</option>
+                    {% for wh in warehouses %}
+                    <option value="{{ wh.id }}">{{ wh.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ L_fuel }}</label>
+                <div class="fuel-pill">ДТ</div>
+            </div>
+
+            <div class="form-group" style="margin-bottom:0;">
+                <label>{{ L_qty }}</label>
+                <input type="number" name="quantity" id="meQuantity" step="0.01" min="0.01" required style="width:130px;" class="form-control" title="{{ L_qty_hint }}">
+            </div>
+
+            <div class="form-group" style="margin-bottom:0; flex:2;">
+                <label>{{ L_note }}</label>
+                <input type="text" name="note" id="meNote" required placeholder="{{ L_note_hint }}" title="{{ L_note_hint }}" class="form-control">
+            </div>
+
+            <div class="form-group" style="margin-bottom:0;">
+                <label>&nbsp;</label>
+                <button type="submit" class="btn btn-primary">{{ L_save }}</button>
+                <button type="button" class="btn btn-secondary" onclick="clearMEForm()">{{ L_clear }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-body" style="padding:12px 20px;">
+        <form method="get" class="form-inline">
+            <div class="form-group" style="margin-bottom:0;"><label>{{ L_from }}</label><input type="date" name="date_from" value="{{ d_from.isoformat() }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0;"><label>{{ L_to }}</label><input type="date" name="date_to" value="{{ d_to.isoformat() }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0; flex:1;">
+                <label>{{ L_wh }}</label>
+                <select name="warehouse_id" class="form-control">
+                    <option value="">{{ L_all }}</option>
+                    {% for wh in warehouses %}<option value="{{ wh.id }}" {% if selected_wh_id == wh.id %}selected{% endif %}>{{ wh.name }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button type="submit" class="btn btn-primary btn-sm">{{ L_show }}</button></div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header" style="justify-content:space-between;">
+        <span>{{ L_title }} ({{ items|length }})</span>
+        <span style="font-weight:700; color:var(--accent);">{{ L_total }}: {{ '%.1f'|format(total_qty) }} л</span>
+    </div>
+    <div style="overflow-x:auto;">
+    <table>
+        <thead>
+            <tr>
+                <th>{{ L_date }}</th>
+                <th>{{ L_wh }}</th>
+                <th>{{ L_fuel }}</th>
+                <th class="text-right">{{ L_qty }}</th>
+                <th>{{ L_note }}</th>
+                <th>{{ L_author }}</th>
+                <th>{{ L_created }}</th>
+                <th style="width:220px;">{{ L_actions }}</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for e in items %}
+        <tr>
+            <td class="text-sm">{{ e.expense_date.strftime('%d.%m.%Y') }}</td>
+            <td>{{ e.warehouse.name if e.warehouse else '—' }}</td>
+            <td><span class="fuel-pill">{{ e.fuel_type }}</span></td>
+            <td class="text-right" style="font-weight:700;">{{ '%.1f'|format(e.quantity) }}</td>
+            <td class="text-sm text-muted">{{ e.note or '' }}</td>
+            {# The two historical rows have created_by = NULL — the dash is the expected state, not an error #}
+            <td class="text-sm">{{ authors.get(e.created_by, '—') if e.created_by else '—' }}</td>
+            <td class="text-sm text-muted">{{ e.created_at.strftime('%d.%m.%Y %H:%M') if e.created_at else '—' }}</td>
+            <td style="white-space:nowrap;">
+                <button type="button" class="btn btn-secondary btn-sm"
+                        onclick='editME({{ e.id }}, {{ e.expense_date.isoformat()|tojson }}, {{ e.warehouse_id }}, {{ e.quantity }}, {{ (e.note or "")|tojson }})'>
+                    {{ L_edit }}
+                </button>
+                <form method="post" action="{{ url_for('fuel.delete_manual_expense', expense_id=e.id) }}"
+                      style="display:inline;"
+                      onsubmit="return confirm('{{ L_confirm_delete }}')">
+                    {% if csrf_token is defined %}
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    {% endif %}
+                    <input type="text" name="reason" required placeholder="{{ L_reason }}" title="{{ L_reason }}"
+                           class="form-control" style="display:inline-block; width:150px;">
+                    <button type="submit" class="btn btn-danger btn-sm">✕</button>
+                </form>
+            </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="text-center text-muted" style="padding:40px;">{{ L_empty }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+{# [REASON]: labels are re-declared here on purpose — a {% set %} made in
+   block content is invisible from block scripts (Jinja block scoping), and
+   |tojson on the resulting Undefined raises a 500 at request time. #}
+{% set is_ru = (lang == 'ru') %}
+{% set L_add = 'Добавить' if is_ru else 'Қўшиш' %}
+{% set L_edit = 'Изменить' if is_ru else 'Ўзгартириш' %}
+<script>
+const MEAdd = {{ L_add|tojson }};
+const MEEdit = {{ L_edit|tojson }};
+function editME(id, dt, whId, qty, note) {
+    document.getElementById('meId').value = id;
+    document.getElementById('meFormTitle').textContent = MEEdit + ' #' + id;
+    document.getElementById('meDate').value = dt;
+    document.getElementById('meQuantity').value = qty;
+    document.getElementById('meNote').value = note || '';
+
+    const whSel = document.getElementById('meWarehouse');
+    for (let i = 0; i < whSel.options.length; i++) {
+        whSel.options[i].selected = (whSel.options[i].value == whId);
+    }
+
+    window.scrollTo(0, 0);
+}
+
+function clearMEForm() {
+    document.getElementById('meId').value = '';
+    document.getElementById('meFormTitle').textContent = MEAdd;
+    document.getElementById('meForm').reset();
+    document.getElementById('meDate').value = {{ today.isoformat()|tojson }};
+}
+</script>
+{% endblock %}

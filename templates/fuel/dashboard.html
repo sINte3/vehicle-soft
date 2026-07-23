@@ -63,6 +63,7 @@
 {% set L_stations = 'АЗС' if lang == 'ru' else 'АЗС' %}
 {% set L_warehouses = 'Склады' if lang == 'ru' else 'Омборлар' %}
 {% set L_initial = 'Начальные остатки' if lang == 'ru' else 'Бошл. қолдиқлар' %}
+{% set L_manual_exp = 'Ручной расход' if lang == 'ru' else 'Қўлда киритилган сарф' %}
 {% set L_today = 'Выдано сегодня' if lang == 'ru' else 'Бугун берилди' %}
 {% set L_warehouse_count = 'Складов' if lang == 'ru' else 'Омборлар сони' %}
 {% set L_active_stations = 'Активных АЗС' if lang == 'ru' else 'Фаол АЗС' %}
@@ -225,6 +226,7 @@
         <a href="{{ url_for('fuel.stations') }}" class="btn btn-secondary btn-sm">{{ L_stations }}</a>
         <a href="{{ url_for('fuel.warehouses') }}" class="btn btn-secondary btn-sm">{{ L_warehouses }}</a>
         <a href="{{ url_for('fuel.initial_balance') }}" class="btn btn-secondary btn-sm">{{ L_initial }}</a>
+        <a href="{{ url_for('fuel.manual_expenses') }}" class="btn btn-secondary btn-sm">{{ L_manual_exp }}</a>
         {% endif %}
     </div>
 </div>
