@@ -1140,6 +1140,9 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         'opening': 0.0,
         'receipts': 0.0,
         'issued': 0.0,
+        # [REASON]: FUEL-MANUAL-EXP-A2 — manual (non-Topaz) expense kept as its
+        # own total so it stays visible and never hides inside the Topaz figure.
+        'manual': 0.0,
         'ending': 0.0,
         'warehouses': len(warehouses),
         'stations': 0,
@@ -1164,6 +1167,11 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
 
     before_receipt_conditions = []
     before_issue_conditions = []
+    # [REASON]: FUEL-MANUAL-EXP-A2 — per-warehouse lower bounds for the manual
+    # expense that predates the period, mirroring receipts/issues above. Only
+    # populated when no station filter is active (a per-station view excludes
+    # manual expenses, which belong to a warehouse and have no station).
+    before_manual_lower_bounds = {}
 
     for wh_id, ib in initial_by_wh.items():
         if d_from <= ib.balance_date:
@@ -1181,6 +1189,9 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             FuelTransaction2.txn_datetime >= datetime.combine(ib.balance_date, datetime.min.time()),
             FuelTransaction2.txn_datetime <= datetime.combine(before_date, datetime.max.time()),
         ))
+
+        if not station_id:
+            before_manual_lower_bounds[(wh_id, 'ДТ')] = ib.balance_date
 
     receipts_before_by_wh = {}
     if before_receipt_conditions:
@@ -1218,6 +1229,24 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             .all())
         period_receipts_by_wh = {int(wh_id): float(total or 0) for wh_id, total in rows}
 
+    # [REASON]: FUEL-MANUAL-EXP-A2 — manual expense before the period (for the
+    # opening) and within the period (for the closing), each one grouped query
+    # via the shared helper. Skipped entirely when a station filter is active,
+    # so a per-station view stays purely about that station's Topaz issues.
+    manual_before_by_wh = {}
+    if before_manual_lower_bounds:
+        before_manual_map = _fuel_manual_expense_map(
+            warehouse_ids, fuel_type='ДТ',
+            date_to=d_from - timedelta(days=1),
+            lower_bounds=before_manual_lower_bounds)
+        manual_before_by_wh = {wh_id: litres for (wh_id, _ft), litres in before_manual_map.items()}
+
+    period_manual_by_wh = {}
+    if warehouse_ids and not station_id:
+        period_manual_map = _fuel_manual_expense_map(
+            warehouse_ids, fuel_type='ДТ', date_from=d_from, date_to=d_to)
+        period_manual_by_wh = {wh_id: litres for (wh_id, _ft), litres in period_manual_map.items()}
+
     tx_stats_by_wh = {}
     if warehouse_ids:
         tx_stats_q = (db.session.query(
@@ -1245,6 +1274,10 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
     for wh in warehouses:
         initial_balance = initial_by_wh.get(wh.id)
 
+        # [REASON]: FUEL-MANUAL-EXP-A2 — manual expense enters the opening only in
+        # the same branch as receipts_before/issues_before (period starts after
+        # the initial-balance date), over [balance_date, d_from). When d_from <=
+        # balance_date the opening is the raw initial quantity, exactly as before.
         if not initial_balance:
             opening = None
         elif d_from <= initial_balance.balance_date:
@@ -1253,18 +1286,22 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             opening = round(
                 float(initial_balance.quantity or 0)
                 + receipts_before_by_wh.get(wh.id, 0.0)
-                - issues_before_by_wh.get(wh.id, 0.0),
+                - issues_before_by_wh.get(wh.id, 0.0)
+                - manual_before_by_wh.get(wh.id, 0.0),
                 2,
             )
 
         receipts = period_receipts_by_wh.get(wh.id, 0.0)
         tx_stats = tx_stats_by_wh.get(wh.id, {})
         issued = float(tx_stats.get('issued') or 0)
+        manual = period_manual_by_wh.get(wh.id, 0.0)
         tx_count = int(tx_stats.get('tx_count') or 0)
         stations_count = int(stations_count_by_wh.get(wh.id, 0))
         last_txn = last_txn_by_wh.get(wh.id)
 
-        ending = None if opening is None else round(opening + receipts - issued, 2)
+        # [REASON]: FUEL-MANUAL-EXP-A2 — closing mirrors the balance report:
+        # opening + receipts − Topaz issues − manual expense.
+        ending = None if opening is None else round(opening + receipts - issued - manual, 2)
 
         if opening is None:
             totals['missing_initial'] += 1
@@ -1275,6 +1312,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
                 totals['negative_balances'] += 1
         totals['receipts'] += receipts
         totals['issued'] += issued
+        totals['manual'] += manual
         totals['transactions'] += tx_count
         totals['stations'] += stations_count
 
@@ -1283,6 +1321,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             'opening': opening,
             'receipts': receipts,
             'issued': issued,
+            'manual': manual,
             'ending': ending,
             'initial_balance': initial_balance,
             'stations_count': stations_count,
@@ -1571,6 +1610,7 @@ def _fuel_report_workbook(data, lang='uz'):
         (L('Начальный остаток, л', 'Бошланғич қолдиқ, л'), data['totals']['opening']),
         (L('Приход, л', 'Кирим, л'), data['totals']['receipts']),
         (L('Выдача Topaz, л', 'Topaz бериш, л'), data['totals']['issued']),
+        (L('Ручной расход, л', 'Қўлда киритилган сарф, л'), data['totals'].get('manual', 0)),
         (L('Расчётный остаток, л', 'Ҳисобий қолдиқ, л'), data['totals']['ending']),
         (L('Склады', 'Омборлар'), data['totals']['warehouses']),
         (L('АЗС', 'АЗС'), data['totals']['stations']),
@@ -1600,10 +1640,10 @@ def _fuel_report_workbook(data, lang='uz'):
     style_table(ws)
 
     ws = wb.create_sheet(_safe_ws_title(L('Склады', 'Омборлар'), used))
-    ws.append([L('Склад', 'Омбор'), L('АЗС', 'АЗС'), L('Начальный остаток', 'Бошланғич қолдиқ'), L('Приход', 'Кирим'), L('Выдача', 'Бериш'), L('Расчётный остаток', 'Ҳисобий қолдиқ'), L('Транзакций', 'Транзакциялар'), L('Последняя выдача', 'Охирги бериш')])
+    ws.append([L('Склад', 'Омбор'), L('АЗС', 'АЗС'), L('Начальный остаток', 'Бошланғич қолдиқ'), L('Приход', 'Кирим'), L('Выдача Topaz', 'Topaz бериш'), L('Ручной расход', 'Қўлда киритилган сарф'), L('Расчётный остаток', 'Ҳисобий қолдиқ'), L('Транзакций', 'Транзакциялар'), L('Последняя выдача', 'Охирги бериш')])
     for r in data['warehouse_rows']:
         last = r['last_txn'].txn_datetime.strftime('%d.%m.%Y %H:%M') if r['last_txn'] else ''
-        ws.append([r['warehouse'].name, r['stations_count'], r['opening'], r['receipts'], r['issued'], r['ending'], r['tx_count'], last])
+        ws.append([r['warehouse'].name, r['stations_count'], r['opening'], r['receipts'], r['issued'], r.get('manual', 0), r['ending'], r['tx_count'], last])
     style_table(ws)
 
     ws = wb.create_sheet(_safe_ws_title(L('АЗС', 'АЗС'), used))
