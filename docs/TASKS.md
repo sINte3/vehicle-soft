@@ -25,21 +25,99 @@ Known confirmed gaps to include in the audit as starting evidence:
 - templates/audit_logs.html — Phase 7 gave it form-control only; full
   visual pass explicitly deferred.
 
-### Next: spare-parts borrowing track — increment 6 not yet scoped
+### Next: spare-parts borrowing track — increment 7 (scoped 2026-07-23)
 
-Increments 1-5 are done and merged into `main`: SP-DESK-001 (operator workspace,
+Increments 1-6 are done and merged into `main`: SP-DESK-001 (operator workspace,
 PR #11), SP-DETAIL-002 (request card redesign, PR #12), SP-RESERVE-003
 (reservations and available stock, PR #13), SP-MINSTOCK-004 (minimum stock levels
 and purchase queue, PR #14), SP-PQEXPORT-005 (Excel export of the purchase queue,
-PR #15) — see their sections below.
+PR #15), SP-POLISH-006 (purchase queue readability and `№` numbering, PR #16) —
+see their sections below.
 
-What comes sixth is the owner's call and is deliberately not scoped here.
-Unprioritised candidates accumulated during the track: releasing a reservation
-when an approved request is rejected, price history on the SKU screen, bulk
-approval of requests. The standalone «Заявки/Наряды» MVP is tracked outside this
-track and is not the next item here.
+Increment 7 pairs two owner-approved items:
+
+- **REPORTS-SPLIT** — split the spare-parts reports screen. Today `/reports`
+  renders five stacked tables in one long page (cost by equipment, by
+  organization, by category, repeat orders, top-20). All five come from a single
+  `_reports_data(d_from, d_to, org_id, equipment_id, category_id)` call, filters
+  are parsed by `_reports_filters()`, and the Excel file is built by
+  `_spare_reports_workbook(data, lang)`. Boundary: this is a presentation
+  change only — `_reports_data` and the cost rule (`status in ('approved',
+  'issued')` AND `price_status == 'confirmed'`, line cost = price * quantity)
+  must not be touched. Open owner questions, not yet asked: tabs inside one page
+  or separate pages; whether the Excel export stays one file; which table opens
+  by default.
+- **SKU-RENAME-001** — see its backlog entry below.
+
+Unprioritised candidates still accumulated during the track: releasing a
+reservation when an approved request is rejected, price history on the SKU
+screen, bulk approval of requests. The standalone «Заявки/Наряды» MVP is tracked
+outside this track and is not the next item here.
+
+### PILOT-1C-001 — Data migration pilot from 1C (Paxtasanoattrans)
+
+Priority: P2
+Status: in progress (analysis; no code so far)
+
+Parallel track, runs alongside the increments. Decisions and findings so far:
+
+- Pilot organization: **Paxtasanoattrans** — 84 equipment objects with plates and
+  a live consumption history.
+- **Warehouse model (option A, decided).** Import stock as the single
+  organization warehouse. 1C models storage locations as *people* (материально
+  ответственные лица); we do not reproduce that — parts held by mechanics count
+  as already issued in our model. The NOT NULL + UNIQUE `organization_id` on
+  `spare_part_warehouses` stays untouched.
+- **Stock is tiny.** Account 1040 for Paxtasanoattrans holds only **15 positions**
+  with a positive balance (~37.8M sum), split between two people (Rahmonov Laziz
+  8, Hamroev Zayniddin 7). Physical presence confirmed by the organization on
+  2026-07-23. Import will be manual data entry through the warehouse UI — no
+  migration script. Blocked only by the missing «кв. метр» unit (UNIT-SQM-001).
+- **Equipment matching done.** Of 161 1C repair objects, 82 have real 2026
+  consumption. Automatic matching by plate (Cyrillic/Latin homoglyphs folded to
+  one alphabet) links **77 of 82 = 93.9%**, covering **96% of the consumed
+  amount**. The remaining 5 were reviewed by the owner: no such machines in
+  Vehicle Soft, excluded. Digits-only matching was tested and rejected — it
+  merges different machines (1C `80/265 HА` with a Kogon PTZ MTZ).
+- Next step, not started: nomenclature mapping. The holding has 217,716
+  nomenclature items, 99,011 of them on account 1040; needs a plan for how they
+  map onto the Vehicle Soft catalog (canonical parts + SKUs) and an owner
+  decision on how much history to carry over.
+- Process rule learned: 1C directory exports must be taken with «С подчиненными»
+  (Ещё → Вывести список), otherwise only the current tree level is exported. An
+  earlier truncated export produced a wrong conclusion about warehouse counts.
 
 ## Recently completed / appears completed
+
+### SP-POLISH-006 — Purchase queue readability + `№` request numbering (PR #16)
+
+Priority: P2
+Status: **completed 2026-07-23 (staging + production)**
+
+Increment 6 of the spare-parts borrowing track. Code and templates only: no
+schema change, no migration.
+
+Commits, in apply order:
+1. `9d05c16` — purchase queue shows the answer, not the formula: nine columns
+   down to five, a large «Нужно закупить: N ед» plus a plain-language
+   explanation line («на складе 4, обещано по заявкам 5, неснижаемый запас 10»)
+   with zero-valued fragments omitted. Template only; the Excel export keeps its
+   detailed columns on purpose (supply officer's working document).
+2. `7c7e3b3` — `№N` instead of `#N` across the UI, the act PDF and Telegram:
+   18 occurrences in 11 files. `href="#..."` anchors, English audit-log strings
+   (`Request #N`), the `sku_label` fallback and `note='Request #{}'` were
+   deliberately left unchanged.
+3. `584ff23` — `qty()` macro: integer quantities render without `.0`.
+
+Rollback: strictly reverse order — `584ff23`, `7c7e3b3`, `9d05c16`. No data
+rollback needed. Merge commit `0ceea30`; deployed to staging and production on
+2026-07-23 (backup `transport_20260723_092222.db` taken immediately before).
+Bot services were restarted too, because `bot_formatters.py` and
+`bot003_outbox_worker.py` changed.
+
+Process deviations recorded, not normalised: production was updated at 09:22
+rather than during a low-activity window, and the staging visual check happened
+after the production deploy rather than before it.
 
 ### DEPLOY-SP-BUNDLE-001 — Production deploy of PR #8..#15
 
@@ -498,6 +576,54 @@ Blocker:
 
 ## Backlog
 
+### SKU-RENAME-001 — Replace the visible term «SKU» with «Артикул»
+
+Priority: P2
+Status: open — scheduled into increment 7, paired with REPORTS-SPLIT
+
+Owner decision 2026-07-23. Management does not read «SKU»; the visible label
+becomes «Артикул» (Uzbek: «Артикул», Cyrillic).
+
+«Номенклатура» was considered and rejected on evidence: in the holding's 1C
+nomenclature directory «Номенклатура» is the part itself (columns: code, name,
+organization, group, kind, account, price — no supplier, no brand). That maps
+onto our «Запчасть» column, not onto SKU, which is a purchasable variant
+(brand / article / supplier). Using it would mislead exactly the people who work
+in 1C daily. Do not reopen without new evidence.
+
+Hard boundary: rename **display strings only**. Field names, the `SparePartSku`
+class, variables, form keys and URLs stay as they are. Rough scope: ~36
+occurrences in module templates (`spare_part_detail.html` ~14,
+`spare_parts_inventory.html` ~11, `spare_part_form.html` ~7,
+`spare_part_act.html` and `spare_parts_purchase_queue.html` 2 each) plus
+bilingual strings in `spare_parts.py`. The implementer must grep the whole
+repository and list every changed occurrence in the PR description.
+
+### UNIT-SQM-001 — Add the «кв. метр» unit to the units directory
+
+Priority: P3
+Status: open
+
+Found while preparing the 1C stock import (PILOT-1C-001): wire mesh is measured
+in square metres, and the `spare_part_units` directory has no such row. Units are
+a managed DB directory (`SparePartUnit`: code, name_ru, name_uz, is_active,
+sort_order), not a list in code, so this is a data change, not a code change.
+Proposed row: code `kv_metr`, RU «кв. метр», UZ «кв. метр» (Cyrillic).
+Unverified: whether the units directory has an edit screen under the spare-parts
+«Справочники» menu — check there first; if not, a one-off insert script.
+
+### PLATE-NORM-001 — Normalise licence plates for search and matching
+
+Priority: P3
+Status: open
+
+Equipment plates are typed with a mix of Cyrillic and Latin homoglyphs — `80 265
+EA` and `80 265 ЕА` sit in adjacent rows of the equipment reference. Visually
+identical, they never match byte-wise, which breaks search and any comparison
+with external systems (found during PILOT-1C-001 matching, where folding
+homoglyphs into one alphabet was required to reach 93.9%). Normalise at display
+and search time; do NOT rewrite stored values.
+
 ### DEPLOY-DRIFT-001 — Detect migration drift automatically
 
 Priority: P1
@@ -533,12 +659,17 @@ Defects found while using it for DEPLOY-SP-BUNDLE-001:
 ### DEPLOY-BOTS-001 — Document the bot services in the deploy procedure
 
 Priority: P3
-Status: open
+Status: **closed 2026-07-23**
 
 `TransportBot` and `TransportBot003` run from `C:\transport-report` and share
 `instance\transport.db`, so they must be stopped before migrations and started
-after. The standard procedure never mentions them. Add them, and add an
-exclusive-lock check (`check_db_lock.py`) as a pre-migration gate.
+after. Verified on 2026-07-23 with `.\nssm.exe get <service> AppDirectory`:
+`TransportBotStaging` and `TransportBot003Staging` point at
+`C:\transport-report-staging`, i.e. the staging bots run staging code, not
+production code — the open question about their working directory is settled.
+Both pairs are now part of the deploy sequence (see the SP-POLISH-006 runbook).
+Still worth adding as a separate improvement: an exclusive-lock check
+(`check_db_lock.py`) as a pre-migration gate — tracked under DEPLOY-DRIFT-001.
 
 ### BOT-DNS-001 — Telegram bot DNS failures
 
