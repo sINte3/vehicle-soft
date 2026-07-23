@@ -14,13 +14,32 @@
   </div>
 </div>
 
+{# REPORTS-POLISH-001: 3+2 tiles with an accent icon each. The accent class is
+   chosen from t.key (colours live in design-system.css, never inline); the icon
+   is inline SVG — no icon font, no CDN, nothing fetched (UI-FONT-LOCAL-001).
+   The former ⚠ prefix on repeat-orders is dropped: the amber icon carries it. #}
+{% set tile_accents = {
+     'by-equipment': 'is-primary', 'by-organization': 'is-info',
+     'by-category': 'is-success', 'repeat-orders': 'is-warning',
+     'top-items': 'is-danger'} %}
 <div class="vs-report-tiles">
   {% for t in tiles %}
-  <a class="vs-card vs-report-tile" href="{{ url_for('spare_parts.report_page', key=t.key) }}">
-    <div class="vs-card-body">
-      {# The ⚠ marker is carried over from the old combined page, where it
-         already prefixed this table's card title — repeat-orders only. #}
-      <div class="vs-report-tile-title">{% if t.key == 'repeat-orders' %}⚠ {% endif %}{{ t.title_ru if is_ru else t.title_uz }}</div>
+  <a class="vs-card vs-report-tile {{ tile_accents.get(t.key, '') }}" href="{{ url_for('spare_parts.report_page', key=t.key) }}">
+    <span class="vs-report-tile-icon" aria-hidden="true">
+      {% if t.key == 'by-equipment' %}
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="6" width="13" height="10" rx="1.5"/><path d="M14 9h4l3 3v4h-7z"/><circle cx="6" cy="18.5" r="2"/><circle cx="17.5" cy="18.5" r="2"/></svg>
+      {% elif t.key == 'by-organization' %}
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M8 7h2M14 7h2M8 11h2M14 11h2M8 15h2M14 15h2"/><path d="M10 21v-3h4v3"/></svg>
+      {% elif t.key == 'by-category' %}
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 22 8 12 13 2 8z"/><polyline points="2,12 12,17 22,12"/><polyline points="2,16 12,21 22,16"/></svg>
+      {% elif t.key == 'repeat-orders' %}
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17,2 21,6 17,10"/><path d="M3 12v-2a4 4 0 0 1 4-4h14"/><polyline points="7,22 3,18 7,14"/><path d="M21 12v2a4 4 0 0 1-4 4H3"/></svg>
+      {% elif t.key == 'top-items' %}
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="21" x2="21" y2="21"/><rect x="5" y="12" width="4" height="9"/><rect x="11" y="7" width="4" height="14"/><rect x="17" y="3" width="4" height="18"/></svg>
+      {% endif %}
+    </span>
+    <div class="vs-report-tile-text">
+      <div class="vs-report-tile-title">{{ t.title_ru if is_ru else t.title_uz }}</div>
       <div class="vs-report-tile-sub">{{ t.subtitle_ru if is_ru else t.subtitle_uz }}</div>
     </div>
     <div class="vs-report-tile-arrow" aria-hidden="true">→</div>

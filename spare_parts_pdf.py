@@ -276,6 +276,50 @@ def generate_write_off_act_pdf(act, dest_path, lang='ru', unit_labels=None):
     return dest_path
 
 
+def _fit_col_widths(available, weights, columns,
+                    font_name='DejaVuSans-Bold', font_size=9, padding=12):
+    """Proportional column widths, widened so no header word breaks in half.
+
+    [REASON]: REPORTS-POLISH-001 — a Paragraph header in a column narrower
+    than one of its words is split mid-word ('Позиций' -> 'Позици'/'й').
+    Rather than hand-tuning col_weights per report, the widest WORD of each
+    header is measured and treated as that column's minimum; the extra
+    points are taken from the columns that have slack, in proportion to how
+    much slack they have, so the intended proportions survive. Wrapping at
+    spaces is untouched — only the unbreakable unit is protected.
+    padding=12 is reportlab's default LEFTPADDING + RIGHTPADDING (6 + 6).
+    """
+    total = float(sum(weights)) or 1.0
+    widths = [available * w / total for w in weights]
+
+    mins = []
+    for label in columns:
+        words = str(label).split() or ['']
+        widest = max(pdfmetrics.stringWidth(w, font_name, font_size)
+                     for w in words)
+        mins.append(widest + padding + 2)
+
+    # If even the minimums do not fit, the table is over-specified for the
+    # page; keep the proportional widths and let reportlab do its best.
+    if sum(mins) >= available:
+        return widths
+
+    deficit = sum(max(0.0, mins[i] - widths[i]) for i in range(len(widths)))
+    if deficit <= 0:
+        return widths
+    slack_total = sum(max(0.0, widths[i] - mins[i]) for i in range(len(widths)))
+    if slack_total <= 0:
+        return widths
+
+    out = []
+    for i, w in enumerate(widths):
+        if w < mins[i]:
+            out.append(mins[i])
+        else:
+            out.append(w - deficit * ((w - mins[i]) / slack_total))
+    return out
+
+
 def generate_report_pdf(dest, report_key, title, subtitle_lines, columns, rows,
                         landscape_page=False, lang='ru', col_weights=None,
                         numeric_cols=(), wrap_cols=(), totals_row=None):
@@ -326,8 +370,7 @@ def generate_report_pdf(dest, report_key, title, subtitle_lines, columns, rows,
     story.append(Spacer(1, 5 * mm))
 
     weights = list(col_weights) if col_weights else [1.0] * len(columns)
-    total_weight = float(sum(weights)) or 1.0
-    col_widths = [doc.width * w / total_weight for w in weights]
+    col_widths = _fit_col_widths(doc.width, weights, columns)
 
     # Header labels wrap in a Paragraph so long report headers never clip in
     # a narrow column (the xlsx counterpart wraps them the same way).
