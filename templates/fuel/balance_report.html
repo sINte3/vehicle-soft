@@ -19,6 +19,9 @@
 {# FUEL-MANUAL-EXP-A3: same labels PR #21 introduced on /fuel/report so the two pages read identically #}
 {% set L_topaz = 'Выдача Topaz' if lang == 'ru' else 'Topaz бериш' %}
 {% set L_manual = 'Ручной расход' if lang == 'ru' else 'Қўлда киритилган сарф' %}
+{# FUEL-CARD-CLASS: external (third-party) fuel — reference column, not part of the balance #}
+{% set L_external = 'Стороннее топливо' if lang == 'ru' else 'Бегона ёқилғи' %}
+{% set L_external_note = 'Стороннее топливо — топливо других владельцев, которое хранится в наших ёмкостях и выдаётся через нашу колонку. С 1 мая 2026 года оно не входит в наш расход и показывается только справочно.' if lang == 'ru' else 'Бегона ёқилғи — бошқа эгаларнинг ёқилғиси, у бизнинг идишларимизда сақланади ва бизнинг колонкамиз орқали берилади. 2026 йил 1 майдан бошлаб у бизнинг сарфимизга кирмайди ва фақат маълумот учун кўрсатилади.' %}
 {% set L_closing = 'Текущий остаток' if lang == 'ru' else 'Жорий қолдиқ' %}
 {% set L_table_desc = 'Расход за период разделён на выдачи Topaz и ручной расход. В дневных колонках они показаны одной суммой.' if lang == 'ru' else 'Давр бўйича сарф Topaz бериш ва қўлда киритилган сарфга ажратилган. Кунлик устунларда улар битта сумма сифатида кўрсатилади.' %}
 {% set L_wh_count = 'Складов:' if lang == 'ru' else 'Омборлар:' %}
@@ -82,7 +85,7 @@
     </form>
 </div>
 
-<div style="display:grid; grid-template-columns:repeat(5, minmax(160px, 1fr)); gap:12px; margin-bottom:16px;">
+<div style="display:grid; grid-template-columns:repeat(6, minmax(150px, 1fr)); gap:12px; margin-bottom:16px;">
     <div class="card" style="padding:16px;">
         <div class="text-muted">{{ L_opening }}</div>
         <div style="font-size:22px; font-weight:700; margin-top:6px;">{{ "%.2f"|format(totals.opening) }} л</div>
@@ -94,6 +97,11 @@
     <div class="card" style="padding:16px;">
         <div class="text-muted">{{ L_topaz }}</div>
         <div style="font-size:22px; font-weight:700; margin-top:6px;">{{ "%.2f"|format(totals.topaz_expenses) }} л</div>
+    </div>
+    {# FUEL-CARD-CLASS: reference tile, styled muted so it does not read as balance arithmetic #}
+    <div class="card" style="padding:16px;" title="{{ L_external_note }}">
+        <div class="text-muted">{{ L_external }}</div>
+        <div class="text-muted" style="font-size:22px; font-weight:700; margin-top:6px;">{{ "%.2f"|format(totals.external_expenses or 0) }} л</div>
     </div>
     <div class="card" style="padding:16px;">
         <div class="text-muted">{{ L_manual }}</div>
@@ -114,6 +122,10 @@
             <div class="text-muted" style="margin-top:4px;">
                 {{ L_table_desc }}
             </div>
+            {# FUEL-CARD-CLASS: explain the external-fuel reference column #}
+            <div class="text-muted" style="margin-top:4px; font-size:12px;">
+                {{ L_external_note }}
+            </div>
         </div>
         <div class="text-muted">{{ L_wh_count }} {{ rows|length }}</div>
     </div>
@@ -128,6 +140,7 @@
                     <th rowspan="2" style="vertical-align:middle;">{% if lang == 'ru' %}Остаток на {{ start_date.strftime('%d/%m/%Y') }}{% else %}{{ start_date.strftime('%d/%m/%Y') }} даги қолдиқ{% endif %}</th>
                     <th rowspan="2" style="vertical-align:middle;">{{ L_receipts }}</th>
                     <th rowspan="2" style="vertical-align:middle;">{{ L_topaz }}</th>
+                    <th rowspan="2" class="text-muted" style="vertical-align:middle;" title="{{ L_external_note }}">{{ L_external }}</th>
                     <th rowspan="2" style="vertical-align:middle;">{{ L_manual }}</th>
                     <th rowspan="2" style="vertical-align:middle;">{{ L_closing }}</th>
                     {% for item in date_items %}
@@ -150,6 +163,8 @@
                     <td class="text-right">{{ "%.2f"|format(row.opening) }}</td>
                     <td class="text-right">{{ "%.2f"|format(row.receipts) }}</td>
                     <td class="text-right">{{ "%.2f"|format(row.topaz_expenses) }}</td>
+                    {# FUEL-CARD-CLASS: external fuel reference cell, muted #}
+                    <td class="text-right text-muted">{{ "%.2f"|format(row.external_expenses or 0) }}</td>
                     {# FUEL-MANUAL-EXP-A3: non-zero manual figure drills into the manual-expenses list, same markup as PR #21 on /fuel/report; admin-only because that page is admin-only #}
                     <td class="text-right">
                         {%- if row.manual_expenses and current_user.is_admin -%}
@@ -173,6 +188,7 @@
                     <th class="text-right">{{ "%.2f"|format(totals.opening) }}</th>
                     <th class="text-right">{{ "%.2f"|format(totals.receipts) }}</th>
                     <th class="text-right">{{ "%.2f"|format(totals.topaz_expenses) }}</th>
+                    <th class="text-right text-muted">{{ "%.2f"|format(totals.external_expenses or 0) }}</th>
                     <th class="text-right">{{ "%.2f"|format(totals.manual_expenses) }}</th>
                     <th class="text-right">{{ "%.2f"|format(totals.closing) }}</th>
                     {% for item in date_items %}
