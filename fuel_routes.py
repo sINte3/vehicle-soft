@@ -715,6 +715,13 @@ def _fuel_balance_map(warehouse_ids, fuel_type=None):
     }
     manual_sums = _fuel_manual_expense_map(ids, lower_bounds=manual_lower_bounds)
 
+    # [REASON]: FUEL-CARD-CLASS — external-fuel Topaz issues are not our expense,
+    # so they must be added back to the balance (equivalently: netted out of the
+    # Topaz issue figure). Same per-(warehouse, fuel_type) lower bound as the
+    # receipts/issues/manual above; the helper intersects it with each card's
+    # start date. One grouped query, never per-warehouse.
+    external_sums = _fuel_external_expense_map(ids, lower_bounds=manual_lower_bounds)
+
     for wh_id in ids:
         ftypes = fuel_types_by_wh.get(wh_id)
 
@@ -735,7 +742,8 @@ def _fuel_balance_map(warehouse_ids, fuel_type=None):
             receipts = receipt_sums.get((wh_id, ft), 0.0)
             expenses = expense_sums.get((wh_id, ft), 0.0)
             manual = manual_sums.get((wh_id, ft), 0.0)
-            result[wh_id][ft] = round(float(ib.quantity or 0) + receipts - expenses - manual, 2)
+            external = external_sums.get((wh_id, ft), 0.0)
+            result[wh_id][ft] = round(float(ib.quantity or 0) + receipts - expenses - manual + external, 2)
 
     return result
 
@@ -948,6 +956,15 @@ def _fuel_today_expense_map(warehouse_ids):
     manual_today = _fuel_manual_expense_map(ids, date_from=today, date_to=today)
     for (wh_id, _ft), litres in manual_today.items():
         result[wh_id] = result.get(wh_id, 0.0) + litres
+
+    # [REASON]: FUEL-CARD-CLASS — external-fuel issues drawn today are not our
+    # expense, so net them out of the "Выдано сегодня" figure. These rows are a
+    # subset of the Topaz sum above (they live in fuel_transactions2), so the
+    # result stays >= 0. The helper only returns rows when today is on or after
+    # the card's start date, so nothing is netted before the rule starts.
+    external_today = _fuel_external_expense_map(ids, date_from=today, date_to=today)
+    for (wh_id, _ft), litres in external_today.items():
+        result[wh_id] = result.get(wh_id, 0.0) - litres
 
     return result
 
