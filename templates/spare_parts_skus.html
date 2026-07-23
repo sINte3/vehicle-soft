@@ -1,6 +1,6 @@
 {% extends g.base_template %}
 {% set is_ru = (lang == 'ru') %}
-{% block title %}{{ 'Запчасти — SKU' if is_ru else 'Эҳтиёт қисмлар — SKU' }}{% endblock %}
+{% block title %}{{ 'Запчасти — артикулы' if is_ru else 'Эҳтиёт қисмлар — артикуллар' }}{% endblock %}
 {% block content %}
 {% include '_spare_nav.html' %}
 {# SP-F-013: programmatic label associations (for=/id, aria-label) — additive only. #}
@@ -8,16 +8,16 @@
 {# SP-DESK-001: the old cross-navigation cluster moved to the shared tab strip. #}
 <div class="vs-hero vs-mb">
   <div>
-    <div class="vs-hero-title">{{ 'SKU — варианты поставки' if is_ru else 'SKU — таъминот вариантлари' }}</div>
+    <div class="vs-hero-title">{{ 'Артикул — варианты поставки' if is_ru else 'Артикул — таъминот вариантлари' }}</div>
     <div class="vs-hero-sub">{{ 'Конкретные варианты (бренд, артикул, поставщик) для записей каталога. Цены обновляются автоматически при подтверждении цен в заявках.' if is_ru else 'Каталог ёзувлари учун аниқ вариантлар (бренд, артикул, таъминотчи). Нархлар сўровларда нарх тасдиқланганда автоматик янгиланади.' }}</div>
   </div>
 </div>
 
-<div class="vs-alert is-info vs-mb">{{ 'SKU не обязателен в заявке: позиция без SKU работает как раньше. Последняя/средняя цена — справочные, они не заменяют подтверждение цены в заявке.' if is_ru else 'Сўровда SKU мажбурий эмас: SKUсиз позиция аввалгидек ишлайди. Охирги/ўртача нарх — маълумот учун, улар сўровдаги нарх тасдиқлашни алмаштирмайди.' }}</div>
+<div class="vs-alert is-info vs-mb">{{ 'Артикул не обязателен в заявке: позиция без артикула работает как раньше. Последняя/средняя цена — справочные, они не заменяют подтверждение цены в заявке.' if is_ru else 'Сўровда артикул мажбурий эмас: артикулсиз позиция аввалгидек ишлайди. Охирги/ўртача нарх — маълумот учун, улар сўровдаги нарх тасдиқлашни алмаштирмайди.' }}</div>
 
 <div class="vs-card vs-mb">
     <div class="vs-card-header">
-        <div class="vs-card-title" id="skuFormTitle">{{ 'Добавить SKU' if is_ru else 'Янги SKU қўшиш' }}</div>
+        <div class="vs-card-title" id="skuFormTitle">{{ 'Добавить артикул' if is_ru else 'Янги артикул қўшиш' }}</div>
     </div>
     <div class="vs-card-body">
         <form method="post" action="{{ url_for('spare_parts.sku_save') }}" class="vs-form-row" id="skuForm" onsubmit="return validateSkuBeforeSubmit()">
@@ -70,7 +70,7 @@
 
 <div class="vs-table-wrap">
     <div class="vs-card-header">
-        <span class="vs-card-title">{{ 'Всего SKU' if is_ru else 'Жами SKU' }}: {{ sku_rows|length }}</span>
+        <span class="vs-card-title">{{ 'Всего артикулов' if is_ru else 'Жами артикуллар' }}: {{ sku_rows|length }}</span>
     </div>
     <div class="vs-table-scroll">
     <table class="vs-table">
@@ -117,7 +117,7 @@
     {% if not sku_rows %}
     <div class="vs-empty">
         <div class="vs-empty-ico">🏷️</div>
-        <div class="vs-empty-title">{{ 'SKU пока нет' if is_ru else 'Ҳозирча SKU йўқ' }}</div>
+        <div class="vs-empty-title">{{ 'Артикулов пока нет' if is_ru else 'Ҳозирча артикул йўқ' }}</div>
         <div class="vs-empty-sub">{{ 'Добавьте первый вариант поставки в форме выше.' if is_ru else 'Юқоридаги шаклда биринчи таъминот вариантини қўшинг.' }}</div>
     </div>
     {% endif %}
@@ -126,8 +126,8 @@
 {% block scripts %}
 <script>
 const SKU_TEXT = {
-    addTitle: {{ ('Добавить SKU' if is_ru else 'Янги SKU қўшиш')|tojson }},
-    editTitle: {{ ('Редактирование SKU' if is_ru else 'SKU таҳрирлаш')|tojson }},
+    addTitle: {{ ('Добавить артикул' if is_ru else 'Янги артикул қўшиш')|tojson }},
+    editTitle: {{ ('Редактирование артикула' if is_ru else 'Артикулни таҳрирлаш')|tojson }},
     requiredPart: {{ ('Выберите запчасть из каталога.' if is_ru else 'Каталогдан эҳтиёт қисмни танланг.')|tojson }},
     requiredOneField: {{ ('Заполните хотя бы одно поле: бренд, артикул или поставщик.' if is_ru else 'Камида битта майдонни тўлдиринг: бренд, артикул ёки таъминотчи.')|tojson }},
     shown: {{ ('Показано' if is_ru else 'Кўрсатилган')|tojson }}

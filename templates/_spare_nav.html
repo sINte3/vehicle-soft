@@ -79,7 +79,7 @@
       <a class="vs-menu-item{% if sp_ep in ('spare_parts.catalog', 'spare_parts.catalog_compatibility') %} is-current{% endif %}"
          href="{{ url_for('spare_parts.catalog') }}">Каталог</a>
       <a class="vs-menu-item{% if sp_ep == 'spare_parts.skus' %} is-current{% endif %}"
-         href="{{ url_for('spare_parts.skus') }}">SKU</a>
+         href="{{ url_for('spare_parts.skus') }}">Артикул</a>
       <a class="vs-menu-item{% if sp_ep == 'spare_parts.equipment_models' %} is-current{% endif %}"
          href="{{ url_for('spare_parts.equipment_models') }}">{{ 'Модели техники' if is_ru else 'Техника моделлари' }}</a>
       <a class="vs-menu-item{% if sp_ep == 'spare_parts.maintenance_norms' %} is-current{% endif %}"

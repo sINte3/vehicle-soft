@@ -41,7 +41,7 @@
             <tr>
                 <th style="width:40px;">№</th>
                 <th>{{ 'Наименование' if is_ru else 'Номи' }}</th>
-                <th>SKU</th>
+                <th>Артикул</th>
                 <th class="right">{{ 'Кол-во' if is_ru else 'Миқдор' }}</th>
                 <th>{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</th>
                 <th class="right">{{ 'Цена' if is_ru else 'Нарх' }}</th>
@@ -73,7 +73,7 @@
 </div>
 
 {% if act.items|selectattr('sku_label', 'equalto', '')|list %}
-<div class="vs-alert is-warning vs-mb">{{ 'Позиции без SKU выданы без списания со складского учёта.' if is_ru else 'SKUсиз позициялар омбор ҳисобидан чиқарилмасдан берилди.' }}</div>
+<div class="vs-alert is-warning vs-mb">{{ 'Позиции без артикула выданы без списания со складского учёта.' if is_ru else 'Артикулсиз позициялар омбор ҳисобидан чиқарилмасдан берилди.' }}</div>
 {% endif %}
 
 {% endblock %}

@@ -2626,9 +2626,9 @@ def _sku_duplicate_response(part_id, race=False):
             'SKU save rejected by uq_spare_part_skus_normalized (race), part=%s',
             part_id)
     _spare_flash_errors(
-        [_spare_t('Бу деталь учун бундай SKU аллақачон мавжуд',
-                  'Такой SKU уже существует для этой детали')],
-        title_uz='SKU сақланмади:', title_ru='SKU не сохранён:')
+        [_spare_t('Бу деталь учун бундай артикул аллақачон мавжуд',
+                  'Такой артикул уже существует для этой детали')],
+        title_uz='Артикул сақланмади:', title_ru='Артикул не сохранён:')
     return redirect(url_for('spare_parts.skus'))
 
 
@@ -2655,8 +2655,8 @@ def sku_save():
             'Камида битта майдонни тўлдиринг: бренд, артикул ёки таъминотчи',
             'Заполните хотя бы одно поле: бренд, артикул или поставщик'))
     if errors:
-        _spare_flash_errors(errors, title_uz='SKU сақланмади:',
-                            title_ru='SKU не сохранён:')
+        _spare_flash_errors(errors, title_uz='Артикул сақланмади:',
+                            title_ru='Артикул не сохранён:')
         return redirect(url_for('spare_parts.skus'))
 
     # Friendly pre-check for the common duplicate case (see
@@ -2710,7 +2710,7 @@ def sku_save():
         # message as the pre-check path.
         db.session.rollback()
         return _sku_duplicate_response(part.id, race=True)
-    flash(_spare_t('SKU сақланди', 'SKU сохранён'), 'success')
+    flash(_spare_t('Артикул сақланди', 'Артикул сохранён'), 'success')
     return redirect(url_for('spare_parts.skus'))
 
 
@@ -3205,7 +3205,7 @@ def _purchase_queue_workbook(rows, lang='uz'):
     ws.append(['№',
                L('Организация', 'Ташкилот'),
                L('Запчасть', 'Эҳтиёт қисм'),
-               'SKU',
+               'Артикул',
                L('Ед. изм.', 'Ўлчов бирлиги'),
                L('Остаток', 'Қолдиқ'),
                L('Под заявки', 'Сўровлар учун'),
@@ -3448,7 +3448,7 @@ def inventory_movement_create():
 
     errors = []
     if sku is None or sku.is_active == False:  # noqa: E712
-        errors.append(_spare_t('SKU танланг', 'Выберите SKU'))
+        errors.append(_spare_t('Артикулни танланг', 'Выберите артикул'))
     quantity = None
     try:
         parsed = float(raw_qty)
@@ -3553,7 +3553,7 @@ def inventory_min_level_save():
     sku_id = request.form.get('sku_id', type=int)
     sku = SparePartSku.query.get(sku_id) if sku_id else None
     if sku is None:
-        _spare_flash_errors([_spare_t('SKU топилмади', 'SKU не найден')],
+        _spare_flash_errors([_spare_t('Артикул топилмади', 'Артикул не найден')],
                             title_uz='Минимум сақланмади:',
                             title_ru='Минимум не сохранён:')
         return redirect(url_for('spare_parts.inventory',
@@ -3861,8 +3861,8 @@ def issue_request(rid):
     # rule holds even if the client-side UI is bypassed.
     if ctx['no_sku_items'] and request.form.get('confirm_no_sku') != '1':
         errors.append(_spare_t(
-            'SKUсиз позициялар омбордан ҳисобдан чиқарилмайди — беришдан олдин буни тасдиқлаш шарт',
-            'Позиции без SKU не будут списаны со склада — перед выдачей это нужно явно подтвердить'))
+            'Артикулсиз позициялар омбордан ҳисобдан чиқарилмайди — беришдан олдин буни тасдиқлаш шарт',
+            'Позиции без артикула не будут списаны со склада — перед выдачей это нужно явно подтвердить'))
     # [REASON]: SP-F-001 pre-flight — a friendly shortage message BEFORE any
     # transaction work. SP-RESERVE-003: aggregated per SKU (two items on the
     # same SKU are checked against their combined need) and against

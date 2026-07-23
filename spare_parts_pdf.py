@@ -67,7 +67,7 @@ _L = {
         'title': 'АКТ СПИСАНИЯ ЗАПЧАСТЕЙ',
         'organization': 'Организация',
         'warehouse': 'Склад',
-        'no_warehouse': '— (без склада, позиции без SKU)',
+        'no_warehouse': '— (без склада, позиции без артикула)',
         'request': 'Заявка',
         'equipment': 'Техника',
         'date': 'Дата выдачи',
@@ -82,13 +82,13 @@ _L = {
         'received_by': 'Получил',
         'signature': 'подпись',
         'full_name': 'Ф.И.О.',
-        'no_sku_note': 'Позиции без SKU выданы без списания со складского учёта.',
+        'no_sku_note': 'Позиции без артикула выданы без списания со складского учёта.',
     },
     'uz': {
         'title': 'ЭҲТИЁТ ҚИСМЛАРНИ ҲИСОБДАН ЧИҚАРИШ ДАЛОЛАТНОМАСИ',
         'organization': 'Ташкилот',
         'warehouse': 'Омбор',
-        'no_warehouse': '— (омборсиз, SKUсиз позициялар)',
+        'no_warehouse': '— (омборсиз, артикулсиз позициялар)',
         'request': 'Сўров',
         'equipment': 'Техника',
         'date': 'Берилган сана',
@@ -103,7 +103,7 @@ _L = {
         'received_by': 'Қабул қилди',
         'signature': 'имзо',
         'full_name': 'Ф.И.Ш.',
-        'no_sku_note': 'SKUсиз позициялар омбор ҳисобидан чиқарилмасдан берилди.',
+        'no_sku_note': 'Артикулсиз позициялар омбор ҳисобидан чиқарилмасдан берилди.',
     },
 }
 
@@ -201,7 +201,7 @@ def generate_write_off_act_pdf(act, dest_path, lang='ru', unit_labels=None):
         # combined, so the application's own <br/>/<font> markup keeps working.
         name_html = escape(display_name)
         if item.sku_label:
-            name_html += '<br/><font size="7.5" color="#555555">SKU: {}</font>'.format(
+            name_html += '<br/><font size="7.5" color="#555555">Артикул: {}</font>'.format(
                 escape(item.sku_label))
         if item.total is not None:
             grand_total += float(item.total)

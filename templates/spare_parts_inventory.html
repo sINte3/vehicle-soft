@@ -16,7 +16,7 @@
 <div class="vs-hero vs-mb">
   <div>
     <div class="vs-hero-title">{{ 'Склад запчастей' if is_ru else 'Эҳтиёт қисмлар омбори' }}</div>
-    <div class="vs-hero-sub">{{ 'Остатки по SKU и журнал движений. Один склад на организацию. Учёт ведётся только по позициям с выбранным SKU.' if is_ru else 'SKU бўйича қолдиқлар ва ҳаракатлар журнали. Ҳар бир ташкилотга битта омбор. Ҳисоб фақат SKU танланган позициялар бўйича юритилади.' }}</div>
+    <div class="vs-hero-sub">{{ 'Остатки по артикулам и журнал движений. Один склад на организацию. Учёт ведётся только по позициям с выбранным артикулом.' if is_ru else 'Артикул бўйича қолдиқлар ва ҳаракатлар журнали. Ҳар бир ташкилотга битта омбор. Ҳисоб фақат артикул танланган позициялар бўйича юритилади.' }}</div>
   </div>
 </div>
 
@@ -74,14 +74,14 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="warehouse_id" value="{{ warehouse.id }}">
             <div class="vs-field" style="flex:2; min-width:260px;">
-                <label class="vs-label" for="movSku">SKU</label>
+                <label class="vs-label" for="movSku">Артикул</label>
                 <select name="sku_id" id="movSku" class="vs-select" required>
-                    <option value="">{{ '— выберите SKU —' if is_ru else '— SKU танланг —' }}</option>
+                    <option value="">{{ '— выберите артикул —' if is_ru else '— артикулни танланг —' }}</option>
                     {% for sku in sku_options %}
                     <option value="{{ sku.id }}">{{ sku.spare_part.name if sku.spare_part else '?' }} — {{ sku.label }}</option>
                     {% endfor %}
                 </select>
-                <div class="vs-help">{{ 'Нет нужного SKU? Добавьте его на экране «SKU — варианты поставки».' if is_ru else 'Керакли SKU йўқми? Уни «SKU — таъминот вариантлари» экранида қўшинг.' }}</div>
+                <div class="vs-help">{{ 'Нет нужного артикула? Добавьте его на экране «Артикул — варианты поставки».' if is_ru else 'Керакли артикул йўқми? Уни «Артикул — таъминот вариантлари» экранида қўшинг.' }}</div>
             </div>
             <div class="vs-field" style="width:180px;">
                 <label class="vs-label" for="movType">{{ 'Тип движения' if is_ru else 'Ҳаракат тури' }}</label>
@@ -119,7 +119,7 @@
             <tr>
                 <th style="width:40px;">№</th>
                 <th>{{ 'Запчасть' if is_ru else 'Эҳтиёт қисм' }}</th>
-                <th>SKU</th>
+                <th>Артикул</th>
                 <th class="right">{{ 'Остаток' if is_ru else 'Қолдиқ' }}</th>
                 <th class="right">{{ 'Зарезервировано' if is_ru else 'Захираланган' }}</th>
                 <th class="right">{{ 'Доступно' if is_ru else 'Мавжуд' }}</th>
@@ -177,9 +177,9 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="warehouse_id" value="{{ warehouse.id }}">
             <div class="vs-field" style="flex:2; min-width:260px;">
-                <label class="vs-label" for="minSku">SKU</label>
+                <label class="vs-label" for="minSku">Артикул</label>
                 <select name="sku_id" id="minSku" class="vs-select" required>
-                    <option value="">{{ '— выберите SKU —' if is_ru else '— SKU танланг —' }}</option>
+                    <option value="">{{ '— выберите артикул —' if is_ru else '— артикулни танланг —' }}</option>
                     {% for sku in sku_options %}
                     <option value="{{ sku.id }}">{{ sku.spare_part.name if sku.spare_part else '?' }} — {{ sku.label }}</option>
                     {% endfor %}
@@ -205,7 +205,7 @@
             <thead>
                 <tr>
                     <th>{{ 'Запчасть' if is_ru else 'Эҳтиёт қисм' }}</th>
-                    <th>SKU</th>
+                    <th>Артикул</th>
                     <th class="right">Минимум</th>
                     <th>{{ 'Примечание' if is_ru else 'Изоҳ' }}</th>
                 </tr>
@@ -243,7 +243,7 @@
         <thead>
             <tr>
                 <th>{{ 'Запчасть' if is_ru else 'Эҳтиёт қисм' }}</th>
-                <th>SKU</th>
+                <th>Артикул</th>
                 <th>{{ 'Заявка' if is_ru else 'Сўров' }}</th>
                 <th class="right">{{ 'Резерв / запрошено' if is_ru else 'Захира / сўралган' }}</th>
                 <th>{{ 'Дата' if is_ru else 'Сана' }}</th>
@@ -297,7 +297,7 @@
         <thead>
             <tr>
                 <th>{{ 'Дата' if is_ru else 'Сана' }}</th>
-                <th>{{ 'Запчасть / SKU' if is_ru else 'Эҳтиёт қисм / SKU' }}</th>
+                <th>{{ 'Запчасть / артикул' if is_ru else 'Эҳтиёт қисм / артикул' }}</th>
                 <th>{{ 'Тип' if is_ru else 'Тури' }}</th>
                 <th class="right">{{ 'Кол-во' if is_ru else 'Миқдор' }}</th>
                 <th class="right">{{ 'Остаток после' if is_ru else 'Кейинги қолдиқ' }}</th>
@@ -343,7 +343,7 @@
 {% block scripts %}
 <script>
 const INV_TEXT = {
-    needSku: {{ ('Выберите SKU.' if is_ru else 'SKU танланг.')|tojson }},
+    needSku: {{ ('Выберите артикул.' if is_ru else 'Артикулни танланг.')|tojson }},
     needQty: {{ ('Количество должно быть числом, отличным от нуля.' if is_ru else 'Миқдор нолдан фарқли сон бўлиши керак.')|tojson }},
     receiptPositive: {{ ('Количество прихода должно быть положительным.' if is_ru else 'Кирим миқдори мусбат бўлиши керак.')|tojson }}
 };
