@@ -646,6 +646,36 @@ class FuelReceipt2(db.Model):
     created_at      = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class FuelManualExpense(db.Model):
+    """Ручной расход топлива со склада мимо ТРК/Топаз (например, налив в автоцистерну)."""
+    # [REASON]: FUEL-MANUAL-EXP -- this model is fitted to a PRE-EXISTING
+    # production table (created outside the migration system, already holding
+    # live rows the balance report counts). Column names, types and
+    # nullability must match PRAGMA table_info(fuel_manual_expenses) exactly;
+    # a mismatch will not raise, it will silently produce wrong SQL.
+    __tablename__ = 'fuel_manual_expenses'
+    id           = db.Column(db.Integer, primary_key=True)
+    warehouse_id = db.Column(db.Integer, db.ForeignKey('fuel_warehouses.id'), nullable=False)
+    expense_date = db.Column(db.Date, nullable=False)
+    fuel_type    = db.Column(db.String(20), nullable=False, default='ДТ')
+    quantity     = db.Column(db.Float, nullable=False)
+    note         = db.Column(db.Text)
+    source       = db.Column(db.String(50), nullable=False, default='manual')
+    is_deleted   = db.Column(db.Integer, nullable=False, default=0)
+    created_at   = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at   = db.Column(db.DateTime, nullable=True)
+    created_by   = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    deleted_by   = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    deleted_at   = db.Column(db.DateTime, nullable=True)
+
+    # [REASON]: no UniqueConstraint on (warehouse_id, expense_date) -- unlike
+    # FuelInitialBalance, the same warehouse can legitimately have several
+    # manual expenses on one date (e.g. two tanker loads plus a top-up).
+    # Plain relationship, no cascade: warehouse deletion must never
+    # hard-delete manual expense rows.
+    warehouse = db.relationship('FuelWarehouse')
+
+
 class FuelTransaction2(db.Model):
     """Транзакция из Топаз (выдача топлива). Списывается со склада АЗС."""
     __tablename__ = 'fuel_transactions2'
