@@ -4970,7 +4970,8 @@ def _reports_parse_date(value, default):
 
 
 def _reports_filters():
-    """Read and validate the filter set shared by reports and reports_export."""
+    """Read and validate the filter set shared by report_page,
+    report_export_xlsx and report_export_pdf."""
     today = date.today()
     default_start = today.replace(day=1)
     d_from = _reports_parse_date(request.args.get('date_from'), default_start)
