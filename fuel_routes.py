@@ -2805,13 +2805,40 @@ def fuel_show_legacy_warehouses():
 
 
 def fuel_target_warehouse_ids():
-    """Warehouse IDs that contain target fuel stations/topaz IDs."""
+    """Warehouse IDs shown in the fuel module by default.
+
+    Union of two sources, purely additive — no warehouse visible before
+    FUEL-RESERVE becomes invisible:
+
+    - warehouses owning a station whose topaz_id is in FUEL_TARGET_TOPAZ_IDS
+      (the original behaviour, unchanged); and
+    - warehouses flagged show_in_ui = 1 (FUEL-RESERVE), used by the reserve
+      («Резерв») which has no physical station and would otherwise be invisible
+      everywhere — balance report, /fuel/report, receipts, dashboard, initial
+      balances.
+
+    Callers relying on this helper for visibility: fuel_warehouse_query_for_ui
+    and fuel_apply_warehouse_filter_for_ui, which are in turn used by
+    get_all_balances / dashboard, _fuel_report_build_rows / balance_report(+export),
+    warehouses(), initial_balance(), receipts(), manual_expenses() and
+    save_manual_expense(). All of them gain the reserve; none lose a warehouse.
+    """
     rows = (db.session.query(FuelStation2.warehouse_id)
             .filter(FuelStation2.topaz_id.in_(FUEL_TARGET_TOPAZ_IDS))
             .filter(FuelStation2.warehouse_id.isnot(None))
             .distinct()
             .all())
-    return [r[0] for r in rows if r[0] is not None]
+    ids = {r[0] for r in rows if r[0] is not None}
+
+    # [REASON]: FUEL-RESERVE — add show_in_ui=1 warehouses (the reserve). Older
+    # production rows predate the column but the migration adds it with DEFAULT 0,
+    # so this filter is safe everywhere the migration has run.
+    ui_rows = (db.session.query(FuelWarehouse.id)
+               .filter(FuelWarehouse.show_in_ui == 1)
+               .all())
+    ids.update(r[0] for r in ui_rows if r[0] is not None)
+
+    return list(ids)
 
 
 def fuel_warehouse_query_for_ui():
