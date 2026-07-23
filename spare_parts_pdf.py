@@ -17,7 +17,7 @@ import os
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
@@ -274,3 +274,99 @@ def generate_write_off_act_pdf(act, dest_path, lang='ru', unit_labels=None):
 
     doc.build(story)
     return dest_path
+
+
+def generate_report_pdf(dest, report_key, title, subtitle_lines, columns, rows,
+                        landscape_page=False, lang='ru', col_weights=None,
+                        numeric_cols=(), wrap_cols=(), totals_row=None):
+    """Render one spare-parts report table to a PDF.
+
+    [REASON]: REPORTS-SPLIT — reuses _register_fonts() (bundled DejaVu, full
+    Uzbek Cyrillic coverage) and the SP-F-005 escaping rule from the write-off
+    act renderer; no new fonts, no network access, no new dependency.
+
+    `dest` is a file-like object (io.BytesIO), exactly as act_pdf passes one.
+    `columns` and `rows` arrive as already-formatted, already-localized
+    strings — this module has no DB access (same rule as unit_labels in the
+    act renderer), and `lang` is kept for signature parity with it.
+    `col_weights` splits doc.width proportionally so no column overflows the
+    page in either orientation (never hard-coded millimetres); `wrap_cols`
+    marks the long operator-typed text columns (equipment / part /
+    organization names) that are wrapped in a Paragraph; `numeric_cols` are
+    right-aligned; `totals_row`, when given, becomes a bold ИТОГО/ЖАМИ last
+    row (the three cost reports).
+    """
+    _register_fonts()
+
+    title_style = ParagraphStyle('rep_title', fontName='DejaVuSans-Bold',
+                                 fontSize=14, leading=18, alignment=1)
+    sub_style = ParagraphStyle('rep_sub', fontName='DejaVuSans',
+                               fontSize=9.5, leading=13,
+                               textColor=colors.HexColor('#333333'))
+    head_style = ParagraphStyle('rep_head', fontName='DejaVuSans-Bold',
+                                fontSize=9, leading=12, alignment=1)
+    cell_style = ParagraphStyle('rep_cell', fontName='DejaVuSans',
+                                fontSize=9, leading=12)
+
+    doc = SimpleDocTemplate(
+        dest, pagesize=landscape(A4) if landscape_page else A4,
+        leftMargin=18 * mm, rightMargin=18 * mm,
+        topMargin=16 * mm, bottomMargin=16 * mm,
+        title=title, subject=report_key,
+        author='Vehicle Soft',
+    )
+
+    # [REASON]: SP-F-005 — every dynamic value that reaches a Paragraph is
+    # escaped. The title and the subtitle lines are escaped WHOLE: they carry
+    # no application markup, and the filters line embeds operator-typed
+    # organization/equipment names resolved by the caller.
+    story = [Paragraph(escape(title), title_style)]
+    for line in (subtitle_lines or []):
+        story.append(Paragraph(escape(str(line)), sub_style))
+    story.append(Spacer(1, 5 * mm))
+
+    weights = list(col_weights) if col_weights else [1.0] * len(columns)
+    total_weight = float(sum(weights)) or 1.0
+    col_widths = [doc.width * w / total_weight for w in weights]
+
+    # Header labels wrap in a Paragraph so long report headers never clip in
+    # a narrow column (the xlsx counterpart wraps them the same way).
+    data = [[Paragraph(escape(str(c)), head_style) for c in columns]]
+    for row in rows:
+        cells = []
+        for idx, value in enumerate(row):
+            text = '' if value is None else str(value)
+            if idx in wrap_cols:
+                # [REASON]: SP-F-005 — operator-typed long text goes through
+                # Paragraph (for wrapping) and therefore MUST be escaped;
+                # the short plain cells in the else-branch are drawn verbatim
+                # by Table without XML parsing and must NOT be escaped.
+                cells.append(Paragraph(escape(text), cell_style))
+            else:
+                cells.append(text)
+        data.append(cells)
+    if totals_row is not None:
+        data.append(['' if v is None else str(v) for v in totals_row])
+
+    # Styling mirrors the write-off act table: bold DejaVu header on #E8EFE8,
+    # 0.5pt #999999 grid, VALIGN TOP; repeatRows=1 repeats the header row on
+    # every page of a long report.
+    table = Table(data, colWidths=col_widths, repeatRows=1)
+    style = [
+        ('FONTNAME', (0, 0), (-1, 0), 'DejaVuSans-Bold'),
+        ('FONTNAME', (0, 1), (-1, -1), 'DejaVuSans'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E8EFE8')),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#999999')),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+    ]
+    for col in numeric_cols:
+        style.append(('ALIGN', (col, 1), (col, -1), 'RIGHT'))
+    if totals_row is not None:
+        style.append(('FONTNAME', (0, -1), (-1, -1), 'DejaVuSans-Bold'))
+    table.setStyle(TableStyle(style))
+    story.append(table)
+
+    doc.build(story)
+    return dest

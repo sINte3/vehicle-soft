@@ -5497,6 +5497,157 @@ def _report_export_filename(key, d_from, d_to, lang, ext):
                                    d_to.strftime('%d_%m_%Y'), ext)
 
 
+def _report_pdf_table(key, data, lang):
+    """Columns, rows and layout hints for one report's PDF table.
+
+    [REASON]: REPORTS-SPLIT — header labels are the exact strings of the
+    corresponding .xlsx builder, so the two formats never drift. Cell text is
+    built plain: no _xlsx_safe apostrophe (that guard is Excel-specific), the
+    PDF renderer applies the SP-F-005 escape() rule to the wrap_cols instead.
+    Money and quantities go through the PDF module's _fmt_money/_fmt_qty so
+    numbers look the same as in the write-off act.
+    """
+    from spare_parts_pdf import _fmt_money, _fmt_qty
+
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
+
+    def eq_name(eq):
+        return eq.name if eq else L('— без техники —', '— техникасиз —')
+
+    def eq_plate(eq):
+        return (eq.plate or '') if eq else ''
+
+    def org_name(org):
+        return (org.short_name or org.name) if org else '—'
+
+    severity_labels = {
+        'red': L('Красный (≤7 дней)', 'Қизил (≤7 кун)'),
+        'yellow': L('Жёлтый (≤30 дней)', 'Сариқ (≤30 кун)'),
+    }
+
+    if key == 'by-equipment':
+        return {
+            'columns': [L('Техника', 'Техника'), L('Гос. номер', 'Давлат рақами'),
+                        L('Организация', 'Ташкилот'), L('Позиций', 'Позициялар'),
+                        L('Сумма, сум', 'Сумма, сўм')],
+            'rows': [[eq_name(r['equipment']), eq_plate(r['equipment']),
+                      org_name(r['organization']), str(r['lines']),
+                      _fmt_money(r['total'])]
+                     for r in data['by_equipment']],
+            'totals_row': [L('ИТОГО', 'ЖАМИ'), '', '',
+                           str(data['cost_lines_count']),
+                           _fmt_money(data['grand_total'])],
+            'col_weights': (3.0, 1.3, 2.2, 1.0, 1.6),
+            'numeric_cols': (3, 4),
+            'wrap_cols': (0, 2),
+        }
+    if key == 'by-organization':
+        return {
+            'columns': [L('Организация', 'Ташкилот'), L('Позиций', 'Позициялар'),
+                        L('Сумма, сум', 'Сумма, сўм')],
+            'rows': [[org_name(r['organization']), str(r['lines']),
+                      _fmt_money(r['total'])]
+                     for r in data['by_organization']],
+            'totals_row': [L('ИТОГО', 'ЖАМИ'), str(data['cost_lines_count']),
+                           _fmt_money(data['grand_total'])],
+            'col_weights': (3.6, 1.0, 1.6),
+            'numeric_cols': (1, 2),
+            'wrap_cols': (0,),
+        }
+    if key == 'by-category':
+        rows = []
+        for r in data['by_category']:
+            cat = r['category']
+            label = ((cat.name_ru if lang == 'ru' else cat.name_uz) if cat
+                     else L('— без категории —', '— категориясиз —'))
+            rows.append([label, str(r['lines']), _fmt_money(r['total'])])
+        return {
+            'columns': [L('Категория', 'Категория'), L('Позиций', 'Позициялар'),
+                        L('Сумма, сум', 'Сумма, сўм')],
+            'rows': rows,
+            'totals_row': [L('ИТОГО', 'ЖАМИ'), str(data['cost_lines_count']),
+                           _fmt_money(data['grand_total'])],
+            'col_weights': (3.6, 1.0, 1.6),
+            'numeric_cols': (1, 2),
+            'wrap_cols': (0,),
+        }
+    if key == 'repeat-orders':
+        return {
+            'columns': [L('Заявка', 'Сўров'), L('Дата', 'Сана'),
+                        L('Организация', 'Ташкилот'), L('Техника', 'Техника'),
+                        L('Запчасть', 'Эҳтиёт қисм'), L('Уровень', 'Даража'),
+                        L('Дней с прошлого заказа', 'Олдинги сўровдан кунлар')],
+            'rows': [['№{}'.format(r['request_id']),
+                      r['request_date'].strftime('%d.%m.%Y'),
+                      org_name(r['organization']), eq_name(r['equipment']),
+                      r['part_name'],
+                      severity_labels.get(r['severity'], r['severity']),
+                      str(r['days_since'])]
+                     for r in data['repeat_rows']],
+            'totals_row': None,
+            'col_weights': (1.0, 1.1, 2.0, 2.4, 2.8, 1.6, 1.4),
+            'numeric_cols': (6,),
+            'wrap_cols': (2, 3, 4),
+        }
+    # top-items
+    # [REASON]: REPORTS-SPLIT — the top-20 PDF carries the № rank column of
+    # the on-screen table (a printed ranking without rank numbers is
+    # unreadable); the other four PDFs mirror their xlsx column sets exactly.
+    return {
+        'columns': ['№', L('Заявка', 'Сўров'), L('Дата', 'Сана'),
+                    L('Организация', 'Ташкилот'), L('Техника', 'Техника'),
+                    L('Запчасть', 'Эҳтиёт қисм'), L('Кол-во', 'Миқдор'),
+                    L('Ед. изм.', 'Ўлчов бирлиги'), L('Цена, сум', 'Нарх, сўм'),
+                    L('Сумма, сум', 'Сумма, сўм')],
+        'rows': [[str(i), '№{}'.format(r['request_id']),
+                  r['request_date'].strftime('%d.%m.%Y'),
+                  org_name(r['organization']), eq_name(r['equipment']),
+                  r['name'], _fmt_qty(r['quantity']), r['unit'] or '',
+                  _fmt_money(r['price']), _fmt_money(r['total'])]
+                 for i, r in enumerate(data['top_items'], start=1)],
+        'totals_row': None,
+        'col_weights': (0.5, 0.9, 1.0, 1.7, 1.9, 2.4, 0.8, 0.9, 1.3, 1.4),
+        'numeric_cols': (6, 8, 9),
+        'wrap_cols': (3, 4, 5),
+    }
+
+
+def _report_pdf_subtitles(d_from, d_to, org_id, equipment_id, category_id, lang):
+    """Header lines under the PDF title: period, applied filters, timestamp.
+
+    [REASON]: REPORTS-SPLIT — built HERE because spare_parts_pdf has no DB
+    access (same rule as unit_labels in the act renderer): the filter ids are
+    resolved to display names via the ORM. Values are escaped inside the
+    renderer (SP-F-005), not here — escaping twice would show '&amp;'.
+    """
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
+
+    period = '{}: {} — {}'.format(L('Период', 'Давр'),
+                                  d_from.strftime('%d.%m.%Y'),
+                                  d_to.strftime('%d.%m.%Y'))
+
+    unset = L('все', 'барчаси')
+    org = Organization.query.get(org_id) if org_id else None
+    org_label = (org.short_name or org.name) if org else unset
+    eq = Equipment.query.get(equipment_id) if equipment_id else None
+    eq_label = unset
+    if eq is not None:
+        eq_label = eq.name + (' — ' + eq.plate if eq.plate else '')
+    cat = SparePartCategory.query.get(category_id) if category_id else None
+    cat_label = ((cat.name_ru if lang == 'ru' else cat.name_uz) if cat
+                 else unset)
+    filters = '{}: {} · {}: {} · {}: {}'.format(
+        L('Организация', 'Ташкилот'), org_label,
+        L('Техника', 'Техника'), eq_label,
+        L('Категория', 'Категория'), cat_label)
+
+    generated = '{}: {}'.format(L('Сформирован', 'Шакллантирилди'),
+                                datetime.now().strftime('%d.%m.%Y %H:%M'))
+    return [period, filters, generated]
+
+
 @spare_parts_bp.route('/reports')
 @module_required('spare_parts')
 def reports():
@@ -5585,3 +5736,29 @@ def report_export_xlsx(key):
         download_name=_report_export_filename(key, d_from, d_to, lang, 'xlsx'),
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
+
+
+@spare_parts_bp.route('/reports/<key>/export.pdf')
+@module_required('spare_parts')
+def report_export_pdf(key):
+    # Same gate as the report page (this is the same data, as a file).
+    if not current_user.has_module_access('spare_parts_reports'):
+        abort(403)
+    spec = _report_spec_or_404(key)
+    d_from, d_to, org_id, equipment_id, category_id = _reports_filters()
+    data = _reports_data(d_from, d_to, org_id=org_id,
+                         equipment_id=equipment_id, category_id=category_id)
+    lang = _spare_lang()
+    table = _report_pdf_table(key, data, lang)
+    # Local import mirrors act_pdf — reportlab stays off the module import path.
+    from spare_parts_pdf import generate_report_pdf
+    buffer = io.BytesIO()
+    generate_report_pdf(buffer, key,
+                        spec['title_ru'] if lang == 'ru' else spec['title_uz'],
+                        _report_pdf_subtitles(d_from, d_to, org_id,
+                                              equipment_id, category_id, lang),
+                        landscape_page=spec['landscape'], lang=lang, **table)
+    buffer.seek(0)
+    return send_file(buffer, mimetype='application/pdf', as_attachment=True,
+                     download_name=_report_export_filename(key, d_from, d_to,
+                                                           lang, 'pdf'))
