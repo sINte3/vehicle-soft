@@ -3422,6 +3422,52 @@ def _fuel_report_daily_expenses(warehouse_id, fuel_type, start_date, end_date):
     return result
 
 
+# [REASON]: FUEL-CARD-CLASS — per-day external-fuel Topaz issues for the balance
+# report's daily columns, keyed (warehouse_id, 'YYYY-MM-DD'), each card counted
+# only from its own start date. One grouped query for all warehouses so the
+# per-warehouse loop in _fuel_report_build_rows adds no query. Empty rule or
+# empty warehouse list touches no database.
+def _fuel_report_daily_external(warehouse_ids, fuel_type, start_date, end_date):
+    ids = [int(x) for x in (warehouse_ids or []) if x]
+    if not ids or not EXTERNAL_FUEL_CARDS:
+        return {}
+
+    start_dt = datetime.combine(start_date, datetime.min.time())
+    end_dt = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+
+    card_conditions = []
+    for card, start in EXTERNAL_FUEL_CARDS.items():
+        card_conditions.append(and_(
+            FuelTransaction2.card_number == card,
+            FuelTransaction2.txn_datetime >= datetime.combine(start, datetime.min.time()),
+        ))
+
+    rows = (
+        db.session.query(
+            FuelStation2.warehouse_id,
+            func.date(FuelTransaction2.txn_datetime),
+            func.coalesce(func.sum(FuelTransaction2.quantity), 0),
+        )
+        .join(FuelTransaction2, FuelTransaction2.station_id == FuelStation2.id)
+        .filter(
+            FuelStation2.warehouse_id.in_(ids),
+            FuelTransaction2.fuel_type == fuel_type,
+            FuelTransaction2.txn_datetime >= start_dt,
+            FuelTransaction2.txn_datetime < end_dt,
+            or_(*card_conditions),
+        )
+        .group_by(FuelStation2.warehouse_id, func.date(FuelTransaction2.txn_datetime))
+        .all()
+    )
+
+    result = {}
+    for wh_id, d, qty in rows:
+        if d is None:
+            continue
+        result[(int(wh_id), str(d))] = float(qty or 0)
+    return result
+
+
 def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="ДТ"):
     date_items = _fuel_report_date_items(start_date, end_date)
     start_dt = datetime.combine(start_date, datetime.min.time())
@@ -3445,16 +3491,59 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
         # balance_report presents the expense exactly like /fuel/report does.
         "topaz_expenses": 0.0,
         "manual_expenses": 0.0,
+        # [REASON]: FUEL-CARD-CLASS — external (third-party) fuel netted out of the
+        # Topaz figure, kept as its own reference total. Never feeds "closing".
+        "external_expenses": 0.0,
         "closing": 0.0,
     }
 
+    warehouse_ids = [wh.id for wh in warehouses]
+
+    # [REASON]: FUEL-CARD-CLASS — the earliest initial balance per warehouse,
+    # loaded in bulk (was a per-warehouse query in the loop). Gives the
+    # per-warehouse lower bound the external-fuel opening adjustment needs while
+    # removing an N+1. Ordering matches the previous per-warehouse query:
+    # earliest balance_date, smallest id.
+    initial_by_wh = {}
+    if warehouse_ids:
+        for ib in (FuelInitialBalance.query
+                   .filter(FuelInitialBalance.warehouse_id.in_(warehouse_ids),
+                           FuelInitialBalance.fuel_type == fuel_type)
+                   .order_by(FuelInitialBalance.warehouse_id,
+                             FuelInitialBalance.balance_date.asc(),
+                             FuelInitialBalance.id.asc())
+                   .all()):
+            wid = int(ib.warehouse_id)
+            if wid not in initial_by_wh:
+                initial_by_wh[wid] = ib
+
+    # [REASON]: FUEL-CARD-CLASS — external-fuel maps computed once for all
+    # warehouses (no per-warehouse query). "before" is added back into the
+    # opening over [max(initial_date, rule_start), start_date); "period" is
+    # netted out of the Topaz figure over [max(start_date, rule_start),
+    # end_date]; "daily" nets each day's Topaz column so the daily columns still
+    # sum to the period figure.
+    external_before_lower_bounds = {}
+    for wid, ib in initial_by_wh.items():
+        if ib.balance_date and ib.balance_date <= start_date:
+            external_before_lower_bounds[(wid, fuel_type)] = ib.balance_date
+
+    external_before_by_wh = {}
+    if external_before_lower_bounds:
+        _before_map = _fuel_external_expense_map(
+            warehouse_ids, fuel_type=fuel_type,
+            date_to=start_date - timedelta(days=1),
+            lower_bounds=external_before_lower_bounds)
+        external_before_by_wh = {wid: litres for (wid, _ft), litres in _before_map.items()}
+
+    _period_map = _fuel_external_expense_map(
+        warehouse_ids, fuel_type=fuel_type, date_from=start_date, date_to=end_date)
+    external_period_by_wh = {wid: litres for (wid, _ft), litres in _period_map.items()}
+
+    external_daily_map = _fuel_report_daily_external(warehouse_ids, fuel_type, start_date, end_date)
+
     for wh in warehouses:
-        initial = (
-            FuelInitialBalance.query
-            .filter_by(warehouse_id=wh.id, fuel_type=fuel_type)
-            .order_by(FuelInitialBalance.balance_date.asc(), FuelInitialBalance.id.asc())
-            .first()
-        )
+        initial = initial_by_wh.get(wh.id)
 
         opening = 0.0
         initial_date = None
@@ -3483,7 +3572,11 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
                     date_from=initial_date,
                     date_to=start_date - timedelta(days=1),
                 )
-                opening = initial_qty + before_receipts - before_expenses - before_manual_expenses
+                # [REASON]: FUEL-CARD-CLASS — before_expenses includes the external
+                # card, which is not our expense from the rule start, so add it
+                # back over [max(initial_date, rule_start), start_date).
+                before_external = external_before_by_wh.get(wh.id, 0.0)
+                opening = initial_qty + before_receipts - before_expenses - before_manual_expenses + before_external
             elif initial_date and initial_date > start_date:
                 opening = 0.0
             else:
@@ -3496,12 +3589,17 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
             date_to=end_date,
         )
 
-        period_topaz_expenses = _fuel_report_sum_transactions(
+        # [REASON]: FUEL-CARD-CLASS — period_topaz_expenses is net of the external
+        # card, because that is what is subtracted from the balance. period_external
+        # is kept beside it for reference; the two sum to the raw Topaz figure.
+        period_topaz_expenses_raw = _fuel_report_sum_transactions(
             wh.id,
             fuel_type,
             dt_from=start_dt,
             dt_to_exclusive=end_dt_exclusive,
         )
+        period_external_expenses = external_period_by_wh.get(wh.id, 0.0)
+        period_topaz_expenses = period_topaz_expenses_raw - period_external_expenses
         period_manual_expenses = _fuel_report_sum_manual_expenses(
             wh.id,
             fuel_type,
@@ -3519,9 +3617,13 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
         daily = {}
         for item in date_items:
             key = item["key"]
+            # [REASON]: FUEL-CARD-CLASS — net the external card out of each day's
+            # Topaz figure so the daily "Расход" columns still sum to the period
+            # expense figure.
+            daily_external = external_daily_map.get((wh.id, key), 0.0)
             daily[key] = {
                 "receipts": round(daily_receipts.get(key, 0.0), 2),
-                "expenses": round(daily_expenses.get(key, 0.0) + daily_manual_expenses.get(key, 0.0), 2),
+                "expenses": round(daily_expenses.get(key, 0.0) - daily_external + daily_manual_expenses.get(key, 0.0), 2),
             }
 
         if not show_zero:
@@ -3542,6 +3644,10 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
             # cent. "expenses" is unchanged and still drives closing.
             "topaz_expenses": round(period_topaz_expenses, 2),
             "manual_expenses": round(period_manual_expenses, 2),
+            # [REASON]: FUEL-CARD-CLASS — external fuel as a reference column;
+            # topaz_expenses + external_expenses equals the raw Topaz sum to the
+            # cent. Not part of the closing arithmetic.
+            "external_expenses": round(period_external_expenses, 2),
             "closing": round(closing, 2),
             "daily": daily,
         }
@@ -3553,6 +3659,7 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
         totals["expenses"] += row["expenses"]
         totals["topaz_expenses"] += row["topaz_expenses"]
         totals["manual_expenses"] += row["manual_expenses"]
+        totals["external_expenses"] += row["external_expenses"]
         totals["closing"] += row["closing"]
 
     for k in totals:
@@ -3638,9 +3745,10 @@ def balance_report_export():
 
     # [REASON]: FUEL-MANUAL-EXP-A3 — split the single "Расход" column into
     # "Выдача Topaz" + "Ручной расход" so the export matches the page and
-    # /fuel/report. This adds one base column, so the day blocks below start one
-    # position further right; every index derives from len(base_headers) so it
-    # follows automatically.
+    # /fuel/report. FUEL-CARD-CLASS then inserts "Стороннее топливо" as a
+    # reference column beside "Выдача Topaz". Each addition shifts the day blocks
+    # below one position further right; every index derives from len(base_headers)
+    # so it follows automatically.
     base_headers = [
         "№",
         "Организация",
@@ -3648,6 +3756,7 @@ def balance_report_export():
         f"Остаток на {start_date.strftime('%d/%m/%Y')}",
         "Приход",
         "Выдача Topaz",
+        "Стороннее топливо",
         "Ручной расход",
         "Текущий остаток",
     ]
@@ -3681,11 +3790,13 @@ def balance_report_export():
         ws.cell(row=r, column=3).value = row["warehouse"]
         ws.cell(row=r, column=4).value = row["opening"]
         ws.cell(row=r, column=5).value = row["receipts"]
-        # [REASON]: FUEL-MANUAL-EXP-A3 — Topaz and manual expense in their own
-        # columns; closing shifts from col 7 to col 8.
+        # [REASON]: FUEL-MANUAL-EXP-A3 / FUEL-CARD-CLASS — Topaz (net), external
+        # fuel (reference) and manual expense in their own columns; closing is
+        # col 9.
         ws.cell(row=r, column=6).value = row["topaz_expenses"]
-        ws.cell(row=r, column=7).value = row["manual_expenses"]
-        ws.cell(row=r, column=8).value = row["closing"]
+        ws.cell(row=r, column=7).value = row["external_expenses"]
+        ws.cell(row=r, column=8).value = row["manual_expenses"]
+        ws.cell(row=r, column=9).value = row["closing"]
 
         col = day_start_col
         for item in date_items:
@@ -3699,8 +3810,9 @@ def balance_report_export():
     ws.cell(row=total_row, column=4).value = totals["opening"]
     ws.cell(row=total_row, column=5).value = totals["receipts"]
     ws.cell(row=total_row, column=6).value = totals["topaz_expenses"]
-    ws.cell(row=total_row, column=7).value = totals["manual_expenses"]
-    ws.cell(row=total_row, column=8).value = totals["closing"]
+    ws.cell(row=total_row, column=7).value = totals["external_expenses"]
+    ws.cell(row=total_row, column=8).value = totals["manual_expenses"]
+    ws.cell(row=total_row, column=9).value = totals["closing"]
 
     thin = Side(style="thin", color="D1D5DB")
     header_fill = PatternFill("solid", fgColor="E5E7EB")
@@ -3726,8 +3838,17 @@ def balance_report_export():
         for row_idx in range(5, total_row + 1):
             ws.cell(row=row_idx, column=col_idx).number_format = '#,##0.00'
 
-    # [REASON]: FUEL-MANUAL-EXP-A3 — col 6 Выдача Topaz, col 7 Ручной расход,
-    # col 8 Текущий остаток; day blocks begin at day_start_col.
+    # [REASON]: FUEL-CARD-CLASS — style the external-fuel reference column (col 7)
+    # muted so it does not read as part of the balance arithmetic. The header keeps
+    # its fill; only the font colour changes.
+    ext_col = 7
+    ws.cell(row=3, column=ext_col).font = Font(bold=True, italic=True, color="6B7280")
+    for row_idx in range(5, total_row):
+        ws.cell(row=row_idx, column=ext_col).font = Font(italic=True, color="6B7280")
+
+    # [REASON]: FUEL-MANUAL-EXP-A3 / FUEL-CARD-CLASS — col 6 Выдача Topaz, col 7
+    # Стороннее топливо, col 8 Ручной расход, col 9 Текущий остаток; day blocks
+    # begin at day_start_col.
     widths = {
         1: 5,
         2: 28,
@@ -3735,8 +3856,9 @@ def balance_report_export():
         4: 16,
         5: 14,
         6: 14,
-        7: 14,
-        8: 16,
+        7: 16,
+        8: 14,
+        9: 16,
     }
     for col_idx, width in widths.items():
         ws.column_dimensions[get_column_letter(col_idx)].width = width
