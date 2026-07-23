@@ -22,9 +22,10 @@ from sqlalchemy.orm import joinedload
 from types import SimpleNamespace
 
 from models import (
-    db, Organization,
+    db, Organization, User,
     FuelWarehouse, FuelStation2, FuelInitialBalance,
-    FuelReceipt2, FuelTransaction2, FuelSyncLog2, FuelWarningReview,
+    FuelReceipt2, FuelManualExpense, FuelTransaction2, FuelSyncLog2,
+    FuelWarningReview,
     FuelCard, FuelCardAlias, FuelCardSyncLog,
     module_required,
 )
@@ -205,6 +206,24 @@ def _fuel_initial_balance_snapshot(balance):
         'quantity': getattr(balance, 'quantity', 0) or 0,
         'balance_date': _iso_date(getattr(balance, 'balance_date', None)),
         'note': getattr(balance, 'note', '') or '',
+    }
+
+
+def _fuel_manual_expense_snapshot(expense):
+    if not expense:
+        return None
+    deleted_at = getattr(expense, 'deleted_at', None)
+    return {
+        'id': getattr(expense, 'id', None),
+        'warehouse_id': getattr(expense, 'warehouse_id', None),
+        'expense_date': _iso_date(getattr(expense, 'expense_date', None)),
+        'fuel_type': getattr(expense, 'fuel_type', '') or '',
+        'quantity': getattr(expense, 'quantity', 0) or 0,
+        'note': getattr(expense, 'note', '') or '',
+        'source': getattr(expense, 'source', '') or '',
+        'is_deleted': int(getattr(expense, 'is_deleted', 0) or 0),
+        'deleted_by': getattr(expense, 'deleted_by', None),
+        'deleted_at': deleted_at.isoformat() if deleted_at else None,
     }
 
 
@@ -2106,6 +2125,212 @@ def delete_receipt(rid):
     db.session.commit()
     flash(fuel_t('Кирим ўчирилди', 'Приход удалён'), 'warning')
     return redirect(url_for('fuel.receipts'))
+
+
+# ─── FUEL-MANUAL-EXP: Manual expenses (Ручной расход мимо ТРК) ────────
+
+@fuel_bp.route('/manual-expenses')
+@module_required('fuel')
+@admin_required_fuel
+def manual_expenses():
+    d_from_s = request.args.get('date_from', '')
+    d_to_s   = request.args.get('date_to', '')
+    wh_id    = request.args.get('warehouse_id', type=int)
+
+    today = date.today()
+    try:
+        d_from = datetime.strptime(d_from_s, '%Y-%m-%d').date()
+    except ValueError:
+        d_from = today.replace(day=1)
+    try:
+        d_to = datetime.strptime(d_to_s, '%Y-%m-%d').date()
+    except ValueError:
+        d_to = today
+
+    # [REASON]: FUEL-MANUAL-EXP -- soft delete only: the balance report keeps
+    # counting rows with coalesce(is_deleted, 0) = 0, so the list applies the
+    # same rule and never shows soft-deleted rows.
+    q = FuelManualExpense.query.filter(
+        FuelManualExpense.is_deleted == 0,
+        FuelManualExpense.expense_date >= d_from,
+        FuelManualExpense.expense_date <= d_to,
+    )
+    if wh_id:
+        q = q.filter(FuelManualExpense.warehouse_id == wh_id)
+    items = q.order_by(FuelManualExpense.expense_date.desc(),
+                       FuelManualExpense.id.desc()).all()
+
+    warehouses = fuel_warehouse_query_for_ui().order_by(FuelWarehouse.name).all()
+
+    # [REASON]: FUEL-MANUAL-EXP -- the historical rows were inserted by hand
+    # and have created_by = NULL; they render with a dash in the author
+    # column, which is the expected state, not an error.
+    author_ids = {e.created_by for e in items if e.created_by}
+    authors = {}
+    if author_ids:
+        for u in User.query.filter(User.id.in_(list(author_ids))).all():
+            authors[u.id] = u.full_name or u.username
+
+    total_qty = sum(e.quantity or 0 for e in items)
+    return render_template('fuel/manual_expenses.html',
+                           items=items, warehouses=warehouses,
+                           authors=authors,
+                           d_from=d_from, d_to=d_to,
+                           selected_wh_id=wh_id,
+                           fuel_types=FUEL_TYPES, total_qty=total_qty,
+                           today=today)
+
+
+@fuel_bp.route('/manual-expenses/save', methods=['POST'])
+@module_required('fuel')
+@admin_required_fuel
+def save_manual_expense():
+    expense_id = request.form.get('id', type=int)
+    warehouse_id = request.form.get('warehouse_id', type=int)
+    fuel_type = 'ДТ'
+    note = (request.form.get('note') or '').strip()
+    date_s = request.form.get('expense_date', '')
+
+    errors = []
+    # [REASON]: FUEL-MANUAL-EXP -- the warehouse must be one the module UI
+    # shows (fuel_warehouse_query_for_ui); a raw FuelWarehouse.query.get()
+    # would accept hidden/legacy warehouses.
+    warehouse = None
+    if warehouse_id:
+        warehouse = (fuel_warehouse_query_for_ui()
+                     .filter(FuelWarehouse.id == warehouse_id).first())
+    if not warehouse:
+        errors.append(fuel_t('Омборни танланг.', 'Выберите склад.'))
+    if fuel_type not in FUEL_TYPES:
+        errors.append(fuel_t('Ёқилғи тури нотўғри', 'Некорректный тип топлива'))
+    # [REASON]: FUEL-MANUAL-EXP -- strictly positive quantity; there is no
+    # "return" mode in this increment (a return is entered as an ordinary
+    # FuelReceipt2), so zero and negative amounts are rejected here.
+    try:
+        quantity = _parse_positive(request.form.get('quantity'), 'quantity')
+    except ValueError:
+        quantity = None
+        errors.append(fuel_t('Миқдор нолдан катта бўлиши керак.',
+                             'Количество должно быть больше нуля.'))
+    expense_date = None
+    try:
+        expense_date = _parse_fuel_date(date_s, 'expense_date')
+    except ValueError:
+        errors.append(fuel_t('Сана тўғри бўлиши керак',
+                             'Дата должна быть корректной'))
+    # [REASON]: FUEL-MANUAL-EXP -- a manual expense records a fact that has
+    # already happened; a future date would silently distort the balance
+    # report for periods that have not occurred yet.
+    if expense_date and expense_date > date.today():
+        errors.append(fuel_t('Сана келажакда бўлиши мумкин эмас.',
+                             'Дата не может быть в будущем.'))
+    # [REASON]: FUEL-MANUAL-EXP -- the note is mandatory in the application
+    # layer, NOT as NOT NULL in the schema: the two historical rows must stay
+    # valid, and this is where a bilingual message can be shown.
+    if not note:
+        errors.append(fuel_t(
+            'Изоҳ мажбурий: ёқилғи нима учун сарфланганини ёзинг.',
+            'Примечание обязательно: укажите, на что израсходовано топливо.'))
+
+    if errors:
+        fuel_flash_errors(errors)
+        return redirect(url_for('fuel.manual_expenses'))
+
+    created = False
+    before = None
+    if expense_id:
+        e = FuelManualExpense.query.get_or_404(expense_id)
+        if e.is_deleted:
+            flash(fuel_t('Бу ёзув аллақачон ўчирилган.',
+                         'Эта запись уже удалена.'), 'warning')
+            return redirect(url_for('fuel.manual_expenses'))
+        before = _fuel_manual_expense_snapshot(e)
+        e.warehouse_id = warehouse_id
+        e.expense_date = expense_date
+        e.fuel_type = fuel_type
+        e.quantity = quantity
+        e.note = note
+        e.updated_at = datetime.utcnow()
+        # [REASON]: FUEL-MANUAL-EXP -- created_by is set on create only and
+        # never touched on edit; source is never taken from the form.
+    else:
+        e = FuelManualExpense(
+            warehouse_id=warehouse_id, expense_date=expense_date,
+            fuel_type=fuel_type, quantity=quantity, note=note,
+            source='manual', created_by=current_user.id,
+        )
+        db.session.add(e)
+        created = True
+
+    db.session.flush()
+    after = _fuel_manual_expense_snapshot(e)
+    _audit_fuel(
+        'fuel_manual_expense_created' if created else 'fuel_manual_expense_updated',
+        entity_type='fuel_manual_expense',
+        entity_id=e.id,
+        entity_label=f'{e.fuel_type} {e.quantity}',
+        before=before,
+        after=after,
+        description='Fuel manual expense saved',
+    )
+    db.session.commit()
+    if created:
+        flash(fuel_t('Сарф сақланди. Баланс автоматик қайта ҳисобланади.',
+                     'Расход сохранён. Баланс пересчитается автоматически.'),
+              'success')
+    else:
+        flash(fuel_t('Сарф ўзгартирилди. Баланс автоматик қайта ҳисобланади.',
+                     'Расход изменён. Баланс пересчитается автоматически.'),
+              'success')
+    return redirect(url_for('fuel.manual_expenses'))
+
+
+@fuel_bp.route('/manual-expenses/delete/<int:expense_id>', methods=['POST'])
+@module_required('fuel')
+@admin_required_fuel
+def delete_manual_expense(expense_id):
+    e = FuelManualExpense.query.get_or_404(expense_id)
+    if e.is_deleted:
+        flash(fuel_t('Бу ёзув аллақачон ўчирилган.',
+                     'Эта запись уже удалена.'), 'warning')
+        return redirect(url_for('fuel.manual_expenses'))
+
+    reason = (request.form.get('reason') or '').strip()
+    if not reason:
+        flash(fuel_t('Ўчириш сабабини кўрсатинг.',
+                     'Укажите причину удаления.'), 'warning')
+        return redirect(url_for('fuel.manual_expenses'))
+
+    before = _fuel_manual_expense_snapshot(e)
+    # [REASON]: FUEL-MANUAL-EXP -- soft delete only: the row stays in the
+    # table and the balance report drops it via coalesce(is_deleted, 0) = 0.
+    # Never db.session.delete() a manual expense -- the data belongs to the
+    # operator, not to this feature.
+    e.is_deleted = 1
+    e.deleted_by = current_user.id
+    e.deleted_at = datetime.utcnow()
+    # [REASON]: FUEL-MANUAL-EXP -- the deletion reason is appended so the
+    # original note stays readable; it must never be overwritten.
+    existing_note = (e.note or '').strip()
+    reason_line = fuel_t('Ўчириш сабаби', 'Причина удаления') + ': ' + reason
+    e.note = (existing_note + '\n' + reason_line) if existing_note else reason_line
+    e.updated_at = datetime.utcnow()
+
+    after = _fuel_manual_expense_snapshot(e)
+    _audit_fuel(
+        'fuel_manual_expense_deleted',
+        entity_type='fuel_manual_expense',
+        entity_id=e.id,
+        entity_label=f'{e.fuel_type} {e.quantity}',
+        before=before,
+        after=after,
+        description='Fuel manual expense soft-deleted',
+    )
+    db.session.commit()
+    flash(fuel_t('Сарф ўчирилди. Баланс автоматик қайта ҳисобланади.',
+                 'Расход удалён. Баланс пересчитается автоматически.'),
+          'warning')
+    return redirect(url_for('fuel.manual_expenses'))
 
 
 # ─── Transactions (Расходы из Топаз) ──────────────────────────────────
