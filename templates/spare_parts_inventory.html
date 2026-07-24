@@ -265,7 +265,7 @@
                 <td class="text-sm vs-muted">{{ res.creator.username if res.creator else '—' }}</td>
                 {% if can_release %}
                 <td class="right">
-                    <form method="post" action="{{ url_for('spare_parts.inventory_reservation_release', res_id=res.id) }}" class="sp-res-release-form" onsubmit="return confirm({{ ('Снять резерв? Заявка останется утверждённой, остаток не изменится.' if is_ru else 'Захира бўшатилсинми? Сўров тасдиқланганича қолади, қолдиқ ўзгармайди.')|tojson }})">
+                    <form method="post" action="{{ url_for('spare_parts.inventory_reservation_release', res_id=res.id) }}" class="sp-res-release-form" onsubmit='return confirm({{ ('Снять резерв? Заявка останется утверждённой, остаток не изменится.' if is_ru else 'Захира бўшатилсинми? Сўров тасдиқланганича қолади, қолдиқ ўзгармайди.')|tojson }})'>
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="text" name="note" class="vs-input sp-res-note" placeholder="{{ 'причина снятия...' if is_ru else 'бўшатиш сабаби...' }}" aria-label="{{ 'Причина снятия резерва' if is_ru else 'Захирани бўшатиш сабаби' }}">
                         <button type="submit" class="vs-btn vs-btn-sm">{{ 'Снять' if is_ru else 'Бўшатиш' }}</button>
