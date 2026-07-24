@@ -87,7 +87,8 @@ Parallel track, runs alongside the increments. Decisions and findings so far:
 ### SP-REPORTS-007 — Report launcher, per-report Excel and PDF, «SKU» → «Артикул» (PR #17, #18, #19)
 
 Priority: P2
-Status: **merged and deployed to staging 2026-07-23; NOT on production; staging QA partially done**
+Status: **merged; on staging AND on production since 2026-07-23; QA still
+partially done — the unrun checks now apply to production**
 
 Increment 7 of the spare-parts borrowing track. Code, templates and CSS only:
 no schema change, no migration, `schema_migrations` stays at 26 rows.
@@ -121,10 +122,15 @@ Commits, in apply order:
 8. `25d79e4` (PR #19) — launcher 3+2, larger tiles, one accent icon per tile
    as inline SVG, `⚠` prefix dropped.
 
-Rollback: strictly reverse order within each PR, and PR #19 → #18 → #17 across
-them. No data rollback needed. To drop the whole increment on a deployed box:
-`git reset --hard 0ceea30` (the PR #16 merge, which is what production runs)
-plus a service restart.
+Rollback: `git revert` of the eight commits, strictly reverse order within
+each PR and PR #19 → #18 → #17 across them. No data rollback needed.
+
+**Do not use `git reset --hard 0ceea30`.** That instruction was written on
+2026-07-23, when production still ran the PR #16 merge. Since then five
+fuel-track PRs (#20-#24) and two migrations
+(`FUEL_MANUAL_EXPENSES_AUTHOR`, `FUEL_RESERVE_WAREHOUSE`) have landed on
+both boxes. A reset to `0ceea30` would roll the code back past all of them
+while leaving the applied schema in place — worse than not rolling back.
 
 Deliberate asymmetries, recorded so nobody "fixes" them later:
 
@@ -149,7 +155,13 @@ correctly named sheet and matching totals (97 883 791.34 / 50 positions), eight
 Uzbek `ў қ ғ ҳ` rendering as real letters, and the header row repeating on
 page 2 of both two-page files.
 
-**Still open — carry into the next chat:** roughly 25 of the 37 checks in
+**Deployment note added 2026-07-24.** This increment reached production on
+2026-07-23 as a passenger of the fuel-track release `c548c71` (tag `v1.2`),
+before its staging checks were finished. `main` is shared, so a production
+pull carries every merged track; there was no gate to stop it. The
+countermeasure is `docs/RELEASE_GATE.md` — see the project instructions.
+
+**Still open — the unrun checks now apply to PRODUCTION:** roughly 25 of the 37 checks in
 `RUNBOOK_INC7_STAGING.md`, namely filter persistence and the equipment
 repopulation, 403 without `spare_parts_reports`, 404 on an unknown key and on
 the removed `/reports/export`, the empty-period state, the whole rename section
@@ -736,6 +748,12 @@ repository and list every changed occurrence in the PR description.
 
 Priority: P3
 Status: **applied on staging 2026-07-23 — PRODUCTION STILL PENDING**
+
+Note 2026-07-24: increment 7 is already on production, but this data change
+is not, and `add_unit_sqm.py` is **untracked** — it exists only in the
+staging working copy. Copy the file to `C:\transport-report` and run it
+there (dry-run, then `--apply`). Check first whether the row is already
+present; the script is idempotent either way.
 
 Found while preparing the 1C stock import (PILOT-1C-001): wire mesh is measured
 in square metres, and the `spare_part_units` directory has no such row. Units are
