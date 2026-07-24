@@ -54,7 +54,7 @@
     <div class="vs-row" style="gap:10px; align-items:center; flex-wrap:wrap;">
     {% if next_action.kind == 'submit' %}
       <form method="post" action="{{ next_action.route }}"
-            onsubmit="return confirm({{ ('Отправить заявку на рассмотрение?' if is_ru else 'Сўровни кўриб чиқишга юборишни тасдиқлайсизми?')|tojson }})">
+            onsubmit='return confirm({{ ('Отправить заявку на рассмотрение?' if is_ru else 'Сўровни кўриб чиқишга юборишни тасдиқлайсизми?')|tojson }})'>
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="vs-btn vs-btn-lg vs-btn-primary">📤 {{ next_action.label }}</button>
       </form>
