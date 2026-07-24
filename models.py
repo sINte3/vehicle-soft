@@ -581,6 +581,12 @@ class FuelWarehouse(db.Model):
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True)
     notes           = db.Column(db.Text, default='')
     created_at      = db.Column(db.DateTime, default=datetime.utcnow)
+    # [REASON]: FUEL-RESERVE -- "show this warehouse in the fuel module even
+    # though it owns no target station". The reserve («Резерв») has no physical
+    # station and never will, so fuel_target_warehouse_ids() unions it in by
+    # this flag. It HIDES nothing: warehouses visible through their stations
+    # stay visible regardless of the flag. See migrate_fuel_reserve_warehouse.py.
+    show_in_ui      = db.Column(db.Integer, nullable=False, default=0)
 
     organization     = db.relationship('Organization')
     stations         = db.relationship('FuelStation2', backref='warehouse',
@@ -736,6 +742,53 @@ class FuelWarningReview(db.Model):
 
     __table_args__ = (
         db.Index('ix_fuel_warning_reviews_status_code', 'status', 'warning_code'),
+    )
+
+
+class FuelTransactionReattribution(db.Model):
+    """FUEL-RESERVE: a mark that moves a Topaz transaction's litres from its
+    station's warehouse to the reserve («Резерв»), at the REPORT layer only.
+
+    [REASON]: The reserve's diesel sits in Pakhtasanoattrans's common tanks and
+    leaves through the same dispenser, so Topaz records it as ordinary
+    Pakhtasanoattrans expense. There is no data signal distinguishing a reserve
+    transfer (the card-198 hypothesis was refuted against production), so a human
+    marks the transactions. Marking must never edit fuel_transactions2: the row
+    stays attached to its station, stays visible in /fuel/transactions and keeps
+    its original values -- reattribution is applied when expense is computed,
+    exactly as FUEL-CARD-CLASS nets out external fuel. Unmarking is a SOFT delete
+    (is_deleted=1); a row is never hard-deleted, so the mark/unmark history
+    survives. The partial unique index makes a second ACTIVE mark on one
+    transaction impossible at the database level while that history remains.
+    created_by/deleted_by naming follows FuelInitialBalance and FuelManualExpense.
+    """
+    __tablename__ = 'fuel_transaction_reattributions'
+    id                  = db.Column(db.Integer, primary_key=True)
+    transaction_id      = db.Column(db.Integer, db.ForeignKey('fuel_transactions2.id'), nullable=False)
+    target_warehouse_id = db.Column(db.Integer, db.ForeignKey('fuel_warehouses.id'), nullable=False)
+    # [REASON]: mandatory in the application layer (the mark must say where the
+    # fuel went), nullable in the schema so the unmark reason can be appended
+    # without a NOT NULL fight and to match migrate_fuel_reserve_warehouse.py.
+    note                = db.Column(db.Text, nullable=True)
+    created_by          = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at          = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    is_deleted          = db.Column(db.Integer, nullable=False, default=0)
+    deleted_by          = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    deleted_at          = db.Column(db.DateTime, nullable=True)
+
+    transaction      = db.relationship('FuelTransaction2')
+    target_warehouse = db.relationship('FuelWarehouse')
+    creator          = db.relationship('User', foreign_keys=[created_by])
+    deleter          = db.relationship('User', foreign_keys=[deleted_by])
+
+    __table_args__ = (
+        db.Index('idx_fuel_reattribution_txn', 'transaction_id'),
+        db.Index('idx_fuel_reattribution_target_wh', 'target_warehouse_id'),
+        # [REASON]: partial UNIQUE -- at most one ACTIVE mark per transaction,
+        # enforced by the database itself; soft-deleted history rows for the same
+        # transaction remain possible. Mirrors uq_spare_part_reservations_active_item.
+        db.Index('uq_fuel_reattribution_active_txn', 'transaction_id',
+                 unique=True, sqlite_where=db.text("coalesce(is_deleted, 0) = 0")),
     )
 
 

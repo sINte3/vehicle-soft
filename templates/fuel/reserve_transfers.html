@@ -1,0 +1,139 @@
+{% extends g.base_template %}
+{% block title %}АЗС — {{ 'Передачи в резерв' if lang == 'ru' else 'Резервга ўтказишлар' }}{% endblock %}
+{% block content %}
+
+{# [REASON]: FUEL-RESERVE — all label {% set %}s live in block content and are
+   used only here; there is no block scripts and no |tojson, so the Jinja block
+   scoping trap that has cost this project a 500 cannot occur on this page. #}
+{% set is_ru = (lang == 'ru') %}
+{% set L_title = 'Передачи в резерв' if is_ru else 'Резервга ўтказишлар' %}
+{% set L_back = '← Дашборд' if is_ru else '← Дашборд' %}
+{% set L_info = 'Резерв — забалансовый запас Пахтасаноаттранса. Топливо стоит в общих ёмкостях и выдаётся через ту же колонку, поэтому операции отмечаются вручную.' if is_ru else 'Резерв — Пахтасаноаттранснинг балансдан ташқари захираси. Ёқилғи умумий идишларда туради ва ўша колонкадан берилади, шунинг учун операциялар қўлда белгиланади.' %}
+{% set L_from = 'С' if is_ru else 'Дан' %}
+{% set L_to = 'По' if is_ru else 'Гача' %}
+{% set L_source = 'Склад-источник' if is_ru else 'Манба омбор' %}
+{% set L_show = 'Показать' if is_ru else 'Кўрсатиш' %}
+{% set L_period_total = 'Передано в резерв за период' if is_ru else 'Давр учун резервга берилган' %}
+{% set L_date = 'Дата' if is_ru else 'Сана' %}
+{% set L_time = 'Время' if is_ru else 'Вақт' %}
+{% set L_station = 'АЗС' if is_ru else 'АЗС' %}
+{% set L_card = 'Карта' if is_ru else 'Карта' %}
+{% set L_liters = 'Литры' if is_ru else 'Литр' %}
+{% set L_status = 'Статус / действие' if is_ru else 'Ҳолат / амал' %}
+{% set L_mark = 'Отметить' if is_ru else 'Белгилаш' %}
+{% set L_unmark = 'Снять отметку' if is_ru else 'Белгини олиб ташлаш' %}
+{% set L_marked = 'Отмечено' if is_ru else 'Белгиланган' %}
+{% set L_marked_by = 'Кто отметил' if is_ru else 'Белгилаган' %}
+{% set L_note = 'Примечание' if is_ru else 'Изоҳ' %}
+{% set L_reason = 'Причина снятия отметки' if is_ru else 'Белгини олиб ташлаш сабаби' %}
+{% set L_external = 'Операцию со сторонним топливом нельзя передать в резерв.' if is_ru else 'Бегона ёқилғи операциясини резервга ўтказиб бўлмайди.' %}
+{% set L_empty = 'За этот период операций нет.' if is_ru else 'Бу давр учун операциялар йўқ.' %}
+{% set L_confirm_unmark = 'Снять отметку? Баланс пересчитается автоматически.' if is_ru else 'Белги олиб ташлансинми? Баланс автоматик қайта ҳисобланади.' %}
+{% set L_no_reserve = 'Склад «Резерв» не найден. Сначала выполните миграцию FUEL_RESERVE_WAREHOUSE.' if is_ru else 'Резерв омбори топилмади. Аввал FUEL_RESERVE_WAREHOUSE миграциясини ишга туширинг.' %}
+
+<style>
+.rt-badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700; background:var(--info-light); color:var(--info); }
+.rt-badge.marked { background:#dcfce7; color:#166534; }
+.rt-ext { color:var(--danger); font-size:12px; }
+.rt-note { font-size:12px; color:var(--text-muted); margin-top:3px; }
+</style>
+
+<div style="display:flex; justify-content:flex-end; margin-bottom:12px;">
+    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ L_back }}</a>
+</div>
+
+<div class="card" style="margin-bottom:16px; border-left:3px solid var(--info);">
+    <div class="card-body" style="padding:12px 16px; font-size:13px; color:var(--info);">
+        {{ L_info }}
+    </div>
+</div>
+
+{% if not reserve %}
+<div class="card" style="margin-bottom:16px; border-left:3px solid var(--danger);">
+    <div class="card-body" style="padding:12px 16px; font-size:13px; color:var(--danger);">
+        {{ L_no_reserve }}
+    </div>
+</div>
+{% endif %}
+
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-body" style="padding:12px 20px;">
+        <form method="get" class="form-inline">
+            <div class="form-group" style="margin-bottom:0;"><label>{{ L_from }}</label><input type="date" name="start_date" value="{{ d_from.isoformat() }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0;"><label>{{ L_to }}</label><input type="date" name="end_date" value="{{ d_to.isoformat() }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0; flex:1;">
+                <label>{{ L_source }}</label>
+                <select name="warehouse_id" class="form-control">
+                    {% for wh in warehouses %}<option value="{{ wh.id }}" {% if source_wh_id == wh.id %}selected{% endif %}>{{ wh.name }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button type="submit" class="btn btn-primary btn-sm">{{ L_show }}</button></div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header" style="justify-content:space-between;">
+        <span>{{ L_title }} ({{ rows|length }})</span>
+        <span style="font-weight:700; color:var(--accent);">{{ L_period_total }}: {{ '%.2f'|format(period_marked_total) }} л</span>
+    </div>
+    <div style="overflow-x:auto;">
+    <table>
+        <thead>
+            <tr>
+                <th>{{ L_date }}</th>
+                <th>{{ L_time }}</th>
+                <th>{{ L_station }}</th>
+                <th>{{ L_card }}</th>
+                <th class="text-right">{{ L_liters }}</th>
+                <th style="min-width:320px;">{{ L_status }}</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in rows %}
+        <tr>
+            <td class="text-sm">{{ row.txn.txn_datetime.strftime('%d.%m.%Y') }}</td>
+            <td class="text-sm">{{ row.txn.txn_datetime.strftime('%H:%M') }}</td>
+            <td>{{ row.txn.station.name if row.txn.station else '—' }}</td>
+            <td class="text-sm text-muted">{{ row.card_name }}</td>
+            <td class="text-right" style="font-weight:700;">{{ '%.2f'|format(row.txn.quantity or 0) }}</td>
+            <td>
+                {% if row.mark %}
+                    <span class="rt-badge marked">{{ L_marked }}</span>
+                    <span class="text-sm text-muted">— {{ L_marked_by }}: {{ row.marker_name }}{% if row.mark.created_at %}, {{ row.mark.created_at.strftime('%d.%m.%Y %H:%M') }}{% endif %}</span>
+                    <div class="rt-note">{{ L_note }}: {{ row.mark.note or '' }}</div>
+                    <form method="post" action="{{ url_for('fuel.reserve_transfer_unmark', mark_id=row.mark.id) }}"
+                          style="display:flex; gap:6px; margin-top:6px;"
+                          onsubmit="return confirm('{{ L_confirm_unmark }}')">
+                        {% if csrf_token is defined %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+                        <input type="hidden" name="start_date" value="{{ d_from.isoformat() }}">
+                        <input type="hidden" name="end_date" value="{{ d_to.isoformat() }}">
+                        <input type="hidden" name="warehouse_id" value="{{ source_wh_id }}">
+                        <input type="text" name="reason" required placeholder="{{ L_reason }}" title="{{ L_reason }}" class="form-control" style="width:200px;">
+                        <button type="submit" class="btn btn-danger btn-sm">{{ L_unmark }}</button>
+                    </form>
+                {% elif row.is_external %}
+                    <span class="rt-ext">{{ L_external }}</span>
+                {% else %}
+                    <form method="post" action="{{ url_for('fuel.reserve_transfer_mark') }}"
+                          style="display:flex; gap:6px;">
+                        {% if csrf_token is defined %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+                        <input type="hidden" name="transaction_id" value="{{ row.txn.id }}">
+                        <input type="hidden" name="start_date" value="{{ d_from.isoformat() }}">
+                        <input type="hidden" name="end_date" value="{{ d_to.isoformat() }}">
+                        <input type="hidden" name="warehouse_id" value="{{ source_wh_id }}">
+                        <input type="text" name="note" required placeholder="{{ L_note }}" title="{{ L_note }}" class="form-control" style="width:200px;">
+                        <button type="submit" class="btn btn-primary btn-sm">{{ L_mark }}</button>
+                    </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-center text-muted" style="padding:40px;">{{ L_empty }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+{% endblock %}

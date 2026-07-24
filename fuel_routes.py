@@ -27,6 +27,7 @@ from models import (
     FuelReceipt2, FuelManualExpense, FuelTransaction2, FuelSyncLog2,
     FuelWarningReview,
     FuelCard, FuelCardAlias, FuelCardSyncLog,
+    FuelTransactionReattribution,
     module_required,
 )
 
@@ -134,6 +135,36 @@ EXTERNAL_FUEL_CARDS = {
     '3978': date(2026, 5, 1),   # VIP_ИЖОРА ВОБКЕНТ
 }
 
+# [REASON]: FUEL-RESERVE — the reserve warehouse is matched on this exact
+# Cyrillic name (the Russian label; «Захира» is the Uzbek UI label). Same value
+# as migrate_fuel_reserve_warehouse.RESERVE_WAREHOUSE_NAME.
+RESERVE_WAREHOUSE_NAME = 'Резерв'
+
+# [REASON]: FUEL-RESERVE — the Pakhtasanoattrans warehouse (default marking
+# source) is resolved from these station topaz_ids, never a hardcoded warehouse
+# id (AZS-ORG-REFACTOR duplicate org ids). Same ids the migration uses.
+RESERVE_SOURCE_TOPAZ_IDS = (811971, 825241)
+
+
+def _is_external_fuel_txn(card_number, txn_dt):
+    """True when a transaction is external fuel (EXTERNAL_FUEL_CARDS) on/after
+    that card's start date.
+
+    [REASON]: FUEL-RESERVE §7 edge case — a transaction already excluded as
+    external fuel must never also be reattributed to the reserve, or the litres
+    move twice. This is the single rule both the marking screen (refuse to mark)
+    and the reattribution maps (exclude) consult, so the rule lives in code, not
+    in the data. Reads EXTERNAL_FUEL_CARDS but never mutates it.
+    """
+    if not card_number:
+        return False
+    start = EXTERNAL_FUEL_CARDS.get(str(card_number).strip())
+    if not start:
+        return False
+    if txn_dt is None:
+        return False
+    return txn_dt >= datetime.combine(start, datetime.min.time())
+
 
 def _iso_date(value):
     return value.isoformat() if value else None
@@ -234,6 +265,27 @@ def _fuel_manual_expense_snapshot(expense):
         'source': getattr(expense, 'source', '') or '',
         'is_deleted': int(getattr(expense, 'is_deleted', 0) or 0),
         'deleted_by': getattr(expense, 'deleted_by', None),
+        'deleted_at': deleted_at.isoformat() if deleted_at else None,
+    }
+
+
+def _fuel_reattribution_snapshot(mark):
+    # [REASON]: FUEL-RESERVE — audit snapshot for a reserve mark, placed beside
+    # _fuel_manual_expense_snapshot and shaped like it (soft-delete fields
+    # included) so _audit_fuel records the full before/after of a mark or unmark.
+    if not mark:
+        return None
+    created_at = getattr(mark, 'created_at', None)
+    deleted_at = getattr(mark, 'deleted_at', None)
+    return {
+        'id': getattr(mark, 'id', None),
+        'transaction_id': getattr(mark, 'transaction_id', None),
+        'target_warehouse_id': getattr(mark, 'target_warehouse_id', None),
+        'note': getattr(mark, 'note', '') or '',
+        'created_by': getattr(mark, 'created_by', None),
+        'created_at': created_at.isoformat() if created_at else None,
+        'is_deleted': int(getattr(mark, 'is_deleted', 0) or 0),
+        'deleted_by': getattr(mark, 'deleted_by', None),
         'deleted_at': deleted_at.isoformat() if deleted_at else None,
     }
 
@@ -722,6 +774,15 @@ def _fuel_balance_map(warehouse_ids, fuel_type=None):
     # start date. One grouped query, never per-warehouse.
     external_sums = _fuel_external_expense_map(ids, lower_bounds=manual_lower_bounds)
 
+    # [REASON]: FUEL-RESERVE — reserve marks move litres between warehouses:
+    # reattr_out leaves the source's expense, reattr_in joins the target's.
+    # expense = topaz − external − reattr_out + reattr_in + manual, so the
+    # balance gains +reattr_out (fuel no longer this warehouse's expense) and
+    # −reattr_in (fuel now this warehouse's expense — the reserve). Same
+    # per-(warehouse, fuel_type) lower bound as the maps above; one query, both
+    # maps, never per-warehouse.
+    reattr_out, reattr_in = _fuel_reattribution_maps(ids, lower_bounds=manual_lower_bounds)
+
     for wh_id in ids:
         ftypes = fuel_types_by_wh.get(wh_id)
 
@@ -743,7 +804,9 @@ def _fuel_balance_map(warehouse_ids, fuel_type=None):
             expenses = expense_sums.get((wh_id, ft), 0.0)
             manual = manual_sums.get((wh_id, ft), 0.0)
             external = external_sums.get((wh_id, ft), 0.0)
-            result[wh_id][ft] = round(float(ib.quantity or 0) + receipts - expenses - manual + external, 2)
+            r_out = reattr_out.get((wh_id, ft), 0.0)
+            r_in = reattr_in.get((wh_id, ft), 0.0)
+            result[wh_id][ft] = round(float(ib.quantity or 0) + receipts - expenses - manual + external + r_out - r_in, 2)
 
     return result
 
@@ -911,6 +974,111 @@ def _fuel_external_expense_map(warehouse_ids, fuel_type=None, date_from=None,
     return {(int(wh_id), ft): float(total or 0) for wh_id, ft, total in rows}
 
 
+# [REASON]: FUEL-RESERVE — the single bulk helper for reserve marks. Returns TWO
+# maps over the SAME window, both derived from ONE query: litres leaving each
+# source warehouse (out) and litres arriving at each target warehouse (in).
+# Deriving both from one row set keeps them consistent by construction — the same
+# mark contributes to out[source] and in[target] or to neither — which is what
+# makes the zero-sum property hold for a period. A transaction's source warehouse
+# is its station's warehouse; the target is target_warehouse_id. Only active marks
+# count (coalesce(is_deleted,0)=0). Window modes mirror _fuel_external_expense_map.
+# The mark table is tiny (a handful per month), so the single un-grouped query is
+# cheap and is emphatically not an N+1: it does not scale with the warehouse count.
+def _fuel_reattribution_maps(warehouse_ids, fuel_type=None, date_from=None,
+                             date_to=None, lower_bounds=None, station_id=None):
+    """Return (out_map, in_map) for active reserve marks.
+
+    out_map: {(source_warehouse_id, fuel_type): litres} leaving each source.
+    in_map:  {(target_warehouse_id, fuel_type): litres} arriving at each target.
+
+    Global window (default): ``date_from`` / ``date_to`` are inclusive date
+    bounds applied to every warehouse; either may be omitted. ``fuel_type``
+    filters when given.
+
+    Per-warehouse window: pass ``lower_bounds={(warehouse_id, fuel_type): date}``
+    to apply that pair's date as the window lower bound, exactly as
+    _fuel_balance_map needs so each warehouse honours its own initial-balance
+    date. Each SIDE uses its OWN warehouse's bound: out uses the source
+    warehouse's bound, in uses the target warehouse's bound. In this mode
+    ``date_to`` still applies as a global inclusive upper bound; ``date_from`` /
+    ``fuel_type`` are ignored, and a (warehouse, fuel_type) pair absent from
+    ``lower_bounds`` contributes nothing on that side.
+
+    ``station_id`` restricts to a single station (a mark is tied to the marked
+    transaction's station).
+
+    A transaction already excluded as external fuel (_is_external_fuel_txn) is
+    dropped from BOTH maps, so its litres never move twice (FUEL-RESERVE §7).
+    """
+    ids = [int(x) for x in (warehouse_ids or []) if x]
+    if not ids:
+        return {}, {}
+    id_set = set(ids)
+
+    def _low(d):
+        return datetime.combine(d, datetime.min.time())
+
+    upper_exclusive = (datetime.combine(date_to + timedelta(days=1), datetime.min.time())
+                       if date_to is not None else None)
+
+    # One query: active marks → their transaction → the source station's warehouse.
+    q = (db.session.query(
+            FuelStation2.warehouse_id,
+            FuelTransactionReattribution.target_warehouse_id,
+            FuelTransaction2.fuel_type,
+            FuelTransaction2.txn_datetime,
+            FuelTransaction2.quantity,
+            FuelTransaction2.card_number)
+         .join(FuelTransaction2,
+               FuelTransaction2.id == FuelTransactionReattribution.transaction_id)
+         .join(FuelStation2, FuelStation2.id == FuelTransaction2.station_id)
+         .filter(func.coalesce(FuelTransactionReattribution.is_deleted, 0) == 0,
+                 or_(FuelStation2.warehouse_id.in_(ids),
+                     FuelTransactionReattribution.target_warehouse_id.in_(ids))))
+
+    if station_id:
+        q = q.filter(FuelTransaction2.station_id == station_id)
+    if upper_exclusive is not None:
+        q = q.filter(FuelTransaction2.txn_datetime < upper_exclusive)
+    if not lower_bounds:
+        if fuel_type:
+            q = q.filter(FuelTransaction2.fuel_type == fuel_type)
+        if date_from is not None:
+            q = q.filter(FuelTransaction2.txn_datetime >= _low(date_from))
+
+    out_map = {}
+    in_map = {}
+    for source_wh, target_wh, ft, txn_dt, qty, card in q.all():
+        # [REASON]: FUEL-RESERVE §7 — never reattribute an external-fuel issue.
+        if _is_external_fuel_txn(card, txn_dt):
+            continue
+        litres = float(qty or 0)
+        source_wh = int(source_wh) if source_wh is not None else None
+        target_wh = int(target_wh) if target_wh is not None else None
+
+        if source_wh in id_set:
+            if lower_bounds is not None:
+                bound = lower_bounds.get((source_wh, ft))
+                keep = bound is not None and txn_dt >= _low(bound)
+            else:
+                keep = True
+            if keep:
+                key = (source_wh, ft)
+                out_map[key] = out_map.get(key, 0.0) + litres
+
+        if target_wh in id_set:
+            if lower_bounds is not None:
+                bound = lower_bounds.get((target_wh, ft))
+                keep = bound is not None and txn_dt >= _low(bound)
+            else:
+                keep = True
+            if keep:
+                key = (target_wh, ft)
+                in_map[key] = in_map.get(key, 0.0) + litres
+
+    return out_map, in_map
+
+
 def _fuel_station_count_map(warehouse_ids, active_only=False):
     ids = [int(x) for x in (warehouse_ids or []) if x]
     if not ids:
@@ -965,6 +1133,16 @@ def _fuel_today_expense_map(warehouse_ids):
     external_today = _fuel_external_expense_map(ids, date_from=today, date_to=today)
     for (wh_id, _ft), litres in external_today.items():
         result[wh_id] = result.get(wh_id, 0.0) - litres
+
+    # [REASON]: FUEL-RESERVE — today's "Выдано сегодня" must reflect reserve
+    # marks: reattr_out leaves the source's expense today, reattr_in joins the
+    # target's (the reserve). One query for today, folded into the same
+    # per-warehouse total.
+    reattr_out_today, reattr_in_today = _fuel_reattribution_maps(ids, date_from=today, date_to=today)
+    for (wh_id, _ft), litres in reattr_out_today.items():
+        result[wh_id] = result.get(wh_id, 0.0) - litres
+    for (wh_id, _ft), litres in reattr_in_today.items():
+        result[wh_id] = result.get(wh_id, 0.0) + litres
 
     return result
 
@@ -1274,6 +1452,10 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         # Topaz issue figure, kept as its own reference total. Never part of the
         # balance arithmetic; the closing already reflects the netted Topaz figure.
         'external': 0.0,
+        # [REASON]: FUEL-RESERVE — litres transferred to the reserve, kept as its
+        # own reference total. Netted out of the source's issued figure (and into
+        # the reserve's), exactly like external fuel; the closing already reflects it.
+        'reserve_out': 0.0,
         'ending': 0.0,
         'warehouses': len(warehouses),
         'stations': 0,
@@ -1407,6 +1589,31 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             station_id=station_id)
         period_external_by_wh = {wh_id: litres for (wh_id, _ft), litres in period_external_map.items()}
 
+    # [REASON]: FUEL-RESERVE — reserve marks before the period (for the opening,
+    # over [max(balance_date, ...), d_from)) and within the period (for the
+    # closing). Both sides (out/in) come from one query each via the shared
+    # helper, mirroring external fuel, with station_id passed through — a mark is
+    # tied to the marked transaction's station.
+    reattr_before_out_by_wh = {}
+    reattr_before_in_by_wh = {}
+    if before_external_lower_bounds:
+        _b_out, _b_in = _fuel_reattribution_maps(
+            warehouse_ids, fuel_type='ДТ',
+            date_to=d_from - timedelta(days=1),
+            lower_bounds=before_external_lower_bounds,
+            station_id=station_id)
+        reattr_before_out_by_wh = {wh_id: l for (wh_id, _ft), l in _b_out.items()}
+        reattr_before_in_by_wh = {wh_id: l for (wh_id, _ft), l in _b_in.items()}
+
+    reattr_out_by_wh = {}
+    reattr_in_by_wh = {}
+    if warehouse_ids:
+        _p_out, _p_in = _fuel_reattribution_maps(
+            warehouse_ids, fuel_type='ДТ', date_from=d_from, date_to=d_to,
+            station_id=station_id)
+        reattr_out_by_wh = {wh_id: l for (wh_id, _ft), l in _p_out.items()}
+        reattr_in_by_wh = {wh_id: l for (wh_id, _ft), l in _p_in.items()}
+
     tx_stats_by_wh = {}
     if warehouse_ids:
         tx_stats_q = (db.session.query(
@@ -1446,12 +1653,19 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             # [REASON]: FUEL-CARD-CLASS — issues_before includes the external
             # card's withdrawals, which are not our expense from the rule start,
             # so add them back over [max(balance_date, rule_start), d_from).
+            # [REASON]: FUEL-RESERVE — the opening balance also honours reserve
+            # marks before the period: +reattr_out (fuel that was not this
+            # warehouse's expense) and −reattr_in (fuel that became the reserve's
+            # expense), over the same [max(balance_date, ...), d_from) window as
+            # the other before-adjustments.
             opening = round(
                 float(initial_balance.quantity or 0)
                 + receipts_before_by_wh.get(wh.id, 0.0)
                 - issues_before_by_wh.get(wh.id, 0.0)
                 - manual_before_by_wh.get(wh.id, 0.0)
-                + external_before_by_wh.get(wh.id, 0.0),
+                + external_before_by_wh.get(wh.id, 0.0)
+                + reattr_before_out_by_wh.get(wh.id, 0.0)
+                - reattr_before_in_by_wh.get(wh.id, 0.0),
                 2,
             )
 
@@ -1462,7 +1676,17 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         # external is kept beside it as a reference; issued + external equals the
         # raw Topaz sum to the cent.
         external = round(period_external_by_wh.get(wh.id, 0.0), 2)
-        issued = round(float(tx_stats.get('issued') or 0) - external, 2)
+        # [REASON]: FUEL-RESERVE — the «Выдача Topaz» figure is net of the reserve
+        # movement too: reattr_out (litres that left for the reserve) is subtracted
+        # and reattr_in (litres the reserve received, its ordinary expense) is added,
+        # exactly as external fuel is netted. On the source, issued drops by
+        # reserve_out; on the reserve, issued IS reattr_in. reserve_out is kept
+        # beside issued as a reference column («Передано в резерв»). The total Topaz
+        # figure is conserved because reattr_out and reattr_in sum equal across all
+        # warehouses.
+        reserve_out = round(reattr_out_by_wh.get(wh.id, 0.0), 2)
+        reserve_in = round(reattr_in_by_wh.get(wh.id, 0.0), 2)
+        issued = round(float(tx_stats.get('issued') or 0) - external - reserve_out + reserve_in, 2)
         manual = period_manual_by_wh.get(wh.id, 0.0)
         tx_count = int(tx_stats.get('tx_count') or 0)
         stations_count = int(stations_count_by_wh.get(wh.id, 0))
@@ -1484,6 +1708,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         totals['issued'] += issued
         totals['manual'] += manual
         totals['external'] += external
+        totals['reserve_out'] += reserve_out
         totals['transactions'] += tx_count
         totals['stations'] += stations_count
 
@@ -1496,6 +1721,10 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             # [REASON]: FUEL-CARD-CLASS — external fuel as a reference column
             # beside «Выдача Topaz»; not part of the balance arithmetic.
             'external': external,
+            # [REASON]: FUEL-RESERVE — litres transferred to the reserve, reference
+            # column «Передано в резерв»; already netted out of issued, so not
+            # subtracted again in the closing. Zero on the reserve itself.
+            'reserve_out': reserve_out,
             'ending': ending,
             'initial_balance': initial_balance,
             'stations_count': stations_count,
@@ -1786,6 +2015,7 @@ def _fuel_report_workbook(data, lang='uz'):
         (L('Выдача Topaz, л', 'Topaz бериш, л'), data['totals']['issued']),
         (L('Стороннее топливо, л', 'Бегона ёқилғи, л'), data['totals'].get('external', 0)),
         (L('Ручной расход, л', 'Қўлда киритилган сарф, л'), data['totals'].get('manual', 0)),
+        (L('Передано в резерв, л', 'Резервга берилган, л'), data['totals'].get('reserve_out', 0)),
         (L('Расчётный остаток, л', 'Ҳисобий қолдиқ, л'), data['totals']['ending']),
         (L('Склады', 'Омборлар'), data['totals']['warehouses']),
         (L('АЗС', 'АЗС'), data['totals']['stations']),
@@ -1815,10 +2045,10 @@ def _fuel_report_workbook(data, lang='uz'):
     style_table(ws)
 
     ws = wb.create_sheet(_safe_ws_title(L('Склады', 'Омборлар'), used))
-    ws.append([L('Склад', 'Омбор'), L('АЗС', 'АЗС'), L('Начальный остаток', 'Бошланғич қолдиқ'), L('Приход', 'Кирим'), L('Выдача Topaz', 'Topaz бериш'), L('Стороннее топливо', 'Бегона ёқилғи'), L('Ручной расход', 'Қўлда киритилган сарф'), L('Расчётный остаток', 'Ҳисобий қолдиқ'), L('Транзакций', 'Транзакциялар'), L('Последняя выдача', 'Охирги бериш')])
+    ws.append([L('Склад', 'Омбор'), L('АЗС', 'АЗС'), L('Начальный остаток', 'Бошланғич қолдиқ'), L('Приход', 'Кирим'), L('Выдача Topaz', 'Topaz бериш'), L('Стороннее топливо', 'Бегона ёқилғи'), L('Ручной расход', 'Қўлда киритилган сарф'), L('Передано в резерв', 'Резервга берилган'), L('Расчётный остаток', 'Ҳисобий қолдиқ'), L('Транзакций', 'Транзакциялар'), L('Последняя выдача', 'Охирги бериш')])
     for r in data['warehouse_rows']:
         last = r['last_txn'].txn_datetime.strftime('%d.%m.%Y %H:%M') if r['last_txn'] else ''
-        ws.append([r['warehouse'].name, r['stations_count'], r['opening'], r['receipts'], r['issued'], r.get('external', 0), r.get('manual', 0), r['ending'], r['tx_count'], last])
+        ws.append([r['warehouse'].name, r['stations_count'], r['opening'], r['receipts'], r['issued'], r.get('external', 0), r.get('manual', 0), r.get('reserve_out', 0), r['ending'], r['tx_count'], last])
     style_table(ws)
 
     ws = wb.create_sheet(_safe_ws_title(L('АЗС', 'АЗС'), used))
@@ -2639,6 +2869,271 @@ def delete_manual_expense(expense_id):
     return redirect(url_for('fuel.manual_expenses'))
 
 
+# ─── FUEL-RESERVE: Reserve transfers (Передачи в резерв / Резервга ўтказишлар) ─
+
+def _fuel_reserve_warehouse():
+    """Return the reserve («Резерв») FuelWarehouse, or None if not created yet.
+
+    Matched on the exact name and show_in_ui=1, exactly as the migration created
+    it. Returns None on a database where the migration has not run — the route
+    handles that with a bilingual message rather than a 500.
+    """
+    return (FuelWarehouse.query
+            .filter(FuelWarehouse.name == RESERVE_WAREHOUSE_NAME,
+                    FuelWarehouse.show_in_ui == 1)
+            .order_by(FuelWarehouse.id)
+            .first())
+
+
+def _fuel_default_source_warehouse_id():
+    """Warehouse id of Pakhtasanoattrans (the default marking source).
+
+    Resolved from RESERVE_SOURCE_TOPAZ_IDS, never a hardcoded warehouse id.
+    Returns None if no station carries one of those topaz ids.
+    """
+    row = (db.session.query(FuelStation2.warehouse_id)
+           .filter(FuelStation2.topaz_id.in_(RESERVE_SOURCE_TOPAZ_IDS),
+                   FuelStation2.warehouse_id.isnot(None))
+           .first())
+    return int(row[0]) if row and row[0] is not None else None
+
+
+@fuel_bp.route('/reserve-transfers')
+@module_required('fuel')
+@admin_required_fuel
+def reserve_transfers():
+    # [REASON]: FUEL-RESERVE — lists the source warehouse's Topaz transactions for
+    # a period so an admin can mark the ones that were actually reserve issues.
+    # Attribution cannot be automated (the card-198 hypothesis was refuted), so
+    # this is the human step. Admin-only via @admin_required_fuel; visible to the
+    # fuel module via @module_required('fuel').
+    today = date.today()
+    default_from = today.replace(day=1)
+    d_from = _fuel_report_parse_date(request.args.get('start_date'), default_from)
+    d_to = _fuel_report_parse_date(request.args.get('end_date'), today)
+    if d_to < d_from:
+        d_from, d_to = d_to, d_from
+
+    reserve = _fuel_reserve_warehouse()
+
+    # Source warehouse: default Pakhtasanoattrans; never the reserve itself.
+    warehouses = [w for w in fuel_warehouse_query_for_ui().order_by(FuelWarehouse.name).all()
+                  if not (reserve and w.id == reserve.id)]
+    valid_ids = {w.id for w in warehouses}
+
+    source_wh_id = request.args.get('warehouse_id', type=int)
+    if source_wh_id not in valid_ids:
+        source_wh_id = _fuel_default_source_warehouse_id()
+        if source_wh_id not in valid_ids:
+            source_wh_id = warehouses[0].id if warehouses else None
+
+    start_dt = datetime.combine(d_from, datetime.min.time())
+    end_dt_exclusive = datetime.combine(d_to + timedelta(days=1), datetime.min.time())
+
+    txns = []
+    if source_wh_id:
+        txns = (FuelTransaction2.query
+                .options(joinedload(FuelTransaction2.station))
+                .join(FuelStation2, FuelStation2.id == FuelTransaction2.station_id)
+                .filter(FuelStation2.warehouse_id == source_wh_id,
+                        FuelTransaction2.txn_datetime >= start_dt,
+                        FuelTransaction2.txn_datetime < end_dt_exclusive)
+                .order_by(FuelTransaction2.txn_datetime.desc(),
+                          FuelTransaction2.id.desc())
+                .all())
+
+    # Active marks for the listed transactions — one query, keyed by txn id.
+    txn_ids = [t.id for t in txns]
+    marks_by_txn = {}
+    if txn_ids:
+        for m in (FuelTransactionReattribution.query
+                  .filter(FuelTransactionReattribution.transaction_id.in_(txn_ids),
+                          func.coalesce(FuelTransactionReattribution.is_deleted, 0) == 0)
+                  .all()):
+            marks_by_txn[m.transaction_id] = m
+
+    # Marker display names — one query.
+    marker_ids = {m.created_by for m in marks_by_txn.values() if m.created_by}
+    markers = {}
+    if marker_ids:
+        for u in User.query.filter(User.id.in_(list(marker_ids))).all():
+            markers[u.id] = u.full_name or u.username
+
+    card_names = _resolve_card_names(txns)
+
+    rows = []
+    for t in txns:
+        mark = marks_by_txn.get(t.id)
+        rows.append({
+            'txn': t,
+            'card_name': _card_display_name(t.card_number, card_names),
+            'mark': mark,
+            'marker_name': markers.get(mark.created_by, '—') if (mark and mark.created_by) else '—',
+            'is_external': _is_external_fuel_txn(t.card_number, t.txn_datetime),
+        })
+
+    # [REASON]: FUEL-RESERVE — running total of litres marked into the reserve for
+    # the WHOLE period (all sources), so the operator can compare against the
+    # Zahira sheet directly. One grouped query, never a per-row loop.
+    period_marked_total = float(
+        db.session.query(func.coalesce(func.sum(FuelTransaction2.quantity), 0))
+        .join(FuelTransactionReattribution,
+              FuelTransactionReattribution.transaction_id == FuelTransaction2.id)
+        .filter(func.coalesce(FuelTransactionReattribution.is_deleted, 0) == 0,
+                FuelTransaction2.txn_datetime >= start_dt,
+                FuelTransaction2.txn_datetime < end_dt_exclusive)
+        .scalar() or 0)
+
+    return render_template('fuel/reserve_transfers.html',
+                           rows=rows,
+                           warehouses=warehouses,
+                           reserve=reserve,
+                           source_wh_id=source_wh_id,
+                           d_from=d_from, d_to=d_to,
+                           period_marked_total=period_marked_total)
+
+
+@fuel_bp.route('/reserve-transfers/mark', methods=['POST'])
+@module_required('fuel')
+@admin_required_fuel
+def reserve_transfer_mark():
+    txn_id = request.form.get('transaction_id', type=int)
+    note = (request.form.get('note') or '').strip()
+    redirect_args = _reserve_transfers_redirect_args()
+
+    txn = FuelTransaction2.query.get(txn_id) if txn_id else None
+    if not txn:
+        flash(fuel_t('Операция топилмади.', 'Операция не найдена.'), 'warning')
+        return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+    # [REASON]: FUEL-RESERVE — note is mandatory in the application layer: the
+    # mark must record where the fuel was transferred.
+    if not note:
+        flash(fuel_t('Изоҳ мажбурий: ёқилғи қаерга ўтказилганини ёзинг.',
+                     'Примечание обязательно: укажите, куда передано топливо.'),
+              'warning')
+        return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+    # [REASON]: FUEL-RESERVE §7 — an external-fuel transaction must never be
+    # reattributed, or the litres move twice. Refuse with a bilingual message.
+    if _is_external_fuel_txn(txn.card_number, txn.txn_datetime):
+        flash(fuel_t('Бегона ёқилғи операциясини резервга ўтказиб бўлмайди.',
+                     'Операцию со сторонним топливом нельзя передать в резерв.'),
+              'warning')
+        return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+    # [REASON]: FUEL-RESERVE — one active mark per transaction. The partial unique
+    # index is the real guard; this pre-check gives a clean bilingual message.
+    existing = (FuelTransactionReattribution.query
+                .filter(FuelTransactionReattribution.transaction_id == txn.id,
+                        func.coalesce(FuelTransactionReattribution.is_deleted, 0) == 0)
+                .first())
+    if existing:
+        flash(fuel_t('Бу операция аллақачон белгиланган.',
+                     'Эта операция уже отмечена.'), 'warning')
+        return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+    reserve = _fuel_reserve_warehouse()
+    if not reserve:
+        flash(fuel_t('Резерв омбори топилмади. Аввал миграцияни ишга туширинг.',
+                     'Склад «Резерв» не найден. Сначала выполните миграцию.'),
+              'warning')
+        return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+    mark = FuelTransactionReattribution(
+        transaction_id=txn.id,
+        target_warehouse_id=reserve.id,
+        note=note,
+        created_by=current_user.id,
+    )
+    db.session.add(mark)
+    try:
+        db.session.flush()
+    except Exception:
+        # [REASON]: FUEL-RESERVE — the partial unique index rejected a concurrent
+        # second active mark. Roll back and report it as already marked.
+        db.session.rollback()
+        flash(fuel_t('Бу операция аллақачон белгиланган.',
+                     'Эта операция уже отмечена.'), 'warning')
+        return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+    after = _fuel_reattribution_snapshot(mark)
+    _audit_fuel(
+        'fuel_reserve_transfer_marked',
+        entity_type='fuel_transaction_reattribution',
+        entity_id=mark.id,
+        entity_label=f'txn {txn.id} → {reserve.name} {txn.quantity}',
+        before=None,
+        after=after,
+        description='Fuel transaction marked as reserve transfer',
+    )
+    db.session.commit()
+    flash(fuel_t('Операция резервга ўтказилди.',
+                 'Операция передана в резерв.'), 'success')
+    return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+
+@fuel_bp.route('/reserve-transfers/unmark/<int:mark_id>', methods=['POST'])
+@module_required('fuel')
+@admin_required_fuel
+def reserve_transfer_unmark(mark_id):
+    redirect_args = _reserve_transfers_redirect_args()
+    mark = FuelTransactionReattribution.query.get_or_404(mark_id)
+
+    if mark.is_deleted:
+        flash(fuel_t('Бу белги аллақачон олиб ташланган.',
+                     'Эта отметка уже снята.'), 'warning')
+        return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+    reason = (request.form.get('reason') or '').strip()
+    if not reason:
+        flash(fuel_t('Белгини олиб ташлаш сабабини кўрсатинг.',
+                     'Укажите причину снятия отметки.'), 'warning')
+        return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+    before = _fuel_reattribution_snapshot(mark)
+    # [REASON]: FUEL-RESERVE — SOFT delete only: the row stays, and the report
+    # layer drops it via coalesce(is_deleted, 0) = 0. Never db.session.delete()
+    # a mark; its mark/unmark history must survive.
+    mark.is_deleted = 1
+    mark.deleted_by = current_user.id
+    mark.deleted_at = datetime.utcnow()
+    # [REASON]: FUEL-RESERVE — the reason is APPENDED to the note, never
+    # overwriting it, so the original attribution note stays readable.
+    existing_note = (mark.note or '').strip()
+    reason_line = fuel_t('Белгини олиб ташлаш сабаби', 'Причина снятия отметки') + ': ' + reason
+    mark.note = (existing_note + '\n' + reason_line) if existing_note else reason_line
+
+    after = _fuel_reattribution_snapshot(mark)
+    _audit_fuel(
+        'fuel_reserve_transfer_unmarked',
+        entity_type='fuel_transaction_reattribution',
+        entity_id=mark.id,
+        entity_label=f'txn {mark.transaction_id}',
+        before=before,
+        after=after,
+        description='Fuel reserve transfer mark soft-removed',
+    )
+    db.session.commit()
+    flash(fuel_t('Белги олиб ташланди.', 'Отметка снята.'), 'warning')
+    return redirect(url_for('fuel.reserve_transfers', **redirect_args))
+
+
+def _reserve_transfers_redirect_args():
+    """Preserve the marking screen's filters across a mark/unmark POST."""
+    args = {}
+    start = (request.form.get('start_date') or '').strip()
+    end = (request.form.get('end_date') or '').strip()
+    wh = request.form.get('warehouse_id', type=int)
+    if start:
+        args['start_date'] = start
+    if end:
+        args['end_date'] = end
+    if wh:
+        args['warehouse_id'] = wh
+    return args
+
+
 # ─── Transactions (Расходы из Топаз) ──────────────────────────────────
 
 @fuel_bp.route('/transactions')
@@ -2805,13 +3300,40 @@ def fuel_show_legacy_warehouses():
 
 
 def fuel_target_warehouse_ids():
-    """Warehouse IDs that contain target fuel stations/topaz IDs."""
+    """Warehouse IDs shown in the fuel module by default.
+
+    Union of two sources, purely additive — no warehouse visible before
+    FUEL-RESERVE becomes invisible:
+
+    - warehouses owning a station whose topaz_id is in FUEL_TARGET_TOPAZ_IDS
+      (the original behaviour, unchanged); and
+    - warehouses flagged show_in_ui = 1 (FUEL-RESERVE), used by the reserve
+      («Резерв») which has no physical station and would otherwise be invisible
+      everywhere — balance report, /fuel/report, receipts, dashboard, initial
+      balances.
+
+    Callers relying on this helper for visibility: fuel_warehouse_query_for_ui
+    and fuel_apply_warehouse_filter_for_ui, which are in turn used by
+    get_all_balances / dashboard, _fuel_report_build_rows / balance_report(+export),
+    warehouses(), initial_balance(), receipts(), manual_expenses() and
+    save_manual_expense(). All of them gain the reserve; none lose a warehouse.
+    """
     rows = (db.session.query(FuelStation2.warehouse_id)
             .filter(FuelStation2.topaz_id.in_(FUEL_TARGET_TOPAZ_IDS))
             .filter(FuelStation2.warehouse_id.isnot(None))
             .distinct()
             .all())
-    return [r[0] for r in rows if r[0] is not None]
+    ids = {r[0] for r in rows if r[0] is not None}
+
+    # [REASON]: FUEL-RESERVE — add show_in_ui=1 warehouses (the reserve). Older
+    # production rows predate the column but the migration adds it with DEFAULT 0,
+    # so this filter is safe everywhere the migration has run.
+    ui_rows = (db.session.query(FuelWarehouse.id)
+               .filter(FuelWarehouse.show_in_ui == 1)
+               .all())
+    ids.update(r[0] for r in ui_rows if r[0] is not None)
+
+    return list(ids)
 
 
 def fuel_warehouse_query_for_ui():
@@ -3468,6 +3990,56 @@ def _fuel_report_daily_external(warehouse_ids, fuel_type, start_date, end_date):
     return result
 
 
+# [REASON]: FUEL-RESERVE — per-day reserve marks for the balance report's daily
+# columns, returning TWO dicts keyed (warehouse_id, 'YYYY-MM-DD'): litres leaving
+# each source per day (out) and litres arriving at each target per day (in). One
+# query for all warehouses so the per-warehouse loop in _fuel_report_build_rows
+# adds no query. Both are needed so the daily columns still sum to the period
+# expense on BOTH the source warehouse and the reserve. External-fuel issues are
+# excluded so they never move twice.
+def _fuel_report_daily_reattribution(warehouse_ids, fuel_type, start_date, end_date):
+    ids = [int(x) for x in (warehouse_ids or []) if x]
+    if not ids:
+        return {}, {}
+    id_set = set(ids)
+
+    start_dt = datetime.combine(start_date, datetime.min.time())
+    end_dt = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+
+    rows = (db.session.query(
+                FuelStation2.warehouse_id,
+                FuelTransactionReattribution.target_warehouse_id,
+                FuelTransaction2.txn_datetime,
+                FuelTransaction2.quantity,
+                FuelTransaction2.card_number)
+            .join(FuelTransaction2,
+                  FuelTransaction2.id == FuelTransactionReattribution.transaction_id)
+            .join(FuelStation2, FuelStation2.id == FuelTransaction2.station_id)
+            .filter(func.coalesce(FuelTransactionReattribution.is_deleted, 0) == 0,
+                    FuelTransaction2.fuel_type == fuel_type,
+                    FuelTransaction2.txn_datetime >= start_dt,
+                    FuelTransaction2.txn_datetime < end_dt,
+                    or_(FuelStation2.warehouse_id.in_(ids),
+                        FuelTransactionReattribution.target_warehouse_id.in_(ids)))
+            .all())
+
+    out_daily = {}
+    in_daily = {}
+    for source_wh, target_wh, txn_dt, qty, card in rows:
+        if _is_external_fuel_txn(card, txn_dt):
+            continue
+        litres = float(qty or 0)
+        day = txn_dt.date().isoformat()
+        if source_wh is not None and int(source_wh) in id_set:
+            k = (int(source_wh), day)
+            out_daily[k] = out_daily.get(k, 0.0) + litres
+        if target_wh is not None and int(target_wh) in id_set:
+            k = (int(target_wh), day)
+            in_daily[k] = in_daily.get(k, 0.0) + litres
+
+    return out_daily, in_daily
+
+
 def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="ДТ"):
     date_items = _fuel_report_date_items(start_date, end_date)
     start_dt = datetime.combine(start_date, datetime.min.time())
@@ -3494,6 +4066,10 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
         # [REASON]: FUEL-CARD-CLASS — external (third-party) fuel netted out of the
         # Topaz figure, kept as its own reference total. Never feeds "closing".
         "external_expenses": 0.0,
+        # [REASON]: FUEL-RESERVE — litres transferred to the reserve, reference
+        # total. Netted out of "topaz_expenses" (and into the reserve's), so it
+        # never feeds "closing" a second time.
+        "reserve_out": 0.0,
         "closing": 0.0,
     }
 
@@ -3542,6 +4118,30 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
 
     external_daily_map = _fuel_report_daily_external(warehouse_ids, fuel_type, start_date, end_date)
 
+    # [REASON]: FUEL-RESERVE — reserve maps computed once for all warehouses (no
+    # per-warehouse query), mirroring the external maps above. "before" adjusts
+    # the opening over [max(initial_date, ...), start_date); "period" nets the
+    # Topaz figure (out subtracted, in added); "daily" nets each day's Topaz
+    # column so the daily columns still sum to the period figure on both the
+    # source and the reserve.
+    reattr_before_out_by_wh = {}
+    reattr_before_in_by_wh = {}
+    if external_before_lower_bounds:
+        _r_before_out, _r_before_in = _fuel_reattribution_maps(
+            warehouse_ids, fuel_type=fuel_type,
+            date_to=start_date - timedelta(days=1),
+            lower_bounds=external_before_lower_bounds)
+        reattr_before_out_by_wh = {wid: l for (wid, _ft), l in _r_before_out.items()}
+        reattr_before_in_by_wh = {wid: l for (wid, _ft), l in _r_before_in.items()}
+
+    _r_period_out, _r_period_in = _fuel_reattribution_maps(
+        warehouse_ids, fuel_type=fuel_type, date_from=start_date, date_to=end_date)
+    reattr_period_out_by_wh = {wid: l for (wid, _ft), l in _r_period_out.items()}
+    reattr_period_in_by_wh = {wid: l for (wid, _ft), l in _r_period_in.items()}
+
+    reattr_daily_out_map, reattr_daily_in_map = _fuel_report_daily_reattribution(
+        warehouse_ids, fuel_type, start_date, end_date)
+
     for wh in warehouses:
         initial = initial_by_wh.get(wh.id)
 
@@ -3576,7 +4176,15 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
                 # card, which is not our expense from the rule start, so add it
                 # back over [max(initial_date, rule_start), start_date).
                 before_external = external_before_by_wh.get(wh.id, 0.0)
-                opening = initial_qty + before_receipts - before_expenses - before_manual_expenses + before_external
+                # [REASON]: FUEL-RESERVE — before_expenses includes any litres that
+                # were reattributed to the reserve, which are not this warehouse's
+                # expense, so add reattr_out back; subtract reattr_in (litres the
+                # reserve received), over the same before-window.
+                before_reattr_out = reattr_before_out_by_wh.get(wh.id, 0.0)
+                before_reattr_in = reattr_before_in_by_wh.get(wh.id, 0.0)
+                opening = (initial_qty + before_receipts - before_expenses
+                           - before_manual_expenses + before_external
+                           + before_reattr_out - before_reattr_in)
             elif initial_date and initial_date > start_date:
                 opening = 0.0
             else:
@@ -3599,7 +4207,16 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
             dt_to_exclusive=end_dt_exclusive,
         )
         period_external_expenses = external_period_by_wh.get(wh.id, 0.0)
-        period_topaz_expenses = period_topaz_expenses_raw - period_external_expenses
+        # [REASON]: FUEL-RESERVE — the «Выдача Topaz» figure is also net of the
+        # reserve movement: reattr_out (litres that left for the reserve) is
+        # subtracted, reattr_in (the reserve's ordinary expense) is added, exactly
+        # as external fuel is netted. reserve_out is kept beside it as the
+        # «Передано в резерв» reference column. The total Topaz figure is conserved
+        # because reattr_out and reattr_in sum equal across all warehouses.
+        period_reserve_out = reattr_period_out_by_wh.get(wh.id, 0.0)
+        period_reserve_in = reattr_period_in_by_wh.get(wh.id, 0.0)
+        period_topaz_expenses = (period_topaz_expenses_raw - period_external_expenses
+                                 - period_reserve_out + period_reserve_in)
         period_manual_expenses = _fuel_report_sum_manual_expenses(
             wh.id,
             fuel_type,
@@ -3621,9 +4238,17 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
             # Topaz figure so the daily "Расход" columns still sum to the period
             # expense figure.
             daily_external = external_daily_map.get((wh.id, key), 0.0)
+            # [REASON]: FUEL-RESERVE — net each day's reserve movement out of the
+            # combined daily "Расход" column (out subtracted, in added) so the
+            # daily columns still sum to the period expense on both the source and
+            # the reserve. The day blocks stay combined — no second reserve column.
+            daily_reattr_out = reattr_daily_out_map.get((wh.id, key), 0.0)
+            daily_reattr_in = reattr_daily_in_map.get((wh.id, key), 0.0)
             daily[key] = {
                 "receipts": round(daily_receipts.get(key, 0.0), 2),
-                "expenses": round(daily_expenses.get(key, 0.0) - daily_external + daily_manual_expenses.get(key, 0.0), 2),
+                "expenses": round(daily_expenses.get(key, 0.0) - daily_external
+                                  - daily_reattr_out + daily_reattr_in
+                                  + daily_manual_expenses.get(key, 0.0), 2),
             }
 
         if not show_zero:
@@ -3648,6 +4273,10 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
             # topaz_expenses + external_expenses equals the raw Topaz sum to the
             # cent. Not part of the closing arithmetic.
             "external_expenses": round(period_external_expenses, 2),
+            # [REASON]: FUEL-RESERVE — litres transferred to the reserve, reference
+            # column «Передано в резерв»; already netted out of topaz_expenses, so
+            # not subtracted again in closing. Zero on the reserve itself.
+            "reserve_out": round(period_reserve_out, 2),
             "closing": round(closing, 2),
             "daily": daily,
         }
@@ -3660,6 +4289,7 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
         totals["topaz_expenses"] += row["topaz_expenses"]
         totals["manual_expenses"] += row["manual_expenses"]
         totals["external_expenses"] += row["external_expenses"]
+        totals["reserve_out"] += row["reserve_out"]
         totals["closing"] += row["closing"]
 
     for k in totals:
@@ -3746,9 +4376,11 @@ def balance_report_export():
     # [REASON]: FUEL-MANUAL-EXP-A3 — split the single "Расход" column into
     # "Выдача Topaz" + "Ручной расход" so the export matches the page and
     # /fuel/report. FUEL-CARD-CLASS then inserts "Стороннее топливо" as a
-    # reference column beside "Выдача Topaz". Each addition shifts the day blocks
-    # below one position further right; every index derives from len(base_headers)
-    # so it follows automatically.
+    # reference column beside "Выдача Topaz"; FUEL-RESERVE inserts "Передано в
+    # резерв" beside "Ручной расход". Each addition shifts the day blocks below
+    # one position further right; day_start_col derives from len(base_headers) so
+    # it follows automatically, but every hard-coded cell index below was
+    # re-checked against this list.
     base_headers = [
         "№",
         "Организация",
@@ -3758,6 +4390,7 @@ def balance_report_export():
         "Выдача Topaz",
         "Стороннее топливо",
         "Ручной расход",
+        "Передано в резерв",
         "Текущий остаток",
     ]
 
@@ -3790,13 +4423,14 @@ def balance_report_export():
         ws.cell(row=r, column=3).value = row["warehouse"]
         ws.cell(row=r, column=4).value = row["opening"]
         ws.cell(row=r, column=5).value = row["receipts"]
-        # [REASON]: FUEL-MANUAL-EXP-A3 / FUEL-CARD-CLASS — Topaz (net), external
-        # fuel (reference) and manual expense in their own columns; closing is
-        # col 9.
+        # [REASON]: FUEL-MANUAL-EXP-A3 / FUEL-CARD-CLASS / FUEL-RESERVE — Topaz
+        # (net), external fuel (reference), manual expense and reserve transfer
+        # (reference) in their own columns; closing is col 10.
         ws.cell(row=r, column=6).value = row["topaz_expenses"]
         ws.cell(row=r, column=7).value = row["external_expenses"]
         ws.cell(row=r, column=8).value = row["manual_expenses"]
-        ws.cell(row=r, column=9).value = row["closing"]
+        ws.cell(row=r, column=9).value = row["reserve_out"]
+        ws.cell(row=r, column=10).value = row["closing"]
 
         col = day_start_col
         for item in date_items:
@@ -3812,7 +4446,8 @@ def balance_report_export():
     ws.cell(row=total_row, column=6).value = totals["topaz_expenses"]
     ws.cell(row=total_row, column=7).value = totals["external_expenses"]
     ws.cell(row=total_row, column=8).value = totals["manual_expenses"]
-    ws.cell(row=total_row, column=9).value = totals["closing"]
+    ws.cell(row=total_row, column=9).value = totals["reserve_out"]
+    ws.cell(row=total_row, column=10).value = totals["closing"]
 
     thin = Side(style="thin", color="D1D5DB")
     header_fill = PatternFill("solid", fgColor="E5E7EB")
@@ -3838,17 +4473,18 @@ def balance_report_export():
         for row_idx in range(5, total_row + 1):
             ws.cell(row=row_idx, column=col_idx).number_format = '#,##0.00'
 
-    # [REASON]: FUEL-CARD-CLASS — style the external-fuel reference column (col 7)
-    # muted so it does not read as part of the balance arithmetic. The header keeps
-    # its fill; only the font colour changes.
-    ext_col = 7
-    ws.cell(row=3, column=ext_col).font = Font(bold=True, italic=True, color="6B7280")
-    for row_idx in range(5, total_row):
-        ws.cell(row=row_idx, column=ext_col).font = Font(italic=True, color="6B7280")
+    # [REASON]: FUEL-CARD-CLASS / FUEL-RESERVE — style the external-fuel (col 7)
+    # and reserve-transfer (col 9) reference columns muted so they do not read as
+    # part of the balance arithmetic. The header keeps its fill; only the font
+    # colour changes.
+    for ref_col in (7, 9):
+        ws.cell(row=3, column=ref_col).font = Font(bold=True, italic=True, color="6B7280")
+        for row_idx in range(5, total_row):
+            ws.cell(row=row_idx, column=ref_col).font = Font(italic=True, color="6B7280")
 
-    # [REASON]: FUEL-MANUAL-EXP-A3 / FUEL-CARD-CLASS — col 6 Выдача Topaz, col 7
-    # Стороннее топливо, col 8 Ручной расход, col 9 Текущий остаток; day blocks
-    # begin at day_start_col.
+    # [REASON]: FUEL-MANUAL-EXP-A3 / FUEL-CARD-CLASS / FUEL-RESERVE — col 6 Выдача
+    # Topaz, col 7 Стороннее топливо, col 8 Ручной расход, col 9 Передано в
+    # резерв, col 10 Текущий остаток; day blocks begin at day_start_col.
     widths = {
         1: 5,
         2: 28,
@@ -3859,6 +4495,7 @@ def balance_report_export():
         7: 16,
         8: 14,
         9: 16,
+        10: 16,
     }
     for col_idx, width in widths.items():
         ws.column_dimensions[get_column_letter(col_idx)].width = width
