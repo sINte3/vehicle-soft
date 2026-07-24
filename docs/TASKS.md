@@ -1041,7 +1041,13 @@ FUEL-MANUAL-EXP.
 ### FUEL-RESERVE - «Резерв» / «Захира» off-balance warehouse
 
 Priority: P1
-Status: **next increment of the AZS/fuel track.** Owner's answers, 2026-07-23:
+Status: **COMPLETED 2026-07-24** — PR #24 (`402abb7`), migration
+`FUEL_RESERVE_WAREHOUSE`, deployed to staging and production, tag
+`v1.4-production-2026-07-24`. Accepted against the owner's Excel ledger: the
+reserve's closing balance came out at 4,142.56 L, matching to the cent, and the
+all-warehouse Topaz total did not move. See AGENT_STATE.md, entry of 2026-07-24.
+
+Owner's answers, 2026-07-23, kept for the record:
 opening balance 10,429 L dated 2026-05-01; the warehouse hangs off
 Pakhtasanoattrans; a return of fuel is recorded as an ordinary receipt with a
 comment, no dedicated operation type; and the tanker loads on card 198 that do
@@ -1130,6 +1136,75 @@ the reserve's opening balance (10,429 L at 2026-05-01, or is there earlier
 history); which organisation the reserve hangs off, given the open
 `AZS-ORG-REFACTOR` duplicate org ids 20-24; and how a reserve receipt (fuel
 returned) is recorded — an ordinary `FuelReceipt2` or a distinct operation type.
+
+### FUEL-LEDGER-001 - Warehouse ledger (chronological movements with a running balance)
+
+Priority: P1
+Status: **next candidate for the AZS/fuel track**
+
+There is no screen showing every movement of one warehouse in chronological
+order. The data lives on four separate pages — `/fuel/initial-balance`,
+`/fuel/receipts`, `/fuel/transactions`, `/fuel/manual-expenses` — plus reserve
+marks now. The balance report gives totals and per-day columns but not a line
+per operation with a running balance.
+
+This is what a reconciliation with an organisation actually needs. It surfaced
+immediately: Pakhtasanoattrans claims a shortfall of about 6,000 L against our
+−11,665.11, and there is no screen that answers "where did the difference come
+from" without exporting four pages and joining them by hand.
+
+Shape: pick a warehouse and a period, get one table — date, time, type
+(opening / receipt / Topaz issue / manual expense / reserve transfer), source
+(station, card, document), litres in, litres out, running balance. Every fuel
+category the module now knows about must appear, and the closing figure must
+equal the balance report's to the cent — that equality is the acceptance test.
+
+### FUEL-NEGATIVE-001 - Explain the negative balances
+
+Priority: P1
+Status: open, blocked on FUEL-LEDGER-001 or a diagnostic
+
+Several warehouses sit at a negative balance on production for
+2026-05-01..2026-07-24: Pakhtasanoattrans −11,665.11, Mirzachul PTZ −9,387.98,
+Gizhduvon PTZ −3,605.15, Benzovoz Isuzu −920.16. A negative balance means
+expense exceeds receipts plus the opening figure, so either receipts are missing
+or the 2026-05-01 opening balances are understated.
+
+The reserve accounted for roughly 6,000 L of Pakhtasanoattrans's gap; the rest is
+unexplained. The first hypothesis to test is that the opening balance is too low
+— ours says 11,908 L. This is a data question, not a code one.
+
+### FUEL-NORMS-001 - Consumption norms and deviation from norm
+
+Priority: P2
+Status: backlog — surfaced by the 2026-07-24 market survey
+
+Every comparable product in the market carries consumption norms per unit of
+equipment and reports actual against norm. We have engine hours from Wialon and
+actual consumption from Topaz but no norms, so the report management asks for
+most often cannot be built. See `FUEL_SOFTWARE_LANDSCAPE_RU.md`.
+
+### FUEL-LIMITS-001 - Show card and equipment limits
+
+Priority: P3
+Status: backlog
+
+Topaz assigns limits per card — the 1C export of card 3978 shows both "limit
+assigned" and "product dispensed" rows, for instance 2,500 L assigned on
+2026-06-10 followed by 2,500 L dispensed. Vehicle Soft ingests only the
+dispensing side, so limits are invisible. Comparable systems treat a limit as a
+first-class entity with a change history.
+
+### FUEL-SHIFT-001 - Operator shift with closing
+
+Priority: P3
+Status: backlog
+
+AZS-industry reporting is built around the operator's shift: open, close,
+reconcile the pump counters against the software figure. We have no such concept.
+The ПЕРЕЛИВ card (`CardID 30`), which we exclude at ingest, is exactly Topaz's
+record of that counter mismatch — so the underlying event already reaches us, we
+simply have nowhere to put it.
 
 ### FUEL-HARGUSH-001 - Hargush PTM missing from the balance report
 
