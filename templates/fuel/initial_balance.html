@@ -119,9 +119,9 @@
                     <td class="text-muted text-sm">{{ ib.note or '' }}</td>
                     <td style="white-space:nowrap;">
                         <button type="button" class="btn btn-secondary btn-sm"
-                                onclick="editIB({{ ib.id }}, {{ wh.id }}, {{ ft|tojson }},
-                                                {{ ib.quantity }}, {{ ib.balance_date.isoformat()|tojson }},
-                                                {{ (ib.note or '')|tojson }})">
+                                onclick='editIB({{ ib.id }}, {{ wh.id }}, {{ ft|tojson }},
+                                                {{ ib.quantity|tojson }}, {{ ib.balance_date.isoformat()|tojson }},
+                                                {{ (ib.note or "")|tojson }})'>
                             {{ L_edit }}
                         </button>
                         <form method="post" action="{{ url_for('fuel.delete_initial_balance', ib_id=ib.id) }}"
