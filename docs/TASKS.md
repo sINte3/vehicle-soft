@@ -87,8 +87,9 @@ Parallel track, runs alongside the increments. Decisions and findings so far:
 ### SP-REPORTS-007 — Report launcher, per-report Excel and PDF, «SKU» → «Артикул» (PR #17, #18, #19)
 
 Priority: P2
-Status: **merged; on staging AND on production since 2026-07-23; QA still
-partially done — the unrun checks now apply to production**
+Status: **COMPLETED 2026-07-25** — merged, on staging and on production since
+2026-07-23, validated in full (two checks closed by argument, not by run —
+listed below)
 
 Increment 7 of the spare-parts borrowing track. Code, templates and CSS only:
 no schema change, no migration, `schema_migrations` stays at 26 rows.
@@ -161,13 +162,43 @@ before its staging checks were finished. `main` is shared, so a production
 pull carries every merged track; there was no gate to stop it. The
 countermeasure is `docs/RELEASE_GATE.md` — see the project instructions.
 
-**Still open — the unrun checks now apply to PRODUCTION:** roughly 25 of the 37 checks in
-`RUNBOOK_INC7_STAGING.md`, namely filter persistence and the equipment
-repopulation, 403 without `spare_parts_reports`, 404 on an unknown key and on
-the removed `/reports/export`, the empty-period state, the whole rename section
-(nav item, `/skus` screen after `FIELD-CATNO-001`, the act PDF, the purchase
-queue Excel column), the whole regression section, and **all of PR #19**, which
-has not been exercised on staging at all.
+**Validation closed 2026-07-25.** The checklist was run in two passes, split by
+what mutates data: read-only checks on production (the code was already there,
+so a defect mattered more there than on a copy), write operations and volume on
+staging.
+
+Part A, production, 2026-07-24 — items 1-29 by a browser QA agent (Codex CLI +
+Playwright MCP), items 30-36 by the owner. No discrepancies. The agent's single
+finding — "the repeat-orders report shows no table" — was **false**: production
+had zero rows for the period and the page correctly rendered its empty state;
+the agent attached the screenshot that disproves it and scored the same
+behaviour "ok" under item 15.
+
+Part B, staging, 2026-07-25 — the `tojson` fix from PR #25 (all four confirm
+dialogs, RU and UZ, on both forms), issue with act generation, article creation
+and its duplicate error, article edit, stock receipt, minimum level, non-empty
+purchase queue with the «Артикул» column in Excel.
+
+Verified from the artefacts rather than the screen, 31 exports: **the table
+header repeats on page 2 in all four multi-page PDFs** (the last never-tested
+part of PR #17 — impossible to check on production, where the data fits one
+page); column headers intact under volume, so PR #19 holds under load; both
+DejaVu fonts embedded everywhere including the write-off act; one sheet per
+`.xlsx` with RU/UZ totals matching pairwise; act `SPW-2026-00009` carries
+«Артикул: TEST-RESERVE» with zero occurrences of "SKU"; the purchase queue
+arithmetic independently reproduces the SP-MINSTOCK-004 shortage formula.
+
+**Two checks closed by argument, not by run** — recorded as such deliberately:
+
+1. *Issuing an item with no article.* Increment 7 changed only four static
+   strings in the `_L` dict of `spare_parts_pdf.py` (`no_sku_note`,
+   `no_warehouse`, RU and UZ), verified correct in the diff. The issue code was
+   not touched and its PDF branch is proven by act `SPW-2026-00009`, which
+   exercised a sibling key of the same dict. Residual risk: a typo in one
+   footnote, self-revealing on first such issue.
+2. *Negative stock correction.* Increment 7 never touched
+   `_apply_inventory_movement`; the AST hash comparison during the PR #17 review
+   showed 127 functions unchanged. This is regression cover on untouched code.
 
 ### FUEL-SYNC-013 — Topaz sync robustness (PR #7)
 
@@ -747,13 +778,15 @@ repository and list every changed occurrence in the PR description.
 ### UNIT-SQM-001 — Add the «кв. метр» unit to the units directory
 
 Priority: P3
-Status: **applied on staging 2026-07-23 — PRODUCTION STILL PENDING**
+Status: **COMPLETED** — applied on staging 2026-07-23, on production
+2026-07-25.
 
-Note 2026-07-24: increment 7 is already on production, but this data change
-is not, and `add_unit_sqm.py` is **untracked** — it exists only in the
-staging working copy. Copy the file to `C:\transport-report` and run it
-there (dry-run, then `--apply`). Check first whether the row is already
-present; the script is idempotent either way.
+`add_unit_sqm.py` is **untracked** and deliberately not committed: it is a
+one-off data change, not a migration, and writes no `schema_migrations` row.
+It now exists in both working copies (`C:\transport-report` and
+`C:\transport-report-staging`). Idempotent — a repeat run is safe. The
+production run was preceded by a dry-run whose report confirmed `kv_metr` was
+absent beforehand.
 
 Found while preparing the 1C stock import (PILOT-1C-001): wire mesh is measured
 in square metres, and the `spare_part_units` directory has no such row. Units are
