@@ -1,0 +1,131 @@
+{# ===========================================================================
+   templates/fuel/_fuel_nav.html — F1.1 · FUEL-NAV-001: shared navigation strip
+   for every page of the fuel (АЗС) module. Include as the FIRST element inside
+   {% block content %}. Uses only vs-* components + the small scoped style
+   block below (no new CSS file, no changes to design-system.css, no JS
+   framework).
+
+   [REASON]: The gate for administrative items is `current_user.is_admin` and
+   nothing else. Unlike the spare parts module, the fuel module has NO granular
+   sub-permissions: every page is guarded by @module_required('fuel'), and the
+   five administrative pages additionally by @admin_required_fuel, which checks
+   exactly current_user.is_admin (fuel_routes.py). Calling has_module_access()
+   with a fuel-shaped string would gate on a permission that does not exist.
+
+   Items the user may not open are hidden entirely, not shown disabled. For a
+   non-admin the strip therefore has seven flat pills and a Справочники group
+   with one item (Карты) — the group still renders, because that item is
+   visible to everyone.
+
+   Active state is computed from request.endpoint (fuel pages do not set the
+   `current` variable base_next.html uses for the sidebar). Bilingual labels
+   use the bare `lang` variable, which is the fuel module's convention.
+   =========================================================================== #}
+{% set is_ru = (lang == 'ru') %}
+{% set fuel_ep = request.endpoint or '' %}
+{% set fuel_refs_active = fuel_ep in ('fuel.stations', 'fuel.warehouses',
+                                      'fuel.card_directory',
+                                      'fuel.initial_balance') %}
+<style>
+/* FUEL-NAV-001 scoped styles: pills-as-links + <details> reference dropdown. */
+.fuel-nav .vs-pill { text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+.fuel-nav .vs-pill:hover { text-decoration: none; }
+/* The wrapper (not the <details>) is the positioning context: the open menu
+   is a full-width panel under the whole strip, so it can never overflow the
+   viewport no matter where the wrapped pill row places the trigger.
+   No overflow-x here or on any ancestor: per the CSS overflow spec setting one
+   axis to a non-visible value computes the other axis to auto as well, which
+   would clip this absolutely positioned panel. The strip wraps instead. */
+.fuel-nav { position: relative; }
+.fuel-nav details { display: inline-flex; }
+.fuel-nav summary { list-style: none; }
+.fuel-nav summary::-webkit-details-marker { display: none; }
+.fuel-nav summary::marker { display: none; content: ''; }
+.fuel-nav .fuel-nav-caret { font-size: 10px; line-height: 1; transition: transform var(--vs-t-fast); }
+.fuel-nav details[open] .fuel-nav-caret { transform: rotate(180deg); }
+.fuel-nav .fuel-nav-menu {
+  left: 0; right: 0;
+  display: flex; flex-wrap: wrap; gap: 2px;
+}
+.fuel-nav .fuel-nav-menu .vs-menu-item { width: auto; text-decoration: none; }
+.fuel-nav .fuel-nav-menu .vs-menu-item.is-current { color: var(--vs-primary); font-weight: 700; }
+</style>
+<nav class="vs-pills fuel-nav vs-mb" aria-label="{{ 'Разделы модуля АЗС' if is_ru else 'АЗС модули бўлимлари' }}">
+
+  <a href="{{ url_for('fuel.dashboard') }}"
+     class="vs-pill{% if fuel_ep == 'fuel.dashboard' %} is-active{% endif %}">{{ 'Остатки' if is_ru else 'Қолдиқлар' }}</a>
+
+  <a href="{{ url_for('fuel.balance_report') }}"
+     class="vs-pill{% if fuel_ep == 'fuel.balance_report' %} is-active{% endif %}">{{ 'Отчёт остатков' if is_ru else 'Қолдиқлар ҳисоботи' }}</a>
+
+  <a href="{{ url_for('fuel.receipts') }}"
+     class="vs-pill{% if fuel_ep == 'fuel.receipts' %} is-active{% endif %}">{{ 'Приходы' if is_ru else 'Киримлар' }}</a>
+
+  <a href="{{ url_for('fuel.transactions') }}"
+     class="vs-pill{% if fuel_ep == 'fuel.transactions' %} is-active{% endif %}">{{ 'Выдачи' if is_ru else 'Беришлар' }}</a>
+
+  {% if current_user.is_admin %}
+  <a href="{{ url_for('fuel.manual_expenses') }}"
+     class="vs-pill{% if fuel_ep == 'fuel.manual_expenses' %} is-active{% endif %}">{{ 'Ручной расход' if is_ru else 'Қўлда сарф' }}</a>
+  {% endif %}
+
+  {% if current_user.is_admin %}
+  <a href="{{ url_for('fuel.reserve_transfers') }}"
+     class="vs-pill{% if fuel_ep == 'fuel.reserve_transfers' %} is-active{% endif %}">{{ 'Резерв' if is_ru else 'Резерв' }}</a>
+  {% endif %}
+
+  <a href="{{ url_for('fuel.fuel_warnings') }}"
+     class="vs-pill{% if fuel_ep == 'fuel.fuel_warnings' %} is-active{% endif %}">{{ 'Предупреждения' if is_ru else 'Огоҳлантиришлар' }}</a>
+
+  {# [REASON]: /fuel/report keeps its own pill because it is a diagnostic screen
+     for the operator, not a report; it is deliberately not a tile in the
+     reports centre. #}
+  <a href="{{ url_for('fuel.fuel_report') }}"
+     class="vs-pill{% if fuel_ep == 'fuel.fuel_report' %} is-active{% endif %}">{{ 'Отчёт по топливу' if is_ru else 'Ёқилғи ҳисоботи' }}</a>
+
+  {# [REASON]: Отчёты is a plain link to the reports centre, not a dropdown
+     (owner decision). It stays highlighted on the station-issues report, which
+     lives behind it as a tile. #}
+  <a href="{{ url_for('fuel.reports_center') }}"
+     class="vs-pill{% if fuel_ep in ('fuel.reports_center', 'fuel.station_issues_report') %} is-active{% endif %}">{{ 'Отчёты' if is_ru else 'Ҳисоботлар' }}</a>
+
+  <details class="fuel-nav-refs" id="fuelNavRefs">
+    <summary class="vs-pill{% if fuel_refs_active %} is-active{% endif %}">{{ 'Справочники' if is_ru else 'Маълумотномалар' }} <span class="fuel-nav-caret" aria-hidden="true">▾</span></summary>
+    <div class="vs-menu fuel-nav-menu">
+      {% if current_user.is_admin %}
+      <a class="vs-menu-item{% if fuel_ep == 'fuel.stations' %} is-current{% endif %}"
+         href="{{ url_for('fuel.stations') }}">АЗС</a>
+      {% endif %}
+      {% if current_user.is_admin %}
+      <a class="vs-menu-item{% if fuel_ep == 'fuel.warehouses' %} is-current{% endif %}"
+         href="{{ url_for('fuel.warehouses') }}">{{ 'Склады' if is_ru else 'Омборлар' }}</a>
+      {% endif %}
+      <a class="vs-menu-item{% if fuel_ep == 'fuel.card_directory' %} is-current{% endif %}"
+         href="{{ url_for('fuel.card_directory') }}">{{ 'Карты' if is_ru else 'Карталар' }}</a>
+      {% if current_user.is_admin %}
+      <a class="vs-menu-item{% if fuel_ep == 'fuel.initial_balance' %} is-current{% endif %}"
+         href="{{ url_for('fuel.initial_balance') }}">{{ 'Начальные остатки' if is_ru else 'Бошланғич қолдиқлар' }}</a>
+      {% endif %}
+    </div>
+  </details>
+
+</nav>
+<script>
+/* FUEL-NAV-001: close the reference dropdown on outside click / Escape.
+   Plain-vanilla, no framework; <details>/<summary> stays fully usable
+   (focusable, Enter/Space) even with JS disabled. */
+(function () {
+    var refs = document.getElementById('fuelNavRefs');
+    if (!refs) return;
+    document.addEventListener('click', function (e) {
+        if (!refs.contains(e.target)) refs.removeAttribute('open');
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && refs.hasAttribute('open')) {
+            refs.removeAttribute('open');
+            var s = refs.querySelector('summary');
+            if (s) s.focus();
+        }
+    });
+})();
+</script>
