@@ -1,6 +1,7 @@
 {% extends g.base_template %}
 {% block title %}АЗС — {{ 'Выдачи топлива из Topaz' if lang == 'ru' else 'Topazдан ёқилғи беришлар' }}{% endblock %}
 {% block content %}
+{% include 'fuel/_fuel_nav.html' %}
 
 <style>
 /* FUEL002B_MARKER: fuel transactions UX refresh, template-only. */

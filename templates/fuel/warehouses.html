@@ -1,6 +1,7 @@
 {% extends g.base_template %}
 {% block title %}АЗС — {{ 'Склады и АЗС' if lang == 'ru' else 'Омборлар ва АЗС' }}{% endblock %}
 {% block content %}
+{% include 'fuel/_fuel_nav.html' %}
 
 <style>
 /* FUEL002C_MARKER: fuel warehouses UX refresh, template-only. */

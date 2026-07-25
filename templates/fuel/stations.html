@@ -1,6 +1,7 @@
 {% extends g.base_template %}
 {% block title %}АЗС — {{ 'Справочник АЗС' if lang == 'ru' else 'АЗС маълумотномаси' }}{% endblock %}
 {% block content %}
+{% include 'fuel/_fuel_nav.html' %}
 
 <style>
 /* FUEL002E_MARKER: fuel stations UX refresh, template/localization only. */

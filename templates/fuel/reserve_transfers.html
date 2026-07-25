@@ -1,6 +1,7 @@
 {% extends g.base_template %}
 {% block title %}АЗС — {{ 'Передачи в резерв' if lang == 'ru' else 'Резервга ўтказишлар' }}{% endblock %}
 {% block content %}
+{% include 'fuel/_fuel_nav.html' %}
 
 {# [REASON]: FUEL-RESERVE — all label {% set %}s live in block content and are
    used only here; there is no block scripts and no |tojson, so the Jinja block

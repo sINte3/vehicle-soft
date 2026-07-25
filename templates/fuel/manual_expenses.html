@@ -1,6 +1,7 @@
 {% extends g.base_template %}
 {% block title %}АЗС — {{ 'Ручной расход' if lang == 'ru' else 'Қўлда киритилган сарф' }}{% endblock %}
 {% block content %}
+{% include 'fuel/_fuel_nav.html' %}
 
 {% set is_ru = (lang == 'ru') %}
 {% set L_title = 'Ручной расход' if is_ru else 'Қўлда киритилган сарф' %}
