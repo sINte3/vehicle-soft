@@ -4299,7 +4299,7 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Ð”Ð
 
 
 @fuel_bp.route('/balance-report')
-@login_required
+@module_required('fuel')
 def balance_report():
     today = date.today()
     default_start = today.replace(day=1)
@@ -4338,7 +4338,7 @@ def balance_report():
 
 
 @fuel_bp.route('/balance-report/export')
-@login_required
+@module_required('fuel')
 def balance_report_export():
     from io import BytesIO
     from flask import send_file
