@@ -1310,6 +1310,57 @@ fix. To close: confirm the deployed production copy matches, load
 `audit_logs.html`, `change_temporary_password.html` — are separate and still
 unexplained.
 
+### FUEL-INITBAL-EDIT-500 - «Изм.» button on /fuel/initial-balance did nothing
+
+Priority: P2
+Status: **CLOSED 2026-07-24** — PR #25, merge `f085c46`. Fixed, reviewed
+instrumentally, validated on staging.
+
+Same defect family as `FUEL-RECEIPTS-500` above, different trap. The `editIB(...)`
+call sat in an `onclick` attribute delimited by **double** quotes while Flask's
+`tojson` emits double-quoted JSON. `tojson` escapes `<`, `>`, `&` and the
+apostrophe but **not** the double quote — it targets `<script>` blocks or
+single-quoted attributes — so the HTML parser terminated the attribute at the
+first `tojson` quote and the browser received `editIB(5, 14,`, which fails to
+compile (`Uncaught SyntaxError: Unexpected end of input`).
+
+A second, latent defect sat on the same line: `fuel_initial_balances.quantity` is
+`db.Column(db.Float, default=0)` and therefore nullable, so a NULL rendered as the
+Python literal `None` — a `ReferenceError` in JavaScript. It now goes through
+`tojson` and renders `null`.
+
+A sweep of `templates/` with `on[a-z]+="[^"]*\|\s*tojson` found exactly three
+occurrences. Two belong to the spare parts module —
+`templates/spare_part_detail.html:57` and
+`templates/spare_parts_inventory.html:268`, both
+`onsubmit="return confirm(...)"` — where the consequence is worse: the handler is
+never installed and the form submits with **no confirmation dialog at all**.
+Fixed here by agreement with the spare parts track under rule 12 (option A).
+
+Commits inside PR #25, revert in reverse order:
+
+- `e0e1f76` - `templates/fuel/initial_balance.html`
+- `89dcab1` - `templates/spare_part_detail.html`,
+  `templates/spare_parts_inventory.html`
+
+Verification, before merge: blob-hash reconstruction of the post-image (`960bb8d`
+reproduced independently from the pre-image `1a7f483`, so the committed file is
+byte-identical to what was intended); then Jinja render with autoescape → HTML
+parse → Node `new Function` compile of the extracted handler, across seven
+scenarios including NULL quantity, an apostrophe/`&`/`<b>` note and both language
+branches. All seven raise `SyntaxError` before the fix and compile after it.
+
+Verification, on staging (`ecdac10`): the button fills the form, picks the right
+warehouse out of two with near-identical names (so the lookup is by id), saving
+prints «Начальный остаток **изменён**» — the update branch of
+`save_initial_balance`, reachable only when the hidden `id` was populated — and no
+duplicate row appears. A note containing `O'Кей & <b>тест</b>` round-trips intact.
+Page console clean; the only console entries came from browser extensions.
+
+Follow-up recorded in the fuel roadmap, not here: the long-term shape for this
+button is a `data-*` attribute plus an event listener rather than an inline
+handler. Deliberately out of scope for a one-hunk fix.
+
 ### FUEL-CARDS-SYNC - Automate Topaz card directory sync to production
 
 Priority: P2
