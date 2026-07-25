@@ -1,5 +1,5 @@
 {% extends g.base_template %}
-{% block title %}АЗС — Начальные остатки{% endblock %}
+{% block title %}АЗС — {{ 'Начальные остатки' if lang == 'ru' else 'Бошланғич қолдиқлар' }}{% endblock %}
 {% block content %}
 {% include 'fuel/_fuel_nav.html' %}
 
