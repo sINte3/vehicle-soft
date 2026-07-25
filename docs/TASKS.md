@@ -84,6 +84,50 @@ Parallel track, runs alongside the increments. Decisions and findings so far:
 
 ## Recently completed / appears completed
 
+### FUEL-ACL-001 — The balance report required only a login, not fuel module access (PR #26)
+
+Priority: P1 by exposure; a one-commit fix
+Status: **COMPLETED 2026-07-25** — merged as `10a2847`, validated on staging
+before the merge
+
+`/fuel/balance-report` and `/fuel/balance-report/export` were guarded by
+`@login_required` only, while the other 31 routes of the fuel blueprint carry
+`@module_required('fuel')`. There is no blueprint-level `before_request` in
+`fuel_routes.py`, so the route decorator was the only guard: any authenticated
+user of any other module — spare parts, work orders, mechanics — could read and
+download the fuel balances of the whole holding.
+
+Found by reading decorators while collecting architectural facts for
+`F1.1 · FUEL-NAV-001`, not by a test. Confirmed at runtime by the owner on
+staging before the fix: as a non-admin user without fuel module access the page
+rendered and the export offered the XLSX.
+
+`module_required` (`models.py:1551`) applies `@login_required` to its own inner
+wrapper, so `@login_required` was replaced rather than stacked and the decorator
+stack now matches every other page route in the file. `has_module_access`
+returns `True` for `is_admin` unconditionally, so administrators are unaffected.
+`@admin_required_fuel` was deliberately not added: the balance report is a
+general page that every user with fuel module access must keep seeing.
+
+Commits, in apply order:
+
+1. `68bb391` (PR #26) — the two decorator lines in `fuel_routes.py`. Verified by
+   git blob hash rather than by eye: the diff carries `index afb5d32..8eab80d`,
+   the reviewed copy normalised to LF hashed to `afb5d32`, and applying the two
+   edits independently reproduced `8eab80d` byte for byte. Two lines changed out
+   of 4521; both function bodies untouched.
+
+Rollback: `git revert 68bb391`, then restart the service. No template, no
+schema, no data change — nothing else to undo. **Do not use `git reset --hard`**:
+commits of the parallel spare-parts track sit around this one in `main`.
+
+Validation on staging, at blob `8eab80d`, before the merge: anonymous →
+redirect to `/login`; non-admin without fuel access → 403 on both routes and no
+XLSX; administrator → report renders, XLSX downloads. The non-admin **with**
+fuel access case is closed by argument, not by a run: `has_module_access`
+returns `True` for that user exactly as it does for an administrator, and the
+code path after `True` does not distinguish them.
+
 ### SP-REPORTS-007 — Report launcher, per-report Excel and PDF, «SKU» → «Артикул» (PR #17, #18, #19)
 
 Priority: P2
@@ -914,6 +958,24 @@ Status: open
 `telegram.error.NetworkError: httpx.ConnectError: [Errno 11001] getaddrinfo failed`.
 Chronic, predates the 2026-07-21 release; the bot recovers and keeps polling.
 Investigate DNS resolution on the server rather than the bot code.
+
+### UI-SIDEBAR-GATE-001 — The sidebar offers modules the user cannot open
+
+Priority: P3
+Status: open
+
+Observed on staging 2026-07-25 while validating `FUEL-ACL-001`: a non-admin user
+without fuel module access sees «АЗС» in the sidebar «Модули» section, and every
+fuel page behind it answers 403. Not a regression from `FUEL-ACL-001` — `/fuel/`
+was already under `@module_required('fuel')`, so the entry was already dead for
+that user; closing the balance report merely removed the one page that still
+opened.
+
+The sidebar is rendered by the shared `base_next.html`, so the fix belongs to
+whoever owns that file rather than to the fuel track: gate each «Модули» entry by
+the same `has_module_access(...)` check that guards its target, the way
+`_spare_nav.html` gates its own pills. `base_next.html` was not read fresh when
+this was filed — confirm the current markup before changing anything.
 
 ### UI-REPORT-UZ-001 — Report screen keeps Russian strings in Uzbek mode
 
