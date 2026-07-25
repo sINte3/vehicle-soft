@@ -268,10 +268,10 @@
 **Коммиты PR #25:**
 
 - `e0e1f76` — `templates/fuel/initial_balance.html`;
-- `89dcab1` — `templates/spare_part_detail.html`,
+- `ecdac10` — `templates/spare_part_detail.html`,
   `templates/spare_parts_inventory.html`.
 
-Откат — `git revert` в обратном порядке: сначала `89dcab1`, затем `e0e1f76`.
+Откат — `git revert` в обратном порядке: сначала `ecdac10`, затем `e0e1f76`.
 Обе правки чисто шаблонные, данных и схемы не касаются.
 
 **Чем проверено — до мержа.**

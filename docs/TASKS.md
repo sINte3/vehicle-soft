@@ -1340,7 +1340,7 @@ Fixed here by agreement with the spare parts track under rule 12 (option A).
 Commits inside PR #25, revert in reverse order:
 
 - `e0e1f76` - `templates/fuel/initial_balance.html`
-- `89dcab1` - `templates/spare_part_detail.html`,
+- `ecdac10` - `templates/spare_part_detail.html`,
   `templates/spare_parts_inventory.html`
 
 Verification, before merge: blob-hash reconstruction of the post-image (`960bb8d`
