@@ -84,6 +84,55 @@ Parallel track, runs alongside the increments. Decisions and findings so far:
 
 ## Recently completed / appears completed
 
+### F1.1 · FUEL-NAV-001 — Persistent module navigation for the fuel module (PR #27)
+
+Priority: P1 — first increment of Phase 1 of the fuel roadmap
+Status: **MERGED 2026-07-26** as `a213874`; validated on staging before the
+merge except two visual checks, which are held open in
+`docs/RELEASE_GATE.md`
+
+Templates only, no Python. One new `templates/fuel/_fuel_nav.html` plus one
+include line in each of the fourteen fuel templates, plus a bilingual title fix
+on `initial_balance.html`, plus removal of the now-duplicated `fuel-actions`
+button row from the dashboard.
+
+Ten menu entries: nine flat pills and one `<details>` group («Справочники») with
+four items. Markup, scoped CSS and active-state logic taken from
+`templates/_spare_nav.html`; **the gating was not** — the fuel module has no
+granular sub-permissions, so the five administrative entries are gated on
+`current_user.is_admin`, the same condition `admin_required_fuel` uses. Entries
+the user cannot open are hidden, not disabled.
+
+Commits, in apply order:
+
+1. `5ce7092` — new `templates/fuel/_fuel_nav.html`. Inert on its own: an unused
+   include changes no page.
+2. `cf4890f` — the include line on all fourteen templates, on the line
+   immediately after `{% block content %}`.
+3. `4e39cf1` — `initial_balance.html` title made bilingual; it was the only
+   Russian-only `<title>` in the module.
+4. `3498bd1` — the `fuel-actions` row removed from `dashboard.html`. All ten of
+   its targets are in the new strip, under the same admin gate. The
+   `.fuel-actions` CSS rule and the six label variables the row used are left in
+   place for `F1.2`; unused `{% set %}` is inert in Jinja.
+
+Rollback: `git revert` in reverse order — `3498bd1`, then `4e39cf1`, `cf4890f`,
+`5ce7092` — then restart the service. Templates only: no schema, no data,
+nothing else to undo. **Do not use `git reset --hard`**: commits of the parallel
+spare-parts track sit around these in `main`.
+
+Diff review was by git blob hash, not by eye. All fourteen pre-images matched
+the working copies; inserting the include independently reproduced all fourteen
+post-images; for commit 4 the chain was reproduced end to end, pre-image
+`8e42986` to post-image `9a2cef6`.
+
+Two deliberate departures from the roadmap text, both recorded in
+`docs/AGENT_STATE.md`: the strip **wraps** on narrow screens instead of
+scrolling horizontally (`overflow-x: auto` computes the cross axis to `auto` per
+the CSS overflow specification and would clip the dropdown panel), and the
+include sits first inside `{% block content %}` rather than under the page
+heading (four of the fourteen pages have no `<h1>`).
+
 ### FUEL-ACL-001 — The balance report required only a login, not fuel module access (PR #26)
 
 Priority: P1 by exposure; a one-commit fix
@@ -958,6 +1007,31 @@ Status: open
 `telegram.error.NetworkError: httpx.ConnectError: [Errno 11001] getaddrinfo failed`.
 Chronic, predates the 2026-07-21 release; the bot recovers and keeps polling.
 Investigate DNS resolution on the server rather than the bot code.
+
+### FUEL-NAV-002 — Back-links superseded by the module navigation strip
+
+Priority: P3
+Status: open
+
+`F1.1` put the navigation strip on all fourteen fuel pages and removed the
+duplicated button row from the dashboard, but eleven pages still carry
+single-purpose back-links the strip now covers: «Назад к АЗС» on
+`balance_report`, «← Дашборд» on `receipts`, `transactions`, `manual_expenses`,
+`reserve_transfers`, `initial_balance`, `report` and `warnings`, «← Отчёт по
+топливу» on `warnings`, «← Назад к панели АЗС» on `reports`, «← Склады» on
+`stations`, «АЗС» and «Начальные остатки» on `warehouses`, «← Панель АЗС» and
+«Центр отчётов» on `cards`. Around fifteen buttons in total.
+
+They were deliberately left out of PR #27: that PR had already been
+hash-verified and browser-checked, and an eleven-template edit would have meant
+redoing both.
+
+Two things to check before removing anything. «Проблемы и предупреждения» on
+`/fuel/report` may be an in-page anchor to the section of the same name rather
+than a link to `/fuel/warnings` — if it is an anchor it stays. The «Excel»
+button on the same page is an action, not navigation, and stays regardless.
+`reports.html` is handled by the reports-hub increment instead, which removes
+its back-link as part of the rebuild.
 
 ### UI-SIDEBAR-GATE-001 — The sidebar offers modules the user cannot open
 
