@@ -211,9 +211,37 @@ commands, citing its own boundary instruction — its policy overrides prompt
 instructions in both directions. Tracked as `QA-AGENT-WRITE-001`.
 
 **Process note.** This is the first increment in the track validated on staging
-before the merge rather than after. `git log --oneline HEAD..origin/main`
-returned empty immediately before the merge, so the merge commit's tree equals
-the validated branch tree and `docs/RELEASE_GATE.md` never needed a row.
+before the merge rather than after. The run was on `3482a45`; the branch was cut
+from `d788674`.
+
+**Corrected the same day.** The first version of this section claimed the merge
+commit's tree equals the validated branch tree because
+`git log --oneline HEAD..origin/main` returned empty before the merge. That
+inference is wrong: an empty range proves only that the local `main` equals
+`origin/main`, not which commit both point at. By merge time `main` had advanced
+to `4bcd845` — eighteen fuel-track commits (PR #26 `FUEL-ACL-001`, PR #27 the
+shared module navigation, PR #28 `FUEL-REPORTS-HUB-016`) plus the
+`v1.6-production-2026-07-26` and `v1.7-production-2026-07-26` release tags. The
+absolute hash had been carried from memory and was stale. Lesson: re-read the
+hash after switching branches; two refs being equal is not the same as knowing
+their value.
+
+**Why the validation still holds.** `git diff --stat 3482a45 0827c98` and
+`git diff --stat d788674 4bcd845` are identical line for line — 19 files, 890
+insertions, 144 deletions. So the entire difference between the validated branch
+tip and the merge commit is exactly the fuel-track work, and none of this
+increment's three files appears in it: the increment passed through the merge
+byte for byte, with no conflict and no adjustment. The interaction surface is
+empty — different Python modules (`spare_parts.py` vs `fuel_routes.py`),
+different templates (`templates/fuel/*` vs ours), and neither
+`static/css/design-system.css` nor `templates/base_next.html` was touched by the
+fuel PRs. No migration on either side.
+
+No row was added to `docs/RELEASE_GATE.md` and none is needed: the gate tracks
+unvalidated *work*, not unvalidated *combinations* of trees — requiring every
+combination to be run would forbid parallel tracks outright. The fuel track
+closed its own gate rows (`e70c4b0`). The combined tree `0827c98` as such was
+never run, and that is stated here plainly rather than glossed over.
 
 ### FUEL-REPORTS-HUB-016 — Reports centre rebuilt on design-system launcher tiles (PR #28)
 
