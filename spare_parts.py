@@ -50,6 +50,12 @@ STATUS_LABELS = {
     'returned_for_revision': {'uz': 'Қайта ишлашга қайтарилган', 'ru': 'На доработке'},
     'approved':  {'uz': 'Тасдиқланган', 'ru': 'Утверждено'},
     'rejected':  {'uz': 'Рад этилган',  'ru': 'Отклонено'},
+    # [REASON]: SP-CANCEL-008 — terminal state, reachable ONLY from 'approved'
+    # (cancel_request enforces the transition): the authorized purchase will
+    # NOT happen (part no longer needed / equipment sold / duplicate), and
+    # cancellation releases the request's own active reservations in the same
+    # transaction. No schema change (status column is free VARCHAR).
+    'cancelled': {'uz': 'Бекор қилинган', 'ru': 'Отменено'},
     # [REASON]: SPARE-STAGE2 — new terminal state, reachable ONLY from
     # 'approved' (issue_request enforces the transition): the approved goods
     # were physically handed over and a write-off act was generated.
@@ -61,6 +67,11 @@ STATUS_COLORS = {
     'returned_for_revision': 'var(--warn)',
     'approved':  'var(--accent)',
     'rejected':  'var(--danger)',
+    # [REASON]: SP-CANCEL-008 — deliberately the same token as 'rejected':
+    # cancellation and rejection are the two "did not happen" outcomes and the
+    # label text carries the distinction. NOT var(--text2): a draft badge and
+    # a cancelled badge must not look identical in the list.
+    'cancelled': 'var(--danger)',
     'issued':    'var(--success)',
 }
 
@@ -1871,7 +1882,7 @@ def detail(rid):
             'label': _spare_t('Омбордан бериш', 'Выдать со склада'),
         }
 
-    if next_action is None and spr.status not in ('rejected', 'issued'):
+    if next_action is None and spr.status not in ('rejected', 'issued', 'cancelled'):
         if spr.status == 'draft':
             waiting_for = _spare_t('Оператор черновикни юборади', 'Оператор отправит заявку')
         elif spr.status == 'returned_for_revision':
@@ -1898,6 +1909,11 @@ def detail(rid):
         _reached = 'submitted'; _side = 'returned'
     elif spr.status == 'rejected':
         _reached = 'submitted'; _side = 'rejected'
+    elif spr.status == 'cancelled':
+        # [REASON]: SP-CANCEL-008 — 'approved', not 'submitted': the request
+        # genuinely reached approval and the stepper must show that progress
+        # as done; cancellation is a side exit from 'approved'.
+        _reached = 'approved'; _side = 'cancelled'
     else:
         _reached = spr.status; _side = None
     _order = [k for k, _ in _step_defs]
