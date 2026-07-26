@@ -84,6 +84,85 @@ Parallel track, runs alongside the increments. Decisions and findings so far:
 
 ## Recently completed / appears completed
 
+### FUEL-REPORTS-HUB-016 — Reports centre rebuilt on design-system launcher tiles (PR #28)
+
+Priority: P2 — owner request, an addition to Phase 1 that is not in the roadmap
+Status: **COMPLETED 2026-07-26** — merged as `f9b0e56`, validated on staging
+before the merge
+
+Owner request of 2026-07-26: the «Отчёты» pill leads to `/fuel/reports`, and that
+page had to look like the spare parts launcher — tiles distributed evenly across
+the width, with an icon next to each report name. The page previously used an
+ad-hoc `report012b-*` style block with `repeat(auto-fill, minmax(300px, 1fr))`,
+which left a ragged trailing gap, and emoji glued into the title strings.
+
+Template only, one file, no Python: `reports_center` still returns
+`render_template('fuel/reports.html')` with no context and the tiles live in the
+template. **Nothing was added to `design-system.css`** — every component used
+(`.vs-report-tiles`, `.vs-report-tile` with its accent modifiers,
+`.vs-report-tile-icon` / `-text` / `-title` / `-sub` / `-arrow`, `.vs-hero*`,
+`.vs-card`, `.vs-badge`) already existed there.
+
+Six tiles in the design-system grid `repeat(3, minmax(0, 1fr))`: two even rows,
+two columns below 1200 px, one below 720 px, and no grid override in the template.
+Three live tiles link to `/fuel/balance-report`, `/fuel/reports/station-issues`
+and `/fuel/cards`; the three planned reports are non-clickable containers with a
+«скоро» badge and no arrow — an arrow promises navigation. Building those three
+reports is `F2.4`, and they are development from scratch, not finishing.
+
+Icons are inline SVG, stroke primitives only, no icon font and no CDN. That was
+not a style preference: on the owner's browser the emoji used by two of the card
+titles had no glyph in the font in use and rendered as empty squares. Confirmed on
+staging that the page requests nothing of its own — the only third-party requests
+are the Golos Text chain from `base_next.html`, which is `UI-FONT-LOCAL-001` and
+predates this increment.
+
+Accents are `is-primary`, `is-success`, `is-warning`. `is-info` was deliberately
+left unused: it is pixel-identical to `is-primary`, filed as `UI-ACCENT-DUP-001`.
+
+Tile 1 was renamed from «Балансовый отчёт по топливу» to «Отчёт остатков топлива»,
+matching the page it opens and the navigation pill. Three names for one report is
+what misled the owner once before.
+
+`Topaz` and `RFID` remain in Latin script in the Uzbek subtitles. Accepted: the
+Cyrillic-only rule governs interface wording, not product names and technical
+acronyms.
+
+Commits, in apply order:
+
+1. `0647d35` — the template rebuilt: hero, six tiles, inline SVG icons, scoped
+   planned-tile styles. Removed the `report012b-*` style block, the
+   `text-muted text-sm` subtitle line and the «← Назад к панели АЗС» card.
+2. `936e78f` — added `.vs-report-tiles a.vs-report-tile:hover
+   { text-decoration: none; color: inherit; }`. **Found by the browser check, not
+   by reading the diff:** `a:hover` in `design-system.css` (0,1,1) outweighs
+   `.vs-report-tile` (0,1,0), so hovering a live tile underlined its title and
+   subtitle and turned the title blue.
+3. `933d24c` — `.fuel-tile-soon:hover` now restates `var(--vs-shadow-sm)` instead
+   of `none`, and the specificity quoted in the previous commit's comment was
+   corrected from `0,2,2` to `0,3,1`.
+
+Rollback: `git revert` in reverse order — `933d24c`, then `936e78f`, then
+`0647d35` — and restart the service. Template only: no schema, no data, nothing
+else to undo. **Do not use `git reset --hard`**: commits of the parallel
+spare-parts track sit around these in `main`.
+
+Diff review was by git blob hash at every step. `f3d80ac` (the post-`F1.1` blob)
+was reproduced independently before reviewing commit 1, whose result `b04155a` was
+matched byte for byte; commit 2 was reconstructed from `b04155a` plus the shown
+diff to `2717a73`; commit 3 was diffed directly against commit 2, giving `+6/−3`
+and `ca02fc9`. Markup after `</style>` is byte-identical between commits 2 and 3.
+
+Validated on staging at blob `ca02fc9`, before the merge: six equal-width tiles in
+two even rows with no ragged gap, two then one column on narrowing, three distinct
+icon colours, planned tiles not clickable, both languages complete, and the
+network tab showing only the font chain and nothing for the icons. Hover behaviour
+on both tile kinds was confirmed by the owner after the third commit.
+
+Deliberate local debt, filed as `UI-TILE-HOVER-001`: the underline fix belongs in
+`design-system.css` and would fix the spare parts launcher at the same time; the
+scoped rule added here is a workaround to be dropped once that lands.
+
 ### F1.1 · FUEL-NAV-001 — Persistent module navigation for the fuel module (PR #27)
 
 Priority: P1 — first increment of Phase 1 of the fuel roadmap
@@ -1032,6 +1111,42 @@ than a link to `/fuel/warnings` — if it is an anchor it stays. The «Excel»
 button on the same page is an action, not navigation, and stays regardless.
 `reports.html` is handled by the reports-hub increment instead, which removes
 its back-link as part of the rebuild.
+
+### UI-TILE-HOVER-001 — `a:hover` underlines the text of design-system report tiles
+
+Priority: P3
+Status: open
+
+`design-system.css` has `a:hover { color: var(--vs-primary-hover);
+text-decoration: underline; }` at specificity 0,1,1, which outweighs
+`.vs-report-tile { text-decoration: none; color: inherit; }` at 0,1,0. Hovering a
+tile therefore underlines its title and subtitle and turns the title blue: the
+title declares no colour of its own and inherits the link colour, and the
+underline is painted by the anchor itself, so no descendant rule can remove it.
+
+Found on staging 2026-07-26 while validating `FUEL-REPORTS-HUB-016`. **The spare
+parts launcher (`templates/spare_parts_reports.html`) carries the same defect** —
+same component, same anchors.
+
+The real fix is one rule in `design-system.css`:
+`.vs-report-tile:hover { text-decoration: none; color: inherit; }` at 0,2,0, which
+beats `a:hover`. That file is shared, so the change has to be announced to the
+other track before merge; the fuel track worked around it locally instead
+(`936e78f`, a scoped `.vs-report-tiles a.vs-report-tile:hover` rule at 0,3,1).
+When the shared fix lands, drop that override.
+
+### FUEL-FAVICON-404 — `favicon.ico` answers 404 on every page
+
+Priority: P4
+Status: open
+
+Seen in the network tab on staging 2026-07-26 while checking
+`FUEL-REPORTS-HUB-016`: the browser's automatic `/favicon.ico` request returns 404
+with `Content-Type: text/html`. Harmless in itself, but it appears on every page
+of the application and adds a failed request to every network trace, which makes
+future network checks noisier than they need to be. The fix is a static file plus
+a link in the base template; the base template is shared, so this belongs to
+whoever owns it rather than to the fuel track.
 
 ### UI-SIDEBAR-GATE-001 — The sidebar offers modules the user cannot open
 
