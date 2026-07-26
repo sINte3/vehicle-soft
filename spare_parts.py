@@ -50,6 +50,12 @@ STATUS_LABELS = {
     'returned_for_revision': {'uz': 'Қайта ишлашга қайтарилган', 'ru': 'На доработке'},
     'approved':  {'uz': 'Тасдиқланган', 'ru': 'Утверждено'},
     'rejected':  {'uz': 'Рад этилган',  'ru': 'Отклонено'},
+    # [REASON]: SP-CANCEL-008 — terminal state, reachable ONLY from 'approved'
+    # (cancel_request enforces the transition): the authorized purchase will
+    # NOT happen (part no longer needed / equipment sold / duplicate), and
+    # cancellation releases the request's own active reservations in the same
+    # transaction. No schema change (status column is free VARCHAR).
+    'cancelled': {'uz': 'Бекор қилинган', 'ru': 'Отменено'},
     # [REASON]: SPARE-STAGE2 — new terminal state, reachable ONLY from
     # 'approved' (issue_request enforces the transition): the approved goods
     # were physically handed over and a write-off act was generated.
@@ -61,6 +67,11 @@ STATUS_COLORS = {
     'returned_for_revision': 'var(--warn)',
     'approved':  'var(--accent)',
     'rejected':  'var(--danger)',
+    # [REASON]: SP-CANCEL-008 — deliberately the same token as 'rejected':
+    # cancellation and rejection are the two "did not happen" outcomes and the
+    # label text carries the distinction. NOT var(--text2): a draft badge and
+    # a cancelled badge must not look identical in the list.
+    'cancelled': 'var(--danger)',
     'issued':    'var(--success)',
 }
 
@@ -533,7 +544,10 @@ def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None,
         q = q.filter(SparePartRequest.status.in_(eligible_statuses),
                      SparePartRequest.request_date < as_of_date)
     else:
-        q = q.filter(SparePartRequest.status != 'rejected')
+        # [REASON]: SP-CANCEL-008 — a cancelled request never delivered a
+        # part, so like a rejected one it must not raise "already ordered
+        # recently".
+        q = q.filter(SparePartRequest.status.notin_(('rejected', 'cancelled')))
     if exclude_request_id:
         q = q.filter(SparePartRequest.id != exclude_request_id)
     rows = q.order_by(SparePartRequest.request_date.desc(),
@@ -940,7 +954,9 @@ def _check_repeat_orders_batch(equipment_id, spare_part_ids, exclude_request_id=
          .filter(SparePartRequest.equipment_id == equipment_id,
                  SparePartRequestItem.spare_part_id.in_(set(spare_part_ids)),
                  SparePartRequest.request_date >= window_start,
-                 SparePartRequest.status != 'rejected'))
+                 # [REASON]: SP-CANCEL-008 — same exclusion as the per-pair
+                 # engine above: cancelled never delivered a part.
+                 SparePartRequest.status.notin_(('rejected', 'cancelled'))))
     if exclude_request_id:
         q = q.filter(SparePartRequest.id != exclude_request_id)
     rows = q.order_by(SparePartRequest.request_date.desc(),
@@ -1796,6 +1812,12 @@ def detail(rid):
     # (warehouse handover vs purchase decision); only approved requests offer it.
     can_issue = (current_user.has_module_access('spare_parts_issue')
                  and spr.status == 'approved')
+    # [REASON]: SP-CANCEL-008 — cancellation shares the approval permission
+    # primitive (see cancel_request) and is offered only while the request
+    # is 'approved'. Checked directly against the permission because
+    # can_approve above already embeds status == 'submitted'.
+    can_cancel = (current_user.has_module_access('spare_parts_approve')
+                  and spr.status == 'approved')
     issue_ctx = _issue_context(spr) if can_issue else None
     # Acts are visible on the request once issued (permanent, no un-issue).
     acts = (SparePartWriteOffAct.query.filter_by(request_id=spr.id)
@@ -1871,7 +1893,7 @@ def detail(rid):
             'label': _spare_t('Омбордан бериш', 'Выдать со склада'),
         }
 
-    if next_action is None and spr.status not in ('rejected', 'issued'):
+    if next_action is None and spr.status not in ('rejected', 'issued', 'cancelled'):
         if spr.status == 'draft':
             waiting_for = _spare_t('Оператор черновикни юборади', 'Оператор отправит заявку')
         elif spr.status == 'returned_for_revision':
@@ -1898,6 +1920,11 @@ def detail(rid):
         _reached = 'submitted'; _side = 'returned'
     elif spr.status == 'rejected':
         _reached = 'submitted'; _side = 'rejected'
+    elif spr.status == 'cancelled':
+        # [REASON]: SP-CANCEL-008 — 'approved', not 'submitted': the request
+        # genuinely reached approval and the stepper must show that progress
+        # as done; cancellation is a side exit from 'approved'.
+        _reached = 'approved'; _side = 'cancelled'
     else:
         _reached = spr.status; _side = None
     _order = [k for k, _ in _step_defs]
@@ -1955,6 +1982,7 @@ def detail(rid):
                            can_approve=can_approve,
                            can_edit_photos=can_edit_photos,
                            can_issue=can_issue,
+                           can_cancel=can_cancel,
                            issue_ctx=issue_ctx,
                            acts=acts,
                            item_warnings=item_warnings,
@@ -2139,6 +2167,90 @@ def reject_request(rid):
     # [REASON]: BOT003 — Post-commit best-effort notification, never raises.
     if _BOT003_AVAILABLE:
         enqueue_spare_request_status_best_effort(spr.id, 'spare_request_rejected')
+    return redirect(url_for('spare_parts.detail', rid=rid))
+
+
+@spare_parts_bp.route('/<int:rid>/cancel', methods=['POST'])
+@module_required('spare_parts')
+def cancel_request(rid):
+    """Cancel an APPROVED request and release its own active reservations.
+
+    [REASON]: SP-CANCEL-008 — 'approved' had exactly one exit (issue_request),
+    so an approved request that must NOT be issued (part no longer needed,
+    equipment sold, duplicate) stayed 'approved' forever while its active
+    reservations kept subtracting from available stock for every other
+    request on the same SKU. The only escape was the warehouse-screen manual
+    release, which frees the claim but leaves the request advertising "issue
+    from warehouse" as its next action. This route closes that hole:
+    status -> 'cancelled' and the release of the request's own reservations
+    happen in ONE transaction — either both, or neither.
+
+    A cancellation is NOT a rejection: reviewed_by / reviewed_at /
+    review_comment record the APPROVAL decision and are left untouched
+    (unlike reject_request, which owns those fields for its own decision) —
+    otherwise the history would lose who authorised the purchase. The
+    cancellation actor, timestamp and reason go to SparePartStatusHistory,
+    the audit log and the reservations' closed_by / closed_at / close_note.
+    """
+    # [REASON]: SP-CANCEL-008 — same permission primitive as approval and
+    # rejection (no new permission codes), with the CYCLE-2-3 Part 8 denial
+    # trail (see _deny_spare).
+    if not current_user.has_module_access('spare_parts_approve'):
+        _deny_spare('cancel request #{}'.format(rid),
+                    entity_type='spare_part_request', entity_id=rid,
+                    entity_label='Request #{}'.format(rid))
+    spr = SparePartRequest.query.get_or_404(rid)
+    _spare_check_request_access(spr)
+    if spr.status != 'approved':
+        abort(400)
+    comment = (request.form.get('cancel_comment', '') or '').strip()
+    if not comment:
+        # [REASON]: SP-CANCEL-008 — the reason is mandatory: it is the only
+        # durable record of WHY warehouse stock was freed.
+        _spare_flash_errors(
+            [_spare_t('Бекор қилиш сабабини кўрсатинг', 'Укажите причину отмены')],
+            title_uz='Сўров бекор қилинмади:',
+            title_ru='Заявка не отменена:')
+        return redirect(url_for('spare_parts.detail', rid=rid))
+    before = _request_snapshot(spr)
+    old_status = spr.status
+    spr.status = 'cancelled'
+    # The request's OWN active claims only; _release_reservations records
+    # who/when/why on each row and ignores rows not currently active.
+    active_ids = [row.id for row in SparePartReservation.query
+                  .filter_by(request_id=spr.id, status='active').all()]
+    released = _release_reservations(active_ids, current_user.id, note=comment)
+    total_released = round(sum(float(row.quantity or 0) for row in released), 3)
+    after = _request_snapshot(spr)
+    _audit_spare(
+        'spare_part_request_status_changed',
+        entity_type='spare_part_request',
+        entity_id=spr.id,
+        entity_label='Request #{}'.format(spr.id),
+        before=before,
+        after=after,
+        changes=diff_dict(before, after),
+        description='Spare part request cancelled after approval; status {} -> {}'.format(old_status, spr.status)
+    )
+    # Mirrors the 'spare_part_reservations_created' event of approve_request.
+    _audit_spare(
+        'spare_part_reservations_released',
+        entity_type='spare_part_request',
+        entity_id=spr.id,
+        entity_label='Request #{}'.format(spr.id),
+        after={'rows': len(released),
+               'total_released': total_released,
+               'note': comment},
+        description='Reservations released on cancellation of request #{}'.format(spr.id)
+    )
+    # [REASON]: FIX003A — Record status history before commit.
+    _add_status_history(spr.id, old_status, 'cancelled', comment=comment,
+                        changed_by=current_user.id)
+    # [REASON]: SP-CANCEL-008 — ONE commit: the status change and the
+    # reservation release are a single transaction.
+    db.session.commit()
+    flash(_spare_t('Сўров бекор қилинди, омбор захираси бўшатилди',
+                   'Заявка отменена, резерв склада снят'), 'success')
     return redirect(url_for('spare_parts.detail', rid=rid))
 
 

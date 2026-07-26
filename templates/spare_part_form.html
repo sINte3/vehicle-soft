@@ -227,6 +227,19 @@ function populateUnitOptions(field) {
     });
 }
 
+/* [REASON]: SP-UNIT-L10N-001 — the repeat-history line used to show the raw
+   stored unit CODE, so the Uzbek interface printed Latin 'dona'. Map a known
+   code to its server-localized UNIT_OPTIONS label; an unknown value falls
+   back to the raw code, because legacy catalog rows hold free text like 'шт'. */
+function unitLabel(code) {
+    if (!code) return '';
+    const v = String(code).trim().toLowerCase();
+    for (const u of UNIT_OPTIONS) {
+        if (u.code.toLowerCase() === v) return u.label;
+    }
+    return code;
+}
+
 /* Set a unit field from a catalog part's stored unit. For the select this
    matches by code first, then by the alt spellings (legacy free-text catalog
    values like 'шт'); an unrecognized value leaves the selection unchanged. */
@@ -524,7 +537,7 @@ function checkRepeat(row) {
             data.history.slice(0, 3).forEach(h => {
                 box.appendChild(document.createElement('br'));
                 box.appendChild(document.createTextNode(
-                    '№' + h.request_id + ' · ' + h.request_date + ' · ' + h.quantity + ' ' + (h.unit || '')));
+                    '№' + h.request_id + ' · ' + h.request_date + ' · ' + h.quantity + ' ' + unitLabel(h.unit || '')));
             });
             box.className = 'sp-repeat ' + cls;
         })
