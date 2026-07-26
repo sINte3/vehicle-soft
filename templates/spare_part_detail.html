@@ -425,9 +425,7 @@
 </div>
 {% endif %}
 
-{# SP-CANCEL-008: status-guarded — approve/reject only ever answer 'submitted',
-   so the buttons must not render on an approved/issued/rejected request. #}
-{% if can_approve and req.status == 'submitted' %}
+{% if can_approve %}
 <div class="vs-card vs-mb" id="sp-action-approve">
     <div class="vs-card-header">
         <div class="vs-card-title">{{ 'Рассмотрение заявки' if is_ru else 'Сўровни кўриб чиқиш' }}</div>
