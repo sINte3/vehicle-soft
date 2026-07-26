@@ -25,29 +25,32 @@ Known confirmed gaps to include in the audit as starting evidence:
 - templates/audit_logs.html — Phase 7 gave it form-control only; full
   visual pass explicitly deferred.
 
-### Next: spare-parts borrowing track — increment 8 (not scoped yet)
+### Next: spare-parts borrowing track — increment 9 (not scoped yet)
 
-Increments 1-7 are done and merged into `main`: SP-DESK-001 (operator workspace,
+Increments 1-8 are done and merged into `main`: SP-DESK-001 (operator workspace,
 PR #11), SP-DETAIL-002 (request card redesign, PR #12), SP-RESERVE-003
 (reservations and available stock, PR #13), SP-MINSTOCK-004 (minimum stock levels
 and purchase queue, PR #14), SP-PQEXPORT-005 (Excel export of the purchase queue,
 PR #15), SP-POLISH-006 (purchase queue readability and `№` numbering, PR #16),
 SP-REPORTS-007 (report launcher, per-report Excel and PDF, «SKU» → «Артикул»,
-PR #17 + #18 + #19) — see their sections below.
+PR #17 + #18 + #19), SP-CANCEL-008 (cancel an approved request and release its
+reservations, PR #29) — see their sections below.
 
-Increment 8 is **not scoped**. Nothing is chosen; the owner picks the next item.
+Increment 9 is **not scoped**. Nothing is chosen; the owner picks the next item.
 
-Before starting increment 8, two things from increment 7 must be closed:
+Nothing from increment 8 is left open: it was validated on staging BEFORE the
+merge, so `docs/RELEASE_GATE.md` never carried a row for it. Four checks were
+closed by argument rather than by run and are listed in `SP-CANCEL-008` below;
+the only one with real residual risk is the repeat-order exclusion of commit
+`1a9369a`, which was never exercised at runtime.
 
-1. The remaining staging checks listed in `SP-REPORTS-007` below — roughly
-   25 of the 37 checklist items, including all of PR #19.
-2. The production deploy of PR #17 + #18 + #19, which also requires running
-   `add_unit_sqm.py --apply` on production.
-
-Unprioritised candidates still accumulated during the track: releasing a
-reservation when an approved request is rejected, price history on the article
-screen, bulk approval of requests. The standalone «Заявки/Наряды» MVP is tracked
-outside this track and is not the next item here.
+Unprioritised candidates still accumulated during the track: price history on the
+article screen, bulk approval of requests, cancelling an ISSUED request (a stock
+return, materially harder than SP-CANCEL-008 and deliberately out of its scope).
+The candidate «release the reservation when an approved request is rejected» is
+now **obsolete** — SP-CANCEL-008 covered it, and the transition it presumed
+never existed: `reject_request` only ever accepted `submitted`. The standalone
+«Заявки/Наряды» MVP is tracked outside this track and is not the next item here.
 
 ### PILOT-1C-001 — Data migration pilot from 1C (Paxtasanoattrans)
 
@@ -83,6 +86,134 @@ Parallel track, runs alongside the increments. Decisions and findings so far:
   earlier truncated export produced a wrong conclusion about warehouse counts.
 
 ## Recently completed / appears completed
+
+### SP-CANCEL-008 — Cancel an approved request and release its reservations (PR #29)
+
+Priority: P2
+Status: **COMPLETED 2026-07-26** — merged as `0827c98`, validated on staging
+BEFORE the merge (four checks closed by argument, listed below)
+
+Increment 8 of the spare-parts borrowing track. Code and templates only: no
+schema change, no migration, `schema_migrations` row count unchanged.
+
+The hole being closed: `approved` had exactly one exit, `issue_request`. An
+approved request that must not be issued stayed `approved` forever while its
+active `SparePartReservation` rows kept subtracting from available stock for
+every other request on the same SKU. The only escape was
+`inventory_reservation_release` on the warehouse screen, whose own docstring
+named the problem — it frees the claim but leaves the request advertising "issue
+from warehouse" as its next action.
+
+Owner decisions taken at design time: a new `cancelled` status rather than
+reusing `rejected`; the existing `spare_parts_approve` permission rather than a
+new code; a mandatory reason; a cancelled request excluded from the repeat-order
+engine. `SP-UNIT-L10N-001` was taken as a rider in the same PR.
+
+Commits, in apply order (all in PR #29, merge `0827c98`):
+
+1. `21ef837` — `cancelled` in `STATUS_LABELS` / `STATUS_COLORS`, the stepper
+   side state, the terminal-status list in the next-action resolver.
+2. `5a480f1` — the `cancel_request` route plus `can_cancel` in `detail()`.
+3. `02ddd4b` — the `sp-action-cancel` card, the side badge, the three-way
+   terminal message, `cancelConfirm`.
+4. `1a9369a` — `_check_repeat_orders` and `_check_repeat_orders_batch` exclude
+   `cancelled` alongside `rejected`.
+5. `a382339` — `SP-UNIT-L10N-001`: the repeat-order hint routes the unit
+   through `unitLabel()` over `UNIT_OPTIONS` instead of printing the raw code.
+6. `3482a45` — reverts the redundant status guard added to the review card in
+   commit 3.
+
+Rollback: `git revert` the six commits strictly in reverse order, 6 → 1, **plus
+a data step** if any request was cancelled. Reverting commit 1 removes
+`cancelled` from `STATUS_LABELS`, and `spare_part_detail.html` renders the badge
+as `status_labels[req.status][lang]`, which raises on a missing key — such a
+request returns 500. The list page is safe, it falls back to the raw status. So
+run `UPDATE spare_part_requests SET status='approved' WHERE status='cancelled';`
+before or with the revert. Released reservations are NOT restored and need not
+be: a released reservation only understates availability, erring safe. This is
+not theoretical — on 2026-07-26 staging was put back on `main` after the run and
+`/spare-parts/510` returned 500 until the merge was pulled.
+
+Deliberate decisions, recorded so nobody "fixes" them later:
+
+- rule 6 (`_check_rule6_recent_rejection`) is untouched: it keys on
+  `status == 'rejected'` and prints "this request was rejected" with the
+  reviewer's comment. A cancellation is not a rejection and that text would lie;
+- every `status.in_(('approved','issued'))` filter is untouched: a cancelled
+  request leaves that set by itself, so cost baselines, the purchase queue and
+  the reports drop it with no code change;
+- `cancelled` and `rejected` share `var(--danger)`: they are the two "did not
+  happen" outcomes and the label text carries the distinction. Not
+  `var(--text2)`, which `draft` already uses;
+- no Telegram notification. `valid_event_types` in `bot003_notifications.py` is
+  a three-entry whitelist and the message text is rendered by the bot003
+  service, which was not read in this increment. `issued` already notifies
+  nobody, so a terminal status without a message is existing behaviour. Tracked
+  as `SP-CANCEL-NOTIFY-001`;
+- `templates/spare_parts_list.html` and `templates/spare_parts_desk.html` were
+  not edited and needed no edit: the list iterates `status_labels.items()` for
+  both its stat tiles and its client-side filter and falls back to the raw
+  status in the badge, while the desk counters derive from
+  `R.status == 'approved'`.
+
+Verified instrumentally before the merge: AST hashes of 15 protected functions
+identical to `main`; of 157 functions exactly three changed (`detail`,
+`_check_repeat_orders`, `_check_repeat_orders_batch`) and one added, 148
+untouched; an AST walk of the route body found exactly one
+`db.session.commit()`, two `_audit_spare` calls with the expected event names,
+no mention of `reviewed_by` / `reviewed_at` / `review_comment`, and no
+`enqueue_*` call; both templates parse, `<div>` 117/117, Jinja blocks 54/54, no
+new `tojson` in any attribute; 30 Cyrillic literals in the added lines with zero
+Latin characters.
+
+Verified at runtime on staging (`3482a45`, 529 requests, screens non-empty): the
+empty and whitespace-only reason both produce the client-side message without
+submitting; confirming the dialog moves request №510 to «Отменено» with the
+correct badge, stepper and terminal text; the history gains an
+«Утверждено → Отменено» entry carrying the reason. **The «РАССМОТРЕЛ» tile still
+shows `muhiddin`, not the cancelling user** — screen-side proof that the review
+fields survive. Warehouse Мирзачул, Топливопровод `Bosch / C-0707`: on hand 80.0
+unchanged, reserved 4.0 → 2.0, available 76.0 → 78.0, matching the prediction to
+the decimal. Desk «Готовы к выдаче» 275 → 274, «Ждут поступления» 55 unchanged
+because the request had been fully reserved. List tiles «Утверждено» 330 → 329,
+«Отменено» 0 → 1, and the eight-tile grid wraps without clipping. Uzbek
+interface renders «БЕКОР ҚИЛИНГАН» in the tile, the filter and the table badge.
+
+**Four checks closed by argument, not by run** — recorded as such deliberately:
+
+1. *The request card in Uzbek.* The badge is proven by the list screen, but the
+   stepper side badge and «Сўров бекор қилинган — амал йўқ.» were never seen
+   live. Closed by reading the diff: both strings passed the Cyrillic-purity
+   check and use the same template idiom as sibling strings that were proven.
+   Residual risk: a typo in one of two phrases, self-revealing on first view.
+2. *Permissions.* `can_cancel` is the single expression
+   `has_module_access('spare_parts_approve') and spr.status == 'approved'`, and
+   the server gate is the same primitive as approval and rejection. Indirectly
+   confirmed by the cancel card being absent on submitted №529 and issued №528.
+3. *The repeat-order exclusion of commit `1a9369a`.* Never exercised at runtime.
+   Closed by reading the diff: `.notin_(('rejected', 'cancelled'))` in two
+   places. **This is the one closure with real residual risk** — it is a
+   behaviour change nobody ran. It would surface as a spurious repeat-order
+   warning, not as data corruption.
+4. *The rider `a382339` and the money drop-out.* The unit label is closed by the
+   diff; the money is closed by argument — the `('approved','issued')` filters
+   were not modified, the AST comparison proves it, and the cancelled request
+   leaves the set on its own. Request №510 carried a confirmed 349 000 × 2.0 =
+   698 000, which should no longer appear under Трактор Puma-210.
+
+**The browser QA agent could not run this increment.** Its
+`vehicle-soft-readonly-boundary` policy blocks every POST, and the whole
+increment is a POST; the language switch is a POST too. It completed phase 0 and
+three read-only steps, marked the rest `BLOCKED_BY_READ_ONLY_POLICY` and ended
+with BLOCKED. It was still useful: it located a ready precondition (request
+№510) and captured the baseline numbers. It also broke the prompt's ban on git
+commands, citing its own boundary instruction — its policy overrides prompt
+instructions in both directions. Tracked as `QA-AGENT-WRITE-001`.
+
+**Process note.** This is the first increment in the track validated on staging
+before the merge rather than after. `git log --oneline HEAD..origin/main`
+returned empty immediately before the merge, so the merge commit's tree equals
+the validated branch tree and `docs/RELEASE_GATE.md` never needed a row.
 
 ### FUEL-REPORTS-HUB-016 — Reports centre rebuilt on design-system launcher tiles (PR #28)
 
@@ -922,6 +1053,47 @@ Blocker:
 
 ## Backlog
 
+### SP-CANCEL-NOTIFY-001 — Notify the requester when an approved request is cancelled
+
+Priority: P3
+Status: open
+
+`cancel_request` (SP-CANCEL-008) deliberately sends no Telegram notification,
+while approval, rejection and return-for-revision all do. Two things stand in
+the way. First, `valid_event_types` in `bot003_notifications.py` is a
+three-entry whitelist that silently drops an unknown type. Second, and the real
+blocker, `_build_payload_for_request` emits data only — the message text is
+rendered by the bot003 service, which was not read during the increment, so
+enqueuing an event the consumer may not know risks the notification worker that
+serves the whole module. Note `issued` also notifies nobody, so the gap is
+pre-existing rather than new. Doing this properly means reading the bot003
+consumer, adding the event on both sides, and deploying two bot services.
+
+### QA-AGENT-WRITE-001 — The browser QA agent cannot validate any write increment
+
+Priority: P2
+Status: open
+
+On 2026-07-26 the Codex + Playwright agent was given the SP-CANCEL-008 run and
+returned BLOCKED. Its `vehicle-soft-readonly-boundary` policy classifies every
+POST as a write and refuses it, which rules out the cancel action itself, the
+client-side guard on the empty reason, and even the language switch (a POST to
+`/set_language`). It completed the read-only baseline and three card checks; the
+owner ran the remaining twelve by hand in about fifteen minutes.
+
+Two facts worth keeping. The policy also overrides the prompt in the other
+direction: told not to run git commands, the agent ran `rev-parse` and
+`status --porcelain` anyway, citing its own boundary instruction. And it reported
+the pre-existing 55 untracked files in the staging working copy as an unexpected
+baseline and a reason to stop — correct from its position, noise from ours.
+
+Options: an explicit policy exemption for `10.103.25.14:5051` only; a dedicated
+agent profile for staging; or accept that write increments are validated by the
+owner and give the agent only read-only passes. **Do not weaken the policy
+globally** — it is what keeps an agent away from production. Related: the agent
+also ran with a pre-authenticated admin session despite `--isolated`, so profile
+isolation needs checking before the next run.
+
 ### SKU-RENAME-001 — Replace the visible term «SKU» with «Артикул»
 
 Priority: P2
@@ -1206,6 +1378,13 @@ Status: backlog
   navigation and fails — console shows
   `Failed to load resource: net::ERR_BLOCKED_BY_CLIENT` for the css2 URL. The
   page then falls back to `system-ui` from the `--vs-font` stack.
+- **Corrected 2026-07-26.** A network log from the SP-CANCEL-008 QA pass shows
+  `fonts.googleapis.com` and `fonts.gstatic.com` both returning **200**, with the
+  woff2 files actually downloaded. So the blocked-request finding above is
+  environment-specific, not universal, and the conclusion that the design system
+  has been rendering in a fallback face all along is **not** supported. What
+  remains, and remains the reason to do this task, is that an on-premises product
+  issues an outbound request to Google on every page load.
 - Why this matters more than cosmetics: the whole product proposition is
   on-premises, «данные не покидают сеть». An outbound request to Google on every
   page contradicts that, and if the holding network blocks or delays it, the
