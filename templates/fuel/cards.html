@@ -1,6 +1,7 @@
 {% extends g.base_template %}
 {% block title %}АЗС — {{ 'Справочник топливных карт' if lang == 'ru' else 'Ёқилғи карталари маълумотномаси' }}{% endblock %}
 {% block content %}
+{% include 'fuel/_fuel_nav.html' %}
 
 {% set L_title = 'Справочник топливных карт' if lang == 'ru' else 'Ёқилғи карталари маълумотномаси' %}
 {% set L_subtitle = 'Каталог карт Topaz: имена, RFID, статус и синхронизация' if lang == 'ru' else 'Topaz карталари каталоги: номлар, RFID, ҳолат ва синхронизация' %}

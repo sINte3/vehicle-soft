@@ -1,6 +1,7 @@
 {% extends g.base_template %}
 {% block title %}АЗС — {{ 'Остатки топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари' }}{% endblock %}
 {% block content %}
+{% include 'fuel/_fuel_nav.html' %}
 
 {% set L_balance_report_title = 'Отчёт остатков топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари ҳисоботи' %}
 {% set L_balance_report_desc = 'Периодический отчёт по 22 рабочим складам: остаток на начало, приход, расход Topaz и текущий остаток.' if lang == 'ru' else '22 та ишчи омбор бўйича даврий ҳисобот: бошланғич қолдиқ, кирим, Topaz сарфи ва жорий қолдиқ.' %}
@@ -217,21 +218,7 @@
         <div class="fuel002h-subtitle FUEL002H_MARKER">{{ t('Ёқилғи панели: омбор қолдиқлари, кунлик сарф, АЗС ва охирги беришларни тез кўриш.') }}</div>
         <div class="text-muted text-sm">{{ L_subtitle }}</div>
     </div>
-    <div class="fuel-actions">
-        <a href="{{ url_for('fuel.transactions') }}" class="btn btn-secondary btn-sm">{{ L_transactions }}</a>
-        <a href="{{ url_for('fuel.reports_center') }}" class="btn btn-primary btn-sm">📊 {{ 'Отчёты' if lang == 'ru' else 'Ҳисоботлар' }}</a>
-        <a href="{{ url_for('fuel.fuel_report') }}" class="btn btn-secondary btn-sm">{{ 'Отчёт' if lang == 'ru' else 'Ҳисобот' }}</a>
-        <a href="{{ url_for('fuel.fuel_warnings') }}" class="btn btn-secondary btn-sm">{{ 'Предупреждения' if lang == 'ru' else 'Огоҳлантиришлар' }}</a>
-        <a href="{{ url_for('fuel.receipts') }}" class="btn btn-secondary btn-sm">{{ L_receipts }}</a>
-        {% if current_user.is_admin %}
-        <a href="{{ url_for('fuel.stations') }}" class="btn btn-secondary btn-sm">{{ L_stations }}</a>
-        <a href="{{ url_for('fuel.warehouses') }}" class="btn btn-secondary btn-sm">{{ L_warehouses }}</a>
-        <a href="{{ url_for('fuel.initial_balance') }}" class="btn btn-secondary btn-sm">{{ L_initial }}</a>
-        <a href="{{ url_for('fuel.manual_expenses') }}" class="btn btn-secondary btn-sm">{{ L_manual_exp }}</a>
-        {# FUEL-RESERVE: reserve-transfer marking, admin-only like the manual-expense entry beside it #}
-        <a href="{{ url_for('fuel.reserve_transfers') }}" class="btn btn-secondary btn-sm">{{ L_reserve_transfers }}</a>
-        {% endif %}
-    </div>
+    {# [REASON]: The fuel-actions button row was removed in F1.1 · FUEL-NAV-001 — it duplicated the module navigation strip added by fuel/_fuel_nav.html, so the dashboard showed two menus to the same places. Every one of its ten targets is a pill (or a Справочники item) in that strip, under the same current_user.is_admin gate. L_transactions, L_receipts, L_warehouses, L_initial, L_manual_exp and L_reserve_transfers are now unused but left in place: unused {% set %} is inert in Jinja and they are cleaned up in F1.2, when this header is rewritten. L_stations is still used by the warehouse and station tables below, and L_initial_missing is a different variable that is still used — do not delete the group as a batch. #}
 </div>
 
 <div class="fuel-note">

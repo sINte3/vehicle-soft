@@ -1,6 +1,7 @@
 {% extends g.base_template %}
 {% block title %}АЗС — {{ 'Выдача топлива по АЗС' if lang == 'ru' else 'АЗС бўйича ёқилғи бериш' }}{% endblock %}
 {% block content %}
+{% include 'fuel/_fuel_nav.html' %}
 
 {% set L_title = 'Выдача топлива по АЗС' if lang == 'ru' else 'АЗС бўйича ёқилғи бериш' %}
 {% set L_subtitle = 'Детальный отчёт по выдачам за период с группировкой по датам' if lang == 'ru' else 'Давр бўйича беришлар бўйича батафсил ҳисобот, саналар бўйича группаланган' %}

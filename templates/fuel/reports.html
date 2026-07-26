@@ -1,6 +1,7 @@
 {% extends g.base_template %}
 {% block title %}АЗС — {{ 'Центр отчётов' if lang == 'ru' else 'Ҳисоботлар маркази' }}{% endblock %}
 {% block content %}
+{% include 'fuel/_fuel_nav.html' %}
 
 {% set L_subtitle = 'Отчёты по топливу, выдачам и аналитика' if lang == 'ru' else 'Ёқилғи, беришлар ва таҳлил бўйича ҳисоботлар' %}
 {% set L_back = '← Назад к панели АЗС' if lang == 'ru' else '← АЗС панелига қайтиш' %}
