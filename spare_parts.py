@@ -544,7 +544,10 @@ def _check_repeat_orders(equipment_id, spare_part_id, exclude_request_id=None,
         q = q.filter(SparePartRequest.status.in_(eligible_statuses),
                      SparePartRequest.request_date < as_of_date)
     else:
-        q = q.filter(SparePartRequest.status != 'rejected')
+        # [REASON]: SP-CANCEL-008 — a cancelled request never delivered a
+        # part, so like a rejected one it must not raise "already ordered
+        # recently".
+        q = q.filter(SparePartRequest.status.notin_(('rejected', 'cancelled')))
     if exclude_request_id:
         q = q.filter(SparePartRequest.id != exclude_request_id)
     rows = q.order_by(SparePartRequest.request_date.desc(),
@@ -951,7 +954,9 @@ def _check_repeat_orders_batch(equipment_id, spare_part_ids, exclude_request_id=
          .filter(SparePartRequest.equipment_id == equipment_id,
                  SparePartRequestItem.spare_part_id.in_(set(spare_part_ids)),
                  SparePartRequest.request_date >= window_start,
-                 SparePartRequest.status != 'rejected'))
+                 # [REASON]: SP-CANCEL-008 — same exclusion as the per-pair
+                 # engine above: cancelled never delivered a part.
+                 SparePartRequest.status.notin_(('rejected', 'cancelled'))))
     if exclude_request_id:
         q = q.filter(SparePartRequest.id != exclude_request_id)
     rows = q.order_by(SparePartRequest.request_date.desc(),
