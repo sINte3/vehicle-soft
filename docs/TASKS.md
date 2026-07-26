@@ -87,9 +87,9 @@ Parallel track, runs alongside the increments. Decisions and findings so far:
 ### F1.1 · FUEL-NAV-001 — Persistent module navigation for the fuel module (PR #27)
 
 Priority: P1 — first increment of Phase 1 of the fuel roadmap
-Status: **MERGED 2026-07-26** as `a213874`; validated on staging before the
-merge except two visual checks, which are held open in
-`docs/RELEASE_GATE.md`
+Status: **COMPLETED 2026-07-26** — merged as `a213874`, validated on staging
+before the merge; the two remaining visual checks (wrap on narrow screens,
+Uzbek labels) were confirmed after the merge and the gate row was removed
 
 Templates only, no Python. One new `templates/fuel/_fuel_nav.html` plus one
 include line in each of the fourteen fuel templates, plus a bilingual title fix
