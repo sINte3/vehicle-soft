@@ -1,132 +1,136 @@
 {% extends g.base_template %}
-{% block title %}АЗС — {{ 'Центр отчётов' if lang == 'ru' else 'Ҳисоботлар маркази' }}{% endblock %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}АЗС — {{ 'Центр отчётов' if is_ru else 'Ҳисоботлар маркази' }}{% endblock %}
 {% block content %}
 {% include 'fuel/_fuel_nav.html' %}
 
-{% set L_subtitle = 'Отчёты по топливу, выдачам и аналитика' if lang == 'ru' else 'Ёқилғи, беришлар ва таҳлил бўйича ҳисоботлар' %}
-{% set L_back = '← Назад к панели АЗС' if lang == 'ru' else '← АЗС панелига қайтиш' %}
-{% set L_open_report = 'Открыть отчёт →' if lang == 'ru' else 'Ҳисоботни очиш →' %}
-{% set L_open_directory = 'Открыть справочник →' if lang == 'ru' else 'Маълумотномани очиш →' %}
-{% set L_coming_soon = 'скоро' if lang == 'ru' else 'тез орада' %}
-{% set L_card1_title = '📊 Балансовый отчёт по топливу' if lang == 'ru' else '📊 Ёқилғи баланс ҳисоботи' %}
-{% set L_card1_desc = 'Остаток на начало, приход, расход Topaz, ручные расходы и текущий остаток по складам за период.' if lang == 'ru' else 'Давр бошидаги қолдиқ, кирим, Topaz сарфи, қўлда киритилган сарфлар ва омборлар бўйича жорий қолдиқ.' %}
-{% set L_card2_title = '⛽ Выдача топлива по АЗС' if lang == 'ru' else '⛽ АЗС бўйича ёқилғи бериш' %}
-{% set L_card2_desc = 'Детальный отчёт по выдачам: дата, карта/RFID, операция Topaz, литры. С группировкой по датам и Excel экспортом.' if lang == 'ru' else 'Беришлар бўйича батафсил ҳисобот: сана, карта/RFID, Topaz операцияси, литр. Саналар бўйича группалаш ва Excel экспорти билан.' %}
-{% set L_card3_title = '🪪 Справочник топливных карт' if lang == 'ru' else '🪪 Ёқилғи карталари маълумотномаси' %}
-{% set L_card3_desc = 'Каталог карт Topaz: имена карт, RFID, привязки, статус и история синхронизации карточного справочника.' if lang == 'ru' else 'Topaz карталари каталоги: карта номлари, RFID, боғланишлар, ҳолат ва карталар маълумотномаси синхронизация тарихи.' %}
-{% set L_card4_title = '📋 Реестр выдачи топлива по картам' if lang == 'ru' else '📋 Карталар бўйича ёқилғи бериш реестри' %}
-{% set L_card4_desc = 'Детализация по картам/RFID: сводка по каждой карте, количество и литры за период.' if lang == 'ru' else 'Карталар/RFID бўйича батафсиллик: ҳар бир карта учун сводка, давр учун сони ва литр.' %}
-{% set L_card5_title = '🏭 Итоги выдачи топлива по АЗС' if lang == 'ru' else '🏭 АЗС бўйича ёқилғи бериш якунлари' %}
-{% set L_card5_desc = 'Сводка по всем АЗС: общее количество выдач, итого литров, среднее за период.' if lang == 'ru' else 'Барча АЗСлар бўйича сводка: жами беришлар сони, жами литр, давр учун ўртача.' %}
-{% set L_card6_title = '🔄 Движение топлива по карте' if lang == 'ru' else '🔄 Карта бўйича ёқилғи ҳаракати' %}
-{% set L_card6_desc = 'История операций по конкретной карте/RFID: где, когда и сколько топлива выдано.' if lang == 'ru' else 'Маълум карта/RFID бўйича операциялар тарихи: қаерда, қачон ва қанча ёқилғи берилган.' %}
+{# ===========================================================================
+   FUEL-REPORTS-HUB-016: the reports centre is a launcher built from the
+   design-system tiles (.vs-report-tiles / .vs-report-tile), the same components
+   the spare parts launcher uses. Nothing was added to design-system.css.
 
-{# FUEL-REPORT-012B: Fuel reports center page #}
+   [REASON]: the grid is `repeat(3, minmax(0, 1fr))` there, dropping to two
+   columns below 1200 px and one below 720 px, so six tiles fill exactly two
+   even rows. Never override the grid here — the previous `auto-fill,
+   minmax(300px, 1fr)` block is what produced the ragged trailing gap.
+
+   [REASON]: every icon is inline SVG, no icon font and nothing fetched from a
+   CDN (UI-FONT-LOCAL-001 — the project already carries one open finding about
+   an external font request). The emoji that used to be glued into the titles
+   are gone: on the owner's browser the code points used by the card and
+   registry titles had no glyph in the font in use and rendered as empty
+   squares. Stroke primitives depend on no font at all.
+
+   [REASON]: the accents are is-primary / is-success / is-warning. `--vs-info`
+   is byte-identical to `--vs-primary` (#2563eb, and #eaf1fe for the soft
+   variants), so an is-info tile would be indistinguishable from an is-primary
+   one — that duplication is filed as UI-ACCENT-DUP-001 and is not fixed here.
+
+   [REASON]: tile 1 is titled «Отчёт остатков топлива», matching the page it
+   opens and the navigation pill. It used to read «Балансовый отчёт по
+   топливу» — three names for one report is what misled the owner once before.
+
+   The three planned reports are plain containers, not links: no href, no
+   accent, no arrow (an arrow promises navigation), and a «скоро» badge.
+   Building the three reports themselves is F2.4, a separate increment.
+   =========================================================================== #}
 <style>
-.report012b-card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 14px;
-  margin-bottom: 24px;
-}
-.report012b-card {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow);
-  background: var(--surface);
-  overflow: hidden;
-  transition: box-shadow 0.15s;
-}
-.report012b-card:hover {
-  box-shadow: var(--shadow);
-}
-.report012b-card-body {
-  padding: 16px 18px;
-}
-.report012b-card-body h3 {
-  margin: 0 0 6px 0;
-  font-size: 15px;
-}
-.report012b-card-body p {
-  margin: 0 0 12px 0;
-  font-size: 13px;
-  color: var(--text2);
-  line-height: 1.4;
-}
-.report012b-card-disabled {
-  opacity: 0.55;
-}
-.report012b-card-disabled:hover {
-  box-shadow: var(--shadow);
-}
-.report012b-badge-coming {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 600;
-  color: #6b7280;
-  background: #f3f4f6;
-  padding: 2px 8px;
-  border-radius: 999px;
-  margin-top: 4px;
-}
+/* FUEL-REPORTS-HUB-016 scoped styles: the planned-tile state, on existing
+   design-system tokens. Overrides .vs-report-tile:hover by document order —
+   equal specificity (both 0,2,0), and this block comes after the stylesheet in
+   <head>. The hover rule restates --vs-shadow-sm instead of using `none`:
+   `none` cancels the resting shadow .vs-card paints with that same token, so a
+   planned tile went flatter under the cursor than at rest. */
+.fuel-tile-soon { cursor: default; }
+.fuel-tile-soon .vs-report-tile-icon { color: var(--vs-text-soft); background: var(--vs-surface-3); }
+.fuel-tile-soon .vs-report-tile-title { color: var(--vs-text-muted); }
+.fuel-tile-soon:hover { box-shadow: var(--vs-shadow-sm); transform: none; }
+/* [REASON]: `a:hover` in design-system.css (colour + underline, specificity
+   0,1,1) outweighs `.vs-report-tile` (0,1,0), so hovering a live tile
+   underlined its title and its subtitle and turned the title blue — the
+   underline is painted by the anchor, which is why a descendant rule cannot
+   remove it. This selector is 0,3,1 and wins. It touches text only: the lift
+   and the shadow are the intended affordance and stay. The shared component
+   carries the same defect (the spare parts launcher shows it too) and the real
+   one-line fix belongs in design-system.css — filed as UI-TILE-HOVER-001. This
+   scoped override is deliberate local debt, to be dropped once that lands. */
+.vs-report-tiles a.vs-report-tile:hover { text-decoration: none; color: inherit; }
 </style>
 
-<div class="text-muted text-sm" style="margin-bottom:12px;">{{ L_subtitle }}</div>
-
-<div class="card" style="margin-bottom:16px; padding:10px 16px;">
-    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">{{ L_back }}</a>
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Отчёты по топливу' if is_ru else 'Ёқилғи бўйича ҳисоботлар' }}</div>
+    <div class="vs-hero-sub">{{ 'Выберите отчёт. Период и выгрузка задаются внутри отчёта.' if is_ru else 'Ҳисоботни танланг. Давр ва юклаб олиш ҳисобот ичида белгиланади.' }}</div>
+  </div>
 </div>
 
-<div class="report012b-card-grid">
+<div class="vs-report-tiles">
 
-    <a href="{{ url_for('fuel.balance_report') }}" class="report012b-card" style="text-decoration:none; color:inherit; display:block;">
-        <div class="report012b-card-body">
-            <h3>{{ L_card1_title }}</h3>
-            <p>{{ L_card1_desc }}</p>
-            <span style="font-size:12px; color:var(--accent);">{{ L_open_report }}</span>
-        </div>
-    </a>
-
-    <a href="{{ url_for('fuel.station_issues_report') }}" class="report012b-card" style="text-decoration:none; color:inherit; display:block;">
-        <div class="report012b-card-body">
-            <h3>{{ L_card2_title }}</h3>
-            <p>{{ L_card2_desc }}</p>
-            <span style="font-size:12px; color:var(--accent);">{{ L_open_report }}</span>
-        </div>
-    </a>
-
-    <a href="{{ url_for('fuel.card_directory') }}" class="report012b-card" style="text-decoration:none; color:inherit; display:block;">
-        <div class="report012b-card-body">
-            <h3>{{ L_card3_title }}</h3>
-            <p>{{ L_card3_desc }}</p>
-            <span style="font-size:12px; color:var(--accent);">{{ L_open_directory }}</span>
-        </div>
-    </a>
-
-    <div class="report012b-card report012b-card-disabled" style="cursor:default;">
-        <div class="report012b-card-body">
-            <h3>{{ L_card4_title }}</h3>
-            <p>{{ L_card4_desc }}</p>
-            <span class="report012b-badge-coming">{{ L_coming_soon }}</span>
-        </div>
+  <a class="vs-card vs-report-tile is-primary" href="{{ url_for('fuel.balance_report') }}">
+    <span class="vs-report-tile-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5c3.9 4.2 6.5 7.4 6.5 10.5a6.5 6.5 0 0 1-13 0c0-3.1 2.6-6.3 6.5-10.5z"/></svg>
+    </span>
+    <div class="vs-report-tile-text">
+      <div class="vs-report-tile-title">{{ 'Отчёт остатков топлива' if is_ru else 'Ёқилғи қолдиқлари ҳисоботи' }}</div>
+      <div class="vs-report-tile-sub">{{ 'Начало, приход, расход и текущий остаток по складам' if is_ru else 'Бошланғич қолдиқ, кирим, сарф ва омборлар бўйича жорий қолдиқ' }}</div>
     </div>
+    <div class="vs-report-tile-arrow" aria-hidden="true">→</div>
+  </a>
 
-    <div class="report012b-card report012b-card-disabled" style="cursor:default;">
-        <div class="report012b-card-body">
-            <h3>{{ L_card5_title }}</h3>
-            <p>{{ L_card5_desc }}</p>
-            <span class="report012b-badge-coming">{{ L_coming_soon }}</span>
-        </div>
+  <a class="vs-card vs-report-tile is-success" href="{{ url_for('fuel.station_issues_report') }}">
+    <span class="vs-report-tile-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 22h12"/><path d="M4 22V4.5A2.5 2.5 0 0 1 6.5 2h5A2.5 2.5 0 0 1 14 4.5V22"/><rect x="6.5" y="5.5" width="5" height="4" rx="1"/><path d="M14 11h2.5A1.5 1.5 0 0 1 18 12.5v4a1.75 1.75 0 0 0 3.5 0V9.5L19 7"/></svg>
+    </span>
+    <div class="vs-report-tile-text">
+      <div class="vs-report-tile-title">{{ 'Выдача топлива по АЗС' if is_ru else 'АЗС бўйича ёқилғи бериш' }}</div>
+      <div class="vs-report-tile-sub">{{ 'Детальный отчёт: дата, карта, литры' if is_ru else 'Батафсил ҳисобот: сана, карта, литр' }}</div>
     </div>
+    <div class="vs-report-tile-arrow" aria-hidden="true">→</div>
+  </a>
 
-    <div class="report012b-card report012b-card-disabled" style="cursor:default;">
-        <div class="report012b-card-body">
-            <h3>{{ L_card6_title }}</h3>
-            <p>{{ L_card6_desc }}</p>
-            <span class="report012b-badge-coming">{{ L_coming_soon }}</span>
-        </div>
+  <a class="vs-card vs-report-tile is-warning" href="{{ url_for('fuel.card_directory') }}">
+    <span class="vs-report-tile-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><line x1="6" y1="15" x2="10" y2="15"/></svg>
+    </span>
+    <div class="vs-report-tile-text">
+      <div class="vs-report-tile-title">{{ 'Справочник топливных карт' if is_ru else 'Ёқилғи карталари маълумотномаси' }}</div>
+      <div class="vs-report-tile-sub">{{ 'Каталог карт Topaz: имена, RFID, привязки, статус' if is_ru else 'Topaz карталари каталоги: номлар, RFID, боғланишлар, ҳолат' }}</div>
     </div>
+    <div class="vs-report-tile-arrow" aria-hidden="true">→</div>
+  </a>
+
+  <div class="vs-card vs-report-tile fuel-tile-soon">
+    <span class="vs-report-tile-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="6" r="1.2"/><circle cx="4" cy="12" r="1.2"/><circle cx="4" cy="18" r="1.2"/><line x1="8.5" y1="6" x2="21" y2="6"/><line x1="8.5" y1="12" x2="21" y2="12"/><line x1="8.5" y1="18" x2="21" y2="18"/></svg>
+    </span>
+    <div class="vs-report-tile-text">
+      <div class="vs-report-tile-title">{{ 'Реестр выдачи топлива по картам' if is_ru else 'Карталар бўйича ёқилғи бериш реестри' }}</div>
+      <div class="vs-report-tile-sub">{{ 'Сводка по каждой карте: количество и литры за период' if is_ru else 'Ҳар бир карта бўйича сводка: сони ва литр' }}</div>
+      <span class="vs-badge vs-badge-sm">{{ 'скоро' if is_ru else 'тез орада' }}</span>
+    </div>
+  </div>
+
+  <div class="vs-card vs-report-tile fuel-tile-soon">
+    <span class="vs-report-tile-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="21" x2="21" y2="21"/><rect x="5" y="12" width="4" height="9"/><rect x="11" y="7" width="4" height="14"/><rect x="17" y="3" width="4" height="18"/></svg>
+    </span>
+    <div class="vs-report-tile-text">
+      <div class="vs-report-tile-title">{{ 'Итоги выдачи топлива по АЗС' if is_ru else 'АЗС бўйича ёқилғи бериш якунлари' }}</div>
+      <div class="vs-report-tile-sub">{{ 'Сводка по всем АЗС: количество выдач, итого литров' if is_ru else 'Барча АЗСлар бўйича сводка: беришлар сони, жами литр' }}</div>
+      <span class="vs-badge vs-badge-sm">{{ 'скоро' if is_ru else 'тез орада' }}</span>
+    </div>
+  </div>
+
+  <div class="vs-card vs-report-tile fuel-tile-soon">
+    <span class="vs-report-tile-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17,2 21,6 17,10"/><path d="M3 12v-2a4 4 0 0 1 4-4h14"/><polyline points="7,22 3,18 7,14"/><path d="M21 12v2a4 4 0 0 1-4 4H3"/></svg>
+    </span>
+    <div class="vs-report-tile-text">
+      <div class="vs-report-tile-title">{{ 'Движение топлива по карте' if is_ru else 'Карта бўйича ёқилғи ҳаракати' }}</div>
+      <div class="vs-report-tile-sub">{{ 'История операций по карте: где, когда, сколько' if is_ru else 'Карта бўйича операциялар тарихи: қаерда, қачон, қанча' }}</div>
+      <span class="vs-badge vs-badge-sm">{{ 'скоро' if is_ru else 'тез орада' }}</span>
+    </div>
+  </div>
 
 </div>
-
 {% endblock %}
