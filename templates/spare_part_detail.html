@@ -47,7 +47,7 @@
 </div>
 
 {# SP-DETAIL-002: single most-relevant action for the current user + status #}
-{% if next_action or waiting_for or req.status in ('rejected', 'issued') %}
+{% if next_action or waiting_for or req.status in ('rejected', 'issued', 'cancelled') %}
 <div class="vs-nextaction vs-mb">
   <div class="vs-label" style="margin-bottom:8px;">{{ 'Следующее действие' if is_ru else 'Кейинги амал' }}</div>
   {% if next_action %}
@@ -70,7 +70,7 @@
   {% elif waiting_for %}
     <div class="vs-nextaction-wait">⏳ {{ 'Ожидает' if is_ru else 'Кутилмоқда' }}: {{ waiting_for }}</div>
   {% else %}
-    <div class="vs-nextaction-wait">{{ ('Заявка завершена — действий нет.' if is_ru else 'Сўров якунланган — амал йўқ.') if req.status == 'issued' else ('Заявка отклонена — действий нет.' if is_ru else 'Сўров рад этилган — амал йўқ.') }}</div>
+    <div class="vs-nextaction-wait">{{ ('Заявка завершена — действий нет.' if is_ru else 'Сўров якунланган — амал йўқ.') if req.status == 'issued' else (('Заявка отменена — действий нет.' if is_ru else 'Сўров бекор қилинган — амал йўқ.') if req.status == 'cancelled' else ('Заявка отклонена — действий нет.' if is_ru else 'Сўров рад этилган — амал йўқ.')) }}</div>
   {% endif %}
 </div>
 {% endif %}
@@ -88,6 +88,9 @@
   <div class="vs-stepper-side is-returned">↩ {{ 'На доработке' if is_ru else 'Қайта ишлашга қайтарилган' }}</div>
   {% elif stepper.side == 'rejected' %}
   <div class="vs-stepper-side is-rejected">✕ {{ 'Отклонено' if is_ru else 'Рад этилган' }}</div>
+  {% elif stepper.side == 'cancelled' %}
+  {# SP-CANCEL-008: reuses the is-rejected look — same "did not happen" family, no new CSS. #}
+  <div class="vs-stepper-side is-rejected">✕ {{ 'Отменено' if is_ru else 'Бекор қилинган' }}</div>
   {% endif %}
 </div>
 
@@ -422,7 +425,9 @@
 </div>
 {% endif %}
 
-{% if can_approve %}
+{# SP-CANCEL-008: status-guarded — approve/reject only ever answer 'submitted',
+   so the buttons must not render on an approved/issued/rejected request. #}
+{% if can_approve and req.status == 'submitted' %}
 <div class="vs-card vs-mb" id="sp-action-approve">
     <div class="vs-card-header">
         <div class="vs-card-title">{{ 'Рассмотрение заявки' if is_ru else 'Сўровни кўриб чиқиш' }}</div>
@@ -444,6 +449,27 @@
                 <button type="submit" class="vs-btn vs-btn-danger">❌ {{ 'Отклонить заявку' if is_ru else 'Сўровни рад этиш' }}</button>
             </form>
         </div>
+    </div>
+</div>
+{% endif %}
+
+{# ─── SP-CANCEL-008: cancel an approved request (spare_parts_approve) ── #}
+{% if can_cancel %}
+<div class="vs-card vs-mb" id="sp-action-cancel">
+    <div class="vs-card-header">
+        <div class="vs-card-title">{{ 'Отмена утверждённой заявки' if is_ru else 'Тасдиқланган сўровни бекор қилиш' }}</div>
+    </div>
+    <div class="vs-card-body">
+        <div class="vs-alert is-info vs-mb">{{ 'Резерв склада будет снят, заявка перейдёт в статус «Отменено». Выдать её после этого нельзя.' if is_ru else 'Омбор захираси бўшатилади, сўров «Бекор қилинган» ҳолатига ўтади. Ундан кейин бериб бўлмайди.' }}</div>
+        <div class="vs-field vs-mb">
+            <label class="vs-label" for="cancelComment">{{ 'Причина отмены' if is_ru else 'Бекор қилиш сабаби' }}</label>
+            <textarea id="cancelComment" class="vs-textarea" rows="3"></textarea>
+        </div>
+        <form method="post" action="{{ url_for('spare_parts.cancel_request', rid=req.id) }}" onsubmit="return cancelConfirm(this)">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="cancel_comment">
+            <button type="submit" class="vs-btn vs-btn-danger">{{ 'Отменить заявку' if is_ru else 'Сўровни бекор қилиш' }}</button>
+        </form>
     </div>
 </div>
 {% endif %}
@@ -552,6 +578,18 @@ function setCommentAndConfirm(form, approve) {
         ? {{ ('Утвердить эту заявку?' if is_ru else 'Ушбу сўровни тасдиқлайсизми?')|tojson }}
         : {{ ('Отклонить эту заявку?' if is_ru else 'Ушбу сўровни рад этасизми?')|tojson }};
     return confirm(msg);
+}
+
+/* SP-CANCEL-008: the reason is mandatory (client-side mirror of the server
+   gate) and the confirm spells out that the stock claim is released. */
+function cancelConfirm(form) {
+    const comment = document.getElementById('cancelComment').value.trim();
+    if (!comment) {
+        alert({{ ('Укажите причину отмены' if is_ru else 'Бекор қилиш сабабини кўрсатинг')|tojson }});
+        return false;
+    }
+    form.querySelector('[name=cancel_comment]').value = comment;
+    return confirm({{ ('Отменить утверждённую заявку и снять резерв склада? Действие необратимо.' if is_ru else 'Тасдиқланган сўровни бекор қилиб, омбор захирасини бўшатасизми? Амал қайтарилмайди.')|tojson }});
 }
 
 /* SPARE-STAGE1: price review helpers. */
