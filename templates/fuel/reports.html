@@ -35,13 +35,23 @@
    Building the three reports themselves is F2.4, a separate increment.
    =========================================================================== #}
 <style>
-/* FUEL-REPORTS-HUB-016 scoped styles: the planned-tile state only, on existing
+/* FUEL-REPORTS-HUB-016 scoped styles: the planned-tile state, on existing
    design-system tokens. Overrides .vs-report-tile:hover by document order —
    equal specificity, and this block comes after the stylesheet in <head>. */
 .fuel-tile-soon { cursor: default; }
 .fuel-tile-soon .vs-report-tile-icon { color: var(--vs-text-soft); background: var(--vs-surface-3); }
 .fuel-tile-soon .vs-report-tile-title { color: var(--vs-text-muted); }
 .fuel-tile-soon:hover { box-shadow: none; transform: none; }
+/* [REASON]: `a:hover` in design-system.css (colour + underline, specificity
+   0,1,1) outweighs `.vs-report-tile` (0,1,0), so hovering a live tile
+   underlined its title and its subtitle and turned the title blue — the
+   underline is painted by the anchor, which is why a descendant rule cannot
+   remove it. This selector is 0,2,2 and wins. It touches text only: the lift
+   and the shadow are the intended affordance and stay. The shared component
+   carries the same defect (the spare parts launcher shows it too) and the real
+   one-line fix belongs in design-system.css — filed as UI-TILE-HOVER-001. This
+   scoped override is deliberate local debt, to be dropped once that lands. */
+.vs-report-tiles a.vs-report-tile:hover { text-decoration: none; color: inherit; }
 </style>
 
 <div class="vs-hero vs-mb">
