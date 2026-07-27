@@ -12,7 +12,10 @@
   </div>
 </div>
 
-<div class="vs-alert is-info vs-mb">{{ 'Минимально обязательное поле — название. Артикул, единица измерения и категория помогают быстрее находить нужную деталь.' if is_ru else 'Камида номини киритиш мажбурий. Артикул, ўлчов бирлиги ва категория керакли детални тез топишга ёрдам беради.' }}</div>
+{# SP-CATALOG-UNIFY-001: the alert described the position-level article-number
+   field that the unified form no longer has; the term itself stays «Артикул»
+   everywhere until SP-TERM-VARIANT-001. #}
+<div class="vs-alert is-info vs-mb">{{ 'Минимально обязательное поле — название. Единица измерения и категория помогают быстрее находить нужную деталь.' if is_ru else 'Камида номини киритиш мажбурий. Ўлчов бирлиги ва категория керакли детални тез топишга ёрдам беради.' }}</div>
 
 {# ─── SPARE-STAGE1: pending-review queue ─────────────────────────────── #}
 {# SP-F-015: manage-only (the route also skips loading pending_parts for read-only viewers). #}
@@ -98,10 +101,10 @@
                 <label class="vs-label" for="editNameUz">{{ 'Название (узб.)' if is_ru else 'Номи (ўзбекча)' }}</label>
                 <input type="text" name="name_uz" id="editNameUz" class="vs-input" placeholder="{{ 'необязательно' if is_ru else 'ихтиёрий' }}">
             </div>
-            <div class="vs-field" style="flex:1; min-width:150px;">
-                <label class="vs-label" for="editPartNum">{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</label>
-                <input type="text" name="part_number" id="editPartNum" class="vs-input" placeholder="000-000">
-            </div>
+            {# SP-CATALOG-UNIFY-001: the position-level «Арт. номер» field is gone —
+               it duplicated the variant's «Номер каталога» with a different meaning.
+               The column and its existing values stay; catalog_save preserves them
+               on edits when the field is absent from the POST. #}
             <div class="vs-field" style="width:120px;">
                 <label class="vs-label" for="editUnit">{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</label>
                 {# SP-F-024: managed unit directory; free-text fallback pre-migration. #}
@@ -124,6 +127,29 @@
                     <option value="{{ cat.id }}">{{ cat.name_ru if is_ru else cat.name_uz }}</option>
                     {% endfor %}
                 </select>
+            </div>
+            {# SP-CATALOG-UNIFY-001: optional first supply variant, created together
+               with the position by the same submit. Create-only: editPart() hides
+               this block (hidden attribute, same mechanism as #catActiveField) so a
+               save of an existing position never creates another variant — a SECOND
+               variant is still added on the /spare-parts/skus screen. #}
+            <div id="firstSkuBlock" style="flex-basis:100%; border-top:1px solid var(--vs-border); padding-top:10px;">
+                <div class="vs-card-title" style="font-size:13.5px;">{{ 'Первый вариант поставки — необязательно' if is_ru else 'Биринчи таъминот варианти — ихтиёрий' }}</div>
+                <div class="vs-soft vs-mb-sm" style="font-size:12.5px;">{{ 'Заполните любое из полей — вариант будет создан вместе с позицией; оставьте пустыми — будет создана только позиция.' if is_ru else 'Майдонлардан исталганини тўлдиринг — вариант позиция билан бирга яратилади; бўш қолдирсангиз — фақат позиция яратилади.' }}</div>
+                <div class="vs-form-row">
+                    <div class="vs-field" style="flex:1; min-width:150px;">
+                        <label class="vs-label" for="newSkuBrand">{{ 'Бренд' if is_ru else 'Бренд' }}</label>
+                        <input type="text" name="sku_brand" id="newSkuBrand" class="vs-input" placeholder="Bosch">
+                    </div>
+                    <div class="vs-field" style="flex:1; min-width:150px;">
+                        <label class="vs-label" for="newSkuArticle">{{ 'Номер каталога' if is_ru else 'Каталог рақами' }}</label>
+                        <input type="text" name="sku_article_number" id="newSkuArticle" class="vs-input" placeholder="0986452041">
+                    </div>
+                    <div class="vs-field" style="flex:1; min-width:150px;">
+                        <label class="vs-label" for="newSkuSupplier">{{ 'Поставщик' if is_ru else 'Таъминотчи' }}</label>
+                        <input type="text" name="sku_supplier" id="newSkuSupplier" class="vs-input" placeholder="{{ 'ООО ТехСнаб' if is_ru else 'ТехСнаб МЧЖ' }}">
+                    </div>
+                </div>
             </div>
             <div class="vs-field" style="flex:none;">
                 <label class="vs-label">&nbsp;</label>
@@ -335,15 +361,28 @@ function setEditUnit(val) {
     f.value = 'dona';
 }
 
+/* [REASON]: SP-CATALOG-UNIFY-001 — the first-variant sub-block is create-only:
+   hidden while editing (and its inputs cleared), otherwise every save of an
+   existing position would create another variant. */
+function clearFirstSkuFields() {
+    ['newSkuBrand', 'newSkuArticle', 'newSkuSupplier'].forEach(fid => {
+        document.getElementById(fid).value = '';
+    });
+}
+
+/* [REASON]: SP-CATALOG-UNIFY-001 — partNum stays in the signature so the
+   inline onclick calls in the list keep working unchanged; the argument is
+   deliberately ignored now that the form has no article-number field. */
 function editPart(id, name, nameUz, partNum, unit, catId) {
     document.getElementById('editId').value = id;
     document.getElementById('editName').value = name;
     // CYCLE-2-3 Part 7: optional Uzbek alias travels through the edit form.
     document.getElementById('editNameUz').value = nameUz || '';
-    document.getElementById('editPartNum').value = partNum;
     setEditUnit(unit);
     // SPARE-STAGE1: category is now a managed category_id select.
     document.getElementById('editCategory').value = catId || '';
+    document.getElementById('firstSkuBlock').hidden = true;
+    clearFirstSkuFields();
     document.getElementById('catalogFormTitle').textContent = CATALOG_TEXT.editTitle;
     document.getElementById('editName').focus();
 }
@@ -372,9 +411,12 @@ function resetForm() {
     document.getElementById('editId').value = '';
     document.getElementById('editName').value = '';
     document.getElementById('editNameUz').value = '';
-    document.getElementById('editPartNum').value = '';
     setEditUnit(null);
     document.getElementById('editCategory').value = '';
+    // SP-CATALOG-UNIFY-001: back to create mode — the first-variant sub-block
+    // reappears empty.
+    document.getElementById('firstSkuBlock').hidden = false;
+    clearFirstSkuFields();
     document.getElementById('catalogFormTitle').textContent = CATALOG_TEXT.addTitle;
     document.getElementById('editName').classList.remove('is-error');
 }

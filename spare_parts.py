@@ -2729,10 +2729,16 @@ def _sku_normalized_clash(spare_part_id, brand, article_number, supplier,
     return clash_q.first() is not None
 
 
-def _sku_duplicate_response(part_id, race=False):
+def _sku_duplicate_response(part_id, race=False,
+                            redirect_endpoint='spare_parts.skus'):
     """Shared friendly-duplicate response for BOTH the pre-check path and the
     IntegrityError race path, so the two converge on identical user-visible
-    behavior (RE-SP-002)."""
+    behavior (RE-SP-002).
+
+    [REASON]: SP-CATALOG-UNIFY-001 — redirect_endpoint lets catalog_save reuse
+    the exact same duplicate message while returning the user to the catalogue
+    screen; the default keeps sku_save's behaviour unchanged.
+    """
     if race:
         current_app.logger.warning(
             'SKU save rejected by uq_spare_part_skus_normalized (race), part=%s',
@@ -2741,7 +2747,7 @@ def _sku_duplicate_response(part_id, race=False):
         [_spare_t('Бу деталь учун бундай артикул аллақачон мавжуд',
                   'Такой артикул уже существует для этой детали')],
         title_uz='Артикул сақланмади:', title_ru='Артикул не сохранён:')
-    return redirect(url_for('spare_parts.skus'))
+    return redirect(url_for(redirect_endpoint))
 
 
 @spare_parts_bp.route('/skus/save', methods=['POST'])
@@ -4359,7 +4365,19 @@ def catalog_save():
     # [REASON]: CYCLE-2-3 Part 7 — optional Uzbek alias; empty means "not
     # translated yet" and is stored as NULL so displays fall back to name.
     name_uz = (request.form.get('name_uz', '') or '').strip() or None
-    part_number = request.form.get('part_number', '').strip()
+    # [REASON]: SP-CATALOG-UNIFY-001 — the catalogue form stopped sending
+    # part_number, so "field absent" (None) must be distinguished from "field
+    # submitted empty" (''): positions promoted from the pending-review queue
+    # carry an operator-entered article number that must survive an edit
+    # through the form; blindly assigning '' on every edit would blank it.
+    raw_part_number = request.form.get('part_number')
+    part_number = (raw_part_number or '').strip()
+    # [REASON]: SP-CATALOG-UNIFY-001 — optional first-supply-variant fields
+    # from the unified catalogue form. Consumed on the CREATE path only (see
+    # below); all three blank keeps today's position-only behaviour.
+    sku_brand = (request.form.get('sku_brand', '') or '').strip()
+    sku_article_number = (request.form.get('sku_article_number', '') or '').strip()
+    sku_supplier = (request.form.get('sku_supplier', '') or '').strip()
     unit = request.form.get('unit', 'dona').strip()
     # [REASON]: SPARE-STAGE1 — the form now sends category_id (managed
     # categories); the deprecated free-text `category` column is left untouched.
@@ -4388,7 +4406,10 @@ def catalog_save():
         before = _catalog_snapshot(part)
         part.name = name
         part.name_uz = name_uz
-        part.part_number = part_number
+        # [REASON]: SP-CATALOG-UNIFY-001 — only assign when the form actually
+        # sent the field; the unified catalogue form omits it entirely.
+        if raw_part_number is not None:
+            part.part_number = part_number
         part.unit = unit
         part.category_id = category_id
     else:
@@ -4398,6 +4419,45 @@ def catalog_save():
         db.session.add(part)
         created = True
     db.session.flush()
+    # [REASON]: SP-CATALOG-UNIFY-001 — one submit may create the position AND
+    # its first supply variant, in ONE transaction: either both rows commit or
+    # neither does, so a duplicate variant can never leave the position behind
+    # without it. CREATE path only — the edit path ignores the three fields
+    # even if a client sends them, because every save of an existing position
+    # would otherwise create another variant (a second variant is added on the
+    # /spare-parts/skus screen).
+    # [REASON]: SP-CATALOG-UNIFY-001 — data rows are flushed BEFORE any audit
+    # write: the duplicate-variant exits below must roll back the position
+    # too, whatever log_audit does internally, so both audit calls sit after
+    # this block and the commit comes last. On the position-only path the
+    # block is a no-op and the flush → audit → commit sequence is unchanged.
+    new_sku = None
+    if created and (sku_brand or sku_article_number or sku_supplier):
+        # part.id is reset to None by rollback(); keep a plain copy for the
+        # duplicate responses below.
+        new_part_id = part.id
+        if _sku_normalized_clash(part.id, sku_brand, sku_article_number,
+                                 sku_supplier):
+            db.session.rollback()
+            return _sku_duplicate_response(
+                new_part_id, race=False,
+                redirect_endpoint='spare_parts.catalog')
+        # [REASON]: RE-SP-002 — same rule as sku_save: flush() is where SQLite
+        # executes the INSERT, so uq_spare_part_skus_normalized raises at
+        # flush() under a true race and the IntegrityError boundary must
+        # cover it.
+        try:
+            new_sku = SparePartSku(spare_part_id=part.id, brand=sku_brand,
+                                   article_number=sku_article_number,
+                                   supplier=sku_supplier,
+                                   created_by=current_user.id)
+            db.session.add(new_sku)
+            db.session.flush()
+        except IntegrityError:
+            db.session.rollback()
+            return _sku_duplicate_response(
+                new_part_id, race=True,
+                redirect_endpoint='spare_parts.catalog')
     after = _catalog_snapshot(part)
     _audit_spare(
         'spare_part_catalog_created' if created else 'spare_part_catalog_updated',
@@ -4409,6 +4469,18 @@ def catalog_save():
         changes=diff_dict(before, after),
         description='Spare part catalog saved'
     )
+    if new_sku is not None:
+        sku_after = _sku_snapshot(new_sku)
+        _audit_spare(
+            'spare_part_sku_created',
+            entity_type='spare_part_sku',
+            entity_id=new_sku.id,
+            entity_label='{} — {}'.format(part.name, new_sku.label),
+            before=None,
+            after=sku_after,
+            changes=diff_dict(None, sku_after),
+            description='Spare part SKU saved'
+        )
     db.session.commit()
     flash(_spare_t('Сақланди', 'Сохранено'), 'success')
     return redirect(url_for('spare_parts.catalog'))
