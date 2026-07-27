@@ -36,13 +36,16 @@ SP-REPORTS-007 (report launcher, per-report Excel and PDF, «SKU» → «Арт�
 PR #17 + #18 + #19), SP-CANCEL-008 (cancel an approved request and release its
 reservations, PR #29) — see their sections below.
 
-Increment 9 is **chosen** (owner, 2026-07-27): `SP-CATALOG-UNIFY-001` in
-its reduced scope — one form that creates a catalogue position together with
-its first supply variant, plus removal of the position’s «Арт. номер» field,
-which duplicates the variant’s «Номер каталога» and is empty on all 250
-positions. No prompt written yet. The nested variant list under a position and
-the type-ahead filter in the position pickers were deliberately left out and
-stay in the backlog as `SP-PICKER-SEARCH-001`.
+Increment 9 is **done and merged**: `SP-CATALOG-UNIFY-001`, PR #30, merge
+`b5bb950`, validated on staging before the merge — see its section under
+«Recently completed» below. Seven commits; the wording half of it was reverted
+inside the same PR, and why is recorded there and in the AGENT_STATE entry of
+2026-07-27.
+
+Increment 10 is **not scoped**. Nothing is chosen; the owner picks the next item.
+Candidates that came out of increment 9 and of the 1C pilot, in rough order of
+cheapness: `SP-PICKER-SEARCH-001` (the backend endpoint already exists),
+`SP-STOCK-XLSX-001`, `SP-TERM-VARIANT-001`, `SP-SKU-XREF-DUP-001`.
 
 Nothing from increment 8 is left open: it was validated on staging BEFORE the
 merge, so `docs/RELEASE_GATE.md` never carried a row for it. Four checks were
@@ -100,6 +103,48 @@ Parallel track, runs alongside the increments. Decisions and findings so far:
   earlier truncated export produced a wrong conclusion about warehouse counts.
 
 ## Recently completed / appears completed
+
+### SP-CATALOG-UNIFY-001 — One form for a catalogue position and its first variant (PR #30)
+
+Status: merged `b5bb950`, validated on staging before the merge.
+
+The owner asked to merge the catalogue and the article directories into one table.
+Rejected on the model level, accepted on the screen level; the reasoning is in the
+AGENT_STATE entry of 2026-07-27 and must not be re-litigated without new facts.
+
+What shipped: the «add position» form gained an optional first-supply-variant
+sub-block (brand / catalogue number / supplier); one submit creates the position
+and its variant in one transaction, all three blank keeps the old position-only
+behaviour; the position-level «Арт. номер» field is gone from the form while its
+column and values stay.
+
+Commits, in apply order — revert in reverse:
+
+- `8795563` route: «field absent» vs «field submitted empty» for `part_number`
+- `8e427aa` template sub-block + variant creation in `catalog_save`
+- `9c4f6ae` «Арт. номер» field removed from the form
+- `009f9ca` «Артикул» → «Вариант поставки» in the interface
+- `6f17c8f` data rows flushed before any audit write
+- `a713831` revert of `009f9ca`
+- `8ddd816` info-alert stops mentioning the removed field
+
+No schema change, no migration, no data rollback step.
+
+Verified by diff: 152 functions before and after, exactly two changed
+(`catalog_save`, `_sku_duplicate_response`); `sku_save`,
+`_apply_inventory_movement` and every inventory / movement / reservation route
+byte-identical; the position-only path of `catalog_save` compared statement by
+statement against `main` via AST.
+
+Verified on staging: positions 258 → 260, variants 115/110 → 116/111, the single
+new variant attached to the right position with `brand='Bosch'` and empty number
+and supplier, and an edit through `catalog_save` left `part_number` intact on a
+position that had one.
+
+Two checks closed by argument rather than by run, recorded as such: the menu label
+(read from `origin/main`, untouched by commit 7) and the catalogue-manage ACL (the
+form card is still inside the same `{% if can_manage %}`, and the permission check
+in `catalog_save` is untouched in the diff).
 
 ### SP-CANCEL-008 — Cancel an approved request and release its reservations (PR #29)
 
@@ -1123,9 +1168,19 @@ Read operations (`git status`, `git log`, `git fetch`, `git diff`) work fine in
 both working copies - this has been exercised repeatedly, including a `git fetch`
 that wrote refs into staging's `.git` without complaint.
 
+More evidence, 2026-07-27: staging survived `git checkout <branch>`, `git checkout
+main` and `git pull --ff-only` without a single complaint, and those are full writes
+to `.git` — refs, HEAD, index, working tree. The claim about the lock looks
+increasingly stale. Still not settled, because `git commit` from that working copy
+has never been attempted; the increment 9 and pilot docs commits both went through
+the separate clone.
+
 ### SP-CATALOG-UNIFY-001 - One form for a catalogue position and its first variant
 
-Priority: P1 (chosen as increment 9 by the owner on 2026-07-27)
+Priority: P1 — **DONE**, shipped as increment 9 in PR #30 (merge
+`b5bb950`). Kept here because the reasoning against merging the two
+directories is the durable part; see the completed section above for
+what actually shipped.
 
 The owner proposed merging the catalogue and the article directories into one
 table. Rejected on the model level, accepted on the screen level; the full
@@ -1166,6 +1221,54 @@ either both or neither, with a readable error.
 
 Templates plus light route work. No migration; rollback is a plain revert.
 
+### SP-TERM-VARIANT-001 - Rename «Артикул» to «Вариант поставки» everywhere, in one pass
+
+Priority: P3
+
+Increment 9 tried this on two screens and reverted it inside the same PR
+(`009f9ca` applied, `a713831` reverted). The term is not confined to those
+screens; a partial rename produces three words for one entity - `SKU`,
+«Артикул», «Вариант поставки» - which is worse than one inconsistent word.
+
+Every surface that must move together:
+
+- `templates/spare_parts_skus.html` - title, hero, form title, table totals,
+  empty state, the JS text table
+- `templates/spare_parts_inventory.html` and the warehouse routes - «Выберите
+  артикул» (`spare_parts.py` ~3569), «Артикул не найден» (~3674)
+- the issue/act confirmation - «Позиции без артикула не будут списаны со
+  склада» (~3982)
+- `sku_save` flashes - «Артикул сохранён», «Артикул не сохранён:» (~2831, ~2776)
+  and the duplicate message in `_sku_duplicate_response` (~2747)
+- the Excel and PDF export column header (~3326), which `SP-REPORTS-007`
+  deliberately renamed from «SKU» to «Артикул» - renaming it again changes a
+  file operators already receive
+- the catalogue search placeholder «Поиск по названию, артикулу, категории»
+
+Uzbek: «Таъминот варианти» / «таъминот вариантлари», Cyrillic only. Do NOT
+rename any Python identifier, route, template filename, form field, element id or
+CSS class - the model term stays `sku`.
+
+Low priority: the current single term is understood, and the confusion the owner
+actually reported was about the two-form workflow, which increment 9 fixed.
+
+### SP-SKU-XREF-DUP-001 - Warn when a catalogue number is reused on a different position
+
+Priority: P3
+
+`uq_spare_part_skus_normalized` is scoped per position: the same catalogue number
+on two different positions is allowed, deliberately, and the 1C pilot data relies
+on it. The consequence is that a mistyped number is caught by nothing. This
+actually happened during the pilot rehearsal on 2026-07-27: `153-00022520` was
+pasted twice, onto «Радиатор масляный» and onto «Наконечник рулевой тяги»,
+where `153-00022521` belonged. It was found by a verification script comparing the
+entered rows against the mapping table, not by the application.
+
+Wanted: a non-blocking warning when a catalogue number already exists on another
+position - «такой номер уже есть у позиции X» - on both the variant form and the
+unified catalogue form. A warning, NOT a constraint: cross-position reuse stays
+legal.
+
 ### SP-PICKER-SEARCH-001 - Type-ahead filter in the catalogue position pickers
 
 Priority: P2
@@ -1183,6 +1286,14 @@ Priority: P2
 Raised by the owner on 2026-07-27: «Текущие остатки» on the warehouse screen has
 no export. Cheap - openpyxl is already in the stack and the export pattern is
 established by the report exports of SP-REPORTS-007.
+
+**One thing to get right, found on 2026-07-27 while picking a test row.** A
+catalogue position on staging is named `=1+1 CODEX-SOL-REAUDIT-...` — a formula
+injection probe left by an earlier QA agent. openpyxl turns a string that starts
+with `=` into a cell formula, so a part name like that lands in the spreadsheet as
+a formula rather than text. Part names already flow into the SP-REPORTS-007
+exports, so this may be a live issue there too. NOT verified - nobody has opened
+those exports with such a name. Check both when this item is picked up.
 
 ### SP-SKU-SPEC-001 - A specification field on the supply variant
 
@@ -1354,6 +1465,15 @@ the `DEMO-2026H1` marker on spare-part requests and will not touch equipment,
 so the pre-production cleanup list must be widened beyond that marker. Related
 leftovers already recorded elsewhere: the `REGR-TEST-` / `REGR2-TEST-` requests
 and the irreversible +2.0 stock receipt from the SP-MINSTOCK-004 QA run.
+
+Widened 2026-07-27: the same agent also left **three catalogue positions** —
+`id=242` and `id=243` (`CODEX-SOL-SPARE-20260713-140035...`) and `id=246`
+(`=1+1 CODEX-SOL-REAUDIT-20260714-192904 <b>CODEX_LITERAL</b> PART`, whose name
+is a formula/HTML injection probe). They are the only positions on staging with a
+non-empty `part_number`, which is why increment 9 used one of them as its edit test.
+Two more rows are the increment 9 test positions themselves, `id=259` «ТЕСТ UNIFY
+без варианта» and `id=260` «ТЕСТ UNIFY с вариантом», deliberately given
+recognisable names. None of this exists on production.
 
 ### PLATE-NORM-001 — Normalise licence plates for search and matching
 
