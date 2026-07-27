@@ -98,10 +98,10 @@
                 <label class="vs-label" for="editNameUz">{{ 'Название (узб.)' if is_ru else 'Номи (ўзбекча)' }}</label>
                 <input type="text" name="name_uz" id="editNameUz" class="vs-input" placeholder="{{ 'необязательно' if is_ru else 'ихтиёрий' }}">
             </div>
-            <div class="vs-field" style="flex:1; min-width:150px;">
-                <label class="vs-label" for="editPartNum">{{ 'Арт. номер' if is_ru else 'Арт. рақами' }}</label>
-                <input type="text" name="part_number" id="editPartNum" class="vs-input" placeholder="000-000">
-            </div>
+            {# SP-CATALOG-UNIFY-001: the position-level «Арт. номер» field is gone —
+               it duplicated the variant's «Номер каталога» with a different meaning.
+               The column and its existing values stay; catalog_save preserves them
+               on edits when the field is absent from the POST. #}
             <div class="vs-field" style="width:120px;">
                 <label class="vs-label" for="editUnit">{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</label>
                 {# SP-F-024: managed unit directory; free-text fallback pre-migration. #}
@@ -367,12 +367,14 @@ function clearFirstSkuFields() {
     });
 }
 
+/* [REASON]: SP-CATALOG-UNIFY-001 — partNum stays in the signature so the
+   inline onclick calls in the list keep working unchanged; the argument is
+   deliberately ignored now that the form has no article-number field. */
 function editPart(id, name, nameUz, partNum, unit, catId) {
     document.getElementById('editId').value = id;
     document.getElementById('editName').value = name;
     // CYCLE-2-3 Part 7: optional Uzbek alias travels through the edit form.
     document.getElementById('editNameUz').value = nameUz || '';
-    document.getElementById('editPartNum').value = partNum;
     setEditUnit(unit);
     // SPARE-STAGE1: category is now a managed category_id select.
     document.getElementById('editCategory').value = catId || '';
@@ -406,7 +408,6 @@ function resetForm() {
     document.getElementById('editId').value = '';
     document.getElementById('editName').value = '';
     document.getElementById('editNameUz').value = '';
-    document.getElementById('editPartNum').value = '';
     setEditUnit(null);
     document.getElementById('editCategory').value = '';
     // SP-CATALOG-UNIFY-001: back to create mode — the first-variant sub-block
