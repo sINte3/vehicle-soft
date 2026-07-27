@@ -125,6 +125,29 @@
                     {% endfor %}
                 </select>
             </div>
+            {# SP-CATALOG-UNIFY-001: optional first supply variant, created together
+               with the position by the same submit. Create-only: editPart() hides
+               this block (hidden attribute, same mechanism as #catActiveField) so a
+               save of an existing position never creates another variant — a SECOND
+               variant is still added on the /spare-parts/skus screen. #}
+            <div id="firstSkuBlock" style="flex-basis:100%; border-top:1px solid var(--vs-border); padding-top:10px;">
+                <div class="vs-card-title" style="font-size:13.5px;">{{ 'Первый вариант поставки — необязательно' if is_ru else 'Биринчи таъминот варианти — ихтиёрий' }}</div>
+                <div class="vs-soft vs-mb-sm" style="font-size:12.5px;">{{ 'Заполните любое из полей — вариант будет создан вместе с позицией; оставьте пустыми — будет создана только позиция.' if is_ru else 'Майдонлардан исталганини тўлдиринг — вариант позиция билан бирга яратилади; бўш қолдирсангиз — фақат позиция яратилади.' }}</div>
+                <div class="vs-form-row">
+                    <div class="vs-field" style="flex:1; min-width:150px;">
+                        <label class="vs-label" for="newSkuBrand">{{ 'Бренд' if is_ru else 'Бренд' }}</label>
+                        <input type="text" name="sku_brand" id="newSkuBrand" class="vs-input" placeholder="Bosch">
+                    </div>
+                    <div class="vs-field" style="flex:1; min-width:150px;">
+                        <label class="vs-label" for="newSkuArticle">{{ 'Номер каталога' if is_ru else 'Каталог рақами' }}</label>
+                        <input type="text" name="sku_article_number" id="newSkuArticle" class="vs-input" placeholder="0986452041">
+                    </div>
+                    <div class="vs-field" style="flex:1; min-width:150px;">
+                        <label class="vs-label" for="newSkuSupplier">{{ 'Поставщик' if is_ru else 'Таъминотчи' }}</label>
+                        <input type="text" name="sku_supplier" id="newSkuSupplier" class="vs-input" placeholder="{{ 'ООО ТехСнаб' if is_ru else 'ТехСнаб МЧЖ' }}">
+                    </div>
+                </div>
+            </div>
             <div class="vs-field" style="flex:none;">
                 <label class="vs-label">&nbsp;</label>
                 <div class="vs-row">
@@ -335,6 +358,15 @@ function setEditUnit(val) {
     f.value = 'dona';
 }
 
+/* [REASON]: SP-CATALOG-UNIFY-001 — the first-variant sub-block is create-only:
+   hidden while editing (and its inputs cleared), otherwise every save of an
+   existing position would create another variant. */
+function clearFirstSkuFields() {
+    ['newSkuBrand', 'newSkuArticle', 'newSkuSupplier'].forEach(fid => {
+        document.getElementById(fid).value = '';
+    });
+}
+
 function editPart(id, name, nameUz, partNum, unit, catId) {
     document.getElementById('editId').value = id;
     document.getElementById('editName').value = name;
@@ -344,6 +376,8 @@ function editPart(id, name, nameUz, partNum, unit, catId) {
     setEditUnit(unit);
     // SPARE-STAGE1: category is now a managed category_id select.
     document.getElementById('editCategory').value = catId || '';
+    document.getElementById('firstSkuBlock').hidden = true;
+    clearFirstSkuFields();
     document.getElementById('catalogFormTitle').textContent = CATALOG_TEXT.editTitle;
     document.getElementById('editName').focus();
 }
@@ -375,6 +409,10 @@ function resetForm() {
     document.getElementById('editPartNum').value = '';
     setEditUnit(null);
     document.getElementById('editCategory').value = '';
+    // SP-CATALOG-UNIFY-001: back to create mode — the first-variant sub-block
+    // reappears empty.
+    document.getElementById('firstSkuBlock').hidden = false;
+    clearFirstSkuFields();
     document.getElementById('catalogFormTitle').textContent = CATALOG_TEXT.addTitle;
     document.getElementById('editName').classList.remove('is-error');
 }
