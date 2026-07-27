@@ -4419,17 +4419,6 @@ def catalog_save():
         db.session.add(part)
         created = True
     db.session.flush()
-    after = _catalog_snapshot(part)
-    _audit_spare(
-        'spare_part_catalog_created' if created else 'spare_part_catalog_updated',
-        entity_type='spare_part_catalog',
-        entity_id=part.id,
-        entity_label=part.name,
-        before=before,
-        after=after,
-        changes=diff_dict(before, after),
-        description='Spare part catalog saved'
-    )
     # [REASON]: SP-CATALOG-UNIFY-001 — one submit may create the position AND
     # its first supply variant, in ONE transaction: either both rows commit or
     # neither does, so a duplicate variant can never leave the position behind
@@ -4437,6 +4426,12 @@ def catalog_save():
     # even if a client sends them, because every save of an existing position
     # would otherwise create another variant (a second variant is added on the
     # /spare-parts/skus screen).
+    # [REASON]: SP-CATALOG-UNIFY-001 — data rows are flushed BEFORE any audit
+    # write: the duplicate-variant exits below must roll back the position
+    # too, whatever log_audit does internally, so both audit calls sit after
+    # this block and the commit comes last. On the position-only path the
+    # block is a no-op and the flush → audit → commit sequence is unchanged.
+    new_sku = None
     if created and (sku_brand or sku_article_number or sku_supplier):
         # part.id is reset to None by rollback(); keep a plain copy for the
         # duplicate responses below.
@@ -4452,28 +4447,40 @@ def catalog_save():
         # flush() under a true race and the IntegrityError boundary must
         # cover it.
         try:
-            sku = SparePartSku(spare_part_id=part.id, brand=sku_brand,
-                               article_number=sku_article_number,
-                               supplier=sku_supplier,
-                               created_by=current_user.id)
-            db.session.add(sku)
+            new_sku = SparePartSku(spare_part_id=part.id, brand=sku_brand,
+                                   article_number=sku_article_number,
+                                   supplier=sku_supplier,
+                                   created_by=current_user.id)
+            db.session.add(new_sku)
             db.session.flush()
-            sku_after = _sku_snapshot(sku)
-            _audit_spare(
-                'spare_part_sku_created',
-                entity_type='spare_part_sku',
-                entity_id=sku.id,
-                entity_label='{} — {}'.format(part.name, sku.label),
-                before=None,
-                after=sku_after,
-                changes=diff_dict(None, sku_after),
-                description='Spare part SKU saved'
-            )
         except IntegrityError:
             db.session.rollback()
             return _sku_duplicate_response(
                 new_part_id, race=True,
                 redirect_endpoint='spare_parts.catalog')
+    after = _catalog_snapshot(part)
+    _audit_spare(
+        'spare_part_catalog_created' if created else 'spare_part_catalog_updated',
+        entity_type='spare_part_catalog',
+        entity_id=part.id,
+        entity_label=part.name,
+        before=before,
+        after=after,
+        changes=diff_dict(before, after),
+        description='Spare part catalog saved'
+    )
+    if new_sku is not None:
+        sku_after = _sku_snapshot(new_sku)
+        _audit_spare(
+            'spare_part_sku_created',
+            entity_type='spare_part_sku',
+            entity_id=new_sku.id,
+            entity_label='{} — {}'.format(part.name, new_sku.label),
+            before=None,
+            after=sku_after,
+            changes=diff_dict(None, sku_after),
+            description='Spare part SKU saved'
+        )
     db.session.commit()
     flash(_spare_t('Сақланди', 'Сохранено'), 'success')
     return redirect(url_for('spare_parts.catalog'))
