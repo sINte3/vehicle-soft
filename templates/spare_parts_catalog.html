@@ -12,7 +12,10 @@
   </div>
 </div>
 
-<div class="vs-alert is-info vs-mb">{{ 'Минимально обязательное поле — название. Артикул, единица измерения и категория помогают быстрее находить нужную деталь.' if is_ru else 'Камида номини киритиш мажбурий. Артикул, ўлчов бирлиги ва категория керакли детални тез топишга ёрдам беради.' }}</div>
+{# SP-CATALOG-UNIFY-001: the alert described the position-level article-number
+   field that the unified form no longer has; the term itself stays «Артикул»
+   everywhere until SP-TERM-VARIANT-001. #}
+<div class="vs-alert is-info vs-mb">{{ 'Минимально обязательное поле — название. Единица измерения и категория помогают быстрее находить нужную деталь.' if is_ru else 'Камида номини киритиш мажбурий. Ўлчов бирлиги ва категория керакли детални тез топишга ёрдам беради.' }}</div>
 
 {# ─── SPARE-STAGE1: pending-review queue ─────────────────────────────── #}
 {# SP-F-015: manage-only (the route also skips loading pending_parts for read-only viewers). #}
