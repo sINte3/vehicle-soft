@@ -4359,7 +4359,13 @@ def catalog_save():
     # [REASON]: CYCLE-2-3 Part 7 — optional Uzbek alias; empty means "not
     # translated yet" and is stored as NULL so displays fall back to name.
     name_uz = (request.form.get('name_uz', '') or '').strip() or None
-    part_number = request.form.get('part_number', '').strip()
+    # [REASON]: SP-CATALOG-UNIFY-001 — the catalogue form stopped sending
+    # part_number, so "field absent" (None) must be distinguished from "field
+    # submitted empty" (''): positions promoted from the pending-review queue
+    # carry an operator-entered article number that must survive an edit
+    # through the form; blindly assigning '' on every edit would blank it.
+    raw_part_number = request.form.get('part_number')
+    part_number = (raw_part_number or '').strip()
     unit = request.form.get('unit', 'dona').strip()
     # [REASON]: SPARE-STAGE1 — the form now sends category_id (managed
     # categories); the deprecated free-text `category` column is left untouched.
@@ -4388,7 +4394,10 @@ def catalog_save():
         before = _catalog_snapshot(part)
         part.name = name
         part.name_uz = name_uz
-        part.part_number = part_number
+        # [REASON]: SP-CATALOG-UNIFY-001 — only assign when the form actually
+        # sent the field; the unified catalogue form omits it entirely.
+        if raw_part_number is not None:
+            part.part_number = part_number
         part.unit = unit
         part.category_id = category_id
     else:
