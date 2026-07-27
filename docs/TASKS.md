@@ -36,7 +36,13 @@ SP-REPORTS-007 (report launcher, per-report Excel and PDF, «SKU» → «Арт�
 PR #17 + #18 + #19), SP-CANCEL-008 (cancel an approved request and release its
 reservations, PR #29) — see their sections below.
 
-Increment 9 is **not scoped**. Nothing is chosen; the owner picks the next item.
+Increment 9 is **chosen** (owner, 2026-07-27): `SP-CATALOG-UNIFY-001` in
+its reduced scope — one form that creates a catalogue position together with
+its first supply variant, plus removal of the position’s «Арт. номер» field,
+which duplicates the variant’s «Номер каталога» and is empty on all 250
+positions. No prompt written yet. The nested variant list under a position and
+the type-ahead filter in the position pickers were deliberately left out and
+stay in the backlog as `SP-PICKER-SEARCH-001`.
 
 Nothing from increment 8 is left open: it was validated on staging BEFORE the
 merge, so `docs/RELEASE_GATE.md` never carried a row for it. Four checks were
@@ -55,12 +61,16 @@ never existed: `reject_request` only ever accepted `submitted`. The standalone
 ### PILOT-1C-001 — Data migration pilot from 1C (Paxtasanoattrans)
 
 Priority: P2
-Status: in progress (analysis; no code so far)
+Status: in progress — **stock entry DONE 2026-07-27** (15 positions, production);
+nomenclature mapping at scale not started
 
 Parallel track, runs alongside the increments. Decisions and findings so far:
 
-- Pilot organization: **Paxtasanoattrans** — 84 equipment objects with plates and
-  a live consumption history.
+- Pilot organization: **Paxtasanoattrans** — **87 active equipment units** with a
+  live consumption history. Fleet read from `equipment` on 2026-07-27: 57 MTZ
+  tractors, 21 trucks (HOWO 13, MAN 5, Kamaz 3), 6 loaders, 2 Isuzu water
+  tankers, 1 fuel tanker; one unit carries no plate. An earlier note in this
+  section said 84 — not adjudicated, the 87 above is what the registry holds.
 - **Warehouse model (option A, decided).** Import stock as the single
   organization warehouse. 1C models storage locations as *people* (материально
   ответственные лица); we do not reproduce that — parts held by mechanics count
@@ -70,7 +80,11 @@ Parallel track, runs alongside the increments. Decisions and findings so far:
   with a positive balance (~37.8M sum), split between two people (Rahmonov Laziz
   8, Hamroev Zayniddin 7). Physical presence confirmed by the organization on
   2026-07-23. Import will be manual data entry through the warehouse UI — no
-  migration script. Blocked only by the missing «кв. метр» unit (UNIT-SQM-001).
+  migration script. **Done 2026-07-27** — 12 new catalogue positions, 15 supply
+  variants, 15 receipts, verified against a written-down prediction; see the
+  AGENT_STATE record of that date for the mapping rule and the findings. The
+  «кв. метр» blocker (UNIT-SQM-001) was closed on 2026-07-25 and was needed by
+  exactly one of the fifteen rows (wire mesh).
 - **Equipment matching done.** Of 161 1C repair objects, 82 have real 2026
   consumption. Automatic matching by plate (Cyrillic/Latin homoglyphs folded to
   one alphabet) links **77 of 82 = 93.9%**, covering **96% of the consumed
@@ -1080,6 +1094,129 @@ Blocker:
 - Needs formal accounting rules from finance/accounting responsible person.
 
 ## Backlog
+
+### INFRA-GIT-WRITE-001 - Git write operations need a clone that survives cleanup
+
+Priority: P2
+
+The staging working copy carries an untracked note,
+`USE_TEMP_CLONE_FOR_GIT_COMMANDS.txt`, left by the fuel track: it reports a
+`.git` lock problem on this machine (wcifs minifilter) and says git WRITE
+operations must be run from a separate clone. The clone it pointed at lived under
+`%TEMP%\1\git_fix_clone`.
+
+On 2026-07-27 that directory still existed but contained no `.git` and no
+`docs/` - Windows had cleaned Temp. The docs commit for PILOT-1C-001 therefore
+went through a fresh clone created outside Temp.
+
+Not verified: whether the original lock still bites. Nobody has retested it, and
+retesting on the shared staging copy is unattractive because both tracks keep
+untracked work there. Two things worth doing when someone has a reason to touch
+this:
+
+- keep the write clone at a durable path and update the note file so the other
+  track does not hit the same wall;
+- establish whether the lock is still real, because if it is not, the whole
+  detour can be dropped.
+
+Read operations (`git status`, `git log`, `git fetch`, `git diff`) work fine in
+both working copies - this has been exercised repeatedly, including a `git fetch`
+that wrote refs into staging's `.git` without complaint.
+
+### SP-CATALOG-UNIFY-001 - One form for a catalogue position and its first variant
+
+Priority: P1 (chosen as increment 9 by the owner on 2026-07-27)
+
+The owner proposed merging the catalogue and the article directories into one
+table. Rejected on the model level, accepted on the screen level; the full
+analysis lives in the chat artefact of 2026-07-27. Why the model stays split:
+
+- `SparePartRequestItem.sku_id` is nullable and NULL means «canonical part only,
+  no inventory tracking», so mechanics never touch variants at all. The two roles
+  that do are the catalogue manager and the storekeeper.
+- `_check_repeat_orders` keys on `spare_part_id` (there is a dedicated index).
+  Merged, the same tyre bought under two brands becomes two catalogue rows and
+  the repeat-order warning silently stops firing.
+- The top-20 consumption report groups by position; merged, one tyre under three
+  brands splits into three rows.
+- `SparePartCompatibility` and `SparePartMaintenanceNorm` hang off the position;
+  merged, every statement has to be repeated per brand.
+- A merge would force the mechanic to name a brand he cannot know, producing
+  requests for a brand that is out of stock while another sits on the shelf.
+- `sku_id` is a foreign key in seven tables including the append-only movement
+  history. The migration has no rollback.
+
+Scope chosen by the owner:
+
+1. The «add position» form gains optional brand / catalogue number / supplier.
+   Filled -> position AND its first variant are created by one submit. Empty ->
+   position only, exactly as today. For a part with one variant the operator
+   never sees a second entity.
+2. Remove «Арт. номер» from the position form. **Mandatory part of the same
+   increment**, not a separate improvement: without it the new form would show
+   «Арт. номер» and «Номер каталога» side by side, which is worse than today's
+   two screens.
+3. Consistent labels on the touched screens. The product already contains the
+   better word in a heading: «варианты поставки».
+
+Acceptance requirement fixed up front: creating the position and its first
+variant must be ONE transaction. If the catalogue number collides and the
+variant cannot be created, the position must not be left behind without it —
+either both or neither, with a readable error.
+
+Templates plus light route work. No migration; rollback is a plain revert.
+
+### SP-PICKER-SEARCH-001 - Type-ahead filter in the catalogue position pickers
+
+Priority: P2
+
+Raised by the owner on 2026-07-27 while entering the pilot data: the position is
+chosen from a scrolling `<select>`. At 250 positions it is already slow, and the
+catalogue only grows. The same picker appears in the variant form, the warehouse
+movement form and the request form, so the fix belongs in one shared component
+rather than on one screen.
+
+### SP-STOCK-XLSX-001 - Excel export of the warehouse stock table
+
+Priority: P2
+
+Raised by the owner on 2026-07-27: «Текущие остатки» on the warehouse screen has
+no export. Cheap - openpyxl is already in the stack and the export pattern is
+established by the report exports of SP-REPORTS-007.
+
+### SP-SKU-SPEC-001 - A specification field on the supply variant
+
+Priority: P3
+
+A supply variant carries brand, catalogue number and supplier, but no
+specification. During PILOT-1C-001 this forced «40 А·ч» into the position name,
+producing the asymmetric pair «Аккумуляторная батарея» and «Аккумуляторная
+батарея 40 А·ч». Tyre sizes live in position names by deliberate decision, but
+capacity is not the same kind of fact. If such cases recur, the answer is a
+`spec` column on the variant - NOT a merge of the two directories. Low priority:
+the problem showed up once in fifteen rows.
+
+### SP-CATALOG-HYGIENE-001 - Catalogue leftovers found during PILOT-1C-001
+
+Priority: P3
+
+Five unrelated findings, all read from production on 2026-07-27, none urgent:
+
+- All 238 pre-existing positions carry `unit=dona`, including «Моторное масло»,
+  «Гидравлический шланг» and «Трос стальной грузовой». The unit field was never
+  curated; the 12 pilot positions are the first with a meaningful unit.
+- «Арт. номер» is empty on every position and is deliberately kept empty. It is
+  removed by `SP-CATALOG-UNIFY-001`.
+- «Шина передняя» (id 99) and «Шина задняя» (id 100) now sit unused next to the
+  size-specific pilot positions and will confuse operators. Neither deleting nor
+  renaming is safe: existing requests may reference them.
+- The only pre-existing supply variant is `SMOKE-TEST / SMOKE-TEST-001 / test`
+  on «Головка блока цилиндров», inactive, prices 1000/1000. Harmless (inactive
+  variants do not appear in pickers) but it is test residue in production.
+- Warehouse `temp` on Kogon PTZ (org 1): one zero stock row, three movements.
+  Because of `UNIQUE(organization_id)` that organization now permanently owns a
+  warehouse called «temp», and there is no rename route in the code - only
+  create. Renaming needs either a new route or a data script.
 
 ### SP-CANCEL-NOTIFY-001 — Notify the requester when an approved request is cancelled
 
