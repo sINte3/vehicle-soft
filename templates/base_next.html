@@ -107,12 +107,19 @@
       </a>
       {% endif %}
 
+      {# [REASON]: UI-SIDEBAR-GATE-001 — same permission that gates the route:
+         a user without fuel access saw the link, clicked it and got 403 (no
+         data exposed, but a misleading affordance). has_module_access returns
+         True unconditionally for administrators, so no admin loses the link.
+         Same pattern as the spare_parts gate above (SP-F-021). #}
+      {% if current_user.has_module_access('fuel') %}
       <a href="{{ url_for('fuel.dashboard') }}" class="vs-side-link{% if current and current.startswith('fuel.') %} is-active{% endif %}">
         <span class="vs-side-icon">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v16"/><path d="M3 21h11"/><path d="M14 8h3l3 3v8a2 2 0 0 1-2 2"/><path d="M14 13h6"/></svg>
         </span>
         <span class="vs-side-label">{{ 'АЗС' if g.lang == 'ru' else 'АЁҚШ' }}</span>
       </a>
+      {% endif %}
 
       <a href="{{ url_for('wialon_index') }}" class="vs-side-link{% if current and current.startswith('wialon') %} is-active{% endif %}">
         <span class="vs-side-icon">
