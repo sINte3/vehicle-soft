@@ -207,7 +207,11 @@ def _resolve_card_names(txns):
     if not card_numbers:
         return {}
 
+    # [REASON]: FUEL-BIG-001 / UI-CARD-NAME — joinedload the card so the whole
+    # map costs ONE query; the lazy backref used to add one SELECT per matched
+    # alias, which scaled with the number of distinct cards on the page.
     aliases = (FuelCardAlias.query
+               .options(joinedload(FuelCardAlias.card))
                .filter(FuelCardAlias.alias_type.in_(['topaz_card_id', 'rfid']),
                        FuelCardAlias.alias_value.in_(list(card_numbers)))
                .all())
@@ -3197,10 +3201,15 @@ def transactions():
     sync_logs = (FuelSyncLog2.query
                  .order_by(FuelSyncLog2.synced_at.desc()).limit(10).all())
 
+    # [REASON]: FUEL-BIG-001 / UI-CARD-NAME — one name map for the whole page
+    # (single query), never a per-row lookup; unknown cards render an em dash.
+    card_names = _resolve_card_names(items)
+
     return render_template('fuel/transactions.html',
                            items=items, warehouses=warehouses,
                            d_from=d_from, d_to=d_to,
                            selected_wh_id=wh_id,
+                           card_names=card_names,
                            total_qty=total_qty, total_amount=total_amount,
                            sync_logs=sync_logs, today=today)
 
