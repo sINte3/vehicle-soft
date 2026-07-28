@@ -4051,6 +4051,158 @@ def card_issues_export():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
+def _fuel_station_totals(start_dt, end_dt_exclusive):
+    """Per-station issue count and litres for the window, plus share of total.
+
+    [REASON]: F2.4 — a station-operations summary: RAW Topaz issues of the
+    UI-visible warehouses (external cards included — they went through the
+    dispenser; only balance arithmetic nets them out). One grouped query.
+    """
+    q = (db.session.query(
+            FuelStation2.id,
+            FuelStation2.name,
+            FuelStation2.topaz_id,
+            FuelWarehouse.name.label('warehouse_name'),
+            func.count(FuelTransaction2.id).label('tx_count'),
+            func.coalesce(func.sum(FuelTransaction2.quantity), 0).label('litres'))
+         .join(FuelWarehouse, FuelWarehouse.id == FuelStation2.warehouse_id)
+         .join(FuelTransaction2, FuelTransaction2.station_id == FuelStation2.id)
+         .filter(FuelTransaction2.txn_datetime >= start_dt,
+                 FuelTransaction2.txn_datetime < end_dt_exclusive))
+    q = fuel_apply_warehouse_filter_for_ui(q, FuelStation2.warehouse_id)
+    rows = (q.group_by(FuelStation2.id, FuelStation2.name, FuelStation2.topaz_id,
+                       FuelWarehouse.name)
+             .order_by(func.coalesce(func.sum(FuelTransaction2.quantity), 0).desc())
+             .all())
+
+    total_litres = sum(float(r.litres or 0) for r in rows)
+    total_count = sum(int(r.tx_count or 0) for r in rows)
+    result = []
+    for r in rows:
+        litres = float(r.litres or 0)
+        result.append({
+            'station_id': r.id,
+            'name': r.name,
+            'topaz_id': r.topaz_id,
+            'warehouse_name': r.warehouse_name,
+            'count': int(r.tx_count or 0),
+            'litres': round(litres, 2),
+            'share': round(litres * 100.0 / total_litres, 1) if total_litres else 0.0,
+        })
+    return result, {'count': total_count, 'litres': round(total_litres, 2),
+                    'stations': len(result)}
+
+
+@fuel_bp.route('/reports/station-totals')
+@module_required('fuel')
+def station_totals_report():
+    """F2.4: issue totals by station."""
+    today = date.today()
+    start_dt, end_dt_exclusive, start_date, end_date, preset = _fuel_parse_period(
+        request.args, today.replace(day=1), today)
+
+    rows, total = _fuel_station_totals(start_dt, end_dt_exclusive)
+
+    return render_template('fuel/report_station_totals.html',
+                           rows=rows,
+                           total=total,
+                           start_date=start_date,
+                           end_date=end_date,
+                           period=_fuel_period_context(start_dt, end_dt_exclusive,
+                                                       start_date, end_date, preset))
+
+
+@fuel_bp.route('/reports/station-totals/export')
+@module_required('fuel')
+def station_totals_export():
+    """F2.4: Excel export of the station totals, matching the screen."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    today = date.today()
+    start_dt, end_dt_exclusive, start_date, end_date, _preset = _fuel_parse_period(
+        request.args, today.replace(day=1), today)
+    rows, total = _fuel_station_totals(start_dt, end_dt_exclusive)
+    lang = _fuel_report_lang()
+
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = _safe_ws_title(L('По АЗС', 'АЗС бўйича'), set())
+
+    thin = Side(style='thin', color='D1D5DB')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_fill = PatternFill('solid', fgColor='D9EAD3')
+    total_fill = PatternFill('solid', fgColor='FEF3C7')
+
+    period_label = '%s %s — %s %s' % (
+        start_date.strftime('%d.%m.%Y'), start_dt.strftime('%H:%M'),
+        end_date.strftime('%d.%m.%Y'),
+        (end_dt_exclusive - timedelta(minutes=1)).strftime('%H:%M'))
+    ws.merge_cells('A1:G1')
+    ws['A1'] = L('Итоги выдачи топлива по АЗС', 'АЗС бўйича ёқилғи бериш якунлари')
+    ws['A1'].font = Font(bold=True, size=14)
+    ws.merge_cells('A2:G2')
+    ws['A2'] = '%s: %s' % (L('Период', 'Давр'), period_label)
+    ws['A2'].font = Font(size=11, color='666666')
+
+    headers = ['№', L('АЗС', 'АЗС'), 'Topaz ID', L('Склад', 'Омбор'),
+               L('Кол-во выдач', 'Беришлар сони'),
+               L('Выдано топлива, л', 'Берилган ёқилғи, л'),
+               L('Доля, %', 'Улуш, %')]
+    for col, title in enumerate(headers, start=1):
+        cell = ws.cell(row=4, column=col, value=title)
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    r = 4
+    for idx, row in enumerate(rows, start=1):
+        r += 1
+        ws.cell(row=r, column=1, value=idx)
+        ws.cell(row=r, column=2, value=row['name'])
+        ws.cell(row=r, column=3, value=row['topaz_id'])
+        ws.cell(row=r, column=4, value=row['warehouse_name'])
+        ws.cell(row=r, column=5, value=row['count'])
+        ws.cell(row=r, column=6, value=row['litres']).number_format = '#,##0.00'
+        ws.cell(row=r, column=7, value=row['share']).number_format = '0.0'
+
+    r += 1
+    ws.cell(row=r, column=4, value=L('ВСЕГО', 'ЖАМИ')).font = Font(bold=True, size=12)
+    ws.cell(row=r, column=5, value=total['count']).font = Font(bold=True)
+    cell = ws.cell(row=r, column=6, value=total['litres'])
+    cell.number_format = '#,##0.00'
+    cell.font = Font(bold=True, size=12)
+    ws.cell(row=r, column=7, value=100.0 if total['litres'] else 0.0).number_format = '0.0'
+    for col in range(1, 8):
+        ws.cell(row=r, column=col).fill = total_fill
+
+    for row_cells in ws.iter_rows(min_row=4, max_row=r, min_col=1, max_col=7):
+        for cell in row_cells:
+            cell.border = border
+    for col, width in ((1, 6), (2, 26), (3, 12), (4, 24), (5, 13), (6, 16), (7, 10)):
+        ws.column_dimensions[get_column_letter(col)].width = width
+    ws.freeze_panes = 'A5'
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = '4:4'
+    ws.oddFooter.center.text = '%s — %s' % (
+        L('Итоги выдачи топлива по АЗС', 'АЗС бўйича ёқилғи бериш якунлари'),
+        period_label)
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    fname = 'fuel_station_totals_%s_%s.xlsx' % (start_date.isoformat(), end_date.isoformat())
+    return send_file(output, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
 # ─── F4.1 FUEL-LEDGER-001: warehouse ledger page ─────────────────────
 
 @fuel_bp.route('/ledger')
