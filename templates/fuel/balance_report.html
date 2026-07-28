@@ -56,10 +56,38 @@
     </div>
 </div>
 
-{# FUEL-BIG-001: shared working-vs-archive mode control, same as the dashboard #}
-{% include 'fuel/_legacy_toggle.html' %}
+{# F2.2 · FUEL-BALANCE-UX-005 commit 17: print styles. Landscape, fit to
+   width, repeating table header (thead prints as table-header-group), a
+   fixed print-only footer naming the report and the period (repeats on every
+   printed page), and everything interactive hidden. Detail rows carry the
+   `hidden` attribute, so the collapsed state prints as collapsed. #}
+<style>
+.fuel-print-footer { display: none; }
+@media print {
+  @page { size: A4 landscape; margin: 12mm 10mm 16mm; }
+  body { background: #fff; }
+  .vs-sidebar, .vs-topbar, .vs-side-backdrop, .vs-skip-link, .fuel-nav,
+  .fuel-no-print, .fuel-balance-day-controls, .vs-alert,
+  .page-header .btn, .fuel-period-picker { display: none !important; }
+  .vs-content { padding: 0; max-width: none; }
+  .card { box-shadow: none; border-color: #bbb; }
+  table { font-size: 10px; white-space: normal !important; }
+  table thead { display: table-header-group; }
+  .fuel-print-footer {
+    display: block !important;
+    position: fixed; bottom: 0; left: 0; right: 0;
+    text-align: center; font-size: 10px; color: #444;
+  }
+}
+</style>
+<div class="fuel-print-footer">{{ L_title }} — {{ start_date.strftime('%d.%m.%Y') }}{% if period.start_time != '00:00' %} {{ period.start_time }}{% endif %} — {{ end_date.strftime('%d.%m.%Y') }}{% if period.end_time != '23:59' %} {{ period.end_time }}{% endif %}</div>
 
-<div class="card" style="margin-bottom:16px; padding:16px;">
+{# FUEL-BIG-001: shared working-vs-archive mode control, same as the dashboard #}
+<div class="fuel-no-print">
+{% include 'fuel/_legacy_toggle.html' %}
+</div>
+
+<div class="card fuel-no-print" style="margin-bottom:16px; padding:16px;">
     <div style="display:flex; justify-content:space-between; gap:16px; align-items:flex-start; flex-wrap:wrap;">
         <div>
             <h2 style="margin:0 0 4px 0;">{{ L_params_title }}</h2>
