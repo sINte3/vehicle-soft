@@ -297,7 +297,11 @@ a.fuel-dash-tile:hover { text-decoration:none; color:inherit; box-shadow:var(--s
                 {% endif %}
             </td>
             <td class="text-right">
-                {% if r.today_expense > 0 %}<span style="color:var(--danger);">-{{ '%.0f'|format(r.today_expense) }} л</span>{% else %}<span class="text-muted">—</span>{% endif %}
+                {# QA fix 46 — expense is shown positive everywhere in the
+                   module (the tile above, the ledger's «Расход, л», the
+                   issues journal); the leading minus contradicted them all.
+                   The colour keeps marking it as consumption. #}
+                {% if r.today_expense > 0 %}<span style="color:var(--danger);">{{ '%.0f'|format(r.today_expense) }} л</span>{% else %}<span class="text-muted">—</span>{% endif %}
             </td>
             <td>
                 {% if r.status == 'negative' %}<span class="badge badge-danger">{{ L_negative }}</span>
