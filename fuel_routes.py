@@ -6077,6 +6077,18 @@ def balance_report_export():
     ws.freeze_panes = f"{get_column_letter(day_start_col)}5"
     ws.auto_filter.ref = f"A4:{get_column_letter(max_col)}{total_row}"
 
+    # [REASON]: QA fix 43 — this sheet is 10 + 2xN-days columns wide; with no
+    # explicit print setup Excel printed it portrait on many pages. Same setup
+    # as the ledger export: landscape, fit to width, repeating two-row header,
+    # a footer naming the report and the period.
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = '3:4'
+    ws.oddFooter.center.text = 'Отчёт по остаткам топлива — %s — %s' % (
+        start_date.strftime('%d.%m.%Y'), end_date.strftime('%d.%m.%Y'))
+
     output = BytesIO()
     wb.save(output)
     output.seek(0)
