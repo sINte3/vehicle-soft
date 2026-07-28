@@ -133,7 +133,6 @@ form.fuel002d-filter-form {
    stock lives in the balance report only. Same URL — somebody is used to it. #}
 {% set L_title = 'Контроль АЗС и синхронизации' if lang == 'ru' else 'АЗС ва синхронизация назорати' %}
 {% set L_subtitle = 'Работа АЗС и агента Topaz за период: активность станций, транзакции, неизвестные АЗС, предупреждения и журнал синхронизации.' if lang == 'ru' else 'Давр учун АЗС ва Topaz агенти иши: станциялар фаоллиги, транзакциялар, номаълум АЗСлар, огоҳлантиришлар ва синхронизация журнали.' %}
-{% set L_back = '← Дашборд' if lang == 'ru' else '← Дашборд' %}
 {% set L_from = 'С' if lang == 'ru' else 'Дан' %}
 {% set L_to = 'По' if lang == 'ru' else 'Гача' %}
 {% set L_wh = 'Склад' if lang == 'ru' else 'Омбор' %}
@@ -224,8 +223,6 @@ form.fuel002d-filter-form {
         <div class="text-muted text-sm">{{ L_subtitle }}</div>
     </div>
     <div class="fuel-report-actions">
-        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">{{ L_back }}</a>
-        <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="btn btn-secondary btn-sm">{{ L_warnings }}</a>
         <a href="{{ url_for('fuel.fuel_report', start_date=period.start_date, end_date=period.end_date, start_time=period.start_time, end_time=period.end_time, warehouse_id=selected_warehouse_id or '', station_id=selected_station_id or '', show_legacy='1' if show_legacy else none, export=1) }}" class="btn btn-primary btn-sm">{{ L_export }}</a>
     </div>
 </div>

@@ -162,7 +162,6 @@
 
 {% set L_title = 'Выдачи топлива из Topaz' if lang == 'ru' else 'Topazдан ёқилғи беришлар' %}
 {% set L_note = 'Это история фактических выдач ДТ с подведомственных АЗС. Цены и суммы не используются.' if lang == 'ru' else 'Бу подведомственный АЗСлардан ДТ беришлар тарихи. Нарх ва сумма ишлатилмайди.' %}
-{% set L_back = '← Дашборд' if lang == 'ru' else '← Дашборд' %}
 {% set L_from = 'С' if lang == 'ru' else 'Дан' %}
 {% set L_to = 'По' if lang == 'ru' else 'Гача' %}
 {% set L_wh = 'Склад' if lang == 'ru' else 'Омбор' %}
@@ -203,7 +202,6 @@
         <h1>{{ L_title }}</h1>
         <div class="text-muted text-sm">{{ L_note }}</div>
     </div>
-    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ L_back }}</a>
 </div>
 
 <div class="card" style="margin-bottom:16px;">

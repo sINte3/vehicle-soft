@@ -5,8 +5,6 @@
 
 {% set L_title = 'Реестр топливных предупреждений' if lang == 'ru' else 'Ёқилғи огоҳлантиришлари реестри' %}
 {% set L_subtitle = 'Здесь фиксируется проверка предупреждений: статус, ответственный и комментарий.' if lang == 'ru' else 'Бу ерда огоҳлантиришлар текшируви: ҳолат, масъул ва изоҳ қайд этилади.' %}
-{% set L_back = '← Отчёт по топливу' if lang == 'ru' else '← Ёқилғи ҳисоботи' %}
-{% set L_dashboard = 'Дашборд' if lang == 'ru' else 'Дашборд' %}
 {% set L_from = 'С' if lang == 'ru' else 'Дан' %}
 {% set L_to = 'По' if lang == 'ru' else 'Гача' %}
 {% set L_status = 'Статус' if lang == 'ru' else 'Ҳолат' %}
@@ -176,10 +174,6 @@
         <h1>{{ L_title }}</h1>
         <div class="fuel002g-subtitle">{{ t('Ёқилғи огоҳлантиришлари: давр, жиддийлик, ҳолат ва текширув изоҳларини бошқариш.') }}</div>
         <div class="text-muted text-sm">{{ L_subtitle }}</div>
-    </div>
-    <div class="warning-actions">
-        <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="btn btn-secondary btn-sm">{{ L_back }}</a>
-        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">{{ L_dashboard }}</a>
     </div>
 </div>
 

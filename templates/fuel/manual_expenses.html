@@ -5,7 +5,6 @@
 
 {% set is_ru = (lang == 'ru') %}
 {% set L_title = 'Ручной расход' if is_ru else 'Қўлда киритилган сарф' %}
-{% set L_back = '← Дашборд' if is_ru else '← Дашборд' %}
 {% set L_info = 'Ручной расход — дизтопливо, отпущенное со склада мимо ТРК (например, налив из ёмкости в автоцистерну). Топаз такие выдачи не видит, поэтому они вводятся вручную и автоматически уменьшают остаток склада в отчёте по балансу.' if is_ru else 'Қўлда киритилган сарф — омбордан ТРК (колонка)дан четлаб берилган дизель ёқилғиси (масалан, идишдан автоцистернага қуйиш). Топаз бундай беришларни кўрмайди, шунинг учун улар қўлда киритилади ва баланс ҳисоботида омбор қолдиғини автоматик камайтиради.' %}
 {% set L_add = 'Добавить' if is_ru else 'Қўшиш' %}
 {% set L_edit = 'Изменить' if is_ru else 'Ўзгартириш' %}
@@ -34,10 +33,6 @@
 <style>
 .fuel-pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700; background:var(--info-light); color:var(--info); }
 </style>
-
-<div style="display:flex; justify-content:flex-end; margin-bottom:12px;">
-    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ L_back }}</a>
-</div>
 
 <div class="card" style="margin-bottom:16px; border-left:3px solid var(--info);">
     <div class="card-body" style="padding:12px 16px; font-size:13px; color:var(--info);">

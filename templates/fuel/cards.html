@@ -5,8 +5,6 @@
 
 {% set L_title = 'Справочник топливных карт' if lang == 'ru' else 'Ёқилғи карталари маълумотномаси' %}
 {% set L_subtitle = 'Каталог карт Topaz: имена, RFID, статус и синхронизация' if lang == 'ru' else 'Topaz карталари каталоги: номлар, RFID, ҳолат ва синхронизация' %}
-{% set L_back = '← Панель АЗС' if lang == 'ru' else '← АЗС панели' %}
-{% set L_reports_center = 'Центр отчётов' if lang == 'ru' else 'Ҳисоботлар маркази' %}
 {% set L_total_cards = 'Всего карт' if lang == 'ru' else 'Жами карталар' %}
 {% set L_total_aliases = 'Всего alias-привязок' if lang == 'ru' else 'Жами alias боғланишлар' %}
 {% set L_active_cards = 'Активных карт' if lang == 'ru' else 'Фаол карталар' %}
@@ -58,10 +56,6 @@
     <div>
         <h1>{{ L_title }}</h1>
         <p class="text-muted text-sm" style="margin-top:4px;">{{ L_subtitle }}</p>
-    </div>
-    <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">{{ L_back }}</a>
-        <a href="{{ url_for('fuel.reports_center') }}" class="btn btn-secondary btn-sm">{{ L_reports_center }}</a>
     </div>
 </div>
 

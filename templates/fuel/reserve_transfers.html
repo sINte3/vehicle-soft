@@ -8,7 +8,6 @@
    scoping trap that has cost this project a 500 cannot occur on this page. #}
 {% set is_ru = (lang == 'ru') %}
 {% set L_title = 'Передачи в резерв' if is_ru else 'Резервга ўтказишлар' %}
-{% set L_back = '← Дашборд' if is_ru else '← Дашборд' %}
 {% set L_info = 'Резерв — забалансовый запас Пахтасаноаттранса. Топливо стоит в общих ёмкостях и выдаётся через ту же колонку, поэтому операции отмечаются вручную.' if is_ru else 'Резерв — Пахтасаноаттранснинг балансдан ташқари захираси. Ёқилғи умумий идишларда туради ва ўша колонкадан берилади, шунинг учун операциялар қўлда белгиланади.' %}
 {% set L_from = 'С' if is_ru else 'Дан' %}
 {% set L_to = 'По' if is_ru else 'Гача' %}
@@ -38,10 +37,6 @@
 .rt-ext { color:var(--danger); font-size:12px; }
 .rt-note { font-size:12px; color:var(--text-muted); margin-top:3px; }
 </style>
-
-<div style="display:flex; justify-content:flex-end; margin-bottom:12px;">
-    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ L_back }}</a>
-</div>
 
 <div class="card" style="margin-bottom:16px; border-left:3px solid var(--info);">
     <div class="card-body" style="padding:12px 16px; font-size:13px; color:var(--info);">

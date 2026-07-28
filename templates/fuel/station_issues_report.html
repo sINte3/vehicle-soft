@@ -5,8 +5,6 @@
 
 {% set L_title = 'Выдача топлива по АЗС' if lang == 'ru' else 'АЗС бўйича ёқилғи бериш' %}
 {% set L_subtitle = 'Детальный отчёт по выдачам за период с группировкой по датам' if lang == 'ru' else 'Давр бўйича беришлар бўйича батафсил ҳисобот, саналар бўйича группаланган' %}
-{% set L_back = '← Центр отчётов' if lang == 'ru' else '← Ҳисоботлар маркази' %}
-{% set L_dashboard = 'Панель АЗС' if lang == 'ru' else 'АЗС панели' %}
 {% set L_date_from = 'Начало периода' if lang == 'ru' else 'Давр бошланиши' %}
 {% set L_date_to = 'Конец периода' if lang == 'ru' else 'Давр тугаши' %}
 {% set L_station = 'АЗС' if lang == 'ru' else 'АЗС' %}
@@ -55,10 +53,6 @@
     <div>
         <h1>{{ L_title }}</h1>
         <p class="text-muted text-sm" style="margin-top:4px;">{{ L_subtitle }}</p>
-    </div>
-    <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <a href="{{ url_for('fuel.reports_center') }}" class="btn btn-secondary btn-sm">{{ L_back }}</a>
-        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">{{ L_dashboard }}</a>
     </div>
 </div>
 
