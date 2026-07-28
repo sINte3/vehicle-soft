@@ -5990,8 +5990,19 @@ def balance_report_export():
         end_dt_exclusive=end_dt_exclusive,
     )
 
+    # [REASON]: QA fix 48 — the workbook follows the interface language like
+    # the card register and station totals exports already do; the header
+    # strings reuse the exact translations the page itself shows. Pre-existing
+    # debt, not a regression: base_headers had no language branching at all.
+    lang = _fuel_report_lang()
+
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
+
     wb = Workbook()
     ws = wb.active
+    # «ФАКТ» is the same word in Uzbek Cyrillic, so the sheet name is
+    # identical in both languages.
     ws.title = "ФАКТ"
 
     # [REASON]: FUEL-MANUAL-EXP-A3 — split the single "Расход" column into
@@ -6004,22 +6015,25 @@ def balance_report_export():
     # re-checked against this list.
     base_headers = [
         "№",
-        "Организация",
-        "Склад",
-        f"Остаток на {start_date.strftime('%d/%m/%Y')}",
-        "Приход",
-        "Выдача Topaz",
-        "Стороннее топливо",
-        "Ручной расход",
-        "Передано в резерв",
-        "Текущий остаток",
+        L("Организация", "Ташкилот"),
+        L("Склад", "Омбор"),
+        L(f"Остаток на {start_date.strftime('%d/%m/%Y')}",
+          f"{start_date.strftime('%d/%m/%Y')} даги қолдиқ"),
+        L("Приход", "Кирим"),
+        L("Выдача Topaz", "Topaz бериш"),
+        L("Стороннее топливо", "Бегона ёқилғи"),
+        L("Ручной расход", "Қўлда киритилган сарф"),
+        L("Передано в резерв", "Резервга берилган"),
+        L("Текущий остаток", "Жорий қолдиқ"),
     ]
 
     max_col = len(base_headers) + len(date_items) * 2
     day_start_col = len(base_headers) + 1
 
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max_col)
-    ws.cell(row=1, column=1).value = f"Отчёт по остаткам топлива за период {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"
+    ws.cell(row=1, column=1).value = L(
+        f"Отчёт по остаткам топлива за период {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}",
+        f"{start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')} даври учун ёқилғи қолдиқлари ҳисоботи")
     ws.cell(row=1, column=1).font = Font(bold=True, size=14)
     ws.cell(row=1, column=1).alignment = Alignment(horizontal="center")
 
@@ -6032,8 +6046,8 @@ def balance_report_export():
         ws.merge_cells(start_row=3, start_column=col, end_row=3, end_column=col + 1)
         ws.cell(row=3, column=col).value = item["date"]
         ws.cell(row=3, column=col).number_format = "dd.mm.yyyy"
-        ws.cell(row=4, column=col).value = "Приход"
-        ws.cell(row=4, column=col + 1).value = "Расход"
+        ws.cell(row=4, column=col).value = L("Приход", "Кирим")
+        ws.cell(row=4, column=col + 1).value = L("Расход", "Сарф")
         col += 2
 
     data_start_row = 5
@@ -6061,7 +6075,7 @@ def balance_report_export():
             col += 2
 
     total_row = data_start_row + len(rows)
-    ws.cell(row=total_row, column=2).value = "ИТОГО"
+    ws.cell(row=total_row, column=2).value = L("ИТОГО", "ЖАМИ")
     ws.cell(row=total_row, column=4).value = totals["opening"]
     ws.cell(row=total_row, column=5).value = totals["receipts"]
     ws.cell(row=total_row, column=6).value = totals["topaz_expenses"]
@@ -6137,7 +6151,8 @@ def balance_report_export():
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.print_title_rows = '3:4'
-    ws.oddFooter.center.text = 'Отчёт по остаткам топлива — %s — %s' % (
+    ws.oddFooter.center.text = '%s — %s — %s' % (
+        L('Отчёт по остаткам топлива', 'Ёқилғи қолдиқлари ҳисоботи'),
         start_date.strftime('%d.%m.%Y'), end_date.strftime('%d.%m.%Y'))
 
     output = BytesIO()
