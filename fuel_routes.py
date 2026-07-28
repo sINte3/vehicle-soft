@@ -4454,6 +4454,174 @@ def station_totals_export():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
+def _fuel_counter_mismatch_groups(start_dt, end_dt_exclusive):
+    """FUEL-SHIFT-001: mismatch records grouped per dispenser column/station.
+
+    [REASON]: neutral equipment accounting — these are counter discrepancies
+    recorded by Topaz (card 30), not fuel consumption, and they are not
+    attributed to any person. Volume is tiny (a handful per month), so
+    grouping happens in Python over one query.
+    """
+    rows = (db.session.query(FuelCounterMismatch, FuelStation2)
+            .outerjoin(FuelStation2,
+                       FuelStation2.id == FuelCounterMismatch.station_id)
+            .filter(FuelCounterMismatch.txn_datetime >= start_dt,
+                    FuelCounterMismatch.txn_datetime < end_dt_exclusive)
+            .order_by(FuelCounterMismatch.topaz_col_id,
+                      FuelCounterMismatch.txn_datetime,
+                      FuelCounterMismatch.id)
+            .all())
+
+    groups = {}
+    for mm, station in rows:
+        key = mm.topaz_col_id
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = {
+                'topaz_col_id': key,
+                'station_name': station.name if station else None,
+                'count': 0,
+                'litres': 0.0,
+                'rows': [],
+            }
+        g['count'] += 1
+        g['litres'] += float(mm.quantity or 0)
+        g['rows'].append(mm)
+
+    ordered = sorted(groups.values(),
+                     key=lambda g: (g['station_name'] is None,
+                                    g['station_name'] or '',
+                                    g['topaz_col_id'] or 0))
+    for g in ordered:
+        g['litres'] = round(g['litres'], 2)
+    total = {
+        'count': sum(g['count'] for g in ordered),
+        'litres': round(sum(g['litres'] for g in ordered), 2),
+        'columns': len(ordered),
+    }
+    return ordered, total
+
+
+@fuel_bp.route('/reports/counter-mismatch')
+@module_required('fuel')
+def counter_mismatch_report():
+    """FUEL-SHIFT-001: counter-mismatch report under the reports hub."""
+    today = date.today()
+    start_dt, end_dt_exclusive, start_date, end_date, preset = _fuel_parse_period(
+        request.args, today.replace(day=1), today)
+
+    groups, total = _fuel_counter_mismatch_groups(start_dt, end_dt_exclusive)
+
+    return render_template('fuel/report_counter_mismatch.html',
+                           groups=groups,
+                           total=total,
+                           start_date=start_date,
+                           end_date=end_date,
+                           period=_fuel_period_context(start_dt, end_dt_exclusive,
+                                                       start_date, end_date, preset))
+
+
+@fuel_bp.route('/reports/counter-mismatch/export')
+@module_required('fuel')
+def counter_mismatch_export():
+    """FUEL-SHIFT-001: Excel export of the counter-mismatch report."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    today = date.today()
+    start_dt, end_dt_exclusive, start_date, end_date, _preset = _fuel_parse_period(
+        request.args, today.replace(day=1), today)
+    groups, total = _fuel_counter_mismatch_groups(start_dt, end_dt_exclusive)
+    lang = _fuel_report_lang()
+
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = _safe_ws_title(L('Расхождения', 'Фарқлар'), set())
+
+    thin = Side(style='thin', color='D1D5DB')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_fill = PatternFill('solid', fgColor='D9EAD3')
+    group_fill = PatternFill('solid', fgColor='F0F9F0')
+    total_fill = PatternFill('solid', fgColor='FEF3C7')
+
+    period_label = '%s — %s' % (start_date.strftime('%d.%m.%Y'),
+                                end_date.strftime('%d.%m.%Y'))
+    ws.merge_cells('A1:F1')
+    ws['A1'] = L('Расхождения счётчиков (Topaz, карта ПЕРЕЛИВ)',
+                 'Ҳисоблагичлар фарқлари (Topaz, ПЕРЕЛИВ картаси)')
+    ws['A1'].font = Font(bold=True, size=14)
+    ws.merge_cells('A2:F2')
+    ws['A2'] = '%s: %s' % (L('Период', 'Давр'), period_label)
+    ws['A2'].font = Font(size=11, color='666666')
+
+    headers = ['№', L('Дата/время', 'Сана/вақт'),
+               L('Колонка (Topaz ID)', 'Колонка (Topaz ID)'),
+               L('АЗС', 'АЗС'), 'Topaz txn',
+               L('Литры расхождения', 'Фарқ литрлари')]
+    for col, title in enumerate(headers, start=1):
+        cell = ws.cell(row=4, column=col, value=title)
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    r = 4
+    for g in groups:
+        r += 1
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=6)
+        name = g['station_name'] or L('АЗС не определена', 'АЗС аниқланмаган')
+        cell = ws.cell(row=r, column=1,
+                       value='%s — %s %s: %d, %s: %.2f' % (
+                           name, L('колонка', 'колонка'), g['topaz_col_id'],
+                           g['count'], L('литров', 'литр'), g['litres']))
+        cell.font = Font(bold=True, size=11, color='1A6B3C')
+        cell.fill = group_fill
+        for seq, mm in enumerate(g['rows'], start=1):
+            r += 1
+            ws.cell(row=r, column=1, value=seq)
+            ws.cell(row=r, column=2,
+                    value=mm.txn_datetime.strftime('%d.%m.%Y %H:%M')
+                    if mm.txn_datetime else '')
+            ws.cell(row=r, column=3, value=mm.topaz_col_id)
+            ws.cell(row=r, column=4, value=name)
+            ws.cell(row=r, column=5, value=mm.topaz_txn_id or '')
+            ws.cell(row=r, column=6,
+                    value=round(float(mm.quantity or 0), 2)).number_format = '#,##0.00'
+
+    r += 1
+    ws.cell(row=r, column=5, value=L('ВСЕГО', 'ЖАМИ')).font = Font(bold=True, size=12)
+    cell = ws.cell(row=r, column=6, value=total['litres'])
+    cell.number_format = '#,##0.00'
+    cell.font = Font(bold=True, size=12)
+    for col in range(1, 7):
+        ws.cell(row=r, column=col).fill = total_fill
+
+    for row_cells in ws.iter_rows(min_row=4, max_row=r, min_col=1, max_col=6):
+        for cell in row_cells:
+            cell.border = border
+    for col, width in ((1, 6), (2, 18), (3, 18), (4, 26), (5, 16), (6, 18)):
+        ws.column_dimensions[get_column_letter(col)].width = width
+    ws.freeze_panes = 'A5'
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = '4:4'
+    ws.oddFooter.center.text = '%s — %s' % (
+        L('Расхождения счётчиков', 'Ҳисоблагичлар фарқлари'), period_label)
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    fname = 'fuel_counter_mismatch_%s_%s.xlsx' % (start_date.isoformat(),
+                                                  end_date.isoformat())
+    return send_file(output, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
 # ─── F4.1 FUEL-LEDGER-001: warehouse ledger page ─────────────────────
 
 @fuel_bp.route('/ledger')
