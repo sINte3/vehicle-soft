@@ -240,6 +240,18 @@ a.fuel-dash-tile:hover { text-decoration:none; color:inherit; box-shadow:var(--s
     </a>
 </div>
 
+{# F1.2 commit 26: the threshold is a stored setting, edited by an admin here #}
+{% if current_user.is_admin %}
+<form method="post" action="{{ url_for('fuel.save_low_stock_setting') }}"
+      style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:-4px 0 12px 0;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="text-muted text-sm" for="lowStockDays">{{ 'Порог низкого запаса, дней:' if lang == 'ru' else 'Кам заҳира чегараси, кун:' }}</label>
+    <input id="lowStockDays" type="number" name="low_stock_days" step="0.5" min="0.5" max="365"
+           value="{{ threshold_days|round(1) }}" class="form-control" style="width:90px;">
+    <button type="submit" class="btn btn-secondary btn-sm">{{ 'Сохранить' if lang == 'ru' else 'Сақлаш' }}</button>
+</form>
+{% endif %}
+
 {# F1.3 commit 24: the three-card hint block («1. Проверьте остатки / 2. …»)
    is gone — a newcomer needs it once, a manager never, and it occupied a
    third of the first screen. #}

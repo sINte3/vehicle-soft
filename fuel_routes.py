@@ -10,6 +10,8 @@ Flask Blueprint: /fuel/* и /api/fuel_*
 """
 
 import hmac
+import json
+import os
 from flask import (Blueprint, render_template, request, redirect,
                    url_for, flash, jsonify, abort, current_app, g, send_file)
 from flask_login import login_required, current_user
@@ -2368,10 +2370,82 @@ def fuel_report():
 
 # ─── Dashboard ────────────────────────────────────────────────────────
 
-# [REASON]: F1.2 FUEL-DASH-002 — low-stock threshold in days of stock. A
-# constant default here; commit 26 turns it into an admin-editable setting.
+# [REASON]: F1.2 FUEL-DASH-002 — low-stock threshold in days of stock,
+# stored as a setting, not a constant in a template.
 FUEL_LOW_STOCK_DAYS_DEFAULT = 3.0
 FUEL_CONSUMPTION_WINDOW_DAYS = 14
+FUEL_SETTINGS_FILENAME = 'fuel_settings.json'
+
+
+# [REASON]: F1.2 commit 26 — the project has NO settings mechanism (checked:
+# no settings table, no key-value store; config.py is env/class based and not
+# admin-editable at runtime). This is the smallest possible one: a JSON file
+# in the Flask instance directory (beside transport.db, gitignored, survives
+# restarts, needs no schema change — the increment's single migration stays
+# the counter-mismatch one). If a real settings table appears later, these
+# three helpers are the only place to rewire.
+def _fuel_settings_path():
+    return os.path.join(current_app.instance_path, FUEL_SETTINGS_FILENAME)
+
+
+def _fuel_settings_load():
+    try:
+        with open(_fuel_settings_path(), 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _fuel_settings_save(settings):
+    path = _fuel_settings_path()
+    tmp_path = path + '.tmp'
+    with open(tmp_path, 'w', encoding='utf-8') as fh:
+        json.dump(settings, fh, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+
+
+def _fuel_low_stock_days():
+    """Low-stock threshold in days of stock; sane fallback on bad data."""
+    try:
+        value = float(_fuel_settings_load().get('low_stock_days',
+                                                FUEL_LOW_STOCK_DAYS_DEFAULT))
+    except (TypeError, ValueError):
+        return FUEL_LOW_STOCK_DAYS_DEFAULT
+    return value if 0 < value <= 365 else FUEL_LOW_STOCK_DAYS_DEFAULT
+
+
+@fuel_bp.route('/settings/low-stock', methods=['POST'])
+@module_required('fuel')
+@admin_required_fuel
+def save_low_stock_setting():
+    """F1.2 commit 26: admin edits the low-stock threshold (days of stock)."""
+    raw = (request.form.get('low_stock_days') or '').replace(',', '.').strip()
+    try:
+        days = float(raw)
+    except ValueError:
+        days = None
+    if days is None or not (0 < days <= 365):
+        flash(fuel_t('Чегара 0 дан катта ва 365 дан кичик кун бўлиши керак.',
+                     'Порог должен быть больше 0 и не больше 365 дней.'),
+              'warning')
+        return redirect(url_for('fuel.dashboard'))
+
+    settings = _fuel_settings_load()
+    before = settings.get('low_stock_days', FUEL_LOW_STOCK_DAYS_DEFAULT)
+    settings['low_stock_days'] = days
+    _fuel_settings_save(settings)
+    _audit_fuel(
+        'fuel_setting_updated',
+        entity_type='fuel_setting',
+        entity_label='low_stock_days',
+        before={'low_stock_days': before},
+        after={'low_stock_days': days},
+        description='Low-stock threshold updated',
+    )
+    db.session.commit()
+    flash(fuel_t('Чегара сақланди.', 'Порог сохранён.'), 'success')
+    return redirect(url_for('fuel.dashboard'))
 
 
 @fuel_bp.route('/')
@@ -2415,7 +2489,7 @@ def dashboard():
     days_left_total = (round(total_fuel / mean_daily_total, 1)
                        if mean_daily_total > 0 and total_fuel > 0 else None)
 
-    threshold_days = FUEL_LOW_STOCK_DAYS_DEFAULT
+    threshold_days = _fuel_low_stock_days()
     low_stock_count = 0
     for wh_id, bal in balances.items():
         m = mean_daily.get(wh_id, 0.0)
