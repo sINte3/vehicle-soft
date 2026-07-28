@@ -4131,6 +4131,31 @@ def card_directory():
 
 # ─── F2.4 FUEL-REPORTS-FINISH-007: card register + station totals ────
 
+def _fuel_external_litres_window(start_dt, end_dt_exclusive):
+    """Litres dispensed on EXTERNAL_FUEL_CARDS cards inside the window, over
+    the UI-visible warehouses, honouring each card's rule-start date.
+
+    [REASON]: QA fix 45 — the card register and station totals report RAW
+    dispensing while the balance report nets external fuel out (582 106.73 vs
+    598 781.58 on the May–July window: the 16 674.85 difference is exactly
+    this figure). Both screens show it as a separate line so a manager does
+    not discover a phantom "shortfall" by comparing the two reports.
+    """
+    total = 0.0
+    for card, rule_start in EXTERNAL_FUEL_CARDS.items():
+        lower = max(start_dt, datetime.combine(rule_start, datetime.min.time()))
+        if lower >= end_dt_exclusive:
+            continue
+        q = (db.session.query(func.coalesce(func.sum(FuelTransaction2.quantity), 0))
+             .join(FuelStation2, FuelStation2.id == FuelTransaction2.station_id)
+             .filter(FuelTransaction2.card_number == card,
+                     FuelTransaction2.txn_datetime >= lower,
+                     FuelTransaction2.txn_datetime < end_dt_exclusive))
+        q = fuel_apply_warehouse_filter_for_ui(q, FuelStation2.warehouse_id)
+        total += float(q.scalar() or 0)
+    return round(total, 2)
+
+
 def _fuel_card_issue_groups(start_dt, end_dt_exclusive):
     """Issues in the window grouped per card, with per-card subtotals.
 
@@ -4194,6 +4219,8 @@ def card_issues_report():
     return render_template('fuel/report_card_issues.html',
                            groups=groups,
                            total=total,
+                           external_litres=_fuel_external_litres_window(
+                               start_dt, end_dt_exclusive),
                            start_date=start_date,
                            end_date=end_date,
                            period=_fuel_period_context(start_dt, end_dt_exclusive,
@@ -4363,6 +4390,8 @@ def station_totals_report():
     return render_template('fuel/report_station_totals.html',
                            rows=rows,
                            total=total,
+                           external_litres=_fuel_external_litres_window(
+                               start_dt, end_dt_exclusive),
                            start_date=start_date,
                            end_date=end_date,
                            period=_fuel_period_context(start_dt, end_dt_exclusive,

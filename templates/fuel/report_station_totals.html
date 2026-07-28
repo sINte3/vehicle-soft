@@ -31,6 +31,15 @@
     </div>
 </div>
 
+{# QA fix 45 — same permanent note as the card register: totals count every
+   litre dispensed through our columns, third-party fuel included, so they
+   exceed the balance report's «Выдача Topaz» by exactly that amount. #}
+<div class="card" style="margin-bottom:16px; border-left:3px solid var(--info);">
+    <div class="card-body" style="padding:12px 16px; font-size:13px; color:var(--info);">
+        {{ 'В итоги входит стороннее топливо, выданное через наши колонки: оно не входит в остатки складов, поэтому итог здесь больше «Выдачи Topaz» в отчёте по остаткам ровно на сумму стороннего топлива. Источник складских остатков — ' if is_ru else 'Якунларга бизнинг колонкалар орқали берилган бегона ёқилғи ҳам киради: у омбор қолдиқларига кирмайди, шунинг учун бу ердаги якун қолдиқлар ҳисоботидаги «Topaz бериш»дан айнан бегона ёқилғи суммасига кўп. Омбор қолдиқлари манбаи — ' }}<a href="{{ url_for('fuel.balance_report') }}">{{ 'отчёт по остаткам' if is_ru else 'қолдиқлар ҳисоботи' }}</a>.
+    </div>
+</div>
+
 <div class="card fuel-no-print" style="margin-bottom:16px; padding:16px;">
     <form method="get" action="{{ url_for('fuel.station_totals_report') }}"
           style="display:flex; flex-direction:column; gap:12px;">
@@ -54,6 +63,7 @@
     <div class="stat-card"><div class="label">{{ 'АЗС с выдачами' if is_ru else 'Беришли АЗСлар' }}</div><div class="value">{{ total.stations }}</div></div>
     <div class="stat-card"><div class="label">{{ 'Выдач' if is_ru else 'Беришлар' }}</div><div class="value">{{ total.count }}</div></div>
     <div class="stat-card"><div class="label">{{ 'Итого литров' if is_ru else 'Жами литр' }}</div><div class="value" style="color:var(--danger);">{{ '%.2f'|format(total.litres) }} л</div></div>
+    <div class="stat-card"><div class="label">{{ 'в т.ч. стороннее топливо' if is_ru else 'шу жумладан бегона ёқилғи' }}</div><div class="value" style="color:var(--text2);">{{ '%.2f'|format(external_litres) }} л</div><div class="text-muted text-xs">{{ 'не входит в остатки складов' if is_ru else 'омбор қолдиқларига кирмайди' }}</div></div>
 </div>
 
 <div class="card" style="overflow:hidden;">
