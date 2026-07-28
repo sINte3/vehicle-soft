@@ -2103,12 +2103,10 @@ def _fuel_report_workbook(data, lang='uz'):
         ws.append([L('OK', 'OK'), L('Критических проблем не найдено', 'Критик муаммолар топилмади'), '', ''])
     style_table(ws)
 
-    ws = wb.create_sheet(_safe_ws_title(L('Склады', 'Омборлар'), used))
-    ws.append([L('Склад', 'Омбор'), L('АЗС', 'АЗС'), L('Начальный остаток', 'Бошланғич қолдиқ'), L('Приход', 'Кирим'), L('Выдача Topaz', 'Topaz бериш'), L('Стороннее топливо', 'Бегона ёқилғи'), L('Ручной расход', 'Қўлда киритилган сарф'), L('Передано в резерв', 'Резервга берилган'), L('Расчётный остаток', 'Ҳисобий қолдиқ'), L('Транзакций', 'Транзакциялар'), L('Последняя выдача', 'Охирги бериш')])
-    for r in data['warehouse_rows']:
-        last = r['last_txn'].txn_datetime.strftime('%d.%m.%Y %H:%M') if r['last_txn'] else ''
-        ws.append([r['warehouse'].name, r['stations_count'], r['opening'], r['receipts'], r['issued'], r.get('external', 0), r.get('manual', 0), r.get('reserve_out', 0), r['ending'], r['tx_count'], last])
-    style_table(ws)
+    # [REASON]: F1.3 FUEL-REPORT-SPLIT-003 — the warehouse sheet is gone: it
+    # duplicated the balance report, and the duplication had already produced
+    # a wrong conclusion by the owner. Stock lives in /fuel/balance-report
+    # (and its export) only. Every other sheet stays.
 
     ws = wb.create_sheet(_safe_ws_title(L('АЗС', 'АЗС'), used))
     ws.append([L('АЗС', 'АЗС'), 'Topaz ID', L('Склад', 'Омбор'), L('Активна', 'Фаол'), L('Выдано, л', 'Берилди, л'), L('Транзакций', 'Транзакциялар'), L('Последняя выдача', 'Охирги бериш')])

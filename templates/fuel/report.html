@@ -1,5 +1,5 @@
 {% extends g.base_template %}
-{% block title %}АЗС — {{ 'Отчёт по топливу' if lang == 'ru' else 'Ёқилғи ҳисоботи' }}{% endblock %}
+{% block title %}АЗС — {{ 'Контроль АЗС и синхронизации' if lang == 'ru' else 'АЗС ва синхронизация назорати' }}{% endblock %}
 {% block content %}
 {% include 'fuel/_fuel_nav.html' %}
 {% set show_legacy = request.args.get('show_legacy') == '1' %}
@@ -161,8 +161,10 @@ form.fuel002d-filter-form {
 
 
 
-{% set L_title = 'Отчёт по топливу' if lang == 'ru' else 'Ёқилғи ҳисоботи' %}
-{% set L_subtitle = 'Сводка по ДТ: начальные остатки, приходы, выдачи Topaz, расчётные остатки и синхронизация.' if lang == 'ru' else 'ДТ бўйича сводка: бошланғич қолдиқ, киримлар, Topaz беришлари, ҳисобий қолдиқлар ва синхронизация.' %}
+{# F1.3 · FUEL-REPORT-SPLIT-003: this page is the АЗС-and-sync control screen;
+   stock lives in the balance report only. Same URL — somebody is used to it. #}
+{% set L_title = 'Контроль АЗС и синхронизации' if lang == 'ru' else 'АЗС ва синхронизация назорати' %}
+{% set L_subtitle = 'Работа АЗС и агента Topaz за период: активность станций, транзакции, неизвестные АЗС, предупреждения и журнал синхронизации.' if lang == 'ru' else 'Давр учун АЗС ва Topaz агенти иши: станциялар фаоллиги, транзакциялар, номаълум АЗСлар, огоҳлантиришлар ва синхронизация журнали.' %}
 {% set L_back = '← Дашборд' if lang == 'ru' else '← Дашборд' %}
 {% set L_from = 'С' if lang == 'ru' else 'Дан' %}
 {% set L_to = 'По' if lang == 'ru' else 'Гача' %}
@@ -272,25 +274,29 @@ form.fuel002d-filter-form {
 <div class="card" style="margin-bottom:16px;">
     <div class="card-body">
         
-<div class="fuel002d-context-strip">
-  {# [REASON]: FUEL-BIG-001 — the plate shows the computed warehouse count for
-     the current mode (wh_counts), not the raw table length, which counted
-     archived warehouses too and overstated the figure. #}
+{# F1.3 · FUEL-REPORT-SPLIT-003 — the plates serve the page's new purpose:
+   АЗС and synchronisation control. The old set read «Склады 30 · АЗС 24 ·
+   Виды топлива 1 · Экспорт XLSX», of which one was useful. #}
+<div class="fuel002d-context-strip" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
   <div class="fuel002d-pill">
-    <span>{{ t('Омборлар') }}</span>
-    <strong>{{ wh_counts.all if show_legacy else wh_counts.working }}</strong>
+    <span>{{ 'Активных АЗС' if lang == 'ru' else 'Фаол АЗСлар' }}</span>
+    <strong>{{ station_rows|selectattr('is_active')|list|length }}</strong>
   </div>
   <div class="fuel002d-pill">
-    <span>{{ t('АЗСлар') }}</span>
-    <strong>{{ stations|length }}</strong>
+    <span>{{ 'Транзакций за период' if lang == 'ru' else 'Давр учун транзакциялар' }}</span>
+    <strong>{{ totals.transactions }}</strong>
   </div>
   <div class="fuel002d-pill">
-    <span>{{ t('Ёқилғи турлари') }}</span>
-    <strong>{{ fuel_types|length }}</strong>
+    <span>{{ 'Неизвестных АЗС' if lang == 'ru' else 'Номаълум АЗСлар' }}</span>
+    <strong {% if sync_summary.unknown %}style="color:var(--danger);"{% endif %}>{{ sync_summary.unknown }}</strong>
   </div>
   <div class="fuel002d-pill">
-    <span>{{ t('Экспорт') }}</span>
-    <strong>XLSX</strong>
+    <span>{{ 'Открытых предупреждений' if lang == 'ru' else 'Очиқ огоҳлантиришлар' }}</span>
+    <strong {% if warnings_summary.danger %}style="color:var(--danger);"{% elif warnings_summary.total %}style="color:var(--warn);"{% endif %}>{{ warnings_summary.total }}</strong>
+  </div>
+  <div class="fuel002d-pill">
+    <span>{{ 'Последняя синхронизация' if lang == 'ru' else 'Охирги синхронизация' }}</span>
+    <strong>{% if latest_sync and latest_sync.synced_at %}{{ latest_sync.synced_at.strftime('%d.%m %H:%M') }}{% else %}—{% endif %}</strong>
   </div>
 </div>
 
@@ -340,19 +346,10 @@ form.fuel002d-filter-form {
     </div>
 </div>
 
-<div class="fuel-report-stats">
-    <div class="stat-card"><div class="label">{{ L_opening }}</div><div class="value">{{ '%.0f'|format(totals.opening) }} л</div></div>
-    <div class="stat-card"><div class="label">{{ L_receipts }}</div><div class="value" style="color:var(--accent);">+{{ '%.0f'|format(totals.receipts) }} л</div></div>
-    <div class="stat-card"><div class="label">{{ L_issued }}</div><div class="value" style="color:var(--danger);">-{{ '%.0f'|format(totals.issued) }} л</div></div>
-    <div class="stat-card"><div class="label">{{ L_external }}</div><div class="value text-muted" title="{{ L_external_note }}">{{ '%.0f'|format(totals.external or 0) }} л</div></div>
-    <div class="stat-card"><div class="label">{{ L_manual }}</div><div class="value" style="color:var(--danger);">-{{ '%.0f'|format(totals.manual) }} л</div></div>
-    {# FUEL-RESERVE: reference tile, muted like external #}
-    <div class="stat-card"><div class="label">{{ L_reserve }}</div><div class="value text-muted" title="{{ L_reserve_note }}">{{ '%.0f'|format(totals.reserve_out or 0) }} л</div></div>
-    <div class="stat-card"><div class="label">{{ L_ending }}</div><div class="value">{{ '%.0f'|format(totals.ending) }} л</div></div>
-    <div class="stat-card"><div class="label">{{ L_tx }}</div><div class="value">{{ totals.transactions }}</div></div>
-    <div class="stat-card"><div class="label">{{ L_sync_unknown }}</div><div class="value" {% if sync_summary.unknown %}style="color:var(--danger);"{% endif %}>{{ sync_summary.unknown }}</div></div>
-    <div class="stat-card"><div class="label">{{ L_warn_count }}</div><div class="value" {% if warnings_summary.danger %}style="color:var(--danger);"{% elif warnings_summary.warning %}style="color:var(--warn);"{% endif %}>{{ warnings_summary.total }}</div></div>
-</div>
+{# F1.3 · FUEL-REPORT-SPLIT-003 — the stock stat tiles (opening, receipts,
+   issued, manual, external, reserve, closing) are gone with the warehouse
+   table: they duplicated the balance report, which is now the single source
+   of stock. The remaining sync/warning figures live in the plates above. #}
 
 <div class="card" style="margin-bottom:24px;">
     <div class="card-header">{{ L_warnings }} ({{ warnings_summary.total }})</div>
@@ -380,52 +377,9 @@ form.fuel002d-filter-form {
     <span class="text-muted text-sm" id="fuelReportVisibleCount"></span>
 </div>
 
-<div class="card" style="margin-bottom:24px;">
-    <div class="card-header">{{ L_warehouses }} ({{ warehouse_rows|length }})</div>
-    <div style="overflow-x:auto;">
-    <div class="fuel002d-table-wrap FUEL002D_TABLE_WRAP_MARKER_1">
-<table id="warehouseReportTable" class="fuel002d-report-table">
-        <thead>
-            <tr>
-                <th>{{ L_wh }}</th><th class="text-center">{{ L_station }}</th><th class="text-right">{{ L_opening }}</th><th class="text-right">{{ L_receipts }}</th><th class="text-right">{{ L_issued }}</th><th class="text-right text-muted" title="{{ L_external_note }}">{{ L_external }}</th><th class="text-right">{{ L_manual }}</th><th class="text-right text-muted" title="{{ L_reserve_note }}">{{ L_reserve }}</th><th class="text-right">{{ L_ending }}</th><th class="text-right">{{ L_tx }}</th><th>{{ L_status }}</th><th>{{ L_last }}</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for r in warehouse_rows %}
-        <tr class="fuel-report-row" data-search="{{ (r.warehouse.name ~ ' ' ~ (r.last_txn.station.name if r.last_txn else ''))|lower }}">
-            <td style="font-weight:700;">{{ r.warehouse.name }}</td>
-            <td class="text-center">{{ r.stations_count }}</td>
-            <td class="text-right">{% if r.opening is none %}<span class="fuel-status warn">{{ L_missing }}</span>{% else %}{{ '%.2f'|format(r.opening) }}{% endif %}</td>
-            <td class="text-right" style="color:var(--accent);">{{ '%.2f'|format(r.receipts) }}</td>
-            <td class="text-right" style="color:var(--danger);">{{ '%.2f'|format(r.issued) }}</td>
-            <td class="text-right text-muted">{{ '%.2f'|format(r.external or 0) }}</td>
-            <td class="text-right" style="color:var(--danger);">
-                {%- if r.manual and current_user.is_admin -%}
-                <a href="{{ url_for('fuel.manual_expenses', warehouse_id=r.warehouse.id, date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" title="{{ L_manual }}">{{ '%.2f'|format(r.manual) }}</a>
-                {%- else -%}
-                {{ '%.2f'|format(r.manual or 0) }}
-                {%- endif -%}
-            </td>
-            {# FUEL-RESERVE: non-zero reserve transfer drills into the marking screen pre-filtered by warehouse and period; admin-only because that page is admin-only #}
-            <td class="text-right text-muted">
-                {%- if r.reserve_out and current_user.is_admin -%}
-                <a href="{{ url_for('fuel.reserve_transfers', warehouse_id=r.warehouse.id, start_date=d_from.isoformat(), end_date=d_to.isoformat()) }}" title="{{ L_reserve }}">{{ '%.2f'|format(r.reserve_out) }}</a>
-                {%- else -%}
-                {{ '%.2f'|format(r.reserve_out or 0) }}
-                {%- endif -%}
-            </td>
-            <td class="text-right" style="font-weight:700;">{% if r.ending is none %}—{% else %}{{ '%.2f'|format(r.ending) }}{% endif %}</td>
-            <td class="text-right">{{ r.tx_count }}</td>
-            <td>{% if r.ending is none %}<span class="fuel-status warn">{{ L_missing }}</span>{% elif r.ending < 0 %}<span class="fuel-status danger">{{ L_negative }}</span>{% else %}<span class="fuel-status ok">OK</span>{% endif %}</td>
-            <td class="text-sm text-muted">{% if r.last_txn %}{{ r.last_txn.txn_datetime.strftime('%d.%m.%Y %H:%M') }}<br>{{ r.last_txn.station.name }}{% else %}—{% endif %}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-</div>
-    <div class="fuel002d-section-note" style="padding:10px 14px 0;">{{ L_external_note }}</div>
-    </div>
-</div>
+{# F1.3 · FUEL-REPORT-SPLIT-003 — the «По складам» table is removed: it
+   duplicated the balance report, and that duplication had already produced a
+   wrong conclusion by the owner. Stock is /fuel/balance-report's job. #}
 
 <div class="card" style="margin-bottom:24px;">
     <div class="card-header">{{ L_stations }} ({{ station_rows|length }})</div>

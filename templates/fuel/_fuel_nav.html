@@ -83,9 +83,10 @@
 
   {# [REASON]: /fuel/report keeps its own pill because it is a diagnostic screen
      for the operator, not a report; it is deliberately not a tile in the
-     reports centre. #}
+     reports centre. F1.3 renamed it: АЗС-and-sync control, stock lives in
+     the balance report. #}
   <a href="{{ url_for('fuel.fuel_report') }}"
-     class="vs-pill{% if fuel_ep == 'fuel.fuel_report' %} is-active{% endif %}">{{ 'Отчёт по топливу' if is_ru else 'Ёқилғи ҳисоботи' }}</a>
+     class="vs-pill{% if fuel_ep == 'fuel.fuel_report' %} is-active{% endif %}">{{ 'Контроль АЗС' if is_ru else 'АЗС назорати' }}</a>
 
   {# [REASON]: Отчёты is a plain link to the reports centre, not a dropdown
      (owner decision). It stays highlighted on the station-issues report, which
