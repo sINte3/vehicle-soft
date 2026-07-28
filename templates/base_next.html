@@ -10,10 +10,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Бошқарув{% endblock %} — Бухоро Агрокластер</title>
 
-  {# Fonts — Golos Text имеет полную кириллицу #}
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  {# [REASON]: UI-FONT-LOCAL-001 — no external font request: this system runs
+     on-premises with no guaranteed internet route, and every page waited on
+     the fonts.googleapis.com timeout. System fonts only (see --vs-font in
+     design-system.css); no font binaries are vendored. #}
 
   {# Design system — ВСЕГДА первым CSS-файлом #}
   <link rel="stylesheet" href="{{ static_v('css/design-system.css') }}">

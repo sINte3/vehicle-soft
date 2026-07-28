@@ -70,8 +70,9 @@
   --vs-content-pad:   24px;
   --vs-content-max: 1520px;
 
-  /* Type */
-  --vs-font: 'Golos Text', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  /* Type — UI-FONT-LOCAL-001: system stack only, no external font (the app
+     runs on-premises with no guaranteed internet route) */
+  --vs-font: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
   --vs-fs-xs: 11px; --vs-fs-sm: 12px; --vs-fs:    13px;
   --vs-fs-md:14px;  --vs-fs-lg: 17px; --vs-fs-xl: 21px; --vs-fs-2xl: 23px;
 
