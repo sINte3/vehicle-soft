@@ -75,15 +75,8 @@
           style="margin-top:14px; display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end;">
         {# FUEL-BIG-001: rebuilding the report must not silently drop the archive mode #}
         {% if show_legacy %}<input type="hidden" name="show_legacy" value="1">{% endif %}
-        <div style="min-width:170px;">
-            <label style="display:block; margin-bottom:5px;">{{ L_date_from }}</label>
-            <input type="date" name="start_date" value="{{ start_date.isoformat() }}" class="form-control" style="width:170px;">
-        </div>
-
-        <div style="min-width:170px;">
-            <label style="display:block; margin-bottom:5px;">{{ L_date_to }}</label>
-            <input type="date" name="end_date" value="{{ end_date.isoformat() }}" class="form-control" style="width:170px;">
-        </div>
+        {# F2.1 FUEL-DATETIME-004: shared period picker — dates, times, presets #}
+        {% include 'fuel/_period_picker.html' %}
 
         <div style="min-width:180px;">
             <label style="display:block; margin-bottom:5px;">{{ L_zero_wh }}</label>
@@ -96,7 +89,7 @@
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button type="submit" class="btn btn-primary">{{ L_build }}</button>
             <a class="btn btn-secondary"
-               href="{{ url_for('fuel.balance_report_export', start_date=start_date.isoformat(), end_date=end_date.isoformat(), hide_zero='0' if show_zero else '1', show_legacy='1' if show_legacy else none) }}">
+               href="{{ url_for('fuel.balance_report_export', start_date=period.start_date, end_date=period.end_date, start_time=period.start_time, end_time=period.end_time, hide_zero='0' if show_zero else '1', show_legacy='1' if show_legacy else none) }}">
                 {{ L_download_excel }}
             </a>
         </div>
@@ -141,7 +134,7 @@
 <div class="card" style="padding:0; overflow:hidden;">
     <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; padding:16px; border-bottom:1px solid var(--border); flex-wrap:wrap;">
         <div>
-            <h2 style="margin:0;">ФАКТ: {{ start_date.strftime('%d.%m.%Y') }} — {{ end_date.strftime('%d.%m.%Y') }}</h2>
+            <h2 style="margin:0;">ФАКТ: {{ start_date.strftime('%d.%m.%Y') }}{% if period.start_time != '00:00' %} {{ period.start_time }}{% endif %} — {{ end_date.strftime('%d.%m.%Y') }}{% if period.end_time != '23:59' %} {{ period.end_time }}{% endif %}</h2>
             <div class="text-muted" style="margin-top:4px;">
                 {{ L_table_desc }}
             </div>

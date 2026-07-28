@@ -889,8 +889,17 @@ def _fuel_manual_expense_map(warehouse_ids, fuel_type=None, date_from=None,
 # returns an empty dict without touching the database, mirroring
 # _fuel_manual_expense_map above.
 def _fuel_external_expense_map(warehouse_ids, fuel_type=None, date_from=None,
-                              date_to=None, lower_bounds=None, station_id=None):
+                              date_to=None, lower_bounds=None, station_id=None,
+                              dt_from=None, dt_to_exclusive=None):
     """Return {(warehouse_id, fuel_type): litres} of external-card Topaz issues.
+
+    [REASON]: F2.1 FUEL-DATETIME-004 — ``dt_from`` / ``dt_to_exclusive``
+    override the datetime bounds derived from ``date_from`` / ``date_to`` in
+    the GLOBAL window mode, so a time-narrowed report period reaches this map
+    exactly. The per-warehouse ``lower_bounds`` mode is date-based by design
+    (it serves opening balances, which time never shifts) and ignores them.
+    A card's own start date still applies: the effective lower bound is
+    ``max(window lower, card start 00:00)``.
 
     Mirrors _fuel_manual_expense_map's shape and window modes, but reads
     FuelTransaction2 (joined to FuelStation2 for the warehouse) and only the
@@ -925,8 +934,9 @@ def _fuel_external_expense_map(warehouse_ids, fuel_type=None, date_from=None,
     def _low(d):
         return datetime.combine(d, datetime.min.time())
 
-    upper_exclusive = (datetime.combine(date_to + timedelta(days=1), datetime.min.time())
-                       if date_to is not None else None)
+    upper_exclusive = dt_to_exclusive
+    if upper_exclusive is None and date_to is not None:
+        upper_exclusive = datetime.combine(date_to + timedelta(days=1), datetime.min.time())
 
     q = (db.session.query(
             FuelStation2.warehouse_id,
@@ -962,11 +972,15 @@ def _fuel_external_expense_map(warehouse_ids, fuel_type=None, date_from=None,
     else:
         if fuel_type:
             q = q.filter(FuelTransaction2.fuel_type == fuel_type)
+        base_lower = dt_from
+        if base_lower is None and date_from is not None:
+            base_lower = _low(date_from)
         for card, start in EXTERNAL_FUEL_CARDS.items():
-            effective = start if (date_from is None or date_from <= start) else date_from
+            card_lower = _low(start)
+            effective = card_lower if (base_lower is None or base_lower <= card_lower) else base_lower
             cond = and_(
                 FuelTransaction2.card_number == card,
-                FuelTransaction2.txn_datetime >= _low(effective),
+                FuelTransaction2.txn_datetime >= effective,
             )
             if upper_exclusive is not None:
                 cond = and_(cond, FuelTransaction2.txn_datetime < upper_exclusive)
@@ -989,8 +1003,15 @@ def _fuel_external_expense_map(warehouse_ids, fuel_type=None, date_from=None,
 # The mark table is tiny (a handful per month), so the single un-grouped query is
 # cheap and is emphatically not an N+1: it does not scale with the warehouse count.
 def _fuel_reattribution_maps(warehouse_ids, fuel_type=None, date_from=None,
-                             date_to=None, lower_bounds=None, station_id=None):
+                             date_to=None, lower_bounds=None, station_id=None,
+                             dt_from=None, dt_to_exclusive=None):
     """Return (out_map, in_map) for active reserve marks.
+
+    [REASON]: F2.1 FUEL-DATETIME-004 — ``dt_from`` / ``dt_to_exclusive``
+    override the datetime bounds derived from ``date_from`` / ``date_to`` in
+    the GLOBAL window mode, so a time-narrowed report period reaches these
+    maps exactly. The per-warehouse ``lower_bounds`` mode stays date-based
+    (it serves opening balances) and ignores them.
 
     out_map: {(source_warehouse_id, fuel_type): litres} leaving each source.
     in_map:  {(target_warehouse_id, fuel_type): litres} arriving at each target.
@@ -1022,8 +1043,9 @@ def _fuel_reattribution_maps(warehouse_ids, fuel_type=None, date_from=None,
     def _low(d):
         return datetime.combine(d, datetime.min.time())
 
-    upper_exclusive = (datetime.combine(date_to + timedelta(days=1), datetime.min.time())
-                       if date_to is not None else None)
+    upper_exclusive = dt_to_exclusive
+    if upper_exclusive is None and date_to is not None:
+        upper_exclusive = datetime.combine(date_to + timedelta(days=1), datetime.min.time())
 
     # One query: active marks → their transaction → the source station's warehouse.
     q = (db.session.query(
@@ -1047,7 +1069,9 @@ def _fuel_reattribution_maps(warehouse_ids, fuel_type=None, date_from=None,
     if not lower_bounds:
         if fuel_type:
             q = q.filter(FuelTransaction2.fuel_type == fuel_type)
-        if date_from is not None:
+        if dt_from is not None:
+            q = q.filter(FuelTransaction2.txn_datetime >= dt_from)
+        elif date_from is not None:
             q = q.filter(FuelTransaction2.txn_datetime >= _low(date_from))
 
     out_map = {}
@@ -4017,9 +4041,14 @@ def _fuel_report_daily_receipts(warehouse_id, fuel_type, start_date, end_date):
     }
 
 
-def _fuel_report_daily_expenses(warehouse_id, fuel_type, start_date, end_date):
-    start_dt = datetime.combine(start_date, datetime.min.time())
-    end_dt = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+def _fuel_report_daily_expenses(warehouse_id, fuel_type, start_date, end_date,
+                                start_dt=None, end_dt_exclusive=None):
+    # [REASON]: F2.1 FUEL-DATETIME-004 — the optional datetime bounds clamp the
+    # window so the daily Topaz columns still sum to the time-narrowed period
+    # figure. Defaults reproduce the old midnight boundaries exactly.
+    start_dt = start_dt if start_dt is not None else datetime.combine(start_date, datetime.min.time())
+    end_dt = (end_dt_exclusive if end_dt_exclusive is not None
+              else datetime.combine(end_date + timedelta(days=1), datetime.min.time()))
 
     rows = (
         db.session.query(
@@ -4050,13 +4079,17 @@ def _fuel_report_daily_expenses(warehouse_id, fuel_type, start_date, end_date):
 # only from its own start date. One grouped query for all warehouses so the
 # per-warehouse loop in _fuel_report_build_rows adds no query. Empty rule or
 # empty warehouse list touches no database.
-def _fuel_report_daily_external(warehouse_ids, fuel_type, start_date, end_date):
+def _fuel_report_daily_external(warehouse_ids, fuel_type, start_date, end_date,
+                                start_dt=None, end_dt_exclusive=None):
     ids = [int(x) for x in (warehouse_ids or []) if x]
     if not ids or not EXTERNAL_FUEL_CARDS:
         return {}
 
-    start_dt = datetime.combine(start_date, datetime.min.time())
-    end_dt = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+    # [REASON]: F2.1 FUEL-DATETIME-004 — optional clamps, as in
+    # _fuel_report_daily_expenses; each card's own start date still applies.
+    start_dt = start_dt if start_dt is not None else datetime.combine(start_date, datetime.min.time())
+    end_dt = (end_dt_exclusive if end_dt_exclusive is not None
+              else datetime.combine(end_date + timedelta(days=1), datetime.min.time()))
 
     card_conditions = []
     for card, start in EXTERNAL_FUEL_CARDS.items():
@@ -4098,14 +4131,18 @@ def _fuel_report_daily_external(warehouse_ids, fuel_type, start_date, end_date):
 # adds no query. Both are needed so the daily columns still sum to the period
 # expense on BOTH the source warehouse and the reserve. External-fuel issues are
 # excluded so they never move twice.
-def _fuel_report_daily_reattribution(warehouse_ids, fuel_type, start_date, end_date):
+def _fuel_report_daily_reattribution(warehouse_ids, fuel_type, start_date, end_date,
+                                     start_dt=None, end_dt_exclusive=None):
     ids = [int(x) for x in (warehouse_ids or []) if x]
     if not ids:
         return {}, {}
     id_set = set(ids)
 
-    start_dt = datetime.combine(start_date, datetime.min.time())
-    end_dt = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+    # [REASON]: F2.1 FUEL-DATETIME-004 — optional clamps, as in
+    # _fuel_report_daily_expenses.
+    start_dt = start_dt if start_dt is not None else datetime.combine(start_date, datetime.min.time())
+    end_dt = (end_dt_exclusive if end_dt_exclusive is not None
+              else datetime.combine(end_date + timedelta(days=1), datetime.min.time()))
 
     rows = (db.session.query(
                 FuelStation2.warehouse_id,
@@ -4228,10 +4265,19 @@ def _fuel_opening_for(warehouse_id, fuel_type, start_date,
             + reattr_before_out - reattr_before_in)
 
 
-def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="ДТ"):
+def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="ДТ",
+                            start_dt=None, end_dt_exclusive=None):
+    # [REASON]: F2.1 FUEL-DATETIME-004 — optional datetime bounds narrow the
+    # window for TRANSACTION sums (period and daily). Receipts, manual expenses
+    # and initial balances stay date-windowed because those tables store no
+    # time — the rule printed on the period picker. The opening window remains
+    # [initial_date, start_date), a date window: time within the first day
+    # never shifts the opening. Defaults are the old midnight boundaries.
     date_items = _fuel_report_date_items(start_date, end_date)
-    start_dt = datetime.combine(start_date, datetime.min.time())
-    end_dt_exclusive = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+    if start_dt is None:
+        start_dt = datetime.combine(start_date, datetime.min.time())
+    if end_dt_exclusive is None:
+        end_dt_exclusive = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
 
     warehouses = (
         fuel_warehouse_query_for_ui()
@@ -4301,10 +4347,13 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
         external_before_by_wh = {wid: litres for (wid, _ft), litres in _before_map.items()}
 
     _period_map = _fuel_external_expense_map(
-        warehouse_ids, fuel_type=fuel_type, date_from=start_date, date_to=end_date)
+        warehouse_ids, fuel_type=fuel_type,
+        dt_from=start_dt, dt_to_exclusive=end_dt_exclusive)
     external_period_by_wh = {wid: litres for (wid, _ft), litres in _period_map.items()}
 
-    external_daily_map = _fuel_report_daily_external(warehouse_ids, fuel_type, start_date, end_date)
+    external_daily_map = _fuel_report_daily_external(
+        warehouse_ids, fuel_type, start_date, end_date,
+        start_dt=start_dt, end_dt_exclusive=end_dt_exclusive)
 
     # [REASON]: FUEL-RESERVE — reserve maps computed once for all warehouses (no
     # per-warehouse query), mirroring the external maps above. "before" adjusts
@@ -4323,12 +4372,14 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
         reattr_before_in_by_wh = {wid: l for (wid, _ft), l in _r_before_in.items()}
 
     _r_period_out, _r_period_in = _fuel_reattribution_maps(
-        warehouse_ids, fuel_type=fuel_type, date_from=start_date, date_to=end_date)
+        warehouse_ids, fuel_type=fuel_type,
+        dt_from=start_dt, dt_to_exclusive=end_dt_exclusive)
     reattr_period_out_by_wh = {wid: l for (wid, _ft), l in _r_period_out.items()}
     reattr_period_in_by_wh = {wid: l for (wid, _ft), l in _r_period_in.items()}
 
     reattr_daily_out_map, reattr_daily_in_map = _fuel_report_daily_reattribution(
-        warehouse_ids, fuel_type, start_date, end_date)
+        warehouse_ids, fuel_type, start_date, end_date,
+        start_dt=start_dt, end_dt_exclusive=end_dt_exclusive)
 
     for wh in warehouses:
         initial = initial_by_wh.get(wh.id)
@@ -4389,7 +4440,9 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
         closing = opening + period_receipts - period_expenses
 
         daily_receipts = _fuel_report_daily_receipts(wh.id, fuel_type, start_date, end_date)
-        daily_expenses = _fuel_report_daily_expenses(wh.id, fuel_type, start_date, end_date)
+        daily_expenses = _fuel_report_daily_expenses(
+            wh.id, fuel_type, start_date, end_date,
+            start_dt=start_dt, end_dt_exclusive=end_dt_exclusive)
         daily_manual_expenses = _fuel_report_daily_manual_expenses(wh.id, fuel_type, start_date, end_date)
 
         daily = {}
@@ -4466,16 +4519,10 @@ def balance_report():
     default_start = today.replace(day=1)
     default_end = today
 
-    start_date = _fuel_report_parse_date(request.args.get("start_date"), default_start)
-    end_date = _fuel_report_parse_date(request.args.get("end_date"), default_end)
-
-    if end_date < start_date:
-        start_date, end_date = end_date, start_date
-
-    max_days = 120
-    if (end_date - start_date).days + 1 > max_days:
-        flash(f"Период отчёта ограничен {max_days} днями.", "warning")
-        end_date = start_date + timedelta(days=max_days - 1)
+    # [REASON]: F2.1 FUEL-DATETIME-004 — the shared parser handles times,
+    # presets, the end-before-start swap and the 120-day cap.
+    start_dt, end_dt_exclusive, start_date, end_date, preset = _fuel_parse_period(
+        request.args, default_start, default_end)
 
     show_zero = request.args.get("hide_zero") != "1"
 
@@ -4484,6 +4531,8 @@ def balance_report():
         end_date=end_date,
         show_zero=show_zero,
         fuel_type="ДТ",
+        start_dt=start_dt,
+        end_dt_exclusive=end_dt_exclusive,
     )
 
     return render_template(
@@ -4495,6 +4544,8 @@ def balance_report():
         end_date=end_date,
         show_zero=show_zero,
         wh_counts=_fuel_warehouse_counts(),
+        period=_fuel_period_context(start_dt, end_dt_exclusive,
+                                    start_date, end_date, preset),
         fuel_type="ДТ",
     )
 
@@ -4512,15 +4563,10 @@ def balance_report_export():
     default_start = today.replace(day=1)
     default_end = today
 
-    start_date = _fuel_report_parse_date(request.args.get("start_date"), default_start)
-    end_date = _fuel_report_parse_date(request.args.get("end_date"), default_end)
-
-    if end_date < start_date:
-        start_date, end_date = end_date, start_date
-
-    max_days = 120
-    if (end_date - start_date).days + 1 > max_days:
-        end_date = start_date + timedelta(days=max_days - 1)
+    # [REASON]: F2.1 FUEL-DATETIME-004 — export uses the same parser as the
+    # page, so the workbook always matches the screen, times included.
+    start_dt, end_dt_exclusive, start_date, end_date, _preset = _fuel_parse_period(
+        request.args, default_start, default_end)
 
     show_zero = request.args.get("hide_zero") != "1"
 
@@ -4529,6 +4575,8 @@ def balance_report_export():
         end_date=end_date,
         show_zero=show_zero,
         fuel_type="ДТ",
+        start_dt=start_dt,
+        end_dt_exclusive=end_dt_exclusive,
     )
 
     wb = Workbook()
