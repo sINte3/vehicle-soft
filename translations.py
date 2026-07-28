@@ -1012,7 +1012,10 @@ TRANS['ru'].update({
 # FUEL002E_TRANSLATIONS_MARKER
 # Fuel stations UX localization keys.
 TRANS['uz'].update({
-    'АЗСлар справочниги: Topaz ID, омбор, фаоллик ва ўчириш ҳимояси.': 'АЗСлар справочниги: Topaz ID, омбор, фаоллик ва ўчириш ҳимояси.',
+    # [REASON]: QA fix 49 — «справочниги» is Russian; the page's own title
+    # already uses the correct form «АЗС маълумотномаси». The key follows the
+    # template literal, so both dict entries change together.
+    'АЗС маълумотномаси: Topaz ID, омбор, фаоллик ва ўчириш ҳимояси.': 'АЗС маълумотномаси: Topaz ID, омбор, фаоллик ва ўчириш ҳимояси.',
     'АЗСлар': 'АЗСлар',
     'Мажбурий': 'Мажбурий',
     'Ҳимоя': 'Ҳимоя',
@@ -1026,7 +1029,7 @@ TRANS['uz'].update({
 })
 
 TRANS['ru'].update({
-    'АЗСлар справочниги: Topaz ID, омбор, фаоллик ва ўчириш ҳимояси.': 'Справочник АЗС: Topaz ID, склад, активность и защита удаления.',
+    'АЗС маълумотномаси: Topaz ID, омбор, фаоллик ва ўчириш ҳимояси.': 'Справочник АЗС: Topaz ID, склад, активность и защита удаления.',
     'АЗСлар': 'АЗС',
     'Мажбурий': 'Обязательный',
     'Ҳимоя': 'Защита',
