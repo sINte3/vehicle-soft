@@ -4797,12 +4797,22 @@ def _fuel_ledger_workbook(ledger, warehouse, start_date, end_date,
         sections.append(sec_external)
 
     if len(sections) > 1:
+        # [REASON]: QA fix 42 — the grand total sums only the sections that
+        # take part in warehouse balances (Склад, Резерв). The external
+        # section says «не входит в остатки» in its own header, so adding it
+        # produced a figure with no business meaning (117 081.12 instead of
+        # 100 406.27 on warehouse 25). It keeps its own subtotal and the
+        # grand-total label states what is covered.
+        balance_sections = [s for s in sections if s != sec_external]
         r += 2
-        cell = ws.cell(row=r, column=4, value=L('ВСЕГО по всем таблицам', 'Барча жадваллар бўйича ЖАМИ'))
+        label = '%s (%s)' % (L('ВСЕГО', 'ЖАМИ'), ' + '.join(balance_sections))
+        if sec_external in sections:
+            label += L(' — без стороннего топлива', ' — бегона ёқилғисиз')
+        cell = ws.cell(row=r, column=4, value=label)
         cell.font = Font(bold=True, size=12)
         for col, colletter in ((7, 'G'), (8, 'H')):
             formula = '+'.join('SUMIFS(%s:%s,$A:$A,"%s")' % (colletter, colletter, s)
-                               for s in sections)
+                               for s in balance_sections)
             cell = ws.cell(row=r, column=col, value='=' + formula)
             cell.font = Font(bold=True, size=12)
             cell.number_format = '#,##0.00'
