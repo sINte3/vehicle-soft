@@ -13,7 +13,7 @@ import hmac
 from flask import (Blueprint, render_template, request, redirect,
                    url_for, flash, jsonify, abort, current_app, g, send_file)
 from flask_login import login_required, current_user
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, time, timedelta
 import hashlib
 from io import BytesIO
 from sqlalchemy import text
@@ -3800,6 +3800,99 @@ def _fuel_report_parse_date(value, default_value):
         return datetime.strptime(value, "%Y-%m-%d").date()
     except Exception:
         return default_value
+
+
+# [REASON]: F2.1 FUEL-DATETIME-004 — one shared period parser for every fuel
+# report. The lower bound is inclusive and the upper bound EXCLUSIVE
+# (end datetime plus one minute); datetime.max.time() is never used, so a
+# transaction stamped inside the last minute can never be lost to microsecond
+# comparisons. A request carrying only dates behaves exactly as before:
+# 00:00 start, 23:59 end -> [start 00:00, end+1day 00:00).
+FUEL_PERIOD_PRESETS = ('today', 'yesterday', 'this_week', 'this_month', 'last_month')
+FUEL_PERIOD_MAX_DAYS = 120
+
+
+def _fuel_parse_time(value, default_time):
+    """HH:MM or fall back silently, matching _fuel_report_parse_date."""
+    try:
+        return datetime.strptime((value or '').strip(), '%H:%M').time()
+    except (TypeError, ValueError):
+        return default_time
+
+
+def _fuel_parse_period(args, default_start_date, default_end_date):
+    """Returns (start_dt, end_dt_exclusive, start_date, end_date, preset).
+
+    Accepts ``start_date``, ``end_date``, ``start_time``, ``end_time`` and
+    ``preset`` (one of FUEL_PERIOD_PRESETS or 'custom'). A recognised preset
+    overrides the four fields; anything else — including a manual edit of any
+    field, which submits without a preset — yields 'custom'. Missing time
+    means 00:00 for the start and 23:59 for the end. Invalid input falls back
+    to the defaults silently. If the end precedes the start they are swapped.
+    The 120-day cap applies by DATE SPAN to every report using this parser.
+
+    ``start_date``/``end_date`` also fall back to the legacy ``date_from``/
+    ``date_to`` names so existing links to /fuel/report keep working.
+    """
+    preset = (args.get('preset') or '').strip()
+    today = date.today()
+
+    if preset in FUEL_PERIOD_PRESETS:
+        if preset == 'today':
+            start_date = end_date = today
+        elif preset == 'yesterday':
+            start_date = end_date = today - timedelta(days=1)
+        elif preset == 'this_week':
+            start_date = today - timedelta(days=today.weekday())
+            end_date = today
+        elif preset == 'this_month':
+            start_date = today.replace(day=1)
+            end_date = today
+        else:  # last_month
+            end_date = today.replace(day=1) - timedelta(days=1)
+            start_date = end_date.replace(day=1)
+        start_time = time(0, 0)
+        end_time = time(23, 59)
+    else:
+        preset = 'custom'
+        start_date = _fuel_report_parse_date(
+            args.get('start_date') or args.get('date_from'), default_start_date)
+        end_date = _fuel_report_parse_date(
+            args.get('end_date') or args.get('date_to'), default_end_date)
+        start_time = _fuel_parse_time(args.get('start_time'), time(0, 0))
+        end_time = _fuel_parse_time(args.get('end_time'), time(23, 59))
+
+    start_dt = datetime.combine(start_date, start_time)
+    end_dt = datetime.combine(end_date, end_time)
+    if end_dt < start_dt:
+        start_dt, end_dt = end_dt, start_dt
+        start_date, end_date = start_dt.date(), end_dt.date()
+
+    if (end_date - start_date).days + 1 > FUEL_PERIOD_MAX_DAYS:
+        end_date = start_date + timedelta(days=FUEL_PERIOD_MAX_DAYS - 1)
+        end_dt = datetime.combine(end_date, end_dt.time())
+        # [REASON]: flash only when a browser session exists; read-only
+        # verification scripts drive this parser without one.
+        try:
+            flash(fuel_t('Ҳисобот даври %d кун билан чекланган.' % FUEL_PERIOD_MAX_DAYS,
+                         'Период отчёта ограничен %d днями.' % FUEL_PERIOD_MAX_DAYS),
+                  'warning')
+        except Exception:
+            pass
+
+    return start_dt, end_dt + timedelta(minutes=1), start_date, end_date, preset
+
+
+def _fuel_period_context(start_dt, end_dt_exclusive, start_date, end_date, preset):
+    """Template context for fuel/_period_picker.html, from parser output."""
+    end_dt = end_dt_exclusive - timedelta(minutes=1)
+    return {
+        'preset': preset,
+        'start_date': start_date.isoformat(),
+        'end_date': end_date.isoformat(),
+        'start_time': start_dt.strftime('%H:%M'),
+        'end_time': end_dt.strftime('%H:%M'),
+    }
 
 
 def _fuel_report_date_items(start_date, end_date):
