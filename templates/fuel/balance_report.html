@@ -150,36 +150,41 @@
         <div class="text-muted">{{ L_wh_count }} {{ rows|length }}</div>
     </div>
 
+    {# =======================================================================
+       F2.2 · FUEL-BALANCE-UX-005 — two levels: the main table shows totals
+       only and fits the screen; clicking a warehouse row expands the daily
+       detail OF THAT WAREHOUSE ONLY (dates as rows, movement days only —
+       zero days rendered empty cells in the old wide table too, so no figure
+       changes). The Excel export keeps the full daily view — that is where
+       the detail is consumed. Vanilla JS toggles; drill-down links inside a
+       row do not trigger the toggle.
+       ======================================================================= #}
+    <div style="display:flex; gap:8px; padding:10px 16px; border-bottom:1px solid var(--border);" class="fuel-balance-day-controls">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="fuelBalanceDays(true)">{{ 'Показать все дни' if lang == 'ru' else 'Барча кунларни кўрсатиш' }}</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="fuelBalanceDays(false)">{{ 'Свернуть все' if lang == 'ru' else 'Барчасини йиғиш' }}</button>
+        <span class="text-muted text-sm" style="align-self:center;">{{ 'Нажмите на строку склада, чтобы раскрыть дни.' if lang == 'ru' else 'Кунларни очиш учун омбор қаторини босинг.' }}</span>
+    </div>
     <div style="overflow:auto; max-width:100%;">
-        <table class="table table-sm table-striped" style="min-width:1500px; white-space:nowrap; margin:0; font-size:13px;">
+        <table class="table table-sm table-striped" style="min-width:1000px; white-space:nowrap; margin:0; font-size:13px;">
             <thead>
                 <tr>
-                    <th rowspan="2" style="vertical-align:middle;">{{ L_num }}</th>
-                    <th rowspan="2" style="vertical-align:middle; min-width:190px;">{{ L_org }}</th>
-                    <th rowspan="2" style="vertical-align:middle; min-width:170px;">{{ L_wh }}</th>
-                    <th rowspan="2" style="vertical-align:middle;">{% if lang == 'ru' %}Остаток на {{ start_date.strftime('%d/%m/%Y') }}{% else %}{{ start_date.strftime('%d/%m/%Y') }} даги қолдиқ{% endif %}</th>
-                    <th rowspan="2" style="vertical-align:middle;">{{ L_receipts }}</th>
-                    <th rowspan="2" style="vertical-align:middle;">{{ L_topaz }}</th>
-                    <th rowspan="2" class="text-muted" style="vertical-align:middle;" title="{{ L_external_note }}">{{ L_external }}</th>
-                    <th rowspan="2" style="vertical-align:middle;">{{ L_manual }}</th>
-                    {# FUEL-RESERVE: reference column, muted like external #}
-                    <th rowspan="2" class="text-muted" style="vertical-align:middle;" title="{{ L_reserve_note }}">{{ L_reserve }}</th>
-                    <th rowspan="2" style="vertical-align:middle;">{{ L_closing }}</th>
-                    {% for item in date_items %}
-                    <th colspan="2" class="text-center">{{ item.label }}</th>
-                    {% endfor %}
-                </tr>
-                <tr>
-                    {% for item in date_items %}
+                    <th>{{ L_num }}</th>
+                    <th style="min-width:190px;">{{ L_org }}</th>
+                    <th style="min-width:170px;">{{ L_wh }}</th>
+                    <th>{% if lang == 'ru' %}Остаток на {{ start_date.strftime('%d/%m/%Y') }}{% else %}{{ start_date.strftime('%d/%m/%Y') }} даги қолдиқ{% endif %}</th>
                     <th>{{ L_receipts }}</th>
-                    <th>{{ L_expense }}</th>
-                    {% endfor %}
+                    <th>{{ L_topaz }}</th>
+                    <th class="text-muted" title="{{ L_external_note }}">{{ L_external }}</th>
+                    <th>{{ L_manual }}</th>
+                    {# FUEL-RESERVE: reference column, muted like external #}
+                    <th class="text-muted" title="{{ L_reserve_note }}">{{ L_reserve }}</th>
+                    <th>{{ L_closing }}</th>
                 </tr>
             </thead>
             <tbody>
                 {% for row in rows %}
-                <tr {% if row.closing < 0 %}style="background:var(--danger-light);"{% endif %}>
-                    <td>{{ loop.index }}</td>
+                <tr class="fuel-balance-row" data-wh="{{ row.warehouse_id }}" style="cursor:pointer; {% if row.closing < 0 %}background:var(--danger-light);{% endif %}">
+                    <td><span class="fuel-day-caret" aria-hidden="true">▸</span> {{ loop.index }}</td>
                     <td>{{ row.organization }}</td>
                     <td>{{ row.warehouse }}</td>
                     <td class="text-right">{{ "%.2f"|format(row.opening) }}</td>
@@ -204,11 +209,40 @@
                         {%- endif -%}
                     </td>
                     <td class="text-right"><strong>{{ "%.2f"|format(row.closing) }}</strong></td>
-                    {% for item in date_items %}
-                    {% set daily = row.daily[item.key] %}
-                    <td class="text-right">{% if daily.receipts %}{{ "%.2f"|format(daily.receipts) }}{% endif %}</td>
-                    <td class="text-right">{% if daily.expenses %}{{ "%.2f"|format(daily.expenses) }}{% endif %}</td>
-                    {% endfor %}
+                </tr>
+                <tr class="fuel-balance-days" data-wh="{{ row.warehouse_id }}" hidden>
+                    <td colspan="10" style="padding:6px 16px 12px 34px; background:var(--surface2);">
+                        {% set movement_days = [] %}
+                        {% for item in date_items %}
+                            {% set daily = row.daily[item.key] %}
+                            {% if daily.receipts or daily.expenses %}
+                                {% set _ = movement_days.append((item, daily)) %}
+                            {% endif %}
+                        {% endfor %}
+                        {% if movement_days %}
+                        <table class="table table-sm" style="width:auto; min-width:360px; margin:0;">
+                            <thead>
+                                <tr>
+                                    <th>{{ 'Дата' if lang == 'ru' else 'Сана' }}</th>
+                                    <th class="text-right">{{ L_receipts }}</th>
+                                    <th class="text-right">{{ L_expense }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item, daily in movement_days %}
+                                <tr>
+                                    <td class="text-sm">{{ item.date.strftime('%d.%m.%Y') }}</td>
+                                    <td class="text-right">{% if daily.receipts %}{{ "%.2f"|format(daily.receipts) }}{% endif %}</td>
+                                    <td class="text-right">{% if daily.expenses %}{{ "%.2f"|format(daily.expenses) }}{% endif %}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        <div class="text-muted text-xs" style="margin-top:4px;">{{ 'Показаны только дни с движением; остальные дни нулевые.' if lang == 'ru' else 'Фақат ҳаракат бўлган кунлар кўрсатилган; қолган кунлар нолга тенг.' }}</div>
+                        {% else %}
+                        <span class="text-muted text-sm">{{ 'Движений по дням за период нет.' if lang == 'ru' else 'Давр ичида кунлик ҳаракатлар йўқ.' }}</span>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -222,13 +256,35 @@
                     <th class="text-right">{{ "%.2f"|format(totals.manual_expenses) }}</th>
                     <th class="text-right text-muted">{{ "%.2f"|format(totals.reserve_out or 0) }}</th>
                     <th class="text-right">{{ "%.2f"|format(totals.closing) }}</th>
-                    {% for item in date_items %}
-                    <th></th>
-                    <th></th>
-                    {% endfor %}
                 </tr>
             </tfoot>
         </table>
     </div>
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+/* F2.2 FUEL-BALANCE-UX-005: per-warehouse daily detail toggles. Plain
+   vanilla JS; clicks on drill-down links inside a row must not toggle. */
+function fuelBalanceToggle(whId, force) {
+    var detail = document.querySelector('.fuel-balance-days[data-wh="' + whId + '"]');
+    var row = document.querySelector('.fuel-balance-row[data-wh="' + whId + '"]');
+    if (!detail || !row) return;
+    var show = (typeof force === 'boolean') ? force : detail.hidden;
+    detail.hidden = !show;
+    var caret = row.querySelector('.fuel-day-caret');
+    if (caret) caret.textContent = show ? '▾' : '▸';
+}
+function fuelBalanceDays(show) {
+    document.querySelectorAll('.fuel-balance-row').forEach(function (row) {
+        fuelBalanceToggle(row.dataset.wh, show);
+    });
+}
+document.querySelectorAll('.fuel-balance-row').forEach(function (row) {
+    row.addEventListener('click', function (e) {
+        if (e.target.closest('a')) return;
+        fuelBalanceToggle(row.dataset.wh);
+    });
+});
+</script>
 {% endblock %}
