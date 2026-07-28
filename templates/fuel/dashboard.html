@@ -121,36 +121,6 @@
   color: var(--text);
 }
 
-.fuel002h-guidance-panel {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(190px, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.fuel002h-guidance-card {
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--accent);
-  background: var(--surface);
-  border-radius: 10px;
-  padding: 11px 13px;
-  box-shadow: var(--shadow);
-}
-
-.fuel002h-guidance-card strong {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.fuel002h-guidance-card span {
-  display: block;
-  color: var(--text2);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
 .fuel002h-balance-card,
 .fuel002h-recent-card {
   border: 1px solid var(--border);
@@ -174,15 +144,13 @@
 }
 
 @media (max-width:1050px) {
-  .fuel002h-context-strip,
-  .fuel002h-guidance-panel {
+  .fuel002h-context-strip {
     grid-template-columns: 1fr 1fr;
   }
 }
 
 @media (max-width:700px) {
-  .fuel002h-context-strip,
-  .fuel002h-guidance-panel {
+  .fuel002h-context-strip {
     grid-template-columns: 1fr;
   }
 }
@@ -228,21 +196,9 @@
     </div>
 </div>
 
-<div class="fuel002h-guidance-panel">
-    <div class="fuel002h-guidance-card">
-        <strong>{{ t('1. Қолдиқларни кўринг') }}</strong>
-        <span>{{ t('Асосий жадвал омборлар кесимида жорий қолдиқ ва ҳолатни кўрсатади.') }}</span>
-    </div>
-    <div class="fuel002h-guidance-card">
-        <strong>{{ t('2. Ҳаракатларга тез ўтинг') }}</strong>
-        <span>{{ t('Беришлар, ҳисобот, огоҳлантиришлар, киримлар, АЗС ва омборлар бўлимлари юқорида очилади.') }}</span>
-    </div>
-    <div class="fuel002h-guidance-card">
-        <strong>{{ t('3. Охирги беришларни назорат қилинг') }}</strong>
-        <span>{{ t('Пастдаги жадвалда охирги 30 та топливная операция кўринади.') }}</span>
-    </div>
-</div>
-
+{# F1.3 commit 24: the three-card hint block («1. Проверьте остатки / 2. …»)
+   is gone — a newcomer needs it once, a manager never, and it occupied a
+   third of the first screen. #}
 
 <div class="card fuel002h-balance-card FUEL002H_BALANCE_CARD_MARKER" style="margin-bottom:24px;">
     <div class="card-header">{{ L_balances }}</div>

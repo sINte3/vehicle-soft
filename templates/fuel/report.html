@@ -54,36 +54,6 @@
   color: var(--text);
 }
 
-.fuel002d-guidance-panel {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(190px, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.fuel002d-guidance-card {
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--accent);
-  background: var(--surface);
-  border-radius: 10px;
-  padding: 11px 13px;
-  box-shadow: var(--shadow);
-}
-
-.fuel002d-guidance-card strong {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.fuel002d-guidance-card span {
-  display: block;
-  color: var(--text2);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
 .fuel002d-filter-card {
   border: 1px solid var(--border);
   background: var(--surface);
@@ -136,8 +106,7 @@ form.fuel002d-filter-form {
 }
 
 @media (max-width: 1200px) {
-  .fuel002d-context-strip,
-  .fuel002d-guidance-panel {
+  .fuel002d-context-strip {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -150,7 +119,6 @@ form.fuel002d-filter-form {
 @media (max-width: 760px) {
   .fuel002d-page-header,
   .fuel002d-context-strip,
-  .fuel002d-guidance-panel,
   .fuel002d-filter-card form,
   form.fuel002d-filter-form {
     grid-template-columns: 1fr;
@@ -309,20 +277,8 @@ form.fuel002d-filter-form {
   </div>
 </div>
 
-<div class="fuel002d-guidance-panel">
-  <div class="fuel002d-guidance-card">
-    <strong>{{ t('1. Даврни танланг') }}</strong>
-    <span>{{ t('Ҳисобот танланган саналар оралиғи бўйича шаклланади.') }}</span>
-  </div>
-  <div class="fuel002d-guidance-card">
-    <strong>{{ t('2. Омбор ёки АЗСни фильтрланг') }}</strong>
-    <span>{{ t('Керак бўлса, маълумотларни битта омбор ёки АЗС бўйича чекланг.') }}</span>
-  </div>
-  <div class="fuel002d-guidance-card">
-    <strong>{{ t('3. Жадвалларни текширинг') }}</strong>
-    <span>{{ t('Итоглар, АЗСлар, транзакциялар ва синхронлаш ҳолатини бир жойда кўринг.') }}</span>
-  </div>
-</div>
+{# F1.3 commit 24: the three-card hint block is gone — a newcomer needs it
+   once, a manager never, and it occupied a third of the first screen. #}
 
 <div class="fuel002d-filter-card FUEL002D_FILTER_CARD_MARKER">
 <form method="get" class="fuel-report-filter fuel002d-filter-form" id="fuelReportForm">
