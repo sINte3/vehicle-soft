@@ -58,6 +58,10 @@
   <a href="{{ url_for('fuel.balance_report') }}"
      class="vs-pill{% if fuel_ep == 'fuel.balance_report' %} is-active{% endif %}">{{ 'Отчёт остатков' if is_ru else 'Қолдиқлар ҳисоботи' }}</a>
 
+  {# F4.1 · FUEL-LEDGER-001: the warehouse ledger card #}
+  <a href="{{ url_for('fuel.warehouse_ledger') }}"
+     class="vs-pill{% if fuel_ep == 'fuel.warehouse_ledger' %} is-active{% endif %}">{{ 'Карточка склада' if is_ru else 'Омбор карточкаси' }}</a>
+
   <a href="{{ url_for('fuel.receipts') }}"
      class="vs-pill{% if fuel_ep == 'fuel.receipts' %} is-active{% endif %}">{{ 'Приходы' if is_ru else 'Киримлар' }}</a>
 
