@@ -2483,8 +2483,18 @@ def dashboard():
         vals = [v for v in (row['balances'] or {}).values() if v is not None]
         balances[row['warehouse'].id] = round(sum(vals), 2) if vals else None
 
-    total_fuel = round(sum(v for v in balances.values() if v is not None), 2)
+    # [REASON]: QA fix 47, owner decision 2026-07-28 option (a) — the tile
+    # answers "how much fuel do we have", so it sums positive balances only
+    # (the algebraic sum said 1 234 л while ~17 100 л physically stood in the
+    # warehouses). Negative warehouses are counted and totalled separately
+    # right beneath the tile — nothing hidden, only separated. The balance
+    # formula itself is untouched; days-of-supply derives from the same
+    # positive sum.
+    total_fuel = round(sum(v for v in balances.values()
+                           if v is not None and v > 0), 2)
     negative_count = sum(1 for v in balances.values() if v is not None and v < 0)
+    negative_total = round(sum(v for v in balances.values()
+                               if v is not None and v < 0), 2)
 
     consumption = _fuel_recent_consumption_map(
         list(balances.keys()),
@@ -2567,6 +2577,7 @@ def dashboard():
                            days_left_total=days_left_total,
                            mean_daily_total=mean_daily_total,
                            negative_count=negative_count,
+                           negative_total=negative_total,
                            low_stock_count=low_stock_count,
                            threshold_days=threshold_days,
                            consumption_window=FUEL_CONSUMPTION_WINDOW_DAYS,
