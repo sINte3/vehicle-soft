@@ -416,8 +416,9 @@ def _fuel_station_issues_workbook(txns, station_name, topaz_id, start_date, end_
     ws.cell(row=2, column=1).font = Font(size=11, color='666666')
     ws.cell(row=2, column=1).alignment = Alignment(horizontal="center")
 
-    # Headers
-    headers = ['№', 'Дата/время', 'АЗС', 'Topaz ID', 'Имя карты', 'Литры']
+    # Headers — Topaz ID stays in the export (F2.3 removed it from the screen
+    # only); «Литры» renamed per the owner's correction.
+    headers = ['№', 'Дата/время', 'АЗС', 'Topaz ID', 'Имя карты', 'Выдано топлива, л']
     header_row = 4
     for col, title in enumerate(headers, start=1):
         ws.cell(row=header_row, column=col).value = title

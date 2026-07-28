@@ -24,7 +24,8 @@
 {% set L_th_num = '№' if lang == 'ru' else '№' %}
 {% set L_th_datetime = 'Дата/время' if lang == 'ru' else 'Сана/вақт' %}
 {% set L_th_card = 'Имя карты' if lang == 'ru' else 'Карта номи' %}
-{% set L_th_liters = 'Литры' if lang == 'ru' else 'Литр' %}
+{# F2.3 · FUEL-STATION-REPORT-006: renamed per owner's correction #}
+{% set L_th_liters = 'Выдано топлива, л' if lang == 'ru' else 'Берилган ёқилғи, л' %}
 {% set L_day_issues = 'выдач, всего' if lang == 'ru' else 'бериш, жами' %}
 {% set L_grand_total = 'ВСЕГО' if lang == 'ru' else 'ЖАМИ' %}
 
@@ -39,9 +40,14 @@
 .station-issues-filter-card label { font-size:12px; font-weight:600; display:block; margin-bottom:2px; color:var(--text2); }
 .station-issues-filter-card select,
 .station-issues-filter-card input { padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; }
-.station-issues-table { min-width:600px; }
-.station-issues-table th { white-space:nowrap; font-size:12px; }
-.station-issues-table td { white-space:nowrap; }
+/* F2.3 · FUEL-STATION-REPORT-006: columns even in width (fixed layout),
+   font one step larger than the module's 13px default. */
+.station-issues-table { min-width:600px; width:100%; table-layout:fixed; font-size:14px; }
+.station-issues-table th { white-space:nowrap; font-size:13px; }
+.station-issues-table td { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.station-issues-table details { display:inline-block; }
+.station-issues-table summary { cursor:pointer; color:var(--text2); font-size:12px; list-style:none; }
+.station-issues-table summary::-webkit-details-marker { display:none; }
 .station-issues-total-row { font-weight:700; background:#fefce8; }
 </style>
 
@@ -124,13 +130,18 @@
 
 <div class="card" style="overflow:hidden;">
     <div style="overflow-x:auto;">
+        {# F2.3 · FUEL-STATION-REPORT-006: Topaz ID is removed from the main
+           view — it stays in the Excel export and in the expandable per-row
+           detail below. The card-name column and the day grouping with
+           subtotals already worked and are not rebuilt. The «Остаток на
+           карте, л» column is deliberately absent: that value exists nowhere
+           in this system until F4.4 delivers it from Topaz. #}
         <table class="station-issues-table">
             <thead>
                 <tr>
                     <th>{{ L_th_num }}</th>
                     <th>{{ L_th_datetime }}</th>
                     <th>АЗС</th>
-                    <th>Topaz ID</th>
                     <th>{{ L_th_card }}</th>
                     <th class="text-right">{{ L_th_liters }}</th>
                 </tr>
@@ -140,7 +151,7 @@
                 {% for date_group, day_txns in grouped|sort(attribute='grouper') %}
                     {% set day_total = day_txns|sum(attribute='quantity') %}
                     <tr style="background:#f0f9f0;">
-                        <td colspan="6" style="font-weight:600; color:#166534; font-size:13px; padding:6px 10px;">
+                        <td colspan="5" style="font-weight:600; color:#166534; font-size:13px; padding:6px 10px;">
                             {{ date_group[8:10] }}.{{ date_group[5:7] }}.{{ date_group[0:4] }} — {{ day_txns|length }} {{ L_day_issues }} {{ '%.2f'|format(day_total) }} л
                         </td>
                     </tr>
@@ -148,15 +159,20 @@
                     <tr>
                         <td>{{ loop.index }}</td>
                         <td class="text-sm">{{ txn.txn_datetime.strftime('%d.%m.%Y %H:%M') }}</td>
-                        <td>{{ txn.station.name if txn.station else station_name }}</td>
-                        <td class="text-sm">{{ topaz_id }}</td>
+                        <td>
+                            {{ txn.station.name if txn.station else station_name }}
+                            <details>
+                                <summary>{{ 'подробнее' if lang == 'ru' else 'батафсил' }} ▾</summary>
+                                <span class="text-sm text-muted">Topaz ID: {{ topaz_id }}{% if txn.card_number %} · {{ 'карта' if lang == 'ru' else 'карта' }} {{ txn.card_number }}{% endif %}</span>
+                            </details>
+                        </td>
                         <td>{{ card_name_map.get(txn.card_number|string, '—') if card_name_map else '—' }}</td>
                         <td class="text-right" style="font-weight:600; color:var(--danger);">{{ '%.2f'|format(txn.quantity) }}</td>
                     </tr>
                     {% endfor %}
                 {% endfor %}
                 <tr class="station-issues-total-row">
-                    <td colspan="5" style="text-align:right; font-size:14px; padding:8px 10px;">{{ L_grand_total }}</td>
+                    <td colspan="4" style="text-align:right; font-size:14px; padding:8px 10px;">{{ L_grand_total }}</td>
                     <td class="text-right" style="font-size:15px; padding:8px 10px;">{{ '%.2f'|format(summary.total_liters) }} л</td>
                 </tr>
             </tbody>
