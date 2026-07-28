@@ -4086,6 +4086,93 @@ def _fuel_report_daily_reattribution(warehouse_ids, fuel_type, start_date, end_d
     return out_daily, in_daily
 
 
+def _fuel_opening_for(warehouse_id, fuel_type, start_date,
+                      initial=None, external_before=None,
+                      reattr_before_out=None, reattr_before_in=None):
+    """Opening balance at 00:00 of start_date, rolled forward from the
+    warehouse's earliest initial balance. Single source of truth.
+
+    [REASON]: FUEL-BIG-001 — extracted from the per-warehouse loop of
+    _fuel_report_build_rows so the ledger (FUEL-LEDGER-001) computes its
+    opening through the exact same arithmetic as the balance report:
+    initial + receipts − Topaz issues − manual expense + external add-back
+    + reattribution out − reattribution in, over the DATE window
+    [initial_date, start_date). Time inside the first day never shifts the
+    opening. Behaviour-preserving to the cent — see
+    verify_fuel_opening_refactor.py.
+
+    The optional arguments exist so the balance report can keep passing its
+    pre-computed bulk maps and add no N+1 query. When they are omitted the
+    helper computes them for the single warehouse — the path the ledger uses.
+    ``initial`` is the earliest FuelInitialBalance row (ordered by
+    balance_date then id); pass it when already loaded in bulk.
+
+    Returns an UNROUNDED float; callers round for display, exactly as the
+    report always has. A warehouse with no initial balance yields 0.0,
+    matching the report's rendering for such rows.
+    """
+    if initial is None:
+        initial = (FuelInitialBalance.query
+                   .filter(FuelInitialBalance.warehouse_id == warehouse_id,
+                           FuelInitialBalance.fuel_type == fuel_type)
+                   .order_by(FuelInitialBalance.balance_date.asc(),
+                             FuelInitialBalance.id.asc())
+                   .first())
+    if not initial:
+        return 0.0
+
+    initial_date = initial.balance_date
+    initial_qty = float(initial.quantity or 0)
+
+    if initial_date and initial_date > start_date:
+        # The initial balance starts inside the period: the opening is zero,
+        # exactly as the report has always rendered this case.
+        return 0.0
+    if not initial_date:
+        return initial_qty
+
+    before_receipts = _fuel_report_sum_receipts(
+        warehouse_id,
+        fuel_type,
+        date_from=initial_date,
+        date_to=start_date - timedelta(days=1),
+    )
+    before_expenses = _fuel_report_sum_transactions(
+        warehouse_id,
+        fuel_type,
+        dt_from=datetime.combine(initial_date, datetime.min.time()),
+        dt_to_exclusive=datetime.combine(start_date, datetime.min.time()),
+    )
+    before_manual_expenses = _fuel_report_sum_manual_expenses(
+        warehouse_id,
+        fuel_type,
+        date_from=initial_date,
+        date_to=start_date - timedelta(days=1),
+    )
+
+    key = (int(warehouse_id), fuel_type)
+    if external_before is None:
+        _ext_map = _fuel_external_expense_map(
+            [warehouse_id], fuel_type=fuel_type,
+            date_to=start_date - timedelta(days=1),
+            lower_bounds={key: initial_date})
+        external_before = _ext_map.get(key, 0.0)
+
+    if reattr_before_out is None or reattr_before_in is None:
+        _r_out, _r_in = _fuel_reattribution_maps(
+            [warehouse_id], fuel_type=fuel_type,
+            date_to=start_date - timedelta(days=1),
+            lower_bounds={key: initial_date})
+        if reattr_before_out is None:
+            reattr_before_out = _r_out.get(key, 0.0)
+        if reattr_before_in is None:
+            reattr_before_in = _r_in.get(key, 0.0)
+
+    return (initial_qty + before_receipts - before_expenses
+            - before_manual_expenses + external_before
+            + reattr_before_out - reattr_before_in)
+
+
 def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="ДТ"):
     date_items = _fuel_report_date_items(start_date, end_date)
     start_dt = datetime.combine(start_date, datetime.min.time())
@@ -4193,48 +4280,21 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
 
         opening = 0.0
         initial_date = None
-        initial_qty = 0.0
 
         if initial:
             initial_date = initial.balance_date
-            initial_qty = float(initial.quantity or 0)
-
-            if initial_date and initial_date <= start_date:
-                before_receipts = _fuel_report_sum_receipts(
-                    wh.id,
-                    fuel_type,
-                    date_from=initial_date,
-                    date_to=start_date - timedelta(days=1),
-                )
-                before_expenses = _fuel_report_sum_transactions(
-                    wh.id,
-                    fuel_type,
-                    dt_from=datetime.combine(initial_date, datetime.min.time()),
-                    dt_to_exclusive=start_dt,
-                )
-                before_manual_expenses = _fuel_report_sum_manual_expenses(
-                    wh.id,
-                    fuel_type,
-                    date_from=initial_date,
-                    date_to=start_date - timedelta(days=1),
-                )
-                # [REASON]: FUEL-CARD-CLASS — before_expenses includes the external
-                # card, which is not our expense from the rule start, so add it
-                # back over [max(initial_date, rule_start), start_date).
-                before_external = external_before_by_wh.get(wh.id, 0.0)
-                # [REASON]: FUEL-RESERVE — before_expenses includes any litres that
-                # were reattributed to the reserve, which are not this warehouse's
-                # expense, so add reattr_out back; subtract reattr_in (litres the
-                # reserve received), over the same before-window.
-                before_reattr_out = reattr_before_out_by_wh.get(wh.id, 0.0)
-                before_reattr_in = reattr_before_in_by_wh.get(wh.id, 0.0)
-                opening = (initial_qty + before_receipts - before_expenses
-                           - before_manual_expenses + before_external
-                           + before_reattr_out - before_reattr_in)
-            elif initial_date and initial_date > start_date:
-                opening = 0.0
-            else:
-                opening = initial_qty
+            # [REASON]: FUEL-BIG-001 — the opening arithmetic (initial rolled
+            # forward over [initial_date, start_date): + receipts − Topaz issues
+            # − manual + external add-back + reattr out − reattr in) lives in
+            # _fuel_opening_for, shared with the ledger. The pre-computed bulk
+            # maps are passed through so this loop still adds no N+1 query.
+            opening = _fuel_opening_for(
+                wh.id, fuel_type, start_date,
+                initial=initial,
+                external_before=external_before_by_wh.get(wh.id, 0.0),
+                reattr_before_out=reattr_before_out_by_wh.get(wh.id, 0.0),
+                reattr_before_in=reattr_before_in_by_wh.get(wh.id, 0.0),
+            )
 
         period_receipts = _fuel_report_sum_receipts(
             wh.id,
