@@ -256,73 +256,56 @@ a.fuel-dash-tile:hover { text-decoration:none; color:inherit; box-shadow:var(--s
    is gone — a newcomer needs it once, a manager never, and it occupied a
    third of the first screen. #}
 
+{# F1.2 commit 27: warehouse table sorted by trouble — negatives first, then
+   below threshold (worst first inside each group), then the rest. Balance in
+   large type, a fill bar scaled to the largest observed balance (NOT a real
+   vessel level until phase 3 — the tooltip says so in both languages),
+   today's consumption and a status badge. #}
+{% set L_fill_note = ('Шкала — относительно наибольшего текущего остатка среди складов (' ~ '%.0f'|format(max_balance) ~ ' л), а не реального уровня ёмкости.') if lang == 'ru' else ('Шкала — омборлар орасидаги энг катта жорий қолдиққа (' ~ '%.0f'|format(max_balance) ~ ' л) нисбатан, идишнинг ҳақиқий даражаси эмас.') %}
 <div id="fuelWarehouseTable" class="card fuel002h-balance-card FUEL002H_BALANCE_CARD_MARKER" style="margin-bottom:24px;">
-    <div class="card-header">{{ L_balances }}</div>
+    <div class="card-header">
+        <span>{{ L_balances }}</span>
+        <span class="text-muted text-xs">{{ 'Сортировка: сначала проблемы' if lang == 'ru' else 'Тартиб: аввал муаммолар' }}</span>
+    </div>
     <div style="overflow-x:auto;">
     <div class="fuel002h-table-wrap FUEL002H_BALANCE_TABLE_MARKER">
 <table class="fuel002h-dashboard-table">
         <thead>
             <tr>
                 <th>{{ L_wh }}</th>
-                <th class="text-center">{{ L_stations }}</th>
-                <th class="text-center">{{ L_fuel }}</th>
+                <th>{{ 'Организация' if lang == 'ru' else 'Ташкилот' }}</th>
                 <th class="text-right">{{ L_balance }}</th>
+                <th style="min-width:140px;" title="{{ L_fill_note }}">{{ 'Запас' if lang == 'ru' else 'Заҳира' }}</th>
                 <th class="text-right">{{ L_today_issued }}</th>
-                <th class="text-muted text-sm">{{ L_last_issue }}</th>
+                <th>{{ 'Статус' if lang == 'ru' else 'Ҳолат' }}</th>
             </tr>
         </thead>
         <tbody>
-        {% for row in balance_rows %}
-            {% set balances = row.balances %}
-            {% if balances %}
-                {% for ft, qty in balances.items() %}
-                <tr>
-                    {% if loop.first %}
-                    <td rowspan="{{ balances|length }}" style="font-weight:700; vertical-align:top; padding-top:12px;">
-                        {{ row.warehouse.name }}
-                    </td>
-                    <td rowspan="{{ balances|length }}" class="text-center" style="vertical-align:top; padding-top:12px;">
-                        {{ row.stations }}
-                    </td>
-                    {% endif %}
-                    <td class="text-center"><span class="fuel-pill">{{ ft }}</span></td>
-                    <td class="text-right" style="font-weight:700; font-size:16px;">
-                        {% if qty is none %}
-                        <span class="text-muted" style="font-size:12px;">{{ L_initial_missing }}</span>
-                        {% elif qty < 0 %}
-                        <span style="color:var(--danger);">{{ '%.0f'|format(qty) }} л</span>
-                        <span class="fuel-balance-status">{{ L_negative }}</span>
-                        {% elif qty < 500 %}
-                        <span style="color:var(--warn);">{{ '%.0f'|format(qty) }} л</span>
-                        <span class="fuel-balance-status">{{ L_low }}</span>
-                        {% else %}
-                        {{ '%.0f'|format(qty) }} л
-                        <span class="fuel-balance-status">{{ L_ok }}</span>
-                        {% endif %}
-                    </td>
-                    {% if loop.first %}
-                    <td rowspan="{{ balances|length }}" class="text-right" style="vertical-align:top; padding-top:12px;">
-                        {% if row.today_expense > 0 %}<span style="color:var(--danger);">-{{ '%.0f'|format(row.today_expense) }} л</span>{% else %}<span class="text-muted">—</span>{% endif %}
-                    </td>
-                    <td rowspan="{{ balances|length }}" class="text-muted text-sm" style="vertical-align:top; padding-top:12px;">
-                        {% if row.last_txn %}
-                        {{ row.last_txn.txn_datetime.strftime('%d.%m %H:%M') }}<br>
-                        <small>{{ row.last_txn.station.name }}</small>
-                        {% else %}—{% endif %}
-                    </td>
-                    {% endif %}
-                </tr>
-                {% endfor %}
-            {% else %}
-            <tr>
-                <td style="font-weight:700;">{{ row.warehouse.name }}</td>
-                <td class="text-center">{{ row.stations }}</td>
-                <td colspan="4" class="text-muted text-sm" style="padding-left:20px;">
-                    ⚠ {{ L_initial_missing }}
-                    {% if current_user.is_admin %} — <a href="{{ url_for('fuel.initial_balance') }}">{{ L_set }}</a>{% endif %}
-                </td>
-            </tr>
-            {% endif %}
+        {% for r in table_rows %}
+        <tr {% if r.status == 'negative' %}style="background:var(--danger-light);"{% endif %}>
+            <td style="font-weight:700;">{{ r.warehouse.name }}</td>
+            <td class="text-muted text-sm">{{ r.organization }}</td>
+            <td class="text-right" style="font-weight:700; font-size:17px; {% if r.status == 'negative' %}color:var(--danger);{% elif r.status == 'low' %}color:var(--warn);{% endif %}">
+                {% if r.balance is none %}<span class="text-muted" style="font-size:12px;">{{ L_initial_missing }}</span>{% else %}{{ '%.0f'|format(r.balance) }} л{% endif %}
+            </td>
+            <td title="{{ L_fill_note }}">
+                <div style="background:var(--surface2); border-radius:4px; height:8px; overflow:hidden;">
+                    <div style="width:{{ r.fill }}%; height:8px; background:{% if r.status == 'negative' %}var(--danger){% elif r.status == 'low' %}var(--warn){% else %}var(--accent){% endif %};"></div>
+                </div>
+                {% if r.days_left is not none %}
+                <span class="text-muted text-xs">{{ ('≈ ' ~ r.days_left ~ (' дн.' if lang == 'ru' else ' кун')) }}</span>
+                {% endif %}
+            </td>
+            <td class="text-right">
+                {% if r.today_expense > 0 %}<span style="color:var(--danger);">-{{ '%.0f'|format(r.today_expense) }} л</span>{% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            <td>
+                {% if r.status == 'negative' %}<span class="badge badge-danger">{{ L_negative }}</span>
+                {% elif r.status == 'low' %}<span class="badge badge-warning">{{ 'Ниже порога' if lang == 'ru' else 'Чегарадан паст' }}</span>
+                {% elif r.status == 'no_initial' %}<span class="badge badge-secondary">{{ L_initial_missing }}</span>{% if current_user.is_admin %} <a class="text-sm" href="{{ url_for('fuel.initial_balance') }}">{{ L_set }}</a>{% endif %}
+                {% else %}<span class="badge badge-success">{{ L_ok }}</span>{% endif %}
+            </td>
+        </tr>
         {% else %}
         <tr>
             <td colspan="6" class="text-center text-muted" style="padding:40px;">

@@ -2511,6 +2511,48 @@ def dashboard():
     open_warnings = sum(1 for w in report_data.get('warnings', [])
                         if (w.get('review_status') or 'new') == 'new')
 
+    # ── F1.2 commit 27: warehouse table sorted by trouble ────────────────
+    # [REASON]: the screen must open on the problems — negatives first, then
+    # below threshold, worst first inside each group; never alphabetical.
+    # Until phase 3 the fill bar is scaled to the maximum balance observed
+    # among the warehouses — NOT a real vessel level (tooltip says so).
+    max_balance = max([v for v in balances.values() if v is not None and v > 0]
+                      or [0.0])
+    table_rows = []
+    for row in balance_rows:
+        wh = row['warehouse']
+        bal = balances.get(wh.id)
+        m = mean_daily.get(wh.id, 0.0)
+        if bal is None:
+            status, rank = 'no_initial', 3
+        elif bal < 0:
+            status, rank = 'negative', 0
+        elif m > 0 and bal < threshold_days * m:
+            status, rank = 'low', 1
+        else:
+            status, rank = 'ok', 2
+        days_left = (round(bal / m, 1)
+                     if (bal is not None and bal >= 0 and m > 0) else None)
+        fill = (bal / max_balance * 100.0
+                if (bal is not None and bal > 0 and max_balance > 0) else 0.0)
+        table_rows.append({
+            'warehouse': wh,
+            'organization': wh.organization.name if wh.organization else '',
+            'balance': bal,
+            'fill': round(min(fill, 100.0), 1),
+            'today_expense': row['today_expense'] or 0.0,
+            'mean_daily': m,
+            'days_left': days_left,
+            'status': status,
+            'rank': rank,
+        })
+    table_rows.sort(key=lambda r: (
+        r['rank'],
+        r['balance'] if r['rank'] == 0 and r['balance'] is not None else 0.0,
+        r['days_left'] if r['rank'] == 1 and r['days_left'] is not None else 0.0,
+        r['warehouse'].name,
+    ))
+
     return render_template('fuel/dashboard.html',
                            balance_rows=balance_rows,
                            last_sync=last_sync,
@@ -2529,6 +2571,8 @@ def dashboard():
                            today=today,
                            balances_by_wh=balances,
                            mean_daily_by_wh=mean_daily,
+                           table_rows=table_rows,
+                           max_balance=max_balance,
                            wh_counts=_fuel_warehouse_counts(),
                            fuel_types=FUEL_TYPES)
 
