@@ -540,6 +540,10 @@ def _fuel_station_issues_workbook(txns, station_name, topaz_id, start_date, end_
     ws.page_setup.orientation = 'landscape'
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
+    # [REASON]: QA fix 44 — without an explicit paperSize Excel falls back to
+    # Letter; A4 is the print standard here, and on Letter the last column is
+    # clipped or the scale drops. Set on every sheet of every fuel export.
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
 
     return wb
 
@@ -2097,6 +2101,7 @@ def _fuel_report_workbook(data, lang='uz'):
         ws.page_setup.orientation = 'landscape'
         ws.page_setup.fitToWidth = 1
         ws.page_setup.fitToHeight = 0
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
         ws.sheet_properties.pageSetUpPr.fitToPage = True
         ws.page_margins.left = 0.3
         ws.page_margins.right = 0.3
@@ -4288,6 +4293,7 @@ def card_issues_export():
     ws.page_setup.orientation = 'landscape'
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.print_title_rows = '4:4'
     ws.oddFooter.center.text = '%s — %s' % (
@@ -4440,6 +4446,7 @@ def station_totals_export():
     ws.page_setup.orientation = 'landscape'
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.print_title_rows = '4:4'
     ws.oddFooter.center.text = '%s — %s' % (
@@ -4608,6 +4615,7 @@ def counter_mismatch_export():
     ws.page_setup.orientation = 'landscape'
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.print_title_rows = '4:4'
     ws.oddFooter.center.text = '%s — %s' % (
@@ -4830,6 +4838,7 @@ def _fuel_ledger_workbook(ledger, warehouse, start_date, end_date,
     ws.page_setup.orientation = 'landscape'
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.print_title_rows = '%d:%d' % (header_row, header_row)
     ws.oddFooter.center.text = '%s — %s' % (warehouse.name, period_label)
@@ -4871,6 +4880,7 @@ def _fuel_ledger_workbook(ledger, warehouse, start_date, end_date,
     ws2.page_setup.orientation = 'landscape'
     ws2.page_setup.fitToWidth = 1
     ws2.page_setup.fitToHeight = 0
+    ws2.page_setup.paperSize = ws2.PAPERSIZE_A4
     ws2.sheet_properties.pageSetUpPr.fitToPage = True
     ws2.print_title_rows = '3:3'
     ws2.oddFooter.center.text = '%s — %s' % (warehouse.name, period_label)
@@ -6084,6 +6094,7 @@ def balance_report_export():
     ws.page_setup.orientation = 'landscape'
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.print_title_rows = '3:4'
     ws.oddFooter.center.text = 'Отчёт по остаткам топлива — %s — %s' % (
