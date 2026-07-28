@@ -97,6 +97,16 @@
 {% include 'fuel/_legacy_toggle.html' %}
 </div>
 
+{# F1.2 · FUEL-DASH-002: the dashboard's negative-warehouses tile lands here #}
+{% if only_negative %}
+<div class="card fuel-no-print" style="margin-bottom:16px; border:1px solid var(--danger); background:var(--danger-light);">
+    <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; padding:12px 16px; flex-wrap:wrap;">
+        <strong style="color:var(--danger);">{{ 'Показаны только склады с отрицательным расчётным остатком.' if lang == 'ru' else 'Фақат манфий ҳисобий қолдиқли омборлар кўрсатилган.' }}</strong>
+        <a href="{{ url_for('fuel.balance_report', start_date=period.start_date, end_date=period.end_date, start_time=period.start_time, end_time=period.end_time) }}" class="btn btn-secondary btn-sm">{{ 'Показать все склады' if lang == 'ru' else 'Барча омборларни кўрсатиш' }}</a>
+    </div>
+</div>
+{% endif %}
+
 <div class="card fuel-no-print" style="margin-bottom:16px; padding:16px;">
     <div style="display:flex; justify-content:space-between; gap:16px; align-items:flex-start; flex-wrap:wrap;">
         <div>
@@ -113,6 +123,7 @@
           style="margin-top:14px; display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end;">
         {# FUEL-BIG-001: rebuilding the report must not silently drop the archive mode #}
         {% if show_legacy %}<input type="hidden" name="show_legacy" value="1">{% endif %}
+        {% if only_negative %}<input type="hidden" name="only_negative" value="1">{% endif %}
         {# F2.1 FUEL-DATETIME-004: shared period picker — dates, times, presets #}
         {% include 'fuel/_period_picker.html' %}
 

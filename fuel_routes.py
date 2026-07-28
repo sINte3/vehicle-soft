@@ -1217,6 +1217,46 @@ def _fuel_today_expense_map(warehouse_ids):
     return result
 
 
+# [REASON]: F1.2 FUEL-DASH-002 — recent NET consumption per warehouse for the
+# dashboard tiles (days-of-stock arithmetic). No new balance arithmetic: the
+# composition is exactly the balance report's expense figure — Topaz issues
+# minus external minus reattr-out plus reattr-in, plus manual expense — built
+# from the same shared bulk helpers, over a date window. Verified against
+# _fuel_report_build_rows totals by script (commit 27 acceptance).
+def _fuel_recent_consumption_map(warehouse_ids, date_from, date_to):
+    ids = [int(x) for x in (warehouse_ids or []) if x]
+    if not ids:
+        return {}
+
+    start_dt = datetime.combine(date_from, datetime.min.time())
+    end_dt_exclusive = datetime.combine(date_to + timedelta(days=1), datetime.min.time())
+
+    rows = (db.session.query(
+            FuelStation2.warehouse_id,
+            func.coalesce(func.sum(FuelTransaction2.quantity), 0))
+        .join(FuelTransaction2, FuelTransaction2.station_id == FuelStation2.id)
+        .filter(FuelStation2.warehouse_id.in_(ids),
+                FuelTransaction2.txn_datetime >= start_dt,
+                FuelTransaction2.txn_datetime < end_dt_exclusive)
+        .group_by(FuelStation2.warehouse_id)
+        .all())
+    result = {int(wh_id): float(total or 0) for wh_id, total in rows}
+
+    for (wh_id, _ft), litres in _fuel_manual_expense_map(
+            ids, date_from=date_from, date_to=date_to).items():
+        result[wh_id] = result.get(wh_id, 0.0) + litres
+    for (wh_id, _ft), litres in _fuel_external_expense_map(
+            ids, date_from=date_from, date_to=date_to).items():
+        result[wh_id] = result.get(wh_id, 0.0) - litres
+    r_out, r_in = _fuel_reattribution_maps(ids, date_from=date_from, date_to=date_to)
+    for (wh_id, _ft), litres in r_out.items():
+        result[wh_id] = result.get(wh_id, 0.0) - litres
+    for (wh_id, _ft), litres in r_in.items():
+        result[wh_id] = result.get(wh_id, 0.0) + litres
+
+    return result
+
+
 def _fuel_latest_txn_map(warehouse_ids, start_dt=None, end_dt_exclusive=None, station_id=None):
     ids = [int(x) for x in (warehouse_ids or []) if x]
     if not ids:
@@ -2328,6 +2368,12 @@ def fuel_report():
 
 # ─── Dashboard ────────────────────────────────────────────────────────
 
+# [REASON]: F1.2 FUEL-DASH-002 — low-stock threshold in days of stock. A
+# constant default here; commit 26 turns it into an admin-editable setting.
+FUEL_LOW_STOCK_DAYS_DEFAULT = 3.0
+FUEL_CONSUMPTION_WINDOW_DAYS = 14
+
+
 @fuel_bp.route('/')
 @module_required('fuel')
 def dashboard():
@@ -2339,29 +2385,76 @@ def dashboard():
                  .order_by(FuelSyncLog2.synced_at.desc())
                  .first())
 
-    # Последние 30 транзакций
-    recent_txns = (FuelTransaction2.query
-                   .options(joinedload(FuelTransaction2.station))
-                   .join(FuelStation2)
-                   .order_by(FuelTransaction2.txn_datetime.desc())
-                   .limit(30).all())
-
     # Статистика за сегодня
     # [REASON]: FUEL-MANUAL-EXP-A3 — the "Выдано сегодня" tile must equal the sum
     # of the per-warehouse "Сегодня выдано" column exactly. Summing the same
     # today_expense values get_all_balances() already produced guarantees that by
     # construction: same warehouse set (fuel_warehouse_query_for_ui, not every
     # warehouse) and same figure (Topaz issues + today's manual expenses, folded
-    # in by _fuel_today_expense_map). The old inline query summed FuelTransaction2
-    # over all warehouses and ignored manual expenses, so it could disagree with
-    # the table. Adds no query.
+    # in by _fuel_today_expense_map). Adds no query.
     today_total = sum((row['today_expense'] or 0) for row in balance_rows)
+
+    # ── F1.2 FUEL-DASH-002: manager tiles ────────────────────────────────
+    # [REASON]: figures come from _fuel_balance_map (via get_all_balances) and
+    # the shared bulk helpers only — no new balance arithmetic on this page.
+    today = date.today()
+    balances = {}
+    for row in balance_rows:
+        vals = [v for v in (row['balances'] or {}).values() if v is not None]
+        balances[row['warehouse'].id] = round(sum(vals), 2) if vals else None
+
+    total_fuel = round(sum(v for v in balances.values() if v is not None), 2)
+    negative_count = sum(1 for v in balances.values() if v is not None and v < 0)
+
+    consumption = _fuel_recent_consumption_map(
+        list(balances.keys()),
+        today - timedelta(days=FUEL_CONSUMPTION_WINDOW_DAYS - 1), today)
+    mean_daily = {wh: round(litres / FUEL_CONSUMPTION_WINDOW_DAYS, 2)
+                  for wh, litres in consumption.items()}
+    mean_daily_total = round(sum(mean_daily.values()), 2)
+    days_left_total = (round(total_fuel / mean_daily_total, 1)
+                       if mean_daily_total > 0 and total_fuel > 0 else None)
+
+    threshold_days = FUEL_LOW_STOCK_DAYS_DEFAULT
+    low_stock_count = 0
+    for wh_id, bal in balances.items():
+        m = mean_daily.get(wh_id, 0.0)
+        if bal is not None and bal >= 0 and m > 0 and bal < threshold_days * m:
+            low_stock_count += 1
+
+    sync_freshness = 'red'
+    sync_age_hours = None
+    if last_sync and last_sync.synced_at:
+        sync_age_hours = (datetime.utcnow() - last_sync.synced_at).total_seconds() / 3600
+        # green under two hours, amber under six, red beyond
+        sync_freshness = ('green' if sync_age_hours < 2
+                          else 'amber' if sync_age_hours < 6 else 'red')
+
+    # Open (unreviewed) warnings for the current month — same collector the
+    # warnings registry uses, so the count and the click target agree.
+    month_start = today.replace(day=1)
+    report_data = _collect_fuel_report_data(month_start, today)
+    open_warnings = sum(1 for w in report_data.get('warnings', [])
+                        if (w.get('review_status') or 'new') == 'new')
 
     return render_template('fuel/dashboard.html',
                            balance_rows=balance_rows,
                            last_sync=last_sync,
-                           recent_txns=recent_txns,
                            today_total=today_total,
+                           total_fuel=total_fuel,
+                           days_left_total=days_left_total,
+                           mean_daily_total=mean_daily_total,
+                           negative_count=negative_count,
+                           low_stock_count=low_stock_count,
+                           threshold_days=threshold_days,
+                           consumption_window=FUEL_CONSUMPTION_WINDOW_DAYS,
+                           sync_freshness=sync_freshness,
+                           sync_age_hours=sync_age_hours,
+                           open_warnings=open_warnings,
+                           month_start=month_start,
+                           today=today,
+                           balances_by_wh=balances,
+                           mean_daily_by_wh=mean_daily,
                            wh_counts=_fuel_warehouse_counts(),
                            fuel_types=FUEL_TYPES)
 
@@ -5455,6 +5548,15 @@ def balance_report():
         end_dt_exclusive=end_dt_exclusive,
     )
 
+    # [REASON]: F1.2 FUEL-DASH-002 — the dashboard's «Склады в минусе» tile
+    # lands here with the filter already applied. Totals are recomputed over
+    # the filtered rows so the page never shows figures its table does not
+    # contain; the full report is one click away.
+    only_negative = request.args.get('only_negative') == '1'
+    if only_negative:
+        rows = [r for r in rows if r['closing'] < 0]
+        totals = {k: round(sum(r[k] for r in rows), 2) for k in totals}
+
     return render_template(
         "fuel/balance_report.html",
         rows=rows,
@@ -5463,6 +5565,7 @@ def balance_report():
         start_date=start_date,
         end_date=end_date,
         show_zero=show_zero,
+        only_negative=only_negative,
         wh_counts=_fuel_warehouse_counts(),
         period=_fuel_period_context(start_dt, end_dt_exclusive,
                                     start_date, end_date, preset),

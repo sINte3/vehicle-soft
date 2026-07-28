@@ -177,30 +177,74 @@
 </div>
 
 
-<div class="fuel002h-context-strip">
-    <div class="fuel002h-pill">
-        <span>{{ t('Омборлар') }}</span>
-        <strong>{{ balance_rows|length }}</strong>
-    </div>
-    <div class="fuel002h-pill">
-        <span>{{ t('Фаол АЗС') }}</span>
-        <strong>{{ balance_rows|sum(attribute='stations') }}</strong>
-    </div>
-    <div class="fuel002h-pill">
-        <span>{{ t('Бугун берилди') }}</span>
-        <strong>{{ "%.1f"|format(today_total or 0) }} л</strong>
-    </div>
-    <div class="fuel002h-pill">
-        <span>{{ t('Охирги беришлар') }}</span>
-        <strong>{{ recent_txns|length }}</strong>
-    </div>
+{# =======================================================================
+   F1.2 · FUEL-DASH-002 — tiles that answer a manager's question. Figures
+   come from _fuel_balance_map / the shared bulk helpers only. Every tile is
+   clickable and lands on its section with the filter already applied.
+   ======================================================================= #}
+<style>
+.fuel-dash-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin-bottom:12px; }
+a.fuel-dash-tile { text-decoration:none; color:inherit; display:block; }
+a.fuel-dash-tile:hover { text-decoration:none; color:inherit; box-shadow:var(--shadow); }
+.fuel-dash-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
+.fuel-dash-dot.green { background:#16a34a; }
+.fuel-dash-dot.amber { background:#d97706; }
+.fuel-dash-dot.red { background:var(--danger); }
+</style>
+<div class="fuel-dash-tiles">
+    <a class="stat-card fuel-dash-tile" href="{{ url_for('fuel.balance_report') }}">
+        <div class="label">{{ 'Всего топлива на складах' if lang == 'ru' else 'Омборлардаги жами ёқилғи' }}</div>
+        <div class="value">{{ '%.0f'|format(total_fuel) }} л</div>
+        <div class="text-muted text-xs" style="margin-top:4px;">
+            {% if days_left_total is not none %}
+            {{ ('хватит примерно на ' ~ days_left_total ~ ' дн. при среднем расходе за ' ~ consumption_window ~ ' дней (' ~ '%.0f'|format(mean_daily_total) ~ ' л/день)') if lang == 'ru' else ('охирги ' ~ consumption_window ~ ' кун ўртача сарфида (' ~ '%.0f'|format(mean_daily_total) ~ ' л/кун) тахминан ' ~ days_left_total ~ ' кунга етади') }}
+            {% else %}
+            {{ ('расхода за последние ' ~ consumption_window ~ ' дней нет') if lang == 'ru' else ('охирги ' ~ consumption_window ~ ' кунда сарф йўқ') }}
+            {% endif %}
+        </div>
+    </a>
+    <a class="stat-card fuel-dash-tile" href="{{ url_for('fuel.balance_report', only_negative=1) }}">
+        <div class="label">{{ 'Склады в минусе' if lang == 'ru' else 'Минусдаги омборлар' }}</div>
+        <div class="value" {% if negative_count %}style="color:var(--danger);"{% endif %}>{{ negative_count }}</div>
+        <div class="text-muted text-xs" style="margin-top:4px;">{{ 'клик — отчёт остатков только по минусовым' if lang == 'ru' else 'босинг — фақат минусдагилар бўйича ҳисобот' }}</div>
+    </a>
+    <a class="stat-card fuel-dash-tile" href="{{ url_for('fuel.transactions', date_from=today.isoformat(), date_to=today.isoformat()) }}">
+        <div class="label">{{ 'Выдано сегодня' if lang == 'ru' else 'Бугун берилди' }}</div>
+        <div class="value">{{ '%.1f'|format(today_total or 0) }} л</div>
+    </a>
+    <a class="stat-card fuel-dash-tile" href="{{ url_for('fuel.fuel_report') }}">
+        <div class="label">{{ 'Последняя синхронизация' if lang == 'ru' else 'Охирги синхронизация' }}</div>
+        <div class="value" style="font-size:15px;">
+            <span class="fuel-dash-dot {{ sync_freshness }}" aria-hidden="true"></span>
+            {%- if last_sync %}{{ last_sync.synced_at.strftime('%d.%m %H:%M') }}{% else %}—{% endif %}
+        </div>
+        <div class="text-muted text-xs" style="margin-top:4px;">
+            {% if sync_age_hours is not none %}
+            {{ ('примерно ' ~ '%.1f'|format(sync_age_hours) ~ ' ч назад') if lang == 'ru' else ('тахминан ' ~ '%.1f'|format(sync_age_hours) ~ ' соат олдин') }}
+            {% else %}
+            {{ 'синхронизаций пока нет' if lang == 'ru' else 'синхронизация ҳали йўқ' }}
+            {% endif %}
+        </div>
+    </a>
+</div>
+<div class="fuel-dash-tiles" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+    <a class="stat-card fuel-dash-tile" href="#fuelWarehouseTable">
+        <div class="label">{{ 'Складов ниже порога' if lang == 'ru' else 'Чегарадан паст омборлар' }}</div>
+        <div class="value" {% if low_stock_count %}style="color:var(--warn);"{% endif %}>{{ low_stock_count }}</div>
+        <div class="text-muted text-xs" style="margin-top:4px;">{{ ('запас меньше ' ~ threshold_days|round(1) ~ ' дн. при среднем расходе; минусовые считаются отдельно') if lang == 'ru' else ('заҳира ўртача сарфда ' ~ threshold_days|round(1) ~ ' кундан кам; минусдагилар алоҳида ҳисобланади') }}</div>
+    </a>
+    <a class="stat-card fuel-dash-tile" href="{{ url_for('fuel.fuel_warnings', status='new', date_from=month_start.isoformat(), date_to=today.isoformat()) }}">
+        <div class="label">{{ 'Открытые предупреждения' if lang == 'ru' else 'Очиқ огоҳлантиришлар' }}</div>
+        <div class="value" {% if open_warnings %}style="color:var(--warn);"{% endif %}>{{ open_warnings }}</div>
+        <div class="text-muted text-xs" style="margin-top:4px;">{{ 'непросмотренные за текущий месяц — клик открывает реестр' if lang == 'ru' else 'жорий ойда кўрилмаганлар — босинг, реестр очилади' }}</div>
+    </a>
 </div>
 
 {# F1.3 commit 24: the three-card hint block («1. Проверьте остатки / 2. …»)
    is gone — a newcomer needs it once, a manager never, and it occupied a
    third of the first screen. #}
 
-<div class="card fuel002h-balance-card FUEL002H_BALANCE_CARD_MARKER" style="margin-bottom:24px;">
+<div id="fuelWarehouseTable" class="card fuel002h-balance-card FUEL002H_BALANCE_CARD_MARKER" style="margin-bottom:24px;">
     <div class="card-header">{{ L_balances }}</div>
     <div style="overflow-x:auto;">
     <div class="fuel002h-table-wrap FUEL002H_BALANCE_TABLE_MARKER">
@@ -281,41 +325,8 @@
     </div>
 </div>
 
-{% if recent_txns %}
-<div class="card fuel002h-recent-card FUEL002H_RECENT_CARD_MARKER">
-    <div class="card-header" style="justify-content:space-between;">
-        <span>{{ L_recent }} ({{ recent_txns|length }})</span>
-        <a href="{{ url_for('fuel.transactions') }}" class="btn btn-secondary btn-sm">{{ L_all }} →</a>
-    </div>
-    <div style="overflow-x:auto;">
-    <div class="fuel002h-table-wrap FUEL002H_RECENT_TABLE_MARKER">
-<table class="fuel002h-dashboard-table">
-        <thead>
-            <tr>
-                <th>{{ L_datetime }}</th>
-                <th>{{ L_stations }}</th>
-                <th>{{ L_wh }}</th>
-                <th>{{ L_fuel }}</th>
-                <th class="text-right">{{ L_quantity }}</th>
-                <th>{{ L_card }}</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for t_ in recent_txns %}
-        <tr>
-            <td class="text-sm">{{ t_.txn_datetime.strftime('%d.%m.%Y %H:%M') }}</td>
-            <td>{{ t_.station.name }}</td>
-            <td class="text-muted text-sm">{{ t_.station.warehouse_name }}</td>
-            <td><span class="fuel-pill">{{ t_.fuel_type }}</span></td>
-            <td class="text-right" style="font-weight:700; color:var(--danger);">{{ '%.1f'|format(t_.quantity) }}</td>
-            <td class="text-sm text-muted">{{ t_.card_number or '—' }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-</div>
-    </div>
-</div>
-{% endif %}
+{# F1.2 · FUEL-DASH-002: the «Последние выдачи из Topaz» table is removed
+   entirely — it remains available under /fuel/transactions (the «Выдано
+   сегодня» tile lands there with today's filter applied). #}
 
 {% endblock %}
