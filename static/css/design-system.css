@@ -45,7 +45,11 @@
   --vs-success:        #15803d;   --vs-success-bg: #e7f6ec;
   --vs-warning:        #b45309;   --vs-warning-bg: #fdf3e3;
   --vs-danger:         #c0392b;   --vs-danger-bg:  #fdeeee;
-  --vs-info:           #2563eb;   --vs-info-bg:    #eaf1fe;
+  /* [REASON]: UI-ACCENT-DUP-001 — --vs-info used to be byte-identical to
+     --vs-primary (#2563eb), so five semantic accents rendered as four
+     colours. Teal-cyan: 5.36:1 on white, 4.86:1 on --vs-info-bg (WCAG AA
+     for text). */
+  --vs-info:           #0e7490;   --vs-info-bg:    #e6f7fb;
   --vs-purple:         #7c3aed;   --vs-purple-bg:  #f1eafe;
 
   /* Radii */
