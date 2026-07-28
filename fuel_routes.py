@@ -30,6 +30,7 @@ from models import (
     FuelWarningReview,
     FuelCard, FuelCardAlias, FuelCardSyncLog,
     FuelTransactionReattribution,
+    FuelCounterMismatch,
     module_required,
 )
 
@@ -3746,6 +3747,47 @@ def _perform_fuel_sync():
             card_number = str(txn.get('card_number', '') or '')
             if card_number in EXCLUDED_CARD_NUMBERS:
                 excluded_count += 1
+                # [REASON]: FUEL-SHIFT-001 — card 30 (ПЕРЕЛИВ) is Topaz's own
+                # counter-mismatch record. It stays OUT of fuel_transactions2
+                # (that exclusion is the whole point) and excluded_count keeps
+                # its meaning, but the signal is now logged beside the
+                # `continue`: station resolved the same way the normal path
+                # does, nullable when unresolvable — the row is never dropped.
+                # INSERT OR IGNORE + the unique (topaz_col_id, topaz_txn_id)
+                # index make the agent's three-day re-read window insert
+                # nothing twice, without ever failing the sync; the guard also
+                # keeps the sync alive on a database where the migration has
+                # not run yet.
+                try:
+                    mm_col_id = int(txn.get('topaz_col_id') or 0)
+                    mm_dt = parse_topaz_txn_datetime(txn.get('txn_datetime', ''))
+                    mm_station = resolve_fuel_station_for_topaz(mm_col_id, mm_dt)
+                    db.session.execute(
+                        text(
+                            'INSERT OR IGNORE INTO fuel_counter_mismatches '
+                            '(topaz_txn_id, topaz_col_id, station_id, '
+                            ' warehouse_id, txn_datetime, card_number, '
+                            ' quantity, amount, created_at) '
+                            'VALUES (:txn_id, :col_id, :station_id, '
+                            ' :warehouse_id, :txn_dt, :card, :qty, :amount, '
+                            ' :created)'
+                        ),
+                        {
+                            'txn_id': str(txn.get('topaz_txn_id', '')),
+                            'col_id': mm_col_id,
+                            'station_id': mm_station.id if mm_station else None,
+                            'warehouse_id': (mm_station.warehouse_id
+                                             if mm_station else None),
+                            'txn_dt': mm_dt,
+                            'card': card_number,
+                            'qty': float(txn.get('quantity', 0) or 0),
+                            'amount': float(txn.get('amount', 0) or 0),
+                            'created': datetime.utcnow(),
+                        },
+                    )
+                except Exception as mm_exc:
+                    current_app.logger.warning(
+                        'FUEL_COUNTER_MISMATCH_LOG_FAILED %s', mm_exc)
                 continue
 
             col_id = int(txn.get('topaz_col_id') or 0)

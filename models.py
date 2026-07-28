@@ -793,6 +793,40 @@ class FuelTransactionReattribution(db.Model):
 
 
 
+class FuelCounterMismatch(db.Model):
+    """FUEL-SHIFT-001: log of card-30 («ПЕРЕЛИВ») rows excluded at ingest.
+
+    [REASON]: card 30 is Topaz's own record of a mismatch between a hose's
+    hardware counter and the software total. Excluding it from consumption is
+    correct and unchanged (EXCLUDED_CARD_NUMBERS in _perform_fuel_sync); this
+    table keeps the SIGNAL that used to vanish, one row per Topaz record, so
+    a per-dispenser picture can accumulate. The table is created on existing
+    databases by migrate_fuel_counter_mismatch.py; this model matches that
+    DDL exactly (no foreign keys there, none here — an unresolvable column id
+    must still be recorded with NULL station/warehouse, never dropped).
+    Records accumulate from deployment; earlier history was never stored.
+    """
+    __tablename__ = 'fuel_counter_mismatches'
+    id           = db.Column(db.Integer, primary_key=True)
+    topaz_txn_id = db.Column(db.Text, nullable=True)
+    topaz_col_id = db.Column(db.Integer, nullable=True)
+    station_id   = db.Column(db.Integer, nullable=True)
+    warehouse_id = db.Column(db.Integer, nullable=True)
+    txn_datetime = db.Column(db.DateTime, nullable=True)
+    card_number  = db.Column(db.Text, nullable=True)
+    quantity     = db.Column(db.Float, nullable=True)
+    amount       = db.Column(db.Float, nullable=True)
+    created_at   = db.Column(db.DateTime, nullable=True, default=datetime.utcnow)
+
+    __table_args__ = (
+        # [REASON]: the agent re-reads a three-day window on every sync; the
+        # unique pair makes a repeated sync insert nothing twice.
+        db.Index('uq_fuel_counter_mismatch_txn', 'topaz_col_id', 'topaz_txn_id',
+                 unique=True),
+        db.Index('ix_fuel_counter_mismatches_txn_datetime', 'txn_datetime'),
+    )
+
+
 # ─── Task 3: Module Permissions ───────────────────────────────────────────────
 
 class AppModule(db.Model):
