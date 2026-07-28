@@ -2,6 +2,7 @@
 {% block title %}АЗС — {{ 'Отчёт по топливу' if lang == 'ru' else 'Ёқилғи ҳисоботи' }}{% endblock %}
 {% block content %}
 {% include 'fuel/_fuel_nav.html' %}
+{% set show_legacy = request.args.get('show_legacy') == '1' %}
 
 <style>
 /* FUEL002D_MARKER: fuel report UX refresh, template/localization only. */
@@ -255,9 +256,12 @@ form.fuel002d-filter-form {
     <div class="fuel-report-actions">
         <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">{{ L_back }}</a>
         <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="btn btn-secondary btn-sm">{{ L_warnings }}</a>
-        <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat(), warehouse_id=selected_warehouse_id or '', station_id=selected_station_id or '', export=1) }}" class="btn btn-primary btn-sm">{{ L_export }}</a>
+        <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat(), warehouse_id=selected_warehouse_id or '', station_id=selected_station_id or '', show_legacy='1' if show_legacy else none, export=1) }}" class="btn btn-primary btn-sm">{{ L_export }}</a>
     </div>
 </div>
+
+{# FUEL-BIG-001: shared working-vs-archive mode control, same as the dashboard #}
+{% include 'fuel/_legacy_toggle.html' %}
 
 <div class="fuel-report-note"><strong>ДТ.</strong> {{ L_rule }}</div>
 
@@ -269,12 +273,12 @@ form.fuel002d-filter-form {
     <div class="card-body">
         
 <div class="fuel002d-context-strip">
-  {# [REASON]: FUEL-BIG-001 — the plate shows the computed working-warehouse
-     count (wh_counts), not the raw table length, which counted archived
-     warehouses too and overstated the figure. #}
+  {# [REASON]: FUEL-BIG-001 — the plate shows the computed warehouse count for
+     the current mode (wh_counts), not the raw table length, which counted
+     archived warehouses too and overstated the figure. #}
   <div class="fuel002d-pill">
     <span>{{ t('Омборлар') }}</span>
-    <strong>{{ wh_counts.working }}</strong>
+    <strong>{{ wh_counts.all if show_legacy else wh_counts.working }}</strong>
   </div>
   <div class="fuel002d-pill">
     <span>{{ t('АЗСлар') }}</span>
@@ -307,6 +311,8 @@ form.fuel002d-filter-form {
 
 <div class="fuel002d-filter-card FUEL002D_FILTER_CARD_MARKER">
 <form method="get" class="fuel-report-filter fuel002d-filter-form" id="fuelReportForm">
+            {# FUEL-BIG-001: refreshing the report must not silently drop the archive mode #}
+            {% if show_legacy %}<input type="hidden" name="show_legacy" value="1">{% endif %}
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ L_from }}</label>
                 <input type="date" name="date_from" class="form-control" value="{{ d_from.isoformat() }}">

@@ -3,10 +3,17 @@
 
 {% block content %}
 {% include 'fuel/_fuel_nav.html' %}
+{% set show_legacy = request.args.get('show_legacy') == '1' %}
 {% set L_title = 'Отчёт остатков топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари ҳисоботи' %}
 {# [REASON]: FUEL-BIG-001 — the warehouse count comes from wh_counts, never a
-   literal: the old hardcoded value had drifted from the rendered row count. #}
+   literal: the old hardcoded value had drifted from the rendered row count.
+   The second sentence follows the archive toggle so it never contradicts the
+   mode banner. #}
+{% if show_legacy %}
+{% set L_formula = ('Остаток на начало периода + приход - расход Topaz/ручной расход = текущий остаток. Показаны все склады, включая архивные (' ~ wh_counts.all ~ ').') if lang == 'ru' else ('Давр бошидаги қолдиқ + кирим - Topaz/қўлда сарф = жорий қолдиқ. Барча омборлар, шу жумладан архивдагилар (' ~ wh_counts.all ~ ' та) кўрсатилган.') %}
+{% else %}
 {% set L_formula = ('Остаток на начало периода + приход - расход Topaz/ручной расход = текущий остаток. В отчёте используются только рабочие склады новой иерархии (' ~ wh_counts.working ~ ').') if lang == 'ru' else ('Давр бошидаги қолдиқ + кирим - Topaz/қўлда сарф = жорий қолдиқ. Ҳисоботда фақат янги иерархиянинг ишчи омборлари (' ~ wh_counts.working ~ ' та) ишлатилади.') %}
+{% endif %}
 {% set L_back = 'Назад к АЗС' if lang == 'ru' else 'АЗС бўлимига қайтиш' %}
 {% set L_params_title = 'Параметры отчёта' if lang == 'ru' else 'Ҳисобот параметрлари' %}
 {% set L_params_hint = 'Выберите период и скачайте отчёт в Excel при необходимости.' if lang == 'ru' else 'Даврни танланг ва зарур бўлса ҳисоботни Excelда юклаб олинг.' %}
@@ -49,6 +56,9 @@
     </div>
 </div>
 
+{# FUEL-BIG-001: shared working-vs-archive mode control, same as the dashboard #}
+{% include 'fuel/_legacy_toggle.html' %}
+
 <div class="card" style="margin-bottom:16px; padding:16px;">
     <div style="display:flex; justify-content:space-between; gap:16px; align-items:flex-start; flex-wrap:wrap;">
         <div>
@@ -63,6 +73,8 @@
     <form method="get"
           action="{{ url_for('fuel.balance_report') }}"
           style="margin-top:14px; display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end;">
+        {# FUEL-BIG-001: rebuilding the report must not silently drop the archive mode #}
+        {% if show_legacy %}<input type="hidden" name="show_legacy" value="1">{% endif %}
         <div style="min-width:170px;">
             <label style="display:block; margin-bottom:5px;">{{ L_date_from }}</label>
             <input type="date" name="start_date" value="{{ start_date.isoformat() }}" class="form-control" style="width:170px;">
@@ -84,7 +96,7 @@
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button type="submit" class="btn btn-primary">{{ L_build }}</button>
             <a class="btn btn-secondary"
-               href="{{ url_for('fuel.balance_report_export', start_date=start_date.isoformat(), end_date=end_date.isoformat(), hide_zero='0' if show_zero else '1') }}">
+               href="{{ url_for('fuel.balance_report_export', start_date=start_date.isoformat(), end_date=end_date.isoformat(), hide_zero='0' if show_zero else '1', show_legacy='1' if show_legacy else none) }}">
                 {{ L_download_excel }}
             </a>
         </div>

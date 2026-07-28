@@ -1435,10 +1435,16 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         else:
             station_id = None
 
-    wh_query = FuelWarehouse.query.order_by(FuelWarehouse.name)
+    # [REASON]: FUEL-BIG-001 — /fuel/report used to compute over EVERY warehouse
+    # while the dashboard and the balance report used the UI set, so the three
+    # screens disagreed on the count. The default set now comes from
+    # fuel_warehouse_query_for_ui() (show_legacy honoured); an explicit
+    # warehouse/station filter bypasses it, matching the receipts() pattern.
     if warehouse_id:
-        wh_query = wh_query.filter(FuelWarehouse.id == warehouse_id)
-    warehouses = wh_query.all()
+        wh_query = FuelWarehouse.query.filter(FuelWarehouse.id == warehouse_id)
+    else:
+        wh_query = fuel_warehouse_query_for_ui()
+    warehouses = wh_query.order_by(FuelWarehouse.name).all()
 
     warehouse_rows = []
     totals = {
@@ -1747,8 +1753,12 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
                    (FuelTransaction2.station_id == FuelStation2.id) &
                    (FuelTransaction2.txn_datetime >= d_from_dt) &
                    (FuelTransaction2.txn_datetime <= d_to_dt)))
+    # [REASON]: FUEL-BIG-001 — the per-station table follows the same default
+    # warehouse visibility as the warehouse table above; explicit filters bypass.
     if warehouse_id:
         station_query = station_query.filter(FuelStation2.warehouse_id == warehouse_id)
+    elif not station_id:
+        station_query = fuel_apply_warehouse_filter_for_ui(station_query, FuelStation2.warehouse_id)
     if station_id:
         station_query = station_query.filter(FuelStation2.id == station_id)
     station_rows = station_query.group_by(
@@ -1763,6 +1773,8 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
                              FuelTransaction2.txn_datetime <= d_to_dt))
     if warehouse_id:
         recent_txns_q = recent_txns_q.filter(FuelStation2.warehouse_id == warehouse_id)
+    elif not station_id:
+        recent_txns_q = fuel_apply_warehouse_filter_for_ui(recent_txns_q, FuelStation2.warehouse_id)
     if station_id:
         recent_txns_q = recent_txns_q.filter(FuelTransaction2.station_id == station_id)
     recent_txns = recent_txns_q.order_by(FuelTransaction2.txn_datetime.desc()).limit(200).all()
@@ -1872,6 +1884,8 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
                            FuelTransaction2.quantity >= FUEL_LARGE_TXN_THRESHOLD))
     if warehouse_id:
         large_txn_q = large_txn_q.filter(FuelStation2.warehouse_id == warehouse_id)
+    elif not station_id:
+        large_txn_q = fuel_apply_warehouse_filter_for_ui(large_txn_q, FuelStation2.warehouse_id)
     if station_id:
         large_txn_q = large_txn_q.filter(FuelTransaction2.station_id == station_id)
     large_txns = large_txn_q.order_by(FuelTransaction2.quantity.desc()).limit(20).all()
@@ -1895,6 +1909,8 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
                  .filter((FuelTransaction2.quantity == None) | (FuelTransaction2.quantity <= 0)))
     if warehouse_id:
         bad_qty_q = bad_qty_q.filter(FuelStation2.warehouse_id == warehouse_id)
+    elif not station_id:
+        bad_qty_q = fuel_apply_warehouse_filter_for_ui(bad_qty_q, FuelStation2.warehouse_id)
     if station_id:
         bad_qty_q = bad_qty_q.filter(FuelTransaction2.station_id == station_id)
     bad_qty_txns = bad_qty_q.order_by(FuelTransaction2.txn_datetime.desc()).limit(20).all()
@@ -2249,9 +2265,13 @@ def fuel_report():
     # perf-fuel-report-warehouse-query-001_marker: reuse warehouses loaded by report collector.
     data_for_template = dict(data)
     warehouses = data_for_template.pop('warehouses', None) or FuelWarehouse.query.order_by(FuelWarehouse.name).all()
-    stations = (FuelStation2.query
-                .join(FuelWarehouse)
-                .order_by(FuelWarehouse.name, FuelStation2.name).all())
+    # [REASON]: FUEL-BIG-001 — the filter dropdowns follow the same warehouse
+    # visibility as the report body (show_legacy honoured), so working mode
+    # cannot offer a station whose report would come back empty.
+    stations_q = (FuelStation2.query
+                  .join(FuelWarehouse)
+                  .order_by(FuelWarehouse.name, FuelStation2.name))
+    stations = fuel_apply_warehouse_filter_for_ui(stations_q, FuelStation2.warehouse_id).all()
     return render_template('fuel/report.html',
                            warehouses=warehouses,
                            stations=stations,

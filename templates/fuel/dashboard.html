@@ -9,37 +9,12 @@
    hardcoded literals had already drifted from the real counts. #}
 {% set L_balance_report_desc = ('Периодический отчёт по рабочим складам (' ~ wh_counts.working ~ '): остаток на начало, приход, расход Topaz и текущий остаток.') if lang == 'ru' else ('Ишчи омборлар (' ~ wh_counts.working ~ ' та) бўйича даврий ҳисобот: бошланғич қолдиқ, кирим, Topaz сарфи ва жорий қолдиқ.') %}
 {% set L_balance_report_open = 'Открыть отчёт' if lang == 'ru' else 'Ҳисоботни очиш' %}
-{% set L_legacy_on = 'Архивный режим складов включён.' if lang == 'ru' else 'Омборларнинг архив режими ёқилган.' %}
-{% set L_legacy_mode_29 = ('Режим: все склады, включая архивные (' ~ wh_counts.all ~ ').') if lang == 'ru' else ('Режим: барча омборлар, шу жумладан архивдагилар (' ~ wh_counts.all ~ ' та).') %}
-{% set L_legacy_note = ('Сейчас показаны рабочие и старые/архивные склады. Для текущей иерархии используйте режим рабочих складов (' ~ wh_counts.working ~ ').') if lang == 'ru' else ('Ҳозир ишчи ва эски/архив омборлар кўрсатилмоқда. Жорий иерархия учун ишчи омборлар режимидан (' ~ wh_counts.working ~ ' та) фойдаланинг.') %}
-{% set L_legacy_back = ('Вернуться к рабочим складам (' ~ wh_counts.working ~ ')') if lang == 'ru' else ('Ишчи омборларга қайтиш (' ~ wh_counts.working ~ ' та)') %}
-{% set L_legacy_mode_22 = ('Режим: рабочие склады (' ~ wh_counts.working ~ ').') if lang == 'ru' else ('Режим: ишчи омборлар (' ~ wh_counts.working ~ ' та).') %}
-{% set L_legacy_only_working = 'Показаны только рабочие склады новой иерархии.' if lang == 'ru' else 'Фақат янги иерархиянинг ишчи омборлари кўрсатилган.' %}
-{% set L_legacy_show = 'Показать архивные склады' if lang == 'ru' else 'Архив омборларни кўрсатиш' %}
 
-{# FUEL-HIERARCHY-010B: explicit working-vs-archive warehouse mode #}
+{# FUEL-HIERARCHY-010B / FUEL-BIG-001: the explicit working-vs-archive mode
+   control moved into the shared include so all three screens (dashboard,
+   balance report, /fuel/report) show one control with one wording. #}
 {% set show_legacy = request.args.get('show_legacy') == '1' %}
-
-{% if show_legacy %}
-<div class="card" style="margin-bottom:16px; border:1px solid #f59e0b; background:#fffbeb;">
-    <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; padding:12px 16px;">
-        <div>
-            <strong style="color:#92400e;">{{ L_legacy_on }}</strong>
-            <div class="text-muted text-sm" style="margin-top:3px;">
-                <strong>{{ L_legacy_mode_29 }}</strong> {{ L_legacy_note }}
-            </div>
-        </div>
-        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">{{ L_legacy_back }}</a>
-    </div>
-</div>
-{% else %}
-{% if current_user.is_admin %}
-<div class="text-muted text-sm" style="margin-bottom:10px;">
-    <strong>{{ L_legacy_mode_22 }}</strong> {{ L_legacy_only_working }}
-    <a href="{{ url_for('fuel.dashboard', show_legacy=1) }}">{{ L_legacy_show }}</a>
-</div>
-{% endif %}
-{% endif %}
+{% include 'fuel/_legacy_toggle.html' %}
 
 
 
