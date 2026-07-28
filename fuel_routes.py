@@ -231,6 +231,29 @@ def _card_display_name(card_number, name_map):
     return name_map.get(card_number.strip(), '—')
 
 
+def _resolve_card_map(txns):
+    """Like _resolve_card_names, but maps card_number -> FuelCard object.
+
+    [REASON]: F2.4 — the card register also shows the vehicle (car_number /
+    car_model) when the directory knows it, so it needs the card row, not
+    just the display name. One query for the whole page, same alias rules.
+    """
+    card_numbers = set()
+    for txn in txns:
+        val = (txn.card_number or '').strip()
+        if val:
+            card_numbers.add(val)
+    if not card_numbers:
+        return {}
+
+    aliases = (FuelCardAlias.query
+               .options(joinedload(FuelCardAlias.card))
+               .filter(FuelCardAlias.alias_type.in_(['topaz_card_id', 'rfid']),
+                       FuelCardAlias.alias_value.in_(list(card_numbers)))
+               .all())
+    return {alias.alias_value: alias.card for alias in aliases if alias.card}
+
+
 def _card_name_map_for_station_report(station_id, start_date, end_date):
     """Build card_number -> display_name map for station issues report."""
     from datetime import datetime as dt
@@ -3848,6 +3871,184 @@ def card_directory():
         cards=cards, total_cards=total_cards, active_cards=active_cards,
         total_aliases=total_aliases, last_sync=last_sync,
         sync_logs=sync_logs, q=request.args.get('q', ''))
+
+
+# ─── F2.4 FUEL-REPORTS-FINISH-007: card register + station totals ────
+
+def _fuel_card_issue_groups(start_dt, end_dt_exclusive):
+    """Issues in the window grouped per card, with per-card subtotals.
+
+    [REASON]: F2.4 — the register reports dispensing operations, so it uses
+    the RAW Topaz rows of the UI-visible warehouses (external cards included:
+    those are real dispensing events, shown under their own card). Groups are
+    sorted by display name, unknown cards last by number.
+    """
+    q = (FuelTransaction2.query
+         .options(joinedload(FuelTransaction2.station))
+         .join(FuelStation2, FuelStation2.id == FuelTransaction2.station_id)
+         .filter(FuelTransaction2.txn_datetime >= start_dt,
+                 FuelTransaction2.txn_datetime < end_dt_exclusive))
+    q = fuel_apply_warehouse_filter_for_ui(q, FuelStation2.warehouse_id)
+    txns = q.order_by(FuelTransaction2.txn_datetime, FuelTransaction2.id).all()
+
+    card_map = _resolve_card_map(txns)
+    groups = {}
+    for t in txns:
+        num = (t.card_number or '').strip()
+        g = groups.get(num)
+        if g is None:
+            card = card_map.get(num)
+            g = groups[num] = {
+                'card_number': num,
+                'display_name': card.display_name if card else None,
+                'car_number': card.car_number if card else None,
+                'car_model': card.car_model if card else None,
+                'txns': [],
+                'count': 0,
+                'litres': 0.0,
+            }
+        g['txns'].append(t)
+        g['count'] += 1
+        g['litres'] += float(t.quantity or 0)
+
+    ordered = sorted(groups.values(),
+                     key=lambda g: (g['display_name'] is None,
+                                    g['display_name'] or '',
+                                    g['card_number']))
+    total = {
+        'count': sum(g['count'] for g in ordered),
+        'litres': round(sum(g['litres'] for g in ordered), 2),
+        'cards': len(ordered),
+    }
+    for g in ordered:
+        g['litres'] = round(g['litres'], 2)
+    return ordered, total
+
+
+@fuel_bp.route('/reports/card-issues')
+@module_required('fuel')
+def card_issues_report():
+    """F2.4: fuel issue register by card."""
+    today = date.today()
+    start_dt, end_dt_exclusive, start_date, end_date, preset = _fuel_parse_period(
+        request.args, today.replace(day=1), today)
+
+    groups, total = _fuel_card_issue_groups(start_dt, end_dt_exclusive)
+
+    return render_template('fuel/report_card_issues.html',
+                           groups=groups,
+                           total=total,
+                           start_date=start_date,
+                           end_date=end_date,
+                           period=_fuel_period_context(start_dt, end_dt_exclusive,
+                                                       start_date, end_date, preset))
+
+
+@fuel_bp.route('/reports/card-issues/export')
+@module_required('fuel')
+def card_issues_export():
+    """F2.4: Excel export of the card register, matching the screen."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    today = date.today()
+    start_dt, end_dt_exclusive, start_date, end_date, _preset = _fuel_parse_period(
+        request.args, today.replace(day=1), today)
+    groups, total = _fuel_card_issue_groups(start_dt, end_dt_exclusive)
+    lang = _fuel_report_lang()
+
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = _safe_ws_title(L('По картам', 'Карталар бўйича'), set())
+
+    thin = Side(style='thin', color='D1D5DB')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_fill = PatternFill('solid', fgColor='D9EAD3')
+    group_fill = PatternFill('solid', fgColor='F0F9F0')
+    total_fill = PatternFill('solid', fgColor='FEF3C7')
+
+    period_label = '%s %s — %s %s' % (
+        start_date.strftime('%d.%m.%Y'), start_dt.strftime('%H:%M'),
+        end_date.strftime('%d.%m.%Y'),
+        (end_dt_exclusive - timedelta(minutes=1)).strftime('%H:%M'))
+    ws.merge_cells('A1:F1')
+    ws['A1'] = L('Реестр выдачи топлива по картам', 'Карталар бўйича ёқилғи бериш реестри')
+    ws['A1'].font = Font(bold=True, size=14)
+    ws.merge_cells('A2:F2')
+    ws['A2'] = '%s: %s' % (L('Период', 'Давр'), period_label)
+    ws['A2'].font = Font(size=11, color='666666')
+
+    headers = ['№', L('Дата/время', 'Сана/вақт'), L('АЗС', 'АЗС'),
+               L('Имя карты', 'Карта номи'), L('Машина', 'Машина'),
+               L('Выдано топлива, л', 'Берилган ёқилғи, л')]
+    for col, title in enumerate(headers, start=1):
+        cell = ws.cell(row=4, column=col, value=title)
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        cell.border = border
+
+    r = 4
+    for g in groups:
+        r += 1
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=6)
+        name = g['display_name'] or ('%s (%s)' % (L('карта без имени', 'номсиз карта'), g['card_number'] or '—'))
+        car = (' · ' + ' '.join(x for x in (g['car_number'], g['car_model']) if x)) \
+            if (g['car_number'] or g['car_model']) else ''
+        cell = ws.cell(row=r, column=1,
+                       value='%s%s — %s: %d, %s: %.2f' % (
+                           name, car, L('выдач', 'беришлар'), g['count'],
+                           L('литров', 'литр'), g['litres']))
+        cell.font = Font(bold=True, size=11, color='1A6B3C')
+        cell.fill = group_fill
+        for seq, t in enumerate(g['txns'], start=1):
+            r += 1
+            ws.cell(row=r, column=1, value=seq)
+            ws.cell(row=r, column=2,
+                    value=t.txn_datetime.strftime('%d.%m.%Y %H:%M') if t.txn_datetime else '')
+            ws.cell(row=r, column=3, value=t.station.name if t.station else '')
+            ws.cell(row=r, column=4, value=g['display_name'] or '—')
+            ws.cell(row=r, column=5,
+                    value=' '.join(x for x in (g['car_number'], g['car_model']) if x) or '—')
+            ws.cell(row=r, column=6, value=round(float(t.quantity or 0), 2)).number_format = '#,##0.00'
+        r += 1
+        ws.cell(row=r, column=5, value=L('Итого по карте', 'Карта бўйича жами')).font = Font(bold=True)
+        ws.cell(row=r, column=6, value=g['litres']).number_format = '#,##0.00'
+        ws.cell(row=r, column=6).font = Font(bold=True)
+
+    r += 1
+    ws.cell(row=r, column=5, value=L('ВСЕГО', 'ЖАМИ')).font = Font(bold=True, size=12)
+    cell = ws.cell(row=r, column=6, value=total['litres'])
+    cell.number_format = '#,##0.00'
+    cell.font = Font(bold=True, size=12)
+    for col in range(1, 7):
+        ws.cell(row=r, column=col).fill = total_fill
+
+    for row_cells in ws.iter_rows(min_row=4, max_row=r, min_col=1, max_col=6):
+        for cell in row_cells:
+            cell.border = border
+    for col, width in ((1, 6), (2, 18), (3, 24), (4, 28), (5, 22), (6, 16)):
+        ws.column_dimensions[get_column_letter(col)].width = width
+    ws.freeze_panes = 'A5'
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = '4:4'
+    ws.oddFooter.center.text = '%s — %s' % (
+        L('Реестр выдачи топлива по картам', 'Карталар бўйича ёқилғи бериш реестри'),
+        period_label)
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    fname = 'fuel_card_issues_%s_%s.xlsx' % (start_date.isoformat(), end_date.isoformat())
+    return send_file(output, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 # ─── F4.1 FUEL-LEDGER-001: warehouse ledger page ─────────────────────
