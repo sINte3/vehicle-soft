@@ -216,8 +216,14 @@ div.fuel-dash-tile:hover { box-shadow:var(--shadow); }
             </div>
         </a>
         {% if negative_count %}
+        {# QA fix 52 — the tile counts positive balances ONLY (fix 47), so
+           negative warehouses are excluded from the figure above; «в том
+           числе» said the opposite. The wording now states they are NOT in
+           the sum. (The similar phrase on the two reports from fix 45 is
+           correct and stays — there the total genuinely includes the
+           third-party fuel.) #}
         <a class="fuel-dash-tile-neg" href="{{ url_for('fuel.balance_report', only_negative=1) }}">
-            {{ ('в том числе складов в минусе: ' ~ negative_count ~ ' на ' ~ '%.0f'|format(negative_total) ~ ' л') if lang == 'ru' else ('шу жумладан минусдаги омборлар: ' ~ negative_count ~ ' та, жами ' ~ '%.0f'|format(negative_total) ~ ' л') }}
+            {{ ('не входит в сумму: складов в минусе ' ~ negative_count ~ ' на ' ~ '%.0f'|format(negative_total) ~ ' л') if lang == 'ru' else ('юқоридаги суммага кирмайди: минусдаги омборлар ' ~ negative_count ~ ' та, жами ' ~ '%.0f'|format(negative_total) ~ ' л') }}
         </a>
         {% endif %}
     </div>
