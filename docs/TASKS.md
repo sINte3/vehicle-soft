@@ -248,9 +248,17 @@ tile counts positive balances only — owner decision 2026-07-28 option (a);
 negative warehouses get their own link line), `479b209` (48, the balance
 workbook follows the interface language), `6423f15` (49, two Uzbek strings
 cleared of Russian words), plus the docs commit (50, this record).
-Development environment had no production DB: the QA-round acceptance
-numbers were measured on the synthetic fixture; re-validation of 41–50 on
-the real database is the open RELEASE_GATE remainder.
+The QA-round acceptance numbers were first measured on the synthetic
+fixture; later the same day the owner supplied a copy of the production
+database (snapshot 2026-07-28 11:13) and everything was re-measured on it:
+verify scripts 23 warehouses / 0 differences, migration 28 → 29 and
+idempotent on re-run, wh 25 grand total 100 406.27 with external 16 674.85
+separate, register 598 781.58 vs balance «Выдача Topaz» 582 106.73 (diff
+exactly the external), dashboard tile 17 111 л with «складов в минусе: 3
+на -15 877 л», issued-today positive (tile 1126.6), both-language export
+headers, table fit at 1440x900 and 1280x800 with the real 23 rows. The
+open RELEASE_GATE remainder is applying the migration on a live platform
+and a human look at the fixed screens.
 Rollback order: the docs commit (50), `6423f15`, `479b209`, `f72747a`,
 `2c24dae`, `e745cea`, `7d13ee3`, `41a0d55`, `e22c6e7`, `61e67ef`.
 
