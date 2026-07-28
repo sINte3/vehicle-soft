@@ -68,6 +68,18 @@
    printed page), and everything interactive hidden. Detail rows carry the
    `hidden` attribute, so the collapsed state prints as collapsed. #}
 <style>
+/* [REASON]: QA fix (commit 41) — the collapsed summary table must fit the
+   screen without horizontal scroll, or «Текущий остаток» (the figure the
+   report exists for) lands off-screen. Long organisation/warehouse names may
+   wrap onto several lines; numeric cells never wrap. The nested daily tables
+   are excluded via direct-child selectors and keep their old behaviour. */
+.fuel-balance-summary { white-space: nowrap; margin: 0; font-size: 13px; width: 100%; }
+.fuel-balance-summary > thead > tr > th { white-space: normal; }
+.table.fuel-balance-summary > thead > tr > th,
+.table.fuel-balance-summary > tbody > tr > td,
+.table.fuel-balance-summary > tfoot > tr > th { padding-left: 7px; padding-right: 7px; }
+.fuel-balance-summary > tbody > tr.fuel-balance-row > td:nth-child(2),
+.fuel-balance-summary > tbody > tr.fuel-balance-row > td:nth-child(3) { white-space: normal; }
 .fuel-print-footer { display: none; }
 @media print {
   @page { size: A4 landscape; margin: 12mm 10mm 16mm; }
@@ -210,12 +222,12 @@
         <span class="text-muted text-sm" style="align-self:center;">{{ 'Нажмите на строку склада, чтобы раскрыть дни.' if lang == 'ru' else 'Кунларни очиш учун омбор қаторини босинг.' }}</span>
     </div>
     <div style="overflow:auto; max-width:100%;">
-        <table class="table table-sm table-striped" style="min-width:1000px; white-space:nowrap; margin:0; font-size:13px;">
+        <table class="table table-sm table-striped fuel-balance-summary">
             <thead>
                 <tr>
                     <th>{{ L_num }}</th>
-                    <th style="min-width:190px;">{{ L_org }}</th>
-                    <th style="min-width:170px;">{{ L_wh }}</th>
+                    <th style="min-width:110px;">{{ L_org }}</th>
+                    <th style="min-width:100px;">{{ L_wh }}</th>
                     <th>{% if lang == 'ru' %}Остаток на {{ start_date.strftime('%d/%m/%Y') }}{% else %}{{ start_date.strftime('%d/%m/%Y') }} даги қолдиқ{% endif %}</th>
                     <th>{{ L_receipts }}</th>
                     <th>{{ L_topaz }}</th>
