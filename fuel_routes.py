@@ -1256,44 +1256,6 @@ def _parse_report_date(value, default):
         return default
 
 
-def _sum_receipts_for_period(warehouse_id, start_date, end_date):
-    return float(db.session.query(func.coalesce(func.sum(FuelReceipt2.quantity), 0))
-                 .filter(FuelReceipt2.warehouse_id == warehouse_id,
-                         FuelReceipt2.receipt_date >= start_date,
-                         FuelReceipt2.receipt_date <= end_date)
-                 .scalar() or 0)
-
-
-def _sum_issues_for_period(warehouse_id, start_dt, end_dt, station_id=None):
-    q = (db.session.query(func.coalesce(func.sum(FuelTransaction2.quantity), 0))
-         .join(FuelStation2)
-         .filter(FuelStation2.warehouse_id == warehouse_id,
-                 FuelTransaction2.txn_datetime >= start_dt,
-                 FuelTransaction2.txn_datetime <= end_dt))
-    if station_id:
-        q = q.filter(FuelTransaction2.station_id == station_id)
-    return float(q.scalar() or 0)
-
-
-def _fuel_opening_balance(warehouse_id, d_from):
-    ib = (FuelInitialBalance.query
-          .filter_by(warehouse_id=warehouse_id, fuel_type='ДТ')
-          .first())
-    if not ib:
-        return None, None
-    start_date = ib.balance_date
-    if d_from <= start_date:
-        return float(ib.quantity or 0), ib
-    before_date = d_from - timedelta(days=1)
-    receipts_before = _sum_receipts_for_period(warehouse_id, start_date, before_date)
-    issues_before = _sum_issues_for_period(
-        warehouse_id,
-        datetime.combine(start_date, datetime.min.time()),
-        datetime.combine(before_date, datetime.max.time()),
-    )
-    return round(float(ib.quantity or 0) + receipts_before - issues_before, 2), ib
-
-
 FUEL_LARGE_TXN_THRESHOLD = 500.0
 FUEL_SYNC_STALE_HOURS = 12
 
