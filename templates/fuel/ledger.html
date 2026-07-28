@@ -1,0 +1,182 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}АЗС — {{ 'Карточка склада' if is_ru else 'Омбор карточкаси' }}{% endblock %}
+{% block content %}
+{% include 'fuel/_fuel_nav.html' %}
+
+{# ===========================================================================
+   F4.1 · FUEL-LEDGER-001 — warehouse ledger card: every movement of one
+   warehouse in chronological order with a running balance. Figures come from
+   _fuel_ledger, which flows through the same helpers as the balance report;
+   the acceptance criterion is arithmetic identity, proven by
+   verify_fuel_ledger_matches_balance.py.
+
+   [REASON]: reserve and external tables collapse with <details> — the same
+   mechanism _fuel_nav.html uses for its group; no JS framework. Rows whose
+   source page is admin-only (manual expense, reserve marks, initial balance)
+   render as plain text unless current_user.is_admin — hidden, not
+   shown-and-disabled, matching _fuel_nav.html. No id-based source routes
+   exist, so a row links to its DAY and WAREHOUSE on the source page.
+   =========================================================================== #}
+
+{% set L_kind = {
+    'opening':         ('Остаток на начало' if is_ru else 'Бошланғич қолдиқ'),
+    'receipt':         ('Приход' if is_ru else 'Кирим'),
+    'topaz':           ('Выдача Topaz' if is_ru else 'Topaz бериш'),
+    'manual':          ('Ручной расход' if is_ru else 'Қўлда сарф'),
+    'reserve_expense': ('Выдача по отметке резерва' if is_ru else 'Резерв белгиси бўйича бериш'),
+    'external':        ('Стороннее топливо' if is_ru else 'Бегона ёқилғи'),
+} %}
+
+<div class="page-header">
+    <div>
+        <h1>{{ 'Карточка склада' if is_ru else 'Омбор карточкаси' }}</h1>
+        <p class="text-muted">
+            {{ 'Все движения топлива по одному складу за период — с остатком после каждой операции. Итоги совпадают с отчётом остатков до копейки.' if is_ru else 'Давр учун битта омбор бўйича барча ёқилғи ҳаракатлари — ҳар бир амалдан кейинги қолдиқ билан. Якунлар қолдиқлар ҳисоботи билан тийингача мос келади.' }}
+        </p>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:16px; padding:16px;">
+    <form method="get" action="{{ url_for('fuel.warehouse_ledger') }}"
+          style="display:flex; flex-direction:column; gap:12px;">
+        {% include 'fuel/_period_picker.html' %}
+        <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">
+            <div class="form-group" style="margin-bottom:0; min-width:280px;">
+                <label>{{ 'Склад' if is_ru else 'Омбор' }}</label>
+                {# [REASON]: duplicate warehouse names exist («Мирзачул ПТЗ» twice),
+                   so the id is shown beside the name; the value is always the id. #}
+                <select name="warehouse_id" class="form-control">
+                    <option value="">{{ '— выберите склад —' if is_ru else '— омборни танланг —' }}</option>
+                    {% for wh in warehouses %}
+                    <option value="{{ wh.id }}" {% if selected and selected.id == wh.id %}selected{% endif %}>{{ wh.name }} (ID {{ wh.id }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <button type="submit" class="btn btn-primary">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+            </div>
+        </div>
+    </form>
+</div>
+
+{% if not selected %}
+<div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Выберите склад' if is_ru else 'Омборни танланг' }}</div>
+    <p class="vs-empty-sub">
+        {{ 'Карточка строится по одному складу. Выберите склад и период выше — таблица покажет каждую операцию и остаток после неё.' if is_ru else 'Карточка битта омбор бўйича тузилади. Юқорида омбор ва даврни танланг — жадвал ҳар бир амални ва ундан кейинги қолдиқни кўрсатади.' }}
+    </p>
+</div>
+{% else %}
+
+{% macro ledger_table(table, table_kind) %}
+<div class="vs-table-scroll">
+<table class="table table-sm" style="min-width:900px;">
+    <thead>
+        <tr>
+            <th>{{ 'Дата' if is_ru else 'Сана' }}</th>
+            <th>{{ 'Время' if is_ru else 'Вақт' }}</th>
+            <th>{{ 'Операция' if is_ru else 'Амал' }}</th>
+            <th>{{ 'Описание' if is_ru else 'Изоҳ' }}</th>
+            <th>{{ 'Имя карты' if is_ru else 'Карта номи' }}</th>
+            <th class="text-right">{{ 'Приход, л' if is_ru else 'Кирим, л' }}</th>
+            <th class="text-right">{{ 'Расход, л' if is_ru else 'Сарф, л' }}</th>
+            {% if table_kind != 'external' %}<th class="text-right">{{ 'Остаток, л' if is_ru else 'Қолдиқ, л' }}</th>{% endif %}
+        </tr>
+    </thead>
+    <tbody>
+        {% if table_kind != 'external' %}
+        <tr style="background:var(--surface2); font-weight:600;">
+            <td class="text-sm">{{ start_date.strftime('%d.%m.%Y') }}</td>
+            <td></td>
+            <td>{{ L_kind['opening'] }}</td>
+            <td class="text-sm text-muted">
+                {%- if current_user.is_admin -%}
+                <a href="{{ url_for('fuel.initial_balance') }}">{{ 'Начальные остатки' if is_ru else 'Бошланғич қолдиқлар' }}</a>
+                {%- endif -%}
+            </td>
+            <td>—</td>
+            <td class="text-right">{{ '%.2f'|format(table.opening) }}</td>
+            <td class="text-right"></td>
+            <td class="text-right">{{ '%.2f'|format(table.opening) }}</td>
+        </tr>
+        {% endif %}
+        {% for row in table.rows %}
+        <tr>
+            <td class="text-sm">{{ row.date.strftime('%d.%m.%Y') }}</td>
+            <td class="text-sm text-muted">{{ row.time }}</td>
+            <td>
+                {# link to the operation's day on its source page; admin-only pages render plain text for non-admins #}
+                {% if not row.admin_only or current_user.is_admin %}
+                    {% if row.source_page == 'fuel.reserve_transfers' %}
+                    <a href="{{ url_for('fuel.reserve_transfers', warehouse_id=row.source_warehouse_id, start_date=row.date.isoformat(), end_date=row.date.isoformat()) }}">{{ L_kind[row.kind] }}</a>
+                    {% else %}
+                    <a href="{{ url_for(row.source_page, warehouse_id=row.source_warehouse_id, date_from=row.date.isoformat(), date_to=row.date.isoformat()) }}">{{ L_kind[row.kind] }}</a>
+                    {% endif %}
+                {% else %}
+                    {{ L_kind[row.kind] }}
+                {% endif %}
+            </td>
+            <td class="text-sm text-muted">{{ row.description }}</td>
+            <td class="text-sm">{{ ledger.card_names.get(row.get('card_number', ''), '—') if row.get('card_number') else '—' }}</td>
+            <td class="text-right" {% if row.qty_in %}style="color:var(--accent); font-weight:600;"{% endif %}>{% if row.qty_in is not none %}{{ '%.2f'|format(row.qty_in) }}{% endif %}</td>
+            <td class="text-right" {% if row.qty_out %}style="color:var(--danger); font-weight:600;"{% endif %}>{% if row.qty_out is not none %}{{ '%.2f'|format(row.qty_out) }}{% endif %}</td>
+            {% if table_kind != 'external' %}<td class="text-right" {% if row.balance < 0 %}style="color:var(--danger); font-weight:700;"{% endif %}>{{ '%.2f'|format(row.balance) }}</td>{% endif %}
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="text-center text-muted" style="padding:28px;">{{ 'За выбранный период операций нет.' if is_ru else 'Танланган даврда амаллар йўқ.' }}</td></tr>
+        {% endfor %}
+    </tbody>
+    <tfoot>
+        {% if table_kind != 'external' %}
+        <tr style="font-weight:700;">
+            <th colspan="5" style="text-align:right;">{{ 'Итого за период' if is_ru else 'Давр учун жами' }}</th>
+            <th class="text-right">{{ '%.2f'|format(table.total_in) }}</th>
+            <th class="text-right">{{ '%.2f'|format(table.total_out) }}</th>
+            <th class="text-right" {% if table.closing < 0 %}style="color:var(--danger);"{% endif %}>{{ '%.2f'|format(table.closing) }}</th>
+        </tr>
+        {% else %}
+        <tr style="font-weight:700;">
+            <th colspan="6" style="text-align:right;">{{ 'Итого стороннего топлива' if is_ru else 'Жами бегона ёқилғи' }}</th>
+            <th class="text-right">{{ '%.2f'|format(table.total) }}</th>
+        </tr>
+        {% endif %}
+    </tfoot>
+</table>
+</div>
+{% endmacro %}
+
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header">
+        <span>{{ selected.name }} (ID {{ selected.id }}) — {{ start_date.strftime('%d.%m.%Y') }}{% if period.start_time != '00:00' %} {{ period.start_time }}{% endif %} — {{ end_date.strftime('%d.%m.%Y') }}{% if period.end_time != '23:59' %} {{ period.end_time }}{% endif %}</span>
+        <span class="text-muted text-sm">{{ 'Остаток на конец' if is_ru else 'Якуний қолдиқ' }}: <strong {% if ledger.main.closing < 0 %}style="color:var(--danger);"{% endif %}>{{ '%.2f'|format(ledger.main.closing) }} л</strong></span>
+    </div>
+    {{ ledger_table(ledger.main, 'main') }}
+</div>
+
+{% if ledger.reserve %}
+<details class="card" style="margin-bottom:16px;">
+    <summary style="padding:14px 18px; cursor:pointer; font-weight:700;">
+        {{ 'Резерв' if is_ru else 'Резерв' }} — {{ ledger.reserve.warehouse.name }} (ID {{ ledger.reserve.warehouse.id }})
+        <span class="text-muted text-sm" style="font-weight:400;">
+            {{ '— движения резерва за тот же период, включая его собственные приходы и ручной расход' if is_ru else '— шу давр учун резерв ҳаракатлари, шу жумладан унинг ўз киримлари ва қўлда сарфи' }}
+        </span>
+    </summary>
+    {{ ledger_table(ledger.reserve, 'reserve') }}
+</details>
+{% endif %}
+
+{% if ledger.external.rows %}
+<details class="card" style="margin-bottom:16px;">
+    <summary style="padding:14px 18px; cursor:pointer; font-weight:700;">
+        {{ 'Стороннее топливо (справочно)' if is_ru else 'Бегона ёқилғи (маълумот учун)' }}
+        <span class="text-muted text-sm" style="font-weight:400;">
+            {{ '— не входит ни в один остаток' if is_ru else '— ҳеч қайси қолдиққа кирмайди' }}
+        </span>
+    </summary>
+    {{ ledger_table(ledger.external, 'external') }}
+</details>
+{% endif %}
+
+{% endif %}
+{% endblock %}

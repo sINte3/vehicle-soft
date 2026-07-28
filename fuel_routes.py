@@ -3849,6 +3849,44 @@ def card_directory():
         sync_logs=sync_logs, q=request.args.get('q', ''))
 
 
+# ─── F4.1 FUEL-LEDGER-001: warehouse ledger page ─────────────────────
+
+@fuel_bp.route('/ledger')
+@module_required('fuel')
+def warehouse_ledger():
+    """Ledger card: every movement of one warehouse with a running balance."""
+    today = date.today()
+    default_start = today.replace(day=1)
+
+    start_dt, end_dt_exclusive, start_date, end_date, preset = _fuel_parse_period(
+        request.args, default_start, today)
+
+    warehouses = fuel_warehouse_query_for_ui().order_by(FuelWarehouse.name).all()
+    valid_ids = {w.id for w in warehouses}
+
+    # [REASON]: F4.1 — no default warehouse: duplicate names exist in the data
+    # («Мирзачул ПТЗ», «Вобкент ПТМ» each twice), so the page opens with an
+    # explanatory empty state rather than an arbitrary pick, and the select
+    # shows the id alongside the name. The submitted value is always the id.
+    warehouse_id = request.args.get('warehouse_id', type=int)
+    selected = None
+    ledger = None
+    if warehouse_id and warehouse_id in valid_ids:
+        selected = next(w for w in warehouses if w.id == warehouse_id)
+        ledger = _fuel_ledger(warehouse_id, 'ДТ', start_dt, end_dt_exclusive,
+                              start_date, end_date)
+
+    return render_template('fuel/ledger.html',
+                           warehouses=warehouses,
+                           selected=selected,
+                           ledger=ledger,
+                           start_date=start_date,
+                           end_date=end_date,
+                           period=_fuel_period_context(start_dt, end_dt_exclusive,
+                                                       start_date, end_date, preset),
+                           fuel_type='ДТ')
+
+
 # ─── FUEL-REPORT-011A: Fuel balance period report ─────────────────────
 
 def _fuel_report_parse_date(value, default_value):
