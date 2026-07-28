@@ -265,7 +265,16 @@ form.fuel002d-filter-form {
 {# FUEL-BIG-001: shared working-vs-archive mode control, same as the dashboard #}
 {% include 'fuel/_legacy_toggle.html' %}
 
-<div class="fuel-report-note"><strong>ДТ.</strong> {{ L_rule }}</div>
+{# F1.3 · FUEL-REPORT-SPLIT-003: cross-link — sync state is here, stock is in the balance report #}
+<div class="fuel-report-note">
+    {% if lang == 'ru' %}
+    Состояние АЗС и синхронизации — здесь. Остатки топлива — в
+    <a href="{{ url_for('fuel.balance_report') }}">«Отчёте остатков топлива»</a>.
+    {% else %}
+    АЗС ва синхронизация ҳолати — шу ерда. Ёқилғи қолдиқлари —
+    <a href="{{ url_for('fuel.balance_report') }}">«Ёқилғи қолдиқлари ҳисоботи»</a>да.
+    {% endif %}
+</div>
 
 {% if selected_station_id %}
 <div class="fuel-report-note" style="border-left-color:var(--warn); background:var(--warn-light); color:var(--warn);">{{ L_station_note }}</div>

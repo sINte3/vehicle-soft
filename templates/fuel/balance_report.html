@@ -50,6 +50,16 @@
         <p class="text-muted">
             {{ L_formula }}
         </p>
+        {# F1.3 · FUEL-REPORT-SPLIT-003: cross-link — stock is here, sync state is in АЗС control #}
+        <p class="text-muted text-sm fuel-no-print">
+            {% if lang == 'ru' %}
+            Остатки топлива — здесь. Состояние АЗС и синхронизации — на странице
+            <a href="{{ url_for('fuel.fuel_report') }}">«Контроль АЗС и синхронизации»</a>.
+            {% else %}
+            Ёқилғи қолдиқлари — шу ерда. АЗС ва синхронизация ҳолати —
+            <a href="{{ url_for('fuel.fuel_report') }}">«АЗС ва синхронизация назорати»</a> саҳифасида.
+            {% endif %}
+        </p>
     </div>
     <div>
         <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ L_back }}</a>
