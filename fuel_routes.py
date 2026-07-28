@@ -4299,6 +4299,253 @@ def _fuel_opening_for(warehouse_id, fuel_type, start_date,
             + reattr_before_out - reattr_before_in)
 
 
+# ─── F4.1 FUEL-LEDGER-001: warehouse ledger card ──────────────────────
+
+def _fuel_ledger_sort_key(row):
+    """date, then time (date-only rows land at 00:00), then kind, then id."""
+    kind_rank = {'receipt': 0, 'topaz': 1, 'reserve_expense': 1,
+                 'manual': 2}.get(row['kind'], 3)
+    return (row['date'], row['time'] or '00:00', kind_rank, row['source_id'] or 0)
+
+
+def _fuel_ledger_rows_for(warehouse_id, fuel_type, start_dt, end_dt_exclusive,
+                          start_date, end_date, marked_txn_ids, include_topaz=True):
+    """Operation rows (no opening, no running balance yet) for one warehouse.
+
+    [REASON]: F4.1 — every figure flows through the same rules the balance
+    report uses: receipts and manual expenses are DATE-windowed (those tables
+    store no time), Topaz issues are datetime-windowed; a Topaz issue that is
+    external (_is_external_fuel_txn) or actively marked to the reserve
+    (marked_txn_ids) is NOT this warehouse's expense and is excluded here —
+    external rows go to the reference table, marked rows to the reserve table.
+    """
+    rows = []
+
+    receipts = (FuelReceipt2.query
+                .filter(FuelReceipt2.warehouse_id == warehouse_id,
+                        FuelReceipt2.fuel_type == fuel_type,
+                        FuelReceipt2.receipt_date >= start_date,
+                        FuelReceipt2.receipt_date <= end_date)
+                .order_by(FuelReceipt2.receipt_date, FuelReceipt2.id)
+                .all())
+    for r in receipts:
+        bits = [b for b in (r.supplier, r.doc_number, r.note) if b]
+        rows.append({
+            'date': r.receipt_date, 'time': '', 'kind': 'receipt',
+            'qty_in': float(r.quantity or 0), 'qty_out': None,
+            'description': ' · '.join(bits),
+            'source_page': 'fuel.receipts', 'source_id': r.id,
+            'source_warehouse_id': warehouse_id, 'admin_only': False,
+        })
+
+    if include_topaz:
+        txns = (FuelTransaction2.query
+                .options(joinedload(FuelTransaction2.station))
+                .join(FuelStation2, FuelStation2.id == FuelTransaction2.station_id)
+                .filter(FuelStation2.warehouse_id == warehouse_id,
+                        FuelTransaction2.fuel_type == fuel_type,
+                        FuelTransaction2.txn_datetime >= start_dt,
+                        FuelTransaction2.txn_datetime < end_dt_exclusive)
+                .order_by(FuelTransaction2.txn_datetime, FuelTransaction2.id)
+                .all())
+        for t in txns:
+            if _is_external_fuel_txn(t.card_number, t.txn_datetime):
+                continue
+            if t.id in marked_txn_ids:
+                continue
+            rows.append({
+                'date': t.txn_datetime.date(),
+                'time': t.txn_datetime.strftime('%H:%M'),
+                'kind': 'topaz',
+                'qty_in': None, 'qty_out': float(t.quantity or 0),
+                'description': (t.station.name if t.station else ''),
+                'card_number': (t.card_number or '').strip(),
+                'source_page': 'fuel.transactions', 'source_id': t.id,
+                'source_warehouse_id': warehouse_id, 'admin_only': False,
+            })
+
+    manuals = (FuelManualExpense.query
+               .filter(FuelManualExpense.warehouse_id == warehouse_id,
+                       FuelManualExpense.fuel_type == fuel_type,
+                       func.coalesce(FuelManualExpense.is_deleted, 0) == 0,
+                       FuelManualExpense.expense_date >= start_date,
+                       FuelManualExpense.expense_date <= end_date)
+               .order_by(FuelManualExpense.expense_date, FuelManualExpense.id)
+               .all())
+    for m in manuals:
+        rows.append({
+            'date': m.expense_date, 'time': '', 'kind': 'manual',
+            'qty_in': None, 'qty_out': float(m.quantity or 0),
+            'description': (m.note or '').split('\n')[0],
+            'source_page': 'fuel.manual_expenses', 'source_id': m.id,
+            'source_warehouse_id': warehouse_id, 'admin_only': True,
+        })
+
+    return rows
+
+
+def _fuel_ledger_reserve_expense_rows(target_warehouse_id, fuel_type,
+                                      start_dt, end_dt_exclusive):
+    """Active reserve marks whose target is this warehouse — its expenses.
+
+    [REASON]: F4.1 — for the reserve, a marked transaction is its ordinary
+    expense (the litres left through a source station's dispenser but belong
+    to the reserve). External transactions never move via a mark
+    (FUEL-RESERVE §7), matching _fuel_reattribution_maps.
+    """
+    marked = (db.session.query(FuelTransactionReattribution, FuelTransaction2,
+                               FuelStation2)
+              .join(FuelTransaction2,
+                    FuelTransaction2.id == FuelTransactionReattribution.transaction_id)
+              .join(FuelStation2, FuelStation2.id == FuelTransaction2.station_id)
+              .filter(func.coalesce(FuelTransactionReattribution.is_deleted, 0) == 0,
+                      FuelTransactionReattribution.target_warehouse_id == target_warehouse_id,
+                      FuelTransaction2.fuel_type == fuel_type,
+                      FuelTransaction2.txn_datetime >= start_dt,
+                      FuelTransaction2.txn_datetime < end_dt_exclusive)
+              .order_by(FuelTransaction2.txn_datetime, FuelTransaction2.id)
+              .all())
+    rows = []
+    for mark, txn, station in marked:
+        if _is_external_fuel_txn(txn.card_number, txn.txn_datetime):
+            continue
+        rows.append({
+            'date': txn.txn_datetime.date(),
+            'time': txn.txn_datetime.strftime('%H:%M'),
+            'kind': 'reserve_expense',
+            'qty_in': None, 'qty_out': float(txn.quantity or 0),
+            'description': (station.name if station else '')
+                           + ((' · ' + (mark.note or '').split('\n')[0])
+                              if mark.note else ''),
+            'card_number': (txn.card_number or '').strip(),
+            'source_page': 'fuel.reserve_transfers', 'source_id': txn.id,
+            'source_warehouse_id': station.warehouse_id if station else None,
+            'admin_only': True,
+        })
+    return rows
+
+
+def _fuel_ledger(warehouse_id, fuel_type, start_dt, end_dt_exclusive,
+                 start_date, end_date):
+    """Ledger card data for one warehouse: main / reserve / external tables.
+
+    Main table: one row per operation, sorted by date then time then id —
+    opening (in), receipts (in), Topaz issues not external and not
+    reattributed (out), manual expenses (out), and reattribution rows whose
+    target_warehouse_id is this warehouse (out — the reserve's own expense).
+    Running balance is computed here, in insertion order, UNROUNDED; it is
+    rounded only for display.
+
+    Reserve table: present only when this warehouse has reattributions OUT in
+    the window. Opening via _fuel_opening_for for the reserve warehouse
+    (_fuel_reserve_warehouse(), never guessed from mark frequency), then the
+    reattributed transactions AND the reserve's own receipts and manual
+    expenses over the same window — the prototype omitted the latter two,
+    which is the arithmetic defect recorded in the task (section 3.2): fuel
+    returned to the reserve is an ordinary FuelReceipt2 by owner decision.
+
+    External table: transactions matching _is_external_fuel_txn. Reference
+    only — never part of any balance.
+    """
+    # Active marks keyed by transaction id — one query, reused everywhere.
+    active_marks = (db.session.query(FuelTransactionReattribution.transaction_id,
+                                     FuelTransactionReattribution.target_warehouse_id)
+                    .filter(func.coalesce(FuelTransactionReattribution.is_deleted, 0) == 0)
+                    .all())
+    marked_txn_ids = {tid for tid, _t in active_marks}
+
+    def build_table(wh_id):
+        opening = _fuel_opening_for(wh_id, fuel_type, start_date)
+        rows = _fuel_ledger_rows_for(wh_id, fuel_type, start_dt, end_dt_exclusive,
+                                     start_date, end_date, marked_txn_ids)
+        rows.extend(_fuel_ledger_reserve_expense_rows(
+            wh_id, fuel_type, start_dt, end_dt_exclusive))
+        rows.sort(key=_fuel_ledger_sort_key)
+        balance = opening
+        total_in = 0.0
+        total_out = 0.0
+        for row in rows:
+            total_in += row['qty_in'] or 0.0
+            total_out += row['qty_out'] or 0.0
+            balance += (row['qty_in'] or 0.0) - (row['qty_out'] or 0.0)
+            row['balance'] = balance
+        return {
+            'opening': opening,
+            'rows': rows,
+            'total_in': total_in,
+            'total_out': total_out,
+            'closing': balance,
+        }
+
+    main = build_table(warehouse_id)
+
+    # Reserve table — only when this warehouse marked litres OUT in the window.
+    reserve = None
+    reserve_wh = _fuel_reserve_warehouse()
+    if reserve_wh and reserve_wh.id != warehouse_id:
+        has_out = (db.session.query(FuelTransactionReattribution.id)
+                   .join(FuelTransaction2,
+                         FuelTransaction2.id == FuelTransactionReattribution.transaction_id)
+                   .join(FuelStation2, FuelStation2.id == FuelTransaction2.station_id)
+                   .filter(func.coalesce(FuelTransactionReattribution.is_deleted, 0) == 0,
+                           FuelStation2.warehouse_id == warehouse_id,
+                           FuelTransaction2.fuel_type == fuel_type,
+                           FuelTransaction2.txn_datetime >= start_dt,
+                           FuelTransaction2.txn_datetime < end_dt_exclusive)
+                   .first())
+        if has_out:
+            reserve = build_table(reserve_wh.id)
+            reserve['warehouse'] = reserve_wh
+
+    # External table — reference only.
+    external_rows = []
+    external_total = 0.0
+    if EXTERNAL_FUEL_CARDS:
+        ext_txns = (FuelTransaction2.query
+                    .options(joinedload(FuelTransaction2.station))
+                    .join(FuelStation2, FuelStation2.id == FuelTransaction2.station_id)
+                    .filter(FuelStation2.warehouse_id == warehouse_id,
+                            FuelTransaction2.fuel_type == fuel_type,
+                            FuelTransaction2.card_number.in_(list(EXTERNAL_FUEL_CARDS.keys())),
+                            FuelTransaction2.txn_datetime >= start_dt,
+                            FuelTransaction2.txn_datetime < end_dt_exclusive)
+                    .order_by(FuelTransaction2.txn_datetime, FuelTransaction2.id)
+                    .all())
+        for t in ext_txns:
+            if not _is_external_fuel_txn(t.card_number, t.txn_datetime):
+                # before the card's start date it is an ordinary issue and
+                # already sits in the main table
+                continue
+            external_total += float(t.quantity or 0)
+            external_rows.append({
+                'date': t.txn_datetime.date(),
+                'time': t.txn_datetime.strftime('%H:%M'),
+                'kind': 'external',
+                'qty_in': None, 'qty_out': float(t.quantity or 0),
+                'description': (t.station.name if t.station else ''),
+                'card_number': (t.card_number or '').strip(),
+                'source_page': 'fuel.transactions', 'source_id': t.id,
+                'source_warehouse_id': warehouse_id, 'admin_only': False,
+            })
+
+    # One card-name map for the whole page (never per row).
+    named = []
+    for coll in (main['rows'],
+                 reserve['rows'] if reserve else [],
+                 external_rows):
+        for row in coll:
+            if row.get('card_number'):
+                named.append(SimpleNamespace(card_number=row['card_number']))
+    card_names = _resolve_card_names(named)
+
+    return {
+        'main': main,
+        'reserve': reserve,
+        'external': {'rows': external_rows, 'total': external_total},
+        'card_names': card_names,
+    }
+
+
 def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="ДТ",
                             start_dt=None, end_dt_exclusive=None):
     # [REASON]: F2.1 FUEL-DATETIME-004 — optional datetime bounds narrow the
