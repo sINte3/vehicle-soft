@@ -3887,6 +3887,255 @@ def warehouse_ledger():
                            fuel_type='ДТ')
 
 
+def _fuel_ledger_workbook(ledger, warehouse, start_date, end_date,
+                          period_label, lang='uz'):
+    """Ledger workbook: sheet «Движение» with the three tables (per-table
+    subtotals by SUMIFS, grand total when more than one table is present) and
+    sheet «По дням» with the daily summary.
+
+    [REASON]: F4.1 — live formulas rather than substituted numbers: the owner
+    edits the workbook and expects recalculation. Subtotals key on the section
+    column (A) via SUMIFS, so inserted rows keep counting as long as they
+    carry the section label; subtotal/total rows leave A empty so they never
+    match their own criteria. The opening is written in the balance column
+    only, so SUMIFS of the incoming column equals the period receipts exactly.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
+
+    kind_labels = {
+        'opening': L('Остаток на начало', 'Бошланғич қолдиқ'),
+        'receipt': L('Приход', 'Кирим'),
+        'topaz': L('Выдача Topaz', 'Topaz бериш'),
+        'manual': L('Ручной расход', 'Қўлда сарф'),
+        'reserve_expense': L('Выдача по отметке резерва', 'Резерв белгиси бўйича бериш'),
+        'external': L('Стороннее топливо', 'Бегона ёқилғи'),
+    }
+    sec_main = L('Склад', 'Омбор')
+    sec_reserve = 'Резерв'
+    sec_external = L('Стороннее', 'Бегона')
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Движение'
+
+    thin = Side(style='thin', color='D1D5DB')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_fill = PatternFill('solid', fgColor='E5E7EB')
+    section_fill = PatternFill('solid', fgColor='F0F9F0')
+    total_fill = PatternFill('solid', fgColor='FEF3C7')
+
+    ws.merge_cells('A1:I1')
+    ws['A1'] = '%s: %s (ID %s)' % (L('Карточка склада', 'Омбор карточкаси'),
+                                   warehouse.name, warehouse.id)
+    ws['A1'].font = Font(bold=True, size=14)
+    ws.merge_cells('A2:I2')
+    ws['A2'] = '%s: %s' % (L('Период', 'Давр'), period_label)
+    ws['A2'].font = Font(size=11, color='666666')
+
+    headers = [L('Раздел', 'Бўлим'), L('Дата', 'Сана'), L('Время', 'Вақт'),
+               L('Операция', 'Амал'), L('Описание', 'Изоҳ'),
+               L('Имя карты', 'Карта номи'),
+               L('Приход, л', 'Кирим, л'), L('Расход, л', 'Сарф, л'),
+               L('Остаток, л', 'Қолдиқ, л')]
+    header_row = 4
+    for col, title in enumerate(headers, start=1):
+        cell = ws.cell(row=header_row, column=col, value=title)
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        cell.border = border
+
+    card_names = ledger.get('card_names') or {}
+    r = header_row
+
+    def write_section(title, table, section_label, with_balance=True):
+        nonlocal r
+        r += 1
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=9)
+        cell = ws.cell(row=r, column=1, value=title)
+        cell.font = Font(bold=True, size=11, color='1A6B3C')
+        cell.fill = section_fill
+
+        first_balance_row = None
+        if with_balance:
+            r += 1
+            ws.cell(row=r, column=2, value=start_date).number_format = 'DD.MM.YYYY'
+            ws.cell(row=r, column=4, value=kind_labels['opening'])
+            ws.cell(row=r, column=9, value=round(table['opening'], 2)).number_format = '#,##0.00'
+            first_balance_row = r
+
+        prev_balance_row = first_balance_row
+        for row in table['rows']:
+            r += 1
+            ws.cell(row=r, column=1, value=section_label)
+            ws.cell(row=r, column=2, value=row['date']).number_format = 'DD.MM.YYYY'
+            ws.cell(row=r, column=3, value=row['time'])
+            ws.cell(row=r, column=4, value=kind_labels.get(row['kind'], row['kind']))
+            ws.cell(row=r, column=5, value=row['description'])
+            card = row.get('card_number') or ''
+            ws.cell(row=r, column=6, value=card_names.get(card, '—') if card else '—')
+            if row['qty_in'] is not None:
+                ws.cell(row=r, column=7, value=round(row['qty_in'], 2)).number_format = '#,##0.00'
+            if row['qty_out'] is not None:
+                ws.cell(row=r, column=8, value=round(row['qty_out'], 2)).number_format = '#,##0.00'
+            if with_balance:
+                # live running balance: previous balance + incoming - outgoing
+                cell = ws.cell(row=r, column=9,
+                               value='=I%d+SUM(G%d)-SUM(H%d)' % (prev_balance_row, r, r))
+                cell.number_format = '#,##0.00'
+                prev_balance_row = r
+
+        r += 1
+        label_cell = ws.cell(row=r, column=4,
+                             value=L('Итого за период', 'Давр учун жами'))
+        label_cell.font = Font(bold=True)
+        for col, colletter in ((7, 'G'), (8, 'H')):
+            cell = ws.cell(row=r, column=col,
+                           value='=SUMIFS(%s:%s,$A:$A,"%s")'
+                                 % (colletter, colletter, section_label))
+            cell.font = Font(bold=True)
+            cell.number_format = '#,##0.00'
+        if with_balance and prev_balance_row:
+            cell = ws.cell(row=r, column=9, value='=I%d' % prev_balance_row)
+            cell.font = Font(bold=True)
+            cell.number_format = '#,##0.00'
+        for col in range(1, 10):
+            ws.cell(row=r, column=col).fill = total_fill
+
+    write_section('%s — %s' % (sec_main, warehouse.name), ledger['main'], sec_main)
+    sections = [sec_main]
+
+    if ledger.get('reserve'):
+        res = ledger['reserve']
+        write_section('%s — %s' % (sec_reserve, res['warehouse'].name),
+                      res, sec_reserve)
+        sections.append(sec_reserve)
+
+    if ledger['external']['rows']:
+        write_section(L('Стороннее топливо (справочно, не входит в остатки)',
+                        'Бегона ёқилғи (маълумот учун, қолдиқларга кирмайди)'),
+                      {'opening': 0.0, 'rows': ledger['external']['rows']},
+                      sec_external, with_balance=False)
+        sections.append(sec_external)
+
+    if len(sections) > 1:
+        r += 2
+        cell = ws.cell(row=r, column=4, value=L('ВСЕГО по всем таблицам', 'Барча жадваллар бўйича ЖАМИ'))
+        cell.font = Font(bold=True, size=12)
+        for col, colletter in ((7, 'G'), (8, 'H')):
+            formula = '+'.join('SUMIFS(%s:%s,$A:$A,"%s")' % (colletter, colletter, s)
+                               for s in sections)
+            cell = ws.cell(row=r, column=col, value='=' + formula)
+            cell.font = Font(bold=True, size=12)
+            cell.number_format = '#,##0.00'
+        for col in range(1, 10):
+            ws.cell(row=r, column=col).fill = total_fill
+
+    for row_cells in ws.iter_rows(min_row=header_row, max_row=r, min_col=1, max_col=9):
+        for cell in row_cells:
+            cell.border = border
+
+    widths = {1: 12, 2: 12, 3: 8, 4: 24, 5: 34, 6: 26, 7: 12, 8: 12, 9: 13}
+    for col, width in widths.items():
+        ws.column_dimensions[get_column_letter(col)].width = width
+    ws.freeze_panes = 'A5'
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = '%d:%d' % (header_row, header_row)
+    ws.oddFooter.center.text = '%s — %s' % (warehouse.name, period_label)
+
+    # ── Sheet «По дням»: daily summary of the MAIN warehouse, live SUMIFS ──
+    ws2 = wb.create_sheet('По дням')
+    ws2.merge_cells('A1:D1')
+    ws2['A1'] = '%s: %s — %s' % (L('По дням', 'Кунлар бўйича'), warehouse.name, period_label)
+    ws2['A1'].font = Font(bold=True, size=12)
+    day_headers = [L('Дата', 'Сана'), L('Приход, л', 'Кирим, л'),
+                   L('Расход, л', 'Сарф, л'), L('Остаток, л', 'Қолдиқ, л')]
+    for col, title in enumerate(day_headers, start=1):
+        cell = ws2.cell(row=3, column=col, value=title)
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.border = border
+
+    rr = 4
+    ws2.cell(row=rr, column=1, value=L('Остаток на начало', 'Бошланғич қолдиқ')).font = Font(bold=True)
+    ws2.cell(row=rr, column=4, value=round(ledger['main']['opening'], 2)).number_format = '#,##0.00'
+    day = start_date
+    while day <= end_date:
+        rr += 1
+        ws2.cell(row=rr, column=1, value=day).number_format = 'DD.MM.YYYY'
+        ws2.cell(row=rr, column=2,
+                 value='=SUMIFS(Движение!$G:$G,Движение!$A:$A,"%s",Движение!$B:$B,$A%d)'
+                       % (sec_main, rr)).number_format = '#,##0.00'
+        ws2.cell(row=rr, column=3,
+                 value='=SUMIFS(Движение!$H:$H,Движение!$A:$A,"%s",Движение!$B:$B,$A%d)'
+                       % (sec_main, rr)).number_format = '#,##0.00'
+        ws2.cell(row=rr, column=4, value='=D%d+B%d-C%d' % (rr - 1, rr, rr)).number_format = '#,##0.00'
+        day = day + timedelta(days=1)
+    for row_cells in ws2.iter_rows(min_row=3, max_row=rr, min_col=1, max_col=4):
+        for cell in row_cells:
+            cell.border = border
+    for col, width in ((1, 14), (2, 12), (3, 12), (4, 13)):
+        ws2.column_dimensions[get_column_letter(col)].width = width
+    ws2.freeze_panes = 'A4'
+    ws2.page_setup.orientation = 'landscape'
+    ws2.page_setup.fitToWidth = 1
+    ws2.page_setup.fitToHeight = 0
+    ws2.sheet_properties.pageSetUpPr.fitToPage = True
+    ws2.print_title_rows = '3:3'
+    ws2.oddFooter.center.text = '%s — %s' % (warehouse.name, period_label)
+
+    return wb
+
+
+@fuel_bp.route('/ledger/export')
+@module_required('fuel')
+def warehouse_ledger_export():
+    """F4.1: Excel export of the warehouse ledger card."""
+    today = date.today()
+    default_start = today.replace(day=1)
+
+    start_dt, end_dt_exclusive, start_date, end_date, _preset = _fuel_parse_period(
+        request.args, default_start, today)
+
+    warehouse_id = request.args.get('warehouse_id', type=int)
+    if not warehouse_id:
+        return 'warehouse_id is required', 400
+    warehouse = (fuel_warehouse_query_for_ui()
+                 .filter(FuelWarehouse.id == warehouse_id).first())
+    if not warehouse:
+        return 'Warehouse not found', 404
+
+    ledger = _fuel_ledger(warehouse_id, 'ДТ', start_dt, end_dt_exclusive,
+                          start_date, end_date)
+    period_label = '%s %s — %s %s' % (
+        start_date.strftime('%d.%m.%Y'), start_dt.strftime('%H:%M'),
+        end_date.strftime('%d.%m.%Y'),
+        (end_dt_exclusive - timedelta(minutes=1)).strftime('%H:%M'))
+    wb = _fuel_ledger_workbook(ledger, warehouse, start_date, end_date,
+                               period_label, lang=_fuel_report_lang())
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    fname = 'fuel_ledger_%s_%s_%s.xlsx' % (warehouse_id,
+                                           start_date.isoformat(),
+                                           end_date.isoformat())
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=fname,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+
+
 # ─── FUEL-REPORT-011A: Fuel balance period report ─────────────────────
 
 def _fuel_report_parse_date(value, default_value):

@@ -56,6 +56,12 @@
             <div class="form-group" style="margin-bottom:0;">
                 <button type="submit" class="btn btn-primary">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
             </div>
+            {% if selected %}
+            <div class="form-group" style="margin-bottom:0;">
+                <a class="btn btn-secondary"
+                   href="{{ url_for('fuel.warehouse_ledger_export', warehouse_id=selected.id, start_date=period.start_date, end_date=period.end_date, start_time=period.start_time, end_time=period.end_time) }}">Excel</a>
+            </div>
+            {% endif %}
         </div>
     </form>
 </div>
