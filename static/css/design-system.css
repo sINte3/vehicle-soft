@@ -1279,6 +1279,14 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 .vs-report-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .vs-report-tile { display: flex; align-items: center; gap: 14px; min-height: 108px; padding: 18px 20px; text-decoration: none; color: inherit; transition: box-shadow .15s ease, transform .15s ease; }
 .vs-report-tile:hover { box-shadow: var(--vs-shadow); transform: translateY(-1px); }
+/* [REASON]: UI-TILE-HOVER-001 — `a:hover` above (0,1,1) underlines a tile's
+   text and turns the title blue: the tile IS the anchor, so no descendant
+   rule can remove the underline. This selector is 0,2,0 (pseudo-classes count
+   like classes) and wins. It touches text only — the hover lift and the
+   `box-shadow: var(--vs-shadow)` above are the intended affordance and stay;
+   never use `box-shadow: none` here, it would also kill the resting
+   --vs-shadow-sm that .vs-card paints. */
+.vs-report-tile:hover { text-decoration: none; color: inherit; }
 .vs-report-tile-icon { flex: none; width: 44px; height: 44px; border-radius: var(--vs-r-md); display: flex; align-items: center; justify-content: center; }
 .vs-report-tile-text { flex: 1; min-width: 0; }
 .vs-report-tile-title { font-size: var(--vs-fs-lg); font-weight: 700; }

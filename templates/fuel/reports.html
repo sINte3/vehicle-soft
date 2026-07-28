@@ -45,16 +45,8 @@
 .fuel-tile-soon .vs-report-tile-icon { color: var(--vs-text-soft); background: var(--vs-surface-3); }
 .fuel-tile-soon .vs-report-tile-title { color: var(--vs-text-muted); }
 .fuel-tile-soon:hover { box-shadow: var(--vs-shadow-sm); transform: none; }
-/* [REASON]: `a:hover` in design-system.css (colour + underline, specificity
-   0,1,1) outweighs `.vs-report-tile` (0,1,0), so hovering a live tile
-   underlined its title and its subtitle and turned the title blue — the
-   underline is painted by the anchor, which is why a descendant rule cannot
-   remove it. This selector is 0,3,1 and wins. It touches text only: the lift
-   and the shadow are the intended affordance and stay. The shared component
-   carries the same defect (the spare parts launcher shows it too) and the real
-   one-line fix belongs in design-system.css — filed as UI-TILE-HOVER-001. This
-   scoped override is deliberate local debt, to be dropped once that lands. */
-.vs-report-tiles a.vs-report-tile:hover { text-decoration: none; color: inherit; }
+/* UI-TILE-HOVER-001: the scoped hover workaround that lived here is gone —
+   the shared fix now sits in design-system.css (.vs-report-tile:hover). */
 </style>
 
 <div class="vs-hero vs-mb">
