@@ -104,10 +104,12 @@ Parallel track, runs alongside the increments. Decisions and findings so far:
 
 ## Recently completed / appears completed
 
-### FUEL-BIG-001 — consolidated fuel/AZS increment (PR #NN), 2026-07-28
+### FUEL-BIG-001 — consolidated fuel/AZS increment (PR #31), 2026-07-28
 
-Status: merged into `main` via PR #NN; the open validation remainder is the
-single row in `docs/RELEASE_GATE.md`.
+Status: merged into `main` via PR #31; the open validation remainder is the
+single row in `docs/RELEASE_GATE.md`. A ten-commit QA round (41–50, fixes
+from the owner's QA on a production copy) sits on the same branch and PR —
+see its subsection below.
 
 Built as one ordered sequence of forty commits on one branch; every commit
 leaves the application importable and the module usable. Rollback is
@@ -227,6 +229,30 @@ Rollback: revert `d0565fa`.
 #### FUEL-FAVICON-404 — CLOSED
 Commit: `e8281ab` — inline SVG data-URI in base_next.html; browser-verified
 zero /favicon.ico requests and zero 404s. Rollback: revert `e8281ab`.
+
+#### QA round — fixes 41–50 from the owner's QA on a production copy, 2026-07-28
+QA validated commits 1–40 against a copy of the production database (23
+warehouses, 01.05–24.07.2026) and a live instance: all three verify scripts
+PASS with 0 differences, the migration applied and re-ran idempotently
+(schema_migrations 28 → 29), the ledger matched the balance report to the
+cent on live data and the ledger Excel matched the owner's reference
+prototype exactly. Of 41 browser checks one failed — it became fix 41.
+Commits in order: `61e67ef` (41, the summary table fits 1440x900 and
+1280x800 — text columns wrap, numbers never), `e22c6e7` (42, ledger grand
+total sums Склад+Резерв only; external keeps its own subtotal), `41a0d55`
+(43, print setup for the balance workbook), `7d13ee3` (44, A4 paper size in
+all seven fuel exports), `e745cea` (45, both new reports state they include
+third-party fuel and show it as a separate line), `2c24dae` (46,
+issued-today positive in the dashboard table), `f72747a` (47, total-fuel
+tile counts positive balances only — owner decision 2026-07-28 option (a);
+negative warehouses get their own link line), `479b209` (48, the balance
+workbook follows the interface language), `6423f15` (49, two Uzbek strings
+cleared of Russian words), plus the docs commit (50, this record).
+Development environment had no production DB: the QA-round acceptance
+numbers were measured on the synthetic fixture; re-validation of 41–50 on
+the real database is the open RELEASE_GATE remainder.
+Rollback order: the docs commit (50), `6423f15`, `479b209`, `f72747a`,
+`2c24dae`, `e745cea`, `7d13ee3`, `41a0d55`, `e22c6e7`, `61e67ef`.
 
 #### Folded codes
 `FUEL-REPORT-012H-C` is folded into `FUEL-CARDS-SYNC` as a single code —
