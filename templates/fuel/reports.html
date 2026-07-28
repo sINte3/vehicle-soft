@@ -141,6 +141,19 @@
     <div class="vs-report-tile-arrow" aria-hidden="true">→</div>
   </a>
 
+  {# FUEL-SHIFT-001: counter-mismatch report — existing components, existing
+     grid. Neutral equipment wording, matching the report itself. #}
+  <a class="vs-card vs-report-tile is-danger" href="{{ url_for('fuel.counter_mismatch_report') }}">
+    <span class="vs-report-tile-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/><path d="M4.5 4.5l2 2M19.5 4.5l-2 2"/></svg>
+    </span>
+    <div class="vs-report-tile-text">
+      <div class="vs-report-tile-title">{{ 'Расхождения счётчиков' if is_ru else 'Ҳисоблагичлар фарқлари' }}</div>
+      <div class="vs-report-tile-sub">{{ 'Записи Topaz о расхождении счётчиков колонок — по колонкам и АЗС' if is_ru else 'Topazнинг колонка ҳисоблагичлари фарқи ёзувлари — колонкалар ва АЗС бўйича' }}</div>
+    </div>
+    <div class="vs-report-tile-arrow" aria-hidden="true">→</div>
+  </a>
+
   {# F2.4: this tile STAYS planned by owner decision — a running per-card
      total without the card limit balance from Topaz (F4.4) would diverge
      from Topaz and be worse than nothing. No route, no href. #}
