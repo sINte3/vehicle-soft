@@ -269,9 +269,12 @@ form.fuel002d-filter-form {
     <div class="card-body">
         
 <div class="fuel002d-context-strip">
+  {# [REASON]: FUEL-BIG-001 — the plate shows the computed working-warehouse
+     count (wh_counts), not the raw table length, which counted archived
+     warehouses too and overstated the figure. #}
   <div class="fuel002d-pill">
     <span>{{ t('Омборлар') }}</span>
-    <strong>{{ warehouses|length }}</strong>
+    <strong>{{ wh_counts.working }}</strong>
   </div>
   <div class="fuel002d-pill">
     <span>{{ t('АЗСлар') }}</span>

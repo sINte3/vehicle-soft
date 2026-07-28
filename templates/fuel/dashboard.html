@@ -4,13 +4,16 @@
 {% include 'fuel/_fuel_nav.html' %}
 
 {% set L_balance_report_title = 'Отчёт остатков топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари ҳисоботи' %}
-{% set L_balance_report_desc = 'Периодический отчёт по 22 рабочим складам: остаток на начало, приход, расход Topaz и текущий остаток.' if lang == 'ru' else '22 та ишчи омбор бўйича даврий ҳисобот: бошланғич қолдиқ, кирим, Topaz сарфи ва жорий қолдиқ.' %}
+{# [REASON]: FUEL-BIG-001 — warehouse counts are interpolated from wh_counts
+   (computed by _fuel_warehouse_counts), never written as literal numbers: the
+   hardcoded literals had already drifted from the real counts. #}
+{% set L_balance_report_desc = ('Периодический отчёт по рабочим складам (' ~ wh_counts.working ~ '): остаток на начало, приход, расход Topaz и текущий остаток.') if lang == 'ru' else ('Ишчи омборлар (' ~ wh_counts.working ~ ' та) бўйича даврий ҳисобот: бошланғич қолдиқ, кирим, Topaz сарфи ва жорий қолдиқ.') %}
 {% set L_balance_report_open = 'Открыть отчёт' if lang == 'ru' else 'Ҳисоботни очиш' %}
 {% set L_legacy_on = 'Архивный режим складов включён.' if lang == 'ru' else 'Омборларнинг архив режими ёқилган.' %}
-{% set L_legacy_mode_29 = 'Режим: 29 складов, включая архивные.' if lang == 'ru' else 'Режим: 29 омбор, шу жумладан архивдагилар.' %}
-{% set L_legacy_note = 'Сейчас показаны рабочие и старые/архивные склады. Для текущей иерархии используйте режим 22 рабочих складов.' if lang == 'ru' else 'Ҳозир ишчи ва эски/архив омборлар кўрсатилмоқда. Жорий иерархия учун 22 та ишчи омбор режимидан фойдаланинг.' %}
-{% set L_legacy_back = 'Вернуться к 22 рабочим складам' if lang == 'ru' else '22 та ишчи омборга қайтиш' %}
-{% set L_legacy_mode_22 = 'Режим: 22 рабочих склада.' if lang == 'ru' else 'Режим: 22 та ишчи омбор.' %}
+{% set L_legacy_mode_29 = ('Режим: все склады, включая архивные (' ~ wh_counts.all ~ ').') if lang == 'ru' else ('Режим: барча омборлар, шу жумладан архивдагилар (' ~ wh_counts.all ~ ' та).') %}
+{% set L_legacy_note = ('Сейчас показаны рабочие и старые/архивные склады. Для текущей иерархии используйте режим рабочих складов (' ~ wh_counts.working ~ ').') if lang == 'ru' else ('Ҳозир ишчи ва эски/архив омборлар кўрсатилмоқда. Жорий иерархия учун ишчи омборлар режимидан (' ~ wh_counts.working ~ ' та) фойдаланинг.') %}
+{% set L_legacy_back = ('Вернуться к рабочим складам (' ~ wh_counts.working ~ ')') if lang == 'ru' else ('Ишчи омборларга қайтиш (' ~ wh_counts.working ~ ' та)') %}
+{% set L_legacy_mode_22 = ('Режим: рабочие склады (' ~ wh_counts.working ~ ').') if lang == 'ru' else ('Режим: ишчи омборлар (' ~ wh_counts.working ~ ' та).') %}
 {% set L_legacy_only_working = 'Показаны только рабочие склады новой иерархии.' if lang == 'ru' else 'Фақат янги иерархиянинг ишчи омборлари кўрсатилган.' %}
 {% set L_legacy_show = 'Показать архивные склады' if lang == 'ru' else 'Архив омборларни кўрсатиш' %}
 

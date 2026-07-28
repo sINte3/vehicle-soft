@@ -4,7 +4,9 @@
 {% block content %}
 {% include 'fuel/_fuel_nav.html' %}
 {% set L_title = 'Отчёт остатков топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари ҳисоботи' %}
-{% set L_formula = 'Остаток на начало периода + приход - расход Topaz/ручной расход = текущий остаток. В отчёте используются только 22 рабочих склада новой иерархии.' if lang == 'ru' else 'Давр бошидаги қолдиқ + кирим - Topaz/қўлда сарф = жорий қолдиқ. Ҳисоботда фақат янги иерархиянинг 22 та ишчи омбори ишлатилади.' %}
+{# [REASON]: FUEL-BIG-001 — the warehouse count comes from wh_counts, never a
+   literal: the old hardcoded value had drifted from the rendered row count. #}
+{% set L_formula = ('Остаток на начало периода + приход - расход Topaz/ручной расход = текущий остаток. В отчёте используются только рабочие склады новой иерархии (' ~ wh_counts.working ~ ').') if lang == 'ru' else ('Давр бошидаги қолдиқ + кирим - Topaz/қўлда сарф = жорий қолдиқ. Ҳисоботда фақат янги иерархиянинг ишчи омборлари (' ~ wh_counts.working ~ ' та) ишлатилади.') %}
 {% set L_back = 'Назад к АЗС' if lang == 'ru' else 'АЗС бўлимига қайтиш' %}
 {% set L_params_title = 'Параметры отчёта' if lang == 'ru' else 'Ҳисобот параметрлари' %}
 {% set L_params_hint = 'Выберите период и скачайте отчёт в Excel при необходимости.' if lang == 'ru' else 'Даврни танланг ва зарур бўлса ҳисоботни Excelда юклаб олинг.' %}

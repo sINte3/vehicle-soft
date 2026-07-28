@@ -2256,6 +2256,7 @@ def fuel_report():
                            warehouses=warehouses,
                            stations=stations,
                            fuel_types=FUEL_TYPES,
+                           wh_counts=_fuel_warehouse_counts(),
                            **data_for_template)
 
 
@@ -2295,6 +2296,7 @@ def dashboard():
                            last_sync=last_sync,
                            recent_txns=recent_txns,
                            today_total=today_total,
+                           wh_counts=_fuel_warehouse_counts(),
                            fuel_types=FUEL_TYPES)
 
 
@@ -3336,6 +3338,21 @@ def fuel_target_warehouse_ids():
     return list(ids)
 
 
+def _fuel_warehouse_counts():
+    """{'working': int, 'all': int, 'legacy': int} — computed, never literal.
+
+    [REASON]: FUEL-BIG-001 — the warehouse count was written into template text
+    as literals ("22", "29") in several places and was wrong (the balance
+    report renders 23 rows, the whole table holds more). Screens interpolate
+    these computed values instead, so adding a warehouse updates every count
+    with no code edit. Deliberately reads no request state (no request.args /
+    show_legacy), so it is safe outside a request that carries the toggle.
+    """
+    working = len(fuel_target_warehouse_ids())
+    total = int(db.session.query(func.count(FuelWarehouse.id)).scalar() or 0)
+    return {'working': working, 'all': total, 'legacy': max(total - working, 0)}
+
+
 def fuel_warehouse_query_for_ui():
     """
     Default UI query for fuel warehouses.
@@ -4333,6 +4350,7 @@ def balance_report():
         start_date=start_date,
         end_date=end_date,
         show_zero=show_zero,
+        wh_counts=_fuel_warehouse_counts(),
         fuel_type="ДТ",
     )
 
