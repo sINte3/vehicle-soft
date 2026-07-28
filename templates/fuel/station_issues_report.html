@@ -58,15 +58,9 @@
 
 <div class="station-issues-filter-card">
     <form method="GET" action="{{ url_for('fuel.station_issues_report') }}">
-        <div class="filter-row">
-            <div>
-                <label>{{ L_date_from }}</label>
-                <input type="date" name="start_date" value="{{ start_date.isoformat() }}" class="form-control">
-            </div>
-            <div>
-                <label>{{ L_date_to }}</label>
-                <input type="date" name="end_date" value="{{ end_date.isoformat() }}" class="form-control">
-            </div>
+        {# F2.1 FUEL-DATETIME-004: shared period picker — dates, times, presets #}
+        {% include 'fuel/_period_picker.html' %}
+        <div class="filter-row" style="margin-top:10px;">
             <div>
                 <label>{{ L_station }}</label>
                 <select name="station_id" style="min-width:240px;" class="form-control">
@@ -124,7 +118,7 @@
 </div>
 
 <div style="margin-bottom:12px;">
-    <a href="{{ url_for('fuel.station_issues_export', start_date=start_date.isoformat(), end_date=end_date.isoformat(), station_id=station_id) }}" class="btn btn-primary btn-sm">📥 Excel</a>
+    <a href="{{ url_for('fuel.station_issues_export', start_date=period.start_date, end_date=period.end_date, start_time=period.start_time, end_time=period.end_time, station_id=station_id) }}" class="btn btn-primary btn-sm">📥 Excel</a>
     <span class="text-muted text-sm" style="margin-left:8px;">{{ summary.count }} {{ L_records }}</span>
 </div>
 

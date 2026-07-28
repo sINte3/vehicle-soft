@@ -348,14 +348,26 @@ def _fuel_stations_active():
             .all())
 
 
-def _fuel_station_issues_query(station_id, start_date, end_date):
+def _fuel_station_issues_query(station_id, start_date, end_date,
+                               start_dt=None, end_dt_exclusive=None):
     """Return station issue transactions for given station and period.
-    Respects station validity dates when present."""
+    Respects station validity dates when present.
+
+    [REASON]: F2.1 FUEL-DATETIME-004 — optional datetime bounds narrow the
+    window; defaults reproduce the old whole-day behaviour. Upper bounds are
+    exclusive next-midnight instead of datetime.max.time() — identical row
+    selection for second-resolution data, immune to microsecond comparisons.
+    """
+    if start_dt is None:
+        start_dt = datetime.combine(start_date, datetime.min.time())
+    if end_dt_exclusive is None:
+        end_dt_exclusive = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+
     q = (FuelTransaction2.query
          .options(joinedload(FuelTransaction2.station))
          .filter(FuelTransaction2.station_id == station_id,
-                 FuelTransaction2.txn_datetime >= datetime.combine(start_date, datetime.min.time()),
-                 FuelTransaction2.txn_datetime <= datetime.combine(end_date, datetime.max.time()))
+                 FuelTransaction2.txn_datetime >= start_dt,
+                 FuelTransaction2.txn_datetime < end_dt_exclusive)
          .order_by(FuelTransaction2.txn_datetime, FuelTransaction2.id))
 
     # [REASON]: Filter by station validity dates per business rule 5:
@@ -367,8 +379,9 @@ def _fuel_station_issues_query(station_id, start_date, end_date):
             q = q.filter(FuelTransaction2.txn_datetime >=
                          datetime.combine(station.valid_from, datetime.min.time()))
         if station.valid_to:
-            q = q.filter(FuelTransaction2.txn_datetime <=
-                         datetime.combine(station.valid_to, datetime.max.time()))
+            q = q.filter(FuelTransaction2.txn_datetime <
+                         datetime.combine(station.valid_to + timedelta(days=1),
+                                          datetime.min.time()))
 
     return q.all()
 
@@ -519,10 +532,9 @@ def station_issues_report():
     default_start = today.replace(day=1)
     default_end = today
 
-    start_date = _fuel_report_parse_date(request.args.get('start_date'), default_start)
-    end_date = _fuel_report_parse_date(request.args.get('end_date'), default_end)
-    if end_date < start_date:
-        start_date, end_date = end_date, start_date
+    # [REASON]: F2.1 FUEL-DATETIME-004 — shared parser: times, presets, cap.
+    start_dt, end_dt_exclusive, start_date, end_date, preset = _fuel_parse_period(
+        request.args, default_start, default_end)
 
     station_id = request.args.get('station_id', type=int)
     stations = _fuel_stations_active()
@@ -538,7 +550,9 @@ def station_issues_report():
         if selected:
             station_name = selected.name
             topaz_id = selected.topaz_id
-            txns = _fuel_station_issues_query(station_id, start_date, end_date)
+            txns = _fuel_station_issues_query(station_id, start_date, end_date,
+                                              start_dt=start_dt,
+                                              end_dt_exclusive=end_dt_exclusive)
             # [REASON]: FUEL-REPORT-012C grouping fix - precompute a safe date string
             # for each transaction so that Jinja's groupby works without calling
             # txn_datetime.date() (which fails because method references are not comparable).
@@ -557,9 +571,11 @@ def station_issues_report():
                            topaz_id=topaz_id,
                            start_date=start_date,
                            end_date=end_date,
+                           period=_fuel_period_context(start_dt, end_dt_exclusive,
+                                                       start_date, end_date, preset),
                            txns=txns,
                            summary=summary,
-                            card_name_map=card_name_map)
+                           card_name_map=card_name_map)
 
 
 @fuel_bp.route('/reports/station-issues/export')
@@ -570,10 +586,10 @@ def station_issues_export():
     default_start = today.replace(day=1)
     default_end = today
 
-    start_date = _fuel_report_parse_date(request.args.get('start_date'), default_start)
-    end_date = _fuel_report_parse_date(request.args.get('end_date'), default_end)
-    if end_date < start_date:
-        start_date, end_date = end_date, start_date
+    # [REASON]: F2.1 FUEL-DATETIME-004 — same parser as the page, so the
+    # workbook always matches the screen, times included.
+    start_dt, end_dt_exclusive, start_date, end_date, _preset = _fuel_parse_period(
+        request.args, default_start, default_end)
 
     station_id = request.args.get('station_id', type=int)
     if not station_id:
@@ -583,7 +599,9 @@ def station_issues_export():
     if not station:
         return 'Station not found', 404
 
-    txns = _fuel_station_issues_query(station_id, start_date, end_date)
+    txns = _fuel_station_issues_query(station_id, start_date, end_date,
+                                      start_dt=start_dt,
+                                      end_dt_exclusive=end_dt_exclusive)
     card_name_map = _resolve_card_names(txns)
 
     wb = _fuel_station_issues_workbook(txns, station.name, station.topaz_id, start_date, end_date, card_name_map=card_name_map)
@@ -1175,7 +1193,7 @@ def _fuel_today_expense_map(warehouse_ids):
     return result
 
 
-def _fuel_latest_txn_map(warehouse_ids, start_dt=None, end_dt=None, station_id=None):
+def _fuel_latest_txn_map(warehouse_ids, start_dt=None, end_dt_exclusive=None, station_id=None):
     ids = [int(x) for x in (warehouse_ids or []) if x]
     if not ids:
         return {}
@@ -1189,8 +1207,10 @@ def _fuel_latest_txn_map(warehouse_ids, start_dt=None, end_dt=None, station_id=N
 
     if start_dt is not None:
         max_query = max_query.filter(FuelTransaction2.txn_datetime >= start_dt)
-    if end_dt is not None:
-        max_query = max_query.filter(FuelTransaction2.txn_datetime <= end_dt)
+    # [REASON]: F2.1 FUEL-DATETIME-004 — exclusive upper bound, consistent with
+    # every other transaction window in the module.
+    if end_dt_exclusive is not None:
+        max_query = max_query.filter(FuelTransaction2.txn_datetime < end_dt_exclusive)
     if station_id:
         max_query = max_query.filter(FuelTransaction2.station_id == station_id)
 
@@ -1413,9 +1433,16 @@ def _fuel_warning_from_review(review):
     }
 
 
-def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
-    d_from_dt = datetime.combine(d_from, datetime.min.time())
-    d_to_dt = datetime.combine(d_to, datetime.max.time())
+def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None,
+                              start_dt=None, end_dt_exclusive=None):
+    # [REASON]: F2.1 FUEL-DATETIME-004 — optional datetime bounds narrow every
+    # transaction/sync window; defaults reproduce the old whole-day behaviour
+    # (the former <= 23:59:59.999999 upper bound and < next-midnight select
+    # the same rows for second-resolution data). Receipts, manual expenses and
+    # initial balances stay date-windowed; the opening stays a date window.
+    d_from_dt = start_dt if start_dt is not None else datetime.combine(d_from, datetime.min.time())
+    if end_dt_exclusive is None:
+        end_dt_exclusive = datetime.combine(d_to + timedelta(days=1), datetime.min.time())
 
     selected_station = None
     if station_id:
@@ -1581,7 +1608,8 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
     period_external_by_wh = {}
     if warehouse_ids:
         period_external_map = _fuel_external_expense_map(
-            warehouse_ids, fuel_type='ДТ', date_from=d_from, date_to=d_to,
+            warehouse_ids, fuel_type='ДТ',
+            dt_from=d_from_dt, dt_to_exclusive=end_dt_exclusive,
             station_id=station_id)
         period_external_by_wh = {wh_id: litres for (wh_id, _ft), litres in period_external_map.items()}
 
@@ -1605,7 +1633,8 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
     reattr_in_by_wh = {}
     if warehouse_ids:
         _p_out, _p_in = _fuel_reattribution_maps(
-            warehouse_ids, fuel_type='ДТ', date_from=d_from, date_to=d_to,
+            warehouse_ids, fuel_type='ДТ',
+            dt_from=d_from_dt, dt_to_exclusive=end_dt_exclusive,
             station_id=station_id)
         reattr_out_by_wh = {wh_id: l for (wh_id, _ft), l in _p_out.items()}
         reattr_in_by_wh = {wh_id: l for (wh_id, _ft), l in _p_in.items()}
@@ -1620,7 +1649,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             .join(FuelTransaction2, FuelTransaction2.station_id == FuelStation2.id)
             .filter(FuelStation2.warehouse_id.in_(warehouse_ids),
                     FuelTransaction2.txn_datetime >= d_from_dt,
-                    FuelTransaction2.txn_datetime <= d_to_dt))
+                    FuelTransaction2.txn_datetime < end_dt_exclusive))
 
         if station_id:
             tx_stats_q = tx_stats_q.filter(FuelTransaction2.station_id == station_id)
@@ -1632,7 +1661,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             }
 
     stations_count_by_wh = _fuel_station_count_map(warehouse_ids, active_only=False)
-    last_txn_by_wh = _fuel_latest_txn_map(warehouse_ids, start_dt=d_from_dt, end_dt=d_to_dt, station_id=station_id)
+    last_txn_by_wh = _fuel_latest_txn_map(warehouse_ids, start_dt=d_from_dt, end_dt_exclusive=end_dt_exclusive, station_id=station_id)
 
     for wh in warehouses:
         initial_balance = initial_by_wh.get(wh.id)
@@ -1742,7 +1771,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         .outerjoin(FuelTransaction2,
                    (FuelTransaction2.station_id == FuelStation2.id) &
                    (FuelTransaction2.txn_datetime >= d_from_dt) &
-                   (FuelTransaction2.txn_datetime <= d_to_dt)))
+                   (FuelTransaction2.txn_datetime < end_dt_exclusive)))
     # [REASON]: FUEL-BIG-001 — the per-station table follows the same default
     # warehouse visibility as the warehouse table above; explicit filters bypass.
     if warehouse_id:
@@ -1760,7 +1789,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
                      .options(joinedload(FuelTransaction2.station))
                      .join(FuelStation2)
                      .filter(FuelTransaction2.txn_datetime >= d_from_dt,
-                             FuelTransaction2.txn_datetime <= d_to_dt))
+                             FuelTransaction2.txn_datetime < end_dt_exclusive))
     if warehouse_id:
         recent_txns_q = recent_txns_q.filter(FuelStation2.warehouse_id == warehouse_id)
     elif not station_id:
@@ -1771,7 +1800,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
 
     sync_logs = (FuelSyncLog2.query
                  .filter(FuelSyncLog2.synced_at >= d_from_dt,
-                         FuelSyncLog2.synced_at <= d_to_dt)
+                         FuelSyncLog2.synced_at < end_dt_exclusive)
                  .order_by(FuelSyncLog2.synced_at.desc())
                  .limit(100).all())
     sync_summary = {
@@ -1870,7 +1899,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
                    .options(joinedload(FuelTransaction2.station))
                    .join(FuelStation2)
                    .filter(FuelTransaction2.txn_datetime >= d_from_dt,
-                           FuelTransaction2.txn_datetime <= d_to_dt,
+                           FuelTransaction2.txn_datetime < end_dt_exclusive,
                            FuelTransaction2.quantity >= FUEL_LARGE_TXN_THRESHOLD))
     if warehouse_id:
         large_txn_q = large_txn_q.filter(FuelStation2.warehouse_id == warehouse_id)
@@ -1895,7 +1924,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
                  .options(joinedload(FuelTransaction2.station))
                  .join(FuelStation2)
                  .filter(FuelTransaction2.txn_datetime >= d_from_dt,
-                         FuelTransaction2.txn_datetime <= d_to_dt)
+                         FuelTransaction2.txn_datetime < end_dt_exclusive)
                  .filter((FuelTransaction2.quantity == None) | (FuelTransaction2.quantity <= 0)))
     if warehouse_id:
         bad_qty_q = bad_qty_q.filter(FuelStation2.warehouse_id == warehouse_id)
@@ -1925,7 +1954,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         'd_from': d_from,
         'd_to': d_to,
         'd_from_dt': d_from_dt,
-        'd_to_dt': d_to_dt,
+        'end_dt_exclusive': end_dt_exclusive,
         'warehouses': warehouses,
         'warehouse_rows': warehouse_rows,
         'station_rows': station_rows,
@@ -2229,14 +2258,17 @@ def fuel_warning_update(warning_key):
 def fuel_report():
     today = date.today()
     default_from = today.replace(day=1)
-    d_from = _parse_report_date(request.args.get('date_from'), default_from)
-    d_to = _parse_report_date(request.args.get('date_to'), today)
-    if d_from > d_to:
-        d_from, d_to = d_to, d_from
+    # [REASON]: F2.1 FUEL-DATETIME-004 — shared parser; the legacy
+    # date_from/date_to names keep working through its fallback.
+    start_dt, end_dt_exclusive, d_from, d_to, preset = _fuel_parse_period(
+        request.args, default_from, today)
 
     warehouse_id = request.args.get('warehouse_id', type=int)
     station_id = request.args.get('station_id', type=int)
-    data = _collect_fuel_report_data(d_from, d_to, warehouse_id=warehouse_id, station_id=station_id)
+    data = _collect_fuel_report_data(d_from, d_to, warehouse_id=warehouse_id,
+                                     station_id=station_id,
+                                     start_dt=start_dt,
+                                     end_dt_exclusive=end_dt_exclusive)
 
     if request.args.get('export') == '1':
         wb = _fuel_report_workbook(data, lang=_fuel_report_lang())
@@ -2267,6 +2299,8 @@ def fuel_report():
                            stations=stations,
                            fuel_types=FUEL_TYPES,
                            wh_counts=_fuel_warehouse_counts(),
+                           period=_fuel_period_context(start_dt, end_dt_exclusive,
+                                                       d_from, d_to, preset),
                            **data_for_template)
 
 
