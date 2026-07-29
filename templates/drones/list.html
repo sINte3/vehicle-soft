@@ -1,0 +1,116 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Дроны — вылеты' if is_ru else 'Дронлар — парвозлар' }}{% endblock %}
+{% block content %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Вылеты дронов' if is_ru else 'Дронлар парвозлари' }}</div>
+    <div class="vs-hero-sub">{{ 'Журнал вылетов DJI Agras: фильтруйте по датам, машине и области. Время показано в поясе UTC+5.' if is_ru else 'DJI Agras парвозлари журнали: сана, машина ва вилоят бўйича сараланг. Вақт Тошкент вақтида кўрсатилган.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('drones.units') }}" class="vs-btn">{{ 'Машины' if is_ru else 'Машиналар' }}</a>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <form method="get" action="{{ url_for('drones.index') }}" class="vs-form-row">
+      <div class="vs-field" style="width:160px;">
+        <label class="vs-label" for="droneDateFrom">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
+        <input type="date" name="date_from" id="droneDateFrom" class="vs-input" value="{{ filters.date_from }}">
+      </div>
+      <div class="vs-field" style="width:160px;">
+        <label class="vs-label" for="droneDateTo">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
+        <input type="date" name="date_to" id="droneDateTo" class="vs-input" value="{{ filters.date_to }}">
+      </div>
+      <div class="vs-field" style="min-width:180px;">
+        <label class="vs-label" for="droneUnitFilter">{{ 'Машина' if is_ru else 'Машина' }}</label>
+        <select name="unit_id" id="droneUnitFilter" class="vs-select">
+          <option value="">{{ '— все машины —' if is_ru else '— барча машиналар —' }}</option>
+          {% for u in units %}
+          <option value="{{ u.id }}" {% if filters.unit_id == u.id %}selected{% endif %}>№ {{ u.number }}{% if u.model %} — {{ u.model }}{% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:180px;">
+        <label class="vs-label" for="droneRegionFilter">{{ 'Область' if is_ru else 'Вилоят' }}</label>
+        <select name="region" id="droneRegionFilter" class="vs-select">
+          <option value="">{{ '— все области —' if is_ru else '— барча вилоятлар —' }}</option>
+          {% for r in regions %}
+          <option value="{{ r }}" {% if filters.region == r %}selected{% endif %}>{{ r }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Список вылетов' if is_ru else 'Парвозлар рўйхати' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'Всего' if is_ru else 'Жами' }}: {{ total }}</span>
+  </div>
+  {% if flights %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Дата и время (UTC+5)' if is_ru else 'Сана ва вақт (Тошкент)' }}</th>
+        <th>{{ 'Машина' if is_ru else 'Машина' }}</th>
+        <th>{{ 'Ник (DJI)' if is_ru else 'Ник (DJI)' }}</th>
+        <th class="right">{{ 'Площадь, га' if is_ru else 'Майдон, га' }}</th>
+        <th class="right">{{ 'Жидкость, л' if is_ru else 'Суюқлик, л' }}</th>
+        <th class="right">{{ 'Семена, кг' if is_ru else 'Уруғ, кг' }}</th>
+        <th>{{ 'Тип' if is_ru else 'Тури' }}</th>
+        <th>{{ 'Область' if is_ru else 'Вилоят' }}</th>
+        <th class="right">{{ 'Длительность, с' if is_ru else 'Давомийлик, с' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in flights %}
+      <tr>
+        <td style="white-space:nowrap;">{{ fmt_dt(f.started_at) }}</td>
+        <td style="font-weight:700;">{% if f.drone_unit %}№ {{ f.drone_unit.number }}{% else %}—{% endif %}</td>
+        <td class="vs-muted">{{ f.nickname_raw or '—' }}</td>
+        <td class="right" style="font-weight:600;">{{ '%.2f'|format(f.area_ha or 0) }}</td>
+        <td class="right">{% if f.spray_liters is not none %}{{ '%.1f'|format(f.spray_liters) }}{% else %}—{% endif %}</td>
+        <td class="right">{% if f.sow_kg is not none %}{{ '%.1f'|format(f.sow_kg) }}{% else %}—{% endif %}</td>
+        <td>{{ usage_labels.get(f.usage_type, '—') }}</td>
+        <td class="vs-muted">{{ f.region or '—' }}</td>
+        <td class="right">{{ f.work_seconds if f.work_seconds is not none else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-ico">🚁</div>
+    <div class="vs-empty-title">{{ 'Вылетов пока нет' if is_ru else 'Ҳозирча парвозлар йўқ' }}</div>
+    <div class="vs-empty-sub">{{ 'Данные появятся после первой синхронизации с DJI SmartFarm.' if is_ru else 'Маълумотлар DJI SmartFarm билан биринчи синхронизациядан кейин пайдо бўлади.' }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% if pages > 1 %}
+<div class="vs-row vs-mb" style="justify-content:space-between; align-items:center;">
+  <div>
+    {% if page > 1 %}
+    <a href="{{ url_for('drones.index', page=page-1, **filter_args) }}" class="vs-btn vs-btn-sm">← {{ 'Предыдущая' if is_ru else 'Олдингиси' }}</a>
+    {% endif %}
+  </div>
+  <span class="vs-soft" style="font-size:12.5px;">{{ 'Страница' if is_ru else 'Саҳифа' }} {{ page }} / {{ pages }}</span>
+  <div>
+    {% if page < pages %}
+    <a href="{{ url_for('drones.index', page=page+1, **filter_args) }}" class="vs-btn vs-btn-sm">{{ 'Следующая' if is_ru else 'Кейингиси' }} →</a>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
