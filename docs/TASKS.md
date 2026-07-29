@@ -5327,3 +5327,46 @@ Still unverified — carry into the next pass, non-blocking: the `kind='submit'`
 POST branch on the owner's OWN draft; the price branch on a submitted request
 that still has an unpriced item; actual scroll-and-flash behaviour; the 380px
 layout; the Uzbek language toggle.
+
+## PHASE1-PR1 — Shared foundation, part 1: tooling and CI (2026-07-29)
+
+Status: **delivered in PR #32** (branch `claude/file-exchange-workflow-zkwhgg`,
+base `fadd431` / v1.9-production-2026-07-29). First of the two Phase-1
+foundation PRs. No application code touched — only `tools/`,
+`.github/workflows/checks.yml` and docs.
+
+Six ordered commits — revert strictly in reverse order (6 -> 5 -> 4 -> 3 ->
+2 -> 1). No migration, no schema change, nothing to undo in any database:
+
+1. `ff172f0` — `tools/check_templates.py` + fixture templates under
+   `tools/test_check_templates/` (deliberately outside `templates/`) +
+   self-test `tools/test_check_templates.py`. Blocking checks: jinja parse
+   failure, unbalanced `<div>`, `tojson` inside a double-quoted attribute.
+   Warning only: set-before-use heuristic, suppressible with
+   `{# noqa: set-before-use #}`. Run on the real tree: 64 files, 0 blocking,
+   0 warnings.
+2. `5df6bc7` — `tools/check_migration_drift.py`: `schema_migrations` registry
+   vs `migrate_*.py` in the working tree; database opened read-only
+   (`mode=ro` URI, never `immutable=1` on a live file); `MIGRATION_ID`
+   extracted with `ast`, modules never imported; reports
+   registered-but-no-file / file-but-not-registered / unclassifiable;
+   exit 1 on any non-empty list.
+3. `2be780e` — `tools/state_snapshot.py`: HEAD, tags at HEAD, commits on
+   origin/main not on HEAD (explicitly without `git fetch` — the output says
+   so), `schema_migrations` count + last five names, and on Windows the six
+   TransportReport*/TransportBot* services via `sc query`; every step fails
+   soft so one broken step cannot hide the rest.
+4. `401d19f` — adopted the three formerly untracked production scripts into
+   `tools/` (provided by the owner from `C:\transport-report`; behaviour
+   unchanged, the only edit is ROOT resolving one level above `tools/`):
+   `preflight_prod_state.py`, `preflight_prod_drift.py`, `check_db_lock.py`.
+5. `dbc6a35` — `.github/workflows/checks.yml`: compileall + template checks
+   on every PR and every push to main. `check_migration_drift.py` and
+   `state_snapshot.py` deliberately NOT in CI — both need a real database
+   and a real worktree; they stay server-side deploy steps.
+6. this docs commit.
+
+DEPLOY-DRIFT-001 is now **partially addressed**: the checker exists and the
+three scripts are in git, but wiring `check_migration_drift.py` into the
+deploy procedure is a separate task — the backlog item above stays open
+until that is done.
