@@ -141,6 +141,14 @@ class Organization(db.Model):
     name       = db.Column(db.String(200), nullable=False)
     short_name = db.Column(db.String(100), default='')
     sort_order = db.Column(db.Integer, default=0)
+    # [REASON]: AZS-ORG-REFACTOR unblock -- production carries duplicate
+    # organisation rows (ids 20-24) that are linked to fuel warehouses and
+    # therefore CANNOT be deleted; they must be hideable instead. Columns
+    # only (added for existing DBs by migrate_core_foundation_001.py):
+    # deciding WHICH rows to hide is the owner's data decision, made later,
+    # and no row is modified by the migration. Nothing reads these yet.
+    is_active   = db.Column(db.Boolean, default=True)
+    archived_at = db.Column(db.DateTime, nullable=True)
     equipment  = db.relationship('Equipment', backref='organization',
                                  cascade='all, delete-orphan', lazy='dynamic')
 
@@ -218,6 +226,20 @@ class Customer(db.Model):
     id            = db.Column(db.Integer, primary_key=True)
     name          = db.Column(db.String(300), nullable=False)
     customer_type = db.Column(db.String(20), default='external')
+
+    # [REASON]: PHASE1 shared foundation -- customers is a SHARED table (read
+    # by daily_records and work_orders; the drone and GPS tracks will attach
+    # field contours to it). Additive nullable columns only, added for
+    # existing DBs by migrate_core_foundation_001.py; every existing reader
+    # keeps seeing exactly the rows it saw before.
+    inn     = db.Column(db.String(20), nullable=True)
+    phone   = db.Column(db.String(50), nullable=True)
+    address = db.Column(db.String(300), nullable=True)
+    notes   = db.Column(db.Text, nullable=True)
+    # [REASON]: hide-not-delete -- a customer referenced by history cannot be
+    # deleted; active=False will hide it from pickers. Wiring the flag into
+    # the reference screens is a later task; nothing reads it yet.
+    active  = db.Column(db.Boolean, default=True)
 
 
 class DailyRecord(db.Model):
@@ -419,6 +441,14 @@ class VialonMapping(db.Model):
     __tablename__ = 'vialon_mappings'
     id           = db.Column(db.Integer, primary_key=True)
     vialon_name  = db.Column(db.String(300), unique=True, nullable=False)
+    # [REASON]: PHASE1 -- vialon_name is the historical unique key, but names
+    # in Wialon change, six plates point at more than one object, and one
+    # machine exists as three objects because trackers were replaced.
+    # wialon_id is the durable key for the GPS track. Nullable + indexed
+    # (added for existing DBs by migrate_core_foundation_001.py); the
+    # existing manual import never sets it and keeps working exactly as
+    # before.
+    wialon_id    = db.Column(db.Integer, nullable=True, index=True)
     equipment_id = db.Column(db.Integer, db.ForeignKey('equipment.id'), nullable=True)
     skip         = db.Column(db.Boolean, default=False)   # True = not our vehicle, ignore
     created_by   = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
@@ -1560,6 +1590,52 @@ class BotNotificationQueue(db.Model):
     __table_args__ = (
         db.Index('idx_bot_notification_queue_status', 'status'),
         db.Index('idx_bot_notification_queue_telegram_id', 'telegram_id'),
+    )
+
+
+# ─── PHASE1 shared foundation: field contours ────────────────────────────────
+
+class FieldContour(db.Model):
+    """Shared directory of field contours for the GPS and drone tracks.
+
+    [REASON]: PHASE1 -- two tracks were about to build the same directory:
+    the GPS track mirrors 17 812 Wialon geozones, the drone track collects
+    4 776 DJI Field Management records. One table with a source
+    discriminator prevents two versions of the same data. Created EMPTY by
+    migrate_core_foundation_001.py (db.create_all() covers fresh installs);
+    nothing populates or reads it yet -- the collectors ship in later tasks.
+    """
+    __tablename__ = 'field_contours'
+    id          = db.Column(db.Integer, primary_key=True)
+    # [REASON]: source is one of 'wialon' / 'dji' / 'manual'; together with
+    # external_id it forms the natural key. external_id is nullable because
+    # a manually created contour has no external system id (SQLite treats
+    # NULLs as distinct inside a unique constraint, so many manual rows are
+    # allowed by design).
+    source      = db.Column(db.String(20), nullable=False)
+    external_id = db.Column(db.String(100), nullable=True)
+    name        = db.Column(db.String(300), nullable=False)
+    name_uz     = db.Column(db.String(300), nullable=True)
+    # [REASON]: geometry as GeoJSON text -- SQLite has no native geometry
+    # type and no consumer needs spatial queries yet; text keeps the value
+    # portable between Wialon polygons and DJI field boundaries.
+    geometry_geojson = db.Column(db.Text, nullable=True)
+    area_ha     = db.Column(db.Float, nullable=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'),
+                            nullable=True, index=True)
+    season_year = db.Column(db.Integer, nullable=True)
+    is_active   = db.Column(db.Boolean, default=True)
+    created_at  = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at  = db.Column(db.DateTime, default=datetime.utcnow,
+                            onupdate=datetime.utcnow)
+
+    customer = db.relationship(
+        'Customer', backref=db.backref('field_contours', lazy='dynamic'))
+
+    __table_args__ = (
+        db.UniqueConstraint('source', 'external_id',
+                            name='uq_field_contours_source_external'),
+        db.Index('ix_field_contours_source_active', 'source', 'is_active'),
     )
 
 
