@@ -1,0 +1,14 @@
+{# fixture: exactly one warning -- 'total' used on line 4 before its set.
+   Every other early use below is excluded: for target, macro name and
+   parameter, with binding, and one suppressed line. #}
+<p>{{ total }}</p>
+<p>{{ suppressed }} {# noqa: set-before-use #}</p>
+{% for row in rows %}<span>{{ row }}</span>{% endfor %}
+{% macro badge(kind) %}<b>{{ kind }}</b>{% endmacro %}
+{% with scoped = 2 %}<i>{{ scoped }}</i>{% endwith %}
+{% set total = 42 %}
+{% set suppressed = 1 %}
+{% set row = none %}
+{% set kind = 'chip' %}
+{% set scoped = 3 %}
+<p>{{ total }}</p>

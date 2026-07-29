@@ -1,0 +1,10 @@
+{# clean fixture: every check must pass on this file #}
+<div class="page">
+  <div class="card" data-rows='{{ rows|tojson }}'>
+    {% set greeting = 'hello' %}
+    <p>{{ greeting }}</p>
+    {% for item in items %}
+      <span>{{ item }}</span>
+    {% endfor %}
+  </div>
+</div>

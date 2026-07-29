@@ -1,0 +1,37 @@
+# PHASE1-PR1: syntax + template checks on every PR and every push to main.
+#
+# Deliberately NOT here:
+#   - tools/check_migration_drift.py -- needs a real database;
+#   - tools/state_snapshot.py        -- needs a real worktree and services.
+# Both run on the server as deploy steps, not in CI.
+#
+# Python 3.12 on the runner is enough: the server runs 3.14, but CI only
+# needs to parse and byte-compile the sources.
+name: checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install jinja2 (the only non-stdlib dependency of the checks)
+        run: pip install jinja2
+
+      - name: Byte-compile every Python source
+        run: python -m compileall -q .
+
+      - name: Template checks (parse, div balance, tojson-in-attr, set-before-use)
+        run: python tools/check_templates.py
+
+      - name: Template checker self-test against planted fixtures
+        run: python tools/test_check_templates.py
