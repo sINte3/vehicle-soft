@@ -1639,6 +1639,168 @@ class FieldContour(db.Model):
     )
 
 
+# ─── DRONE-001: drones module data foundation ────────────────────────────────
+
+class DroneUnit(db.Model):
+    """One physical DJI Agras machine, identified by its number (1..15).
+
+    [REASON]: DRONE-001 / decision R3 of the drones track -- drones are NOT
+    rows of `equipment`: they have no plate and no equipment category, fly up
+    to 476 times a day against the one-record-per-day model of daily_records,
+    and work_orders.equipment_id is NOT NULL. Identity is the machine NUMBER;
+    the DJI nickname is a mutable label resolved via DroneNickname.
+    """
+    __tablename__ = 'drone_units'
+    id              = db.Column(db.Integer, primary_key=True)
+    number          = db.Column(db.Integer, nullable=False, unique=True)
+    # [REASON]: decision R4 -- all 15 machines belong to organization 12
+    # (Agrocluster); revenue attribution below organization level does not
+    # exist until DRONE-005 orders.
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'),
+                                nullable=False)
+    model           = db.Column(db.String(50), nullable=True)
+    # [REASON]: exclusion from reporting is DATED, not a constant flag:
+    # flights with started_at >= excluded_from are omitted from reports when
+    # is_excluded is true; earlier flights still count. A machine that was a
+    # test unit and later went to work ("9 Garden") must not retroactively
+    # lose its real hectares.
+    is_excluded     = db.Column(db.Boolean, default=False)
+    excluded_from   = db.Column(db.Date, nullable=True)
+    excluded_reason = db.Column(db.String(300), nullable=True)
+    notes           = db.Column(db.Text, nullable=True)
+    is_active       = db.Column(db.Boolean, default=True)
+    created_at      = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at      = db.Column(db.DateTime, default=datetime.utcnow,
+                                onupdate=datetime.utcnow)
+
+    organization = db.relationship(
+        'Organization', backref=db.backref('drone_units', lazy='dynamic'))
+
+
+class DroneNickname(db.Model):
+    """Alias map: one DJI nickname spelling -> one machine.
+
+    [REASON]: DRONE-001 -- a hardcoded nickname dictionary in the old system
+    knew 16 of 20 raw spellings and silently dropped 2 036 flights (2 082 ha)
+    into an unattributed bucket. The alias map therefore lives in the
+    database and is extensible at runtime; an unknown nickname must never
+    reject a flight (it is stored unresolved instead, see DroneFlight).
+
+    Resolution order (used by the ingest): exact match on `nickname`; on a
+    miss, match on `normalized`; if the normalized match returns rows
+    pointing at more than one drone_unit_id, treat the nickname as
+    UNRESOLVED rather than guessing.
+    """
+    __tablename__ = 'drone_nicknames'
+    id            = db.Column(db.Integer, primary_key=True)
+    drone_unit_id = db.Column(db.Integer, db.ForeignKey('drone_units.id'),
+                              nullable=False, index=True)
+    # Exactly as DJI sends it, including script and spacing.
+    nickname      = db.Column(db.String(100), nullable=False, unique=True)
+    # [REASON]: normalized (lowercase, all whitespace removed) is deliberately
+    # NOT unique: '8 Garden U' and '8 GardenU' both normalise to '8gardenu'.
+    normalized    = db.Column(db.String(100), nullable=False, index=True)
+    first_seen_at = db.Column(db.DateTime, nullable=True)
+    last_seen_at  = db.Column(db.DateTime, nullable=True)
+    is_active     = db.Column(db.Boolean, default=True)
+    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+
+    drone_unit = db.relationship(
+        'DroneUnit', backref=db.backref('nicknames', lazy='dynamic'))
+
+
+class DroneSyncLog(db.Model):
+    """One ingestion run of the drones endpoint (backfill/incremental/replay).
+
+    [REASON]: DRONE-001 -- the old collector always reported
+    records_written == records_seen (verified: all 520 rows of its sync_runs),
+    so the log could not answer whether new data had arrived. These five
+    counters must never be collapsed into two.
+    """
+    __tablename__ = 'drone_sync_logs'
+    id                 = db.Column(db.Integer, primary_key=True)
+    kind               = db.Column(db.String(20), nullable=False)  # backfill/incremental/replay
+    period_from        = db.Column(db.Date, nullable=True)
+    period_to          = db.Column(db.Date, nullable=True)
+    started_at         = db.Column(db.DateTime, nullable=False,
+                                   default=datetime.utcnow)
+    finished_at        = db.Column(db.DateTime, nullable=True)
+    status             = db.Column(db.String(20), nullable=False,
+                                   default='running')  # running/ok/error
+    records_seen       = db.Column(db.Integer, default=0)
+    records_new        = db.Column(db.Integer, default=0)
+    records_duplicate  = db.Column(db.Integer, default=0)
+    records_unresolved = db.Column(db.Integer, default=0)
+    records_error      = db.Column(db.Integer, default=0)
+    source_ip          = db.Column(db.String(45), nullable=True)
+    error_text         = db.Column(db.Text, nullable=True)
+
+
+class DroneFlight(db.Model):
+    """One DJI flight (= one tank load, not a shift; ~0.98 ha on average).
+
+    [REASON]: DRONE-001 -- dji_flight_id (payload `id`) is the dedup key;
+    serial_number is a PER-FLIGHT identifier in the DJI payload, not a
+    machine identifier, and is kept only for traceability. drone_unit_id is
+    nullable ON PURPOSE: an unknown nickname must never reject a flight --
+    the row is stored with drone_unit_id NULL and nickname_raw filled, and
+    can be re-attributed once the alias map learns the spelling. raw_json
+    always stores the complete payload, so every derived column (including
+    `region`) can be recomputed if a rule changes.
+    """
+    __tablename__ = 'drone_flights'
+    id            = db.Column(db.Integer, primary_key=True)
+    dji_flight_id = db.Column(db.BigInteger, nullable=False, unique=True)
+    drone_unit_id = db.Column(db.Integer, db.ForeignKey('drone_units.id'),
+                              nullable=True)
+    nickname_raw  = db.Column(db.String(100), nullable=True)
+    serial_number = db.Column(db.String(50), nullable=True)
+    flyer_name    = db.Column(db.String(100), nullable=True)
+    team_name     = db.Column(db.String(100), nullable=True)
+    # UTC, from payload start_timestamp / end_timestamp (unix seconds).
+    # Display is UTC+5 -- conversion happens at render time, never here.
+    started_at    = db.Column(db.DateTime, nullable=False, index=True)
+    finished_at   = db.Column(db.DateTime, nullable=True)
+    work_seconds  = db.Column(db.Integer, nullable=True)
+    # Normalised units: new_work_area / 10000 (m2 -> ha),
+    # spray_usage / 1000 (ml -> l), sow_usage / 1000 (GRAMS -> kg).
+    area_ha       = db.Column(db.Float, nullable=False, default=0)
+    spray_liters  = db.Column(db.Float, nullable=True)
+    sow_kg        = db.Column(db.Float, nullable=True)
+    usage_type    = db.Column(db.Integer, nullable=True)  # 0 spray, 1 sow
+    # [REASON]: mode_name semantics are unknown (values 0/1/4 observed) --
+    # stored, never interpreted.
+    mode_name     = db.Column(db.Integer, nullable=True)
+    manual_mode   = db.Column(db.Boolean, nullable=True)
+    work_speed    = db.Column(db.Float, nullable=True)
+    spray_width   = db.Column(db.Float, nullable=True)
+    radar_height  = db.Column(db.Float, nullable=True)
+    lat           = db.Column(db.Float, nullable=True)
+    lng           = db.Column(db.Float, nullable=True)
+    location_text = db.Column(db.String(500), nullable=True)
+    # [REASON]: region is computed AT INGEST and stored, so reports never
+    # re-parse tens of thousands of address strings; location_text is kept
+    # verbatim so the whole column can be recomputed if the rule changes.
+    region        = db.Column(db.String(100), nullable=True, index=True)
+    raw_json      = db.Column(db.Text, nullable=False)
+    sync_log_id   = db.Column(db.Integer, db.ForeignKey('drone_sync_logs.id'),
+                              nullable=True)
+    ingested_at   = db.Column(db.DateTime, nullable=False,
+                              default=datetime.utcnow)
+
+    drone_unit = db.relationship(
+        'DroneUnit', backref=db.backref('flights', lazy='dynamic'))
+    sync_log   = db.relationship(
+        'DroneSyncLog', backref=db.backref('flights', lazy='dynamic'))
+
+    # [REASON]: the composite index also serves unit-only lookups via its
+    # leading column, so no separate index on drone_unit_id is created.
+    __table_args__ = (
+        db.Index('ix_drone_flights_unit_started', 'drone_unit_id',
+                 'started_at'),
+    )
+
+
 # ─── Migration Registry ───────────────────────────────────────────────────────
 
 class SchemaMigration(db.Model):
