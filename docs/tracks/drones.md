@@ -81,6 +81,7 @@ SmartFarm, публичного API нет. Отдельное приложен�
 |---|---|---|---|
 | `DRONE-000` | доменная документация `docs/DRONES_DOMAIN.md` (числа перепроверены по сырым payload: написаний ников 20, а не 19), правка инварианта Р8, чистка устаревшего в треках АЗС и GPS, бэклог `DRONE-DISTRICT-001` | — (ветка `claude/file-exchange-workflow-4mnkmn`, PR не открыт) | — |
 | `DRONE-001` | фундамент: `drone_units` / `drone_nicknames` / `drone_flights` / `drone_sync_logs`, миграция `DRONES_FOUNDATION_001` (15 машин на организации 12, 20 ников), blueprint `drones.py`, два read-only экрана, пункт меню под правом `drones` | — (та же ветка, PR не открыт) | — |
+| `DRONE-002` | endpoint `POST /drones/api/flight_sync` на `ingest_common` (пять счётчиков, дедуп по id DJI, незнакомый ник не отклоняет вылет) + реплей `tools/drone_replay_appdb.py`; приёмка локально на сэмпле 10 385: все предсказанные числа совпали | — (та же ветка, PR не открыт) | — |
 
 ## 4. Открытые хвосты
 
