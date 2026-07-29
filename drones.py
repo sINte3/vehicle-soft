@@ -773,3 +773,200 @@ def summary():
         units=units,
         regions=regions,
     )
+
+
+def _drone_xlsx_safe(value):
+    """Neutralize spreadsheet formula injection in a data-driven string.
+
+    [REASON]: same defense as _xlsx_safe in spare_parts.py (SP-F-004) --
+    Excel/LibreOffice execute a cell starting with = + - @ as a formula.
+    Nicknames and reverse-geocoded addresses come from the DJI cloud, i.e.
+    outside this system; the fix is one helper and it also stops Excel from
+    mangling ordinary values. Applied only to data-driven strings; fixed
+    labels and numeric columns are left untouched.
+    """
+    if isinstance(value, str):
+        stripped = value.lstrip()
+        if stripped and stripped[0] in ('=', '+', '-', '@'):
+            return "'" + value
+    return value
+
+
+def _drone_xlsx_styler():
+    """Shared openpyxl styling for the drones workbooks.
+
+    Modeled on _spare_report_styler (spare_parts.py): header fill and bold
+    font, thin borders, frozen header row, auto column widths. Local on
+    purpose -- excel_export.py is the eight-sheet daily activity machinery
+    and is not a fit here.
+    """
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    from types import SimpleNamespace
+
+    header_fill = PatternFill('solid', fgColor='D9EAD3')
+    header_font = Font(bold=True)
+    total_font = Font(bold=True)
+    thin = Side(style='thin', color='D9D9D9')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def style_table(ws, num_formats=None, bold_rows=(), datetime_format=None):
+        """num_formats: {column index: number format} for numeric cells;
+        datetime_format: {column index: format} for datetime cells."""
+        ws.freeze_panes = 'A2'
+        ws.sheet_view.showGridLines = False
+        num_formats = num_formats or {}
+        datetime_format = datetime_format or {}
+        for cell in ws[1]:
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center', vertical='center',
+                                       wrap_text=True)
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row,
+                                max_col=ws.max_column):
+            for cell in row:
+                if (cell.column in num_formats
+                        and isinstance(cell.value, (int, float))
+                        and not isinstance(cell.value, bool)):
+                    cell.number_format = num_formats[cell.column]
+                elif (cell.column in datetime_format
+                        and isinstance(cell.value, datetime)):
+                    cell.number_format = datetime_format[cell.column]
+        for row in ws.iter_rows(min_row=1, max_row=ws.max_row,
+                                max_col=ws.max_column):
+            for cell in row:
+                cell.border = border
+        for row_idx in bold_rows:
+            for cell in ws[row_idx]:
+                cell.font = total_font
+        for col in range(1, ws.max_column + 1):
+            letter = get_column_letter(col)
+            width = 10
+            for cell in ws[letter]:
+                val = '' if cell.value is None else str(cell.value)
+                width = max(width, min(len(val) + 2, 42))
+            ws.column_dimensions[letter].width = width
+
+    return SimpleNamespace(style_table=style_table, total_font=total_font)
+
+
+def _drone_xlsx_response(wb, base_name, filters):
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    if filters['date_from_s'] or filters['date_to_s']:
+        fname = '%s_%s_%s.xlsx' % (base_name,
+                                   filters['date_from_s'] or 'all',
+                                   filters['date_to_s'] or 'all')
+    else:
+        fname = '%s_all.xlsx' % base_name
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=fname,
+        mimetype=('application/vnd.openxmlformats-officedocument'
+                  '.spreadsheetml.sheet'),
+    )
+
+
+@drones_bp.route('/summary.xlsx')
+@module_required('drones')
+def summary_xlsx():
+    """Five-sheet workbook of the summary page, same filters, same order."""
+    from openpyxl import Workbook
+
+    filters = _drone_filters_from_args(request.args,
+                                       default_current_month=True)
+    data = _drone_summary_data(_drone_flight_conditions(filters))
+    st = _drone_xlsx_styler()
+
+    label_total = _drone_t('Жами', 'Итого')
+    label_unattr = _drone_t('Аниқланмаган', 'Не распознано')
+    label_noregion = _drone_t('Вилоят аниқланмаган', 'Область не определена')
+    head_flights = _drone_t('Парвозлар', 'Вылеты')
+    head_area = _drone_t('Гектар', 'Гектары')
+    head_share = _drone_t('Улуш, %', 'Доля, %')
+    unbounded = _drone_t('чекланмаган', 'не ограничен')
+
+    wb = Workbook()
+
+    # 1. Сводка / Жамланма
+    ws = wb.active
+    ws.title = _drone_t('Жамланма', 'Сводка')
+    ws.append([_drone_t('Кўрсаткич', 'Показатель'),
+               _drone_t('Қиймат', 'Значение')])
+    summary_rows = [
+        (_drone_t('Давр: бошланиши', 'Период: с'),
+         filters['date_from_s'] or unbounded, None),
+        (_drone_t('Давр: охири', 'Период: по'),
+         filters['date_to_s'] or unbounded, None),
+        (_drone_t('Парвозлар', 'Вылетов'), data['totals']['flights'], None),
+        (_drone_t('Гектар', 'Гектаров'), data['totals']['area_ha'], '0.00'),
+        (_drone_t('Ҳавода соат', 'Часов в воздухе'),
+         data['totals']['hours'], '0.00'),
+        (_drone_t('Литр эритма', 'Литров раствора'),
+         data['totals']['spray_liters'], '0.00'),
+        (_drone_t('Кг уруғ', 'Кг посева'), data['totals']['sow_kg'], '0.000'),
+        (_drone_t('Ноль майдонли парвозлар', 'Вылетов с нулевой площадью'),
+         data['totals']['zero_area'], None),
+    ]
+    for label, value, fmt in summary_rows:
+        ws.append([label, value])
+        if fmt:
+            ws.cell(row=ws.max_row, column=2).number_format = fmt
+    st.style_table(ws)
+
+    # 2. По машинам / Машиналар бўйича
+    ws = wb.create_sheet(_drone_t('Машиналар бўйича', 'По машинам'))
+    ws.append([_drone_t('Машина (№)', 'Машина (№)'), head_flights,
+               head_area, head_share])
+    for r in data['by_machine']['rows']:
+        ws.append([r['number'], r['flights'], r['area'], r['share']])
+    if data['by_machine']['unattributed']:
+        u = data['by_machine']['unattributed']
+        ws.append([label_unattr, u['flights'], u['area'], u['share']])
+    ws.append([label_total, data['by_machine']['total']['flights'],
+               data['by_machine']['total']['area'], 100.0])
+    st.style_table(ws, num_formats={3: '0.00', 4: '0.0'},
+                   bold_rows=(ws.max_row,))
+
+    # 3. По областям / Вилоятлар бўйича
+    ws = wb.create_sheet(_drone_t('Вилоятлар бўйича', 'По областям'))
+    ws.append([_drone_t('Вилоят', 'Область'), head_flights,
+               head_area, head_share])
+    for r in data['by_region']['rows']:
+        ws.append([_drone_xlsx_safe(r['region']), r['flights'], r['area'],
+                   r['share']])
+    if data['by_region']['undetermined']:
+        u = data['by_region']['undetermined']
+        ws.append([label_noregion, u['flights'], u['area'], u['share']])
+    ws.append([label_total, data['by_region']['total']['flights'],
+               data['by_region']['total']['area'], 100.0])
+    st.style_table(ws, num_formats={3: '0.00', 4: '0.0'},
+                   bold_rows=(ws.max_row,))
+
+    # 4. По типам работ / Иш турлари бўйича
+    ws = wb.create_sheet(_drone_t('Иш турлари бўйича', 'По типам работ'))
+    ws.append([_drone_t('Иш тури', 'Тип работы'), head_flights, head_area,
+               head_share, _drone_t('Литр', 'Литров'),
+               _drone_t('Килограмм', 'Килограммов')])
+    for r in data['by_usage']['rows']:
+        ws.append([r['label'], r['flights'], r['area'], r['share'],
+                   r['spray_liters'], r['sow_kg']])
+    ws.append([label_total, data['by_usage']['total']['flights'],
+               data['by_usage']['total']['area'], 100.0, None, None])
+    st.style_table(ws, num_formats={3: '0.00', 4: '0.0', 5: '0.00',
+                                    6: '0.000'},
+                   bold_rows=(ws.max_row,))
+
+    # 5. По месяцам / Ойлар бўйича
+    ws = wb.create_sheet(_drone_t('Ойлар бўйича', 'По месяцам'))
+    ws.append([_drone_t('Ой', 'Месяц'), head_flights, head_area, head_share])
+    for r in data['by_month']['rows']:
+        ws.append([r['month'], r['flights'], r['area'], r['share']])
+    ws.append([label_total, data['by_month']['total']['flights'],
+               data['by_month']['total']['area'], 100.0])
+    st.style_table(ws, num_formats={3: '0.00', 4: '0.0'},
+                   bold_rows=(ws.max_row,))
+
+    return _drone_xlsx_response(wb, 'drones_summary', filters)
