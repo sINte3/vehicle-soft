@@ -133,6 +133,11 @@ def create_app():
         # require browser-session CSRF tokens.
         if request.path in ('/fuel/api/fuel_sync', '/fuel/api/card_sync'):
             return True
+        # DRONE-002: the drone collector endpoint is protected by
+        # DRONE_API_TOKEN in the request body (deny-by-default when unset)
+        # and must not require a browser-session CSRF token.
+        if request.path == '/drones/api/flight_sync':
+            return True
         # BOT001: Bot API endpoints use Bearer token auth, not browser sessions.
         if request.path.startswith('/api/bot/'):
             return True
