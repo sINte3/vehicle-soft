@@ -2905,6 +2905,13 @@ def create_app():
                 # migrate_spare_parts_acts_permission.py; this list only
                 # serves fresh installs.
                 ('spare_parts_acts', 'Эҳтиёт қисмлар: далолатномаларни кўриш', 'Запчасти: просмотр актов списания'),
+                # [REASON]: PHASE1 -- module code for the drones track. This
+                # seed runs only when app_modules is empty (fresh installs);
+                # existing DBs get the row from migrate_core_foundation_001.py
+                # (INSERT OR IGNORE). No sidebar link yet: there is no drones
+                # blueprint, and url_for would fail at render time on every
+                # page -- the link ships together with the module.
+                ('drones', 'Дронлар', 'Дроны'),
             ]:
                 db.session.add(AppModule(code=code, name_uz=name_uz, name_ru=name_ru))
             db.session.commit()
