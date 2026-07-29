@@ -1,0 +1,38 @@
+{# ===========================================================================
+   templates/fuel/_legacy_toggle.html — FUEL-BIG-001: the explicit
+   working-vs-archive warehouse mode control, shared by the dashboard, the
+   balance report and /fuel/report so the three screens can never disagree
+   on wording or on the counts they show.
+
+   Requires `wh_counts` in the render context (_fuel_warehouse_counts()).
+
+   [REASON]: the toggle links are built from request.args so every other query
+   parameter — the selected period included — survives switching the mode in
+   both directions. The entry link keeps the dashboard's original gate
+   (current_user.is_admin): the archive mode is a diagnostic view, and
+   non-admins never had the control. The banner for the ON state renders for
+   everyone, because a shared URL can carry show_legacy=1 to any user.
+   =========================================================================== #}
+{% set fuel_show_legacy = request.args.get('show_legacy') == '1' %}
+{% set _toggle_args = request.args.to_dict() %}
+{% set _ = _toggle_args.pop('show_legacy', none) %}
+{% if fuel_show_legacy %}
+<div class="card" style="margin-bottom:16px; border:1px solid #f59e0b; background:#fffbeb;">
+    <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; padding:12px 16px; flex-wrap:wrap;">
+        <div>
+            <strong style="color:#92400e;">{{ 'Архивный режим складов включён.' if lang == 'ru' else 'Омборларнинг архив режими ёқилган.' }}</strong>
+            <div class="text-muted text-sm" style="margin-top:3px;">
+                <strong>{{ ('Режим: все склады, включая архивные (' ~ wh_counts.all ~ ').') if lang == 'ru' else ('Режим: барча омборлар, шу жумладан архивдагилар (' ~ wh_counts.all ~ ' та).') }}</strong>
+                {{ 'Сейчас показаны рабочие и старые/архивные склады. Для текущей иерархии используйте режим рабочих складов.' if lang == 'ru' else 'Ҳозир ишчи ва эски/архив омборлар кўрсатилмоқда. Жорий иерархия учун ишчи омборлар режимидан фойдаланинг.' }}
+            </div>
+        </div>
+        <a href="{{ url_for(request.endpoint, **_toggle_args) }}" class="btn btn-secondary btn-sm">{{ ('Вернуться к рабочим складам (' ~ wh_counts.working ~ ')') if lang == 'ru' else ('Ишчи омборларга қайтиш (' ~ wh_counts.working ~ ' та)') }}</a>
+    </div>
+</div>
+{% elif current_user.is_admin %}
+<div class="text-muted text-sm" style="margin-bottom:10px;">
+    <strong>{{ ('Режим: рабочие склады (' ~ wh_counts.working ~ ').') if lang == 'ru' else ('Режим: ишчи омборлар (' ~ wh_counts.working ~ ' та).') }}</strong>
+    {{ 'Показаны только рабочие склады новой иерархии.' if lang == 'ru' else 'Фақат янги иерархиянинг ишчи омборлари кўрсатилган.' }}
+    <a href="{{ url_for(request.endpoint, show_legacy=1, **_toggle_args) }}">{{ ('Показать архивные склады (всего ' ~ wh_counts.all ~ ')') if lang == 'ru' else ('Архив омборларни кўрсатиш (жами ' ~ wh_counts.all ~ ' та)') }}</a>
+</div>
+{% endif %}

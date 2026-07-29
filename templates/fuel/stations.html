@@ -164,7 +164,6 @@ form.fuel002e-station-form .form-group {
 
 {% set L_title = 'Справочник АЗС' if lang == 'ru' else 'АЗС маълумотномаси' %}
 {% set L_subtitle = 'Каждая АЗС привязывается к складу и Topaz ID. Выдачи ДТ приходят из Topaz.' if lang == 'ru' else 'Ҳар бир АЗС омбор ва Topaz ID га боғланади. ДТ беришлари Topazдан келади.' %}
-{% set L_back = '← Склады' if lang == 'ru' else '← Омборлар' %}
 {% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
 {% set L_deactivate = 'Отключить' if lang == 'ru' else 'Фаол эмас қилиш' %}
 {% set L_disabled = 'Отключена' if lang == 'ru' else 'Ўчирилган' %}
@@ -202,9 +201,8 @@ form.fuel002e-station-form .form-group {
 <div class="page-header fuel002e-page-header FUEL002E_MARKER">
     <div><div>
     <h1>{{ L_title }}</h1>
-    <div class="fuel002e-subtitle">{{ t('АЗСлар справочниги: Topaz ID, омбор, фаоллик ва ўчириш ҳимояси.') }}</div>
+    <div class="fuel002e-subtitle">{{ t('АЗС маълумотномаси: Topaz ID, омбор, фаоллик ва ўчириш ҳимояси.') }}</div>
   </div><div class="text-muted text-sm">{{ L_subtitle }}</div></div>
-    <a href="{{ url_for('fuel.warehouses') }}" class="btn btn-secondary">{{ L_back }}</a>
 </div>
 
 <div class="fuel-help"><strong>Topaz ID.</strong> {{ L_subtitle }}</div>

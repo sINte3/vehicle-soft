@@ -45,16 +45,8 @@
 .fuel-tile-soon .vs-report-tile-icon { color: var(--vs-text-soft); background: var(--vs-surface-3); }
 .fuel-tile-soon .vs-report-tile-title { color: var(--vs-text-muted); }
 .fuel-tile-soon:hover { box-shadow: var(--vs-shadow-sm); transform: none; }
-/* [REASON]: `a:hover` in design-system.css (colour + underline, specificity
-   0,1,1) outweighs `.vs-report-tile` (0,1,0), so hovering a live tile
-   underlined its title and its subtitle and turned the title blue — the
-   underline is painted by the anchor, which is why a descendant rule cannot
-   remove it. This selector is 0,3,1 and wins. It touches text only: the lift
-   and the shadow are the intended affordance and stay. The shared component
-   carries the same defect (the spare parts launcher shows it too) and the real
-   one-line fix belongs in design-system.css — filed as UI-TILE-HOVER-001. This
-   scoped override is deliberate local debt, to be dropped once that lands. */
-.vs-report-tiles a.vs-report-tile:hover { text-decoration: none; color: inherit; }
+/* UI-TILE-HOVER-001: the scoped hover workaround that lived here is gone —
+   the shared fix now sits in design-system.css (.vs-report-tile:hover). */
 </style>
 
 <div class="vs-hero vs-mb">
@@ -99,28 +91,64 @@
     <div class="vs-report-tile-arrow" aria-hidden="true">→</div>
   </a>
 
-  <div class="vs-card vs-report-tile fuel-tile-soon">
+  {# F4.1 · FUEL-LEDGER-001: this slot's «скоро» tile became the live ledger
+     tile; the card register it used to announce returns as a live tile in
+     F2.4. is-info was deliberately unused while it was pixel-identical to
+     is-primary — UI-ACCENT-DUP-001 gives --vs-info its own colour in this
+     same increment. #}
+  <a class="vs-card vs-report-tile is-info" href="{{ url_for('fuel.warehouse_ledger') }}">
+    <span class="vs-report-tile-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 3v18"/><path d="M12 8h5M12 12h5M12 16h5"/></svg>
+    </span>
+    <div class="vs-report-tile-text">
+      <div class="vs-report-tile-title">{{ 'Карточка склада' if is_ru else 'Омбор карточкаси' }}</div>
+      <div class="vs-report-tile-sub">{{ 'Все движения одного склада с остатком после каждой операции' if is_ru else 'Битта омборнинг барча ҳаракатлари, ҳар бир амалдан кейинги қолдиқ билан' }}</div>
+    </div>
+    <div class="vs-report-tile-arrow" aria-hidden="true">→</div>
+  </a>
+
+  {# F2.4 · FUEL-REPORTS-FINISH-007: the card register returns as a LIVE
+     tile (its original slot became the ledger tile earlier in this
+     increment). #}
+  <a class="vs-card vs-report-tile is-primary" href="{{ url_for('fuel.card_issues_report') }}">
     <span class="vs-report-tile-icon" aria-hidden="true">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4" cy="6" r="1.2"/><circle cx="4" cy="12" r="1.2"/><circle cx="4" cy="18" r="1.2"/><line x1="8.5" y1="6" x2="21" y2="6"/><line x1="8.5" y1="12" x2="21" y2="12"/><line x1="8.5" y1="18" x2="21" y2="18"/></svg>
     </span>
     <div class="vs-report-tile-text">
       <div class="vs-report-tile-title">{{ 'Реестр выдачи топлива по картам' if is_ru else 'Карталар бўйича ёқилғи бериш реестри' }}</div>
-      <div class="vs-report-tile-sub">{{ 'Сводка по каждой карте: количество и литры за период' if is_ru else 'Ҳар бир карта бўйича сводка: сони ва литр' }}</div>
-      <span class="vs-badge vs-badge-sm">{{ 'скоро' if is_ru else 'тез орада' }}</span>
+      <div class="vs-report-tile-sub">{{ 'Каждая выдача по каждой карте: когда, сколько, на какой АЗС' if is_ru else 'Ҳар бир карта бўйича ҳар бир бериш: қачон, қанча, қайси АЗСда' }}</div>
     </div>
-  </div>
+    <div class="vs-report-tile-arrow" aria-hidden="true">→</div>
+  </a>
 
-  <div class="vs-card vs-report-tile fuel-tile-soon">
+  {# F2.4: station totals became real #}
+  <a class="vs-card vs-report-tile is-success" href="{{ url_for('fuel.station_totals_report') }}">
     <span class="vs-report-tile-icon" aria-hidden="true">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="21" x2="21" y2="21"/><rect x="5" y="12" width="4" height="9"/><rect x="11" y="7" width="4" height="14"/><rect x="17" y="3" width="4" height="18"/></svg>
     </span>
     <div class="vs-report-tile-text">
       <div class="vs-report-tile-title">{{ 'Итоги выдачи топлива по АЗС' if is_ru else 'АЗС бўйича ёқилғи бериш якунлари' }}</div>
-      <div class="vs-report-tile-sub">{{ 'Сводка по всем АЗС: количество выдач, итого литров' if is_ru else 'Барча АЗСлар бўйича сводка: беришлар сони, жами литр' }}</div>
-      <span class="vs-badge vs-badge-sm">{{ 'скоро' if is_ru else 'тез орада' }}</span>
+      <div class="vs-report-tile-sub">{{ 'Сводка по всем АЗС: количество выдач, литры и доля' if is_ru else 'Барча АЗСлар бўйича сводка: беришлар сони, литр ва улуш' }}</div>
     </div>
-  </div>
+    <div class="vs-report-tile-arrow" aria-hidden="true">→</div>
+  </a>
 
+  {# FUEL-SHIFT-001: counter-mismatch report — existing components, existing
+     grid. Neutral equipment wording, matching the report itself. #}
+  <a class="vs-card vs-report-tile is-danger" href="{{ url_for('fuel.counter_mismatch_report') }}">
+    <span class="vs-report-tile-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/><path d="M4.5 4.5l2 2M19.5 4.5l-2 2"/></svg>
+    </span>
+    <div class="vs-report-tile-text">
+      <div class="vs-report-tile-title">{{ 'Расхождения счётчиков' if is_ru else 'Ҳисоблагичлар фарқлари' }}</div>
+      <div class="vs-report-tile-sub">{{ 'Записи Topaz о расхождении счётчиков колонок — по колонкам и АЗС' if is_ru else 'Topazнинг колонка ҳисоблагичлари фарқи ёзувлари — колонкалар ва АЗС бўйича' }}</div>
+    </div>
+    <div class="vs-report-tile-arrow" aria-hidden="true">→</div>
+  </a>
+
+  {# F2.4: this tile STAYS planned by owner decision — a running per-card
+     total without the card limit balance from Topaz (F4.4) would diverge
+     from Topaz and be worse than nothing. No route, no href. #}
   <div class="vs-card vs-report-tile fuel-tile-soon">
     <span class="vs-report-tile-icon" aria-hidden="true">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17,2 21,6 17,10"/><path d="M3 12v-2a4 4 0 0 1 4-4h14"/><polyline points="7,22 3,18 7,14"/><path d="M21 12v2a4 4 0 0 1-4 4H3"/></svg>
@@ -128,6 +156,7 @@
     <div class="vs-report-tile-text">
       <div class="vs-report-tile-title">{{ 'Движение топлива по карте' if is_ru else 'Карта бўйича ёқилғи ҳаракати' }}</div>
       <div class="vs-report-tile-sub">{{ 'История операций по карте: где, когда, сколько' if is_ru else 'Карта бўйича операциялар тарихи: қаерда, қачон, қанча' }}</div>
+      <div class="vs-report-tile-sub">{{ 'Нужен остаток по карте из Topaz — появится вместе с его синхронизацией.' if is_ru else 'Topazдан карта қолдиғи керак — унинг синхронизацияси билан бирга пайдо бўлади.' }}</div>
       <span class="vs-badge vs-badge-sm">{{ 'скоро' if is_ru else 'тез орада' }}</span>
     </div>
   </div>

@@ -195,7 +195,6 @@ form.fuel002c-save-form textarea {
 {% set L_empty = 'Склады не созданы. Добавьте первый склад выше.' if lang == 'ru' else 'Омборлар яратилмаган. Юқорида биринчи омборни қўшинг.' %}
 {% set L_stations = 'АЗС' if lang == 'ru' else 'АЗС' %}
 {% set L_initial = 'Начальные остатки' if lang == 'ru' else 'Бошл. қолдиқлар' %}
-{% set L_dashboard = '← Дашборд' if lang == 'ru' else '← Дашборд' %}
 {% set L_total_wh = 'Всего складов' if lang == 'ru' else 'Жами омборлар' %}
 {% set L_total_st = 'Всего АЗС' if lang == 'ru' else 'Жами АЗС' %}
 {% set L_search = 'Поиск по складу, организации или АЗС' if lang == 'ru' else 'Омбор, ташкилот ёки АЗС бўйича қидириш' %}
@@ -210,11 +209,6 @@ form.fuel002c-save-form textarea {
 
 <div class="page-header fuel002c-page-header">
     <div><h1>{{ L_title }}</h1><div class="text-muted text-sm">{{ L_subtitle }}</div></div>
-    <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <a href="{{ url_for('fuel.stations') }}" class="btn btn-secondary">{{ L_stations }}</a>
-        <a href="{{ url_for('fuel.initial_balance') }}" class="btn btn-secondary">{{ L_initial }}</a>
-        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ L_dashboard }}</a>
-    </div>
 </div>
 
 <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); margin-bottom:16px;">

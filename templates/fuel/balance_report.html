@@ -3,9 +3,17 @@
 
 {% block content %}
 {% include 'fuel/_fuel_nav.html' %}
+{% set show_legacy = request.args.get('show_legacy') == '1' %}
 {% set L_title = 'Отчёт остатков топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари ҳисоботи' %}
-{% set L_formula = 'Остаток на начало периода + приход - расход Topaz/ручной расход = текущий остаток. В отчёте используются только 22 рабочих склада новой иерархии.' if lang == 'ru' else 'Давр бошидаги қолдиқ + кирим - Topaz/қўлда сарф = жорий қолдиқ. Ҳисоботда фақат янги иерархиянинг 22 та ишчи омбори ишлатилади.' %}
-{% set L_back = 'Назад к АЗС' if lang == 'ru' else 'АЗС бўлимига қайтиш' %}
+{# [REASON]: FUEL-BIG-001 — the warehouse count comes from wh_counts, never a
+   literal: the old hardcoded value had drifted from the rendered row count.
+   The second sentence follows the archive toggle so it never contradicts the
+   mode banner. #}
+{% if show_legacy %}
+{% set L_formula = ('Остаток на начало периода + приход - расход Topaz/ручной расход = текущий остаток. Показаны все склады, включая архивные (' ~ wh_counts.all ~ ').') if lang == 'ru' else ('Давр бошидаги қолдиқ + кирим - Topaz/қўлда сарф = жорий қолдиқ. Барча омборлар, шу жумладан архивдагилар (' ~ wh_counts.all ~ ' та) кўрсатилган.') %}
+{% else %}
+{% set L_formula = ('Остаток на начало периода + приход - расход Topaz/ручной расход = текущий остаток. В отчёте используются только рабочие склады новой иерархии (' ~ wh_counts.working ~ ').') if lang == 'ru' else ('Давр бошидаги қолдиқ + кирим - Topaz/қўлда сарф = жорий қолдиқ. Ҳисоботда фақат янги иерархиянинг ишчи омборлари (' ~ wh_counts.working ~ ' та) ишлатилади.') %}
+{% endif %}
 {% set L_params_title = 'Параметры отчёта' if lang == 'ru' else 'Ҳисобот параметрлари' %}
 {% set L_params_hint = 'Выберите период и скачайте отчёт в Excel при необходимости.' if lang == 'ru' else 'Даврни танланг ва зарур бўлса ҳисоботни Excelда юклаб олинг.' %}
 {% set L_wh_in_report = 'Складов в отчёте:' if lang == 'ru' else 'Ҳисоботдаги омборлар:' %}
@@ -41,13 +49,73 @@
         <p class="text-muted">
             {{ L_formula }}
         </p>
-    </div>
-    <div>
-        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ L_back }}</a>
+        {# F1.3 · FUEL-REPORT-SPLIT-003: cross-link — stock is here, sync state is in АЗС control #}
+        <p class="text-muted text-sm fuel-no-print">
+            {% if lang == 'ru' %}
+            Остатки топлива — здесь. Состояние АЗС и синхронизации — на странице
+            <a href="{{ url_for('fuel.fuel_report') }}">«Контроль АЗС и синхронизации»</a>.
+            {% else %}
+            Ёқилғи қолдиқлари — шу ерда. АЗС ва синхронизация ҳолати —
+            <a href="{{ url_for('fuel.fuel_report') }}">«АЗС ва синхронизация назорати»</a> саҳифасида.
+            {% endif %}
+        </p>
     </div>
 </div>
 
-<div class="card" style="margin-bottom:16px; padding:16px;">
+{# F2.2 · FUEL-BALANCE-UX-005 commit 17: print styles. Landscape, fit to
+   width, repeating table header (thead prints as table-header-group), a
+   fixed print-only footer naming the report and the period (repeats on every
+   printed page), and everything interactive hidden. Detail rows carry the
+   `hidden` attribute, so the collapsed state prints as collapsed. #}
+<style>
+/* [REASON]: QA fix (commit 41) — the collapsed summary table must fit the
+   screen without horizontal scroll, or «Текущий остаток» (the figure the
+   report exists for) lands off-screen. Long organisation/warehouse names may
+   wrap onto several lines; numeric cells never wrap. The nested daily tables
+   are excluded via direct-child selectors and keep their old behaviour. */
+.fuel-balance-summary { white-space: nowrap; margin: 0; font-size: 13px; width: 100%; }
+.fuel-balance-summary > thead > tr > th { white-space: normal; }
+.table.fuel-balance-summary > thead > tr > th,
+.table.fuel-balance-summary > tbody > tr > td,
+.table.fuel-balance-summary > tfoot > tr > th { padding-left: 7px; padding-right: 7px; }
+.fuel-balance-summary > tbody > tr.fuel-balance-row > td:nth-child(2),
+.fuel-balance-summary > tbody > tr.fuel-balance-row > td:nth-child(3) { white-space: normal; }
+.fuel-print-footer { display: none; }
+@media print {
+  @page { size: A4 landscape; margin: 12mm 10mm 16mm; }
+  body { background: #fff; }
+  .vs-sidebar, .vs-topbar, .vs-side-backdrop, .vs-skip-link, .fuel-nav,
+  .fuel-no-print, .fuel-balance-day-controls, .vs-alert,
+  .page-header .btn, .fuel-period-picker { display: none !important; }
+  .vs-content { padding: 0; max-width: none; }
+  .card { box-shadow: none; border-color: #bbb; }
+  table { font-size: 10px; white-space: normal !important; }
+  table thead { display: table-header-group; }
+  .fuel-print-footer {
+    display: block !important;
+    position: fixed; bottom: 0; left: 0; right: 0;
+    text-align: center; font-size: 10px; color: #444;
+  }
+}
+</style>
+<div class="fuel-print-footer">{{ L_title }} — {{ start_date.strftime('%d.%m.%Y') }}{% if period.start_time != '00:00' %} {{ period.start_time }}{% endif %} — {{ end_date.strftime('%d.%m.%Y') }}{% if period.end_time != '23:59' %} {{ period.end_time }}{% endif %}</div>
+
+{# FUEL-BIG-001: shared working-vs-archive mode control, same as the dashboard #}
+<div class="fuel-no-print">
+{% include 'fuel/_legacy_toggle.html' %}
+</div>
+
+{# F1.2 · FUEL-DASH-002: the dashboard's negative-warehouses tile lands here #}
+{% if only_negative %}
+<div class="card fuel-no-print" style="margin-bottom:16px; border:1px solid var(--danger); background:var(--danger-light);">
+    <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; padding:12px 16px; flex-wrap:wrap;">
+        <strong style="color:var(--danger);">{{ 'Показаны только склады с отрицательным расчётным остатком.' if lang == 'ru' else 'Фақат манфий ҳисобий қолдиқли омборлар кўрсатилган.' }}</strong>
+        <a href="{{ url_for('fuel.balance_report', start_date=period.start_date, end_date=period.end_date, start_time=period.start_time, end_time=period.end_time) }}" class="btn btn-secondary btn-sm">{{ 'Показать все склады' if lang == 'ru' else 'Барча омборларни кўрсатиш' }}</a>
+    </div>
+</div>
+{% endif %}
+
+<div class="card fuel-no-print" style="margin-bottom:16px; padding:16px;">
     <div style="display:flex; justify-content:space-between; gap:16px; align-items:flex-start; flex-wrap:wrap;">
         <div>
             <h2 style="margin:0 0 4px 0;">{{ L_params_title }}</h2>
@@ -61,15 +129,11 @@
     <form method="get"
           action="{{ url_for('fuel.balance_report') }}"
           style="margin-top:14px; display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end;">
-        <div style="min-width:170px;">
-            <label style="display:block; margin-bottom:5px;">{{ L_date_from }}</label>
-            <input type="date" name="start_date" value="{{ start_date.isoformat() }}" class="form-control" style="width:170px;">
-        </div>
-
-        <div style="min-width:170px;">
-            <label style="display:block; margin-bottom:5px;">{{ L_date_to }}</label>
-            <input type="date" name="end_date" value="{{ end_date.isoformat() }}" class="form-control" style="width:170px;">
-        </div>
+        {# FUEL-BIG-001: rebuilding the report must not silently drop the archive mode #}
+        {% if show_legacy %}<input type="hidden" name="show_legacy" value="1">{% endif %}
+        {% if only_negative %}<input type="hidden" name="only_negative" value="1">{% endif %}
+        {# F2.1 FUEL-DATETIME-004: shared period picker — dates, times, presets #}
+        {% include 'fuel/_period_picker.html' %}
 
         <div style="min-width:180px;">
             <label style="display:block; margin-bottom:5px;">{{ L_zero_wh }}</label>
@@ -82,7 +146,7 @@
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button type="submit" class="btn btn-primary">{{ L_build }}</button>
             <a class="btn btn-secondary"
-               href="{{ url_for('fuel.balance_report_export', start_date=start_date.isoformat(), end_date=end_date.isoformat(), hide_zero='0' if show_zero else '1') }}">
+               href="{{ url_for('fuel.balance_report_export', start_date=period.start_date, end_date=period.end_date, start_time=period.start_time, end_time=period.end_time, hide_zero='0' if show_zero else '1', show_legacy='1' if show_legacy else none) }}">
                 {{ L_download_excel }}
             </a>
         </div>
@@ -127,7 +191,7 @@
 <div class="card" style="padding:0; overflow:hidden;">
     <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; padding:16px; border-bottom:1px solid var(--border); flex-wrap:wrap;">
         <div>
-            <h2 style="margin:0;">ФАКТ: {{ start_date.strftime('%d.%m.%Y') }} — {{ end_date.strftime('%d.%m.%Y') }}</h2>
+            <h2 style="margin:0;">ФАКТ: {{ start_date.strftime('%d.%m.%Y') }}{% if period.start_time != '00:00' %} {{ period.start_time }}{% endif %} — {{ end_date.strftime('%d.%m.%Y') }}{% if period.end_time != '23:59' %} {{ period.end_time }}{% endif %}</h2>
             <div class="text-muted" style="margin-top:4px;">
                 {{ L_table_desc }}
             </div>
@@ -143,36 +207,41 @@
         <div class="text-muted">{{ L_wh_count }} {{ rows|length }}</div>
     </div>
 
+    {# =======================================================================
+       F2.2 · FUEL-BALANCE-UX-005 — two levels: the main table shows totals
+       only and fits the screen; clicking a warehouse row expands the daily
+       detail OF THAT WAREHOUSE ONLY (dates as rows, movement days only —
+       zero days rendered empty cells in the old wide table too, so no figure
+       changes). The Excel export keeps the full daily view — that is where
+       the detail is consumed. Vanilla JS toggles; drill-down links inside a
+       row do not trigger the toggle.
+       ======================================================================= #}
+    <div style="display:flex; gap:8px; padding:10px 16px; border-bottom:1px solid var(--border);" class="fuel-balance-day-controls">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="fuelBalanceDays(true)">{{ 'Показать все дни' if lang == 'ru' else 'Барча кунларни кўрсатиш' }}</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="fuelBalanceDays(false)">{{ 'Свернуть все' if lang == 'ru' else 'Барчасини йиғиш' }}</button>
+        <span class="text-muted text-sm" style="align-self:center;">{{ 'Нажмите на строку склада, чтобы раскрыть дни.' if lang == 'ru' else 'Кунларни очиш учун омбор қаторини босинг.' }}</span>
+    </div>
     <div style="overflow:auto; max-width:100%;">
-        <table class="table table-sm table-striped" style="min-width:1500px; white-space:nowrap; margin:0; font-size:13px;">
+        <table class="table table-sm table-striped fuel-balance-summary">
             <thead>
                 <tr>
-                    <th rowspan="2" style="vertical-align:middle;">{{ L_num }}</th>
-                    <th rowspan="2" style="vertical-align:middle; min-width:190px;">{{ L_org }}</th>
-                    <th rowspan="2" style="vertical-align:middle; min-width:170px;">{{ L_wh }}</th>
-                    <th rowspan="2" style="vertical-align:middle;">{% if lang == 'ru' %}Остаток на {{ start_date.strftime('%d/%m/%Y') }}{% else %}{{ start_date.strftime('%d/%m/%Y') }} даги қолдиқ{% endif %}</th>
-                    <th rowspan="2" style="vertical-align:middle;">{{ L_receipts }}</th>
-                    <th rowspan="2" style="vertical-align:middle;">{{ L_topaz }}</th>
-                    <th rowspan="2" class="text-muted" style="vertical-align:middle;" title="{{ L_external_note }}">{{ L_external }}</th>
-                    <th rowspan="2" style="vertical-align:middle;">{{ L_manual }}</th>
-                    {# FUEL-RESERVE: reference column, muted like external #}
-                    <th rowspan="2" class="text-muted" style="vertical-align:middle;" title="{{ L_reserve_note }}">{{ L_reserve }}</th>
-                    <th rowspan="2" style="vertical-align:middle;">{{ L_closing }}</th>
-                    {% for item in date_items %}
-                    <th colspan="2" class="text-center">{{ item.label }}</th>
-                    {% endfor %}
-                </tr>
-                <tr>
-                    {% for item in date_items %}
+                    <th>{{ L_num }}</th>
+                    <th style="min-width:110px;">{{ L_org }}</th>
+                    <th style="min-width:100px;">{{ L_wh }}</th>
+                    <th>{% if lang == 'ru' %}Остаток на {{ start_date.strftime('%d/%m/%Y') }}{% else %}{{ start_date.strftime('%d/%m/%Y') }} даги қолдиқ{% endif %}</th>
                     <th>{{ L_receipts }}</th>
-                    <th>{{ L_expense }}</th>
-                    {% endfor %}
+                    <th>{{ L_topaz }}</th>
+                    <th class="text-muted" title="{{ L_external_note }}">{{ L_external }}</th>
+                    <th>{{ L_manual }}</th>
+                    {# FUEL-RESERVE: reference column, muted like external #}
+                    <th class="text-muted" title="{{ L_reserve_note }}">{{ L_reserve }}</th>
+                    <th>{{ L_closing }}</th>
                 </tr>
             </thead>
             <tbody>
                 {% for row in rows %}
-                <tr {% if row.closing < 0 %}style="background:var(--danger-light);"{% endif %}>
-                    <td>{{ loop.index }}</td>
+                <tr class="fuel-balance-row" data-wh="{{ row.warehouse_id }}" style="cursor:pointer; {% if row.closing < 0 %}background:var(--danger-light);{% endif %}">
+                    <td><span class="fuel-day-caret" aria-hidden="true">▸</span> {{ loop.index }}</td>
                     <td>{{ row.organization }}</td>
                     <td>{{ row.warehouse }}</td>
                     <td class="text-right">{{ "%.2f"|format(row.opening) }}</td>
@@ -197,11 +266,40 @@
                         {%- endif -%}
                     </td>
                     <td class="text-right"><strong>{{ "%.2f"|format(row.closing) }}</strong></td>
-                    {% for item in date_items %}
-                    {% set daily = row.daily[item.key] %}
-                    <td class="text-right">{% if daily.receipts %}{{ "%.2f"|format(daily.receipts) }}{% endif %}</td>
-                    <td class="text-right">{% if daily.expenses %}{{ "%.2f"|format(daily.expenses) }}{% endif %}</td>
-                    {% endfor %}
+                </tr>
+                <tr class="fuel-balance-days" data-wh="{{ row.warehouse_id }}" hidden>
+                    <td colspan="10" style="padding:6px 16px 12px 34px; background:var(--surface2);">
+                        {% set movement_days = [] %}
+                        {% for item in date_items %}
+                            {% set daily = row.daily[item.key] %}
+                            {% if daily.receipts or daily.expenses %}
+                                {% set _ = movement_days.append((item, daily)) %}
+                            {% endif %}
+                        {% endfor %}
+                        {% if movement_days %}
+                        <table class="table table-sm" style="width:auto; min-width:360px; margin:0;">
+                            <thead>
+                                <tr>
+                                    <th>{{ 'Дата' if lang == 'ru' else 'Сана' }}</th>
+                                    <th class="text-right">{{ L_receipts }}</th>
+                                    <th class="text-right">{{ L_expense }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item, daily in movement_days %}
+                                <tr>
+                                    <td class="text-sm">{{ item.date.strftime('%d.%m.%Y') }}</td>
+                                    <td class="text-right">{% if daily.receipts %}{{ "%.2f"|format(daily.receipts) }}{% endif %}</td>
+                                    <td class="text-right">{% if daily.expenses %}{{ "%.2f"|format(daily.expenses) }}{% endif %}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        <div class="text-muted text-xs" style="margin-top:4px;">{{ 'Показаны только дни с движением; остальные дни нулевые.' if lang == 'ru' else 'Фақат ҳаракат бўлган кунлар кўрсатилган; қолган кунлар нолга тенг.' }}</div>
+                        {% else %}
+                        <span class="text-muted text-sm">{{ 'Движений по дням за период нет.' if lang == 'ru' else 'Давр ичида кунлик ҳаракатлар йўқ.' }}</span>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -215,13 +313,35 @@
                     <th class="text-right">{{ "%.2f"|format(totals.manual_expenses) }}</th>
                     <th class="text-right text-muted">{{ "%.2f"|format(totals.reserve_out or 0) }}</th>
                     <th class="text-right">{{ "%.2f"|format(totals.closing) }}</th>
-                    {% for item in date_items %}
-                    <th></th>
-                    <th></th>
-                    {% endfor %}
                 </tr>
             </tfoot>
         </table>
     </div>
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+/* F2.2 FUEL-BALANCE-UX-005: per-warehouse daily detail toggles. Plain
+   vanilla JS; clicks on drill-down links inside a row must not toggle. */
+function fuelBalanceToggle(whId, force) {
+    var detail = document.querySelector('.fuel-balance-days[data-wh="' + whId + '"]');
+    var row = document.querySelector('.fuel-balance-row[data-wh="' + whId + '"]');
+    if (!detail || !row) return;
+    var show = (typeof force === 'boolean') ? force : detail.hidden;
+    detail.hidden = !show;
+    var caret = row.querySelector('.fuel-day-caret');
+    if (caret) caret.textContent = show ? '▾' : '▸';
+}
+function fuelBalanceDays(show) {
+    document.querySelectorAll('.fuel-balance-row').forEach(function (row) {
+        fuelBalanceToggle(row.dataset.wh, show);
+    });
+}
+document.querySelectorAll('.fuel-balance-row').forEach(function (row) {
+    row.addEventListener('click', function (e) {
+        if (e.target.closest('a')) return;
+        fuelBalanceToggle(row.dataset.wh);
+    });
+});
+</script>
 {% endblock %}

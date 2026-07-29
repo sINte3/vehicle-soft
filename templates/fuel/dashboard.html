@@ -4,39 +4,17 @@
 {% include 'fuel/_fuel_nav.html' %}
 
 {% set L_balance_report_title = 'Отчёт остатков топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари ҳисоботи' %}
-{% set L_balance_report_desc = 'Периодический отчёт по 22 рабочим складам: остаток на начало, приход, расход Topaz и текущий остаток.' if lang == 'ru' else '22 та ишчи омбор бўйича даврий ҳисобот: бошланғич қолдиқ, кирим, Topaz сарфи ва жорий қолдиқ.' %}
+{# [REASON]: FUEL-BIG-001 — warehouse counts are interpolated from wh_counts
+   (computed by _fuel_warehouse_counts), never written as literal numbers: the
+   hardcoded literals had already drifted from the real counts. #}
+{% set L_balance_report_desc = ('Периодический отчёт по рабочим складам (' ~ wh_counts.working ~ '): остаток на начало, приход, расход Topaz и текущий остаток.') if lang == 'ru' else ('Ишчи омборлар (' ~ wh_counts.working ~ ' та) бўйича даврий ҳисобот: бошланғич қолдиқ, кирим, Topaz сарфи ва жорий қолдиқ.') %}
 {% set L_balance_report_open = 'Открыть отчёт' if lang == 'ru' else 'Ҳисоботни очиш' %}
-{% set L_legacy_on = 'Архивный режим складов включён.' if lang == 'ru' else 'Омборларнинг архив режими ёқилган.' %}
-{% set L_legacy_mode_29 = 'Режим: 29 складов, включая архивные.' if lang == 'ru' else 'Режим: 29 омбор, шу жумладан архивдагилар.' %}
-{% set L_legacy_note = 'Сейчас показаны рабочие и старые/архивные склады. Для текущей иерархии используйте режим 22 рабочих складов.' if lang == 'ru' else 'Ҳозир ишчи ва эски/архив омборлар кўрсатилмоқда. Жорий иерархия учун 22 та ишчи омбор режимидан фойдаланинг.' %}
-{% set L_legacy_back = 'Вернуться к 22 рабочим складам' if lang == 'ru' else '22 та ишчи омборга қайтиш' %}
-{% set L_legacy_mode_22 = 'Режим: 22 рабочих склада.' if lang == 'ru' else 'Режим: 22 та ишчи омбор.' %}
-{% set L_legacy_only_working = 'Показаны только рабочие склады новой иерархии.' if lang == 'ru' else 'Фақат янги иерархиянинг ишчи омборлари кўрсатилган.' %}
-{% set L_legacy_show = 'Показать архивные склады' if lang == 'ru' else 'Архив омборларни кўрсатиш' %}
 
-{# FUEL-HIERARCHY-010B: explicit working-vs-archive warehouse mode #}
+{# FUEL-HIERARCHY-010B / FUEL-BIG-001: the explicit working-vs-archive mode
+   control moved into the shared include so all three screens (dashboard,
+   balance report, /fuel/report) show one control with one wording. #}
 {% set show_legacy = request.args.get('show_legacy') == '1' %}
-
-{% if show_legacy %}
-<div class="card" style="margin-bottom:16px; border:1px solid #f59e0b; background:#fffbeb;">
-    <div style="display:flex; justify-content:space-between; gap:12px; align-items:center; padding:12px 16px;">
-        <div>
-            <strong style="color:#92400e;">{{ L_legacy_on }}</strong>
-            <div class="text-muted text-sm" style="margin-top:3px;">
-                <strong>{{ L_legacy_mode_29 }}</strong> {{ L_legacy_note }}
-            </div>
-        </div>
-        <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary btn-sm">{{ L_legacy_back }}</a>
-    </div>
-</div>
-{% else %}
-{% if current_user.is_admin %}
-<div class="text-muted text-sm" style="margin-bottom:10px;">
-    <strong>{{ L_legacy_mode_22 }}</strong> {{ L_legacy_only_working }}
-    <a href="{{ url_for('fuel.dashboard', show_legacy=1) }}">{{ L_legacy_show }}</a>
-</div>
-{% endif %}
-{% endif %}
+{% include 'fuel/_legacy_toggle.html' %}
 
 
 
@@ -143,36 +121,6 @@
   color: var(--text);
 }
 
-.fuel002h-guidance-panel {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(190px, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.fuel002h-guidance-card {
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--accent);
-  background: var(--surface);
-  border-radius: 10px;
-  padding: 11px 13px;
-  box-shadow: var(--shadow);
-}
-
-.fuel002h-guidance-card strong {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.fuel002h-guidance-card span {
-  display: block;
-  color: var(--text2);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
 .fuel002h-balance-card,
 .fuel002h-recent-card {
   border: 1px solid var(--border);
@@ -196,15 +144,13 @@
 }
 
 @media (max-width:1050px) {
-  .fuel002h-context-strip,
-  .fuel002h-guidance-panel {
+  .fuel002h-context-strip {
     grid-template-columns: 1fr 1fr;
   }
 }
 
 @media (max-width:700px) {
-  .fuel002h-context-strip,
-  .fuel002h-guidance-panel {
+  .fuel002h-context-strip {
     grid-template-columns: 1fr;
   }
 }
@@ -231,108 +177,163 @@
 </div>
 
 
-<div class="fuel002h-context-strip">
-    <div class="fuel002h-pill">
-        <span>{{ t('Омборлар') }}</span>
-        <strong>{{ balance_rows|length }}</strong>
+{# =======================================================================
+   F1.2 · FUEL-DASH-002 — tiles that answer a manager's question. Figures
+   come from _fuel_balance_map / the shared bulk helpers only. Every tile is
+   clickable and lands on its section with the filter already applied.
+   ======================================================================= #}
+<style>
+.fuel-dash-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin-bottom:12px; }
+a.fuel-dash-tile { text-decoration:none; color:inherit; display:block; }
+a.fuel-dash-tile:hover { text-decoration:none; color:inherit; box-shadow:var(--shadow); }
+/* QA fix 47 — the total-fuel tile is a div with two links inside (nested
+   <a> is invalid HTML): the main area and the negative-warehouses line. */
+div.fuel-dash-tile:hover { box-shadow:var(--shadow); }
+.fuel-dash-tile-link { text-decoration:none; color:inherit; display:block; }
+.fuel-dash-tile-link:hover { text-decoration:none; color:inherit; }
+.fuel-dash-tile-neg { display:block; margin-top:6px; font-size:12px; color:var(--danger); text-decoration:none; }
+.fuel-dash-tile-neg:hover { text-decoration:underline; color:var(--danger); }
+.fuel-dash-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
+.fuel-dash-dot.green { background:#16a34a; }
+.fuel-dash-dot.amber { background:#d97706; }
+.fuel-dash-dot.red { background:var(--danger); }
+</style>
+<div class="fuel-dash-tiles">
+    {# QA fix 47, owner decision 2026-07-28 (a): positive balances only —
+       the question this tile answers is «сколько топлива у нас есть».
+       Negative warehouses get their own line right beneath, linking to the
+       same filtered report the «Склады в минусе» tile uses. #}
+    <div class="stat-card fuel-dash-tile">
+        <a class="fuel-dash-tile-link" href="{{ url_for('fuel.balance_report') }}">
+            <div class="label">{{ 'Всего топлива на складах' if lang == 'ru' else 'Омборлардаги жами ёқилғи' }}</div>
+            <div class="value">{{ '%.0f'|format(total_fuel) }} л</div>
+            <div class="text-muted text-xs" style="margin-top:4px;">
+                {% if days_left_total is not none %}
+                {{ ('хватит примерно на ' ~ days_left_total ~ ' дн. при среднем расходе за ' ~ consumption_window ~ ' дней (' ~ '%.0f'|format(mean_daily_total) ~ ' л/день)') if lang == 'ru' else ('охирги ' ~ consumption_window ~ ' кун ўртача сарфида (' ~ '%.0f'|format(mean_daily_total) ~ ' л/кун) тахминан ' ~ days_left_total ~ ' кунга етади') }}
+                {% else %}
+                {{ ('расхода за последние ' ~ consumption_window ~ ' дней нет') if lang == 'ru' else ('охирги ' ~ consumption_window ~ ' кунда сарф йўқ') }}
+                {% endif %}
+            </div>
+        </a>
+        {% if negative_count %}
+        {# QA fix 52 — the tile counts positive balances ONLY (fix 47), so
+           negative warehouses are excluded from the figure above; «в том
+           числе» said the opposite. The wording now states they are NOT in
+           the sum. (The similar phrase on the two reports from fix 45 is
+           correct and stays — there the total genuinely includes the
+           third-party fuel.) #}
+        <a class="fuel-dash-tile-neg" href="{{ url_for('fuel.balance_report', only_negative=1) }}">
+            {{ ('не входит в сумму: складов в минусе ' ~ negative_count ~ ' на ' ~ '%.0f'|format(negative_total) ~ ' л') if lang == 'ru' else ('юқоридаги суммага кирмайди: минусдаги омборлар ' ~ negative_count ~ ' та, жами ' ~ '%.0f'|format(negative_total) ~ ' л') }}
+        </a>
+        {% endif %}
     </div>
-    <div class="fuel002h-pill">
-        <span>{{ t('Фаол АЗС') }}</span>
-        <strong>{{ balance_rows|sum(attribute='stations') }}</strong>
-    </div>
-    <div class="fuel002h-pill">
-        <span>{{ t('Бугун берилди') }}</span>
-        <strong>{{ "%.1f"|format(today_total or 0) }} л</strong>
-    </div>
-    <div class="fuel002h-pill">
-        <span>{{ t('Охирги беришлар') }}</span>
-        <strong>{{ recent_txns|length }}</strong>
-    </div>
+    <a class="stat-card fuel-dash-tile" href="{{ url_for('fuel.balance_report', only_negative=1) }}">
+        <div class="label">{{ 'Склады в минусе' if lang == 'ru' else 'Минусдаги омборлар' }}</div>
+        <div class="value" {% if negative_count %}style="color:var(--danger);"{% endif %}>{{ negative_count }}</div>
+        <div class="text-muted text-xs" style="margin-top:4px;">{{ 'клик — отчёт остатков только по минусовым' if lang == 'ru' else 'босинг — фақат минусдагилар бўйича ҳисобот' }}</div>
+    </a>
+    <a class="stat-card fuel-dash-tile" href="{{ url_for('fuel.transactions', date_from=today.isoformat(), date_to=today.isoformat()) }}">
+        <div class="label">{{ 'Выдано сегодня' if lang == 'ru' else 'Бугун берилди' }}</div>
+        <div class="value">{{ '%.1f'|format(today_total or 0) }} л</div>
+    </a>
+    <a class="stat-card fuel-dash-tile" href="{{ url_for('fuel.fuel_report') }}">
+        <div class="label">{{ 'Последняя синхронизация' if lang == 'ru' else 'Охирги синхронизация' }}</div>
+        <div class="value" style="font-size:15px;">
+            <span class="fuel-dash-dot {{ sync_freshness }}" aria-hidden="true"></span>
+            {%- if last_sync %}{{ last_sync.synced_at.strftime('%d.%m %H:%M') }}{% else %}—{% endif %}
+        </div>
+        <div class="text-muted text-xs" style="margin-top:4px;">
+            {% if sync_age_hours is not none %}
+            {{ ('примерно ' ~ '%.1f'|format(sync_age_hours) ~ ' ч назад') if lang == 'ru' else ('тахминан ' ~ '%.1f'|format(sync_age_hours) ~ ' соат олдин') }}
+            {% else %}
+            {{ 'синхронизаций пока нет' if lang == 'ru' else 'синхронизация ҳали йўқ' }}
+            {% endif %}
+        </div>
+    </a>
+</div>
+<div class="fuel-dash-tiles" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+    <a class="stat-card fuel-dash-tile" href="#fuelWarehouseTable">
+        <div class="label">{{ 'Складов ниже порога' if lang == 'ru' else 'Чегарадан паст омборлар' }}</div>
+        <div class="value" {% if low_stock_count %}style="color:var(--warn);"{% endif %}>{{ low_stock_count }}</div>
+        <div class="text-muted text-xs" style="margin-top:4px;">{{ ('запас меньше ' ~ threshold_days|round(1) ~ ' дн. при среднем расходе; минусовые считаются отдельно') if lang == 'ru' else ('заҳира ўртача сарфда ' ~ threshold_days|round(1) ~ ' кундан кам; минусдагилар алоҳида ҳисобланади') }}</div>
+    </a>
+    <a class="stat-card fuel-dash-tile" href="{{ url_for('fuel.fuel_warnings', status='new', date_from=month_start.isoformat(), date_to=today.isoformat()) }}">
+        <div class="label">{{ 'Открытые предупреждения' if lang == 'ru' else 'Очиқ огоҳлантиришлар' }}</div>
+        <div class="value" {% if open_warnings %}style="color:var(--warn);"{% endif %}>{{ open_warnings }}</div>
+        <div class="text-muted text-xs" style="margin-top:4px;">{{ 'непросмотренные за текущий месяц — клик открывает реестр' if lang == 'ru' else 'жорий ойда кўрилмаганлар — босинг, реестр очилади' }}</div>
+    </a>
 </div>
 
-<div class="fuel002h-guidance-panel">
-    <div class="fuel002h-guidance-card">
-        <strong>{{ t('1. Қолдиқларни кўринг') }}</strong>
-        <span>{{ t('Асосий жадвал омборлар кесимида жорий қолдиқ ва ҳолатни кўрсатади.') }}</span>
-    </div>
-    <div class="fuel002h-guidance-card">
-        <strong>{{ t('2. Ҳаракатларга тез ўтинг') }}</strong>
-        <span>{{ t('Беришлар, ҳисобот, огоҳлантиришлар, киримлар, АЗС ва омборлар бўлимлари юқорида очилади.') }}</span>
-    </div>
-    <div class="fuel002h-guidance-card">
-        <strong>{{ t('3. Охирги беришларни назорат қилинг') }}</strong>
-        <span>{{ t('Пастдаги жадвалда охирги 30 та топливная операция кўринади.') }}</span>
-    </div>
-</div>
+{# F1.2 commit 26: the threshold is a stored setting, edited by an admin here #}
+{% if current_user.is_admin %}
+<form method="post" action="{{ url_for('fuel.save_low_stock_setting') }}"
+      style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:-4px 0 12px 0;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="text-muted text-sm" for="lowStockDays">{{ 'Порог низкого запаса, дней:' if lang == 'ru' else 'Кам заҳира чегараси, кун:' }}</label>
+    <input id="lowStockDays" type="number" name="low_stock_days" step="0.5" min="0.5" max="365"
+           value="{{ threshold_days|round(1) }}" class="form-control" style="width:90px;">
+    <button type="submit" class="btn btn-secondary btn-sm">{{ 'Сохранить' if lang == 'ru' else 'Сақлаш' }}</button>
+</form>
+{% endif %}
 
+{# F1.3 commit 24: the three-card hint block («1. Проверьте остатки / 2. …»)
+   is gone — a newcomer needs it once, a manager never, and it occupied a
+   third of the first screen. #}
 
-<div class="card fuel002h-balance-card FUEL002H_BALANCE_CARD_MARKER" style="margin-bottom:24px;">
-    <div class="card-header">{{ L_balances }}</div>
+{# F1.2 commit 27: warehouse table sorted by trouble — negatives first, then
+   below threshold (worst first inside each group), then the rest. Balance in
+   large type, a fill bar scaled to the largest observed balance (NOT a real
+   vessel level until phase 3 — the tooltip says so in both languages),
+   today's consumption and a status badge. #}
+{% set L_fill_note = ('Шкала — относительно наибольшего текущего остатка среди складов (' ~ '%.0f'|format(max_balance) ~ ' л), а не реального уровня ёмкости.') if lang == 'ru' else ('Шкала — омборлар орасидаги энг катта жорий қолдиққа (' ~ '%.0f'|format(max_balance) ~ ' л) нисбатан, идишнинг ҳақиқий даражаси эмас.') %}
+<div id="fuelWarehouseTable" class="card fuel002h-balance-card FUEL002H_BALANCE_CARD_MARKER" style="margin-bottom:24px;">
+    <div class="card-header">
+        <span>{{ L_balances }}</span>
+        <span class="text-muted text-xs">{{ 'Сортировка: сначала проблемы' if lang == 'ru' else 'Тартиб: аввал муаммолар' }}</span>
+    </div>
     <div style="overflow-x:auto;">
     <div class="fuel002h-table-wrap FUEL002H_BALANCE_TABLE_MARKER">
 <table class="fuel002h-dashboard-table">
         <thead>
             <tr>
                 <th>{{ L_wh }}</th>
-                <th class="text-center">{{ L_stations }}</th>
-                <th class="text-center">{{ L_fuel }}</th>
+                <th>{{ 'Организация' if lang == 'ru' else 'Ташкилот' }}</th>
                 <th class="text-right">{{ L_balance }}</th>
+                <th style="min-width:140px;" title="{{ L_fill_note }}">{{ 'Запас' if lang == 'ru' else 'Заҳира' }}</th>
                 <th class="text-right">{{ L_today_issued }}</th>
-                <th class="text-muted text-sm">{{ L_last_issue }}</th>
+                <th>{{ 'Статус' if lang == 'ru' else 'Ҳолат' }}</th>
             </tr>
         </thead>
         <tbody>
-        {% for row in balance_rows %}
-            {% set balances = row.balances %}
-            {% if balances %}
-                {% for ft, qty in balances.items() %}
-                <tr>
-                    {% if loop.first %}
-                    <td rowspan="{{ balances|length }}" style="font-weight:700; vertical-align:top; padding-top:12px;">
-                        {{ row.warehouse.name }}
-                    </td>
-                    <td rowspan="{{ balances|length }}" class="text-center" style="vertical-align:top; padding-top:12px;">
-                        {{ row.stations }}
-                    </td>
-                    {% endif %}
-                    <td class="text-center"><span class="fuel-pill">{{ ft }}</span></td>
-                    <td class="text-right" style="font-weight:700; font-size:16px;">
-                        {% if qty is none %}
-                        <span class="text-muted" style="font-size:12px;">{{ L_initial_missing }}</span>
-                        {% elif qty < 0 %}
-                        <span style="color:var(--danger);">{{ '%.0f'|format(qty) }} л</span>
-                        <span class="fuel-balance-status">{{ L_negative }}</span>
-                        {% elif qty < 500 %}
-                        <span style="color:var(--warn);">{{ '%.0f'|format(qty) }} л</span>
-                        <span class="fuel-balance-status">{{ L_low }}</span>
-                        {% else %}
-                        {{ '%.0f'|format(qty) }} л
-                        <span class="fuel-balance-status">{{ L_ok }}</span>
-                        {% endif %}
-                    </td>
-                    {% if loop.first %}
-                    <td rowspan="{{ balances|length }}" class="text-right" style="vertical-align:top; padding-top:12px;">
-                        {% if row.today_expense > 0 %}<span style="color:var(--danger);">-{{ '%.0f'|format(row.today_expense) }} л</span>{% else %}<span class="text-muted">—</span>{% endif %}
-                    </td>
-                    <td rowspan="{{ balances|length }}" class="text-muted text-sm" style="vertical-align:top; padding-top:12px;">
-                        {% if row.last_txn %}
-                        {{ row.last_txn.txn_datetime.strftime('%d.%m %H:%M') }}<br>
-                        <small>{{ row.last_txn.station.name }}</small>
-                        {% else %}—{% endif %}
-                    </td>
-                    {% endif %}
-                </tr>
-                {% endfor %}
-            {% else %}
-            <tr>
-                <td style="font-weight:700;">{{ row.warehouse.name }}</td>
-                <td class="text-center">{{ row.stations }}</td>
-                <td colspan="4" class="text-muted text-sm" style="padding-left:20px;">
-                    ⚠ {{ L_initial_missing }}
-                    {% if current_user.is_admin %} — <a href="{{ url_for('fuel.initial_balance') }}">{{ L_set }}</a>{% endif %}
-                </td>
-            </tr>
-            {% endif %}
+        {% for r in table_rows %}
+        <tr {% if r.status == 'negative' %}style="background:var(--danger-light);"{% endif %}>
+            <td style="font-weight:700;">{{ r.warehouse.name }}</td>
+            <td class="text-muted text-sm">{{ r.organization }}</td>
+            <td class="text-right" style="font-weight:700; font-size:17px; {% if r.status == 'negative' %}color:var(--danger);{% elif r.status == 'low' %}color:var(--warn);{% endif %}">
+                {% if r.balance is none %}<span class="text-muted" style="font-size:12px;">{{ L_initial_missing }}</span>{% else %}{{ '%.0f'|format(r.balance) }} л{% endif %}
+            </td>
+            <td title="{{ L_fill_note }}">
+                <div style="background:var(--surface2); border-radius:4px; height:8px; overflow:hidden;">
+                    <div style="width:{{ r.fill }}%; height:8px; background:{% if r.status == 'negative' %}var(--danger){% elif r.status == 'low' %}var(--warn){% else %}var(--accent){% endif %};"></div>
+                </div>
+                {% if r.days_left is not none %}
+                <span class="text-muted text-xs">{{ ('≈ ' ~ r.days_left ~ (' дн.' if lang == 'ru' else ' кун')) }}</span>
+                {% endif %}
+            </td>
+            <td class="text-right">
+                {# QA fix 46 — expense is shown positive everywhere in the
+                   module (the tile above, the ledger's «Расход, л», the
+                   issues journal); the leading minus contradicted them all.
+                   The colour keeps marking it as consumption. #}
+                {% if r.today_expense > 0 %}<span style="color:var(--danger);">{{ '%.0f'|format(r.today_expense) }} л</span>{% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            <td>
+                {% if r.status == 'negative' %}<span class="badge badge-danger">{{ L_negative }}</span>
+                {% elif r.status == 'low' %}<span class="badge badge-warning">{{ 'Ниже порога' if lang == 'ru' else 'Чегарадан паст' }}</span>
+                {% elif r.status == 'no_initial' %}<span class="badge badge-secondary">{{ L_initial_missing }}</span>{% if current_user.is_admin %} <a class="text-sm" href="{{ url_for('fuel.initial_balance') }}">{{ L_set }}</a>{% endif %}
+                {% else %}<span class="badge badge-success">{{ L_ok }}</span>{% endif %}
+            </td>
+        </tr>
         {% else %}
         <tr>
             <td colspan="6" class="text-center text-muted" style="padding:40px;">
@@ -347,41 +348,8 @@
     </div>
 </div>
 
-{% if recent_txns %}
-<div class="card fuel002h-recent-card FUEL002H_RECENT_CARD_MARKER">
-    <div class="card-header" style="justify-content:space-between;">
-        <span>{{ L_recent }} ({{ recent_txns|length }})</span>
-        <a href="{{ url_for('fuel.transactions') }}" class="btn btn-secondary btn-sm">{{ L_all }} →</a>
-    </div>
-    <div style="overflow-x:auto;">
-    <div class="fuel002h-table-wrap FUEL002H_RECENT_TABLE_MARKER">
-<table class="fuel002h-dashboard-table">
-        <thead>
-            <tr>
-                <th>{{ L_datetime }}</th>
-                <th>{{ L_stations }}</th>
-                <th>{{ L_wh }}</th>
-                <th>{{ L_fuel }}</th>
-                <th class="text-right">{{ L_quantity }}</th>
-                <th>{{ L_card }}</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for t_ in recent_txns %}
-        <tr>
-            <td class="text-sm">{{ t_.txn_datetime.strftime('%d.%m.%Y %H:%M') }}</td>
-            <td>{{ t_.station.name }}</td>
-            <td class="text-muted text-sm">{{ t_.station.warehouse_name }}</td>
-            <td><span class="fuel-pill">{{ t_.fuel_type }}</span></td>
-            <td class="text-right" style="font-weight:700; color:var(--danger);">{{ '%.1f'|format(t_.quantity) }}</td>
-            <td class="text-sm text-muted">{{ t_.card_number or '—' }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-</div>
-    </div>
-</div>
-{% endif %}
+{# F1.2 · FUEL-DASH-002: the «Последние выдачи из Topaz» table is removed
+   entirely — it remains available under /fuel/transactions (the «Выдано
+   сегодня» tile lands there with today's filter applied). #}
 
 {% endblock %}

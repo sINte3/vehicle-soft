@@ -1,0 +1,119 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}АЗС — {{ 'Расхождения счётчиков' if is_ru else 'Ҳисоблагичлар фарқлари' }}{% endblock %}
+{% block content %}
+{% include 'fuel/_fuel_nav.html' %}
+
+{# FUEL-SHIFT-001 — per dispenser column and per station: count and total
+   litres of counter-mismatch records for the period, with a drill-down to
+   the rows. Wording is neutral and about equipment: this is a counter
+   discrepancy recorded by Topaz, it is not fuel consumption and it is not
+   attributed to any person. #}
+<style>
+.mismatch-table { width:100%; font-size:14px; }
+.mismatch-group { background:#f0f9f0; font-weight:600; color:#166534; }
+.mismatch-table details { display:inline-block; }
+.mismatch-table summary { cursor:pointer; list-style:none; color:var(--text2); font-size:12px; }
+.mismatch-table summary::-webkit-details-marker { display:none; }
+.fuel-print-footer { display:none; }
+@media print {
+  @page { size: A4 landscape; margin: 12mm 10mm 16mm; }
+  body { background:#fff; }
+  .vs-sidebar, .vs-topbar, .vs-side-backdrop, .vs-skip-link, .fuel-nav,
+  .fuel-no-print, .vs-alert { display:none !important; }
+  .vs-content { padding:0; max-width:none; }
+  .card { box-shadow:none; border-color:#bbb; }
+  table { font-size:10px; white-space:normal !important; }
+  table thead { display:table-header-group; }
+  .fuel-print-footer { display:block !important; position:fixed; bottom:0; left:0; right:0;
+    text-align:center; font-size:10px; color:#444; }
+}
+</style>
+<div class="fuel-print-footer">{{ 'Расхождения счётчиков' if is_ru else 'Ҳисоблагичлар фарқлари' }} — {{ start_date.strftime('%d.%m.%Y') }} — {{ end_date.strftime('%d.%m.%Y') }}</div>
+
+<div class="page-header">
+    <div>
+        <h1>{{ 'Расхождения счётчиков (Topaz)' if is_ru else 'Ҳисоблагичлар фарқлари (Topaz)' }}</h1>
+        <p class="text-muted">
+            {{ 'Записи карты «ПЕРЕЛИВ» (CardID 30): расхождение между аппаратным счётчиком рукава и программным итогом, зафиксированное самим Topaz. Это не расход топлива и не относится к какому-либо человеку — это сигнал о состоянии оборудования.' if is_ru else '«ПЕРЕЛИВ» картаси (CardID 30) ёзувлари: шланг аппарат ҳисоблагичи ва дастурий якун ўртасидаги фарқ, уни Topaz ўзи қайд этган. Бу ёқилғи сарфи эмас ва бирор шахсга тегишли эмас — бу ускуна ҳолати ҳақидаги сигнал.' }}
+        </p>
+    </div>
+</div>
+
+{# The limitation, stated plainly in both languages #}
+<div class="card fuel-no-print" style="margin-bottom:16px; border-left:3px solid var(--info);">
+    <div class="card-body" style="padding:12px 16px; font-size:13px; color:var(--info);">
+        {{ 'Записи накапливаются с момента внедрения этой функции, плюс то, что попадает в трёхдневное окно перечитывания агента. Более ранняя история не сохранялась и не может быть восстановлена без изменения агента на узле Topaz.' if is_ru else 'Ёзувлар ушбу функция жорий этилган пайтдан бошлаб тўпланади, бунга агентнинг уч кунлик қайта ўқиш ойнасига тушганлар ҳам қўшилади. Аввалги тарих сақланмаган ва Topaz узелидаги агентни ўзгартирмасдан уни тиклаб бўлмайди.' }}
+    </div>
+</div>
+
+<div class="card fuel-no-print" style="margin-bottom:16px; padding:16px;">
+    <form method="get" action="{{ url_for('fuel.counter_mismatch_report') }}"
+          style="display:flex; flex-direction:column; gap:12px;">
+        {% include 'fuel/_period_picker.html' %}
+        <div style="display:flex; gap:8px;">
+            <button type="submit" class="btn btn-primary">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+            <a class="btn btn-secondary"
+               href="{{ url_for('fuel.counter_mismatch_export', start_date=period.start_date, end_date=period.end_date, start_time=period.start_time, end_time=period.end_time) }}">Excel</a>
+        </div>
+    </form>
+</div>
+
+{% if not groups %}
+<div class="vs-empty">
+    <div class="vs-empty-title">{{ 'За выбранный период записей о расхождениях нет' if is_ru else 'Танланган даврда фарқ ёзувлари йўқ' }}</div>
+    <p class="vs-empty-sub">{{ 'Это нормально: записи появляются только когда Topaz фиксирует расхождение счётчика.' if is_ru else 'Бу нормал ҳолат: ёзувлар фақат Topaz ҳисоблагич фарқини қайд этганда пайдо бўлади.' }}</p>
+</div>
+{% else %}
+
+<div class="stats-grid fuel-no-print" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); margin-bottom:16px;">
+    <div class="stat-card"><div class="label">{{ 'Колонок с расхождениями' if is_ru else 'Фарқли колонкалар' }}</div><div class="value">{{ total.columns }}</div></div>
+    <div class="stat-card"><div class="label">{{ 'Записей' if is_ru else 'Ёзувлар' }}</div><div class="value">{{ total.count }}</div></div>
+    <div class="stat-card"><div class="label">{{ 'Итого литров расхождения' if is_ru else 'Жами фарқ литрлари' }}</div><div class="value" {% if total.litres < 0 %}style="color:var(--danger);"{% endif %}>{{ '%.2f'|format(total.litres) }} л</div></div>
+</div>
+
+<div class="card" style="overflow:hidden;">
+    <div class="card-header">
+        <span>{{ start_date.strftime('%d.%m.%Y') }} — {{ end_date.strftime('%d.%m.%Y') }}</span>
+    </div>
+    <div style="overflow-x:auto;">
+        <table class="mismatch-table">
+            <thead>
+                <tr>
+                    <th>{{ 'Дата/время' if is_ru else 'Сана/вақт' }}</th>
+                    <th>{{ 'Колонка (Topaz ID)' if is_ru else 'Колонка (Topaz ID)' }}</th>
+                    <th>АЗС</th>
+                    <th>Topaz txn</th>
+                    <th class="text-right">{{ 'Литры расхождения' if is_ru else 'Фарқ литрлари' }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for g in groups %}
+                <tr class="mismatch-group">
+                    <td colspan="5" style="padding:6px 10px;">
+                        {{ g.station_name or ('АЗС не определена' if is_ru else 'АЗС аниқланмаган') }}
+                        — {{ 'колонка' if is_ru else 'колонка' }} {{ g.topaz_col_id }}
+                        — {{ g.count }} {{ 'записей' if is_ru else 'ёзув' }}, {{ '%.2f'|format(g.litres) }} л
+                    </td>
+                </tr>
+                {% for mm in g.rows %}
+                <tr>
+                    <td class="text-sm">{{ mm.txn_datetime.strftime('%d.%m.%Y %H:%M') if mm.txn_datetime else '—' }}</td>
+                    <td class="text-sm">{{ mm.topaz_col_id }}</td>
+                    <td class="text-sm text-muted">{{ g.station_name or '—' }}</td>
+                    <td class="text-sm text-muted">{{ mm.topaz_txn_id or '—' }}</td>
+                    <td class="text-right" style="font-weight:600; {% if (mm.quantity or 0) < 0 %}color:var(--danger);{% endif %}">{{ '%.2f'|format(mm.quantity or 0) }}</td>
+                </tr>
+                {% endfor %}
+                {% endfor %}
+                <tr style="font-weight:700; background:#fefce8;">
+                    <td colspan="4" style="text-align:right; padding:8px 10px;">{{ 'ВСЕГО' if is_ru else 'ЖАМИ' }}</td>
+                    <td class="text-right" style="padding:8px 10px;">{{ '%.2f'|format(total.litres) }} л</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

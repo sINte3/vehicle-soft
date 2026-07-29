@@ -161,8 +161,7 @@
 
 
 {% set L_title = 'Выдачи топлива из Topaz' if lang == 'ru' else 'Topazдан ёқилғи беришлар' %}
-{% set L_note = 'Это история фактических выдач ДТ с подведомственных АЗС. Цены и суммы не используются.' if lang == 'ru' else 'Бу подведомственный АЗСлардан ДТ беришлар тарихи. Нарх ва сумма ишлатилмайди.' %}
-{% set L_back = '← Дашборд' if lang == 'ru' else '← Дашборд' %}
+{% set L_note = 'Это история фактических выдач ДТ с подведомственных АЗС. Цены и суммы не используются.' if lang == 'ru' else 'Бу тасарруфимиздаги АЗСлардан ДТ беришлар тарихи. Нарх ва сумма ишлатилмайди.' %}
 {% set L_from = 'С' if lang == 'ru' else 'Дан' %}
 {% set L_to = 'По' if lang == 'ru' else 'Гача' %}
 {% set L_wh = 'Склад' if lang == 'ru' else 'Омбор' %}
@@ -176,6 +175,7 @@
 {% set L_station = 'АЗС' if lang == 'ru' else 'АЗС' %}
 {% set L_liter = 'Литры' if lang == 'ru' else 'Литр' %}
 {% set L_card = 'Карта' if lang == 'ru' else 'Карта' %}
+{% set L_card_name = 'Имя карты' if lang == 'ru' else 'Карта номи' %}
 {% set L_no_data = 'За выбранный период выдач топлива нет.' if lang == 'ru' else 'Танланган давр учун ёқилғи беришлар йўқ.' %}
 {% set L_agent = 'Убедитесь, что агент Topaz настроен и работает.' if lang == 'ru' else 'Topaz агенти созланганига ва ишлаётганига ишонинг.' %}
 {% set L_sync = 'История синхронизаций' if lang == 'ru' else 'Синхронизация тарихи' %}
@@ -202,7 +202,6 @@
         <h1>{{ L_title }}</h1>
         <div class="text-muted text-sm">{{ L_note }}</div>
     </div>
-    <a href="{{ url_for('fuel.dashboard') }}" class="btn btn-secondary">{{ L_back }}</a>
 </div>
 
 <div class="card" style="margin-bottom:16px;">
@@ -281,6 +280,7 @@
                 <th>{{ L_fuel }}</th>
                 <th class="text-right">{{ L_liter }}</th>
                 <th>{{ L_card }}</th>
+                <th>{{ L_card_name }}</th>
                 <th class="text-muted text-sm">Topaz ID</th>
             </tr>
         </thead>
@@ -293,11 +293,13 @@
             <td><span style="font-size:11px; padding:1px 6px; background:var(--info-light); color:var(--info); border-radius:2px; font-weight:700;">{{ txn.fuel_type }}</span></td>
             <td class="text-right" style="font-weight:700; color:var(--danger);">{{ '%.2f'|format(txn.quantity) }}</td>
             <td class="text-sm text-muted">{{ txn.card_number or '—' }}</td>
+            {# UI-CARD-NAME: display name via the page-wide map; em dash when no alias #}
+            <td class="text-sm">{{ card_names.get((txn.card_number or '')|trim, '—') }}</td>
             <td class="text-muted" style="font-size:10px;">{{ txn.topaz_txn_id or '' }}</td>
         </tr>
         {% else %}
         <tr>
-            <td colspan="7" class="text-center text-muted" style="padding:60px;">
+            <td colspan="8" class="text-center text-muted" style="padding:60px;">
                 <div style="font-size:36px; margin-bottom:12px;">⛽</div>
                 {{ L_no_data }}<br><small>{{ L_agent }}</small>
             </td>

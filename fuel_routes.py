@@ -10,10 +10,12 @@ Flask Blueprint: /fuel/* и /api/fuel_*
 """
 
 import hmac
+import json
+import os
 from flask import (Blueprint, render_template, request, redirect,
                    url_for, flash, jsonify, abort, current_app, g, send_file)
 from flask_login import login_required, current_user
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, time, timedelta
 import hashlib
 from io import BytesIO
 from sqlalchemy import text
@@ -28,6 +30,7 @@ from models import (
     FuelWarningReview,
     FuelCard, FuelCardAlias, FuelCardSyncLog,
     FuelTransactionReattribution,
+    FuelCounterMismatch,
     module_required,
 )
 
@@ -207,7 +210,11 @@ def _resolve_card_names(txns):
     if not card_numbers:
         return {}
 
+    # [REASON]: FUEL-BIG-001 / UI-CARD-NAME — joinedload the card so the whole
+    # map costs ONE query; the lazy backref used to add one SELECT per matched
+    # alias, which scaled with the number of distinct cards on the page.
     aliases = (FuelCardAlias.query
+               .options(joinedload(FuelCardAlias.card))
                .filter(FuelCardAlias.alias_type.in_(['topaz_card_id', 'rfid']),
                        FuelCardAlias.alias_value.in_(list(card_numbers)))
                .all())
@@ -225,6 +232,29 @@ def _card_display_name(card_number, name_map):
     if not card_number or not name_map:
         return '—'
     return name_map.get(card_number.strip(), '—')
+
+
+def _resolve_card_map(txns):
+    """Like _resolve_card_names, but maps card_number -> FuelCard object.
+
+    [REASON]: F2.4 — the card register also shows the vehicle (car_number /
+    car_model) when the directory knows it, so it needs the card row, not
+    just the display name. One query for the whole page, same alias rules.
+    """
+    card_numbers = set()
+    for txn in txns:
+        val = (txn.card_number or '').strip()
+        if val:
+            card_numbers.add(val)
+    if not card_numbers:
+        return {}
+
+    aliases = (FuelCardAlias.query
+               .options(joinedload(FuelCardAlias.card))
+               .filter(FuelCardAlias.alias_type.in_(['topaz_card_id', 'rfid']),
+                       FuelCardAlias.alias_value.in_(list(card_numbers)))
+               .all())
+    return {alias.alias_value: alias.card for alias in aliases if alias.card}
 
 
 def _card_name_map_for_station_report(station_id, start_date, end_date):
@@ -344,14 +374,26 @@ def _fuel_stations_active():
             .all())
 
 
-def _fuel_station_issues_query(station_id, start_date, end_date):
+def _fuel_station_issues_query(station_id, start_date, end_date,
+                               start_dt=None, end_dt_exclusive=None):
     """Return station issue transactions for given station and period.
-    Respects station validity dates when present."""
+    Respects station validity dates when present.
+
+    [REASON]: F2.1 FUEL-DATETIME-004 — optional datetime bounds narrow the
+    window; defaults reproduce the old whole-day behaviour. Upper bounds are
+    exclusive next-midnight instead of datetime.max.time() — identical row
+    selection for second-resolution data, immune to microsecond comparisons.
+    """
+    if start_dt is None:
+        start_dt = datetime.combine(start_date, datetime.min.time())
+    if end_dt_exclusive is None:
+        end_dt_exclusive = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+
     q = (FuelTransaction2.query
          .options(joinedload(FuelTransaction2.station))
          .filter(FuelTransaction2.station_id == station_id,
-                 FuelTransaction2.txn_datetime >= datetime.combine(start_date, datetime.min.time()),
-                 FuelTransaction2.txn_datetime <= datetime.combine(end_date, datetime.max.time()))
+                 FuelTransaction2.txn_datetime >= start_dt,
+                 FuelTransaction2.txn_datetime < end_dt_exclusive)
          .order_by(FuelTransaction2.txn_datetime, FuelTransaction2.id))
 
     # [REASON]: Filter by station validity dates per business rule 5:
@@ -363,8 +405,9 @@ def _fuel_station_issues_query(station_id, start_date, end_date):
             q = q.filter(FuelTransaction2.txn_datetime >=
                          datetime.combine(station.valid_from, datetime.min.time()))
         if station.valid_to:
-            q = q.filter(FuelTransaction2.txn_datetime <=
-                         datetime.combine(station.valid_to, datetime.max.time()))
+            q = q.filter(FuelTransaction2.txn_datetime <
+                         datetime.combine(station.valid_to + timedelta(days=1),
+                                          datetime.min.time()))
 
     return q.all()
 
@@ -399,8 +442,9 @@ def _fuel_station_issues_workbook(txns, station_name, topaz_id, start_date, end_
     ws.cell(row=2, column=1).font = Font(size=11, color='666666')
     ws.cell(row=2, column=1).alignment = Alignment(horizontal="center")
 
-    # Headers
-    headers = ['№', 'Дата/время', 'АЗС', 'Topaz ID', 'Имя карты', 'Литры']
+    # Headers — Topaz ID stays in the export (F2.3 removed it from the screen
+    # only); «Литры» renamed per the owner's correction.
+    headers = ['№', 'Дата/время', 'АЗС', 'Topaz ID', 'Имя карты', 'Выдано топлива, л']
     header_row = 4
     for col, title in enumerate(headers, start=1):
         ws.cell(row=header_row, column=col).value = title
@@ -496,6 +540,10 @@ def _fuel_station_issues_workbook(txns, station_name, topaz_id, start_date, end_
     ws.page_setup.orientation = 'landscape'
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
+    # [REASON]: QA fix 44 — without an explicit paperSize Excel falls back to
+    # Letter; A4 is the print standard here, and on Letter the last column is
+    # clipped or the scale drops. Set on every sheet of every fuel export.
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
 
     return wb
 
@@ -515,10 +563,9 @@ def station_issues_report():
     default_start = today.replace(day=1)
     default_end = today
 
-    start_date = _fuel_report_parse_date(request.args.get('start_date'), default_start)
-    end_date = _fuel_report_parse_date(request.args.get('end_date'), default_end)
-    if end_date < start_date:
-        start_date, end_date = end_date, start_date
+    # [REASON]: F2.1 FUEL-DATETIME-004 — shared parser: times, presets, cap.
+    start_dt, end_dt_exclusive, start_date, end_date, preset = _fuel_parse_period(
+        request.args, default_start, default_end)
 
     station_id = request.args.get('station_id', type=int)
     stations = _fuel_stations_active()
@@ -534,7 +581,9 @@ def station_issues_report():
         if selected:
             station_name = selected.name
             topaz_id = selected.topaz_id
-            txns = _fuel_station_issues_query(station_id, start_date, end_date)
+            txns = _fuel_station_issues_query(station_id, start_date, end_date,
+                                              start_dt=start_dt,
+                                              end_dt_exclusive=end_dt_exclusive)
             # [REASON]: FUEL-REPORT-012C grouping fix - precompute a safe date string
             # for each transaction so that Jinja's groupby works without calling
             # txn_datetime.date() (which fails because method references are not comparable).
@@ -553,9 +602,11 @@ def station_issues_report():
                            topaz_id=topaz_id,
                            start_date=start_date,
                            end_date=end_date,
+                           period=_fuel_period_context(start_dt, end_dt_exclusive,
+                                                       start_date, end_date, preset),
                            txns=txns,
                            summary=summary,
-                            card_name_map=card_name_map)
+                           card_name_map=card_name_map)
 
 
 @fuel_bp.route('/reports/station-issues/export')
@@ -566,10 +617,10 @@ def station_issues_export():
     default_start = today.replace(day=1)
     default_end = today
 
-    start_date = _fuel_report_parse_date(request.args.get('start_date'), default_start)
-    end_date = _fuel_report_parse_date(request.args.get('end_date'), default_end)
-    if end_date < start_date:
-        start_date, end_date = end_date, start_date
+    # [REASON]: F2.1 FUEL-DATETIME-004 — same parser as the page, so the
+    # workbook always matches the screen, times included.
+    start_dt, end_dt_exclusive, start_date, end_date, _preset = _fuel_parse_period(
+        request.args, default_start, default_end)
 
     station_id = request.args.get('station_id', type=int)
     if not station_id:
@@ -579,7 +630,9 @@ def station_issues_export():
     if not station:
         return 'Station not found', 404
 
-    txns = _fuel_station_issues_query(station_id, start_date, end_date)
+    txns = _fuel_station_issues_query(station_id, start_date, end_date,
+                                      start_dt=start_dt,
+                                      end_dt_exclusive=end_dt_exclusive)
     card_name_map = _resolve_card_names(txns)
 
     wb = _fuel_station_issues_workbook(txns, station.name, station.topaz_id, start_date, end_date, card_name_map=card_name_map)
@@ -885,8 +938,17 @@ def _fuel_manual_expense_map(warehouse_ids, fuel_type=None, date_from=None,
 # returns an empty dict without touching the database, mirroring
 # _fuel_manual_expense_map above.
 def _fuel_external_expense_map(warehouse_ids, fuel_type=None, date_from=None,
-                              date_to=None, lower_bounds=None, station_id=None):
+                              date_to=None, lower_bounds=None, station_id=None,
+                              dt_from=None, dt_to_exclusive=None):
     """Return {(warehouse_id, fuel_type): litres} of external-card Topaz issues.
+
+    [REASON]: F2.1 FUEL-DATETIME-004 — ``dt_from`` / ``dt_to_exclusive``
+    override the datetime bounds derived from ``date_from`` / ``date_to`` in
+    the GLOBAL window mode, so a time-narrowed report period reaches this map
+    exactly. The per-warehouse ``lower_bounds`` mode is date-based by design
+    (it serves opening balances, which time never shifts) and ignores them.
+    A card's own start date still applies: the effective lower bound is
+    ``max(window lower, card start 00:00)``.
 
     Mirrors _fuel_manual_expense_map's shape and window modes, but reads
     FuelTransaction2 (joined to FuelStation2 for the warehouse) and only the
@@ -921,8 +983,9 @@ def _fuel_external_expense_map(warehouse_ids, fuel_type=None, date_from=None,
     def _low(d):
         return datetime.combine(d, datetime.min.time())
 
-    upper_exclusive = (datetime.combine(date_to + timedelta(days=1), datetime.min.time())
-                       if date_to is not None else None)
+    upper_exclusive = dt_to_exclusive
+    if upper_exclusive is None and date_to is not None:
+        upper_exclusive = datetime.combine(date_to + timedelta(days=1), datetime.min.time())
 
     q = (db.session.query(
             FuelStation2.warehouse_id,
@@ -958,11 +1021,15 @@ def _fuel_external_expense_map(warehouse_ids, fuel_type=None, date_from=None,
     else:
         if fuel_type:
             q = q.filter(FuelTransaction2.fuel_type == fuel_type)
+        base_lower = dt_from
+        if base_lower is None and date_from is not None:
+            base_lower = _low(date_from)
         for card, start in EXTERNAL_FUEL_CARDS.items():
-            effective = start if (date_from is None or date_from <= start) else date_from
+            card_lower = _low(start)
+            effective = card_lower if (base_lower is None or base_lower <= card_lower) else base_lower
             cond = and_(
                 FuelTransaction2.card_number == card,
-                FuelTransaction2.txn_datetime >= _low(effective),
+                FuelTransaction2.txn_datetime >= effective,
             )
             if upper_exclusive is not None:
                 cond = and_(cond, FuelTransaction2.txn_datetime < upper_exclusive)
@@ -985,8 +1052,15 @@ def _fuel_external_expense_map(warehouse_ids, fuel_type=None, date_from=None,
 # The mark table is tiny (a handful per month), so the single un-grouped query is
 # cheap and is emphatically not an N+1: it does not scale with the warehouse count.
 def _fuel_reattribution_maps(warehouse_ids, fuel_type=None, date_from=None,
-                             date_to=None, lower_bounds=None, station_id=None):
+                             date_to=None, lower_bounds=None, station_id=None,
+                             dt_from=None, dt_to_exclusive=None):
     """Return (out_map, in_map) for active reserve marks.
+
+    [REASON]: F2.1 FUEL-DATETIME-004 — ``dt_from`` / ``dt_to_exclusive``
+    override the datetime bounds derived from ``date_from`` / ``date_to`` in
+    the GLOBAL window mode, so a time-narrowed report period reaches these
+    maps exactly. The per-warehouse ``lower_bounds`` mode stays date-based
+    (it serves opening balances) and ignores them.
 
     out_map: {(source_warehouse_id, fuel_type): litres} leaving each source.
     in_map:  {(target_warehouse_id, fuel_type): litres} arriving at each target.
@@ -1018,8 +1092,9 @@ def _fuel_reattribution_maps(warehouse_ids, fuel_type=None, date_from=None,
     def _low(d):
         return datetime.combine(d, datetime.min.time())
 
-    upper_exclusive = (datetime.combine(date_to + timedelta(days=1), datetime.min.time())
-                       if date_to is not None else None)
+    upper_exclusive = dt_to_exclusive
+    if upper_exclusive is None and date_to is not None:
+        upper_exclusive = datetime.combine(date_to + timedelta(days=1), datetime.min.time())
 
     # One query: active marks → their transaction → the source station's warehouse.
     q = (db.session.query(
@@ -1043,7 +1118,9 @@ def _fuel_reattribution_maps(warehouse_ids, fuel_type=None, date_from=None,
     if not lower_bounds:
         if fuel_type:
             q = q.filter(FuelTransaction2.fuel_type == fuel_type)
-        if date_from is not None:
+        if dt_from is not None:
+            q = q.filter(FuelTransaction2.txn_datetime >= dt_from)
+        elif date_from is not None:
             q = q.filter(FuelTransaction2.txn_datetime >= _low(date_from))
 
     out_map = {}
@@ -1147,7 +1224,47 @@ def _fuel_today_expense_map(warehouse_ids):
     return result
 
 
-def _fuel_latest_txn_map(warehouse_ids, start_dt=None, end_dt=None, station_id=None):
+# [REASON]: F1.2 FUEL-DASH-002 — recent NET consumption per warehouse for the
+# dashboard tiles (days-of-stock arithmetic). No new balance arithmetic: the
+# composition is exactly the balance report's expense figure — Topaz issues
+# minus external minus reattr-out plus reattr-in, plus manual expense — built
+# from the same shared bulk helpers, over a date window. Verified against
+# _fuel_report_build_rows totals by script (commit 27 acceptance).
+def _fuel_recent_consumption_map(warehouse_ids, date_from, date_to):
+    ids = [int(x) for x in (warehouse_ids or []) if x]
+    if not ids:
+        return {}
+
+    start_dt = datetime.combine(date_from, datetime.min.time())
+    end_dt_exclusive = datetime.combine(date_to + timedelta(days=1), datetime.min.time())
+
+    rows = (db.session.query(
+            FuelStation2.warehouse_id,
+            func.coalesce(func.sum(FuelTransaction2.quantity), 0))
+        .join(FuelTransaction2, FuelTransaction2.station_id == FuelStation2.id)
+        .filter(FuelStation2.warehouse_id.in_(ids),
+                FuelTransaction2.txn_datetime >= start_dt,
+                FuelTransaction2.txn_datetime < end_dt_exclusive)
+        .group_by(FuelStation2.warehouse_id)
+        .all())
+    result = {int(wh_id): float(total or 0) for wh_id, total in rows}
+
+    for (wh_id, _ft), litres in _fuel_manual_expense_map(
+            ids, date_from=date_from, date_to=date_to).items():
+        result[wh_id] = result.get(wh_id, 0.0) + litres
+    for (wh_id, _ft), litres in _fuel_external_expense_map(
+            ids, date_from=date_from, date_to=date_to).items():
+        result[wh_id] = result.get(wh_id, 0.0) - litres
+    r_out, r_in = _fuel_reattribution_maps(ids, date_from=date_from, date_to=date_to)
+    for (wh_id, _ft), litres in r_out.items():
+        result[wh_id] = result.get(wh_id, 0.0) - litres
+    for (wh_id, _ft), litres in r_in.items():
+        result[wh_id] = result.get(wh_id, 0.0) + litres
+
+    return result
+
+
+def _fuel_latest_txn_map(warehouse_ids, start_dt=None, end_dt_exclusive=None, station_id=None):
     ids = [int(x) for x in (warehouse_ids or []) if x]
     if not ids:
         return {}
@@ -1161,8 +1278,10 @@ def _fuel_latest_txn_map(warehouse_ids, start_dt=None, end_dt=None, station_id=N
 
     if start_dt is not None:
         max_query = max_query.filter(FuelTransaction2.txn_datetime >= start_dt)
-    if end_dt is not None:
-        max_query = max_query.filter(FuelTransaction2.txn_datetime <= end_dt)
+    # [REASON]: F2.1 FUEL-DATETIME-004 — exclusive upper bound, consistent with
+    # every other transaction window in the module.
+    if end_dt_exclusive is not None:
+        max_query = max_query.filter(FuelTransaction2.txn_datetime < end_dt_exclusive)
     if station_id:
         max_query = max_query.filter(FuelTransaction2.station_id == station_id)
 
@@ -1250,44 +1369,6 @@ def _parse_report_date(value, default):
         return datetime.strptime(value or '', '%Y-%m-%d').date()
     except (TypeError, ValueError):
         return default
-
-
-def _sum_receipts_for_period(warehouse_id, start_date, end_date):
-    return float(db.session.query(func.coalesce(func.sum(FuelReceipt2.quantity), 0))
-                 .filter(FuelReceipt2.warehouse_id == warehouse_id,
-                         FuelReceipt2.receipt_date >= start_date,
-                         FuelReceipt2.receipt_date <= end_date)
-                 .scalar() or 0)
-
-
-def _sum_issues_for_period(warehouse_id, start_dt, end_dt, station_id=None):
-    q = (db.session.query(func.coalesce(func.sum(FuelTransaction2.quantity), 0))
-         .join(FuelStation2)
-         .filter(FuelStation2.warehouse_id == warehouse_id,
-                 FuelTransaction2.txn_datetime >= start_dt,
-                 FuelTransaction2.txn_datetime <= end_dt))
-    if station_id:
-        q = q.filter(FuelTransaction2.station_id == station_id)
-    return float(q.scalar() or 0)
-
-
-def _fuel_opening_balance(warehouse_id, d_from):
-    ib = (FuelInitialBalance.query
-          .filter_by(warehouse_id=warehouse_id, fuel_type='ДТ')
-          .first())
-    if not ib:
-        return None, None
-    start_date = ib.balance_date
-    if d_from <= start_date:
-        return float(ib.quantity or 0), ib
-    before_date = d_from - timedelta(days=1)
-    receipts_before = _sum_receipts_for_period(warehouse_id, start_date, before_date)
-    issues_before = _sum_issues_for_period(
-        warehouse_id,
-        datetime.combine(start_date, datetime.min.time()),
-        datetime.combine(before_date, datetime.max.time()),
-    )
-    return round(float(ib.quantity or 0) + receipts_before - issues_before, 2), ib
 
 
 FUEL_LARGE_TXN_THRESHOLD = 500.0
@@ -1423,9 +1504,16 @@ def _fuel_warning_from_review(review):
     }
 
 
-def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
-    d_from_dt = datetime.combine(d_from, datetime.min.time())
-    d_to_dt = datetime.combine(d_to, datetime.max.time())
+def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None,
+                              start_dt=None, end_dt_exclusive=None):
+    # [REASON]: F2.1 FUEL-DATETIME-004 — optional datetime bounds narrow every
+    # transaction/sync window; defaults reproduce the old whole-day behaviour
+    # (the former <= 23:59:59.999999 upper bound and < next-midnight select
+    # the same rows for second-resolution data). Receipts, manual expenses and
+    # initial balances stay date-windowed; the opening stays a date window.
+    d_from_dt = start_dt if start_dt is not None else datetime.combine(d_from, datetime.min.time())
+    if end_dt_exclusive is None:
+        end_dt_exclusive = datetime.combine(d_to + timedelta(days=1), datetime.min.time())
 
     selected_station = None
     if station_id:
@@ -1435,10 +1523,16 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         else:
             station_id = None
 
-    wh_query = FuelWarehouse.query.order_by(FuelWarehouse.name)
+    # [REASON]: FUEL-BIG-001 — /fuel/report used to compute over EVERY warehouse
+    # while the dashboard and the balance report used the UI set, so the three
+    # screens disagreed on the count. The default set now comes from
+    # fuel_warehouse_query_for_ui() (show_legacy honoured); an explicit
+    # warehouse/station filter bypasses it, matching the receipts() pattern.
     if warehouse_id:
-        wh_query = wh_query.filter(FuelWarehouse.id == warehouse_id)
-    warehouses = wh_query.all()
+        wh_query = FuelWarehouse.query.filter(FuelWarehouse.id == warehouse_id)
+    else:
+        wh_query = fuel_warehouse_query_for_ui()
+    warehouses = wh_query.order_by(FuelWarehouse.name).all()
 
     warehouse_rows = []
     totals = {
@@ -1585,7 +1679,8 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
     period_external_by_wh = {}
     if warehouse_ids:
         period_external_map = _fuel_external_expense_map(
-            warehouse_ids, fuel_type='ДТ', date_from=d_from, date_to=d_to,
+            warehouse_ids, fuel_type='ДТ',
+            dt_from=d_from_dt, dt_to_exclusive=end_dt_exclusive,
             station_id=station_id)
         period_external_by_wh = {wh_id: litres for (wh_id, _ft), litres in period_external_map.items()}
 
@@ -1609,7 +1704,8 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
     reattr_in_by_wh = {}
     if warehouse_ids:
         _p_out, _p_in = _fuel_reattribution_maps(
-            warehouse_ids, fuel_type='ДТ', date_from=d_from, date_to=d_to,
+            warehouse_ids, fuel_type='ДТ',
+            dt_from=d_from_dt, dt_to_exclusive=end_dt_exclusive,
             station_id=station_id)
         reattr_out_by_wh = {wh_id: l for (wh_id, _ft), l in _p_out.items()}
         reattr_in_by_wh = {wh_id: l for (wh_id, _ft), l in _p_in.items()}
@@ -1624,7 +1720,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             .join(FuelTransaction2, FuelTransaction2.station_id == FuelStation2.id)
             .filter(FuelStation2.warehouse_id.in_(warehouse_ids),
                     FuelTransaction2.txn_datetime >= d_from_dt,
-                    FuelTransaction2.txn_datetime <= d_to_dt))
+                    FuelTransaction2.txn_datetime < end_dt_exclusive))
 
         if station_id:
             tx_stats_q = tx_stats_q.filter(FuelTransaction2.station_id == station_id)
@@ -1636,7 +1732,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
             }
 
     stations_count_by_wh = _fuel_station_count_map(warehouse_ids, active_only=False)
-    last_txn_by_wh = _fuel_latest_txn_map(warehouse_ids, start_dt=d_from_dt, end_dt=d_to_dt, station_id=station_id)
+    last_txn_by_wh = _fuel_latest_txn_map(warehouse_ids, start_dt=d_from_dt, end_dt_exclusive=end_dt_exclusive, station_id=station_id)
 
     for wh in warehouses:
         initial_balance = initial_by_wh.get(wh.id)
@@ -1746,9 +1842,13 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         .outerjoin(FuelTransaction2,
                    (FuelTransaction2.station_id == FuelStation2.id) &
                    (FuelTransaction2.txn_datetime >= d_from_dt) &
-                   (FuelTransaction2.txn_datetime <= d_to_dt)))
+                   (FuelTransaction2.txn_datetime < end_dt_exclusive)))
+    # [REASON]: FUEL-BIG-001 — the per-station table follows the same default
+    # warehouse visibility as the warehouse table above; explicit filters bypass.
     if warehouse_id:
         station_query = station_query.filter(FuelStation2.warehouse_id == warehouse_id)
+    elif not station_id:
+        station_query = fuel_apply_warehouse_filter_for_ui(station_query, FuelStation2.warehouse_id)
     if station_id:
         station_query = station_query.filter(FuelStation2.id == station_id)
     station_rows = station_query.group_by(
@@ -1760,16 +1860,18 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
                      .options(joinedload(FuelTransaction2.station))
                      .join(FuelStation2)
                      .filter(FuelTransaction2.txn_datetime >= d_from_dt,
-                             FuelTransaction2.txn_datetime <= d_to_dt))
+                             FuelTransaction2.txn_datetime < end_dt_exclusive))
     if warehouse_id:
         recent_txns_q = recent_txns_q.filter(FuelStation2.warehouse_id == warehouse_id)
+    elif not station_id:
+        recent_txns_q = fuel_apply_warehouse_filter_for_ui(recent_txns_q, FuelStation2.warehouse_id)
     if station_id:
         recent_txns_q = recent_txns_q.filter(FuelTransaction2.station_id == station_id)
     recent_txns = recent_txns_q.order_by(FuelTransaction2.txn_datetime.desc()).limit(200).all()
 
     sync_logs = (FuelSyncLog2.query
                  .filter(FuelSyncLog2.synced_at >= d_from_dt,
-                         FuelSyncLog2.synced_at <= d_to_dt)
+                         FuelSyncLog2.synced_at < end_dt_exclusive)
                  .order_by(FuelSyncLog2.synced_at.desc())
                  .limit(100).all())
     sync_summary = {
@@ -1868,10 +1970,12 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
                    .options(joinedload(FuelTransaction2.station))
                    .join(FuelStation2)
                    .filter(FuelTransaction2.txn_datetime >= d_from_dt,
-                           FuelTransaction2.txn_datetime <= d_to_dt,
+                           FuelTransaction2.txn_datetime < end_dt_exclusive,
                            FuelTransaction2.quantity >= FUEL_LARGE_TXN_THRESHOLD))
     if warehouse_id:
         large_txn_q = large_txn_q.filter(FuelStation2.warehouse_id == warehouse_id)
+    elif not station_id:
+        large_txn_q = fuel_apply_warehouse_filter_for_ui(large_txn_q, FuelStation2.warehouse_id)
     if station_id:
         large_txn_q = large_txn_q.filter(FuelTransaction2.station_id == station_id)
     large_txns = large_txn_q.order_by(FuelTransaction2.quantity.desc()).limit(20).all()
@@ -1891,10 +1995,12 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
                  .options(joinedload(FuelTransaction2.station))
                  .join(FuelStation2)
                  .filter(FuelTransaction2.txn_datetime >= d_from_dt,
-                         FuelTransaction2.txn_datetime <= d_to_dt)
+                         FuelTransaction2.txn_datetime < end_dt_exclusive)
                  .filter((FuelTransaction2.quantity == None) | (FuelTransaction2.quantity <= 0)))
     if warehouse_id:
         bad_qty_q = bad_qty_q.filter(FuelStation2.warehouse_id == warehouse_id)
+    elif not station_id:
+        bad_qty_q = fuel_apply_warehouse_filter_for_ui(bad_qty_q, FuelStation2.warehouse_id)
     if station_id:
         bad_qty_q = bad_qty_q.filter(FuelTransaction2.station_id == station_id)
     bad_qty_txns = bad_qty_q.order_by(FuelTransaction2.txn_datetime.desc()).limit(20).all()
@@ -1919,7 +2025,7 @@ def _collect_fuel_report_data(d_from, d_to, warehouse_id=None, station_id=None):
         'd_from': d_from,
         'd_to': d_to,
         'd_from_dt': d_from_dt,
-        'd_to_dt': d_to_dt,
+        'end_dt_exclusive': end_dt_exclusive,
         'warehouses': warehouses,
         'warehouse_rows': warehouse_rows,
         'station_rows': station_rows,
@@ -1995,6 +2101,7 @@ def _fuel_report_workbook(data, lang='uz'):
         ws.page_setup.orientation = 'landscape'
         ws.page_setup.fitToWidth = 1
         ws.page_setup.fitToHeight = 0
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
         ws.sheet_properties.pageSetUpPr.fitToPage = True
         ws.page_margins.left = 0.3
         ws.page_margins.right = 0.3
@@ -2044,12 +2151,10 @@ def _fuel_report_workbook(data, lang='uz'):
         ws.append([L('OK', 'OK'), L('Критических проблем не найдено', 'Критик муаммолар топилмади'), '', ''])
     style_table(ws)
 
-    ws = wb.create_sheet(_safe_ws_title(L('Склады', 'Омборлар'), used))
-    ws.append([L('Склад', 'Омбор'), L('АЗС', 'АЗС'), L('Начальный остаток', 'Бошланғич қолдиқ'), L('Приход', 'Кирим'), L('Выдача Topaz', 'Topaz бериш'), L('Стороннее топливо', 'Бегона ёқилғи'), L('Ручной расход', 'Қўлда киритилган сарф'), L('Передано в резерв', 'Резервга берилган'), L('Расчётный остаток', 'Ҳисобий қолдиқ'), L('Транзакций', 'Транзакциялар'), L('Последняя выдача', 'Охирги бериш')])
-    for r in data['warehouse_rows']:
-        last = r['last_txn'].txn_datetime.strftime('%d.%m.%Y %H:%M') if r['last_txn'] else ''
-        ws.append([r['warehouse'].name, r['stations_count'], r['opening'], r['receipts'], r['issued'], r.get('external', 0), r.get('manual', 0), r.get('reserve_out', 0), r['ending'], r['tx_count'], last])
-    style_table(ws)
+    # [REASON]: F1.3 FUEL-REPORT-SPLIT-003 — the warehouse sheet is gone: it
+    # duplicated the balance report, and the duplication had already produced
+    # a wrong conclusion by the owner. Stock lives in /fuel/balance-report
+    # (and its export) only. Every other sheet stays.
 
     ws = wb.create_sheet(_safe_ws_title(L('АЗС', 'АЗС'), used))
     ws.append([L('АЗС', 'АЗС'), 'Topaz ID', L('Склад', 'Омбор'), L('Активна', 'Фаол'), L('Выдано, л', 'Берилди, л'), L('Транзакций', 'Транзакциялар'), L('Последняя выдача', 'Охирги бериш')])
@@ -2223,14 +2328,17 @@ def fuel_warning_update(warning_key):
 def fuel_report():
     today = date.today()
     default_from = today.replace(day=1)
-    d_from = _parse_report_date(request.args.get('date_from'), default_from)
-    d_to = _parse_report_date(request.args.get('date_to'), today)
-    if d_from > d_to:
-        d_from, d_to = d_to, d_from
+    # [REASON]: F2.1 FUEL-DATETIME-004 — shared parser; the legacy
+    # date_from/date_to names keep working through its fallback.
+    start_dt, end_dt_exclusive, d_from, d_to, preset = _fuel_parse_period(
+        request.args, default_from, today)
 
     warehouse_id = request.args.get('warehouse_id', type=int)
     station_id = request.args.get('station_id', type=int)
-    data = _collect_fuel_report_data(d_from, d_to, warehouse_id=warehouse_id, station_id=station_id)
+    data = _collect_fuel_report_data(d_from, d_to, warehouse_id=warehouse_id,
+                                     station_id=station_id,
+                                     start_dt=start_dt,
+                                     end_dt_exclusive=end_dt_exclusive)
 
     if request.args.get('export') == '1':
         wb = _fuel_report_workbook(data, lang=_fuel_report_lang())
@@ -2249,17 +2357,102 @@ def fuel_report():
     # perf-fuel-report-warehouse-query-001_marker: reuse warehouses loaded by report collector.
     data_for_template = dict(data)
     warehouses = data_for_template.pop('warehouses', None) or FuelWarehouse.query.order_by(FuelWarehouse.name).all()
-    stations = (FuelStation2.query
-                .join(FuelWarehouse)
-                .order_by(FuelWarehouse.name, FuelStation2.name).all())
+    # [REASON]: FUEL-BIG-001 — the filter dropdowns follow the same warehouse
+    # visibility as the report body (show_legacy honoured), so working mode
+    # cannot offer a station whose report would come back empty.
+    stations_q = (FuelStation2.query
+                  .join(FuelWarehouse)
+                  .order_by(FuelWarehouse.name, FuelStation2.name))
+    stations = fuel_apply_warehouse_filter_for_ui(stations_q, FuelStation2.warehouse_id).all()
     return render_template('fuel/report.html',
                            warehouses=warehouses,
                            stations=stations,
                            fuel_types=FUEL_TYPES,
+                           wh_counts=_fuel_warehouse_counts(),
+                           period=_fuel_period_context(start_dt, end_dt_exclusive,
+                                                       d_from, d_to, preset),
                            **data_for_template)
 
 
 # ─── Dashboard ────────────────────────────────────────────────────────
+
+# [REASON]: F1.2 FUEL-DASH-002 — low-stock threshold in days of stock,
+# stored as a setting, not a constant in a template.
+FUEL_LOW_STOCK_DAYS_DEFAULT = 3.0
+FUEL_CONSUMPTION_WINDOW_DAYS = 14
+FUEL_SETTINGS_FILENAME = 'fuel_settings.json'
+
+
+# [REASON]: F1.2 commit 26 — the project has NO settings mechanism (checked:
+# no settings table, no key-value store; config.py is env/class based and not
+# admin-editable at runtime). This is the smallest possible one: a JSON file
+# in the Flask instance directory (beside transport.db, gitignored, survives
+# restarts, needs no schema change — the increment's single migration stays
+# the counter-mismatch one). If a real settings table appears later, these
+# three helpers are the only place to rewire.
+def _fuel_settings_path():
+    return os.path.join(current_app.instance_path, FUEL_SETTINGS_FILENAME)
+
+
+def _fuel_settings_load():
+    try:
+        with open(_fuel_settings_path(), 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _fuel_settings_save(settings):
+    path = _fuel_settings_path()
+    tmp_path = path + '.tmp'
+    with open(tmp_path, 'w', encoding='utf-8') as fh:
+        json.dump(settings, fh, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+
+
+def _fuel_low_stock_days():
+    """Low-stock threshold in days of stock; sane fallback on bad data."""
+    try:
+        value = float(_fuel_settings_load().get('low_stock_days',
+                                                FUEL_LOW_STOCK_DAYS_DEFAULT))
+    except (TypeError, ValueError):
+        return FUEL_LOW_STOCK_DAYS_DEFAULT
+    return value if 0 < value <= 365 else FUEL_LOW_STOCK_DAYS_DEFAULT
+
+
+@fuel_bp.route('/settings/low-stock', methods=['POST'])
+@module_required('fuel')
+@admin_required_fuel
+def save_low_stock_setting():
+    """F1.2 commit 26: admin edits the low-stock threshold (days of stock)."""
+    raw = (request.form.get('low_stock_days') or '').replace(',', '.').strip()
+    try:
+        days = float(raw)
+    except ValueError:
+        days = None
+    if days is None or not (0 < days <= 365):
+        flash(fuel_t('Чегара 0 дан катта ва 365 дан кичик кун бўлиши керак.',
+                     'Порог должен быть больше 0 и не больше 365 дней.'),
+              'warning')
+        return redirect(url_for('fuel.dashboard'))
+
+    settings = _fuel_settings_load()
+    before = settings.get('low_stock_days', FUEL_LOW_STOCK_DAYS_DEFAULT)
+    settings['low_stock_days'] = days
+    _fuel_settings_save(settings)
+    _audit_fuel(
+        'fuel_setting_updated',
+        entity_type='fuel_setting',
+        entity_label='low_stock_days',
+        before={'low_stock_days': before},
+        after={'low_stock_days': days},
+        description='Low-stock threshold updated',
+    )
+    db.session.commit()
+    flash(fuel_t('Чегара сақланди.', 'Порог сохранён.'), 'success')
+    return redirect(url_for('fuel.dashboard'))
+
 
 @fuel_bp.route('/')
 @module_required('fuel')
@@ -2272,29 +2465,132 @@ def dashboard():
                  .order_by(FuelSyncLog2.synced_at.desc())
                  .first())
 
-    # Последние 30 транзакций
-    recent_txns = (FuelTransaction2.query
-                   .options(joinedload(FuelTransaction2.station))
-                   .join(FuelStation2)
-                   .order_by(FuelTransaction2.txn_datetime.desc())
-                   .limit(30).all())
-
     # Статистика за сегодня
     # [REASON]: FUEL-MANUAL-EXP-A3 — the "Выдано сегодня" tile must equal the sum
     # of the per-warehouse "Сегодня выдано" column exactly. Summing the same
     # today_expense values get_all_balances() already produced guarantees that by
     # construction: same warehouse set (fuel_warehouse_query_for_ui, not every
     # warehouse) and same figure (Topaz issues + today's manual expenses, folded
-    # in by _fuel_today_expense_map). The old inline query summed FuelTransaction2
-    # over all warehouses and ignored manual expenses, so it could disagree with
-    # the table. Adds no query.
+    # in by _fuel_today_expense_map). Adds no query.
     today_total = sum((row['today_expense'] or 0) for row in balance_rows)
+
+    # ── F1.2 FUEL-DASH-002: manager tiles ────────────────────────────────
+    # [REASON]: figures come from _fuel_balance_map (via get_all_balances) and
+    # the shared bulk helpers only — no new balance arithmetic on this page.
+    today = date.today()
+    balances = {}
+    for row in balance_rows:
+        vals = [v for v in (row['balances'] or {}).values() if v is not None]
+        balances[row['warehouse'].id] = round(sum(vals), 2) if vals else None
+
+    # [REASON]: QA fix 47, owner decision 2026-07-28 option (a) — the tile
+    # answers "how much fuel do we have", so it sums positive balances only
+    # (the algebraic sum said 1 234 л while ~17 100 л physically stood in the
+    # warehouses). Negative warehouses are counted and totalled separately
+    # right beneath the tile — nothing hidden, only separated. The balance
+    # formula itself is untouched; days-of-supply derives from the same
+    # positive sum.
+    total_fuel = round(sum(v for v in balances.values()
+                           if v is not None and v > 0), 2)
+    negative_count = sum(1 for v in balances.values() if v is not None and v < 0)
+    negative_total = round(sum(v for v in balances.values()
+                               if v is not None and v < 0), 2)
+
+    consumption = _fuel_recent_consumption_map(
+        list(balances.keys()),
+        today - timedelta(days=FUEL_CONSUMPTION_WINDOW_DAYS - 1), today)
+    mean_daily = {wh: round(litres / FUEL_CONSUMPTION_WINDOW_DAYS, 2)
+                  for wh, litres in consumption.items()}
+    mean_daily_total = round(sum(mean_daily.values()), 2)
+    days_left_total = (round(total_fuel / mean_daily_total, 1)
+                       if mean_daily_total > 0 and total_fuel > 0 else None)
+
+    threshold_days = _fuel_low_stock_days()
+    low_stock_count = 0
+    for wh_id, bal in balances.items():
+        m = mean_daily.get(wh_id, 0.0)
+        if bal is not None and bal >= 0 and m > 0 and bal < threshold_days * m:
+            low_stock_count += 1
+
+    sync_freshness = 'red'
+    sync_age_hours = None
+    if last_sync and last_sync.synced_at:
+        sync_age_hours = (datetime.utcnow() - last_sync.synced_at).total_seconds() / 3600
+        # green under two hours, amber under six, red beyond
+        sync_freshness = ('green' if sync_age_hours < 2
+                          else 'amber' if sync_age_hours < 6 else 'red')
+
+    # Open (unreviewed) warnings for the current month — same collector the
+    # warnings registry uses, so the count and the click target agree.
+    month_start = today.replace(day=1)
+    report_data = _collect_fuel_report_data(month_start, today)
+    open_warnings = sum(1 for w in report_data.get('warnings', [])
+                        if (w.get('review_status') or 'new') == 'new')
+
+    # ── F1.2 commit 27: warehouse table sorted by trouble ────────────────
+    # [REASON]: the screen must open on the problems — negatives first, then
+    # below threshold, worst first inside each group; never alphabetical.
+    # Until phase 3 the fill bar is scaled to the maximum balance observed
+    # among the warehouses — NOT a real vessel level (tooltip says so).
+    max_balance = max([v for v in balances.values() if v is not None and v > 0]
+                      or [0.0])
+    table_rows = []
+    for row in balance_rows:
+        wh = row['warehouse']
+        bal = balances.get(wh.id)
+        m = mean_daily.get(wh.id, 0.0)
+        if bal is None:
+            status, rank = 'no_initial', 3
+        elif bal < 0:
+            status, rank = 'negative', 0
+        elif m > 0 and bal < threshold_days * m:
+            status, rank = 'low', 1
+        else:
+            status, rank = 'ok', 2
+        days_left = (round(bal / m, 1)
+                     if (bal is not None and bal >= 0 and m > 0) else None)
+        fill = (bal / max_balance * 100.0
+                if (bal is not None and bal > 0 and max_balance > 0) else 0.0)
+        table_rows.append({
+            'warehouse': wh,
+            'organization': wh.organization.name if wh.organization else '',
+            'balance': bal,
+            'fill': round(min(fill, 100.0), 1),
+            'today_expense': row['today_expense'] or 0.0,
+            'mean_daily': m,
+            'days_left': days_left,
+            'status': status,
+            'rank': rank,
+        })
+    table_rows.sort(key=lambda r: (
+        r['rank'],
+        r['balance'] if r['rank'] == 0 and r['balance'] is not None else 0.0,
+        r['days_left'] if r['rank'] == 1 and r['days_left'] is not None else 0.0,
+        r['warehouse'].name,
+    ))
 
     return render_template('fuel/dashboard.html',
                            balance_rows=balance_rows,
                            last_sync=last_sync,
-                           recent_txns=recent_txns,
                            today_total=today_total,
+                           total_fuel=total_fuel,
+                           days_left_total=days_left_total,
+                           mean_daily_total=mean_daily_total,
+                           negative_count=negative_count,
+                           negative_total=negative_total,
+                           low_stock_count=low_stock_count,
+                           threshold_days=threshold_days,
+                           consumption_window=FUEL_CONSUMPTION_WINDOW_DAYS,
+                           sync_freshness=sync_freshness,
+                           sync_age_hours=sync_age_hours,
+                           open_warnings=open_warnings,
+                           month_start=month_start,
+                           today=today,
+                           balances_by_wh=balances,
+                           mean_daily_by_wh=mean_daily,
+                           table_rows=table_rows,
+                           max_balance=max_balance,
+                           wh_counts=_fuel_warehouse_counts(),
                            fuel_types=FUEL_TYPES)
 
 
@@ -3175,10 +3471,15 @@ def transactions():
     sync_logs = (FuelSyncLog2.query
                  .order_by(FuelSyncLog2.synced_at.desc()).limit(10).all())
 
+    # [REASON]: FUEL-BIG-001 / UI-CARD-NAME — one name map for the whole page
+    # (single query), never a per-row lookup; unknown cards render an em dash.
+    card_names = _resolve_card_names(items)
+
     return render_template('fuel/transactions.html',
                            items=items, warehouses=warehouses,
                            d_from=d_from, d_to=d_to,
                            selected_wh_id=wh_id,
+                           card_names=card_names,
                            total_qty=total_qty, total_amount=total_amount,
                            sync_logs=sync_logs, today=today)
 
@@ -3336,6 +3637,21 @@ def fuel_target_warehouse_ids():
     return list(ids)
 
 
+def _fuel_warehouse_counts():
+    """{'working': int, 'all': int, 'legacy': int} — computed, never literal.
+
+    [REASON]: FUEL-BIG-001 — the warehouse count was written into template text
+    as literals ("22", "29") in several places and was wrong (the balance
+    report renders 23 rows, the whole table holds more). Screens interpolate
+    these computed values instead, so adding a warehouse updates every count
+    with no code edit. Deliberately reads no request state (no request.args /
+    show_legacy), so it is safe outside a request that carries the toggle.
+    """
+    working = len(fuel_target_warehouse_ids())
+    total = int(db.session.query(func.count(FuelWarehouse.id)).scalar() or 0)
+    return {'working': working, 'all': total, 'legacy': max(total - working, 0)}
+
+
 def fuel_warehouse_query_for_ui():
     """
     Default UI query for fuel warehouses.
@@ -3447,6 +3763,47 @@ def _perform_fuel_sync():
             card_number = str(txn.get('card_number', '') or '')
             if card_number in EXCLUDED_CARD_NUMBERS:
                 excluded_count += 1
+                # [REASON]: FUEL-SHIFT-001 — card 30 (ПЕРЕЛИВ) is Topaz's own
+                # counter-mismatch record. It stays OUT of fuel_transactions2
+                # (that exclusion is the whole point) and excluded_count keeps
+                # its meaning, but the signal is now logged beside the
+                # `continue`: station resolved the same way the normal path
+                # does, nullable when unresolvable — the row is never dropped.
+                # INSERT OR IGNORE + the unique (topaz_col_id, topaz_txn_id)
+                # index make the agent's three-day re-read window insert
+                # nothing twice, without ever failing the sync; the guard also
+                # keeps the sync alive on a database where the migration has
+                # not run yet.
+                try:
+                    mm_col_id = int(txn.get('topaz_col_id') or 0)
+                    mm_dt = parse_topaz_txn_datetime(txn.get('txn_datetime', ''))
+                    mm_station = resolve_fuel_station_for_topaz(mm_col_id, mm_dt)
+                    db.session.execute(
+                        text(
+                            'INSERT OR IGNORE INTO fuel_counter_mismatches '
+                            '(topaz_txn_id, topaz_col_id, station_id, '
+                            ' warehouse_id, txn_datetime, card_number, '
+                            ' quantity, amount, created_at) '
+                            'VALUES (:txn_id, :col_id, :station_id, '
+                            ' :warehouse_id, :txn_dt, :card, :qty, :amount, '
+                            ' :created)'
+                        ),
+                        {
+                            'txn_id': str(txn.get('topaz_txn_id', '')),
+                            'col_id': mm_col_id,
+                            'station_id': mm_station.id if mm_station else None,
+                            'warehouse_id': (mm_station.warehouse_id
+                                             if mm_station else None),
+                            'txn_dt': mm_dt,
+                            'card': card_number,
+                            'qty': float(txn.get('quantity', 0) or 0),
+                            'amount': float(txn.get('amount', 0) or 0),
+                            'created': datetime.utcnow(),
+                        },
+                    )
+                except Exception as mm_exc:
+                    current_app.logger.warning(
+                        'FUEL_COUNTER_MISMATCH_LOG_FAILED %s', mm_exc)
                 continue
 
             col_id = int(txn.get('topaz_col_id') or 0)
@@ -3783,6 +4140,835 @@ def card_directory():
         sync_logs=sync_logs, q=request.args.get('q', ''))
 
 
+# ─── F2.4 FUEL-REPORTS-FINISH-007: card register + station totals ────
+
+def _fuel_external_litres_window(start_dt, end_dt_exclusive):
+    """Litres dispensed on EXTERNAL_FUEL_CARDS cards inside the window, over
+    the UI-visible warehouses, honouring each card's rule-start date.
+
+    [REASON]: QA fix 45 — the card register and station totals report RAW
+    dispensing while the balance report nets external fuel out (582 106.73 vs
+    598 781.58 on the May–July window: the 16 674.85 difference is exactly
+    this figure). Both screens show it as a separate line so a manager does
+    not discover a phantom "shortfall" by comparing the two reports.
+    """
+    total = 0.0
+    for card, rule_start in EXTERNAL_FUEL_CARDS.items():
+        lower = max(start_dt, datetime.combine(rule_start, datetime.min.time()))
+        if lower >= end_dt_exclusive:
+            continue
+        q = (db.session.query(func.coalesce(func.sum(FuelTransaction2.quantity), 0))
+             .join(FuelStation2, FuelStation2.id == FuelTransaction2.station_id)
+             .filter(FuelTransaction2.card_number == card,
+                     FuelTransaction2.txn_datetime >= lower,
+                     FuelTransaction2.txn_datetime < end_dt_exclusive))
+        q = fuel_apply_warehouse_filter_for_ui(q, FuelStation2.warehouse_id)
+        total += float(q.scalar() or 0)
+    return round(total, 2)
+
+
+def _fuel_card_issue_groups(start_dt, end_dt_exclusive):
+    """Issues in the window grouped per card, with per-card subtotals.
+
+    [REASON]: F2.4 — the register reports dispensing operations, so it uses
+    the RAW Topaz rows of the UI-visible warehouses (external cards included:
+    those are real dispensing events, shown under their own card). Groups are
+    sorted by display name, unknown cards last by number.
+    """
+    q = (FuelTransaction2.query
+         .options(joinedload(FuelTransaction2.station))
+         .join(FuelStation2, FuelStation2.id == FuelTransaction2.station_id)
+         .filter(FuelTransaction2.txn_datetime >= start_dt,
+                 FuelTransaction2.txn_datetime < end_dt_exclusive))
+    q = fuel_apply_warehouse_filter_for_ui(q, FuelStation2.warehouse_id)
+    txns = q.order_by(FuelTransaction2.txn_datetime, FuelTransaction2.id).all()
+
+    card_map = _resolve_card_map(txns)
+    groups = {}
+    for t in txns:
+        num = (t.card_number or '').strip()
+        g = groups.get(num)
+        if g is None:
+            card = card_map.get(num)
+            g = groups[num] = {
+                'card_number': num,
+                'display_name': card.display_name if card else None,
+                'car_number': card.car_number if card else None,
+                'car_model': card.car_model if card else None,
+                'txns': [],
+                'count': 0,
+                'litres': 0.0,
+            }
+        g['txns'].append(t)
+        g['count'] += 1
+        g['litres'] += float(t.quantity or 0)
+
+    ordered = sorted(groups.values(),
+                     key=lambda g: (g['display_name'] is None,
+                                    g['display_name'] or '',
+                                    g['card_number']))
+    total = {
+        'count': sum(g['count'] for g in ordered),
+        'litres': round(sum(g['litres'] for g in ordered), 2),
+        'cards': len(ordered),
+    }
+    for g in ordered:
+        g['litres'] = round(g['litres'], 2)
+    return ordered, total
+
+
+@fuel_bp.route('/reports/card-issues')
+@module_required('fuel')
+def card_issues_report():
+    """F2.4: fuel issue register by card."""
+    today = date.today()
+    start_dt, end_dt_exclusive, start_date, end_date, preset = _fuel_parse_period(
+        request.args, today.replace(day=1), today)
+
+    groups, total = _fuel_card_issue_groups(start_dt, end_dt_exclusive)
+
+    return render_template('fuel/report_card_issues.html',
+                           groups=groups,
+                           total=total,
+                           external_litres=_fuel_external_litres_window(
+                               start_dt, end_dt_exclusive),
+                           start_date=start_date,
+                           end_date=end_date,
+                           period=_fuel_period_context(start_dt, end_dt_exclusive,
+                                                       start_date, end_date, preset))
+
+
+@fuel_bp.route('/reports/card-issues/export')
+@module_required('fuel')
+def card_issues_export():
+    """F2.4: Excel export of the card register, matching the screen."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    today = date.today()
+    start_dt, end_dt_exclusive, start_date, end_date, _preset = _fuel_parse_period(
+        request.args, today.replace(day=1), today)
+    groups, total = _fuel_card_issue_groups(start_dt, end_dt_exclusive)
+    lang = _fuel_report_lang()
+
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = _safe_ws_title(L('По картам', 'Карталар бўйича'), set())
+
+    thin = Side(style='thin', color='D1D5DB')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_fill = PatternFill('solid', fgColor='D9EAD3')
+    group_fill = PatternFill('solid', fgColor='F0F9F0')
+    total_fill = PatternFill('solid', fgColor='FEF3C7')
+
+    period_label = '%s %s — %s %s' % (
+        start_date.strftime('%d.%m.%Y'), start_dt.strftime('%H:%M'),
+        end_date.strftime('%d.%m.%Y'),
+        (end_dt_exclusive - timedelta(minutes=1)).strftime('%H:%M'))
+    ws.merge_cells('A1:F1')
+    ws['A1'] = L('Реестр выдачи топлива по картам', 'Карталар бўйича ёқилғи бериш реестри')
+    ws['A1'].font = Font(bold=True, size=14)
+    ws.merge_cells('A2:F2')
+    ws['A2'] = '%s: %s' % (L('Период', 'Давр'), period_label)
+    ws['A2'].font = Font(size=11, color='666666')
+
+    headers = ['№', L('Дата/время', 'Сана/вақт'), L('АЗС', 'АЗС'),
+               L('Имя карты', 'Карта номи'), L('Машина', 'Машина'),
+               L('Выдано топлива, л', 'Берилган ёқилғи, л')]
+    for col, title in enumerate(headers, start=1):
+        cell = ws.cell(row=4, column=col, value=title)
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        cell.border = border
+
+    r = 4
+    for g in groups:
+        r += 1
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=6)
+        name = g['display_name'] or ('%s (%s)' % (L('карта без имени', 'номсиз карта'), g['card_number'] or '—'))
+        car = (' · ' + ' '.join(x for x in (g['car_number'], g['car_model']) if x)) \
+            if (g['car_number'] or g['car_model']) else ''
+        cell = ws.cell(row=r, column=1,
+                       value='%s%s — %s: %d, %s: %.2f' % (
+                           name, car, L('выдач', 'беришлар'), g['count'],
+                           L('литров', 'литр'), g['litres']))
+        cell.font = Font(bold=True, size=11, color='1A6B3C')
+        cell.fill = group_fill
+        for seq, t in enumerate(g['txns'], start=1):
+            r += 1
+            ws.cell(row=r, column=1, value=seq)
+            ws.cell(row=r, column=2,
+                    value=t.txn_datetime.strftime('%d.%m.%Y %H:%M') if t.txn_datetime else '')
+            ws.cell(row=r, column=3, value=t.station.name if t.station else '')
+            ws.cell(row=r, column=4, value=g['display_name'] or '—')
+            ws.cell(row=r, column=5,
+                    value=' '.join(x for x in (g['car_number'], g['car_model']) if x) or '—')
+            ws.cell(row=r, column=6, value=round(float(t.quantity or 0), 2)).number_format = '#,##0.00'
+        r += 1
+        ws.cell(row=r, column=5, value=L('Итого по карте', 'Карта бўйича жами')).font = Font(bold=True)
+        ws.cell(row=r, column=6, value=g['litres']).number_format = '#,##0.00'
+        ws.cell(row=r, column=6).font = Font(bold=True)
+
+    r += 1
+    ws.cell(row=r, column=5, value=L('ВСЕГО', 'ЖАМИ')).font = Font(bold=True, size=12)
+    cell = ws.cell(row=r, column=6, value=total['litres'])
+    cell.number_format = '#,##0.00'
+    cell.font = Font(bold=True, size=12)
+    for col in range(1, 7):
+        ws.cell(row=r, column=col).fill = total_fill
+
+    for row_cells in ws.iter_rows(min_row=4, max_row=r, min_col=1, max_col=6):
+        for cell in row_cells:
+            cell.border = border
+    for col, width in ((1, 6), (2, 18), (3, 24), (4, 28), (5, 22), (6, 16)):
+        ws.column_dimensions[get_column_letter(col)].width = width
+    ws.freeze_panes = 'A5'
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = '4:4'
+    ws.oddFooter.center.text = '%s — %s' % (
+        L('Реестр выдачи топлива по картам', 'Карталар бўйича ёқилғи бериш реестри'),
+        period_label)
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    fname = 'fuel_card_issues_%s_%s.xlsx' % (start_date.isoformat(), end_date.isoformat())
+    return send_file(output, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+def _fuel_station_totals(start_dt, end_dt_exclusive):
+    """Per-station issue count and litres for the window, plus share of total.
+
+    [REASON]: F2.4 — a station-operations summary: RAW Topaz issues of the
+    UI-visible warehouses (external cards included — they went through the
+    dispenser; only balance arithmetic nets them out). One grouped query.
+    """
+    q = (db.session.query(
+            FuelStation2.id,
+            FuelStation2.name,
+            FuelStation2.topaz_id,
+            FuelWarehouse.name.label('warehouse_name'),
+            func.count(FuelTransaction2.id).label('tx_count'),
+            func.coalesce(func.sum(FuelTransaction2.quantity), 0).label('litres'))
+         .join(FuelWarehouse, FuelWarehouse.id == FuelStation2.warehouse_id)
+         .join(FuelTransaction2, FuelTransaction2.station_id == FuelStation2.id)
+         .filter(FuelTransaction2.txn_datetime >= start_dt,
+                 FuelTransaction2.txn_datetime < end_dt_exclusive))
+    q = fuel_apply_warehouse_filter_for_ui(q, FuelStation2.warehouse_id)
+    rows = (q.group_by(FuelStation2.id, FuelStation2.name, FuelStation2.topaz_id,
+                       FuelWarehouse.name)
+             .order_by(func.coalesce(func.sum(FuelTransaction2.quantity), 0).desc())
+             .all())
+
+    total_litres = sum(float(r.litres or 0) for r in rows)
+    total_count = sum(int(r.tx_count or 0) for r in rows)
+    result = []
+    for r in rows:
+        litres = float(r.litres or 0)
+        result.append({
+            'station_id': r.id,
+            'name': r.name,
+            'topaz_id': r.topaz_id,
+            'warehouse_name': r.warehouse_name,
+            'count': int(r.tx_count or 0),
+            'litres': round(litres, 2),
+            'share': round(litres * 100.0 / total_litres, 1) if total_litres else 0.0,
+        })
+    return result, {'count': total_count, 'litres': round(total_litres, 2),
+                    'stations': len(result)}
+
+
+@fuel_bp.route('/reports/station-totals')
+@module_required('fuel')
+def station_totals_report():
+    """F2.4: issue totals by station."""
+    today = date.today()
+    start_dt, end_dt_exclusive, start_date, end_date, preset = _fuel_parse_period(
+        request.args, today.replace(day=1), today)
+
+    rows, total = _fuel_station_totals(start_dt, end_dt_exclusive)
+
+    return render_template('fuel/report_station_totals.html',
+                           rows=rows,
+                           total=total,
+                           external_litres=_fuel_external_litres_window(
+                               start_dt, end_dt_exclusive),
+                           start_date=start_date,
+                           end_date=end_date,
+                           period=_fuel_period_context(start_dt, end_dt_exclusive,
+                                                       start_date, end_date, preset))
+
+
+@fuel_bp.route('/reports/station-totals/export')
+@module_required('fuel')
+def station_totals_export():
+    """F2.4: Excel export of the station totals, matching the screen."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    today = date.today()
+    start_dt, end_dt_exclusive, start_date, end_date, _preset = _fuel_parse_period(
+        request.args, today.replace(day=1), today)
+    rows, total = _fuel_station_totals(start_dt, end_dt_exclusive)
+    lang = _fuel_report_lang()
+
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = _safe_ws_title(L('По АЗС', 'АЗС бўйича'), set())
+
+    thin = Side(style='thin', color='D1D5DB')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_fill = PatternFill('solid', fgColor='D9EAD3')
+    total_fill = PatternFill('solid', fgColor='FEF3C7')
+
+    period_label = '%s %s — %s %s' % (
+        start_date.strftime('%d.%m.%Y'), start_dt.strftime('%H:%M'),
+        end_date.strftime('%d.%m.%Y'),
+        (end_dt_exclusive - timedelta(minutes=1)).strftime('%H:%M'))
+    ws.merge_cells('A1:G1')
+    ws['A1'] = L('Итоги выдачи топлива по АЗС', 'АЗС бўйича ёқилғи бериш якунлари')
+    ws['A1'].font = Font(bold=True, size=14)
+    ws.merge_cells('A2:G2')
+    ws['A2'] = '%s: %s' % (L('Период', 'Давр'), period_label)
+    ws['A2'].font = Font(size=11, color='666666')
+
+    headers = ['№', L('АЗС', 'АЗС'), 'Topaz ID', L('Склад', 'Омбор'),
+               L('Кол-во выдач', 'Беришлар сони'),
+               L('Выдано топлива, л', 'Берилган ёқилғи, л'),
+               L('Доля, %', 'Улуш, %')]
+    for col, title in enumerate(headers, start=1):
+        cell = ws.cell(row=4, column=col, value=title)
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    r = 4
+    for idx, row in enumerate(rows, start=1):
+        r += 1
+        ws.cell(row=r, column=1, value=idx)
+        ws.cell(row=r, column=2, value=row['name'])
+        ws.cell(row=r, column=3, value=row['topaz_id'])
+        ws.cell(row=r, column=4, value=row['warehouse_name'])
+        ws.cell(row=r, column=5, value=row['count'])
+        ws.cell(row=r, column=6, value=row['litres']).number_format = '#,##0.00'
+        ws.cell(row=r, column=7, value=row['share']).number_format = '0.0'
+
+    r += 1
+    ws.cell(row=r, column=4, value=L('ВСЕГО', 'ЖАМИ')).font = Font(bold=True, size=12)
+    ws.cell(row=r, column=5, value=total['count']).font = Font(bold=True)
+    cell = ws.cell(row=r, column=6, value=total['litres'])
+    cell.number_format = '#,##0.00'
+    cell.font = Font(bold=True, size=12)
+    ws.cell(row=r, column=7, value=100.0 if total['litres'] else 0.0).number_format = '0.0'
+    for col in range(1, 8):
+        ws.cell(row=r, column=col).fill = total_fill
+
+    for row_cells in ws.iter_rows(min_row=4, max_row=r, min_col=1, max_col=7):
+        for cell in row_cells:
+            cell.border = border
+    for col, width in ((1, 6), (2, 26), (3, 12), (4, 24), (5, 13), (6, 16), (7, 10)):
+        ws.column_dimensions[get_column_letter(col)].width = width
+    ws.freeze_panes = 'A5'
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = '4:4'
+    ws.oddFooter.center.text = '%s — %s' % (
+        L('Итоги выдачи топлива по АЗС', 'АЗС бўйича ёқилғи бериш якунлари'),
+        period_label)
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    fname = 'fuel_station_totals_%s_%s.xlsx' % (start_date.isoformat(), end_date.isoformat())
+    return send_file(output, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+def _fuel_counter_mismatch_groups(start_dt, end_dt_exclusive):
+    """FUEL-SHIFT-001: mismatch records grouped per dispenser column/station.
+
+    [REASON]: neutral equipment accounting — these are counter discrepancies
+    recorded by Topaz (card 30), not fuel consumption, and they are not
+    attributed to any person. Volume is tiny (a handful per month), so
+    grouping happens in Python over one query.
+    """
+    rows = (db.session.query(FuelCounterMismatch, FuelStation2)
+            .outerjoin(FuelStation2,
+                       FuelStation2.id == FuelCounterMismatch.station_id)
+            .filter(FuelCounterMismatch.txn_datetime >= start_dt,
+                    FuelCounterMismatch.txn_datetime < end_dt_exclusive)
+            .order_by(FuelCounterMismatch.topaz_col_id,
+                      FuelCounterMismatch.txn_datetime,
+                      FuelCounterMismatch.id)
+            .all())
+
+    groups = {}
+    for mm, station in rows:
+        key = mm.topaz_col_id
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = {
+                'topaz_col_id': key,
+                'station_name': station.name if station else None,
+                'count': 0,
+                'litres': 0.0,
+                'rows': [],
+            }
+        g['count'] += 1
+        g['litres'] += float(mm.quantity or 0)
+        g['rows'].append(mm)
+
+    ordered = sorted(groups.values(),
+                     key=lambda g: (g['station_name'] is None,
+                                    g['station_name'] or '',
+                                    g['topaz_col_id'] or 0))
+    for g in ordered:
+        g['litres'] = round(g['litres'], 2)
+    total = {
+        'count': sum(g['count'] for g in ordered),
+        'litres': round(sum(g['litres'] for g in ordered), 2),
+        'columns': len(ordered),
+    }
+    return ordered, total
+
+
+@fuel_bp.route('/reports/counter-mismatch')
+@module_required('fuel')
+def counter_mismatch_report():
+    """FUEL-SHIFT-001: counter-mismatch report under the reports hub."""
+    today = date.today()
+    start_dt, end_dt_exclusive, start_date, end_date, preset = _fuel_parse_period(
+        request.args, today.replace(day=1), today)
+
+    groups, total = _fuel_counter_mismatch_groups(start_dt, end_dt_exclusive)
+
+    return render_template('fuel/report_counter_mismatch.html',
+                           groups=groups,
+                           total=total,
+                           start_date=start_date,
+                           end_date=end_date,
+                           period=_fuel_period_context(start_dt, end_dt_exclusive,
+                                                       start_date, end_date, preset))
+
+
+@fuel_bp.route('/reports/counter-mismatch/export')
+@module_required('fuel')
+def counter_mismatch_export():
+    """FUEL-SHIFT-001: Excel export of the counter-mismatch report."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    today = date.today()
+    start_dt, end_dt_exclusive, start_date, end_date, _preset = _fuel_parse_period(
+        request.args, today.replace(day=1), today)
+    groups, total = _fuel_counter_mismatch_groups(start_dt, end_dt_exclusive)
+    lang = _fuel_report_lang()
+
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = _safe_ws_title(L('Расхождения', 'Фарқлар'), set())
+
+    thin = Side(style='thin', color='D1D5DB')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_fill = PatternFill('solid', fgColor='D9EAD3')
+    group_fill = PatternFill('solid', fgColor='F0F9F0')
+    total_fill = PatternFill('solid', fgColor='FEF3C7')
+
+    period_label = '%s — %s' % (start_date.strftime('%d.%m.%Y'),
+                                end_date.strftime('%d.%m.%Y'))
+    ws.merge_cells('A1:F1')
+    ws['A1'] = L('Расхождения счётчиков (Topaz, карта ПЕРЕЛИВ)',
+                 'Ҳисоблагичлар фарқлари (Topaz, ПЕРЕЛИВ картаси)')
+    ws['A1'].font = Font(bold=True, size=14)
+    ws.merge_cells('A2:F2')
+    ws['A2'] = '%s: %s' % (L('Период', 'Давр'), period_label)
+    ws['A2'].font = Font(size=11, color='666666')
+
+    headers = ['№', L('Дата/время', 'Сана/вақт'),
+               L('Колонка (Topaz ID)', 'Колонка (Topaz ID)'),
+               L('АЗС', 'АЗС'), 'Topaz txn',
+               L('Литры расхождения', 'Фарқ литрлари')]
+    for col, title in enumerate(headers, start=1):
+        cell = ws.cell(row=4, column=col, value=title)
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    r = 4
+    for g in groups:
+        r += 1
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=6)
+        name = g['station_name'] or L('АЗС не определена', 'АЗС аниқланмаган')
+        cell = ws.cell(row=r, column=1,
+                       value='%s — %s %s: %d, %s: %.2f' % (
+                           name, L('колонка', 'колонка'), g['topaz_col_id'],
+                           g['count'], L('литров', 'литр'), g['litres']))
+        cell.font = Font(bold=True, size=11, color='1A6B3C')
+        cell.fill = group_fill
+        for seq, mm in enumerate(g['rows'], start=1):
+            r += 1
+            ws.cell(row=r, column=1, value=seq)
+            ws.cell(row=r, column=2,
+                    value=mm.txn_datetime.strftime('%d.%m.%Y %H:%M')
+                    if mm.txn_datetime else '')
+            ws.cell(row=r, column=3, value=mm.topaz_col_id)
+            ws.cell(row=r, column=4, value=name)
+            ws.cell(row=r, column=5, value=mm.topaz_txn_id or '')
+            ws.cell(row=r, column=6,
+                    value=round(float(mm.quantity or 0), 2)).number_format = '#,##0.00'
+
+    r += 1
+    ws.cell(row=r, column=5, value=L('ВСЕГО', 'ЖАМИ')).font = Font(bold=True, size=12)
+    cell = ws.cell(row=r, column=6, value=total['litres'])
+    cell.number_format = '#,##0.00'
+    cell.font = Font(bold=True, size=12)
+    for col in range(1, 7):
+        ws.cell(row=r, column=col).fill = total_fill
+
+    for row_cells in ws.iter_rows(min_row=4, max_row=r, min_col=1, max_col=6):
+        for cell in row_cells:
+            cell.border = border
+    for col, width in ((1, 6), (2, 18), (3, 18), (4, 26), (5, 16), (6, 18)):
+        ws.column_dimensions[get_column_letter(col)].width = width
+    ws.freeze_panes = 'A5'
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = '4:4'
+    ws.oddFooter.center.text = '%s — %s' % (
+        L('Расхождения счётчиков', 'Ҳисоблагичлар фарқлари'), period_label)
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    fname = 'fuel_counter_mismatch_%s_%s.xlsx' % (start_date.isoformat(),
+                                                  end_date.isoformat())
+    return send_file(output, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+# ─── F4.1 FUEL-LEDGER-001: warehouse ledger page ─────────────────────
+
+@fuel_bp.route('/ledger')
+@module_required('fuel')
+def warehouse_ledger():
+    """Ledger card: every movement of one warehouse with a running balance."""
+    today = date.today()
+    default_start = today.replace(day=1)
+
+    start_dt, end_dt_exclusive, start_date, end_date, preset = _fuel_parse_period(
+        request.args, default_start, today)
+
+    warehouses = fuel_warehouse_query_for_ui().order_by(FuelWarehouse.name).all()
+    valid_ids = {w.id for w in warehouses}
+
+    # [REASON]: F4.1 — no default warehouse: duplicate names exist in the data
+    # («Мирзачул ПТЗ», «Вобкент ПТМ» each twice), so the page opens with an
+    # explanatory empty state rather than an arbitrary pick, and the select
+    # shows the id alongside the name. The submitted value is always the id.
+    warehouse_id = request.args.get('warehouse_id', type=int)
+    selected = None
+    ledger = None
+    if warehouse_id and warehouse_id in valid_ids:
+        selected = next(w for w in warehouses if w.id == warehouse_id)
+        ledger = _fuel_ledger(warehouse_id, 'ДТ', start_dt, end_dt_exclusive,
+                              start_date, end_date)
+
+    return render_template('fuel/ledger.html',
+                           warehouses=warehouses,
+                           selected=selected,
+                           ledger=ledger,
+                           start_date=start_date,
+                           end_date=end_date,
+                           period=_fuel_period_context(start_dt, end_dt_exclusive,
+                                                       start_date, end_date, preset),
+                           fuel_type='ДТ')
+
+
+def _fuel_ledger_workbook(ledger, warehouse, start_date, end_date,
+                          period_label, lang='uz'):
+    """Ledger workbook: sheet «Движение» with the three tables (per-table
+    subtotals by SUMIFS, grand total when more than one table is present) and
+    sheet «По дням» with the daily summary.
+
+    [REASON]: F4.1 — live formulas rather than substituted numbers: the owner
+    edits the workbook and expects recalculation. Subtotals key on the section
+    column (A) via SUMIFS, so inserted rows keep counting as long as they
+    carry the section label; subtotal/total rows leave A empty so they never
+    match their own criteria. The opening is written in the balance column
+    only, so SUMIFS of the incoming column equals the period receipts exactly.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
+
+    kind_labels = {
+        'opening': L('Остаток на начало', 'Бошланғич қолдиқ'),
+        'receipt': L('Приход', 'Кирим'),
+        'topaz': L('Выдача Topaz', 'Topaz бериш'),
+        'manual': L('Ручной расход', 'Қўлда сарф'),
+        'reserve_expense': L('Выдача по отметке резерва', 'Резерв белгиси бўйича бериш'),
+        'external': L('Стороннее топливо', 'Бегона ёқилғи'),
+    }
+    sec_main = L('Склад', 'Омбор')
+    sec_reserve = 'Резерв'
+    sec_external = L('Стороннее', 'Бегона')
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Движение'
+
+    thin = Side(style='thin', color='D1D5DB')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_fill = PatternFill('solid', fgColor='E5E7EB')
+    section_fill = PatternFill('solid', fgColor='F0F9F0')
+    total_fill = PatternFill('solid', fgColor='FEF3C7')
+
+    ws.merge_cells('A1:I1')
+    ws['A1'] = '%s: %s (ID %s)' % (L('Карточка склада', 'Омбор карточкаси'),
+                                   warehouse.name, warehouse.id)
+    ws['A1'].font = Font(bold=True, size=14)
+    ws.merge_cells('A2:I2')
+    ws['A2'] = '%s: %s' % (L('Период', 'Давр'), period_label)
+    ws['A2'].font = Font(size=11, color='666666')
+
+    headers = [L('Раздел', 'Бўлим'), L('Дата', 'Сана'), L('Время', 'Вақт'),
+               L('Операция', 'Амал'), L('Описание', 'Изоҳ'),
+               L('Имя карты', 'Карта номи'),
+               L('Приход, л', 'Кирим, л'), L('Расход, л', 'Сарф, л'),
+               L('Остаток, л', 'Қолдиқ, л')]
+    header_row = 4
+    for col, title in enumerate(headers, start=1):
+        cell = ws.cell(row=header_row, column=col, value=title)
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        cell.border = border
+
+    card_names = ledger.get('card_names') or {}
+    r = header_row
+
+    def write_section(title, table, section_label, with_balance=True):
+        nonlocal r
+        r += 1
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=9)
+        cell = ws.cell(row=r, column=1, value=title)
+        cell.font = Font(bold=True, size=11, color='1A6B3C')
+        cell.fill = section_fill
+
+        first_balance_row = None
+        if with_balance:
+            r += 1
+            ws.cell(row=r, column=2, value=start_date).number_format = 'DD.MM.YYYY'
+            ws.cell(row=r, column=4, value=kind_labels['opening'])
+            ws.cell(row=r, column=9, value=round(table['opening'], 2)).number_format = '#,##0.00'
+            first_balance_row = r
+
+        prev_balance_row = first_balance_row
+        for row in table['rows']:
+            r += 1
+            ws.cell(row=r, column=1, value=section_label)
+            ws.cell(row=r, column=2, value=row['date']).number_format = 'DD.MM.YYYY'
+            ws.cell(row=r, column=3, value=row['time'])
+            ws.cell(row=r, column=4, value=kind_labels.get(row['kind'], row['kind']))
+            ws.cell(row=r, column=5, value=row['description'])
+            card = row.get('card_number') or ''
+            ws.cell(row=r, column=6, value=card_names.get(card, '—') if card else '—')
+            if row['qty_in'] is not None:
+                ws.cell(row=r, column=7, value=round(row['qty_in'], 2)).number_format = '#,##0.00'
+            if row['qty_out'] is not None:
+                ws.cell(row=r, column=8, value=round(row['qty_out'], 2)).number_format = '#,##0.00'
+            if with_balance:
+                # live running balance: previous balance + incoming - outgoing
+                cell = ws.cell(row=r, column=9,
+                               value='=I%d+SUM(G%d)-SUM(H%d)' % (prev_balance_row, r, r))
+                cell.number_format = '#,##0.00'
+                prev_balance_row = r
+
+        r += 1
+        label_cell = ws.cell(row=r, column=4,
+                             value=L('Итого за период', 'Давр учун жами'))
+        label_cell.font = Font(bold=True)
+        for col, colletter in ((7, 'G'), (8, 'H')):
+            cell = ws.cell(row=r, column=col,
+                           value='=SUMIFS(%s:%s,$A:$A,"%s")'
+                                 % (colletter, colletter, section_label))
+            cell.font = Font(bold=True)
+            cell.number_format = '#,##0.00'
+        if with_balance and prev_balance_row:
+            cell = ws.cell(row=r, column=9, value='=I%d' % prev_balance_row)
+            cell.font = Font(bold=True)
+            cell.number_format = '#,##0.00'
+        for col in range(1, 10):
+            ws.cell(row=r, column=col).fill = total_fill
+
+    write_section('%s — %s' % (sec_main, warehouse.name), ledger['main'], sec_main)
+    sections = [sec_main]
+
+    if ledger.get('reserve'):
+        res = ledger['reserve']
+        write_section('%s — %s' % (sec_reserve, res['warehouse'].name),
+                      res, sec_reserve)
+        sections.append(sec_reserve)
+
+    if ledger['external']['rows']:
+        write_section(L('Стороннее топливо (справочно, не входит в остатки)',
+                        'Бегона ёқилғи (маълумот учун, қолдиқларга кирмайди)'),
+                      {'opening': 0.0, 'rows': ledger['external']['rows']},
+                      sec_external, with_balance=False)
+        sections.append(sec_external)
+
+    if len(sections) > 1:
+        # [REASON]: QA fix 42 — the grand total sums only the sections that
+        # take part in warehouse balances (Склад, Резерв). The external
+        # section says «не входит в остатки» in its own header, so adding it
+        # produced a figure with no business meaning (117 081.12 instead of
+        # 100 406.27 on warehouse 25). It keeps its own subtotal and the
+        # grand-total label states what is covered.
+        balance_sections = [s for s in sections if s != sec_external]
+        r += 2
+        label = '%s (%s)' % (L('ВСЕГО', 'ЖАМИ'), ' + '.join(balance_sections))
+        if sec_external in sections:
+            label += L(' — без стороннего топлива', ' — бегона ёқилғисиз')
+        cell = ws.cell(row=r, column=4, value=label)
+        cell.font = Font(bold=True, size=12)
+        for col, colletter in ((7, 'G'), (8, 'H')):
+            formula = '+'.join('SUMIFS(%s:%s,$A:$A,"%s")' % (colletter, colletter, s)
+                               for s in balance_sections)
+            cell = ws.cell(row=r, column=col, value='=' + formula)
+            cell.font = Font(bold=True, size=12)
+            cell.number_format = '#,##0.00'
+        for col in range(1, 10):
+            ws.cell(row=r, column=col).fill = total_fill
+
+    for row_cells in ws.iter_rows(min_row=header_row, max_row=r, min_col=1, max_col=9):
+        for cell in row_cells:
+            cell.border = border
+
+    widths = {1: 12, 2: 12, 3: 8, 4: 24, 5: 34, 6: 26, 7: 12, 8: 12, 9: 13}
+    for col, width in widths.items():
+        ws.column_dimensions[get_column_letter(col)].width = width
+    ws.freeze_panes = 'A5'
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = '%d:%d' % (header_row, header_row)
+    ws.oddFooter.center.text = '%s — %s' % (warehouse.name, period_label)
+
+    # ── Sheet «По дням»: daily summary of the MAIN warehouse, live SUMIFS ──
+    ws2 = wb.create_sheet('По дням')
+    ws2.merge_cells('A1:D1')
+    ws2['A1'] = '%s: %s — %s' % (L('По дням', 'Кунлар бўйича'), warehouse.name, period_label)
+    ws2['A1'].font = Font(bold=True, size=12)
+    day_headers = [L('Дата', 'Сана'), L('Приход, л', 'Кирим, л'),
+                   L('Расход, л', 'Сарф, л'), L('Остаток, л', 'Қолдиқ, л')]
+    for col, title in enumerate(day_headers, start=1):
+        cell = ws2.cell(row=3, column=col, value=title)
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.border = border
+
+    rr = 4
+    ws2.cell(row=rr, column=1, value=L('Остаток на начало', 'Бошланғич қолдиқ')).font = Font(bold=True)
+    ws2.cell(row=rr, column=4, value=round(ledger['main']['opening'], 2)).number_format = '#,##0.00'
+    day = start_date
+    while day <= end_date:
+        rr += 1
+        ws2.cell(row=rr, column=1, value=day).number_format = 'DD.MM.YYYY'
+        ws2.cell(row=rr, column=2,
+                 value='=SUMIFS(Движение!$G:$G,Движение!$A:$A,"%s",Движение!$B:$B,$A%d)'
+                       % (sec_main, rr)).number_format = '#,##0.00'
+        ws2.cell(row=rr, column=3,
+                 value='=SUMIFS(Движение!$H:$H,Движение!$A:$A,"%s",Движение!$B:$B,$A%d)'
+                       % (sec_main, rr)).number_format = '#,##0.00'
+        ws2.cell(row=rr, column=4, value='=D%d+B%d-C%d' % (rr - 1, rr, rr)).number_format = '#,##0.00'
+        day = day + timedelta(days=1)
+    for row_cells in ws2.iter_rows(min_row=3, max_row=rr, min_col=1, max_col=4):
+        for cell in row_cells:
+            cell.border = border
+    for col, width in ((1, 14), (2, 12), (3, 12), (4, 13)):
+        ws2.column_dimensions[get_column_letter(col)].width = width
+    ws2.freeze_panes = 'A4'
+    ws2.page_setup.orientation = 'landscape'
+    ws2.page_setup.fitToWidth = 1
+    ws2.page_setup.fitToHeight = 0
+    ws2.page_setup.paperSize = ws2.PAPERSIZE_A4
+    ws2.sheet_properties.pageSetUpPr.fitToPage = True
+    ws2.print_title_rows = '3:3'
+    ws2.oddFooter.center.text = '%s — %s' % (warehouse.name, period_label)
+
+    return wb
+
+
+@fuel_bp.route('/ledger/export')
+@module_required('fuel')
+def warehouse_ledger_export():
+    """F4.1: Excel export of the warehouse ledger card."""
+    today = date.today()
+    default_start = today.replace(day=1)
+
+    start_dt, end_dt_exclusive, start_date, end_date, _preset = _fuel_parse_period(
+        request.args, default_start, today)
+
+    warehouse_id = request.args.get('warehouse_id', type=int)
+    if not warehouse_id:
+        return 'warehouse_id is required', 400
+    warehouse = (fuel_warehouse_query_for_ui()
+                 .filter(FuelWarehouse.id == warehouse_id).first())
+    if not warehouse:
+        return 'Warehouse not found', 404
+
+    ledger = _fuel_ledger(warehouse_id, 'ДТ', start_dt, end_dt_exclusive,
+                          start_date, end_date)
+    period_label = '%s %s — %s %s' % (
+        start_date.strftime('%d.%m.%Y'), start_dt.strftime('%H:%M'),
+        end_date.strftime('%d.%m.%Y'),
+        (end_dt_exclusive - timedelta(minutes=1)).strftime('%H:%M'))
+    wb = _fuel_ledger_workbook(ledger, warehouse, start_date, end_date,
+                               period_label, lang=_fuel_report_lang())
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    fname = 'fuel_ledger_%s_%s_%s.xlsx' % (warehouse_id,
+                                           start_date.isoformat(),
+                                           end_date.isoformat())
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=fname,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+
+
 # ─── FUEL-REPORT-011A: Fuel balance period report ─────────────────────
 
 def _fuel_report_parse_date(value, default_value):
@@ -3792,6 +4978,99 @@ def _fuel_report_parse_date(value, default_value):
         return datetime.strptime(value, "%Y-%m-%d").date()
     except Exception:
         return default_value
+
+
+# [REASON]: F2.1 FUEL-DATETIME-004 — one shared period parser for every fuel
+# report. The lower bound is inclusive and the upper bound EXCLUSIVE
+# (end datetime plus one minute); datetime.max.time() is never used, so a
+# transaction stamped inside the last minute can never be lost to microsecond
+# comparisons. A request carrying only dates behaves exactly as before:
+# 00:00 start, 23:59 end -> [start 00:00, end+1day 00:00).
+FUEL_PERIOD_PRESETS = ('today', 'yesterday', 'this_week', 'this_month', 'last_month')
+FUEL_PERIOD_MAX_DAYS = 120
+
+
+def _fuel_parse_time(value, default_time):
+    """HH:MM or fall back silently, matching _fuel_report_parse_date."""
+    try:
+        return datetime.strptime((value or '').strip(), '%H:%M').time()
+    except (TypeError, ValueError):
+        return default_time
+
+
+def _fuel_parse_period(args, default_start_date, default_end_date):
+    """Returns (start_dt, end_dt_exclusive, start_date, end_date, preset).
+
+    Accepts ``start_date``, ``end_date``, ``start_time``, ``end_time`` and
+    ``preset`` (one of FUEL_PERIOD_PRESETS or 'custom'). A recognised preset
+    overrides the four fields; anything else — including a manual edit of any
+    field, which submits without a preset — yields 'custom'. Missing time
+    means 00:00 for the start and 23:59 for the end. Invalid input falls back
+    to the defaults silently. If the end precedes the start they are swapped.
+    The 120-day cap applies by DATE SPAN to every report using this parser.
+
+    ``start_date``/``end_date`` also fall back to the legacy ``date_from``/
+    ``date_to`` names so existing links to /fuel/report keep working.
+    """
+    preset = (args.get('preset') or '').strip()
+    today = date.today()
+
+    if preset in FUEL_PERIOD_PRESETS:
+        if preset == 'today':
+            start_date = end_date = today
+        elif preset == 'yesterday':
+            start_date = end_date = today - timedelta(days=1)
+        elif preset == 'this_week':
+            start_date = today - timedelta(days=today.weekday())
+            end_date = today
+        elif preset == 'this_month':
+            start_date = today.replace(day=1)
+            end_date = today
+        else:  # last_month
+            end_date = today.replace(day=1) - timedelta(days=1)
+            start_date = end_date.replace(day=1)
+        start_time = time(0, 0)
+        end_time = time(23, 59)
+    else:
+        preset = 'custom'
+        start_date = _fuel_report_parse_date(
+            args.get('start_date') or args.get('date_from'), default_start_date)
+        end_date = _fuel_report_parse_date(
+            args.get('end_date') or args.get('date_to'), default_end_date)
+        start_time = _fuel_parse_time(args.get('start_time'), time(0, 0))
+        end_time = _fuel_parse_time(args.get('end_time'), time(23, 59))
+
+    start_dt = datetime.combine(start_date, start_time)
+    end_dt = datetime.combine(end_date, end_time)
+    if end_dt < start_dt:
+        start_dt, end_dt = end_dt, start_dt
+        start_date, end_date = start_dt.date(), end_dt.date()
+
+    if (end_date - start_date).days + 1 > FUEL_PERIOD_MAX_DAYS:
+        end_date = start_date + timedelta(days=FUEL_PERIOD_MAX_DAYS - 1)
+        end_dt = datetime.combine(end_date, end_dt.time())
+        # [REASON]: flash only when a browser session exists; read-only
+        # verification scripts drive this parser without one.
+        try:
+            flash(fuel_t('Ҳисобот даври %d кун билан чекланган.' % FUEL_PERIOD_MAX_DAYS,
+                         'Период отчёта ограничен %d днями.' % FUEL_PERIOD_MAX_DAYS),
+                  'warning')
+        except Exception:
+            pass
+
+    return start_dt, end_dt + timedelta(minutes=1), start_date, end_date, preset
+
+
+def _fuel_period_context(start_dt, end_dt_exclusive, start_date, end_date, preset):
+    """Template context for fuel/_period_picker.html, from parser output."""
+    end_dt = end_dt_exclusive - timedelta(minutes=1)
+    return {
+        'preset': preset,
+        'start_date': start_date.isoformat(),
+        'end_date': end_date.isoformat(),
+        'start_time': start_dt.strftime('%H:%M'),
+        'end_time': end_dt.strftime('%H:%M'),
+    }
 
 
 def _fuel_report_date_items(start_date, end_date):
@@ -3916,9 +5195,14 @@ def _fuel_report_daily_receipts(warehouse_id, fuel_type, start_date, end_date):
     }
 
 
-def _fuel_report_daily_expenses(warehouse_id, fuel_type, start_date, end_date):
-    start_dt = datetime.combine(start_date, datetime.min.time())
-    end_dt = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+def _fuel_report_daily_expenses(warehouse_id, fuel_type, start_date, end_date,
+                                start_dt=None, end_dt_exclusive=None):
+    # [REASON]: F2.1 FUEL-DATETIME-004 — the optional datetime bounds clamp the
+    # window so the daily Topaz columns still sum to the time-narrowed period
+    # figure. Defaults reproduce the old midnight boundaries exactly.
+    start_dt = start_dt if start_dt is not None else datetime.combine(start_date, datetime.min.time())
+    end_dt = (end_dt_exclusive if end_dt_exclusive is not None
+              else datetime.combine(end_date + timedelta(days=1), datetime.min.time()))
 
     rows = (
         db.session.query(
@@ -3949,13 +5233,17 @@ def _fuel_report_daily_expenses(warehouse_id, fuel_type, start_date, end_date):
 # only from its own start date. One grouped query for all warehouses so the
 # per-warehouse loop in _fuel_report_build_rows adds no query. Empty rule or
 # empty warehouse list touches no database.
-def _fuel_report_daily_external(warehouse_ids, fuel_type, start_date, end_date):
+def _fuel_report_daily_external(warehouse_ids, fuel_type, start_date, end_date,
+                                start_dt=None, end_dt_exclusive=None):
     ids = [int(x) for x in (warehouse_ids or []) if x]
     if not ids or not EXTERNAL_FUEL_CARDS:
         return {}
 
-    start_dt = datetime.combine(start_date, datetime.min.time())
-    end_dt = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+    # [REASON]: F2.1 FUEL-DATETIME-004 — optional clamps, as in
+    # _fuel_report_daily_expenses; each card's own start date still applies.
+    start_dt = start_dt if start_dt is not None else datetime.combine(start_date, datetime.min.time())
+    end_dt = (end_dt_exclusive if end_dt_exclusive is not None
+              else datetime.combine(end_date + timedelta(days=1), datetime.min.time()))
 
     card_conditions = []
     for card, start in EXTERNAL_FUEL_CARDS.items():
@@ -3997,14 +5285,18 @@ def _fuel_report_daily_external(warehouse_ids, fuel_type, start_date, end_date):
 # adds no query. Both are needed so the daily columns still sum to the period
 # expense on BOTH the source warehouse and the reserve. External-fuel issues are
 # excluded so they never move twice.
-def _fuel_report_daily_reattribution(warehouse_ids, fuel_type, start_date, end_date):
+def _fuel_report_daily_reattribution(warehouse_ids, fuel_type, start_date, end_date,
+                                     start_dt=None, end_dt_exclusive=None):
     ids = [int(x) for x in (warehouse_ids or []) if x]
     if not ids:
         return {}, {}
     id_set = set(ids)
 
-    start_dt = datetime.combine(start_date, datetime.min.time())
-    end_dt = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+    # [REASON]: F2.1 FUEL-DATETIME-004 — optional clamps, as in
+    # _fuel_report_daily_expenses.
+    start_dt = start_dt if start_dt is not None else datetime.combine(start_date, datetime.min.time())
+    end_dt = (end_dt_exclusive if end_dt_exclusive is not None
+              else datetime.combine(end_date + timedelta(days=1), datetime.min.time()))
 
     rows = (db.session.query(
                 FuelStation2.warehouse_id,
@@ -4040,10 +5332,353 @@ def _fuel_report_daily_reattribution(warehouse_ids, fuel_type, start_date, end_d
     return out_daily, in_daily
 
 
-def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="ДТ"):
+def _fuel_opening_for(warehouse_id, fuel_type, start_date,
+                      initial=None, external_before=None,
+                      reattr_before_out=None, reattr_before_in=None):
+    """Opening balance at 00:00 of start_date, rolled forward from the
+    warehouse's earliest initial balance. Single source of truth.
+
+    [REASON]: FUEL-BIG-001 — extracted from the per-warehouse loop of
+    _fuel_report_build_rows so the ledger (FUEL-LEDGER-001) computes its
+    opening through the exact same arithmetic as the balance report:
+    initial + receipts − Topaz issues − manual expense + external add-back
+    + reattribution out − reattribution in, over the DATE window
+    [initial_date, start_date). Time inside the first day never shifts the
+    opening. Behaviour-preserving to the cent — see
+    verify_fuel_opening_refactor.py.
+
+    The optional arguments exist so the balance report can keep passing its
+    pre-computed bulk maps and add no N+1 query. When they are omitted the
+    helper computes them for the single warehouse — the path the ledger uses.
+    ``initial`` is the earliest FuelInitialBalance row (ordered by
+    balance_date then id); pass it when already loaded in bulk.
+
+    Returns an UNROUNDED float; callers round for display, exactly as the
+    report always has. A warehouse with no initial balance yields 0.0,
+    matching the report's rendering for such rows.
+    """
+    if initial is None:
+        initial = (FuelInitialBalance.query
+                   .filter(FuelInitialBalance.warehouse_id == warehouse_id,
+                           FuelInitialBalance.fuel_type == fuel_type)
+                   .order_by(FuelInitialBalance.balance_date.asc(),
+                             FuelInitialBalance.id.asc())
+                   .first())
+    if not initial:
+        return 0.0
+
+    initial_date = initial.balance_date
+    initial_qty = float(initial.quantity or 0)
+
+    if initial_date and initial_date > start_date:
+        # The initial balance starts inside the period: the opening is zero,
+        # exactly as the report has always rendered this case.
+        return 0.0
+    if not initial_date:
+        return initial_qty
+
+    before_receipts = _fuel_report_sum_receipts(
+        warehouse_id,
+        fuel_type,
+        date_from=initial_date,
+        date_to=start_date - timedelta(days=1),
+    )
+    before_expenses = _fuel_report_sum_transactions(
+        warehouse_id,
+        fuel_type,
+        dt_from=datetime.combine(initial_date, datetime.min.time()),
+        dt_to_exclusive=datetime.combine(start_date, datetime.min.time()),
+    )
+    before_manual_expenses = _fuel_report_sum_manual_expenses(
+        warehouse_id,
+        fuel_type,
+        date_from=initial_date,
+        date_to=start_date - timedelta(days=1),
+    )
+
+    key = (int(warehouse_id), fuel_type)
+    if external_before is None:
+        _ext_map = _fuel_external_expense_map(
+            [warehouse_id], fuel_type=fuel_type,
+            date_to=start_date - timedelta(days=1),
+            lower_bounds={key: initial_date})
+        external_before = _ext_map.get(key, 0.0)
+
+    if reattr_before_out is None or reattr_before_in is None:
+        _r_out, _r_in = _fuel_reattribution_maps(
+            [warehouse_id], fuel_type=fuel_type,
+            date_to=start_date - timedelta(days=1),
+            lower_bounds={key: initial_date})
+        if reattr_before_out is None:
+            reattr_before_out = _r_out.get(key, 0.0)
+        if reattr_before_in is None:
+            reattr_before_in = _r_in.get(key, 0.0)
+
+    return (initial_qty + before_receipts - before_expenses
+            - before_manual_expenses + external_before
+            + reattr_before_out - reattr_before_in)
+
+
+# ─── F4.1 FUEL-LEDGER-001: warehouse ledger card ──────────────────────
+
+def _fuel_ledger_sort_key(row):
+    """date, then time (date-only rows land at 00:00), then kind, then id."""
+    kind_rank = {'receipt': 0, 'topaz': 1, 'reserve_expense': 1,
+                 'manual': 2}.get(row['kind'], 3)
+    return (row['date'], row['time'] or '00:00', kind_rank, row['source_id'] or 0)
+
+
+def _fuel_ledger_rows_for(warehouse_id, fuel_type, start_dt, end_dt_exclusive,
+                          start_date, end_date, marked_txn_ids, include_topaz=True):
+    """Operation rows (no opening, no running balance yet) for one warehouse.
+
+    [REASON]: F4.1 — every figure flows through the same rules the balance
+    report uses: receipts and manual expenses are DATE-windowed (those tables
+    store no time), Topaz issues are datetime-windowed; a Topaz issue that is
+    external (_is_external_fuel_txn) or actively marked to the reserve
+    (marked_txn_ids) is NOT this warehouse's expense and is excluded here —
+    external rows go to the reference table, marked rows to the reserve table.
+    """
+    rows = []
+
+    receipts = (FuelReceipt2.query
+                .filter(FuelReceipt2.warehouse_id == warehouse_id,
+                        FuelReceipt2.fuel_type == fuel_type,
+                        FuelReceipt2.receipt_date >= start_date,
+                        FuelReceipt2.receipt_date <= end_date)
+                .order_by(FuelReceipt2.receipt_date, FuelReceipt2.id)
+                .all())
+    for r in receipts:
+        bits = [b for b in (r.supplier, r.doc_number, r.note) if b]
+        rows.append({
+            'date': r.receipt_date, 'time': '', 'kind': 'receipt',
+            'qty_in': float(r.quantity or 0), 'qty_out': None,
+            'description': ' · '.join(bits),
+            'source_page': 'fuel.receipts', 'source_id': r.id,
+            'source_warehouse_id': warehouse_id, 'admin_only': False,
+        })
+
+    if include_topaz:
+        txns = (FuelTransaction2.query
+                .options(joinedload(FuelTransaction2.station))
+                .join(FuelStation2, FuelStation2.id == FuelTransaction2.station_id)
+                .filter(FuelStation2.warehouse_id == warehouse_id,
+                        FuelTransaction2.fuel_type == fuel_type,
+                        FuelTransaction2.txn_datetime >= start_dt,
+                        FuelTransaction2.txn_datetime < end_dt_exclusive)
+                .order_by(FuelTransaction2.txn_datetime, FuelTransaction2.id)
+                .all())
+        for t in txns:
+            if _is_external_fuel_txn(t.card_number, t.txn_datetime):
+                continue
+            if t.id in marked_txn_ids:
+                continue
+            rows.append({
+                'date': t.txn_datetime.date(),
+                'time': t.txn_datetime.strftime('%H:%M'),
+                'kind': 'topaz',
+                'qty_in': None, 'qty_out': float(t.quantity or 0),
+                'description': (t.station.name if t.station else ''),
+                'card_number': (t.card_number or '').strip(),
+                'source_page': 'fuel.transactions', 'source_id': t.id,
+                'source_warehouse_id': warehouse_id, 'admin_only': False,
+            })
+
+    manuals = (FuelManualExpense.query
+               .filter(FuelManualExpense.warehouse_id == warehouse_id,
+                       FuelManualExpense.fuel_type == fuel_type,
+                       func.coalesce(FuelManualExpense.is_deleted, 0) == 0,
+                       FuelManualExpense.expense_date >= start_date,
+                       FuelManualExpense.expense_date <= end_date)
+               .order_by(FuelManualExpense.expense_date, FuelManualExpense.id)
+               .all())
+    for m in manuals:
+        rows.append({
+            'date': m.expense_date, 'time': '', 'kind': 'manual',
+            'qty_in': None, 'qty_out': float(m.quantity or 0),
+            'description': (m.note or '').split('\n')[0],
+            'source_page': 'fuel.manual_expenses', 'source_id': m.id,
+            'source_warehouse_id': warehouse_id, 'admin_only': True,
+        })
+
+    return rows
+
+
+def _fuel_ledger_reserve_expense_rows(target_warehouse_id, fuel_type,
+                                      start_dt, end_dt_exclusive):
+    """Active reserve marks whose target is this warehouse — its expenses.
+
+    [REASON]: F4.1 — for the reserve, a marked transaction is its ordinary
+    expense (the litres left through a source station's dispenser but belong
+    to the reserve). External transactions never move via a mark
+    (FUEL-RESERVE §7), matching _fuel_reattribution_maps.
+    """
+    marked = (db.session.query(FuelTransactionReattribution, FuelTransaction2,
+                               FuelStation2)
+              .join(FuelTransaction2,
+                    FuelTransaction2.id == FuelTransactionReattribution.transaction_id)
+              .join(FuelStation2, FuelStation2.id == FuelTransaction2.station_id)
+              .filter(func.coalesce(FuelTransactionReattribution.is_deleted, 0) == 0,
+                      FuelTransactionReattribution.target_warehouse_id == target_warehouse_id,
+                      FuelTransaction2.fuel_type == fuel_type,
+                      FuelTransaction2.txn_datetime >= start_dt,
+                      FuelTransaction2.txn_datetime < end_dt_exclusive)
+              .order_by(FuelTransaction2.txn_datetime, FuelTransaction2.id)
+              .all())
+    rows = []
+    for mark, txn, station in marked:
+        if _is_external_fuel_txn(txn.card_number, txn.txn_datetime):
+            continue
+        rows.append({
+            'date': txn.txn_datetime.date(),
+            'time': txn.txn_datetime.strftime('%H:%M'),
+            'kind': 'reserve_expense',
+            'qty_in': None, 'qty_out': float(txn.quantity or 0),
+            'description': (station.name if station else '')
+                           + ((' · ' + (mark.note or '').split('\n')[0])
+                              if mark.note else ''),
+            'card_number': (txn.card_number or '').strip(),
+            'source_page': 'fuel.reserve_transfers', 'source_id': txn.id,
+            'source_warehouse_id': station.warehouse_id if station else None,
+            'admin_only': True,
+        })
+    return rows
+
+
+def _fuel_ledger(warehouse_id, fuel_type, start_dt, end_dt_exclusive,
+                 start_date, end_date):
+    """Ledger card data for one warehouse: main / reserve / external tables.
+
+    Main table: one row per operation, sorted by date then time then id —
+    opening (in), receipts (in), Topaz issues not external and not
+    reattributed (out), manual expenses (out), and reattribution rows whose
+    target_warehouse_id is this warehouse (out — the reserve's own expense).
+    Running balance is computed here, in insertion order, UNROUNDED; it is
+    rounded only for display.
+
+    Reserve table: present only when this warehouse has reattributions OUT in
+    the window. Opening via _fuel_opening_for for the reserve warehouse
+    (_fuel_reserve_warehouse(), never guessed from mark frequency), then the
+    reattributed transactions AND the reserve's own receipts and manual
+    expenses over the same window — the prototype omitted the latter two,
+    which is the arithmetic defect recorded in the task (section 3.2): fuel
+    returned to the reserve is an ordinary FuelReceipt2 by owner decision.
+
+    External table: transactions matching _is_external_fuel_txn. Reference
+    only — never part of any balance.
+    """
+    # Active marks keyed by transaction id — one query, reused everywhere.
+    active_marks = (db.session.query(FuelTransactionReattribution.transaction_id,
+                                     FuelTransactionReattribution.target_warehouse_id)
+                    .filter(func.coalesce(FuelTransactionReattribution.is_deleted, 0) == 0)
+                    .all())
+    marked_txn_ids = {tid for tid, _t in active_marks}
+
+    def build_table(wh_id):
+        opening = _fuel_opening_for(wh_id, fuel_type, start_date)
+        rows = _fuel_ledger_rows_for(wh_id, fuel_type, start_dt, end_dt_exclusive,
+                                     start_date, end_date, marked_txn_ids)
+        rows.extend(_fuel_ledger_reserve_expense_rows(
+            wh_id, fuel_type, start_dt, end_dt_exclusive))
+        rows.sort(key=_fuel_ledger_sort_key)
+        balance = opening
+        total_in = 0.0
+        total_out = 0.0
+        for row in rows:
+            total_in += row['qty_in'] or 0.0
+            total_out += row['qty_out'] or 0.0
+            balance += (row['qty_in'] or 0.0) - (row['qty_out'] or 0.0)
+            row['balance'] = balance
+        return {
+            'opening': opening,
+            'rows': rows,
+            'total_in': total_in,
+            'total_out': total_out,
+            'closing': balance,
+        }
+
+    main = build_table(warehouse_id)
+
+    # Reserve table — only when this warehouse marked litres OUT in the window.
+    reserve = None
+    reserve_wh = _fuel_reserve_warehouse()
+    if reserve_wh and reserve_wh.id != warehouse_id:
+        has_out = (db.session.query(FuelTransactionReattribution.id)
+                   .join(FuelTransaction2,
+                         FuelTransaction2.id == FuelTransactionReattribution.transaction_id)
+                   .join(FuelStation2, FuelStation2.id == FuelTransaction2.station_id)
+                   .filter(func.coalesce(FuelTransactionReattribution.is_deleted, 0) == 0,
+                           FuelStation2.warehouse_id == warehouse_id,
+                           FuelTransaction2.fuel_type == fuel_type,
+                           FuelTransaction2.txn_datetime >= start_dt,
+                           FuelTransaction2.txn_datetime < end_dt_exclusive)
+                   .first())
+        if has_out:
+            reserve = build_table(reserve_wh.id)
+            reserve['warehouse'] = reserve_wh
+
+    # External table — reference only.
+    external_rows = []
+    external_total = 0.0
+    if EXTERNAL_FUEL_CARDS:
+        ext_txns = (FuelTransaction2.query
+                    .options(joinedload(FuelTransaction2.station))
+                    .join(FuelStation2, FuelStation2.id == FuelTransaction2.station_id)
+                    .filter(FuelStation2.warehouse_id == warehouse_id,
+                            FuelTransaction2.fuel_type == fuel_type,
+                            FuelTransaction2.card_number.in_(list(EXTERNAL_FUEL_CARDS.keys())),
+                            FuelTransaction2.txn_datetime >= start_dt,
+                            FuelTransaction2.txn_datetime < end_dt_exclusive)
+                    .order_by(FuelTransaction2.txn_datetime, FuelTransaction2.id)
+                    .all())
+        for t in ext_txns:
+            if not _is_external_fuel_txn(t.card_number, t.txn_datetime):
+                # before the card's start date it is an ordinary issue and
+                # already sits in the main table
+                continue
+            external_total += float(t.quantity or 0)
+            external_rows.append({
+                'date': t.txn_datetime.date(),
+                'time': t.txn_datetime.strftime('%H:%M'),
+                'kind': 'external',
+                'qty_in': None, 'qty_out': float(t.quantity or 0),
+                'description': (t.station.name if t.station else ''),
+                'card_number': (t.card_number or '').strip(),
+                'source_page': 'fuel.transactions', 'source_id': t.id,
+                'source_warehouse_id': warehouse_id, 'admin_only': False,
+            })
+
+    # One card-name map for the whole page (never per row).
+    named = []
+    for coll in (main['rows'],
+                 reserve['rows'] if reserve else [],
+                 external_rows):
+        for row in coll:
+            if row.get('card_number'):
+                named.append(SimpleNamespace(card_number=row['card_number']))
+    card_names = _resolve_card_names(named)
+
+    return {
+        'main': main,
+        'reserve': reserve,
+        'external': {'rows': external_rows, 'total': external_total},
+        'card_names': card_names,
+    }
+
+
+def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="ДТ",
+                            start_dt=None, end_dt_exclusive=None):
+    # [REASON]: F2.1 FUEL-DATETIME-004 — optional datetime bounds narrow the
+    # window for TRANSACTION sums (period and daily). Receipts, manual expenses
+    # and initial balances stay date-windowed because those tables store no
+    # time — the rule printed on the period picker. The opening window remains
+    # [initial_date, start_date), a date window: time within the first day
+    # never shifts the opening. Defaults are the old midnight boundaries.
     date_items = _fuel_report_date_items(start_date, end_date)
-    start_dt = datetime.combine(start_date, datetime.min.time())
-    end_dt_exclusive = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+    if start_dt is None:
+        start_dt = datetime.combine(start_date, datetime.min.time())
+    if end_dt_exclusive is None:
+        end_dt_exclusive = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
 
     warehouses = (
         fuel_warehouse_query_for_ui()
@@ -4113,10 +5748,13 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
         external_before_by_wh = {wid: litres for (wid, _ft), litres in _before_map.items()}
 
     _period_map = _fuel_external_expense_map(
-        warehouse_ids, fuel_type=fuel_type, date_from=start_date, date_to=end_date)
+        warehouse_ids, fuel_type=fuel_type,
+        dt_from=start_dt, dt_to_exclusive=end_dt_exclusive)
     external_period_by_wh = {wid: litres for (wid, _ft), litres in _period_map.items()}
 
-    external_daily_map = _fuel_report_daily_external(warehouse_ids, fuel_type, start_date, end_date)
+    external_daily_map = _fuel_report_daily_external(
+        warehouse_ids, fuel_type, start_date, end_date,
+        start_dt=start_dt, end_dt_exclusive=end_dt_exclusive)
 
     # [REASON]: FUEL-RESERVE — reserve maps computed once for all warehouses (no
     # per-warehouse query), mirroring the external maps above. "before" adjusts
@@ -4135,60 +5773,35 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
         reattr_before_in_by_wh = {wid: l for (wid, _ft), l in _r_before_in.items()}
 
     _r_period_out, _r_period_in = _fuel_reattribution_maps(
-        warehouse_ids, fuel_type=fuel_type, date_from=start_date, date_to=end_date)
+        warehouse_ids, fuel_type=fuel_type,
+        dt_from=start_dt, dt_to_exclusive=end_dt_exclusive)
     reattr_period_out_by_wh = {wid: l for (wid, _ft), l in _r_period_out.items()}
     reattr_period_in_by_wh = {wid: l for (wid, _ft), l in _r_period_in.items()}
 
     reattr_daily_out_map, reattr_daily_in_map = _fuel_report_daily_reattribution(
-        warehouse_ids, fuel_type, start_date, end_date)
+        warehouse_ids, fuel_type, start_date, end_date,
+        start_dt=start_dt, end_dt_exclusive=end_dt_exclusive)
 
     for wh in warehouses:
         initial = initial_by_wh.get(wh.id)
 
         opening = 0.0
         initial_date = None
-        initial_qty = 0.0
 
         if initial:
             initial_date = initial.balance_date
-            initial_qty = float(initial.quantity or 0)
-
-            if initial_date and initial_date <= start_date:
-                before_receipts = _fuel_report_sum_receipts(
-                    wh.id,
-                    fuel_type,
-                    date_from=initial_date,
-                    date_to=start_date - timedelta(days=1),
-                )
-                before_expenses = _fuel_report_sum_transactions(
-                    wh.id,
-                    fuel_type,
-                    dt_from=datetime.combine(initial_date, datetime.min.time()),
-                    dt_to_exclusive=start_dt,
-                )
-                before_manual_expenses = _fuel_report_sum_manual_expenses(
-                    wh.id,
-                    fuel_type,
-                    date_from=initial_date,
-                    date_to=start_date - timedelta(days=1),
-                )
-                # [REASON]: FUEL-CARD-CLASS — before_expenses includes the external
-                # card, which is not our expense from the rule start, so add it
-                # back over [max(initial_date, rule_start), start_date).
-                before_external = external_before_by_wh.get(wh.id, 0.0)
-                # [REASON]: FUEL-RESERVE — before_expenses includes any litres that
-                # were reattributed to the reserve, which are not this warehouse's
-                # expense, so add reattr_out back; subtract reattr_in (litres the
-                # reserve received), over the same before-window.
-                before_reattr_out = reattr_before_out_by_wh.get(wh.id, 0.0)
-                before_reattr_in = reattr_before_in_by_wh.get(wh.id, 0.0)
-                opening = (initial_qty + before_receipts - before_expenses
-                           - before_manual_expenses + before_external
-                           + before_reattr_out - before_reattr_in)
-            elif initial_date and initial_date > start_date:
-                opening = 0.0
-            else:
-                opening = initial_qty
+            # [REASON]: FUEL-BIG-001 — the opening arithmetic (initial rolled
+            # forward over [initial_date, start_date): + receipts − Topaz issues
+            # − manual + external add-back + reattr out − reattr in) lives in
+            # _fuel_opening_for, shared with the ledger. The pre-computed bulk
+            # maps are passed through so this loop still adds no N+1 query.
+            opening = _fuel_opening_for(
+                wh.id, fuel_type, start_date,
+                initial=initial,
+                external_before=external_before_by_wh.get(wh.id, 0.0),
+                reattr_before_out=reattr_before_out_by_wh.get(wh.id, 0.0),
+                reattr_before_in=reattr_before_in_by_wh.get(wh.id, 0.0),
+            )
 
         period_receipts = _fuel_report_sum_receipts(
             wh.id,
@@ -4228,7 +5841,9 @@ def _fuel_report_build_rows(start_date, end_date, show_zero=True, fuel_type="Д�
         closing = opening + period_receipts - period_expenses
 
         daily_receipts = _fuel_report_daily_receipts(wh.id, fuel_type, start_date, end_date)
-        daily_expenses = _fuel_report_daily_expenses(wh.id, fuel_type, start_date, end_date)
+        daily_expenses = _fuel_report_daily_expenses(
+            wh.id, fuel_type, start_date, end_date,
+            start_dt=start_dt, end_dt_exclusive=end_dt_exclusive)
         daily_manual_expenses = _fuel_report_daily_manual_expenses(wh.id, fuel_type, start_date, end_date)
 
         daily = {}
@@ -4305,16 +5920,10 @@ def balance_report():
     default_start = today.replace(day=1)
     default_end = today
 
-    start_date = _fuel_report_parse_date(request.args.get("start_date"), default_start)
-    end_date = _fuel_report_parse_date(request.args.get("end_date"), default_end)
-
-    if end_date < start_date:
-        start_date, end_date = end_date, start_date
-
-    max_days = 120
-    if (end_date - start_date).days + 1 > max_days:
-        flash(f"Период отчёта ограничен {max_days} днями.", "warning")
-        end_date = start_date + timedelta(days=max_days - 1)
+    # [REASON]: F2.1 FUEL-DATETIME-004 — the shared parser handles times,
+    # presets, the end-before-start swap and the 120-day cap.
+    start_dt, end_dt_exclusive, start_date, end_date, preset = _fuel_parse_period(
+        request.args, default_start, default_end)
 
     show_zero = request.args.get("hide_zero") != "1"
 
@@ -4323,7 +5932,18 @@ def balance_report():
         end_date=end_date,
         show_zero=show_zero,
         fuel_type="ДТ",
+        start_dt=start_dt,
+        end_dt_exclusive=end_dt_exclusive,
     )
+
+    # [REASON]: F1.2 FUEL-DASH-002 — the dashboard's «Склады в минусе» tile
+    # lands here with the filter already applied. Totals are recomputed over
+    # the filtered rows so the page never shows figures its table does not
+    # contain; the full report is one click away.
+    only_negative = request.args.get('only_negative') == '1'
+    if only_negative:
+        rows = [r for r in rows if r['closing'] < 0]
+        totals = {k: round(sum(r[k] for r in rows), 2) for k in totals}
 
     return render_template(
         "fuel/balance_report.html",
@@ -4333,6 +5953,10 @@ def balance_report():
         start_date=start_date,
         end_date=end_date,
         show_zero=show_zero,
+        only_negative=only_negative,
+        wh_counts=_fuel_warehouse_counts(),
+        period=_fuel_period_context(start_dt, end_dt_exclusive,
+                                    start_date, end_date, preset),
         fuel_type="ДТ",
     )
 
@@ -4350,15 +5974,10 @@ def balance_report_export():
     default_start = today.replace(day=1)
     default_end = today
 
-    start_date = _fuel_report_parse_date(request.args.get("start_date"), default_start)
-    end_date = _fuel_report_parse_date(request.args.get("end_date"), default_end)
-
-    if end_date < start_date:
-        start_date, end_date = end_date, start_date
-
-    max_days = 120
-    if (end_date - start_date).days + 1 > max_days:
-        end_date = start_date + timedelta(days=max_days - 1)
+    # [REASON]: F2.1 FUEL-DATETIME-004 — export uses the same parser as the
+    # page, so the workbook always matches the screen, times included.
+    start_dt, end_dt_exclusive, start_date, end_date, _preset = _fuel_parse_period(
+        request.args, default_start, default_end)
 
     show_zero = request.args.get("hide_zero") != "1"
 
@@ -4367,10 +5986,23 @@ def balance_report_export():
         end_date=end_date,
         show_zero=show_zero,
         fuel_type="ДТ",
+        start_dt=start_dt,
+        end_dt_exclusive=end_dt_exclusive,
     )
+
+    # [REASON]: QA fix 48 — the workbook follows the interface language like
+    # the card register and station totals exports already do; the header
+    # strings reuse the exact translations the page itself shows. Pre-existing
+    # debt, not a regression: base_headers had no language branching at all.
+    lang = _fuel_report_lang()
+
+    def L(ru, uz):
+        return ru if lang == 'ru' else uz
 
     wb = Workbook()
     ws = wb.active
+    # «ФАКТ» is the same word in Uzbek Cyrillic, so the sheet name is
+    # identical in both languages.
     ws.title = "ФАКТ"
 
     # [REASON]: FUEL-MANUAL-EXP-A3 — split the single "Расход" column into
@@ -4383,22 +6015,25 @@ def balance_report_export():
     # re-checked against this list.
     base_headers = [
         "№",
-        "Организация",
-        "Склад",
-        f"Остаток на {start_date.strftime('%d/%m/%Y')}",
-        "Приход",
-        "Выдача Topaz",
-        "Стороннее топливо",
-        "Ручной расход",
-        "Передано в резерв",
-        "Текущий остаток",
+        L("Организация", "Ташкилот"),
+        L("Склад", "Омбор"),
+        L(f"Остаток на {start_date.strftime('%d/%m/%Y')}",
+          f"{start_date.strftime('%d/%m/%Y')} даги қолдиқ"),
+        L("Приход", "Кирим"),
+        L("Выдача Topaz", "Topaz бериш"),
+        L("Стороннее топливо", "Бегона ёқилғи"),
+        L("Ручной расход", "Қўлда киритилган сарф"),
+        L("Передано в резерв", "Резервга берилган"),
+        L("Текущий остаток", "Жорий қолдиқ"),
     ]
 
     max_col = len(base_headers) + len(date_items) * 2
     day_start_col = len(base_headers) + 1
 
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max_col)
-    ws.cell(row=1, column=1).value = f"Отчёт по остаткам топлива за период {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"
+    ws.cell(row=1, column=1).value = L(
+        f"Отчёт по остаткам топлива за период {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}",
+        f"{start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')} даври учун ёқилғи қолдиқлари ҳисоботи")
     ws.cell(row=1, column=1).font = Font(bold=True, size=14)
     ws.cell(row=1, column=1).alignment = Alignment(horizontal="center")
 
@@ -4411,8 +6046,8 @@ def balance_report_export():
         ws.merge_cells(start_row=3, start_column=col, end_row=3, end_column=col + 1)
         ws.cell(row=3, column=col).value = item["date"]
         ws.cell(row=3, column=col).number_format = "dd.mm.yyyy"
-        ws.cell(row=4, column=col).value = "Приход"
-        ws.cell(row=4, column=col + 1).value = "Расход"
+        ws.cell(row=4, column=col).value = L("Приход", "Кирим")
+        ws.cell(row=4, column=col + 1).value = L("Расход", "Сарф")
         col += 2
 
     data_start_row = 5
@@ -4440,7 +6075,7 @@ def balance_report_export():
             col += 2
 
     total_row = data_start_row + len(rows)
-    ws.cell(row=total_row, column=2).value = "ИТОГО"
+    ws.cell(row=total_row, column=2).value = L("ИТОГО", "ЖАМИ")
     ws.cell(row=total_row, column=4).value = totals["opening"]
     ws.cell(row=total_row, column=5).value = totals["receipts"]
     ws.cell(row=total_row, column=6).value = totals["topaz_expenses"]
@@ -4505,6 +6140,20 @@ def balance_report_export():
 
     ws.freeze_panes = f"{get_column_letter(day_start_col)}5"
     ws.auto_filter.ref = f"A4:{get_column_letter(max_col)}{total_row}"
+
+    # [REASON]: QA fix 43 — this sheet is 10 + 2xN-days columns wide; with no
+    # explicit print setup Excel printed it portrait on many pages. Same setup
+    # as the ledger export: landscape, fit to width, repeating two-row header,
+    # a footer naming the report and the period.
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = '3:4'
+    ws.oddFooter.center.text = '%s — %s — %s' % (
+        L('Отчёт по остаткам топлива', 'Ёқилғи қолдиқлари ҳисоботи'),
+        start_date.strftime('%d.%m.%Y'), end_date.strftime('%d.%m.%Y'))
 
     output = BytesIO()
     wb.save(output)

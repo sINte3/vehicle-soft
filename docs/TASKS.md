@@ -104,6 +104,171 @@ Parallel track, runs alongside the increments. Decisions and findings so far:
 
 ## Recently completed / appears completed
 
+### FUEL-BIG-001 — consolidated fuel/AZS increment (PR #31), 2026-07-28
+
+Status: merged into `main` via PR #31; the open validation remainder is the
+single row in `docs/RELEASE_GATE.md`. A ten-commit QA round (41–50, fixes
+from the owner's QA on a production copy) sits on the same branch and PR —
+see its subsection below.
+
+Built as one ordered sequence of forty commits on one branch; every commit
+leaves the application importable and the module usable. Rollback is
+`git revert` of commits in strict reverse numeric order. Two dependency
+chains: the ledger (commits 11–15) depends on commit 4 (`_fuel_opening_for`)
+and on commits 6–9 (time-aware windows); blocks D–H depend on 6–9. Commit 29
+is the single migration — its code rollback and data rollback are separate
+(the table is inert without commits 30–31; the DROP is a manual step, see the
+header of `migrate_fuel_counter_mismatch.py`).
+
+Shared foundations (block A, no task code of their own): computed warehouse
+counts `2a104b7`; explicit archive toggle on all three screens `755aff7`;
+shared opening helper `580c143`; dead legacy helpers deleted `08ab1c2`.
+Rollback of the block: `08ab1c2`, `580c143`, `755aff7`, `2a104b7` (but
+`580c143` cannot be reverted alone once the ledger commits exist).
+
+#### F2.1 FUEL-DATETIME-004 — period with date and time, quick presets — CLOSED
+Commits in order: `e94e200` (parser), `104ab35` (picker include), `6614d68`
+(balance report), `2afb1ca` (AZS report + station issues), `f5240b9`
+(invariant script `verify_fuel_period_invariant.py`).
+Rollback order: `f5240b9`, `2afb1ca`, `6614d68`, `104ab35`, `e94e200`.
+
+#### F4.1 FUEL-LEDGER-001 — warehouse ledger card — CLOSED
+Commits in order: `a705396` (builder), `7b87c15` (page /fuel/ledger),
+`9493267` (Excel export, live formulas), `9e99938` (nav pill + hub tile),
+`18eac98` (identity script `verify_fuel_ledger_matches_balance.py`).
+Foundation: `580c143` (block A). The prototype `fuel_ledger_002.py` named by
+the task is NOT in the repository (it was untracked on the owner's machine);
+the workbook layout was built from the task's description, and the
+prototype's known-wrong arithmetic was never ported.
+Rollback order: `18eac98`, `9e99938`, `9493267`, `7b87c15`, `a705396`.
+
+#### F2.2 FUEL-BALANCE-UX-005 — collapsible daily detail + print — CLOSED
+Commits in order: `2096a02` (two-level table), `f2ec48e` (print styles,
+verified in headless Chromium).
+Rollback order: `f2ec48e`, `2096a02`.
+
+#### F2.3 FUEL-STATION-REPORT-006 — station report per owner's corrections — CLOSED
+Commit: `9ec46f9` (even columns, larger font, Topaz ID out of the main view
+but kept in export and per-row detail, «Литры» → «Выдано топлива, л»).
+NOT closed: the «Остаток на карте, л» column — the value exists nowhere in
+this system until F4.4 brings it from Topaz; no placeholder was added.
+Rollback: revert `9ec46f9`.
+
+#### F2.4 FUEL-REPORTS-FINISH-007 — two of three reports — CLOSED (2 of 3)
+Commits in order: `47808d6` (register by card), `1a72c8c` (totals by
+station), `c54a809` (tiles wired).
+NOT closed: the third report «Движение топлива по карте» stays «скоро» by
+owner decision — it needs the card balance from Topaz (F4.4); a running
+per-card total without it would diverge from Topaz and be worse than nothing.
+Rollback order: `c54a809`, `1a72c8c`, `47808d6`.
+
+#### F1.3 FUEL-REPORT-SPLIT-003 — the two reports separated — CLOSED
+Commits in order: `9cd7204` (warehouse table and stock tiles removed from
+/fuel/report, plates rebuilt, page renamed «Контроль АЗС и синхронизации»,
+export loses the warehouse sheet), `6b58930` (cross-links), `13d2c55`
+(three-card hint blocks removed). URL unchanged.
+Rollback order: `13d2c55`, `6b58930`, `9cd7204`.
+
+#### F1.2 FUEL-DASH-002 — dashboard on manager tiles — CLOSED
+Commits in order: `a31ea88` (six tiles, «Последние выдачи» removed,
+only_negative filter on the balance report), `4c2c2cc` (low-stock threshold
+as a setting — instance/fuel_settings.json, the project's first settings
+mechanism, admin-editable), `ed2f460` (warehouse table sorted by trouble,
+fill bar scaled to the max observed balance with an explicit tooltip).
+NOT closed: the «Расхождение по последней сверке» tile and the real vessel
+fill bar — both blocked on phase 3; no placeholders left.
+Rollback order: `ed2f460`, `4c2c2cc`, `a31ea88`.
+
+#### FUEL-NAV-002 — back buttons superseded by the nav strip — CLOSED
+Commit: `930d179` — fifteen buttons across twelve templates; the full
+removed/kept list with reasons is in the commit message. «Проблемы и
+предупреждения» on /fuel/report was checked and is a link (not an anchor),
+so it went; «Excel» buttons are actions and stayed.
+Rollback: revert `930d179`.
+
+#### FUEL-SHIFT-001 — counter-mismatch capture (card 30, ПЕРЕЛИВ) — CLOSED
+Commits in order: `747d6ad` (migration FUEL_COUNTER_MISMATCH), `fb5872b`
+(ingest logging beside the exclusion; response shape unchanged, card 30
+still never enters fuel_transactions2 — proven by script), `917022a`
+(report under the hub, neutral equipment wording, accumulation limitation
+stated), `8025d76` (hub tile). Records accumulate from deployment plus the
+agent's three-day re-read window; earlier history was never stored.
+The wider «operator shift with closing» concept from the backlog remains
+future work — this increment lands the signal capture and its report.
+Rollback order: `8025d76`, `917022a`, `fb5872b`, `747d6ad`; the table DROP
+is a separate manual step, correct only after `fb5872b`/`917022a` are gone.
+
+#### UI-CARD-NAME — card names in the issues journal — CLOSED
+Commit: `9d62b4c` (one map per page; em dash for unknown; joinedload kills
+the per-alias SELECT). For the record: the balance report has no card column
+at all — it is built per warehouse — so the backlog's mention of it was
+wrong and nothing was changed there.
+Rollback: revert `9d62b4c`.
+
+#### UI-SIDEBAR-GATE-001 — CLOSED
+Commit: `aad0cdb` (shared base_next.html, has_module_access('fuel'), same
+pattern as SP-F-021). Rollback: revert `aad0cdb`.
+
+#### UI-FONT-LOCAL-001 — CLOSED
+Commit: `687927b` — resolved by REMOVING the external font entirely
+(system-ui stack), not by self-hosting: no font binaries in the increment.
+Whole-application typography change, announced to the spare-parts track.
+Rollback: revert `687927b` (restores the Google Fonts request).
+
+#### UI-TILE-HOVER-001 — CLOSED
+Commit: `e2967df` — the shared `.vs-report-tile:hover` rule landed in
+design-system.css (announced), the fuel-local override removed; verified in
+a real browser on both launchers. Rollback: revert `e2967df`.
+
+#### UI-ACCENT-DUP-001 — CLOSED
+Commit: `d0565fa` — `--vs-info` is now #0e7490 / `--vs-info-bg` #e6f7fb
+(5.36:1 on white, 4.86:1 on the bg); every consumer enumerated in the
+commit message (design-system.css shared file, announced).
+Rollback: revert `d0565fa`.
+
+#### FUEL-FAVICON-404 — CLOSED
+Commit: `e8281ab` — inline SVG data-URI in base_next.html; browser-verified
+zero /favicon.ico requests and zero 404s. Rollback: revert `e8281ab`.
+
+#### QA round — fixes 41–50 from the owner's QA on a production copy, 2026-07-28
+QA validated commits 1–40 against a copy of the production database (23
+warehouses, 01.05–24.07.2026) and a live instance: all three verify scripts
+PASS with 0 differences, the migration applied and re-ran idempotently
+(schema_migrations 28 → 29), the ledger matched the balance report to the
+cent on live data and the ledger Excel matched the owner's reference
+prototype exactly. Of 41 browser checks one failed — it became fix 41.
+Commits in order: `61e67ef` (41, the summary table fits 1440x900 and
+1280x800 — text columns wrap, numbers never), `e22c6e7` (42, ledger grand
+total sums Склад+Резерв only; external keeps its own subtotal), `41a0d55`
+(43, print setup for the balance workbook), `7d13ee3` (44, A4 paper size in
+all seven fuel exports), `e745cea` (45, both new reports state they include
+third-party fuel and show it as a separate line), `2c24dae` (46,
+issued-today positive in the dashboard table), `f72747a` (47, total-fuel
+tile counts positive balances only — owner decision 2026-07-28 option (a);
+negative warehouses get their own link line), `479b209` (48, the balance
+workbook follows the interface language), `6423f15` (49, two Uzbek strings
+cleared of Russian words), plus the docs commit (50, this record).
+The QA-round acceptance numbers were first measured on the synthetic
+fixture; later the same day the owner supplied a copy of the production
+database (snapshot 2026-07-28 11:13) and everything was re-measured on it:
+verify scripts 23 warehouses / 0 differences, migration 28 → 29 and
+idempotent on re-run, wh 25 grand total 100 406.27 with external 16 674.85
+separate, register 598 781.58 vs balance «Выдача Topaz» 582 106.73 (diff
+exactly the external), dashboard tile 17 111 л with «складов в минусе: 3
+на -15 877 л», issued-today positive (tile 1126.6), both-language export
+headers, table fit at 1440x900 and 1280x800 with the real 23 rows. The
+open RELEASE_GATE remainder is applying the migration on a live platform
+and a human look at the fixed screens.
+Rollback order: the docs commit (50), `6423f15`, `479b209`, `f72747a`,
+`2c24dae`, `e745cea`, `7d13ee3`, `41a0d55`, `e22c6e7`, `61e67ef`.
+
+#### Folded codes
+`FUEL-REPORT-012H-C` is folded into `FUEL-CARDS-SYNC` as a single code —
+they describe the same work. `FUEL-CARDS-SYNC` is executed by the owner on
+the Topaz host, not in this repository (the receiving endpoint
+`/fuel/api/card_sync` already exists here).
+
+
 ### SP-CATALOG-UNIFY-001 — One form for a catalogue position and its first variant (PR #30)
 
 Status: merged `b5bb950`, validated on staging before the merge.
@@ -702,7 +867,7 @@ Changes made:
 ### FUEL-REPORT-012H-C - Topaz card directory sync
 
 Priority: P1
-Status: **completed 2026-06-24 (production)**
+Status: **completed 2026-06-24 (production)**; folded into FUEL-CARDS-SYNC (same work, one code)
 
 Changes made:
 - Added fuel_cards / fuel_card_aliases / fuel_card_sync_logs, /fuel/api/card_sync, /fuel/cards page, card-name column in the station-issues report, language-correct Excel, Cyrillic card search.
@@ -1444,7 +1609,7 @@ has a `№` rank column and its `.xlsx` does not.
 ### UI-ACCENT-DUP-001 — `--vs-info` is the same colour as `--vs-primary`
 
 Priority: P3
-Status: open
+Status: **CLOSED 2026-07-28 by FUEL-BIG-001** (`d0565fa`) — see the section above
 
 In `design-system.css` `--vs-info` is `#2563eb`, identical to `--vs-primary`,
 and `--vs-info-bg` (`#eaf1fe`) is identical to `--vs-primary-soft`. The five
@@ -1547,7 +1712,7 @@ Investigate DNS resolution on the server rather than the bot code.
 ### FUEL-NAV-002 — Back-links superseded by the module navigation strip
 
 Priority: P3
-Status: open
+Status: **CLOSED 2026-07-28 by FUEL-BIG-001** (`930d179`) — see the section above
 
 `F1.1` put the navigation strip on all fourteen fuel pages and removed the
 duplicated button row from the dashboard, but eleven pages still carry
@@ -1572,7 +1737,7 @@ its back-link as part of the rebuild.
 ### UI-TILE-HOVER-001 — `a:hover` underlines the text of design-system report tiles
 
 Priority: P3
-Status: open
+Status: **CLOSED 2026-07-28 by FUEL-BIG-001** (`e2967df`) — shared rule landed, scoped override dropped
 
 `design-system.css` has `a:hover { color: var(--vs-primary-hover);
 text-decoration: underline; }` at specificity 0,1,1, which outweighs
@@ -1595,7 +1760,7 @@ When the shared fix lands, drop that override.
 ### FUEL-FAVICON-404 — `favicon.ico` answers 404 on every page
 
 Priority: P4
-Status: open
+Status: **CLOSED 2026-07-28 by FUEL-BIG-001** (`e8281ab`)
 
 Seen in the network tab on staging 2026-07-26 while checking
 `FUEL-REPORTS-HUB-016`: the browser's automatic `/favicon.ico` request returns 404
@@ -1608,7 +1773,7 @@ whoever owns it rather than to the fuel track.
 ### UI-SIDEBAR-GATE-001 — The sidebar offers modules the user cannot open
 
 Priority: P3
-Status: open
+Status: **CLOSED 2026-07-28 by FUEL-BIG-001** (`aad0cdb`)
 
 Observed on staging 2026-07-25 while validating `FUEL-ACL-001`: a non-admin user
 without fuel module access sees «АЗС» in the sidebar «Модули» section, and every
@@ -1655,7 +1820,7 @@ is not in the release diff, so this is pre-existing.
 ### UI-FONT-LOCAL-001 - Self-host Golos Text, drop the external font CDN
 
 Priority: P2 (raised from P3 after runtime evidence)
-Status: backlog
+Status: **CLOSED 2026-07-28 by FUEL-BIG-001** (`687927b`) — resolved by removing the external font (system stack), no self-hosted binaries
 
 - `templates/base_next.html` lines 13-16 preconnect to `fonts.googleapis.com` /
   `fonts.gstatic.com` and pull `Golos Text` as a stylesheet on EVERY page load.
@@ -1906,7 +2071,7 @@ returned) is recorded — an ordinary `FuelReceipt2` or a distinct operation typ
 ### FUEL-LEDGER-001 - Warehouse ledger (chronological movements with a running balance)
 
 Priority: P1
-Status: **next candidate for the AZS/fuel track**
+Status: **CLOSED 2026-07-28 by FUEL-BIG-001** (`a705396`…`18eac98`) — see the section above
 
 There is no screen showing every movement of one warehouse in chronological
 order. The data lives on four separate pages — `/fuel/initial-balance`,
@@ -1964,7 +2129,7 @@ first-class entity with a change history.
 ### FUEL-SHIFT-001 - Operator shift with closing
 
 Priority: P3
-Status: backlog
+Status: **counter-mismatch capture CLOSED 2026-07-28 by FUEL-BIG-001** (`747d6ad`…`8025d76`); the full shift-with-closing concept stays future work
 
 AZS-industry reporting is built around the operator's shift: open, close,
 reconcile the pump counters against the software figure. We have no such concept.
@@ -1996,7 +2161,7 @@ in 2024-11 — consistent with the site going quiet, not with a sync fault.
 ### UI-CARD-NAME - Show card display_name instead of the raw number
 
 Priority: P2
-Status: backlog
+Status: **CLOSED 2026-07-28 by FUEL-BIG-001** (`9d62b4c`) — issues journal; the balance report has no card column (backlog wording was wrong)
 
 The balance report and the exports print the raw `card_number` (`3978`) instead
 of the `display_name` from the directory (`VIP_ИЖОРА ВОБКЕНТ`), although the
@@ -2079,7 +2244,7 @@ handler. Deliberately out of scope for a one-hunk fix.
 ### FUEL-CARDS-SYNC - Automate Topaz card directory sync to production
 
 Priority: P2
-Status: backlog
+Status: backlog — absorbs FUEL-REPORT-012H-C (one code for the same work); executed by the owner on the Topaz host, not in this repository
 
 - Source: Topaz Firebird dcCards (CardID/Name/Code/PartnerID/Enabled/CarNumber/CarModel/TransactionID) on 10.103.40.140.
 - Verified loader exists on Topaz host: topaz_send_cards_to_staging.py (uses topaz_agent.get_connection + API_TOKEN; POST /fuel/api/card_sync, batched 500).

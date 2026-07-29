@@ -1,0 +1,118 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}АЗС — {{ 'Реестр выдачи топлива по картам' if is_ru else 'Карталар бўйича ёқилғи бериш реестри' }}{% endblock %}
+{% block content %}
+{% include 'fuel/_fuel_nav.html' %}
+
+{# F2.4 · FUEL-REPORTS-FINISH-007 — detail per card: which card, when, how
+   much, at which station, on which vehicle if known. Grouped by card with a
+   per-card subtotal and a period total. Names/vehicles via the card
+   directory; unknown cards group under their raw number at the end. #}
+<style>
+.card-issues-table { width:100%; font-size:14px; }
+.card-issues-group { background:#f0f9f0; font-weight:600; color:#166534; }
+.fuel-print-footer { display:none; }
+@media print {
+  @page { size: A4 landscape; margin: 12mm 10mm 16mm; }
+  body { background:#fff; }
+  .vs-sidebar, .vs-topbar, .vs-side-backdrop, .vs-skip-link, .fuel-nav,
+  .fuel-no-print, .vs-alert { display:none !important; }
+  .vs-content { padding:0; max-width:none; }
+  .card { box-shadow:none; border-color:#bbb; }
+  table { font-size:10px; white-space:normal !important; }
+  table thead { display:table-header-group; }
+  .fuel-print-footer { display:block !important; position:fixed; bottom:0; left:0; right:0;
+    text-align:center; font-size:10px; color:#444; }
+}
+</style>
+<div class="fuel-print-footer">{{ 'Реестр выдачи топлива по картам' if is_ru else 'Карталар бўйича ёқилғи бериш реестри' }} — {{ start_date.strftime('%d.%m.%Y') }}{% if period.start_time != '00:00' %} {{ period.start_time }}{% endif %} — {{ end_date.strftime('%d.%m.%Y') }}{% if period.end_time != '23:59' %} {{ period.end_time }}{% endif %}</div>
+
+<div class="page-header">
+    <div>
+        <h1>{{ 'Реестр выдачи топлива по картам' if is_ru else 'Карталар бўйича ёқилғи бериш реестри' }}</h1>
+        <p class="text-muted">{{ 'Каждая выдача за период, сгруппированная по карте: когда, сколько, на какой АЗС и на какой машине, если она известна.' if is_ru else 'Давр учун ҳар бир бериш, карта бўйича группаланган: қачон, қанча, қайси АЗСда ва машина маълум бўлса — қайси машинада.' }}</p>
+    </div>
+</div>
+
+{# QA fix 45 — permanent note: this register counts every litre dispensed
+   through our columns, so its total exceeds the balance report's «Выдача
+   Topaz» by exactly the third-party fuel, which does not form part of
+   warehouse balances. Without the note the first manager comparing the two
+   reports finds a phantom "shortfall". #}
+<div class="card" style="margin-bottom:16px; border-left:3px solid var(--info);">
+    <div class="card-body" style="padding:12px 16px; font-size:13px; color:var(--info);">
+        {{ 'В итоги входит стороннее топливо, выданное через наши колонки: оно не входит в остатки складов, поэтому итог здесь больше «Выдачи Topaz» в отчёте по остаткам ровно на сумму стороннего топлива. Источник складских остатков — ' if is_ru else 'Якунларга бизнинг колонкалар орқали берилган бегона ёқилғи ҳам киради: у омбор қолдиқларига кирмайди, шунинг учун бу ердаги якун қолдиқлар ҳисоботидаги «Topaz бериш»дан айнан бегона ёқилғи суммасига кўп. Омбор қолдиқлари манбаи — ' }}<a href="{{ url_for('fuel.balance_report') }}">{{ 'отчёт по остаткам' if is_ru else 'қолдиқлар ҳисоботи' }}</a>.
+    </div>
+</div>
+
+<div class="card fuel-no-print" style="margin-bottom:16px; padding:16px;">
+    <form method="get" action="{{ url_for('fuel.card_issues_report') }}"
+          style="display:flex; flex-direction:column; gap:12px;">
+        {% include 'fuel/_period_picker.html' %}
+        <div style="display:flex; gap:8px;">
+            <button type="submit" class="btn btn-primary">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+            <a class="btn btn-secondary"
+               href="{{ url_for('fuel.card_issues_export', start_date=period.start_date, end_date=period.end_date, start_time=period.start_time, end_time=period.end_time) }}">Excel</a>
+        </div>
+    </form>
+</div>
+
+{% if not groups %}
+<div class="vs-empty">
+    <div class="vs-empty-title">{{ 'За выбранный период выдач нет' if is_ru else 'Танланган даврда беришлар йўқ' }}</div>
+    <p class="vs-empty-sub">{{ 'Измените период или проверьте синхронизацию Topaz.' if is_ru else 'Даврни ўзгартиринг ёки Topaz синхронизациясини текширинг.' }}</p>
+</div>
+{% else %}
+
+<div class="stats-grid fuel-no-print" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); margin-bottom:16px;">
+    <div class="stat-card"><div class="label">{{ 'Карт' if is_ru else 'Карталар' }}</div><div class="value">{{ total.cards }}</div></div>
+    <div class="stat-card"><div class="label">{{ 'Выдач' if is_ru else 'Беришлар' }}</div><div class="value">{{ total.count }}</div></div>
+    <div class="stat-card"><div class="label">{{ 'Итого литров' if is_ru else 'Жами литр' }}</div><div class="value" style="color:var(--danger);">{{ '%.2f'|format(total.litres) }} л</div></div>
+    <div class="stat-card"><div class="label">{{ 'в т.ч. стороннее топливо' if is_ru else 'шу жумладан бегона ёқилғи' }}</div><div class="value" style="color:var(--text2);">{{ '%.2f'|format(external_litres) }} л</div><div class="text-muted text-xs">{{ 'не входит в остатки складов' if is_ru else 'омбор қолдиқларига кирмайди' }}</div></div>
+</div>
+
+<div class="card" style="overflow:hidden;">
+    <div class="card-header">
+        <span>{{ start_date.strftime('%d.%m.%Y') }}{% if period.start_time != '00:00' %} {{ period.start_time }}{% endif %} — {{ end_date.strftime('%d.%m.%Y') }}{% if period.end_time != '23:59' %} {{ period.end_time }}{% endif %}</span>
+    </div>
+    <div style="overflow-x:auto;">
+        <table class="card-issues-table">
+            <thead>
+                <tr>
+                    <th>№</th>
+                    <th>{{ 'Дата/время' if is_ru else 'Сана/вақт' }}</th>
+                    <th>АЗС</th>
+                    <th>{{ 'Машина' if is_ru else 'Машина' }}</th>
+                    <th class="text-right">{{ 'Выдано топлива, л' if is_ru else 'Берилган ёқилғи, л' }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for g in groups %}
+                <tr class="card-issues-group">
+                    <td colspan="5" style="padding:6px 10px;">
+                        {{ g.display_name or ((('карта без имени (' if is_ru else 'номсиз карта (') ~ (g.card_number or '—') ~ ')')) }}
+                        {%- if g.car_number or g.car_model %} · {{ [g.car_number, g.car_model]|select|join(' ') }}{% endif %}
+                        — {{ g.count }} {{ 'выдач' if is_ru else 'бериш' }}, {{ '%.2f'|format(g.litres) }} л
+                    </td>
+                </tr>
+                {% for t_ in g.txns %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td class="text-sm">{{ t_.txn_datetime.strftime('%d.%m.%Y %H:%M') }}</td>
+                    <td>{{ t_.station.name if t_.station else '—' }}</td>
+                    <td class="text-sm text-muted">{{ [g.car_number, g.car_model]|select|join(' ') or '—' }}</td>
+                    <td class="text-right" style="font-weight:600; color:var(--danger);">{{ '%.2f'|format(t_.quantity or 0) }}</td>
+                </tr>
+                {% endfor %}
+                {% endfor %}
+                <tr style="font-weight:700; background:#fefce8;">
+                    <td colspan="4" style="text-align:right; padding:8px 10px;">{{ 'ВСЕГО' if is_ru else 'ЖАМИ' }}</td>
+                    <td class="text-right" style="padding:8px 10px;">{{ '%.2f'|format(total.litres) }} л</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
