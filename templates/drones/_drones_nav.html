@@ -1,0 +1,10 @@
+{# Shared navigation row of the drones module (DRONE-004): one pattern on
+   all three pages, the current page marked. /drones/ stays the landing
+   page; promoting the summary is the owner's one-line decision later. #}
+{% set nav_is_ru = (lang == 'ru') %}
+{% set nav_current = request.endpoint or '' %}
+<div class="vs-row vs-mb" style="gap:8px; flex-wrap:wrap;">
+  <a href="{{ url_for('drones.summary') }}" class="vs-btn{% if nav_current == 'drones.summary' %} vs-btn-primary{% endif %}">{{ 'Сводка' if nav_is_ru else 'Жамланма' }}</a>
+  <a href="{{ url_for('drones.index') }}" class="vs-btn{% if nav_current == 'drones.index' %} vs-btn-primary{% endif %}">{{ 'Вылеты' if nav_is_ru else 'Парвозлар' }}</a>
+  <a href="{{ url_for('drones.units') }}" class="vs-btn{% if nav_current == 'drones.units' %} vs-btn-primary{% endif %}">{{ 'Машины' if nav_is_ru else 'Машиналар' }}</a>
+</div>

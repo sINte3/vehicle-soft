@@ -2,14 +2,12 @@
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Дроны — вылеты' if is_ru else 'Дронлар — парвозлар' }}{% endblock %}
 {% block content %}
+{% include 'drones/_drones_nav.html' %}
 
 <div class="vs-hero vs-mb">
   <div>
     <div class="vs-hero-title">{{ 'Вылеты дронов' if is_ru else 'Дронлар парвозлари' }}</div>
     <div class="vs-hero-sub">{{ 'Журнал вылетов DJI Agras: фильтруйте по датам, машине и области. Время показано в поясе UTC+5.' if is_ru else 'DJI Agras парвозлари журнали: сана, машина ва вилоят бўйича сараланг. Вақт Тошкент вақтида кўрсатилган.' }}</div>
-  </div>
-  <div class="vs-row-end">
-    <a href="{{ url_for('drones.units') }}" class="vs-btn">{{ 'Машины' if is_ru else 'Машиналар' }}</a>
   </div>
 </div>
 
