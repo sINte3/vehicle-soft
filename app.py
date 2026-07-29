@@ -42,6 +42,7 @@ from excel_daily_activity import generate_daily_activity
 from translations import TRANS
 from spare_parts import spare_parts_bp
 from work_orders import work_orders_bp
+from drones import drones_bp
 # BOT001: Telegram foundation blueprint
 from bot_api import bot_api_bp
 from bot_security import generate_link_code, hash_secret, utcnow
@@ -2817,6 +2818,12 @@ def create_app():
     # [REASON]: Phase 1 routes use @login_required + inline role/org checks and
     # standard CSRF-protected browser forms (GET API endpoints need no exemption).
     app.register_blueprint(work_orders_bp)
+
+    # ─── DRONES (DRONE-001) ───────────────────────────────────────────────────
+    # [REASON]: read-only foundation routes only; every route carries
+    # @module_required('drones'), so the admin permission toggles are enforced
+    # at the route, not just at the sidebar link.
+    app.register_blueprint(drones_bp)
 
     # ─── BOT001: Telegram Bot API ─────────────────────────────────────────────
     # [REASON]: bot_api_bp provides /api/bot/* endpoints. Registered after spare_parts_bp.

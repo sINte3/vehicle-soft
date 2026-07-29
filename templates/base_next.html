@@ -128,6 +128,21 @@
       </a>
       {% endif %}
 
+      {# [REASON]: DRONE-001 — same permission that gates the routes: without
+         this check a user lacking the drones permission sees the link, clicks
+         it and gets 403 (no data exposed, but a misleading affordance).
+         has_module_access returns True unconditionally for administrators, so
+         no administrator loses the link. Same pattern as the fuel gate above
+         (UI-SIDEBAR-GATE-001). #}
+      {% if current_user.has_module_access('drones') %}
+      <a href="{{ url_for('drones.index') }}" class="vs-side-link{% if current and current.startswith('drones.') %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="5" r="2.5"/><circle cx="19" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M7.2 7.2l2.3 2.3M16.8 7.2l-2.3 2.3M7.2 16.8l2.3-2.3M16.8 16.8l-2.3-2.3"/></svg>
+        </span>
+        <span class="vs-side-label">{{ 'Дроны' if g.lang == 'ru' else 'Дронлар' }}</span>
+      </a>
+      {% endif %}
+
       <a href="{{ url_for('wialon_index') }}" class="vs-side-link{% if current and current.startswith('wialon') %} is-active{% endif %}">
         <span class="vs-side-icon">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10z"/></svg>
