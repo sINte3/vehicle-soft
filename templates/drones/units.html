@@ -1,0 +1,74 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Дроны — машины' if is_ru else 'Дронлар — машиналар' }}{% endblock %}
+{% block content %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Машины' if is_ru else 'Машиналар' }}</div>
+    <div class="vs-hero-sub">{{ 'Парк DJI Agras: номер — идентичность машины, ники DJI — сменяемые ярлыки, сгруппированы по машине.' if is_ru else 'DJI Agras парки: рақам — машинанинг идентитети, DJI никлари — ўзгарувчан ёрлиқлар, машина бўйича гуруҳланган.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('drones.index') }}" class="vs-btn">{{ 'Вылеты' if is_ru else 'Парвозлар' }}</a>
+  </div>
+</div>
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Список машин' if is_ru else 'Машиналар рўйхати' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'Всего' if is_ru else 'Жами' }}: {{ units|length }}</span>
+  </div>
+  {% if units %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th style="width:70px;">№</th>
+        <th>{{ 'Модель' if is_ru else 'Модель' }}</th>
+        <th>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
+        <th>{{ 'Ники (DJI)' if is_ru else 'Никлар (DJI)' }}</th>
+        <th>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in units %}
+      <tr>
+        <td style="font-weight:700;">№ {{ u.number }}</td>
+        <td>{{ u.model or '—' }}</td>
+        <td class="vs-muted">{{ (u.organization.short_name or u.organization.name) if u.organization else '—' }}</td>
+        <td>
+          {% set unit_nicks = nicknames_by_unit.get(u.id, []) %}
+          {% if unit_nicks %}
+          <span class="vs-row" style="gap:6px; flex-wrap:wrap;">
+            {% for n in unit_nicks %}
+            <span class="vs-badge">{{ n.nickname }}</span>
+            {% endfor %}
+          </span>
+          {% else %}
+          <span class="vs-muted">—</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if u.is_excluded %}
+          <span class="vs-badge vs-badge-warning">{{ 'Исключена из отчётности' if is_ru else 'Ҳисоботдан чиқарилган' }}{% if u.excluded_from %} · {{ u.excluded_from.strftime('%d.%m.%Y') }}{% endif %}</span>
+          {% elif not u.is_active %}
+          <span class="vs-badge">{{ 'Неактивна' if is_ru else 'Фаол эмас' }}</span>
+          {% else %}
+          <span class="vs-badge vs-badge-success">{{ 'Активна' if is_ru else 'Фаол' }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-ico">🚁</div>
+    <div class="vs-empty-title">{{ 'Машины не заведены' if is_ru else 'Машиналар киритилмаган' }}</div>
+    <div class="vs-empty-sub">{{ 'Запустите миграцию DRONES_FOUNDATION_001 — она заводит 15 машин и карту ников.' if is_ru else 'Дронлар фундаменти миграцияси ҳали қўлланилмаган — у 15 машина ва никлар харитасини киритади.' }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}
