@@ -9,6 +9,9 @@
     <div class="vs-hero-title">{{ 'Вылеты дронов' if is_ru else 'Дронлар парвозлари' }}</div>
     <div class="vs-hero-sub">{{ 'Журнал вылетов DJI Agras: фильтруйте по датам, машине и области. Время показано в поясе UTC+5.' if is_ru else 'DJI Agras парвозлари журнали: сана, машина ва вилоят бўйича сараланг. Вақт Тошкент вақтида кўрсатилган.' }}</div>
   </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('drones.flights_xlsx', **filter_args) }}" class="vs-btn vs-btn-success">Excel</a>
+  </div>
 </div>
 
 <div class="vs-card vs-mb">

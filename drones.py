@@ -970,3 +970,72 @@ def summary_xlsx():
                    bold_rows=(ws.max_row,))
 
     return _drone_xlsx_response(wb, 'drones_summary', filters)
+
+
+@drones_bp.route('/flights.xlsx')
+@module_required('drones')
+def flights_xlsx():
+    """Flat one-sheet export of the flight list, honouring its filters."""
+    from openpyxl import Workbook
+
+    filters = _drone_filters_from_args(request.args,
+                                       default_current_month=False)
+    conds = _drone_flight_conditions(filters)
+
+    total = (db.session.query(func.count(DroneFlight.id))
+             .filter(*conds).scalar() or 0)
+    if total > DRONE_FLIGHTS_XLSX_CAP:
+        # [REASON]: a silently truncated file reads as complete data on the
+        # other side of an e-mail -- refuse with a clear message instead.
+        flash(_drone_t(
+            'Экспорт жуда катта: %d та парвоз, чегара — %d. '
+            'Даврни торайтиринг.',
+            'Экспорт слишком велик: %d вылетов при пределе %d. '
+            'Сузьте период.') % (total, DRONE_FLIGHTS_XLSX_CAP), 'warning')
+        return redirect(url_for('drones.index', **_drone_link_args(filters)))
+
+    flights = (DroneFlight.query.filter(*conds)
+               .options(joinedload(DroneFlight.drone_unit))
+               .order_by(DroneFlight.started_at.desc())
+               .all())
+    usage_labels = _drone_usage_labels()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = _drone_t('Парвозлар', 'Вылеты')
+    ws.append([
+        _drone_t('Сана ва вақт (Тошкент)', 'Дата и время (UTC+5)'),
+        _drone_t('Машина (№)', 'Машина (№)'),
+        _drone_t('Ник (DJI)', 'Ник (DJI)'),
+        _drone_t('Вилоят', 'Область'),
+        _drone_t('Манзил', 'Адрес'),
+        _drone_t('Гектар', 'Гектары'),
+        _drone_t('Дақиқа', 'Минуты'),
+        _drone_t('Литр', 'Литры'),
+        _drone_t('Килограмм', 'Килограммы'),
+        _drone_t('Иш тури', 'Тип работы'),
+        'DJI id',
+    ])
+    for f in flights:
+        usage_label = usage_labels.get(f.usage_type)
+        if usage_label is None and f.usage_type is not None:
+            usage_label = str(f.usage_type)
+        ws.append([
+            (f.started_at + DRONE_DISPLAY_UTC_OFFSET)
+            if f.started_at else None,
+            f.drone_unit.number if f.drone_unit else None,
+            _drone_xlsx_safe(f.nickname_raw),
+            _drone_xlsx_safe(f.region),
+            _drone_xlsx_safe(f.location_text),
+            f.area_ha,
+            (f.work_seconds / 60.0) if f.work_seconds is not None else None,
+            f.spray_liters,
+            f.sow_kg,
+            usage_label,
+            f.dji_flight_id,
+        ])
+    st = _drone_xlsx_styler()
+    st.style_table(ws,
+                   num_formats={6: '0.00', 7: '0.0', 8: '0.00', 9: '0.000'},
+                   datetime_format={1: 'DD.MM.YYYY HH:MM'})
+    return _drone_xlsx_response(wb, 'drones_flights', filters)
