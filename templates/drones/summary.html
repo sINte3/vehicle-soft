@@ -1,0 +1,275 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Дроны — сводка' if is_ru else 'Дронлар — жамланма' }}{% endblock %}
+{% block content %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Сводка по дронам' if is_ru else 'Дронлар жамланмаси' }}</div>
+    <div class="vs-hero-sub">{{ 'Итоги за период: машины, области, типы работ, месяцы. Каждая таблица сверяется с общим итогом; нераспознанные вылеты показаны отдельной строкой.' if is_ru else 'Давр якунлари: машиналар, вилоятлар, иш турлари, ойлар. Ҳар бир жадвал умумий якун билан солиштирилади; аниқланмаган парвозлар алоҳида қатор билан кўрсатилади.' }}</div>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <form method="get" action="{{ url_for('drones.summary') }}" class="vs-form-row">
+      <div class="vs-field" style="width:160px;">
+        <label class="vs-label" for="sumDateFrom">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
+        <input type="date" name="date_from" id="sumDateFrom" class="vs-input" value="{{ filters.date_from_s }}">
+      </div>
+      <div class="vs-field" style="width:160px;">
+        <label class="vs-label" for="sumDateTo">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
+        <input type="date" name="date_to" id="sumDateTo" class="vs-input" value="{{ filters.date_to_s }}">
+      </div>
+      <div class="vs-field" style="min-width:180px;">
+        <label class="vs-label" for="sumUnitFilter">{{ 'Машина' if is_ru else 'Машина' }}</label>
+        <select name="unit_id" id="sumUnitFilter" class="vs-select">
+          <option value="">{{ '— все машины —' if is_ru else '— барча машиналар —' }}</option>
+          {% for u in units %}
+          <option value="{{ u.id }}" {% if filters.unit_id == u.id %}selected{% endif %}>№ {{ u.number }}{% if u.model %} — {{ u.model }}{% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:180px;">
+        <label class="vs-label" for="sumRegionFilter">{{ 'Область' if is_ru else 'Вилоят' }}</label>
+        <select name="region" id="sumRegionFilter" class="vs-select">
+          <option value="">{{ '— все области —' if is_ru else '— барча вилоятлар —' }}</option>
+          {% for r in regions %}
+          <option value="{{ r }}" {% if filters.region == r %}selected{% endif %}>{{ r }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Вылетов' if is_ru else 'Парвозлар' }}</div>
+    <div class="vs-stat-value">{{ data.totals.flights }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Гектаров' if is_ru else 'Гектар' }}</div>
+    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.area_ha) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Часов в воздухе' if is_ru else 'Ҳавода соат' }}</div>
+    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.hours) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Литров раствора' if is_ru else 'Литр эритма' }}</div>
+    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.spray_liters) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Кг посева' if is_ru else 'Кг уруғ' }}</div>
+    <div class="vs-stat-value">{{ '%.3f'|format(data.totals.sow_kg) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Вылетов с нулевой площадью' if is_ru else 'Ноль майдонли парвозлар' }}</div>
+    <div class="vs-stat-value">{{ data.totals.zero_area }}</div>
+  </div>
+</div>
+
+{% set t_flights = 'Вылеты' if is_ru else 'Парвозлар' %}
+{% set t_area = 'Гектары' if is_ru else 'Гектар' %}
+{% set t_share = 'Доля, %' if is_ru else 'Улуш, %' %}
+{% set t_total = 'Итого' if is_ru else 'Жами' %}
+{% set t_empty = 'Нет данных за период' if is_ru else 'Даврда маълумот йўқ' %}
+{% set mismatch_text = 'Сумма таблицы не сходится с общим итогом — расхождение показано, а не скрыто. Сообщите об этом.' if is_ru else 'Жадвал йиғиндиси умумий якунга тўғри келмайди — фарқ яширилмасдан кўрсатилган. Бу ҳақда хабар беринг.' %}
+
+{# ── По машинам ─────────────────────────────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'По машинам' if is_ru else 'Машиналар бўйича' }}</span>
+  </div>
+  {% if not data.by_machine.reconciled %}<div class="vs-alert is-danger">{{ mismatch_text }}</div>{% endif %}
+  {% if data.by_machine.rows or data.by_machine.unattributed %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Машина' if is_ru else 'Машина' }}</th>
+        <th class="right">{{ t_flights }}</th>
+        <th class="right">{{ t_area }}</th>
+        <th class="right">{{ t_share }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in data.by_machine.rows %}
+      <tr>
+        <td style="font-weight:700;"><a href="{{ url_for('drones.index', unit_id=r.unit_id, **link_args) }}">№ {{ r.number }}</a></td>
+        <td class="right">{{ r.flights }}</td>
+        <td class="right">{{ '%.2f'|format(r.area) }}</td>
+        <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
+      </tr>
+      {% endfor %}
+      {% if data.by_machine.unattributed %}
+      <tr>
+        <td><span class="vs-badge vs-badge-warning">{{ 'Не распознано' if is_ru else 'Аниқланмаган' }}</span></td>
+        <td class="right">{{ data.by_machine.unattributed.flights }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_machine.unattributed.area) }}</td>
+        <td class="right vs-muted">{{ '%.1f'|format(data.by_machine.unattributed.share) }}</td>
+      </tr>
+      {% endif %}
+      <tr style="font-weight:700;">
+        <td>{{ t_total }}</td>
+        <td class="right">{{ data.by_machine.total.flights }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_machine.total.area) }}</td>
+        <td class="right">100.0</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ t_empty }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{# ── По областям ───────────────────────────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'По областям' if is_ru else 'Вилоятлар бўйича' }}</span>
+  </div>
+  {% if not data.by_region.reconciled %}<div class="vs-alert is-danger">{{ mismatch_text }}</div>{% endif %}
+  {% if data.by_region.rows or data.by_region.undetermined %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Область' if is_ru else 'Вилоят' }}</th>
+        <th class="right">{{ t_flights }}</th>
+        <th class="right">{{ t_area }}</th>
+        <th class="right">{{ t_share }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in data.by_region.rows %}
+      <tr>
+        <td><a href="{{ url_for('drones.index', region=r.region, **link_args) }}">{{ r.region }}</a></td>
+        <td class="right">{{ r.flights }}</td>
+        <td class="right">{{ '%.2f'|format(r.area) }}</td>
+        <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
+      </tr>
+      {% endfor %}
+      {% if data.by_region.undetermined %}
+      <tr>
+        <td><span class="vs-badge vs-badge-warning">{{ 'Область не определена' if is_ru else 'Вилоят аниқланмаган' }}</span></td>
+        <td class="right">{{ data.by_region.undetermined.flights }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_region.undetermined.area) }}</td>
+        <td class="right vs-muted">{{ '%.1f'|format(data.by_region.undetermined.share) }}</td>
+      </tr>
+      {% endif %}
+      <tr style="font-weight:700;">
+        <td>{{ t_total }}</td>
+        <td class="right">{{ data.by_region.total.flights }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_region.total.area) }}</td>
+        <td class="right">100.0</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ t_empty }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{# ── По типам работ ────────────────────────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'По типам работ' if is_ru else 'Иш турлари бўйича' }}</span>
+  </div>
+  {% if not data.by_usage.reconciled %}<div class="vs-alert is-danger">{{ mismatch_text }}</div>{% endif %}
+  {% if data.by_usage.rows %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Тип работы' if is_ru else 'Иш тури' }}</th>
+        <th class="right">{{ t_flights }}</th>
+        <th class="right">{{ t_area }}</th>
+        <th class="right">{{ t_share }}</th>
+        <th class="right">{{ 'Литров' if is_ru else 'Литр' }}</th>
+        <th class="right">{{ 'Килограммов' if is_ru else 'Килограмм' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in data.by_usage.rows %}
+      <tr>
+        <td>{{ r.label }}</td>
+        <td class="right">{{ r.flights }}</td>
+        <td class="right">{{ '%.2f'|format(r.area) }}</td>
+        <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
+        <td class="right">{% if r.spray_liters is not none %}{{ '%.2f'|format(r.spray_liters) }}{% else %}—{% endif %}</td>
+        <td class="right">{% if r.sow_kg is not none %}{{ '%.3f'|format(r.sow_kg) }}{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+      <tr style="font-weight:700;">
+        <td>{{ t_total }}</td>
+        <td class="right">{{ data.by_usage.total.flights }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_usage.total.area) }}</td>
+        <td class="right">100.0</td>
+        <td class="right">—</td>
+        <td class="right">—</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ t_empty }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{# ── По месяцам ────────────────────────────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'По месяцам' if is_ru else 'Ойлар бўйича' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'календарные месяцы, UTC+5' if is_ru else 'календарь ойлари, Тошкент вақти' }}</span>
+  </div>
+  {% if not data.by_month.reconciled %}<div class="vs-alert is-danger">{{ mismatch_text }}</div>{% endif %}
+  {% if data.by_month.rows %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Месяц' if is_ru else 'Ой' }}</th>
+        <th class="right">{{ t_flights }}</th>
+        <th class="right">{{ t_area }}</th>
+        <th class="right">{{ t_share }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in data.by_month.rows %}
+      <tr>
+        <td style="font-weight:600;">{{ r.month }}</td>
+        <td class="right">{{ r.flights }}</td>
+        <td class="right">{{ '%.2f'|format(r.area) }}</td>
+        <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
+      </tr>
+      {% endfor %}
+      <tr style="font-weight:700;">
+        <td>{{ t_total }}</td>
+        <td class="right">{{ data.by_month.total.flights }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_month.total.area) }}</td>
+        <td class="right">100.0</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ t_empty }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}
