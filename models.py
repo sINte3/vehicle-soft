@@ -1716,6 +1716,14 @@ class DroneSyncLog(db.Model):
     records_written == records_seen (verified: all 520 rows of its sync_runs),
     so the log could not answer whether new data had arrived. These five
     counters must never be collapsed into two.
+
+    Counter relations (DRONE-002 QA): records_seen = records_new +
+    records_duplicate + records_error, and records_unresolved is a SUBSET
+    of records_new (unresolved <= new) -- an unattributed flight is still
+    a stored flight, and it becomes attributed later without the log
+    changing. A rolled-back batch records new = duplicate = unresolved = 0
+    and errors = seen: the log must never claim rows that are not in the
+    table.
     """
     __tablename__ = 'drone_sync_logs'
     id                 = db.Column(db.Integer, primary_key=True)

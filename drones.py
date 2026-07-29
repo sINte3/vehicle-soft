@@ -274,6 +274,19 @@ def _drone_resolve_unit(nickname, exact, normalized):
 
 @drones_bp.route('/api/flight_sync', methods=['POST'])
 def api_flight_sync():
+    """Ingest a batch of raw DJI flight payloads.
+
+    Counter semantics (also stated on the DroneSyncLog model): every seen
+    flight lands in exactly one of new / duplicates / errors, so
+
+        seen = new + duplicates + errors
+
+    `new` counts every row that entered the table -- it is the answer to
+    "did data arrive". `unresolved` is a SUBSET of `new`, not a sibling
+    bucket (unresolved <= new): rows stored with an unrecognised nickname
+    and drone_unit_id NULL. A batch-level failure rolls everything back
+    and reports new = duplicates = unresolved = 0, errors = seen.
+    """
     payload = request.get_json(force=True, silent=True)
     token = extract_token(payload)
     # [REASON]: a missing DRONE_API_TOKEN must DENY, never accept --
@@ -401,10 +414,15 @@ def api_flight_sync():
                     duplicates += 1
                     continue
                 existing.add(fid)
+                # [REASON]: `new` counts every row that entered the table,
+                # whether or not its nickname resolved -- it is the answer
+                # to "did data arrive". `unresolved` is a SUBSET of `new`,
+                # not a sibling bucket: an unattributed flight is still a
+                # stored flight, and it becomes attributed later without
+                # the log changing.
+                new += 1
                 if unit_id is None:
                     unresolved += 1
-                else:
-                    new += 1
             except Exception as exc:
                 # [REASON]: a row that fails to parse increments errors and
                 # is recorded, but never aborts the batch -- the rest of the
@@ -423,12 +441,17 @@ def api_flight_sync():
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
-        log.records_new = new
-        log.records_duplicate = duplicates
-        log.records_unresolved = unresolved
-        log.records_error = errors
+        # [REASON]: the rollback above discarded every row of this batch,
+        # so the counters must say so. Recording the in-flight values here
+        # would leave a log claiming N new rows that do not exist -- worse
+        # than no log at all. records_seen stays: what was submitted is
+        # still true.
+        log.records_new = 0
+        log.records_duplicate = 0
+        log.records_unresolved = 0
+        log.records_error = len(flights)
         log.status = 'error'
-        log.error_text = str(exc)
+        log.error_text = ('batch rolled back, nothing was stored: %s' % exc)
         log.finished_at = datetime.utcnow()
         db.session.commit()
         return jsonify(status='error', log_id=log.id, error=str(exc)), 500
