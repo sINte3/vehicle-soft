@@ -18,7 +18,15 @@ Prints, in order:
   - on Windows only (os.name == 'nt'): the state of the six services
     TransportReport, TransportReportStaging, TransportBot,
     TransportBotStaging, TransportBot003, TransportBot003Staging
-    via sc query.
+    via a single Get-Service PowerShell call. NOT sc query
+    (TOOLS-SNAPSHOT-LOCALE-001): sc.exe prints its labels in the OS
+    display language -- on a ru-RU server the state label is Cyrillic --
+    so a substring search for the English label matched nothing and every
+    service, running or stopped, printed the same "(no STATE line)"
+    placeholder. sc.exe also writes in the OEM code page, which the UTF-8
+    decode in _run() would mangle. Get-Service's Status is the .NET
+    ServiceControllerStatus enum and renders in English (Running,
+    Stopped, StartPending, ...) regardless of the display language.
 
 Every step is independent: a failure (missing database, missing service,
 git error) is printed and the snapshot continues -- a broken step must not
@@ -131,23 +139,30 @@ def section_services():
     if os.name != 'nt':
         _emit('services      : skipped (not Windows, os.name=%r)' % os.name)
         return
-    _emit('services (sc query):')
+    _emit('services (Get-Service):')
+    # [REASON]: TOOLS-SNAPSHOT-LOCALE-001 -- sc.exe labels the state line in the
+    # OS display language ("СОСТОЯНИЕ" on a ru-RU server), so the previous
+    # substring search for "STATE" never matched and every service, running or
+    # stopped, printed the same "(no STATE line)". Get-Service returns the .NET
+    # ServiceControllerStatus enum, which is not localised. One call for all six
+    # services: six PowerShell start-ups cost seconds each.
+    names = ','.join("'%s'" % n for n in SERVICES)
+    script = ("Get-Service -Name %s -ErrorAction SilentlyContinue | "
+              "ForEach-Object { $_.Name + '=' + $_.Status }" % names)
+    code, out = _run(['powershell', '-NoProfile', '-NonInteractive',
+                      '-Command', script])
+    if code != 0:
+        _emit('  FAILED (powershell exit %d): %s' % (code, out[:200]))
+        return
+    found = {}
+    for line in out.splitlines():
+        if '=' in line:
+            name, _, status = line.partition('=')
+            found[name.strip()] = status.strip()
     for name in SERVICES:
-        try:
-            code, out = _run(['sc', 'query', name])
-            state = '(no STATE line in sc output)'
-            for line in out.splitlines():
-                if 'STATE' in line:
-                    state = line.strip()
-                    break
-            if code != 0:
-                # sc prints e.g. 1060 for a service that does not exist --
-                # report and continue, a missing service must not abort.
-                state = 'FAILED (sc exit %d): %s' % (
-                    code, out.splitlines()[-1] if out else 'no output')
-            _emit('  %-26s %s' % (name, state))
-        except Exception as exc:
-            _emit('  %-26s FAILED: %s' % (name, exc))
+        # [REASON]: a service absent from the output is reported explicitly as
+        # NOT FOUND, so "missing" can never be mistaken for "present but idle".
+        _emit('  %-26s %s' % (name, found.get(name, 'NOT FOUND')))
 
 
 def main(argv=None):
