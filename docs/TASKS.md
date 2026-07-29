@@ -5370,3 +5370,58 @@ DEPLOY-DRIFT-001 is now **partially addressed**: the checker exists and the
 three scripts are in git, but wiring `check_migration_drift.py` into the
 deploy procedure is a separate task — the backlog item above stays open
 until that is done.
+
+## PHASE1-PR2 — Shared foundation, part 2: shared data model (2026-07-29)
+
+Status: **delivered in PR #33** (branch `claude/file-exchange-workflow-zkwhgg`,
+opened after PR #32 was merged). Second of the two Phase-1 foundation PRs.
+One additive migration; no existing route, template or query changed; zero
+diff lines inside `_perform_fuel_sync`; `fuel_tanks`/`FuelTank` untouched
+(the future warehouse tank entity will be `FuelWarehouseTank`).
+
+Seven ordered commits — revert strictly in reverse order (7 -> 6 -> 5 ->
+4 -> 3 -> 2 -> 1). Code rollback and data rollback are SEPARATE — see the
+migration docstring: on a code revert the added columns deliberately stay
+in place (DROP COLUMN on live production is the larger risk); only
+`field_contours`, the `drones` row and the registry row are dropped, and
+only manually, and only after the code revert.
+
+1. `5c3c96b` — `plate_norm.py` + `test_plate_norm.py`: upper-case, strip
+   whitespace/punctuation, fold the twelve Cyrillic/Latin homoglyph pairs
+   to Latin (the fold that reached 93.9% in the 1C pilot); None/empty ->
+   ''. NOT wired into any query; no stored value rewritten.
+2. `70e554a` — `ingest_common.py` + `test_ingest_common.py`:
+   verify_api_token (hmac.compare_digest over bytes; empty/None expected
+   token DENIES), IngestCounters (new/duplicates/errors, as_dict, chaining
+   merge), extract_token (body 'token' key, the fuel-sync convention).
+   `_perform_fuel_sync` stays the untouched reference implementation.
+3. `94ffd91` — `config.py`: DRONE_API_TOKEN next to FUEL_API_TOKEN, same
+   safe-default contract (missing variable -> deny). Nothing reads it yet.
+4. `9680b6f` — `models.py`: Customer +inn/phone/address/notes/active
+   (customers is a SHARED table — daily_records and work_orders read it;
+   the change is additive-only precisely for that reason), Organization
+   +is_active/archived_at, VialonMapping +wialon_id (nullable, indexed),
+   new `FieldContour` / `field_contours` — one shared directory for Wialon
+   geozones (17 812), DJI fields (4 776) and manual contours; unique
+   (source, external_id); indexes on customer_id and (source, is_active);
+   created empty.
+5. `91df3c5` — `migrate_core_foundation_001.py` (`CORE_FOUNDATION_001`):
+   stdlib sqlite3, refuses to run without instance/transport.db, PRAGMA
+   table_info guard before every ALTER (SQLite has no ADD COLUMN IF NOT
+   EXISTS), single transaction, postconditions verified before recording,
+   drones row via INSERT OR IGNORE, ASCII output. Second run prints
+   "Already applied" and changes nothing.
+6. `cac78ae` — `app.py`: ('drones', ...) appended to the app_modules seed
+   list, which runs only when the table is empty (fresh installs);
+   existing databases get the row from the migration. Deliberately NO
+   sidebar link — there is no drones blueprint yet and url_for would fail
+   at render time on every page.
+7. this docs commit (TASKS.md, AGENT_STATE.md, RELEASE_GATE.md migration
+   row per rule 8 of the multi-track protocol).
+
+PLATE-NORM-001 is now **partially addressed**: the helper and its tests
+exist; wiring into search/display is a later task — the backlog item above
+stays open. AZS-ORG-REFACTOR is **unblocked but not done**: the
+is_active/archived_at columns exist, but deciding which of the duplicate
+org rows 20-24 to hide is the owner's data decision and no row was
+modified.

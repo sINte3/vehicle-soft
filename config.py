@@ -16,6 +16,13 @@ class Config:
     # denies all requests (safe default) rather than accepting a hardcoded token.
     FUEL_API_TOKEN = os.environ.get('FUEL_API_TOKEN')
 
+    # [REASON]: Drone collector API token, same safe-default contract as
+    # FUEL_API_TOKEN (missing -> deny all). A separate variable on purpose:
+    # the drone collector must not reuse the fuel token, so revoking one
+    # integration never breaks the other. Nothing reads this value yet --
+    # the drones ingest ships in a later task.
+    DRONE_API_TOKEN = os.environ.get('DRONE_API_TOKEN')
+
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     REPORTS_DIR = os.path.join(BASE_DIR, 'reports')
 
