@@ -718,11 +718,20 @@ def _drone_summary_data(conds):
         'reconciled': reconciled(u_flights, u_area),
     }
 
-    # По месяцам -- calendar months in the operator's timezone (UTC+5),
-    # ascending. The shift must match the display shift exactly: a flight at
-    # 19:30 UTC on the 31st belongs to the next month for the operator.
+    # По месяцам -- calendar months in the operator's timezone, ascending.
+    # The shift must match the display shift exactly: a flight at 19:30 UTC
+    # on the 31st belongs to the next month for the operator.
+    # [REASON]: the modifier is derived from DRONE_DISPLAY_UTC_OFFSET, never
+    # written as a literal. Eight other sites in this module already derive
+    # from the constant; a ninth that hardcodes it would silently keep
+    # grouping at the old offset if the constant ever changes, and the month
+    # table would stop reconciling with the header cards while still looking
+    # plausible. Minutes, not hours, so a half-hour timezone stays correct.
+    _offset_minutes = int(DRONE_DISPLAY_UTC_OFFSET.total_seconds() // 60)
     month_expr = func.strftime(
-        '%Y-%m', func.datetime(DroneFlight.started_at, '+5 hours'))
+        '%Y-%m',
+        func.datetime(DroneFlight.started_at,
+                      '%+d minutes' % _offset_minutes))
     month_groups = (db.session.query(
         month_expr,
         func.count(DroneFlight.id),
