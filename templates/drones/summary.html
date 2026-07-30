@@ -46,6 +46,14 @@
       <div class="vs-field" style="flex:none;">
         <label class="vs-label">&nbsp;</label>
         <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+        {# Ссылка, а не кнопка со скриптом: страница подставляет текущий месяц,
+           когда параметров даты нет вовсе, и трактует пустые параметры как
+           отсутствие границ, а браузерное поле type="date" очищается только
+           посегментным удалением. Ссылка с пустыми датами делает «за всё
+           время» достижимым и не может быть сломана разбором атрибута.
+           Машина и область берутся ПРИМЕНЁННЫЕ, а не выбранные в списках и
+           ещё не отправленные — обычное поведение ссылки, сознательно. #}
+        <a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.summary', date_from='', date_to='', unit_id=filters.unit_id or None, region=filters.region or None) }}">{{ 'За всё время' if is_ru else 'Барча вақт' }}</a>
       </div>
     </form>
   </div>
@@ -105,7 +113,11 @@
     <tbody>
       {% for r in data.by_machine.rows %}
       <tr>
-        <td style="font-weight:700;"><a href="{{ url_for('drones.index', unit_id=r.unit_id, **link_args) }}">№ {{ r.number }}</a></td>
+        {# link_args уже несёт unit_id, когда фильтр по машине применён; при
+           отдельном именованном аргументе это два значения одного ключа и
+           TypeError на разборе вызова, то есть 500 вместо страницы. Слияние
+           через dict() оставляет приоритет за машиной строки. #}
+        <td style="font-weight:700;"><a href="{{ url_for('drones.index', **dict(link_args, unit_id=r.unit_id)) }}">№ {{ r.number }}</a></td>
         <td class="right">{{ r.flights }}</td>
         <td class="right">{{ '%.2f'|format(r.area) }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
@@ -155,7 +167,9 @@
     <tbody>
       {% for r in data.by_region.rows %}
       <tr>
-        <td><a href="{{ url_for('drones.index', region=r.region, **link_args) }}">{{ r.region }}</a></td>
+        {# То же, что в таблице машин: применённый фильтр по области уже лежит
+           в link_args, и второй одноимённый аргумент даёт 500. #}
+        <td><a href="{{ url_for('drones.index', **dict(link_args, region=r.region)) }}">{{ r.region }}</a></td>
         <td class="right">{{ r.flights }}</td>
         <td class="right">{{ '%.2f'|format(r.area) }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>

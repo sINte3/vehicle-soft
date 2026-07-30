@@ -521,6 +521,12 @@ def _drone_filters_from_args(args, default_current_month):
         'date_to': date_to,
         'date_from_s': date_from_s,
         'date_to_s': date_to_s,
+        # [REASON]: the flag travels with the parsed filters so a caller can
+        # tell "no date filter was ever specified" from "the date filter was
+        # explicitly cleared". Both look like an empty date_from_s, but only
+        # the second one must survive into an export link -- see
+        # _drone_link_args.
+        'has_date_args': has_date_args,
         'unit_id': args.get('unit_id', type=int),
         'region': (args.get('region') or '').strip(),
     }
@@ -547,13 +553,23 @@ def _drone_flight_conditions(filters):
 
 
 def _drone_link_args(filters):
-    """Query args for drill-down links and exports -- only the filters that
-    are actually set, so cleared dates stay cleared in the target URL."""
+    """Query args for drill-down links and exports.
+
+    A set date is passed through. A date that was explicitly cleared is passed
+    through as an EMPTY value rather than dropped: _drone_filters_from_args
+    decides whether to apply its current-month default by the PRESENCE of the
+    key, so dropping a cleared date makes the target silently fall back to the
+    current month while the page that produced the link shows all time.
+    """
     link = {}
     if filters['date_from_s']:
         link['date_from'] = filters['date_from_s']
+    elif filters.get('has_date_args'):
+        link['date_from'] = ''
     if filters['date_to_s']:
         link['date_to'] = filters['date_to_s']
+    elif filters.get('has_date_args'):
+        link['date_to'] = ''
     if filters['unit_id']:
         link['unit_id'] = filters['unit_id']
     if filters['region']:
