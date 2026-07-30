@@ -21,12 +21,15 @@ Out of scope here: the Playwright collector (DRONE-003), reporting screens
 and Excel (DRONE-004).
 """
 
+import io
 import json
 
 from datetime import datetime, timedelta
 
-from flask import Blueprint, current_app, jsonify, render_template, request, g
+from flask import (Blueprint, current_app, flash, jsonify, redirect,
+                   render_template, request, send_file, url_for, g)
 from flask_login import current_user
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
@@ -478,3 +481,570 @@ def units():
         units=unit_rows,
         nicknames_by_unit=nicknames_by_unit,
     )
+
+
+# ─── Summary and Excel exports (DRONE-004) ────────────────────────────────────
+
+# [REASON]: a silently truncated export reads as complete data on the other
+# side of an e-mail; above the cap the route refuses with a clear message
+# asking to narrow the period instead.
+DRONE_FLIGHTS_XLSX_CAP = 50000
+
+
+def _drone_filters_from_args(args, default_current_month):
+    """Parse the shared filter set (dates, machine, region) from a query
+    string, mirroring index(): the same _drone_parse_date and the same UTC+5
+    day-boundary shift -- one convention, not two.
+
+    When default_current_month is true and NEITHER date parameter is present
+    in the query string at all, the current calendar month (in UTC+5) is
+    preselected. Parameters that are present but empty mean "no bound" --
+    that is how the operator asks for all time by clearing the inputs.
+    """
+    has_date_args = ('date_from' in args) or ('date_to' in args)
+    date_from_s = (args.get('date_from') or '').strip()
+    date_to_s = (args.get('date_to') or '').strip()
+    date_from = _drone_parse_date(date_from_s)
+    date_to = _drone_parse_date(date_to_s)
+    if default_current_month and not has_date_args:
+        today_local = (datetime.utcnow() + DRONE_DISPLAY_UTC_OFFSET).date()
+        date_from = today_local.replace(day=1)
+        if today_local.month == 12:
+            date_to = today_local.replace(day=31)
+        else:
+            date_to = (today_local.replace(month=today_local.month + 1, day=1)
+                       - timedelta(days=1))
+        date_from_s = date_from.isoformat()
+        date_to_s = date_to.isoformat()
+    return {
+        'date_from': date_from,
+        'date_to': date_to,
+        'date_from_s': date_from_s,
+        'date_to_s': date_to_s,
+        'unit_id': args.get('unit_id', type=int),
+        'region': (args.get('region') or '').strip(),
+    }
+
+
+def _drone_flight_conditions(filters):
+    """Filter conditions over DroneFlight for the parsed filter set."""
+    conds = []
+    if filters['date_from']:
+        conds.append(DroneFlight.started_at >=
+                     datetime.combine(filters['date_from'],
+                                      datetime.min.time())
+                     - DRONE_DISPLAY_UTC_OFFSET)
+    if filters['date_to']:
+        conds.append(DroneFlight.started_at <=
+                     datetime.combine(filters['date_to'],
+                                      datetime.max.time())
+                     - DRONE_DISPLAY_UTC_OFFSET)
+    if filters['unit_id']:
+        conds.append(DroneFlight.drone_unit_id == filters['unit_id'])
+    if filters['region']:
+        conds.append(DroneFlight.region == filters['region'])
+    return conds
+
+
+def _drone_link_args(filters):
+    """Query args for drill-down links and exports -- only the filters that
+    are actually set, so cleared dates stay cleared in the target URL."""
+    link = {}
+    if filters['date_from_s']:
+        link['date_from'] = filters['date_from_s']
+    if filters['date_to_s']:
+        link['date_to'] = filters['date_to_s']
+    if filters['unit_id']:
+        link['unit_id'] = filters['unit_id']
+    if filters['region']:
+        link['region'] = filters['region']
+    return link
+
+
+def _drone_share(area, total_area):
+    if not total_area:
+        return 0.0
+    return round(area * 100.0 / total_area, 1)
+
+
+def _drone_summary_data(conds):
+    """Aggregate the filtered flights for the summary page and the exports.
+
+    [REASON]: every breakdown must reconcile with the grand total, and
+    unattributed flights must appear as their own visible line.
+    drone_flights.drone_unit_id is nullable BY DESIGN -- a flight whose DJI
+    nickname is not yet in the alias map is stored with NULL rather than
+    rejected. A per-machine table that simply groups by machine silently
+    omits those flights and their hectares; that is precisely how the
+    previous system lost 2 036 flights and 2 082 hectares into an invisible
+    bucket. So: NULL drone_unit_id gets an explicit line, NULL region gets
+    an explicit line, every table carries a total row, and each table's
+    total is compared against the grand total -- a mismatch is surfaced on
+    the page (reconciled=False), never hidden.
+
+    Aggregation happens in SQL (func.count / func.sum / group_by), never by
+    looping over loaded rows: the table holds ~29 000 flights after the
+    historical backfill and keeps growing.
+    """
+    totals_row = (db.session.query(
+        func.count(DroneFlight.id),
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+        func.coalesce(func.sum(DroneFlight.work_seconds), 0),
+        func.coalesce(func.sum(DroneFlight.spray_liters), 0.0),
+        func.coalesce(func.sum(DroneFlight.sow_kg), 0.0),
+    ).filter(*conds).one())
+    zero_area = (db.session.query(func.count(DroneFlight.id))
+                 .filter(*conds).filter(DroneFlight.area_ha == 0).scalar())
+
+    totals = {
+        'flights': totals_row[0] or 0,
+        'area_ha': float(totals_row[1] or 0.0),
+        'hours': (totals_row[2] or 0) / 3600.0,
+        'spray_liters': float(totals_row[3] or 0.0),
+        'sow_kg': float(totals_row[4] or 0.0),
+        'zero_area': zero_area or 0,
+    }
+    total_area = totals['area_ha']
+
+    def reconciled(flights_sum, area_sum):
+        return (flights_sum == totals['flights']
+                and abs(area_sum - totals['area_ha']) < 0.005)
+
+    # По машинам -- ordered by machine number, NULL as its own line.
+    machine_groups = (db.session.query(
+        DroneFlight.drone_unit_id,
+        func.count(DroneFlight.id),
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+    ).filter(*conds).group_by(DroneFlight.drone_unit_id).all())
+    unit_numbers = {u.id: u.number for u in DroneUnit.query.all()}
+    machine_rows = []
+    machine_unattributed = None
+    for unit_id, flights, area in machine_groups:
+        area = float(area or 0.0)
+        if unit_id is None:
+            machine_unattributed = {'flights': flights, 'area': area,
+                                    'share': _drone_share(area, total_area)}
+        else:
+            machine_rows.append({
+                'unit_id': unit_id,
+                'number': unit_numbers.get(unit_id),
+                'flights': flights,
+                'area': area,
+                'share': _drone_share(area, total_area),
+            })
+    machine_rows.sort(key=lambda r: (r['number'] is None, r['number']))
+    m_flights = (sum(r['flights'] for r in machine_rows)
+                 + (machine_unattributed['flights']
+                    if machine_unattributed else 0))
+    m_area = (sum(r['area'] for r in machine_rows)
+              + (machine_unattributed['area']
+                 if machine_unattributed else 0.0))
+    by_machine = {
+        'rows': machine_rows,
+        'unattributed': machine_unattributed,
+        'total': {'flights': m_flights, 'area': m_area},
+        'reconciled': reconciled(m_flights, m_area),
+    }
+
+    # По областям -- ordered by hectares descending, NULL as its own line.
+    region_groups = (db.session.query(
+        DroneFlight.region,
+        func.count(DroneFlight.id),
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+    ).filter(*conds).group_by(DroneFlight.region).all())
+    region_rows = []
+    region_undetermined = None
+    for region, flights, area in region_groups:
+        area = float(area or 0.0)
+        if region is None:
+            region_undetermined = {'flights': flights, 'area': area,
+                                   'share': _drone_share(area, total_area)}
+        else:
+            region_rows.append({
+                'region': region,
+                'flights': flights,
+                'area': area,
+                'share': _drone_share(area, total_area),
+            })
+    region_rows.sort(key=lambda r: r['area'], reverse=True)
+    r_flights = (sum(r['flights'] for r in region_rows)
+                 + (region_undetermined['flights']
+                    if region_undetermined else 0))
+    r_area = (sum(r['area'] for r in region_rows)
+              + (region_undetermined['area'] if region_undetermined else 0.0))
+    by_region = {
+        'rows': region_rows,
+        'undetermined': region_undetermined,
+        'total': {'flights': r_flights, 'area': r_area},
+        'reconciled': reconciled(r_flights, r_area),
+    }
+
+    # По типам работ -- spraying and sowing separately; litres belong only
+    # to the spraying row and kilograms only to the sowing row (different
+    # substances in different units are NEVER added together); any other
+    # usage_type value gets its own row instead of being folded into either.
+    usage_groups = (db.session.query(
+        DroneFlight.usage_type,
+        func.count(DroneFlight.id),
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+        func.coalesce(func.sum(DroneFlight.spray_liters), 0.0),
+        func.coalesce(func.sum(DroneFlight.sow_kg), 0.0),
+    ).filter(*conds).group_by(DroneFlight.usage_type).all())
+    usage_labels = _drone_usage_labels()
+    usage_rows = []
+    for usage_type, flights, area, liters, kg in usage_groups:
+        area = float(area or 0.0)
+        label = usage_labels.get(usage_type)
+        if label is None:
+            label = (_drone_t('Номаълум тур', 'Неизвестный тип')
+                     + ': ' + str(usage_type))
+        usage_rows.append({
+            'usage_type': usage_type,
+            'label': label,
+            'flights': flights,
+            'area': area,
+            'share': _drone_share(area, total_area),
+            'spray_liters': float(liters or 0.0) if usage_type == 0 else None,
+            'sow_kg': float(kg or 0.0) if usage_type == 1 else None,
+        })
+    usage_rows.sort(key=lambda r: (r['usage_type'] is None,
+                                   r['usage_type']
+                                   if r['usage_type'] is not None else 0))
+    u_flights = sum(r['flights'] for r in usage_rows)
+    u_area = sum(r['area'] for r in usage_rows)
+    by_usage = {
+        'rows': usage_rows,
+        'total': {'flights': u_flights, 'area': u_area},
+        'reconciled': reconciled(u_flights, u_area),
+    }
+
+    # По месяцам -- calendar months in the operator's timezone, ascending.
+    # The shift must match the display shift exactly: a flight at 19:30 UTC
+    # on the 31st belongs to the next month for the operator.
+    # [REASON]: the modifier is derived from DRONE_DISPLAY_UTC_OFFSET, never
+    # written as a literal. Eight other sites in this module already derive
+    # from the constant; a ninth that hardcodes it would silently keep
+    # grouping at the old offset if the constant ever changes, and the month
+    # table would stop reconciling with the header cards while still looking
+    # plausible. Minutes, not hours, so a half-hour timezone stays correct.
+    _offset_minutes = int(DRONE_DISPLAY_UTC_OFFSET.total_seconds() // 60)
+    month_expr = func.strftime(
+        '%Y-%m',
+        func.datetime(DroneFlight.started_at,
+                      '%+d minutes' % _offset_minutes))
+    month_groups = (db.session.query(
+        month_expr,
+        func.count(DroneFlight.id),
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+    ).filter(*conds).group_by(month_expr).order_by(month_expr).all())
+    month_rows = [{
+        'month': month,
+        'flights': flights,
+        'area': float(area or 0.0),
+        'share': _drone_share(float(area or 0.0), total_area),
+    } for month, flights, area in month_groups]
+    mo_flights = sum(r['flights'] for r in month_rows)
+    mo_area = sum(r['area'] for r in month_rows)
+    by_month = {
+        'rows': month_rows,
+        'total': {'flights': mo_flights, 'area': mo_area},
+        'reconciled': reconciled(mo_flights, mo_area),
+    }
+
+    return {
+        'totals': totals,
+        'by_machine': by_machine,
+        'by_region': by_region,
+        'by_usage': by_usage,
+        'by_month': by_month,
+    }
+
+
+@drones_bp.route('/summary')
+@module_required('drones')
+def summary():
+    filters = _drone_filters_from_args(request.args,
+                                       default_current_month=True)
+    conds = _drone_flight_conditions(filters)
+    data = _drone_summary_data(conds)
+
+    units = DroneUnit.query.order_by(DroneUnit.number).all()
+    regions = [row[0] for row in
+               db.session.query(DroneFlight.region)
+               .filter(DroneFlight.region.isnot(None))
+               .distinct().order_by(DroneFlight.region).all()]
+
+    return render_template(
+        'drones/summary.html',
+        data=data,
+        filters=filters,
+        link_args=_drone_link_args(filters),
+        units=units,
+        regions=regions,
+    )
+
+
+def _drone_xlsx_safe(value):
+    """Neutralize spreadsheet formula injection in a data-driven string.
+
+    [REASON]: same defense as _xlsx_safe in spare_parts.py (SP-F-004) --
+    Excel/LibreOffice execute a cell starting with = + - @ as a formula.
+    Nicknames and reverse-geocoded addresses come from the DJI cloud, i.e.
+    outside this system; the fix is one helper and it also stops Excel from
+    mangling ordinary values. Applied only to data-driven strings; fixed
+    labels and numeric columns are left untouched.
+    """
+    if isinstance(value, str):
+        stripped = value.lstrip()
+        if stripped and stripped[0] in ('=', '+', '-', '@'):
+            return "'" + value
+    return value
+
+
+def _drone_xlsx_styler():
+    """Shared openpyxl styling for the drones workbooks.
+
+    Modeled on _spare_report_styler (spare_parts.py): header fill and bold
+    font, thin borders, frozen header row, auto column widths. Local on
+    purpose -- excel_export.py is the eight-sheet daily activity machinery
+    and is not a fit here.
+    """
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    from types import SimpleNamespace
+
+    header_fill = PatternFill('solid', fgColor='D9EAD3')
+    header_font = Font(bold=True)
+    total_font = Font(bold=True)
+    thin = Side(style='thin', color='D9D9D9')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def style_table(ws, num_formats=None, bold_rows=(), datetime_format=None):
+        """num_formats: {column index: number format} for numeric cells;
+        datetime_format: {column index: format} for datetime cells."""
+        ws.freeze_panes = 'A2'
+        ws.sheet_view.showGridLines = False
+        num_formats = num_formats or {}
+        datetime_format = datetime_format or {}
+        for cell in ws[1]:
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center', vertical='center',
+                                       wrap_text=True)
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row,
+                                max_col=ws.max_column):
+            for cell in row:
+                if (cell.column in num_formats
+                        and isinstance(cell.value, (int, float))
+                        and not isinstance(cell.value, bool)):
+                    cell.number_format = num_formats[cell.column]
+                elif (cell.column in datetime_format
+                        and isinstance(cell.value, datetime)):
+                    cell.number_format = datetime_format[cell.column]
+        for row in ws.iter_rows(min_row=1, max_row=ws.max_row,
+                                max_col=ws.max_column):
+            for cell in row:
+                cell.border = border
+        for row_idx in bold_rows:
+            for cell in ws[row_idx]:
+                cell.font = total_font
+        for col in range(1, ws.max_column + 1):
+            letter = get_column_letter(col)
+            width = 10
+            for cell in ws[letter]:
+                val = '' if cell.value is None else str(cell.value)
+                width = max(width, min(len(val) + 2, 42))
+            ws.column_dimensions[letter].width = width
+
+    return SimpleNamespace(style_table=style_table, total_font=total_font)
+
+
+def _drone_xlsx_response(wb, base_name, filters):
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    if filters['date_from_s'] or filters['date_to_s']:
+        fname = '%s_%s_%s.xlsx' % (base_name,
+                                   filters['date_from_s'] or 'all',
+                                   filters['date_to_s'] or 'all')
+    else:
+        fname = '%s_all.xlsx' % base_name
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=fname,
+        mimetype=('application/vnd.openxmlformats-officedocument'
+                  '.spreadsheetml.sheet'),
+    )
+
+
+@drones_bp.route('/summary.xlsx')
+@module_required('drones')
+def summary_xlsx():
+    """Five-sheet workbook of the summary page, same filters, same order."""
+    from openpyxl import Workbook
+
+    filters = _drone_filters_from_args(request.args,
+                                       default_current_month=True)
+    data = _drone_summary_data(_drone_flight_conditions(filters))
+    st = _drone_xlsx_styler()
+
+    label_total = _drone_t('Жами', 'Итого')
+    label_unattr = _drone_t('Аниқланмаган', 'Не распознано')
+    label_noregion = _drone_t('Вилоят аниқланмаган', 'Область не определена')
+    head_flights = _drone_t('Парвозлар', 'Вылеты')
+    head_area = _drone_t('Гектар', 'Гектары')
+    head_share = _drone_t('Улуш, %', 'Доля, %')
+    unbounded = _drone_t('чекланмаган', 'не ограничен')
+
+    wb = Workbook()
+
+    # 1. Сводка / Жамланма
+    ws = wb.active
+    ws.title = _drone_t('Жамланма', 'Сводка')
+    ws.append([_drone_t('Кўрсаткич', 'Показатель'),
+               _drone_t('Қиймат', 'Значение')])
+    summary_rows = [
+        (_drone_t('Давр: бошланиши', 'Период: с'),
+         filters['date_from_s'] or unbounded, None),
+        (_drone_t('Давр: охири', 'Период: по'),
+         filters['date_to_s'] or unbounded, None),
+        (_drone_t('Парвозлар', 'Вылетов'), data['totals']['flights'], None),
+        (_drone_t('Гектар', 'Гектаров'), data['totals']['area_ha'], '0.00'),
+        (_drone_t('Ҳавода соат', 'Часов в воздухе'),
+         data['totals']['hours'], '0.00'),
+        (_drone_t('Литр эритма', 'Литров раствора'),
+         data['totals']['spray_liters'], '0.00'),
+        (_drone_t('Кг уруғ', 'Кг посева'), data['totals']['sow_kg'], '0.000'),
+        (_drone_t('Ноль майдонли парвозлар', 'Вылетов с нулевой площадью'),
+         data['totals']['zero_area'], None),
+    ]
+    for label, value, fmt in summary_rows:
+        ws.append([label, value])
+        if fmt:
+            ws.cell(row=ws.max_row, column=2).number_format = fmt
+    st.style_table(ws)
+
+    # 2. По машинам / Машиналар бўйича
+    ws = wb.create_sheet(_drone_t('Машиналар бўйича', 'По машинам'))
+    ws.append([_drone_t('Машина (№)', 'Машина (№)'), head_flights,
+               head_area, head_share])
+    for r in data['by_machine']['rows']:
+        ws.append([r['number'], r['flights'], r['area'], r['share']])
+    if data['by_machine']['unattributed']:
+        u = data['by_machine']['unattributed']
+        ws.append([label_unattr, u['flights'], u['area'], u['share']])
+    ws.append([label_total, data['by_machine']['total']['flights'],
+               data['by_machine']['total']['area'], 100.0])
+    st.style_table(ws, num_formats={3: '0.00', 4: '0.0'},
+                   bold_rows=(ws.max_row,))
+
+    # 3. По областям / Вилоятлар бўйича
+    ws = wb.create_sheet(_drone_t('Вилоятлар бўйича', 'По областям'))
+    ws.append([_drone_t('Вилоят', 'Область'), head_flights,
+               head_area, head_share])
+    for r in data['by_region']['rows']:
+        ws.append([_drone_xlsx_safe(r['region']), r['flights'], r['area'],
+                   r['share']])
+    if data['by_region']['undetermined']:
+        u = data['by_region']['undetermined']
+        ws.append([label_noregion, u['flights'], u['area'], u['share']])
+    ws.append([label_total, data['by_region']['total']['flights'],
+               data['by_region']['total']['area'], 100.0])
+    st.style_table(ws, num_formats={3: '0.00', 4: '0.0'},
+                   bold_rows=(ws.max_row,))
+
+    # 4. По типам работ / Иш турлари бўйича
+    ws = wb.create_sheet(_drone_t('Иш турлари бўйича', 'По типам работ'))
+    ws.append([_drone_t('Иш тури', 'Тип работы'), head_flights, head_area,
+               head_share, _drone_t('Литр', 'Литров'),
+               _drone_t('Килограмм', 'Килограммов')])
+    for r in data['by_usage']['rows']:
+        ws.append([r['label'], r['flights'], r['area'], r['share'],
+                   r['spray_liters'], r['sow_kg']])
+    ws.append([label_total, data['by_usage']['total']['flights'],
+               data['by_usage']['total']['area'], 100.0, None, None])
+    st.style_table(ws, num_formats={3: '0.00', 4: '0.0', 5: '0.00',
+                                    6: '0.000'},
+                   bold_rows=(ws.max_row,))
+
+    # 5. По месяцам / Ойлар бўйича
+    ws = wb.create_sheet(_drone_t('Ойлар бўйича', 'По месяцам'))
+    ws.append([_drone_t('Ой', 'Месяц'), head_flights, head_area, head_share])
+    for r in data['by_month']['rows']:
+        ws.append([r['month'], r['flights'], r['area'], r['share']])
+    ws.append([label_total, data['by_month']['total']['flights'],
+               data['by_month']['total']['area'], 100.0])
+    st.style_table(ws, num_formats={3: '0.00', 4: '0.0'},
+                   bold_rows=(ws.max_row,))
+
+    return _drone_xlsx_response(wb, 'drones_summary', filters)
+
+
+@drones_bp.route('/flights.xlsx')
+@module_required('drones')
+def flights_xlsx():
+    """Flat one-sheet export of the flight list, honouring its filters."""
+    from openpyxl import Workbook
+
+    filters = _drone_filters_from_args(request.args,
+                                       default_current_month=False)
+    conds = _drone_flight_conditions(filters)
+
+    total = (db.session.query(func.count(DroneFlight.id))
+             .filter(*conds).scalar() or 0)
+    if total > DRONE_FLIGHTS_XLSX_CAP:
+        # [REASON]: a silently truncated file reads as complete data on the
+        # other side of an e-mail -- refuse with a clear message instead.
+        flash(_drone_t(
+            'Экспорт жуда катта: %d та парвоз, чегара — %d. '
+            'Даврни торайтиринг.',
+            'Экспорт слишком велик: %d вылетов при пределе %d. '
+            'Сузьте период.') % (total, DRONE_FLIGHTS_XLSX_CAP), 'warning')
+        return redirect(url_for('drones.index', **_drone_link_args(filters)))
+
+    flights = (DroneFlight.query.filter(*conds)
+               .options(joinedload(DroneFlight.drone_unit))
+               .order_by(DroneFlight.started_at.desc())
+               .all())
+    usage_labels = _drone_usage_labels()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = _drone_t('Парвозлар', 'Вылеты')
+    ws.append([
+        _drone_t('Сана ва вақт (Тошкент)', 'Дата и время (UTC+5)'),
+        _drone_t('Машина (№)', 'Машина (№)'),
+        _drone_t('Ник (DJI)', 'Ник (DJI)'),
+        _drone_t('Вилоят', 'Область'),
+        _drone_t('Манзил', 'Адрес'),
+        _drone_t('Гектар', 'Гектары'),
+        _drone_t('Дақиқа', 'Минуты'),
+        _drone_t('Литр', 'Литры'),
+        _drone_t('Килограмм', 'Килограммы'),
+        _drone_t('Иш тури', 'Тип работы'),
+        'DJI id',
+    ])
+    for f in flights:
+        usage_label = usage_labels.get(f.usage_type)
+        if usage_label is None and f.usage_type is not None:
+            usage_label = str(f.usage_type)
+        ws.append([
+            (f.started_at + DRONE_DISPLAY_UTC_OFFSET)
+            if f.started_at else None,
+            f.drone_unit.number if f.drone_unit else None,
+            _drone_xlsx_safe(f.nickname_raw),
+            _drone_xlsx_safe(f.region),
+            _drone_xlsx_safe(f.location_text),
+            f.area_ha,
+            (f.work_seconds / 60.0) if f.work_seconds is not None else None,
+            f.spray_liters,
+            f.sow_kg,
+            usage_label,
+            f.dji_flight_id,
+        ])
+    st = _drone_xlsx_styler()
+    st.style_table(ws,
+                   num_formats={6: '0.00', 7: '0.0', 8: '0.00', 9: '0.000'},
+                   datetime_format={1: 'DD.MM.YYYY HH:MM'})
+    return _drone_xlsx_response(wb, 'drones_flights', filters)

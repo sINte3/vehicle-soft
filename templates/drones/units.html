@@ -2,14 +2,12 @@
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Дроны — машины' if is_ru else 'Дронлар — машиналар' }}{% endblock %}
 {% block content %}
+{% include 'drones/_drones_nav.html' %}
 
 <div class="vs-hero vs-mb">
   <div>
     <div class="vs-hero-title">{{ 'Машины' if is_ru else 'Машиналар' }}</div>
     <div class="vs-hero-sub">{{ 'Парк DJI Agras: номер — идентичность машины, ники DJI — сменяемые ярлыки, сгруппированы по машине.' if is_ru else 'DJI Agras парки: рақам — машинанинг идентитети, DJI никлари — ўзгарувчан ёрлиқлар, машина бўйича гуруҳланган.' }}</div>
-  </div>
-  <div class="vs-row-end">
-    <a href="{{ url_for('drones.index') }}" class="vs-btn">{{ 'Вылеты' if is_ru else 'Парвозлар' }}</a>
   </div>
 </div>
 
