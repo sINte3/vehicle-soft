@@ -46,6 +46,14 @@
       <div class="vs-field" style="flex:none;">
         <label class="vs-label">&nbsp;</label>
         <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+        {# Ссылка, а не кнопка со скриптом: страница подставляет текущий месяц,
+           когда параметров даты нет вовсе, и трактует пустые параметры как
+           отсутствие границ, а браузерное поле type="date" очищается только
+           посегментным удалением. Ссылка с пустыми датами делает «за всё
+           время» достижимым и не может быть сломана разбором атрибута.
+           Машина и область берутся ПРИМЕНЁННЫЕ, а не выбранные в списках и
+           ещё не отправленные — обычное поведение ссылки, сознательно. #}
+        <a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.summary', date_from='', date_to='', unit_id=filters.unit_id or None, region=filters.region or None) }}">{{ 'За всё время' if is_ru else 'Барча вақт' }}</a>
       </div>
     </form>
   </div>
