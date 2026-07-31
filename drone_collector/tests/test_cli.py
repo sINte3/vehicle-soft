@@ -121,7 +121,7 @@ class ExitCodeTests(CliTestCase):
         self.assertEqual(code, EXIT_SESSION)
 
     def test_missing_token_exits_1_before_anything_else(self):
-        os.environ['VEHICLE_SOFT_BASE_URL'] = 'http://10.103.25.200:5050'
+        os.environ['VEHICLE_SOFT_BASE_URL'] = 'http://10.103.25.14:5050'
         os.environ['DJI_STORAGE_STATE'] = MISSING_STATE
         # No DRONE_API_TOKEN: the run must stop at configuration, i.e. BEFORE
         # the session check that would otherwise report 2.
@@ -135,7 +135,7 @@ class ExitCodeTests(CliTestCase):
 
     def test_unparsable_setting_exits_1(self):
         os.environ['DRONE_API_TOKEN'] = 'test-token'
-        os.environ['VEHICLE_SOFT_BASE_URL'] = 'http://10.103.25.200:5050'
+        os.environ['VEHICLE_SOFT_BASE_URL'] = 'http://10.103.25.14:5050'
         os.environ['DJI_WINDOW_DAYS'] = 'thirty'
         self.assertEqual(main([]), EXIT_CONFIG)
 

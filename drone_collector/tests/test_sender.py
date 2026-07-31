@@ -46,7 +46,7 @@ def config(batch_size=500, token='test-token'):
         page_timeout_ms=45000,
         settle_ms=0,
         max_pages=500,
-        base_url='http://10.103.25.200:5050',
+        base_url='http://10.103.25.14:5050',
         api_token=token,
         batch_size=batch_size,
     )
