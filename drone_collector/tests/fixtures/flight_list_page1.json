@@ -1,0 +1,53 @@
+{
+  "status": 200,
+  "code": 200,
+  "message": "success",
+  "data": [
+    {
+      "id": 900000001,
+      "nickname": "3 Gijduvon",
+      "serial_number": "R0000000001",
+      "flyer_name": "operator",
+      "team_name": "Бригада 1",
+      "drone_type": "T40",
+      "start_timestamp": 1774538260,
+      "end_timestamp": 1774538794,
+      "new_work_area": 19306.66,
+      "spray_usage": 39784,
+      "sow_usage": 0,
+      "usage_type": 0,
+      "mode_name": 4,
+      "manual_mode": false,
+      "work_speed": 8.9,
+      "spray_width": 6.45,
+      "radar_height": 2.0,
+      "location": "Qiziltepa Tumani, Navoiy Region, 442020, Uzbekistan"
+    },
+    {
+      "id": 900000002,
+      "nickname": "4 Ғиждувон",
+      "serial_number": "R0000000002",
+      "flyer_name": "operator",
+      "team_name": "Бригада 2",
+      "drone_type": "T40",
+      "start_timestamp": 1774541000,
+      "end_timestamp": 1774541600,
+      "new_work_area": 25000.0,
+      "spray_usage": 51000,
+      "sow_usage": 0,
+      "usage_type": 0,
+      "mode_name": 4,
+      "manual_mode": false,
+      "work_speed": 9.1,
+      "spray_width": 6.45,
+      "radar_height": 2.0,
+      "location": "Gijduvon Tumani, Bukhara Region, 200100, Uzbekistan"
+    }
+  ],
+  "meta_data": {
+    "current_page": 1,
+    "total_pages": 37,
+    "page_size": 30,
+    "total_count": 1102
+  }
+}
