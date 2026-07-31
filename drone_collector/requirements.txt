@@ -1,0 +1,21 @@
+# Dependencies of the DRONE-003 collector ONLY.
+#
+# Deliberately separate from the application's requirements.txt: the collector
+# runs in its own virtual environment and the Flask service must never grow a
+# Playwright/Chromium dependency because of it.
+#
+# After installing these, the browser itself still has to be fetched once:
+#   python -m playwright install chromium
+# playwright 1.61.0, not 1.45.0: 1.45.0 pins greenlet==3.0.3 exactly, and
+# greenlet 3.0.3 publishes wheels only up to cp312. On the server's CPython
+# 3.14 that makes pip fall back to compiling a C extension from source.
+# 1.61.0 requires greenlet>=3.1.1,<4.0.0, and the install on the server pulled
+# greenlet-3.5.4-cp314-cp314-win_amd64.whl -- a ready wheel, no compiler. The
+# live run against the DJI cabinet on 2026-07-31 was on this version.
+playwright==1.61.0
+requests==2.32.3
+python-dotenv==1.0.1
+
+# pytest is deliberately NOT here. The collector does not need it to run, and
+# the test suite is plain unittest. Install it separately, in the same virtual
+# environment, only if you prefer to run the suite with pytest.

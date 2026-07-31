@@ -1,0 +1,13 @@
+# Runtime artifacts of the collector. None of this belongs in the repository.
+
+# Real configuration (the repository .gitignore also ignores `.env`).
+.env
+
+# Saved browser session: cookies and local storage of a live DJI account.
+data/
+
+# Dry-run dumps of collected flights.
+out/
+
+# Rotating logs.
+logs/

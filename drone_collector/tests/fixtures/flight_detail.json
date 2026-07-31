@@ -1,0 +1,14 @@
+{
+  "status": 200,
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "id": 900000001,
+    "nickname": "3 Gijduvon",
+    "serial_number": "R0000000001",
+    "start_timestamp": 1774538260,
+    "end_timestamp": 1774538794,
+    "new_work_area": 19306.66,
+    "location": "Qiziltepa Tumani, Navoiy Region, 442020, Uzbekistan"
+  }
+}

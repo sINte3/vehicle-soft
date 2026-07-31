@@ -1,0 +1,345 @@
+# DRONE-003 — DJI SmartFarm flight collector
+
+A standalone process that opens DJI SmartFarm in a real browser using a saved
+session, sets a reporting period, walks every page of the flight list, captures
+the responses the site fetches for itself, and POSTs the flights to Vehicle
+Soft in batches.
+
+It lives in this repository but is **not part of the Flask application**. It
+imports neither `app` nor `models`, it never touches `transport.db`, and it has
+its own `requirements.txt` because the application's service must not grow a
+Playwright/Chromium dependency. It is expected to run in its own virtual
+environment, under a real user account.
+
+---
+
+## The constraint that is not negotiable
+
+**Nothing in a URL may be edited after the site has signed it.**
+
+DJI signs every API request with a `Signature` header produced by its own
+bundled WASM code. This was tested against the live site on 2026-07-31:
+
+* a request without the `Signature` header is answered with body `code 101`;
+* a genuine request whose query string is altered afterwards — `page_size=30`
+  rewritten to `page_size=100` — is also answered with body `code 101`.
+
+So the requests have to be issued by the site itself, and we only listen to the
+responses. That is the whole reason a browser is involved. It follows that:
+
+* the reporting period cannot be injected into the URL — it is set through the
+  site's own date picker, and then **verified** against the URL the site
+  produced;
+* pagination is by page number, through the site's own control.
+
+Do not attempt to generate, replay or reverse-engineer the `Signature` header.
+It has been tested and it does not work.
+
+**But note what that test does not prove.** It proves an *altered* URL is
+rejected, not that the values in it are fixed. `page_size` is a per-session
+setting with its own control on the page; when that control is used, the app
+signs a request carrying the new value. The control was opened on the live
+page on 2026-07-31 and offers exactly **`10 / page`, `20 / page`, `30 / page`,
+`50 / page`** — **50 is the maximum, there is no 100**. The collector drives
+that control and only that control: it logs the option list on every run
+(so a change on DJI's side is visible rather than assumed), selects the
+largest, and reads the size actually in force back out of an intercepted URL.
+
+**`serial_number` is not a machine identifier.** It is unique per flight
+(verified on 10 385 records), so it is a second flight id. Nothing keys,
+groups or deduplicates on it; deduplication is on `id` alone, and a test walks
+the AST of every module to keep it that way.
+
+**Success is not the HTTP status, and the success code is not 200.** Every
+response from the DJI API is HTTP 200; the truth is the `code` field inside
+the JSON body, and the envelope looks like this:
+
+```
+success:  {"status": 200, "code": 0,   "message": "OK", "data": [...]}
+failure:  {"status": 101, "code": 101}   missing or invalidated signature
+          {"status": 408, "code": 408}   bad timestamp
+```
+
+`status` is 200 on every success whatever the code; on a failure `status` and
+`code` are equal to each other. **Success is `code == 0`.** This cost the first
+live run: the collector had the success code as 200, rejected every good page
+with `Rejected flight-list response (code-0)`, and exited 4. Any code that
+decides success from `response.status` — or from `code == 200` — is wrong.
+
+---
+
+## Install
+
+The collector runs in its own virtual environment, separate from the
+application's Python.
+
+```cmd
+cd C:\transport-report\drone_collector
+"C:\Program Files\Python314\python.exe" -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m playwright install chromium
+copy .env.example .env
+notepad .env
+```
+
+Fill in `VEHICLE_SOFT_BASE_URL` and `DRONE_API_TOKEN` in `.env`. The token must
+be the same value as the `DRONE_API_TOKEN` the Vehicle Soft service runs with.
+Never commit `.env`.
+
+Every command below is run from the repository root with the collector's
+Python:
+
+```cmd
+cd C:\transport-report
+drone_collector\.venv\Scripts\python.exe -m drone_collector.main --help
+```
+
+> **Chromium and the service account.** Playwright installs Chromium into the
+> user profile. A scheduled task running as `LocalSystem` cannot see it — this
+> was the single most common failure in the previous collector's logs. Run the
+> scheduled task under the same account that ran `playwright install`.
+
+---
+
+## Create the session file
+
+The collector never types credentials. A human signs in once, by hand.
+
+```cmd
+drone_collector\.venv\Scripts\python.exe -m drone_collector.main --save-session
+```
+
+A browser window opens on the DJI sign-in page. Sign in, wait until the records
+page shows flights, then return to the console and press Enter. The session is
+written to `drone_collector/data/storage_state.json` (or wherever
+`DJI_STORAGE_STATE` points).
+
+While you are there, **check the region selector**. An accidental click on
+"Other Regions" switches the account to an empty country, and the collector
+then quietly returns zero flights.
+
+The session file is a live login: it is ignored by git and must never be
+committed, copied into a ticket, or pasted into a chat. Repeat this step when a
+run exits with code 2.
+
+---
+
+## Run a dry run
+
+A dry run collects exactly as a real run does, but writes the result to a file
+instead of sending it. It needs no token and no `VEHICLE_SOFT_BASE_URL`.
+
+```cmd
+drone_collector\.venv\Scripts\python.exe -m drone_collector.main --dry-run
+drone_collector\.venv\Scripts\python.exe -m drone_collector.main --dry-run --from 2026-07-01 --to 2026-07-07
+```
+
+The flights land in `drone_collector/out/flights_<from>_<to>.json`. The file is
+the ingest body **without** the token: it can be read, diffed and — with a
+token added — replayed by hand.
+
+## Run for a fixed period
+
+```cmd
+drone_collector\.venv\Scripts\python.exe -m drone_collector.main --from 2026-07-01 --to 2026-07-31
+```
+
+With `--from`/`--to` the run is reported to the ingest endpoint as
+`kind=backfill`. Override with `--kind backfill|incremental|replay` when
+needed.
+
+## Run the rolling window (the scheduled case)
+
+```cmd
+drone_collector\.venv\Scripts\python.exe -m drone_collector.main
+```
+
+Without dates the collector takes the last `DJI_WINDOW_DAYS` days inclusive of
+today, in local time (`DJI_TZ_OFFSET_HOURS`, 5 for this business), and reports
+`kind=incremental`.
+
+Re-running the same period is normal and safe: the ingest endpoint
+deduplicates by DJI flight id, so a repeat brings back `duplicates`, not double
+data. The previous collector failed about one run in twenty on timeouts, so a
+repeat is the expected repair, not an incident.
+
+**A period crossing a year boundary is split automatically.** The SmartFarm
+calendar resets such a range, so the collector requests one calendar year at a
+time — see "Historical collection" below. Nothing needs doing about it on the
+command line.
+
+---
+
+## Exit codes
+
+| Code | Meaning | What to do |
+|---|---|---|
+| 0 | Success. | Nothing. |
+| 1 | Configuration error, a bad command line, or an unexpected failure. | The log names the variable or the flag; a crash carries its traceback. Nothing was sent. |
+| 2 | Session missing or expired. | Re-run `--save-session`. Nothing was sent. |
+| 3 | Period verification failed. | The log shows the intended and the observed period. Nothing was sent — on purpose. |
+| 4 | The page walk did not complete. | Flights that were captured *were* sent; re-run the same period to finish it. |
+| 5 | The ingest endpoint rejected a batch. | The log carries the HTTP status and the endpoint's message. 401 means the token, 413 means the batch size, 400 means the body. |
+| 6 | A window captured **zero flights**. | Nothing was sent. Usually the session is in the wrong region. If the period really is empty, set `DJI_ALLOW_EMPTY_WINDOW=true`. |
+| 7 | The session is in the **wrong region**. | The log shows the expected and the observed value. Re-run `--save-session` and check the region selector. |
+
+Exits 6 and 7 both exist for one failure: a session switched to another region
+returns **zero rows with no error at all**, so the run looks perfectly
+successful and collects nothing. Exit 7 is the fast diagnosis and needs a
+selector that has never been confirmed. Exit 6 needs no selector and is the
+one that actually protects the data — which is why an empty window is a
+failure by default rather than a quiet success.
+
+Exit 3 deserves its own sentence, because it is the one that looks like an
+over-reaction. After the dates are typed into the picker, the collector reads
+`filters[timestamp_gteq]` and `filters[timestamp_lteq]` back out of the request
+URL the site produced and compares them against the intended window, with one
+hour of slack on each edge. On a mismatch it logs both values, fails, and sends
+nothing. A collector that silently harvests the wrong period is worse than one
+that fails: the flights it brings back are real, they land in the database, and
+nothing downstream can tell that the window was not the one that was asked for.
+
+---
+
+## Logs
+
+Rotating file log in `drone_collector/logs/collector.log` (5 MB per file, 10
+backups) plus stdout. Every run ends with one structured line:
+
+```
+RUN SUMMARY kind=incremental dry_run=false period_from=2026-07-02 period_to=2026-07-31
+  windows=1 windows_completed=1 region=not-found page_size=50
+  pages=25 pages_expected=25 flights_captured=1219 flights_deduped=1217
+  self_duplicates=2 rejected_responses=0 batches=2 seen=1217 new=214
+  duplicates=886 unresolved=3 errors=0 exit=0
+```
+
+`region` is `ok`, `not-found` or `skipped` — see exit 7 above; `not-found` is
+the expected value today. `page_size` is the size actually in force, read back
+from an intercepted request URL rather than from the control's label.
+
+`self_duplicates` is what the **collector** removed — the same page captured
+twice. `duplicates` is what the **endpoint** reported — flights already in the
+database. They answer different questions and are never added together.
+`unresolved` is a subset of `new` (flights stored with an unrecognised
+nickname), not a separate bucket.
+
+The token, cookies, the contents of the session file and request headers are
+never logged. Request URLs of the flight-list API *are* logged, because the
+period is read out of them; they carry filter parameters only.
+
+---
+
+## Tests
+
+Fixture-driven: no network, no browser, no database. They run in the
+application's Python — the collector's dependencies are not needed, because
+every module that uses them imports them lazily.
+
+```cmd
+cd C:\transport-report
+"C:\Program Files\Python314\python.exe" -m unittest discover -s drone_collector/tests -t .
+```
+
+The suite is plain `unittest` and needs nothing beyond the standard library —
+the command above works in the application's Python and in the collector's
+virtual environment alike. **If you prefer to run it with `pytest`, install
+pytest first** (`pip install pytest`, in the same virtual environment): it is
+deliberately absent from `requirements.txt`, because the collector does not
+need it to run and the service must not carry a test dependency.
+
+They cover the window arithmetic (month, year and leap-day boundaries; local
+midnight rather than UTC midnight at UTC+5), period verification (exact match,
+match within tolerance, one-day-off rejected, no filter parameters rejected),
+response filtering (list URL accepted, detail URL rejected, `code 101`
+rejected), chunking (0, 1, 999, 1000, 1001, 2500 flights) and in-run
+deduplication.
+
+---
+
+## Selectors
+
+Every selector is a module-level constant at the top of `browser.py`. When one
+turns out to be wrong, correct it there and nowhere else — the log says which
+one failed, and a missing pagination control and a missing range picker each
+name their constant.
+
+**Confirmed by the live run of 2026-07-31**, which collected end to end:
+
+* `SELECTOR_RANGE_INPUTS` — `.ant-picker-range .ant-picker-input input` matches
+  the live markup. The inputs are `readonly` while the panel is shut; the
+  click-then-type path works and the `fill()` fallback was never needed.
+* `SELECTOR_PAGINATION_NEXT` / `..._ENABLED` — the walk paginated correctly and
+  stopped cleanly on the disabled control.
+* `SELECTOR_PAGE_SIZE_CHANGER` and its option list — opened, read, logged, and
+  the largest option selected. The collector noticed the pagination had
+  renumbered and restarted the walk, exactly as designed.
+* Period verification matched **to the millisecond** on three separate windows.
+* The half-applied period is real, not theoretical: the site issues a request
+  while the second date is still being typed. Both that page and the
+  pre-period page were captured and correctly discarded.
+* Year-boundary splitting works: `2025-12-01..2025-12-31` and
+  `2026-01-01..2026-01-31` each verified independently, with no overlap in
+  flight ids between them.
+* **Numbers.** 1–7 July 2026 gave 1217 flights across 25 pages; the site's own
+  tile for the same period reports 1217 flights, 31 154 L and 0 kg. The
+  collector's area came to 1318.58 ha against the tile's 1318.62 — the tile
+  labels hectares as `mu`, a known trap of this interface, and the residual is
+  rounding.
+* The list payload carries all twenty fields the ingest endpoint reads,
+  including `lat`, `lng` and `work_time_seconds`, so **no per-flight detail
+  request is needed**. `geometry_md5` is *not* in the list payload; it exists
+  only on the single-flight endpoint.
+
+**Still unverified, and the reason each is safe:**
+
+* `SELECTOR_COOKIE_ACCEPT` and `SELECTOR_LIST_VIEW` — both best-effort. A miss
+  is logged and the run continues; the list toggle is only attempted when
+  nothing was captured at all.
+* `SELECTOR_REGION_INDICATOR` matches **nothing** on the live page, and that is
+  the honest state of it: the page has no region display, only an "Other
+  Regions" switcher whose class is a build-hashed CSS-module name. That item is
+  deliberately not matched — a selector picking it up would compare the
+  expected region against the string "Other Regions" and block every run. So
+  the region check reports `not-found` and warns until someone identifies the
+  real element. Exit 6 is what protects the run meanwhile.
+
+**What the collector has still never done: POST to the ingest endpoint.** The
+live run was a dry run. `DRONE_API_TOKEN` is not set on production, and the
+collector has never run on a schedule.
+
+## Historical collection
+
+**Year boundaries are handled for you.** The picker resets a range that crosses
+one, so `--from 2025-06-30 --to 2026-07-31` is split automatically into
+`2025-06-30 … 2025-12-31` and `2026-01-01 … 2026-07-31`, and each is a full
+cycle of its own: set the period, verify it, walk it, send it. If one window
+fails, the ones already sent are kept and the log names both lists — what
+completed and what still needs collecting. Re-running a completed window is
+harmless; the ingest deduplicates by DJI flight id.
+
+**Sizing.** Observed on the live cabinet on 2026-07-31: 2026-01-01 → 2026-07-31
+is 705 pages at 30 per page (21 123 flights), and a full historical window is
+around 970. At the maximum page size of 50 a full year is roughly **420
+pages**, so `DJI_MAX_PAGES=2000` leaves ample headroom — the old 500 would have
+terminated a legitimate backfill as if it had run away.
+
+At `DJI_SETTLE_MS=2500`, a several-hundred-page walk takes tens of minutes of
+clicking. That is expected, not a hang.
+
+---
+
+## Deployment
+
+Deliberately **not** wired into the application's service configuration or
+scheduler. Scheduling it is a separate, owner-run step.
+
+The browser side is proved — the live run of 2026-07-31 collected end to end.
+What remains before it can be scheduled is the other half: `DRONE_API_TOKEN`
+has to be set on the production service, and the first sending run should be
+watched (`DJI_HEADLESS=false`) over a short period, because the collector has
+never actually POSTed to the ingest endpoint.
+
+The collector performs no unit conversion. `new_work_area` is m², `spray_usage`
+is millilitres and `sow_usage` is grams in the payload; `drones.py` performs
+those conversions at ingest. The flight objects are forwarded verbatim.
