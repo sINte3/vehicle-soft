@@ -102,6 +102,14 @@ FIRST_CAPTURE_TIMEOUT_MS = 60000
 # Polling granularity while waiting for a capture.
 CAPTURE_POLL_MS = 250
 
+# How long to wait for the flight list of the next page after clicking, in
+# milliseconds. Shorter than the first-capture wait: by this point the session
+# is warm and the site has answered at least once.
+PAGE_CAPTURE_TIMEOUT_MS = 20000
+
+# Guard: this many consecutive clicks producing no new page ends the walk.
+MAX_IDLE_CLICKS = 2
+
 
 # The site rounds the period it was given (and may apply its own idea of the
 # day's edges), so the returned URL is compared against the intended bounds
@@ -268,6 +276,51 @@ def period_matches(url, expected_from_ms, expected_to_ms,
         return False
     return (abs(observed_from - expected_from_ms) <= tolerance_ms
             and abs(observed_to - expected_to_ms) <= tolerance_ms)
+
+
+def dedupe_flights(flights):
+    """(unique_flights, self_duplicate_count) -- deduplicated by the `id` field.
+
+    The same page can be captured twice: a click that lands on a page the site
+    re-fetches, a re-render, a retried XHR. The first occurrence of an id wins
+    and the order of first appearance is preserved, so the result is
+    deterministic whatever the capture order was.
+
+    [REASON]: flights WITHOUT a usable id are passed through, never dropped.
+    They cannot be deduplicated here, and the ingest endpoint will count them
+    as errors and say so in its log -- which is the visible outcome. Dropping
+    them in the collector would make them disappear without a trace, and a
+    flight lost in the collector is unrecoverable once the DJI history window
+    rolls past it.
+    """
+    seen = set()
+    unique = []
+    duplicates = 0
+    for flight in flights:
+        if not isinstance(flight, dict):
+            continue
+        flight_id = _as_int(flight.get('id'))
+        if flight_id is None:
+            unique.append(flight)
+            continue
+        if flight_id in seen:
+            duplicates += 1
+            continue
+        seen.add(flight_id)
+        unique.append(flight)
+    return unique, duplicates
+
+
+def count_unidentified(flights):
+    """How many flights carry no numeric id (the ingest will error on these)."""
+    return sum(1 for flight in flights
+               if isinstance(flight, dict) and _as_int(flight.get('id')) is None)
+
+
+def pages_seen(captured):
+    """The set of distinct page numbers among captured pages."""
+    return set(page.current_page for page in captured
+               if page.current_page is not None)
 
 
 def format_ms(value, tz_offset_hours):
@@ -610,3 +663,191 @@ class FlightCollector(object):
                           'period', dropped)
         self._captured = kept
         return dropped
+
+    def _accept_new_captures(self, before, expected_from_ms, expected_to_ms):
+        """Validate the pages captured since index `before`, drop the rest."""
+        fresh = self._captured[before:]
+        kept = [page for page in fresh
+                if period_matches(page.url, expected_from_ms, expected_to_ms)]
+        dropped = len(fresh) - len(kept)
+        if dropped:
+            self.log.warning('Dropped %d page(s) whose URL carried a different '
+                             'period', dropped)
+        self._captured = self._captured[:before] + kept
+        return kept
+
+    # -- pagination -----------------------------------------------------------
+
+    def _next_control_state(self):
+        """'enabled', 'disabled' or 'missing'."""
+        try:
+            if self._page.locator(SELECTOR_PAGINATION_NEXT_ENABLED).count() > 0:
+                return 'enabled'
+            if self._page.locator(SELECTOR_PAGINATION_NEXT).count() > 0:
+                return 'disabled'
+        except Exception as exc:
+            self.log.warning('Could not read the pagination control (%s)', exc)
+        return 'missing'
+
+    def _click_next(self):
+        """Click the next-page control. True when the click was delivered.
+
+        [REASON]: the click goes through element.click() in the page rather
+        than Playwright's own click, because a consent banner or a sticky
+        footer overlaying the control makes a real mouse click land on the
+        overlay instead. This was the previous collector's fix and it holds.
+        """
+        control = self._page.locator(SELECTOR_PAGINATION_NEXT_ENABLED).first
+        try:
+            control.evaluate('el => el.click()')
+            return True
+        except Exception as exc:
+            self.log.warning('JS click on the next-page control failed (%s), '
+                             'trying a real click', exc)
+        try:
+            control.click(timeout=self.cfg.page_timeout_ms)
+            return True
+        except Exception as exc:
+            self.log.warning('Next-page click failed (%s)', exc)
+            return False
+
+    def paginate(self, expected_from_ms, expected_to_ms):
+        """Walk the remaining pages. Returns (complete, total_pages, clicks).
+
+        Four guards, all required, any of which ends the walk:
+          1. DJI_MAX_PAGES iterations, regardless of anything else;
+          2. MAX_IDLE_CLICKS consecutive clicks producing no new page;
+          3. current_page failing to advance;
+          4. the next-page control being disabled -- a clean stop.
+
+        `complete` is False when the walk ended before every page reported by
+        meta_data.total_pages was captured. The caller decides what to do with
+        that; nothing is hidden.
+        """
+        if not self._captured:
+            raise BrowserError('paginate() called before any page was captured')
+
+        first = self._captured[0]
+        total_pages = first.total_pages or 1
+        last_page = first.current_page
+        self.log.info('Total pages reported by the site: %s', total_pages)
+
+        clicks = 0
+        idle_clicks = 0
+        while len(pages_seen(self._captured)) < total_pages:
+            # Guard 1: the hard cap, checked before anything else.
+            if clicks >= self.cfg.max_pages:
+                self.log.warning('Stopping: hit the DJI_MAX_PAGES cap of %d',
+                                 self.cfg.max_pages)
+                break
+
+            # Guard 4: a disabled control means the site says there is no next
+            # page. That is a clean stop, even if total_pages disagrees.
+            state = self._next_control_state()
+            if state == 'disabled':
+                self.log.info('Stopping: the next-page control is disabled')
+                break
+            if state == 'missing':
+                self.log.warning('Stopping: the next-page control was not found'
+                                 ' (%r) -- correct the selector constants at the'
+                                 ' top of browser.py', SELECTOR_PAGINATION_NEXT)
+                break
+
+            before = len(self._captured)
+            if not self._click_next():
+                break
+            clicks += 1
+            self._wait_for_capture(before, PAGE_CAPTURE_TIMEOUT_MS)
+            self._page.wait_for_timeout(self.cfg.settle_ms)
+            fresh = self._accept_new_captures(before, expected_from_ms,
+                                              expected_to_ms)
+
+            # Guard 2: nothing new arrived.
+            if not fresh:
+                idle_clicks += 1
+                self.log.warning('Click %d produced no new page (%d in a row)',
+                                 clicks, idle_clicks)
+                if idle_clicks >= MAX_IDLE_CLICKS:
+                    self.log.warning('Stopping: %d consecutive clicks produced '
+                                     'no new page', idle_clicks)
+                    break
+                continue
+            idle_clicks = 0
+
+            # Guard 3: the page number did not move forward.
+            numbers = [page.current_page for page in fresh
+                       if page.current_page is not None]
+            newest = max(numbers) if numbers else None
+            if newest is None:
+                self.log.warning('Stopping: the captured page carries no '
+                                 'current_page')
+                break
+            if last_page is not None and newest <= last_page:
+                self.log.warning('Stopping: current_page did not advance '
+                                 '(%s -> %s)', last_page, newest)
+                break
+            last_page = newest
+
+        complete = len(pages_seen(self._captured)) >= total_pages
+        if not complete:
+            self.log.error('Pagination incomplete: %d of %s pages captured '
+                           'after %d click(s)', len(pages_seen(self._captured)),
+                           total_pages, clicks)
+        return complete, total_pages, clicks
+
+    # -- the whole run --------------------------------------------------------
+
+    def collect(self, date_from, date_to):
+        """Open the records page, set the period, walk it, return the flights."""
+        self.open_records()
+        expected_from, expected_to = self.set_period(date_from, date_to)
+        complete, total_pages, clicks = self.paginate(expected_from,
+                                                      expected_to)
+
+        raw = []
+        for page in self._captured:
+            raw.extend(page.flights)
+        unique, self_duplicates = dedupe_flights(raw)
+
+        result = CollectResult(
+            flights=unique,
+            pages_captured=len(pages_seen(self._captured)),
+            total_pages=total_pages,
+            flights_captured=len(raw),
+            self_duplicates=self_duplicates,
+            unidentified=count_unidentified(unique),
+            rejected=self.rejected,
+            ignored_detail=self.ignored_detail_responses,
+            clicks=clicks,
+            complete=complete,
+        )
+        self.log.info('Collected %d flight(s) from %d page(s); the collector '
+                      'itself removed %d duplicate(s)', len(unique),
+                      result.pages_captured, self_duplicates)
+        if result.unidentified:
+            self.log.warning('%d captured flight(s) carry no numeric id; they '
+                             'are sent anyway and the ingest will report them '
+                             'as errors', result.unidentified)
+        return result
+
+
+class CollectResult(object):
+    """What one browser run produced. Everything here goes into the summary."""
+
+    __slots__ = ('flights', 'pages_captured', 'total_pages', 'flights_captured',
+                 'self_duplicates', 'unidentified', 'rejected',
+                 'ignored_detail', 'clicks', 'complete')
+
+    def __init__(self, flights, pages_captured, total_pages, flights_captured,
+                 self_duplicates, unidentified, rejected, ignored_detail,
+                 clicks, complete):
+        self.flights = flights
+        self.pages_captured = pages_captured
+        self.total_pages = total_pages
+        self.flights_captured = flights_captured
+        self.self_duplicates = self_duplicates
+        self.unidentified = unidentified
+        self.rejected = rejected
+        self.ignored_detail = ignored_detail
+        self.clicks = clicks
+        self.complete = complete
