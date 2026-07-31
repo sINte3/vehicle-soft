@@ -30,6 +30,8 @@ nowhere else.
 import logging
 import time
 
+from datetime import datetime, timedelta
+
 from urllib.parse import parse_qs, urlsplit
 
 log = logging.getLogger(__name__)
@@ -101,12 +103,36 @@ FIRST_CAPTURE_TIMEOUT_MS = 60000
 CAPTURE_POLL_MS = 250
 
 
+# The site rounds the period it was given (and may apply its own idea of the
+# day's edges), so the returned URL is compared against the intended bounds
+# with one hour of slack on each edge. One hour absorbs rounding; it is far
+# too small to hide the failure this check exists for -- a period the picker
+# ignored, or a range the calendar reset because it crossed a year boundary,
+# is wrong by a day or more.
+PERIOD_TOLERANCE_MS = 3600 * 1000
+
+# Delay between keystrokes when typing into the date inputs. Ant Design
+# revalidates on every keystroke; typing instantly has been known to leave the
+# control holding a partial date.
+KEY_DELAY_MS = 40
+
+
 class BrowserError(Exception):
     """The browser side of the run failed."""
 
 
 class SessionExpired(BrowserError):
     """The saved session no longer signs us in. main() -> exit code 2."""
+
+
+class PeriodVerificationFailed(BrowserError):
+    """The site is not showing the period we asked for. main() -> exit code 3.
+
+    [REASON]: a collector that silently harvests the wrong period is worse
+    than one that fails -- the flights it brings back are real, they land in
+    the database, and nothing downstream can tell that the window was not the
+    one the operator asked for. So this is fatal and nothing is sent.
+    """
 
 
 # ─── Pure response filtering (unit-tested, no browser) ────────────────────────
@@ -205,6 +231,60 @@ def _as_int(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+# ─── Period verification (unit-tested, no browser) ────────────────────────────
+
+def parse_period_from_url(url):
+    """(from_ms, to_ms) read out of a flight-list request URL.
+
+    The parameters arrive percent-encoded as filters%5Btimestamp_gteq%5D;
+    parse_qs decodes keys as well as values, so both spellings land on the
+    same key. A parameter that is absent or not an integer comes back None.
+    """
+    if not url:
+        return (None, None)
+    params = parse_qs(urlsplit(url).query, keep_blank_values=True)
+    return (_first_int(params.get(PARAM_PERIOD_FROM)),
+            _first_int(params.get(PARAM_PERIOD_TO)))
+
+
+def _first_int(values):
+    if not values:
+        return None
+    return _as_int(values[0])
+
+
+def period_matches(url, expected_from_ms, expected_to_ms,
+                   tolerance_ms=PERIOD_TOLERANCE_MS):
+    """True when the URL's period matches the intended one within tolerance.
+
+    A URL carrying neither bound never matches: "no filter parameters" means
+    the picker was not applied at all, which is exactly the failure this
+    function exists to catch.
+    """
+    observed_from, observed_to = parse_period_from_url(url)
+    if observed_from is None or observed_to is None:
+        return False
+    return (abs(observed_from - expected_from_ms) <= tolerance_ms
+            and abs(observed_to - expected_to_ms) <= tolerance_ms)
+
+
+def format_ms(value, tz_offset_hours):
+    """'1782846000000 (2026-07-01 00:00:00 +5)' -- for log lines and errors.
+
+    Both the raw number and its local rendering are shown: the number is what
+    the site sent, the rendering is what a human can compare against the
+    period they asked for.
+    """
+    if value is None:
+        return 'absent'
+    moment = (datetime(1970, 1, 1)
+              + timedelta(milliseconds=value)
+              + timedelta(hours=tz_offset_hours))
+    sign = '+' if tz_offset_hours >= 0 else '-'
+    return '%d (%s %s%g)' % (value, moment.strftime('%Y-%m-%d %H:%M:%S'),
+                             sign, abs(tz_offset_hours))
 
 
 # ─── The driver ───────────────────────────────────────────────────────────────
@@ -405,3 +485,128 @@ class FlightCollector(object):
             self.log.info('Switched to the List view')
         except Exception as exc:
             self.log.info('List view toggle not used (%s)', exc)
+
+    # -- period ---------------------------------------------------------------
+
+    def _range_inputs(self):
+        """The two date inputs of the Ant Design range picker, in order."""
+        for selector in (SELECTOR_RANGE_INPUTS, SELECTOR_RANGE_INPUTS_FALLBACK):
+            locator = self._page.locator(selector)
+            try:
+                count = locator.count()
+            except Exception:
+                count = 0
+            if count >= 2:
+                self.log.info('Range picker inputs found with %r', selector)
+                return [locator.nth(0), locator.nth(1)]
+        raise BrowserError(
+            'the date range picker was not found -- looked for %r and %r under '
+            '%r. Correct the selector constants at the top of browser.py.'
+            % (SELECTOR_RANGE_INPUTS, SELECTOR_RANGE_INPUTS_FALLBACK,
+               SELECTOR_RANGE_PICKER))
+
+    def _type_date(self, field, text):
+        """Click, select all, type YYYY-MM-DD, press Enter."""
+        field.click(timeout=self.cfg.page_timeout_ms)
+        # Select whatever the control already holds; Ant Design keeps the
+        # previous value in the input and typing would otherwise append to it.
+        field.press('Control+a')
+        # press_sequentially replaced type() in newer Playwright; both are
+        # tried so the collector is not pinned to one minor version.
+        try:
+            field.press_sequentially(text, delay=KEY_DELAY_MS)
+        except AttributeError:  # pragma: no cover -- older Playwright
+            field.type(text, delay=KEY_DELAY_MS)
+        field.press('Enter')
+        self._page.wait_for_timeout(self.cfg.settle_ms)
+
+    def set_period(self, date_from, date_to):
+        """Type the period into the picker, then prove the site accepted it.
+
+        The period cannot be put into the request URL: an altered query string
+        fails DJI's signature check (`code 101`). It has to go through the
+        site's own control, which is why it then has to be verified rather
+        than assumed.
+
+        Returns (from_ms, to_ms) -- the intended bounds, once verified.
+        """
+        from drone_collector.window import format_date, window_bounds_ms
+
+        expected_from, expected_to = window_bounds_ms(
+            date_from, date_to, self.cfg.tz_offset_hours)
+
+        fields = self._range_inputs()
+
+        # [REASON]: everything captured so far belongs to the site's DEFAULT
+        # period, not to ours. Keeping it would mix flights from an unasked-for
+        # window into the batch, and the run summary would still look right.
+        discarded = len(self._captured)
+        self._captured = []
+        if discarded:
+            self.log.info('Discarded %d page(s) captured before the period was '
+                          'set', discarded)
+
+        self.log.info('Setting period %s .. %s', format_date(date_from),
+                      format_date(date_to))
+        self._type_date(fields[0], format_date(date_from))
+        self._type_date(fields[1], format_date(date_to))
+
+        if not self._captured:
+            self._wait_for_capture(0, FIRST_CAPTURE_TIMEOUT_MS)
+
+        self.verify_period(expected_from, expected_to)
+        return expected_from, expected_to
+
+    def verify_period(self, expected_from_ms, expected_to_ms):
+        """Read the period back out of the site's own request URL.
+
+        Mandatory, and fatal when it fails: the intended and the observed
+        values are both logged, PeriodVerificationFailed is raised, and the
+        run sends nothing.
+        """
+        tz = self.cfg.tz_offset_hours
+        intended = 'intended %s .. %s' % (format_ms(expected_from_ms, tz),
+                                          format_ms(expected_to_ms, tz))
+        if not self._captured:
+            raise PeriodVerificationFailed(
+                'no flight-list request was captured after the period was set '
+                '(%s); rejected responses: %s'
+                % (intended, self._rejected or 'none'))
+
+        url = self._captured[-1].url
+        observed_from, observed_to = parse_period_from_url(url)
+        observed = 'observed %s .. %s' % (format_ms(observed_from, tz),
+                                          format_ms(observed_to, tz))
+
+        if not period_matches(url, expected_from_ms, expected_to_ms):
+            self.log.error('Period verification failed: %s; %s', intended,
+                           observed)
+            self.log.error('Observed request URL: %s', url)
+            raise PeriodVerificationFailed(
+                'the site is showing a different period: %s; %s' % (intended,
+                                                                    observed))
+
+        self.log.info('Period verified: %s; %s', intended, observed)
+        self._drop_captures_outside_period(expected_from_ms, expected_to_ms)
+        return True
+
+    def _drop_captures_outside_period(self, expected_from_ms, expected_to_ms):
+        """Keep only pages whose own URL carries the verified period.
+
+        [REASON]: the picker fires a request after the START date is entered,
+        while the end date is still the old one. That intermediate page is a
+        real, well-formed flight list for a period nobody asked for. The last
+        captured URL is the one verified above; the rest are filtered here so
+        that a half-applied period cannot contribute flights to the batch.
+        """
+        kept, dropped = [], 0
+        for page in self._captured:
+            if period_matches(page.url, expected_from_ms, expected_to_ms):
+                kept.append(page)
+            else:
+                dropped += 1
+        if dropped:
+            self.log.info('Dropped %d page(s) captured with a half-applied '
+                          'period', dropped)
+        self._captured = kept
+        return dropped
