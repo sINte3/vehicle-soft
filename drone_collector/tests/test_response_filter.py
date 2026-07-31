@@ -19,6 +19,8 @@ from drone_collector.browser import (
     is_expected_api_version,
     is_flight_list_body,
     is_flight_list_url,
+    parse_page_size_from_url,
+    parse_page_size_option,
 )
 
 from drone_collector.tests.support import (
@@ -150,6 +152,39 @@ class ClassifyResponseTests(unittest.TestCase):
         accepted, reason = classify_response(list_url(), {'data': []})
         self.assertFalse(accepted)
         self.assertEqual(reason, 'code-none')
+
+
+class PageSizeTests(unittest.TestCase):
+    """page_size is a per-session setting with its own control, not a constant.
+
+    What the signature test proved is narrower: an ALTERED URL is rejected.
+    The value itself changes when the site's own control is used, and it has
+    been seen at 30 in one session and 50 in another.
+    """
+
+    def test_option_labels(self):
+        self.assertEqual(parse_page_size_option('30 / page'), 30)
+        self.assertEqual(parse_page_size_option('50 / page'), 50)
+        self.assertEqual(parse_page_size_option('100/page'), 100)
+
+    def test_localised_option_labels(self):
+        # The first run of digits is taken rather than the wording matched,
+        # so a Russian or Chinese UI still parses.
+        self.assertEqual(parse_page_size_option('50 / страница'), 50)
+        self.assertEqual(parse_page_size_option('100 条/页'), 100)
+
+    def test_unreadable_labels(self):
+        for text in ('', None, 'per page', 'all'):
+            self.assertIsNone(parse_page_size_option(text))
+
+    def test_read_back_from_a_request_url(self):
+        self.assertEqual(parse_page_size_from_url(list_url(page_size=30)), 30)
+        self.assertEqual(parse_page_size_from_url(list_url(page_size=100)), 100)
+
+    def test_read_back_when_absent(self):
+        self.assertIsNone(parse_page_size_from_url(
+            'https://www.djiag.com/api/web/v1/flight_records?page=1'))
+        self.assertIsNone(parse_page_size_from_url(''))
 
 
 class CapturedPageTests(unittest.TestCase):

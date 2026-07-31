@@ -10,8 +10,12 @@ says "the browser handed me the same page twice", the endpoint's says "these
 flights were already in the database". Adding them together would hide both.
 """
 
+import ast
 import unittest
 
+from pathlib import Path
+
+from drone_collector import browser as browser_module
 from drone_collector.browser import (
     CapturedPage,
     count_unidentified,
@@ -79,6 +83,71 @@ class DedupeTests(unittest.TestCase):
         unique, duplicates = dedupe_flights(raw)
         self.assertEqual(len(unique), 2)
         self.assertEqual(duplicates, 2)
+
+
+class SerialNumberIsNotAMachineKeyTests(unittest.TestCase):
+    """serial_number is unique per FLIGHT, not per aircraft (verified on
+    10 385 records). Treating it as a machine key is the mistake this pins."""
+
+    def test_flights_sharing_a_serial_number_are_both_kept(self):
+        # Two different flights that happen to carry the same serial: both are
+        # real flights and both must survive.
+        flights = [make_flight(1, serial_number='R0000000001'),
+                   make_flight(2, serial_number='R0000000001')]
+        unique, duplicates = dedupe_flights(flights)
+        self.assertEqual(len(unique), 2)
+        self.assertEqual(duplicates, 0)
+
+    def test_one_flight_with_two_serial_numbers_is_still_one_flight(self):
+        # Same id, different serial: deduplication is on id alone.
+        flights = [make_flight(1, serial_number='R0000000001'),
+                   make_flight(1, serial_number='R0000000002')]
+        unique, duplicates = dedupe_flights(flights)
+        self.assertEqual(len(unique), 1)
+        self.assertEqual(duplicates, 1)
+
+    def test_no_module_reads_the_serial_number_field(self):
+        """Structural check: no *code* in the package names serial_number.
+
+        Docstrings and comments are excluded on purpose -- saying "this is not
+        a machine key" in prose is the point. What this forbids is a string
+        literal in executable code, which is the only way a dict field can be
+        read: flight['serial_number'], flight.get('serial_number'), a key in a
+        mapping. Comments never reach the AST; docstrings are skipped
+        explicitly.
+        """
+        package = Path(browser_module.__file__).resolve().parent
+        offenders = []
+        for source in sorted(package.glob('*.py')):
+            for literal in _code_string_literals(source.read_text(encoding='utf-8')):
+                if 'serial_number' in literal:
+                    offenders.append('%s: %r' % (source.name, literal))
+        self.assertEqual(offenders, [])
+
+
+def _code_string_literals(source):
+    """Every string constant in `source` except docstrings.
+
+    Comments are absent from the AST altogether, so they need no handling.
+    """
+    tree = ast.parse(source)
+    docstrings = set()
+    for node in ast.walk(tree):
+        body = getattr(node, 'body', None)
+        if not isinstance(body, list) or not body:
+            continue
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                 ast.AsyncFunctionDef)):
+            continue
+        first = body[0]
+        if (isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)):
+            docstrings.add(id(first.value))
+    return [node.value for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in docstrings]
 
 
 class PagesSeenTests(unittest.TestCase):

@@ -9,13 +9,24 @@ dropping the header returns body `code 101`, and rewriting `page_size=30` to
 requests are issued by the site, and we only listen. Three consequences run
 through this whole module:
 
-  * page_size is 30 and cannot be changed;
+  * nothing in a URL may be edited after the site has signed it;
   * the reporting period cannot be put into the URL -- it is set through the
     site's own date picker and then VERIFIED against the URL the site produced;
   * pagination is by page number, through the site's own control.
 
+Note what the signature test does NOT prove. It proves that an ALTERED URL is
+rejected, not that the values in it are fixed. page_size in particular is a
+per-session setting with its own control on the page: when that control is
+used, the app signs a request carrying the new value. It has been observed at
+30 in one session and 50 in another. maximise_page_size() therefore drives
+that control -- and only that control.
+
 Do not try to generate, replay or reverse-engineer the Signature header. It
 has been tested and it does not work.
+
+serial_number is NOT a machine identifier. It is unique per flight (verified
+on 10 385 records), so it is a second flight id. Nothing here keys, groups or
+deduplicates on it; deduplication is on `id` alone.
 
 Success is NOT the HTTP status. Every response is HTTP 200; success or failure
 is the `code` field inside the JSON body: 200 means data, 101 and 408 mean
@@ -28,6 +39,7 @@ nowhere else.
 """
 
 import logging
+import re
 import time
 
 from datetime import datetime, timedelta
@@ -112,6 +124,24 @@ SELECTOR_RANGE_INPUT_END = '.ant-picker-range input[placeholder="End date"]'
 # control carries aria-disabled="true" and the class ant-pagination-disabled.
 SELECTOR_PAGINATION_NEXT = 'li.ant-pagination-next'
 SELECTOR_PAGINATION_NEXT_ENABLED = "li.ant-pagination-next[aria-disabled='false']"
+
+# Page-size control. Confirmed in the dump:
+#   <div class="ant-select ... ant-pagination-options-size-changer"
+#        aria-label="Page Size">
+#     <div class="ant-select-selector">
+#       <span class="ant-select-selection-item" title="30 / page">30 / page</span>
+SELECTOR_PAGE_SIZE_CHANGER = '.ant-pagination-options-size-changer'
+SELECTOR_PAGE_SIZE_CURRENT = ('.ant-pagination-options-size-changer '
+                              '.ant-select-selection-item')
+
+# The option list is NOT in the DOM until the control is opened -- Ant Design
+# renders the dropdown into a portal on the body, so these are document-wide
+# and cannot be scoped to the pagination element. The :not(...-hidden) part
+# skips a dropdown that has been opened and closed again and is still in the
+# DOM. Unverified: the saved page had never had this control opened.
+SELECTOR_PAGE_SIZE_OPTIONS = ('.ant-select-dropdown:not(.ant-select-dropdown-hidden) '
+                              '.ant-select-item-option')
+SELECTOR_PAGE_SIZE_OPTIONS_FALLBACK = '.ant-select-item-option'
 
 # Cookie-consent banner. It overlays the bottom of the page and swallows
 # clicks on the pagination control.
@@ -317,6 +347,27 @@ def period_matches(url, expected_from_ms, expected_to_ms,
         return False
     return (abs(observed_from - expected_from_ms) <= tolerance_ms
             and abs(observed_to - expected_to_ms) <= tolerance_ms)
+
+
+def parse_page_size_option(text):
+    """'50 / page' -> 50. None when the label carries no number.
+
+    Ant Design renders the option as '<n> / page'; other locales and other
+    antd versions render it differently ('50/страница', '50 条/页'), so the
+    first run of digits is taken rather than the exact wording matched.
+    """
+    if not text:
+        return None
+    match = re.search(r'\d+', str(text))
+    return int(match.group()) if match else None
+
+
+def parse_page_size_from_url(url):
+    """The page_size actually in force, read out of a request URL."""
+    if not url:
+        return None
+    params = parse_qs(urlsplit(url).query, keep_blank_values=True)
+    return _first_int(params.get('page_size'))
 
 
 def dedupe_flights(flights):
@@ -774,6 +825,131 @@ class FlightCollector(object):
         self._captured = self._captured[:before] + kept
         return kept
 
+    # -- page size ------------------------------------------------------------
+
+    def current_page_size(self):
+        """The page size actually in force, from the last captured request URL.
+
+        The URL is the authority, not the label on the control: it is what the
+        API was actually asked for.
+        """
+        if self._captured:
+            size = parse_page_size_from_url(self._captured[-1].url)
+            if size:
+                return size
+        try:
+            text = self._page.locator(SELECTOR_PAGE_SIZE_CURRENT).first.inner_text()
+            return parse_page_size_option(text)
+        except Exception:
+            return None
+
+    def _page_size_options(self):
+        """[(size, label, locator)] from the opened dropdown, largest last."""
+        for selector in (SELECTOR_PAGE_SIZE_OPTIONS,
+                         SELECTOR_PAGE_SIZE_OPTIONS_FALLBACK):
+            locator = self._page.locator(selector)
+            try:
+                count = locator.count()
+            except Exception:
+                count = 0
+            options = []
+            for index in range(count):
+                item = locator.nth(index)
+                try:
+                    label = (item.get_attribute('title')
+                             or item.inner_text() or '').strip()
+                except Exception:
+                    continue
+                size = parse_page_size_option(label)
+                if size:
+                    options.append((size, label, item))
+            if options:
+                return sorted(options, key=lambda option: option[0])
+        return []
+
+    def maximise_page_size(self, expected_from_ms, expected_to_ms):
+        """Switch the site to the largest page size it offers. Best effort.
+
+        Returns the page size in force afterwards, or None if unknown.
+
+        [REASON]: page_size is NOT fixed. What was proven is narrower than it
+        first looked: rewriting page_size in the URL *after* the app signed the
+        request is rejected with `code 101`. The value itself can change --
+        the site has its own control, and when it is used the app signs a
+        request carrying the new value. Observed as 30 in one session and 50
+        in another, so the setting is per-session and persists.
+
+        This never raises. A page size that cannot be changed only makes the
+        run slower; aborting for it would trade a working collection for none.
+        """
+        before_size = self.current_page_size()
+        self.log.info('Page size currently in force: %s', before_size)
+
+        try:
+            changer = self._page.locator(SELECTOR_PAGE_SIZE_CHANGER).first
+            if changer.count() == 0:
+                self.log.warning('Page-size control %r not found; continuing at '
+                                 '%s per page', SELECTOR_PAGE_SIZE_CHANGER,
+                                 before_size)
+                return before_size
+            changer.click(timeout=self.cfg.page_timeout_ms)
+            self._page.wait_for_timeout(min(self.cfg.settle_ms, 1500))
+
+            options = self._page_size_options()
+            if not options:
+                self.log.warning('Page-size control opened but offered no '
+                                 'readable options (%r); continuing at %s per '
+                                 'page', SELECTOR_PAGE_SIZE_OPTIONS, before_size)
+                self._page.keyboard.press('Escape')
+                return before_size
+
+            # Required log line: the available maximum was unknown before this
+            # run, and this is how it becomes known.
+            self.log.info('Page-size options offered by the site: %s',
+                          [label for _size, label, _item in options])
+
+            largest_size, largest_label, largest_item = options[-1]
+            if before_size is not None and largest_size <= before_size:
+                self.log.info('Already at the largest offered page size (%s)',
+                              before_size)
+                self._page.keyboard.press('Escape')
+                return before_size
+
+            self.log.info('Selecting the largest page size: %s', largest_label)
+            captured_before = len(self._captured)
+            largest_item.click(timeout=self.cfg.page_timeout_ms)
+            self._wait_for_capture(captured_before, PAGE_CAPTURE_TIMEOUT_MS)
+            self._page.wait_for_timeout(self.cfg.settle_ms)
+            fresh = self._accept_new_captures(captured_before, expected_from_ms,
+                                              expected_to_ms)
+        except Exception as exc:
+            self.log.warning('Could not change the page size (%s); continuing '
+                             'at %s per page', exc, before_size)
+            return before_size
+
+        if not fresh:
+            self.log.warning('The page-size selection produced no new request; '
+                             'continuing at %s per page', before_size)
+            return before_size
+
+        effective = parse_page_size_from_url(fresh[-1].url)
+        self.log.info('Page size now in force, read back from the request URL: '
+                      '%s', effective)
+        if effective and effective != before_size:
+            # [REASON]: changing the page size renumbers the pagination -- the
+            # pages captured at the old size describe a different partition of
+            # the same flights, and mixing the two would make pages_seen()
+            # meaningless against the new total_pages. The flights are not
+            # lost: the new page 1 is a superset of the old one, and anything
+            # beyond it is walked again.
+            self.log.info('Pagination renumbered by the page-size change; '
+                          'restarting the walk from the new first page')
+            self._captured = fresh
+        elif effective == before_size:
+            self.log.warning('The page-size selection did not take effect; '
+                             'continuing at %s per page', before_size)
+        return effective or before_size
+
     # -- pagination -----------------------------------------------------------
 
     def _next_control_state(self):
@@ -899,6 +1075,7 @@ class FlightCollector(object):
         """Open the records page, set the period, walk it, return the flights."""
         self.open_records()
         expected_from, expected_to = self.set_period(date_from, date_to)
+        page_size = self.maximise_page_size(expected_from, expected_to)
         complete, total_pages, clicks = self.paginate(expected_from,
                                                       expected_to)
 
@@ -918,6 +1095,7 @@ class FlightCollector(object):
             ignored_detail=self.ignored_detail_responses,
             clicks=clicks,
             complete=complete,
+            page_size=page_size,
         )
         self.log.info('Collected %d flight(s) from %d page(s); the collector '
                       'itself removed %d duplicate(s)', len(unique),
@@ -934,11 +1112,13 @@ class CollectResult(object):
 
     __slots__ = ('flights', 'pages_captured', 'total_pages', 'flights_captured',
                  'self_duplicates', 'unidentified', 'rejected',
-                 'ignored_detail', 'clicks', 'complete')
+                 'ignored_detail', 'clicks', 'complete', 'page_size',
+                 'date_from', 'date_to')
 
     def __init__(self, flights, pages_captured, total_pages, flights_captured,
                  self_duplicates, unidentified, rejected, ignored_detail,
-                 clicks, complete):
+                 clicks, complete, page_size=None, date_from=None,
+                 date_to=None):
         self.flights = flights
         self.pages_captured = pages_captured
         self.total_pages = total_pages
@@ -949,3 +1129,6 @@ class CollectResult(object):
         self.ignored_detail = ignored_detail
         self.clicks = clicks
         self.complete = complete
+        self.page_size = page_size
+        self.date_from = date_from
+        self.date_to = date_to
