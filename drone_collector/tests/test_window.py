@@ -7,13 +7,14 @@ and fails on the 1st of a month.
 
 import unittest
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from drone_collector.window import (
     compute_window,
     format_date,
     local_today,
     parse_date,
+    split_by_calendar_year,
     to_epoch_ms,
     window_bounds_ms,
 )
@@ -107,6 +108,64 @@ class EpochConversionTests(unittest.TestCase):
         self.assertEqual(from_ms, to_epoch_ms(date(2026, 7, 2), False, 5))
         self.assertEqual(to_ms, to_epoch_ms(date(2026, 7, 31), True, 5))
         self.assertEqual(to_ms - from_ms, 30 * MS_PER_DAY - 1)
+
+
+class SplitByCalendarYearTests(unittest.TestCase):
+    """The picker resets a range that crosses a year boundary, so history can
+    only be collected one calendar year at a time."""
+
+    def test_a_range_inside_one_year_returns_one_window(self):
+        self.assertEqual(
+            split_by_calendar_year(date(2026, 1, 1), date(2026, 7, 31)),
+            [(date(2026, 1, 1), date(2026, 7, 31))])
+
+    def test_a_range_spanning_two_years_returns_two(self):
+        self.assertEqual(
+            split_by_calendar_year(date(2025, 6, 30), date(2026, 7, 31)),
+            [(date(2025, 6, 30), date(2025, 12, 31)),
+             (date(2026, 1, 1), date(2026, 7, 31))])
+
+    def test_a_range_spanning_three_years_returns_three(self):
+        self.assertEqual(
+            split_by_calendar_year(date(2024, 5, 1), date(2026, 3, 1)),
+            [(date(2024, 5, 1), date(2024, 12, 31)),
+             (date(2025, 1, 1), date(2025, 12, 31)),
+             (date(2026, 1, 1), date(2026, 3, 1))])
+
+    def test_a_range_starting_and_ending_on_1_january(self):
+        self.assertEqual(
+            split_by_calendar_year(date(2025, 1, 1), date(2026, 1, 1)),
+            [(date(2025, 1, 1), date(2025, 12, 31)),
+             (date(2026, 1, 1), date(2026, 1, 1))])
+
+    def test_a_single_day(self):
+        self.assertEqual(
+            split_by_calendar_year(date(2026, 1, 1), date(2026, 1, 1)),
+            [(date(2026, 1, 1), date(2026, 1, 1))])
+
+    def test_a_whole_year_exactly(self):
+        self.assertEqual(
+            split_by_calendar_year(date(2025, 1, 1), date(2025, 12, 31)),
+            [(date(2025, 1, 1), date(2025, 12, 31))])
+
+    def test_the_windows_are_contiguous_and_lose_no_day(self):
+        windows = split_by_calendar_year(date(2024, 5, 1), date(2026, 3, 1))
+        days = sum((end - start).days + 1 for start, end in windows)
+        self.assertEqual(days, (date(2026, 3, 1) - date(2024, 5, 1)).days + 1)
+        for earlier, later in zip(windows, windows[1:]):
+            self.assertEqual(later[0] - earlier[1], timedelta(days=1))
+
+    def test_a_reversed_range_is_rejected(self):
+        with self.assertRaises(ValueError):
+            split_by_calendar_year(date(2026, 7, 31), date(2026, 1, 1))
+
+    def test_the_rolling_window_across_new_year_splits_in_two(self):
+        # The scheduled case on 15 January: the 30-day window reaches back
+        # into December and must not be requested as one range.
+        date_from, date_to = compute_window(30, 5, today=date(2026, 1, 15))
+        self.assertEqual(split_by_calendar_year(date_from, date_to),
+                         [(date(2025, 12, 17), date(2025, 12, 31)),
+                          (date(2026, 1, 1), date(2026, 1, 15))])
 
 
 class DateFormatTests(unittest.TestCase):

@@ -17,7 +17,7 @@ flights of the first day.
 
 import calendar
 
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 
 # One hour of tolerance is allowed when the site's own request URL is compared
 # against these values; see browser.verify_period_in_url.
@@ -69,6 +69,33 @@ def window_bounds_ms(date_from, date_to, tz_offset_hours):
     """(from_ms, to_ms) for a window: local midnight to local 23:59:59.999."""
     return (to_epoch_ms(date_from, False, tz_offset_hours),
             to_epoch_ms(date_to, True, tz_offset_hours))
+
+
+def split_by_calendar_year(date_from, date_to):
+    """Split a period into per-calendar-year sub-windows, in order.
+
+        2025-06-30 .. 2026-07-31  ->  [(2025-06-30, 2025-12-31),
+                                       (2026-01-01, 2026-07-31)]
+
+    [REASON]: the SmartFarm date picker RESETS a range that spans a year
+    boundary -- a single request for 2025-06-30 .. 2026-07-31 does not produce
+    that period. Splitting is not an optimisation, it is the only way to
+    collect history at all. Each sub-window is then a full cycle of its own:
+    set the period, verify it, paginate, capture, send.
+
+    A period inside one year comes back as a single window, so the caller
+    always iterates a list and never special-cases.
+    """
+    if date_from > date_to:
+        raise ValueError('date_from %s is after date_to %s'
+                         % (date_from, date_to))
+    windows = []
+    start = date_from
+    while start.year < date_to.year:
+        windows.append((start, date(start.year, 12, 31)))
+        start = date(start.year + 1, 1, 1)
+    windows.append((start, date_to))
+    return windows
 
 
 def format_date(day):
