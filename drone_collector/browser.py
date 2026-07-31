@@ -28,9 +28,12 @@ serial_number is NOT a machine identifier. It is unique per flight (verified
 on 10 385 records), so it is a second flight id. Nothing here keys, groups or
 deduplicates on it; deduplication is on `id` alone.
 
-Success is NOT the HTTP status. Every response is HTTP 200; success or failure
-is the `code` field inside the JSON body: 200 means data, 101 and 408 mean
-rejection. Any code path that decides success from response.status is wrong.
+Success is NOT the HTTP status, and the success code is NOT 200. Every
+response is HTTP 200; the truth is the `code` field inside the JSON body, and
+a successful body reads {"status": 200, "code": 0, "message": "OK"}. On a
+failure `status` and `code` are equal instead: 101/101 for a missing or
+invalidated signature, 408/408 for a bad timestamp. Any code path that decides
+success from response.status -- or from code == 200 -- is wrong.
 
 Selectors. The site cannot be reached from the development machine, so every
 selector below is a module-level constant with a comment: when one turns out
@@ -68,8 +71,26 @@ FLIGHT_LIST_URL_MARKER_LOOSE = '/flight_records?'
 # captured -- their body has no `data` list and no meta_data.
 FLIGHT_DETAIL_URL_MARKER = '/flight_records/'
 
-# In-body status. NOT the HTTP status: every response is HTTP 200.
-BODY_CODE_OK = 200
+# In-body status of a SUCCESSFUL response. NOT the HTTP status, and NOT 200.
+#
+# The envelope, verified on twelve real responses captured in HAR files from
+# the live cabinet on 2026-07-31 -- the flight list, flight detail, overview,
+# only_all_ids and the fields GraphQL, all of them identical in shape:
+#
+#     success:  {"status": 200, "code": 0,   "message": "OK", ...}
+#     failure:  {"status": 408, "code": 408, ...}   bad timestamp
+#               {"status": 101, "code": 101, ...}   missing/invalidated signature
+#
+# So `status` is 200 on every success regardless of the code, and on a failure
+# `status` and `code` are equal to each other. Success is code == 0.
+#
+# [REASON]: this constant was 200 in the first version, on the assumption that
+# a success code mirrors the HTTP status. It does not, and the effect was total
+# and silent-looking: the live run rejected every good page with
+# "Rejected flight-list response (code-0)" and then failed with exit 4. 200 is
+# a plausible-looking wrong answer, so there is a test asserting a body with
+# code 200 is REJECTED, not only that code 0 is accepted.
+BODY_CODE_OK = 0
 
 # Query parameters carrying the period, as the site itself spells them. They
 # arrive percent-encoded (filters%5Btimestamp_gteq%5D); parse_qs decodes both
@@ -276,7 +297,7 @@ def body_code(body):
 
 
 def is_flight_list_body(body):
-    """True when the body carries data: code == 200 AND a `data` list."""
+    """True when the body carries data: code == 0 AND a `data` list."""
     return body_code(body) == BODY_CODE_OK and isinstance(body.get('data'), list)
 
 
@@ -288,7 +309,9 @@ def classify_response(url, body):
       'not-flight-list'    -- some other endpoint, ignored entirely
       'detail-url'         -- a single flight card, excluded by contract
       'code-101' / 'code-408' / 'code-none' -- the server rejected the request
-      'no-data-list'       -- code 200 but no `data` list: not usable
+      'code-200'           -- NOT a success: 200 is the envelope's `status`,
+                              never its `code`
+      'no-data-list'       -- code 0 but no `data` list: a detail response
     """
     if url and FLIGHT_DETAIL_URL_MARKER in url and 'flight_records' in url:
         return False, 'detail-url'

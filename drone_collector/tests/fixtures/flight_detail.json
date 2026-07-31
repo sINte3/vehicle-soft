@@ -1,7 +1,7 @@
 {
   "status": 200,
-  "code": 200,
-  "message": "success",
+  "code": 0,
+  "message": "OK",
   "data": {
     "id": 900000001,
     "nickname": "3 Gijduvon",

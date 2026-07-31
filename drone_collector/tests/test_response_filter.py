@@ -2,7 +2,15 @@
 """Response filtering (section 7.3 of the DRONE-003 task).
 
 A list URL is accepted, a detail URL is rejected, a body with code 101 is
-rejected, a body with code 200 and a data list is accepted.
+rejected, a body with code 0 and a data list is accepted.
+
+Note the success code: **0**, not 200. The envelope is
+{"status": 200, "code": 0, "message": "OK"} on success and status == code on
+failure (101/101, 408/408). The first version of this module took the success
+code to be 200, and the live run rejected every good page with "Rejected
+flight-list response (code-0)". So 200 has a negative test of its own here --
+it is a plausible-looking wrong answer, and a constant that merely looks right
+is exactly what cost the first live run.
 
 The rejection cases matter more than the acceptance ones: the server answers
 HTTP 200 for every one of them, so a filter that trusts the HTTP status
@@ -85,10 +93,25 @@ class UrlFilterTests(unittest.TestCase):
 
 class BodyFilterTests(unittest.TestCase):
 
-    def test_code_200_with_a_data_list_is_accepted(self):
+    def test_code_0_with_a_data_list_is_accepted(self):
         body = load_fixture('flight_list_page1.json')
-        self.assertEqual(body_code(body), BODY_CODE_OK)
+        self.assertEqual(body_code(body), 0)
+        self.assertEqual(BODY_CODE_OK, 0)
+        self.assertEqual(body.get('status'), 200)
+        self.assertEqual(body.get('message'), 'OK')
         self.assertTrue(is_flight_list_body(body))
+
+    def test_code_200_is_REJECTED(self):
+        # The regression that cost the first live run. 200 is the envelope's
+        # `status`, never its `code`; a body carrying code 200 is not a
+        # success and must not be captured.
+        body = {'status': 200, 'code': 200, 'message': 'OK',
+                'data': [{'id': 1}], 'meta_data': {'current_page': 1,
+                                                   'total_pages': 1}}
+        self.assertFalse(is_flight_list_body(body))
+        accepted, reason = classify_response(list_url(), body)
+        self.assertFalse(accepted)
+        self.assertEqual(reason, 'code-200')
 
     def test_code_101_is_rejected(self):
         body = load_fixture('flight_list_rejected_101.json')
@@ -99,14 +122,16 @@ class BodyFilterTests(unittest.TestCase):
         self.assertFalse(is_flight_list_body(
             {'status': 200, 'code': 408, 'message': 'timeout', 'data': []}))
 
-    def test_http_200_does_not_make_a_body_acceptable(self):
-        # status 200 with code 101 -- the exact shape that fools a filter
+    def test_a_failure_carries_status_equal_to_code(self):
+        # Observed shape of a rejection: status and code are the same value.
+        # The HTTP status is 200 all the same, which is what fools a filter
         # written against response.status.
         body = load_fixture('flight_list_rejected_101.json')
-        self.assertEqual(body.get('status'), 200)
+        self.assertEqual(body.get('status'), body.get('code'))
         self.assertFalse(is_flight_list_body(body))
 
-    def test_code_200_without_a_data_list_is_rejected(self):
+    def test_a_successful_detail_body_is_rejected_for_having_no_data_list(self):
+        # A real detail response: code 0, but `data` is an object.
         body = load_fixture('flight_detail.json')
         self.assertEqual(body_code(body), BODY_CODE_OK)
         self.assertFalse(is_flight_list_body(body))
@@ -139,12 +164,12 @@ class ClassifyResponseTests(unittest.TestCase):
 
     def test_unrelated_endpoint(self):
         accepted, reason = classify_response(
-            'https://www.djiag.com/api/web/v1/devices?page=1', {'code': 200})
+            'https://www.djiag.com/api/web/v1/devices?page=1', {'code': 0})
         self.assertFalse(accepted)
         self.assertEqual(reason, 'not-flight-list')
 
-    def test_code_200_without_data_list(self):
-        accepted, reason = classify_response(list_url(), {'code': 200})
+    def test_code_0_without_data_list(self):
+        accepted, reason = classify_response(list_url(), {'code': 0})
         self.assertFalse(accepted)
         self.assertEqual(reason, 'no-data-list')
 
@@ -197,14 +222,14 @@ class CapturedPageTests(unittest.TestCase):
         self.assertEqual(page.flights[0]['id'], 900000001)
 
     def test_missing_meta_data_does_not_raise(self):
-        page = CapturedPage(list_url(), {'code': 200, 'data': []})
+        page = CapturedPage(list_url(), {'code': 0, 'data': []})
         self.assertIsNone(page.current_page)
         self.assertIsNone(page.total_pages)
         self.assertEqual(page.flights, [])
 
     def test_non_object_rows_are_dropped(self):
         page = CapturedPage(list_url(),
-                            {'code': 200, 'data': [{'id': 1}, None, 'x']})
+                            {'code': 0, 'data': [{'id': 1}, None, 'x']})
         self.assertEqual(page.flights, [{'id': 1}])
 
 

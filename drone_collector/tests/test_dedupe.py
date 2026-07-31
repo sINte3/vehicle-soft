@@ -164,7 +164,7 @@ class PagesSeenTests(unittest.TestCase):
         self.assertEqual(pages_seen(pages), set([1, 2]))
 
     def test_pages_without_meta_data_are_not_counted(self):
-        pages = [CapturedPage(list_url(), {'code': 200, 'data': []})]
+        pages = [CapturedPage(list_url(), {'code': 0, 'data': []})]
         self.assertEqual(pages_seen(pages), set())
 
 
