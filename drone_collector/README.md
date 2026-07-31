@@ -214,21 +214,57 @@ deduplication.
 
 ## Selectors
 
-The live cabinet is not reachable from a development machine, so **none of the
-UI selectors has been verified against it**. Every one of them is a
-module-level constant at the top of `browser.py`, with a comment saying what it
-is for:
+Every selector is a module-level constant at the top of `browser.py`. When one
+turns out to be wrong, correct it there and nowhere else — the log says which
+one failed, and a missing pagination control and a missing range picker each
+name their constant.
 
-* `SELECTOR_RANGE_PICKER`, `SELECTOR_RANGE_INPUTS` — the date range picker;
-* `SELECTOR_PAGINATION_NEXT`, `SELECTOR_PAGINATION_NEXT_ENABLED` — pagination;
-* `SELECTOR_COOKIE_ACCEPT` — the consent banner, which overlays the pagination
-  control;
-* `SELECTOR_LIST_VIEW` — the list/map toggle; map mode only fetches
-  `/flight_records/overview` and never a flight list.
+**Checked against a saved DOM of the live `/records/list` page, 2026-07-31:**
 
-When one turns out to be wrong on the live site, correct it there and nowhere
-else. The log says which one failed: a missing pagination control and a missing
-range picker both name the constant.
+* `SELECTOR_RANGE_INPUTS` — confirmed. Two `<input>` elements inside
+  `.ant-picker-input` wrappers, placeholders "Start date" and "End date",
+  values already in `YYYY-MM-DD` form, which is the format typed in.
+* `SELECTOR_PAGINATION_NEXT`, `SELECTOR_PAGINATION_NEXT_ENABLED` — confirmed.
+  `<li title="Next Page" class="ant-pagination-next" aria-disabled="false">`,
+  and the disabled state really is carried by `aria-disabled`.
+* The filter parameters and the epoch convention — confirmed. The live page
+  requests `filters%5Btimestamp_gteq%5D=1767207600000` for 2026-01-01, which
+  is local midnight at UTC+5 and is exactly what `window.py` computes.
+
+**Not checked, and the reason each one is still safe:**
+
+* `SELECTOR_COOKIE_ACCEPT` and `SELECTOR_LIST_VIEW` — both best-effort. A miss
+  is logged and the run continues; the list toggle is only attempted when
+  nothing was captured at all.
+* The date inputs carry `readonly` while the calendar panel is closed. The
+  collector clicks the input first, which is what makes rc-picker drop the
+  attribute — but if the site ever sets it permanently, keystrokes would
+  change nothing. So the typed value is read back and the run fails loudly
+  instead of collecting the site's default period.
+* The API path prefix. Matching is on `flight_records?`, not on
+  `/api/web/v1/`, so a version bump on DJI's side does not silently produce a
+  zero-flight run; a URL that matches the endpoint but not the expected
+  version is captured *and* logged as a version change. The page's other
+  calls — `aggr?` and `aggr_by_day?`, which carry the same filter parameters —
+  do not match either form.
+
+**The collector has never been run against the live cabinet.** The first run
+must be a `--dry-run`, watched, with `DJI_HEADLESS=false`.
+
+## Sizing a historical run
+
+Observed on the live cabinet on 2026-07-31: the period 2026-01-01 → 2026-07-31
+is **705 pages** at 30 per page (21 123 flights).
+
+Two consequences for a backfill:
+
+* `DJI_MAX_PAGES` defaults to **500** and would stop such a run at page 500,
+  which is reported as exit 4. Raise it for historical collection.
+* at `DJI_SETTLE_MS=2500` a 705-page walk takes roughly half an hour of
+  clicking. That is expected, not a hang.
+
+Collect history in **per-year windows** in any case: the calendar resets a
+range that crosses a year boundary.
 
 ---
 

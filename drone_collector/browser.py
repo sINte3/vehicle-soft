@@ -43,6 +43,15 @@ log = logging.getLogger(__name__)
 # separates the list endpoint from a flight detail URL.
 FLIGHT_LIST_URL_MARKER = '/api/web/v1/flight_records?'
 
+# [REASON]: matching is done on the endpoint name, not on the API version, so
+# that a version bump on DJI's side does not turn every run into a silent
+# "0 flights collected". A URL that matches this but not the full marker above
+# is captured AND logged as an API-version change, so the constant can be
+# corrected deliberately instead of being discovered by an empty database.
+# It is still specific: the same page also fetches /aggr? and /aggr_by_day?
+# with the very same filter parameters, and neither matches this.
+FLIGHT_LIST_URL_MARKER_LOOSE = '/flight_records?'
+
 # Detail URLs look like /api/web/v1/flight_records/574320663 and must never be
 # captured -- their body has no `data` list and no meta_data.
 FLIGHT_DETAIL_URL_MARKER = '/flight_records/'
@@ -58,23 +67,49 @@ PARAM_PERIOD_TO = 'filters[timestamp_lteq]'
 
 
 # ─── Selectors (correct these here, nowhere else) ─────────────────────────────
+#
+# Verified on 2026-07-31 against a saved DOM of the live /records/list page.
+# The markup found there, trimmed to what matters:
+#
+#   <div class="ant-picker ant-picker-range ant-picker-middle">
+#     <div class="ant-picker-input ant-picker-input-active">
+#       <input readonly placeholder="Start date" value="2026-01-01">
+#     <div class="ant-picker-range-separator">...
+#     <div class="ant-picker-input">
+#       <input readonly placeholder="End date" value="2026-07-31">
+#
+#   <ul class="ant-pagination ant-pagination-mini">
+#     <li title="Previous Page" class="ant-pagination-prev ant-pagination-disabled"
+#         aria-disabled="true">
+#     <li title="Next Page" class="ant-pagination-next" aria-disabled="false">
+#
+# What that confirms: the value format is YYYY-MM-DD, which is what is typed;
+# the two inputs sit in .ant-picker-input wrappers in document order; the
+# pagination controls are <li> elements whose disabled state is carried by
+# aria-disabled, exactly as matched below.
 
 # Ant Design range picker: one wrapper holding two <input> elements.
 SELECTOR_RANGE_PICKER = '.ant-picker-range'
 
-# The two date inputs. In Ant Design markup the wrapper is a
-# <div class="ant-picker-input"> holding the <input>, so the working selector
-# is `.ant-picker-input input` -- not `input.ant-picker-input input`, which
-# would mean an input inside an input and matches nothing.
+# The two date inputs. The wrapper is a <div class="ant-picker-input"> holding
+# the <input>, so the working selector is `.ant-picker-input input` -- not
+# `input.ant-picker-input input`, which would mean an input inside an input
+# and matches nothing.
 SELECTOR_RANGE_INPUTS = '.ant-picker-range .ant-picker-input input'
 
 # Fallback when the wrapper class differs: the two plain <input> descendants
-# of the picker, in document order.
+# of the picker, in document order. Verified to yield exactly two.
 SELECTOR_RANGE_INPUTS_FALLBACK = '.ant-picker-range input'
+
+# Placeholders on those two inputs, kept as a documented last resort if
+# document order ever stops being reliable: 'Start date' and 'End date'.
+SELECTOR_RANGE_INPUT_START = '.ant-picker-range input[placeholder="Start date"]'
+SELECTOR_RANGE_INPUT_END = '.ant-picker-range input[placeholder="End date"]'
 
 # Ant Design pagination. The [aria-disabled='false'] form is used for clicking
 # so a disabled control is simply not found; the bare form is used to ask
-# whether the control exists at all.
+# whether the control exists at all. Confirmed against the dump: the disabled
+# control carries aria-disabled="true" and the class ant-pagination-disabled.
 SELECTOR_PAGINATION_NEXT = 'li.ant-pagination-next'
 SELECTOR_PAGINATION_NEXT_ENABLED = "li.ant-pagination-next[aria-disabled='false']"
 
@@ -148,16 +183,22 @@ class PeriodVerificationFailed(BrowserError):
 def is_flight_list_url(url):
     """True for the flight LIST endpoint, False for detail URLs and the rest.
 
-    Both conditions of the task are applied: the URL must contain
-    '/api/web/v1/flight_records?' and must NOT contain '/flight_records/'.
+    Both conditions of the task are applied: the URL must be the
+    flight_records LIST call (a query string, hence the '?') and must NOT
+    contain '/flight_records/'.
     """
     if not url:
         return False
-    if FLIGHT_LIST_URL_MARKER not in url:
+    if FLIGHT_LIST_URL_MARKER_LOOSE not in url:
         return False
     if FLIGHT_DETAIL_URL_MARKER in url:
         return False
     return True
+
+
+def is_expected_api_version(url):
+    """False when the list URL is the right endpoint on a different API version."""
+    return bool(url) and FLIGHT_LIST_URL_MARKER in url
 
 
 def body_code(body):
@@ -365,6 +406,7 @@ class FlightCollector(object):
         self._captured = []
         self._rejected = {}
         self._ignored_detail = 0
+        self._version_warned = False
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -444,6 +486,12 @@ class FlightCollector(object):
         if not accepted:
             self._note_rejected(reason, url)
             return
+        if not is_expected_api_version(url) and not self._version_warned:
+            self._version_warned = True
+            self.log.warning('The flight list is being served from a different '
+                             'API path than the expected %r: %s. Captured '
+                             'anyway; update the constant in browser.py.',
+                             FLIGHT_LIST_URL_MARKER, url)
         page = CapturedPage(url, body)
         self._captured.append(page)
         self.log.info('Captured page %s/%s (%d flights)',
@@ -559,8 +607,23 @@ class FlightCollector(object):
                SELECTOR_RANGE_PICKER))
 
     def _type_date(self, field, text):
-        """Click, select all, type YYYY-MM-DD, press Enter."""
+        """Click, select all, type YYYY-MM-DD, press Enter -- then check.
+
+        [REASON]: on the live page both inputs carry the `readonly` attribute
+        while the calendar panel is closed (verified on a saved DOM,
+        2026-07-31). rc-picker drops it when the panel opens, which is why the
+        click comes first -- but if the site ever sets inputReadOnly for good,
+        keystrokes would land on a read-only field and change nothing, and the
+        run would go on to collect the site's default period. So the value is
+        read back and the failure is made loud rather than silent.
+        """
         field.click(timeout=self.cfg.page_timeout_ms)
+        self._page.wait_for_timeout(200)
+
+        if self._is_readonly(field):
+            self.log.warning('The date input is still read-only after the '
+                             'click; typing may not take effect')
+
         # Select whatever the control already holds; Ant Design keeps the
         # previous value in the input and typing would otherwise append to it.
         field.press('Control+a')
@@ -570,8 +633,43 @@ class FlightCollector(object):
             field.press_sequentially(text, delay=KEY_DELAY_MS)
         except AttributeError:  # pragma: no cover -- older Playwright
             field.type(text, delay=KEY_DELAY_MS)
+
+        if self._input_value(field) != text:
+            # fill() sets the value directly and fires the input event; it is
+            # the fallback, not the default, because typing is what the
+            # picker's own handlers expect.
+            self.log.warning('Typing did not take on the date input, falling '
+                             'back to fill()')
+            try:
+                field.fill(text, timeout=self.cfg.page_timeout_ms)
+            except Exception as exc:
+                raise BrowserError(
+                    'could not set the date %s: the input rejected both typing '
+                    'and fill() (%s). If the site has made the picker inputs '
+                    'permanently read-only, the period has to be set by '
+                    'clicking through the calendar panel instead -- see the '
+                    'selector constants at the top of browser.py.' % (text, exc))
+
         field.press('Enter')
         self._page.wait_for_timeout(self.cfg.settle_ms)
+
+        final = self._input_value(field)
+        if final != text:
+            raise BrowserError(
+                'the date input holds %r after being set to %r -- the picker '
+                'did not accept the value' % (final, text))
+
+    def _is_readonly(self, field):
+        try:
+            return field.get_attribute('readonly') is not None
+        except Exception:
+            return False
+
+    def _input_value(self, field):
+        try:
+            return field.input_value()
+        except Exception:
+            return None
 
     def set_period(self, date_from, date_to):
         """Type the period into the picker, then prove the site accepted it.

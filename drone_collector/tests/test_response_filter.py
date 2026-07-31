@@ -16,6 +16,7 @@ from drone_collector.browser import (
     CapturedPage,
     body_code,
     classify_response,
+    is_expected_api_version,
     is_flight_list_body,
     is_flight_list_url,
 )
@@ -54,6 +55,26 @@ class UrlFilterTests(unittest.TestCase):
     def test_another_endpoint_is_rejected(self):
         self.assertFalse(is_flight_list_url(
             'https://www.djiag.com/api/web/v1/devices?page=1'))
+
+    def test_the_aggregate_endpoints_are_rejected(self):
+        # The same page fetches these alongside the list, with the very same
+        # filter parameters (observed on the live cabinet, 2026-07-31). They
+        # carry totals, not flights, and must not be captured.
+        for path in ('aggr', 'aggr_by_day'):
+            url = ('https://www.djiag.com/api/web/v1/%s?'
+                   'filters%%5Btimestamp_gteq%%5D=1767207600000' % path)
+            self.assertFalse(is_flight_list_url(url), url)
+
+    def test_a_different_api_version_is_still_captured_but_flagged(self):
+        # Matching on the endpoint name rather than the API version: a version
+        # bump must not turn every run into a silent "0 flights collected".
+        url = list_url().replace('/api/web/v1/', '/api/web/v2/')
+        self.assertTrue(is_flight_list_url(url))
+        self.assertFalse(is_expected_api_version(url))
+
+    def test_the_expected_version_is_recognised(self):
+        self.assertTrue(is_expected_api_version(list_url()))
+        self.assertFalse(is_expected_api_version(''))
 
     def test_empty_and_none_are_rejected(self):
         self.assertFalse(is_flight_list_url(''))
