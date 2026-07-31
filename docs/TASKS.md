@@ -104,6 +104,44 @@ Parallel track, runs alongside the increments. Decisions and findings so far:
 
 ## Recently completed / appears completed
 
+### DRONE-003 — DJI SmartFarm flight collector (PR #38), 2026-07-31
+
+Status: merged into `main` as `00f859a`. Validated against the live DJI cabinet
+BEFORE the merge, so `docs/RELEASE_GATE.md` carries no row for it and the PR's
+net diff on that file is empty.
+
+Twenty-two commits on one branch; twenty-four new files under
+`drone_collector/`; 4379 insertions and **zero deletions**. The package is a
+standalone process, not part of the Flask application: it imports neither `app`
+nor `models`, keeps its own `requirements.txt` and virtual environment, and
+carries no migration.
+
+Commits in order: `cca34bb` skeleton, configuration and logging; `a751839`
+window arithmetic; `eef52c5` saved session; `00c4c60` response interception and
+the flight-list filter; `1e797c6` period setting and verification; `1b33181`
+pagination with four guards and in-run deduplication; `ca2f8c0` chunked
+retrying sender with a dry-run mode; `1177427` CLI; `1e37799` README; `ccf54f5`
+selectors against a saved DOM; `c656181` gate row; `4153f3b` calendar-year
+split; `4255c2e` largest page size; `acc26ae` region guard, empty-window guard
+and the per-year loop; `5fb93c5` raised defaults and two new settings;
+`81ce568` gate row revision; `9d3c865` the success code is 0, not 200;
+`ca95765` playwright pinned to 1.61.0; `98643e9` corrected example base URL;
+`8f64727` live-run findings recorded in the docs; `bcf96c9` gate row revision;
+`57d1e08` gate row removed.
+
+Rollback order: strict reverse, `57d1e08` first through `cca34bb` last. The
+four gate-row commits (`c656181`, `81ce568`, `bcf96c9`, `57d1e08`) cancel out,
+so reverting any single one cannot leave a stray row behind.
+
+Acceptance: 129 unit tests, fixture-driven, no browser and no network. Two live
+dry runs — 2026-07-01..07 collected 1217 flights across 25 pages and matched the
+cabinet tile exactly on flights, litres and kilograms; 2025-12-01..2026-01-31
+was split into two calendar-year windows, each verified independently, with no
+flight-id overlap between them.
+
+Open afterwards, tracked in `docs/tracks/drones.md`: the collector has never
+POSTed to the ingest endpoint, `DRONE_API_TOKEN` is not set on production, no
+schedule exists, and its permanent location is not chosen.
 ### FUEL-BIG-001 — consolidated fuel/AZS increment (PR #31), 2026-07-28
 
 Status: merged into `main` via PR #31; the open validation remainder is the
@@ -1640,6 +1678,19 @@ Two more rows are the increment 9 test positions themselves, `id=259` «ТЕСТ
 без варианта» and `id=260` «ТЕСТ UNIFY с вариантом», deliberately given
 recognisable names. None of this exists on production.
 
+### DOC-REPLAY-URL-001 — Stale host in the replay tool's help text
+
+Priority: P3
+Status: open
+
+`tools/drone_replay_appdb.py` prints
+`http://10.103.25.200:5050/drones/api/flight_sync` in its module docstring
+example and in the `--url` help string. That host is the decommissioned
+workstation. Nothing fails silently — the parameter is declared
+`required=True`, so a copied example fails loudly with a connection error —
+but the example should name the live server, `10.103.25.14`. Found during the
+DRONE-003 review and deliberately left out of PR #38, whose acceptance
+criterion forbade touching files outside `drone_collector/`.
 ### PLATE-NORM-001 — Normalise licence plates for search and matching
 
 Priority: P3
