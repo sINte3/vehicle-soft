@@ -38,21 +38,33 @@ It has been tested and it does not work.
 **But note what that test does not prove.** It proves an *altered* URL is
 rejected, not that the values in it are fixed. `page_size` is a per-session
 setting with its own control on the page; when that control is used, the app
-signs a request carrying the new value. It has been seen at 30 in one session
-and 50 in another. So the collector drives that control — and only that
-control — taking the largest size the site offers, logging the option list and
-then reading the size actually in force back out of an intercepted URL.
+signs a request carrying the new value. The control was opened on the live
+page on 2026-07-31 and offers exactly **`10 / page`, `20 / page`, `30 / page`,
+`50 / page`** — **50 is the maximum, there is no 100**. The collector drives
+that control and only that control: it logs the option list on every run
+(so a change on DJI's side is visible rather than assumed), selects the
+largest, and reads the size actually in force back out of an intercepted URL.
 
 **`serial_number` is not a machine identifier.** It is unique per flight
 (verified on 10 385 records), so it is a second flight id. Nothing keys,
 groups or deduplicates on it; deduplication is on `id` alone, and a test walks
 the AST of every module to keep it that way.
 
-**Success is not the HTTP status.** Every response from the DJI API is HTTP
-200. Success or failure is the `code` field inside the JSON body: `code 200`
-means data, `code 101` and `code 408` mean rejection. Any code that decides
-success from `response.status` is wrong and will treat a rejection as an empty
-but successful run.
+**Success is not the HTTP status, and the success code is not 200.** Every
+response from the DJI API is HTTP 200; the truth is the `code` field inside
+the JSON body, and the envelope looks like this:
+
+```
+success:  {"status": 200, "code": 0,   "message": "OK", "data": [...]}
+failure:  {"status": 101, "code": 101}   missing or invalidated signature
+          {"status": 408, "code": 408}   bad timestamp
+```
+
+`status` is 200 on every success whatever the code; on a failure `status` and
+`code` are equal to each other. **Success is `code == 0`.** This cost the first
+live run: the collector had the success code as 200, rejected every good page
+with `Rejected flight-list response (code-0)`, and exited 4. Any code that
+decides success from `response.status` — or from `code == 200` — is wrong.
 
 ---
 
@@ -196,9 +208,9 @@ backups) plus stdout. Every run ends with one structured line:
 
 ```
 RUN SUMMARY kind=incremental dry_run=false period_from=2026-07-02 period_to=2026-07-31
-  windows=1 windows_completed=1 region=not-found page_size=100
-  pages=11 pages_expected=11 flights_captured=1102 flights_deduped=1100
-  self_duplicates=2 rejected_responses=0 batches=2 seen=1100 new=214
+  windows=1 windows_completed=1 region=not-found page_size=50
+  pages=25 pages_expected=25 flights_captured=1219 flights_deduped=1217
+  self_duplicates=2 rejected_responses=0 batches=2 seen=1217 new=214
   duplicates=886 unresolved=3 errors=0 exit=0
 ```
 
@@ -229,6 +241,13 @@ cd C:\transport-report
 "C:\Program Files\Python314\python.exe" -m unittest discover -s drone_collector/tests -t .
 ```
 
+The suite is plain `unittest` and needs nothing beyond the standard library —
+the command above works in the application's Python and in the collector's
+virtual environment alike. **If you prefer to run it with `pytest`, install
+pytest first** (`pip install pytest`, in the same virtual environment): it is
+deliberately absent from `requirements.txt`, because the collector does not
+need it to run and the service must not carry a test dependency.
+
 They cover the window arithmetic (month, year and leap-day boundaries; local
 midnight rather than UTC midnight at UTC+5), period verification (exact match,
 match within tolerance, one-day-off rejected, no filter parameters rejected),
@@ -245,48 +264,49 @@ turns out to be wrong, correct it there and nowhere else — the log says which
 one failed, and a missing pagination control and a missing range picker each
 name their constant.
 
-**Checked against a saved DOM of the live `/records/list` page, 2026-07-31:**
+**Confirmed by the live run of 2026-07-31**, which collected end to end:
 
-* `SELECTOR_RANGE_INPUTS` — confirmed. Two `<input>` elements inside
-  `.ant-picker-input` wrappers, placeholders "Start date" and "End date",
-  values already in `YYYY-MM-DD` form, which is the format typed in.
-* `SELECTOR_PAGINATION_NEXT`, `SELECTOR_PAGINATION_NEXT_ENABLED` — confirmed.
-  `<li title="Next Page" class="ant-pagination-next" aria-disabled="false">`,
-  and the disabled state really is carried by `aria-disabled`.
-* The filter parameters and the epoch convention — confirmed. The live page
-  requests `filters%5Btimestamp_gteq%5D=1767207600000` for 2026-01-01, which
-  is local midnight at UTC+5 and is exactly what `window.py` computes.
+* `SELECTOR_RANGE_INPUTS` — `.ant-picker-range .ant-picker-input input` matches
+  the live markup. The inputs are `readonly` while the panel is shut; the
+  click-then-type path works and the `fill()` fallback was never needed.
+* `SELECTOR_PAGINATION_NEXT` / `..._ENABLED` — the walk paginated correctly and
+  stopped cleanly on the disabled control.
+* `SELECTOR_PAGE_SIZE_CHANGER` and its option list — opened, read, logged, and
+  the largest option selected. The collector noticed the pagination had
+  renumbered and restarted the walk, exactly as designed.
+* Period verification matched **to the millisecond** on three separate windows.
+* The half-applied period is real, not theoretical: the site issues a request
+  while the second date is still being typed. Both that page and the
+  pre-period page were captured and correctly discarded.
+* Year-boundary splitting works: `2025-12-01..2025-12-31` and
+  `2026-01-01..2026-01-31` each verified independently, with no overlap in
+  flight ids between them.
+* **Numbers.** 1–7 July 2026 gave 1217 flights across 25 pages; the site's own
+  tile for the same period reports 1217 flights, 31 154 L and 0 kg. The
+  collector's area came to 1318.58 ha against the tile's 1318.62 — the tile
+  labels hectares as `mu`, a known trap of this interface, and the residual is
+  rounding.
+* The list payload carries all twenty fields the ingest endpoint reads,
+  including `lat`, `lng` and `work_time_seconds`, so **no per-flight detail
+  request is needed**. `geometry_md5` is *not* in the list payload; it exists
+  only on the single-flight endpoint.
 
-**Not checked, and the reason each one is still safe:**
+**Still unverified, and the reason each is safe:**
 
 * `SELECTOR_COOKIE_ACCEPT` and `SELECTOR_LIST_VIEW` — both best-effort. A miss
   is logged and the run continues; the list toggle is only attempted when
   nothing was captured at all.
-* `SELECTOR_PAGE_SIZE_CHANGER` is confirmed, but its **option list is not**:
-  Ant Design renders the dropdown into a portal on first open, so the saved
-  page contains no options. Every failure mode here is a warning and a
-  continue — a page size that cannot be raised only makes a run slower.
-* `SELECTOR_REGION_INDICATOR` matches **nothing** on the saved page, and that
-  is the honest state of it: the page has no region display, only an "Other
-  Regions" switcher whose class is a build-hashed CSS-module name. That item
-  is deliberately not matched — a selector picking it up would compare the
+* `SELECTOR_REGION_INDICATOR` matches **nothing** on the live page, and that is
+  the honest state of it: the page has no region display, only an "Other
+  Regions" switcher whose class is a build-hashed CSS-module name. That item is
+  deliberately not matched — a selector picking it up would compare the
   expected region against the string "Other Regions" and block every run. So
   the region check reports `not-found` and warns until someone identifies the
   real element. Exit 6 is what protects the run meanwhile.
-* The date inputs carry `readonly` while the calendar panel is closed. The
-  collector clicks the input first, which is what makes rc-picker drop the
-  attribute — but if the site ever sets it permanently, keystrokes would
-  change nothing. So the typed value is read back and the run fails loudly
-  instead of collecting the site's default period.
-* The API path prefix. Matching is on `flight_records?`, not on
-  `/api/web/v1/`, so a version bump on DJI's side does not silently produce a
-  zero-flight run; a URL that matches the endpoint but not the expected
-  version is captured *and* logged as a version change. The page's other
-  calls — `aggr?` and `aggr_by_day?`, which carry the same filter parameters —
-  do not match either form.
 
-**The collector has never been run against the live cabinet.** The first run
-must be a `--dry-run`, watched, with `DJI_HEADLESS=false`.
+**What the collector has still never done: POST to the ingest endpoint.** The
+live run was a dry run. `DRONE_API_TOKEN` is not set on production, and the
+collector has never run on a schedule.
 
 ## Historical collection
 
@@ -300,10 +320,9 @@ harmless; the ingest deduplicates by DJI flight id.
 
 **Sizing.** Observed on the live cabinet on 2026-07-31: 2026-01-01 → 2026-07-31
 is 705 pages at 30 per page (21 123 flights), and a full historical window is
-around 970. Hence `DJI_MAX_PAGES=2000` — the old 500 would have terminated a
-legitimate backfill as if it had run away. Taking the largest page size the
-site offers cuts the walk proportionally; at 100 per page those 705 pages
-become 212.
+around 970. At the maximum page size of 50 a full year is roughly **420
+pages**, so `DJI_MAX_PAGES=2000` leaves ample headroom — the old 500 would have
+terminated a legitimate backfill as if it had run away.
 
 At `DJI_SETTLE_MS=2500`, a several-hundred-page walk takes tens of minutes of
 clicking. That is expected, not a hang.
@@ -313,8 +332,13 @@ clicking. That is expected, not a hang.
 ## Deployment
 
 Deliberately **not** wired into the application's service configuration or
-scheduler. Scheduling it is a separate, owner-run step, after a first manual
-run has proved the selectors on the live cabinet.
+scheduler. Scheduling it is a separate, owner-run step.
+
+The browser side is proved — the live run of 2026-07-31 collected end to end.
+What remains before it can be scheduled is the other half: `DRONE_API_TOKEN`
+has to be set on the production service, and the first sending run should be
+watched (`DJI_HEADLESS=false`) over a short period, because the collector has
+never actually POSTed to the ingest endpoint.
 
 The collector performs no unit conversion. `new_work_area` is m², `spray_usage`
 is millilitres and `sow_usage` is grams in the payload; `drones.py` performs

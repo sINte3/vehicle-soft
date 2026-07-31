@@ -183,8 +183,10 @@ class PageSizeTests(unittest.TestCase):
     """page_size is a per-session setting with its own control, not a constant.
 
     What the signature test proved is narrower: an ALTERED URL is rejected.
-    The value itself changes when the site's own control is used, and it has
-    been seen at 30 in one session and 50 in another.
+    The value itself changes when the site's own control is used. Read off the
+    live control on 2026-07-31: 10, 20, 30 and 50 per page, maximum 50, no 100
+    option. The parser is still tested on 100 and on other locales -- it must
+    not break if DJI adds a size or ships another translation.
     """
 
     def test_option_labels(self):

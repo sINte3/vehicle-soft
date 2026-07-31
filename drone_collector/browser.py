@@ -17,9 +17,9 @@ through this whole module:
 Note what the signature test does NOT prove. It proves that an ALTERED URL is
 rejected, not that the values in it are fixed. page_size in particular is a
 per-session setting with its own control on the page: when that control is
-used, the app signs a request carrying the new value. It has been observed at
-30 in one session and 50 in another. maximise_page_size() therefore drives
-that control -- and only that control.
+used, the app signs a request carrying the new value. The live control was
+opened on 2026-07-31 and offers exactly 10, 20, 30 and 50 per page -- there is
+no 100. maximise_page_size() drives that control, and only that control.
 
 Do not try to generate, replay or reverse-engineer the Signature header. It
 has been tested and it does not work.
@@ -151,6 +151,8 @@ SELECTOR_PAGINATION_NEXT_ENABLED = "li.ant-pagination-next[aria-disabled='false'
 #        aria-label="Page Size">
 #     <div class="ant-select-selector">
 #       <span class="ant-select-selection-item" title="30 / page">30 / page</span>
+# Opened on the live page 2026-07-31: the options are 10, 20, 30 and 50 per
+# page. 50 is the maximum -- there is no 100.
 SELECTOR_PAGE_SIZE_CHANGER = '.ant-pagination-options-size-changer'
 SELECTOR_PAGE_SIZE_CURRENT = ('.ant-pagination-options-size-changer '
                               '.ant-select-selection-item')
@@ -159,7 +161,8 @@ SELECTOR_PAGE_SIZE_CURRENT = ('.ant-pagination-options-size-changer '
 # renders the dropdown into a portal on the body, so these are document-wide
 # and cannot be scoped to the pagination element. The :not(...-hidden) part
 # skips a dropdown that has been opened and closed again and is still in the
-# DOM. Unverified: the saved page had never had this control opened.
+# DOM. Confirmed on the live cabinet 2026-07-31: opening the control yields
+# four options, and the collector read, logged and selected them.
 SELECTOR_PAGE_SIZE_OPTIONS = ('.ant-select-dropdown:not(.ant-select-dropdown-hidden) '
                               '.ant-select-item-option')
 SELECTOR_PAGE_SIZE_OPTIONS_FALLBACK = '.ant-select-item-option'
@@ -977,8 +980,13 @@ class FlightCollector(object):
         first looked: rewriting page_size in the URL *after* the app signed the
         request is rejected with `code 101`. The value itself can change --
         the site has its own control, and when it is used the app signs a
-        request carrying the new value. Observed as 30 in one session and 50
-        in another, so the setting is per-session and persists.
+        request carrying the new value. The setting is per-session and
+        persists, which is why it is probed once per run.
+
+        Read off the live control on 2026-07-31: the options are 10, 20, 30
+        and 50 per page. 50 is the maximum; there is no 100. The option list
+        is still logged on every run rather than assumed, because that is the
+        only way a change on DJI's side becomes visible.
 
         This never raises. A page size that cannot be changed only makes the
         run slower; aborting for it would trade a working collection for none.
