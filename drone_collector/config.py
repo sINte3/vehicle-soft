@@ -59,8 +59,18 @@ DEFAULT_WINDOW_DAYS = 30
 DEFAULT_TZ_OFFSET_HOURS = 5
 DEFAULT_PAGE_TIMEOUT_MS = 45000
 DEFAULT_SETTLE_MS = 2500
-DEFAULT_MAX_PAGES = 500
-DEFAULT_BATCH_SIZE = 500
+# [REASON]: 500 was below reality. The live cabinet reports 705 pages for
+# 2026-01-01..2026-07-31 at 30 per page, and a full historical window is around
+# 970 -- the old default terminated a legitimate backfill as if it had run
+# away. 2000 still catches a genuine runaway.
+DEFAULT_MAX_PAGES = 2000
+
+# [REASON]: the ingest endpoint creates one drone_sync_logs row PER REQUEST.
+# A backfill of ~29 000 flights at 500 per request leaves about 60 rows, and
+# "did the 2025 collection succeed" becomes a manual summing exercise. 1000
+# halves that. It is also the endpoint's hard limit -- above it, 413 -- so the
+# clamp stays.
+DEFAULT_BATCH_SIZE = 1000
 
 
 class ConfigError(Exception):

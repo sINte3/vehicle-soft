@@ -13,10 +13,9 @@ environment, under a real user account.
 
 ---
 
-## Two constraints that are not negotiable
+## The constraint that is not negotiable
 
-**`page_size` is 30 and cannot be changed. The period cannot be passed in the
-URL.**
+**Nothing in a URL may be edited after the site has signed it.**
 
 DJI signs every API request with a `Signature` header produced by its own
 bundled WASM code. This was tested against the live site on 2026-07-31:
@@ -28,7 +27,6 @@ bundled WASM code. This was tested against the live site on 2026-07-31:
 So the requests have to be issued by the site itself, and we only listen to the
 responses. That is the whole reason a browser is involved. It follows that:
 
-* the page size is whatever the site uses, which is 30;
 * the reporting period cannot be injected into the URL — it is set through the
   site's own date picker, and then **verified** against the URL the site
   produced;
@@ -36,6 +34,19 @@ responses. That is the whole reason a browser is involved. It follows that:
 
 Do not attempt to generate, replay or reverse-engineer the `Signature` header.
 It has been tested and it does not work.
+
+**But note what that test does not prove.** It proves an *altered* URL is
+rejected, not that the values in it are fixed. `page_size` is a per-session
+setting with its own control on the page; when that control is used, the app
+signs a request carrying the new value. It has been seen at 30 in one session
+and 50 in another. So the collector drives that control — and only that
+control — taking the largest size the site offers, logging the option list and
+then reading the size actually in force back out of an intercepted URL.
+
+**`serial_number` is not a machine identifier.** It is unique per flight
+(verified on 10 385 records), so it is a second flight id. Nothing keys,
+groups or deduplicates on it; deduplication is on `id` alone, and a test walks
+the AST of every module to keep it that way.
 
 **Success is not the HTTP status.** Every response from the DJI API is HTTP
 200. Success or failure is the `code` field inside the JSON body: `code 200`
@@ -140,9 +151,10 @@ deduplicates by DJI flight id, so a repeat brings back `duplicates`, not double
 data. The previous collector failed about one run in twenty on timeouts, so a
 repeat is the expected repair, not an incident.
 
-**The period cannot cross a year boundary.** The SmartFarm calendar resets a
-range that does, which the verification step below will catch and report as
-exit 3. Collect history in per-year windows.
+**A period crossing a year boundary is split automatically.** The SmartFarm
+calendar resets such a range, so the collector requests one calendar year at a
+time — see "Historical collection" below. Nothing needs doing about it on the
+command line.
 
 ---
 
@@ -156,6 +168,15 @@ exit 3. Collect history in per-year windows.
 | 3 | Period verification failed. | The log shows the intended and the observed period. Nothing was sent — on purpose. |
 | 4 | The page walk did not complete. | Flights that were captured *were* sent; re-run the same period to finish it. |
 | 5 | The ingest endpoint rejected a batch. | The log carries the HTTP status and the endpoint's message. 401 means the token, 413 means the batch size, 400 means the body. |
+| 6 | A window captured **zero flights**. | Nothing was sent. Usually the session is in the wrong region. If the period really is empty, set `DJI_ALLOW_EMPTY_WINDOW=true`. |
+| 7 | The session is in the **wrong region**. | The log shows the expected and the observed value. Re-run `--save-session` and check the region selector. |
+
+Exits 6 and 7 both exist for one failure: a session switched to another region
+returns **zero rows with no error at all**, so the run looks perfectly
+successful and collects nothing. Exit 7 is the fast diagnosis and needs a
+selector that has never been confirmed. Exit 6 needs no selector and is the
+one that actually protects the data — which is why an empty window is a
+failure by default rather than a quiet success.
 
 Exit 3 deserves its own sentence, because it is the one that looks like an
 over-reaction. After the dates are typed into the picker, the collector reads
@@ -175,10 +196,15 @@ backups) plus stdout. Every run ends with one structured line:
 
 ```
 RUN SUMMARY kind=incremental dry_run=false period_from=2026-07-02 period_to=2026-07-31
-  pages=37 pages_expected=37 flights_captured=1102 flights_deduped=1100
-  self_duplicates=2 rejected_responses=0 batches=3 seen=1100 new=214
+  windows=1 windows_completed=1 region=not-found page_size=100
+  pages=11 pages_expected=11 flights_captured=1102 flights_deduped=1100
+  self_duplicates=2 rejected_responses=0 batches=2 seen=1100 new=214
   duplicates=886 unresolved=3 errors=0 exit=0
 ```
+
+`region` is `ok`, `not-found` or `skipped` — see exit 7 above; `not-found` is
+the expected value today. `page_size` is the size actually in force, read back
+from an intercepted request URL rather than from the control's label.
 
 `self_duplicates` is what the **collector** removed — the same page captured
 twice. `duplicates` is what the **endpoint** reported — flights already in the
@@ -236,6 +262,17 @@ name their constant.
 * `SELECTOR_COOKIE_ACCEPT` and `SELECTOR_LIST_VIEW` — both best-effort. A miss
   is logged and the run continues; the list toggle is only attempted when
   nothing was captured at all.
+* `SELECTOR_PAGE_SIZE_CHANGER` is confirmed, but its **option list is not**:
+  Ant Design renders the dropdown into a portal on first open, so the saved
+  page contains no options. Every failure mode here is a warning and a
+  continue — a page size that cannot be raised only makes a run slower.
+* `SELECTOR_REGION_INDICATOR` matches **nothing** on the saved page, and that
+  is the honest state of it: the page has no region display, only an "Other
+  Regions" switcher whose class is a build-hashed CSS-module name. That item
+  is deliberately not matched — a selector picking it up would compare the
+  expected region against the string "Other Regions" and block every run. So
+  the region check reports `not-found` and warns until someone identifies the
+  real element. Exit 6 is what protects the run meanwhile.
 * The date inputs carry `readonly` while the calendar panel is closed. The
   collector clicks the input first, which is what makes rc-picker drop the
   attribute — but if the site ever sets it permanently, keystrokes would
@@ -251,20 +288,25 @@ name their constant.
 **The collector has never been run against the live cabinet.** The first run
 must be a `--dry-run`, watched, with `DJI_HEADLESS=false`.
 
-## Sizing a historical run
+## Historical collection
 
-Observed on the live cabinet on 2026-07-31: the period 2026-01-01 → 2026-07-31
-is **705 pages** at 30 per page (21 123 flights).
+**Year boundaries are handled for you.** The picker resets a range that crosses
+one, so `--from 2025-06-30 --to 2026-07-31` is split automatically into
+`2025-06-30 … 2025-12-31` and `2026-01-01 … 2026-07-31`, and each is a full
+cycle of its own: set the period, verify it, walk it, send it. If one window
+fails, the ones already sent are kept and the log names both lists — what
+completed and what still needs collecting. Re-running a completed window is
+harmless; the ingest deduplicates by DJI flight id.
 
-Two consequences for a backfill:
+**Sizing.** Observed on the live cabinet on 2026-07-31: 2026-01-01 → 2026-07-31
+is 705 pages at 30 per page (21 123 flights), and a full historical window is
+around 970. Hence `DJI_MAX_PAGES=2000` — the old 500 would have terminated a
+legitimate backfill as if it had run away. Taking the largest page size the
+site offers cuts the walk proportionally; at 100 per page those 705 pages
+become 212.
 
-* `DJI_MAX_PAGES` defaults to **500** and would stop such a run at page 500,
-  which is reported as exit 4. Raise it for historical collection.
-* at `DJI_SETTLE_MS=2500` a 705-page walk takes roughly half an hour of
-  clicking. That is expected, not a hang.
-
-Collect history in **per-year windows** in any case: the calendar resets a
-range that crosses a year boundary.
+At `DJI_SETTLE_MS=2500`, a several-hundred-page walk takes tens of minutes of
+clicking. That is expected, not a hang.
 
 ---
 
