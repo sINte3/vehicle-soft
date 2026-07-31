@@ -143,6 +143,27 @@ SELECTOR_PAGE_SIZE_OPTIONS = ('.ant-select-dropdown:not(.ant-select-dropdown-hid
                               '.ant-select-item-option')
 SELECTOR_PAGE_SIZE_OPTIONS_FALLBACK = '.ant-select-item-option'
 
+# Region indicator, for the region readback guard.
+#
+# [REASON]: the saved DOM of 2026-07-31 contains NO region indicator. The only
+# region-ish text on the page is the sidebar navigation item "Other Regions",
+# which is a switcher, not a display of the current region, and its class is a
+# build-hashed CSS-module name (_menu-item-content-name_1n58w_309) that changes
+# on every deploy. That item is deliberately NOT matched here: a selector that
+# picked it up would compare the expected region against the string "Other
+# Regions", mismatch, and block every single run -- a guard that fails closed
+# on a false reading is worse than no guard.
+#
+# So these are candidates for an element nobody has identified yet, and the
+# expected outcome today is "not found" -> a warning and a continue. The guard
+# that actually protects the run is the empty-window check, which needs no
+# selector at all. Correct this constant once someone finds the real element
+# on the live page.
+SELECTOR_REGION_INDICATOR = ('[data-testid*="region"], '
+                             '[class*="current-region"], '
+                             '[class*="region-name"], '
+                             '[class*="regionName"]')
+
 # Cookie-consent banner. It overlays the bottom of the page and swallows
 # clicks on the pagination control.
 SELECTOR_COOKIE_ACCEPT = ("button.cc-consent-accept, "
@@ -196,6 +217,16 @@ class BrowserError(Exception):
 
 class SessionExpired(BrowserError):
     """The saved session no longer signs us in. main() -> exit code 2."""
+
+
+class RegionMismatch(BrowserError):
+    """The session is in the wrong region. main() -> exit code 7.
+
+    [REASON]: when the account is switched to another region the flight list
+    returns zero rows with no error whatsoever -- the run looks perfectly
+    successful and collects nothing. This is the single most dangerous silent
+    failure in the integration, and it has happened before.
+    """
 
 
 class PeriodVerificationFailed(BrowserError):
@@ -458,6 +489,7 @@ class FlightCollector(object):
         self._rejected = {}
         self._ignored_detail = 0
         self._version_warned = False
+        self._page_size_probed = False
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -637,6 +669,52 @@ class FlightCollector(object):
             self.log.info('Switched to the List view')
         except Exception as exc:
             self.log.info('List view toggle not used (%s)', exc)
+
+    # -- region ---------------------------------------------------------------
+
+    def _read_region(self):
+        """The region shown on the page, or None when no indicator is found."""
+        try:
+            locator = self._page.locator(SELECTOR_REGION_INDICATOR)
+            for index in range(min(locator.count(), 5)):
+                text = (locator.nth(index).inner_text() or '').strip()
+                if text:
+                    return text
+        except Exception as exc:
+            self.log.info('Could not read the region indicator (%s)', exc)
+        return None
+
+    def check_region(self, expected):
+        """Guard B: compare the region on the page against the expected one.
+
+        Returns 'ok', 'not-found' or 'skipped'. Raises RegionMismatch when an
+        indicator IS found and does not match -- a found-and-wrong element must
+        block the run, while a missing one must not, because the selector is
+        unverified and blocking on it would stop every run for a guess.
+        """
+        if not expected:
+            self.log.info('DJI_EXPECTED_REGION is not set; region check '
+                          'skipped')
+            return 'skipped'
+
+        observed = self._read_region()
+        if observed is None:
+            self.log.warning('REGION CHECK DID NOT RUN: no region indicator '
+                             'matched %r on the page. Continuing -- this '
+                             'selector has never been confirmed against the '
+                             'live cabinet. The empty-window guard is what '
+                             'protects this run.', SELECTOR_REGION_INDICATOR)
+            return 'not-found'
+
+        if expected.strip().lower() not in observed.lower():
+            raise RegionMismatch(
+                'the session is in the wrong region: expected something '
+                'containing %r, the page shows %r. A wrong region returns an '
+                'empty flight list with no error at all, so the run stops '
+                'here.' % (expected, observed))
+
+        self.log.info('Region check passed: %r contains %r', observed, expected)
+        return 'ok'
 
     # -- period ---------------------------------------------------------------
 
@@ -883,6 +961,12 @@ class FlightCollector(object):
         run slower; aborting for it would trade a working collection for none.
         """
         before_size = self.current_page_size()
+        if self._page_size_probed:
+            # The setting is per-session and persists, so later windows in the
+            # same run inherit it; only the value in force is worth logging.
+            self.log.info('Page size in force for this window: %s', before_size)
+            return before_size
+        self._page_size_probed = True
         self.log.info('Page size currently in force: %s', before_size)
 
         try:
@@ -1072,8 +1156,18 @@ class FlightCollector(object):
     # -- the whole run --------------------------------------------------------
 
     def collect(self, date_from, date_to):
-        """Open the records page, set the period, walk it, return the flights."""
+        """Single-window convenience: open the records page, then collect."""
         self.open_records()
+        return self.collect_window(date_from, date_to)
+
+    def collect_window(self, date_from, date_to):
+        """One reporting window, on an already-open page.
+
+        Kept separate from collect() because a period spanning a calendar-year
+        boundary has to be collected one year at a time -- the picker resets a
+        range that crosses the boundary -- and all those windows share one
+        browser, one session and one page load.
+        """
         expected_from, expected_to = self.set_period(date_from, date_to)
         page_size = self.maximise_page_size(expected_from, expected_to)
         complete, total_pages, clicks = self.paginate(expected_from,
@@ -1096,6 +1190,8 @@ class FlightCollector(object):
             clicks=clicks,
             complete=complete,
             page_size=page_size,
+            date_from=date_from,
+            date_to=date_to,
         )
         self.log.info('Collected %d flight(s) from %d page(s); the collector '
                       'itself removed %d duplicate(s)', len(unique),

@@ -137,7 +137,8 @@ class CollectorConfig(object):
 
     def __init__(self, records_url, storage_state, headless, window_days,
                  tz_offset_hours, page_timeout_ms, settle_ms, max_pages,
-                 base_url, api_token, batch_size):
+                 base_url, api_token, batch_size, expected_region=None,
+                 allow_empty_window=False):
         self.records_url = records_url
         self.storage_state = storage_state
         self.headless = headless
@@ -149,6 +150,8 @@ class CollectorConfig(object):
         self.base_url = base_url
         self.api_token = api_token
         self.batch_size = batch_size
+        self.expected_region = expected_region
+        self.allow_empty_window = allow_empty_window
 
     @property
     def flight_sync_url(self):
@@ -183,6 +186,8 @@ class CollectorConfig(object):
             'flight_sync_url': self.flight_sync_url,
             'api_token': 'set' if self.api_token else 'missing',
             'batch_size': self.batch_size,
+            'expected_region': self.expected_region or 'not set',
+            'allow_empty_window': self.allow_empty_window,
         }
 
 
@@ -235,4 +240,6 @@ def load_config(require_ingest=True, load_dotenv=True):
         base_url=base_url,
         api_token=api_token,
         batch_size=batch_size,
+        expected_region=_raw('DJI_EXPECTED_REGION'),
+        allow_empty_window=_as_bool('DJI_ALLOW_EMPTY_WINDOW', False),
     )

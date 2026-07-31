@@ -29,6 +29,9 @@ from drone_collector.main import (
     resolve_period,
 )
 
+from drone_collector.browser import CollectResult
+from drone_collector.tests.support import make_flight
+from drone_collector.sender import SendResult
 from drone_collector.tests.test_sender import config
 
 MISSING_STATE = '/nonexistent/drone_collector/storage_state.json'
@@ -147,14 +150,100 @@ class ExitCodeTests(CliTestCase):
         self.assertEqual(caught.exception.code, 0)
 
 
+class EmptyWindowGuardTests(CliTestCase):
+    """Guard A of the addendum, and the one that needs no selector.
+
+    A session switched to another region returns zero rows with no error at
+    all: the run looks successful and collects nothing. So zero flights is a
+    failure unless it has been declared expected.
+    """
+
+    def setUp(self):
+        CliTestCase.setUp(self)
+        self.posted = []
+        self._real_send = main_module.send
+
+        def fake_send(flights, kind, period_from, period_to, cfg, **kwargs):
+            self.posted.append((flights, kind, period_from, period_to))
+            return SendResult().add({'log_id': 1, 'seen': len(flights),
+                                     'new': len(flights)})
+
+        main_module.send = fake_send
+
+    def tearDown(self):
+        main_module.send = self._real_send
+        CliTestCase.tearDown(self)
+
+    def account_for(self, result, cfg=None, dry_run=False):
+        args = build_parser().parse_args(['--dry-run'] if dry_run else [])
+        return main_module._account_for(result, args, 'incremental',
+                                        cfg or config(), logging.getLogger('t'),
+                                        {})
+
+    def test_an_empty_window_exits_6_and_posts_nothing(self):
+        self.assertEqual(self.account_for(collect_result([])),
+                         main_module.EXIT_EMPTY)
+        self.assertEqual(self.posted, [])
+
+    def test_an_empty_window_is_allowed_when_declared_expected(self):
+        cfg = config()
+        cfg.allow_empty_window = True
+        self.assertEqual(self.account_for(collect_result([]), cfg=cfg),
+                         main_module.EXIT_OK)
+        self.assertEqual(self.posted, [])
+
+    def test_a_non_empty_window_is_sent(self):
+        self.assertEqual(self.account_for(collect_result([make_flight(1)])),
+                         main_module.EXIT_OK)
+        self.assertEqual(len(self.posted), 1)
+
+    def test_an_incomplete_walk_is_still_sent_but_exits_4(self):
+        result = collect_result([make_flight(1)], complete=False)
+        self.assertEqual(self.account_for(result), main_module.EXIT_PAGINATION)
+        self.assertEqual(len(self.posted), 1)
+
+
+class RegionGuardTests(unittest.TestCase):
+    """Guard B: a wrong region blocks, a missing indicator only warns."""
+
+    def test_a_region_mismatch_maps_to_exit_7(self):
+        from drone_collector.browser import RegionMismatch
+        code = main_module._exit_code_for(RegionMismatch('wrong region'),
+                                          logging.getLogger('t'))
+        self.assertEqual(code, main_module.EXIT_REGION)
+
+    def test_the_other_browser_failures_keep_their_codes(self):
+        from drone_collector.browser import (BrowserError,
+                                             PeriodVerificationFailed,
+                                             SessionExpired)
+        log = logging.getLogger('t')
+        cases = [
+            (SessionExpired('x'), main_module.EXIT_SESSION),
+            (PeriodVerificationFailed('x'), main_module.EXIT_PERIOD),
+            (BrowserError('x'), main_module.EXIT_PAGINATION),
+        ]
+        for exc, expected in cases:
+            self.assertEqual(main_module._exit_code_for(exc, log), expected)
+
+
 class ExitCodeConstantsTests(unittest.TestCase):
 
     def test_the_documented_codes(self):
         self.assertEqual(
             (main_module.EXIT_OK, main_module.EXIT_CONFIG,
              main_module.EXIT_SESSION, main_module.EXIT_PERIOD,
-             main_module.EXIT_PAGINATION, main_module.EXIT_INGEST),
-            (0, 1, 2, 3, 4, 5))
+             main_module.EXIT_PAGINATION, main_module.EXIT_INGEST,
+             main_module.EXIT_EMPTY, main_module.EXIT_REGION),
+            (0, 1, 2, 3, 4, 5, 6, 7))
+
+
+def collect_result(flights, complete=True):
+    """A CollectResult as the browser would return it, without a browser."""
+    return CollectResult(
+        flights=flights, pages_captured=1, total_pages=1,
+        flights_captured=len(flights), self_duplicates=0, unidentified=0,
+        rejected={}, ignored_detail=0, clicks=0, complete=complete,
+        page_size=100, date_from=date(2026, 7, 1), date_to=date(2026, 7, 31))
 
 
 if __name__ == '__main__':

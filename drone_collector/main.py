@@ -17,6 +17,8 @@ Exit codes (see drone_collector/README.md):
     3  period verification failed
     4  the page walk did not complete
     5  the ingest endpoint rejected a batch
+    6  a window captured zero flights (usually the wrong region)
+    7  the session is in the wrong region
 """
 
 import argparse
@@ -27,7 +29,8 @@ from drone_collector.config import ConfigError, load_config
 from drone_collector.logging_setup import format_run_summary, setup_logging
 from drone_collector.sender import IngestRejected, send, write_dry_run
 from drone_collector.session import SessionMissing, require_session
-from drone_collector.window import compute_window, format_date, parse_date
+from drone_collector.window import (compute_window, format_date, parse_date,
+                                    split_by_calendar_year)
 
 EXIT_OK = 0
 EXIT_CONFIG = 1
@@ -35,6 +38,8 @@ EXIT_SESSION = 2
 EXIT_PERIOD = 3
 EXIT_PAGINATION = 4
 EXIT_INGEST = 5
+EXIT_EMPTY = 6
+EXIT_REGION = 7
 
 KIND_INCREMENTAL = 'incremental'
 KIND_BACKFILL = 'backfill'
@@ -105,6 +110,8 @@ def main(argv=None):
     summary = [
         ('kind', None), ('dry_run', False),
         ('period_from', None), ('period_to', None),
+        ('windows', None), ('windows_completed', None),
+        ('region', None), ('page_size', None),
         ('pages', None), ('pages_expected', None),
         ('flights_captured', None), ('flights_deduped', None),
         ('self_duplicates', None), ('rejected_responses', None),
@@ -181,11 +188,24 @@ def _run(argv, log, state):
         log.error('%s', exc)
         return EXIT_SESSION
 
+    # [REASON]: the picker RESETS a range that crosses a calendar-year
+    # boundary, so a period that spans one is collected a year at a time. Each
+    # sub-window is a full cycle of its own: set the period, verify it, walk
+    # it, send it.
+    windows = split_by_calendar_year(date_from, date_to)
+    state['windows'] = len(windows)
+    if len(windows) > 1:
+        log.info('The period crosses a calendar-year boundary, which the '
+                 'picker resets; splitting into %d windows: %s', len(windows),
+                 ', '.join('%s..%s' % (format_date(a), format_date(b))
+                           for a, b in windows))
+
     try:
         from drone_collector.browser import (
             BrowserError,
             FlightCollector,
             PeriodVerificationFailed,
+            RegionMismatch,
             SessionExpired,
         )
     except ImportError as exc:
@@ -195,9 +215,24 @@ def _run(argv, log, state):
                   'install chromium', exc)
         return EXIT_CONFIG
 
+    errors = (BrowserError, PeriodVerificationFailed, RegionMismatch,
+              SessionExpired, SessionMissing)
+    completed = []
+    code = EXIT_OK
+
     try:
         with FlightCollector(cfg, log) as collector:
-            result = collector.collect(date_from, date_to)
+            collector.open_records()
+            state['region'] = collector.check_region(cfg.expected_region)
+
+            for index, (window_from, window_to) in enumerate(windows, start=1):
+                log.info('Window %d/%d: %s .. %s', index, len(windows),
+                         format_date(window_from), format_date(window_to))
+                result = collector.collect_window(window_from, window_to)
+                code = _account_for(result, args, kind, cfg, log, state)
+                if code != EXIT_OK:
+                    break
+                completed.append((window_from, window_to))
     except ImportError as exc:
         # playwright is imported lazily, inside start().
         log.error('Playwright is not available in this environment (%s). '
@@ -205,50 +240,90 @@ def _run(argv, log, state):
                   'drone_collector/requirements.txt && python -m playwright '
                   'install chromium', exc)
         return EXIT_CONFIG
-    except SessionMissing as exc:
+    except errors as exc:
+        code = _exit_code_for(exc, log)
+    except IngestRejected as exc:
+        log.error('Ingest rejected the batch: %s', exc)
+        code = EXIT_INGEST
+
+    state['windows_completed'] = len(completed)
+    if len(windows) > 1:
+        # [REASON]: a failure in one sub-window must not discard the ones
+        # already sent. Those flights are in the database; the operator needs
+        # to know exactly which periods still need collecting, and re-running
+        # a completed one is harmless because the ingest deduplicates.
+        log.info('Windows completed and sent: %s',
+                 ', '.join('%s..%s' % (format_date(a), format_date(b))
+                           for a, b in completed) or 'none')
+        if code != EXIT_OK:
+            remaining = [w for w in windows if w not in completed]
+            log.error('Windows NOT collected: %s',
+                      ', '.join('%s..%s' % (format_date(a), format_date(b))
+                                for a, b in remaining))
+
+    return code
+
+
+def _exit_code_for(exc, log):
+    """Map a browser-side failure onto its documented exit code."""
+    from drone_collector.browser import (PeriodVerificationFailed,
+                                         RegionMismatch, SessionExpired)
+
+    if isinstance(exc, RegionMismatch):
+        log.error('%s', exc)
+        return EXIT_REGION
+    if isinstance(exc, (SessionMissing, SessionExpired)):
         log.error('%s', exc)
         return EXIT_SESSION
-    except SessionExpired as exc:
-        log.error('%s', exc)
-        return EXIT_SESSION
-    except PeriodVerificationFailed as exc:
+    if isinstance(exc, PeriodVerificationFailed):
         log.error('Period verification failed: %s', exc)
         log.error('Nothing was sent -- collecting the wrong period silently is '
                   'worse than failing.')
         return EXIT_PERIOD
-    except BrowserError as exc:
-        log.error('Browser run failed: %s', exc)
-        return EXIT_PAGINATION
+    log.error('Browser run failed: %s', exc)
+    return EXIT_PAGINATION
 
-    state['pages'] = result.pages_captured
-    state['pages_expected'] = result.total_pages
-    state['flights_captured'] = result.flights_captured
-    state['flights_deduped'] = len(result.flights)
-    state['self_duplicates'] = result.self_duplicates
-    state['rejected_responses'] = sum(result.rejected.values()) if result.rejected else 0
+
+def _account_for(result, args, kind, cfg, log, state):
+    """Record one window's result and send it. Returns an exit code."""
+    _accumulate(state, result)
     if result.rejected:
         log.warning('Rejected responses by reason: %s', result.rejected)
 
+    # Guard A: an empty window is an error, not a success.
+    #
+    # [REASON]: a session in the wrong region returns zero rows with no error
+    # at all -- the run looks successful and collects nothing. This guard
+    # needs no selector and is the one that actually protects the data.
+    if not result.flights:
+        if cfg.allow_empty_window:
+            log.warning('EMPTY WINDOW %s .. %s: zero flights captured, and '
+                        'DJI_ALLOW_EMPTY_WINDOW is set, so the run continues. '
+                        'If this window was not expected to be empty, the '
+                        'session is probably in the wrong region.',
+                        format_date(result.date_from),
+                        format_date(result.date_to))
+            return EXIT_OK
+        log.error('EMPTY WINDOW %s .. %s: zero flights captured. Nothing is '
+                  'sent. The usual cause is a session switched to another '
+                  'region, which returns an empty list with no error. Set '
+                  'DJI_ALLOW_EMPTY_WINDOW=true if this period really is '
+                  'empty.', format_date(result.date_from),
+                  format_date(result.date_to))
+        return EXIT_EMPTY
+
     if args.dry_run:
-        target = write_dry_run(result.flights, kind, date_from, date_to,
-                               cfg.out_dir)
+        target = write_dry_run(result.flights, kind, result.date_from,
+                               result.date_to, cfg.out_dir)
         log.info('Dry run: %d flight(s) written to %s', len(result.flights),
                  target)
         print('%d flight(s) written to %s' % (len(result.flights), target))
-        return EXIT_OK if result.complete else EXIT_PAGINATION
-
-    try:
-        sent = send(result.flights, kind, date_from, date_to, cfg, logger=log)
-    except IngestRejected as exc:
-        log.error('Ingest rejected the batch: %s', exc)
-        return EXIT_INGEST
-
-    state['batches'] = sent.batches
-    state['seen'] = sent.seen
-    state['new'] = sent.new
-    state['duplicates'] = sent.duplicates
-    state['unresolved'] = sent.unresolved
-    state['errors'] = sent.errors
+    else:
+        sent = send(result.flights, kind, result.date_from, result.date_to,
+                    cfg, logger=log)
+        for key in ('batches', 'seen', 'new', 'duplicates', 'unresolved',
+                    'errors'):
+            state[key] = (state.get(key) or 0) + getattr(sent, key)
 
     if not result.complete:
         # [REASON]: the flights that WERE captured are real and have already
@@ -260,8 +335,23 @@ def _run(argv, log, state):
                   'were sent; re-run the same period to finish it.',
                   result.pages_captured, result.total_pages)
         return EXIT_PAGINATION
-
     return EXIT_OK
+
+
+def _accumulate(state, result):
+    """Sum one window's collection counters into the run summary."""
+    state['pages'] = (state.get('pages') or 0) + result.pages_captured
+    state['pages_expected'] = ((state.get('pages_expected') or 0)
+                               + (result.total_pages or 0))
+    state['flights_captured'] = ((state.get('flights_captured') or 0)
+                                 + result.flights_captured)
+    state['flights_deduped'] = ((state.get('flights_deduped') or 0)
+                                + len(result.flights))
+    state['self_duplicates'] = ((state.get('self_duplicates') or 0)
+                                + result.self_duplicates)
+    state['rejected_responses'] = ((state.get('rejected_responses') or 0)
+                                   + sum(result.rejected.values()))
+    state['page_size'] = result.page_size
 
 
 def _save_session(cfg, log):
