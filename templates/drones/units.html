@@ -1,5 +1,6 @@
 {% extends g.base_template %}
 {% set is_ru = (lang == 'ru') %}
+{% set can_edit_nicks = current_user.can_edit %}
 {% block title %}{{ 'Дроны — машины' if is_ru else 'Дронлар — машиналар' }}{% endblock %}
 {% block content %}
 {% include 'drones/_drones_nav.html' %}
@@ -10,6 +11,37 @@
     <div class="vs-hero-sub">{{ 'Парк DJI Agras: номер — идентичность машины, ники DJI — сменяемые ярлыки, сгруппированы по машине.' if is_ru else 'DJI Agras парки: рақам — машинанинг идентитети, DJI никлари — ўзгарувчан ёрлиқлар, машина бўйича гуруҳланган.' }}</div>
   </div>
 </div>
+
+{% if can_edit_nicks %}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Добавить ник' if is_ru else 'Ник қўшиш' }}</span>
+  </div>
+  <div class="vs-card-body">
+    <form method="post" action="{{ url_for('drones.units_nickname_add') }}" class="vs-form-row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="vs-field" style="min-width:200px;">
+        <label class="vs-label" for="addNickUnit">{{ 'Машина' if is_ru else 'Машина' }}</label>
+        <select name="drone_unit_id" id="addNickUnit" class="vs-select" required>
+          <option value="">{{ '— выберите машину —' if is_ru else '— машинани танланг —' }}</option>
+          {% for u in units %}
+          <option value="{{ u.id }}">№ {{ u.number }}{% if u.model %} — {{ u.model }}{% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:240px;">
+        <label class="vs-label" for="addNickText">{{ 'Ник (DJI) — точное написание' if is_ru else 'Ник (DJI) — аниқ ёзилиши' }}</label>
+        <input type="text" name="nickname" id="addNickText" class="vs-input" maxlength="100" required autocomplete="off">
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn vs-btn-primary">{{ 'Добавить' if is_ru else 'Қўшиш' }}</button>
+      </div>
+    </form>
+    <div class="vs-help">{{ 'Ник сохраняется ровно так, как его присылает DJI, включая регистр и пробелы. Отключённый ник не распознаётся при загрузке новых вылетов, а уже сохранённые вылеты не меняются. Удаления нет: отключение обратимо и сохраняет запись о том, что написание существовало.' if is_ru else 'Ник DJI юборганидек, ҳарф катта-кичиклиги ва бўшлиқлари билан айнан сақланади. Ўчирилган ник янги парвозларни юклашда танилмайди, аллақачон сақланган парвозлар эса ўзгармайди. Ўчириб ташлаш йўқ: ўчириш қайтариладиган амал ва ёзилиш мавжуд бўлганини сақлаб қолади.' }}</div>
+  </div>
+</div>
+{% endif %}
 
 <div class="vs-table-wrap vs-mb">
   <div class="vs-card-header">
@@ -37,11 +69,39 @@
         <td>
           {% set unit_nicks = nicknames_by_unit.get(u.id, []) %}
           {% if unit_nicks %}
-          <span class="vs-row" style="gap:6px; flex-wrap:wrap;">
+          <div class="vs-stack-sm">
             {% for n in unit_nicks %}
-            <span class="vs-badge">{{ n.nickname }}</span>
+            {# NULL считается активным — ровно так же, как в _drone_nickname_maps(). #}
+            {% set nick_active = (n.is_active != False) %}
+            {% if can_edit_nicks %}
+            <form method="post" action="{{ url_for('drones.units_nickname_update', nick_id=n.id) }}" class="vs-row" style="gap:6px; flex-wrap:wrap; align-items:center;">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="text" name="nickname" class="vs-input" style="width:200px;" value="{{ n.nickname }}" maxlength="100" required autocomplete="off">
+              <select name="drone_unit_id" class="vs-select" style="width:110px;">
+                {% for opt in units %}
+                <option value="{{ opt.id }}" {% if opt.id == n.drone_unit_id %}selected{% endif %}>№ {{ opt.number }}</option>
+                {% endfor %}
+              </select>
+              <label class="vs-label" style="margin:0; display:inline-flex; gap:4px; align-items:center; white-space:nowrap;">
+                <input type="checkbox" name="is_active" value="1" {% if nick_active %}checked{% endif %}>{{ 'Активен' if is_ru else 'Фаол' }}
+              </label>
+              <button type="submit" class="vs-btn vs-btn-sm">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+              {% if not nick_active %}
+              <span class="vs-badge">{{ 'Отключён' if is_ru else 'Ўчирилган' }}</span>
+              {% endif %}
+            </form>
+            {% else %}
+            <span class="vs-row" style="gap:6px; flex-wrap:wrap; align-items:center;">
+              {% if nick_active %}
+              <span class="vs-badge vs-badge-success">{{ n.nickname }}</span>
+              {% else %}
+              <span class="vs-badge">{{ n.nickname }}</span>
+              <span class="vs-muted" style="font-size:12px;">{{ 'отключён' if is_ru else 'ўчирилган' }}</span>
+              {% endif %}
+            </span>
+            {% endif %}
             {% endfor %}
-          </span>
+          </div>
           {% else %}
           <span class="vs-muted">—</span>
           {% endif %}

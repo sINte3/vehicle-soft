@@ -26,7 +26,7 @@ import json
 
 from datetime import datetime, timedelta
 
-from flask import (Blueprint, current_app, flash, jsonify, redirect,
+from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
                    render_template, request, send_file, url_for, g)
 from flask_login import current_user
 from sqlalchemy import func
@@ -257,7 +257,17 @@ def _drone_nickname_maps():
     """
     exact = {}
     normalized = {}
-    for nick in DroneNickname.query.all():
+    # [REASON]: DRONE-007 -- the units screen offers a per-alias disable
+    # toggle. Without this filter the toggle would change nothing at ingest
+    # and the UI would be lying about what it does. isnot(False), never
+    # == True: in SQLite the column is BOOLEAN DEFAULT 1 and a legacy or
+    # hand-inserted row can hold NULL, which == True would silently drop,
+    # turning known spellings into unresolved flights. NULL therefore counts
+    # as active, which is the behaviour that was there before. All twenty
+    # rows seeded by migrate_drones_foundation_001.py carry is_active = 1, so
+    # nothing changes on existing data.
+    for nick in DroneNickname.query.filter(
+            DroneNickname.is_active.isnot(False)).all():
         exact[nick.nickname] = nick.drone_unit_id
         normalized.setdefault(nick.normalized, set()).add(nick.drone_unit_id)
     return exact, normalized
@@ -481,6 +491,201 @@ def units():
         units=unit_rows,
         nicknames_by_unit=nicknames_by_unit,
     )
+
+
+# ─── Alias management (DRONE-007) ─────────────────────────────────────────────
+#
+# [REASON]: DroneNickname was writable only by migration until now, so the
+# forty historical 2025 spellings sitting in drone_flights.nickname_raw could
+# not be mapped without a code change. Two POST routes -- add and update --
+# cover the whole surface the owner needs: a new spelling, a rename, a move to
+# another machine, and a disable.
+#
+# There is deliberately NO delete route. Deactivation is the reversible
+# operation and it preserves the record that a spelling ever existed, which is
+# what makes an old attribution explainable years later; deleting the row
+# loses that permanently and gains nothing, because an inactive alias already
+# stops resolving at ingest (_drone_nickname_maps filters on is_active).
+
+
+def _drone_units_redirect():
+    return redirect(url_for('drones.units'))
+
+
+def _drone_nickname_ambiguous_with(normalized, drone_unit_id,
+                                   exclude_id=None):
+    """An ACTIVE alias normalising the same way but pointing elsewhere.
+
+    [REASON]: `normalized` is deliberately not unique ('8 Garden U' and
+    '8 GardenU' both normalise to '8gardenu'), and that is fine while every
+    row of a normalized group points at one machine. When a group straddles
+    two machines, _drone_resolve_unit() stops using the normalized fallback
+    for the whole group and returns None rather than guessing -- so the save
+    still happens, but the operator has to be told that resolution for these
+    spellings is now exact-match only.
+    """
+    query = DroneNickname.query.filter(
+        DroneNickname.normalized == normalized,
+        DroneNickname.drone_unit_id != drone_unit_id,
+        DroneNickname.is_active.isnot(False))
+    if exclude_id is not None:
+        query = query.filter(DroneNickname.id != exclude_id)
+    return query.first()
+
+
+def _drone_flash_ambiguity(other):
+    unit = DroneUnit.query.get(other.drone_unit_id)
+    number = unit.number if unit else other.drone_unit_id
+    flash(_drone_t(
+        'Сақланди, аммо огоҳлантириш: «%s» ёзилиши № %s машинага '
+        'ишора қилади ва нормаллаштирилгандан кейин худди шундай бўлади. '
+        'Бу ёзилишлар гуруҳи учун нормаллаштирилган мослик энди ноаниқ — '
+        'аниқлаш фақат аниқ мослик бўйича ишлайди.',
+        'Сохранено, но внимание: написание «%s» указывает на машину № %s и '
+        'после нормализации совпадает с этим. Для этой группы написаний '
+        'нормализованное сопоставление стало неоднозначным — распознавание '
+        'будет работать только по точному совпадению.')
+        % (other.nickname, number), 'warning')
+
+
+def _drone_flash_duplicate(nickname):
+    """Name the machine the existing spelling already points at, not a 500."""
+    existing = DroneNickname.query.filter(
+        DroneNickname.nickname == nickname).first()
+    if existing is None:
+        flash(_drone_t('«%s» ёзилиши сақланмади: у аллақачон мавжуд.',
+                       'Написание «%s» не сохранено: оно уже существует.')
+              % nickname, 'danger')
+        return
+    unit = DroneUnit.query.get(existing.drone_unit_id)
+    number = unit.number if unit else existing.drone_unit_id
+    flash(_drone_t(
+        '«%s» ёзилиши аллақачон мавжуд ва № %s машинага бириктирилган. '
+        'Ҳеч нарса ўзгартирилмади.',
+        'Написание «%s» уже существует и привязано к машине № %s. '
+        'Ничего не изменено.') % (nickname, number), 'danger')
+
+
+@drones_bp.route('/units/nicknames/add', methods=['POST'])
+@module_required('drones')
+def units_nickname_add():
+    """Add one raw DJI spelling and attach it to a machine."""
+    # The admin-only decorators live inside create_app() and are not
+    # importable from a blueprint; spare_parts.py and fuel_routes.py check the
+    # flag inline for the same reason.
+    if not current_user.can_edit:
+        abort(403)
+
+    nickname = (request.form.get('nickname') or '').strip()
+    unit_id = request.form.get('drone_unit_id', type=int)
+
+    if not nickname:
+        flash(_drone_t('Ник бўш бўлиши мумкин эмас.',
+                       'Ник не может быть пустым.'), 'warning')
+        return _drone_units_redirect()
+
+    unit = DroneUnit.query.get(unit_id) if unit_id else None
+    if unit is None:
+        flash(_drone_t('Машина танланмаган ёки топилмади.',
+                       'Машина не выбрана или не найдена.'), 'warning')
+        return _drone_units_redirect()
+
+    # [REASON]: normalized is recomputed here with the ingest's own helper on
+    # every write, so the column can never drift from the rule the resolution
+    # uses -- the migration seeds it with the identical rule.
+    normalized = _drone_normalize_nickname(nickname)
+    ambiguous = _drone_nickname_ambiguous_with(normalized, unit.id)
+
+    row = DroneNickname(drone_unit_id=unit.id, nickname=nickname,
+                        normalized=normalized, is_active=True,
+                        created_at=datetime.utcnow())
+    db.session.add(row)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # nickname is UNIQUE in the database; a readable message beats a 500.
+        db.session.rollback()
+        _drone_flash_duplicate(nickname)
+        return _drone_units_redirect()
+
+    flash(_drone_t('«%s» ники № %s машинага қўшилди.',
+                   'Ник «%s» добавлен машине № %s.')
+          % (nickname, unit.number), 'success')
+    if ambiguous is not None:
+        _drone_flash_ambiguity(ambiguous)
+    return _drone_units_redirect()
+
+
+@drones_bp.route('/units/nicknames/<int:nick_id>/update', methods=['POST'])
+@module_required('drones')
+def units_nickname_update(nick_id):
+    """Rename a spelling, move it to another machine, activate or disable it.
+
+    One route covers all three edits of a row: they are one form on the
+    screen, and splitting them would make "rename and re-attach in one go"
+    two round trips that can half-fail.
+    """
+    if not current_user.can_edit:
+        abort(403)
+
+    row = DroneNickname.query.get(nick_id)
+    if row is None:
+        flash(_drone_t('Ник топилмади.', 'Ник не найден.'), 'warning')
+        return _drone_units_redirect()
+
+    nickname = (request.form.get('nickname') or '').strip()
+    unit_id = request.form.get('drone_unit_id', type=int)
+    # An unchecked checkbox is simply absent from the form body.
+    is_active = request.form.get('is_active') is not None
+
+    if not nickname:
+        flash(_drone_t('Ник бўш бўлиши мумкин эмас.',
+                       'Ник не может быть пустым.'), 'warning')
+        return _drone_units_redirect()
+
+    unit = DroneUnit.query.get(unit_id) if unit_id else None
+    if unit is None:
+        flash(_drone_t('Машина танланмаган ёки топилмади.',
+                       'Машина не выбрана или не найдена.'), 'warning')
+        return _drone_units_redirect()
+
+    normalized = _drone_normalize_nickname(nickname)
+    # Only an alias that will BE active can make a group ambiguous, and the
+    # row being edited is excluded from its own check.
+    ambiguous = None
+    if is_active:
+        ambiguous = _drone_nickname_ambiguous_with(normalized, unit.id,
+                                                   exclude_id=row.id)
+
+    row.nickname = nickname
+    row.normalized = normalized
+    row.drone_unit_id = unit.id
+    row.is_active = is_active
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        _drone_flash_duplicate(nickname)
+        return _drone_units_redirect()
+
+    if is_active:
+        flash(_drone_t('«%s» ники янгиланди: № %s машина, фаол.',
+                       'Ник «%s» обновлён: машина № %s, активен.')
+              % (nickname, unit.number), 'success')
+    else:
+        # [REASON]: say plainly what a disabled alias does, because it is the
+        # only setting on this screen that changes how new data is ingested:
+        # _drone_nickname_maps() skips it, so flights carrying this spelling
+        # are stored unattributed from now on. Nothing already stored moves.
+        flash(_drone_t(
+            '«%s» ники ўчирилди: у энди янги парвозларда танилмайди, '
+            'аллақачон сақланган парвозлар ўзгармайди.',
+            'Ник «%s» отключён: он больше не распознаётся при загрузке новых '
+            'вылетов, уже сохранённые вылеты не меняются.')
+            % nickname, 'success')
+    if ambiguous is not None:
+        _drone_flash_ambiguity(ambiguous)
+    return _drone_units_redirect()
 
 
 # ─── Summary and Excel exports (DRONE-004) ────────────────────────────────────
