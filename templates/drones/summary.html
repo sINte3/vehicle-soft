@@ -38,8 +38,10 @@
         <label class="vs-label" for="sumRegionFilter">{{ 'Область' if is_ru else 'Вилоят' }}</label>
         <select name="region" id="sumRegionFilter" class="vs-select">
           <option value="">{{ '— все области —' if is_ru else '— барча вилоятлар —' }}</option>
+          {# Значение опции — сырая строка из базы: по ней и идёт фильтр.
+             Переводится только видимый текст. #}
           {% for r in regions %}
-          <option value="{{ r }}" {% if filters.region == r %}selected{% endif %}>{{ r }}</option>
+          <option value="{{ r }}" {% if filters.region == r %}selected{% endif %}>{{ region_labels.get(r, r) }}</option>
           {% endfor %}
         </select>
       </div>
@@ -169,7 +171,9 @@
       <tr>
         {# То же, что в таблице машин: применённый фильтр по области уже лежит
            в link_args, и второй одноимённый аргумент даёт 500. #}
-        <td><a href="{{ url_for('drones.index', **dict(link_args, region=r.region)) }}">{{ r.region }}</a></td>
+        {# Ссылка несёт СЫРОЕ значение — фильтр сравнивает его; подписью
+           служит перевод. #}
+        <td><a href="{{ url_for('drones.index', **dict(link_args, region=r.region)) }}">{{ r.label or r.region }}</a></td>
         <td class="right">{{ r.flights }}</td>
         <td class="right">{{ '%.2f'|format(r.area) }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>

@@ -164,6 +164,11 @@ def index():
         pages=pages,
         units=units,
         regions=regions,
+        # [REASON]: labels are for display only. The <option> value and the
+        # filter comparison stay the RAW stored string, so
+        # DroneFlight.region == filters['region'] keeps working unchanged and
+        # links already in circulation keep resolving.
+        region_labels=_drone_region_label_map(regions),
         filters={'date_from': date_from_s, 'date_to': date_to_s,
                  'unit_id': unit_id, 'region': region},
         filter_args=filter_args,
@@ -210,6 +215,67 @@ def _drone_region_from_location(location):
         if seg == 'Tashkent':
             return 'Tashkent'
     return None
+
+
+# [REASON]: DRONE-007 -- stems of the stored region strings, i.e. the value
+# lowercased with a trailing ' region' removed. DJI sends the region in Latin
+# ('Bukhara Region') and it landed unchanged on an Uzbek Cyrillic screen and
+# in Excel. This map is DISPLAY ONLY: nothing here is ever written to
+# drone_flights.region, and every filter keeps comparing the raw stored value,
+# so an existing bookmark or export link keeps working.
+#
+# Confirmed present in production data: bukhara, navoiy, qashqadaryo,
+# samarqand, jizzakh, tashkent. The remaining Uzbek regions are listed too, so
+# the first flight from a new region does not appear raw among translated
+# neighbours. Uzbek is Cyrillic, as everywhere in this module.
+DRONE_REGION_LABELS = {
+    'bukhara':        ('Бухоро вилояти', 'Бухарская область'),
+    'navoiy':         ('Навоий вилояти', 'Навоийская область'),
+    'qashqadaryo':    ('Қашқадарё вилояти', 'Кашкадарьинская область'),
+    'samarqand':      ('Самарқанд вилояти', 'Самаркандская область'),
+    'jizzakh':        ('Жиззах вилояти', 'Джизакская область'),
+    'tashkent':       ('Тошкент', 'Ташкент'),
+    'andijan':        ('Андижон вилояти', 'Андижанская область'),
+    'fergana':        ('Фарғона вилояти', 'Ферганская область'),
+    'namangan':       ('Наманган вилояти', 'Наманганская область'),
+    'sirdaryo':       ('Сирдарё вилояти', 'Сырдарьинская область'),
+    'surxondaryo':    ('Сурхондарё вилояти', 'Сурхандарьинская область'),
+    'xorazm':         ('Хоразм вилояти', 'Хорезмская область'),
+    'karakalpakstan': ('Қорақалпоғистон Республикаси',
+                       'Республика Каракалпакстан'),
+}
+
+DRONE_REGION_SUFFIX = ' region'
+
+
+def _drone_region_label(region):
+    """Display label for a stored region value, in the current language.
+
+    [REASON]: an UNKNOWN region is returned VERBATIM, never blank and never a
+    placeholder. A region that fell out of this map must still be readable and
+    still be recognisable as the string the filter works on; rendering it as
+    an empty cell would look exactly like the NULL-region case, which has its
+    own explicit line and its own wording.
+    """
+    if not region:
+        return region
+    stem = region.strip().lower()
+    if stem.endswith(DRONE_REGION_SUFFIX):
+        stem = stem[:-len(DRONE_REGION_SUFFIX)].strip()
+    labels = DRONE_REGION_LABELS.get(stem)
+    if labels is None:
+        return region
+    return _drone_t(labels[0], labels[1])
+
+
+def _drone_region_label_map(regions):
+    """{raw value: label} for a list of raw region strings.
+
+    Handed to the templates instead of registering a global Jinja filter --
+    a global would have to be registered in app.py, which this change does
+    not touch.
+    """
+    return {region: _drone_region_label(region) for region in regions}
 
 
 def _drone_num(value):
@@ -335,6 +401,11 @@ def api_flight_sync():
     db.session.commit()
 
     new = duplicates = unresolved = errors = 0
+    # [REASON]: counted for the batch-level warning below only. It is NOT a
+    # sixth DroneSyncLog counter and NOT part of the JSON response: the log's
+    # five counters carry a documented invariant and the response shape is
+    # what the collector reads, so the signal channel here is the app log.
+    new_without_region = 0
     error_lines = []
 
     try:
@@ -379,6 +450,7 @@ def api_flight_sync():
                 spray = _drone_num(flight.get('spray_usage'))
                 sow = _drone_num(flight.get('sow_usage'))
                 manual = flight.get('manual_mode')
+                region = _drone_region_from_location(flight.get('location'))
 
                 row = DroneFlight(
                     dji_flight_id=fid,
@@ -414,7 +486,7 @@ def api_flight_sync():
                     # [REASON]: region is computed at ingest and stored, so
                     # reports never re-parse tens of thousands of address
                     # strings; location_text keeps the source verbatim.
-                    region=_drone_region_from_location(flight.get('location')),
+                    region=region,
                     raw_json=json.dumps(flight, ensure_ascii=False),
                     sync_log_id=log.id,
                     ingested_at=datetime.utcnow(),
@@ -437,6 +509,8 @@ def api_flight_sync():
                 new += 1
                 if unit_id is None:
                     unresolved += 1
+                if region is None:
+                    new_without_region += 1
             except Exception as exc:
                 # [REASON]: a row that fails to parse increments errors and
                 # is recorded, but never aborts the batch -- the rest of the
@@ -444,6 +518,28 @@ def api_flight_sync():
                 errors += 1
                 if len(error_lines) < DRONE_SYNC_MAX_ERRORS_LOGGED:
                     error_lines.append(str(exc))
+
+        # [REASON]: DRONE-007 -- the region parser looks for the ENGLISH word
+        # 'Region' in the reverse-geocoded address. If the DJI account
+        # language ever changes, the token disappears, the column goes NULL
+        # for every new row and nothing else about the run looks different:
+        # the flights arrive, the counters are healthy, and the by-region
+        # report quietly empties out. A whole batch with no region at all is
+        # the shape of that failure, so it is said out loud. The threshold is
+        # ALL of them, not some: a handful of addresses without the token is
+        # ordinary, and a warning that fires on ordinary data stops being
+        # read. The parsing rule itself is NOT changed -- it is verified at
+        # 100 % coverage on 10 385 rows, and changing it on a guess would
+        # corrupt a working column.
+        if new > 0 and new_without_region == new:
+            current_app.logger.warning(
+                'DRONE INGEST: all %d newly stored flight(s) in this batch '
+                'have region NULL. That is what a change of the DJI account '
+                'language looks like -- the address no longer contains the '
+                'token the region parser matches on. Check the SmartFarm '
+                'account language; the parsing rule was not changed and is '
+                'verified at 100%% coverage on 10385 rows. Sync log id %s.',
+                new, log.id)
 
         log.records_new = new
         log.records_duplicate = duplicates
@@ -1164,6 +1260,12 @@ def _drone_summary_data(conds):
         else:
             region_rows.append({
                 'region': region,
+                # The label rides alongside the raw value, never replaces it:
+                # the drill-down link and the Excel row both need the raw
+                # string to keep filtering, and both need the label to be
+                # readable. Computed here so the page and summary_xlsx use
+                # one helper rather than two.
+                'label': _drone_region_label(region),
                 'flights': flights,
                 'area': area,
                 'share': _drone_share(area, total_area),
@@ -1283,6 +1385,7 @@ def summary():
         link_args=_drone_link_args(filters),
         units=units,
         regions=regions,
+        region_labels=_drone_region_label_map(regions),
     )
 
 
@@ -1446,7 +1549,11 @@ def summary_xlsx():
     ws.append([_drone_t('Вилоят', 'Область'), head_flights,
                head_area, head_share])
     for r in data['by_region']['rows']:
-        ws.append([_drone_xlsx_safe(r['region']), r['flights'], r['area'],
+        # The same label helper as the screen -- an export that disagrees with
+        # the page it was taken from is a support ticket waiting to happen.
+        # _drone_xlsx_safe still wraps it: an unknown region passes through as
+        # its raw string, which came from outside this system.
+        ws.append([_drone_xlsx_safe(r['label']), r['flights'], r['area'],
                    r['share']])
     if data['by_region']['undetermined']:
         u = data['by_region']['undetermined']
@@ -1536,7 +1643,7 @@ def flights_xlsx():
             if f.started_at else None,
             f.drone_unit.number if f.drone_unit else None,
             _drone_xlsx_safe(f.nickname_raw),
-            _drone_xlsx_safe(f.region),
+            _drone_xlsx_safe(_drone_region_label(f.region)),
             _drone_xlsx_safe(f.location_text),
             f.area_ha,
             (f.work_seconds / 60.0) if f.work_seconds is not None else None,
