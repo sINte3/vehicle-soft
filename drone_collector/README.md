@@ -327,6 +327,16 @@ terminated a legitimate backfill as if it had run away.
 At `DJI_SETTLE_MS=2500`, a several-hundred-page walk takes tens of minutes of
 clicking. That is expected, not a hang.
 
+**Leave `DJI_SETTLE_MS` at its default of 2500.** The value of 8000 that
+circulated for a while was a workaround for `DRONE-PERIOD-RACE-001`, not a
+setting: period verification used to accept or reject on whatever had been
+captured last, and the range picker's intermediate request — fired with the
+start date applied and the end date still stale — could win that race and fail
+the run with exit code 3. Verification now waits for a capture whose own URL
+carries the requested period, so the workaround is unnecessary. It was also
+expensive: `paginate()` waits `settle_ms` after every click, so 8000 cost eight
+seconds *per page* and roughly doubled every run.
+
 ---
 
 ## Deployment
