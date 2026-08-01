@@ -10,6 +10,13 @@
     <div class="vs-hero-title">{{ 'Машины' if is_ru else 'Машиналар' }}</div>
     <div class="vs-hero-sub">{{ 'Парк DJI Agras: номер — идентичность машины, ники DJI — сменяемые ярлыки, сгруппированы по машине.' if is_ru else 'DJI Agras парки: рақам — машинанинг идентитети, DJI никлари — ўзгарувчан ёрлиқлар, машина бўйича гуруҳланган.' }}</div>
   </div>
+  {% if can_edit_nicks %}
+  <div class="vs-row-end">
+    {# Ссылка отсюда, а не четвёртая вкладка в _drones_nav.html: навигационная
+       строка общая для трёх страниц, и её изменение видно на всех трёх. #}
+    <a href="{{ url_for('drones.reattach') }}" class="vs-btn">{{ 'Переназначение вылетов' if is_ru else 'Парвозларни қайта бириктириш' }}</a>
+  </div>
+  {% endif %}
 </div>
 
 {% if can_edit_nicks %}

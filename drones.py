@@ -39,6 +39,7 @@ from models import (
     DroneUnit,
     DroneNickname,
     DroneFlight,
+    DroneReattachRun,
     DroneSyncLog,
     module_required,
 )
@@ -686,6 +687,286 @@ def units_nickname_update(nick_id):
     if ambiguous is not None:
         _drone_flash_ambiguity(ambiguous)
     return _drone_units_redirect()
+
+
+# ─── Re-attribution pass (DRONE-007) ──────────────────────────────────────────
+#
+# [REASON]: THE INVARIANT OF THIS WHOLE SECTION -- a flight whose
+# drone_unit_id IS NOT NULL is never modified by any route here. Re-attribution
+# only fills blanks. Correcting an attribution that already points at a machine
+# is a different problem with a different risk profile (it silently moves
+# hectares between machines in reports that have already been sent) and is not
+# in this change. Every write below therefore carries
+# DroneFlight.drone_unit_id.is_(None) IN THE SQL WHERE CLAUSE, never a filter
+# applied in Python after loading, so the guarantee does not depend on the
+# rows the request happened to read.
+
+# [REASON]: SQLite caps the number of bound parameters in one statement
+# (999 before 3.32, 32766 after). The worst case here is 5 977 ids in one
+# undo, which lands on the wrong side of that line on an older SQLite and
+# fails the whole statement. Chunking is unconditional so behaviour does not
+# depend on the library version that happens to be linked into the Python on
+# the server.
+DRONE_ID_CHUNK = 400
+
+
+def _drone_id_chunks(ids):
+    for start in range(0, len(ids), DRONE_ID_CHUNK):
+        yield ids[start:start + DRONE_ID_CHUNK]
+
+
+def _drone_unattributed_groups():
+    """Unattributed flights grouped by raw spelling, with their resolution.
+
+    Returns (resolvable, unresolvable, totals). Reads only -- this is shared
+    by the preview and by apply, and apply recomputes it inside its own
+    request rather than trusting anything the client posted back.
+    """
+    rows = (db.session.query(
+        DroneFlight.nickname_raw,
+        func.count(DroneFlight.id),
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0))
+        .filter(DroneFlight.drone_unit_id.is_(None))
+        .group_by(DroneFlight.nickname_raw).all())
+
+    exact, normalized = _drone_nickname_maps()
+    unit_numbers = {u.id: u.number for u in DroneUnit.query.all()}
+
+    resolvable, unresolvable = [], []
+    for nickname, flights, area in rows:
+        unit_id = _drone_resolve_unit(nickname, exact, normalized)
+        entry = {
+            'nickname': nickname,
+            'flights': flights,
+            'area': float(area or 0.0),
+            'drone_unit_id': unit_id,
+            'unit_number': unit_numbers.get(unit_id),
+        }
+        (resolvable if unit_id is not None else unresolvable).append(entry)
+
+    resolvable.sort(key=lambda r: (-r['flights'], r['nickname'] or ''))
+    unresolvable.sort(key=lambda r: (-r['flights'], r['nickname'] or ''))
+    totals = {
+        'resolvable_flights': sum(r['flights'] for r in resolvable),
+        'resolvable_area': sum(r['area'] for r in resolvable),
+        'unresolvable_flights': sum(r['flights'] for r in unresolvable),
+        'unresolvable_area': sum(r['area'] for r in unresolvable),
+    }
+    return resolvable, unresolvable, totals
+
+
+def _drone_run_detail(run):
+    """detail_json parsed, never raising on a malformed or truncated row."""
+    try:
+        detail = json.loads(run.detail_json or '{}')
+    except (TypeError, ValueError):
+        return {'by_nickname': {}, 'flight_ids': []}
+    if not isinstance(detail, dict):
+        return {'by_nickname': {}, 'flight_ids': []}
+    by_nickname = detail.get('by_nickname')
+    flight_ids = detail.get('flight_ids')
+    return {
+        'by_nickname': by_nickname if isinstance(by_nickname, dict) else {},
+        'flight_ids': [i for i in flight_ids
+                       if isinstance(i, int)] if isinstance(flight_ids,
+                                                            list) else [],
+    }
+
+
+@drones_bp.route('/units/reattach')
+@module_required('drones')
+def reattach():
+    """Preview of the pass. WRITES NOTHING."""
+    if not current_user.can_edit:
+        abort(403)
+
+    resolvable, unresolvable, totals = _drone_unattributed_groups()
+    runs = (DroneReattachRun.query
+            .options(joinedload(DroneReattachRun.performer),
+                     joinedload(DroneReattachRun.undoer))
+            .order_by(DroneReattachRun.id.desc())
+            .limit(50).all())
+    run_rows = []
+    for run in runs:
+        detail = _drone_run_detail(run)
+        run_rows.append({
+            'id': run.id,
+            'performed_at': run.performed_at,
+            'performed_by': (run.performer.full_name or
+                             run.performer.username) if run.performer else None,
+            'rows_matched': run.rows_matched,
+            'rows_updated': run.rows_updated,
+            'undone_at': run.undone_at,
+            'undone_by': (run.undoer.full_name or run.undoer.username)
+                         if run.undoer else None,
+            'nicknames': sorted(detail['by_nickname'].keys()),
+        })
+
+    return render_template(
+        'drones/reattach.html',
+        resolvable=resolvable,
+        unresolvable=unresolvable,
+        totals=totals,
+        runs=run_rows,
+        fmt_dt=_drone_fmt_dt,
+    )
+
+
+@drones_bp.route('/units/reattach/apply', methods=['POST'])
+@module_required('drones')
+def reattach_apply():
+    """Fill drone_unit_id on unattributed flights whose spelling now resolves.
+
+    The grouping is recomputed HERE. Nothing the client posted about which
+    rows to change is read, because a form field naming rows to update is a
+    form field an attacker can rewrite.
+    """
+    if not current_user.can_edit:
+        abort(403)
+
+    resolvable, _unresolvable, totals = _drone_unattributed_groups()
+    if not resolvable:
+        # [REASON]: a run row recording zero changes is noise in an audit
+        # ledger -- it makes "what has been done to this data" longer to read
+        # without adding a fact. Nothing resolvable means nothing happened.
+        flash(_drone_t(
+            'Қайта бириктириш учун ҳеч нарса йўқ: бириктирилмаган '
+            'парвозларнинг ҳеч бир ёзилиши жорий никлар харитасида '
+            'танилмади.',
+            'Переназначать нечего: ни одно написание среди непривязанных '
+            'вылетов не распознаётся текущей картой ников.'), 'info')
+        return redirect(url_for('drones.reattach'))
+
+    by_nickname = {}
+    flight_ids = []
+    rows_updated = 0
+    try:
+        for group in resolvable:
+            nickname = group['nickname']
+            unit_id = group['drone_unit_id']
+            # The id list and the UPDATE carry the SAME conditions, and
+            # drone_unit_id IS NULL is one of them on both sides.
+            conds = (DroneFlight.drone_unit_id.is_(None),
+                     DroneFlight.nickname_raw == nickname)
+            ids = [row[0] for row in
+                   db.session.query(DroneFlight.id).filter(*conds).all()]
+            if not ids:
+                continue
+            updated = (db.session.query(DroneFlight).filter(*conds)
+                       .update({DroneFlight.drone_unit_id: unit_id},
+                               synchronize_session=False))
+            rows_updated += updated or 0
+            flight_ids.extend(ids)
+            by_nickname[nickname] = {
+                'drone_unit_id': unit_id,
+                'unit_number': group['unit_number'],
+                'count': len(ids),
+            }
+
+        run = DroneReattachRun(
+            performed_by=current_user.id,
+            performed_at=datetime.utcnow(),
+            rows_matched=totals['resolvable_flights'],
+            rows_updated=rows_updated,
+            detail_json=json.dumps({'by_nickname': by_nickname,
+                                    'flight_ids': flight_ids},
+                                   ensure_ascii=False),
+        )
+        db.session.add(run)
+        db.session.commit()
+    except Exception as exc:
+        # One transaction: either the whole pass and its ledger row land, or
+        # neither does. A ledger row describing rows that were rolled back
+        # would be worse than no ledger at all.
+        db.session.rollback()
+        current_app.logger.exception('Drone re-attribution failed')
+        flash(_drone_t('Қайта бириктириш бажарилмади, ҳеч нарса '
+                       'ўзгартирилмади: %s',
+                       'Переназначение не выполнено, ничего не изменено: %s')
+              % exc, 'danger')
+        return redirect(url_for('drones.reattach'))
+
+    flash(_drone_t(
+        'Қайта бириктирилди: %d та ёзилиш, %d та парвоз машиналарга '
+        'бириктирилди. Прогон №%d — уни бекор қилиш мумкин.',
+        'Переназначено: %d написаний, %d вылетов привязано к машинам. '
+        'Прогон №%d — его можно откатить.')
+        % (len(by_nickname), rows_updated, run.id), 'success')
+    return redirect(url_for('drones.reattach'))
+
+
+@drones_bp.route('/units/reattach/<int:run_id>/undo', methods=['POST'])
+@module_required('drones')
+def reattach_undo(run_id):
+    """Put the blanks back for exactly the rows this run filled."""
+    if not current_user.can_edit:
+        abort(403)
+
+    run = DroneReattachRun.query.get(run_id)
+    if run is None:
+        flash(_drone_t('Прогон топилмади.', 'Прогон не найден.'), 'warning')
+        return redirect(url_for('drones.reattach'))
+    if run.undone_at is not None:
+        flash(_drone_t('Прогон №%d аллақачон бекор қилинган (%s). Ҳеч нарса '
+                       'ўзгартирилмади.',
+                       'Прогон №%d уже откачен (%s). Ничего не изменено.')
+              % (run.id, _drone_fmt_dt(run.undone_at)), 'warning')
+        return redirect(url_for('drones.reattach'))
+
+    detail = _drone_run_detail(run)
+    recorded_ids = detail['flight_ids']
+    expected_unit = {}
+    for nickname, info in detail['by_nickname'].items():
+        if isinstance(info, dict) and info.get('drone_unit_id') is not None:
+            expected_unit[nickname] = info['drone_unit_id']
+
+    reverted = 0
+    try:
+        # [REASON]: only rows that STILL point at the machine this run
+        # recorded for their spelling are reverted. A row re-attributed since
+        # -- by a later pass after this one was undone and redone, say -- is
+        # skipped rather than blanked, because undoing this run must not undo
+        # somebody else's work. The id restriction is equally load-bearing: it
+        # separates the rows this run filled from flights of the same spelling
+        # that arrived afterwards and were attributed at ingest, which this
+        # run never touched and must not blank.
+        for chunk in _drone_id_chunks(recorded_ids):
+            rows = (db.session.query(DroneFlight.id, DroneFlight.nickname_raw,
+                                     DroneFlight.drone_unit_id)
+                    .filter(DroneFlight.id.in_(chunk)).all())
+            by_unit = {}
+            for flight_id, nickname_raw, unit_id in rows:
+                if (unit_id is not None
+                        and expected_unit.get(nickname_raw) == unit_id):
+                    by_unit.setdefault(unit_id, []).append(flight_id)
+            # The machine condition is repeated in the UPDATE itself, so the
+            # guarantee rests on SQL and not only on the read above.
+            for unit_id, ids in by_unit.items():
+                reverted += (db.session.query(DroneFlight).filter(
+                    DroneFlight.id.in_(ids),
+                    DroneFlight.drone_unit_id == unit_id)
+                    .update({DroneFlight.drone_unit_id: None},
+                            synchronize_session=False) or 0)
+        run.undone_at = datetime.utcnow()
+        run.undone_by = current_user.id
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception('Drone re-attribution undo failed')
+        flash(_drone_t('Бекор қилиш бажарилмади, ҳеч нарса ўзгартирилмади: %s',
+                       'Откат не выполнен, ничего не изменено: %s')
+              % exc, 'danger')
+        return redirect(url_for('drones.reattach'))
+
+    skipped = len(recorded_ids) - reverted
+    flash(_drone_t(
+        'Прогон №%d бекор қилинди: %d та парвоз яна бириктирилмаган ҳолатга '
+        'қайтарилди, %d таси ўтказиб юборилди (улар ўшандан бери '
+        'ўзгартирилган).',
+        'Прогон №%d откачен: %d вылетов возвращено в непривязанное '
+        'состояние, %d пропущено (они были изменены с тех пор).')
+        % (run.id, reverted, skipped), 'success')
+    return redirect(url_for('drones.reattach'))
 
 
 # ─── Summary and Excel exports (DRONE-004) ────────────────────────────────────
