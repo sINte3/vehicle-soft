@@ -1809,6 +1809,53 @@ class DroneFlight(db.Model):
     )
 
 
+class DroneReattachRun(db.Model):
+    """One re-attribution pass over flights whose drone_unit_id is NULL.
+
+    [REASON]: DRONE-007 -- deliberately NOT a DroneSyncLog row. That model
+    documents, and the project's verification scripts rely on, the invariant
+    records_seen = records_new + records_duplicate + records_error, with
+    records_unresolved a subset of records_new. A re-attribution pass stores
+    no flight at all: it only fills blanks on rows that are already in the
+    table, so it belongs in none of those buckets and recording it there
+    would break the invariant and every check written against it.
+
+    [REASON]: detail_json carries the COMPLETE list of affected flight ids,
+    not merely the counts. That list is what makes undo exact rather than
+    approximate -- it reverts precisely the rows this pass changed and can
+    tell a row that has since moved from one it still owns. Shape:
+
+        {"by_nickname": {"<raw spelling>": {"drone_unit_id": 6,
+                                            "unit_number": 6,
+                                            "count": 724}},
+         "flight_ids": [12, 13, 14]}
+
+    At the current worst case (5 977 unattributed flights) that is roughly
+    60 KB -- cheap for a ledger written once per pass and read by one screen.
+
+    Created by migrate_drones_reattach_001.py. A row with drone_unit_id
+    already set is never modified by the routes that write here: this ledger
+    only ever records blanks being filled.
+    """
+    __tablename__ = 'drone_reattach_runs'
+    id           = db.Column(db.Integer, primary_key=True)
+    performed_by = db.Column(db.Integer, db.ForeignKey('users.id'),
+                             nullable=True)
+    performed_at = db.Column(db.DateTime, nullable=False,
+                             default=datetime.utcnow)
+    rows_matched = db.Column(db.Integer, nullable=False, default=0)
+    rows_updated = db.Column(db.Integer, nullable=False, default=0)
+    detail_json  = db.Column(db.Text, nullable=False)
+    undone_at    = db.Column(db.DateTime, nullable=True)
+    undone_by    = db.Column(db.Integer, db.ForeignKey('users.id'),
+                             nullable=True)
+
+    # Two foreign keys onto the same table, so the join condition of each
+    # relationship has to be spelled out.
+    performer = db.relationship('User', foreign_keys=[performed_by])
+    undoer    = db.relationship('User', foreign_keys=[undone_by])
+
+
 # ─── Migration Registry ───────────────────────────────────────────────────────
 
 class SchemaMigration(db.Model):

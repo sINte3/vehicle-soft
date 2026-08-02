@@ -638,6 +638,33 @@ class FlightCollector(object):
             self._page.wait_for_timeout(CAPTURE_POLL_MS)
         return len(self._captured) > previous_count
 
+    def _wait_for_matching_capture(self, expected_from_ms, expected_to_ms,
+                                   timeout_ms):
+        """The first captured page whose OWN URL carries the requested period.
+
+        Returns the page, or None when the timeout expires. Checks before it
+        sleeps, so an already-present match costs no wait at all.
+
+        [REASON]: waiting for "any new capture" and then reading the LAST one
+        is what DRONE-PERIOD-RACE-001 was: the picker fires a request with the
+        start date applied and the end date still stale, and that response is
+        a valid flight list. The only safe acceptance test is the period in
+        the URL of the capture itself.
+
+        Waiting goes through the page's own wait_for_timeout, never
+        time.sleep(): a plain sleep would stop Playwright pumping its event
+        loop and the response listener would never run, so the capture being
+        waited for could not arrive at all.
+        """
+        deadline = time.time() + (timeout_ms / 1000.0)
+        while True:
+            for page in self._captured:
+                if period_matches(page.url, expected_from_ms, expected_to_ms):
+                    return page
+            if time.time() >= deadline:
+                return None
+            self._page.wait_for_timeout(CAPTURE_POLL_MS)
+
     # -- navigation -----------------------------------------------------------
 
     def open_records(self):
@@ -857,44 +884,77 @@ class FlightCollector(object):
         self._type_date(fields[0], format_date(date_from))
         self._type_date(fields[1], format_date(date_to))
 
-        if not self._captured:
-            self._wait_for_capture(0, FIRST_CAPTURE_TIMEOUT_MS)
-
+        # [REASON]: DRONE-PERIOD-RACE-001 -- there used to be a
+        # "if not self._captured: self._wait_for_capture(...)" here. The
+        # picker fires a flight-list request as soon as the START date is
+        # typed, while the end date is still the previous one; when that
+        # well-formed response for an unasked-for period landed first,
+        # self._captured was non-empty, the wait was skipped entirely, and
+        # verify_period read the stale URL and aborted the run. The wait now
+        # lives inside verify_period, where it can wait for a capture that
+        # actually carries the requested period instead of for any capture
+        # at all.
         self.verify_period(expected_from, expected_to)
         return expected_from, expected_to
 
-    def verify_period(self, expected_from_ms, expected_to_ms):
-        """Read the period back out of the site's own request URL.
+    def verify_period(self, expected_from_ms, expected_to_ms,
+                      timeout_ms=FIRST_CAPTURE_TIMEOUT_MS):
+        """Wait for a capture whose OWN URL carries the requested period.
 
         Mandatory, and fatal when it fails: the intended and the observed
         values are both logged, PeriodVerificationFailed is raised, and the
         run sends nothing.
+
+        [REASON]: acceptance is decided by the period in the URL of the
+        capture being examined, never by "the last thing captured". The last
+        capture is a moving target while the range picker is still settling,
+        and reading it is what made DRONE-PERIOD-RACE-001 grow with the weight
+        of the intermediate request -- a 965-page window failed where a
+        175-page window passed.
         """
         tz = self.cfg.tz_offset_hours
         intended = 'intended %s .. %s' % (format_ms(expected_from_ms, tz),
                                           format_ms(expected_to_ms, tz))
+
+        match = self._wait_for_matching_capture(expected_from_ms,
+                                                expected_to_ms, timeout_ms)
+        if match is not None:
+            observed_from, observed_to = parse_period_from_url(match.url)
+            observed = 'observed %s .. %s' % (format_ms(observed_from, tz),
+                                              format_ms(observed_to, tz))
+            self.log.info('Period verified: %s; %s', intended, observed)
+            self._drop_captures_outside_period(expected_from_ms,
+                                               expected_to_ms)
+            return True
+
         if not self._captured:
             raise PeriodVerificationFailed(
                 'no flight-list request was captured after the period was set '
                 '(%s); rejected responses: %s'
                 % (intended, self._rejected or 'none'))
 
+        # Every capture is reported, de-duplicated and in first-seen order: a
+        # half-applied period and a period the picker ignored outright look
+        # identical when only one of the URLs is shown.
+        periods = []
+        for page in self._captured:
+            bounds = parse_period_from_url(page.url)
+            if bounds not in periods:
+                periods.append(bounds)
+        observed = '; '.join(
+            'observed %s .. %s' % (format_ms(from_ms, tz),
+                                   format_ms(to_ms, tz))
+            for from_ms, to_ms in periods)
+
         url = self._captured[-1].url
-        observed_from, observed_to = parse_period_from_url(url)
-        observed = 'observed %s .. %s' % (format_ms(observed_from, tz),
-                                          format_ms(observed_to, tz))
-
-        if not period_matches(url, expected_from_ms, expected_to_ms):
-            self.log.error('Period verification failed: %s; %s', intended,
-                           observed)
-            self.log.error('Observed request URL: %s', url)
-            raise PeriodVerificationFailed(
-                'the site is showing a different period: %s; %s' % (intended,
-                                                                    observed))
-
-        self.log.info('Period verified: %s; %s', intended, observed)
-        self._drop_captures_outside_period(expected_from_ms, expected_to_ms)
-        return True
+        self.log.error('Period verification failed: %s; %s', intended,
+                       observed)
+        self.log.error('Observed request URL: %s', url)
+        raise PeriodVerificationFailed(
+            'the site is showing a different period after %d ms: %s; '
+            '%d capture(s) carrying %d distinct period(s): %s'
+            % (timeout_ms, intended, len(self._captured), len(periods),
+               observed))
 
     def _drop_captures_outside_period(self, expected_from_ms, expected_to_ms):
         """Keep only pages whose own URL carries the verified period.

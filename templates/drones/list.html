@@ -38,8 +38,10 @@
         <label class="vs-label" for="droneRegionFilter">{{ 'Область' if is_ru else 'Вилоят' }}</label>
         <select name="region" id="droneRegionFilter" class="vs-select">
           <option value="">{{ '— все области —' if is_ru else '— барча вилоятлар —' }}</option>
+          {# Значение опции — сырая строка из базы: по ней и идёт фильтр.
+             Переводится только видимый текст. #}
           {% for r in regions %}
-          <option value="{{ r }}" {% if filters.region == r %}selected{% endif %}>{{ r }}</option>
+          <option value="{{ r }}" {% if filters.region == r %}selected{% endif %}>{{ region_labels.get(r, r) }}</option>
           {% endfor %}
         </select>
       </div>
@@ -82,7 +84,7 @@
         <td class="right">{% if f.spray_liters is not none %}{{ '%.1f'|format(f.spray_liters) }}{% else %}—{% endif %}</td>
         <td class="right">{% if f.sow_kg is not none %}{{ '%.1f'|format(f.sow_kg) }}{% else %}—{% endif %}</td>
         <td>{{ usage_labels.get(f.usage_type, '—') }}</td>
-        <td class="vs-muted">{{ f.region or '—' }}</td>
+        <td class="vs-muted">{{ region_labels.get(f.region, f.region) or '—' }}</td>
         <td class="right">{{ f.work_seconds if f.work_seconds is not none else '—' }}</td>
       </tr>
       {% endfor %}

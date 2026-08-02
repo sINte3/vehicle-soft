@@ -26,7 +26,7 @@ import json
 
 from datetime import datetime, timedelta
 
-from flask import (Blueprint, current_app, flash, jsonify, redirect,
+from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
                    render_template, request, send_file, url_for, g)
 from flask_login import current_user
 from sqlalchemy import func
@@ -39,6 +39,7 @@ from models import (
     DroneUnit,
     DroneNickname,
     DroneFlight,
+    DroneReattachRun,
     DroneSyncLog,
     module_required,
 )
@@ -163,6 +164,11 @@ def index():
         pages=pages,
         units=units,
         regions=regions,
+        # [REASON]: labels are for display only. The <option> value and the
+        # filter comparison stay the RAW stored string, so
+        # DroneFlight.region == filters['region'] keeps working unchanged and
+        # links already in circulation keep resolving.
+        region_labels=_drone_region_label_map(regions),
         filters={'date_from': date_from_s, 'date_to': date_to_s,
                  'unit_id': unit_id, 'region': region},
         filter_args=filter_args,
@@ -211,6 +217,67 @@ def _drone_region_from_location(location):
     return None
 
 
+# [REASON]: DRONE-007 -- stems of the stored region strings, i.e. the value
+# lowercased with a trailing ' region' removed. DJI sends the region in Latin
+# ('Bukhara Region') and it landed unchanged on an Uzbek Cyrillic screen and
+# in Excel. This map is DISPLAY ONLY: nothing here is ever written to
+# drone_flights.region, and every filter keeps comparing the raw stored value,
+# so an existing bookmark or export link keeps working.
+#
+# Confirmed present in production data: bukhara, navoiy, qashqadaryo,
+# samarqand, jizzakh, tashkent. The remaining Uzbek regions are listed too, so
+# the first flight from a new region does not appear raw among translated
+# neighbours. Uzbek is Cyrillic, as everywhere in this module.
+DRONE_REGION_LABELS = {
+    'bukhara':        ('Бухоро вилояти', 'Бухарская область'),
+    'navoiy':         ('Навоий вилояти', 'Навоийская область'),
+    'qashqadaryo':    ('Қашқадарё вилояти', 'Кашкадарьинская область'),
+    'samarqand':      ('Самарқанд вилояти', 'Самаркандская область'),
+    'jizzakh':        ('Жиззах вилояти', 'Джизакская область'),
+    'tashkent':       ('Тошкент', 'Ташкент'),
+    'andijan':        ('Андижон вилояти', 'Андижанская область'),
+    'fergana':        ('Фарғона вилояти', 'Ферганская область'),
+    'namangan':       ('Наманган вилояти', 'Наманганская область'),
+    'sirdaryo':       ('Сирдарё вилояти', 'Сырдарьинская область'),
+    'surxondaryo':    ('Сурхондарё вилояти', 'Сурхандарьинская область'),
+    'xorazm':         ('Хоразм вилояти', 'Хорезмская область'),
+    'karakalpakstan': ('Қорақалпоғистон Республикаси',
+                       'Республика Каракалпакстан'),
+}
+
+DRONE_REGION_SUFFIX = ' region'
+
+
+def _drone_region_label(region):
+    """Display label for a stored region value, in the current language.
+
+    [REASON]: an UNKNOWN region is returned VERBATIM, never blank and never a
+    placeholder. A region that fell out of this map must still be readable and
+    still be recognisable as the string the filter works on; rendering it as
+    an empty cell would look exactly like the NULL-region case, which has its
+    own explicit line and its own wording.
+    """
+    if not region:
+        return region
+    stem = region.strip().lower()
+    if stem.endswith(DRONE_REGION_SUFFIX):
+        stem = stem[:-len(DRONE_REGION_SUFFIX)].strip()
+    labels = DRONE_REGION_LABELS.get(stem)
+    if labels is None:
+        return region
+    return _drone_t(labels[0], labels[1])
+
+
+def _drone_region_label_map(regions):
+    """{raw value: label} for a list of raw region strings.
+
+    Handed to the templates instead of registering a global Jinja filter --
+    a global would have to be registered in app.py, which this change does
+    not touch.
+    """
+    return {region: _drone_region_label(region) for region in regions}
+
+
 def _drone_num(value):
     """float(value) or None -- missing and non-numeric both become None."""
     if value is None or isinstance(value, bool):
@@ -257,7 +324,17 @@ def _drone_nickname_maps():
     """
     exact = {}
     normalized = {}
-    for nick in DroneNickname.query.all():
+    # [REASON]: DRONE-007 -- the units screen offers a per-alias disable
+    # toggle. Without this filter the toggle would change nothing at ingest
+    # and the UI would be lying about what it does. isnot(False), never
+    # == True: in SQLite the column is BOOLEAN DEFAULT 1 and a legacy or
+    # hand-inserted row can hold NULL, which == True would silently drop,
+    # turning known spellings into unresolved flights. NULL therefore counts
+    # as active, which is the behaviour that was there before. All twenty
+    # rows seeded by migrate_drones_foundation_001.py carry is_active = 1, so
+    # nothing changes on existing data.
+    for nick in DroneNickname.query.filter(
+            DroneNickname.is_active.isnot(False)).all():
         exact[nick.nickname] = nick.drone_unit_id
         normalized.setdefault(nick.normalized, set()).add(nick.drone_unit_id)
     return exact, normalized
@@ -324,6 +401,11 @@ def api_flight_sync():
     db.session.commit()
 
     new = duplicates = unresolved = errors = 0
+    # [REASON]: counted for the batch-level warning below only. It is NOT a
+    # sixth DroneSyncLog counter and NOT part of the JSON response: the log's
+    # five counters carry a documented invariant and the response shape is
+    # what the collector reads, so the signal channel here is the app log.
+    new_without_region = 0
     error_lines = []
 
     try:
@@ -368,6 +450,7 @@ def api_flight_sync():
                 spray = _drone_num(flight.get('spray_usage'))
                 sow = _drone_num(flight.get('sow_usage'))
                 manual = flight.get('manual_mode')
+                region = _drone_region_from_location(flight.get('location'))
 
                 row = DroneFlight(
                     dji_flight_id=fid,
@@ -403,7 +486,7 @@ def api_flight_sync():
                     # [REASON]: region is computed at ingest and stored, so
                     # reports never re-parse tens of thousands of address
                     # strings; location_text keeps the source verbatim.
-                    region=_drone_region_from_location(flight.get('location')),
+                    region=region,
                     raw_json=json.dumps(flight, ensure_ascii=False),
                     sync_log_id=log.id,
                     ingested_at=datetime.utcnow(),
@@ -426,6 +509,8 @@ def api_flight_sync():
                 new += 1
                 if unit_id is None:
                     unresolved += 1
+                if region is None:
+                    new_without_region += 1
             except Exception as exc:
                 # [REASON]: a row that fails to parse increments errors and
                 # is recorded, but never aborts the batch -- the rest of the
@@ -433,6 +518,28 @@ def api_flight_sync():
                 errors += 1
                 if len(error_lines) < DRONE_SYNC_MAX_ERRORS_LOGGED:
                     error_lines.append(str(exc))
+
+        # [REASON]: DRONE-007 -- the region parser looks for the ENGLISH word
+        # 'Region' in the reverse-geocoded address. If the DJI account
+        # language ever changes, the token disappears, the column goes NULL
+        # for every new row and nothing else about the run looks different:
+        # the flights arrive, the counters are healthy, and the by-region
+        # report quietly empties out. A whole batch with no region at all is
+        # the shape of that failure, so it is said out loud. The threshold is
+        # ALL of them, not some: a handful of addresses without the token is
+        # ordinary, and a warning that fires on ordinary data stops being
+        # read. The parsing rule itself is NOT changed -- it is verified at
+        # 100 % coverage on 10 385 rows, and changing it on a guess would
+        # corrupt a working column.
+        if new > 0 and new_without_region == new:
+            current_app.logger.warning(
+                'DRONE INGEST: all %d newly stored flight(s) in this batch '
+                'have region NULL. That is what a change of the DJI account '
+                'language looks like -- the address no longer contains the '
+                'token the region parser matches on. Check the SmartFarm '
+                'account language; the parsing rule was not changed and is '
+                'verified at 100%% coverage on 10385 rows. Sync log id %s.',
+                new, log.id)
 
         log.records_new = new
         log.records_duplicate = duplicates
@@ -481,6 +588,481 @@ def units():
         units=unit_rows,
         nicknames_by_unit=nicknames_by_unit,
     )
+
+
+# ─── Alias management (DRONE-007) ─────────────────────────────────────────────
+#
+# [REASON]: DroneNickname was writable only by migration until now, so the
+# forty historical 2025 spellings sitting in drone_flights.nickname_raw could
+# not be mapped without a code change. Two POST routes -- add and update --
+# cover the whole surface the owner needs: a new spelling, a rename, a move to
+# another machine, and a disable.
+#
+# There is deliberately NO delete route. Deactivation is the reversible
+# operation and it preserves the record that a spelling ever existed, which is
+# what makes an old attribution explainable years later; deleting the row
+# loses that permanently and gains nothing, because an inactive alias already
+# stops resolving at ingest (_drone_nickname_maps filters on is_active).
+
+
+def _drone_units_redirect():
+    return redirect(url_for('drones.units'))
+
+
+def _drone_nickname_ambiguous_with(normalized, drone_unit_id,
+                                   exclude_id=None):
+    """An ACTIVE alias normalising the same way but pointing elsewhere.
+
+    [REASON]: `normalized` is deliberately not unique ('8 Garden U' and
+    '8 GardenU' both normalise to '8gardenu'), and that is fine while every
+    row of a normalized group points at one machine. When a group straddles
+    two machines, _drone_resolve_unit() stops using the normalized fallback
+    for the whole group and returns None rather than guessing -- so the save
+    still happens, but the operator has to be told that resolution for these
+    spellings is now exact-match only.
+    """
+    query = DroneNickname.query.filter(
+        DroneNickname.normalized == normalized,
+        DroneNickname.drone_unit_id != drone_unit_id,
+        DroneNickname.is_active.isnot(False))
+    if exclude_id is not None:
+        query = query.filter(DroneNickname.id != exclude_id)
+    return query.first()
+
+
+def _drone_flash_ambiguity(other):
+    unit = DroneUnit.query.get(other.drone_unit_id)
+    number = unit.number if unit else other.drone_unit_id
+    flash(_drone_t(
+        'Сақланди, аммо огоҳлантириш: «%s» ёзилиши № %s машинага '
+        'ишора қилади ва нормаллаштирилгандан кейин худди шундай бўлади. '
+        'Бу ёзилишлар гуруҳи учун нормаллаштирилган мослик энди ноаниқ — '
+        'аниқлаш фақат аниқ мослик бўйича ишлайди.',
+        'Сохранено, но внимание: написание «%s» указывает на машину № %s и '
+        'после нормализации совпадает с этим. Для этой группы написаний '
+        'нормализованное сопоставление стало неоднозначным — распознавание '
+        'будет работать только по точному совпадению.')
+        % (other.nickname, number), 'warning')
+
+
+def _drone_flash_duplicate(nickname):
+    """Name the machine the existing spelling already points at, not a 500."""
+    existing = DroneNickname.query.filter(
+        DroneNickname.nickname == nickname).first()
+    if existing is None:
+        flash(_drone_t('«%s» ёзилиши сақланмади: у аллақачон мавжуд.',
+                       'Написание «%s» не сохранено: оно уже существует.')
+              % nickname, 'danger')
+        return
+    unit = DroneUnit.query.get(existing.drone_unit_id)
+    number = unit.number if unit else existing.drone_unit_id
+    flash(_drone_t(
+        '«%s» ёзилиши аллақачон мавжуд ва № %s машинага бириктирилган. '
+        'Ҳеч нарса ўзгартирилмади.',
+        'Написание «%s» уже существует и привязано к машине № %s. '
+        'Ничего не изменено.') % (nickname, number), 'danger')
+
+
+@drones_bp.route('/units/nicknames/add', methods=['POST'])
+@module_required('drones')
+def units_nickname_add():
+    """Add one raw DJI spelling and attach it to a machine."""
+    # The admin-only decorators live inside create_app() and are not
+    # importable from a blueprint; spare_parts.py and fuel_routes.py check the
+    # flag inline for the same reason.
+    if not current_user.can_edit:
+        abort(403)
+
+    nickname = (request.form.get('nickname') or '').strip()
+    unit_id = request.form.get('drone_unit_id', type=int)
+
+    if not nickname:
+        flash(_drone_t('Ник бўш бўлиши мумкин эмас.',
+                       'Ник не может быть пустым.'), 'warning')
+        return _drone_units_redirect()
+
+    unit = DroneUnit.query.get(unit_id) if unit_id else None
+    if unit is None:
+        flash(_drone_t('Машина танланмаган ёки топилмади.',
+                       'Машина не выбрана или не найдена.'), 'warning')
+        return _drone_units_redirect()
+
+    # [REASON]: normalized is recomputed here with the ingest's own helper on
+    # every write, so the column can never drift from the rule the resolution
+    # uses -- the migration seeds it with the identical rule.
+    normalized = _drone_normalize_nickname(nickname)
+    ambiguous = _drone_nickname_ambiguous_with(normalized, unit.id)
+
+    row = DroneNickname(drone_unit_id=unit.id, nickname=nickname,
+                        normalized=normalized, is_active=True,
+                        created_at=datetime.utcnow())
+    db.session.add(row)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # nickname is UNIQUE in the database; a readable message beats a 500.
+        db.session.rollback()
+        _drone_flash_duplicate(nickname)
+        return _drone_units_redirect()
+
+    flash(_drone_t('«%s» ники № %s машинага қўшилди.',
+                   'Ник «%s» добавлен машине № %s.')
+          % (nickname, unit.number), 'success')
+    if ambiguous is not None:
+        _drone_flash_ambiguity(ambiguous)
+    return _drone_units_redirect()
+
+
+@drones_bp.route('/units/nicknames/<int:nick_id>/update', methods=['POST'])
+@module_required('drones')
+def units_nickname_update(nick_id):
+    """Rename a spelling, move it to another machine, activate or disable it.
+
+    One route covers all three edits of a row: they are one form on the
+    screen, and splitting them would make "rename and re-attach in one go"
+    two round trips that can half-fail.
+    """
+    if not current_user.can_edit:
+        abort(403)
+
+    row = DroneNickname.query.get(nick_id)
+    if row is None:
+        flash(_drone_t('Ник топилмади.', 'Ник не найден.'), 'warning')
+        return _drone_units_redirect()
+
+    nickname = (request.form.get('nickname') or '').strip()
+    unit_id = request.form.get('drone_unit_id', type=int)
+    # An unchecked checkbox is simply absent from the form body.
+    is_active = request.form.get('is_active') is not None
+
+    if not nickname:
+        flash(_drone_t('Ник бўш бўлиши мумкин эмас.',
+                       'Ник не может быть пустым.'), 'warning')
+        return _drone_units_redirect()
+
+    unit = DroneUnit.query.get(unit_id) if unit_id else None
+    if unit is None:
+        flash(_drone_t('Машина танланмаган ёки топилмади.',
+                       'Машина не выбрана или не найдена.'), 'warning')
+        return _drone_units_redirect()
+
+    normalized = _drone_normalize_nickname(nickname)
+    # Only an alias that will BE active can make a group ambiguous, and the
+    # row being edited is excluded from its own check.
+    ambiguous = None
+    if is_active:
+        ambiguous = _drone_nickname_ambiguous_with(normalized, unit.id,
+                                                   exclude_id=row.id)
+
+    row.nickname = nickname
+    row.normalized = normalized
+    row.drone_unit_id = unit.id
+    row.is_active = is_active
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        _drone_flash_duplicate(nickname)
+        return _drone_units_redirect()
+
+    if is_active:
+        flash(_drone_t('«%s» ники янгиланди: № %s машина, фаол.',
+                       'Ник «%s» обновлён: машина № %s, активен.')
+              % (nickname, unit.number), 'success')
+    else:
+        # [REASON]: say plainly what a disabled alias does, because it is the
+        # only setting on this screen that changes how new data is ingested:
+        # _drone_nickname_maps() skips it, so flights carrying this spelling
+        # are stored unattributed from now on. Nothing already stored moves.
+        flash(_drone_t(
+            '«%s» ники ўчирилди: у энди янги парвозларда танилмайди, '
+            'аллақачон сақланган парвозлар ўзгармайди.',
+            'Ник «%s» отключён: он больше не распознаётся при загрузке новых '
+            'вылетов, уже сохранённые вылеты не меняются.')
+            % nickname, 'success')
+    if ambiguous is not None:
+        _drone_flash_ambiguity(ambiguous)
+    return _drone_units_redirect()
+
+
+# ─── Re-attribution pass (DRONE-007) ──────────────────────────────────────────
+#
+# [REASON]: THE INVARIANT OF THIS WHOLE SECTION -- a flight whose
+# drone_unit_id IS NOT NULL is never modified by any route here. Re-attribution
+# only fills blanks. Correcting an attribution that already points at a machine
+# is a different problem with a different risk profile (it silently moves
+# hectares between machines in reports that have already been sent) and is not
+# in this change. Every write below therefore carries
+# DroneFlight.drone_unit_id.is_(None) IN THE SQL WHERE CLAUSE, never a filter
+# applied in Python after loading, so the guarantee does not depend on the
+# rows the request happened to read.
+
+# [REASON]: SQLite caps the number of bound parameters in one statement
+# (999 before 3.32, 32766 after). The worst case here is 5 977 ids in one
+# undo, which lands on the wrong side of that line on an older SQLite and
+# fails the whole statement. Chunking is unconditional so behaviour does not
+# depend on the library version that happens to be linked into the Python on
+# the server.
+DRONE_ID_CHUNK = 400
+
+
+def _drone_id_chunks(ids):
+    for start in range(0, len(ids), DRONE_ID_CHUNK):
+        yield ids[start:start + DRONE_ID_CHUNK]
+
+
+def _drone_unattributed_groups():
+    """Unattributed flights grouped by raw spelling, with their resolution.
+
+    Returns (resolvable, unresolvable, totals). Reads only -- this is shared
+    by the preview and by apply, and apply recomputes it inside its own
+    request rather than trusting anything the client posted back.
+    """
+    rows = (db.session.query(
+        DroneFlight.nickname_raw,
+        func.count(DroneFlight.id),
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0))
+        .filter(DroneFlight.drone_unit_id.is_(None))
+        .group_by(DroneFlight.nickname_raw).all())
+
+    exact, normalized = _drone_nickname_maps()
+    unit_numbers = {u.id: u.number for u in DroneUnit.query.all()}
+
+    resolvable, unresolvable = [], []
+    for nickname, flights, area in rows:
+        unit_id = _drone_resolve_unit(nickname, exact, normalized)
+        entry = {
+            'nickname': nickname,
+            'flights': flights,
+            'area': float(area or 0.0),
+            'drone_unit_id': unit_id,
+            'unit_number': unit_numbers.get(unit_id),
+        }
+        (resolvable if unit_id is not None else unresolvable).append(entry)
+
+    resolvable.sort(key=lambda r: (-r['flights'], r['nickname'] or ''))
+    unresolvable.sort(key=lambda r: (-r['flights'], r['nickname'] or ''))
+    totals = {
+        'resolvable_flights': sum(r['flights'] for r in resolvable),
+        'resolvable_area': sum(r['area'] for r in resolvable),
+        'unresolvable_flights': sum(r['flights'] for r in unresolvable),
+        'unresolvable_area': sum(r['area'] for r in unresolvable),
+    }
+    return resolvable, unresolvable, totals
+
+
+def _drone_run_detail(run):
+    """detail_json parsed, never raising on a malformed or truncated row."""
+    try:
+        detail = json.loads(run.detail_json or '{}')
+    except (TypeError, ValueError):
+        return {'by_nickname': {}, 'flight_ids': []}
+    if not isinstance(detail, dict):
+        return {'by_nickname': {}, 'flight_ids': []}
+    by_nickname = detail.get('by_nickname')
+    flight_ids = detail.get('flight_ids')
+    return {
+        'by_nickname': by_nickname if isinstance(by_nickname, dict) else {},
+        'flight_ids': [i for i in flight_ids
+                       if isinstance(i, int)] if isinstance(flight_ids,
+                                                            list) else [],
+    }
+
+
+@drones_bp.route('/units/reattach')
+@module_required('drones')
+def reattach():
+    """Preview of the pass. WRITES NOTHING."""
+    if not current_user.can_edit:
+        abort(403)
+
+    resolvable, unresolvable, totals = _drone_unattributed_groups()
+    runs = (DroneReattachRun.query
+            .options(joinedload(DroneReattachRun.performer),
+                     joinedload(DroneReattachRun.undoer))
+            .order_by(DroneReattachRun.id.desc())
+            .limit(50).all())
+    run_rows = []
+    for run in runs:
+        detail = _drone_run_detail(run)
+        run_rows.append({
+            'id': run.id,
+            'performed_at': run.performed_at,
+            'performed_by': (run.performer.full_name or
+                             run.performer.username) if run.performer else None,
+            'rows_matched': run.rows_matched,
+            'rows_updated': run.rows_updated,
+            'undone_at': run.undone_at,
+            'undone_by': (run.undoer.full_name or run.undoer.username)
+                         if run.undoer else None,
+            'nicknames': sorted(detail['by_nickname'].keys()),
+        })
+
+    return render_template(
+        'drones/reattach.html',
+        resolvable=resolvable,
+        unresolvable=unresolvable,
+        totals=totals,
+        runs=run_rows,
+        fmt_dt=_drone_fmt_dt,
+    )
+
+
+@drones_bp.route('/units/reattach/apply', methods=['POST'])
+@module_required('drones')
+def reattach_apply():
+    """Fill drone_unit_id on unattributed flights whose spelling now resolves.
+
+    The grouping is recomputed HERE. Nothing the client posted about which
+    rows to change is read, because a form field naming rows to update is a
+    form field an attacker can rewrite.
+    """
+    if not current_user.can_edit:
+        abort(403)
+
+    resolvable, _unresolvable, totals = _drone_unattributed_groups()
+    if not resolvable:
+        # [REASON]: a run row recording zero changes is noise in an audit
+        # ledger -- it makes "what has been done to this data" longer to read
+        # without adding a fact. Nothing resolvable means nothing happened.
+        flash(_drone_t(
+            'Қайта бириктириш учун ҳеч нарса йўқ: бириктирилмаган '
+            'парвозларнинг ҳеч бир ёзилиши жорий никлар харитасида '
+            'танилмади.',
+            'Переназначать нечего: ни одно написание среди непривязанных '
+            'вылетов не распознаётся текущей картой ников.'), 'info')
+        return redirect(url_for('drones.reattach'))
+
+    by_nickname = {}
+    flight_ids = []
+    rows_updated = 0
+    try:
+        for group in resolvable:
+            nickname = group['nickname']
+            unit_id = group['drone_unit_id']
+            # The id list and the UPDATE carry the SAME conditions, and
+            # drone_unit_id IS NULL is one of them on both sides.
+            conds = (DroneFlight.drone_unit_id.is_(None),
+                     DroneFlight.nickname_raw == nickname)
+            ids = [row[0] for row in
+                   db.session.query(DroneFlight.id).filter(*conds).all()]
+            if not ids:
+                continue
+            updated = (db.session.query(DroneFlight).filter(*conds)
+                       .update({DroneFlight.drone_unit_id: unit_id},
+                               synchronize_session=False))
+            rows_updated += updated or 0
+            flight_ids.extend(ids)
+            by_nickname[nickname] = {
+                'drone_unit_id': unit_id,
+                'unit_number': group['unit_number'],
+                'count': len(ids),
+            }
+
+        run = DroneReattachRun(
+            performed_by=current_user.id,
+            performed_at=datetime.utcnow(),
+            rows_matched=totals['resolvable_flights'],
+            rows_updated=rows_updated,
+            detail_json=json.dumps({'by_nickname': by_nickname,
+                                    'flight_ids': flight_ids},
+                                   ensure_ascii=False),
+        )
+        db.session.add(run)
+        db.session.commit()
+    except Exception as exc:
+        # One transaction: either the whole pass and its ledger row land, or
+        # neither does. A ledger row describing rows that were rolled back
+        # would be worse than no ledger at all.
+        db.session.rollback()
+        current_app.logger.exception('Drone re-attribution failed')
+        flash(_drone_t('Қайта бириктириш бажарилмади, ҳеч нарса '
+                       'ўзгартирилмади: %s',
+                       'Переназначение не выполнено, ничего не изменено: %s')
+              % exc, 'danger')
+        return redirect(url_for('drones.reattach'))
+
+    flash(_drone_t(
+        'Қайта бириктирилди: %d та ёзилиш, %d та парвоз машиналарга '
+        'бириктирилди. Прогон №%d — уни бекор қилиш мумкин.',
+        'Переназначено: %d написаний, %d вылетов привязано к машинам. '
+        'Прогон №%d — его можно откатить.')
+        % (len(by_nickname), rows_updated, run.id), 'success')
+    return redirect(url_for('drones.reattach'))
+
+
+@drones_bp.route('/units/reattach/<int:run_id>/undo', methods=['POST'])
+@module_required('drones')
+def reattach_undo(run_id):
+    """Put the blanks back for exactly the rows this run filled."""
+    if not current_user.can_edit:
+        abort(403)
+
+    run = DroneReattachRun.query.get(run_id)
+    if run is None:
+        flash(_drone_t('Прогон топилмади.', 'Прогон не найден.'), 'warning')
+        return redirect(url_for('drones.reattach'))
+    if run.undone_at is not None:
+        flash(_drone_t('Прогон №%d аллақачон бекор қилинган (%s). Ҳеч нарса '
+                       'ўзгартирилмади.',
+                       'Прогон №%d уже откачен (%s). Ничего не изменено.')
+              % (run.id, _drone_fmt_dt(run.undone_at)), 'warning')
+        return redirect(url_for('drones.reattach'))
+
+    detail = _drone_run_detail(run)
+    recorded_ids = detail['flight_ids']
+    expected_unit = {}
+    for nickname, info in detail['by_nickname'].items():
+        if isinstance(info, dict) and info.get('drone_unit_id') is not None:
+            expected_unit[nickname] = info['drone_unit_id']
+
+    reverted = 0
+    try:
+        # [REASON]: only rows that STILL point at the machine this run
+        # recorded for their spelling are reverted. A row re-attributed since
+        # -- by a later pass after this one was undone and redone, say -- is
+        # skipped rather than blanked, because undoing this run must not undo
+        # somebody else's work. The id restriction is equally load-bearing: it
+        # separates the rows this run filled from flights of the same spelling
+        # that arrived afterwards and were attributed at ingest, which this
+        # run never touched and must not blank.
+        for chunk in _drone_id_chunks(recorded_ids):
+            rows = (db.session.query(DroneFlight.id, DroneFlight.nickname_raw,
+                                     DroneFlight.drone_unit_id)
+                    .filter(DroneFlight.id.in_(chunk)).all())
+            by_unit = {}
+            for flight_id, nickname_raw, unit_id in rows:
+                if (unit_id is not None
+                        and expected_unit.get(nickname_raw) == unit_id):
+                    by_unit.setdefault(unit_id, []).append(flight_id)
+            # The machine condition is repeated in the UPDATE itself, so the
+            # guarantee rests on SQL and not only on the read above.
+            for unit_id, ids in by_unit.items():
+                reverted += (db.session.query(DroneFlight).filter(
+                    DroneFlight.id.in_(ids),
+                    DroneFlight.drone_unit_id == unit_id)
+                    .update({DroneFlight.drone_unit_id: None},
+                            synchronize_session=False) or 0)
+        run.undone_at = datetime.utcnow()
+        run.undone_by = current_user.id
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception('Drone re-attribution undo failed')
+        flash(_drone_t('Бекор қилиш бажарилмади, ҳеч нарса ўзгартирилмади: %s',
+                       'Откат не выполнен, ничего не изменено: %s')
+              % exc, 'danger')
+        return redirect(url_for('drones.reattach'))
+
+    skipped = len(recorded_ids) - reverted
+    flash(_drone_t(
+        'Прогон №%d бекор қилинди: %d та парвоз яна бириктирилмаган ҳолатга '
+        'қайтарилди, %d таси ўтказиб юборилди (улар ўшандан бери '
+        'ўзгартирилган).',
+        'Прогон №%d откачен: %d вылетов возвращено в непривязанное '
+        'состояние, %d пропущено (они были изменены с тех пор).')
+        % (run.id, reverted, skipped), 'success')
+    return redirect(url_for('drones.reattach'))
 
 
 # ─── Summary and Excel exports (DRONE-004) ────────────────────────────────────
@@ -678,6 +1260,12 @@ def _drone_summary_data(conds):
         else:
             region_rows.append({
                 'region': region,
+                # The label rides alongside the raw value, never replaces it:
+                # the drill-down link and the Excel row both need the raw
+                # string to keep filtering, and both need the label to be
+                # readable. Computed here so the page and summary_xlsx use
+                # one helper rather than two.
+                'label': _drone_region_label(region),
                 'flights': flights,
                 'area': area,
                 'share': _drone_share(area, total_area),
@@ -797,6 +1385,7 @@ def summary():
         link_args=_drone_link_args(filters),
         units=units,
         regions=regions,
+        region_labels=_drone_region_label_map(regions),
     )
 
 
@@ -960,7 +1549,11 @@ def summary_xlsx():
     ws.append([_drone_t('Вилоят', 'Область'), head_flights,
                head_area, head_share])
     for r in data['by_region']['rows']:
-        ws.append([_drone_xlsx_safe(r['region']), r['flights'], r['area'],
+        # The same label helper as the screen -- an export that disagrees with
+        # the page it was taken from is a support ticket waiting to happen.
+        # _drone_xlsx_safe still wraps it: an unknown region passes through as
+        # its raw string, which came from outside this system.
+        ws.append([_drone_xlsx_safe(r['label']), r['flights'], r['area'],
                    r['share']])
     if data['by_region']['undetermined']:
         u = data['by_region']['undetermined']
@@ -1050,7 +1643,7 @@ def flights_xlsx():
             if f.started_at else None,
             f.drone_unit.number if f.drone_unit else None,
             _drone_xlsx_safe(f.nickname_raw),
-            _drone_xlsx_safe(f.region),
+            _drone_xlsx_safe(_drone_region_label(f.region)),
             _drone_xlsx_safe(f.location_text),
             f.area_ha,
             (f.work_seconds / 60.0) if f.work_seconds is not None else None,

@@ -1,0 +1,168 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Дроны — переназначение' if is_ru else 'Дронлар — қайта бириктириш' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Переназначение вылетов' if is_ru else 'Парвозларни қайта бириктириш' }}</div>
+    <div class="vs-hero-sub">{{ 'Вылеты, у которых машина не определена, разложены по написанию ника. Проход заполняет только пустые привязки: вылет, у которого машина уже стоит, не изменяется никогда.' if is_ru else 'Машинаси аниқланмаган парвозлар ник ёзилиши бўйича гуруҳланган. Прогон фақат бўш бириктиришларни тўлдиради: машинаси аллақачон қўйилган парвоз ҳеч қачон ўзгартирилмайди.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('drones.units') }}" class="vs-btn">{{ 'К машинам и никам' if is_ru else 'Машиналар ва никларга' }}</a>
+  </div>
+</div>
+
+{% set t_nick = 'Написание ника (как прислал DJI)' if is_ru else 'Ник ёзилиши (DJI юборганидек)' %}
+{% set t_flights = 'Вылеты' if is_ru else 'Парвозлар' %}
+{% set t_area = 'Гектары' if is_ru else 'Гектар' %}
+{% set t_machine = 'Машина' if is_ru else 'Машина' %}
+{% set t_total = 'Итого' if is_ru else 'Жами' %}
+
+{# ── Распознаётся ───────────────────────────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Распознаётся картой ников' if is_ru else 'Никлар харитаси бўйича танилади' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'Вылетов' if is_ru else 'Парвозлар' }}: {{ totals.resolvable_flights }} · {{ '%.2f'|format(totals.resolvable_area) }} {{ 'га' if is_ru else 'га' }}</span>
+  </div>
+  {% if resolvable %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ t_nick }}</th>
+        <th class="right">{{ t_flights }}</th>
+        <th class="right">{{ t_area }}</th>
+        <th>{{ t_machine }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in resolvable %}
+      <tr>
+        <td><span class="vs-badge">{{ r.nickname if r.nickname else ('— пусто —' if is_ru else '— бўш —') }}</span></td>
+        <td class="right">{{ r.flights }}</td>
+        <td class="right">{{ '%.2f'|format(r.area) }}</td>
+        <td style="font-weight:700;">№ {{ r.unit_number }}</td>
+      </tr>
+      {% endfor %}
+      <tr style="font-weight:700;">
+        <td>{{ t_total }}</td>
+        <td class="right">{{ totals.resolvable_flights }}</td>
+        <td class="right">{{ '%.2f'|format(totals.resolvable_area) }}</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="vs-card-body">
+    <form method="post" action="{{ url_for('drones.reattach_apply') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="vs-btn vs-btn-primary">{{ 'Выполнить переназначение' if is_ru else 'Қайта бириктиришни бажариш' }}</button>
+      <div class="vs-help">{{ 'Список пересчитывается заново в момент выполнения — применится ровно то, что показано выше на тот момент. Прогон записывается в журнал ниже и может быть откачен.' if is_ru else 'Рўйхат бажариш пайтида қайтадан ҳисобланади — ўша пайтдаги ҳолат қўлланилади. Прогон қуйидаги журналга ёзилади ва уни бекор қилиш мумкин.' }}</div>
+    </form>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Переназначать нечего' if is_ru else 'Қайта бириктириш учун ҳеч нарса йўқ' }}</div>
+    <div class="vs-empty-sub">{{ 'Ни одно написание среди непривязанных вылетов не распознаётся текущей картой ников. Заведите нужные ники на странице машин.' if is_ru else 'Бириктирилмаган парвозларнинг ҳеч бир ёзилиши жорий никлар харитасида танилмади. Керакли никларни машиналар саҳифасида киритинг.' }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{# ── Не распознаётся ────────────────────────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Не распознаётся' if is_ru else 'Танилмайди' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'Вылетов' if is_ru else 'Парвозлар' }}: {{ totals.unresolvable_flights }} · {{ '%.2f'|format(totals.unresolvable_area) }} {{ 'га' if is_ru else 'га' }}</span>
+  </div>
+  {% if unresolvable %}
+  <div class="vs-alert is-info">{{ 'Для этих написаний в карте ников нет подходящей записи, либо нормализованное совпадение указывает более чем на одну машину. Какой машине принадлежит написание — решение владельца: заведите ник на странице машин и вернитесь сюда.' if is_ru else 'Бу ёзилишлар учун никлар харитасида мос ёзув йўқ ёки нормаллаштирилган мослик бирдан ортиқ машинага ишора қилади. Ёзилиш қайси машинага тегишли эканини эгаси ҳал қилади: никни машиналар саҳифасида киритинг ва бу ерга қайтинг.' }}</div>
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ t_nick }}</th>
+        <th class="right">{{ t_flights }}</th>
+        <th class="right">{{ t_area }}</th>
+        <th>{{ t_machine }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in unresolvable %}
+      <tr>
+        <td><span class="vs-badge vs-badge-warning">{{ r.nickname if r.nickname else ('— пусто —' if is_ru else '— бўш —') }}</span></td>
+        <td class="right">{{ r.flights }}</td>
+        <td class="right">{{ '%.2f'|format(r.area) }}</td>
+        <td class="vs-muted">{{ 'не распознаётся' if is_ru else 'танилмайди' }}</td>
+      </tr>
+      {% endfor %}
+      <tr style="font-weight:700;">
+        <td>{{ t_total }}</td>
+        <td class="right">{{ totals.unresolvable_flights }}</td>
+        <td class="right">{{ '%.2f'|format(totals.unresolvable_area) }}</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Нераспознанных написаний нет' if is_ru else 'Танилмаган ёзилишлар йўқ' }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{# ── Журнал прогонов ────────────────────────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Журнал прогонов' if is_ru else 'Прогонлар журнали' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'последние 50' if is_ru else 'охирги 50 та' }}</span>
+  </div>
+  {% if runs %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th style="width:60px;">№</th>
+        <th>{{ 'Когда (UTC+5)' if is_ru else 'Қачон (Тошкент)' }}</th>
+        <th>{{ 'Кто' if is_ru else 'Ким' }}</th>
+        <th class="right">{{ 'Подошло' if is_ru else 'Мос келди' }}</th>
+        <th class="right">{{ 'Изменено' if is_ru else 'Ўзгартирилди' }}</th>
+        <th>{{ 'Написания' if is_ru else 'Ёзилишлар' }}</th>
+        <th>{{ 'Состояние' if is_ru else 'Ҳолат' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in runs %}
+      <tr>
+        <td style="font-weight:700;">{{ run.id }}</td>
+        <td style="white-space:nowrap;">{{ fmt_dt(run.performed_at) }}</td>
+        <td class="vs-muted">{{ run.performed_by or '—' }}</td>
+        <td class="right">{{ run.rows_matched }}</td>
+        <td class="right">{{ run.rows_updated }}</td>
+        <td class="vs-muted" style="font-size:12px;">{{ run.nicknames|join(', ') if run.nicknames else '—' }}</td>
+        <td>
+          {% if run.undone_at %}
+          <span class="vs-badge">{{ 'Откачен' if is_ru else 'Бекор қилинган' }} · {{ fmt_dt(run.undone_at) }}{% if run.undone_by %} · {{ run.undone_by }}{% endif %}</span>
+          {% else %}
+          <form method="post" action="{{ url_for('drones.reattach_undo', run_id=run.id) }}" class="vs-row" style="gap:6px; align-items:center;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <span class="vs-badge vs-badge-success">{{ 'Применён' if is_ru else 'Қўлланилган' }}</span>
+            <button type="submit" class="vs-btn vs-btn-sm">{{ 'Откатить' if is_ru else 'Бекор қилиш' }}</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Прогонов ещё не было' if is_ru else 'Ҳали прогонлар бўлмаган' }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}
