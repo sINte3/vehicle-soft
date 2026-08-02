@@ -1,105 +1,166 @@
-# CLAUDE.md — Vehicle Soft Project Rules
+# CLAUDE.md — Vehicle Soft
 
-## Project identity
+Внутренняя система учёта работы техники холдинга «Бухоро Агрокластер»:
+техника, топливо/АЗС с интеграцией Topaz, запчасти со складом, наряды, дроны
+DJI, Wialon, Telegram-боты. Flask + SQLAlchemy + SQLite (WAL), Python 3.14,
+Waitress, Windows-службы через NSSM. Всё on-premises.
 
-Vehicle Soft is a Flask-based web application for Bukhoro Agroklaster transport, equipment, Wialon, fuel station and reporting workflows.
+Здесь только инварианты. Состояние проекта — в `docs/tracks/<трек>.md`;
+`docs/AGENT_STATE.md` и `docs/TASKS.md` — летопись, читать точечно поиском по
+коду задачи, а не целиком (800 КБ).
 
-The application is used in production on a Windows server. Changes must be conservative, traceable and easy for a non-programmer operator to deploy.
+## Язык интерфейса
 
-## Current production context
+- Все пользовательские строки двуязычны: русский и узбекский.
+- **Узбекский только кириллицей.** Латиница допустима лишь в названиях
+  продуктов и брендов: Topaz, RFID, DJI, Bosch, Excel, PDF.
+- Общие модули — через `t()`, запчасти — через `_spare_t()`.
+  В шаблонах: `{% set is_ru = (lang == 'ru') %}`.
 
-- Project path on server: `C:\transport-report\`
-- Application URL: `http://10.103.25.200:5050`
-- Python: `C:\Program Files\Python314\python.exe`
-- Service: NSSM service `TransportReport`
-- DB: SQLite file `instance\transport.db`
-- Frontend: Jinja2 templates, vanilla JavaScript and CSS only
-- Excel generation: `openpyxl`
-- Server runtime: Waitress via NSSM
+## Запреты
 
-## Required reading before every task
+- **`git add -A` и `git add .` запрещены всегда.** Только поимённо. В рабочих
+  копиях десятки untracked-скриптов и скриншотов разных треков. Перед
+  коммитом — `git status --short` и проверка индекса.
+- **`git reset --hard` как откат запрещён.** Ветка `main` общая для четырёх
+  треков; между хешем и HEAD лежат чужие коммиты, а если сосед применил
+  миграцию, reset откатит код и оставит схему. Откат — `git revert` в обратном
+  порядке.
+- Мерж PR — «Create a merge commit», не squash: squash уничтожает
+  гранулярность отката.
+- В `drone_collector/` не тащить зависимости приложения и наоборот: это
+  отдельный процесс со своим `requirements.txt` и своим venv.
+- Секреты и токены не печатать никогда — только имена переменных.
 
-Read these files before editing code:
+## Общие файлы: трогать только с объявлением
 
-1. `docs/PROJECT_BRIEF.md`
-2. `docs/AGENT_STATE.md`
-3. `docs/ARCHITECTURE.md`
-4. `docs/DECISIONS.md`
-5. `docs/TASKS.md`
-6. `docs/QA_CHECKLIST.md`
-7. `docs/PROMPT_PROTOCOL.md`
+`app.py`, `models.py`, `templates/base_next.html`,
+`static/css/design-system.css`, `migration_utils.py`, `excel_export.py`.
+Правка любого из них выходит за границы трека и объявляется соседям **до**
+мержа. Если считаешь, что правка необходима, — сообщи об этом в описании PR,
+а не вноси молча.
 
-For code tasks, inspect the actual target files before making any change.
+## Классы дефектов, которыми проект уже обжигался
 
-## Non-negotiable constraints
+- **`tojson` только внутри `<script>` или в атрибуте с ОДИНАРНЫМИ кавычками.**
+  Фильтр экранирует `<`, `>`, `&` и апостроф, но **не** двойную кавычку, и
+  возвращает `Markup`. В атрибуте с двойными кавычками парсер обрывает
+  значение, обработчик молча не устанавливается — форма уходит без
+  подтверждения. Не ловится ни Jinja-парсингом, ни балансом `<div>`, ни
+  `py_compile`.
+- **Jinja `{% set %}`, использованный до объявления, рендерится молча пустой
+  строкой.** Блоки `{% block %}` не видят переменных соседнего блока.
+- **`app = create_app()` вызывает `db.create_all()` на импорте.** Любой скрипт
+  с `from app import app` — писатель, а не читатель. Диагностика и миграции
+  работают через stdlib `sqlite3` напрямую.
+- **`db.create_all()` создаёт отсутствующую таблицу пустой, но никогда не
+  добавляет колонку, индекс или строку прав.** Из-за этого дрейф миграций не
+  падает, а тихо деградирует.
+- **Проверка использования переменной подстрокой врёт**: `L_initial` совпадает
+  с `L_initial_missing`. Только `\bИМЯ\b` с отрицательным просмотром на `_`.
+- **Цветовые токены сверять по значениям, а не по именам** — разные
+  семантические имена могут указывать на один цвет.
+- `User.is_active_user` — колонка БД, `User.is_active` — property. В запросах
+  не путать.
 
-- Never change database schema without a migration script and rollback note.
-- Never delete production data automatically.
-- Never drop or recreate `transport.db` in production.
-- Never use Cyrillic text in `.bat` files.
-- Never use Cyrillic text in `run_server.py` output because NSSM/Windows log encoding can break.
-- Never add new Python dependencies without explaining why and updating `requirements.txt`.
-- Never change core Excel layout without preserving approved business meaning.
-- Do not rewrite the app from scratch unless explicitly approved.
-- Do not use external frontend frameworks.
-- Do not assume business rules for accounting, approval workflows or fuel accounting.
+## Целостность данных
 
-## Required comments for code changes
+- **Остаток запчастей ведётся только на уровне SKU.** Количество в инвентаре
+  никогда не пишется напрямую — только через `_apply_inventory_movement`,
+  который в той же транзакции создаёт movement-строку. Движения append-only,
+  гвардия `quantity + delta >= 0`.
+- Единица измерения строки остатка берётся из позиции каталога в момент
+  создания строки и больше не меняется. Позицию исправить можно, строку — нет.
+- **Топливо: два разных механизма, не путать.** `EXCLUDED_CARD_NUMBERS = {'30'}`
+  (ПЕРЕЛИВ, запись Topaz о рассогласовании счётчика) отбрасывается **на
+  приёме**, до резолва станции. `EXTERNAL_FUEL_CARDS` (чужое топливо) —
+  настоящая выдача, остаётся в базе и фильтруется **на слое отчёта**, с
+  датой начала действия правила.
+- **Дроны: машина определяется только по строке ника.** `serial_number` —
+  идентификатор вылета, а не борта (22 855 различных значений на 22 855
+  вылетов). Никогда не выводить машину из цифры в нике.
+- Незнакомый ник никогда не отклоняет вылет: строка сохраняется с
+  `drone_unit_id = NULL` и считается как «нераспознан».
+- Инвариант журнала приёма: `seen = new + duplicates + errors`,
+  `unresolved <= new`. Ничего постороннего в `drone_sync_logs` не класть.
+- Исторические аудит-записи не бэкфиллить и не изобретать.
 
-When adding or changing non-obvious logic, add a nearby comment:
+## Миграции
 
-```python
-# [REASON]: Explain why this logic exists and which project constraint/business rule it protects.
-```
+Образец — `migrate_drones_reattach_001.py`. Обязательно: stdlib `sqlite3` без
+Flask; константа `MIGRATION_ID`; регистрация через `migration_utils`
+(`ensure_schema_migrations_table` / `is_migration_applied` / `record_migration`
+/ `migration_checksum`); отказ с кодом 2 при отсутствии `instance/transport.db`;
+PRAGMA-guard перед каждым ALTER (в SQLite нет `ADD COLUMN IF NOT EXISTS`);
+одна транзакция; постусловия проверяются **до** записи в реестр; вывод в
+консоль только ASCII; докстринг с командой запуска и раздельным откатом кода и
+данных.
 
-Do not add noisy comments to every trivial line. Use this comment for business rules, migrations, compatibility fixes, Windows-specific fixes, Wialon/Topaz parsing, report formulas and security checks.
+Проверять миграцию на синтетической базе по четырём путям: чистая база,
+повтор («Already applied»), отсутствие базы (код 2, файл не создан),
+непройденное предусловие (код 1, полный откат, в реестре пусто).
 
-## Current module map
+## Что значит «готово»
 
-- `app.py` — app factory, auth, dashboard, daily entry, reports, references, admin users, module permission UI.
-- `models.py` — SQLAlchemy models, roles, 9 equipment categories, Wialon, fuel, module permissions and spare parts models.
-- `excel_export.py` — main Excel report generator with dynamic categories.
-- `excel_daily_activity.py` — daily activity report.
-- `wialon_import.py` — Wialon import, mapping, moto-hours reports and workload routes.
-- `workload_report.py` — workload report data and Excel generator.
-- `fuel_routes.py` — fuel station / warehouse / Topaz sync module.
-- `spare_parts.py` — early spare parts request module.
-- `translations.py` — UZ/RU translation dictionary.
+Перед тем как отчитаться:
 
-## Release rules
+1. `python -m compileall -q .` — чисто.
+2. `python tools/check_templates.py` и `python tools/test_check_templates.py` —
+   чисто. Это блокирующие проверки CI.
+3. Тесты затронутых пакетов прогнаны, ни один не удалён и не ослаблен.
+4. Если есть миграция — четыре пути выше.
+5. Для каждого критерия приёмки сказано, **чем именно** он проверен: имя теста,
+   команда, число. Непроверенное называется непроверенным прямо, а не
+   подразумевается.
 
-Every deliverable must include:
+**Отчёт не является доказательством.** Принимается дифф и артефакт. Если
+утверждение и артефакт расходятся, прав артефакт.
 
-1. Changed files only, unless a full archive is explicitly requested.
-2. Migration script if database schema or reference data changes.
-3. Step-by-step Windows CMD instructions.
-4. Syntax check results.
-5. Manual test checklist.
-6. Rollback instructions.
+**Проверка, дающая одинаковый результат при верном и неверном коде, проверкой
+не является.** Прежде чем объявить контроль доказательством, убедиться, что на
+этих данных он способен различить два случая. При возможности прогнать
+отрицательный контроль.
 
-## Service commands
+## Проверка вывода в файлы
 
-Use these commands in instructions:
+Excel разбирать `openpyxl` и сверять числа, PDF — проверять наличие
+`/FontFile2` (просмотрщики молча подставляют свой шрифт). Скриншот ничего не
+доказывает.
 
-```cmd
-cd C:\transport-report
-.\nssm.exe stop TransportReport
-.\nnssm.exe start TransportReport
-```
+## PowerShell (сервер и рабочая машина — Windows)
 
-If `nssm.exe` is unavailable in the current directory, use:
+- Нет `&&`. Команды по одной на строку.
+- `& "C:\Program Files\Python314\python.exe"` — путь с пробелом.
+- Python с SQL-подзапросами или вложенными кавычками — в `.py`-файл, не
+  инлайном через `-c`.
+- Скрипты с кириллическим выводом пишут в UTF-8 файл; в консоль только ASCII.
+- `git --no-pager log` в готовых к вставке блоках — иначе пейджер съест
+  следующие команды.
+- **Плейсхолдеров в готовых к вставке командах не оставлять** — они будут
+  вставлены буквально.
+- `Restart-Service`, не `Start-Service`: последний на работающей службе молча
+  ничего не делает.
 
-```cmd
-net stop TransportReport
-net start TransportReport
-```
+## Переводы строк и BOM
 
-## Current recommended next work
+В git блобы с **LF**; CRLF появляется в рабочей копии Windows через
+`core.autocrlf`. `docs/AGENT_STATE.md` несёт **BOM**, `docs/TASKS.md` и
+`docs/RELEASE_GATE.md` — нет. Скрипты правки доков обязаны это сохранять;
+контроль — `git diff --stat` показывает десятки строк, а не тысячи.
 
-Do not start a new large feature before addressing these audit items:
+## Гейт релиза
 
-1. Enforce module permissions in route guards, not only admin UI.
-2. Move secrets/tokens to environment variables.
-3. Clarify and standardize Topaz sync API URL.
-4. Split `wialon_import.py` into smaller units after current urgent work stabilizes.
-5. Formalize migration/versioning process.
+`docs/RELEASE_GATE.md` — единственный на проект список того, что влито в
+`main`, но не провалидировано. Строка кладётся **последним коммитом внутрь
+PR**. Прод-деплой разрешён только при пустой таблице «Открытые пункты».
+В норме файл пуст: строка появляется только как остаток, когда пришлось
+смержить раньше проверки. Одна запись — ровно одна строка; таблицу не
+переформатировать и столбцы пробелами не выравнивать.
+
+## Чего не делать без явного задания
+
+- Не расширять границы инкремента «заодно».
+- Не переименовывать сущности частично: частичный переход даёт три слова на
+  одну вещь и хуже исходного.
+- Не трогать `_perform_fuel_sync` — эталонная реализация тракта приёма.
+- Не проектировать Telegram Mini App: заморожено до решения владельца.
