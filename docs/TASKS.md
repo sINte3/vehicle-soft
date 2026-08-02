@@ -104,6 +104,85 @@ Parallel track, runs alongside the increments. Decisions and findings so far:
 
 ## Recently completed / appears completed
 
+### DRONE-007 — collector period race, alias management, re-attribution, region labels (PR #39), 2026-08-01
+
+Status: merged into `main` as `ac177c2`. Validated on staging `594b889` AFTER the
+merge, so `docs/RELEASE_GATE.md` carried a row for it until the checks closed.
+
+Five commits, 11 files, 1305 insertions and 35 deletions. One additive
+migration, `DRONES_REATTACH_001` — one new table, no column altered.
+
+Commits in order:
+
+1. `b80a572` — `fix(drones-collector)`: `_wait_for_matching_capture()` plus a
+   `verify_period` that waits for a capture whose OWN url carries the
+   requested period and accepts a match anywhere in the list. The conditional
+   wait is gone from `set_period`. Six new tests, 129 → 135.
+2. `eb58ba0` — `feat(drones)`: alias management screen; `_drone_nickname_maps()`
+   filters `is_active.isnot(False)`; add and update routes, no delete route.
+3. `5bb8cce` — `feat(drones)`: re-attribution preview, apply and undo, the
+   `DRONES_REATTACH_001` migration and the `DroneReattachRun` model.
+4. `b05230e` — `feat(drones)`: display-only region labels in both languages
+   and both workbooks, plus an ASCII warning when every newly stored flight in
+   a batch has a NULL region.
+5. `594b889` — `docs(release-gate)`: the gate row, amended to also flip the
+   gate sentence (see below).
+
+Rollback: `git revert` in strict reverse order, 5 → 1. **Not**
+`git reset --hard`: commits of the neighbouring tracks sit around these in
+`main`. Data rollback is separate and comes only after the code revert —
+restore the blanks per run from `detail_json.flight_ids`, then
+`DROP TABLE drone_reattach_runs` and delete the registry row. Reverting commit
+2 alone restores the previous ingest behaviour in which a deactivated alias
+still resolves, so any alias switched off through the screen would silently
+become active again.
+
+Deliberate decisions, recorded so nobody "fixes" them later:
+
+- the filter is `is_active.isnot(False)`, not `== True`: the SQLite column is
+  `BOOLEAN DEFAULT 1` and comparing NULL against True would silently drop the
+  alias and start producing unattributed flights;
+- the run log is its own table. `drone_sync_logs` documents the invariant
+  `seen = new + duplicates + errors`, which a row of seen=N, new=0 would break
+  together with the verification scripts;
+- `detail_json` stores the full id list, roughly 60 KB at the worst current
+  case. That list is what makes undo exact rather than approximate;
+- apply filters `drone_unit_id IS NULL` in SQL, not in Python. Re-attribution
+  fills blanks only; correcting an existing wrong attribution is a different
+  problem and is out of scope;
+- the region parsing rule is unchanged — it is verified at 100% coverage on
+  10 385 rows. The batch-level warning is the signal instead;
+- no delete route for an alias: deactivation is reversible and preserves the
+  record that the spelling ever existed.
+
+Verified instrumentally before the merge, by the reviewer and not from the
+implementer's report: AST comparison of `drones.py` showed exactly seven
+changed function bodies, fourteen added, zero removed and twenty-two
+byte-identical, among them `_drone_region_from_location`,
+`_drone_resolve_unit`, `_drone_normalize_nickname` and `units`. The migration
+was run against a synthetic SQLite database on four paths — clean, repeat,
+missing database (exit 2, no file created) and failed precondition (exit 1,
+rolled back, no registry row). `tools/check_templates.py` clean on the patched
+templates; every `vs-*` class used exists in `design-system.css` and no CSS
+was added.
+
+Verified on staging: see the AGENT_STATE entry of 2026-08-01 for the numbers. The
+short version — every figure was written down before the run and matched, the
+alias `is_active` filter was proven through the same function the ingest uses,
+and the re-attribution run left all 10 385 already-attributed rows untouched.
+
+**Not verified, said plainly:** the collector period-race fix, which surfaces
+only against the live DJI cabinet the collector actually visits; the guard
+against a repeated apply, which is unreachable from the interface because the
+section and its button disappear after a run; renaming an alias and moving an
+existing alias to another machine, since only the "active" checkbox exercised
+that route.
+
+**Consequence for the 5 977 unattributed flights:** they are re-attributed on
+production, after the release. The screens do not exist there until then, and
+neither does the alias map. The staging mappings `GardenN6` → 6 and `Kogon№8`
+→ 8 are a mechanism check, **not** a decision about the fleet.
+
 ### DRONE-003 — DJI SmartFarm flight collector (PR #38), 2026-07-31
 
 Status: merged into `main` as `00f859a`. Validated against the live DJI cabinet
@@ -6215,14 +6294,24 @@ Python 3.11 при 3.14 на сервере, с ослабленной защи�
 <!-- DRONE-HISTORY-20260731 -->
 ### Дроны — бэклог, заведён 2026-07-31
 
-- **DRONE-REATTACH-001** (высокий). Экран управления алиасами машин
+- **DRONE-REATTACH-001** (высокий). **Механика реализована DRONE-007**
+  (PR #39, коммиты `eb58ba0` и `5bb8cce`): экран алиасов, предпросмотр,
+  применение, журнал и откат прогона. Открытым остаётся само действие —
+  сорок написаний вводятся и 5977 строк переназначаются **на
+  production**, после релиза; на staging этого сделать нельзя, база
+  другая. Исходная постановка: экран управления алиасами машин
   (добавить/переименовать/выключить) + проход переназначения вылетов с
   `drone_unit_id IS NULL` по обновлённой карте ников. Затрагивает 5977
   вылетов и 6092.68 га. Объективного признака в данных нет: `serial_number`
   — идентификатор вылета, а не борта, DJI отдаёт машину только ником.
   Сопоставление вносит владелец руками. Переназначение должно быть
   обратимым и логируемым (кто, когда, сколько строк).
-- **DRONE-PERIOD-RACE-001** (высокий). `verify_period` должна дожидаться
+- **DRONE-PERIOD-RACE-001** (высокий). **Исправлено DRONE-007**
+  (PR #39, коммит `b80a572`), но проверено только тестами против
+  поддельной страницы: гонка проявляется на живом кабинете DJI, куда
+  ходит сборщик, то есть проверяется прогоном после релиза. Тогда же
+  снимается `DJI_SETTLE_MS=8000`. Исходная постановка: `verify_period`
+  должна дожидаться
   захвата, чей URL совпал с ожидаемым периодом, а не читать последний
   пришедший. После починки убрать костыль `DJI_SETTLE_MS=8000` — он удваивает
   время каждого прогона.
@@ -6230,14 +6319,24 @@ Python 3.11 при 3.14 на сервере, с ослабленной защи�
   Барьер: Chromium установлен в профиле пользователя, служба под
   `LocalSystem` его не увидит — это уже губило старый сборщик. Актуальность
   повышена тем, что кабинет хранит около года.
-- **DRONE-REGION-I18N-001** (средний). Хранить область как есть, переводить
+- **DRONE-REGION-I18N-001** (средний). **Закрыто DRONE-007**
+  (PR #39, коммит `b05230e`): подписи переводятся на выводе — экран,
+  выпадающий список и обе книги Excel, — хранение и фильтры остались на
+  сырых значениях, неизвестная область выводится дословно. Правило
+  разбора сознательно не менялось; вместо этого приём пишет
+  предупреждение, когда вся партия дала region NULL. Исходная
+  постановка: хранить область как есть, переводить
   на выводе (Бухоро вилояти и т. д.). Разбор не должен зависеть от
   английского слова `Region` в адресе.
 - **DRONE-EMPTY-WINDOW-001** (средний). `DJI_ALLOW_EMPTY_WINDOW` по факту
   оказался включён (`true`) — предохранитель, который ловит уведённую в чужой
   регион сессию, был снят. Зафиксировать безопасное значение по умолчанию и
   проверять его в шапке лога перед длинными прогонами.
-- **DOC-DRONE-README-001** (низкий). Привести README сборщика в соответствие
+- **DOC-DRONE-README-001** (низкий). Частично: DRONE-007 поправил в README
+  только абзац про `DJI_SETTLE_MS`, остальное осталось как было —
+  утверждение о том, что прогон против живого кабинета не выполнялся, и
+  пример с `page_size=100`, которого у DJI нет. Исходная постановка:
+  привести README сборщика в соответствие
   с фактом: прогон против живого кабинета выполнен, максимальный размер
   страницы 50, глубина истории — скользящий год.
 - **ИСПРАВИТЬ ИНВАРИАНТ Р8.** Формулировка «история доступна с 30.06.2025»
