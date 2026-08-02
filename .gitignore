@@ -74,3 +74,5 @@ logs/
 *.pyc
 
 schema.txt
+
+drone_verify_007_*.txt
