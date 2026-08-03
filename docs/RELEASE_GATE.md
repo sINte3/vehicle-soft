@@ -42,7 +42,7 @@ production попутно с релизом трека АЗС `c548c71`, мин�
 
 | PR | Трек | Что трогает | Статус |
 |---|---|---|---|
-| — | — | — | — |
+| ветка `claude/work-session-guidelines-29kgds` | Дроны | `models.py` (4 новые модели + 3 колонки `drone_units`), `templates/index.html` (одна плитка) — объявление по правилу 12, `app.py` не тронут | DRONE-FLEET-001 готов, миграции `DRONES_FLEET_001` и `DRONES_FLEET_SEED_001` ни на одной площадке не применялись |
 
 ---
 

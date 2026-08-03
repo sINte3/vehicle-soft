@@ -1669,6 +1669,23 @@ class DroneUnit(db.Model):
     excluded_reason = db.Column(db.String(300), nullable=True)
     notes           = db.Column(db.Text, nullable=True)
     is_active       = db.Column(db.Boolean, default=True)
+    # ─── DRONE-FLEET-001 additive columns ────────────────────────────────
+    # [REASON]: the airframe identifier is hardware_id and NEVER
+    # serial_number. In this module serial_number already means the
+    # per-flight record id of the DJI payload -- 22 855 distinct values on
+    # 22 855 flights (see DroneFlight below, and the trap is recorded in
+    # CLAUDE.md). Reusing that name for the airframe would make every query
+    # in the module ambiguous to the next reader.
+    hardware_id      = db.Column(db.String(50), nullable=True)
+    generator_id     = db.Column(db.String(50), nullable=True)
+    # [REASON]: DESCRIPTIVE ONLY -- never a key of revenue or attribution.
+    # Invariant R4 of the track stands: all fifteen machines belong to
+    # organization_id = 12, reconfirmed by the owner on 2026-08-03 after he
+    # was shown that the dispatchers split them across seven subdivisions in
+    # their own sheets. The column exists so a screen can say where a machine
+    # is stationed; summing anything by it would resurrect the fictional
+    # sub-organisations the track already rejected.
+    subdivision_name = db.Column(db.String(120), nullable=True)
     created_at      = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at      = db.Column(db.DateTime, default=datetime.utcnow,
                                 onupdate=datetime.utcnow)
@@ -1854,6 +1871,215 @@ class DroneReattachRun(db.Model):
     # relationship has to be spelled out.
     performer = db.relationship('User', foreign_keys=[performed_by])
     undoer    = db.relationship('User', foreign_keys=[undone_by])
+
+
+# ─── DRONE-FLEET-001: operators, assignments, status ledger, batteries ───────
+
+# The two statuses a machine can be in, and nothing else. The source sheet
+# uses exactly `Соз` (serviceable) and `Носоз` (unserviceable); everything
+# else it records -- "in Tashkent", "hit a 380 kV line", "5 propellers to
+# replace" -- is free text and lives in DroneUnitStatusLog.comment.
+#
+# [REASON]: no `in_repair`, no `written_off`. A third value looks harmless
+# and is not: the moment one exists, half the rows drift into it, the two
+# real states stop being countable, and the dashboard tile ("9 serviceable,
+# 6 not") can no longer be produced from the data.
+DRONE_STATUS_SERVICEABLE = 'serviceable'
+DRONE_STATUS_UNSERVICEABLE = 'unserviceable'
+DRONE_STATUSES = (DRONE_STATUS_SERVICEABLE, DRONE_STATUS_UNSERVICEABLE)
+
+# Battery condition values, from the source sheet: соз / носоз /
+# янги очилмаган (new and unopened). The set is closed for the same reason.
+DRONE_BATTERY_WORKING = 'working'
+DRONE_BATTERY_FAULTY = 'faulty'
+DRONE_BATTERY_NEW_SEALED = 'new_sealed'
+DRONE_BATTERY_CONDITIONS = (DRONE_BATTERY_WORKING, DRONE_BATTERY_FAULTY,
+                            DRONE_BATTERY_NEW_SEALED)
+
+
+class DroneOperator(db.Model):
+    """One pilot, as the dispatchers write his name.
+
+    [REASON]: DRONE-FLEET-001 -- an operator is NOT a `users` row. He has no
+    login, several have no phone at all, and the directory has to hold people
+    who left: an operator who is gone still owns the hectares he flew. Hence
+    is_active and NO delete route anywhere in the module.
+
+    Two people in the source share one phone number and the two source sheets
+    disagree about which of them owns it; the seed records that as a resolved
+    conflict in `note` rather than as certainty.
+    """
+    __tablename__ = 'drone_operators'
+    id               = db.Column(db.Integer, primary_key=True)
+    full_name        = db.Column(db.String(200), nullable=False)
+    phone_primary    = db.Column(db.String(50), nullable=True)
+    # Several operators genuinely carry two numbers in the source sheet.
+    phone_secondary  = db.Column(db.String(50), nullable=True)
+    # [REASON]: descriptive, exactly like DroneUnit.subdivision_name -- it
+    # says where the man works, and it is never summed, shared or attributed
+    # by. All fifteen machines belong to organization 12 (invariant R4).
+    subdivision_name = db.Column(db.String(120), nullable=True)
+    is_active        = db.Column(db.Boolean, default=True)
+    note             = db.Column(db.Text, nullable=True)
+    created_at       = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at       = db.Column(db.DateTime, default=datetime.utcnow,
+                                 onupdate=datetime.utcnow)
+
+
+class DroneOperatorAssignment(db.Model):
+    """Operator on a machine BETWEEN TWO DATES. date_to NULL = still current.
+
+    [REASON]: DRONE-FLEET-001, and the single most consequential rule in this
+    model file. The 2026-08-03 reconciliation against the dispatchers' April
+    ledgers matched the month total to 0.15 % (6 379.24 ha ours against
+    6 388.83 ha theirs) while the per-subdivision breakdown carried two large
+    errors, +460 ha and -544 ha, that happened to cancel. They were not
+    measurement errors: one operator flew machine No 4 until 13 April and
+    machine No 8 from 14 April, and the dispatcher kept booking his work to
+    his own subdivision. Our data confirms the boundary independently --
+    No 4 has 198 flights, none after 13 April; No 8 jumps from 107 to 541
+    flights on that date. Once the operator was bound to the machine WITH
+    DATES, all twelve operators fell within +-9 %.
+
+    An assignment without a validity period is worthless: it cannot reproduce
+    April and it will be wrong again the next time an operator moves. So
+    date_from is NOT NULL, and closing an assignment means SETTING date_to --
+    never deleting the row, which would erase the history that explains an
+    old report.
+
+    [REASON]: OVERLAPS ARE PERMITTED AND MUST NOT BE BLOCKED -- no unique
+    constraint over (drone_unit_id, period) exists or may be added. Two
+    operators genuinely appear on one machine in the source, and
+    substitutions are written as "Anvarov Usmon (Qodirov Nurali)". The screen
+    saves an overlapping row and shows a warning naming the other assignment;
+    the report gives a flight covered by more than one assignment its own
+    visible row. A flight is NEVER silently assigned to one of several
+    candidates.
+
+    ATTRIBUTION IS DERIVED, NOT OBSERVED. DJI records flyer_name = DzzDron
+    and team_name = 'Бригада 1' on all 28 832 flights -- the whole fleet flies
+    under one account, so the operator is never in the payload. Every screen
+    and every export carrying an operator cut states this, because a wrong
+    assignment silently moves hectares onto the wrong person.
+    """
+    __tablename__ = 'drone_operator_assignments'
+    id            = db.Column(db.Integer, primary_key=True)
+    operator_id   = db.Column(db.Integer, db.ForeignKey('drone_operators.id'),
+                              nullable=False)
+    drone_unit_id = db.Column(db.Integer, db.ForeignKey('drone_units.id'),
+                              nullable=False)
+    date_from     = db.Column(db.Date, nullable=False)
+    # NULL means "still current" -- an open interval, not a missing value.
+    date_to       = db.Column(db.Date, nullable=True)
+    # Substitution, vacancy, "sheet says both names on one line", ...
+    note          = db.Column(db.Text, nullable=True)
+    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by    = db.Column(db.Integer, db.ForeignKey('users.id'),
+                              nullable=True)
+
+    operator   = db.relationship(
+        'DroneOperator', backref=db.backref('assignments', lazy='dynamic'))
+    drone_unit = db.relationship(
+        'DroneUnit', backref=db.backref('operator_assignments',
+                                        lazy='dynamic'))
+    creator    = db.relationship('User', foreign_keys=[created_by])
+
+    __table_args__ = (
+        db.Index('ix_drone_oper_assign_unit_from', 'drone_unit_id',
+                 'date_from'),
+        db.Index('ix_drone_oper_assign_operator_from', 'operator_id',
+                 'date_from'),
+    )
+
+
+class DroneUnitStatusLog(db.Model):
+    """Append-only ledger of a machine's serviceability.
+
+    Current status of a machine = the row with the greatest changed_on, ties
+    broken by the greatest id. Nothing here is ever UPDATEd in place: the
+    reason a machine was down in May has to stay readable in August.
+
+    [REASON]: changed_on is a DATE ENTERED BY THE USER and may be in the
+    past -- a machine is reported broken after the fact, and stamping now()
+    would put the whole fleet's history on the day someone first opened the
+    screen. Only FUTURE dates are refused.
+
+    [REASON]: `comment` is free text and carries everything that is not one
+    of the two statuses -- where the machine physically is, what it hit, how
+    many propellers it needs. Promoting any of that to a status value would
+    make the two real states uncountable.
+    """
+    __tablename__ = 'drone_unit_status_log'
+    id            = db.Column(db.Integer, primary_key=True)
+    drone_unit_id = db.Column(db.Integer, db.ForeignKey('drone_units.id'),
+                              nullable=False)
+    # One of DRONE_STATUSES. Enforced in the route, not by a CHECK: a CHECK
+    # constraint on SQLite cannot be altered later without rebuilding the
+    # table, and the closed set is a business rule the routes state loudly.
+    status        = db.Column(db.String(20), nullable=False)
+    comment       = db.Column(db.Text, nullable=True)
+    changed_on    = db.Column(db.Date, nullable=False)
+    changed_by    = db.Column(db.Integer, db.ForeignKey('users.id'),
+                              nullable=True)
+    # When the ROW was written, as opposed to when the status changed.
+    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+
+    drone_unit = db.relationship(
+        'DroneUnit', backref=db.backref('status_log', lazy='dynamic'))
+    author     = db.relationship('User', foreign_keys=[changed_by])
+
+    __table_args__ = (
+        db.Index('ix_drone_unit_status_log_unit_changed', 'drone_unit_id',
+                 'changed_on'),
+    )
+
+
+class DroneBattery(db.Model):
+    """One battery of the fleet, in the dispatchers' own numbering (1..46).
+
+    [REASON]: serial_number CARRIES NO UNIQUE CONSTRAINT, and none may be
+    added. The source contains a genuine duplicate -- the batteries labelled
+    No 8 and No 10 both bear 65VPN19DA50MSU. That is either a transcription
+    error or two identical labels, and neither this module nor the person
+    running the seed can tell which. A unique index would make the seed fail
+    and would push somebody to "fix" a value he cannot verify against the
+    physical battery. The screen surfaces duplicates as a warning instead,
+    which is the honest outcome: the register shows what the sheet says and
+    names the contradiction.
+
+    label_number is the dispatchers' numbering, not an identifier of ours: it
+    is what they will say on the phone, so it has to be visible.
+    """
+    __tablename__ = 'drone_batteries'
+    id            = db.Column(db.Integer, primary_key=True)
+    serial_number = db.Column(db.String(50), nullable=False)
+    label_number  = db.Column(db.Integer, nullable=True)
+    # NULL = not attached to any machine (spare, in repair, unknown).
+    drone_unit_id = db.Column(db.Integer, db.ForeignKey('drone_units.id'),
+                              nullable=True)
+    # One of DRONE_BATTERY_CONDITIONS.
+    condition     = db.Column(db.String(20), nullable=True)
+    note          = db.Column(db.Text, nullable=True)
+    is_active     = db.Column(db.Boolean, default=True)
+    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at    = db.Column(db.DateTime, default=datetime.utcnow,
+                              onupdate=datetime.utcnow)
+
+    drone_unit = db.relationship(
+        'DroneUnit', backref=db.backref('batteries', lazy='dynamic'))
+
+    # [REASON]: both indexes are named EXPLICITLY rather than declared with
+    # index=True, because the auto-generated names (ix_drone_batteries_serial_
+    # number, ix_drone_batteries_drone_unit_id) would differ from the names
+    # migrate_drones_fleet_001.py creates on production. tools/
+    # check_migration_drift.py compares a fresh db.create_all() database with
+    # the migrated one; two names for one index is exactly the silent drift
+    # that check exists to catch. Neither index is UNIQUE -- see the class
+    # docstring on 65VPN19DA50MSU.
+    __table_args__ = (
+        db.Index('ix_drone_batteries_serial', 'serial_number'),
+        db.Index('ix_drone_batteries_unit', 'drone_unit_id'),
+    )
 
 
 # ─── Migration Registry ───────────────────────────────────────────────────────

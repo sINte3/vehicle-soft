@@ -29,14 +29,22 @@ from datetime import datetime, timedelta
 from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
                    render_template, request, send_file, url_for, g)
 from flask_login import current_user
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import aliased, joinedload
 
 from ingest_common import verify_api_token, extract_token
 from models import (
     db,
+    DRONE_BATTERY_CONDITIONS,
+    DRONE_STATUSES,
+    DRONE_STATUS_SERVICEABLE,
+    DRONE_STATUS_UNSERVICEABLE,
+    DroneBattery,
+    DroneOperator,
+    DroneOperatorAssignment,
     DroneUnit,
+    DroneUnitStatusLog,
     DroneNickname,
     DroneFlight,
     DroneReattachRun,
@@ -86,6 +94,20 @@ def _drone_fmt_dt(dt):
     if not dt:
         return '—'
     return (dt + DRONE_DISPLAY_UTC_OFFSET).strftime('%d.%m.%Y %H:%M')
+
+
+def _drone_today_local():
+    """Today's date as the operators see it (UTC+5), not as the server sees it."""
+    return (datetime.utcnow() + DRONE_DISPLAY_UTC_OFFSET).date()
+
+
+def _drone_fmt_date(value):
+    return value.strftime('%d.%m.%Y') if value else '—'
+
+
+def _drone_assignment_is_current(row, today):
+    return (row.date_from is not None and row.date_from <= today
+            and (row.date_to is None or row.date_to >= today))
 
 
 def _drone_usage_labels():
@@ -583,10 +605,20 @@ def units():
     for nick in DroneNickname.query.order_by(DroneNickname.id).all():
         nicknames_by_unit.setdefault(nick.drone_unit_id, []).append(nick)
 
+    # DRONE-FLEET-001: the same one-query-then-group-in-Python rule for the
+    # battery count as for the aliases above.
+    battery_counts = dict(
+        db.session.query(DroneBattery.drone_unit_id,
+                         func.count(DroneBattery.id))
+        .group_by(DroneBattery.drone_unit_id).all())
+
     return render_template(
         'drones/units.html',
         units=unit_rows,
         nicknames_by_unit=nicknames_by_unit,
+        current_status=_drone_current_status_rows(),
+        status_labels=_drone_status_labels(),
+        battery_counts=battery_counts,
     )
 
 
@@ -603,6 +635,47 @@ def units():
 # what makes an old attribution explainable years later; deleting the row
 # loses that permanently and gains nothing, because an inactive alias already
 # stops resolving at ingest (_drone_nickname_maps filters on is_active).
+
+
+@drones_bp.app_context_processor
+def _drone_dashboard_context():
+    """Expose a LAZY fleet-status callable to every template (DRONE-FLEET-001).
+
+    [REASON]: registered from the BLUEPRINT rather than added to the dashboard
+    route. The main dashboard belongs to another track and app.py is a shared
+    file; this keeps the cross-track change down to one additive tile in
+    templates/index.html and nothing else.
+
+    [REASON]: the value is a FUNCTION, not the numbers. An app-wide context
+    processor runs on every render in every module, and computing the counts
+    eagerly would put two queries on every page of the whole application to
+    feed one tile on one page. Nothing runs until a template calls it.
+    """
+    def drone_fleet_status():
+        if not getattr(current_user, 'is_authenticated', False):
+            return None
+        if not current_user.has_module_access('drones'):
+            return None
+        try:
+            serviceable, unserviceable, unknown = _drone_fleet_status_counts()
+        except Exception:
+            # [REASON]: a drones table that is missing or mid-migration must
+            # not take the whole dashboard down with it -- but it must not be
+            # reported as "0 broken machines" either, which is a false and
+            # comfortable answer. The rollback is required: a failed statement
+            # leaves the session unusable for the rest of the page.
+            db.session.rollback()
+            current_app.logger.exception('drone fleet status tile failed')
+            return {'error': True}
+        return {
+            'error': False,
+            'serviceable': serviceable,
+            'unserviceable': unserviceable,
+            'unknown': unknown,
+            'total': serviceable + unserviceable + unknown,
+        }
+
+    return {'drone_fleet_status': drone_fleet_status}
 
 
 def _drone_units_redirect():
@@ -1065,6 +1138,528 @@ def reattach_undo(run_id):
     return redirect(url_for('drones.reattach'))
 
 
+# ─── Machine card: identifiers, status ledger, batteries (DRONE-FLEET-001) ────
+#
+# [REASON]: EXACTLY TWO STATUSES, and no third one may be added. The source
+# uses `Соз` (serviceable) and `Носоз` (unserviceable); everything else it
+# records -- "in Tashkent", "hit a 380 kV line", "5 propellers to replace" --
+# is free text and belongs in `comment`. The moment a third value exists, half
+# the rows drift into it, the two real states stop being countable, and the
+# question the owner actually asks ("how many machines can fly today?") stops
+# having an answer.
+#
+# [REASON]: the ledger is APPEND-ONLY. A status change writes a new row; no
+# route here ever UPDATEs one. The reason a machine was down in May has to
+# stay readable in August, and an in-place edit erases it silently.
+
+
+def _drone_status_labels():
+    return {
+        DRONE_STATUS_SERVICEABLE: _drone_t('Соз', 'Исправна'),
+        DRONE_STATUS_UNSERVICEABLE: _drone_t('Носоз', 'Неисправна'),
+    }
+
+
+def _drone_battery_condition_labels():
+    return {
+        'working': _drone_t('Соз', 'Рабочая'),
+        'faulty': _drone_t('Носоз', 'Неисправная'),
+        'new_sealed': _drone_t('Янги, очилмаган', 'Новая, невскрытая'),
+    }
+
+
+def _drone_current_status_rows():
+    """{drone_unit_id: DroneUnitStatusLog} -- the CURRENT status of each machine.
+
+    Current = the greatest changed_on, ties broken by the greatest id. Both
+    halves of that rule are resolved in SQL over two aggregations rather than
+    by loading the ledger and sorting in Python: the ledger only grows, and a
+    Python max() over a page of loaded rows would quietly start answering with
+    whatever happened to be loaded.
+    """
+    newest = (db.session.query(
+        DroneUnitStatusLog.drone_unit_id.label('unit_id'),
+        func.max(DroneUnitStatusLog.changed_on).label('changed_on'))
+        .group_by(DroneUnitStatusLog.drone_unit_id).subquery())
+    winners = (db.session.query(func.max(DroneUnitStatusLog.id))
+               .join(newest,
+                     and_(DroneUnitStatusLog.drone_unit_id == newest.c.unit_id,
+                          DroneUnitStatusLog.changed_on == newest.c.changed_on))
+               .group_by(DroneUnitStatusLog.drone_unit_id))
+    ids = [row[0] for row in winners.all()]
+    if not ids:
+        return {}
+    rows = DroneUnitStatusLog.query.filter(DroneUnitStatusLog.id.in_(ids)).all()
+    return {row.drone_unit_id: row for row in rows}
+
+
+def _drone_fleet_status_counts():
+    """(serviceable, unserviceable, unknown) over all ACTIVE machines.
+
+    A machine with no status row at all is counted as UNKNOWN and never as
+    serviceable: "nobody has said" and "somebody said it flies" are different
+    facts, and folding them together is how a broken machine gets planned into
+    a working day.
+    """
+    current = _drone_current_status_rows()
+    serviceable = unserviceable = unknown = 0
+    for unit in DroneUnit.query.all():
+        row = current.get(unit.id)
+        if row is None:
+            unknown += 1
+        elif row.status == DRONE_STATUS_SERVICEABLE:
+            serviceable += 1
+        elif row.status == DRONE_STATUS_UNSERVICEABLE:
+            unserviceable += 1
+        else:
+            unknown += 1
+    return serviceable, unserviceable, unknown
+
+
+def _drone_duplicate_battery_serials():
+    """Serial numbers carried by more than one battery row.
+
+    [REASON]: this is a WARNING, never a constraint. Batteries No 8 and No 10
+    genuinely share 65VPN19DA50MSU in the source. Whether that is one
+    transcription error or two identical labels can only be settled at the
+    battery itself, so the register shows what the sheet says and names the
+    contradiction.
+    """
+    rows = (db.session.query(DroneBattery.serial_number)
+            .group_by(DroneBattery.serial_number)
+            .having(func.count(DroneBattery.id) > 1).all())
+    return set(row[0] for row in rows)
+
+
+def _drone_unit_redirect(unit_id):
+    return redirect(url_for('drones.unit_card', unit_id=unit_id))
+
+
+@drones_bp.route('/units/<int:unit_id>')
+@module_required('drones')
+def unit_card(unit_id):
+    """One machine: identifiers, status history, batteries, nicknames."""
+    unit = DroneUnit.query.get(unit_id)
+    if unit is None:
+        abort(404)
+    history = (DroneUnitStatusLog.query
+               .options(joinedload(DroneUnitStatusLog.author))
+               .filter(DroneUnitStatusLog.drone_unit_id == unit_id)
+               .order_by(DroneUnitStatusLog.changed_on.desc(),
+                         DroneUnitStatusLog.id.desc())
+               .all())
+    batteries = (DroneBattery.query
+                 .filter(DroneBattery.drone_unit_id == unit_id)
+                 .order_by(DroneBattery.label_number, DroneBattery.id).all())
+    assignments = (DroneOperatorAssignment.query
+                   .options(joinedload(DroneOperatorAssignment.operator))
+                   .filter(DroneOperatorAssignment.drone_unit_id == unit_id)
+                   .order_by(DroneOperatorAssignment.date_from.desc(),
+                             DroneOperatorAssignment.id.desc()).all())
+    today = _drone_today_local()
+    return render_template(
+        'drones/unit_card.html',
+        unit=unit,
+        history=history,
+        current_status=(history[0] if history else None),
+        batteries=batteries,
+        duplicate_serials=_drone_duplicate_battery_serials(),
+        condition_labels=_drone_battery_condition_labels(),
+        status_labels=_drone_status_labels(),
+        nicknames=(DroneNickname.query
+                   .filter(DroneNickname.drone_unit_id == unit_id)
+                   .order_by(DroneNickname.id).all()),
+        assignments=assignments,
+        current_flags={a.id: _drone_assignment_is_current(a, today)
+                       for a in assignments},
+        today=today,
+    )
+
+
+@drones_bp.route('/units/<int:unit_id>/fields', methods=['POST'])
+@module_required('drones')
+def unit_fields_update(unit_id):
+    """Edit hardware_id, generator_id and subdivision_name of one machine.
+
+    [REASON]: the field is hardware_id and never serial_number. In this module
+    serial_number means the per-flight record id of the DJI payload -- 22 855
+    distinct values on 22 855 flights -- and reusing the name for the airframe
+    would make the whole module ambiguous to read.
+    """
+    if not current_user.can_edit:
+        abort(403)
+
+    unit = DroneUnit.query.get(unit_id)
+    if unit is None:
+        abort(404)
+
+    unit.hardware_id = (request.form.get('hardware_id') or '').strip() or None
+    unit.generator_id = (request.form.get('generator_id') or '').strip() or None
+    unit.subdivision_name = (request.form.get('subdivision_name') or '').strip() or None
+    db.session.commit()
+    flash(_drone_t('№ %s машина маълумотлари сақланди.',
+                   'Данные машины № %s сохранены.') % unit.number, 'success')
+    return _drone_unit_redirect(unit_id)
+
+
+@drones_bp.route('/units/<int:unit_id>/status', methods=['POST'])
+@module_required('drones')
+def unit_status_add(unit_id):
+    """Append ONE row to the status ledger. Nothing is ever updated in place."""
+    if not current_user.can_edit:
+        abort(403)
+
+    unit = DroneUnit.query.get(unit_id)
+    if unit is None:
+        abort(404)
+
+    status = (request.form.get('status') or '').strip()
+    if status not in DRONE_STATUSES:
+        # [REASON]: the closed set is enforced here, in the only place that
+        # writes the column. A machine "in repair" or "written off" is still
+        # either flyable or not, and its situation belongs in the comment.
+        flash(_drone_t('Ҳолат фақат «Соз» ёки «Носоз» бўлиши мумкин.',
+                       'Статус может быть только «Исправна» или '
+                       '«Неисправна».'), 'warning')
+        return _drone_unit_redirect(unit_id)
+
+    changed_on = _drone_parse_date(request.form.get('changed_on'))
+    if changed_on is None:
+        flash(_drone_t('Ўзгариш санаси кўрсатилмаган.',
+                       'Дата изменения не указана.'), 'warning')
+        return _drone_unit_redirect(unit_id)
+    if changed_on > _drone_today_local():
+        # [REASON]: a past date is normal and expected -- a machine is
+        # reported broken after the fact. Only the future is refused, because
+        # a future row would become the "current" status of the machine
+        # immediately and hide the real one.
+        flash(_drone_t('Ўзгариш санаси келажакда бўлиши мумкин эмас.',
+                       'Дата изменения не может быть в будущем.'), 'warning')
+        return _drone_unit_redirect(unit_id)
+
+    db.session.add(DroneUnitStatusLog(
+        drone_unit_id=unit.id,
+        status=status,
+        comment=(request.form.get('comment') or '').strip() or None,
+        changed_on=changed_on,
+        changed_by=(current_user.id
+                    if getattr(current_user, 'is_authenticated', False)
+                    else None)))
+    db.session.commit()
+    flash(_drone_t('№ %s машина ҳолати ёзилди: %s, %s.',
+                   'Статус машины № %s записан: %s, %s.')
+          % (unit.number, _drone_status_labels()[status],
+             _drone_fmt_date(changed_on)), 'success')
+    return _drone_unit_redirect(unit_id)
+
+
+# ─── Fleet directories: operators and assignments (DRONE-FLEET-001) ───────────
+#
+# [REASON]: THE RULE THIS WHOLE SECTION EXISTS FOR. An assignment of an
+# operator to a machine WITHOUT a validity period is worthless. The
+# 2026-08-03 reconciliation against the dispatchers' April ledgers matched the
+# month total to 0.15 % while the per-subdivision breakdown carried two errors
+# of +460 ha and -544 ha that happened to cancel: one operator flew machine
+# No 4 until 13 April and No 8 from 14 April, and the dispatcher kept booking
+# his work to his own subdivision. Our data confirms the boundary
+# independently -- No 4 has 198 flights and none after 13 April, No 8 jumps
+# from 107 to 541 flights on that date. With dates, all twelve operators fell
+# within +-9 %. So date_from is mandatory everywhere below, and closing an
+# assignment means SETTING date_to -- there is no delete route, for an
+# operator or for an assignment, exactly as there is none for a nickname.
+#
+# [REASON]: OVERLAPS ARE SAVED, NOT REFUSED. Two operators genuinely appear on
+# one machine in the source, and a substitution is written into the sheet as
+# "Anvarov Usmon (Qodirov Nurali)". A screen that refuses the real data is a
+# screen nobody can use, and it would push somebody to invent dates that make
+# the form happy. The save succeeds and a warning names the other assignment;
+# the report gives a multi-covered flight its own visible row.
+
+
+def _drone_operators_redirect(op_id=None):
+    if op_id:
+        return redirect(url_for('drones.operator_card', op_id=op_id))
+    return redirect(url_for('drones.operators'))
+
+
+def _drone_assignment_overlaps(drone_unit_id, date_from, date_to,
+                               exclude_id=None):
+    """Assignments on the SAME machine whose period intersects the given one.
+
+    Two half-open intervals overlap when A.from <= B.to and B.from <= A.to,
+    with a NULL end meaning "still current", i.e. +infinity. The NULL branch
+    is spelled out rather than folded into a COALESCE with a far-future date:
+    a sentinel date is a value somebody eventually filters on by accident.
+
+    This is a WARNING source, never a veto -- see the section header.
+    """
+    q = DroneOperatorAssignment.query.filter(
+        DroneOperatorAssignment.drone_unit_id == drone_unit_id)
+    if exclude_id:
+        q = q.filter(DroneOperatorAssignment.id != exclude_id)
+    if date_to is not None:
+        q = q.filter(DroneOperatorAssignment.date_from <= date_to)
+    q = q.filter(or_(DroneOperatorAssignment.date_to.is_(None),
+                     DroneOperatorAssignment.date_to >= date_from))
+    return (q.options(joinedload(DroneOperatorAssignment.operator),
+                      joinedload(DroneOperatorAssignment.drone_unit))
+            .order_by(DroneOperatorAssignment.date_from).all())
+
+
+def _drone_flash_overlap(rows):
+    """Name every other assignment the saved one overlaps with."""
+    if not rows:
+        return
+    names = ', '.join(
+        '%s (№ %s, %s — %s)' % (
+            r.operator.full_name if r.operator else '?',
+            r.drone_unit.number if r.drone_unit else '?',
+            _drone_fmt_date(r.date_from),
+            _drone_fmt_date(r.date_to))
+        for r in rows)
+    flash(_drone_t(
+        'Сақланди, аммо давр бошқа бириктириш билан кесишади: %s. '
+        'Ҳисоботда бундай парвозлар «Бир нечта оператор» қаторига тушади — '
+        'улар йўқолмайди, аммо бирор операторга ёзилмайди ҳам.',
+        'Сохранено, но период пересекается с другим назначением: %s. '
+        'В отчёте такие вылеты попадут в строку «Несколько операторов» — '
+        'они не теряются, но и не приписываются никому одному.')
+        % names, 'warning')
+
+
+def _drone_assignments_by_operator(operator_ids=None):
+    """All assignments, grouped by operator id, machines joined in one query."""
+    q = (DroneOperatorAssignment.query
+         .options(joinedload(DroneOperatorAssignment.drone_unit)))
+    if operator_ids is not None:
+        q = q.filter(DroneOperatorAssignment.operator_id.in_(operator_ids))
+    grouped = {}
+    for row in q.order_by(DroneOperatorAssignment.date_from.desc(),
+                          DroneOperatorAssignment.id.desc()).all():
+        grouped.setdefault(row.operator_id, []).append(row)
+    return grouped
+
+
+@drones_bp.route('/operators')
+@module_required('drones')
+def operators():
+    """Directory of pilots with the machines they currently fly."""
+    rows = (DroneOperator.query
+            .order_by(DroneOperator.is_active.desc(), DroneOperator.full_name)
+            .all())
+    # One query for every assignment, grouped in Python -- the lazy='dynamic'
+    # relationship would give one query per operator.
+    assignments = _drone_assignments_by_operator()
+    today = _drone_today_local()
+    current_units = {}
+    for op in rows:
+        current_units[op.id] = [
+            a for a in assignments.get(op.id, [])
+            if _drone_assignment_is_current(a, today)]
+    return render_template(
+        'drones/operators.html',
+        operators=rows,
+        current_units=current_units,
+        assignment_counts={op.id: len(assignments.get(op.id, []))
+                           for op in rows},
+        today=today,
+    )
+
+
+@drones_bp.route('/operators/add', methods=['POST'])
+@module_required('drones')
+def operators_add():
+    if not current_user.can_edit:
+        abort(403)
+
+    full_name = (request.form.get('full_name') or '').strip()
+    if not full_name:
+        flash(_drone_t('Оператор Ф.И.Ш. бўш бўлиши мумкин эмас.',
+                       'Ф.И.О. оператора не может быть пустым.'), 'warning')
+        return _drone_operators_redirect()
+
+    row = DroneOperator(
+        full_name=full_name,
+        phone_primary=(request.form.get('phone_primary') or '').strip() or None,
+        phone_secondary=(request.form.get('phone_secondary') or '').strip() or None,
+        subdivision_name=(request.form.get('subdivision_name') or '').strip() or None,
+        note=(request.form.get('note') or '').strip() or None,
+        is_active=True,
+    )
+    db.session.add(row)
+    db.session.commit()
+    flash(_drone_t('«%s» оператори қўшилди.', 'Оператор «%s» добавлен.')
+          % full_name, 'success')
+    return _drone_operators_redirect(row.id)
+
+
+@drones_bp.route('/operators/<int:op_id>')
+@module_required('drones')
+def operator_card(op_id):
+    """One pilot: his details and the full history of his assignments."""
+    operator = DroneOperator.query.get(op_id)
+    if operator is None:
+        abort(404)
+    assignments = _drone_assignments_by_operator([op_id]).get(op_id, [])
+    today = _drone_today_local()
+    return render_template(
+        'drones/operator_card.html',
+        operator=operator,
+        assignments=assignments,
+        current_flags={a.id: _drone_assignment_is_current(a, today)
+                       for a in assignments},
+        units=DroneUnit.query.order_by(DroneUnit.number).all(),
+        today=today,
+    )
+
+
+@drones_bp.route('/operators/<int:op_id>/update', methods=['POST'])
+@module_required('drones')
+def operator_update(op_id):
+    """Edit a pilot, or deactivate him. There is deliberately no delete.
+
+    [REASON]: an operator who left still owns the hectares he flew. Deleting
+    the row would orphan every assignment that explains an already-sent
+    report; deactivating keeps the history readable and takes him out of the
+    pickers.
+    """
+    if not current_user.can_edit:
+        abort(403)
+
+    operator = DroneOperator.query.get(op_id)
+    if operator is None:
+        abort(404)
+
+    full_name = (request.form.get('full_name') or '').strip()
+    if not full_name:
+        flash(_drone_t('Оператор Ф.И.Ш. бўш бўлиши мумкин эмас.',
+                       'Ф.И.О. оператора не может быть пустым.'), 'warning')
+        return _drone_operators_redirect(op_id)
+
+    operator.full_name = full_name
+    operator.phone_primary = (request.form.get('phone_primary') or '').strip() or None
+    operator.phone_secondary = (request.form.get('phone_secondary') or '').strip() or None
+    operator.subdivision_name = (request.form.get('subdivision_name') or '').strip() or None
+    operator.note = (request.form.get('note') or '').strip() or None
+    # An unchecked checkbox is simply absent from the form body.
+    operator.is_active = request.form.get('is_active') is not None
+    db.session.commit()
+
+    if operator.is_active:
+        flash(_drone_t('«%s» оператори янгиланди.',
+                       'Оператор «%s» обновлён.') % full_name, 'success')
+    else:
+        flash(_drone_t(
+            '«%s» оператори фаолсизлантирилди: у янги бириктиришлар '
+            'рўйхатида кўринмайди, аммо бириктиришлари ва гектарлари '
+            'сақланиб қолади.',
+            'Оператор «%s» деактивирован: он не появляется в списках выбора, '
+            'но его назначения и гектары сохраняются.')
+            % full_name, 'success')
+    return _drone_operators_redirect(op_id)
+
+
+def _drone_assignment_form_values():
+    """(drone_unit, date_from, date_to, note, error_message) from the form."""
+    unit_id = request.form.get('drone_unit_id', type=int)
+    unit = DroneUnit.query.get(unit_id) if unit_id else None
+    date_from = _drone_parse_date(request.form.get('date_from'))
+    date_to = _drone_parse_date(request.form.get('date_to'))
+    note = (request.form.get('note') or '').strip() or None
+
+    if unit is None:
+        return None, None, None, None, _drone_t(
+            'Машина танланмаган ёки топилмади.',
+            'Машина не выбрана или не найдена.')
+    if date_from is None:
+        # [REASON]: the mandatory field of this task. A dateless assignment
+        # cannot reproduce April and will be wrong again at the next move.
+        return None, None, None, None, _drone_t(
+            '«Санадан» мажбурий: даврсиз бириктириш ҳисоботни тиклай олмайди.',
+            '«Дата с» обязательна: назначение без периода не может '
+            'воспроизвести отчёт.')
+    if date_to is not None and date_to < date_from:
+        return None, None, None, None, _drone_t(
+            '«Санагача» «Санадан»дан олдин бўлиши мумкин эмас.',
+            '«Дата по» не может быть раньше «Даты с».')
+    return unit, date_from, date_to, note, None
+
+
+@drones_bp.route('/operators/<int:op_id>/assignments/add', methods=['POST'])
+@module_required('drones')
+def operator_assignment_add(op_id):
+    if not current_user.can_edit:
+        abort(403)
+
+    operator = DroneOperator.query.get(op_id)
+    if operator is None:
+        abort(404)
+
+    unit, date_from, date_to, note, error = _drone_assignment_form_values()
+    if error:
+        flash(error, 'warning')
+        return _drone_operators_redirect(op_id)
+
+    overlaps = _drone_assignment_overlaps(unit.id, date_from, date_to)
+    row = DroneOperatorAssignment(
+        operator_id=operator.id, drone_unit_id=unit.id, date_from=date_from,
+        date_to=date_to, note=note,
+        created_by=(current_user.id
+                    if getattr(current_user, 'is_authenticated', False)
+                    else None))
+    db.session.add(row)
+    db.session.commit()
+
+    flash(_drone_t('Бириктириш қўшилди: № %s машина, %s дан.',
+                   'Назначение добавлено: машина № %s, с %s.')
+          % (unit.number, _drone_fmt_date(date_from)), 'success')
+    _drone_flash_overlap(overlaps)
+    return _drone_operators_redirect(op_id)
+
+
+@drones_bp.route('/operators/assignments/<int:assign_id>/update',
+                 methods=['POST'])
+@module_required('drones')
+def operator_assignment_update(assign_id):
+    """Edit one assignment, including closing it by setting date_to.
+
+    [REASON]: closing is SETTING date_to, never deleting the row. The row is
+    the only record of who flew that machine in April; a report printed in May
+    stops being explainable the moment it is gone.
+    """
+    if not current_user.can_edit:
+        abort(403)
+
+    row = DroneOperatorAssignment.query.get(assign_id)
+    if row is None:
+        abort(404)
+
+    unit, date_from, date_to, note, error = _drone_assignment_form_values()
+    if error:
+        flash(error, 'warning')
+        return _drone_operators_redirect(row.operator_id)
+
+    overlaps = _drone_assignment_overlaps(unit.id, date_from, date_to,
+                                          exclude_id=row.id)
+    row.drone_unit_id = unit.id
+    row.date_from = date_from
+    row.date_to = date_to
+    row.note = note
+    db.session.commit()
+
+    if date_to is None:
+        flash(_drone_t('Бириктириш янгиланди: № %s машина, %s дан, амалда.',
+                       'Назначение обновлено: машина № %s, с %s, действует.')
+              % (unit.number, _drone_fmt_date(date_from)), 'success')
+    else:
+        flash(_drone_t('Бириктириш ёпилди: № %s машина, %s — %s.',
+                       'Назначение закрыто: машина № %s, %s — %s.')
+              % (unit.number, _drone_fmt_date(date_from),
+                 _drone_fmt_date(date_to)), 'success')
+    _drone_flash_overlap(overlaps)
+    return _drone_operators_redirect(row.operator_id)
+
+
 # ─── Summary and Excel exports (DRONE-004) ────────────────────────────────────
 
 # [REASON]: a silently truncated export reads as complete data on the other
@@ -1165,6 +1760,144 @@ def _drone_share(area, total_area):
     return round(area * 100.0 / total_area, 1)
 
 
+def _drone_rate(numerator, denominator):
+    """numerator/denominator, or None when the denominator is zero.
+
+    [REASON]: DRONE-FLEET-001 section 6.2. 899 April-to-May flights have zero
+    area and about 3 % of all flights do -- manual and technical take-offs,
+    normal and not an error. None travels to the template and the workbook as
+    an EM DASH: a zero would read as "this machine sprays nothing per
+    hectare", which is a different and false statement, and an unguarded
+    division would 500 the whole page over data that is fine.
+    """
+    if not denominator:
+        return None
+    return numerator / denominator
+
+
+# Bucket keys of the operator cut. Both are rows of the table and both count
+# towards the grand total, exactly like «Не распознано» and «Область не
+# определена» already do.
+DRONE_OPERATOR_NONE = 'none'
+DRONE_OPERATOR_MANY = 'many'
+
+
+def _drone_flight_operator_subquery(conds):
+    """One row per flight: how many operators cover it, and which one.
+
+    THE ATTRIBUTION RULE, implemented exactly as specified and nowhere else:
+    a flight belongs to the operator whose assignment covers ITS MACHINE on
+    ITS LOCAL DATE (UTC+5). No cover -> «Оператор не определён». More than one
+    -> «Несколько операторов». A flight is never silently handed to one of
+    several candidates.
+
+    [REASON]: the count is over DISTINCT operator_id, not over assignment
+    rows. Two rows for the SAME man on the same machine (a period he re-opened
+    after a repair, say) are one candidate, not an ambiguity; counting rows
+    would push his own hectares into «Несколько операторов» and make the cut
+    read as chaos where the data is merely verbose.
+
+    [REASON]: both sides of the date comparison are wrapped in date(). The
+    DATE columns have NUMERIC affinity in SQLite while date(started_at, ...)
+    yields TEXT, and leaning on affinity coercion to make that comparison work
+    is a silent dependency on storage format. date() on both sides makes it a
+    text-to-text comparison of two ISO strings, which is what it must be.
+
+    [REASON]: the whole cut is derived from ONE row per flight (GROUP BY the
+    primary key), which is what makes it reconcile with every other cut on the
+    page. A flight cannot be counted twice by an operator holding two
+    overlapping assignments.
+    """
+    offset_minutes = int(DRONE_DISPLAY_UTC_OFFSET.total_seconds() // 60)
+    local_date = func.date(DroneFlight.started_at,
+                           '%+d minutes' % offset_minutes)
+    assign = aliased(DroneOperatorAssignment)
+    return (db.session.query(
+        DroneFlight.id.label('flight_id'),
+        DroneFlight.area_ha.label('area_ha'),
+        func.count(func.distinct(assign.operator_id)).label('covers'),
+        func.min(assign.operator_id).label('operator_id'),
+    ).outerjoin(assign, and_(
+        assign.drone_unit_id == DroneFlight.drone_unit_id,
+        func.date(assign.date_from) <= local_date,
+        or_(assign.date_to.is_(None),
+            func.date(assign.date_to) >= local_date),
+    )).filter(*conds).group_by(DroneFlight.id).subquery())
+
+
+def _drone_operator_cut(conds, total_area):
+    """Flights, hectares and share per operator, plus the two special rows."""
+    per_flight = _drone_flight_operator_subquery(conds)
+    groups = (db.session.query(
+        per_flight.c.covers,
+        per_flight.c.operator_id,
+        func.count(per_flight.c.flight_id),
+        func.coalesce(func.sum(per_flight.c.area_ha), 0.0),
+    ).group_by(per_flight.c.covers, per_flight.c.operator_id).all())
+
+    names = {op.id: op.full_name for op in DroneOperator.query.all()}
+    by_operator = {}
+    undetermined = {'flights': 0, 'area': 0.0}
+    multiple = {'flights': 0, 'area': 0.0}
+    for covers, operator_id, flights, area in groups:
+        area = float(area or 0.0)
+        if not covers:
+            undetermined['flights'] += flights
+            undetermined['area'] += area
+        elif covers == 1:
+            row = by_operator.setdefault(
+                operator_id, {'operator_id': operator_id,
+                              'name': names.get(operator_id, '?'),
+                              'flights': 0, 'area': 0.0})
+            row['flights'] += flights
+            row['area'] += area
+        else:
+            multiple['flights'] += flights
+            multiple['area'] += area
+
+    rows = sorted(by_operator.values(), key=lambda r: r['area'], reverse=True)
+    for row in rows:
+        row['share'] = _drone_share(row['area'], total_area)
+    for special in (undetermined, multiple):
+        special['share'] = _drone_share(special['area'], total_area)
+
+    o_flights = (sum(r['flights'] for r in rows) + undetermined['flights']
+                 + multiple['flights'])
+    o_area = (sum(r['area'] for r in rows) + undetermined['area']
+              + multiple['area'])
+    return {
+        'rows': rows,
+        # Both special rows are ALWAYS present in the structure; the template
+        # hides an empty one. They are never folded into a named operator.
+        'undetermined': undetermined,
+        'multiple': multiple,
+        'total': {'flights': o_flights, 'area': o_area},
+    }
+
+
+def _drone_operator_by_flight(conds):
+    """{flight id: operator label} under the same rule as the cut above.
+
+    Built from the same subquery, so the flat export and the operator cut
+    cannot drift apart: one attribution rule, one place it is written.
+    """
+    per_flight = _drone_flight_operator_subquery(conds)
+    rows = db.session.query(per_flight.c.flight_id, per_flight.c.covers,
+                            per_flight.c.operator_id).all()
+    names = {op.id: op.full_name for op in DroneOperator.query.all()}
+    label_none = _drone_t('Оператор аниқланмаган', 'Оператор не определён')
+    label_many = _drone_t('Бир нечта оператор', 'Несколько операторов')
+    labels = {}
+    for flight_id, covers, operator_id in rows:
+        if not covers:
+            labels[flight_id] = label_none
+        elif covers == 1:
+            labels[flight_id] = names.get(operator_id, label_none)
+        else:
+            labels[flight_id] = label_many
+    return labels
+
+
 def _drone_summary_data(conds):
     """Aggregate the filtered flights for the summary page and the exports.
 
@@ -1213,23 +1946,39 @@ def _drone_summary_data(conds):
         DroneFlight.drone_unit_id,
         func.count(DroneFlight.id),
         func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+        # DRONE-FLEET-001: the two productivity columns are derived from
+        # fields already stored -- no new column, no new table.
+        func.coalesce(func.sum(DroneFlight.work_seconds), 0),
+        func.coalesce(func.sum(DroneFlight.spray_liters), 0.0),
     ).filter(*conds).group_by(DroneFlight.drone_unit_id).all())
     unit_numbers = {u.id: u.number for u in DroneUnit.query.all()}
     machine_rows = []
     machine_unattributed = None
-    for unit_id, flights, area in machine_groups:
+    m_seconds = 0
+    m_liters = 0.0
+    for unit_id, flights, area, seconds, liters in machine_groups:
         area = float(area or 0.0)
+        seconds = int(seconds or 0)
+        liters = float(liters or 0.0)
+        m_seconds += seconds
+        m_liters += liters
+        cell = {
+            'flights': flights,
+            'area': area,
+            'share': _drone_share(area, total_area),
+            'hours': seconds / 3600.0,
+            'spray_liters': liters,
+            # Guarded: a machine with no recorded flight time and a machine
+            # with no sprayed area both render as an em dash, never as zero.
+            'ha_per_hour': _drone_rate(area, seconds / 3600.0),
+            'liters_per_ha': _drone_rate(liters, area),
+        }
         if unit_id is None:
-            machine_unattributed = {'flights': flights, 'area': area,
-                                    'share': _drone_share(area, total_area)}
+            machine_unattributed = cell
         else:
-            machine_rows.append({
-                'unit_id': unit_id,
-                'number': unit_numbers.get(unit_id),
-                'flights': flights,
-                'area': area,
-                'share': _drone_share(area, total_area),
-            })
+            cell['unit_id'] = unit_id
+            cell['number'] = unit_numbers.get(unit_id)
+            machine_rows.append(cell)
     machine_rows.sort(key=lambda r: (r['number'] is None, r['number']))
     m_flights = (sum(r['flights'] for r in machine_rows)
                  + (machine_unattributed['flights']
@@ -1240,7 +1989,14 @@ def _drone_summary_data(conds):
     by_machine = {
         'rows': machine_rows,
         'unattributed': machine_unattributed,
-        'total': {'flights': m_flights, 'area': m_area},
+        'total': {
+            'flights': m_flights,
+            'area': m_area,
+            'hours': m_seconds / 3600.0,
+            'spray_liters': m_liters,
+            'ha_per_hour': _drone_rate(m_area, m_seconds / 3600.0),
+            'liters_per_ha': _drone_rate(m_liters, m_area),
+        },
         'reconciled': reconciled(m_flights, m_area),
     }
 
@@ -1355,12 +2111,20 @@ def _drone_summary_data(conds):
         'reconciled': reconciled(mo_flights, mo_area),
     }
 
+    # По операторам (DRONE-FLEET-001) -- derived from the assignment table,
+    # never observed. It must reconcile with the grand total exactly like the
+    # four cuts above, and it does because it is built from one row per flight.
+    by_operator = _drone_operator_cut(conds, total_area)
+    by_operator['reconciled'] = reconciled(by_operator['total']['flights'],
+                                           by_operator['total']['area'])
+
     return {
         'totals': totals,
         'by_machine': by_machine,
         'by_region': by_region,
         'by_usage': by_usage,
         'by_month': by_month,
+        'by_operator': by_operator,
     }
 
 
@@ -1389,6 +2153,110 @@ def summary():
     )
 
 
+@drones_bp.route('/sources')
+@module_required('drones')
+def sources():
+    """Sync observability: who has gone silent, and what the last runs did.
+
+    [REASON]: DRONE-FLEET-001 section 5. Everything on this page is DERIVED --
+    no table was added for it. Two facts motivated it and neither is visible
+    anywhere else today: machines No 11 and No 13 produced 200.11 ha in May
+    that no dispatcher ledger records, and machines No 4, No 9 and No 12
+    produced nothing at all in May. Silence from a machine has to be a row
+    somebody can see, not something noticed when the numbers stop.
+
+    [REASON]: A MACHINE WITH ZERO FLIGHTS IN THE PERIOD IS SHOWN AS A ROW.
+    Omitting it would make it indistinguishable from a machine nobody looked
+    at, which is precisely the failure this screen exists to prevent. The
+    "last flight" column is therefore computed over ALL time and not inside
+    the period: a machine that has been silent for three months must show the
+    date it last spoke, not an em dash.
+    """
+    filters = _drone_filters_from_args(request.args,
+                                       default_current_month=True)
+    # Only the date bounds apply here: a per-machine silence table filtered to
+    # one machine would answer a question nobody asks and hide the rest.
+    period_conds = _drone_flight_conditions(dict(filters, unit_id=None,
+                                                 region=''))
+
+    period_rows = (db.session.query(
+        DroneFlight.drone_unit_id,
+        func.count(DroneFlight.id),
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+    ).filter(*period_conds).group_by(DroneFlight.drone_unit_id).all())
+    period_by_unit = {unit_id: (flights, float(area or 0.0))
+                      for unit_id, flights, area in period_rows}
+
+    # Last flight EVER received per machine -- deliberately unfiltered.
+    last_rows = (db.session.query(DroneFlight.drone_unit_id,
+                                  func.max(DroneFlight.started_at))
+                 .group_by(DroneFlight.drone_unit_id).all())
+    last_by_unit = {unit_id: last for unit_id, last in last_rows}
+
+    today = _drone_today_local()
+    current_status = _drone_current_status_rows()
+    rows = []
+    for unit in DroneUnit.query.order_by(DroneUnit.number).all():
+        flights, area = period_by_unit.get(unit.id, (0, 0.0))
+        last_utc = last_by_unit.get(unit.id)
+        last_local = ((last_utc + DRONE_DISPLAY_UTC_OFFSET).date()
+                      if last_utc else None)
+        status_row = current_status.get(unit.id)
+        rows.append({
+            'unit': unit,
+            'flights': flights,
+            'area': area,
+            'last_local': last_local,
+            'silent_days': ((today - last_local).days
+                            if last_local is not None else None),
+            'status': status_row.status if status_row else None,
+        })
+
+    # Flights whose machine is still unresolved are their own visible line for
+    # the same reason as on the summary: they are received data, and a page
+    # about what arrived must not drop them.
+    unattributed = period_by_unit.get(None)
+
+    logs = (DroneSyncLog.query
+            .order_by(DroneSyncLog.started_at.desc(), DroneSyncLog.id.desc())
+            .limit(20).all())
+    log_rows = []
+    for log in logs:
+        seen = log.records_seen or 0
+        new = log.records_new or 0
+        duplicate = log.records_duplicate or 0
+        error = log.records_error or 0
+        unresolved = log.records_unresolved or 0
+        # [REASON]: the invariant is only DISPLAYED here. Nothing on this page
+        # writes to drone_sync_logs, and the ingest keeps producing exactly
+        # what it produced before -- seen = new + duplicate + error, with
+        # unresolved a subset of new. Verification scripts depend on it, so
+        # this screen reports a violation instead of repairing one.
+        log_rows.append({
+            'log': log,
+            'holds': (seen == new + duplicate + error and unresolved <= new),
+        })
+
+    return render_template(
+        'drones/sources.html',
+        rows=rows,
+        unattributed=unattributed,
+        totals={
+            'flights': sum(r['flights'] for r in rows)
+                       + (unattributed[0] if unattributed else 0),
+            'area': sum(r['area'] for r in rows)
+                    + (unattributed[1] if unattributed else 0.0),
+            'silent': sum(1 for r in rows if r['flights'] == 0),
+            'never': sum(1 for r in rows if r['last_local'] is None),
+        },
+        log_rows=log_rows,
+        filters=filters,
+        link_args=_drone_link_args(dict(filters, unit_id=None, region='')),
+        status_labels=_drone_status_labels(),
+        today=today,
+    )
+
+
 def _drone_xlsx_safe(value):
     """Neutralize spreadsheet formula injection in a data-driven string.
 
@@ -1404,6 +2272,62 @@ def _drone_xlsx_safe(value):
         if stripped and stripped[0] in ('=', '+', '-', '@'):
             return "'" + value
     return value
+
+
+def _drone_xlsx_rate(value):
+    """None -> em dash in a spreadsheet cell, exactly as on the screen.
+
+    [REASON]: a workbook cell is where a zero does the most damage -- it is
+    summed, averaged and charted downstream. An undefined rate (no flight
+    time recorded, or no sprayed area) must arrive as text nobody can add up,
+    not as a number that means "zero litres per hectare".
+    """
+    return '—' if value is None else value
+
+
+def _drone_operator_derived_note():
+    return _drone_t(
+        'Оператор бириктиришлар жадвалидан келтириб чиқарилган, DJI '
+        'маълумотларидан олинган эмас: бутун парк битта аккаунт остида '
+        'учади. Бириктириш даври нотўғри бўлса, гектарлар бошқа одамга '
+        'ёзилади.',
+        'Оператор выведен из таблицы назначений, а не получен из данных DJI: '
+        'весь парк летает под одним аккаунтом. Если период назначения задан '
+        'неверно, гектары попадут на другого человека.')
+
+
+def _drone_operator_sheet(wb, st, by_operator):
+    """The «По операторам» sheet, identical in both workbooks.
+
+    Carries the derived-attribution note in its first row, because the task
+    requires every export showing an operator cut to state it visibly, and a
+    workbook that leaves the caveat on the web page arrives without it.
+    """
+    ws = wb.create_sheet(_drone_t('Операторлар бўйича', 'По операторам'))
+    ws.append([_drone_operator_derived_note()])
+    ws.append([_drone_t('Оператор', 'Оператор'),
+               _drone_t('Парвозлар', 'Вылеты'),
+               _drone_t('Гектар', 'Гектары'),
+               _drone_t('Улуш, %', 'Доля, %')])
+    for r in by_operator['rows']:
+        ws.append([_drone_xlsx_safe(r['name']), r['flights'], r['area'],
+                   r['share']])
+    # Both special rows are written whenever they carry anything, and they are
+    # part of the total -- never a remainder outside it.
+    if by_operator['undetermined']['flights']:
+        u = by_operator['undetermined']
+        ws.append([_drone_t('Оператор аниқланмаган', 'Оператор не определён'),
+                   u['flights'], u['area'], u['share']])
+    if by_operator['multiple']['flights']:
+        m = by_operator['multiple']
+        ws.append([_drone_t('Бир нечта оператор', 'Несколько операторов'),
+                   m['flights'], m['area'], m['share']])
+    ws.append([_drone_t('Жами', 'Итого'), by_operator['total']['flights'],
+               by_operator['total']['area'], 100.0])
+    # The note occupies row 1, so the header the styler freezes is row 2.
+    st.style_table(ws, num_formats={3: '0.00', 4: '0.0'},
+                   bold_rows=(ws.max_row,), header_row=2)
+    return ws
 
 
 def _drone_xlsx_styler():
@@ -1424,19 +2348,27 @@ def _drone_xlsx_styler():
     thin = Side(style='thin', color='D9D9D9')
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    def style_table(ws, num_formats=None, bold_rows=(), datetime_format=None):
+    def style_table(ws, num_formats=None, bold_rows=(), datetime_format=None,
+                    header_row=1):
         """num_formats: {column index: number format} for numeric cells;
-        datetime_format: {column index: format} for datetime cells."""
-        ws.freeze_panes = 'A2'
+        datetime_format: {column index: format} for datetime cells.
+
+        header_row says which row carries the column names. It is 1 for every
+        sheet but the operator cut, which puts the derived-attribution note
+        above the header -- the caveat has to be the first thing read, and a
+        styler that assumed row 1 would bold the note and freeze the header
+        out of view.
+        """
+        ws.freeze_panes = 'A%d' % (header_row + 1)
         ws.sheet_view.showGridLines = False
         num_formats = num_formats or {}
         datetime_format = datetime_format or {}
-        for cell in ws[1]:
+        for cell in ws[header_row]:
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = Alignment(horizontal='center', vertical='center',
                                        wrap_text=True)
-        for row in ws.iter_rows(min_row=2, max_row=ws.max_row,
+        for row in ws.iter_rows(min_row=header_row + 1, max_row=ws.max_row,
                                 max_col=ws.max_column):
             for cell in row:
                 if (cell.column in num_formats
@@ -1500,6 +2432,8 @@ def summary_xlsx():
     head_flights = _drone_t('Парвозлар', 'Вылеты')
     head_area = _drone_t('Гектар', 'Гектары')
     head_share = _drone_t('Улуш, %', 'Доля, %')
+    head_ha_hour = _drone_t('Га/соат', 'Га/час')
+    head_l_ha = _drone_t('Л/га', 'Л/га')
     unbounded = _drone_t('чекланмаган', 'не ограничен')
 
     wb = Workbook()
@@ -1531,17 +2465,27 @@ def summary_xlsx():
     st.style_table(ws)
 
     # 2. По машинам / Машиналар бўйича
+    # DRONE-FLEET-001: two productivity columns appended at the END. Existing
+    # columns keep their position and their business meaning -- the file goes
+    # to operators and to accounting.
     ws = wb.create_sheet(_drone_t('Машиналар бўйича', 'По машинам'))
     ws.append([_drone_t('Машина (№)', 'Машина (№)'), head_flights,
-               head_area, head_share])
+               head_area, head_share, head_ha_hour, head_l_ha])
     for r in data['by_machine']['rows']:
-        ws.append([r['number'], r['flights'], r['area'], r['share']])
+        ws.append([r['number'], r['flights'], r['area'], r['share'],
+                   _drone_xlsx_rate(r['ha_per_hour']),
+                   _drone_xlsx_rate(r['liters_per_ha'])])
     if data['by_machine']['unattributed']:
         u = data['by_machine']['unattributed']
-        ws.append([label_unattr, u['flights'], u['area'], u['share']])
+        ws.append([label_unattr, u['flights'], u['area'], u['share'],
+                   _drone_xlsx_rate(u['ha_per_hour']),
+                   _drone_xlsx_rate(u['liters_per_ha'])])
     ws.append([label_total, data['by_machine']['total']['flights'],
-               data['by_machine']['total']['area'], 100.0])
-    st.style_table(ws, num_formats={3: '0.00', 4: '0.0'},
+               data['by_machine']['total']['area'], 100.0,
+               _drone_xlsx_rate(data['by_machine']['total']['ha_per_hour']),
+               _drone_xlsx_rate(data['by_machine']['total']['liters_per_ha'])])
+    st.style_table(ws, num_formats={3: '0.00', 4: '0.0', 5: '0.00',
+                                    6: '0.00'},
                    bold_rows=(ws.max_row,))
 
     # 3. По областям / Вилоятлар бўйича
@@ -1587,6 +2531,9 @@ def summary_xlsx():
     st.style_table(ws, num_formats={3: '0.00', 4: '0.0'},
                    bold_rows=(ws.max_row,))
 
+    # 6. По операторам / Операторлар бўйича (DRONE-FLEET-001)
+    _drone_operator_sheet(wb, st, data['by_operator'])
+
     return _drone_xlsx_response(wb, 'drones_summary', filters)
 
 
@@ -1617,6 +2564,13 @@ def flights_xlsx():
                .order_by(DroneFlight.started_at.desc())
                .all())
     usage_labels = _drone_usage_labels()
+    # DRONE-FLEET-001: the per-flight operator, resolved by the SAME rule and
+    # the SAME query the summary cut uses -- one implementation, so the flat
+    # export and the cut can never disagree about who flew a flight.
+    operator_by_flight = _drone_operator_by_flight(conds)
+    total_area = float(db.session.query(
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0))
+        .filter(*conds).scalar() or 0.0)
 
     wb = Workbook()
     ws = wb.active
@@ -1633,11 +2587,18 @@ def flights_xlsx():
         _drone_t('Килограмм', 'Килограммы'),
         _drone_t('Иш тури', 'Тип работы'),
         'DJI id',
+        # The caveat rides in the column NAME: a flat sheet has nowhere else
+        # to put it, and this column must never be read as observed fact.
+        _drone_t('Оператор (бириктиришдан келтирилган)',
+                 'Оператор (выведен по назначениям)'),
+        _drone_t('Га/соат', 'Га/час'),
+        _drone_t('Л/га', 'Л/га'),
     ])
     for f in flights:
         usage_label = usage_labels.get(f.usage_type)
         if usage_label is None and f.usage_type is not None:
             usage_label = str(f.usage_type)
+        hours = (f.work_seconds or 0) / 3600.0
         ws.append([
             (f.started_at + DRONE_DISPLAY_UTC_OFFSET)
             if f.started_at else None,
@@ -1651,9 +2612,18 @@ def flights_xlsx():
             f.sow_kg,
             usage_label,
             f.dji_flight_id,
+            _drone_xlsx_safe(operator_by_flight.get(f.id, '')),
+            _drone_xlsx_rate(_drone_rate(f.area_ha or 0.0, hours)),
+            _drone_xlsx_rate(_drone_rate(f.spray_liters or 0.0, f.area_ha)),
         ])
     st = _drone_xlsx_styler()
     st.style_table(ws,
-                   num_formats={6: '0.00', 7: '0.0', 8: '0.00', 9: '0.000'},
+                   num_formats={6: '0.00', 7: '0.0', 8: '0.00', 9: '0.000',
+                                13: '0.00', 14: '0.00'},
                    datetime_format={1: 'DD.MM.YYYY HH:MM'})
+
+    # The same operator cut sheet as summary.xlsx, over the same filters --
+    # the flat list answers "which flight", the cut answers "how much whose",
+    # and a reader who has only this file needs both.
+    _drone_operator_sheet(wb, st, _drone_operator_cut(conds, total_area))
     return _drone_xlsx_response(wb, 'drones_flights', filters)

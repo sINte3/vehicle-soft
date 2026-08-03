@@ -1,0 +1,115 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% set can_edit_ops = current_user.can_edit %}
+{% block title %}{{ 'Дроны — операторы' if is_ru else 'Дронлар — операторлар' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Операторы' if is_ru else 'Операторлар' }}</div>
+    <div class="vs-hero-sub">{{ 'Справочник пилотов и машины, на которых они летают сейчас. Оператора не удаляют — его деактивируют: ушедший оператор всё равно владеет своими гектарами за прошлые месяцы.' if is_ru else 'Пилотлар маълумотномаси ва улар ҳозир учаётган машиналар. Операторни ўчириб ташламайдилар — уни фаолсизлантирадилар: кетган оператор ҳам ўтган ойлардаги гектарларининг эгаси бўлиб қолади.' }}</div>
+  </div>
+</div>
+
+{# ── Предупреждение о происхождении привязки ───────────────────────────── #}
+<div class="vs-alert is-info vs-mb">
+  {{ 'Оператор в отчётах — величина ВЫВЕДЕННАЯ, а не наблюдаемая. DJI пишет во все вылеты один аккаунт, поэтому пилота в данных нет. Гектары раскладываются по операторам только по таблице назначений ниже: ошибка в назначении молча переносит гектары на другого человека.' if is_ru else 'Ҳисоботлардаги оператор — КЕЛТИРИБ ЧИҚАРИЛГАН қиймат, кузатилган эмас. DJI барча парвозларга битта аккаунтни ёзади, шунинг учун маълумотларда пилот йўқ. Гектарлар операторлар бўйича фақат қуйидаги бириктиришлар жадвали асосида тақсимланади: бириктиришдаги хато гектарларни бошқа одамга индамай кўчиради.' }}
+</div>
+
+{% if can_edit_ops %}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Добавить оператора' if is_ru else 'Оператор қўшиш' }}</span>
+  </div>
+  <div class="vs-card-body">
+    <form method="post" action="{{ url_for('drones.operators_add') }}" class="vs-form-row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="vs-field" style="min-width:240px;">
+        <label class="vs-label" for="addOpName">{{ 'Ф.И.О.' if is_ru else 'Ф.И.Ш.' }}</label>
+        <input type="text" name="full_name" id="addOpName" class="vs-input" maxlength="200" required autocomplete="off">
+      </div>
+      <div class="vs-field" style="min-width:150px;">
+        <label class="vs-label" for="addOpPhone1">{{ 'Телефон 1' if is_ru else 'Телефон 1' }}</label>
+        <input type="text" name="phone_primary" id="addOpPhone1" class="vs-input" maxlength="50" autocomplete="off">
+      </div>
+      <div class="vs-field" style="min-width:150px;">
+        <label class="vs-label" for="addOpPhone2">{{ 'Телефон 2' if is_ru else 'Телефон 2' }}</label>
+        <input type="text" name="phone_secondary" id="addOpPhone2" class="vs-input" maxlength="50" autocomplete="off">
+      </div>
+      <div class="vs-field" style="min-width:200px;">
+        <label class="vs-label" for="addOpSub">{{ 'Подразделение' if is_ru else 'Бўлинма' }}</label>
+        <input type="text" name="subdivision_name" id="addOpSub" class="vs-input" maxlength="120" autocomplete="off">
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn vs-btn-primary">{{ 'Добавить' if is_ru else 'Қўшиш' }}</button>
+      </div>
+    </form>
+    <div class="vs-help">{{ 'Подразделение — описательное поле: оно говорит, где человек работает, и никогда не участвует в подсчёте гектаров или доли. Назначения на машины задаются в карточке оператора.' if is_ru else 'Бўлинма — тавсифловчи майдон: у одам қаерда ишлашини айтади ва ҳеч қачон гектар ёки улуш ҳисобида қатнашмайди. Машиналарга бириктириш оператор картасида берилади.' }}</div>
+  </div>
+</div>
+{% endif %}
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Список операторов' if is_ru else 'Операторлар рўйхати' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'Всего' if is_ru else 'Жами' }}: {{ operators|length }}</span>
+  </div>
+  {% if operators %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Ф.И.О.' if is_ru else 'Ф.И.Ш.' }}</th>
+        <th>{{ 'Телефоны' if is_ru else 'Телефонлар' }}</th>
+        <th>{{ 'Подразделение' if is_ru else 'Бўлинма' }}</th>
+        <th>{{ 'Машины сейчас' if is_ru else 'Ҳозирги машиналар' }}</th>
+        <th class="right">{{ 'Назначений' if is_ru else 'Бириктиришлар' }}</th>
+        <th>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for op in operators %}
+      <tr>
+        <td style="font-weight:600;"><a href="{{ url_for('drones.operator_card', op_id=op.id) }}">{{ op.full_name }}</a></td>
+        <td class="vs-muted">
+          {% if op.phone_primary or op.phone_secondary %}
+          {{ op.phone_primary or '—' }}{% if op.phone_secondary %} · {{ op.phone_secondary }}{% endif %}
+          {% else %}—{% endif %}
+        </td>
+        <td class="vs-muted">{{ op.subdivision_name or '—' }}</td>
+        <td>
+          {% set cur = current_units.get(op.id, []) %}
+          {% if cur %}
+          {% for a in cur %}<span class="vs-badge vs-badge-success">№ {{ a.drone_unit.number if a.drone_unit else '?' }}</span>{% if not loop.last %} {% endif %}{% endfor %}
+          {% else %}
+          <span class="vs-muted">—</span>
+          {% endif %}
+        </td>
+        <td class="right">{{ assignment_counts.get(op.id, 0) }}</td>
+        <td>
+          {% if op.is_active %}
+          <span class="vs-badge vs-badge-success">{{ 'Активен' if is_ru else 'Фаол' }}</span>
+          {% else %}
+          <span class="vs-badge">{{ 'Деактивирован' if is_ru else 'Фаолсизлантирилган' }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-help">{{ 'Столбец «Машины сейчас» показывает назначения, чей период накрывает сегодняшний день (' if is_ru else '«Ҳозирги машиналар» устуни бугунги кунни қамраб оладиган бириктиришларни кўрсатади (' }}{{ today.strftime('%d.%m.%Y') }}{{ ', UTC+5). Пусто — значит на сегодня оператор ни к одной машине не привязан; это не ошибка.' if is_ru else ', UTC+5). Бўш бўлса — бугунга оператор ҳеч бир машинага бириктирилмаган; бу хато эмас.' }}</div>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-ico">👤</div>
+    <div class="vs-empty-title">{{ 'Операторы не заведены' if is_ru else 'Операторлар киритилмаган' }}</div>
+    <div class="vs-empty-sub">{{ 'Запустите сид DRONES_FLEET_SEED_001 — он заводит 17 операторов из ведомостей диспетчеров. Назначения на машины он не заводит намеренно: их вносит владелец.' if is_ru else 'DRONES_FLEET_SEED_001 сидини ишга туширинг — у диспетчерлар ведомостларидан 17 операторни киритади. Машиналарга бириктиришни у атайлаб киритмайди: уларни эгаси киритади.' }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

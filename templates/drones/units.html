@@ -63,8 +63,15 @@
         <th style="width:70px;">№</th>
         <th>{{ 'Модель' if is_ru else 'Модель' }}</th>
         <th>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
+        {# DRONE-FLEET-001: заводской номер планера — hardware_id, а НЕ
+           serial_number: последний в этом модуле означает идентификатор
+           записи вылета в выгрузке DJI. #}
+        <th>{{ 'Планер / генератор' if is_ru else 'Планер / генератор' }}</th>
+        <th>{{ 'Подразделение' if is_ru else 'Бўлинма' }}</th>
         <th>{{ 'Ники (DJI)' if is_ru else 'Никлар (DJI)' }}</th>
+        <th>{{ 'Исправность' if is_ru else 'Созлиги' }}</th>
         <th>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
@@ -73,6 +80,13 @@
         <td style="font-weight:700;">№ {{ u.number }}</td>
         <td>{{ u.model or '—' }}</td>
         <td class="vs-muted">{{ (u.organization.short_name or u.organization.name) if u.organization else '—' }}</td>
+        <td class="vs-muted" style="font-size:12px;">
+          {{ u.hardware_id or '—' }}<br>{{ u.generator_id or '—' }}
+        </td>
+        {# Описательное поле: оно говорит, где машина стоит, и никогда не
+           участвует в подсчёте гектаров или доли — все 15 машин принадлежат
+           одной организации (инвариант Р4 трека). #}
+        <td class="vs-muted">{{ u.subdivision_name or '—' }}</td>
         <td>
           {% set unit_nicks = nicknames_by_unit.get(u.id, []) %}
           {% if unit_nicks %}
@@ -114,6 +128,21 @@
           {% endif %}
         </td>
         <td>
+          {# Текущая исправность — строка журнала с наибольшей датой изменения,
+             ничьё поле не перезаписывается. Машина без единой записи — это
+             «не сказано», а не «исправна». #}
+          {% set st = current_status.get(u.id) %}
+          {% if st and st.status == 'serviceable' %}
+          <span class="vs-badge vs-badge-success">{{ status_labels['serviceable'] }}</span>
+          <div class="vs-muted" style="font-size:11.5px;">{{ st.changed_on.strftime('%d.%m.%Y') if st.changed_on else '—' }}</div>
+          {% elif st and st.status == 'unserviceable' %}
+          <span class="vs-badge vs-badge-danger">{{ status_labels['unserviceable'] }}</span>
+          <div class="vs-muted" style="font-size:11.5px;">{{ st.changed_on.strftime('%d.%m.%Y') if st.changed_on else '—' }}</div>
+          {% else %}
+          <span class="vs-badge">{{ 'Не указана' if is_ru else 'Кўрсатилмаган' }}</span>
+          {% endif %}
+        </td>
+        <td>
           {% if u.is_excluded %}
           <span class="vs-badge vs-badge-warning">{{ 'Исключена из отчётности' if is_ru else 'Ҳисоботдан чиқарилган' }}{% if u.excluded_from %} · {{ u.excluded_from.strftime('%d.%m.%Y') }}{% endif %}</span>
           {% elif not u.is_active %}
@@ -121,6 +150,10 @@
           {% else %}
           <span class="vs-badge vs-badge-success">{{ 'Активна' if is_ru else 'Фаол' }}</span>
           {% endif %}
+        </td>
+        <td>
+          <a href="{{ url_for('drones.unit_card', unit_id=u.id) }}" class="vs-btn vs-btn-sm">{{ 'Карточка' if is_ru else 'Карта' }}</a>
+          <div class="vs-muted" style="font-size:11.5px; margin-top:4px;">{{ 'батарей' if is_ru else 'батарея' }}: {{ battery_counts.get(u.id, 0) }}</div>
         </td>
       </tr>
       {% endfor %}
