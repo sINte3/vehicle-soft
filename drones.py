@@ -1943,6 +1943,110 @@ def summary():
     )
 
 
+@drones_bp.route('/sources')
+@module_required('drones')
+def sources():
+    """Sync observability: who has gone silent, and what the last runs did.
+
+    [REASON]: DRONE-FLEET-001 section 5. Everything on this page is DERIVED --
+    no table was added for it. Two facts motivated it and neither is visible
+    anywhere else today: machines No 11 and No 13 produced 200.11 ha in May
+    that no dispatcher ledger records, and machines No 4, No 9 and No 12
+    produced nothing at all in May. Silence from a machine has to be a row
+    somebody can see, not something noticed when the numbers stop.
+
+    [REASON]: A MACHINE WITH ZERO FLIGHTS IN THE PERIOD IS SHOWN AS A ROW.
+    Omitting it would make it indistinguishable from a machine nobody looked
+    at, which is precisely the failure this screen exists to prevent. The
+    "last flight" column is therefore computed over ALL time and not inside
+    the period: a machine that has been silent for three months must show the
+    date it last spoke, not an em dash.
+    """
+    filters = _drone_filters_from_args(request.args,
+                                       default_current_month=True)
+    # Only the date bounds apply here: a per-machine silence table filtered to
+    # one machine would answer a question nobody asks and hide the rest.
+    period_conds = _drone_flight_conditions(dict(filters, unit_id=None,
+                                                 region=''))
+
+    period_rows = (db.session.query(
+        DroneFlight.drone_unit_id,
+        func.count(DroneFlight.id),
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+    ).filter(*period_conds).group_by(DroneFlight.drone_unit_id).all())
+    period_by_unit = {unit_id: (flights, float(area or 0.0))
+                      for unit_id, flights, area in period_rows}
+
+    # Last flight EVER received per machine -- deliberately unfiltered.
+    last_rows = (db.session.query(DroneFlight.drone_unit_id,
+                                  func.max(DroneFlight.started_at))
+                 .group_by(DroneFlight.drone_unit_id).all())
+    last_by_unit = {unit_id: last for unit_id, last in last_rows}
+
+    today = _drone_today_local()
+    current_status = _drone_current_status_rows()
+    rows = []
+    for unit in DroneUnit.query.order_by(DroneUnit.number).all():
+        flights, area = period_by_unit.get(unit.id, (0, 0.0))
+        last_utc = last_by_unit.get(unit.id)
+        last_local = ((last_utc + DRONE_DISPLAY_UTC_OFFSET).date()
+                      if last_utc else None)
+        status_row = current_status.get(unit.id)
+        rows.append({
+            'unit': unit,
+            'flights': flights,
+            'area': area,
+            'last_local': last_local,
+            'silent_days': ((today - last_local).days
+                            if last_local is not None else None),
+            'status': status_row.status if status_row else None,
+        })
+
+    # Flights whose machine is still unresolved are their own visible line for
+    # the same reason as on the summary: they are received data, and a page
+    # about what arrived must not drop them.
+    unattributed = period_by_unit.get(None)
+
+    logs = (DroneSyncLog.query
+            .order_by(DroneSyncLog.started_at.desc(), DroneSyncLog.id.desc())
+            .limit(20).all())
+    log_rows = []
+    for log in logs:
+        seen = log.records_seen or 0
+        new = log.records_new or 0
+        duplicate = log.records_duplicate or 0
+        error = log.records_error or 0
+        unresolved = log.records_unresolved or 0
+        # [REASON]: the invariant is only DISPLAYED here. Nothing on this page
+        # writes to drone_sync_logs, and the ingest keeps producing exactly
+        # what it produced before -- seen = new + duplicate + error, with
+        # unresolved a subset of new. Verification scripts depend on it, so
+        # this screen reports a violation instead of repairing one.
+        log_rows.append({
+            'log': log,
+            'holds': (seen == new + duplicate + error and unresolved <= new),
+        })
+
+    return render_template(
+        'drones/sources.html',
+        rows=rows,
+        unattributed=unattributed,
+        totals={
+            'flights': sum(r['flights'] for r in rows)
+                       + (unattributed[0] if unattributed else 0),
+            'area': sum(r['area'] for r in rows)
+                    + (unattributed[1] if unattributed else 0.0),
+            'silent': sum(1 for r in rows if r['flights'] == 0),
+            'never': sum(1 for r in rows if r['last_local'] is None),
+        },
+        log_rows=log_rows,
+        filters=filters,
+        link_args=_drone_link_args(dict(filters, unit_id=None, region='')),
+        status_labels=_drone_status_labels(),
+        today=today,
+    )
+
+
 def _drone_xlsx_safe(value):
     """Neutralize spreadsheet formula injection in a data-driven string.
 

@@ -1,0 +1,201 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Дроны — источники' if is_ru else 'Дронлар — манбалар' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Источники данных' if is_ru else 'Маълумот манбалари' }}</div>
+    <div class="vs-hero-sub">{{ 'Кто из машин перестал присылать вылеты и что сделали последние загрузки. Машина без единого вылета за период показана строкой, а не пропущена: пропущенная строка неотличима от машины, на которую никто не посмотрел.' if is_ru else 'Қайси машина парвоз юборишни тўхтатган ва сўнгги юклашлар нима қилган. Даврда бирорта парвози бўлмаган машина қатор билан кўрсатилади, ташлаб кетилмайди: ташлаб кетилган қатор ҳеч ким қарамаган машинадан фарқ қилмайди.' }}</div>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <form method="get" action="{{ url_for('drones.sources') }}" class="vs-form-row">
+      <div class="vs-field" style="width:170px;">
+        <label class="vs-label" for="srcFrom">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
+        <input type="date" name="date_from" id="srcFrom" class="vs-input" value="{{ filters.date_from_s }}">
+      </div>
+      <div class="vs-field" style="width:170px;">
+        <label class="vs-label" for="srcTo">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
+        <input type="date" name="date_to" id="srcTo" class="vs-input" value="{{ filters.date_to_s }}">
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+        {# Ссылка, а не скрипт: браузерное поле type="date" очищается только
+           посегментным удалением, а пустые параметры страница трактует как
+           «без границ». То же решение, что на сводке. #}
+        <a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.sources', date_from='', date_to='') }}">{{ 'За всё время' if is_ru else 'Барча вақт' }}</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Вылетов за период' if is_ru else 'Даврдаги парвозлар' }}</div>
+    <div class="vs-stat-value">{{ totals.flights }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Гектаров за период' if is_ru else 'Даврдаги гектарлар' }}</div>
+    <div class="vs-stat-value">{{ '%.2f'|format(totals.area) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Машин без вылетов' if is_ru else 'Парвозсиз машиналар' }}</div>
+    <div class="vs-stat-value">{{ totals.silent }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Не присылали никогда' if is_ru else 'Ҳеч қачон юбормаган' }}</div>
+    <div class="vs-stat-value">{{ totals.never }}</div>
+  </div>
+</div>
+
+{# ── По машинам ─────────────────────────────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Молчание по машинам' if is_ru else 'Машиналар бўйича сукунат' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'сегодня' if is_ru else 'бугун' }}: {{ today.strftime('%d.%m.%Y') }} (UTC+5)</span>
+  </div>
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th style="width:90px;">{{ 'Машина' if is_ru else 'Машина' }}</th>
+        <th>{{ 'Последний вылет' if is_ru else 'Сўнгги парвоз' }}</th>
+        <th class="right">{{ 'Дней молчания' if is_ru else 'Сукунат кунлари' }}</th>
+        <th class="right">{{ 'Вылетов за период' if is_ru else 'Даврдаги парвозлар' }}</th>
+        <th class="right">{{ 'Гектаров за период' if is_ru else 'Даврдаги гектарлар' }}</th>
+        <th>{{ 'Исправность' if is_ru else 'Созлиги' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td style="font-weight:700;"><a href="{{ url_for('drones.unit_card', unit_id=r.unit.id) }}">№ {{ r.unit.number }}</a></td>
+        <td>
+          {% if r.last_local %}
+          {{ r.last_local.strftime('%d.%m.%Y') }}
+          {% else %}
+          <span class="vs-badge vs-badge-danger">{{ 'ни одного вылета' if is_ru else 'бирорта парвоз йўқ' }}</span>
+          {% endif %}
+        </td>
+        <td class="right">
+          {% if r.silent_days is none %}
+          <span class="vs-muted">—</span>
+          {% elif r.silent_days > 30 %}
+          <span class="vs-badge vs-badge-danger">{{ r.silent_days }}</span>
+          {% elif r.silent_days > 7 %}
+          <span class="vs-badge vs-badge-warning">{{ r.silent_days }}</span>
+          {% else %}
+          {{ r.silent_days }}
+          {% endif %}
+        </td>
+        {# Ноль показан нулём, а не пустой ячейкой: пустая читается как
+           «не смотрели», а это ровно то, что страница обязана различать. #}
+        <td class="right{% if r.flights == 0 %} vs-muted{% endif %}">{{ r.flights }}</td>
+        <td class="right{% if r.flights == 0 %} vs-muted{% endif %}">{{ '%.2f'|format(r.area) }}</td>
+        <td>
+          {% if r.status == 'serviceable' %}
+          <span class="vs-badge vs-badge-success">{{ status_labels['serviceable'] }}</span>
+          {% elif r.status == 'unserviceable' %}
+          <span class="vs-badge vs-badge-danger">{{ status_labels['unserviceable'] }}</span>
+          {% else %}
+          <span class="vs-muted">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      {% if unattributed %}
+      <tr>
+        <td><span class="vs-badge vs-badge-warning">{{ 'Не распознано' if is_ru else 'Аниқланмаган' }}</span></td>
+        <td class="vs-muted" colspan="2">{{ 'вылеты без машины: ник DJI ещё не в карте' if is_ru else 'машинасиз парвозлар: DJI ники ҳали харитада йўқ' }}</td>
+        <td class="right">{{ unattributed[0] }}</td>
+        <td class="right">{{ '%.2f'|format(unattributed[1]) }}</td>
+        <td class="vs-muted">—</td>
+      </tr>
+      {% endif %}
+      <tr style="font-weight:700;">
+        <td>{{ 'Итого' if is_ru else 'Жами' }}</td>
+        <td colspan="2"></td>
+        <td class="right">{{ totals.flights }}</td>
+        <td class="right">{{ '%.2f'|format(totals.area) }}</td>
+        <td></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-help">{{ 'Столбец «Последний вылет» считается за всё время, а не за выбранный период: машина, молчащая три месяца, должна показывать дату, когда она говорила в последний раз, а не прочерк. «Дней молчания» — от этой даты до сегодня.' if is_ru else '«Сўнгги парвоз» устуни танланган давр бўйича эмас, бутун вақт бўйича ҳисобланади: уч ой сукут сақлаган машина прочерк эмас, охирги марта қачон гапирганини кўрсатиши керак. «Сукунат кунлари» — ўша санадан бугунгача.' }}</div>
+  </div>
+</div>
+
+{# ── Последние загрузки ─────────────────────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Последние загрузки' if is_ru else 'Сўнгги юклашлар' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'не более 20' if is_ru else '20 тагача' }}</span>
+  </div>
+  {% if log_rows %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Начало' if is_ru else 'Бошланиши' }}</th>
+        <th>{{ 'Вид' if is_ru else 'Тури' }}</th>
+        <th>{{ 'Период' if is_ru else 'Давр' }}</th>
+        <th class="right">{{ 'Увидено' if is_ru else 'Кўрилган' }}</th>
+        <th class="right">{{ 'Новых' if is_ru else 'Янги' }}</th>
+        <th class="right">{{ 'Дублей' if is_ru else 'Такрор' }}</th>
+        <th class="right">{{ 'Без машины' if is_ru else 'Машинасиз' }}</th>
+        <th class="right">{{ 'Ошибок' if is_ru else 'Хатолар' }}</th>
+        <th>{{ 'Итог' if is_ru else 'Якун' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for lr in log_rows %}
+      {% set l = lr.log %}
+      <tr>
+        <td>{{ (l.started_at.strftime('%d.%m.%Y %H:%M') ~ ' UTC') if l.started_at else '—' }}</td>
+        <td class="vs-muted">{{ l.kind }}</td>
+        <td class="vs-muted">
+          {% if l.period_from or l.period_to %}
+          {{ l.period_from.strftime('%d.%m.%Y') if l.period_from else '—' }} — {{ l.period_to.strftime('%d.%m.%Y') if l.period_to else '—' }}
+          {% else %}—{% endif %}
+        </td>
+        <td class="right">{{ l.records_seen or 0 }}</td>
+        <td class="right">{{ l.records_new or 0 }}</td>
+        <td class="right">{{ l.records_duplicate or 0 }}</td>
+        <td class="right">{{ l.records_unresolved or 0 }}</td>
+        <td class="right{% if (l.records_error or 0) > 0 %} vs-num is-danger{% endif %}">{{ l.records_error or 0 }}</td>
+        <td>
+          {% if l.status == 'ok' %}
+          <span class="vs-badge vs-badge-success">ok</span>
+          {% elif l.status == 'error' %}
+          <span class="vs-badge vs-badge-danger">{{ 'ошибка' if is_ru else 'хато' }}</span>
+          {% else %}
+          <span class="vs-badge">{{ l.status }}</span>
+          {% endif %}
+          {% if not lr.holds %}
+          <span class="vs-badge vs-badge-danger">{{ 'счётчики не сходятся' if is_ru else 'ҳисоблагичлар тўғри келмайди' }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-help">{{ 'Счётчики показаны ровно такими, какими их записал приём: увидено = новых + дублей + ошибок, а «без машины» — часть новых. Эта страница только читает журнал и ничего в нём не правит; если счётчики не сходятся, она это показывает, а не чинит.' if is_ru else 'Ҳисоблагичлар қабул уларни қандай ёзган бўлса, шундай кўрсатилган: кўрилган = янги + такрор + хатолар, «машинасиз» эса янгиларнинг бир қисми. Бу саҳифа журнални фақат ўқийди ва унда ҳеч нарсани тузатмайди; ҳисоблагичлар тўғри келмаса, у буни кўрсатади, тузатмайди.' }}</div>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Загрузок не было' if is_ru else 'Юклашлар бўлмаган' }}</div>
+    <div class="vs-empty-sub">{{ 'Журнал приёма пуст: сборщик ещё ни разу не присылал данные.' if is_ru else 'Қабул журнали бўш: йиғувчи ҳали бирор марта маълумот юбормаган.' }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}
