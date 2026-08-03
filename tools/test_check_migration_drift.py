@@ -318,7 +318,14 @@ class DriftProductionFixtureTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix='check_drift_prod_')
         self.db = os.path.join(self.tmp, 'transport.db')
-        id_to_file, _ = drift.scan_migration_files(REPO_ROOT)
+        # [REASON]: the MIGRATION_ID half of the registry is derived from the
+        # tree rather than frozen at the 17 rows of 2026-08-02. Freezing it
+        # would turn this fixture into a trap for the next track that adds a
+        # migration -- its file would show up as file-but-not-registered and
+        # fail CI for a change that is perfectly correct. The legacy half is
+        # what this fixture is actually about, and that half is verbatim.
+        id_to_file, self.raw_unclassifiable = drift.scan_migration_files(
+            REPO_ROOT)
         registered = sorted(set(PRODUCTION_LEGACY_REGISTERED) | set(id_to_file))
         make_registry(self.db, registered)
         self.registry_size = len(registered)
@@ -327,9 +334,19 @@ class DriftProductionFixtureTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_fixture_reproduces_the_production_registry_size(self):
-        """15 legacy names + 17 MIGRATION_ID files = the 32 rows on prod."""
-        self.assertEqual(self.registry_size, 32)
+    def test_fixture_carries_the_fifteen_recorded_legacy_names(self):
+        """On 2026-08-02 the registry held 32 rows: these 15 plus 17 files.
+
+        The 15 are asserted to be genuinely legacy -- none of them is a
+        MIGRATION_ID claimed by a file, which is what made them show up as
+        registered-but-no-file in the first place.
+        """
+        self.assertEqual(len(PRODUCTION_LEGACY_REGISTERED), 15)
+        id_to_file, _ = drift.scan_migration_files(REPO_ROOT)
+        overlap = set(PRODUCTION_LEGACY_REGISTERED) & set(id_to_file)
+        self.assertEqual(overlap, set(),
+                         'these names must not be claimed by any MIGRATION_ID')
+        self.assertEqual(self.registry_size, 15 + len(id_to_file))
 
     def test_the_real_signal_is_clean(self):
         """file-but-not-registered was 0 after the release. It still is."""
@@ -348,10 +365,17 @@ class DriftProductionFixtureTests(unittest.TestCase):
         self.assertEqual(len(PRODUCTION_LEGACY_REGISTERED), 15)
         self.assertEqual(len(remaining), 6)
 
-    def test_noise_drops_from_twentyone_to_twelve(self):
+    def test_unclassifiable_shrinks_by_exactly_the_resolved_pairs(self):
+        """21 -> 12 on 2026-08-02: nine files identified by the map.
+
+        Expressed as a difference rather than the literal 12 so that adding a
+        migration later cannot make this fail for the wrong reason.
+        """
         remaining = section(
             self.out, 'unclassifiable (no MIGRATION_ID constant)')
-        self.assertEqual(len(remaining), 12)
+        self.assertEqual(
+            len(remaining),
+            len(self.raw_unclassifiable) - len(PRODUCTION_RESOLVED_BY_BACKFILL))
         for resolved_file in ('migrate_to_v3.py', 'migrate_fuel_v2.py',
                               'migrate_add_wialon.py'):
             self.assertNotIn(resolved_file, remaining)

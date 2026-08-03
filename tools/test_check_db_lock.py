@@ -157,8 +157,14 @@ class CheckDbLockTests(unittest.TestCase):
         holder.wait()
         self._reap()
         time.sleep(0.5)
-        self.assertTrue(os.path.exists(self.db + '-shm'),
-                        'precondition: killing the holder must leave -shm')
+        if not os.path.exists(self.db + '-shm'):
+            # [REASON]: skip rather than fail. Leaving -shm behind after a
+            # hard kill is SQLite/OS behaviour, not something this tool
+            # controls; on a platform or filesystem where it does not hold
+            # there is no stale state to test and a red CI run would say
+            # nothing true about the tool.
+            self.skipTest('platform does not leave -shm after a hard kill; '
+                          'the stale state cannot be produced here')
         code, out = run_tool(self.db)
         self.assertEqual(code, EXIT_STALE,
                          'leftover artefacts with no holder must be STALE:\n'

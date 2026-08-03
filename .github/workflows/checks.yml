@@ -5,6 +5,10 @@
 #   - tools/state_snapshot.py        -- needs a real worktree and services.
 # Both run on the server as deploy steps, not in CI.
 #
+# Their SELF-TESTS do run here (TOOLS-TRUST-001). Those build their own
+# temporary SQLite files and their own holder process, so they need no real
+# database, no server and no Windows-specific path.
+#
 # Python 3.12 on the runner is enough: the server runs 3.14, but CI only
 # needs to parse and byte-compile the sources.
 name: checks
@@ -35,3 +39,9 @@ jobs:
 
       - name: Template checker self-test against planted fixtures
         run: python tools/test_check_templates.py
+
+      - name: Database-lock checker self-test (TOOL-DBLOCK-WAL-001)
+        run: python tools/test_check_db_lock.py
+
+      - name: Migration-drift checker self-test (TOOL-DRIFT-LEGACY-001)
+        run: python tools/test_check_migration_drift.py
