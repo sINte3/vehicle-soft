@@ -21,6 +21,7 @@
   </div>
   <div class="vs-row-end">
     <a href="{{ url_for('drones.works', **link_args) }}" class="vs-btn">{{ 'К ведомости' if is_ru else 'Ведомостга' }}</a>
+    <a href="{{ url_for('drones.works_assignment_hints', month=filters.period or None) }}" class="vs-btn">{{ 'Подсказка по назначениям' if is_ru else 'Бириктиришлар маслаҳати' }}</a>
     <a href="{{ url_for('drones.works_reports_xlsx', **link_args) }}" class="vs-btn vs-btn-success">Excel</a>
     <a href="{{ url_for('drones.works_debt_xlsx', **link_args) }}" class="vs-btn vs-btn-success">{{ 'Excel — долги' if is_ru else 'Excel — қарзлар' }}</a>
   </div>

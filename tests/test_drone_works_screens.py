@@ -22,8 +22,9 @@ import io
 import unittest
 
 from tests.harness import app, reset_db, create_admin, login, CSRF
-from models import (db, DroneCustomer, DroneCustomerAlias, DroneOperator,
-                    DroneWork, User, ROLE_OPERATOR)
+from models import (db, DroneCustomer, DroneCustomerAlias, DroneFlight,
+                    DroneOperator, DroneOperatorAssignment, DroneUnit,
+                    DroneWork, Organization, User, ROLE_OPERATOR)
 
 
 def set_language(user_id, lang):
@@ -562,6 +563,177 @@ class DroneCustomerKeyTests(unittest.TestCase):
                       'Фукаро', 'Ғиждувон ПТЗ- ФХ', '', 'a  b\tc\nd'):
             self.assertEqual(drones._drone_customer_key(value),
                              imp.customer_key(value), repr(value))
+
+
+class DroneAssignmentHintTests(unittest.TestCase):
+    """The hint screen: read-only, and honest about what it cannot know.
+
+    The fixture is built so the right answer is knowable by hand. In 2026-04
+    the ledger gives Fayzullaev 31.5 ha (12.5 + 10.0 + the 9.0 ha row whose
+    book is filed as March but whose own date is 25 April) and Khamroev
+    25.0 ha; the flights give machine No 1 22.4 ha, machine No 2 30.0 ha and
+    5.0 ha with no machine at all.
+
+    So Fayzullaev's closest is No 2 at -4.8 % and Khamroev's is No 1 at
+    -10.4 % -- NOT No 2 at +20.0 %, which is the point: the ranking is by the
+    absolute relative difference, and a bigger machine is not a better match
+    just because it is bigger.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ids = seed()
+        cls.admin = create_admin('hint_admin')
+        set_language(cls.admin, 'ru')
+        with app.app_context():
+            org = Organization(name='Agrocluster')
+            db.session.add(org)
+            db.session.flush()
+            units = {}
+            for number in (1, 2):
+                unit = DroneUnit(number=number, organization_id=org.id)
+                db.session.add(unit)
+                db.session.flush()
+                units[number] = unit.id
+            cls.units = units
+            # April flights, stored UTC. 19:30 UTC on 31 March is already
+            # 1 April for the operators, so the fixture keeps well inside the
+            # month rather than testing the boundary twice.
+            flights = [
+                (1, datetime.datetime(2026, 4, 5, 6, 0), 12.4),
+                (1, datetime.datetime(2026, 4, 6, 6, 0), 10.0),
+                (2, datetime.datetime(2026, 4, 7, 6, 0), 30.0),
+                (None, datetime.datetime(2026, 4, 8, 6, 0), 5.0),
+                # March, must not leak into the April comparison
+                (1, datetime.datetime(2026, 3, 5, 6, 0), 500.0),
+            ]
+            for index, (number, started, area) in enumerate(flights, 1):
+                db.session.add(DroneFlight(
+                    dji_flight_id=index,
+                    drone_unit_id=units.get(number),
+                    nickname_raw='n%d' % index,
+                    started_at=started, area_ha=area,
+                    raw_json='{}'))
+            db.session.commit()
+
+    def setUp(self):
+        self.client = app.test_client()
+        login(self.client, self.admin)
+
+    def hints(self, month='2026-04'):
+        import drones
+        from flask import g
+        with app.test_request_context('/?month=' + month):
+            g.lang = 'ru'
+            return drones._drone_assignment_hints(month)
+
+    def test_the_closest_machine_is_the_closest_by_relative_difference(self):
+        data = self.hints()
+        by_name = {r['name']: r for r in data['rows']}
+        faiz = by_name['Файзуллаев Фурқат']
+        self.assertAlmostEqual(faiz['area'], 31.5, places=2)
+        self.assertEqual(faiz['best']['number'], 2)
+        self.assertAlmostEqual(faiz['best']['area'], 30.0, places=2)
+        self.assertAlmostEqual(faiz['best']['delta'], -4.7619, places=3)
+        self.assertEqual(faiz['second']['number'], 1)
+        self.assertAlmostEqual(faiz['second']['delta'], -28.8889, places=3)
+
+        khamroev = by_name['Хамроев Шохрух']
+        self.assertAlmostEqual(khamroev['area'], 25.0, places=2)
+        # -10.4 beats +20.0 on absolute relative difference, which is the
+        # whole ranking rule -- a bigger machine is not a better match.
+        self.assertEqual(khamroev['best']['number'], 1)
+        self.assertAlmostEqual(khamroev['best']['delta'], -10.4, places=2)
+        self.assertEqual(khamroev['second']['number'], 2)
+        self.assertAlmostEqual(khamroev['second']['delta'], 20.0, places=2)
+
+    def test_the_month_boundary_holds(self):
+        """March's 500 ha must not appear anywhere in the April comparison."""
+        data = self.hints()
+        self.assertAlmostEqual(data['machine_area'], 57.4, places=2)
+        for machine in data['pool']:
+            self.assertLess(machine['area'], 100.0)
+
+    def test_flights_with_no_machine_are_shown_and_never_a_candidate(self):
+        data = self.hints()
+        self.assertEqual(data['unattributed']['flights'], 1)
+        self.assertAlmostEqual(data['unattributed']['area'], 5.0, places=2)
+        self.assertEqual({m['number'] for m in data['pool']}, {1, 2})
+
+    def test_a_machine_already_assigned_to_that_operator_is_excluded(self):
+        """The differential half: it is a candidate until the assignment exists."""
+        before = self.hints()
+        faiz_id = self.ids['op1']
+        self.assertEqual(
+            [r for r in before['rows']
+             if r['operator_id'] == faiz_id][0]['best']['number'], 2)
+        with app.app_context():
+            row = DroneOperatorAssignment(
+                operator_id=faiz_id, drone_unit_id=self.units[2],
+                date_from=datetime.date(2026, 4, 1),
+                date_to=datetime.date(2026, 4, 30))
+            db.session.add(row)
+            db.session.commit()
+            assignment_id = row.id
+        try:
+            after = self.hints()
+            faiz = [r for r in after['rows']
+                    if r['operator_id'] == faiz_id][0]
+            self.assertEqual(faiz['best']['number'], 1)
+            self.assertIsNone(faiz['second'])
+            self.assertEqual(faiz['already'], [2])
+            # ... and the machine is still a candidate for the OTHER operator,
+            # marked with who holds it, because two operators genuinely share
+            # a machine in the source data.
+            khamroev = [r for r in after['rows']
+                        if r['operator_id'] == self.ids['op2']][0]
+            candidates = [c for c in (khamroev['best'], khamroev['second'])
+                          if c]
+            taken = [c for c in candidates if c['number'] == 2]
+            self.assertEqual(len(taken), 1)
+            self.assertEqual(taken[0]['taken_by'], ['Файзуллаев Фурқат'])
+        finally:
+            with app.app_context():
+                db.session.delete(db.session.get(DroneOperatorAssignment,
+                                                 assignment_id))
+                db.session.commit()
+
+    def test_works_with_no_operator_are_reported_not_hidden(self):
+        data = self.hints('2026-03')
+        self.assertEqual(data['unresolved']['jobs'], 1)
+        self.assertAlmostEqual(data['unresolved']['area'], 30.0, places=2)
+
+    def test_the_screen_opens_and_says_loudly_that_it_only_suggests(self):
+        response = self.client.get('/drones/works/assignment-hints')
+        self.assertEqual(response.status_code, 200)
+        body = response.data.decode('utf-8')
+        self.assertIn('ЭТО ПОДСКАЗКА, А НЕ НАЗНАЧЕНИЕ', body)
+        self.assertIn('довод', body.lower())
+
+    def test_the_screen_writes_nothing(self):
+        """Read-only means read-only: nothing exists that was not there."""
+        with app.app_context():
+            before = (DroneOperatorAssignment.query.count(),
+                      DroneWork.query.count())
+        self.client.get('/drones/works/assignment-hints?month=2026-04')
+        self.client.get('/drones/works/assignment-hints?month=2026-03')
+        with app.app_context():
+            after = (DroneOperatorAssignment.query.count(),
+                     DroneWork.query.count())
+        self.assertEqual(before, after)
+
+    def test_it_is_403_without_the_module(self):
+        with app.app_context():
+            user = User(username='no_drones_hints', role=ROLE_OPERATOR,
+                        full_name='No Drones')
+            user.set_password('x')
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+        client = app.test_client()
+        login(client, user_id)
+        self.assertEqual(
+            client.get('/drones/works/assignment-hints').status_code, 403)
 
 
 if __name__ == '__main__':

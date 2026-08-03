@@ -3678,3 +3678,158 @@ def works_xlsx():
                                 12: '0.00', 13: '0.00', 14: '0.00'},
                    datetime_format={2: 'DD.MM.YYYY', 3: 'DD.MM.YYYY'})
     return _drone_works_xlsx_response(wb, 'drone_works', filters)
+
+
+# ─── DRONE-WORKS-001: assignment hints ───────────────────────────────────────
+
+def _drone_flight_month_expr():
+    """'YYYY-MM' of a flight in the operators' timezone (UTC+5).
+
+    Derived from DRONE_DISPLAY_UTC_OFFSET, never written as a literal -- the
+    summary page groups months the same way, and a second site hardcoding the
+    offset would keep grouping at the old value if the constant ever changed.
+    """
+    offset_minutes = int(DRONE_DISPLAY_UTC_OFFSET.total_seconds() // 60)
+    return func.strftime('%Y-%m',
+                         func.datetime(DroneFlight.started_at,
+                                       '%+d minutes' % offset_minutes))
+
+
+def _drone_month_bounds(month):
+    """('YYYY-MM-01', last day) for an assignment-overlap test."""
+    year, mon = int(month[:4]), int(month[5:7])
+    first = datetime(year, mon, 1).date()
+    if mon == 12:
+        last = datetime(year + 1, 1, 1).date() - timedelta(days=1)
+    else:
+        last = datetime(year, mon + 1, 1).date() - timedelta(days=1)
+    return first, last
+
+
+def _drone_assigned_units_in_month(month):
+    """{operator id: {unit ids}} for assignments overlapping the month."""
+    first, last = _drone_month_bounds(month)
+    rows = (DroneOperatorAssignment.query
+            .filter(DroneOperatorAssignment.date_from <= last)
+            .filter(or_(DroneOperatorAssignment.date_to.is_(None),
+                        DroneOperatorAssignment.date_to >= first))
+            .all())
+    by_operator = {}
+    by_unit = {}
+    for row in rows:
+        by_operator.setdefault(row.operator_id, set()).add(row.drone_unit_id)
+        by_unit.setdefault(row.drone_unit_id, set()).add(row.operator_id)
+    return by_operator, by_unit
+
+
+def _drone_assignment_hints(month):
+    """Operator hectares from the ledger against machine hectares from DJI.
+
+    [REASON]: THIS SCREEN SUGGESTS AND CREATES NOTHING. It is the one place in
+    the module where two independent measurements of the same month can be put
+    side by side: what the dispatchers billed, and what the machines flew. On
+    April 2026 the comparison put all twelve operators within +-9 %, the best
+    being Zhuraev Tuygun on machine No 6 at 0.1 %. It also produced one
+    confident wrong answer, for an operator who changed machines mid-month --
+    which is precisely why a close match is evidence and not proof, and why
+    the human decides. A screen that could write an assignment would turn that
+    one wrong answer into a silently wrong report.
+    """
+    work_month = _drone_work_month_expr()
+    ledger = (db.session.query(
+        DroneWork.drone_operator_id,
+        func.count(DroneWork.id),
+        func.coalesce(func.sum(DroneWork.area_ha), 0.0),
+    ).filter(work_month == month)
+        .filter(DroneWork.drone_operator_id.isnot(None))
+        .group_by(DroneWork.drone_operator_id).all())
+
+    flight_month = _drone_flight_month_expr()
+    machines = (db.session.query(
+        DroneFlight.drone_unit_id,
+        func.count(DroneFlight.id),
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+    ).filter(flight_month == month)
+        .group_by(DroneFlight.drone_unit_id).all())
+
+    unit_numbers = {u.id: u.number for u in DroneUnit.query.all()}
+    operator_names = {o.id: o.full_name for o in DroneOperator.query.all()}
+    assigned_by_operator, assigned_by_unit = _drone_assigned_units_in_month(
+        month)
+
+    pool = []
+    unattributed = {'flights': 0, 'area': 0.0}
+    for unit_id, flights, area in machines:
+        area = float(area or 0.0)
+        if unit_id is None:
+            # [REASON]: a flight whose DJI nickname is not in the alias map
+            # belongs to no machine and therefore cannot be a candidate. It is
+            # shown as its own number rather than dropped, because a big
+            # unattributed bucket is the reason a hint would look wrong.
+            unattributed = {'flights': flights, 'area': area}
+            continue
+        pool.append({'unit_id': unit_id, 'number': unit_numbers.get(unit_id),
+                     'flights': flights, 'area': area,
+                     'taken_by': sorted(
+                         operator_names.get(op_id, '?')
+                         for op_id in assigned_by_unit.get(unit_id, ()))})
+
+    rows = []
+    for operator_id, jobs, area in ledger:
+        area = float(area or 0.0)
+        already = assigned_by_operator.get(operator_id, set())
+        candidates = []
+        for machine in pool:
+            if machine['unit_id'] in already:
+                continue
+            delta = None if not area else (
+                (machine['area'] - area) * 100.0 / area)
+            candidates.append(dict(machine, delta=delta))
+        candidates.sort(key=lambda c: (c['delta'] is None,
+                                       abs(c['delta']) if c['delta'] is not None
+                                       else 0.0))
+        rows.append({
+            'operator_id': operator_id,
+            'name': operator_names.get(operator_id, '?'),
+            'jobs': jobs,
+            'area': area,
+            'already': sorted(unit_numbers.get(u) for u in already),
+            'best': candidates[0] if candidates else None,
+            'second': candidates[1] if len(candidates) > 1 else None,
+        })
+    rows.sort(key=lambda r: r['area'], reverse=True)
+
+    ledger_area = sum(r['area'] for r in rows)
+    machine_area = sum(m['area'] for m in pool) + unattributed['area']
+    unresolved = db.session.query(
+        func.count(DroneWork.id),
+        func.coalesce(func.sum(DroneWork.area_ha), 0.0)
+    ).filter(work_month == month) \
+        .filter(DroneWork.drone_operator_id.is_(None)).one()
+    return {
+        'rows': rows,
+        'pool': sorted(pool, key=lambda m: (m['number'] is None,
+                                            m['number'])),
+        'unattributed': unattributed,
+        'ledger_area': ledger_area,
+        'machine_area': machine_area,
+        'unresolved': {'jobs': unresolved[0] or 0,
+                       'area': float(unresolved[1] or 0.0)},
+    }
+
+
+@drones_bp.route('/works/assignment-hints')
+@module_required('drones')
+def works_assignment_hints():
+    """Read-only. Suggests a machine for an operator; creates nothing."""
+    periods = _drone_work_periods()
+    month = (request.args.get('month') or '').strip()
+    if not re.match(r'^\d{4}-\d{2}$', month or ''):
+        month = periods[0] if periods else ''
+    data = _drone_assignment_hints(month) if month else None
+    return render_template(
+        'drones/works_assignment_hints.html',
+        data=data,
+        month=month,
+        periods=periods,
+    )
