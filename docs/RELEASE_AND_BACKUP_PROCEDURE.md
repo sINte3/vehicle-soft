@@ -125,7 +125,17 @@ Get-Service TransportReport, TransportBot, TransportBot003 | Format-Table Name, 
 Проверить в выводе три вещи: `SUCCESS`, размер приёмника **равен** размеру
 источника, `Integrity check : ok`. Размер сверять числом, а не на глаз.
 
-### Шаг 4 — Проверка блокировки базы
+### Шаг 4 — Забрать код
+
+```
+git merge --ff-only origin/main
+git rev-parse --short HEAD
+```
+
+`--ff-only` намеренно: если слияние не перемотка, история разошлась и это
+разбирают до релиза, а не во время него.
+
+### Шаг 5 — Проверка блокировки базы
 
 ```
 & "C:\Program Files\Python314\python.exe" tools\check_db_lock.py
@@ -135,15 +145,10 @@ Get-Service TransportReport, TransportBot, TransportBot003 | Format-Table Name, 
 открыта, вернуться к шагу 2. Код 3 (`STALE`) — остались `-wal`/`-shm` без
 живого держателя, это след неаккуратной остановки; разобраться до миграции.
 
-### Шаг 5 — Забрать код
-
-```
-git merge --ff-only origin/main
-git rev-parse --short HEAD
-```
-
-`--ff-only` намеренно: если слияние не перемотка, история разошлась и это
-разбирают до релиза, а не во время него.
+**Почему после мержа, а не до него.** До мержа на диске лежит предыдущая
+версия `tools/check_db_lock.py` — и на релизе, который её же и чинит,
+сработала бы именно она; `git merge` базу не трогает, поэтому такой порядок
+безопасен и даёт проверку тем кодом, который едет в этот релиз.
 
 ### Шаг 6 — Дрейф миграций, замер «после pull» (DEPLOY-DRIFT-001)
 
@@ -544,9 +549,9 @@ Full checklist: `docs\QA_CHECKLIST.md`.
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| `git merge --ff-only` fails due to diverged history | Medium | Шаг 5 останавливает релиз. Разбирать через `git status` и `git log`, до старта служб. |
+| `git merge --ff-only` fails due to diverged history | Medium | Шаг 4 останавливает релиз. Разбирать через `git status` и `git log`, до старта служб. |
 | Migration script forgotten — service starts without migrating | High | Сломало v1.10. Закрыто порядком шагов 2–8 и тройным замером дрейфа (шаг 6, `DEPLOY-DRIFT-001`), а не паузой с вопросом к оператору. |
-| Одна служба остановлена вместо трёх | High | Шаг 2 останавливает все три и требует `Stopped` в выводе `Get-Service`. Шаг 4 (`check_db_lock.py`, код 2) ловит оставшегося держателя базы. |
+| Одна служба остановлена вместо трёх | High | Шаг 2 останавливает все три и требует `Stopped` в выводе `Get-Service`. Шаг 5 (`check_db_lock.py`, код 2) ловит оставшегося держателя базы. |
 | Database backup fails silently | Medium | `backup_production_db.bat` exits with code 1 on failure. Task Scheduler can send email alerts (configure in task properties). |
 | Backup disk runs out of space | Medium | Keep only the last 30 daily backups. Review `D:\transport-report-backups\production\daily\` monthly. |
 | Service refuses to start after update | Medium | Check `logs\error.log`. Most common cause: `SECRET_KEY` not set. See `docs\DEPLOYMENT_SECURITY.md`. |
