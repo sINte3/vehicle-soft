@@ -93,6 +93,11 @@
 {% set t_share = 'Доля, %' if is_ru else 'Улуш, %' %}
 {% set t_total = 'Итого' if is_ru else 'Жами' %}
 {% set t_empty = 'Нет данных за период' if is_ru else 'Даврда маълумот йўқ' %}
+{% set t_ha_hour = 'Га/час' if is_ru else 'Га/соат' %}
+{% set t_l_ha = 'Л/га' if is_ru else 'Л/га' %}
+{% set t_op_none = 'Оператор не определён' if is_ru else 'Оператор аниқланмаган' %}
+{% set t_op_many = 'Несколько операторов' if is_ru else 'Бир нечта оператор' %}
+{% set derived_note = 'Оператор здесь ВЫВЕДЕН из таблицы назначений, а не получен из данных: DJI пишет во все вылеты один аккаунт, поэтому пилота в выгрузке нет. Ошибка в периоде назначения молча переносит гектары на другого человека.' if is_ru else 'Бу ердаги оператор бириктиришлар жадвалидан КЕЛТИРИБ ЧИҚАРИЛГАН, маълумотлардан олинган эмас: DJI барча парвозларга битта аккаунтни ёзади, шунинг учун юкламада пилот йўқ. Бириктириш давридаги хато гектарларни бошқа одамга индамай кўчиради.' %}
 {% set mismatch_text = 'Сумма таблицы не сходится с общим итогом — расхождение показано, а не скрыто. Сообщите об этом.' if is_ru else 'Жадвал йиғиндиси умумий якунга тўғри келмайди — фарқ яширилмасдан кўрсатилган. Бу ҳақда хабар беринг.' %}
 
 {# ── По машинам ─────────────────────────────────────────────────────────── #}
@@ -110,6 +115,12 @@
         <th class="right">{{ t_flights }}</th>
         <th class="right">{{ t_area }}</th>
         <th class="right">{{ t_share }}</th>
+        {# DRONE-FLEET-001: обе колонки выведены из уже хранимых полей —
+           work_seconds и spray_liters. Нулевой знаменатель даёт прочерк, а не
+           ноль: 3 % вылетов имеют нулевую площадь (ручные и технические
+           взлёты), и это норма, а не ошибка. #}
+        <th class="right">{{ t_ha_hour }}</th>
+        <th class="right">{{ t_l_ha }}</th>
       </tr>
     </thead>
     <tbody>
@@ -123,6 +134,8 @@
         <td class="right">{{ r.flights }}</td>
         <td class="right">{{ '%.2f'|format(r.area) }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
+        <td class="right">{% if r.ha_per_hour is not none %}{{ '%.2f'|format(r.ha_per_hour) }}{% else %}—{% endif %}</td>
+        <td class="right">{% if r.liters_per_ha is not none %}{{ '%.2f'|format(r.liters_per_ha) }}{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
       {% if data.by_machine.unattributed %}
@@ -131,6 +144,8 @@
         <td class="right">{{ data.by_machine.unattributed.flights }}</td>
         <td class="right">{{ '%.2f'|format(data.by_machine.unattributed.area) }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(data.by_machine.unattributed.share) }}</td>
+        <td class="right">{% if data.by_machine.unattributed.ha_per_hour is not none %}{{ '%.2f'|format(data.by_machine.unattributed.ha_per_hour) }}{% else %}—{% endif %}</td>
+        <td class="right">{% if data.by_machine.unattributed.liters_per_ha is not none %}{{ '%.2f'|format(data.by_machine.unattributed.liters_per_ha) }}{% else %}—{% endif %}</td>
       </tr>
       {% endif %}
       <tr style="font-weight:700;">
@@ -138,9 +153,75 @@
         <td class="right">{{ data.by_machine.total.flights }}</td>
         <td class="right">{{ '%.2f'|format(data.by_machine.total.area) }}</td>
         <td class="right">100.0</td>
+        <td class="right">{% if data.by_machine.total.ha_per_hour is not none %}{{ '%.2f'|format(data.by_machine.total.ha_per_hour) }}{% else %}—{% endif %}</td>
+        <td class="right">{% if data.by_machine.total.liters_per_ha is not none %}{{ '%.2f'|format(data.by_machine.total.liters_per_ha) }}{% else %}—{% endif %}</td>
       </tr>
     </tbody>
   </table>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ t_empty }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{# ── По операторам ─────────────────────────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'По операторам' if is_ru else 'Операторлар бўйича' }}</span>
+  </div>
+  {# Требование задачи: каждый экран и каждая выгрузка с разрезом по
+     операторам несёт видимое предупреждение о происхождении привязки. #}
+  <div class="vs-alert is-info">{{ derived_note }}</div>
+  {% if not data.by_operator.reconciled %}<div class="vs-alert is-danger">{{ mismatch_text }}</div>{% endif %}
+  {% if data.by_operator.rows or data.by_operator.undetermined.flights or data.by_operator.multiple.flights %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Оператор' if is_ru else 'Оператор' }}</th>
+        <th class="right">{{ t_flights }}</th>
+        <th class="right">{{ t_area }}</th>
+        <th class="right">{{ t_share }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in data.by_operator.rows %}
+      <tr>
+        <td><a href="{{ url_for('drones.operator_card', op_id=r.operator_id) }}">{{ r.name }}</a></td>
+        <td class="right">{{ r.flights }}</td>
+        <td class="right">{{ '%.2f'|format(r.area) }}</td>
+        <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
+      </tr>
+      {% endfor %}
+      {% if data.by_operator.undetermined.flights %}
+      <tr>
+        <td><span class="vs-badge vs-badge-warning">{{ t_op_none }}</span></td>
+        <td class="right">{{ data.by_operator.undetermined.flights }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_operator.undetermined.area) }}</td>
+        <td class="right vs-muted">{{ '%.1f'|format(data.by_operator.undetermined.share) }}</td>
+      </tr>
+      {% endif %}
+      {% if data.by_operator.multiple.flights %}
+      <tr>
+        <td><span class="vs-badge vs-badge-warning">{{ t_op_many }}</span></td>
+        <td class="right">{{ data.by_operator.multiple.flights }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_operator.multiple.area) }}</td>
+        <td class="right vs-muted">{{ '%.1f'|format(data.by_operator.multiple.share) }}</td>
+      </tr>
+      {% endif %}
+      <tr style="font-weight:700;">
+        <td>{{ t_total }}</td>
+        <td class="right">{{ data.by_operator.total.flights }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_operator.total.area) }}</td>
+        <td class="right">100.0</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-help">{{ 'Обе служебные строки — часть итога, а не остаток за скобками. Вылет, который накрыт двумя назначениями сразу, не приписывается ни одному из кандидатов: он виден отдельной строкой, и это сигнал поправить период в карточке оператора.' if is_ru else 'Иккала хизматчи қатор ҳам якуннинг қисми, қавс ортидаги қолдиқ эмас. Бирданига иккита бириктириш қамраб олган парвоз номзодларнинг бирортасига ҳам ёзилмайди: у алоҳида қатор бўлиб кўринади, ва бу оператор картасидаги даврни тузатиш сигнали.' }}</div>
   </div>
   {% else %}
   <div class="vs-empty">

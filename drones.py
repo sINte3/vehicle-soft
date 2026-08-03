@@ -1719,6 +1719,144 @@ def _drone_share(area, total_area):
     return round(area * 100.0 / total_area, 1)
 
 
+def _drone_rate(numerator, denominator):
+    """numerator/denominator, or None when the denominator is zero.
+
+    [REASON]: DRONE-FLEET-001 section 6.2. 899 April-to-May flights have zero
+    area and about 3 % of all flights do -- manual and technical take-offs,
+    normal and not an error. None travels to the template and the workbook as
+    an EM DASH: a zero would read as "this machine sprays nothing per
+    hectare", which is a different and false statement, and an unguarded
+    division would 500 the whole page over data that is fine.
+    """
+    if not denominator:
+        return None
+    return numerator / denominator
+
+
+# Bucket keys of the operator cut. Both are rows of the table and both count
+# towards the grand total, exactly like «Не распознано» and «Область не
+# определена» already do.
+DRONE_OPERATOR_NONE = 'none'
+DRONE_OPERATOR_MANY = 'many'
+
+
+def _drone_flight_operator_subquery(conds):
+    """One row per flight: how many operators cover it, and which one.
+
+    THE ATTRIBUTION RULE, implemented exactly as specified and nowhere else:
+    a flight belongs to the operator whose assignment covers ITS MACHINE on
+    ITS LOCAL DATE (UTC+5). No cover -> «Оператор не определён». More than one
+    -> «Несколько операторов». A flight is never silently handed to one of
+    several candidates.
+
+    [REASON]: the count is over DISTINCT operator_id, not over assignment
+    rows. Two rows for the SAME man on the same machine (a period he re-opened
+    after a repair, say) are one candidate, not an ambiguity; counting rows
+    would push his own hectares into «Несколько операторов» and make the cut
+    read as chaos where the data is merely verbose.
+
+    [REASON]: both sides of the date comparison are wrapped in date(). The
+    DATE columns have NUMERIC affinity in SQLite while date(started_at, ...)
+    yields TEXT, and leaning on affinity coercion to make that comparison work
+    is a silent dependency on storage format. date() on both sides makes it a
+    text-to-text comparison of two ISO strings, which is what it must be.
+
+    [REASON]: the whole cut is derived from ONE row per flight (GROUP BY the
+    primary key), which is what makes it reconcile with every other cut on the
+    page. A flight cannot be counted twice by an operator holding two
+    overlapping assignments.
+    """
+    offset_minutes = int(DRONE_DISPLAY_UTC_OFFSET.total_seconds() // 60)
+    local_date = func.date(DroneFlight.started_at,
+                           '%+d minutes' % offset_minutes)
+    assign = aliased(DroneOperatorAssignment)
+    return (db.session.query(
+        DroneFlight.id.label('flight_id'),
+        DroneFlight.area_ha.label('area_ha'),
+        func.count(func.distinct(assign.operator_id)).label('covers'),
+        func.min(assign.operator_id).label('operator_id'),
+    ).outerjoin(assign, and_(
+        assign.drone_unit_id == DroneFlight.drone_unit_id,
+        func.date(assign.date_from) <= local_date,
+        or_(assign.date_to.is_(None),
+            func.date(assign.date_to) >= local_date),
+    )).filter(*conds).group_by(DroneFlight.id).subquery())
+
+
+def _drone_operator_cut(conds, total_area):
+    """Flights, hectares and share per operator, plus the two special rows."""
+    per_flight = _drone_flight_operator_subquery(conds)
+    groups = (db.session.query(
+        per_flight.c.covers,
+        per_flight.c.operator_id,
+        func.count(per_flight.c.flight_id),
+        func.coalesce(func.sum(per_flight.c.area_ha), 0.0),
+    ).group_by(per_flight.c.covers, per_flight.c.operator_id).all())
+
+    names = {op.id: op.full_name for op in DroneOperator.query.all()}
+    by_operator = {}
+    undetermined = {'flights': 0, 'area': 0.0}
+    multiple = {'flights': 0, 'area': 0.0}
+    for covers, operator_id, flights, area in groups:
+        area = float(area or 0.0)
+        if not covers:
+            undetermined['flights'] += flights
+            undetermined['area'] += area
+        elif covers == 1:
+            row = by_operator.setdefault(
+                operator_id, {'operator_id': operator_id,
+                              'name': names.get(operator_id, '?'),
+                              'flights': 0, 'area': 0.0})
+            row['flights'] += flights
+            row['area'] += area
+        else:
+            multiple['flights'] += flights
+            multiple['area'] += area
+
+    rows = sorted(by_operator.values(), key=lambda r: r['area'], reverse=True)
+    for row in rows:
+        row['share'] = _drone_share(row['area'], total_area)
+    for special in (undetermined, multiple):
+        special['share'] = _drone_share(special['area'], total_area)
+
+    o_flights = (sum(r['flights'] for r in rows) + undetermined['flights']
+                 + multiple['flights'])
+    o_area = (sum(r['area'] for r in rows) + undetermined['area']
+              + multiple['area'])
+    return {
+        'rows': rows,
+        # Both special rows are ALWAYS present in the structure; the template
+        # hides an empty one. They are never folded into a named operator.
+        'undetermined': undetermined,
+        'multiple': multiple,
+        'total': {'flights': o_flights, 'area': o_area},
+    }
+
+
+def _drone_operator_by_flight(conds):
+    """{flight id: operator label} under the same rule as the cut above.
+
+    Built from the same subquery, so the flat export and the operator cut
+    cannot drift apart: one attribution rule, one place it is written.
+    """
+    per_flight = _drone_flight_operator_subquery(conds)
+    rows = db.session.query(per_flight.c.flight_id, per_flight.c.covers,
+                            per_flight.c.operator_id).all()
+    names = {op.id: op.full_name for op in DroneOperator.query.all()}
+    label_none = _drone_t('Оператор аниқланмаган', 'Оператор не определён')
+    label_many = _drone_t('Бир нечта оператор', 'Несколько операторов')
+    labels = {}
+    for flight_id, covers, operator_id in rows:
+        if not covers:
+            labels[flight_id] = label_none
+        elif covers == 1:
+            labels[flight_id] = names.get(operator_id, label_none)
+        else:
+            labels[flight_id] = label_many
+    return labels
+
+
 def _drone_summary_data(conds):
     """Aggregate the filtered flights for the summary page and the exports.
 
@@ -1767,23 +1905,39 @@ def _drone_summary_data(conds):
         DroneFlight.drone_unit_id,
         func.count(DroneFlight.id),
         func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+        # DRONE-FLEET-001: the two productivity columns are derived from
+        # fields already stored -- no new column, no new table.
+        func.coalesce(func.sum(DroneFlight.work_seconds), 0),
+        func.coalesce(func.sum(DroneFlight.spray_liters), 0.0),
     ).filter(*conds).group_by(DroneFlight.drone_unit_id).all())
     unit_numbers = {u.id: u.number for u in DroneUnit.query.all()}
     machine_rows = []
     machine_unattributed = None
-    for unit_id, flights, area in machine_groups:
+    m_seconds = 0
+    m_liters = 0.0
+    for unit_id, flights, area, seconds, liters in machine_groups:
         area = float(area or 0.0)
+        seconds = int(seconds or 0)
+        liters = float(liters or 0.0)
+        m_seconds += seconds
+        m_liters += liters
+        cell = {
+            'flights': flights,
+            'area': area,
+            'share': _drone_share(area, total_area),
+            'hours': seconds / 3600.0,
+            'spray_liters': liters,
+            # Guarded: a machine with no recorded flight time and a machine
+            # with no sprayed area both render as an em dash, never as zero.
+            'ha_per_hour': _drone_rate(area, seconds / 3600.0),
+            'liters_per_ha': _drone_rate(liters, area),
+        }
         if unit_id is None:
-            machine_unattributed = {'flights': flights, 'area': area,
-                                    'share': _drone_share(area, total_area)}
+            machine_unattributed = cell
         else:
-            machine_rows.append({
-                'unit_id': unit_id,
-                'number': unit_numbers.get(unit_id),
-                'flights': flights,
-                'area': area,
-                'share': _drone_share(area, total_area),
-            })
+            cell['unit_id'] = unit_id
+            cell['number'] = unit_numbers.get(unit_id)
+            machine_rows.append(cell)
     machine_rows.sort(key=lambda r: (r['number'] is None, r['number']))
     m_flights = (sum(r['flights'] for r in machine_rows)
                  + (machine_unattributed['flights']
@@ -1794,7 +1948,14 @@ def _drone_summary_data(conds):
     by_machine = {
         'rows': machine_rows,
         'unattributed': machine_unattributed,
-        'total': {'flights': m_flights, 'area': m_area},
+        'total': {
+            'flights': m_flights,
+            'area': m_area,
+            'hours': m_seconds / 3600.0,
+            'spray_liters': m_liters,
+            'ha_per_hour': _drone_rate(m_area, m_seconds / 3600.0),
+            'liters_per_ha': _drone_rate(m_liters, m_area),
+        },
         'reconciled': reconciled(m_flights, m_area),
     }
 
@@ -1909,12 +2070,20 @@ def _drone_summary_data(conds):
         'reconciled': reconciled(mo_flights, mo_area),
     }
 
+    # По операторам (DRONE-FLEET-001) -- derived from the assignment table,
+    # never observed. It must reconcile with the grand total exactly like the
+    # four cuts above, and it does because it is built from one row per flight.
+    by_operator = _drone_operator_cut(conds, total_area)
+    by_operator['reconciled'] = reconciled(by_operator['total']['flights'],
+                                           by_operator['total']['area'])
+
     return {
         'totals': totals,
         'by_machine': by_machine,
         'by_region': by_region,
         'by_usage': by_usage,
         'by_month': by_month,
+        'by_operator': by_operator,
     }
 
 
@@ -2064,6 +2233,62 @@ def _drone_xlsx_safe(value):
     return value
 
 
+def _drone_xlsx_rate(value):
+    """None -> em dash in a spreadsheet cell, exactly as on the screen.
+
+    [REASON]: a workbook cell is where a zero does the most damage -- it is
+    summed, averaged and charted downstream. An undefined rate (no flight
+    time recorded, or no sprayed area) must arrive as text nobody can add up,
+    not as a number that means "zero litres per hectare".
+    """
+    return '—' if value is None else value
+
+
+def _drone_operator_derived_note():
+    return _drone_t(
+        'Оператор бириктиришлар жадвалидан келтириб чиқарилган, DJI '
+        'маълумотларидан олинган эмас: бутун парк битта аккаунт остида '
+        'учади. Бириктириш даври нотўғри бўлса, гектарлар бошқа одамга '
+        'ёзилади.',
+        'Оператор выведен из таблицы назначений, а не получен из данных DJI: '
+        'весь парк летает под одним аккаунтом. Если период назначения задан '
+        'неверно, гектары попадут на другого человека.')
+
+
+def _drone_operator_sheet(wb, st, by_operator):
+    """The «По операторам» sheet, identical in both workbooks.
+
+    Carries the derived-attribution note in its first row, because the task
+    requires every export showing an operator cut to state it visibly, and a
+    workbook that leaves the caveat on the web page arrives without it.
+    """
+    ws = wb.create_sheet(_drone_t('Операторлар бўйича', 'По операторам'))
+    ws.append([_drone_operator_derived_note()])
+    ws.append([_drone_t('Оператор', 'Оператор'),
+               _drone_t('Парвозлар', 'Вылеты'),
+               _drone_t('Гектар', 'Гектары'),
+               _drone_t('Улуш, %', 'Доля, %')])
+    for r in by_operator['rows']:
+        ws.append([_drone_xlsx_safe(r['name']), r['flights'], r['area'],
+                   r['share']])
+    # Both special rows are written whenever they carry anything, and they are
+    # part of the total -- never a remainder outside it.
+    if by_operator['undetermined']['flights']:
+        u = by_operator['undetermined']
+        ws.append([_drone_t('Оператор аниқланмаган', 'Оператор не определён'),
+                   u['flights'], u['area'], u['share']])
+    if by_operator['multiple']['flights']:
+        m = by_operator['multiple']
+        ws.append([_drone_t('Бир нечта оператор', 'Несколько операторов'),
+                   m['flights'], m['area'], m['share']])
+    ws.append([_drone_t('Жами', 'Итого'), by_operator['total']['flights'],
+               by_operator['total']['area'], 100.0])
+    # The note occupies row 1, so the header the styler freezes is row 2.
+    st.style_table(ws, num_formats={3: '0.00', 4: '0.0'},
+                   bold_rows=(ws.max_row,), header_row=2)
+    return ws
+
+
 def _drone_xlsx_styler():
     """Shared openpyxl styling for the drones workbooks.
 
@@ -2082,19 +2307,27 @@ def _drone_xlsx_styler():
     thin = Side(style='thin', color='D9D9D9')
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    def style_table(ws, num_formats=None, bold_rows=(), datetime_format=None):
+    def style_table(ws, num_formats=None, bold_rows=(), datetime_format=None,
+                    header_row=1):
         """num_formats: {column index: number format} for numeric cells;
-        datetime_format: {column index: format} for datetime cells."""
-        ws.freeze_panes = 'A2'
+        datetime_format: {column index: format} for datetime cells.
+
+        header_row says which row carries the column names. It is 1 for every
+        sheet but the operator cut, which puts the derived-attribution note
+        above the header -- the caveat has to be the first thing read, and a
+        styler that assumed row 1 would bold the note and freeze the header
+        out of view.
+        """
+        ws.freeze_panes = 'A%d' % (header_row + 1)
         ws.sheet_view.showGridLines = False
         num_formats = num_formats or {}
         datetime_format = datetime_format or {}
-        for cell in ws[1]:
+        for cell in ws[header_row]:
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = Alignment(horizontal='center', vertical='center',
                                        wrap_text=True)
-        for row in ws.iter_rows(min_row=2, max_row=ws.max_row,
+        for row in ws.iter_rows(min_row=header_row + 1, max_row=ws.max_row,
                                 max_col=ws.max_column):
             for cell in row:
                 if (cell.column in num_formats
@@ -2158,6 +2391,8 @@ def summary_xlsx():
     head_flights = _drone_t('Парвозлар', 'Вылеты')
     head_area = _drone_t('Гектар', 'Гектары')
     head_share = _drone_t('Улуш, %', 'Доля, %')
+    head_ha_hour = _drone_t('Га/соат', 'Га/час')
+    head_l_ha = _drone_t('Л/га', 'Л/га')
     unbounded = _drone_t('чекланмаган', 'не ограничен')
 
     wb = Workbook()
@@ -2189,17 +2424,27 @@ def summary_xlsx():
     st.style_table(ws)
 
     # 2. По машинам / Машиналар бўйича
+    # DRONE-FLEET-001: two productivity columns appended at the END. Existing
+    # columns keep their position and their business meaning -- the file goes
+    # to operators and to accounting.
     ws = wb.create_sheet(_drone_t('Машиналар бўйича', 'По машинам'))
     ws.append([_drone_t('Машина (№)', 'Машина (№)'), head_flights,
-               head_area, head_share])
+               head_area, head_share, head_ha_hour, head_l_ha])
     for r in data['by_machine']['rows']:
-        ws.append([r['number'], r['flights'], r['area'], r['share']])
+        ws.append([r['number'], r['flights'], r['area'], r['share'],
+                   _drone_xlsx_rate(r['ha_per_hour']),
+                   _drone_xlsx_rate(r['liters_per_ha'])])
     if data['by_machine']['unattributed']:
         u = data['by_machine']['unattributed']
-        ws.append([label_unattr, u['flights'], u['area'], u['share']])
+        ws.append([label_unattr, u['flights'], u['area'], u['share'],
+                   _drone_xlsx_rate(u['ha_per_hour']),
+                   _drone_xlsx_rate(u['liters_per_ha'])])
     ws.append([label_total, data['by_machine']['total']['flights'],
-               data['by_machine']['total']['area'], 100.0])
-    st.style_table(ws, num_formats={3: '0.00', 4: '0.0'},
+               data['by_machine']['total']['area'], 100.0,
+               _drone_xlsx_rate(data['by_machine']['total']['ha_per_hour']),
+               _drone_xlsx_rate(data['by_machine']['total']['liters_per_ha'])])
+    st.style_table(ws, num_formats={3: '0.00', 4: '0.0', 5: '0.00',
+                                    6: '0.00'},
                    bold_rows=(ws.max_row,))
 
     # 3. По областям / Вилоятлар бўйича
@@ -2245,6 +2490,9 @@ def summary_xlsx():
     st.style_table(ws, num_formats={3: '0.00', 4: '0.0'},
                    bold_rows=(ws.max_row,))
 
+    # 6. По операторам / Операторлар бўйича (DRONE-FLEET-001)
+    _drone_operator_sheet(wb, st, data['by_operator'])
+
     return _drone_xlsx_response(wb, 'drones_summary', filters)
 
 
@@ -2275,6 +2523,13 @@ def flights_xlsx():
                .order_by(DroneFlight.started_at.desc())
                .all())
     usage_labels = _drone_usage_labels()
+    # DRONE-FLEET-001: the per-flight operator, resolved by the SAME rule and
+    # the SAME query the summary cut uses -- one implementation, so the flat
+    # export and the cut can never disagree about who flew a flight.
+    operator_by_flight = _drone_operator_by_flight(conds)
+    total_area = float(db.session.query(
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0))
+        .filter(*conds).scalar() or 0.0)
 
     wb = Workbook()
     ws = wb.active
@@ -2291,11 +2546,18 @@ def flights_xlsx():
         _drone_t('Килограмм', 'Килограммы'),
         _drone_t('Иш тури', 'Тип работы'),
         'DJI id',
+        # The caveat rides in the column NAME: a flat sheet has nowhere else
+        # to put it, and this column must never be read as observed fact.
+        _drone_t('Оператор (бириктиришдан келтирилган)',
+                 'Оператор (выведен по назначениям)'),
+        _drone_t('Га/соат', 'Га/час'),
+        _drone_t('Л/га', 'Л/га'),
     ])
     for f in flights:
         usage_label = usage_labels.get(f.usage_type)
         if usage_label is None and f.usage_type is not None:
             usage_label = str(f.usage_type)
+        hours = (f.work_seconds or 0) / 3600.0
         ws.append([
             (f.started_at + DRONE_DISPLAY_UTC_OFFSET)
             if f.started_at else None,
@@ -2309,9 +2571,18 @@ def flights_xlsx():
             f.sow_kg,
             usage_label,
             f.dji_flight_id,
+            _drone_xlsx_safe(operator_by_flight.get(f.id, '')),
+            _drone_xlsx_rate(_drone_rate(f.area_ha or 0.0, hours)),
+            _drone_xlsx_rate(_drone_rate(f.spray_liters or 0.0, f.area_ha)),
         ])
     st = _drone_xlsx_styler()
     st.style_table(ws,
-                   num_formats={6: '0.00', 7: '0.0', 8: '0.00', 9: '0.000'},
+                   num_formats={6: '0.00', 7: '0.0', 8: '0.00', 9: '0.000',
+                                13: '0.00', 14: '0.00'},
                    datetime_format={1: 'DD.MM.YYYY HH:MM'})
+
+    # The same operator cut sheet as summary.xlsx, over the same filters --
+    # the flat list answers "which flight", the cut answers "how much whose",
+    # and a reader who has only this file needs both.
+    _drone_operator_sheet(wb, st, _drone_operator_cut(conds, total_area))
     return _drone_xlsx_response(wb, 'drones_flights', filters)
