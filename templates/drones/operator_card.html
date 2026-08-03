@@ -1,0 +1,189 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% set can_edit_ops = current_user.can_edit %}
+{% block title %}{{ ('Оператор — ' if is_ru else 'Оператор — ') ~ operator.full_name }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ operator.full_name }}</div>
+    <div class="vs-hero-sub">{{ 'Карточка оператора: контакты и вся история назначений на машины. Назначение закрывают датой «по», а не удалением строки — иначе отчёт за прошлый месяц перестаёт быть объяснимым.' if is_ru else 'Оператор картаси: алоқа маълумотлари ва машиналарга бириктиришларнинг тўлиқ тарихи. Бириктириш «гача» санаси билан ёпилади, қатор ўчирилмайди — акс ҳолда ўтган ойлик ҳисоботни изоҳлаб бўлмай қолади.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('drones.operators') }}" class="vs-btn">{{ 'К списку операторов' if is_ru else 'Операторлар рўйхатига' }}</a>
+  </div>
+</div>
+
+{% if not operator.is_active %}
+<div class="vs-alert is-warning vs-mb">{{ 'Оператор деактивирован. Его назначения и гектары сохраняются в отчётах за прошедшие периоды.' if is_ru else 'Оператор фаолсизлантирилган. Унинг бириктиришлари ва гектарлари ўтган даврлар ҳисоботларида сақланиб қолади.' }}</div>
+{% endif %}
+
+{# ── Карточка оператора ────────────────────────────────────────────────── #}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Данные оператора' if is_ru else 'Оператор маълумотлари' }}</span>
+  </div>
+  <div class="vs-card-body">
+    {% if can_edit_ops %}
+    <form method="post" action="{{ url_for('drones.operator_update', op_id=operator.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="vs-form-row">
+        <div class="vs-field" style="min-width:240px;">
+          <label class="vs-label" for="opName">{{ 'Ф.И.О.' if is_ru else 'Ф.И.Ш.' }}</label>
+          <input type="text" name="full_name" id="opName" class="vs-input" maxlength="200" value="{{ operator.full_name }}" required autocomplete="off">
+        </div>
+        <div class="vs-field" style="min-width:150px;">
+          <label class="vs-label" for="opPhone1">{{ 'Телефон 1' if is_ru else 'Телефон 1' }}</label>
+          <input type="text" name="phone_primary" id="opPhone1" class="vs-input" maxlength="50" value="{{ operator.phone_primary or '' }}" autocomplete="off">
+        </div>
+        <div class="vs-field" style="min-width:150px;">
+          <label class="vs-label" for="opPhone2">{{ 'Телефон 2' if is_ru else 'Телефон 2' }}</label>
+          <input type="text" name="phone_secondary" id="opPhone2" class="vs-input" maxlength="50" value="{{ operator.phone_secondary or '' }}" autocomplete="off">
+        </div>
+        <div class="vs-field" style="min-width:200px;">
+          <label class="vs-label" for="opSub">{{ 'Подразделение' if is_ru else 'Бўлинма' }}</label>
+          <input type="text" name="subdivision_name" id="opSub" class="vs-input" maxlength="120" value="{{ operator.subdivision_name or '' }}" autocomplete="off">
+        </div>
+      </div>
+      <div class="vs-form-row" style="margin-top:10px;">
+        <div class="vs-field" style="min-width:300px;">
+          <label class="vs-label" for="opNote">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+          <input type="text" name="note" id="opNote" class="vs-input" value="{{ operator.note or '' }}" autocomplete="off">
+        </div>
+        <div class="vs-field" style="flex:none;">
+          <label class="vs-label">&nbsp;</label>
+          <label class="vs-label" style="margin:0; display:inline-flex; gap:6px; align-items:center; white-space:nowrap;">
+            <input type="checkbox" name="is_active" value="1" {% if operator.is_active %}checked{% endif %}>{{ 'Активен' if is_ru else 'Фаол' }}
+          </label>
+        </div>
+        <div class="vs-field" style="flex:none;">
+          <label class="vs-label">&nbsp;</label>
+          <button type="submit" class="vs-btn vs-btn-primary">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+        </div>
+      </div>
+      <div class="vs-help">{{ 'Удаления нет: снятая галочка «Активен» убирает оператора из списков выбора и сохраняет всю его историю.' if is_ru else 'Ўчириб ташлаш йўқ: «Фаол» белгиси олиб ташланса, оператор танлов рўйхатларидан чиқади, бутун тарихи эса сақланиб қолади.' }}</div>
+    </form>
+    {% else %}
+    <div class="vs-stack-sm">
+      <div>{{ 'Телефоны' if is_ru else 'Телефонлар' }}: {{ operator.phone_primary or '—' }}{% if operator.phone_secondary %} · {{ operator.phone_secondary }}{% endif %}</div>
+      <div>{{ 'Подразделение' if is_ru else 'Бўлинма' }}: {{ operator.subdivision_name or '—' }}</div>
+      {% if operator.note %}<div class="vs-muted">{{ operator.note }}</div>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Добавить назначение ───────────────────────────────────────────────── #}
+{% if can_edit_ops %}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Назначить на машину' if is_ru else 'Машинага бириктириш' }}</span>
+  </div>
+  <div class="vs-card-body">
+    <form method="post" action="{{ url_for('drones.operator_assignment_add', op_id=operator.id) }}" class="vs-form-row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="vs-field" style="min-width:200px;">
+        <label class="vs-label" for="addAsgUnit">{{ 'Машина' if is_ru else 'Машина' }}</label>
+        <select name="drone_unit_id" id="addAsgUnit" class="vs-select" required>
+          <option value="">{{ '— выберите машину —' if is_ru else '— машинани танланг —' }}</option>
+          {% for u in units %}
+          <option value="{{ u.id }}">№ {{ u.number }}{% if u.hardware_id %} — {{ u.hardware_id }}{% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="width:170px;">
+        <label class="vs-label" for="addAsgFrom">{{ 'Дата с *' if is_ru else 'Сана дан *' }}</label>
+        <input type="date" name="date_from" id="addAsgFrom" class="vs-input" required>
+      </div>
+      <div class="vs-field" style="width:170px;">
+        <label class="vs-label" for="addAsgTo">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
+        <input type="date" name="date_to" id="addAsgTo" class="vs-input">
+      </div>
+      <div class="vs-field" style="min-width:200px;">
+        <label class="vs-label" for="addAsgNote">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+        <input type="text" name="note" id="addAsgNote" class="vs-input" autocomplete="off">
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn vs-btn-primary">{{ 'Назначить' if is_ru else 'Бириктириш' }}</button>
+      </div>
+    </form>
+    <div class="vs-help">{{ '«Дата с» обязательна. Пустая «Дата по» означает «работает сейчас». Пересечение с другим назначением на ту же машину разрешено и сохраняется — система только предупреждает и в отчёте показывает такие вылеты строкой «Несколько операторов».' if is_ru else '«Сана дан» мажбурий. Бўш «Сана гача» «ҳозир ишламоқда» дегани. Айни машинадаги бошқа бириктириш билан кесишишга рухсат берилади ва у сақланади — тизим фақат огоҳлантиради ва ҳисоботда бундай парвозларни «Бир нечта оператор» қатори билан кўрсатади.' }}</div>
+  </div>
+</div>
+{% endif %}
+
+{# ── История назначений ────────────────────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'История назначений' if is_ru else 'Бириктиришлар тарихи' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'Всего' if is_ru else 'Жами' }}: {{ assignments|length }}</span>
+  </div>
+  {% if assignments %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Машина' if is_ru else 'Машина' }}</th>
+        <th>{{ 'Дата с' if is_ru else 'Сана дан' }}</th>
+        <th>{{ 'Дата по' if is_ru else 'Сана гача' }}</th>
+        <th>{{ 'Примечание' if is_ru else 'Изоҳ' }}</th>
+        <th>{{ 'Сейчас' if is_ru else 'Ҳозир' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in assignments %}
+      <tr>
+        {% if can_edit_ops %}
+        <td colspan="5">
+          <form method="post" action="{{ url_for('drones.operator_assignment_update', assign_id=a.id) }}" class="vs-row" style="gap:8px; flex-wrap:wrap; align-items:center;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <select name="drone_unit_id" class="vs-select" style="width:130px;">
+              {% for opt in units %}
+              <option value="{{ opt.id }}" {% if opt.id == a.drone_unit_id %}selected{% endif %}>№ {{ opt.number }}</option>
+              {% endfor %}
+            </select>
+            <input type="date" name="date_from" class="vs-input" style="width:160px;" value="{{ a.date_from.isoformat() if a.date_from else '' }}" required>
+            <input type="date" name="date_to" class="vs-input" style="width:160px;" value="{{ a.date_to.isoformat() if a.date_to else '' }}">
+            <input type="text" name="note" class="vs-input" style="min-width:180px; flex:1;" value="{{ a.note or '' }}" autocomplete="off">
+            <button type="submit" class="vs-btn vs-btn-sm">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+            {% if current_flags.get(a.id) %}
+            <span class="vs-badge vs-badge-success">{{ 'действует' if is_ru else 'амалда' }}</span>
+            {% elif a.date_to %}
+            <span class="vs-badge">{{ 'закрыто' if is_ru else 'ёпилган' }}</span>
+            {% else %}
+            <span class="vs-badge vs-badge-warning">{{ 'ещё не началось' if is_ru else 'ҳали бошланмаган' }}</span>
+            {% endif %}
+          </form>
+        </td>
+        {% else %}
+        <td style="font-weight:700;">№ {{ a.drone_unit.number if a.drone_unit else '?' }}</td>
+        <td>{{ a.date_from.strftime('%d.%m.%Y') if a.date_from else '—' }}</td>
+        <td>{{ a.date_to.strftime('%d.%m.%Y') if a.date_to else '—' }}</td>
+        <td class="vs-muted">{{ a.note or '—' }}</td>
+        <td>
+          {% if current_flags.get(a.id) %}
+          <span class="vs-badge vs-badge-success">{{ 'действует' if is_ru else 'амалда' }}</span>
+          {% else %}
+          <span class="vs-badge">{{ 'нет' if is_ru else 'йўқ' }}</span>
+          {% endif %}
+        </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-help">{{ 'Чтобы закрыть назначение, поставьте «Дату по» и сохраните. Строку не удаляют: она объясняет, кому засчитаны гектары в уже отправленных отчётах.' if is_ru else 'Бириктиришни ёпиш учун «Сана гача»ни қўйиб сақланг. Қатор ўчирилмайди: у аллақачон юборилган ҳисоботларда гектарлар кимга ёзилганини изоҳлайди.' }}</div>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Назначений нет' if is_ru else 'Бириктиришлар йўқ' }}</div>
+    <div class="vs-empty-sub">{{ 'Пока оператор не привязан ни к одной машине, его вылеты попадают в строку «Оператор не определён».' if is_ru else 'Оператор бирор машинага бириктирилмагунча, унинг парвозлари «Оператор аниқланмаган» қаторига тушади.' }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

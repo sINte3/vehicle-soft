@@ -29,14 +29,22 @@ from datetime import datetime, timedelta
 from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
                    render_template, request, send_file, url_for, g)
 from flask_login import current_user
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import aliased, joinedload
 
 from ingest_common import verify_api_token, extract_token
 from models import (
     db,
+    DRONE_BATTERY_CONDITIONS,
+    DRONE_STATUSES,
+    DRONE_STATUS_SERVICEABLE,
+    DRONE_STATUS_UNSERVICEABLE,
+    DroneBattery,
+    DroneOperator,
+    DroneOperatorAssignment,
     DroneUnit,
+    DroneUnitStatusLog,
     DroneNickname,
     DroneFlight,
     DroneReattachRun,
@@ -1063,6 +1071,327 @@ def reattach_undo(run_id):
         'состояние, %d пропущено (они были изменены с тех пор).')
         % (run.id, reverted, skipped), 'success')
     return redirect(url_for('drones.reattach'))
+
+
+# ─── Fleet directories: operators and assignments (DRONE-FLEET-001) ───────────
+#
+# [REASON]: THE RULE THIS WHOLE SECTION EXISTS FOR. An assignment of an
+# operator to a machine WITHOUT a validity period is worthless. The
+# 2026-08-03 reconciliation against the dispatchers' April ledgers matched the
+# month total to 0.15 % while the per-subdivision breakdown carried two errors
+# of +460 ha and -544 ha that happened to cancel: one operator flew machine
+# No 4 until 13 April and No 8 from 14 April, and the dispatcher kept booking
+# his work to his own subdivision. Our data confirms the boundary
+# independently -- No 4 has 198 flights and none after 13 April, No 8 jumps
+# from 107 to 541 flights on that date. With dates, all twelve operators fell
+# within +-9 %. So date_from is mandatory everywhere below, and closing an
+# assignment means SETTING date_to -- there is no delete route, for an
+# operator or for an assignment, exactly as there is none for a nickname.
+#
+# [REASON]: OVERLAPS ARE SAVED, NOT REFUSED. Two operators genuinely appear on
+# one machine in the source, and a substitution is written into the sheet as
+# "Anvarov Usmon (Qodirov Nurali)". A screen that refuses the real data is a
+# screen nobody can use, and it would push somebody to invent dates that make
+# the form happy. The save succeeds and a warning names the other assignment;
+# the report gives a multi-covered flight its own visible row.
+
+
+def _drone_today_local():
+    """Today's date as the operators see it (UTC+5), not as the server sees it."""
+    return (datetime.utcnow() + DRONE_DISPLAY_UTC_OFFSET).date()
+
+
+def _drone_fmt_date(value):
+    return value.strftime('%d.%m.%Y') if value else '—'
+
+
+def _drone_operators_redirect(op_id=None):
+    if op_id:
+        return redirect(url_for('drones.operator_card', op_id=op_id))
+    return redirect(url_for('drones.operators'))
+
+
+def _drone_assignment_overlaps(drone_unit_id, date_from, date_to,
+                               exclude_id=None):
+    """Assignments on the SAME machine whose period intersects the given one.
+
+    Two half-open intervals overlap when A.from <= B.to and B.from <= A.to,
+    with a NULL end meaning "still current", i.e. +infinity. The NULL branch
+    is spelled out rather than folded into a COALESCE with a far-future date:
+    a sentinel date is a value somebody eventually filters on by accident.
+
+    This is a WARNING source, never a veto -- see the section header.
+    """
+    q = DroneOperatorAssignment.query.filter(
+        DroneOperatorAssignment.drone_unit_id == drone_unit_id)
+    if exclude_id:
+        q = q.filter(DroneOperatorAssignment.id != exclude_id)
+    if date_to is not None:
+        q = q.filter(DroneOperatorAssignment.date_from <= date_to)
+    q = q.filter(or_(DroneOperatorAssignment.date_to.is_(None),
+                     DroneOperatorAssignment.date_to >= date_from))
+    return (q.options(joinedload(DroneOperatorAssignment.operator),
+                      joinedload(DroneOperatorAssignment.drone_unit))
+            .order_by(DroneOperatorAssignment.date_from).all())
+
+
+def _drone_flash_overlap(rows):
+    """Name every other assignment the saved one overlaps with."""
+    if not rows:
+        return
+    names = ', '.join(
+        '%s (№ %s, %s — %s)' % (
+            r.operator.full_name if r.operator else '?',
+            r.drone_unit.number if r.drone_unit else '?',
+            _drone_fmt_date(r.date_from),
+            _drone_fmt_date(r.date_to))
+        for r in rows)
+    flash(_drone_t(
+        'Сақланди, аммо давр бошқа бириктириш билан кесишади: %s. '
+        'Ҳисоботда бундай парвозлар «Бир нечта оператор» қаторига тушади — '
+        'улар йўқолмайди, аммо бирор операторга ёзилмайди ҳам.',
+        'Сохранено, но период пересекается с другим назначением: %s. '
+        'В отчёте такие вылеты попадут в строку «Несколько операторов» — '
+        'они не теряются, но и не приписываются никому одному.')
+        % names, 'warning')
+
+
+def _drone_assignments_by_operator(operator_ids=None):
+    """All assignments, grouped by operator id, machines joined in one query."""
+    q = (DroneOperatorAssignment.query
+         .options(joinedload(DroneOperatorAssignment.drone_unit)))
+    if operator_ids is not None:
+        q = q.filter(DroneOperatorAssignment.operator_id.in_(operator_ids))
+    grouped = {}
+    for row in q.order_by(DroneOperatorAssignment.date_from.desc(),
+                          DroneOperatorAssignment.id.desc()).all():
+        grouped.setdefault(row.operator_id, []).append(row)
+    return grouped
+
+
+def _drone_assignment_is_current(row, today):
+    return (row.date_from is not None and row.date_from <= today
+            and (row.date_to is None or row.date_to >= today))
+
+
+@drones_bp.route('/operators')
+@module_required('drones')
+def operators():
+    """Directory of pilots with the machines they currently fly."""
+    rows = (DroneOperator.query
+            .order_by(DroneOperator.is_active.desc(), DroneOperator.full_name)
+            .all())
+    # One query for every assignment, grouped in Python -- the lazy='dynamic'
+    # relationship would give one query per operator.
+    assignments = _drone_assignments_by_operator()
+    today = _drone_today_local()
+    current_units = {}
+    for op in rows:
+        current_units[op.id] = [
+            a for a in assignments.get(op.id, [])
+            if _drone_assignment_is_current(a, today)]
+    return render_template(
+        'drones/operators.html',
+        operators=rows,
+        current_units=current_units,
+        assignment_counts={op.id: len(assignments.get(op.id, []))
+                           for op in rows},
+        today=today,
+    )
+
+
+@drones_bp.route('/operators/add', methods=['POST'])
+@module_required('drones')
+def operators_add():
+    if not current_user.can_edit:
+        abort(403)
+
+    full_name = (request.form.get('full_name') or '').strip()
+    if not full_name:
+        flash(_drone_t('Оператор Ф.И.Ш. бўш бўлиши мумкин эмас.',
+                       'Ф.И.О. оператора не может быть пустым.'), 'warning')
+        return _drone_operators_redirect()
+
+    row = DroneOperator(
+        full_name=full_name,
+        phone_primary=(request.form.get('phone_primary') or '').strip() or None,
+        phone_secondary=(request.form.get('phone_secondary') or '').strip() or None,
+        subdivision_name=(request.form.get('subdivision_name') or '').strip() or None,
+        note=(request.form.get('note') or '').strip() or None,
+        is_active=True,
+    )
+    db.session.add(row)
+    db.session.commit()
+    flash(_drone_t('«%s» оператори қўшилди.', 'Оператор «%s» добавлен.')
+          % full_name, 'success')
+    return _drone_operators_redirect(row.id)
+
+
+@drones_bp.route('/operators/<int:op_id>')
+@module_required('drones')
+def operator_card(op_id):
+    """One pilot: his details and the full history of his assignments."""
+    operator = DroneOperator.query.get(op_id)
+    if operator is None:
+        abort(404)
+    assignments = _drone_assignments_by_operator([op_id]).get(op_id, [])
+    today = _drone_today_local()
+    return render_template(
+        'drones/operator_card.html',
+        operator=operator,
+        assignments=assignments,
+        current_flags={a.id: _drone_assignment_is_current(a, today)
+                       for a in assignments},
+        units=DroneUnit.query.order_by(DroneUnit.number).all(),
+        today=today,
+    )
+
+
+@drones_bp.route('/operators/<int:op_id>/update', methods=['POST'])
+@module_required('drones')
+def operator_update(op_id):
+    """Edit a pilot, or deactivate him. There is deliberately no delete.
+
+    [REASON]: an operator who left still owns the hectares he flew. Deleting
+    the row would orphan every assignment that explains an already-sent
+    report; deactivating keeps the history readable and takes him out of the
+    pickers.
+    """
+    if not current_user.can_edit:
+        abort(403)
+
+    operator = DroneOperator.query.get(op_id)
+    if operator is None:
+        abort(404)
+
+    full_name = (request.form.get('full_name') or '').strip()
+    if not full_name:
+        flash(_drone_t('Оператор Ф.И.Ш. бўш бўлиши мумкин эмас.',
+                       'Ф.И.О. оператора не может быть пустым.'), 'warning')
+        return _drone_operators_redirect(op_id)
+
+    operator.full_name = full_name
+    operator.phone_primary = (request.form.get('phone_primary') or '').strip() or None
+    operator.phone_secondary = (request.form.get('phone_secondary') or '').strip() or None
+    operator.subdivision_name = (request.form.get('subdivision_name') or '').strip() or None
+    operator.note = (request.form.get('note') or '').strip() or None
+    # An unchecked checkbox is simply absent from the form body.
+    operator.is_active = request.form.get('is_active') is not None
+    db.session.commit()
+
+    if operator.is_active:
+        flash(_drone_t('«%s» оператори янгиланди.',
+                       'Оператор «%s» обновлён.') % full_name, 'success')
+    else:
+        flash(_drone_t(
+            '«%s» оператори фаолсизлантирилди: у янги бириктиришлар '
+            'рўйхатида кўринмайди, аммо бириктиришлари ва гектарлари '
+            'сақланиб қолади.',
+            'Оператор «%s» деактивирован: он не появляется в списках выбора, '
+            'но его назначения и гектары сохраняются.')
+            % full_name, 'success')
+    return _drone_operators_redirect(op_id)
+
+
+def _drone_assignment_form_values():
+    """(drone_unit, date_from, date_to, note, error_message) from the form."""
+    unit_id = request.form.get('drone_unit_id', type=int)
+    unit = DroneUnit.query.get(unit_id) if unit_id else None
+    date_from = _drone_parse_date(request.form.get('date_from'))
+    date_to = _drone_parse_date(request.form.get('date_to'))
+    note = (request.form.get('note') or '').strip() or None
+
+    if unit is None:
+        return None, None, None, None, _drone_t(
+            'Машина танланмаган ёки топилмади.',
+            'Машина не выбрана или не найдена.')
+    if date_from is None:
+        # [REASON]: the mandatory field of this task. A dateless assignment
+        # cannot reproduce April and will be wrong again at the next move.
+        return None, None, None, None, _drone_t(
+            '«Санадан» мажбурий: даврсиз бириктириш ҳисоботни тиклай олмайди.',
+            '«Дата с» обязательна: назначение без периода не может '
+            'воспроизвести отчёт.')
+    if date_to is not None and date_to < date_from:
+        return None, None, None, None, _drone_t(
+            '«Санагача» «Санадан»дан олдин бўлиши мумкин эмас.',
+            '«Дата по» не может быть раньше «Даты с».')
+    return unit, date_from, date_to, note, None
+
+
+@drones_bp.route('/operators/<int:op_id>/assignments/add', methods=['POST'])
+@module_required('drones')
+def operator_assignment_add(op_id):
+    if not current_user.can_edit:
+        abort(403)
+
+    operator = DroneOperator.query.get(op_id)
+    if operator is None:
+        abort(404)
+
+    unit, date_from, date_to, note, error = _drone_assignment_form_values()
+    if error:
+        flash(error, 'warning')
+        return _drone_operators_redirect(op_id)
+
+    overlaps = _drone_assignment_overlaps(unit.id, date_from, date_to)
+    row = DroneOperatorAssignment(
+        operator_id=operator.id, drone_unit_id=unit.id, date_from=date_from,
+        date_to=date_to, note=note,
+        created_by=(current_user.id
+                    if getattr(current_user, 'is_authenticated', False)
+                    else None))
+    db.session.add(row)
+    db.session.commit()
+
+    flash(_drone_t('Бириктириш қўшилди: № %s машина, %s дан.',
+                   'Назначение добавлено: машина № %s, с %s.')
+          % (unit.number, _drone_fmt_date(date_from)), 'success')
+    _drone_flash_overlap(overlaps)
+    return _drone_operators_redirect(op_id)
+
+
+@drones_bp.route('/operators/assignments/<int:assign_id>/update',
+                 methods=['POST'])
+@module_required('drones')
+def operator_assignment_update(assign_id):
+    """Edit one assignment, including closing it by setting date_to.
+
+    [REASON]: closing is SETTING date_to, never deleting the row. The row is
+    the only record of who flew that machine in April; a report printed in May
+    stops being explainable the moment it is gone.
+    """
+    if not current_user.can_edit:
+        abort(403)
+
+    row = DroneOperatorAssignment.query.get(assign_id)
+    if row is None:
+        abort(404)
+
+    unit, date_from, date_to, note, error = _drone_assignment_form_values()
+    if error:
+        flash(error, 'warning')
+        return _drone_operators_redirect(row.operator_id)
+
+    overlaps = _drone_assignment_overlaps(unit.id, date_from, date_to,
+                                          exclude_id=row.id)
+    row.drone_unit_id = unit.id
+    row.date_from = date_from
+    row.date_to = date_to
+    row.note = note
+    db.session.commit()
+
+    if date_to is None:
+        flash(_drone_t('Бириктириш янгиланди: № %s машина, %s дан, амалда.',
+                       'Назначение обновлено: машина № %s, с %s, действует.')
+              % (unit.number, _drone_fmt_date(date_from)), 'success')
+    else:
+        flash(_drone_t('Бириктириш ёпилди: № %s машина, %s — %s.',
+                       'Назначение закрыто: машина № %s, %s — %s.')
+              % (unit.number, _drone_fmt_date(date_from),
+                 _drone_fmt_date(date_to)), 'success')
+    _drone_flash_overlap(overlaps)
+    return _drone_operators_redirect(row.operator_id)
 
 
 # ─── Summary and Excel exports (DRONE-004) ────────────────────────────────────
