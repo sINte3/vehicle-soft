@@ -180,6 +180,37 @@
     {% endif %}
   </div>
 
+  {# Drones — DRONE-FLEET-001. Плитка строго дополняющая: ни одно из правил
+     выше не изменено. Данные приходят из ленивой функции, объявленной
+     блюпринтом дронов (drones.py), поэтому маршрут дашборда не тронут;
+     запрос выполняется только здесь и только при наличии доступа к модулю. #}
+  {% set fleet = drone_fleet_status() %}
+  <div class="vs-kpi">
+    <div class="vs-kpi-head">
+      <div class="vs-kpi-label">{{ 'Дроны — исправность' if lang == 'ru' else 'Дронлар — созлиги' }}</div>
+      {% if fleet %}
+      <a href="{{ url_for('drones.units') }}" class="vs-kpi-link">{{ 'Открыть →' if lang == 'ru' else 'Очиш →' }}</a>
+      {% endif %}
+    </div>
+    {% if fleet and not fleet.error %}
+    <div class="vs-kpi-grid-2">
+      <div class="vs-mini is-success"><span class="vs-mini-v vs-num">{{ fleet.serviceable }}</span><span class="vs-mini-l">{{ 'исправны' if lang == 'ru' else 'соз' }}</span></div>
+      <div class="vs-mini{% if fleet.unserviceable > 0 %} is-danger{% endif %}"><span class="vs-mini-v vs-num">{{ fleet.unserviceable }}</span><span class="vs-mini-l">{{ 'неисправны' if lang == 'ru' else 'носоз' }}</span></div>
+      {# Машина без единой записи в журнале — «не сказано», а не «исправна». #}
+      <div class="vs-mini{% if fleet.unknown > 0 %} is-warning{% endif %}"><span class="vs-mini-v vs-num">{{ fleet.unknown }}</span><span class="vs-mini-l">{{ 'не указано' if lang == 'ru' else 'кўрсатилмаган' }}</span></div>
+      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ fleet.total }}</span><span class="vs-mini-l">{{ 'всего' if lang == 'ru' else 'жами' }}</span></div>
+    </div>
+    {% elif fleet %}
+    <div class="vs-empty" style="border:none; padding:24px 0; background:transparent;">
+      <div class="vs-empty-sub">{{ 'Данные об исправности недоступны' if lang == 'ru' else 'Созлик маълумотлари мавжуд эмас' }}</div>
+    </div>
+    {% else %}
+    <div class="vs-empty" style="border:none; padding:24px 0; background:transparent;">
+      <div class="vs-empty-sub">{{ 'Нет доступа к модулю' if lang == 'ru' else 'Модулга рухсат йўқ' }}</div>
+    </div>
+    {% endif %}
+  </div>
+
 </div>
 
 {# ════════ DASH003 — WORK ORDERS ANALYTICS ════════ #}

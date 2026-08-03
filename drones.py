@@ -637,6 +637,47 @@ def units():
 # stops resolving at ingest (_drone_nickname_maps filters on is_active).
 
 
+@drones_bp.app_context_processor
+def _drone_dashboard_context():
+    """Expose a LAZY fleet-status callable to every template (DRONE-FLEET-001).
+
+    [REASON]: registered from the BLUEPRINT rather than added to the dashboard
+    route. The main dashboard belongs to another track and app.py is a shared
+    file; this keeps the cross-track change down to one additive tile in
+    templates/index.html and nothing else.
+
+    [REASON]: the value is a FUNCTION, not the numbers. An app-wide context
+    processor runs on every render in every module, and computing the counts
+    eagerly would put two queries on every page of the whole application to
+    feed one tile on one page. Nothing runs until a template calls it.
+    """
+    def drone_fleet_status():
+        if not getattr(current_user, 'is_authenticated', False):
+            return None
+        if not current_user.has_module_access('drones'):
+            return None
+        try:
+            serviceable, unserviceable, unknown = _drone_fleet_status_counts()
+        except Exception:
+            # [REASON]: a drones table that is missing or mid-migration must
+            # not take the whole dashboard down with it -- but it must not be
+            # reported as "0 broken machines" either, which is a false and
+            # comfortable answer. The rollback is required: a failed statement
+            # leaves the session unusable for the rest of the page.
+            db.session.rollback()
+            current_app.logger.exception('drone fleet status tile failed')
+            return {'error': True}
+        return {
+            'error': False,
+            'serviceable': serviceable,
+            'unserviceable': unserviceable,
+            'unknown': unknown,
+            'total': serviceable + unserviceable + unknown,
+        }
+
+    return {'drone_fleet_status': drone_fleet_status}
+
+
 def _drone_units_redirect():
     return redirect(url_for('drones.units'))
 
