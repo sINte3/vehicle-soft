@@ -2,7 +2,22 @@
 
 Task ID: TASK-DEPLOY-004  
 Created: 2026-05-23  
+Updated: 2026-08-02 (DOC-RELEASE-PROC-001, DEPLOY-DRIFT-001)  
 Applies to: Windows production server, `C:\transport-report\`
+
+---
+
+> ## ⛔ НЕ ЗАПУСКАТЬ `update.bat` ДЛЯ РЕЛИЗА С МИГРАЦИЕЙ
+>
+> `update.bat` остаётся в репозитории и работает, но он останавливает **одну**
+> службу из трёх и стартует её сразу после паузы с вопросом о миграции —
+> то есть поднимает новый код на непромигрированной базе, если оператор
+> ответит не задумываясь. Ровно так сломался релиз v1.10: служба поднялась на
+> новом коде раньше своей миграции и отвечала `no such column` почти на каждом
+> экране.
+>
+> Для любого релиза используйте **[Процедуру обновления](#процедура-обновления-фактическая)**
+> ниже. Скрипт не изменён и не удалён: это отдельное решение.
 
 ---
 
@@ -49,119 +64,157 @@ Before running any update, complete this checklist:
       (See `docs\DEPLOYMENT_SECURITY.md`.)
 - [ ] Confirm a recent daily backup exists in `D:\transport-report-backups\production\daily\`.
       The pre-update script also creates a backup, but a recent daily backup is a second safety net.
-- [ ] Notify users that a brief downtime is coming (service will be stopped during update).
+- [ ] Notify users that a brief downtime is coming — **all three** services are
+      stopped during the update, not just `TransportReport`.
 - [ ] Close any open Excel reports downloaded from the application.
+- [ ] Записать числа для дымовой проверки **до** начала работ: количество
+      единиц техники, контрагентов, и ключевые числа затронутого трека.
+      После релиза сверять не с чем, если они не записаны заранее.
+- [ ] Записать ожидаемый переход `file-but-not-registered` для шага 6:
+      `0 -> N -> 0`, где N — число миграций в релизе.
 
 ---
 
-## Production update procedure
+## Процедура обновления (фактическая)
 
-### Option A — Automated: use `update.bat`
+Так выпущены v1.9, v1.10 и v1.11. Порядок шагов — часть процедуры, а не
+оформление: он выведен из того, чем именно сломался v1.10.
 
-`update.bat` is located in `C:\transport-report\`. It runs all steps in sequence and stops at any failure.
+PowerShell, по одной команде на строку — в PowerShell нет `&&`.
 
-Open CMD as Administrator and run:
+### Шаг 1 — Предполётная проверка, службы ещё работают
 
-```cmd
+Только чтение, ничего не меняет. Выполняется до остановки служб, чтобы
+обнаруженная проблема не стоила простоя.
+
+```
 cd C:\transport-report
-update.bat
+git fetch origin
+git status --short
+git rev-parse --short HEAD
+git --no-pager log --oneline HEAD..origin/main
 ```
 
-The script:
-1. Verifies the working directory.
-2. Creates a pre-update backup using the SQLite online backup API (`backup_transport_db.py`) in `C:\transport-report-backups\before_update\`.
-3. Stops the `TransportReport` service.
-4. Runs `git status` and `git pull --ff-only origin main`.
-5. Runs Python syntax check on all main modules.
-6. Runs application import check (`from app import app`).
-7. Prints the migration warning and pauses — operator must confirm no migration is needed (or run migrations first).
-8. Starts the `TransportReport` service.
-9. Prints the backup file path and application URL.
+- Локальных коммитов впереди `origin/main` быть не должно. Если они есть —
+  остановиться и разобраться, откуда они взялись.
+- Прочитать **весь** вывод `log --oneline HEAD..origin/main` и назвать каждый
+  трек, который в нём присутствует. `main` общая для четырёх треков; в релиз
+  едет всё, что смержено, а не только то, чего вы ждёте.
 
-If any step fails, the script exits immediately with a clear error message. The service remains stopped. See **Rollback procedure** below.
+### Шаг 2 — Остановить все три службы
 
----
+`AppDirectory` = `C:\transport-report` у трёх служб, и все три пишут в одну базу.
+Остановка одной оставляет двух живых писателей.
 
-### Option B — Manual: step by step
-
-Use this when `update.bat` cannot be used or when more control is needed.
-
-Open CMD as Administrator in `C:\transport-report\`:
-
-```cmd
-cd C:\transport-report
+```
+Stop-Service TransportReport
+Stop-Service TransportBot
+Stop-Service TransportBot003
+Get-Service TransportReport, TransportBot, TransportBot003 | Format-Table Name, Status
 ```
 
-#### Step 1: Create a manual backup
+Все три обязаны показать `Stopped`. Не «команда прошла без ошибки» — именно
+`Stopped` в выводе.
 
-```cmd
-backup_production_db.bat
+### Шаг 3 — Резервная копия на остановленной базе
+
+```
+.\backup_production_db.bat
 ```
 
-Confirm that the output says `SUCCESS` and shows the backup file path.
+Проверить в выводе три вещи: `SUCCESS`, размер приёмника **равен** размеру
+источника, `Integrity check : ok`. Размер сверять числом, а не на глаз.
 
-#### Step 2: Stop the service
+### Шаг 4 — Забрать код
 
-```cmd
-.\nssm.exe stop TransportReport
+```
+git merge --ff-only origin/main
+git rev-parse --short HEAD
 ```
 
-If `nssm.exe` is not in the project folder:
+`--ff-only` намеренно: если слияние не перемотка, история разошлась и это
+разбирают до релиза, а не во время него.
 
-```cmd
-net stop TransportReport
+### Шаг 5 — Проверка блокировки базы
+
+```
+& "C:\Program Files\Python314\python.exe" tools\check_db_lock.py
 ```
 
-#### Step 3: Pull the latest code
+Код возврата 0 (`CLEAN`) — можно продолжать. Код 2 (`HELD`) — база у кого-то
+открыта, вернуться к шагу 2. Код 3 (`STALE`) — остались `-wal`/`-shm` без
+живого держателя, это след неаккуратной остановки; разобраться до миграции.
 
-```cmd
-git status
-git pull --ff-only origin main
+**Почему после мержа, а не до него.** До мержа на диске лежит предыдущая
+версия `tools/check_db_lock.py` — и на релизе, который её же и чинит,
+сработала бы именно она; `git merge` базу не трогает, поэтому такой порядок
+безопасен и даёт проверку тем кодом, который едет в этот релиз.
+
+### Шаг 6 — Дрейф миграций, замер «после pull» (DEPLOY-DRIFT-001)
+
+```
+& "C:\Program Files\Python314\python.exe" tools\check_migration_drift.py --db instance\transport.db
 ```
 
-If `git pull` fails (e.g., diverged history or authentication error), do NOT continue.
-Start the service manually and investigate the git issue:
+Замеряется **трижды за релиз**: до pull, после pull, после миграций. Значимая
+величина одна — `file-but-not-registered`. Ожидаемый переход записывается
+**заранее**, до первого замера: `0 -> N -> 0`, где N — число миграций в релизе.
 
-```cmd
-.\nssm.exe start TransportReport
+Секции `resolved-by-backfill`, `registered-but-no-file` и `unclassifiable` —
+исторический хвост (`TOOL-DRIFT-LEGACY-001`); их числа от релиза к релизу не
+меняются и сами по себе ничего не значат. Меняются — повод разобраться.
+
+### Шаг 7 — Миграции, каждая по два раза
+
+Каждый скрипт миграции запускается дважды подряд. Второй запуск обязан
+сказать «уже применено» и ничего не сделать — это и есть проверка
+идемпотентности, а не формальность.
+
+```
+& "C:\Program Files\Python314\python.exe" migrate_<имя>.py
+& "C:\Program Files\Python314\python.exe" migrate_<имя>.py
 ```
 
-#### Step 4: Run syntax check
+Затем повторить шаг 6 — третий замер дрейфа. `file-but-not-registered` обязан
+вернуться к 0.
 
-```cmd
-"C:\Program Files\Python314\python.exe" -m py_compile app.py models.py config.py run_server.py fuel_routes.py spare_parts.py wialon_import.py workload_report.py translations.py
+### Шаг 8 — Поднять службы
+
+```
+Restart-Service TransportReport
+Restart-Service TransportBot
+Restart-Service TransportBot003
+Get-Service TransportReport, TransportBot, TransportBot003 | Format-Table Name, Status
 ```
 
-No output means all files passed. If a file is listed with an error, do NOT start the service.
+`Restart-Service`, а не `Start-Service`: последний на уже работающей службе
+молча ничего не делает. Все три обязаны показать `Running`.
 
-#### Step 5: Run import check
+### Шаг 9 — Дымовая проверка против чисел, снятых ДО релиза
 
-```cmd
-"C:\Program Files\Python314\python.exe" -c "from app import app; print('APP IMPORT OK')"
+Числа для сверки снимаются **до** начала работ — иначе сверять не с чем и
+проверка вырождается в «страница открылась».
+
+- `/login`, вход, дашборд;
+- `/ref/equipment` — количество единиц техники совпадает с записанным до релиза;
+- `/report` — отчёт за один день строится;
+- `/fuel/` — топливный дашборд и отчёт по остаткам открываются;
+- запчасти — рабочий стол открывается;
+- экраны затронутого релизом трека — по описанию PR;
+- переключение UZ ↔ RU;
+- `logs\error.log` — новых исключений с момента старта нет.
+
+Полный список: `docs\QA_CHECKLIST.md`.
+
+### Шаг 10 — Тег, только после дымовой проверки
+
+```
+git tag -a v<версия>-production-<ГГГГ-ММ-ДД> -m "Production release v<версия>"
+git push origin v<версия>-production-<ГГГГ-ММ-ДД>
 ```
 
-Must print `APP IMPORT OK`. If it prints an error, do NOT start the service.
-
-#### Step 6: Run migrations if needed
-
-If the release includes a migration script, run it now — BEFORE starting the service.
-Follow `docs\MIGRATIONS.md` exactly. Do not skip the backup step (already done in Step 1).
-
-#### Step 7: Start the service
-
-```cmd
-.\nssm.exe start TransportReport
-```
-
-If `nssm.exe` is not in the project folder:
-
-```cmd
-net start TransportReport
-```
-
-#### Step 8: Smoke test
-
-Open `http://10.103.25.14:5050` in a browser and run through the smoke test below.
+Тег ставится **после** шага 9, никогда до. Тег до проверки означает метку
+«проверено» на непроверенном коде.
 
 ---
 
@@ -170,13 +223,16 @@ Open `http://10.103.25.14:5050` in a browser and run through the smoke test belo
 **Migrations are NEVER automatic.**
 
 - If a release includes a migration script (`migrate_NNN_*.py`), it must be run manually.
-- Always run migrations AFTER stopping the service and BEFORE starting it.
+- Always run migrations AFTER stopping the services and BEFORE starting them.
 - Always back up the database BEFORE running a migration.
+- Always run each migration twice; the second run proves idempotency.
 - Follow `docs\MIGRATIONS.md` for the full procedure.
 - If you are unsure whether a migration is needed, read the release notes or ask before continuing.
 
-`update.bat` enforces this: it prints a warning and pauses before starting the service,
-giving the operator a window to run migrations if needed.
+Порядок из шагов 2–8 выше — единственное, что это правило обеспечивает.
+`update.bat` его не обеспечивает: он останавливает одну службу из трёх и
+стартует её сразу после паузы с вопросом о миграции. См. баннер в начале
+документа.
 
 ---
 
@@ -493,8 +549,9 @@ Full checklist: `docs\QA_CHECKLIST.md`.
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| `git pull --ff-only` fails due to diverged history | Medium | `update.bat` stops and prints instructions. Investigate with `git status` and `git log`. |
-| Migration script forgotten — service starts without migrating | High | `update.bat` migration warning with manual pause. Read release notes before updating. |
+| `git merge --ff-only` fails due to diverged history | Medium | Шаг 4 останавливает релиз. Разбирать через `git status` и `git log`, до старта служб. |
+| Migration script forgotten — service starts without migrating | High | Сломало v1.10. Закрыто порядком шагов 2–8 и тройным замером дрейфа (шаг 6, `DEPLOY-DRIFT-001`), а не паузой с вопросом к оператору. |
+| Одна служба остановлена вместо трёх | High | Шаг 2 останавливает все три и требует `Stopped` в выводе `Get-Service`. Шаг 5 (`check_db_lock.py`, код 2) ловит оставшегося держателя базы. |
 | Database backup fails silently | Medium | `backup_production_db.bat` exits with code 1 on failure. Task Scheduler can send email alerts (configure in task properties). |
 | Backup disk runs out of space | Medium | Keep only the last 30 daily backups. Review `D:\transport-report-backups\production\daily\` monthly. |
 | Service refuses to start after update | Medium | Check `logs\error.log`. Most common cause: `SECRET_KEY` not set. See `docs\DEPLOYMENT_SECURITY.md`. |
@@ -507,9 +564,22 @@ Full checklist: `docs\QA_CHECKLIST.md`.
 
 ### Update production from GitHub
 
-```cmd
+Полная процедура — [«Процедура обновления (фактическая)»](#процедура-обновления-фактическая).
+Одной командой релиз не выпускается: `update.bat` для релиза с миграцией
+использовать нельзя (см. баннер в начале документа).
+
+### Check the database lock before migrating
+
+```
 cd C:\transport-report
-update.bat
+& "C:\Program Files\Python314\python.exe" tools\check_db_lock.py
+```
+
+### Check migration drift
+
+```
+cd C:\transport-report
+& "C:\Program Files\Python314\python.exe" tools\check_migration_drift.py --db instance\transport.db
 ```
 
 ### Create a manual backup

@@ -22,7 +22,15 @@ bundled WASM code. This was tested against the live site on 2026-07-31:
 
 * a request without the `Signature` header is answered with body `code 101`;
 * a genuine request whose query string is altered afterwards — `page_size=30`
-  rewritten to `page_size=100` — is also answered with body `code 101`.
+  rewritten to `page_size=50` — is also answered with body `code 101`. The
+  signature covers the query string, so an edit fails for being an edit: `50`
+  is a size the site itself offers and it is rejected all the same.
+
+> The 2026-07-31 test actually substituted `page_size=100`. It is written here
+> with a real size instead, because **DJI offers no page size above 50** and a
+> `100` in an example reads as a value that can be obtained. The same `100`
+> still appears in the module docstring of `browser.py`; correcting it there is
+> a code change and is deliberately not made in this documentation-only pass.
 
 So the requests have to be issued by the site itself, and we only listen to the
 responses. That is the whole reason a browser is involved. It follows that:
@@ -304,9 +312,20 @@ name their constant.
   the region check reports `not-found` and warns until someone identifies the
   real element. Exit 6 is what protects the run meanwhile.
 
-**What the collector has still never done: POST to the ingest endpoint.** The
-live run was a dry run. `DRONE_API_TOKEN` is not set on production, and the
-collector has never run on a schedule.
+**The collector has run against the live cabinet and has POSTed for real.**
+On 2026-07-31:
+
+* `DRONE_API_TOKEN` was set at machine level and the service picked it up after
+  `Restart-Service`;
+* the window 2026-07-01..2026-07-07 was sent for real — **1217 flights**,
+  1318.58 ha, matching the cabinet's own tile for the same period;
+* re-running that same window deduplicated as designed: `new 0`,
+  `duplicates 1217`;
+* the historical backfill 2025-08-01..2026-07-30 brought **28 832 flights with
+  0 errors**.
+
+What is still not done is **scheduling**: the collector has never run
+unattended. See "Deployment" below.
 
 ## Historical collection
 
@@ -318,11 +337,17 @@ fails, the ones already sent are kept and the log names both lists — what
 completed and what still needs collecting. Re-running a completed window is
 harmless; the ingest deduplicates by DJI flight id.
 
-**Sizing.** Observed on the live cabinet on 2026-07-31: 2026-01-01 → 2026-07-31
-is 705 pages at 30 per page (21 123 flights), and a full historical window is
-around 970. At the maximum page size of 50 a full year is roughly **420
-pages**, so `DJI_MAX_PAGES=2000` leaves ample headroom — the old 500 would have
-terminated a legitimate backfill as if it had run away.
+**The cabinet keeps roughly a rolling 12 months.** Established on 2026-07-31,
+not assumed: the earliest selectable date moves forward. Every day the
+collector does not run is a day of history that falls off the far end, which
+makes a regular run a condition of keeping the data rather than a convenience.
+
+**Sizing.** Observed on the live cabinet on 2026-07-31: 2026-01-01 →
+2026-07-31 is 705 pages at 30 per page (21 123 flights). The historical window
+2025-08-01 → 2026-07-30 was then collected for real: **28 832 flights**, which
+at the maximum page size of 50 is roughly **580 pages**. `DJI_MAX_PAGES=2000`
+therefore leaves ample headroom — the old 500 would have terminated that
+legitimate backfill as if it had run away.
 
 At `DJI_SETTLE_MS=2500`, a several-hundred-page walk takes tens of minutes of
 clicking. That is expected, not a hang.
@@ -344,11 +369,15 @@ seconds *per page* and roughly doubled every run.
 Deliberately **not** wired into the application's service configuration or
 scheduler. Scheduling it is a separate, owner-run step.
 
-The browser side is proved — the live run of 2026-07-31 collected end to end.
-What remains before it can be scheduled is the other half: `DRONE_API_TOKEN`
-has to be set on the production service, and the first sending run should be
-watched (`DJI_HEADLESS=false`) over a short period, because the collector has
-never actually POSTed to the ingest endpoint.
+Both halves are proved as of 2026-07-31: the browser side collected end to end,
+and the sending side delivered 1217 flights for one week and 28 832 for the
+historical window with 0 errors. `DRONE_API_TOKEN` is set at machine level on
+production.
+
+What remains is scheduling, and it is not a service under `LocalSystem`:
+Playwright installs Chromium into the user profile, so the task has to run
+under the account that ran `playwright install`, or headless. Nothing schedules
+the collector today — every run so far has been started by hand.
 
 The collector performs no unit conversion. `new_work_area` is m², `spray_usage`
 is millilitres and `sow_usage` is grams in the payload; `drones.py` performs

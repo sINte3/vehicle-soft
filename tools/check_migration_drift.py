@@ -19,8 +19,36 @@ What it reports, as three lists:
      migrations; naming here is not uniform (migrate_fuel_counter_mismatch,
      migrate_spare_parts_stage1, ...), so every migrate_*.py counts.
 
-Exit code 1 if any list is non-empty, 0 when registry and tree agree,
-2 on usage errors. Output is ASCII only.
+plus one informational section:
+  4. resolved-by-backfill    -- legacy pairs that predate the MIGRATION_ID
+     convention (TOOL-DRIFT-LEGACY-001). Visible, but they do not fail the
+     run.
+
+TOOL-DRIFT-LEGACY-001
+  On production this ended with DRIFT DETECTED on every single run while
+  nothing was wrong. The real signal -- file-but-not-registered -- moved
+  exactly as predicted across the v1.11 release, 0 -> 1 -> 0. The noise came
+  from 15 registered-but-no-file and 21 unclassifiable entries: migrations
+  that predate the MIGRATION_ID convention and were registered by
+  migrate_001_backfill_historical_registry.py, which carries a ready
+  name-to-file mapping table.
+
+  An operator who sees DRIFT DETECTED on every run learns to ignore it, and
+  the one time it means something it will be ignored too. So the fix is in
+  this checker, not in 21 old migrations.
+
+  A legacy pair is resolved only when ALL of these hold:
+    - the backfill script maps the registered name to a file;
+    - that file exists at --root;
+    - the name really is in schema_migrations.
+  A mapped file whose registry row is missing is NOT resolved -- it moves to
+  file-but-not-registered, because a legacy migration present on disk but
+  never applied is exactly the drift this tool exists to catch. Anything the
+  map does not mention keeps its previous treatment and still fails the run:
+  the goal is a quiet tool, not a permissive one.
+
+Exit code 1 if any of the three drift lists is non-empty, 0 when registry
+and tree agree, 2 on usage errors. Output is ASCII only.
 
 Safety:
   - the database is opened read-only via a file: URI with mode=ro. NEVER
@@ -42,8 +70,17 @@ import glob
 import os
 import sqlite3
 import sys
+import warnings
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# [REASON]: the one script that knows which pre-MIGRATION_ID registry names
+# belong to which file. Its mapping is read, never guessed from filename
+# stems -- several files (migrate_categories_v9, migrate_v42, migrate_v47,
+# migrate_worktypes, ...) look like they should pair with a registered name
+# and deliberately do not, and REPORT001E_FUEL_WARNING_REVIEWS has no file at
+# all. Only the map settles it.
+BACKFILL_FILE = 'migrate_001_backfill_historical_registry.py'
 
 
 def _ascii(text):
@@ -76,17 +113,79 @@ def read_registered_names(db_path):
         con.close()
 
 
-def extract_migration_id(path):
-    """Return the module-level MIGRATION_ID string constant, or None.
+def parse_module(path):
+    """Return the ast for path, or None when it does not parse.
 
     Parses with ast only -- the module is never imported, so a migration
     script cannot run as a side effect of this check.
     """
     with open(path, 'r', encoding='utf-8', errors='replace') as fh:
         source = fh.read()
-    try:
-        tree = ast.parse(source, filename=path)
-    except SyntaxError:
+    # [REASON]: migrate_add_wialon.py contains a '\P' escape and raises
+    # SyntaxWarning on every parse, which polluted every run of this tool.
+    # Suppressed here rather than by editing the migration: migrate_*.py
+    # files are applied history and are not touched to quieten a diagnostic.
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', SyntaxWarning)
+        try:
+            return ast.parse(source, filename=path)
+        except SyntaxError:
+            return None
+
+
+def _string_constant(node):
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def read_backfill_map(root):
+    """Return {registry_name: filename} as declared by the backfill script.
+
+    Empty when the script is absent -- in that case nothing is resolved and
+    every legacy entry keeps failing the run, which is the safe direction.
+    """
+    path = os.path.join(root, BACKFILL_FILE)
+    if not os.path.exists(path):
+        return {}
+    tree = parse_module(path)
+    if tree is None:
+        return {}
+    mapping = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if not isinstance(target, ast.Name):
+                continue
+            if target.id == 'CONFIRMED_MIGRATIONS':
+                if not isinstance(node.value, (ast.List, ast.Tuple)):
+                    continue
+                for element in node.value.elts:
+                    if not isinstance(element, (ast.Tuple, ast.List)):
+                        continue
+                    if len(element.elts) < 2:
+                        continue
+                    name = _string_constant(element.elts[0])
+                    filename = _string_constant(element.elts[1])
+                    if name and filename:
+                        mapping[name] = filename
+            elif target.id == 'THIS_MIGRATION':
+                # [REASON]: the backfill records itself too, with
+                # migration_checksum(os.path.abspath(__file__)) -- so the
+                # pair (THIS_MIGRATION -> its own filename) is declared by
+                # the script just as explicitly as the table entries, and
+                # leaving it out would strand one real legacy row.
+                name = _string_constant(node.value)
+                if name:
+                    mapping[name] = BACKFILL_FILE
+    return mapping
+
+
+def extract_migration_id(path):
+    """Return the module-level MIGRATION_ID string constant, or None."""
+    tree = parse_module(path)
+    if tree is None:
         return None
     for node in tree.body:
         targets = []
@@ -150,19 +249,50 @@ def main(argv=None):
     id_to_file, unclassifiable = scan_migration_files(args.root)
     file_ids = set(id_to_file)
 
-    registered_but_no_file = sorted(registered - file_ids)
-    file_but_not_registered = sorted(
+    registered_but_no_file = set(registered - file_ids)
+    file_but_not_registered = [
         '%s (%s)' % (mid, ', '.join(id_to_file[mid]))
-        for mid in file_ids - registered)
+        for mid in file_ids - registered]
+    unclassifiable = list(unclassifiable)
+
+    # [REASON]: legacy pairs are resolved only when the map names the file,
+    # the file is really there AND the row is really registered. Dropping any
+    # one of those conditions would let a legacy migration that is present but
+    # never applied pass silently -- which widens the blind spot instead of
+    # narrowing the noise.
+    backfill_map = read_backfill_map(args.root)
+    resolved_legacy = []
+    for name in sorted(backfill_map):
+        filename = backfill_map[name]
+        if not os.path.exists(os.path.join(args.root, filename)):
+            # The map points at a file that is gone: keep the registered name
+            # in registered-but-no-file, where it is already counted.
+            continue
+        if name in registered:
+            resolved_legacy.append((name, filename))
+            registered_but_no_file.discard(name)
+        else:
+            file_but_not_registered.append(
+                '%s (%s) [legacy, via backfill map]' % (name, filename))
+        if filename in unclassifiable:
+            unclassifiable.remove(filename)
+
+    registered_but_no_file = sorted(registered_but_no_file)
+    file_but_not_registered = sorted(file_but_not_registered)
 
     print('database : %s' % _ascii(args.db))
     print('root     : %s' % _ascii(args.root))
     print('registered migrations: %d; migrate_*.py files: %d '
           '(%d with MIGRATION_ID)'
           % (len(registered),
-             len(unclassifiable) + sum(len(v) for v in id_to_file.values()),
+             len(unclassifiable) + len(resolved_legacy)
+             + sum(len(v) for v in id_to_file.values()),
              sum(len(v) for v in id_to_file.values())))
+    print('backfill map: %d name-to-file pairs from %s'
+          % (len(backfill_map), BACKFILL_FILE))
     print('')
+    _print_list('resolved-by-backfill (legacy, pre-MIGRATION_ID)',
+                ['%s -> %s' % pair for pair in resolved_legacy])
     _print_list('registered-but-no-file', registered_but_no_file)
     _print_list('file-but-not-registered', file_but_not_registered)
     _print_list('unclassifiable (no MIGRATION_ID constant)', unclassifiable)
@@ -170,6 +300,7 @@ def main(argv=None):
 
     if registered_but_no_file or file_but_not_registered or unclassifiable:
         print('DRIFT DETECTED: at least one list above is non-empty.')
+        print('(resolved-by-backfill is informational and never fails a run.)')
         return 1
     print('OK: registry and working tree are consistent.')
     return 0
