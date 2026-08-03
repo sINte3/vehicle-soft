@@ -2082,6 +2082,214 @@ class DroneBattery(db.Model):
     )
 
 
+# ─── DRONE-WORKS-001: the commercial ledger of the drone operation ───────────
+
+# The three payment types the dispatchers actually use, and no more.
+#   cash     -- Нақд, money handed over
+#   transfer -- Справка: the operator writes a certificate, the client signs
+#               and stamps it, accounting issues an invoice
+#   internal -- Тизим корхонаси, the holding's own land
+# [REASON]: the certificate's document states (written / signed / invoiced /
+# paid) were deliberately left OUT of scope by the owner on 2026-08-03.
+# Modelling them here would create four half-filled columns nobody maintains
+# and a report that looks authoritative while resting on guesses.
+DRONE_WORK_PAYMENT_CASH = 'cash'
+DRONE_WORK_PAYMENT_TRANSFER = 'transfer'
+DRONE_WORK_PAYMENT_INTERNAL = 'internal'
+DRONE_WORK_PAYMENT_TYPES = (DRONE_WORK_PAYMENT_CASH,
+                            DRONE_WORK_PAYMENT_TRANSFER,
+                            DRONE_WORK_PAYMENT_INTERNAL)
+
+DRONE_CUSTOMER_EXTERNAL = 'external'
+DRONE_CUSTOMER_INTERNAL = 'internal'
+DRONE_CUSTOMER_TYPES = (DRONE_CUSTOMER_EXTERNAL, DRONE_CUSTOMER_INTERNAL)
+
+# Suggested prices for the MANUAL entry form only -- never for the import.
+# [REASON]: 200 000 so'm/ha dominates the dispatchers' books (639 rows of
+# ~708), but 150 000, 250 000, 300 000, 350 000, 400 000, 500 000, 600 000,
+# 800 000 and 2 000 000 all occur, and the internal tariff is quoted as
+# 85 633 on one sheet and 76 458 on another. So these are SUGGESTIONS shown
+# in a form somebody looks at, not defaults the import may substitute: a
+# price the import invented is indistinguishable from a price the farm
+# agreed. tools/import_drone_works.py stores NULL when the cell is empty.
+DRONE_WORK_PRICE_SUGGESTIONS = {
+    DRONE_WORK_PAYMENT_CASH: 200000,
+    DRONE_WORK_PAYMENT_TRANSFER: 200000,
+    DRONE_WORK_PAYMENT_INTERNAL: 85633,
+}
+
+
+class DroneCustomer(db.Model):
+    """A farm or organisation the drone service was sold to.
+
+    [REASON]: DRONE-WORKS-001 -- a directory SEPARATE from `customers`, by the
+    owner's explicit decision of 2026-08-03. The dispatchers' books carry ~526
+    distinct spellings of farms nobody in `customers` has ever heard of, most
+    without an INN («Фукаро» -- a private citizen -- will never have one). A
+    foreign key into `customers` would presume the outcome of a merge that has
+    not been decided; merging the two directories by INN is a separate task.
+    Nothing here joins to `customers`, and no row is migrated between them.
+    """
+    __tablename__ = 'drone_customers'
+    id            = db.Column(db.Integer, primary_key=True)
+    # Canonical spelling, as it should appear in reports. The verbatim
+    # spelling of any single job stays on DroneWork.customer_raw.
+    name          = db.Column(db.String(300), nullable=False)
+    inn           = db.Column(db.String(20), nullable=True)
+    # One of DRONE_CUSTOMER_TYPES. Enforced in the route, not by a CHECK:
+    # a CHECK on SQLite cannot be altered later without rebuilding the table.
+    customer_type = db.Column(db.String(20), nullable=True,
+                              default=DRONE_CUSTOMER_EXTERNAL)
+    is_active     = db.Column(db.Boolean, default=True)
+    note          = db.Column(db.Text, nullable=True)
+    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at    = db.Column(db.DateTime, default=datetime.utcnow,
+                              onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        db.Index('ix_drone_customers_name', 'name'),
+    )
+
+
+class DroneCustomerAlias(db.Model):
+    """One spelling of a farm name -> one customer. Exactly DroneNickname.
+
+    [REASON]: DRONE-WORKS-001 -- the same shape and the same reason as the DJI
+    nickname map. The dispatchers type the farm by hand every time; one farm
+    arrives as three spellings across two months. A hardcoded dictionary in
+    the old drone system knew 16 of 20 nicknames and silently dropped 2 036
+    flights, so the map lives in the database and is extensible at runtime.
+
+    An unknown spelling NEVER rejects a work row: the row is stored with
+    drone_customer_id = NULL and counts as unresolved, the same rule flights
+    obey.
+    """
+    __tablename__ = 'drone_customer_aliases'
+    id                = db.Column(db.Integer, primary_key=True)
+    # Verbatim, as the operator wrote it.
+    raw_name          = db.Column(db.String(300), nullable=False)
+    # Case-folded and whitespace-collapsed. UNIQUE: one spelling can point at
+    # exactly one customer, otherwise resolution would have to guess.
+    normalized_key    = db.Column(db.String(300), nullable=False, unique=True)
+    drone_customer_id = db.Column(db.Integer,
+                                  db.ForeignKey('drone_customers.id'),
+                                  nullable=False)
+    is_active         = db.Column(db.Boolean, default=True)
+    created_at        = db.Column(db.DateTime, default=datetime.utcnow)
+
+    drone_customer = db.relationship(
+        'DroneCustomer', backref=db.backref('aliases', lazy='dynamic'))
+
+    __table_args__ = (
+        db.Index('ix_drone_customer_aliases_customer', 'drone_customer_id'),
+    )
+
+
+class DroneWork(db.Model):
+    """One job from the dispatchers' books: a field sprayed and its price.
+
+    [REASON]: DRONE-WORKS-001, and the single most consequential rule of this
+    table -- IT STORES THE OPERATOR, NEVER THE MACHINE. The dispatchers' sheets
+    do not name the machine; a row is "Anvarov Usmon sprayed 12.5 ha for
+    Mirobod AMT on 11 April at 200 000 so'm". The machine is DERIVED from
+    operator + date through drone_operator_assignments, exactly as the flight
+    reports derive their operator cut. That inversion is what lets the import
+    run before a single assignment exists: every imported row acquires its
+    machine retroactively as the owner enters assignments, with no re-import.
+    A drone_unit_id column here would invert the dependency and force a
+    reload later. Do not add one.
+
+    [REASON]: A ROW IS A JOB, NOT A DAY. Roughly one row in ten carries a date
+    written as free text spanning several days -- '23-24.03.2026',
+    '13,16,17.05.2026', '08-09.092025'. One field sprayed over three days is
+    billed as one line. Hence work_date_from / work_date_to, both nullable,
+    and date_raw keeping the original cell verbatim. Measured across all
+    files: 86.0 % of rows carry a real date, 9.2 % a text span, 4.8 % nothing.
+
+    [REASON]: period_month is NOT NULL while the dates are nullable. 34 rows
+    of ~708 carry no date at all; without a month they would fall out of every
+    monthly report exactly the way the old system lost its 2 036 flights. The
+    month is always knowable from the source file, so the import takes it from
+    the manifest and never from the file-name pattern -- the names are
+    inconsistent and two carry no month at all.
+    """
+    __tablename__ = 'drone_works'
+    id                = db.Column(db.Integer, primary_key=True)
+    # 'YYYY-MM'. Always known, even when the row has no date at all.
+    period_month      = db.Column(db.String(7), nullable=False)
+    work_date_from    = db.Column(db.Date, nullable=True)
+    # Equals work_date_from for a single-day job.
+    work_date_to      = db.Column(db.Date, nullable=True)
+    # The original cell, verbatim, whenever it was text. Kept even when the
+    # dates parsed, so a parsing rule can be revisited without the sources.
+    date_raw          = db.Column(db.String(100), nullable=True)
+
+    drone_operator_id = db.Column(db.Integer,
+                                  db.ForeignKey('drone_operators.id'),
+                                  nullable=True)
+    # The dispatchers' spelling, from the sheet title. Never rewritten.
+    operator_raw      = db.Column(db.String(200), nullable=True)
+
+    drone_customer_id = db.Column(db.Integer,
+                                  db.ForeignKey('drone_customers.id'),
+                                  nullable=True)
+    # Verbatim, NEVER rewritten -- it is the evidence behind the resolution.
+    customer_raw      = db.Column(db.String(300), nullable=False)
+
+    # [REASON]: NUMERIC with asdecimal=False. The DDL type matches what
+    # migrate_drones_works_001.py writes on production, so a fresh
+    # db.create_all() database and a migrated one carry the same column type;
+    # asdecimal=False keeps the Python value a float, because SQLite has no
+    # native decimal and SQLAlchemy would otherwise round-trip through one.
+    area_ha           = db.Column(db.Numeric(asdecimal=False), nullable=False)
+    # As written in the row. NULL when the cell was empty -- never computed
+    # from amount / area, see DRONE_WORK_PRICE_SUGGESTIONS.
+    price_per_ha      = db.Column(db.Numeric(asdecimal=False), nullable=True)
+    amount            = db.Column(db.Numeric(asdecimal=False), nullable=True)
+    # «Бошка харажатлар» -- other costs charged on the same line.
+    other_costs       = db.Column(db.Numeric(asdecimal=False), nullable=True)
+    # «Кирим қилинган» -- how much of the amount came back.
+    received_amount   = db.Column(db.Numeric(asdecimal=False), nullable=True)
+
+    # One of DRONE_WORK_PAYMENT_TYPES.
+    payment_type      = db.Column(db.String(20), nullable=False)
+    # [REASON]: DESCRIPTIVE ONLY, never an attribution key -- the same rule
+    # DroneUnit.subdivision_name and DroneOperator.subdivision_name already
+    # obey. It says which book the row came out of; summing revenue by it
+    # would resurrect the fictional sub-organisations the track rejected.
+    subdivision_name  = db.Column(db.String(120), nullable=True)
+
+    # Provenance. NULL on a row typed into the manual form.
+    source_file       = db.Column(db.String(300), nullable=True)
+    source_sheet      = db.Column(db.String(200), nullable=True)
+    source_row        = db.Column(db.Integer, nullable=True)
+    import_batch      = db.Column(db.String(100), nullable=True)
+
+    note              = db.Column(db.Text, nullable=True)
+    created_at        = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by        = db.Column(db.Integer, db.ForeignKey('users.id'),
+                                  nullable=True)
+
+    drone_operator = db.relationship(
+        'DroneOperator', backref=db.backref('works', lazy='dynamic'))
+    drone_customer = db.relationship(
+        'DroneCustomer', backref=db.backref('works', lazy='dynamic'))
+    creator        = db.relationship('User', foreign_keys=[created_by])
+
+    __table_args__ = (
+        # [REASON]: THE reason re-running the import is a no-op instead of a
+        # doubling. SQLite treats NULLs inside a unique index as distinct, so
+        # manually entered rows -- which carry no provenance at all -- are
+        # unaffected and any number of them may exist.
+        db.UniqueConstraint('source_file', 'source_sheet', 'source_row',
+                            name='uq_drone_works_source'),
+        db.Index('ix_drone_works_period', 'period_month'),
+        db.Index('ix_drone_works_customer', 'drone_customer_id'),
+        db.Index('ix_drone_works_operator', 'drone_operator_id'),
+        db.Index('ix_drone_works_date_from', 'work_date_from'),
+    )
+
+
 # ─── Migration Registry ───────────────────────────────────────────────────────
 
 class SchemaMigration(db.Model):
