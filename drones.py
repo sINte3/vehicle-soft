@@ -96,6 +96,20 @@ def _drone_fmt_dt(dt):
     return (dt + DRONE_DISPLAY_UTC_OFFSET).strftime('%d.%m.%Y %H:%M')
 
 
+def _drone_today_local():
+    """Today's date as the operators see it (UTC+5), not as the server sees it."""
+    return (datetime.utcnow() + DRONE_DISPLAY_UTC_OFFSET).date()
+
+
+def _drone_fmt_date(value):
+    return value.strftime('%d.%m.%Y') if value else '—'
+
+
+def _drone_assignment_is_current(row, today):
+    return (row.date_from is not None and row.date_from <= today
+            and (row.date_to is None or row.date_to >= today))
+
+
 def _drone_usage_labels():
     return {
         0: _drone_t('Пуркаш', 'Опрыскивание'),
@@ -591,10 +605,20 @@ def units():
     for nick in DroneNickname.query.order_by(DroneNickname.id).all():
         nicknames_by_unit.setdefault(nick.drone_unit_id, []).append(nick)
 
+    # DRONE-FLEET-001: the same one-query-then-group-in-Python rule for the
+    # battery count as for the aliases above.
+    battery_counts = dict(
+        db.session.query(DroneBattery.drone_unit_id,
+                         func.count(DroneBattery.id))
+        .group_by(DroneBattery.drone_unit_id).all())
+
     return render_template(
         'drones/units.html',
         units=unit_rows,
         nicknames_by_unit=nicknames_by_unit,
+        current_status=_drone_current_status_rows(),
+        status_labels=_drone_status_labels(),
+        battery_counts=battery_counts,
     )
 
 
@@ -1073,6 +1097,221 @@ def reattach_undo(run_id):
     return redirect(url_for('drones.reattach'))
 
 
+# ─── Machine card: identifiers, status ledger, batteries (DRONE-FLEET-001) ────
+#
+# [REASON]: EXACTLY TWO STATUSES, and no third one may be added. The source
+# uses `Соз` (serviceable) and `Носоз` (unserviceable); everything else it
+# records -- "in Tashkent", "hit a 380 kV line", "5 propellers to replace" --
+# is free text and belongs in `comment`. The moment a third value exists, half
+# the rows drift into it, the two real states stop being countable, and the
+# question the owner actually asks ("how many machines can fly today?") stops
+# having an answer.
+#
+# [REASON]: the ledger is APPEND-ONLY. A status change writes a new row; no
+# route here ever UPDATEs one. The reason a machine was down in May has to
+# stay readable in August, and an in-place edit erases it silently.
+
+
+def _drone_status_labels():
+    return {
+        DRONE_STATUS_SERVICEABLE: _drone_t('Соз', 'Исправна'),
+        DRONE_STATUS_UNSERVICEABLE: _drone_t('Носоз', 'Неисправна'),
+    }
+
+
+def _drone_battery_condition_labels():
+    return {
+        'working': _drone_t('Соз', 'Рабочая'),
+        'faulty': _drone_t('Носоз', 'Неисправная'),
+        'new_sealed': _drone_t('Янги, очилмаган', 'Новая, невскрытая'),
+    }
+
+
+def _drone_current_status_rows():
+    """{drone_unit_id: DroneUnitStatusLog} -- the CURRENT status of each machine.
+
+    Current = the greatest changed_on, ties broken by the greatest id. Both
+    halves of that rule are resolved in SQL over two aggregations rather than
+    by loading the ledger and sorting in Python: the ledger only grows, and a
+    Python max() over a page of loaded rows would quietly start answering with
+    whatever happened to be loaded.
+    """
+    newest = (db.session.query(
+        DroneUnitStatusLog.drone_unit_id.label('unit_id'),
+        func.max(DroneUnitStatusLog.changed_on).label('changed_on'))
+        .group_by(DroneUnitStatusLog.drone_unit_id).subquery())
+    winners = (db.session.query(func.max(DroneUnitStatusLog.id))
+               .join(newest,
+                     and_(DroneUnitStatusLog.drone_unit_id == newest.c.unit_id,
+                          DroneUnitStatusLog.changed_on == newest.c.changed_on))
+               .group_by(DroneUnitStatusLog.drone_unit_id))
+    ids = [row[0] for row in winners.all()]
+    if not ids:
+        return {}
+    rows = DroneUnitStatusLog.query.filter(DroneUnitStatusLog.id.in_(ids)).all()
+    return {row.drone_unit_id: row for row in rows}
+
+
+def _drone_fleet_status_counts():
+    """(serviceable, unserviceable, unknown) over all ACTIVE machines.
+
+    A machine with no status row at all is counted as UNKNOWN and never as
+    serviceable: "nobody has said" and "somebody said it flies" are different
+    facts, and folding them together is how a broken machine gets planned into
+    a working day.
+    """
+    current = _drone_current_status_rows()
+    serviceable = unserviceable = unknown = 0
+    for unit in DroneUnit.query.all():
+        row = current.get(unit.id)
+        if row is None:
+            unknown += 1
+        elif row.status == DRONE_STATUS_SERVICEABLE:
+            serviceable += 1
+        elif row.status == DRONE_STATUS_UNSERVICEABLE:
+            unserviceable += 1
+        else:
+            unknown += 1
+    return serviceable, unserviceable, unknown
+
+
+def _drone_duplicate_battery_serials():
+    """Serial numbers carried by more than one battery row.
+
+    [REASON]: this is a WARNING, never a constraint. Batteries No 8 and No 10
+    genuinely share 65VPN19DA50MSU in the source. Whether that is one
+    transcription error or two identical labels can only be settled at the
+    battery itself, so the register shows what the sheet says and names the
+    contradiction.
+    """
+    rows = (db.session.query(DroneBattery.serial_number)
+            .group_by(DroneBattery.serial_number)
+            .having(func.count(DroneBattery.id) > 1).all())
+    return set(row[0] for row in rows)
+
+
+def _drone_unit_redirect(unit_id):
+    return redirect(url_for('drones.unit_card', unit_id=unit_id))
+
+
+@drones_bp.route('/units/<int:unit_id>')
+@module_required('drones')
+def unit_card(unit_id):
+    """One machine: identifiers, status history, batteries, nicknames."""
+    unit = DroneUnit.query.get(unit_id)
+    if unit is None:
+        abort(404)
+    history = (DroneUnitStatusLog.query
+               .options(joinedload(DroneUnitStatusLog.author))
+               .filter(DroneUnitStatusLog.drone_unit_id == unit_id)
+               .order_by(DroneUnitStatusLog.changed_on.desc(),
+                         DroneUnitStatusLog.id.desc())
+               .all())
+    batteries = (DroneBattery.query
+                 .filter(DroneBattery.drone_unit_id == unit_id)
+                 .order_by(DroneBattery.label_number, DroneBattery.id).all())
+    assignments = (DroneOperatorAssignment.query
+                   .options(joinedload(DroneOperatorAssignment.operator))
+                   .filter(DroneOperatorAssignment.drone_unit_id == unit_id)
+                   .order_by(DroneOperatorAssignment.date_from.desc(),
+                             DroneOperatorAssignment.id.desc()).all())
+    today = _drone_today_local()
+    return render_template(
+        'drones/unit_card.html',
+        unit=unit,
+        history=history,
+        current_status=(history[0] if history else None),
+        batteries=batteries,
+        duplicate_serials=_drone_duplicate_battery_serials(),
+        condition_labels=_drone_battery_condition_labels(),
+        status_labels=_drone_status_labels(),
+        nicknames=(DroneNickname.query
+                   .filter(DroneNickname.drone_unit_id == unit_id)
+                   .order_by(DroneNickname.id).all()),
+        assignments=assignments,
+        current_flags={a.id: _drone_assignment_is_current(a, today)
+                       for a in assignments},
+        today=today,
+    )
+
+
+@drones_bp.route('/units/<int:unit_id>/fields', methods=['POST'])
+@module_required('drones')
+def unit_fields_update(unit_id):
+    """Edit hardware_id, generator_id and subdivision_name of one machine.
+
+    [REASON]: the field is hardware_id and never serial_number. In this module
+    serial_number means the per-flight record id of the DJI payload -- 22 855
+    distinct values on 22 855 flights -- and reusing the name for the airframe
+    would make the whole module ambiguous to read.
+    """
+    if not current_user.can_edit:
+        abort(403)
+
+    unit = DroneUnit.query.get(unit_id)
+    if unit is None:
+        abort(404)
+
+    unit.hardware_id = (request.form.get('hardware_id') or '').strip() or None
+    unit.generator_id = (request.form.get('generator_id') or '').strip() or None
+    unit.subdivision_name = (request.form.get('subdivision_name') or '').strip() or None
+    db.session.commit()
+    flash(_drone_t('№ %s машина маълумотлари сақланди.',
+                   'Данные машины № %s сохранены.') % unit.number, 'success')
+    return _drone_unit_redirect(unit_id)
+
+
+@drones_bp.route('/units/<int:unit_id>/status', methods=['POST'])
+@module_required('drones')
+def unit_status_add(unit_id):
+    """Append ONE row to the status ledger. Nothing is ever updated in place."""
+    if not current_user.can_edit:
+        abort(403)
+
+    unit = DroneUnit.query.get(unit_id)
+    if unit is None:
+        abort(404)
+
+    status = (request.form.get('status') or '').strip()
+    if status not in DRONE_STATUSES:
+        # [REASON]: the closed set is enforced here, in the only place that
+        # writes the column. A machine "in repair" or "written off" is still
+        # either flyable or not, and its situation belongs in the comment.
+        flash(_drone_t('Ҳолат фақат «Соз» ёки «Носоз» бўлиши мумкин.',
+                       'Статус может быть только «Исправна» или '
+                       '«Неисправна».'), 'warning')
+        return _drone_unit_redirect(unit_id)
+
+    changed_on = _drone_parse_date(request.form.get('changed_on'))
+    if changed_on is None:
+        flash(_drone_t('Ўзгариш санаси кўрсатилмаган.',
+                       'Дата изменения не указана.'), 'warning')
+        return _drone_unit_redirect(unit_id)
+    if changed_on > _drone_today_local():
+        # [REASON]: a past date is normal and expected -- a machine is
+        # reported broken after the fact. Only the future is refused, because
+        # a future row would become the "current" status of the machine
+        # immediately and hide the real one.
+        flash(_drone_t('Ўзгариш санаси келажакда бўлиши мумкин эмас.',
+                       'Дата изменения не может быть в будущем.'), 'warning')
+        return _drone_unit_redirect(unit_id)
+
+    db.session.add(DroneUnitStatusLog(
+        drone_unit_id=unit.id,
+        status=status,
+        comment=(request.form.get('comment') or '').strip() or None,
+        changed_on=changed_on,
+        changed_by=(current_user.id
+                    if getattr(current_user, 'is_authenticated', False)
+                    else None)))
+    db.session.commit()
+    flash(_drone_t('№ %s машина ҳолати ёзилди: %s, %s.',
+                   'Статус машины № %s записан: %s, %s.')
+          % (unit.number, _drone_status_labels()[status],
+             _drone_fmt_date(changed_on)), 'success')
+    return _drone_unit_redirect(unit_id)
+
+
 # ─── Fleet directories: operators and assignments (DRONE-FLEET-001) ───────────
 #
 # [REASON]: THE RULE THIS WHOLE SECTION EXISTS FOR. An assignment of an
@@ -1094,15 +1333,6 @@ def reattach_undo(run_id):
 # screen nobody can use, and it would push somebody to invent dates that make
 # the form happy. The save succeeds and a warning names the other assignment;
 # the report gives a multi-covered flight its own visible row.
-
-
-def _drone_today_local():
-    """Today's date as the operators see it (UTC+5), not as the server sees it."""
-    return (datetime.utcnow() + DRONE_DISPLAY_UTC_OFFSET).date()
-
-
-def _drone_fmt_date(value):
-    return value.strftime('%d.%m.%Y') if value else '—'
 
 
 def _drone_operators_redirect(op_id=None):
@@ -1167,11 +1397,6 @@ def _drone_assignments_by_operator(operator_ids=None):
                           DroneOperatorAssignment.id.desc()).all():
         grouped.setdefault(row.operator_id, []).append(row)
     return grouped
-
-
-def _drone_assignment_is_current(row, today):
-    return (row.date_from is not None and row.date_from <= today
-            and (row.date_to is None or row.date_to >= today))
 
 
 @drones_bp.route('/operators')

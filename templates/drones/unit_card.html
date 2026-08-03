@@ -1,0 +1,275 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% set can_edit_unit = current_user.can_edit %}
+{% block title %}{{ ('Дрон № ' if is_ru else 'Дрон № ') ~ unit.number }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ ('Машина № ' if is_ru else 'Машина № ') ~ unit.number }}</div>
+    <div class="vs-hero-sub">{{ 'Карточка машины: заводские идентификаторы, журнал исправности и батареи. Журнал только дописывается: каждое изменение — новая строка, ни одна старая не правится.' if is_ru else 'Машина картаси: заводдаги идентификаторлар, созлик журнали ва батареялар. Журналга фақат қўшилади: ҳар бир ўзгариш — янги қатор, эскилари таҳрирланмайди.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('drones.units') }}" class="vs-btn">{{ 'К списку машин' if is_ru else 'Машиналар рўйхатига' }}</a>
+  </div>
+</div>
+
+{# ── Текущая исправность ───────────────────────────────────────────────── #}
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Исправность сейчас' if is_ru else 'Ҳозирги созлик' }}</div>
+    <div class="vs-stat-value">
+      {% if current_status and current_status.status == 'serviceable' %}
+      <span class="vs-badge vs-badge-success">{{ status_labels['serviceable'] }}</span>
+      {% elif current_status and current_status.status == 'unserviceable' %}
+      <span class="vs-badge vs-badge-danger">{{ status_labels['unserviceable'] }}</span>
+      {% else %}
+      <span class="vs-badge">{{ 'Не указана' if is_ru else 'Кўрсатилмаган' }}</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Дата изменения' if is_ru else 'Ўзгариш санаси' }}</div>
+    <div class="vs-stat-value">{{ current_status.changed_on.strftime('%d.%m.%Y') if current_status and current_status.changed_on else '—' }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Батарей' if is_ru else 'Батареялар' }}</div>
+    <div class="vs-stat-value">{{ batteries|length }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Записей в журнале' if is_ru else 'Журнал ёзувлари' }}</div>
+    <div class="vs-stat-value">{{ history|length }}</div>
+  </div>
+</div>
+
+{# ── Заводские идентификаторы ──────────────────────────────────────────── #}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Заводские идентификаторы' if is_ru else 'Заводдаги идентификаторлар' }}</span>
+  </div>
+  <div class="vs-card-body">
+    {% if can_edit_unit %}
+    <form method="post" action="{{ url_for('drones.unit_fields_update', unit_id=unit.id) }}" class="vs-form-row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="vs-field" style="min-width:220px;">
+        <label class="vs-label" for="uHw">{{ 'Номер планера' if is_ru else 'Планер рақами' }}</label>
+        <input type="text" name="hardware_id" id="uHw" class="vs-input" maxlength="50" value="{{ unit.hardware_id or '' }}" autocomplete="off">
+      </div>
+      <div class="vs-field" style="min-width:220px;">
+        <label class="vs-label" for="uGen">{{ 'Номер генератора' if is_ru else 'Генератор рақами' }}</label>
+        <input type="text" name="generator_id" id="uGen" class="vs-input" maxlength="50" value="{{ unit.generator_id or '' }}" autocomplete="off">
+      </div>
+      <div class="vs-field" style="min-width:220px;">
+        <label class="vs-label" for="uSub">{{ 'Подразделение' if is_ru else 'Бўлинма' }}</label>
+        <input type="text" name="subdivision_name" id="uSub" class="vs-input" maxlength="120" value="{{ unit.subdivision_name or '' }}" autocomplete="off">
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn vs-btn-primary">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+      </div>
+    </form>
+    {% else %}
+    <div class="vs-stack-sm">
+      <div>{{ 'Номер планера' if is_ru else 'Планер рақами' }}: <strong>{{ unit.hardware_id or '—' }}</strong></div>
+      <div>{{ 'Номер генератора' if is_ru else 'Генератор рақами' }}: <strong>{{ unit.generator_id or '—' }}</strong></div>
+      <div>{{ 'Подразделение' if is_ru else 'Бўлинма' }}: {{ unit.subdivision_name or '—' }}</div>
+    </div>
+    {% endif %}
+    {% if not unit.hardware_id %}
+    <div class="vs-alert is-warning" style="margin-top:10px;">{{ 'Номер планера не заведён. У машин № 2 и № 9 он оставлен пустым намеренно: две ведомости диспетчеров меняют их идентификаторы местами, и записать любой из вариантов значило бы внести в реестр непроверенный номер. Заполните поле, сверившись с самим планером.' if is_ru else 'Планер рақами киритилмаган. № 2 ва № 9 машиналарда у атайлаб бўш қолдирилган: диспетчерларнинг иккита ведомости уларнинг идентификаторларини алмаштириб юборган, ва бирор вариантни ёзиш реестрга текширилмаган рақам киритиш дегани бўларди. Планернинг ўзига қараб майдонни тўлдиринг.' }}</div>
+    {% endif %}
+    <div class="vs-help">{{ 'Подразделение — описательное поле. Оно не участвует ни в одном подсчёте гектаров, доли или выручки: все машины парка принадлежат одной организации.' if is_ru else 'Бўлинма — тавсифловчи майдон. У гектар, улуш ёки тушум ҳисобининг бирортасида қатнашмайди: парк машиналарининг барчаси битта ташкилотга тегишли.' }}</div>
+  </div>
+</div>
+
+{# ── Изменить исправность ──────────────────────────────────────────────── #}
+{% if can_edit_unit %}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Записать изменение исправности' if is_ru else 'Созлик ўзгаришини ёзиш' }}</span>
+  </div>
+  <div class="vs-card-body">
+    <form method="post" action="{{ url_for('drones.unit_status_add', unit_id=unit.id) }}" class="vs-form-row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="vs-field" style="min-width:180px;">
+        <label class="vs-label" for="stStatus">{{ 'Исправность' if is_ru else 'Созлик' }}</label>
+        <select name="status" id="stStatus" class="vs-select" required>
+          <option value="serviceable">{{ status_labels['serviceable'] }}</option>
+          <option value="unserviceable">{{ status_labels['unserviceable'] }}</option>
+        </select>
+      </div>
+      <div class="vs-field" style="width:180px;">
+        <label class="vs-label" for="stDate">{{ 'Дата изменения' if is_ru else 'Ўзгариш санаси' }}</label>
+        <input type="date" name="changed_on" id="stDate" class="vs-input" value="{{ today.isoformat() }}" max="{{ today.isoformat() }}" required>
+      </div>
+      <div class="vs-field" style="min-width:280px;">
+        <label class="vs-label" for="stComment">{{ 'Комментарий' if is_ru else 'Изоҳ' }}</label>
+        <input type="text" name="comment" id="stComment" class="vs-input" autocomplete="off">
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn vs-btn-primary">{{ 'Записать' if is_ru else 'Ёзиш' }}</button>
+      </div>
+    </form>
+    <div class="vs-help">{{ 'Состояний ровно два. Где машина стоит, во что она врезалась и сколько лопастей менять — это комментарий, а не отдельный статус. Дата может быть в прошлом: о поломке часто сообщают позже. Будущая дата не принимается.' if is_ru else 'Ҳолатлар роппа-роса иккита. Машина қаерда тургани, нимага урилгани ва нечта паррак алмаштириш кераклиги — бу изоҳ, алоҳида ҳолат эмас. Сана ўтмишда бўлиши мумкин: носозлик ҳақида кўпинча кейинроқ хабар қилинади. Келажакдаги сана қабул қилинмайди.' }}</div>
+  </div>
+</div>
+{% endif %}
+
+{# ── Журнал исправности ────────────────────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Журнал исправности' if is_ru else 'Созлик журнали' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'новые сверху' if is_ru else 'янгилари юқорида' }}</span>
+  </div>
+  {% if history %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th style="width:120px;">{{ 'Дата' if is_ru else 'Сана' }}</th>
+        <th style="width:130px;">{{ 'Исправность' if is_ru else 'Созлик' }}</th>
+        <th>{{ 'Комментарий' if is_ru else 'Изоҳ' }}</th>
+        <th style="width:160px;">{{ 'Кто записал' if is_ru else 'Ким ёзди' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for h in history %}
+      <tr>
+        <td style="font-weight:600;">{{ h.changed_on.strftime('%d.%m.%Y') if h.changed_on else '—' }}</td>
+        <td>
+          {% if h.status == 'serviceable' %}
+          <span class="vs-badge vs-badge-success">{{ status_labels['serviceable'] }}</span>
+          {% else %}
+          <span class="vs-badge vs-badge-danger">{{ status_labels['unserviceable'] }}</span>
+          {% endif %}
+        </td>
+        <td style="white-space:pre-line;">{{ h.comment or '—' }}</td>
+        <td class="vs-muted">{{ (h.author.full_name or h.author.username) if h.author else ('сид' if is_ru else 'сид') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Журнал пуст' if is_ru else 'Журнал бўш' }}</div>
+    <div class="vs-empty-sub">{{ 'Пока ни одной записи об исправности нет. Это значит «не сказано», а не «исправна».' if is_ru else 'Ҳозирча созлик ҳақида бирорта ёзув йўқ. Бу «созлиги айтилмаган» дегани, «соз» эмас.' }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{# ── Батареи ───────────────────────────────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Батареи машины' if is_ru else 'Машина батареялари' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'Всего' if is_ru else 'Жами' }}: {{ batteries|length }}</span>
+  </div>
+  {% set dup_here = batteries|selectattr('serial_number', 'in', duplicate_serials)|list %}
+  {% if dup_here %}
+  <div class="vs-alert is-warning">{{ 'Одинаковый серийный номер стоит у нескольких батарей. В источнике это встречается по-настоящему: батареи № 8 и № 10 несут один номер. Это либо описка, либо две одинаковые бирки — проверить можно только на самих батареях, поэтому система показывает данные как есть и не выбирает за вас.' if is_ru else 'Бир хил серия рақами бир нечта батареяда турибди. Манбада бу ҳақиқатан учрайди: № 8 ва № 10 батареялар битта рақамни ташийди. Бу ё хато ёзув, ё иккита бир хил бирка — буни фақат батареяларнинг ўзида текшириш мумкин, шунинг учун тизим маълумотни борича кўрсатади ва сиз учун танламайди.' }}</div>
+  {% endif %}
+  {% if batteries %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th style="width:70px;">№</th>
+        <th>{{ 'Серийный номер' if is_ru else 'Серия рақами' }}</th>
+        <th>{{ 'Состояние' if is_ru else 'Ҳолати' }}</th>
+        <th>{{ 'Примечание' if is_ru else 'Изоҳ' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for b in batteries %}
+      <tr>
+        <td style="font-weight:700;">{{ b.label_number if b.label_number is not none else '—' }}</td>
+        <td>
+          {{ b.serial_number }}
+          {% if b.serial_number in duplicate_serials %}
+          <span class="vs-badge vs-badge-warning">{{ 'дубль' if is_ru else 'такрор' }}</span>
+          {% endif %}
+        </td>
+        <td>{{ condition_labels.get(b.condition, b.condition or '—') }}</td>
+        <td class="vs-muted" style="font-size:12px;">{{ b.note or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Батареи не заведены' if is_ru else 'Батареялар киритилмаган' }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{# ── Операторы этой машины ─────────────────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Операторы этой машины' if is_ru else 'Ушбу машина операторлари' }}</span>
+  </div>
+  {% if assignments %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Оператор' if is_ru else 'Оператор' }}</th>
+        <th style="width:130px;">{{ 'Дата с' if is_ru else 'Сана дан' }}</th>
+        <th style="width:130px;">{{ 'Дата по' if is_ru else 'Сана гача' }}</th>
+        <th>{{ 'Примечание' if is_ru else 'Изоҳ' }}</th>
+        <th style="width:110px;">{{ 'Сейчас' if is_ru else 'Ҳозир' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in assignments %}
+      <tr>
+        <td><a href="{{ url_for('drones.operator_card', op_id=a.operator_id) }}">{{ a.operator.full_name if a.operator else '—' }}</a></td>
+        <td>{{ a.date_from.strftime('%d.%m.%Y') if a.date_from else '—' }}</td>
+        <td>{{ a.date_to.strftime('%d.%m.%Y') if a.date_to else '—' }}</td>
+        <td class="vs-muted">{{ a.note or '—' }}</td>
+        <td>
+          {% if current_flags.get(a.id) %}
+          <span class="vs-badge vs-badge-success">{{ 'действует' if is_ru else 'амалда' }}</span>
+          {% else %}
+          <span class="vs-badge">{{ 'нет' if is_ru else 'йўқ' }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Назначений нет' if is_ru else 'Бириктиришлар йўқ' }}</div>
+    <div class="vs-empty-sub">{{ 'Вылеты этой машины попадут в отчёте в строку «Оператор не определён», пока на неё никто не назначен.' if is_ru else 'Ушбу машина парвозлари, унга ҳеч ким бириктирилмагунча, ҳисоботда «Оператор аниқланмаган» қаторига тушади.' }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{# ── Ники DJI (только чтение; правка живёт на общей странице машин) ────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Ники (DJI)' if is_ru else 'Никлар (DJI)' }}</span>
+    <a href="{{ url_for('drones.units') }}" class="vs-kpi-link">{{ 'Править на странице машин →' if is_ru else 'Машиналар саҳифасида таҳрирлаш →' }}</a>
+  </div>
+  <div class="vs-card-body">
+    {% if nicknames %}
+    <div class="vs-row" style="gap:6px; flex-wrap:wrap;">
+      {% for n in nicknames %}
+      {% if n.is_active != False %}
+      <span class="vs-badge vs-badge-success">{{ n.nickname }}</span>
+      {% else %}
+      <span class="vs-badge">{{ n.nickname }}</span>
+      {% endif %}
+      {% endfor %}
+    </div>
+    {% else %}
+    <span class="vs-muted">—</span>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}
