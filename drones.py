@@ -3279,3 +3279,402 @@ def customer_alias_update(alias_id):
             'импорте, а уже сохранённые работы не меняются.')
           % alias.raw_name, 'success')
     return _drone_customers_redirect(target.id)
+
+
+# ─── DRONE-WORKS-001: reports ────────────────────────────────────────────────
+
+def _drone_work_cut(conds, group_expr, total_row, service_label,
+                    label_map=None, order_by_area=True):
+    """One breakdown of the ledger, with the NULL bucket as a visible row.
+
+    [REASON]: the rule the flight summary already obeys and this must match --
+    a group-by that simply drops NULL silently omits exactly the rows nobody
+    has resolved yet, which is how the previous system lost 2 036 flights and
+    2 082 hectares into an invisible bucket. So NULL gets a row, the row is
+    part of the total, and the total is compared against the grand total; a
+    mismatch is shown on the page (reconciled=False), never hidden.
+    """
+    groups = db.session.query(
+        group_expr,
+        func.count(DroneWork.id),
+        func.coalesce(func.sum(DroneWork.area_ha), 0.0),
+        func.coalesce(func.sum(DroneWork.amount), 0.0),
+        func.coalesce(func.sum(DroneWork.received_amount), 0.0),
+    ).filter(*conds).group_by(group_expr).all()
+
+    rows = []
+    service = None
+    for key, jobs, area, amount, received in groups:
+        cell = {
+            'key': key,
+            'jobs': jobs,
+            'area': float(area or 0.0),
+            'amount': float(amount or 0.0),
+            'received': float(received or 0.0),
+        }
+        cell['outstanding'] = cell['amount'] - cell['received']
+        cell['share'] = _drone_share(cell['area'], total_row['area'])
+        if key is None:
+            cell['label'] = service_label
+            service = cell
+        else:
+            cell['label'] = (label_map or {}).get(key, key)
+            rows.append(cell)
+
+    if order_by_area:
+        rows.sort(key=lambda r: r['area'], reverse=True)
+    else:
+        rows.sort(key=lambda r: str(r['key']))
+
+    everything = rows + ([service] if service else [])
+    total = {
+        'jobs': sum(r['jobs'] for r in everything),
+        'area': sum(r['area'] for r in everything),
+        'amount': sum(r['amount'] for r in everything),
+        'received': sum(r['received'] for r in everything),
+    }
+    total['outstanding'] = total['amount'] - total['received']
+    reconciled = (total['jobs'] == total_row['jobs']
+                  and abs(total['area'] - total_row['area']) < 0.005
+                  and abs(total['amount'] - total_row['amount']) < 0.005
+                  and abs(total['received'] - total_row['received']) < 0.005)
+    return {'rows': rows, 'service': service, 'total': total,
+            'reconciled': reconciled}
+
+
+def _drone_work_debt_cut(cut, no_debt_label):
+    """The same cut, re-read as money: who owes, and how much.
+
+    [REASON]: rows with nothing outstanding are collapsed into ONE visible
+    service line rather than dropped, so the column still sums to the grand
+    total. A debt table that silently omits the settled rows reads as "this is
+    everybody" and there is no way to tell it apart from a filter mistake.
+    """
+    everything = cut['rows'] + ([cut['service']] if cut['service'] else [])
+    owing = [r for r in everything if r['outstanding'] > 0.005]
+    settled = [r for r in everything if r['outstanding'] <= 0.005]
+    owing.sort(key=lambda r: r['outstanding'], reverse=True)
+    rest = None
+    if settled:
+        rest = {
+            'label': no_debt_label,
+            'jobs': sum(r['jobs'] for r in settled),
+            'area': sum(r['area'] for r in settled),
+            'amount': sum(r['amount'] for r in settled),
+            'received': sum(r['received'] for r in settled),
+        }
+        rest['outstanding'] = rest['amount'] - rest['received']
+    return {'rows': owing, 'rest': rest, 'total': cut['total'],
+            'reconciled': cut['reconciled']}
+
+
+def _drone_works_report_data(conds):
+    """Four cuts, a debt view, and the grand total they all reconcile with."""
+    totals = _drone_works_totals(conds)
+
+    customer_names = {c.id: c.name for c in DroneCustomer.query.all()}
+    operator_names = {o.id: o.full_name for o in DroneOperator.query.all()}
+
+    by_customer = _drone_work_cut(
+        conds, DroneWork.drone_customer_id, totals,
+        _drone_t('Буюртмачи аниқланмаган', 'Заказчик не определён'),
+        label_map=customer_names)
+    by_operator = _drone_work_cut(
+        conds, DroneWork.drone_operator_id, totals,
+        _drone_t('Оператор аниқланмаган', 'Оператор не определён'),
+        label_map=operator_names)
+    by_subdivision = _drone_work_cut(
+        conds, DroneWork.subdivision_name, totals,
+        _drone_t('Бўлинма кўрсатилмаган', 'Подразделение не указано'))
+
+    # [REASON]: the month cut groups on the job's OWN date, and jobs with no
+    # date get the «Дата не указана» row instead of vanishing. Grouping every
+    # row by period_month instead would look tidier and would file the April
+    # work of a March-labelled book in March -- the exact error the manifest
+    # note about «Имомов Бехзод Пешку ПТЗ.xlsx» warns about. The service row
+    # then carries a per-period breakdown, which is what period_month is FOR:
+    # an undated job is still attributable to a month, just not to a day.
+    by_month = _drone_work_cut(
+        conds, func.strftime('%Y-%m', DroneWork.work_date_from), totals,
+        _drone_t('Сана кўрсатилмаган', 'Дата не указана'),
+        order_by_area=False)
+    if by_month['service'] is not None:
+        breakdown = db.session.query(
+            DroneWork.period_month,
+            func.count(DroneWork.id),
+            func.coalesce(func.sum(DroneWork.area_ha), 0.0),
+        ).filter(*conds).filter(DroneWork.work_date_from.is_(None)) \
+            .group_by(DroneWork.period_month) \
+            .order_by(DroneWork.period_month).all()
+        by_month['service']['periods'] = [
+            {'period': period, 'jobs': jobs, 'area': float(area or 0.0)}
+            for period, jobs, area in breakdown]
+
+    no_debt = _drone_t('Қарзи йўқ (қолганлари)', 'Долга нет (остальные)')
+    return {
+        'totals': totals,
+        'by_customer': by_customer,
+        'by_operator': by_operator,
+        'by_subdivision': by_subdivision,
+        'by_month': by_month,
+        'debt_by_customer': _drone_work_debt_cut(by_customer, no_debt),
+        'debt_by_operator': _drone_work_debt_cut(by_operator, no_debt),
+    }
+
+
+@drones_bp.route('/works/reports')
+@module_required('drones')
+def works_reports():
+    """Four cuts and a debt view, all over the same filters as the ledger."""
+    filters = _drone_works_filters_from_args(request.args)
+    conds = _drone_work_conditions(filters)
+    data = _drone_works_report_data(conds)
+    context = _drone_works_pickers()
+    return render_template(
+        'drones/works_reports.html',
+        data=data,
+        filters=filters,
+        link_args=_drone_works_link_args(filters),
+        unresolved_key=DRONE_WORK_UNRESOLVED,
+        payment_types=DRONE_WORK_PAYMENT_TYPES,
+        **context)
+
+
+def _drone_works_xlsx_response(wb, base_name, filters):
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    fname = '%s_%s.xlsx' % (base_name, filters['period'] or 'all')
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=fname,
+        mimetype=('application/vnd.openxmlformats-officedocument'
+                  '.spreadsheetml.sheet'),
+    )
+
+
+def _drone_works_filter_sheet(wb, st, filters, totals):
+    """First sheet: which filters produced these numbers, and the grand total.
+
+    [REASON]: a workbook that arrives by e-mail without its filters is a set
+    of numbers nobody can reproduce. The filters ride in the file.
+    """
+    ws = wb.active
+    ws.title = _drone_t('Жамланма', 'Сводка')
+    ws.append([_drone_t('Кўрсаткич', 'Показатель'),
+               _drone_t('Қиймат', 'Значение')])
+    unbounded = _drone_t('чекланмаган', 'не ограничен')
+    payment_labels = _drone_payment_labels()
+    rows = [
+        (_drone_t('Давр', 'Период'), filters['period'] or unbounded, None),
+        (_drone_t('Тўлов тури', 'Тип оплаты'),
+         payment_labels.get(filters['payment'], unbounded), None),
+        (_drone_t('Бўлинма', 'Подразделение'),
+         filters['subdivision'] or unbounded, None),
+        (_drone_t('Ишлар', 'Работ'), totals['jobs'], None),
+        (_drone_t('Гектар', 'Гектаров'), totals['area'], '0.00'),
+        (_drone_t('Сумма', 'Сумма'), totals['amount'], '0.00'),
+        (_drone_t('Кирим қилинган', 'Получено'), totals['received'], '0.00'),
+        (_drone_t('Олинмаган', 'Не получено'), totals['outstanding'], '0.00'),
+        (_drone_t('Бошқа харажатлар', 'Прочие расходы'),
+         totals['other_costs'], '0.00'),
+    ]
+    for label, value, fmt in rows:
+        ws.append([label, _drone_xlsx_safe(value)])
+        if fmt:
+            ws.cell(row=ws.max_row, column=2).number_format = fmt
+    st.style_table(ws)
+    return ws
+
+
+def _drone_work_cut_sheet(wb, st, title, first_column, cut):
+    """One cut as one sheet: rows, the service row, and the total."""
+    ws = wb.create_sheet(title)
+    ws.append([first_column,
+               _drone_t('Ишлар', 'Работ'),
+               _drone_t('Гектар', 'Гектары'),
+               _drone_t('Сумма', 'Сумма'),
+               _drone_t('Кирим қилинган', 'Получено'),
+               _drone_t('Олинмаган', 'Не получено'),
+               _drone_t('Улуш, %', 'Доля, %')])
+    for row in cut['rows']:
+        ws.append([_drone_xlsx_safe(row['label']), row['jobs'], row['area'],
+                   row['amount'], row['received'], row['outstanding'],
+                   row['share']])
+    # The service row is part of the table AND part of the total -- never a
+    # remainder printed outside it.
+    if cut['service'] is not None:
+        s = cut['service']
+        ws.append([s['label'], s['jobs'], s['area'], s['amount'],
+                   s['received'], s['outstanding'], s['share']])
+    ws.append([_drone_t('Жами', 'Итого'), cut['total']['jobs'],
+               cut['total']['area'], cut['total']['amount'],
+               cut['total']['received'], cut['total']['outstanding'], 100.0])
+    st.style_table(ws, num_formats={3: '0.00', 4: '0.00', 5: '0.00',
+                                    6: '0.00', 7: '0.0'},
+                   bold_rows=(ws.max_row,))
+    return ws
+
+
+def _drone_work_debt_sheet(wb, st, title, first_column, debt):
+    ws = wb.create_sheet(title)
+    ws.append([first_column,
+               _drone_t('Ишлар', 'Работ'),
+               _drone_t('Сумма', 'Сумма'),
+               _drone_t('Кирим қилинган', 'Получено'),
+               _drone_t('Олинмаган', 'Не получено')])
+    for row in debt['rows']:
+        ws.append([_drone_xlsx_safe(row['label']), row['jobs'], row['amount'],
+                   row['received'], row['outstanding']])
+    if debt['rest'] is not None:
+        r = debt['rest']
+        ws.append([r['label'], r['jobs'], r['amount'], r['received'],
+                   r['outstanding']])
+    ws.append([_drone_t('Жами', 'Итого'), debt['total']['jobs'],
+               debt['total']['amount'], debt['total']['received'],
+               debt['total']['outstanding']])
+    st.style_table(ws, num_formats={3: '0.00', 4: '0.00', 5: '0.00'},
+                   bold_rows=(ws.max_row,))
+    return ws
+
+
+@drones_bp.route('/works/reports.xlsx')
+@module_required('drones')
+def works_reports_xlsx():
+    """The four cuts and both debt views, one sheet each, same filters."""
+    from openpyxl import Workbook
+
+    filters = _drone_works_filters_from_args(request.args)
+    data = _drone_works_report_data(_drone_work_conditions(filters))
+    st = _drone_xlsx_styler()
+    wb = Workbook()
+    _drone_works_filter_sheet(wb, st, filters, data['totals'])
+    _drone_work_cut_sheet(wb, st, _drone_t('Буюртмачилар бўйича',
+                                           'По заказчикам'),
+                          _drone_t('Буюртмачи', 'Заказчик'),
+                          data['by_customer'])
+    _drone_work_cut_sheet(wb, st, _drone_t('Операторлар бўйича',
+                                           'По операторам'),
+                          _drone_t('Оператор', 'Оператор'),
+                          data['by_operator'])
+    _drone_work_cut_sheet(wb, st, _drone_t('Бўлинмалар бўйича',
+                                           'По подразделениям'),
+                          _drone_t('Бўлинма', 'Подразделение'),
+                          data['by_subdivision'])
+    _drone_work_cut_sheet(wb, st, _drone_t('Ойлар бўйича', 'По месяцам'),
+                          _drone_t('Ой', 'Месяц'), data['by_month'])
+    _drone_work_debt_sheet(wb, st, _drone_t('Қарз — буюртмачилар',
+                                            'Долги — заказчики'),
+                           _drone_t('Буюртмачи', 'Заказчик'),
+                           data['debt_by_customer'])
+    _drone_work_debt_sheet(wb, st, _drone_t('Қарз — операторлар',
+                                            'Долги — операторы'),
+                           _drone_t('Оператор', 'Оператор'),
+                           data['debt_by_operator'])
+    return _drone_works_xlsx_response(wb, 'drone_works_reports', filters)
+
+
+@drones_bp.route('/works/debt.xlsx')
+@module_required('drones')
+def works_debt_xlsx():
+    """«олинмаган пуллар» alone: who owes, by customer and by operator."""
+    from openpyxl import Workbook
+
+    filters = _drone_works_filters_from_args(request.args)
+    data = _drone_works_report_data(_drone_work_conditions(filters))
+    st = _drone_xlsx_styler()
+    wb = Workbook()
+    _drone_works_filter_sheet(wb, st, filters, data['totals'])
+    _drone_work_debt_sheet(wb, st, _drone_t('Қарз — буюртмачилар',
+                                            'Долги — заказчики'),
+                           _drone_t('Буюртмачи', 'Заказчик'),
+                           data['debt_by_customer'])
+    _drone_work_debt_sheet(wb, st, _drone_t('Қарз — операторлар',
+                                            'Долги — операторы'),
+                           _drone_t('Оператор', 'Оператор'),
+                           data['debt_by_operator'])
+    return _drone_works_xlsx_response(wb, 'drone_works_debt', filters)
+
+
+@drones_bp.route('/works.xlsx')
+@module_required('drones')
+def works_xlsx():
+    """Flat one-sheet export of the ledger, honouring its filters."""
+    from openpyxl import Workbook
+
+    filters = _drone_works_filters_from_args(request.args)
+    conds = _drone_work_conditions(filters)
+    total = db.session.query(func.count(DroneWork.id)).filter(*conds).scalar() or 0
+    if total > DRONE_WORKS_XLSX_CAP:
+        flash(_drone_t(
+            'Экспорт жуда катта: %d та иш, чегара — %d. Даврни торайтиринг.',
+            'Экспорт слишком велик: %d работ при пределе %d. Сузьте период.')
+            % (total, DRONE_WORKS_XLSX_CAP), 'warning')
+        return redirect(url_for('drones.works', **_drone_works_link_args(filters)))
+
+    rows = (DroneWork.query.filter(*conds)
+            .options(joinedload(DroneWork.drone_operator),
+                     joinedload(DroneWork.drone_customer))
+            .order_by(_drone_work_month_expr().desc(),
+                      DroneWork.work_date_from.desc(), DroneWork.id.desc())
+            .all())
+    payment_labels = _drone_payment_labels()
+    label_no_customer = _drone_t('Буюртмачи аниқланмаган',
+                                 'Заказчик не определён')
+    label_no_operator = _drone_t('Оператор аниқланмаган',
+                                 'Оператор не определён')
+
+    st = _drone_xlsx_styler()
+    wb = Workbook()
+    _drone_works_filter_sheet(wb, st, filters, _drone_works_totals(conds))
+    ws = wb.create_sheet(_drone_t('Ишлар', 'Работы'))
+    ws.append([
+        _drone_t('Давр', 'Период'),
+        _drone_t('Сана дан', 'Дата с'),
+        _drone_t('Сана гача', 'Дата по'),
+        _drone_t('Сана — матн', 'Дата — текст'),
+        _drone_t('Оператор', 'Оператор'),
+        _drone_t('Оператор — ёзилганидек', 'Оператор — как написано'),
+        _drone_t('Буюртмачи', 'Заказчик'),
+        _drone_t('Буюртмачи — ёзилганидек', 'Заказчик — как написано'),
+        _drone_t('Гектар', 'Гектары'),
+        _drone_t('1 га нархи', 'Цена за га'),
+        _drone_t('Сумма', 'Сумма'),
+        _drone_t('Бошқа харажатлар', 'Прочие расходы'),
+        _drone_t('Кирим қилинган', 'Получено'),
+        _drone_t('Олинмаган', 'Не получено'),
+        _drone_t('Тўлов тури', 'Тип оплаты'),
+        _drone_t('Бўлинма', 'Подразделение'),
+        _drone_t('Манба файл', 'Файл-источник'),
+        _drone_t('Варақ', 'Лист'),
+        _drone_t('Қатор', 'Строка'),
+        _drone_t('Изоҳ', 'Примечание'),
+    ])
+    for w in rows:
+        amount = float(w.amount or 0.0)
+        received = float(w.received_amount or 0.0)
+        ws.append([
+            w.period_month,
+            w.work_date_from, w.work_date_to,
+            _drone_xlsx_safe(w.date_raw),
+            _drone_xlsx_safe(w.drone_operator.full_name if w.drone_operator
+                             else label_no_operator),
+            _drone_xlsx_safe(w.operator_raw),
+            _drone_xlsx_safe(w.drone_customer.name if w.drone_customer
+                             else label_no_customer),
+            _drone_xlsx_safe(w.customer_raw),
+            w.area_ha, w.price_per_ha, w.amount, w.other_costs,
+            w.received_amount, amount - received,
+            payment_labels.get(w.payment_type, w.payment_type),
+            _drone_xlsx_safe(w.subdivision_name),
+            _drone_xlsx_safe(w.source_file),
+            _drone_xlsx_safe(w.source_sheet),
+            w.source_row,
+            _drone_xlsx_safe(w.note),
+        ])
+    st.style_table(ws,
+                   num_formats={9: '0.00', 10: '0.00', 11: '0.00',
+                                12: '0.00', 13: '0.00', 14: '0.00'},
+                   datetime_format={2: 'DD.MM.YYYY', 3: 'DD.MM.YYYY'})
+    return _drone_works_xlsx_response(wb, 'drone_works', filters)
