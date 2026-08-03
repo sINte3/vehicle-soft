@@ -1,0 +1,358 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% set can_edit_works = current_user.can_edit %}
+{% set t_none_customer = 'Заказчик не определён' if is_ru else 'Буюртмачи аниқланмаган' %}
+{% set t_none_operator = 'Оператор не определён' if is_ru else 'Оператор аниқланмаган' %}
+{% set t_no_date = 'Дата не указана' if is_ru else 'Сана кўрсатилмаган' %}
+{% block title %}{{ 'Дроны — работы' if is_ru else 'Дронлар — ишлар' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Работы' if is_ru else 'Ишлар' }}</div>
+    <div class="vs-hero-sub">{{ 'Ведомость диспетчеров: одна строка — одна работа, а не один день. Строка хранит ОПЕРАТОРА, а не машину: в ведомостях машина не названа, она выводится из назначений оператора на дату.' if is_ru else 'Диспетчерлар ведомости: бир қатор — бир иш, бир кун эмас. Қатор ОПЕРАТОРНИ сақлайди, машинани эмас: ведомостларда машина аталмаган, у операторнинг санадаги бириктиришидан келтириб чиқарилади.' }}</div>
+  </div>
+</div>
+
+{# ── Фильтры ────────────────────────────────────────────────────────────── #}
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <form method="get" action="{{ url_for('drones.works') }}" class="vs-form-row">
+      <div class="vs-field" style="min-width:140px;">
+        <label class="vs-label" for="wPeriod">{{ 'Период' if is_ru else 'Давр' }}</label>
+        <select name="period" id="wPeriod" class="vs-select">
+          <option value="">{{ '— все периоды —' if is_ru else '— барча даврлар —' }}</option>
+          {% for p in periods %}
+          <option value="{{ p }}" {% if filters.period == p %}selected{% endif %}>{{ p }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:200px;">
+        <label class="vs-label" for="wOperator">{{ 'Оператор' if is_ru else 'Оператор' }}</label>
+        <select name="operator_id" id="wOperator" class="vs-select">
+          <option value="">{{ '— все операторы —' if is_ru else '— барча операторлар —' }}</option>
+          <option value="{{ unresolved_key }}" {% if filters.operator_id == unresolved_key %}selected{% endif %}>{{ t_none_operator }}</option>
+          {% for op in operators %}
+          <option value="{{ op.id }}" {% if filters.operator_id == op.id %}selected{% endif %}>{{ op.full_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:220px;">
+        <label class="vs-label" for="wCustomer">{{ 'Заказчик' if is_ru else 'Буюртмачи' }}</label>
+        <select name="customer_id" id="wCustomer" class="vs-select">
+          <option value="">{{ '— все заказчики —' if is_ru else '— барча буюртмачилар —' }}</option>
+          <option value="{{ unresolved_key }}" {% if filters.customer_id == unresolved_key %}selected{% endif %}>{{ t_none_customer }}</option>
+          {% for c in customers %}
+          <option value="{{ c.id }}" {% if filters.customer_id == c.id %}selected{% endif %}>{{ c.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:160px;">
+        <label class="vs-label" for="wPayment">{{ 'Тип оплаты' if is_ru else 'Тўлов тури' }}</label>
+        <select name="payment" id="wPayment" class="vs-select">
+          <option value="">{{ '— все —' if is_ru else '— барчаси —' }}</option>
+          {% for p in payment_types %}
+          <option value="{{ p }}" {% if filters.payment == p %}selected{% endif %}>{{ payment_labels.get(p, p) }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:170px;">
+        <label class="vs-label" for="wSub">{{ 'Подразделение' if is_ru else 'Бўлинма' }}</label>
+        <select name="subdivision" id="wSub" class="vs-select">
+          <option value="">{{ '— все —' if is_ru else '— барчаси —' }}</option>
+          {% for s in subdivisions %}
+          <option value="{{ s }}" {% if filters.subdivision == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:170px;">
+        <label class="vs-label" for="wResolved">{{ 'Распознавание' if is_ru else 'Аниқланганлик' }}</label>
+        <select name="resolved" id="wResolved" class="vs-select">
+          <option value="">{{ '— все строки —' if is_ru else '— барча қаторлар —' }}</option>
+          <option value="resolved" {% if filters.resolved == 'resolved' %}selected{% endif %}>{{ 'Распознаны' if is_ru else 'Аниқланган' }}</option>
+          <option value="unresolved" {% if filters.resolved == 'unresolved' %}selected{% endif %}>{{ 'Не распознаны' if is_ru else 'Аниқланмаган' }}</option>
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:180px;">
+        <label class="vs-label" for="wQ">{{ 'Поиск' if is_ru else 'Қидирув' }}</label>
+        <input type="text" name="q" id="wQ" class="vs-input" value="{{ filters.q }}" maxlength="100" autocomplete="off">
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+        <a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.works') }}">{{ 'Сбросить' if is_ru else 'Тозалаш' }}</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Работ' if is_ru else 'Ишлар' }}</div>
+    <div class="vs-stat-value">{{ totals.jobs }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Гектаров' if is_ru else 'Гектар' }}</div>
+    <div class="vs-stat-value">{{ '%.2f'|format(totals.area) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Сумма' if is_ru else 'Сумма' }}</div>
+    <div class="vs-stat-value">{{ '%.0f'|format(totals.amount) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Получено' if is_ru else 'Кирим қилинган' }}</div>
+    <div class="vs-stat-value">{{ '%.0f'|format(totals.received) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Не получено' if is_ru else 'Олинмаган' }}</div>
+    <div class="vs-stat-value">{{ '%.0f'|format(totals.outstanding) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Прочие расходы' if is_ru else 'Бошқа харажатлар' }}</div>
+    <div class="vs-stat-value">{{ '%.0f'|format(totals.other_costs) }}</div>
+  </div>
+</div>
+<div class="vs-help vs-mb">{{ 'Карточки считаются по ВСЕМУ отфильтрованному набору, а не по показанной странице.' if is_ru else 'Карточкалар кўрсатилган саҳифа бўйича эмас, БУТУН фильтрланган тўплам бўйича ҳисобланади.' }}</div>
+
+{% if can_edit_works %}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Добавить работу вручную' if is_ru else 'Ишни қўлда қўшиш' }}</span>
+  </div>
+  <div class="vs-card-body">
+    <form method="post" action="{{ url_for('drones.works_add', **link_args) }}" class="vs-form-row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="vs-field" style="width:150px;">
+        <label class="vs-label" for="addWDateFrom">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
+        <input type="date" name="work_date_from" id="addWDateFrom" class="vs-input">
+      </div>
+      <div class="vs-field" style="width:150px;">
+        <label class="vs-label" for="addWDateTo">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
+        <input type="date" name="work_date_to" id="addWDateTo" class="vs-input">
+      </div>
+      <div class="vs-field" style="width:120px;">
+        <label class="vs-label" for="addWPeriod">{{ 'Период' if is_ru else 'Давр' }}</label>
+        <input type="text" name="period_month" id="addWPeriod" class="vs-input" placeholder="2026-04" maxlength="7">
+      </div>
+      <div class="vs-field" style="min-width:220px;">
+        <label class="vs-label" for="addWCustomerRaw">{{ 'Заказчик — как написано' if is_ru else 'Буюртмачи — ёзилганидек' }}</label>
+        <input type="text" name="customer_raw" id="addWCustomerRaw" class="vs-input" maxlength="300" required autocomplete="off">
+      </div>
+      <div class="vs-field" style="min-width:200px;">
+        <label class="vs-label" for="addWCustomer">{{ 'Заказчик из справочника' if is_ru else 'Маълумотномадаги буюртмачи' }}</label>
+        <select name="drone_customer_id" id="addWCustomer" class="vs-select">
+          <option value="">{{ '— не выбран —' if is_ru else '— танланмаган —' }}</option>
+          {% for c in customers %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:190px;">
+        <label class="vs-label" for="addWOperator">{{ 'Оператор' if is_ru else 'Оператор' }}</label>
+        <select name="drone_operator_id" id="addWOperator" class="vs-select">
+          <option value="">{{ '— не выбран —' if is_ru else '— танланмаган —' }}</option>
+          {% for op in operators %}<option value="{{ op.id }}">{{ op.full_name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="width:110px;">
+        <label class="vs-label" for="addWArea">{{ 'Площадь, га' if is_ru else 'Майдон, га' }}</label>
+        <input type="text" name="area_ha" id="addWArea" class="vs-input" required autocomplete="off">
+      </div>
+      <div class="vs-field" style="width:150px;">
+        <label class="vs-label" for="addWPayment">{{ 'Тип оплаты' if is_ru else 'Тўлов тури' }}</label>
+        <select name="payment_type" id="addWPayment" class="vs-select" required>
+          {% for p in payment_types %}<option value="{{ p }}">{{ payment_labels.get(p, p) }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="width:130px;">
+        <label class="vs-label" for="addWPrice">{{ 'Цена за га' if is_ru else '1 га нархи' }}</label>
+        <input type="text" name="price_per_ha" id="addWPrice" class="vs-input" value="{{ price_suggestions.get('cash') }}" autocomplete="off">
+      </div>
+      <div class="vs-field" style="width:130px;">
+        <label class="vs-label" for="addWAmount">{{ 'Сумма' if is_ru else 'Сумма' }}</label>
+        <input type="text" name="amount" id="addWAmount" class="vs-input" autocomplete="off">
+      </div>
+      <div class="vs-field" style="width:130px;">
+        <label class="vs-label" for="addWReceived">{{ 'Получено' if is_ru else 'Кирим қилинган' }}</label>
+        <input type="text" name="received_amount" id="addWReceived" class="vs-input" autocomplete="off">
+      </div>
+      <div class="vs-field" style="width:130px;">
+        <label class="vs-label" for="addWOther">{{ 'Прочие расходы' if is_ru else 'Бошқа харажатлар' }}</label>
+        <input type="text" name="other_costs" id="addWOther" class="vs-input" autocomplete="off">
+      </div>
+      <div class="vs-field" style="min-width:150px;">
+        <label class="vs-label" for="addWSub">{{ 'Подразделение' if is_ru else 'Бўлинма' }}</label>
+        <input type="text" name="subdivision_name" id="addWSub" class="vs-input" maxlength="120" autocomplete="off">
+      </div>
+      <div class="vs-field" style="min-width:180px;">
+        <label class="vs-label" for="addWNote">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+        <input type="text" name="note" id="addWNote" class="vs-input" maxlength="500" autocomplete="off">
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn vs-btn-primary">{{ 'Добавить' if is_ru else 'Қўшиш' }}</button>
+      </div>
+    </form>
+    {# Значения подсказок держим в data-атрибуте: tojson в атрибуте с двойными
+       кавычками обрывает значение, а обработчик молча не устанавливается. #}
+    <div class="vs-help" id="wPriceHint"
+         data-price-cash="{{ price_suggestions.get('cash') }}"
+         data-price-transfer="{{ price_suggestions.get('transfer') }}"
+         data-price-internal="{{ price_suggestions.get('internal') }}">
+      {{ 'Цена за гектар — ПОДСКАЗКА, а не правило: 200 000 сум для наличных и справки, 85 633 для своего предприятия. В настоящих ведомостях встречаются ещё девять значений, а внутренний тариф на одном листе указан как 76 458. Переписывайте свободно. Разовый платёж вводится суммой при пустой цене за гектар. Период (ГГГГ-ММ) можно не заполнять, если указана дата с — он будет взят из неё; для работы без даты период обязателен, иначе она выпадет из месячного отчёта.' if is_ru else '1 га нархи — ТАВСИЯ, қоида эмас: нақд ва справка учун 200 000 сўм, тизим корхонаси учун 85 633. Ҳақиқий ведомостларда яна тўққизта қиймат учрайди, бир ички варақда тариф 76 458 деб кўрсатилган. Эркин ўзгартиринг. Бир марталик тўлов 1 га нархи бўш ҳолда сумма орқали киритилади. Давр (ЙЙЙЙ-ОО) «Сана дан» кўрсатилган бўлса тўлдирилмаса ҳам бўлади — у сана орқали олинади; санасиз иш учун давр мажбурий, акс ҳолда у ойлик ҳисоботдан тушиб қолади.' }}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Список работ' if is_ru else 'Ишлар рўйхати' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'Всего' if is_ru else 'Жами' }}: {{ total }}</span>
+  </div>
+  {% if rows %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Даты' if is_ru else 'Саналар' }}</th>
+        <th>{{ 'Оператор' if is_ru else 'Оператор' }}</th>
+        <th>{{ 'Заказчик' if is_ru else 'Буюртмачи' }}</th>
+        <th class="right">{{ 'Га' if is_ru else 'Га' }}</th>
+        <th class="right">{{ 'Цена за га' if is_ru else '1 га нархи' }}</th>
+        <th class="right">{{ 'Сумма' if is_ru else 'Сумма' }}</th>
+        <th class="right">{{ 'Получено' if is_ru else 'Кирим' }}</th>
+        <th>{{ 'Оплата' if is_ru else 'Тўлов' }}</th>
+        <th>{{ 'Источник' if is_ru else 'Манба' }}</th>
+        {% if can_edit_works %}<th>{{ 'Правка' if is_ru else 'Таҳрир' }}</th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for w in rows %}
+      <tr>
+        <td>
+          {% if w.work_date_from %}
+            {{ w.work_date_from.strftime('%d.%m.%Y') }}{% if w.work_date_to and w.work_date_to != w.work_date_from %} — {{ w.work_date_to.strftime('%d.%m.%Y') }}{% endif %}
+          {% else %}
+            <span class="vs-badge">{{ t_no_date }}</span>
+          {% endif %}
+          <div class="vs-muted" style="font-size:11px;">{{ w.period_month }}{% if w.date_raw %} · {{ w.date_raw }}{% endif %}</div>
+        </td>
+        <td>
+          {% if w.drone_operator %}{{ w.drone_operator.full_name }}
+          {% else %}<span class="vs-badge">{{ t_none_operator }}</span>{% endif %}
+          {% if w.operator_raw %}<div class="vs-muted" style="font-size:11px;">{{ w.operator_raw }}</div>{% endif %}
+        </td>
+        <td>
+          {% if w.drone_customer %}{{ w.drone_customer.name }}
+          {% else %}<span class="vs-badge">{{ t_none_customer }}</span>{% endif %}
+          <div class="vs-muted" style="font-size:11px;">{{ w.customer_raw }}</div>
+        </td>
+        <td class="right">{{ '%.2f'|format(w.area_ha or 0) }}</td>
+        <td class="right">{% if w.price_per_ha is not none %}{{ '%.0f'|format(w.price_per_ha) }}{% else %}—{% endif %}</td>
+        <td class="right">{% if w.amount is not none %}{{ '%.0f'|format(w.amount) }}{% else %}—{% endif %}</td>
+        <td class="right">{% if w.received_amount is not none %}{{ '%.0f'|format(w.received_amount) }}{% else %}—{% endif %}</td>
+        <td>{{ payment_labels.get(w.payment_type, w.payment_type) }}</td>
+        <td class="vs-muted" style="font-size:11px;">
+          {% if w.source_file %}{{ w.source_file }}<br>{{ w.source_sheet }} · {{ w.source_row }}
+          {% else %}{{ 'вручную' if is_ru else 'қўлда' }}{% endif %}
+        </td>
+        {% if can_edit_works %}
+        <td>
+          <details>
+            <summary class="vs-btn vs-btn-ghost" style="font-size:12px;">{{ 'Изменить' if is_ru else 'Ўзгартириш' }}</summary>
+            <form method="post" action="{{ url_for('drones.works_update', work_id=w.id, **link_args) }}" class="vs-row" style="gap:6px; flex-wrap:wrap; align-items:flex-end; margin-top:8px;">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <div class="vs-field" style="width:140px;">
+                <label class="vs-label">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
+                <input type="date" name="work_date_from" class="vs-input" value="{{ w.work_date_from.isoformat() if w.work_date_from else '' }}">
+              </div>
+              <div class="vs-field" style="width:140px;">
+                <label class="vs-label">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
+                <input type="date" name="work_date_to" class="vs-input" value="{{ w.work_date_to.isoformat() if w.work_date_to else '' }}">
+              </div>
+              <div class="vs-field" style="width:100px;">
+                <label class="vs-label">{{ 'Период' if is_ru else 'Давр' }}</label>
+                <input type="text" name="period_month" class="vs-input" value="{{ w.period_month }}" maxlength="7">
+              </div>
+              <div class="vs-field" style="min-width:200px;">
+                <label class="vs-label">{{ 'Заказчик — как написано' if is_ru else 'Буюртмачи — ёзилганидек' }}</label>
+                <input type="text" name="customer_raw" class="vs-input" value="{{ w.customer_raw }}" maxlength="300" required>
+              </div>
+              <div class="vs-field" style="min-width:180px;">
+                <label class="vs-label">{{ 'Заказчик из справочника' if is_ru else 'Маълумотномадаги буюртмачи' }}</label>
+                <select name="drone_customer_id" class="vs-select">
+                  <option value="">{{ '— не выбран —' if is_ru else '— танланмаган —' }}</option>
+                  {% for c in customers %}<option value="{{ c.id }}" {% if w.drone_customer_id == c.id %}selected{% endif %}>{{ c.name }}</option>{% endfor %}
+                </select>
+              </div>
+              <div class="vs-field" style="min-width:180px;">
+                <label class="vs-label">{{ 'Оператор' if is_ru else 'Оператор' }}</label>
+                <select name="drone_operator_id" class="vs-select">
+                  <option value="">{{ '— не выбран —' if is_ru else '— танланмаган —' }}</option>
+                  {% for op in operators %}<option value="{{ op.id }}" {% if w.drone_operator_id == op.id %}selected{% endif %}>{{ op.full_name }}</option>{% endfor %}
+                </select>
+              </div>
+              <div class="vs-field" style="width:100px;">
+                <label class="vs-label">{{ 'Га' if is_ru else 'Га' }}</label>
+                <input type="text" name="area_ha" class="vs-input" value="{{ w.area_ha }}" required>
+              </div>
+              <div class="vs-field" style="width:140px;">
+                <label class="vs-label">{{ 'Оплата' if is_ru else 'Тўлов' }}</label>
+                <select name="payment_type" class="vs-select">
+                  {% for p in payment_types %}<option value="{{ p }}" {% if w.payment_type == p %}selected{% endif %}>{{ payment_labels.get(p, p) }}</option>{% endfor %}
+                </select>
+              </div>
+              <div class="vs-field" style="width:120px;">
+                <label class="vs-label">{{ 'Цена за га' if is_ru else '1 га нархи' }}</label>
+                <input type="text" name="price_per_ha" class="vs-input" value="{{ w.price_per_ha if w.price_per_ha is not none else '' }}">
+              </div>
+              <div class="vs-field" style="width:120px;">
+                <label class="vs-label">{{ 'Сумма' if is_ru else 'Сумма' }}</label>
+                <input type="text" name="amount" class="vs-input" value="{{ w.amount if w.amount is not none else '' }}">
+              </div>
+              <div class="vs-field" style="width:120px;">
+                <label class="vs-label">{{ 'Получено' if is_ru else 'Кирим' }}</label>
+                <input type="text" name="received_amount" class="vs-input" value="{{ w.received_amount if w.received_amount is not none else '' }}">
+              </div>
+              <div class="vs-field" style="width:120px;">
+                <label class="vs-label">{{ 'Прочие' if is_ru else 'Бошқа' }}</label>
+                <input type="text" name="other_costs" class="vs-input" value="{{ w.other_costs if w.other_costs is not none else '' }}">
+              </div>
+              <div class="vs-field" style="min-width:140px;">
+                <label class="vs-label">{{ 'Подразделение' if is_ru else 'Бўлинма' }}</label>
+                <input type="text" name="subdivision_name" class="vs-input" value="{{ w.subdivision_name or '' }}" maxlength="120">
+              </div>
+              <div class="vs-field" style="min-width:160px;">
+                <label class="vs-label">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+                <input type="text" name="note" class="vs-input" value="{{ w.note or '' }}" maxlength="500">
+              </div>
+              <div class="vs-field" style="flex:none;">
+                <label class="vs-label">&nbsp;</label>
+                <button type="submit" class="vs-btn vs-btn-primary">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+              </div>
+            </form>
+          </details>
+        </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if pages > 1 %}
+  <div class="vs-card-body vs-row" style="gap:8px; align-items:center;">
+    {% if page > 1 %}<a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.works', page=page-1, **link_args) }}">←</a>{% endif %}
+    <span class="vs-soft">{{ 'Страница' if is_ru else 'Саҳифа' }} {{ page }} / {{ pages }}</span>
+    {% if page < pages %}<a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.works', page=page+1, **link_args) }}">→</a>{% endif %}
+  </div>
+  {% endif %}
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-ico">📒</div>
+    <div class="vs-empty-title">{{ 'Работ нет' if is_ru else 'Ишлар йўқ' }}</div>
+    <div class="vs-empty-sub">{{ 'Либо фильтр ничего не нашёл, либо ведомости ещё не импортированы: tools/import_drone_works.py с манифестом, сначала без --apply.' if is_ru else 'Ё фильтр ҳеч нарса топмади, ёки ведомостлар ҳали импорт қилинмаган: tools/import_drone_works.py манифест билан, аввал --apply’сиз.' }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

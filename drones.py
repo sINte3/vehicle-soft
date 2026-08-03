@@ -23,6 +23,7 @@ and Excel (DRONE-004).
 
 import io
 import json
+import re
 
 from datetime import datetime, timedelta
 
@@ -37,10 +38,20 @@ from ingest_common import verify_api_token, extract_token
 from models import (
     db,
     DRONE_BATTERY_CONDITIONS,
+    DRONE_CUSTOMER_EXTERNAL,
+    DRONE_CUSTOMER_INTERNAL,
+    DRONE_CUSTOMER_TYPES,
     DRONE_STATUSES,
     DRONE_STATUS_SERVICEABLE,
     DRONE_STATUS_UNSERVICEABLE,
+    DRONE_WORK_PAYMENT_CASH,
+    DRONE_WORK_PAYMENT_INTERNAL,
+    DRONE_WORK_PAYMENT_TRANSFER,
+    DRONE_WORK_PAYMENT_TYPES,
+    DRONE_WORK_PRICE_SUGGESTIONS,
     DroneBattery,
+    DroneCustomer,
+    DroneCustomerAlias,
     DroneOperator,
     DroneOperatorAssignment,
     DroneUnit,
@@ -49,6 +60,7 @@ from models import (
     DroneFlight,
     DroneReattachRun,
     DroneSyncLog,
+    DroneWork,
     module_required,
 )
 
@@ -2627,3 +2639,377 @@ def flights_xlsx():
     # and a reader who has only this file needs both.
     _drone_operator_sheet(wb, st, _drone_operator_cut(conds, total_area))
     return _drone_xlsx_response(wb, 'drones_flights', filters)
+
+
+# ─── DRONE-WORKS-001: the work ledger ────────────────────────────────────────
+
+# [REASON]: the commercial side of the drone operation has lived in the
+# dispatchers' Excel books since September 2025 -- about 700 rows, 526 farms,
+# 12 767 ha. Everything below reads drone_works, which stores the OPERATOR and
+# never the machine: the sheets name the man, and the machine is derived from
+# operator + date through drone_operator_assignments. Nothing here reads or
+# writes drone_flights, and no route in this section touches the ingest.
+
+DRONE_WORKS_PAGE_SIZE = 50
+
+# Same reason as DRONE_FLIGHTS_XLSX_CAP: a silently truncated workbook reads
+# as complete data on the other side of an e-mail.
+DRONE_WORKS_XLSX_CAP = 20000
+
+# Query-string sentinel for «not resolved». -1 rather than an empty string,
+# because an empty value already means «no filter» in every other picker on
+# this module and reusing it would make the two indistinguishable.
+DRONE_WORK_UNRESOLVED = -1
+
+
+def _drone_payment_labels():
+    return {
+        DRONE_WORK_PAYMENT_CASH: _drone_t('Нақд', 'Наличные'),
+        DRONE_WORK_PAYMENT_TRANSFER: _drone_t('Справка', 'Справка'),
+        DRONE_WORK_PAYMENT_INTERNAL: _drone_t('Тизим корхонаси',
+                                              'Своё предприятие'),
+    }
+
+
+def _drone_customer_type_labels():
+    return {
+        DRONE_CUSTOMER_EXTERNAL: _drone_t('Ташқи', 'Внешний'),
+        DRONE_CUSTOMER_INTERNAL: _drone_t('Ички', 'Внутренний'),
+    }
+
+
+def _drone_work_month_expr():
+    """'YYYY-MM' of a job: its own date when it has one, the month otherwise.
+
+    [REASON]: period_month is NOT NULL precisely so a job with no date is
+    still attributable to a month -- 34 rows of ~708 carry no date at all and
+    would otherwise fall out of every monthly report. A job that DOES carry a
+    date is grouped by that date, never by the manifest month: one book is
+    filed as 2026-03 while its rows run 17.03--25.04, and filing April work in
+    March is the error this expression exists to avoid.
+    """
+    return func.coalesce(func.strftime('%Y-%m', DroneWork.work_date_from),
+                         DroneWork.period_month)
+
+
+def _drone_work_outstanding_expr():
+    """amount - received, both defaulting to zero. «олинмаган пуллар»."""
+    return (func.coalesce(DroneWork.amount, 0.0)
+            - func.coalesce(DroneWork.received_amount, 0.0))
+
+
+def _drone_num_arg(value):
+    """A money/area field from a form: float, or None when the field is blank.
+
+    [REASON]: blank must become NULL and never 0.0. A zero price means «this
+    farm was charged nothing per hectare», which is a different and false
+    statement from «the price was not written down», and the two must stay
+    distinguishable in a ledger somebody bills from.
+    """
+    text = (value or '').strip()
+    if not text:
+        return None
+    text = (text.replace('\xa0', '').replace(' ', '').replace(' ', '')
+            .replace(',', '.'))
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _drone_works_filters_from_args(args):
+    """Parse the ledger filter set. Every value round-trips into link_args."""
+    period = (args.get('period') or '').strip()
+    if not re.match(r'^\d{4}-\d{2}$', period or ''):
+        period = ''
+    payment = (args.get('payment') or '').strip()
+    if payment not in DRONE_WORK_PAYMENT_TYPES:
+        payment = ''
+    resolved = (args.get('resolved') or '').strip()
+    if resolved not in ('resolved', 'unresolved'):
+        resolved = ''
+    return {
+        'period': period,
+        'operator_id': args.get('operator_id', type=int),
+        'customer_id': args.get('customer_id', type=int),
+        'payment': payment,
+        'subdivision': (args.get('subdivision') or '').strip(),
+        'resolved': resolved,
+        'q': (args.get('q') or '').strip(),
+    }
+
+
+def _drone_work_conditions(filters):
+    """SQLAlchemy conditions for the parsed ledger filters."""
+    conds = []
+    if filters['period']:
+        conds.append(_drone_work_month_expr() == filters['period'])
+    if filters['operator_id'] == DRONE_WORK_UNRESOLVED:
+        conds.append(DroneWork.drone_operator_id.is_(None))
+    elif filters['operator_id']:
+        conds.append(DroneWork.drone_operator_id == filters['operator_id'])
+    if filters['customer_id'] == DRONE_WORK_UNRESOLVED:
+        conds.append(DroneWork.drone_customer_id.is_(None))
+    elif filters['customer_id']:
+        conds.append(DroneWork.drone_customer_id == filters['customer_id'])
+    if filters['payment']:
+        conds.append(DroneWork.payment_type == filters['payment'])
+    if filters['subdivision']:
+        conds.append(DroneWork.subdivision_name == filters['subdivision'])
+    if filters['resolved'] == 'resolved':
+        conds.append(and_(DroneWork.drone_customer_id.isnot(None),
+                          DroneWork.drone_operator_id.isnot(None)))
+    elif filters['resolved'] == 'unresolved':
+        conds.append(or_(DroneWork.drone_customer_id.is_(None),
+                         DroneWork.drone_operator_id.is_(None)))
+    if filters['q']:
+        # The verbatim spelling is what people remember and search for; the
+        # canonical name lives on the customer row and is searched too.
+        like = '%%%s%%' % filters['q']
+        conds.append(or_(DroneWork.customer_raw.ilike(like),
+                         DroneWork.operator_raw.ilike(like),
+                         DroneWork.note.ilike(like)))
+    return conds
+
+
+def _drone_works_link_args(filters):
+    """Filters as URL parameters, empty ones dropped -- shared by every link."""
+    args = {}
+    if filters['period']:
+        args['period'] = filters['period']
+    if filters['operator_id']:
+        args['operator_id'] = filters['operator_id']
+    if filters['customer_id']:
+        args['customer_id'] = filters['customer_id']
+    if filters['payment']:
+        args['payment'] = filters['payment']
+    if filters['subdivision']:
+        args['subdivision'] = filters['subdivision']
+    if filters['resolved']:
+        args['resolved'] = filters['resolved']
+    if filters['q']:
+        args['q'] = filters['q']
+    return args
+
+
+def _drone_work_periods():
+    """Every month present in the ledger, newest first."""
+    month = _drone_work_month_expr()
+    return [row[0] for row in
+            db.session.query(month).distinct().order_by(month.desc()).all()
+            if row[0]]
+
+
+def _drone_work_subdivisions():
+    return [row[0] for row in
+            db.session.query(DroneWork.subdivision_name)
+            .filter(DroneWork.subdivision_name.isnot(None))
+            .distinct().order_by(DroneWork.subdivision_name).all()]
+
+
+def _drone_works_totals(conds):
+    row = db.session.query(
+        func.count(DroneWork.id),
+        func.coalesce(func.sum(DroneWork.area_ha), 0.0),
+        func.coalesce(func.sum(DroneWork.amount), 0.0),
+        func.coalesce(func.sum(DroneWork.received_amount), 0.0),
+        func.coalesce(func.sum(DroneWork.other_costs), 0.0),
+    ).filter(*conds).one()
+    return {
+        'jobs': row[0] or 0,
+        'area': float(row[1] or 0.0),
+        'amount': float(row[2] or 0.0),
+        'received': float(row[3] or 0.0),
+        'other_costs': float(row[4] or 0.0),
+        'outstanding': float(row[2] or 0.0) - float(row[3] or 0.0),
+    }
+
+
+def _drone_works_pickers():
+    """The three pickers every works screen shares."""
+    return {
+        'operators': DroneOperator.query.order_by(
+            DroneOperator.is_active.desc(), DroneOperator.full_name).all(),
+        'customers': DroneCustomer.query.order_by(
+            DroneCustomer.is_active.desc(), DroneCustomer.name).all(),
+        'periods': _drone_work_periods(),
+        'subdivisions': _drone_work_subdivisions(),
+        'payment_labels': _drone_payment_labels(),
+    }
+
+
+@drones_bp.route('/works')
+@module_required('drones')
+def works():
+    """The work ledger: one row per job, with the filters the owner asked for."""
+    page = request.args.get('page', 1, type=int) or 1
+    if page < 1:
+        page = 1
+    filters = _drone_works_filters_from_args(request.args)
+    conds = _drone_work_conditions(filters)
+
+    query = (DroneWork.query.filter(*conds)
+             .options(joinedload(DroneWork.drone_operator),
+                      joinedload(DroneWork.drone_customer))
+             # [REASON]: ordered by the EFFECTIVE month, which is never NULL,
+             # then by the date inside it. Sorting on work_date_from alone
+             # would need NULLS LAST -- unsupported on SQLite below 3.30 --
+             # and would scatter the 34 undated jobs to one end of the whole
+             # ledger instead of keeping them inside their own month.
+             .order_by(_drone_work_month_expr().desc(),
+                       DroneWork.work_date_from.desc(),
+                       DroneWork.id.desc()))
+    total = db.session.query(func.count(DroneWork.id)).filter(*conds).scalar() or 0
+    pages = max(1, (total + DRONE_WORKS_PAGE_SIZE - 1) // DRONE_WORKS_PAGE_SIZE)
+    if page > pages:
+        page = pages
+    rows = (query.offset((page - 1) * DRONE_WORKS_PAGE_SIZE)
+            .limit(DRONE_WORKS_PAGE_SIZE).all())
+
+    context = _drone_works_pickers()
+    return render_template(
+        'drones/works.html',
+        rows=rows,
+        filters=filters,
+        link_args=_drone_works_link_args(filters),
+        # The totals are over the WHOLE filtered set, not the page: a page
+        # total on a paginated ledger is a number people quote by accident.
+        totals=_drone_works_totals(conds),
+        page=page,
+        pages=pages,
+        total=total,
+        unresolved_key=DRONE_WORK_UNRESOLVED,
+        price_suggestions=DRONE_WORK_PRICE_SUGGESTIONS,
+        payment_types=DRONE_WORK_PAYMENT_TYPES,
+        **context)
+
+
+def _drone_work_redirect(filters=None):
+    args = _drone_works_link_args(filters) if filters else {}
+    return redirect(url_for('drones.works', **args))
+
+
+def _drone_work_form_values(row=None):
+    """(values dict, error message). Shared by add and edit.
+
+    [REASON]: the manual form is the one place a price may be SUGGESTED --
+    200 000 so'm/ha for cash and certificate work, 85 633 for the holding's
+    own land. Both are prefilled and both are overridable, because nine other
+    prices occur in the real books and one internal sheet quotes 76 458. The
+    import must never do this; a price it invented would be
+    indistinguishable from a price the farm agreed.
+    """
+    period = (request.form.get('period_month') or '').strip()
+    date_from = _drone_parse_date(request.form.get('work_date_from'))
+    date_to = _drone_parse_date(request.form.get('work_date_to'))
+    customer_raw = (request.form.get('customer_raw') or '').strip()
+    area = _drone_num_arg(request.form.get('area_ha'))
+    payment = (request.form.get('payment_type') or '').strip()
+
+    if not customer_raw:
+        return None, _drone_t('Буюртмачи номи бўш бўлиши мумкин эмас.',
+                              'Название заказчика не может быть пустым.')
+    if area is None or area <= 0:
+        return None, _drone_t('Майдон нолдан катта бўлиши керак.',
+                              'Площадь должна быть больше нуля.')
+    if payment not in DRONE_WORK_PAYMENT_TYPES:
+        return None, _drone_t('Тўлов тури танланмаган.',
+                              'Тип оплаты не выбран.')
+    if date_to is not None and date_from is not None and date_to < date_from:
+        return None, _drone_t('«Санагача» «Санадан»дан олдин бўлиши мумкин эмас.',
+                              '«Дата по» не может быть раньше «Даты с».')
+    if date_to is not None and date_from is None:
+        return None, _drone_t('«Санагача» бор, «Санадан» йўқ — даврнинг '
+                              'боши кўрсатилмаган.',
+                              'Указана «Дата по» без «Даты с» — начало '
+                              'периода не задано.')
+    if not re.match(r'^\d{4}-\d{2}$', period or ''):
+        # [REASON]: period_month is NOT NULL and is what keeps an undated job
+        # inside its month's report. It is derived from the date when there
+        # is one, so the operator does not have to type it twice.
+        if date_from is not None:
+            period = date_from.strftime('%Y-%m')
+        else:
+            return None, _drone_t(
+                'Давр (ЙЙЙЙ-ОО) кўрсатилиши шарт: санаси йўқ иш ҳам ўз '
+                'ойининг ҳисоботида қолиши керак.',
+                'Период (ГГГГ-ММ) обязателен: работа без даты всё равно '
+                'должна остаться в отчёте своего месяца.')
+
+    customer_id = request.form.get('drone_customer_id', type=int) or None
+    operator_id = request.form.get('drone_operator_id', type=int) or None
+    if customer_id and DroneCustomer.query.get(customer_id) is None:
+        return None, _drone_t('Буюртмачи топилмади.', 'Заказчик не найден.')
+    if operator_id and DroneOperator.query.get(operator_id) is None:
+        return None, _drone_t('Оператор топилмади.', 'Оператор не найден.')
+
+    return {
+        'period_month': period,
+        'work_date_from': date_from,
+        'work_date_to': date_to if date_to is not None else date_from,
+        'date_raw': (request.form.get('date_raw') or '').strip() or None,
+        'drone_operator_id': operator_id,
+        'operator_raw': (request.form.get('operator_raw') or '').strip() or None,
+        'drone_customer_id': customer_id,
+        'customer_raw': customer_raw,
+        'area_ha': area,
+        'price_per_ha': _drone_num_arg(request.form.get('price_per_ha')),
+        'amount': _drone_num_arg(request.form.get('amount')),
+        'other_costs': _drone_num_arg(request.form.get('other_costs')),
+        'received_amount': _drone_num_arg(request.form.get('received_amount')),
+        'payment_type': payment,
+        'subdivision_name': (request.form.get('subdivision_name') or '').strip()
+                            or None,
+        'note': (request.form.get('note') or '').strip() or None,
+    }, None
+
+
+@drones_bp.route('/works/add', methods=['POST'])
+@module_required('drones')
+def works_add():
+    """A job typed by hand. Not everything comes out of a file."""
+    if not current_user.can_edit:
+        abort(403)
+    filters = _drone_works_filters_from_args(request.args)
+    values, error = _drone_work_form_values()
+    if error:
+        flash(error, 'warning')
+        return _drone_work_redirect(filters)
+
+    row = DroneWork(created_by=(current_user.id
+                                if getattr(current_user, 'is_authenticated',
+                                           False) else None),
+                    **values)
+    db.session.add(row)
+    db.session.commit()
+    flash(_drone_t('Иш қўшилди: «%s», %.2f га.', 'Работа добавлена: «%s», %.2f га.')
+          % (values['customer_raw'], values['area_ha']), 'success')
+    return _drone_work_redirect(filters)
+
+
+@drones_bp.route('/works/<int:work_id>/update', methods=['POST'])
+@module_required('drones')
+def works_update(work_id):
+    """Edit one job.
+
+    [REASON]: customer_raw stays editable but its ORIGINAL value is the
+    evidence behind the resolution, so the import never rewrites it and a
+    hand edit of an imported row is a deliberate act by a person who can see
+    the source file name in the same table.
+    """
+    if not current_user.can_edit:
+        abort(403)
+    row = DroneWork.query.get(work_id)
+    if row is None:
+        abort(404)
+    filters = _drone_works_filters_from_args(request.args)
+    values, error = _drone_work_form_values(row)
+    if error:
+        flash(error, 'warning')
+        return _drone_work_redirect(filters)
+    for key, value in values.items():
+        setattr(row, key, value)
+    db.session.commit()
+    flash(_drone_t('Иш янгиланди: «%s».', 'Работа обновлена: «%s».')
+          % values['customer_raw'], 'success')
+    return _drone_work_redirect(filters)

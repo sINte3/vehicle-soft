@@ -11,5 +11,9 @@
   <a href="{{ url_for('drones.index') }}" class="vs-btn{% if nav_current == 'drones.index' %} vs-btn-primary{% endif %}">{{ 'Вылеты' if nav_is_ru else 'Парвозлар' }}</a>
   <a href="{{ url_for('drones.units') }}" class="vs-btn{% if nav_current in ('drones.units', 'drones.unit_card') %} vs-btn-primary{% endif %}">{{ 'Машины' if nav_is_ru else 'Машиналар' }}</a>
   <a href="{{ url_for('drones.operators') }}" class="vs-btn{% if nav_current in ('drones.operators', 'drones.operator_card') %} vs-btn-primary{% endif %}">{{ 'Операторы' if nav_is_ru else 'Операторлар' }}</a>
+  {# DRONE-WORKS-001 добавил «Работы»: коммерческая сторона трека, ведомости
+     диспетчеров. Отдельная запись от «Вылетов» намеренно — вылет DJI и
+     работа из ведомости это разные факты и разные таблицы. #}
+  <a href="{{ url_for('drones.works') }}" class="vs-btn{% if nav_current == 'drones.works' %} vs-btn-primary{% endif %}">{{ 'Работы' if nav_is_ru else 'Ишлар' }}</a>
   <a href="{{ url_for('drones.sources') }}" class="vs-btn{% if nav_current == 'drones.sources' %} vs-btn-primary{% endif %}">{{ 'Источники' if nav_is_ru else 'Манбалар' }}</a>
 </div>
