@@ -3013,3 +3013,269 @@ def works_update(work_id):
     flash(_drone_t('Иш янгиланди: «%s».', 'Работа обновлена: «%s».')
           % values['customer_raw'], 'success')
     return _drone_work_redirect(filters)
+
+
+# ─── DRONE-WORKS-001: the customer directory and its aliases ─────────────────
+
+def _drone_customer_key(value):
+    """normalized_key of a farm spelling: case-folded, whitespace-collapsed.
+
+    [REASON]: the SAME rule tools/import_drone_works.py writes, spelled out
+    here rather than imported, because tools/ is not a package and drones.py
+    must not depend on it at request time. The two are pinned together by a
+    test that compares them on the same inputs -- if one drifts, the alias the
+    screen creates stops matching the alias the import looks up, and every
+    re-import quietly creates a second customer.
+    """
+    if value is None:
+        return ''
+    return re.sub(r'\s+', ' ', str(value)).strip().casefold()
+
+
+def _drone_customers_redirect(customer_id=None):
+    if customer_id:
+        return redirect(url_for('drones.customers', focus=customer_id))
+    return redirect(url_for('drones.customers'))
+
+
+def _drone_alias_maps():
+    """{normalized_key: customer id} for resolution. isnot(False), never == True.
+
+    [REASON]: is_active is BOOLEAN DEFAULT 1 and a hand-inserted or legacy row
+    can hold NULL. `== True` silently drops those rows, turning a known
+    spelling into an unresolved one and, on the next import, into a duplicate
+    customer. The identical bug was already caught once in
+    _drone_nickname_maps(); it is not being reintroduced here.
+    """
+    mapping = {}
+    for alias in DroneCustomerAlias.query.filter(
+            DroneCustomerAlias.is_active.isnot(False)).all():
+        mapping[alias.normalized_key] = alias.drone_customer_id
+    return mapping
+
+
+@drones_bp.route('/customers')
+@module_required('drones')
+def customers():
+    """The drone service's own customer directory and every spelling of it.
+
+    [REASON]: a directory SEPARATE from `customers`, by the owner's decision
+    of 2026-08-03. Nothing on this screen joins to `customers` and no row is
+    moved between them; merging the two by INN is a separate task, and a
+    foreign key added now would presume its outcome.
+    """
+    rows = (DroneCustomer.query
+            .order_by(DroneCustomer.is_active.desc(), DroneCustomer.name)
+            .all())
+    aliases = {}
+    for alias in (DroneCustomerAlias.query
+                  .order_by(DroneCustomerAlias.raw_name).all()):
+        aliases.setdefault(alias.drone_customer_id, []).append(alias)
+
+    # Jobs and hectares per customer, in one query -- the lazy='dynamic'
+    # relationship would give one query per customer and there are ~526.
+    usage = {}
+    for customer_id, jobs, area in db.session.query(
+            DroneWork.drone_customer_id,
+            func.count(DroneWork.id),
+            func.coalesce(func.sum(DroneWork.area_ha), 0.0)
+    ).group_by(DroneWork.drone_customer_id).all():
+        usage[customer_id] = {'jobs': jobs, 'area': float(area or 0.0)}
+
+    unresolved = db.session.query(
+        func.count(DroneWork.id),
+        func.coalesce(func.sum(DroneWork.area_ha), 0.0)
+    ).filter(DroneWork.drone_customer_id.is_(None)).one()
+
+    return render_template(
+        'drones/customers.html',
+        customers=rows,
+        aliases=aliases,
+        usage=usage,
+        unresolved={'jobs': unresolved[0] or 0,
+                    'area': float(unresolved[1] or 0.0)},
+        type_labels=_drone_customer_type_labels(),
+        customer_types=DRONE_CUSTOMER_TYPES,
+        focus=request.args.get('focus', type=int),
+    )
+
+
+@drones_bp.route('/customers/add', methods=['POST'])
+@module_required('drones')
+def customers_add():
+    """Add a customer and, in the same transaction, its first alias.
+
+    [REASON]: a customer with no alias resolves nothing -- the import looks
+    up spellings, not names. Creating the two together is what makes the
+    screen and the import agree from the first row.
+    """
+    if not current_user.can_edit:
+        abort(403)
+    name = (request.form.get('name') or '').strip()
+    if not name:
+        flash(_drone_t('Буюртмачи номи бўш бўлиши мумкин эмас.',
+                       'Название заказчика не может быть пустым.'), 'warning')
+        return _drone_customers_redirect()
+
+    customer_type = (request.form.get('customer_type') or '').strip()
+    if customer_type not in DRONE_CUSTOMER_TYPES:
+        customer_type = DRONE_CUSTOMER_EXTERNAL
+
+    key = _drone_customer_key(name)
+    existing = _drone_alias_maps().get(key)
+    if existing is not None:
+        other = DroneCustomer.query.get(existing)
+        flash(_drone_t(
+            'Бундай ёзилиш аллақачон «%s» буюртмачисига боғланган. '
+            'Иккинчи ёзувни яратиш ўрнига мавжуд алиасни кўчиринг.',
+            'Такое написание уже привязано к заказчику «%s». Перенесите '
+            'существующий алиас, а не создавайте вторую запись.')
+            % (other.name if other else '?'), 'warning')
+        return _drone_customers_redirect(existing)
+
+    row = DroneCustomer(
+        name=name,
+        inn=(request.form.get('inn') or '').strip() or None,
+        customer_type=customer_type,
+        note=(request.form.get('note') or '').strip() or None,
+        is_active=True)
+    db.session.add(row)
+    db.session.flush()
+    db.session.add(DroneCustomerAlias(
+        raw_name=name, normalized_key=key, drone_customer_id=row.id,
+        is_active=True))
+    db.session.commit()
+    flash(_drone_t('«%s» буюртмачиси ва унинг биринчи ёзилиши қўшилди.',
+                   'Заказчик «%s» и его первое написание добавлены.')
+          % name, 'success')
+    return _drone_customers_redirect(row.id)
+
+
+@drones_bp.route('/customers/<int:customer_id>/update', methods=['POST'])
+@module_required('drones')
+def customers_update(customer_id):
+    """Edit a customer, or deactivate it. There is deliberately no delete.
+
+    [REASON]: a customer that stops being served still owns the hectares it
+    was billed for. Deleting the row would orphan every work row that
+    explains an already-sent report; deactivating keeps the history readable
+    and takes it out of the pickers.
+    """
+    if not current_user.can_edit:
+        abort(403)
+    row = DroneCustomer.query.get(customer_id)
+    if row is None:
+        abort(404)
+    name = (request.form.get('name') or '').strip()
+    if not name:
+        flash(_drone_t('Буюртмачи номи бўш бўлиши мумкин эмас.',
+                       'Название заказчика не может быть пустым.'), 'warning')
+        return _drone_customers_redirect(customer_id)
+    customer_type = (request.form.get('customer_type') or '').strip()
+    if customer_type not in DRONE_CUSTOMER_TYPES:
+        customer_type = row.customer_type or DRONE_CUSTOMER_EXTERNAL
+
+    row.name = name
+    row.inn = (request.form.get('inn') or '').strip() or None
+    row.customer_type = customer_type
+    row.note = (request.form.get('note') or '').strip() or None
+    row.is_active = request.form.get('is_active') is not None
+    db.session.commit()
+    if row.is_active:
+        flash(_drone_t('«%s» янгиланди.', '«%s» обновлён.') % name, 'success')
+    else:
+        flash(_drone_t(
+            '«%s» фаолсизлантирилди: у танлаш рўйхатларида кўринмайди, аммо '
+            'ишлари ва гектарлари сақланиб қолади.',
+            '«%s» деактивирован: он не появляется в списках выбора, но его '
+            'работы и гектары сохраняются.') % name, 'success')
+    return _drone_customers_redirect(customer_id)
+
+
+@drones_bp.route('/customers/aliases/add', methods=['POST'])
+@module_required('drones')
+def customer_alias_add():
+    if not current_user.can_edit:
+        abort(403)
+    customer_id = request.form.get('drone_customer_id', type=int)
+    customer = DroneCustomer.query.get(customer_id) if customer_id else None
+    raw_name = (request.form.get('raw_name') or '').strip()
+    if customer is None:
+        flash(_drone_t('Буюртмачи танланмаган ёки топилмади.',
+                       'Заказчик не выбран или не найден.'), 'warning')
+        return _drone_customers_redirect()
+    if not raw_name:
+        flash(_drone_t('Ёзилиш бўш бўлиши мумкин эмас.',
+                       'Написание не может быть пустым.'), 'warning')
+        return _drone_customers_redirect(customer_id)
+
+    key = _drone_customer_key(raw_name)
+    existing = DroneCustomerAlias.query.filter_by(normalized_key=key).first()
+    if existing is not None:
+        other = DroneCustomer.query.get(existing.drone_customer_id)
+        # [REASON]: name the customer it already points at instead of letting
+        # the unique index raise a 500. Which customer holds the spelling is
+        # exactly what the person is trying to find out.
+        flash(_drone_t(
+            'Бундай ёзилиш аллақачон «%s» буюртмачисида. Икки буюртмачини '
+            'бирлаштириш — алиасни кўчириш, иш қаторларини таҳрирлаш эмас.',
+            'Такое написание уже у заказчика «%s». Слияние двух заказчиков — '
+            'это перенос алиаса, а не правка строк работ.')
+            % (other.name if other else '?'), 'warning')
+        return _drone_customers_redirect(existing.drone_customer_id)
+
+    db.session.add(DroneCustomerAlias(
+        raw_name=raw_name, normalized_key=key, drone_customer_id=customer.id,
+        is_active=True))
+    db.session.commit()
+    flash(_drone_t('«%s» ёзилиши «%s»га боғланди.',
+                   'Написание «%s» привязано к «%s».')
+          % (raw_name, customer.name), 'success')
+    return _drone_customers_redirect(customer.id)
+
+
+@drones_bp.route('/customers/aliases/<int:alias_id>/update', methods=['POST'])
+@module_required('drones')
+def customer_alias_update(alias_id):
+    """Repoint a spelling at another customer, or switch it off.
+
+    [REASON]: THIS IS HOW TWO CUSTOMERS ARE MERGED -- by repointing the
+    alias, never by editing work rows. customer_raw on a work row is the
+    evidence behind its resolution and rewriting it destroys the only record
+    of what the sheet actually said.
+    """
+    if not current_user.can_edit:
+        abort(403)
+    alias = DroneCustomerAlias.query.get(alias_id)
+    if alias is None:
+        abort(404)
+    target_id = request.form.get('drone_customer_id', type=int)
+    target = DroneCustomer.query.get(target_id) if target_id else None
+    if target is None:
+        flash(_drone_t('Буюртмачи танланмаган ёки топилмади.',
+                       'Заказчик не выбран или не найден.'), 'warning')
+        return _drone_customers_redirect(alias.drone_customer_id)
+
+    moved = target.id != alias.drone_customer_id
+    alias.drone_customer_id = target.id
+    alias.is_active = request.form.get('is_active') is not None
+    db.session.commit()
+
+    if moved:
+        flash(_drone_t('«%s» ёзилиши «%s»га кўчирилди. Иш қаторлари '
+                       'ўзгартирилмади: улар келгуси импортда қайта '
+                       'боғланади.',
+                       'Написание «%s» перенесено к «%s». Строки работ не '
+                       'изменены: они перепривяжутся при следующем импорте.')
+              % (alias.raw_name, target.name), 'success')
+    elif alias.is_active:
+        flash(_drone_t('«%s» ёзилиши ёқилди.', 'Написание «%s» включено.')
+              % alias.raw_name, 'success')
+    else:
+        flash(_drone_t(
+            '«%s» ёзилиши ўчирилди: у янги импортда танилмайди, аммо '
+            'аллақачон сақланган ишлар ўзгармайди.',
+            'Написание «%s» отключено: оно не распознаётся при новом '
+            'импорте, а уже сохранённые работы не меняются.')
+          % alias.raw_name, 'success')
+    return _drone_customers_redirect(target.id)

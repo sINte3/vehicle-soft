@@ -1,0 +1,201 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% set can_edit_cust = current_user.can_edit %}
+{% block title %}{{ 'Дроны — заказчики' if is_ru else 'Дронлар — буюртмачилар' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Заказчики дронов' if is_ru else 'Дрон буюртмачилари' }}</div>
+    <div class="vs-hero-sub">{{ 'Отдельный справочник от общего справочника заказчиков — по решению владельца от 03.08.2026. Ничего сюда не переносится и отсюда не переносится; объединение по ИНН — отдельная задача.' if is_ru else 'Умумий буюртмачилар маълумотномасидан алоҳида — эганинг 03.08.2026 даги қарори бўйича. Бу ерга ҳам, бу ердан ҳам ҳеч нарса кўчирилмайди; ИНН бўйича бирлаштириш — алоҳида вазифа.' }}</div>
+  </div>
+</div>
+
+<div class="vs-alert is-info vs-mb">
+  {{ 'Написание — это ключ, по которому импорт узнаёт хозяйство. Незнакомое написание НИКОГДА не отклоняет работу: строка сохраняется с пустым заказчиком и считается нераспознанной. Слияние двух заказчиков — это перенос написания на другого заказчика, а не правка строк работ: в строке работы хранится то, что диспетчер написал своей рукой, и это доказательство, а не поле для редактирования.' if is_ru else 'Ёзилиш — импорт хўжаликни таниб оладиган калит. Нотаниш ёзилиш ишни ҲЕЧ ҚАЧОН рад этмайди: қатор бўш буюртмачи билан сақланади ва аниқланмаган деб ҳисобланади. Икки буюртмачини бирлаштириш — ёзилишни бошқа буюртмачига кўчириш, иш қаторларини таҳрирлаш эмас: иш қаторида диспетчер ўз қўли билан ёзгани сақланади, бу далил, таҳрир майдони эмас.' }}
+</div>
+
+{% if unresolved.jobs %}
+<div class="vs-alert is-warning vs-mb">
+  {{ 'Работ без заказчика' if is_ru else 'Буюртмачисиз ишлар' }}: <b>{{ unresolved.jobs }}</b> ({{ '%.2f'|format(unresolved.area) }} {{ 'га' if is_ru else 'га' }}).
+  <a href="{{ url_for('drones.works', customer_id=-1) }}">{{ 'Показать их' if is_ru else 'Уларни кўрсатиш' }}</a>.
+  {{ 'Добавьте написание нужному заказчику — и следующий импорт их привяжет.' if is_ru else 'Керакли буюртмачига ёзилиш қўшинг — кейинги импорт уларни боғлайди.' }}
+</div>
+{% endif %}
+
+{% if can_edit_cust %}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Добавить заказчика' if is_ru else 'Буюртмачи қўшиш' }}</span>
+  </div>
+  <div class="vs-card-body">
+    <form method="post" action="{{ url_for('drones.customers_add') }}" class="vs-form-row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="vs-field" style="min-width:260px;">
+        <label class="vs-label" for="addCustName">{{ 'Название (каноническое)' if is_ru else 'Номи (асосий)' }}</label>
+        <input type="text" name="name" id="addCustName" class="vs-input" maxlength="300" required autocomplete="off">
+      </div>
+      <div class="vs-field" style="width:150px;">
+        <label class="vs-label" for="addCustInn">{{ 'ИНН' if is_ru else 'СТИР' }}</label>
+        <input type="text" name="inn" id="addCustInn" class="vs-input" maxlength="20" autocomplete="off">
+      </div>
+      <div class="vs-field" style="width:170px;">
+        <label class="vs-label" for="addCustType">{{ 'Тип' if is_ru else 'Тури' }}</label>
+        <select name="customer_type" id="addCustType" class="vs-select">
+          {% for t in customer_types %}<option value="{{ t }}">{{ type_labels.get(t, t) }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:200px;">
+        <label class="vs-label" for="addCustNote">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+        <input type="text" name="note" id="addCustNote" class="vs-input" maxlength="500" autocomplete="off">
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn vs-btn-primary">{{ 'Добавить' if is_ru else 'Қўшиш' }}</button>
+      </div>
+    </form>
+    <div class="vs-help">{{ 'Название заказчика сразу становится его первым написанием: заказчик без написаний не распознаёт ничего, потому что импорт ищет написания, а не названия. ИНН есть не у всех — у «Фукаро» его не будет никогда.' if is_ru else 'Буюртмачи номи дарҳол унинг биринчи ёзилишига айланади: ёзилишсиз буюртмачи ҳеч нарсани танимайди, чунки импорт номларни эмас, ёзилишларни қидиради. СТИР ҳаммада ҳам йўқ — «Фукаро»да у ҳеч қачон бўлмайди.' }}</div>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Добавить написание' if is_ru else 'Ёзилиш қўшиш' }}</span>
+  </div>
+  <div class="vs-card-body">
+    <form method="post" action="{{ url_for('drones.customer_alias_add') }}" class="vs-form-row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="vs-field" style="min-width:240px;">
+        <label class="vs-label" for="addAliasCust">{{ 'Заказчик' if is_ru else 'Буюртмачи' }}</label>
+        <select name="drone_customer_id" id="addAliasCust" class="vs-select" required>
+          <option value="">{{ '— выберите заказчика —' if is_ru else '— буюртмачини танланг —' }}</option>
+          {% for c in customers %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:280px;">
+        <label class="vs-label" for="addAliasRaw">{{ 'Написание — точно как в ведомости' if is_ru else 'Ёзилиш — ведомостдагидек аниқ' }}</label>
+        <input type="text" name="raw_name" id="addAliasRaw" class="vs-input" maxlength="300" required autocomplete="off">
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn vs-btn-primary">{{ 'Добавить' if is_ru else 'Қўшиш' }}</button>
+      </div>
+    </form>
+    <div class="vs-help">{{ 'Ключ сравнения — регистр и пробелы: «Миробод  АМТ» и «миробод амт» это одно и то же написание. Одно написание принадлежит ровно одному заказчику; если оно уже занято, экран назовёт того, кто его держит, вместо ошибки.' if is_ru else 'Солиштириш калити — ҳарф катта-кичиклиги ва бўшлиқлар: «Миробод  АМТ» ва «миробод амт» — бир хил ёзилиш. Бир ёзилиш аниқ бир буюртмачига тегишли; агар у банд бўлса, экран хато ўрнига уни ушлаб турганни айтади.' }}</div>
+  </div>
+</div>
+{% endif %}
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Справочник' if is_ru else 'Маълумотнома' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'Всего' if is_ru else 'Жами' }}: {{ customers|length }}</span>
+  </div>
+  {% if customers %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Заказчик' if is_ru else 'Буюртмачи' }}</th>
+        <th>{{ 'ИНН' if is_ru else 'СТИР' }}</th>
+        <th>{{ 'Тип' if is_ru else 'Тури' }}</th>
+        <th class="right">{{ 'Работ' if is_ru else 'Ишлар' }}</th>
+        <th class="right">{{ 'Гектаров' if is_ru else 'Гектар' }}</th>
+        <th>{{ 'Написания' if is_ru else 'Ёзилишлар' }}</th>
+        <th>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in customers %}
+      {% set use = usage.get(c.id, {'jobs': 0, 'area': 0.0}) %}
+      <tr{% if focus == c.id %} class="is-focus"{% endif %}>
+        <td style="font-weight:600;">
+          {{ c.name }}
+          {% if can_edit_cust %}
+          <details>
+            <summary class="vs-btn vs-btn-ghost" style="font-size:12px;">{{ 'Изменить' if is_ru else 'Ўзгартириш' }}</summary>
+            <form method="post" action="{{ url_for('drones.customers_update', customer_id=c.id) }}" class="vs-row" style="gap:6px; flex-wrap:wrap; align-items:flex-end; margin-top:8px;">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <div class="vs-field" style="min-width:220px;">
+                <label class="vs-label">{{ 'Название' if is_ru else 'Номи' }}</label>
+                <input type="text" name="name" class="vs-input" value="{{ c.name }}" maxlength="300" required>
+              </div>
+              <div class="vs-field" style="width:140px;">
+                <label class="vs-label">{{ 'ИНН' if is_ru else 'СТИР' }}</label>
+                <input type="text" name="inn" class="vs-input" value="{{ c.inn or '' }}" maxlength="20">
+              </div>
+              <div class="vs-field" style="width:160px;">
+                <label class="vs-label">{{ 'Тип' if is_ru else 'Тури' }}</label>
+                <select name="customer_type" class="vs-select">
+                  {% for t in customer_types %}<option value="{{ t }}" {% if c.customer_type == t %}selected{% endif %}>{{ type_labels.get(t, t) }}</option>{% endfor %}
+                </select>
+              </div>
+              <div class="vs-field" style="min-width:180px;">
+                <label class="vs-label">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+                <input type="text" name="note" class="vs-input" value="{{ c.note or '' }}" maxlength="500">
+              </div>
+              <div class="vs-field" style="flex:none;">
+                <label class="vs-label">&nbsp;</label>
+                <label class="vs-check"><input type="checkbox" name="is_active" {% if c.is_active %}checked{% endif %}> {{ 'Активен' if is_ru else 'Фаол' }}</label>
+              </div>
+              <div class="vs-field" style="flex:none;">
+                <label class="vs-label">&nbsp;</label>
+                <button type="submit" class="vs-btn vs-btn-primary">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+              </div>
+            </form>
+          </details>
+          {% endif %}
+        </td>
+        <td class="vs-muted">{{ c.inn or '—' }}</td>
+        <td class="vs-muted">{{ type_labels.get(c.customer_type, c.customer_type or '—') }}</td>
+        <td class="right">{{ use.jobs }}</td>
+        <td class="right">{{ '%.2f'|format(use.area) }}</td>
+        <td>
+          {% set alias_rows = aliases.get(c.id, []) %}
+          {% if alias_rows %}
+            {% for a in alias_rows %}
+            {% if can_edit_cust %}
+            {# NULL считается активным — ровно так же, как в _drone_alias_maps(). #}
+            <form method="post" action="{{ url_for('drones.customer_alias_update', alias_id=a.id) }}" class="vs-row" style="gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:4px;">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <span class="vs-badge{% if a.is_active is not sameas false %} vs-badge-success{% endif %}">{{ a.raw_name }}</span>
+              <select name="drone_customer_id" class="vs-select" style="width:190px;">
+                {% for target in customers %}<option value="{{ target.id }}" {% if target.id == a.drone_customer_id %}selected{% endif %}>{{ target.name }}</option>{% endfor %}
+              </select>
+              <label class="vs-check"><input type="checkbox" name="is_active" {% if a.is_active is not sameas false %}checked{% endif %}> {{ 'Активно' if is_ru else 'Фаол' }}</label>
+              <button type="submit" class="vs-btn vs-btn-ghost" style="font-size:12px;">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+            </form>
+            {% else %}
+            <span class="vs-badge{% if a.is_active is not sameas false %} vs-badge-success{% endif %}">{{ a.raw_name }}</span>
+            {% endif %}
+            {% endfor %}
+          {% else %}
+          <span class="vs-muted">{{ 'написаний нет — ничего не распознаётся' if is_ru else 'ёзилишлар йўқ — ҳеч нарса танилмайди' }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if c.is_active %}
+          <span class="vs-badge vs-badge-success">{{ 'Активен' if is_ru else 'Фаол' }}</span>
+          {% else %}
+          <span class="vs-badge">{{ 'Деактивирован' if is_ru else 'Фаолсизлантирилган' }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-help">{{ 'Удаления нет ни у заказчика, ни у написания: заказчик, которого перестали обслуживать, всё равно владеет своими гектарами за прошлые месяцы, а отключённое написание сохраняет запись о том, что так когда-то писали. Перенос написания не трогает уже сохранённые работы — они перепривяжутся при следующем импорте.' if is_ru else 'На буюртмачида, на ёзилишда ўчириш йўқ: хизмат кўрсатилмай қолган буюртмачи ҳам ўтган ойлардаги гектарларининг эгаси бўлиб қолади, ўчирилган ёзилиш эса бир вақтлар шундай ёзилганини сақлаб қолади. Ёзилишни кўчириш аллақачон сақланган ишларга тегмайди — улар кейинги импортда қайта боғланади.' }}</div>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-ico">🏢</div>
+    <div class="vs-empty-title">{{ 'Заказчики не заведены' if is_ru else 'Буюртмачилар киритилмаган' }}</div>
+    <div class="vs-empty-sub">{{ 'Их заводит импорт ведомостей: незнакомое написание создаёт заказчика и его первый алиас. Либо добавьте вручную формой выше.' if is_ru else 'Уларни ведомостлар импорти киритади: нотаниш ёзилиш буюртмачи ва унинг биринчи алиасини яратади. Ёки юқоридаги форма орқали қўлда қўшинг.' }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

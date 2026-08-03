@@ -15,5 +15,6 @@
      диспетчеров. Отдельная запись от «Вылетов» намеренно — вылет DJI и
      работа из ведомости это разные факты и разные таблицы. #}
   <a href="{{ url_for('drones.works') }}" class="vs-btn{% if nav_current == 'drones.works' %} vs-btn-primary{% endif %}">{{ 'Работы' if nav_is_ru else 'Ишлар' }}</a>
+  <a href="{{ url_for('drones.customers') }}" class="vs-btn{% if nav_current == 'drones.customers' %} vs-btn-primary{% endif %}">{{ 'Заказчики' if nav_is_ru else 'Буюртмачилар' }}</a>
   <a href="{{ url_for('drones.sources') }}" class="vs-btn{% if nav_current == 'drones.sources' %} vs-btn-primary{% endif %}">{{ 'Источники' if nav_is_ru else 'Манбалар' }}</a>
 </div>
