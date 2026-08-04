@@ -571,13 +571,47 @@ class ManifestTests(ImportTestBase):
         path = os.path.join(HERE, 'drone_works_manifest.txt')
         manifest, problems = imp.read_manifest(path)
         self.assertEqual(problems, [])
-        self.assertEqual(len(manifest), 26)
+        self.assertEqual(len(manifest), 28)
         self.assertEqual(manifest['Имомов Бехзод Пешку ПТЗ.xlsx'], '2026-03')
         self.assertEqual(manifest['01.07.2026 Июль.xlsx'], '2026-07')
         self.assertEqual(manifest['Ғиждувон ПТЗ Дрон маълумот Март.xlsx'],
                          '2026-03')
         for period in manifest.values():
             self.assertRegex(period, r'^\d{4}-\d{2}$')
+
+    def test_the_three_names_the_2026_08_04_run_refused(self):
+        """Correct behaviour, wrong manifest -- all three are now present.
+
+        [REASON]: the tool named all three and refused them, which is what it
+        is supposed to do. Spaces against underscores is not a difference a
+        file name lookup may paper over: two real books in this list differ
+        from each other by exactly that.
+        """
+        path = os.path.join(HERE, 'drone_works_manifest.txt')
+        manifest, _problems = imp.read_manifest(path)
+        self.assertEqual(manifest['Когон ПТЗ Шохрух Хамроев Май.xlsx'],
+                         '2026-05')
+        self.assertNotIn('Когон_ПТЗ_Шохрух_Хамроев_Май.xlsx', manifest)
+        self.assertEqual(manifest['Ғиждувон ПТЗ Дрон маълумот.xlsx'],
+                         '2025-09')
+        self.assertEqual(manifest['Ғиждувон_ПТЗ_Дрон_маълумот_Октябрь.xlsx'],
+                         '2025-10')
+
+    def test_the_manifest_carries_both_spellings_where_the_books_do(self):
+        """Underscored and spaced names coexist -- they are different files."""
+        path = os.path.join(HERE, 'drone_works_manifest.txt')
+        manifest, _problems = imp.read_manifest(path)
+        self.assertIn('Гарден_Агрокластер_Дрон_маълумот.xlsx', manifest)
+        self.assertIn('Гарден Агрокластер Дрон Октябрь.xlsx', manifest)
+        self.assertIn('Агрокластер_Дрон_маълумот_АПРЕЛЬ.xlsx', manifest)
+        self.assertIn('Агрокластер Дрон маълумот МАЙ.xlsx', manifest)
+
+    def test_every_month_of_the_prediction_is_represented(self):
+        path = os.path.join(HERE, 'drone_works_manifest.txt')
+        manifest, _problems = imp.read_manifest(path)
+        self.assertEqual(
+            sorted(set(manifest.values())),
+            [m for m, _r, _a in imp.EXPECTED_BY_MONTH])
 
     def test_dated_rows_outside_the_manifest_month_are_reported(self):
         result, _stats = self.run_import()
