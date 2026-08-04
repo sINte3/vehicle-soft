@@ -28,6 +28,7 @@ if REPO_ROOT not in sys.path:
 
 import migration_utils  # noqa: E402
 import migrate_drones_works_001 as works_mig  # noqa: E402
+import migrate_drones_works_002 as kind_mig  # noqa: E402
 
 # The two REFERENCES targets the migration insists on before it will run.
 PRECONDITION_DDL = {
@@ -238,6 +239,168 @@ class DroneWorksMigrationTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(_registry_rows(self.db, self.MID), 0)
         self.assertEqual(_tables(self.db) & set(works_mig.NEW_TABLES), set())
+
+
+class DroneWorksReceivedKindMigrationTests(unittest.TestCase):
+    """DRONES_WORKS_002 -- the same four paths, plus the CHECK read-back.
+
+    The load-bearing assertion is not that received_kind appears. It is that
+    payment_type carries no CHECK constraint: the import gains a fourth value,
+    'unknown', for the ~2/5 of the real corpus whose sheets have no payment
+    block, and a CHECK would let a clean --dry-run be followed by a failing
+    --apply on the owner's machine.
+    """
+    MID = kind_mig.MIGRATION_ID
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='drone_works_kind_')
+        self.db = os.path.join(self.tmp, 'throwaway.db')
+        self._orig_module_db = kind_mig.DB_PATH
+        self._orig_first_db = works_mig.DB_PATH
+        self._orig_utils_db = migration_utils.DB_PATH
+        kind_mig.DB_PATH = self.db
+        works_mig.DB_PATH = self.db
+        migration_utils.DB_PATH = self.db
+
+    def tearDown(self):
+        kind_mig.DB_PATH = self._orig_module_db
+        works_mig.DB_PATH = self._orig_first_db
+        migration_utils.DB_PATH = self._orig_utils_db
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _base(self):
+        """A database with DRONES_WORKS_001 already applied."""
+        _make_db(self.db, ['users', 'drone_operators'])
+        works_mig.run()
+
+    def run_migration(self):
+        try:
+            kind_mig.run()
+            return True, 0
+        except SystemExit as exc:
+            return False, exc.code
+
+    # ── Path 1: clean database ────────────────────────────────────────────
+    def test_clean_database_adds_the_column_and_records_once(self):
+        self._base()
+        ok, _ = self.run_migration()
+        self.assertTrue(ok)
+        self.assertEqual(_registry_rows(self.db, self.MID), 1)
+        columns = {r[1] for r in _query(self.db,
+                                        'PRAGMA table_info(drone_works)')}
+        self.assertIn('received_kind', columns)
+
+    def test_nothing_is_backfilled(self):
+        """A row that predates the distinction keeps NULL, not an invented value."""
+        self._base()
+        con = sqlite3.connect(self.db)
+        con.execute("INSERT INTO drone_works (period_month, customer_raw, "
+                    "area_ha, payment_type, received_amount) VALUES "
+                    "('2026-04', 'X', 1.0, 'cash', 500)")
+        con.commit()
+        con.close()
+        self.assertTrue(self.run_migration()[0])
+        self.assertEqual(
+            _query(self.db, 'SELECT received_kind, received_amount '
+                            'FROM drone_works'),
+            [(None, 500)])
+
+    def test_the_fourth_payment_value_can_actually_be_stored(self):
+        """The whole point, exercised against the database rather than argued."""
+        self._base()
+        self.assertTrue(self.run_migration()[0])
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute("INSERT INTO drone_works (period_month, customer_raw, "
+                        "area_ha, payment_type, received_kind) VALUES "
+                        "('2026-09', '', 12.5, 'unknown', 'operator_due')")
+            con.commit()
+            self.assertEqual(
+                con.execute('SELECT payment_type, received_kind, customer_raw '
+                            'FROM drone_works').fetchall(),
+                [('unknown', 'operator_due', '')])
+        finally:
+            con.close()
+
+    def test_the_check_guard_discriminates(self):
+        """A guard that only ever sees a clean table has not been shown to work.
+
+        [REASON]: the postcondition reads sqlite_master back. Feeding the same
+        pure function a definition that DOES carry the constraint is the
+        negative control -- without it, 'no CHECK found' is indistinguishable
+        from 'the regex never matches anything'.
+        """
+        clean = ("CREATE TABLE drone_works (id INTEGER PRIMARY KEY, "
+                 "payment_type VARCHAR(20) NOT NULL)")
+        self.assertFalse(kind_mig.payment_type_has_check(clean))
+        self.assertFalse(kind_mig.payment_type_has_check(''))
+        self.assertFalse(kind_mig.payment_type_has_check(None))
+        inline = ("CREATE TABLE drone_works (id INTEGER PRIMARY KEY, "
+                  "payment_type VARCHAR(20) NOT NULL CHECK (payment_type IN "
+                  "('cash','transfer','internal')))")
+        self.assertTrue(kind_mig.payment_type_has_check(inline))
+        table_level = ("CREATE TABLE drone_works (id INTEGER PRIMARY KEY, "
+                       "payment_type VARCHAR(20) NOT NULL, "
+                       "CONSTRAINT c CHECK (payment_type <> ''))")
+        self.assertTrue(kind_mig.payment_type_has_check(table_level))
+
+    def test_a_check_constraint_stops_the_migration_and_records_nothing(self):
+        """End to end: a real table with the constraint really refuses."""
+        _make_db(self.db, ['users', 'drone_operators'])
+        con = sqlite3.connect(self.db)
+        con.execute("CREATE TABLE drone_works (id INTEGER PRIMARY KEY, "
+                    "period_month VARCHAR(7) NOT NULL, "
+                    "customer_raw VARCHAR(300) NOT NULL, "
+                    "area_ha NUMERIC NOT NULL, "
+                    "payment_type VARCHAR(20) NOT NULL CHECK (payment_type IN "
+                    "('cash','transfer','internal')))")
+        con.commit()
+        con.close()
+        ok, code = self.run_migration()
+        self.assertFalse(ok)
+        self.assertEqual(code, 1)
+        self.assertEqual(_registry_rows(self.db, self.MID), 0)
+        columns = {r[1] for r in _query(self.db,
+                                        'PRAGMA table_info(drone_works)')}
+        self.assertNotIn('received_kind', columns, 'rollback left the column')
+
+    # ── Path 2: repeat run ────────────────────────────────────────────────
+    def test_rerun_is_a_clean_noop(self):
+        self._base()
+        self.assertTrue(self.run_migration()[0])
+        self.assertTrue(self.run_migration()[0])
+        self.assertEqual(_registry_rows(self.db, self.MID), 1)
+
+    def test_rerun_after_a_lost_registry_row_does_not_duplicate_the_column(self):
+        """The PRAGMA guard carries idempotency, not the registry."""
+        self._base()
+        self.assertTrue(self.run_migration()[0])
+        con = sqlite3.connect(self.db)
+        con.execute('DELETE FROM schema_migrations WHERE name=?', (self.MID,))
+        con.commit()
+        con.close()
+        self.assertTrue(self.run_migration()[0])
+        columns = [r[1] for r in _query(self.db,
+                                        'PRAGMA table_info(drone_works)')]
+        self.assertEqual(columns.count('received_kind'), 1)
+
+    # ── Path 3: missing database ──────────────────────────────────────────
+    def test_missing_database_exits_2_and_creates_no_file(self):
+        missing = os.path.join(self.tmp, 'nope.db')
+        kind_mig.DB_PATH = missing
+        migration_utils.DB_PATH = missing
+        ok, code = self.run_migration()
+        self.assertFalse(ok)
+        self.assertEqual(code, 2)
+        self.assertFalse(os.path.exists(missing))
+
+    # ── Path 4: failed precondition ───────────────────────────────────────
+    def test_missing_drone_works_exits_1_and_records_nothing(self):
+        _make_db(self.db, ['users', 'drone_operators'])
+        ok, code = self.run_migration()
+        self.assertFalse(ok)
+        self.assertEqual(code, 1)
+        self.assertEqual(_registry_rows(self.db, self.MID), 0)
 
 
 if __name__ == '__main__':
