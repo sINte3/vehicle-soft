@@ -113,6 +113,57 @@ def naive_is_wage_marker(cells):
     return False
 
 
+# ─── DRONE-WORKS-IMPORT-FIX-001: the versions that were actually shipped ────
+
+def naive_is_detail_sheet(title):
+    """'every sheet in the book is a detail sheet' -- the 2026-08-04 tool."""
+    return True
+
+
+# The fragment table the first version used. «суммаси» is a substring of
+# «Хизмат кўрсатиш суммаси», so amount claimed the PRICE column and price was
+# never mapped at all -- on every one of the 24 real layouts.
+NAIVE_FIELD_KEYWORDS = (
+    ('note', ('изох', 'кайд')),
+    ('other_costs', ('бошка харажат', 'кушимча харажат', 'харажат')),
+    ('received', ('кирим', 'олинган пул', 'тушган')),
+    ('date', ('сана', 'куни', 'дата')),
+    ('area', ('майдон', 'мадон')),
+    ('customer', ('фх номи', 'ф/х номи', 'фх', 'хужалик', 'фермер')),
+    ('price', ('нарх', '1 га', '1га', 'бир га', 'бахо')),
+    ('amount', ('сумма', 'жами', 'умумий', 'тулов')),
+)
+
+
+def naive_map_columns(header_cells):
+    """Fragment matching, first match per field wins. The shipped version."""
+    mapping = imp.ColumnMap()
+    claimed = set()
+    for field, keywords in NAIVE_FIELD_KEYWORDS:
+        for index, cell in enumerate(header_cells):
+            if index in claimed:
+                continue
+            folded = imp.uz_fold(cell)
+            if not folded:
+                continue
+            if any(keyword in folded for keyword in keywords):
+                mapping.fields[field] = index
+                mapping.chosen[field] = imp._text(cell)
+                claimed.add(index)
+                break
+    # The shipped version had ONE other_costs column, not a list: whichever
+    # expense header it met first, and no report that a second existed.
+    if 'other_costs' in mapping.fields:
+        index = mapping.fields['other_costs']
+        mapping.expenses.append((index, mapping.chosen['other_costs']))
+    return mapping
+
+
+def naive_payment_when_no_block():
+    """'a row with no payment block is not a row' -- the 2026-08-04 tool."""
+    return None
+
+
 # ─── Harness ─────────────────────────────────────────────────────────────────
 
 class ImportTestBase(unittest.TestCase):
@@ -281,27 +332,40 @@ class TrapCPaymentBlockTests(ImportTestBase):
         self.assertEqual(stats['payments']['transfer'], 8)
         self.assertEqual(stats['payments']['internal'], 2)
 
-    def test_a_parser_that_only_knows_spravka_loses_every_cash_row(self):
+    def test_a_parser_that_only_knows_spravka_misfiles_every_cash_row(self):
+        """The rows are no longer lost -- they are silently misfiled instead.
+
+        [REASON]: since 2026-08-04 a row with no recognised block is imported
+        as 'unknown' rather than rejected, so the damage of a broken marker
+        reader changed shape: the hectares survive, the money classification
+        does not. The control has to assert the new damage, or it would pass
+        against a reader that recognises nothing at all.
+        """
         with patched(payment_marker=naive_payment_marker):
             result, stats = self.run_import()
         self.assertEqual(stats['payments']['cash'], 0)
-        self.assertEqual(stats['rows'], 9)
-        self.assertGreater(len(result.rejections), EXPECTED['rejections'])
-        self.assertTrue(any('no payment block' in r[3]
-                            for r in result.rejections))
+        self.assertEqual(stats['payments']['internal'], 1)
+        self.assertEqual(stats['payments']['unknown'], 13)
+        # nothing is lost, everything is unclassified
+        self.assertEqual(stats['rows'], EXPECTED['rows'])
+        self.assertAlmostEqual(stats['area'], EXPECTED['area'], places=2)
 
-    def test_a_row_before_any_block_is_rejected_not_guessed(self):
+    def test_a_row_before_any_block_is_imported_as_unknown(self):
         result, _stats = self.run_import()
-        matching = [r for r in result.rejections
-                    if r[0] == 'Гарден Дрон маълумот Март.xlsx'
-                    and 'no payment block' in r[3]]
-        self.assertEqual(len(matching), 1)
+        rows = [r for r in result.rows
+                if r['customer_raw'] == 'Гарден ФХ 1']
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['payment_type'], imp.PAYMENT_UNKNOWN)
+        self.assertFalse(any('no payment block' in r[3]
+                             for r in result.rejections))
 
     def test_default_payment_is_an_explicit_owner_override(self):
         result, stats = self.run_import(default_payment=imp.PAYMENT_CASH)
-        self.assertEqual(stats['rows'], EXPECTED['rows'] + 1)
-        self.assertFalse(any('no payment block' in r[3]
-                             for r in result.rejections))
+        self.assertEqual(stats['rows'], EXPECTED['rows'])
+        self.assertEqual(stats['payments']['unknown'], 0)
+        self.assertEqual(stats['payments']['cash'],
+                         EXPECTED['payments']['cash'] + 1)
+        self.assertNotIn(imp.PAYMENT_UNKNOWN, imp.PAYMENT_OVERRIDE_TYPES)
 
     def test_an_internal_customer_overrides_the_block(self):
         result, _stats = self.run_import()
@@ -736,6 +800,433 @@ class ApplyTests(ImportTestBase):
         # every duplicate names both sides
         self.assertIn('принято:', text)
         self.assertIn('пропущено:', text)
+
+
+# ─── DRONE-WORKS-IMPORT-FIX-001: the nine causes found on the real books ────
+
+class FixCorpusTestBase(unittest.TestCase):
+    """The seven books that reproduce what the 2026-08-04 run got wrong."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='drone_works_fix_')
+        cls.books, cls.manifest = fx.build_fix(os.path.join(cls.tmp, 'books'))
+        cls.db = fx.build_database(os.path.join(cls.tmp, 'fixture.db'))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def run_import(self, default_payment=None):
+        manifest, problems = imp.read_manifest(self.manifest)
+        files = sorted(f for f in os.listdir(self.books)
+                       if f.lower().endswith('.xlsx'))
+        con = imp._connect(self.db, read_only=True)
+        try:
+            dir_obj = imp.Directory(con)
+            result = imp.collect(self.books, manifest, files, dir_obj,
+                                 default_payment)
+            result.manifest_problems = problems
+            imp.resolve(result, dir_obj)
+            stats = imp.summarize(result)
+        finally:
+            con.close()
+        return result, stats
+
+    def rows_of(self, result, customer):
+        return [r for r in result.rows if r['customer_raw'] == customer]
+
+    def one(self, result, customer):
+        rows = self.rows_of(result, customer)
+        self.assertEqual(len(rows), 1, customer)
+        return rows[0]
+
+
+class FixBaselineTests(FixCorpusTestBase):
+    def test_the_corpus_matches_the_hand_computed_prediction(self):
+        result, stats = self.run_import()
+        self.assertEqual(stats['rows'], fx.FIX_EXPECTED['rows'])
+        self.assertAlmostEqual(stats['area'], fx.FIX_EXPECTED['area'],
+                               places=2)
+        self.assertEqual(len(result.rejections),
+                         fx.FIX_EXPECTED['rejections'])
+        self.assertEqual(len(result.duplicates),
+                         fx.FIX_EXPECTED['duplicates'])
+        self.assertEqual(len(result.skipped_sheets),
+                         fx.FIX_EXPECTED['skipped_sheets'])
+        self.assertEqual(result.unknown_payment_rows,
+                         fx.FIX_EXPECTED['unknown_payment_rows'])
+        self.assertEqual(result.empty_customer_rows,
+                         fx.FIX_EXPECTED['empty_customer_rows'])
+        self.assertEqual(result.operator_from_row,
+                         fx.FIX_EXPECTED['operator_from_row'])
+        self.assertEqual(result.operator_from_sheet,
+                         fx.FIX_EXPECTED['operator_from_sheet'])
+        self.assertEqual(result.received_kinds,
+                         fx.FIX_EXPECTED['received_kinds'])
+
+
+class Case1PriceAndAmountTests(FixCorpusTestBase):
+    """1. «Хизмат кўрсатиш суммаси» is the price, «Жами сумма (обьём)» is not."""
+
+    def test_the_two_columns_go_to_the_two_fields(self):
+        result, _stats = self.run_import()
+        row = self.one(result, 'Когон ФХ 1')
+        self.assertEqual(row['price_per_ha'], 200000)
+        self.assertEqual(row['amount'], 2000000)
+        second = self.one(result, 'Когон ФХ 2')
+        self.assertEqual(second['price_per_ha'], 250000)
+        self.assertEqual(second['amount'], 1250000)
+
+    def test_every_row_of_the_corpus_has_a_price(self):
+        _result, stats = self.run_import()
+        self.assertEqual(stats['priced'], fx.FIX_EXPECTED['rows'])
+
+    def test_fragment_matching_puts_the_price_into_the_amount(self):
+        """The shipped bug, reproduced: amount holds 200 000 and price is NULL.
+
+        This is what «rows with a price cell: 0» and an amount total eleven
+        times too small looked like from inside.
+        """
+        with patched(map_columns=naive_map_columns):
+            result, stats = self.run_import()
+        row = self.one(result, 'Когон ФХ 1')
+        self.assertIsNone(row['price_per_ha'])
+        self.assertEqual(row['amount'], 200000)     # the PRICE, stored as the amount
+        self.assertEqual(stats['priced'], 0)
+        # The amount total collapses by more than an order of magnitude --
+        # the same shape as the real run's 86 975 976 against a received
+        # total of 1 001 768 428.
+        _correct, correct_stats = self.run_import()
+        self.assertLess(stats['amount'], correct_stats['amount'] / 10.0)
+
+
+class Case2TwoSimilarHeadersTests(FixCorpusTestBase):
+    """2. «Хизмат кўрсатиш САНаси» and «Хизмат кўрсатиш СУМмаси» in one sheet."""
+
+    def test_one_is_the_date_and_one_is_the_price(self):
+        result, _stats = self.run_import()
+        row = self.one(result, 'Когон ФХ 1')
+        self.assertEqual(row['work_date_from'], datetime.date(2025, 10, 3))
+        self.assertEqual(row['price_per_ha'], 200000)
+
+    def test_the_two_phrases_normalise_apart(self):
+        self.assertNotEqual(imp.header_key('Хизмат кўрсатиш санаси'),
+                            imp.header_key('Хизмат кўрсатиш суммаси'))
+
+    def test_fragment_matching_reads_the_date_column_as_the_date(self):
+        """... and still loses the price, which is the damage that matters."""
+        with patched(map_columns=naive_map_columns):
+            result, _stats = self.run_import()
+        row = self.one(result, 'Когон ФХ 1')
+        self.assertIsNone(row['price_per_ha'])
+
+
+class Case3NoPaymentBlockTests(FixCorpusTestBase):
+    """3. A sheet with no block at all -- header, then data."""
+
+    def test_the_rows_are_imported_as_unknown(self):
+        result, stats = self.run_import()
+        rows = self.rows_of(result, 'Шофиркон ФХ А')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['payment_type'], imp.PAYMENT_UNKNOWN)
+        self.assertEqual(stats['payments']['unknown'], 2)
+        self.assertAlmostEqual(stats['payment_area']['unknown'], 20.0,
+                               places=2)
+
+    def test_nothing_is_rejected(self):
+        result, _stats = self.run_import()
+        self.assertEqual(result.rejections, [])
+
+    def test_the_previous_rule_would_have_thrown_both_rows_away(self):
+        """The shipped behaviour, reproduced by reinstating the rejection."""
+        with patched(payment_when_no_block=naive_payment_when_no_block):
+            result, stats = self.run_import()
+        self.assertEqual(stats['rows'], fx.FIX_EXPECTED['rows'] - 2)
+        self.assertAlmostEqual(stats['area'], fx.FIX_EXPECTED['area'] - 20.0,
+                               places=2)
+        self.assertEqual(len(result.rejections), 2)
+        self.assertTrue(all('no payment block' in r[3]
+                            for r in result.rejections))
+
+
+class Case4EmptyCustomerTests(FixCorpusTestBase):
+    """4. An internal job with no farm name, at the internal tariff."""
+
+    def test_the_row_is_imported_with_an_empty_customer(self):
+        result, _stats = self.run_import()
+        empty = [r for r in result.rows if not r['customer_raw']]
+        self.assertEqual(len(empty), 1)
+        self.assertAlmostEqual(empty[0]['area_ha'], 24.0, places=2)
+        self.assertAlmostEqual(empty[0]['price_per_ha'], 85632.96, places=2)
+        self.assertEqual(empty[0]['payment_type'], imp.PAYMENT_INTERNAL)
+
+    def test_no_customer_and_no_alias_are_created_for_it(self):
+        result, _stats = self.run_import()
+        empty = [r for r in result.rows if not r['customer_raw']][0]
+        self.assertIsNone(empty['drone_customer_id'])
+        self.assertFalse(empty['customer_is_new'])
+        self.assertNotIn('', [key for key, _name in result.created_customers])
+        self.assertNotIn('', [name for _key, name in result.created_customers])
+
+    def test_it_is_not_counted_as_a_distinct_customer(self):
+        _result, stats = self.run_import()
+        # ten named farms across the seven books, and the nameless one is
+        # not an eleventh
+        self.assertEqual(stats['customers'], 10)
+
+    def test_the_internal_tariff_row_reaches_the_internal_bucket(self):
+        """This is why the shipped run reported «internal 0 rows»."""
+        _result, stats = self.run_import()
+        self.assertEqual(stats['payments']['internal'], 2)
+        self.assertAlmostEqual(stats['payment_area']['internal'], 40.0,
+                               places=2)
+
+
+class Case5SummarySheetsTests(FixCorpusTestBase):
+    """5. «свод ичи» and «олинмаган пуллар» sharing a row; «ЖАМИ:» totals."""
+
+    def test_the_shared_row_is_imported_once_from_the_detail_sheet(self):
+        result, _stats = self.run_import()
+        rows = self.rows_of(result, 'Бахром Хайрулло фх')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['source_sheet'], 'свод ичи (Шахзод)')
+        self.assertEqual(result.duplicates, [])
+
+    def test_the_summary_sheets_are_skipped_and_listed(self):
+        result, _stats = self.run_import()
+        titles = {title for _f, title in result.skipped_sheets}
+        self.assertEqual(titles, {'олинмаган пуллар', 'ОБШИЙ СВОД Шохрух1',
+                                  'свод фх'})
+        for report in result.sheets:
+            if report.sheet_name in titles:
+                self.assertIn('not a detail sheet', report.skipped_reason)
+
+    def test_the_summary_rows_never_reach_the_ledger(self):
+        result, _stats = self.run_import()
+        customers = {r['customer_raw'] for r in result.rows}
+        self.assertNotIn('Свод хужалиги', customers)
+        self.assertNotIn('Свод ФХ хужалиги', customers)
+        self.assertNotIn('ЖАМИ:', customers)
+
+    def test_reading_every_sheet_imports_the_summaries(self):
+        """The shipped behaviour: +209.5 ha of rows that are not jobs."""
+        with patched(is_detail_sheet=naive_is_detail_sheet):
+            result, stats = self.run_import()
+        customers = {r['customer_raw'] for r in result.rows}
+        self.assertIn('Свод хужалиги', customers)
+        self.assertIn('Свод ФХ хужалиги', customers)
+        self.assertAlmostEqual(
+            stats['area'],
+            fx.FIX_EXPECTED['area'] + fx.FIX_EXPECTED['summary_sheet_area'],
+            places=2)
+        # the shared row is caught by the dedup, and which copy survives
+        # depends on sheet order -- a decision no tool should be making
+        self.assertEqual(len(result.duplicates), 1)
+
+
+class Case6TwoExpenseColumnsTests(FixCorpusTestBase):
+    """6. «ЁММ харажати» and «Транспорт харажати (Мерс 80 L 422 MA)»."""
+
+    def test_other_costs_is_their_sum(self):
+        result, _stats = self.run_import()
+        row = self.one(result, 'Сервис Май ФХ')
+        self.assertAlmostEqual(row['other_costs'], 200000.0, places=2)
+
+    def test_the_sheet_report_names_both_headers(self):
+        result, _stats = self.run_import()
+        report = [s for s in result.sheets
+                  if s.sheet_name == 'свод ичи (Шахбоз)'][0]
+        headers = [h for _i, h in report.column_map.expenses]
+        self.assertEqual(headers, ['ЁММ харажати',
+                                   'Транспорт харажати (Мерс 80 L 422 MA)'])
+
+    def test_the_plate_in_brackets_is_matched_as_a_prefix(self):
+        for header in ('Транспорт харажати (Мерс 80 L 422 MA)',
+                       'Транспорт харажати (Газель 80 120 FBA)',
+                       'Транспорт харажати Газел'):
+            mapping = imp.map_columns(['№', 'ФХ номи', 'Майдон (га)', header])
+            self.assertEqual([h for _i, h in mapping.expenses], [header])
+
+    def test_taking_only_the_first_expense_understates_the_costs(self):
+        """The naive version keeps 120 000 of the 200 000 and says nothing."""
+        with patched(map_columns=naive_map_columns):
+            result, _stats = self.run_import()
+        row = self.one(result, 'Сервис Май ФХ')
+        self.assertAlmostEqual(row['other_costs'], 120000.0, places=2)
+
+
+class Case7OperatorDueTests(FixCorpusTestBase):
+    """7. «Оператор топшириши керак» is not «Кирим қилинган»."""
+
+    def test_the_kind_is_recorded(self):
+        result, _stats = self.run_import()
+        row = self.one(result, 'Гарден Май ФХ')
+        self.assertEqual(row['received_kind'], imp.RECEIVED_KIND_OPERATOR_DUE)
+        self.assertEqual(row['received_amount'], 3000000)
+
+    def test_an_actual_receipt_is_recorded_as_such(self):
+        result, _stats = self.run_import()
+        row = self.one(result, 'Когон ФХ 1')
+        self.assertEqual(row['received_kind'], imp.RECEIVED_KIND_RECEIVED)
+
+    def test_a_sheet_with_neither_column_records_no_kind(self):
+        result, _stats = self.run_import()
+        row = self.one(result, 'Шофиркон ФХ А')
+        self.assertIsNone(row['received_kind'])
+        self.assertIsNone(row['received_amount'])
+
+    def test_the_actual_receipt_wins_when_a_sheet_carries_both(self):
+        mapping = imp.map_columns(
+            ['№', 'ФХ номи', 'Майдон (га)', 'Оператор топшириши керак',
+             'Кирим қилинган'])
+        self.assertEqual(mapping.received_kind, imp.RECEIVED_KIND_RECEIVED)
+        self.assertEqual(mapping.received_index, 4)
+
+    def test_fragment_matching_reads_the_operator_debt_as_collected(self):
+        """«кирим» does not appear in «Оператор топшириши керак» at all.
+
+        The naive table therefore maps nothing, the figure is lost, and the
+        debt report silently loses a whole column instead of overstating it --
+        the other half of the same conflation.
+        """
+        with patched(map_columns=naive_map_columns):
+            result, _stats = self.run_import()
+        row = self.one(result, 'Гарден Май ФХ')
+        self.assertIsNone(row['received_amount'])
+        self.assertIsNone(row['received_kind'])
+
+
+class Case8RowOperatorTests(FixCorpusTestBase):
+    """8. «Дрон бошқарувчи оператор» beats an ambiguous sheet title."""
+
+    def _operator_name(self, operator_id):
+        con = sqlite3.connect(self.db)
+        try:
+            row = con.execute('SELECT full_name FROM drone_operators '
+                              'WHERE id=?', (operator_id,)).fetchone()
+        finally:
+            con.close()
+        return row[0] if row else None
+
+    def test_the_full_name_in_the_row_wins(self):
+        result, _stats = self.run_import()
+        row = self.one(result, 'Гарден Окт ФХ 1')
+        self.assertEqual(row['operator_raw'], 'Қодиров Нурали')
+        self.assertEqual(row['operator_source'], 'row')
+        self.assertEqual(self._operator_name(row['drone_operator_id']),
+                         'Қодиров Нурали')
+
+    def test_an_empty_cell_falls_back_to_the_sheet_title(self):
+        result, _stats = self.run_import()
+        row = self.one(result, 'Гарден Окт ФХ 2')
+        self.assertEqual(row['operator_raw'], 'Шахзод')
+        self.assertEqual(row['operator_source'], 'sheet')
+
+    def test_the_sheet_title_alone_stays_ambiguous(self):
+        """Which is why the row column is worth reading: «Шахзод» is two men."""
+        result, _stats = self.run_import()
+        row = self.one(result, 'Гарден Окт ФХ 2')
+        self.assertIsNone(row['drone_operator_id'])
+        reasons = {reason for (_raw, reason) in result.unresolved_operators}
+        self.assertTrue(any('ambiguous' in r for r in reasons))
+
+    def test_without_the_row_column_both_rows_are_unresolved(self):
+        """The shipped behaviour: the column was never read."""
+        with patched(map_columns=naive_map_columns):
+            result, _stats = self.run_import()
+        first = self.one(result, 'Гарден Окт ФХ 1')
+        self.assertEqual(first['operator_raw'], 'Шахзод')
+        self.assertIsNone(first['drone_operator_id'])
+
+
+class Case9UnmatchedHeaderTests(FixCorpusTestBase):
+    """9. A header matching nothing: listed, field NULL, row still imported."""
+
+    def test_the_unknown_header_is_listed_with_its_sheet(self):
+        result, _stats = self.run_import()
+        self.assertIn('Бригада', result.unmatched_headers)
+        places = result.unmatched_headers['Бригада']
+        self.assertEqual(places,
+                         [('Шофиркон ПТЗ Дрон Октябрь.xlsx',
+                           'свод ичи (Туйғун)')] * 1)
+
+    def test_the_rows_of_that_sheet_are_still_imported(self):
+        result, _stats = self.run_import()
+        self.assertEqual(len(self.rows_of(result, 'Шофиркон ФХ А')), 1)
+        self.assertEqual(len(self.rows_of(result, 'Шофиркон ФХ Б')), 1)
+
+    def test_a_known_but_unimported_header_is_not_reported_as_unknown(self):
+        """«Ишлаган контур рақами» is understood and deliberately skipped."""
+        result, _stats = self.run_import()
+        self.assertNotIn('Ишлаган контур рақами', result.unmatched_headers)
+        report = [s for s in result.sheets
+                  if s.sheet_name == 'свод ичи (Туйғун)'][0]
+        self.assertIn('Ишлаган контур рақами',
+                      [h for _i, h in report.column_map.ignored])
+
+    def test_the_row_counter_is_not_reported_as_an_unknown_header(self):
+        result, _stats = self.run_import()
+        self.assertNotIn('№', result.unmatched_headers)
+
+    def test_nothing_is_guessed_by_position(self):
+        """The unknown column is next to the amount and stays unread."""
+        result, _stats = self.run_import()
+        row = self.one(result, 'Шофиркон ФХ А')
+        self.assertEqual(row['amount'], 2400000)
+        self.assertIsNone(row['other_costs'])
+        self.assertIsNone(row['note'])
+
+
+class HeaderKeyTests(unittest.TestCase):
+    """The normalisation the whole mapping rests on."""
+
+    def test_whitespace_of_every_kind_collapses(self):
+        self.assertEqual(imp.header_key('Дрон  ишлаган сана'),
+                         imp.header_key('Дрон ишлаган сана'))
+        self.assertEqual(imp.header_key('Дрон\nишлаган\tсана'),
+                         imp.header_key('Дрон ишлаган сана'))
+        self.assertEqual(imp.header_key(' Дрон ишлаган сана '),
+                         imp.header_key('Дрон ишлаган сана'))
+        self.assertEqual(imp.header_key('Дрон\xa0ишлаган сана'),
+                         imp.header_key('Дрон ишлаган сана'))
+
+    def test_zero_width_characters_are_removed(self):
+        self.assertEqual(imp.header_key('ФХ\u200b номи'),
+                         imp.header_key('ФХ номи'))
+
+    def test_case_and_the_uzbek_letters_fold(self):
+        self.assertEqual(imp.header_key('ХИЗМАТ КЎРСАТИШ СУММАСИ'),
+                         imp.header_key('Хизмат курсатиш суммаси'))
+        self.assertEqual(imp.header_key('*Изоҳ'), imp.header_key('*ИЗОХ'))
+
+    def test_two_headers_that_differ_by_two_letters_stay_apart(self):
+        self.assertNotEqual(imp.header_key('Хизмат кўрсатиш суммаси'),
+                            imp.header_key('Хизмат кўрсатиш санаси'))
+
+    def test_longest_phrase_first(self):
+        """«Жами сумма (обьём)» must not be shadowed by «Жами сумма»."""
+        mapping = imp.map_columns(['№', 'ФХ номи', 'Майдон (га)',
+                                   'Жами сумма (обьём)'])
+        self.assertEqual(mapping.get('amount'), 3)
+        self.assertEqual(mapping.chosen['amount'], 'Жами сумма (обьём)')
+
+    def test_the_preferred_phrase_wins_when_a_sheet_has_two(self):
+        mapping = imp.map_columns(['№', 'ФХ номи', 'Майдон (га)',
+                                   'Жами сумма', 'Жами сумма (обьём)'])
+        self.assertEqual(mapping.get('amount'), 4)
+        self.assertEqual(len(mapping.shadowed), 1)
+
+    def test_a_detail_sheet_title_is_recognised_in_all_three_shapes(self):
+        for title in ('свод ичи (Фурқат)', 'свод ичи Шохрух', 'свод ичи ',
+                      'СВОД ИЧИ', '  свод   ичи  (Нурали)'):
+            self.assertTrue(imp.is_detail_sheet(title), title)
+
+    def test_every_known_summary_title_is_skipped(self):
+        for title in ('ОБШИЙ СВОД', 'ОБШИЙ СВОД Нурали', 'ОБШИЙ СВОД Шохрух1',
+                      'ОБШИЙ СВОД ФАРРУХ', 'олинмаган пуллар', 'свод фх',
+                      'Свод1', 'Расход', 'карпаратив почта'):
+            self.assertFalse(imp.is_detail_sheet(title), title)
 
 
 if __name__ == '__main__':

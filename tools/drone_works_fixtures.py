@@ -382,9 +382,11 @@ FIX_EXPECTED = {
     'unmatched_headers': 1,       # «Бригада»
     'received_kinds': {'received': 6, 'operator_due': 1},
     # What the three skipped sheets would have added if the tool still read
-    # every sheet: 99.0 + 77.0 from the two summaries, and 33.5 duplicated
-    # out of «олинмаган пуллар».
-    'summary_sheet_area': 209.5,
+    # every sheet: 99.0 from «ОБШИЙ СВОД Шохрух1» and 77.0 from «свод фх».
+    # The 33.5 of «олинмаган пуллар» is a duplicate of the detail row and the
+    # dedup catches it -- but WHICH copy survives then depends on sheet
+    # order, which is not a decision a tool should be making.
+    'summary_sheet_area': 176.0,
 }
 
 

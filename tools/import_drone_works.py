@@ -564,6 +564,19 @@ def area_in_range(area):
     return area is not None and 0 < area <= MAX_AREA_HA
 
 
+def payment_when_no_block():
+    """What a row with no payment block above it becomes. None = reject it.
+
+    [REASON]: a named decision rather than a literal, because it USED to be
+    rejection and the change is the whole of section 4 of
+    DRONE-WORKS-IMPORT-FIX-001. The negative control in
+    tools/test_import_drone_works.py swaps in the version that returns None
+    and watches the two rows disappear again -- which is what happened to 360
+    real rows on 2026-08-04.
+    """
+    return PAYMENT_UNKNOWN
+
+
 # ─── Trap (e): dates ─────────────────────────────────────────────────────────
 
 # '23-24.03.2026', '13,16,17.05.2026', '27,30.03.2026', '08-09.092025'.
@@ -845,7 +858,11 @@ def parse_sheet(ws, file_name, sheet_name, period_month, subdivision,
             # threw away 360 jobs with their hectares, customers and dates
             # over the one field that was missing. 'unknown' keeps the row and
             # names the gap; the owner sets the type on the works screen.
-            payment = PAYMENT_UNKNOWN
+            payment = payment_when_no_block()
+            if payment is None:
+                report.rejections.append(
+                    (excel_row, 'no payment block above this row', cells))
+                continue
             report.unknown_payment_rows += 1
 
         amount = _number(cell('amount'))
