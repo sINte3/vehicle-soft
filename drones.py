@@ -30,7 +30,7 @@ from datetime import datetime, timedelta
 from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
                    render_template, request, send_file, url_for, g)
 from flask_login import current_user
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased, joinedload
 
@@ -48,7 +48,10 @@ from models import (
     DRONE_WORK_PAYMENT_INTERNAL,
     DRONE_WORK_PAYMENT_TRANSFER,
     DRONE_WORK_PAYMENT_TYPES,
+    DRONE_WORK_PAYMENT_UNKNOWN,
     DRONE_WORK_PRICE_SUGGESTIONS,
+    DRONE_RECEIVED_KIND_OPERATOR_DUE,
+    DRONE_RECEIVED_KIND_RECEIVED,
     DroneBattery,
     DroneCustomer,
     DroneCustomerAlias,
@@ -2661,6 +2664,12 @@ DRONE_WORKS_XLSX_CAP = 20000
 # this module and reusing it would make the two indistinguishable.
 DRONE_WORK_UNRESOLVED = -1
 
+# Group keys of the two customer service rows. Strings, because the group
+# expression has to produce one column type and the ordinary keys are customer
+# ids rendered with printf.
+DRONE_WORK_CUSTOMER_UNSTATED = 'unstated'
+DRONE_WORK_CUSTOMER_UNRESOLVED = 'unresolved'
+
 
 def _drone_payment_labels():
     return {
@@ -2668,6 +2677,21 @@ def _drone_payment_labels():
         DRONE_WORK_PAYMENT_TRANSFER: _drone_t('Справка', 'Справка'),
         DRONE_WORK_PAYMENT_INTERNAL: _drone_t('Тизим корхонаси',
                                               'Своё предприятие'),
+        # [REASON]: not «прочее» and not an empty label. The sheet did not say,
+        # and the row is waiting for somebody to say -- which is a different
+        # statement from «this job was paid in some fourth way».
+        DRONE_WORK_PAYMENT_UNKNOWN: _drone_t('Тўлов тури кўрсатилмаган',
+                                             'Тип оплаты не указан'),
+    }
+
+
+def _drone_received_kind_labels():
+    return {
+        DRONE_RECEIVED_KIND_RECEIVED: _drone_t('Кирим қилинган',
+                                               'Кирим қилинган — получено'),
+        DRONE_RECEIVED_KIND_OPERATOR_DUE: _drone_t(
+            'Оператор топшириши керак',
+            'Оператор топшириши керак — оператор ещё должен'),
     }
 
 
@@ -3283,16 +3307,28 @@ def customer_alias_update(alias_id):
 
 # ─── DRONE-WORKS-001: reports ────────────────────────────────────────────────
 
-def _drone_work_cut(conds, group_expr, total_row, service_label,
+def _drone_work_cut(conds, group_expr, total_row, service_labels,
                     label_map=None, order_by_area=True):
-    """One breakdown of the ledger, with the NULL bucket as a visible row.
+    """One breakdown of the ledger, with its service buckets as visible rows.
+
+    service_labels is an ORDERED sequence of (key, label): every group whose
+    key is one of them becomes a service row instead of an ordinary one, in
+    that order, and is still part of the total.
 
     [REASON]: the rule the flight summary already obeys and this must match --
     a group-by that simply drops NULL silently omits exactly the rows nobody
     has resolved yet, which is how the previous system lost 2 036 flights and
-    2 082 hectares into an invisible bucket. So NULL gets a row, the row is
-    part of the total, and the total is compared against the grand total; a
-    mismatch is shown on the page (reconciled=False), never hidden.
+    2 082 hectares into an invisible bucket. So the missing bucket gets a row,
+    the row is part of the total, and the total is compared against the grand
+    total; a mismatch is shown on the page (reconciled=False), never hidden.
+
+    [REASON]: SEVERAL service rows, not one. «Заказчик не указан» -- the sheet
+    carried no farm name at all, which is what all nine internal jobs of
+    «Агрокластер Дрон маълумот МАЙ.xlsx» look like -- and «Заказчик не
+    определён» -- a spelling that exists but matched no alias -- are different
+    facts needing different actions. The first is how the holding's own land
+    is written down and needs nothing; the second is an alias somebody has to
+    add. One combined row would hide the second inside the first.
     """
     groups = db.session.query(
         group_expr,
@@ -3302,8 +3338,9 @@ def _drone_work_cut(conds, group_expr, total_row, service_label,
         func.coalesce(func.sum(DroneWork.received_amount), 0.0),
     ).filter(*conds).group_by(group_expr).all()
 
+    service_map = dict(service_labels)
     rows = []
-    service = None
+    found = {}
     for key, jobs, area, amount, received in groups:
         cell = {
             'key': key,
@@ -3314,9 +3351,9 @@ def _drone_work_cut(conds, group_expr, total_row, service_label,
         }
         cell['outstanding'] = cell['amount'] - cell['received']
         cell['share'] = _drone_share(cell['area'], total_row['area'])
-        if key is None:
-            cell['label'] = service_label
-            service = cell
+        if key in service_map:
+            cell['label'] = service_map[key]
+            found[key] = cell
         else:
             cell['label'] = (label_map or {}).get(key, key)
             rows.append(cell)
@@ -3326,7 +3363,8 @@ def _drone_work_cut(conds, group_expr, total_row, service_label,
     else:
         rows.sort(key=lambda r: str(r['key']))
 
-    everything = rows + ([service] if service else [])
+    services = [found[key] for key, _label in service_labels if key in found]
+    everything = rows + services
     total = {
         'jobs': sum(r['jobs'] for r in everything),
         'area': sum(r['area'] for r in everything),
@@ -3338,7 +3376,7 @@ def _drone_work_cut(conds, group_expr, total_row, service_label,
                   and abs(total['area'] - total_row['area']) < 0.005
                   and abs(total['amount'] - total_row['amount']) < 0.005
                   and abs(total['received'] - total_row['received']) < 0.005)
-    return {'rows': rows, 'service': service, 'total': total,
+    return {'rows': rows, 'services': services, 'total': total,
             'reconciled': reconciled}
 
 
@@ -3350,7 +3388,7 @@ def _drone_work_debt_cut(cut, no_debt_label):
     total. A debt table that silently omits the settled rows reads as "this is
     everybody" and there is no way to tell it apart from a filter mistake.
     """
-    everything = cut['rows'] + ([cut['service']] if cut['service'] else [])
+    everything = cut['rows'] + list(cut['services'])
     owing = [r for r in everything if r['outstanding'] > 0.005]
     settled = [r for r in everything if r['outstanding'] <= 0.005]
     owing.sort(key=lambda r: r['outstanding'], reverse=True)
@@ -3375,17 +3413,43 @@ def _drone_works_report_data(conds):
     customer_names = {c.id: c.name for c in DroneCustomer.query.all()}
     operator_names = {o.id: o.full_name for o in DroneOperator.query.all()}
 
+    # [REASON]: the customer cut has TWO service rows, and the key is a CASE
+    # expression rather than the raw column, because a NULL drone_customer_id
+    # means two different things. «Заказчик не указан» is a sheet that carried
+    # no farm name -- how the holding's own land is written down, and nothing
+    # needs doing about it. «Заказчик не определён» is a spelling that exists
+    # and matched no alias -- somebody has to add the alias. One combined row
+    # would hide the second inside the first.
+    customer_group = case(
+        (DroneWork.drone_customer_id.isnot(None),
+         func.printf('%d', DroneWork.drone_customer_id)),
+        (func.trim(func.coalesce(DroneWork.customer_raw, '')) == '',
+         DRONE_WORK_CUSTOMER_UNSTATED),
+        else_=DRONE_WORK_CUSTOMER_UNRESOLVED)
     by_customer = _drone_work_cut(
-        conds, DroneWork.drone_customer_id, totals,
-        _drone_t('Буюртмачи аниқланмаган', 'Заказчик не определён'),
-        label_map=customer_names)
+        conds, customer_group, totals,
+        ((DRONE_WORK_CUSTOMER_UNSTATED,
+          _drone_t('Буюртмачи кўрсатилмаган', 'Заказчик не указан')),
+         (DRONE_WORK_CUSTOMER_UNRESOLVED,
+          _drone_t('Буюртмачи аниқланмаган', 'Заказчик не определён'))),
+        label_map={('%d' % c.id): c.name for c in DroneCustomer.query.all()})
     by_operator = _drone_work_cut(
         conds, DroneWork.drone_operator_id, totals,
-        _drone_t('Оператор аниқланмаган', 'Оператор не определён'),
+        ((None, _drone_t('Оператор аниқланмаган', 'Оператор не определён')),),
         label_map=operator_names)
     by_subdivision = _drone_work_cut(
         conds, DroneWork.subdivision_name, totals,
-        _drone_t('Бўлинма кўрсатилмаган', 'Подразделение не указано'))
+        ((None, _drone_t('Бўлинма кўрсатилмаган',
+                         'Подразделение не указано')),))
+    # [REASON]: the payment cut exists because 'unknown' does. Roughly two
+    # fifths of the corpus has no payment type in the source, and a report
+    # that never shows the bucket makes it invisible to the person who is
+    # supposed to fill it in on the works screen.
+    by_payment = _drone_work_cut(
+        conds, DroneWork.payment_type, totals,
+        ((DRONE_WORK_PAYMENT_UNKNOWN,
+          _drone_t('Тўлов тури кўрсатилмаган', 'Тип оплаты не указан')),),
+        label_map=_drone_payment_labels(), order_by_area=False)
 
     # [REASON]: the month cut groups on the job's OWN date, and jobs with no
     # date get the «Дата не указана» row instead of vanishing. Grouping every
@@ -3396,9 +3460,9 @@ def _drone_works_report_data(conds):
     # an undated job is still attributable to a month, just not to a day.
     by_month = _drone_work_cut(
         conds, func.strftime('%Y-%m', DroneWork.work_date_from), totals,
-        _drone_t('Сана кўрсатилмаган', 'Дата не указана'),
+        ((None, _drone_t('Сана кўрсатилмаган', 'Дата не указана')),),
         order_by_area=False)
-    if by_month['service'] is not None:
+    if by_month['services']:
         breakdown = db.session.query(
             DroneWork.period_month,
             func.count(DroneWork.id),
@@ -3406,17 +3470,31 @@ def _drone_works_report_data(conds):
         ).filter(*conds).filter(DroneWork.work_date_from.is_(None)) \
             .group_by(DroneWork.period_month) \
             .order_by(DroneWork.period_month).all()
-        by_month['service']['periods'] = [
+        by_month['services'][0]['periods'] = [
             {'period': period, 'jobs': jobs, 'area': float(area or 0.0)}
             for period, jobs, area in breakdown]
 
     no_debt = _drone_t('Қарзи йўқ (қолганлари)', 'Долга нет (остальные)')
+    # [REASON]: what the debt column is actually made of. «Кирим қилинган» is
+    # money handed in; «Оператор топшириши керак» is what the operator still
+    # owes and is NOT a collection. Both live in received_amount, so the debt
+    # tables carry a memo saying how much of the «получено» column is the
+    # second kind. It changes no total -- it says what the totals contain.
+    operator_due = db.session.query(
+        func.count(DroneWork.id),
+        func.coalesce(func.sum(DroneWork.received_amount), 0.0),
+    ).filter(*conds).filter(
+        DroneWork.received_kind == DRONE_RECEIVED_KIND_OPERATOR_DUE).one()
+
     return {
         'totals': totals,
         'by_customer': by_customer,
         'by_operator': by_operator,
         'by_subdivision': by_subdivision,
         'by_month': by_month,
+        'by_payment': by_payment,
+        'operator_due': {'jobs': operator_due[0] or 0,
+                         'amount': float(operator_due[1] or 0.0)},
         'debt_by_customer': _drone_work_debt_cut(by_customer, no_debt),
         'debt_by_operator': _drone_work_debt_cut(by_operator, no_debt),
     }
@@ -3502,12 +3580,12 @@ def _drone_work_cut_sheet(wb, st, title, first_column, cut):
         ws.append([_drone_xlsx_safe(row['label']), row['jobs'], row['area'],
                    row['amount'], row['received'], row['outstanding'],
                    row['share']])
-    # The service row is part of the table AND part of the total -- never a
+    # The service rows are part of the table AND part of the total -- never a
     # remainder printed outside it.
-    if cut['service'] is not None:
-        s = cut['service']
-        ws.append([s['label'], s['jobs'], s['area'], s['amount'],
-                   s['received'], s['outstanding'], s['share']])
+    for service in cut['services']:
+        ws.append([service['label'], service['jobs'], service['area'],
+                   service['amount'], service['received'],
+                   service['outstanding'], service['share']])
     ws.append([_drone_t('Жами', 'Итого'), cut['total']['jobs'],
                cut['total']['area'], cut['total']['amount'],
                cut['total']['received'], cut['total']['outstanding'], 100.0])
@@ -3564,6 +3642,10 @@ def works_reports_xlsx():
                           data['by_subdivision'])
     _drone_work_cut_sheet(wb, st, _drone_t('Ойлар бўйича', 'По месяцам'),
                           _drone_t('Ой', 'Месяц'), data['by_month'])
+    _drone_work_cut_sheet(wb, st, _drone_t('Тўлов турлари бўйича',
+                                           'По типам оплаты'),
+                          _drone_t('Тўлов тури', 'Тип оплаты'),
+                          data['by_payment'])
     _drone_work_debt_sheet(wb, st, _drone_t('Қарз — буюртмачилар',
                                             'Долги — заказчики'),
                            _drone_t('Буюртмачи', 'Заказчик'),
@@ -3624,6 +3706,7 @@ def works_xlsx():
                                  'Заказчик не определён')
     label_no_operator = _drone_t('Оператор аниқланмаган',
                                  'Оператор не определён')
+    received_kind_labels = _drone_received_kind_labels()
 
     st = _drone_xlsx_styler()
     wb = Workbook()
@@ -3643,6 +3726,9 @@ def works_xlsx():
         _drone_t('Сумма', 'Сумма'),
         _drone_t('Бошқа харажатлар', 'Прочие расходы'),
         _drone_t('Кирим қилинган', 'Получено'),
+        # [REASON]: without this column «получено» is two different facts in
+        # one place -- money handed in, and money the operator still owes.
+        _drone_t('«Получено» нимадан олинган', 'Что за «получено»'),
         _drone_t('Олинмаган', 'Не получено'),
         _drone_t('Тўлов тури', 'Тип оплаты'),
         _drone_t('Бўлинма', 'Подразделение'),
@@ -3665,7 +3751,9 @@ def works_xlsx():
                              else label_no_customer),
             _drone_xlsx_safe(w.customer_raw),
             w.area_ha, w.price_per_ha, w.amount, w.other_costs,
-            w.received_amount, amount - received,
+            w.received_amount,
+            received_kind_labels.get(w.received_kind, ''),
+            amount - received,
             payment_labels.get(w.payment_type, w.payment_type),
             _drone_xlsx_safe(w.subdivision_name),
             _drone_xlsx_safe(w.source_file),
@@ -3675,7 +3763,7 @@ def works_xlsx():
         ])
     st.style_table(ws,
                    num_formats={9: '0.00', 10: '0.00', 11: '0.00',
-                                12: '0.00', 13: '0.00', 14: '0.00'},
+                                12: '0.00', 13: '0.00', 15: '0.00'},
                    datetime_format={2: 'DD.MM.YYYY', 3: 'DD.MM.YYYY'})
     return _drone_works_xlsx_response(wb, 'drone_works', filters)
 
