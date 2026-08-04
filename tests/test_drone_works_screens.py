@@ -9,10 +9,11 @@ cut is checked to sum back to the same grand total, and each workbook is
 re-read with openpyxl and compared cell by cell against the numbers the screen
 computed. A screenshot proves nothing and neither does the route returning 200.
 
-The fixture is deliberately small and hand-checkable: 8 jobs, 100.50 ha,
-21 700 000 so'm, of which 12 500 000 received. One unresolved customer, one
-unresolved operator, one job with no date, one job whose own date falls
-outside the month its book is filed under.
+The fixture is deliberately small and hand-checkable: 10 jobs, 128.50 ha,
+24 555 256 so'm, of which 12 500 000 received. One unresolved customer, one
+customer missing entirely, one unresolved operator, one job with no date, one
+job with no payment type, and one job whose own date falls outside the month
+its book is filed under.
 
 Run:
   python -m unittest tests.test_drone_works_screens -v
@@ -60,11 +61,22 @@ FIXTURE = [
      1800000, 0, 'cash', 'Пешку'),
     # No date at all: it has to stay in the report, in its own service row.
     ('2026-03', None, 'op2', 'c3', 6.0, 200000, 2015000, 0, 'cash', 'Пешку'),
+    # DRONE-WORKS-IMPORT-FIX-001. The sheet said nothing about how this job
+    # was paid -- roughly two fifths of the real corpus looks like this.
+    ('2026-04', datetime.date(2026, 4, 9), 'op1', 'c1', 4.0, 200000,
+     800000, 0, 'unknown', 'Гарден'),
+    # The farm name was missing in the source: how the holding's own land is
+    # written down. It must NOT share a service row with «не определён».
+    ('2026-05', datetime.date(2026, 5, 4), 'op2', None, 24.0, 85633,
+     2055192, 0, 'internal', 'Гарден'),
 ]
+# The row with no customer at all is index 10 of the fixture; seed() gives it
+# customer_raw = '' rather than a name.
+EMPTY_CUSTOMER_INDEX = 10
 
-TOTAL_JOBS = 8
-TOTAL_AREA = 100.5
-TOTAL_AMOUNT = 21700064.0
+TOTAL_JOBS = 10
+TOTAL_AREA = 128.5
+TOTAL_AMOUNT = 24555256.0
 TOTAL_RECEIVED = 12500000.0
 TOTAL_OUTSTANDING = TOTAL_AMOUNT - TOTAL_RECEIVED
 
@@ -100,7 +112,8 @@ def seed():
                 drone_operator_id=ids.get(operator),
                 operator_raw=operator or 'Ким',
                 drone_customer_id=ids.get(customer),
-                customer_raw='Хозяйство %d' % index,
+                customer_raw=('' if index == EMPTY_CUSTOMER_INDEX
+                              else 'Хозяйство %d' % index),
                 area_ha=area, price_per_ha=price, amount=amount,
                 received_amount=received, payment_type=payment,
                 subdivision_name=subdivision,
@@ -159,8 +172,9 @@ class DroneWorksScreenTests(unittest.TestCase):
         response = self.client.get('/drones/works')
         self.assertEqual(response.status_code, 200)
         body = response.data.decode('utf-8')
-        self.assertIn('100.50', body)
+        self.assertIn('128.50', body)
         self.assertIn('Дата не указана', body)
+        self.assertIn('Тип оплаты не указан', body)
 
     def test_the_period_filter_uses_the_jobs_own_date(self):
         """The April row of a March-labelled book belongs to April."""
@@ -171,8 +185,8 @@ class DroneWorksScreenTests(unittest.TestCase):
                     _request_args('period=2026-04'))
                 conds = drones._drone_work_conditions(filters)
                 april = drones._drone_works_totals(conds)
-        self.assertEqual(april['jobs'], 5)
-        self.assertAlmostEqual(april['area'], 56.5, places=2)
+        self.assertEqual(april['jobs'], 6)
+        self.assertAlmostEqual(april['area'], 60.5, places=2)
 
     def test_an_undated_job_falls_into_its_manifest_month(self):
         with app.app_context():
@@ -205,8 +219,10 @@ class DroneWorksScreenTests(unittest.TestCase):
                     _request_args('customer_id=-1'))
                 totals = drones._drone_works_totals(
                     drones._drone_work_conditions(filters))
-        self.assertEqual(totals['jobs'], 1)
-        self.assertAlmostEqual(totals['area'], 5.0, places=2)
+        # both the unmatched spelling and the missing one -- the ledger
+        # filter deliberately catches both, the report separates them
+        self.assertEqual(totals['jobs'], 2)
+        self.assertAlmostEqual(totals['area'], 29.0, places=2)
 
     def test_a_manual_job_needs_a_period_when_it_has_no_date(self):
         before = self._count()
@@ -250,7 +266,7 @@ class DroneWorksScreenTests(unittest.TestCase):
     def test_every_cut_reconciles_to_the_same_grand_total(self):
         data, _filters = report_data()
         for name in ('by_customer', 'by_operator', 'by_subdivision',
-                     'by_month'):
+                     'by_month', 'by_payment'):
             cut = data[name]
             self.assertTrue(cut['reconciled'], name)
             self.assertEqual(cut['total']['jobs'], TOTAL_JOBS, name)
@@ -273,35 +289,57 @@ class DroneWorksScreenTests(unittest.TestCase):
             wrong = drones._drone_works_totals([])
             wrong['area'] += 1.0
             cut = drones._drone_work_cut(
-                [], DroneWork.drone_customer_id, wrong, 'x')
+                [], DroneWork.drone_customer_id, wrong, ((None, 'x'),))
         self.assertFalse(cut['reconciled'])
 
     def test_the_unresolved_rows_are_visible_and_counted_in_the_total(self):
         data, _filters = report_data()
         customer = data['by_customer']
-        self.assertIsNotNone(customer['service'])
-        self.assertEqual(customer['service']['jobs'], 1)
-        self.assertAlmostEqual(customer['service']['area'], 5.0, places=2)
-        # ... and the total INCLUDES it
-        self.assertEqual(
-            customer['total']['jobs'],
-            sum(r['jobs'] for r in customer['rows'])
-            + customer['service']['jobs'])
+        labels = [s['label'] for s in customer['services']]
+        self.assertEqual(labels,
+                         ['Заказчик не указан', 'Заказчик не определён'])
+        self.assertEqual(customer['total']['jobs'],
+                         sum(r['jobs'] for r in customer['rows'])
+                         + sum(s['jobs'] for s in customer['services']))
 
         operator = data['by_operator']
-        self.assertIsNotNone(operator['service'])
-        self.assertEqual(operator['service']['jobs'], 1)
-        self.assertAlmostEqual(operator['service']['area'], 30.0, places=2)
+        self.assertEqual(len(operator['services']), 1)
+        self.assertEqual(operator['services'][0]['jobs'], 1)
+        self.assertAlmostEqual(operator['services'][0]['area'], 30.0,
+                               places=2)
+
+    def test_the_two_customer_service_rows_are_different_facts(self):
+        """«не указан» is missing data; «не определён» is unmatched data."""
+        data, _filters = report_data()
+        services = {s['label']: s for s in data['by_customer']['services']}
+        unstated = services['Заказчик не указан']
+        self.assertEqual(unstated['jobs'], 1)
+        self.assertAlmostEqual(unstated['area'], 24.0, places=2)
+        unresolved = services['Заказчик не определён']
+        self.assertEqual(unresolved['jobs'], 1)
+        self.assertAlmostEqual(unresolved['area'], 5.0, places=2)
+
+    def test_the_payment_cut_shows_the_unknown_bucket(self):
+        data, _filters = report_data()
+        cut = data['by_payment']
+        self.assertTrue(cut['reconciled'])
+        self.assertEqual([s['label'] for s in cut['services']],
+                         ['Тип оплаты не указан'])
+        self.assertEqual(cut['services'][0]['jobs'], 1)
+        self.assertAlmostEqual(cut['services'][0]['area'], 4.0, places=2)
+        self.assertEqual(cut['total']['jobs'], TOTAL_JOBS)
 
     def test_the_month_cut_uses_the_jobs_own_date_and_shows_the_undated_row(self):
         data, _filters = report_data()
         months = {r['key']: r for r in data['by_month']['rows']}
-        self.assertEqual(set(months), {'2026-03', '2026-04'})
-        # 12.5 + 10 + 20 + 5 + 9 -- including the April row of the March book
-        self.assertAlmostEqual(months['2026-04']['area'], 56.5, places=2)
+        self.assertEqual(set(months), {'2026-03', '2026-04', '2026-05'})
+        # 12.5 + 10 + 20 + 5 + 9 + 4 -- including the April row of the March
+        # book
+        self.assertAlmostEqual(months['2026-04']['area'], 60.5, places=2)
         self.assertAlmostEqual(months['2026-03']['area'], 38.0, places=2)
-        service = data['by_month']['service']
-        self.assertIsNotNone(service)
+        self.assertAlmostEqual(months['2026-05']['area'], 24.0, places=2)
+        self.assertEqual(len(data['by_month']['services']), 1)
+        service = data['by_month']['services'][0]
         self.assertEqual(service['jobs'], 1)
         self.assertAlmostEqual(service['area'], 6.0, places=2)
         # ... and it says which book's month the undated job belongs to
@@ -310,9 +348,9 @@ class DroneWorksScreenTests(unittest.TestCase):
 
     def test_the_subdivision_cut_shows_the_row_with_no_subdivision(self):
         data, _filters = report_data()
-        self.assertIsNotNone(data['by_subdivision']['service'])
-        self.assertAlmostEqual(data['by_subdivision']['service']['area'], 8.0,
-                               places=2)
+        self.assertEqual(len(data['by_subdivision']['services']), 1)
+        self.assertAlmostEqual(
+            data['by_subdivision']['services'][0]['area'], 8.0, places=2)
 
     def test_the_debt_view_sums_back_to_the_grand_total(self):
         data, _filters = report_data()
@@ -335,7 +373,7 @@ class DroneWorksScreenTests(unittest.TestCase):
         self.assertEqual(data['totals']['jobs'], 3)
         self.assertAlmostEqual(data['totals']['area'], 55.0, places=2)
         for name in ('by_customer', 'by_operator', 'by_subdivision',
-                     'by_month'):
+                     'by_month', 'by_payment'):
             self.assertTrue(data[name]['reconciled'], name)
             self.assertEqual(data[name]['total']['jobs'], 3, name)
 
@@ -344,9 +382,11 @@ class DroneWorksScreenTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.data.decode('utf-8')
         self.assertIn('Заказчик не определён', body)
+        self.assertIn('Заказчик не указан', body)
         self.assertIn('Оператор не определён', body)
         self.assertIn('Дата не указана', body)
         self.assertIn('Подразделение не указано', body)
+        self.assertIn('Тип оплаты не указан', body)
 
     # ── The workbooks, re-read with openpyxl ──────────────────────────────
     def test_the_report_workbook_matches_the_screen_cell_by_cell(self):
@@ -356,14 +396,14 @@ class DroneWorksScreenTests(unittest.TestCase):
         for title, cut_name in (('По заказчикам', 'by_customer'),
                                 ('По операторам', 'by_operator'),
                                 ('По подразделениям', 'by_subdivision'),
-                                ('По месяцам', 'by_month')):
+                                ('По месяцам', 'by_month'),
+                                ('По типам оплаты', 'by_payment')):
             rows = sheet_rows(response.data, title)
             cut = data[cut_name]
-            expected = len(cut['rows']) + (1 if cut['service'] else 0) + 2
+            expected = len(cut['rows']) + len(cut['services']) + 2
             self.assertEqual(len(rows), expected, title)
             body = rows[1:-1]
-            screen = cut['rows'] + ([cut['service']] if cut['service']
-                                    else [])
+            screen = cut['rows'] + list(cut['services'])
             for sheet_row, screen_row in zip(body, screen):
                 self.assertEqual(sheet_row[0], screen_row['label'], title)
                 self.assertEqual(sheet_row[1], screen_row['jobs'], title)
@@ -387,7 +427,7 @@ class DroneWorksScreenTests(unittest.TestCase):
         """The file must stand on its own: sum the body, get the total row."""
         response = self.client.get('/drones/works/reports.xlsx')
         for title in ('По заказчикам', 'По операторам', 'По подразделениям',
-                      'По месяцам'):
+                      'По месяцам', 'По типам оплаты'):
             rows = sheet_rows(response.data, title)
             body = rows[1:-1]
             total = rows[-1]
@@ -435,8 +475,8 @@ class DroneWorksScreenTests(unittest.TestCase):
         rows = sheet_rows(response.data, 'Сводка')
         values = {r[0]: r[1] for r in rows[1:]}
         self.assertEqual(values['Период'], '2026-04')
-        self.assertEqual(values['Работ'], 5)
-        self.assertAlmostEqual(values['Гектаров'], 56.5, places=2)
+        self.assertEqual(values['Работ'], 6)
+        self.assertAlmostEqual(values['Гектаров'], 60.5, places=2)
 
     def test_a_filtered_workbook_really_carries_fewer_rows(self):
         """The differential half: the filter has to reach the file."""
@@ -446,7 +486,7 @@ class DroneWorksScreenTests(unittest.TestCase):
             self.client.get('/drones/works.xlsx?period=2026-04').data,
             'Работы')
         self.assertEqual(len(everything) - 1, TOTAL_JOBS)
-        self.assertEqual(len(april) - 1, 5)
+        self.assertEqual(len(april) - 1, 6)
 
 
 class DroneWorksPermissionTests(unittest.TestCase):
@@ -507,13 +547,15 @@ class DroneWorksUzbekTests(unittest.TestCase):
 
     def test_the_service_row_labels_are_cyrillic(self):
         data, _filters = report_data(lang='uz')
-        labels = [data[name]['service']['label']
-                  for name in ('by_customer', 'by_operator', 'by_subdivision',
-                               'by_month')]
+        labels = []
+        for name in ('by_customer', 'by_operator', 'by_subdivision',
+                     'by_month', 'by_payment'):
+            labels.extend(s['label'] for s in data[name]['services'])
         self.assertEqual(
             labels,
-            ['Буюртмачи аниқланмаган', 'Оператор аниқланмаган',
-             'Бўлинма кўрсатилмаган', 'Сана кўрсатилмаган'])
+            ['Буюртмачи кўрсатилмаган', 'Буюртмачи аниқланмаган',
+             'Оператор аниқланмаган', 'Бўлинма кўрсатилмаган',
+             'Сана кўрсатилмаган', 'Тўлов тури кўрсатилмаган'])
         for label in labels:
             self.assertFalse(any('a' <= ch.lower() <= 'z' for ch in label),
                              label)
@@ -526,8 +568,8 @@ class DroneWorksUzbekTests(unittest.TestCase):
         self.assertEqual(
             wb.sheetnames,
             ['Жамланма', 'Буюртмачилар бўйича', 'Операторлар бўйича',
-             'Бўлинмалар бўйича', 'Ойлар бўйича', 'Қарз — буюртмачилар',
-             'Қарз — операторлар'])
+             'Бўлинмалар бўйича', 'Ойлар бўйича', 'Тўлов турлари бўйича',
+             'Қарз — буюртмачилар', 'Қарз — операторлар'])
         for name in wb.sheetnames:
             self.assertFalse(any('a' <= ch.lower() <= 'z' for ch in name),
                              name)
@@ -569,12 +611,12 @@ class DroneAssignmentHintTests(unittest.TestCase):
     """The hint screen: read-only, and honest about what it cannot know.
 
     The fixture is built so the right answer is knowable by hand. In 2026-04
-    the ledger gives Fayzullaev 31.5 ha (12.5 + 10.0 + the 9.0 ha row whose
-    book is filed as March but whose own date is 25 April) and Khamroev
-    25.0 ha; the flights give machine No 1 22.4 ha, machine No 2 30.0 ha and
-    5.0 ha with no machine at all.
+    the ledger gives Fayzullaev 35.5 ha (12.5 + 10.0 + the 9.0 ha row whose
+    book is filed as March but whose own date is 25 April + the 4.0 ha row
+    with no payment type) and Khamroev 25.0 ha; the flights give machine No 1
+    22.4 ha, machine No 2 30.0 ha and 5.0 ha with no machine at all.
 
-    So Fayzullaev's closest is No 2 at -4.8 % and Khamroev's is No 1 at
+    So Fayzullaev's closest is No 2 at -15.5 % and Khamroev's is No 1 at
     -10.4 % -- NOT No 2 at +20.0 %, which is the point: the ranking is by the
     absolute relative difference, and a bigger machine is not a better match
     just because it is bigger.
@@ -631,12 +673,12 @@ class DroneAssignmentHintTests(unittest.TestCase):
         data = self.hints()
         by_name = {r['name']: r for r in data['rows']}
         faiz = by_name['Файзуллаев Фурқат']
-        self.assertAlmostEqual(faiz['area'], 31.5, places=2)
+        self.assertAlmostEqual(faiz['area'], 35.5, places=2)
         self.assertEqual(faiz['best']['number'], 2)
         self.assertAlmostEqual(faiz['best']['area'], 30.0, places=2)
-        self.assertAlmostEqual(faiz['best']['delta'], -4.7619, places=3)
+        self.assertAlmostEqual(faiz['best']['delta'], -15.4930, places=3)
         self.assertEqual(faiz['second']['number'], 1)
-        self.assertAlmostEqual(faiz['second']['delta'], -28.8889, places=3)
+        self.assertAlmostEqual(faiz['second']['delta'], -36.9014, places=3)
 
         khamroev = by_name['Хамроев Шохрух']
         self.assertAlmostEqual(khamroev['area'], 25.0, places=2)

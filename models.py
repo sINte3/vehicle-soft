@@ -2084,21 +2084,40 @@ class DroneBattery(db.Model):
 
 # ─── DRONE-WORKS-001: the commercial ledger of the drone operation ───────────
 
-# The three payment types the dispatchers actually use, and no more.
+# The payment types the dispatchers actually use, and no more.
 #   cash     -- Нақд, money handed over
 #   transfer -- Справка: the operator writes a certificate, the client signs
 #               and stamps it, accounting issues an invoice
 #   internal -- Тизим корхонаси, the holding's own land
+#   unknown  -- the sheet does not say
 # [REASON]: the certificate's document states (written / signed / invoiced /
 # paid) were deliberately left OUT of scope by the owner on 2026-08-03.
 # Modelling them here would create four half-filled columns nobody maintains
 # and a report that looks authoritative while resting on guesses.
+#
+# [REASON]: `unknown` was added on 2026-08-04 by the owner's decision, after
+# the first dry run over the real books rejected 360 rows with «no payment
+# block above this row». The September and October detail sheets carry no
+# «Справка (…ойи)» / «Нақд (…ойи)» markers at all -- header, then data. The
+# payment split lives only in the «ОБШИЙ СВОД» summary sheets, which are not
+# imported. Roughly two fifths of the corpus therefore has no payment type in
+# the source, and refusing those rows threw away their hectares, customers and
+# dates along with the one field that was missing. `unknown` keeps the row and
+# names the gap; the owner sets the type later on the works screen.
 DRONE_WORK_PAYMENT_CASH = 'cash'
 DRONE_WORK_PAYMENT_TRANSFER = 'transfer'
 DRONE_WORK_PAYMENT_INTERNAL = 'internal'
+DRONE_WORK_PAYMENT_UNKNOWN = 'unknown'
 DRONE_WORK_PAYMENT_TYPES = (DRONE_WORK_PAYMENT_CASH,
                             DRONE_WORK_PAYMENT_TRANSFER,
-                            DRONE_WORK_PAYMENT_INTERNAL)
+                            DRONE_WORK_PAYMENT_INTERNAL,
+                            DRONE_WORK_PAYMENT_UNKNOWN)
+
+# Which header the figure in received_amount came from. See DroneWork.
+DRONE_RECEIVED_KIND_RECEIVED = 'received'
+DRONE_RECEIVED_KIND_OPERATOR_DUE = 'operator_due'
+DRONE_RECEIVED_KINDS = (DRONE_RECEIVED_KIND_RECEIVED,
+                        DRONE_RECEIVED_KIND_OPERATOR_DUE)
 
 DRONE_CUSTOMER_EXTERNAL = 'external'
 DRONE_CUSTOMER_INTERNAL = 'internal'
@@ -2246,10 +2265,22 @@ class DroneWork(db.Model):
     # from amount / area, see DRONE_WORK_PRICE_SUGGESTIONS.
     price_per_ha      = db.Column(db.Numeric(asdecimal=False), nullable=True)
     amount            = db.Column(db.Numeric(asdecimal=False), nullable=True)
-    # «Бошка харажатлар» -- other costs charged on the same line.
+    # «Бошка харажатлар», «Транспорт харажати», «ЁММ харажати» -- other costs
+    # charged on the same line. Six of the twenty-four real layouts carry TWO
+    # expense columns at once, and this is their SUM; the import reports per
+    # sheet which headers it added together.
     other_costs       = db.Column(db.Numeric(asdecimal=False), nullable=True)
     # «Кирим қилинган» -- how much of the amount came back.
     received_amount   = db.Column(db.Numeric(asdecimal=False), nullable=True)
+    # [REASON]: DRONES_WORKS_002. «Кирим қилинган» is money already handed in;
+    # «Оператор топшириши керак» is what the operator STILL OWES. In the real
+    # sheets the two occupy the same position and both equal
+    # amount - other_costs, so they are trivial to conflate -- and conflating
+    # them would report an unpaid job as collected and understate the debt
+    # report by the whole column. One nullable value of DRONE_RECEIVED_KINDS
+    # records which header the figure came from. NULL on rows imported before
+    # this migration and on rows typed by hand.
+    received_kind     = db.Column(db.String(20), nullable=True)
 
     # One of DRONE_WORK_PAYMENT_TYPES.
     payment_type      = db.Column(db.String(20), nullable=False)

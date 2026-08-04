@@ -110,10 +110,46 @@ DEFAULT_DB_PATH = os.path.join(REPO_ROOT, 'instance', 'transport.db')
 PAYMENT_CASH = 'cash'
 PAYMENT_TRANSFER = 'transfer'
 PAYMENT_INTERNAL = 'internal'
-PAYMENT_TYPES = (PAYMENT_CASH, PAYMENT_TRANSFER, PAYMENT_INTERNAL)
+# [REASON]: owner's decision of 2026-08-04 -- see parse_sheet. Roughly two
+# fifths of the real corpus sits in sheets with no payment block at all.
+PAYMENT_UNKNOWN = 'unknown'
+PAYMENT_TYPES = (PAYMENT_CASH, PAYMENT_TRANSFER, PAYMENT_INTERNAL,
+                 PAYMENT_UNKNOWN)
+# --default-payment may not be used to declare rows unknown: that is what
+# happens anyway, and offering it as a choice would suggest it does something.
+PAYMENT_OVERRIDE_TYPES = (PAYMENT_CASH, PAYMENT_TRANSFER, PAYMENT_INTERNAL)
+
+RECEIVED_KIND_RECEIVED = 'received'
+RECEIVED_KIND_OPERATOR_DUE = 'operator_due'
 
 # A single job is never larger than this. See trap (b).
 MAX_AREA_HA = 1000.0
+
+# What the owner's hand parser measured over all 28 books on 2026-08-04,
+# grouped by the MANIFEST month. Printed next to the actual figures so the run
+# can be compared against a prediction written beforehand instead of being
+# read as "some numbers came out".
+#
+# [REASON]: April is the anchor and the only line corroborated by anything
+# other than the same hand parser -- 6 388.83 ha agrees with our own DJI
+# flight data for April 2026 (6 379.24 ha over 6 403 flights) to 0.15 %. The
+# monthly split for September and October WILL differ here, because this tool
+# groups by the row's own date and one book straddles the two months; the
+# total is the firm number and the monthly rows are indicative. These figures
+# come from a parser that has been wrong twice already: a disagreement is a
+# finding to report, not a number to force.
+EXPECTED_BY_MONTH = (
+    ('2025-09', 378, 4937.73),
+    ('2025-10', 28, 790.90),
+    ('2026-03', 46, 1378.48),
+    ('2026-04', 331, 6388.83),
+    ('2026-05', 106, 2179.72),
+    ('2026-07', 6, 62.73),
+)
+EXPECTED_TOTAL_ROWS = 895
+EXPECTED_TOTAL_AREA = 15738.39
+EXPECTED_ANCHOR_MONTH = '2026-04'
+
 
 DATE_KIND_EXACT = 'date'      # one real day, from a datetime cell or dd.mm.yyyy
 DATE_KIND_SPAN = 'span'       # a text range or comma list over several days
@@ -256,51 +292,235 @@ def is_header_row(cells):
                for c in cells[:6] for mark in HEADER_AREA_MARKS)
 
 
+# ─── Sheet selection ─────────────────────────────────────────────────────────
+
+DETAIL_SHEET_PREFIX = uz_fold('свод ичи')
+
+
+def is_detail_sheet(title):
+    """True only for the per-job detail sheets. Everything else is skipped.
+
+    [REASON]: the 2026-08-04 dry run over the real books offered rows from
+    «олинмаган пуллар» and «свод фх» as well as from «свод ичи». They were all
+    rejected at the time for a different reason -- no payment block -- which
+    hid the problem; once that rejection is lifted they would be IMPORTED, and
+    they are duplicates of rows already present in the detail sheet
+    («Бахром Хайрулло фх, 33.5 га» is in both) plus «ЖАМИ:» total lines. The
+    dedup would catch some of them and silently pick whichever file listing
+    reached it first, which is not a decision a tool should make.
+
+    The rule is the sheet TITLE, not its shape: «ОБШИЙ СВОД» and its suffixed
+    variants, «олинмаган пуллар», «свод фх», «Свод1», «Расход» and
+    «карпаратив почта» are summaries and registers, and the payment split
+    lives only in «ОБШИЙ СВОД». A detail sheet may name its operator in
+    brackets, after a space, or not at all -- «свод ичи (Фурқат)»,
+    «свод ичи Шохрух», «свод ичи » -- and all three are imported.
+    """
+    return uz_fold(title).startswith(DETAIL_SHEET_PREFIX)
+
+
 # ─── Column mapping ──────────────────────────────────────────────────────────
 
-# Fields in PRIORITY order: the most specific keyword sets are claimed first,
-# so «Бошка харажатлар» and «Кирим қилинган» cannot be eaten by the generic
-# «сумма» of the amount column. Every keyword is written already folded.
-FIELD_KEYWORDS = (
-    ('note', ('изох', 'кайд')),
-    ('other_costs', ('бошка харажат', 'кушимча харажат', 'харажат')),
-    ('received', ('кирим', 'олинган пул', 'тушган')),
-    ('date', ('сана', 'куни', 'дата')),
-    ('area', ('майдон', 'мадон')),
-    ('customer', ('фх номи', 'ф/х номи', 'фх', 'хужалик', 'фермер')),
-    ('price', ('нарх', '1 га', '1га', 'бир га', 'бахо')),
-    ('amount', ('сумма', 'жами', 'умумий', 'тулов')),
+# EXACT normalised phrases, not fragments.
+#
+# [REASON]: the first version matched header fragments, and on the real books
+# «суммаси» hit «Хизмат кўрсатиш суммаси» -- the PRICE -- and stored it as the
+# amount, while «Жами сумма (обьём)», the real amount, was never mapped at all.
+# Every one of the twenty-four layouts reported `amount->3 ... НЕ ОПОЗНАНЫ
+# КОЛОНКИ: price`, and the run's amount total came out eleven times smaller
+# than its received total, which is arithmetically impossible. Two headers also
+# differ by two letters: «Хизмат кўрсатиш СУМмаси» is the price and «Хизмат
+# кўрсатиш САНаси» is a date, and seven layouts carry the second.
+#
+# Within a field the phrases are in PREFERENCE order: the first one present in
+# the sheet wins, and any other match is reported rather than silently dropped.
+# Across fields the phrases are matched longest-first, so a longer phrase can
+# never be shadowed by a shorter one contained in it.
+FIELD_PHRASES = (
+    ('customer', ('ФХ номи',)),
+    ('area', ('Майдон (га)', 'Мадон (га)')),
+    ('price', ('Хизмат кўрсатиш суммаси',)),
+    ('amount', ('Жами сумма (обьём)', 'Жами сумма', 'Сумма (без НДС)')),
+    ('received', ('Кирим қилинган', 'Кирим қилинган (Фактура)',
+                  'Кирим қилиши керак')),
+    ('operator_due', ('Оператор топшириши керак',)),
+    ('date', ('Дрон ишлаган сана', 'Кирим қилинган сана', 'Сана',
+              'Хизмат кўрсатиш санаси')),
+    ('note', ('*Изоҳ', '*Изоҳ / Йуналиш')),
+    ('row_operator', ('Дрон бошқарувчи оператор',)),
 )
 
+# Expense columns. ALL of them present in a sheet are summed into other_costs;
+# six of the twenty-four layouts carry two at once.
+EXPENSE_PHRASES = ('Бошка харажатлар', 'Транспорт харажати', 'ЁММ харажати')
+# [REASON]: the vehicle plate follows the header in brackets --
+# «Транспорт харажати (Мерс 80 L 422 MA)», «(Газель 80 120 FBA)», «Газел» --
+# so this one phrase is matched as a PREFIX. It is the only prefix rule there
+# is; everything else is exact, because a prefix rule is how «суммаси» ate the
+# price column in the first place.
+EXPENSE_PREFIXES = ('Транспорт харажати',)
+
+# Headers that exist, are understood, and are deliberately not imported.
+#   Иш хаки              -- the operator's wage, sub-accounting, deferred
+#   Сумма ( НДС)         -- the VAT part; «Сумма (без НДС)» is the amount
+#   Ишлаган контур рақами -- the field-contour number, no consumer yet
+#   №                    -- the dispatchers' row counter, read positionally
+#                           as cells[0] by the data-row guard, never a field
+IGNORED_PHRASES = ('Иш хаки', 'Сумма ( НДС)', 'Ишлаган контур рақами', '№')
+
 # Without these two a sheet cannot be read at all: there is no job without a
-# farm and an area. The rest degrade to NULL and are reported per sheet.
+# place to read the farm and the area from. Everything else degrades to NULL
+# and is reported per sheet.
 REQUIRED_FIELDS = ('customer', 'area')
-OPTIONAL_FIELDS = ('price', 'amount', 'other_costs', 'received', 'date',
-                   'note')
+OPTIONAL_FIELDS = ('price', 'amount', 'received', 'date', 'note')
+
+_ZERO_WIDTH = dict.fromkeys(
+    [0x00ad, 0x200b, 0x200c, 0x200d, 0xfeff], None)
+
+
+def header_key(value):
+    """Normalised comparison form of a header cell.
+
+    Whitespace of every kind -- including the double space in «Дрон  ишлаган
+    сана», embedded newlines and non-breaking spaces -- collapses to one
+    space; then trim, lower-case and the same Uzbek-letter fold uz_fold()
+    already applies to names. Zero-width characters are removed outright:
+    they are invisible in Excel and would make two identical-looking headers
+    compare unequal with nothing on screen to explain it.
+    """
+    if value is None:
+        return ''
+    text = str(value).translate(_ZERO_WIDTH)
+    text = text.replace('\xa0', ' ').replace(' ', ' ')
+    return uz_fold(text)
+
+
+def _build_phrase_index():
+    """[(key, field)] over every phrase, longest key first."""
+    entries = []
+    for field, phrases in FIELD_PHRASES:
+        for phrase in phrases:
+            entries.append((header_key(phrase), field))
+    for phrase in EXPENSE_PHRASES:
+        entries.append((header_key(phrase), 'expense'))
+    for phrase in IGNORED_PHRASES:
+        entries.append((header_key(phrase), 'ignored'))
+    entries.sort(key=lambda pair: len(pair[0]), reverse=True)
+    return entries
+
+
+PHRASE_INDEX = _build_phrase_index()
+EXPENSE_PREFIX_KEYS = tuple(sorted((header_key(p) for p in EXPENSE_PREFIXES),
+                                   key=len, reverse=True))
+# Preference order inside a field, as a lookup: phrase key -> its position.
+FIELD_PREFERENCE = {}
+for _field, _phrases in FIELD_PHRASES:
+    for _position, _phrase in enumerate(_phrases):
+        FIELD_PREFERENCE[(_field, header_key(_phrase))] = _position
+
+
+class ColumnMap(object):
+    """What one header row resolved to. Everything the report prints."""
+
+    def __init__(self):
+        self.fields = {}          # field -> column index
+        self.chosen = {}          # field -> the header text that won
+        self.expenses = []        # [(index, header)] -- ALL of them, summed
+        self.unmatched = []       # [(index, header)] -- named in the report
+        self.ignored = []         # [(index, header)] -- known, not imported
+        self.shadowed = []        # [(field, index, header)] -- second match
+
+    def get(self, field, default=None):
+        return self.fields.get(field, default)
+
+    def __contains__(self, field):
+        return field in self.fields
+
+    def __bool__(self):
+        return bool(self.fields)
+
+    __nonzero__ = __bool__
+
+    @property
+    def received_kind(self):
+        """Which header the figure in received_amount came from, or None.
+
+        [REASON]: «Кирим қилинган» is money already handed in; «Оператор
+        топшириши керак» is what the operator still owes. They sit in the same
+        position and both equal amount - other_costs, so a sheet carrying only
+        the second must not be read as collections. When a sheet carries both,
+        the actual receipt wins and the other column is reported as shadowed.
+        """
+        if 'received' in self.fields:
+            return 'received'
+        if 'operator_due' in self.fields:
+            return 'operator_due'
+        return None
+
+    @property
+    def received_index(self):
+        if 'received' in self.fields:
+            return self.fields['received']
+        return self.fields.get('operator_due')
+
+    def missing_fields(self):
+        return [f for f in OPTIONAL_FIELDS
+                if f not in self.fields
+                and not (f == 'received' and 'operator_due' in self.fields)]
 
 
 def map_columns(header_cells):
-    """{field: column index} for one header row. Keyword matching only.
+    """Resolve one header row into a ColumnMap. Exact phrases only.
 
-    [REASON]: NO POSITIONAL FALLBACK, on purpose. Guessing that the column
-    after the area is the price would silently move a whole book's numbers
-    into the wrong field on a sheet whose layout differs, and nothing
-    downstream could tell. A field whose header is not recognised stays NULL
-    and is named in the report, per sheet, with the header text as read.
+    [REASON]: NO POSITIONAL FALLBACK, and no fragment matching. Guessing that
+    the column after the area is the price is exactly what produced a run
+    whose amount column held prices. A header that matches nothing keeps its
+    field NULL and is NAMED in the report with its sheet -- there were 24
+    layouts and there may be a 25th, and the report is how the 25th gets
+    found instead of quietly mis-parsed.
     """
-    mapping = {}
-    claimed = set()
-    for field, keywords in FIELD_KEYWORDS:
-        for index, cell in enumerate(header_cells):
-            if index in claimed:
-                continue
-            folded = uz_fold(cell)
-            if not folded:
-                continue
-            if any(keyword in folded for keyword in keywords):
-                mapping[field] = index
-                claimed.add(index)
+    mapping = ColumnMap()
+    for index, cell in enumerate(header_cells):
+        key = header_key(cell)
+        if not key:
+            continue
+        header = _text(cell)
+        field = None
+        for phrase_key, candidate in PHRASE_INDEX:
+            if key == phrase_key:
+                field = candidate
                 break
+        if field is None:
+            for prefix in EXPENSE_PREFIX_KEYS:
+                if key.startswith(prefix):
+                    field = 'expense'
+                    break
+        if field is None:
+            mapping.unmatched.append((index, header))
+            continue
+        if field == 'ignored':
+            mapping.ignored.append((index, header))
+            continue
+        if field == 'expense':
+            mapping.expenses.append((index, header))
+            continue
+        if field in mapping.fields:
+            # A second column matched the same field. Keep the one whose
+            # phrase is earlier in that field's preference list, and report
+            # the loser rather than dropping it in silence.
+            old_key = header_key(mapping.chosen[field])
+            old_rank = FIELD_PREFERENCE.get((field, old_key), 99)
+            new_rank = FIELD_PREFERENCE.get((field, key), 99)
+            if new_rank < old_rank:
+                mapping.shadowed.append(
+                    (field, mapping.fields[field], mapping.chosen[field]))
+                mapping.fields[field] = index
+                mapping.chosen[field] = header
+            else:
+                mapping.shadowed.append((field, index, header))
+            continue
+        mapping.fields[field] = index
+        mapping.chosen[field] = header
     return mapping
 
 
@@ -342,6 +562,19 @@ def payment_marker(cells):
 def area_in_range(area):
     """0 < area <= 1000. See trap (b): 'Доллар | 12220' below the totals row."""
     return area is not None and 0 < area <= MAX_AREA_HA
+
+
+def payment_when_no_block():
+    """What a row with no payment block above it becomes. None = reject it.
+
+    [REASON]: a named decision rather than a literal, because it USED to be
+    rejection and the change is the whole of section 4 of
+    DRONE-WORKS-IMPORT-FIX-001. The negative control in
+    tools/test_import_drone_works.py swaps in the version that returns None
+    and watches the two rows disappear again -- which is what happened to 360
+    real rows on 2026-08-04.
+    """
+    return PAYMENT_UNKNOWN
 
 
 # ─── Trap (e): dates ─────────────────────────────────────────────────────────
@@ -498,7 +731,7 @@ class SheetReport(object):
         self.operator_raw = ''
         self.operator_from_file_name = False
         self.header_row = None
-        self.mapping = {}
+        self.column_map = None
         self.header_cells = []
         self.missing_fields = []
         self.rows = 0
@@ -506,6 +739,12 @@ class SheetReport(object):
         self.rejections = []
         self.wage_rows = 0
         self.blocks = []
+        # DRONE-WORKS-IMPORT-FIX-001
+        self.skipped_reason = None       # non-detail sheets, see is_detail_sheet
+        self.operator_from_row = 0       # rows resolved from the row column
+        self.operator_from_sheet = 0     # rows resolved from the sheet title
+        self.unknown_payment_rows = 0
+        self.empty_customer_rows = 0
 
 
 def _row_cells(row):
@@ -525,7 +764,7 @@ def parse_sheet(ws, file_name, sheet_name, period_month, subdivision,
         operator_from_sheet_title(sheet_name, stem))
 
     rows = []
-    mapping = {}
+    mapping = None
     current_payment = default_payment
     in_wage_block = False
 
@@ -538,20 +777,20 @@ def parse_sheet(ws, file_name, sheet_name, period_month, subdivision,
             mapping = map_columns(cells)
             report.header_row = excel_row
             report.header_cells = [_text(c) for c in cells]
-            report.mapping = dict(mapping)
-            report.missing_fields = [f for f in OPTIONAL_FIELDS
-                                     if f not in mapping]
+            report.column_map = mapping
+            report.missing_fields = mapping.missing_fields()
             missing_required = [f for f in REQUIRED_FIELDS if f not in mapping]
             if missing_required:
                 report.rejections.append(
                     (excel_row, 'header without %s column'
                      % '/'.join(missing_required), cells))
-                mapping = {}
+                mapping = None
             continue
 
         counter = _int_counter(cells[0] if cells else None)
-        area = (_number(cells[mapping['area']])
-                if 'area' in mapping and mapping['area'] < len(cells)
+        area = (_number(cells[mapping.get('area')])
+                if mapping is not None and 'area' in mapping
+                and mapping.get('area') < len(cells)
                 else None)
         looks_like_data = counter is not None and area_in_range(area)
 
@@ -578,7 +817,7 @@ def parse_sheet(ws, file_name, sheet_name, period_month, subdivision,
             report.wage_rows += 1
             continue
 
-        if not mapping:
+        if mapping is None:
             report.rejections.append(
                 (excel_row, 'data row before any recognised header', cells))
             continue
@@ -589,33 +828,82 @@ def parse_sheet(ws, file_name, sheet_name, period_month, subdivision,
                 return None
             return cells[index]
 
+        def cell_at(index):
+            if index is None or index >= len(cells):
+                return None
+            return cells[index]
+
+        # [REASON]: an EMPTY customer is data, not an error. All nine internal
+        # jobs in «Агрокластер Дрон маълумот МАЙ.xlsx / свод ичи (Сайфулло)»
+        # carry no farm name and the internal tariff 85 632.96: on the
+        # holding's own land nobody writes one down. Rejecting them was why
+        # the first run reported «internal 0 rows». The row is kept with an
+        # empty customer_raw, no drone_customers row and no alias are created,
+        # and the reports show «Заказчик не указан» separately from «Заказчик
+        # не определён» -- missing data and unmatched data are different facts.
         customer_raw = _text(cell('customer'))
         if not customer_raw:
-            report.rejections.append(
-                (excel_row, 'empty customer name', cells))
-            continue
+            report.empty_customer_rows += 1
 
         payment = current_payment
         # Internal work also appears as ordinary rows whose customer IS a
         # holding subdivision -- see trap (c).
-        if MARK_INTERNAL in uz_fold(customer_raw):
+        if customer_raw and MARK_INTERNAL in uz_fold(customer_raw):
             payment = PAYMENT_INTERNAL
         if payment is None:
-            report.rejections.append(
-                (excel_row, 'no payment block above this row', cells))
-            continue
+            # [REASON]: owner's decision of 2026-08-04. The September and
+            # October detail sheets carry no «Справка (…ойи)» / «Нақд (…ойи)»
+            # markers at all -- the split lives only in the «ОБШИЙ СВОД»
+            # summary sheets, which are not imported. Rejecting those rows
+            # threw away 360 jobs with their hectares, customers and dates
+            # over the one field that was missing. 'unknown' keeps the row and
+            # names the gap; the owner sets the type on the works screen.
+            payment = payment_when_no_block()
+            if payment is None:
+                report.rejections.append(
+                    (excel_row, 'no payment block above this row', cells))
+                continue
+            report.unknown_payment_rows += 1
 
         amount = _number(cell('amount'))
         date_cell = cell('date')
         date_from, date_to, date_kind = parse_date_cell(date_cell)
 
+        # [REASON]: other_costs is the SUM of every expense column present.
+        # Six of the twenty-four layouts carry two at once, e.g. «ЁММ
+        # харажати» together with «Транспорт харажати (Мерс 80 L 422 MA)».
+        # Taking only the first would understate the costs of exactly those
+        # sheets and nothing would say so.
+        other_costs = None
+        for index, _header in mapping.expenses:
+            value = _number(cell_at(index))
+            if value is not None:
+                other_costs = value if other_costs is None else other_costs + value
+
+        # [REASON]: a per-row «Дрон бошқарувчи оператор» beats the sheet
+        # title. It is the more specific source and it is written in full --
+        # «Қодиров Нурали» rather than «Нурали» -- which removes the
+        # «Шахзод» / «Шохрух» ambiguity for those rows outright.
+        operator_raw = report.operator_raw
+        operator_source = 'file' if report.operator_from_file_name else 'sheet'
+        row_operator = _text(cell('row_operator'))
+        if row_operator:
+            operator_raw = row_operator
+            operator_source = 'row'
+            report.operator_from_row += 1
+        else:
+            report.operator_from_sheet += 1
+
         formula_no_cache = False
         if formula_cells:
-            for field in ('amount', 'price', 'received', 'other_costs'):
-                index = mapping.get(field)
+            checked = [mapping.get('amount'), mapping.get('price'),
+                       mapping.received_index]
+            checked.extend(index for index, _h in mapping.expenses)
+            for index in checked:
                 if index is None:
                     continue
-                if (excel_row, index) in formula_cells and cell(field) is None:
+                if ((excel_row, index) in formula_cells
+                        and cell_at(index) is None):
                     formula_no_cache = True
 
         rows.append({
@@ -627,14 +915,16 @@ def parse_sheet(ws, file_name, sheet_name, period_month, subdivision,
             'area_ha': area,
             'price_per_ha': resolve_price(cell('price'), amount, area),
             'amount': amount,
-            'other_costs': _number(cell('other_costs')),
-            'received_amount': _number(cell('received')),
+            'other_costs': other_costs,
+            'received_amount': _number(cell_at(mapping.received_index)),
+            'received_kind': mapping.received_kind,
             'payment_type': payment,
             'date_raw': _text(date_cell) or None,
             'work_date_from': date_from,
             'work_date_to': date_to,
             'date_kind': date_kind,
-            'operator_raw': report.operator_raw,
+            'operator_raw': operator_raw,
+            'operator_source': operator_source,
             'subdivision_name': subdivision,
             'note': _text(cell('note')) or None,
             'formula_no_cache': formula_no_cache,
@@ -698,6 +988,21 @@ def _require_tables(con, tables):
     if missing:
         print('ERROR: table(s) missing: %s. Run migrate_drones_works_001.py '
               'first.' % ', '.join(missing))
+        sys.exit(2)
+
+
+def _require_received_kind(con):
+    """Refuse to run against a database that predates DRONES_WORKS_002.
+
+    [REASON]: without the column the INSERT raises inside the transaction on
+    --apply, after the whole corpus has been parsed and reported. Checking it
+    up front means --dry-run says so too, which is where somebody is actually
+    looking.
+    """
+    columns = {row[1] for row in con.execute('PRAGMA table_info(drone_works)')}
+    if 'received_kind' not in columns:
+        print('ERROR: drone_works.received_kind is missing. Run '
+              'migrate_drones_works_002.py first.')
         sys.exit(2)
 
 
@@ -799,6 +1104,14 @@ class RunResult(object):
         self.month_outliers = {}
         self.formula_no_cache = 0
         self.wage_rows = 0
+        # DRONE-WORKS-IMPORT-FIX-001
+        self.skipped_sheets = []          # [(file, sheet title)]
+        self.unmatched_headers = {}       # normalised header -> [(file, sheet)]
+        self.unknown_payment_rows = 0
+        self.empty_customer_rows = 0
+        self.operator_from_row = 0
+        self.operator_from_sheet = 0
+        self.received_kinds = {}          # kind -> row count
 
 
 def collect(directory_path, manifest, dirs_files, dir_obj, default_payment):
@@ -821,6 +1134,17 @@ def collect(directory_path, manifest, dirs_files, dir_obj, default_payment):
             result.files_seen.append((file_name, period_month, subdivision,
                                       len(wb.worksheets)))
             for ws in wb.worksheets:
+                # [REASON]: gate everything else. «олинмаган пуллар» and
+                # «свод фх» repeat rows that already live in «свод ичи», and
+                # «ОБШИЙ СВОД» is a summary whose «ЖАМИ:» lines are not jobs.
+                if not is_detail_sheet(ws.title):
+                    skipped = SheetReport(file_name, ws.title)
+                    skipped.skipped_reason = (
+                        'not a detail sheet (title does not start with '
+                        '"свод ичи")')
+                    result.sheets.append(skipped)
+                    result.skipped_sheets.append((file_name, ws.title))
+                    continue
                 sheet_formulas = {(r, c) for (title, r, c) in formulas
                                   if title == ws.title}
                 rows, report = parse_sheet(
@@ -829,6 +1153,14 @@ def collect(directory_path, manifest, dirs_files, dir_obj, default_payment):
                     formula_cells=sheet_formulas)
                 result.sheets.append(report)
                 result.wage_rows += report.wage_rows
+                result.unknown_payment_rows += report.unknown_payment_rows
+                result.empty_customer_rows += report.empty_customer_rows
+                result.operator_from_row += report.operator_from_row
+                result.operator_from_sheet += report.operator_from_sheet
+                if report.column_map is not None:
+                    for _index, header in report.column_map.unmatched:
+                        result.unmatched_headers.setdefault(
+                            header, []).append((file_name, ws.title))
                 for excel_row, reason, cells in report.rejections:
                     result.rejections.append(
                         (file_name, ws.title, excel_row, reason,
@@ -844,6 +1176,10 @@ def collect(directory_path, manifest, dirs_files, dir_obj, default_payment):
                     if key is not None:
                         seen_keys[key] = row
                     result.rows.append(row)
+                    if row['received_kind']:
+                        result.received_kinds[row['received_kind']] = (
+                            result.received_kinds.get(row['received_kind'], 0)
+                            + 1)
                     if (row['work_date_from'] is not None
                             and row['work_date_from'].strftime('%Y-%m')
                             != period_month):
@@ -867,6 +1203,17 @@ def resolve(result, dir_obj):
                 result.unresolved_operators.get(key, 0) + 1)
         else:
             result.matched_operators += 1
+
+        # [REASON]: an EMPTY customer creates NOTHING. A drone_customers row
+        # named '' would be a farm called nothing, it would collect every
+        # nameless internal job under one meaningless heading, and its alias
+        # would then swallow every future nameless row. The work row keeps
+        # customer_raw = '' and drone_customer_id NULL, and the reports say
+        # «Заказчик не указан» -- which is the fact.
+        if not row['customer_raw']:
+            row['drone_customer_id'] = None
+            row['customer_is_new'] = False
+            continue
 
         key = customer_key(row['customer_raw'])
         customer_id = dir_obj.aliases.get(key)
@@ -917,7 +1264,10 @@ def apply_rows(con, result, batch):
                 (raw_name, key, customer_id, now))
             created += 1
         for row in result.rows:
-            if customer_key(row['customer_raw']) == key:
+            # An empty customer_raw normalises to '' and must never be
+            # attached to a customer created for some other spelling.
+            if (row['customer_raw']
+                    and customer_key(row['customer_raw']) == key):
                 row['drone_customer_id'] = customer_id
 
     inserted = 0
@@ -934,17 +1284,18 @@ def apply_rows(con, result, batch):
             'INSERT INTO drone_works (period_month, work_date_from, '
             'work_date_to, date_raw, drone_operator_id, operator_raw, '
             'drone_customer_id, customer_raw, area_ha, price_per_ha, amount, '
-            'other_costs, received_amount, payment_type, subdivision_name, '
-            'source_file, source_sheet, source_row, import_batch, note, '
-            'created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '
-            '?, ?, ?, ?, ?, ?, ?)',
+            'other_costs, received_amount, received_kind, payment_type, '
+            'subdivision_name, source_file, source_sheet, source_row, '
+            'import_batch, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '
+            '?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             (row['period_month'],
              row['work_date_from'].isoformat() if row['work_date_from'] else None,
              row['work_date_to'].isoformat() if row['work_date_to'] else None,
              row['date_raw'], row['drone_operator_id'], row['operator_raw'],
              row['drone_customer_id'], row['customer_raw'], row['area_ha'],
              row['price_per_ha'], row['amount'], row['other_costs'],
-             row['received_amount'], row['payment_type'],
+             row['received_amount'], row['received_kind'],
+             row['payment_type'],
              row['subdivision_name'], row['source_file'], row['source_sheet'],
              row['source_row'], batch, row['note'], now))
         inserted += 1
@@ -967,6 +1318,7 @@ def summarize(result):
     payments = dict.fromkeys(PAYMENT_TYPES, 0)
     payment_area = dict.fromkeys(PAYMENT_TYPES, 0.0)
     months = {}
+    manifest_months = {}
     customers = set()
     area = 0.0
     amount = 0.0
@@ -983,7 +1335,15 @@ def summarize(result):
         bucket = months.setdefault(month, [0, 0.0])
         bucket[0] += 1
         bucket[1] += row['area_ha']
-        customers.add(customer_key(row['customer_raw']))
+        # The same rows keyed by the MANIFEST month, which is what the
+        # prediction in EXPECTED_BY_MONTH is grouped by. Both are printed:
+        # comparing a date-grouped actual against a manifest-grouped
+        # expectation is how a straddling book looks like a defect.
+        bucket = manifest_months.setdefault(row['period_month'], [0, 0.0])
+        bucket[0] += 1
+        bucket[1] += row['area_ha']
+        if row['customer_raw']:
+            customers.add(customer_key(row['customer_raw']))
         area += row['area_ha']
         amount += row['amount'] or 0.0
         received += row['received_amount'] or 0.0
@@ -1005,6 +1365,7 @@ def summarize(result):
         'payments': payments,
         'payment_area': payment_area,
         'months': months,
+        'manifest_months': manifest_months,
     }
 
 
@@ -1047,6 +1408,30 @@ def print_console(result, stats, args, batch):
         count, month_area = stats['months'][month]
         print('  %-8s %5d rows  %10.2f ha' % (month, count, month_area))
     print('')
+    print('by MANIFEST month, against the prediction of 2026-08-04 for the')
+    print('28 REAL books -- a run over any other corpus differs wholesale:')
+    print('  %-8s %6s %11s | %6s %11s | %s'
+          % ('month', 'rows', 'ha', 'exp.', 'exp. ha', 'delta ha'))
+    expected = dict((m, (r, a)) for m, r, a in EXPECTED_BY_MONTH)
+    for month in sorted(set(stats['manifest_months']) | set(expected)):
+        count, month_area = stats['manifest_months'].get(month, (0, 0.0))
+        exp_rows, exp_area = expected.get(month, (0, 0.0))
+        delta = month_area - exp_area
+        print('  %-8s %6d %11.2f | %6d %11.2f | %+10.2f'
+              % (month, count, month_area, exp_rows, exp_area, delta))
+    total_delta = stats['area'] - EXPECTED_TOTAL_AREA
+    total_pct = (total_delta * 100.0 / EXPECTED_TOTAL_AREA
+                 if EXPECTED_TOTAL_AREA else 0.0)
+    print('  %-8s %6d %11.2f | %6d %11.2f | %+10.2f (%+.2f%%)'
+          % ('TOTAL', stats['rows'], stats['area'], EXPECTED_TOTAL_ROWS,
+             EXPECTED_TOTAL_AREA, total_delta, total_pct))
+    print('  The monthly rows are INDICATIVE: this tool groups a dated row by')
+    print('  its own date and one book straddles September and October. The')
+    print('  total is the firm number. %s is the anchor -- it agrees with our'
+          % EXPECTED_ANCHOR_MONTH)
+    print('  own DJI flight data to 0.15 %. A disagreement is a finding to')
+    print('  report, not a number to force.')
+    print('')
     print('customers matched to an alias : %d' % result.matched_customers)
     print('customers to be created       : %d' % len(result.created_customers))
     print('operator resolved rows        : %d' % result.matched_operators)
@@ -1057,6 +1442,17 @@ def print_console(result, stats, args, batch):
     print('rows rejected                 : %d' % len(result.rejections))
     print('wage rows ignored (Ish haki)  : %d' % result.wage_rows)
     print('formula cells with no cache   : %d' % result.formula_no_cache)
+    print('')
+    print('sheets skipped (not "svod ichi") : %d' % len(result.skipped_sheets))
+    print('headers matching no known phrase : %d distinct'
+          % len(result.unmatched_headers))
+    print('rows with payment type unknown   : %d' % result.unknown_payment_rows)
+    print('rows with an empty customer      : %d' % result.empty_customer_rows)
+    print('operator taken from the row cell : %d' % result.operator_from_row)
+    print('operator taken from sheet/file   : %d' % result.operator_from_sheet)
+    for kind in (RECEIVED_KIND_RECEIVED, RECEIVED_KIND_OPERATOR_DUE):
+        print('received figure of kind %-13s: %d'
+              % (kind, result.received_kinds.get(kind, 0)))
     if result.month_outliers:
         print('')
         print('files whose dated rows fall outside the manifest month: %d'
@@ -1125,20 +1521,84 @@ def write_report(path, result, stats, args, batch):
             add('  - строка %d: %s' % (lineno, text))
 
     add('')
+    add('ПО МЕСЯЦАМ МАНИФЕСТА, ПРОТИВ ПРЕДСКАЗАНИЯ ОТ 2026-08-04')
+    add('  Помесячные строки ОРИЕНТИРОВОЧНЫ: инструмент группирует')
+    add('  датированную строку по её собственной дате, а одна книга лежит')
+    add('  между сентябрём и октябрём. Твёрдое число — итог. Апрель —')
+    add('  якорь: 6 388.83 га сходятся с нашими же данными DJI за апрель')
+    add('  2026 (6 379.24 га на 6 403 вылетах) до 0.15 %.')
+    _expected = dict((m, (r, a)) for m, r, a in EXPECTED_BY_MONTH)
+    for month in sorted(set(stats['manifest_months']) | set(_expected)):
+        count, month_area = stats['manifest_months'].get(month, (0, 0.0))
+        exp_rows, exp_area = _expected.get(month, (0, 0.0))
+        add('  %-8s %5d строк %11.2f га | ожидалось %5d %11.2f | %+.2f'
+            % (month, count, month_area, exp_rows, exp_area,
+               month_area - exp_area))
+    add('  ИТОГО    %5d строк %11.2f га | ожидалось %5d %11.2f | %+.2f'
+        % (stats['rows'], stats['area'], EXPECTED_TOTAL_ROWS,
+           EXPECTED_TOTAL_AREA, stats['area'] - EXPECTED_TOTAL_AREA))
+
+    add('')
+    add('ПРОПУЩЕННЫЕ ЛИСТЫ: %d' % len(result.skipped_sheets))
+    add('  Импортируются только листы, чьё название начинается на «свод ичи».')
+    add('  «ОБШИЙ СВОД», «олинмаган пуллар», «свод фх» и подобные — это')
+    add('  сводки и реестры: их строки повторяют уже импортированные из')
+    add('  «свод ичи», а строки «ЖАМИ:» вообще не являются работами.')
+    for file_name, sheet_name in result.skipped_sheets:
+        add('  - %s / %s' % (file_name, sheet_name))
+
+    add('')
+    add('ЗАГОЛОВКИ, НЕ СОВПАВШИЕ НИ С ОДНОЙ ИЗВЕСТНОЙ ФРАЗОЙ: %d'
+        % len(result.unmatched_headers))
+    add('  Поле остаётся NULL, строка импортируется. Настоящих раскладок')
+    add('  двадцать четыре; может появиться двадцать пятая — вот она.')
+    for header, places in sorted(result.unmatched_headers.items()):
+        add('  - «%s» — %d раз(а)' % (header, len(places)))
+        for file_name, sheet_name in places[:5]:
+            add('      %s / %s' % (file_name, sheet_name))
+        if len(places) > 5:
+            add('      ... и ещё %d' % (len(places) - 5))
+
+    add('')
     add('ЛИСТЫ')
     for sheet in result.sheets:
         add('  %s / %s' % (sheet.file_name, sheet.sheet_name))
+        if sheet.skipped_reason:
+            add('    ПРОПУЩЕН: %s' % sheet.skipped_reason)
+            continue
         add('    оператор: %s%s'
             % (sheet.operator_raw or '(пусто)',
                ' — ВЗЯТ ИЗ ИМЕНИ ФАЙЛА, в заголовке листа имени нет'
                if sheet.operator_from_file_name else ''))
         add('    строк: %d, гектаров: %.2f' % (sheet.rows, sheet.area))
+        if sheet.operator_from_row:
+            add('    оператор из колонки строки: %d, из названия листа: %d'
+                % (sheet.operator_from_row, sheet.operator_from_sheet))
         if sheet.header_row:
             add('    шапка в строке %d: %s'
                 % (sheet.header_row, ' | '.join(sheet.header_cells)))
             add('    колонки: %s'
-                % ', '.join('%s->%d' % (k, v)
-                            for k, v in sorted(sheet.mapping.items())))
+                % ', '.join('%s->%d («%s»)'
+                            % (field, index,
+                               sheet.column_map.chosen.get(field, ''))
+                            for field, index
+                            in sorted(sheet.column_map.fields.items())))
+            if sheet.column_map.expenses:
+                add('    расходы суммируются из: %s'
+                    % ', '.join('«%s» (кол. %d)' % (header, index)
+                                for index, header
+                                in sheet.column_map.expenses))
+            if sheet.column_map.received_kind:
+                add('    «получено» прочитано как: %s'
+                    % sheet.column_map.received_kind)
+            if sheet.column_map.shadowed:
+                add('    ВТОРОЕ СОВПАДЕНИЕ, не использовано: %s'
+                    % ', '.join('%s кол. %d («%s»)' % (f, i, h)
+                                for f, i, h in sheet.column_map.shadowed))
+            if sheet.column_map.unmatched:
+                add('    ЗАГОЛОВКИ БЕЗ СООТВЕТСТВИЯ: %s'
+                    % ', '.join('«%s» (кол. %d)' % (h, i)
+                                for i, h in sheet.column_map.unmatched))
             if sheet.missing_fields:
                 add('    НЕ ОПОЗНАНЫ КОЛОНКИ: %s — эти поля записаны как NULL'
                     % ', '.join(sheet.missing_fields))
@@ -1149,6 +1609,12 @@ def write_report(path, result, stats, args, batch):
                 % ', '.join('%d:%s' % (r, b) for r, b in sheet.blocks))
         if sheet.wage_rows:
             add('    строк «Иш хаки» пропущено: %d' % sheet.wage_rows)
+        if sheet.unknown_payment_rows:
+            add('    строк без блока оплаты (unknown): %d'
+                % sheet.unknown_payment_rows)
+        if sheet.empty_customer_rows:
+            add('    строк без имени заказчика: %d'
+                % sheet.empty_customer_rows)
 
     add('')
     add('ДУБЛИ, ПРОПУЩЕННЫЕ В ЭТОМ ПРОГОНЕ: %d' % len(result.duplicates))
@@ -1234,11 +1700,12 @@ def build_parser():
     parser.add_argument('--batch', default=None, help='import_batch value')
     parser.add_argument('--report', default=None,
                         help='UTF-8 report file (default next to the manifest)')
-    parser.add_argument('--default-payment', choices=PAYMENT_TYPES,
+    parser.add_argument('--default-payment', choices=PAYMENT_OVERRIDE_TYPES,
                         default=None,
                         help='payment type for rows appearing before any '
-                             'block marker. Off by default: such rows are '
-                             'rejected and listed rather than guessed at.')
+                             "block marker. Off by default: such rows get "
+                             "'unknown', which is reported and is fixable on "
+                             'the works screen.')
     return parser
 
 
@@ -1266,6 +1733,7 @@ def main(argv=None):
     try:
         _require_tables(con, ('drone_works', 'drone_customers',
                               'drone_customer_aliases', 'drone_operators'))
+        _require_received_kind(con)
         dir_obj = Directory(con)
         result = collect(args.dir, manifest, files, dir_obj,
                          args.default_payment)

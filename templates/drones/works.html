@@ -255,7 +255,11 @@
         <td class="right">{% if w.price_per_ha is not none %}{{ '%.0f'|format(w.price_per_ha) }}{% else %}—{% endif %}</td>
         <td class="right">{% if w.amount is not none %}{{ '%.0f'|format(w.amount) }}{% else %}—{% endif %}</td>
         <td class="right">{% if w.received_amount is not none %}{{ '%.0f'|format(w.received_amount) }}{% else %}—{% endif %}</td>
-        <td>{{ payment_labels.get(w.payment_type, w.payment_type) }}</td>
+        <td>
+          {% if w.payment_type == 'unknown' %}
+          <span class="vs-badge">{{ payment_labels.get(w.payment_type, w.payment_type) }}</span>
+          {% else %}{{ payment_labels.get(w.payment_type, w.payment_type) }}{% endif %}
+        </td>
         <td class="vs-muted" style="font-size:11px;">
           {% if w.source_file %}{{ w.source_file }}<br>{{ w.source_sheet }} · {{ w.source_row }}
           {% else %}{{ 'вручную' if is_ru else 'қўлда' }}{% endif %}
