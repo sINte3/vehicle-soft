@@ -1361,5 +1361,78 @@ class DroneDebtsSummaryCardTests(unittest.TestCase):
                          '%.0f' % totals['outstanding'])
 
 
+# ─── DRONE-WORKS-PRICE-INTERNAL-001 ──────────────────────────────────────────
+
+class DroneWorksPriceDefaultTests(unittest.TestCase):
+    """The markup that lets «Цена за га» follow «Тип оплаты».
+
+    HONESTY: this behaviour is CLIENT-SIDE. Everything below asserts that the
+    page carries both tariffs, the three element ids the script binds to, and
+    the script itself. It does NOT assert that clicking the select changes the
+    field -- no browser runs in this suite. That half is proven by a human
+    clicking it, and nobody has.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        seed()
+        cls.admin = create_admin('price_admin')
+        set_language(cls.admin, 'ru')
+
+    def setUp(self):
+        self.client = app.test_client()
+        login(self.client, self.admin)
+        self.body = self.client.get('/drones/works').data.decode('utf-8')
+
+    def test_both_tariffs_are_in_the_markup_as_plain_integers(self):
+        import re
+        hint = self.body[self.body.index('id="wPriceHint"'):]
+        hint = hint[:hint.index('>')]
+        attrs = dict(re.findall(r'data-price-(\w+)="([^"]*)"', hint))
+        self.assertEqual(attrs, {'cash': '200000', 'transfer': '200000',
+                                 'internal': '85633'})
+        for value in attrs.values():
+            self.assertTrue(value.isdigit(), value)
+
+    def test_the_tariffs_come_from_the_model_not_from_the_template(self):
+        from models import DRONE_WORK_PRICE_SUGGESTIONS
+        self.assertIn('data-price-internal="%d"'
+                      % DRONE_WORK_PRICE_SUGGESTIONS['internal'], self.body)
+        self.assertIn('data-price-cash="%d"'
+                      % DRONE_WORK_PRICE_SUGGESTIONS['cash'], self.body)
+
+    def test_the_three_ids_the_script_binds_to_all_exist(self):
+        for element_id in ('wPriceHint', 'addWPayment', 'addWPrice'):
+            self.assertIn('id="%s"' % element_id, self.body, element_id)
+
+    def test_the_script_is_present_and_reads_the_data_attributes(self):
+        self.assertIn('<script>', self.body)
+        self.assertIn("getAttribute('data-price-internal')", self.body)
+        self.assertIn("addEventListener('change'", self.body)
+
+    def test_no_tojson_reaches_an_attribute(self):
+        """The documented trap: tojson does not escape the double quote.
+
+        [REASON]: CLAUDE.md records three forms already broken this way. The
+        blocking checker tools/check_templates.py enforces it repository-wide;
+        this asserts it for the one template that gained a script.
+        """
+        source = open('templates/drones/works.html', encoding='utf-8').read()
+        import re
+        self.assertEqual(re.findall(r'=\s*"[^"]*tojson[^"]*"', source), [])
+
+    def test_the_internal_tariff_is_not_the_external_one(self):
+        """The whole defect in one assertion: 85 633 is not 200 000."""
+        from models import DRONE_WORK_PRICE_SUGGESTIONS
+        self.assertNotEqual(DRONE_WORK_PRICE_SUGGESTIONS['internal'],
+                            DRONE_WORK_PRICE_SUGGESTIONS['cash'])
+        self.assertEqual(DRONE_WORK_PRICE_SUGGESTIONS['internal'], 85633)
+
+    def test_the_form_still_prefills_the_external_rate(self):
+        """The server-rendered default is unchanged: the script only reacts."""
+        self.assertIn('id="addWPrice" class="vs-input" value="200000"',
+                      self.body)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

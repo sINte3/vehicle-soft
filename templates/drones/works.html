@@ -206,6 +206,50 @@
     </div>
   </div>
 </div>
+
+{# DRONE-WORKS-PRICE-INTERNAL-001 — «Цена за га» следует за типом оплаты.
+
+   Форма префилила 200 000 всегда. Переключение на «Своё предприятие» её не
+   меняло, хотя внутренний тариф 85 633: оператор, не перечитавший подсказку,
+   записывал внутреннюю работу в 2.3 раза дороже. Владелец наткнулся на это
+   2026-08-05, вводя ровно те строки, из-за которых дефект и завёлся.
+
+   Тарифы читаются из data-атрибутов #wPriceHint — они уже там и это ЦЕЛЫЕ
+   ЧИСЛА. tojson в атрибут не кладём никогда: фильтр экранирует < > & и
+   апостроф, но НЕ двойную кавычку, парсер обрывает значение на первой же
+   кавычке из tojson, и обработчик молча не устанавливается. Этот класс
+   дефектов уже стоил проекту трёх сломанных форм.
+
+   Значение НЕ перетирается: подставляем только в пустое поле или в поле,
+   где стоит один из наших же дефолтов нетронутым. Оператор набрал 76 458 —
+   76 458 и останется. Тип «не указан» не трогает поле вовсе: мы не знаем,
+   какой тариф предложить, и предложить неверный хуже, чем не предлагать. #}
+<script>
+(function () {
+  var hint = document.getElementById('wPriceHint');
+  var payment = document.getElementById('addWPayment');
+  var price = document.getElementById('addWPrice');
+  if (!hint || !payment || !price) { return; }
+
+  var tariffs = {
+    cash: hint.getAttribute('data-price-cash'),
+    transfer: hint.getAttribute('data-price-transfer'),
+    internal: hint.getAttribute('data-price-internal')
+  };
+  // Everything this script is allowed to overwrite: its own suggestions.
+  var ours = {};
+  for (var key in tariffs) {
+    if (tariffs[key]) { ours[String(tariffs[key]).trim()] = true; }
+  }
+
+  payment.addEventListener('change', function () {
+    var next = tariffs[payment.value];
+    if (!next) { return; }              // 'unknown' — leave the field alone
+    var current = String(price.value || '').trim();
+    if (current === '' || ours[current]) { price.value = next; }
+  });
+})();
+</script>
 {% endif %}
 
 <div class="vs-table-wrap vs-mb">
