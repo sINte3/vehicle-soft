@@ -3500,6 +3500,94 @@ def _drone_works_report_data(conds):
     }
 
 
+# ─── DRONE-REPORTS-HUB-001: the reports launcher ─────────────────────────────
+
+# [REASON]: five drone reports had accumulated in five places with no index.
+# The owner went looking for the debt tables on 2026-08-05 and could not find
+# them. Spare parts solved exactly this with /spare-parts/reports -- a grid of
+# tiles, one per report -- so this copies that pattern rather than inventing a
+# second one. Every class it uses already exists in design-system.css; not one
+# rule is added or changed.
+#
+# The launcher is deliberately DATA-FREE: no filters, no query, no export
+# button. Those live inside each report, the same division spare parts makes.
+#
+# `endpoint` is resolved with url_for at render time, so a renamed route
+# breaks the page loudly instead of producing a dead tile.
+DRONE_REPORT_TILES = (
+    {
+        'key': 'flights-summary',
+        'endpoint': 'drones.summary',
+        'accent': 'is-primary',
+        'title_ru': 'Сводка по вылетам',
+        'title_uz': 'Парвозлар жамланмаси',
+        'subtitle_ru': 'Машины, области, типы работ, месяцы и операторы '
+                       'за период',
+        'subtitle_uz': 'Давр бўйича машиналар, вилоятлар, иш турлари, ойлар '
+                       'ва операторлар',
+    },
+    {
+        'key': 'works',
+        'endpoint': 'drones.works_reports',
+        'accent': 'is-info',
+        'title_ru': 'Работы — заказчики и операторы',
+        'title_uz': 'Ишлар — буюртмачилар ва операторлар',
+        'subtitle_ru': 'Гектары и суммы по ведомостям диспетчеров, '
+                       'пять разрезов',
+        'subtitle_uz': 'Диспетчерлар ведомостлари бўйича гектар ва суммалар, '
+                       'бешта кесим',
+    },
+    {
+        'key': 'debts',
+        # [REASON]: points at the works report until DRONE-REPORTS-HUB-001
+        # commit 3 gives the debts their own page. A tile that 404s in the
+        # intervening commit would be worse than one that lands on the page
+        # where the tables currently live.
+        'endpoint': 'drones.works_reports',
+        'accent': 'is-warning',
+        'title_ru': 'Долги',
+        'title_uz': 'Қарзлар',
+        'subtitle_ru': 'Кто и сколько не заплатил — по заказчикам '
+                       'и по операторам',
+        'subtitle_uz': 'Ким қанча тўламаган — буюртмачилар ва операторлар '
+                       'бўйича',
+    },
+    {
+        'key': 'assignment-hints',
+        'endpoint': 'drones.works_assignment_hints',
+        'accent': 'is-success',
+        'title_ru': 'Подсказка по назначениям',
+        'title_uz': 'Бириктиришлар бўйича маслаҳат',
+        'subtitle_ru': 'Гектары оператора рядом с гектарами машины '
+                       'за тот же месяц',
+        'subtitle_uz': 'Операторнинг гектарлари ўша ойдаги машина гектарлари '
+                       'ёнида',
+    },
+    {
+        'key': 'sources',
+        'endpoint': 'drones.sources',
+        'accent': 'is-danger',
+        'title_ru': 'Источники данных',
+        'title_uz': 'Маълумот манбалари',
+        'subtitle_ru': 'Какая машина перестала присылать вылеты и что сделали '
+                       'последние загрузки',
+        'subtitle_uz': 'Қайси машина парвоз юборишни тўхтатган ва сўнгги '
+                       'юклашлар нима қилган',
+    },
+)
+
+
+@drones_bp.route('/reports')
+@module_required('drones')
+def reports():
+    """Launcher: one tile per report. No filters, no data, no export.
+
+    [REASON]: the route name drones.reports and the /reports URL are what
+    _drones_nav.html links; keep both if this ever moves.
+    """
+    return render_template('drones/reports.html', tiles=DRONE_REPORT_TILES)
+
+
 @drones_bp.route('/works/reports')
 @module_required('drones')
 def works_reports():
