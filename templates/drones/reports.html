@@ -1,0 +1,51 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Дроны — отчёты' if is_ru else 'Дронлар — ҳисоботлар' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+{# DRONE-REPORTS-HUB-001: /drones/reports is a launcher — five tiles, one per
+   report page. No data, no filters, no export button here: filters and the
+   Excel downloads live inside each report. The structure is copied from
+   templates/spare_parts_reports.html rather than invented: the same problem
+   was already solved there, and a second pattern for one thing is worse than
+   either pattern.
+
+   Every class used here already exists in design-system.css (vs-report-tiles
+   line 1283, vs-report-tile 1284, -icon 1294, -text 1295, -title 1296, -sub
+   1297, -arrow 1298, the five accents 1299-1303). Not one rule is added.
+
+   Icons are inline SVG — no icon font, no CDN, nothing fetched
+   (UI-FONT-LOCAL-001). #}
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Отчёты по дронам' if is_ru else 'Дронлар бўйича ҳисоботлар' }}</div>
+    <div class="vs-hero-sub">{{ 'Выберите отчёт. Фильтры и выгрузка в Excel — внутри каждого отчёта.' if is_ru else 'Ҳисоботни танланг. Фильтрлар ва Excel юклаб олиш — ҳар бир ҳисобот ичида.' }}</div>
+  </div>
+</div>
+
+<div class="vs-report-tiles">
+  {% for t in tiles %}
+  <a class="vs-card vs-report-tile {{ t.accent }}" href="{{ url_for(t.endpoint) }}">
+    <span class="vs-report-tile-icon" aria-hidden="true">
+      {% if t.key == 'flights-summary' %}
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="21" x2="21" y2="21"/><polyline points="4,15 9,9 13,13 20,5"/><polyline points="15,5 20,5 20,10"/></svg>
+      {% elif t.key == 'works' %}
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1z"/><path d="M8 5H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2"/><path d="M9 11h6M9 15h4"/></svg>
+      {% elif t.key == 'debts' %}
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 10v4M18 10v4"/></svg>
+      {% elif t.key == 'assignment-hints' %}
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polygon points="15.5,8.5 10.5,10.5 8.5,15.5 13.5,13.5"/></svg>
+      {% elif t.key == 'sources' %}
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>
+      {% endif %}
+    </span>
+    <div class="vs-report-tile-text">
+      <div class="vs-report-tile-title">{{ t.title_ru if is_ru else t.title_uz }}</div>
+      <div class="vs-report-tile-sub">{{ t.subtitle_ru if is_ru else t.subtitle_uz }}</div>
+    </div>
+    <div class="vs-report-tile-arrow" aria-hidden="true">→</div>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

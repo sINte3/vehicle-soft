@@ -3,7 +3,16 @@
    page; promoting the summary is the owner's one-line decision later.
    DRONE-FLEET-001 added «Операторы», per the task, and «Источники»: the
    sync-observability screen needs an entry point, and a page nobody can
-   reach reports silence to nobody. #}
+   reach reports silence to nobody.
+
+   DRONE-REPORTS-HUB-001 replaced «Источники» in the strip with «Отчёты».
+   Источники did not lose its entry point — it became the fifth tile of the
+   launcher, and the route /drones/sources is unchanged. The strip stays
+   seven tabs wide, which is what it was measured to fit at.
+
+   «Сводка» stays in the strip AND appears as the first tile: it is the
+   module's landing report, and a launcher that omits the main report is
+   confusing. #}
 {% set nav_is_ru = (lang == 'ru') %}
 {% set nav_current = request.endpoint or '' %}
 <div class="vs-row vs-mb" style="gap:8px; flex-wrap:wrap;">
@@ -16,5 +25,7 @@
      работа из ведомости это разные факты и разные таблицы. #}
   <a href="{{ url_for('drones.works') }}" class="vs-btn{% if nav_current == 'drones.works' %} vs-btn-primary{% endif %}">{{ 'Работы' if nav_is_ru else 'Ишлар' }}</a>
   <a href="{{ url_for('drones.customers') }}" class="vs-btn{% if nav_current == 'drones.customers' %} vs-btn-primary{% endif %}">{{ 'Заказчики' if nav_is_ru else 'Буюртмачилар' }}</a>
-  <a href="{{ url_for('drones.sources') }}" class="vs-btn{% if nav_current == 'drones.sources' %} vs-btn-primary{% endif %}">{{ 'Источники' if nav_is_ru else 'Манбалар' }}</a>
+  {# Marked active on every page the launcher is the entry point for, so the
+     strip keeps saying «you are inside reports» after a tile is clicked. #}
+  <a href="{{ url_for('drones.reports') }}" class="vs-btn{% if nav_current in ('drones.reports', 'drones.sources', 'drones.works_reports', 'drones.works_debts', 'drones.works_assignment_hints') %} vs-btn-primary{% endif %}">{{ 'Отчёты' if nav_is_ru else 'Ҳисоботлар' }}</a>
 </div>

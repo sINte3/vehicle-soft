@@ -3500,16 +3500,132 @@ def _drone_works_report_data(conds):
     }
 
 
+# ─── DRONE-REPORTS-HUB-001: the reports launcher ─────────────────────────────
+
+# [REASON]: five drone reports had accumulated in five places with no index.
+# The owner went looking for the debt tables on 2026-08-05 and could not find
+# them. Spare parts solved exactly this with /spare-parts/reports -- a grid of
+# tiles, one per report -- so this copies that pattern rather than inventing a
+# second one. Every class it uses already exists in design-system.css; not one
+# rule is added or changed.
+#
+# The launcher is deliberately DATA-FREE: no filters, no query, no export
+# button. Those live inside each report, the same division spare parts makes.
+#
+# `endpoint` is resolved with url_for at render time, so a renamed route
+# breaks the page loudly instead of producing a dead tile.
+DRONE_REPORT_TILES = (
+    {
+        'key': 'flights-summary',
+        'endpoint': 'drones.summary',
+        'accent': 'is-primary',
+        'title_ru': 'Сводка по вылетам',
+        'title_uz': 'Парвозлар жамланмаси',
+        'subtitle_ru': 'Машины, области, типы работ, месяцы и операторы '
+                       'за период',
+        'subtitle_uz': 'Давр бўйича машиналар, вилоятлар, иш турлари, ойлар '
+                       'ва операторлар',
+    },
+    {
+        'key': 'works',
+        'endpoint': 'drones.works_reports',
+        'accent': 'is-info',
+        'title_ru': 'Работы — заказчики и операторы',
+        'title_uz': 'Ишлар — буюртмачилар ва операторлар',
+        'subtitle_ru': 'Гектары и суммы по ведомостям диспетчеров, '
+                       'пять разрезов',
+        'subtitle_uz': 'Диспетчерлар ведомостлари бўйича гектар ва суммалар, '
+                       'бешта кесим',
+    },
+    {
+        'key': 'debts',
+        'endpoint': 'drones.works_debts',
+        'accent': 'is-warning',
+        'title_ru': 'Долги',
+        'title_uz': 'Қарзлар',
+        'subtitle_ru': 'Кто и сколько не заплатил — по заказчикам '
+                       'и по операторам',
+        'subtitle_uz': 'Ким қанча тўламаган — буюртмачилар ва операторлар '
+                       'бўйича',
+    },
+    {
+        'key': 'assignment-hints',
+        'endpoint': 'drones.works_assignment_hints',
+        'accent': 'is-success',
+        'title_ru': 'Подсказка по назначениям',
+        'title_uz': 'Бириктиришлар бўйича маслаҳат',
+        'subtitle_ru': 'Гектары оператора рядом с гектарами машины '
+                       'за тот же месяц',
+        'subtitle_uz': 'Операторнинг гектарлари ўша ойдаги машина гектарлари '
+                       'ёнида',
+    },
+    {
+        'key': 'sources',
+        'endpoint': 'drones.sources',
+        'accent': 'is-danger',
+        'title_ru': 'Источники данных',
+        'title_uz': 'Маълумот манбалари',
+        'subtitle_ru': 'Какая машина перестала присылать вылеты и что сделали '
+                       'последние загрузки',
+        'subtitle_uz': 'Қайси машина парвоз юборишни тўхтатган ва сўнгги '
+                       'юклашлар нима қилган',
+    },
+)
+
+
+@drones_bp.route('/reports')
+@module_required('drones')
+def reports():
+    """Launcher: one tile per report. No filters, no data, no export.
+
+    [REASON]: the route name drones.reports and the /reports URL are what
+    _drones_nav.html links; keep both if this ever moves.
+    """
+    return render_template('drones/reports.html', tiles=DRONE_REPORT_TILES)
+
+
 @drones_bp.route('/works/reports')
 @module_required('drones')
 def works_reports():
-    """Four cuts and a debt view, all over the same filters as the ledger."""
+    """The five cuts, over the same filters as the ledger.
+
+    The debt view moved to works_debts() in DRONE-REPORTS-HUB-001; this route
+    still computes it, because _drone_works_report_data() is one function and
+    splitting it would mean rewriting queries this task is not allowed to
+    touch. The cost is one unused dict per request, accepted knowingly.
+    """
     filters = _drone_works_filters_from_args(request.args)
     conds = _drone_work_conditions(filters)
     data = _drone_works_report_data(conds)
     context = _drone_works_pickers()
     return render_template(
         'drones/works_reports.html',
+        data=data,
+        filters=filters,
+        link_args=_drone_works_link_args(filters),
+        unresolved_key=DRONE_WORK_UNRESOLVED,
+        payment_types=DRONE_WORK_PAYMENT_TYPES,
+        **context)
+
+
+@drones_bp.route('/works/debts')
+@module_required('drones')
+def works_debts():
+    """The two debt tables, on their own page. «олинмаган пуллар».
+
+    [REASON]: DRONE-REPORTS-HUB-001. These tables used to sit at the bottom of
+    /drones/works/reports, below five long cuts; the owner went looking for
+    them on 2026-08-05 and could not find them. Nothing is recomputed here --
+    the same _drone_works_report_data() the reports page calls, rendered by
+    the same markup -- so the figures on this page are the figures that were
+    on that one, by construction rather than by coincidence.
+    """
+    filters = _drone_works_filters_from_args(request.args)
+    conds = _drone_work_conditions(filters)
+    data = _drone_works_report_data(conds)
+    context = _drone_works_pickers()
+    return render_template(
+        'drones/works_debts.html',
         data=data,
         filters=filters,
         link_args=_drone_works_link_args(filters),
