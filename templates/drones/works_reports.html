@@ -79,23 +79,23 @@
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_area }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.area) }}</div>
+    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.area)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_amount }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.amount) }}</div>
+    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.amount)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_received }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.received) }}</div>
+    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.received)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_outstanding }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.outstanding) }}</div>
+    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.outstanding)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Прочие расходы' if is_ru else 'Бошқа харажатлар' }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.other_costs) }}</div>
+    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.other_costs)|vs_num }}</div>
   </div>
 </div>
 
@@ -124,10 +124,10 @@
       <tr>
         <td>{{ r.label }}</td>
         <td class="right">{{ r.jobs }}</td>
-        <td class="right">{{ '%.2f'|format(r.area) }}</td>
-        <td class="right">{{ '%.0f'|format(r.amount) }}</td>
-        <td class="right">{{ '%.0f'|format(r.received) }}</td>
-        <td class="right">{{ '%.0f'|format(r.outstanding) }}</td>
+        <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(r.amount)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(r.received)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(r.outstanding)|vs_num }}</td>
         <td class="right">{{ '%.1f'|format(r.share) }}</td>
       </tr>
       {% endfor %}
@@ -138,25 +138,25 @@
           {% if service.periods %}
           <div class="vs-muted" style="font-size:11px;">
             {{ 'период по ведомости' if is_ru else 'ведомост бўйича давр' }}:
-            {% for p in service.periods %}{{ p.period }} — {{ p.jobs }} / {{ '%.2f'|format(p.area) }} {{ 'га' if is_ru else 'га' }}{% if not loop.last %} · {% endif %}{% endfor %}
+            {% for p in service.periods %}{{ p.period }} — {{ p.jobs }} / {{ '%.2f'|format(p.area)|vs_num }} {{ 'га' if is_ru else 'га' }}{% if not loop.last %} · {% endif %}{% endfor %}
           </div>
           {% endif %}
         </td>
         <td class="right">{{ service.jobs }}</td>
-        <td class="right">{{ '%.2f'|format(service.area) }}</td>
-        <td class="right">{{ '%.0f'|format(service.amount) }}</td>
-        <td class="right">{{ '%.0f'|format(service.received) }}</td>
-        <td class="right">{{ '%.0f'|format(service.outstanding) }}</td>
+        <td class="right">{{ '%.2f'|format(service.area)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(service.amount)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(service.received)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(service.outstanding)|vs_num }}</td>
         <td class="right">{{ '%.1f'|format(service.share) }}</td>
       </tr>
       {% endfor %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
         <td class="right">{{ cut.total.jobs }}</td>
-        <td class="right">{{ '%.2f'|format(cut.total.area) }}</td>
-        <td class="right">{{ '%.0f'|format(cut.total.amount) }}</td>
-        <td class="right">{{ '%.0f'|format(cut.total.received) }}</td>
-        <td class="right">{{ '%.0f'|format(cut.total.outstanding) }}</td>
+        <td class="right">{{ '%.2f'|format(cut.total.area)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(cut.total.amount)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(cut.total.received)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(cut.total.outstanding)|vs_num }}</td>
         <td class="right">100.0</td>
       </tr>
     </tbody>

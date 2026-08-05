@@ -68,19 +68,19 @@
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Гектаров' if is_ru else 'Гектар' }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.area_ha) }}</div>
+    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.area_ha)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Часов в воздухе' if is_ru else 'Ҳавода соат' }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.hours) }}</div>
+    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.hours)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Литров раствора' if is_ru else 'Литр эритма' }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.spray_liters) }}</div>
+    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.spray_liters)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Кг посева' if is_ru else 'Кг уруғ' }}</div>
-    <div class="vs-stat-value">{{ '%.3f'|format(data.totals.sow_kg) }}</div>
+    <div class="vs-stat-value">{{ '%.3f'|format(data.totals.sow_kg)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Вылетов с нулевой площадью' if is_ru else 'Ноль майдонли парвозлар' }}</div>
@@ -132,29 +132,29 @@
            через dict() оставляет приоритет за машиной строки. #}
         <td style="font-weight:700;"><a href="{{ url_for('drones.index', **dict(link_args, unit_id=r.unit_id)) }}">№ {{ r.number }}</a></td>
         <td class="right">{{ r.flights }}</td>
-        <td class="right">{{ '%.2f'|format(r.area) }}</td>
+        <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
-        <td class="right">{% if r.ha_per_hour is not none %}{{ '%.2f'|format(r.ha_per_hour) }}{% else %}—{% endif %}</td>
-        <td class="right">{% if r.liters_per_ha is not none %}{{ '%.2f'|format(r.liters_per_ha) }}{% else %}—{% endif %}</td>
+        <td class="right">{% if r.ha_per_hour is not none %}{{ '%.2f'|format(r.ha_per_hour)|vs_num }}{% else %}—{% endif %}</td>
+        <td class="right">{% if r.liters_per_ha is not none %}{{ '%.2f'|format(r.liters_per_ha)|vs_num }}{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
       {% if data.by_machine.unattributed %}
       <tr>
         <td><span class="vs-badge vs-badge-warning">{{ 'Не распознано' if is_ru else 'Аниқланмаган' }}</span></td>
         <td class="right">{{ data.by_machine.unattributed.flights }}</td>
-        <td class="right">{{ '%.2f'|format(data.by_machine.unattributed.area) }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_machine.unattributed.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(data.by_machine.unattributed.share) }}</td>
-        <td class="right">{% if data.by_machine.unattributed.ha_per_hour is not none %}{{ '%.2f'|format(data.by_machine.unattributed.ha_per_hour) }}{% else %}—{% endif %}</td>
-        <td class="right">{% if data.by_machine.unattributed.liters_per_ha is not none %}{{ '%.2f'|format(data.by_machine.unattributed.liters_per_ha) }}{% else %}—{% endif %}</td>
+        <td class="right">{% if data.by_machine.unattributed.ha_per_hour is not none %}{{ '%.2f'|format(data.by_machine.unattributed.ha_per_hour)|vs_num }}{% else %}—{% endif %}</td>
+        <td class="right">{% if data.by_machine.unattributed.liters_per_ha is not none %}{{ '%.2f'|format(data.by_machine.unattributed.liters_per_ha)|vs_num }}{% else %}—{% endif %}</td>
       </tr>
       {% endif %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
         <td class="right">{{ data.by_machine.total.flights }}</td>
-        <td class="right">{{ '%.2f'|format(data.by_machine.total.area) }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_machine.total.area)|vs_num }}</td>
         <td class="right">100.0</td>
-        <td class="right">{% if data.by_machine.total.ha_per_hour is not none %}{{ '%.2f'|format(data.by_machine.total.ha_per_hour) }}{% else %}—{% endif %}</td>
-        <td class="right">{% if data.by_machine.total.liters_per_ha is not none %}{{ '%.2f'|format(data.by_machine.total.liters_per_ha) }}{% else %}—{% endif %}</td>
+        <td class="right">{% if data.by_machine.total.ha_per_hour is not none %}{{ '%.2f'|format(data.by_machine.total.ha_per_hour)|vs_num }}{% else %}—{% endif %}</td>
+        <td class="right">{% if data.by_machine.total.liters_per_ha is not none %}{{ '%.2f'|format(data.by_machine.total.liters_per_ha)|vs_num }}{% else %}—{% endif %}</td>
       </tr>
     </tbody>
   </table>
@@ -191,7 +191,7 @@
       <tr>
         <td><a href="{{ url_for('drones.operator_card', op_id=r.operator_id) }}">{{ r.name }}</a></td>
         <td class="right">{{ r.flights }}</td>
-        <td class="right">{{ '%.2f'|format(r.area) }}</td>
+        <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
       </tr>
       {% endfor %}
@@ -199,7 +199,7 @@
       <tr>
         <td><span class="vs-badge vs-badge-warning">{{ t_op_none }}</span></td>
         <td class="right">{{ data.by_operator.undetermined.flights }}</td>
-        <td class="right">{{ '%.2f'|format(data.by_operator.undetermined.area) }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_operator.undetermined.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(data.by_operator.undetermined.share) }}</td>
       </tr>
       {% endif %}
@@ -207,14 +207,14 @@
       <tr>
         <td><span class="vs-badge vs-badge-warning">{{ t_op_many }}</span></td>
         <td class="right">{{ data.by_operator.multiple.flights }}</td>
-        <td class="right">{{ '%.2f'|format(data.by_operator.multiple.area) }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_operator.multiple.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(data.by_operator.multiple.share) }}</td>
       </tr>
       {% endif %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
         <td class="right">{{ data.by_operator.total.flights }}</td>
-        <td class="right">{{ '%.2f'|format(data.by_operator.total.area) }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_operator.total.area)|vs_num }}</td>
         <td class="right">100.0</td>
       </tr>
     </tbody>
@@ -256,7 +256,7 @@
            служит перевод. #}
         <td><a href="{{ url_for('drones.index', **dict(link_args, region=r.region)) }}">{{ r.label or r.region }}</a></td>
         <td class="right">{{ r.flights }}</td>
-        <td class="right">{{ '%.2f'|format(r.area) }}</td>
+        <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
       </tr>
       {% endfor %}
@@ -264,14 +264,14 @@
       <tr>
         <td><span class="vs-badge vs-badge-warning">{{ 'Область не определена' if is_ru else 'Вилоят аниқланмаган' }}</span></td>
         <td class="right">{{ data.by_region.undetermined.flights }}</td>
-        <td class="right">{{ '%.2f'|format(data.by_region.undetermined.area) }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_region.undetermined.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(data.by_region.undetermined.share) }}</td>
       </tr>
       {% endif %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
         <td class="right">{{ data.by_region.total.flights }}</td>
-        <td class="right">{{ '%.2f'|format(data.by_region.total.area) }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_region.total.area)|vs_num }}</td>
         <td class="right">100.0</td>
       </tr>
     </tbody>
@@ -308,16 +308,16 @@
       <tr>
         <td>{{ r.label }}</td>
         <td class="right">{{ r.flights }}</td>
-        <td class="right">{{ '%.2f'|format(r.area) }}</td>
+        <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
-        <td class="right">{% if r.spray_liters is not none %}{{ '%.2f'|format(r.spray_liters) }}{% else %}—{% endif %}</td>
-        <td class="right">{% if r.sow_kg is not none %}{{ '%.3f'|format(r.sow_kg) }}{% else %}—{% endif %}</td>
+        <td class="right">{% if r.spray_liters is not none %}{{ '%.2f'|format(r.spray_liters)|vs_num }}{% else %}—{% endif %}</td>
+        <td class="right">{% if r.sow_kg is not none %}{{ '%.3f'|format(r.sow_kg)|vs_num }}{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
         <td class="right">{{ data.by_usage.total.flights }}</td>
-        <td class="right">{{ '%.2f'|format(data.by_usage.total.area) }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_usage.total.area)|vs_num }}</td>
         <td class="right">100.0</td>
         <td class="right">—</td>
         <td class="right">—</td>
@@ -355,14 +355,14 @@
       <tr>
         <td style="font-weight:600;">{{ r.month }}</td>
         <td class="right">{{ r.flights }}</td>
-        <td class="right">{{ '%.2f'|format(r.area) }}</td>
+        <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
       </tr>
       {% endfor %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
         <td class="right">{{ data.by_month.total.flights }}</td>
-        <td class="right">{{ '%.2f'|format(data.by_month.total.area) }}</td>
+        <td class="right">{{ '%.2f'|format(data.by_month.total.area)|vs_num }}</td>
         <td class="right">100.0</td>
       </tr>
     </tbody>

@@ -80,6 +80,74 @@ DRONE_PAGE_SIZE = 50
 DRONE_DISPLAY_UTC_OFFSET = timedelta(hours=5)
 
 
+# ─── UI-NUMBER-FORMAT-001: thousands grouping ────────────────────────────────
+
+# [REASON]: money and counts rendered unseparated -- 2491814505. At that length
+# nobody reads the magnitude, and these are reports people decide from.
+#
+# U+00A0, not a plain space: a plain space lets a browser break the line
+# between «2 491» and «814 505», and half a number on each line is worse than
+# no grouping at all.
+DRONE_GROUP_SEPARATOR = '\u00a0'
+
+# [REASON]: THE YEAR RULE, and it is structural rather than a convention every
+# template author has to remember. A number is grouped only when its integer
+# part is FIVE digits or longer, so 2026 can never become «2 026» no matter
+# where the filter is applied -- and neither can 906, 0 or any other short
+# count. Grouping a year is the classic failure of exactly this change; making
+# it impossible beats forbidding it in a comment. The cost is that a genuine
+# 5 000 so'm renders ungrouped, which is readable either way.
+DRONE_GROUP_MIN_DIGITS = 5
+
+_DRONE_NUMERIC_RE = re.compile(r'^-?\d+(\.\d+)?$')
+
+
+@drones_bp.app_template_filter('vs_num')
+def drone_group_number(value):
+    """Group an integer part by three with a non-breaking space.
+
+    2491814505 -> '2 491 814 505'   (with U+00A0)
+    '15893.64' -> '15 893.64'       decimal separator stays the POINT
+    906        -> '906'
+    2026       -> '2026'            a year is never grouped -- see above
+    '2026-04'  -> '2026-04'         not numeric, passes through untouched
+    None       -> None              the template renders its own dash
+
+    Published from the blueprint with @app_template_filter, so app.py is not
+    touched -- the same route DRONE-FLEET-001 used for the dashboard tile.
+    """
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        text = str(value)
+    elif isinstance(value, float):
+        text = ('%d' % value) if value.is_integer() else repr(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        # [REASON]: anything that is not purely numeric passes through
+        # UNCHANGED. '2026-04' is a period, not a number; a nickname, a serial
+        # and a phone number are identifiers. The filter must be safe to apply
+        # to a value that turns out not to be a number, or every call site
+        # becomes a decision.
+        if not _DRONE_NUMERIC_RE.match(text):
+            return value
+    else:
+        return value
+
+    sign = '-' if text.startswith('-') else ''
+    body = text[1:] if sign else text
+    whole, _, fraction = body.partition('.')
+    if len(whole) < DRONE_GROUP_MIN_DIGITS:
+        return value if isinstance(value, str) else text
+    groups = []
+    while len(whole) > 3:
+        groups.insert(0, whole[-3:])
+        whole = whole[:-3]
+    groups.insert(0, whole)
+    grouped = sign + DRONE_GROUP_SEPARATOR.join(groups)
+    return grouped + ('.' + fraction if fraction else '')
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _drone_lang():

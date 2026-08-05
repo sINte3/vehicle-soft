@@ -95,23 +95,23 @@
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_area }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.area) }}</div>
+    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.area)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_amount }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.amount) }}</div>
+    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.amount)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_received }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.received) }}</div>
+    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.received)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_outstanding }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.outstanding) }}</div>
+    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.outstanding)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Прочие расходы' if is_ru else 'Бошқа харажатлар' }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.other_costs) }}</div>
+    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.other_costs)|vs_num }}</div>
   </div>
 </div>
 
@@ -138,26 +138,26 @@
       <tr>
         <td>{{ r.label }}</td>
         <td class="right">{{ r.jobs }}</td>
-        <td class="right">{{ '%.0f'|format(r.amount) }}</td>
-        <td class="right">{{ '%.0f'|format(r.received) }}</td>
-        <td class="right">{{ '%.0f'|format(r.outstanding) }}</td>
+        <td class="right">{{ '%.0f'|format(r.amount)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(r.received)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(r.outstanding)|vs_num }}</td>
       </tr>
       {% endfor %}
       {% if debt.rest %}
       <tr class="vs-muted">
         <td>{{ debt.rest.label }}</td>
         <td class="right">{{ debt.rest.jobs }}</td>
-        <td class="right">{{ '%.0f'|format(debt.rest.amount) }}</td>
-        <td class="right">{{ '%.0f'|format(debt.rest.received) }}</td>
-        <td class="right">{{ '%.0f'|format(debt.rest.outstanding) }}</td>
+        <td class="right">{{ '%.0f'|format(debt.rest.amount)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(debt.rest.received)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(debt.rest.outstanding)|vs_num }}</td>
       </tr>
       {% endif %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
         <td class="right">{{ debt.total.jobs }}</td>
-        <td class="right">{{ '%.0f'|format(debt.total.amount) }}</td>
-        <td class="right">{{ '%.0f'|format(debt.total.received) }}</td>
-        <td class="right">{{ '%.0f'|format(debt.total.outstanding) }}</td>
+        <td class="right">{{ '%.0f'|format(debt.total.amount)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(debt.total.received)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(debt.total.outstanding)|vs_num }}</td>
       </tr>
     </tbody>
   </table>
@@ -174,7 +174,7 @@
 
 {% if data.operator_due.jobs %}
 <div class="vs-alert is-warning vs-mb">
-  {{ 'Из колонки «Получено» ' if is_ru else '«Кирим қилинган» устунидан ' }}<b>{{ '%.0f'|format(data.operator_due.amount) }}</b>{{ ' на ' if is_ru else ' сўм, ' }}{{ data.operator_due.jobs }}{{ ' работах взято из графы «Оператор топшириши керак» — это деньги, которые оператор ЕЩЁ ДОЛЖЕН сдать, а не сданные. В ведомостях обе графы стоят на одном месте и обе равны «сумма минус расходы», поэтому они и различаются в базе отдельным полем. Итоги ниже их не разделяют: разделение — отдельное решение владельца, а не догадка отчёта.' if is_ru else ' ишда «Оператор топшириши керак» графасидан олинган — бу оператор ҲАЛИ ТОПШИРИШИ КЕРАК бўлган пул, топширилгани эмас. Ведомостларда иккала графа бир жойда туради ва иккаласи ҳам «сумма минус харажат»га тенг, шунинг учун улар базада алоҳида майдон билан фарқланади. Қуйидаги якунлар уларни ажратмайди: ажратиш — эганинг алоҳида қарори, ҳисоботнинг тахмини эмас.' }}
+  {{ 'Из колонки «Получено» ' if is_ru else '«Кирим қилинган» устунидан ' }}<b>{{ '%.0f'|format(data.operator_due.amount)|vs_num }}</b>{{ ' на ' if is_ru else ' сўм, ' }}{{ data.operator_due.jobs }}{{ ' работах взято из графы «Оператор топшириши керак» — это деньги, которые оператор ЕЩЁ ДОЛЖЕН сдать, а не сданные. В ведомостях обе графы стоят на одном месте и обе равны «сумма минус расходы», поэтому они и различаются в базе отдельным полем. Итоги ниже их не разделяют: разделение — отдельное решение владельца, а не догадка отчёта.' if is_ru else ' ишда «Оператор топшириши керак» графасидан олинган — бу оператор ҲАЛИ ТОПШИРИШИ КЕРАК бўлган пул, топширилгани эмас. Ведомостларда иккала графа бир жойда туради ва иккаласи ҳам «сумма минус харажат»га тенг, шунинг учун улар базада алоҳида майдон билан фарқланади. Қуйидаги якунлар уларни ажратмайди: ажратиш — эганинг алоҳида қарори, ҳисоботнинг тахмини эмас.' }}
 </div>
 {% endif %}
 

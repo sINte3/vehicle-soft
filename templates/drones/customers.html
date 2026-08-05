@@ -18,7 +18,7 @@
 
 {% if unresolved.jobs %}
 <div class="vs-alert is-warning vs-mb">
-  {{ 'Работ без заказчика' if is_ru else 'Буюртмачисиз ишлар' }}: <b>{{ unresolved.jobs }}</b> ({{ '%.2f'|format(unresolved.area) }} {{ 'га' if is_ru else 'га' }}).
+  {{ 'Работ без заказчика' if is_ru else 'Буюртмачисиз ишлар' }}: <b>{{ unresolved.jobs }}</b> ({{ '%.2f'|format(unresolved.area)|vs_num }} {{ 'га' if is_ru else 'га' }}).
   <a href="{{ url_for('drones.works', customer_id=-1) }}">{{ 'Показать их' if is_ru else 'Уларни кўрсатиш' }}</a>.
   {{ 'Добавьте написание нужному заказчику — и следующий импорт их привяжет.' if is_ru else 'Керакли буюртмачига ёзилиш қўшинг — кейинги импорт уларни боғлайди.' }}
 </div>
@@ -174,7 +174,7 @@
         <td class="vs-muted">{{ c.inn or '—' }}</td>
         <td class="vs-muted">{{ type_labels.get(c.customer_type, c.customer_type or '—') }}</td>
         <td class="right">{{ use.jobs }}</td>
-        <td class="right">{{ '%.2f'|format(use.area) }}</td>
+        <td class="right">{{ '%.2f'|format(use.area)|vs_num }}</td>
         <td>
           {% set alias_rows = aliases.get(c.id, []) %}
           {% if alias_rows %}

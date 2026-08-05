@@ -48,19 +48,19 @@
 <div class="vs-stat-grid vs-mb">
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Га по ведомостям' if is_ru else 'Ведомостлар бўйича га' }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(data.ledger_area) }}</div>
+    <div class="vs-stat-value">{{ '%.2f'|format(data.ledger_area)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Га по DJI' if is_ru else 'DJI бўйича га' }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(data.machine_area) }}</div>
+    <div class="vs-stat-value">{{ '%.2f'|format(data.machine_area)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Га без оператора' if is_ru else 'Операторсиз га' }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(data.unresolved.area) }}</div>
+    <div class="vs-stat-value">{{ '%.2f'|format(data.unresolved.area)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Га без машины (DJI)' if is_ru else 'Машинасиз га (DJI)' }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(data.unattributed.area) }}</div>
+    <div class="vs-stat-value">{{ '%.2f'|format(data.unattributed.area)|vs_num }}</div>
   </div>
 </div>
 <div class="vs-help vs-mb">{{ 'Две левые карточки НЕ обязаны совпадать: ведомости считают проданную работу, DJI считает налёт, и одно от другого отличается по определению. Две правые объясняют часть расхождения: работы без распознанного оператора не попадают ни в одну строку ниже, а вылеты с неизвестным ником не принадлежат ни одной машине и не могут стать кандидатом.' if is_ru else 'Чапдаги иккита карточка мос келиши ШАРТ ЭМАС: ведомостлар сотилган ишни, DJI эса учишни ҳисоблайди, бу иккиси таърифига кўра фарқ қилади. Ўнгдаги иккитаси фарқнинг бир қисмини тушунтиради: оператори аниқланмаган ишлар қуйидаги ҳеч бир қаторга тушмайди, ники номаълум парвозлар эса ҳеч бир машинага тегишли эмас ва номзод бўла олмайди.' }}</div>
@@ -90,20 +90,20 @@
       {% for r in data.rows %}
       <tr>
         <td style="font-weight:600;">{{ r.name }}<div class="vs-muted" style="font-size:11px;">{{ r.jobs }} {{ 'работ' if is_ru else 'иш' }}</div></td>
-        <td class="right">{{ '%.2f'|format(r.area) }}</td>
+        <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
         <td>
           {% if r.best %}№ {{ r.best.number }}
             {% if r.best.taken_by %}<div class="vs-muted" style="font-size:11px;">{{ 'уже за' if is_ru else 'аллақачон' }}: {{ r.best.taken_by|join(', ') }}</div>{% endif %}
           {% else %}<span class="vs-muted">—</span>{% endif %}
         </td>
-        <td class="right">{% if r.best %}{{ '%.2f'|format(r.best.area) }}{% else %}—{% endif %}</td>
+        <td class="right">{% if r.best %}{{ '%.2f'|format(r.best.area)|vs_num }}{% else %}—{% endif %}</td>
         <td class="right">{% if r.best and r.best.delta is not none %}{{ '%+.1f'|format(r.best.delta) }}{% else %}—{% endif %}</td>
         <td>
           {% if r.second %}№ {{ r.second.number }}
             {% if r.second.taken_by %}<div class="vs-muted" style="font-size:11px;">{{ 'уже за' if is_ru else 'аллақачон' }}: {{ r.second.taken_by|join(', ') }}</div>{% endif %}
           {% else %}<span class="vs-muted">—</span>{% endif %}
         </td>
-        <td class="right">{% if r.second %}{{ '%.2f'|format(r.second.area) }}{% else %}—{% endif %}</td>
+        <td class="right">{% if r.second %}{{ '%.2f'|format(r.second.area)|vs_num }}{% else %}—{% endif %}</td>
         <td class="right">{% if r.second and r.second.delta is not none %}{{ '%+.1f'|format(r.second.delta) }}{% else %}—{% endif %}</td>
         <td class="vs-muted">{% if r.already %}{% for n in r.already %}<span class="vs-badge vs-badge-success">№ {{ n }}</span>{% endfor %}{% else %}—{% endif %}</td>
       </tr>
@@ -142,7 +142,7 @@
       <tr>
         <td>№ {{ m.number }}</td>
         <td class="right">{{ m.flights }}</td>
-        <td class="right">{{ '%.2f'|format(m.area) }}</td>
+        <td class="right">{{ '%.2f'|format(m.area)|vs_num }}</td>
         <td class="vs-muted">{% if m.taken_by %}{{ m.taken_by|join(', ') }}{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
@@ -150,7 +150,7 @@
       <tr class="is-warning">
         <td><b>{{ 'Машина не распознана' if is_ru else 'Машина аниқланмаган' }}</b></td>
         <td class="right">{{ data.unattributed.flights }}</td>
-        <td class="right">{{ '%.2f'|format(data.unattributed.area) }}</td>
+        <td class="right">{{ '%.2f'|format(data.unattributed.area)|vs_num }}</td>
         <td class="vs-muted">—</td>
       </tr>
       {% endif %}
