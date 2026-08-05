@@ -1132,6 +1132,32 @@ class DroneReportsHubUzbekTests(unittest.TestCase):
             response = self.client.get(url)
             self.assertEqual(response.status_code, 200, url)
 
+    def test_the_debts_page_hero_is_cyrillic_and_is_its_own(self):
+        """After DRONE-DEBTS-DOUBLE-HEADER-001 there is one hero, and it is
+        «Қарзлар» -- not the reports hero that used to sit above it."""
+        body = self.client.get('/drones/works/debts').data.decode('utf-8')
+        shape = page_shape(body)
+        self.assertEqual(shape['hero_titles'], ['Қарзлар'])
+        self.assertEqual(shape['forms'], ['/drones/works/debts'])
+        self.assertEqual(shape['stat_grids'], 1)
+        title = shape['hero_titles'][0]
+        self.assertEqual(self.latin_runs(title, self.ALLOWED_LATIN), [])
+        # «Қ» must be U+049A, not a Latin K somebody pasted a tail onto.
+        self.assertEqual(ord(title[0]), 0x049A)
+
+    def test_the_uzbek_summary_card_labels_are_cyrillic(self):
+        import re
+        body = self.client.get('/drones/works/debts').data.decode('utf-8')
+        labels = [' '.join(l.split()) for l in re.findall(
+            r'<div class="vs-stat-label">(.*?)</div>', body, re.S)]
+        self.assertEqual(len(labels), 6)
+        for label in labels:
+            self.assertEqual(self.latin_runs(label, self.ALLOWED_LATIN), [],
+                             label)
+        # ... and the control still fires on the same scanner
+        self.assertEqual(self.latin_runs('Кирим qилинган',
+                                         self.ALLOWED_LATIN), ['q'])
+
     def test_the_uzbek_nav_strip_is_cyrillic(self):
         import re
         body = self.client.get('/drones/reports').data.decode('utf-8')
@@ -1144,6 +1170,195 @@ class DroneReportsHubUzbekTests(unittest.TestCase):
         for label in labels:
             self.assertEqual(self.latin_runs(label, self.ALLOWED_LATIN), [],
                              label)
+
+
+# ─── DRONE-DEBTS-DOUBLE-HEADER-001 ───────────────────────────────────────────
+
+def page_shape(body):
+    """The structural counts a report page must satisfy.
+
+    [REASON]: DRONE-REPORTS-HUB-001 proved the debt tables moved intact, cell
+    by cell -- and nothing checked what came WITH them. works_debts.html was
+    works_reports.html sliced too widely, so the page shipped two heroes, two
+    filter forms and two rows of summary cards, and the FIRST form posted to
+    the other page. An operator who set a period in the top form and pressed
+    «Показать» was silently navigated somewhere else. A check on the numbers
+    could never have caught that; this one looks at the shape.
+    """
+    import re
+    return {
+        'forms': re.findall(r'<form method="get" action="([^"]*)"', body),
+        'hero_titles': [' '.join(t.split()) for t in re.findall(
+            r'<div class="vs-hero-title">(.*?)</div>', body, re.S)],
+        'stat_grids': len(re.findall(r'class="vs-stat-grid', body)),
+    }
+
+
+class DroneReportPageShapeTests(unittest.TestCase):
+    """One form, one hero, one card row -- and the form stays on its page."""
+
+    # (url, endpoint the single form must post to)
+    FILTERED_PAGES = (
+        ('/drones/works/reports', '/drones/works/reports'),
+        ('/drones/works/debts', '/drones/works/debts'),
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        seed()
+        cls.admin = create_admin('shape_admin')
+        set_language(cls.admin, 'ru')
+
+    def setUp(self):
+        self.client = app.test_client()
+        login(self.client, self.admin)
+
+    def shape(self, url):
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200, url)
+        return page_shape(response.data.decode('utf-8'))
+
+    def test_each_filtered_page_has_exactly_one_form(self):
+        for url, _endpoint in self.FILTERED_PAGES:
+            self.assertEqual(len(self.shape(url)['forms']), 1, url)
+
+    def test_each_form_posts_back_to_its_own_page(self):
+        """The damaging half. A form that leaves is worse than no filter."""
+        for url, endpoint in self.FILTERED_PAGES:
+            self.assertEqual(self.shape(url)['forms'], [endpoint], url)
+
+    def test_each_filtered_page_has_exactly_one_hero(self):
+        for url, _endpoint in self.FILTERED_PAGES:
+            self.assertEqual(len(self.shape(url)['hero_titles']), 1, url)
+
+    def test_each_filtered_page_has_exactly_one_row_of_cards(self):
+        for url, _endpoint in self.FILTERED_PAGES:
+            self.assertEqual(self.shape(url)['stat_grids'], 1, url)
+
+    def test_the_two_pages_share_no_hero_title(self):
+        """Two pages titled the same thing are one page rendered twice."""
+        reports = set(self.shape('/drones/works/reports')['hero_titles'])
+        debts = set(self.shape('/drones/works/debts')['hero_titles'])
+        self.assertEqual(reports & debts, set())
+
+    def test_the_debts_page_is_titled_debts(self):
+        self.assertEqual(self.shape('/drones/works/debts')['hero_titles'],
+                         ['Долги'])
+
+    def test_the_reports_page_is_titled_reports(self):
+        self.assertEqual(self.shape('/drones/works/reports')['hero_titles'],
+                         ['Отчёты по работам'])
+
+    def test_the_launcher_has_one_hero_and_by_design_no_form_and_no_cards(self):
+        """The same four assertions, adjusted for what a launcher IS.
+
+        [REASON]: /drones/reports carries no filters and no data on purpose
+        (DRONE-REPORTS-HUB-001), so «exactly one form» is the wrong assertion
+        for it -- zero is the correct answer and the design intent. What
+        transfers is the hero count, which is the check that would have caught
+        the duplication.
+        """
+        shape = self.shape('/drones/reports')
+        self.assertEqual(len(shape['hero_titles']), 1)
+        self.assertEqual(shape['hero_titles'], ['Отчёты по дронам'])
+        self.assertEqual(shape['forms'], [])
+        self.assertEqual(shape['stat_grids'], 0)
+
+    def test_no_report_page_repeats_a_hero(self):
+        """Sweep: every drones page the launcher leads to."""
+        for url in ('/drones/reports', '/drones/works/reports',
+                    '/drones/works/debts', '/drones/works/assignment-hints',
+                    '/drones/sources', '/drones/summary'):
+            titles = self.shape(url)['hero_titles']
+            self.assertEqual(len(titles), len(set(titles)), url)
+            self.assertEqual(len(titles), 1, url)
+
+    def test_no_page_carries_a_form_that_posts_somewhere_else(self):
+        """Sweep: a GET form must never navigate off its own page."""
+        for url in ('/drones/works/reports', '/drones/works/debts',
+                    '/drones/works', '/drones/works/assignment-hints',
+                    '/drones/summary'):
+            for action in self.shape(url)['forms']:
+                self.assertEqual(action, url, '%s -> %s' % (url, action))
+
+    def test_the_shape_reader_would_notice_a_duplicate(self):
+        """Negative control. A counter that never counts two is not a counter.
+
+        [REASON]: every assertion above is an equality against 1. Fed markup
+        that really does carry the duplication, the reader has to report 2 --
+        otherwise «exactly one» is indistinguishable from «the regex never
+        matched anything».
+        """
+        doubled = (
+            '<div class="vs-hero-title">Отчёты по работам</div>'
+            '<form method="get" action="/drones/works/reports">x</form>'
+            '<div class="vs-stat-grid vs-mb">a</div>'
+            '<div class="vs-hero-title">Долги</div>'
+            '<form method="get" action="/drones/works/debts">y</form>'
+            '<div class="vs-stat-grid vs-mb">b</div>')
+        shape = page_shape(doubled)
+        self.assertEqual(len(shape['forms']), 2)
+        self.assertEqual(shape['forms'][0], '/drones/works/reports')
+        self.assertEqual(len(shape['hero_titles']), 2)
+        self.assertEqual(shape['stat_grids'], 2)
+        # ... and on a single-section page it reports one of each
+        single = doubled[doubled.index('<div class="vs-hero-title">Долги'):]
+        shape = page_shape(single)
+        self.assertEqual(len(shape['forms']), 1)
+        self.assertEqual(len(shape['hero_titles']), 1)
+        self.assertEqual(shape['stat_grids'], 1)
+
+
+class DroneDebtsSummaryCardTests(unittest.TestCase):
+    """The six figures on the debts page, before and against after.
+
+    [REASON]: the fix deletes markup. These assertions exist so that deleting
+    markup cannot quietly delete a number with it -- they read the rendered
+    cards, not the structure that produces them.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        seed()
+        cls.admin = create_admin('cards_admin')
+        set_language(cls.admin, 'ru')
+
+    def setUp(self):
+        self.client = app.test_client()
+        login(self.client, self.admin)
+
+    def cards(self, url):
+        import re
+        body = self.client.get(url).data.decode('utf-8')
+        grid = body[body.index('vs-stat-grid'):]
+        grid = grid[:grid.index('<div class="vs-help')
+                    if '<div class="vs-help' in grid else len(grid)]
+        labels = re.findall(r'<div class="vs-stat-label">(.*?)</div>', grid,
+                            re.S)
+        values = re.findall(r'<div class="vs-stat-value">(.*?)</div>', grid,
+                            re.S)
+        return list(zip([' '.join(l.split()) for l in labels],
+                        [' '.join(v.split()) for v in values]))
+
+    def test_the_debts_page_shows_the_six_figures(self):
+        self.assertEqual(self.cards('/drones/works/debts'), [
+            ('Работ', '10'),
+            ('Гектары', '128.50'),
+            ('Сумма', '24555256'),
+            ('Получено', '12500000'),
+            ('Не получено', '12055256'),
+            ('Прочие расходы', '0'),
+        ])
+
+    def test_the_figures_match_the_report_structure(self):
+        data, _filters = report_data()
+        totals = data['totals']
+        cards = dict(self.cards('/drones/works/debts'))
+        self.assertEqual(cards['Работ'], str(totals['jobs']))
+        self.assertEqual(cards['Сумма'], '%.0f' % totals['amount'])
+        self.assertEqual(cards['Получено'], '%.0f' % totals['received'])
+        self.assertEqual(cards['Не получено'],
+                         '%.0f' % totals['outstanding'])
 
 
 if __name__ == '__main__':
