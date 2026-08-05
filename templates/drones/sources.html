@@ -41,7 +41,7 @@
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Гектаров за период' if is_ru else 'Даврдаги гектарлар' }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(totals.area) }}</div>
+    <div class="vs-stat-value">{{ '%.2f'|format(totals.area)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Машин без вылетов' if is_ru else 'Парвозсиз машиналар' }}</div>
@@ -96,7 +96,7 @@
         {# Ноль показан нулём, а не пустой ячейкой: пустая читается как
            «не смотрели», а это ровно то, что страница обязана различать. #}
         <td class="right{% if r.flights == 0 %} vs-muted{% endif %}">{{ r.flights }}</td>
-        <td class="right{% if r.flights == 0 %} vs-muted{% endif %}">{{ '%.2f'|format(r.area) }}</td>
+        <td class="right{% if r.flights == 0 %} vs-muted{% endif %}">{{ '%.2f'|format(r.area)|vs_num }}</td>
         <td>
           {% if r.status == 'serviceable' %}
           <span class="vs-badge vs-badge-success">{{ status_labels['serviceable'] }}</span>
@@ -113,7 +113,7 @@
         <td><span class="vs-badge vs-badge-warning">{{ 'Не распознано' if is_ru else 'Аниқланмаган' }}</span></td>
         <td class="vs-muted" colspan="2">{{ 'вылеты без машины: ник DJI ещё не в карте' if is_ru else 'машинасиз парвозлар: DJI ники ҳали харитада йўқ' }}</td>
         <td class="right">{{ unattributed[0] }}</td>
-        <td class="right">{{ '%.2f'|format(unattributed[1]) }}</td>
+        <td class="right">{{ '%.2f'|format(unattributed[1])|vs_num }}</td>
         <td class="vs-muted">—</td>
       </tr>
       {% endif %}
@@ -121,7 +121,7 @@
         <td>{{ 'Итого' if is_ru else 'Жами' }}</td>
         <td colspan="2"></td>
         <td class="right">{{ totals.flights }}</td>
-        <td class="right">{{ '%.2f'|format(totals.area) }}</td>
+        <td class="right">{{ '%.2f'|format(totals.area)|vs_num }}</td>
         <td></td>
       </tr>
     </tbody>

@@ -98,23 +98,23 @@
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Гектаров' if is_ru else 'Гектар' }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(totals.area) }}</div>
+    <div class="vs-stat-value">{{ '%.2f'|format(totals.area)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Сумма' if is_ru else 'Сумма' }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(totals.amount) }}</div>
+    <div class="vs-stat-value">{{ '%.0f'|format(totals.amount)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Получено' if is_ru else 'Кирим қилинган' }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(totals.received) }}</div>
+    <div class="vs-stat-value">{{ '%.0f'|format(totals.received)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Не получено' if is_ru else 'Олинмаган' }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(totals.outstanding) }}</div>
+    <div class="vs-stat-value">{{ '%.0f'|format(totals.outstanding)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Прочие расходы' if is_ru else 'Бошқа харажатлар' }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(totals.other_costs) }}</div>
+    <div class="vs-stat-value">{{ '%.0f'|format(totals.other_costs)|vs_num }}</div>
   </div>
 </div>
 <div class="vs-help vs-mb">{{ 'Карточки считаются по ВСЕМУ отфильтрованному набору, а не по показанной странице.' if is_ru else 'Карточкалар кўрсатилган саҳифа бўйича эмас, БУТУН фильтрланган тўплам бўйича ҳисобланади.' }}</div>
@@ -206,6 +206,50 @@
     </div>
   </div>
 </div>
+
+{# DRONE-WORKS-PRICE-INTERNAL-001 — «Цена за га» следует за типом оплаты.
+
+   Форма префилила 200 000 всегда. Переключение на «Своё предприятие» её не
+   меняло, хотя внутренний тариф 85 633: оператор, не перечитавший подсказку,
+   записывал внутреннюю работу в 2.3 раза дороже. Владелец наткнулся на это
+   2026-08-05, вводя ровно те строки, из-за которых дефект и завёлся.
+
+   Тарифы читаются из data-атрибутов #wPriceHint — они уже там и это ЦЕЛЫЕ
+   ЧИСЛА. tojson в атрибут не кладём никогда: фильтр экранирует < > & и
+   апостроф, но НЕ двойную кавычку, парсер обрывает значение на первой же
+   кавычке из tojson, и обработчик молча не устанавливается. Этот класс
+   дефектов уже стоил проекту трёх сломанных форм.
+
+   Значение НЕ перетирается: подставляем только в пустое поле или в поле,
+   где стоит один из наших же дефолтов нетронутым. Оператор набрал 76 458 —
+   76 458 и останется. Тип «не указан» не трогает поле вовсе: мы не знаем,
+   какой тариф предложить, и предложить неверный хуже, чем не предлагать. #}
+<script>
+(function () {
+  var hint = document.getElementById('wPriceHint');
+  var payment = document.getElementById('addWPayment');
+  var price = document.getElementById('addWPrice');
+  if (!hint || !payment || !price) { return; }
+
+  var tariffs = {
+    cash: hint.getAttribute('data-price-cash'),
+    transfer: hint.getAttribute('data-price-transfer'),
+    internal: hint.getAttribute('data-price-internal')
+  };
+  // Everything this script is allowed to overwrite: its own suggestions.
+  var ours = {};
+  for (var key in tariffs) {
+    if (tariffs[key]) { ours[String(tariffs[key]).trim()] = true; }
+  }
+
+  payment.addEventListener('change', function () {
+    var next = tariffs[payment.value];
+    if (!next) { return; }              // 'unknown' — leave the field alone
+    var current = String(price.value || '').trim();
+    if (current === '' || ours[current]) { price.value = next; }
+  });
+})();
+</script>
 {% endif %}
 
 <div class="vs-table-wrap vs-mb">
@@ -251,10 +295,10 @@
           {% else %}<span class="vs-badge">{{ t_none_customer }}</span>{% endif %}
           <div class="vs-muted" style="font-size:11px;">{{ w.customer_raw }}</div>
         </td>
-        <td class="right">{{ '%.2f'|format(w.area_ha or 0) }}</td>
-        <td class="right">{% if w.price_per_ha is not none %}{{ '%.0f'|format(w.price_per_ha) }}{% else %}—{% endif %}</td>
-        <td class="right">{% if w.amount is not none %}{{ '%.0f'|format(w.amount) }}{% else %}—{% endif %}</td>
-        <td class="right">{% if w.received_amount is not none %}{{ '%.0f'|format(w.received_amount) }}{% else %}—{% endif %}</td>
+        <td class="right">{{ '%.2f'|format(w.area_ha or 0)|vs_num }}</td>
+        <td class="right">{% if w.price_per_ha is not none %}{{ '%.0f'|format(w.price_per_ha)|vs_num }}{% else %}—{% endif %}</td>
+        <td class="right">{% if w.amount is not none %}{{ '%.0f'|format(w.amount)|vs_num }}{% else %}—{% endif %}</td>
+        <td class="right">{% if w.received_amount is not none %}{{ '%.0f'|format(w.received_amount)|vs_num }}{% else %}—{% endif %}</td>
         <td>
           {% if w.payment_type == 'unknown' %}
           <span class="vs-badge">{{ payment_labels.get(w.payment_type, w.payment_type) }}</span>

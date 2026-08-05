@@ -18,7 +18,7 @@
 
 {% if unresolved.jobs %}
 <div class="vs-alert is-warning vs-mb">
-  {{ 'Работ без заказчика' if is_ru else 'Буюртмачисиз ишлар' }}: <b>{{ unresolved.jobs }}</b> ({{ '%.2f'|format(unresolved.area) }} {{ 'га' if is_ru else 'га' }}).
+  {{ 'Работ без заказчика' if is_ru else 'Буюртмачисиз ишлар' }}: <b>{{ unresolved.jobs }}</b> ({{ '%.2f'|format(unresolved.area)|vs_num }} {{ 'га' if is_ru else 'га' }}).
   <a href="{{ url_for('drones.works', customer_id=-1) }}">{{ 'Показать их' if is_ru else 'Уларни кўрсатиш' }}</a>.
   {{ 'Добавьте написание нужному заказчику — и следующий импорт их привяжет.' if is_ru else 'Керакли буюртмачига ёзилиш қўшинг — кейинги импорт уларни боғлайди.' }}
 </div>
@@ -70,7 +70,9 @@
         <label class="vs-label" for="addAliasCust">{{ 'Заказчик' if is_ru else 'Буюртмачи' }}</label>
         <select name="drone_customer_id" id="addAliasCust" class="vs-select" required>
           <option value="">{{ '— выберите заказчика —' if is_ru else '— буюртмачини танланг —' }}</option>
-          {% for c in customers %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+          {# ВСЕ заказчики, не страница: иначе алиас нельзя было бы
+             перенести на заказчика с седьмой страницы. #}
+          {% for c in all_customers %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
         </select>
       </div>
       <div class="vs-field" style="min-width:280px;">
@@ -87,10 +89,32 @@
 </div>
 {% endif %}
 
+{# DRONE-CUSTOMERS-PAGE-SLOW-001: поиск идёт и по названию, и по ЛЮБОМУ
+   написанию заказчика, с тем же складыванием узбекских букв, что применяет
+   импорт. Пробелы схлопываются — иначе «Гурганжи» не нашло бы
+   «Гурганжи Чорва   (Завкиддин)» с двумя пробелами внутри. #}
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <form method="get" action="{{ url_for('drones.customers') }}" class="vs-form-row">
+      <div class="vs-field" style="min-width:280px;">
+        <label class="vs-label" for="custSearch">{{ 'Поиск по названию и написаниям' if is_ru else 'Номи ва ёзилишлари бўйича қидирув' }}</label>
+        <input type="text" name="q" id="custSearch" class="vs-input" value="{{ query_text }}" maxlength="200" autocomplete="off">
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn">{{ 'Найти' if is_ru else 'Топиш' }}</button>
+        <a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.customers') }}">{{ 'Сбросить' if is_ru else 'Тозалаш' }}</a>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div class="vs-table-wrap vs-mb">
   <div class="vs-card-header">
     <span class="vs-card-title">{{ 'Справочник' if is_ru else 'Маълумотнома' }}</span>
-    <span class="vs-soft" style="font-size:12px;">{{ 'Всего' if is_ru else 'Жами' }}: {{ customers|length }}</span>
+    <span class="vs-soft" style="font-size:12px;">
+      {{ 'Всего' if is_ru else 'Жами' }}: {{ total }}{% if query_text %} · {{ 'найдено' if is_ru else 'топилди' }}: {{ matched_total }}{% endif %}{% if pages > 1 %} · {{ 'страница' if is_ru else 'саҳифа' }} {{ page }} / {{ pages }}{% endif %}
+    </span>
   </div>
   {% if customers %}
   <div class="vs-table-scroll">
@@ -150,7 +174,7 @@
         <td class="vs-muted">{{ c.inn or '—' }}</td>
         <td class="vs-muted">{{ type_labels.get(c.customer_type, c.customer_type or '—') }}</td>
         <td class="right">{{ use.jobs }}</td>
-        <td class="right">{{ '%.2f'|format(use.area) }}</td>
+        <td class="right">{{ '%.2f'|format(use.area)|vs_num }}</td>
         <td>
           {% set alias_rows = aliases.get(c.id, []) %}
           {% if alias_rows %}
@@ -161,7 +185,7 @@
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <span class="vs-badge{% if a.is_active is not sameas false %} vs-badge-success{% endif %}">{{ a.raw_name }}</span>
               <select name="drone_customer_id" class="vs-select" style="width:190px;">
-                {% for target in customers %}<option value="{{ target.id }}" {% if target.id == a.drone_customer_id %}selected{% endif %}>{{ target.name }}</option>{% endfor %}
+                {% for target in all_customers %}<option value="{{ target.id }}" {% if target.id == a.drone_customer_id %}selected{% endif %}>{{ target.name }}</option>{% endfor %}
               </select>
               <label class="vs-check"><input type="checkbox" name="is_active" {% if a.is_active is not sameas false %}checked{% endif %}> {{ 'Активно' if is_ru else 'Фаол' }}</label>
               <button type="submit" class="vs-btn vs-btn-ghost" style="font-size:12px;">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
@@ -186,14 +210,21 @@
     </tbody>
   </table>
   </div>
+  {% if pages > 1 %}
+  <div class="vs-card-body vs-row" style="gap:8px; align-items:center;">
+    {% if page > 1 %}<a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.customers', page=page-1, q=query_text or None) }}">←</a>{% endif %}
+    <span class="vs-soft">{{ 'Страница' if is_ru else 'Саҳифа' }} {{ page }} / {{ pages }}</span>
+    {% if page < pages %}<a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.customers', page=page+1, q=query_text or None) }}">→</a>{% endif %}
+  </div>
+  {% endif %}
   <div class="vs-card-body">
     <div class="vs-help">{{ 'Удаления нет ни у заказчика, ни у написания: заказчик, которого перестали обслуживать, всё равно владеет своими гектарами за прошлые месяцы, а отключённое написание сохраняет запись о том, что так когда-то писали. Перенос написания не трогает уже сохранённые работы — они перепривяжутся при следующем импорте.' if is_ru else 'На буюртмачида, на ёзилишда ўчириш йўқ: хизмат кўрсатилмай қолган буюртмачи ҳам ўтган ойлардаги гектарларининг эгаси бўлиб қолади, ўчирилган ёзилиш эса бир вақтлар шундай ёзилганини сақлаб қолади. Ёзилишни кўчириш аллақачон сақланган ишларга тегмайди — улар кейинги импортда қайта боғланади.' }}</div>
   </div>
   {% else %}
   <div class="vs-empty">
     <div class="vs-empty-ico">🏢</div>
-    <div class="vs-empty-title">{{ 'Заказчики не заведены' if is_ru else 'Буюртмачилар киритилмаган' }}</div>
-    <div class="vs-empty-sub">{{ 'Их заводит импорт ведомостей: незнакомое написание создаёт заказчика и его первый алиас. Либо добавьте вручную формой выше.' if is_ru else 'Уларни ведомостлар импорти киритади: нотаниш ёзилиш буюртмачи ва унинг биринчи алиасини яратади. Ёки юқоридаги форма орқали қўлда қўшинг.' }}</div>
+    <div class="vs-empty-title">{% if query_text %}{{ 'Ничего не найдено' if is_ru else 'Ҳеч нарса топилмади' }}{% else %}{{ 'Заказчики не заведены' if is_ru else 'Буюртмачилар киритилмаган' }}{% endif %}</div>
+    <div class="vs-empty-sub">{% if query_text %}{{ 'Ни название, ни одно из написаний не содержит этой строки. Поиск не различает регистр и узбекские буквы: «Фуркат» находит «Фурқат».' if is_ru else 'На номи, на ёзилишларининг бирортаси бу сатрни ўз ичига олмайди. Қидирув ҳарф катта-кичиклиги ва ўзбек ҳарфларини фарқламайди: «Фуркат» «Фурқат»ни топади.' }}{% else %}{{ 'Их заводит импорт ведомостей: незнакомое написание создаёт заказчика и его первый алиас. Либо добавьте вручную формой выше.' if is_ru else 'Уларни ведомостлар импорти киритади: нотаниш ёзилиш буюртмачи ва унинг биринчи алиасини яратади. Ёки юқоридаги форма орқали қўлда қўшинг.' }}{% endif %}</div>
   </div>
   {% endif %}
 </div>
