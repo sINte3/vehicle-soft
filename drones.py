@@ -2655,6 +2655,10 @@ def flights_xlsx():
 
 DRONE_WORKS_PAGE_SIZE = 50
 
+# [REASON]: DRONE-CUSTOMERS-PAGE-SLOW-001 -- 713 customers after the
+# 2026-08-05 import. Same 50 as everywhere else in this project.
+DRONE_CUSTOMERS_PAGE_SIZE = 50
+
 # Same reason as DRONE_FLIGHTS_XLSX_CAP: a silently truncated workbook reads
 # as complete data on the other side of an e-mail.
 DRONE_WORKS_XLSX_CAP = 20000
@@ -3056,6 +3060,39 @@ def _drone_customer_key(value):
     return re.sub(r'\s+', ' ', str(value)).strip().casefold()
 
 
+# [REASON]: DRONE-CUSTOMERS-PAGE-SLOW-001. The SAME fold
+# tools/import_drone_works.py applies to operator names, spelled out here
+# rather than imported: tools/ is not a package and drones.py must not depend
+# on it at request time. A test compares the two on the same inputs, so a
+# drift shows up as a failing test rather than as a search that quietly stops
+# finding «Фурқат» when somebody typed «Фуркат».
+#
+# This is the SEARCH key, not the alias key. _drone_customer_key() -- case and
+# whitespace only -- is what gets STORED in drone_customer_aliases and must
+# never change: the screen has to be able to reproduce it by eye. Search may
+# be more forgiving than storage; storage may not be more forgiving than the
+# import.
+_DRONE_UZ_FOLD = {
+    'Қ': 'К', 'Ғ': 'Г', 'Ҳ': 'Х', 'Ў': 'У', 'Ҷ': 'Ж', 'Ҝ': 'К',
+    'қ': 'к', 'ғ': 'г', 'ҳ': 'х', 'ў': 'у', 'ҷ': 'ж',
+    'Ъ': '', 'ъ': '', 'Ь': '', 'ь': '', 'Ё': 'Е', 'ё': 'е',
+    '\u0451': 'е',
+}
+_DRONE_UZ_TABLE = {ord(k): (v or None) for k, v in _DRONE_UZ_FOLD.items()}
+
+
+def _drone_search_key(value):
+    """Uzbek fold, lower-cased, whitespace collapsed. Search only.
+
+    Collapsing whitespace is what lets «Гурганжи» find «Гурганжи Чорва
+    (Завкиддин)» -- the real row has two spaces inside it.
+    """
+    if value is None:
+        return ''
+    return re.sub(r'\s+', ' ',
+                  str(value).translate(_DRONE_UZ_TABLE).lower()).strip()
+
+
 def _drone_customers_redirect(customer_id=None):
     if customer_id:
         return redirect(url_for('drones.customers', focus=customer_id))
@@ -3096,6 +3133,33 @@ def customers():
                   .order_by(DroneCustomerAlias.raw_name).all()):
         aliases.setdefault(alias.drone_customer_id, []).append(alias)
 
+    # [REASON]: DRONE-CUSTOMERS-PAGE-SLOW-001. The 2026-08-05 import created
+    # 713 customers and the page rendered all of them, each with its alias
+    # list and its own save form; the browser QA agent failed to load it four
+    # times and gave up. Filtering happens in PYTHON, not in SQL, because the
+    # match has to run over the FOLDED name AND every folded alias spelling,
+    # and neither fold exists inside SQLite. 713 rows and their aliases are
+    # already in memory by this point -- the filter costs one pass over a list
+    # that was loaded either way.
+    query_text = (request.args.get('q') or '').strip()
+    matched = rows
+    if query_text:
+        needle = _drone_search_key(query_text)
+        matched = [c for c in rows
+                   if needle in _drone_search_key(c.name)
+                   or any(needle in _drone_search_key(a.raw_name)
+                          for a in aliases.get(c.id, ()))]
+
+    page = request.args.get('page', 1, type=int) or 1
+    if page < 1:
+        page = 1
+    pages = max(1, ((len(matched) + DRONE_CUSTOMERS_PAGE_SIZE - 1)
+                    // DRONE_CUSTOMERS_PAGE_SIZE))
+    if page > pages:
+        page = pages
+    start = (page - 1) * DRONE_CUSTOMERS_PAGE_SIZE
+    page_rows = matched[start:start + DRONE_CUSTOMERS_PAGE_SIZE]
+
     # Jobs and hectares per customer, in one query -- the lazy='dynamic'
     # relationship would give one query per customer and there are ~526.
     usage = {}
@@ -3113,14 +3177,26 @@ def customers():
 
     return render_template(
         'drones/customers.html',
-        customers=rows,
+        # The page, and separately EVERY customer. The pickers -- «Добавить
+        # написание» and the per-alias repoint select -- must list all of
+        # them, or an alias could not be moved to a customer on page 7.
+        customers=page_rows,
+        all_customers=rows,
         aliases=aliases,
         usage=usage,
+        # [REASON]: counted over the WHOLE table, never the page. This banner
+        # is how somebody notices there is work to do at all; a per-page count
+        # would read as «almost nothing to fix» on page 1 of 15.
         unresolved={'jobs': unresolved[0] or 0,
                     'area': float(unresolved[1] or 0.0)},
         type_labels=_drone_customer_type_labels(),
         customer_types=DRONE_CUSTOMER_TYPES,
         focus=request.args.get('focus', type=int),
+        query_text=query_text,
+        page=page,
+        pages=pages,
+        total=len(rows),
+        matched_total=len(matched),
     )
 
 

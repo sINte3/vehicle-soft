@@ -1434,5 +1434,216 @@ class DroneWorksPriceDefaultTests(unittest.TestCase):
                       self.body)
 
 
+# ─── DRONE-CUSTOMERS-PAGE-SLOW-001 ───────────────────────────────────────────
+
+def seed_many_customers(count=713, unresolved_jobs=10):
+    """713 customers, the number the 2026-08-05 import actually created."""
+    reset_db()
+    with app.app_context():
+        for index in range(1, count + 1):
+            row = DroneCustomer(name='Хозяйство %04d' % index)
+            db.session.add(row)
+            db.session.flush()
+            db.session.add(DroneCustomerAlias(
+                raw_name='Хозяйство %04d' % index,
+                normalized_key='хозяйство %04d' % index,
+                drone_customer_id=row.id, is_active=True))
+        # The one real spelling the task names, with its two internal spaces.
+        special = DroneCustomer(name='Гурганжи Чорва   (Завкиддин)')
+        db.session.add(special)
+        db.session.flush()
+        db.session.add(DroneCustomerAlias(
+            raw_name='Гурганжи Чорва   (Завкиддин)',
+            normalized_key='гурганжи чорва (завкиддин)',
+            drone_customer_id=special.id, is_active=True))
+        # An alias whose spelling shares nothing with its customer's name --
+        # the case that proves search really looks at aliases.
+        hidden = DroneCustomer(name='Пахтакор АМТ')
+        db.session.add(hidden)
+        db.session.flush()
+        db.session.add(DroneCustomerAlias(
+            raw_name='Фурқат фермер хўжалиги',
+            normalized_key='фурқат фермер хўжалиги',
+            drone_customer_id=hidden.id, is_active=True))
+        for index in range(unresolved_jobs):
+            db.session.add(DroneWork(
+                period_month='2026-04', customer_raw='Неизвестное %d' % index,
+                area_ha=23.1, payment_type='cash'))
+        db.session.commit()
+    return count + 2
+
+
+class DroneCustomersPaginationTests(unittest.TestCase):
+    """713 rows on one page made the browser QA agent give up four times."""
+
+    PAGE_SIZE = 50
+
+    @classmethod
+    def setUpClass(cls):
+        cls.total = seed_many_customers()
+        cls.admin = create_admin('cust_page_admin')
+        set_language(cls.admin, 'ru')
+
+    def setUp(self):
+        self.client = app.test_client()
+        login(self.client, self.admin)
+
+    def rows_on(self, url):
+        """How many customer rows the directory table renders."""
+        import re
+        body = self.client.get(url).data.decode('utf-8')
+        table = body[body.index('Справочник'):]
+        table = table[:table.index('</table>')] if '</table>' in table else table
+        return len(re.findall(r'<tr(?: class="[^"]*")?>\s*\n?\s*<td style="font-weight:600;">',
+                              table)), body
+
+    def test_the_page_size_is_fifty(self):
+        import drones
+        self.assertEqual(drones.DRONE_CUSTOMERS_PAGE_SIZE, self.PAGE_SIZE)
+        count, _body = self.rows_on('/drones/customers')
+        self.assertEqual(count, self.PAGE_SIZE)
+
+    def test_the_last_page_carries_the_remainder(self):
+        pages = (self.total + self.PAGE_SIZE - 1) // self.PAGE_SIZE
+        count, _body = self.rows_on('/drones/customers?page=%d' % pages)
+        self.assertEqual(count, self.total - (pages - 1) * self.PAGE_SIZE)
+
+    def test_a_page_beyond_the_end_clamps_instead_of_erroring(self):
+        response = self.client.get('/drones/customers?page=9999')
+        self.assertEqual(response.status_code, 200)
+        response = self.client.get('/drones/customers?page=0')
+        self.assertEqual(response.status_code, 200)
+        response = self.client.get('/drones/customers?page=-3')
+        self.assertEqual(response.status_code, 200)
+
+    def test_the_total_stays_the_total_not_the_page_size(self):
+        _count, body = self.rows_on('/drones/customers')
+        self.assertIn('Всего: %d' % self.total, ' '.join(body.split()))
+
+    def test_the_unresolved_banner_counts_across_all_customers(self):
+        """[REASON]: a per-page count would read as «almost nothing to fix».
+
+        The banner is how somebody notices there is work at all. It is
+        asserted on the LAST page, where a page-scoped count would differ
+        from a table-scoped one.
+        """
+        pages = (self.total + self.PAGE_SIZE - 1) // self.PAGE_SIZE
+        for url in ('/drones/customers', '/drones/customers?page=%d' % pages,
+                    '/drones/customers?q=Гурганжи'):
+            body = ' '.join(
+                self.client.get(url).data.decode('utf-8').split())
+            self.assertIn('Работ без заказчика</span>: <b>10</b> (231.00 га)'
+                          .replace('</span>', ''), body, url)
+
+    def test_the_pickers_still_list_every_customer(self):
+        """An alias must be movable to a customer on page 7."""
+        import re
+        body = self.client.get('/drones/customers').data.decode('utf-8')
+        picker = body[body.index('id="addAliasCust"'):]
+        picker = picker[:picker.index('</select>')]
+        self.assertEqual(len(re.findall(r'<option value="\d+"', picker)),
+                         self.total)
+
+    def test_the_add_forms_are_still_there(self):
+        body = self.client.get('/drones/customers').data.decode('utf-8')
+        self.assertIn(url_for_test('drones.customers_add'), body)
+        self.assertIn(url_for_test('drones.customer_alias_add'), body)
+
+
+class DroneCustomersSearchTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.total = seed_many_customers()
+        cls.admin = create_admin('cust_search_admin')
+        set_language(cls.admin, 'ru')
+
+    def setUp(self):
+        self.client = app.test_client()
+        login(self.client, self.admin)
+
+    def body(self, url):
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200, url)
+        return response.data.decode('utf-8')
+
+    def test_search_collapses_the_internal_spaces(self):
+        """«Гурганжи» must find «Гурганжи Чорва   (Завкиддин)»."""
+        body = self.body('/drones/customers?q=Гурганжи')
+        self.assertIn('Гурганжи Чорва', body)
+        self.assertIn('найдено: 1', ' '.join(body.split()))
+
+    def test_search_is_case_insensitive(self):
+        body = ' '.join(self.body('/drones/customers?q=гурганжи').split())
+        self.assertIn('найдено: 1', body)
+
+    def test_search_folds_the_uzbek_letters(self):
+        """«Фуркат» must find the alias spelled «Фурқат»."""
+        body = ' '.join(self.body('/drones/customers?q=Фуркат').split())
+        self.assertIn('найдено: 1', body)
+        self.assertIn('Пахтакор АМТ', body)
+
+    def test_search_matches_an_alias_whose_customer_name_differs(self):
+        """The alias «Фурқат фермер хўжалиги» belongs to «Пахтакор АМТ»."""
+        body = self.body('/drones/customers?q=хўжалиги')
+        self.assertIn('Пахтакор АМТ', body)
+
+    def test_search_narrows_the_result(self):
+        """The differential half: the same page without q shows everything."""
+        wide = ' '.join(self.body('/drones/customers').split())
+        narrow = ' '.join(self.body('/drones/customers?q=Гурганжи').split())
+        self.assertIn('Всего: %d' % self.total, wide)
+        self.assertNotIn('найдено:', wide)
+        self.assertIn('Всего: %d' % self.total, narrow)
+        self.assertIn('найдено: 1', narrow)
+
+    def test_a_search_that_finds_nothing_says_so(self):
+        body = self.body('/drones/customers?q=такогонетнигде')
+        self.assertIn('Ничего не найдено', body)
+
+    def test_the_query_survives_paging(self):
+        import re
+        body = self.body('/drones/customers?q=Хозяйство')
+        joined = ' '.join(body.split())
+        self.assertIn('найдено: 713', joined)
+        links = re.findall(r'href="(/drones/customers\?[^"]*page=2[^"]*)"',
+                           body)
+        self.assertTrue(links, 'no next-page link on a paged search')
+        self.assertTrue(any('q=' in link for link in links), links)
+        second = ' '.join(self.body(links[0].replace('&amp;', '&')).split())
+        self.assertIn('найдено: 713', second)
+
+    def test_the_page_survives_the_query(self):
+        body = ' '.join(
+            self.body('/drones/customers?q=Хозяйство&page=3').split())
+        self.assertIn('страница 3 /', body)
+
+    def test_the_search_fold_matches_the_import(self):
+        """Pinned: search and import must fold the same, or search rots.
+
+        [REASON]: drones.py cannot import from tools/ at request time, so the
+        fold exists twice. This is the pin -- if one drifts, this fails
+        instead of a farm quietly becoming unfindable.
+        """
+        import os
+        import sys
+        import drones
+        tools = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), 'tools')
+        if tools not in sys.path:
+            sys.path.insert(0, tools)
+        import import_drone_works as imp
+        for value in ('Гурганжи Чорва   (Завкиддин)', 'Фурқат', 'Фуркат',
+                      'Беҳзод', 'Туйғун', 'ЎЗБЕКИСТОН', 'Ёрдамчи', '',
+                      'a  b\tc\nd', 'Миробод АМТ'):
+            self.assertEqual(drones._drone_search_key(value),
+                             imp.uz_fold(value), repr(value))
+
+
+def url_for_test(endpoint):
+    with app.test_request_context('/'):
+        from flask import url_for
+        return url_for(endpoint)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
