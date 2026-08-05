@@ -23,9 +23,11 @@ import io
 import unittest
 
 from tests.harness import app, reset_db, create_admin, login, CSRF
-from models import (db, DroneCustomer, DroneCustomerAlias, DroneFlight,
-                    DroneOperator, DroneOperatorAssignment, DroneUnit,
-                    DroneWork, Organization, User, ROLE_OPERATOR)
+from models import (db, DRONE_RECEIVED_KIND_OPERATOR_DUE,
+                    DRONE_RECEIVED_KIND_RECEIVED, DroneCustomer,
+                    DroneCustomerAlias, DroneFlight, DroneOperator,
+                    DroneOperatorAssignment, DroneUnit, DroneWork,
+                    Organization, User, ROLE_OPERATOR)
 
 
 def set_language(user_id, lang):
@@ -73,6 +75,9 @@ FIXTURE = [
 # The row with no customer at all is index 10 of the fixture; seed() gives it
 # customer_raw = '' rather than a name.
 EMPTY_CUSTOMER_INDEX = 10
+# Fixture row 3 (20.0 ha, 3 000 000 amount, 1 000 000 «received») is the one
+# whose figure came from «Оператор топшириши керак».
+OPERATOR_DUE_INDEX = 3
 
 TOTAL_JOBS = 10
 TOTAL_AREA = 128.5
@@ -115,7 +120,17 @@ def seed():
                 customer_raw=('' if index == EMPTY_CUSTOMER_INDEX
                               else 'Хозяйство %d' % index),
                 area_ha=area, price_per_ha=price, amount=amount,
-                received_amount=received, payment_type=payment,
+                received_amount=received,
+                # [REASON]: one row carries «Оператор топшириши керак» -- money
+                # the operator still OWES, sitting in received_amount. Without
+                # one the debts page's memo never renders and the test that
+                # checks it would pass on an empty string. On the 2026-08-05
+                # staging import that is 164 rows out of 852.
+                received_kind=(DRONE_RECEIVED_KIND_OPERATOR_DUE
+                               if index == OPERATOR_DUE_INDEX
+                               else (DRONE_RECEIVED_KIND_RECEIVED
+                                     if received else None)),
+                payment_type=payment,
                 subdivision_name=subdivision,
                 source_file='book%d.xlsx' % index, source_sheet='свод ичи',
                 source_row=index, import_batch='fixture'))
@@ -776,6 +791,359 @@ class DroneAssignmentHintTests(unittest.TestCase):
         login(client, user_id)
         self.assertEqual(
             client.get('/drones/works/assignment-hints').status_code, 403)
+
+
+# ─── DRONE-REPORTS-HUB-001 ───────────────────────────────────────────────────
+
+def debt_tables(body):
+    """The two debt tables of a rendered page, cell by cell."""
+    import re
+    out = {}
+    for title in ('Долги — по заказчикам', 'Долги — по операторам'):
+        index = body.find(title)
+        if index < 0:
+            out[title] = None
+            continue
+        chunk = body[index:]
+        table = chunk[chunk.find('<table'):chunk.find('</table>')]
+        rows = []
+        for tr in re.findall(r'<tr[^>]*>(.*?)</tr>', table, re.S):
+            cells = [' '.join(re.sub(r'<[^>]+>', '', c).split())
+                     for c in re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', tr,
+                                         re.S)]
+            if cells:
+                rows.append(cells)
+        out[title] = rows
+    return out
+
+
+class DroneReportsLauncherTests(unittest.TestCase):
+    """/drones/reports -- five tiles, no data, no filters, no export."""
+
+    @classmethod
+    def setUpClass(cls):
+        seed()
+        cls.admin = create_admin('hub_admin')
+        set_language(cls.admin, 'ru')
+
+    def setUp(self):
+        self.client = app.test_client()
+        login(self.client, self.admin)
+
+    def test_the_launcher_opens_with_five_tiles_in_order(self):
+        import re
+        response = self.client.get('/drones/reports')
+        self.assertEqual(response.status_code, 200)
+        body = response.data.decode('utf-8')
+        tiles = re.findall(
+            r'<a class="vs-card vs-report-tile ([\w-]+)" href="([^"]+)"', body)
+        self.assertEqual(tiles, [
+            ('is-primary', '/drones/summary'),
+            ('is-info', '/drones/works/reports'),
+            ('is-warning', '/drones/works/debts'),
+            ('is-success', '/drones/works/assignment-hints'),
+            ('is-danger', '/drones/sources'),
+        ])
+
+    def test_every_tile_target_really_answers(self):
+        """A launcher whose tiles 404 is worse than no launcher."""
+        import re
+        body = self.client.get('/drones/reports').data.decode('utf-8')
+        for _accent, href in re.findall(
+                r'<a class="vs-card vs-report-tile ([\w-]+)" href="([^"]+)"',
+                body):
+            self.assertEqual(self.client.get(href).status_code, 200, href)
+
+    def test_the_launcher_carries_no_data_no_filter_no_export(self):
+        body = self.client.get('/drones/reports').data.decode('utf-8')
+        self.assertNotIn('<form', body.split('vs-report-tiles')[1])
+        self.assertNotIn('.xlsx', body)
+        self.assertNotIn('vs-stat-value', body)
+
+    def test_the_icons_are_inline_svg_and_nothing_is_fetched(self):
+        """UI-FONT-LOCAL-001: no CDN, no icon font, no remote asset."""
+        body = self.client.get('/drones/reports').data.decode('utf-8')
+        tiles = body.split('vs-report-tiles')[1]
+        self.assertEqual(tiles.count('<svg'), 5)
+        for marker in ('http://', 'https://', '<img', '@font-face', 'url('):
+            self.assertNotIn(marker, tiles, marker)
+
+    def test_it_is_403_without_the_module(self):
+        with app.app_context():
+            user = User(username='no_drones_hub', role=ROLE_OPERATOR,
+                        full_name='No Drones')
+            user.set_password('x')
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+        client = app.test_client()
+        login(client, user_id)
+        self.assertEqual(client.get('/drones/reports').status_code, 403)
+
+
+class DroneNavStripTests(unittest.TestCase):
+    """Отчёты in, Источники out -- and the route it left behind still works."""
+
+    @classmethod
+    def setUpClass(cls):
+        seed()
+        cls.admin = create_admin('nav_admin')
+        set_language(cls.admin, 'ru')
+
+    def setUp(self):
+        self.client = app.test_client()
+        login(self.client, self.admin)
+
+    def _strip(self, url='/drones/reports'):
+        import re
+        body = self.client.get(url).data.decode('utf-8')
+        strip = body.split(
+            '<div class="vs-row vs-mb" style="gap:8px; flex-wrap:wrap;">')[1]
+        strip = strip[:strip.find('</div>')]
+        return re.findall(r'<a href="([^"]+)"[^>]*>([^<]+)</a>', strip)
+
+    def test_the_strip_is_the_seven_tabs_in_order(self):
+        self.assertEqual(
+            [label.strip() for _href, label in self._strip()],
+            ['Сводка', 'Вылеты', 'Машины', 'Операторы', 'Работы',
+             'Заказчики', 'Отчёты'])
+
+    def test_istochniki_left_the_strip_but_not_the_application(self):
+        hrefs = [href for href, _label in self._strip()]
+        self.assertNotIn('/drones/sources', hrefs)
+        self.assertEqual(self.client.get('/drones/sources').status_code, 200)
+
+    def test_svodka_is_in_the_strip_and_is_also_the_first_tile(self):
+        """A launcher that omits the main report is confusing."""
+        hrefs = [href for href, _label in self._strip()]
+        self.assertIn('/drones/summary', hrefs)
+        body = self.client.get('/drones/reports').data.decode('utf-8')
+        first = body.split('vs-report-tiles')[1]
+        self.assertLess(first.find('/drones/summary'),
+                        first.find('/drones/works/reports'))
+
+    def test_otchety_is_marked_active_on_the_pages_it_leads_to(self):
+        for url in ('/drones/reports', '/drones/sources',
+                    '/drones/works/reports', '/drones/works/debts',
+                    '/drones/works/assignment-hints'):
+            body = self.client.get(url).data.decode('utf-8')
+            strip = body.split(
+                '<div class="vs-row vs-mb" style="gap:8px; flex-wrap:wrap;">')[1]
+            strip = strip[:strip.find('</div>')]
+            self.assertIn(
+                'href="/drones/reports" class="vs-btn vs-btn-primary"',
+                strip, url)
+
+
+class DroneDebtsPageTests(unittest.TestCase):
+    """The split that actually fixes the complaint.
+
+    The load-bearing assertion is that the numbers did not move: the debts
+    page renders the same _drone_works_report_data() output the reports page
+    used to render, and both debt tables still sum to the same grand total as
+    every other cut.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        seed()
+        cls.admin = create_admin('debts_admin')
+        set_language(cls.admin, 'ru')
+
+    def setUp(self):
+        self.client = app.test_client()
+        login(self.client, self.admin)
+
+    def test_the_page_opens_and_carries_both_tables(self):
+        response = self.client.get('/drones/works/debts')
+        self.assertEqual(response.status_code, 200)
+        tables = debt_tables(response.data.decode('utf-8'))
+        self.assertIsNotNone(tables['Долги — по заказчикам'])
+        self.assertIsNotNone(tables['Долги — по операторам'])
+
+    def test_the_reports_page_no_longer_carries_them(self):
+        """The differential half: the tables really left the old page."""
+        body = self.client.get('/drones/works/reports').data.decode('utf-8')
+        tables = debt_tables(body)
+        self.assertIsNone(tables['Долги — по заказчикам'])
+        self.assertIsNone(tables['Долги — по операторам'])
+        self.assertNotIn('/drones/works/debt.xlsx', body)
+        # ... but the page is not a dead end for somebody looking for them
+        self.assertIn('/drones/works/debts', body)
+
+    def test_the_excel_debt_button_moved_with_the_tables(self):
+        body = self.client.get('/drones/works/debts').data.decode('utf-8')
+        self.assertIn('/drones/works/debt.xlsx', body)
+        self.assertEqual(
+            self.client.get('/drones/works/debt.xlsx').status_code, 200)
+
+    def test_every_cell_equals_what_the_report_structure_says(self):
+        """Cell by cell against the same data the reports page computes."""
+        data, _filters = report_data()
+        tables = debt_tables(
+            self.client.get('/drones/works/debts').data.decode('utf-8'))
+        for title, key in (('Долги — по заказчикам', 'debt_by_customer'),
+                           ('Долги — по операторам', 'debt_by_operator')):
+            debt = data[key]
+            screen = list(debt['rows']) + ([debt['rest']] if debt['rest']
+                                           else [])
+            rows = tables[title][1:-1]          # drop the header and total
+            self.assertEqual(len(rows), len(screen), title)
+            for rendered, computed in zip(rows, screen):
+                self.assertEqual(rendered[0], computed['label'], title)
+                self.assertEqual(rendered[1], str(computed['jobs']), title)
+                self.assertEqual(rendered[2],
+                                 '%.0f' % computed['amount'], title)
+                self.assertEqual(rendered[3],
+                                 '%.0f' % computed['received'], title)
+                self.assertEqual(rendered[4],
+                                 '%.0f' % computed['outstanding'], title)
+            total = tables[title][-1]
+            self.assertEqual(total[1], str(TOTAL_JOBS), title)
+            self.assertEqual(total[2], '%.0f' % TOTAL_AMOUNT, title)
+            self.assertEqual(total[3], '%.0f' % TOTAL_RECEIVED, title)
+            self.assertEqual(total[4], '%.0f' % TOTAL_OUTSTANDING, title)
+
+    def test_both_tables_reconcile_inside_the_page(self):
+        """Sum the body, get the total row -- the page stands on its own."""
+        tables = debt_tables(
+            self.client.get('/drones/works/debts').data.decode('utf-8'))
+        for title, rows in tables.items():
+            body = rows[1:-1]
+            total = rows[-1]
+            for column in (1, 2, 3, 4):
+                self.assertEqual(sum(int(float(r[column])) for r in body),
+                                 int(float(total[column])),
+                                 '%s column %d' % (title, column))
+
+    def test_the_no_debt_row_is_present_and_counted(self):
+        tables = debt_tables(
+            self.client.get('/drones/works/debts').data.decode('utf-8'))
+        labels = [r[0] for r in tables['Долги — по операторам']]
+        self.assertIn('Долга нет (остальные)', labels)
+
+    def test_the_operator_due_memo_survives_the_move(self):
+        """Without it the report shows money OWED as money collected."""
+        body = self.client.get('/drones/works/debts').data.decode('utf-8')
+        self.assertIn('Оператор топшириши керак', body)
+        self.assertIn('ЕЩЁ ДОЛЖЕН', body)
+        self.assertIn('<b>1000000</b>', body)
+
+    def test_the_memo_can_be_absent_and_the_test_would_notice(self):
+        """Negative control: no operator_due row, no memo.
+
+        [REASON]: the memo is rendered inside {% if data.operator_due.jobs %}.
+        A test that only ever saw the populated fixture could not tell the
+        block from a hardcoded string.
+        """
+        with app.app_context():
+            row = DroneWork.query.filter_by(
+                received_kind=DRONE_RECEIVED_KIND_OPERATOR_DUE).one()
+            row.received_kind = DRONE_RECEIVED_KIND_RECEIVED
+            db.session.commit()
+        try:
+            body = self.client.get(
+                '/drones/works/debts').data.decode('utf-8')
+            self.assertNotIn('ЕЩЁ ДОЛЖЕН', body)
+        finally:
+            with app.app_context():
+                row = DroneWork.query.filter_by(
+                    source_row=OPERATOR_DUE_INDEX).one()
+                row.received_kind = DRONE_RECEIVED_KIND_OPERATOR_DUE
+                db.session.commit()
+
+    def test_the_filters_reach_the_page(self):
+        data, _filters = report_data('period=2026-04')
+        tables = debt_tables(self.client.get(
+            '/drones/works/debts?period=2026-04').data.decode('utf-8'))
+        total = tables['Долги — по заказчикам'][-1]
+        self.assertEqual(total[1], str(data['totals']['jobs']))
+        self.assertNotEqual(total[1], str(TOTAL_JOBS))
+
+    def test_it_is_403_without_the_module(self):
+        with app.app_context():
+            user = User(username='no_drones_debts', role=ROLE_OPERATOR,
+                        full_name='No Drones')
+            user.set_password('x')
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+        client = app.test_client()
+        login(client, user_id)
+        self.assertEqual(
+            client.get('/drones/works/debts').status_code, 403)
+
+
+class DroneReportsHubUzbekTests(unittest.TestCase):
+    """Uzbek is CYRILLIC ONLY, verified by code point."""
+
+    # Latin is allowed only in product and brand names.
+    ALLOWED_LATIN = ('Excel', 'DJI')
+
+    @classmethod
+    def setUpClass(cls):
+        seed()
+        cls.admin = create_admin('hub_uz')
+        set_language(cls.admin, 'uz')
+
+    def setUp(self):
+        self.client = app.test_client()
+        login(self.client, self.admin)
+
+    @staticmethod
+    def latin_runs(text, allowed=()):
+        """Every run of Latin letters left after the allowed words are cut."""
+        import re
+        for word in allowed:
+            text = text.replace(word, ' ')
+        return re.findall(r'[A-Za-z]+', text)
+
+    def test_the_tile_strings_are_cyrillic(self):
+        import drones
+        offenders = []
+        for tile in drones.DRONE_REPORT_TILES:
+            for field in ('title_uz', 'subtitle_uz'):
+                runs = self.latin_runs(tile[field], self.ALLOWED_LATIN)
+                if runs:
+                    offenders.append((tile['key'], field, runs))
+        self.assertEqual(offenders, [])
+
+    def test_the_scanner_fires_on_a_planted_latin_string(self):
+        """Negative control. A scanner that never fires is not a scanner."""
+        self.assertEqual(
+            self.latin_runs('Ҳисоботлар', self.ALLOWED_LATIN), [])
+        self.assertEqual(
+            self.latin_runs('Ҳисоbотlар', self.ALLOWED_LATIN), ['b', 'l'])
+        # ... and the allowance really allows
+        self.assertEqual(
+            self.latin_runs('Excel юклаб олиш', self.ALLOWED_LATIN), [])
+
+    def test_the_uzbek_letters_really_are_cyrillic_code_points(self):
+        """«Қ» must be U+049A, not a Latin K with a tail somebody pasted."""
+        import drones
+        titles = {t['key']: t['title_uz'] for t in drones.DRONE_REPORT_TILES}
+        self.assertEqual(ord(titles['debts'][0]), 0x049A)      # Қ
+        self.assertEqual(titles['debts'], 'Қарзлар')
+        for name, char in (('Ҳ', 0x04B2), ('Ў', 0x040E), ('Ғ', 0x0492)):
+            self.assertEqual(ord(name), char)
+
+    def test_the_launcher_and_the_debts_page_render_in_uzbek(self):
+        for url in ('/drones/reports', '/drones/works/debts'):
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200, url)
+
+    def test_the_uzbek_nav_strip_is_cyrillic(self):
+        import re
+        body = self.client.get('/drones/reports').data.decode('utf-8')
+        strip = body.split(
+            '<div class="vs-row vs-mb" style="gap:8px; flex-wrap:wrap;">')[1]
+        strip = strip[:strip.find('</div>')]
+        labels = [label.strip() for _h, label
+                  in re.findall(r'<a href="([^"]+)"[^>]*>([^<]+)</a>', strip)]
+        self.assertEqual(labels[-1], 'Ҳисоботлар')
+        for label in labels:
+            self.assertEqual(self.latin_runs(label, self.ALLOWED_LATIN), [],
+                             label)
 
 
 if __name__ == '__main__':

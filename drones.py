@@ -3539,11 +3539,7 @@ DRONE_REPORT_TILES = (
     },
     {
         'key': 'debts',
-        # [REASON]: points at the works report until DRONE-REPORTS-HUB-001
-        # commit 3 gives the debts their own page. A tile that 404s in the
-        # intervening commit would be worse than one that lands on the page
-        # where the tables currently live.
-        'endpoint': 'drones.works_reports',
+        'endpoint': 'drones.works_debts',
         'accent': 'is-warning',
         'title_ru': 'Долги',
         'title_uz': 'Қарзлар',
@@ -3591,13 +3587,45 @@ def reports():
 @drones_bp.route('/works/reports')
 @module_required('drones')
 def works_reports():
-    """Four cuts and a debt view, all over the same filters as the ledger."""
+    """The five cuts, over the same filters as the ledger.
+
+    The debt view moved to works_debts() in DRONE-REPORTS-HUB-001; this route
+    still computes it, because _drone_works_report_data() is one function and
+    splitting it would mean rewriting queries this task is not allowed to
+    touch. The cost is one unused dict per request, accepted knowingly.
+    """
     filters = _drone_works_filters_from_args(request.args)
     conds = _drone_work_conditions(filters)
     data = _drone_works_report_data(conds)
     context = _drone_works_pickers()
     return render_template(
         'drones/works_reports.html',
+        data=data,
+        filters=filters,
+        link_args=_drone_works_link_args(filters),
+        unresolved_key=DRONE_WORK_UNRESOLVED,
+        payment_types=DRONE_WORK_PAYMENT_TYPES,
+        **context)
+
+
+@drones_bp.route('/works/debts')
+@module_required('drones')
+def works_debts():
+    """The two debt tables, on their own page. «олинмаган пуллар».
+
+    [REASON]: DRONE-REPORTS-HUB-001. These tables used to sit at the bottom of
+    /drones/works/reports, below five long cuts; the owner went looking for
+    them on 2026-08-05 and could not find them. Nothing is recomputed here --
+    the same _drone_works_report_data() the reports page calls, rendered by
+    the same markup -- so the figures on this page are the figures that were
+    on that one, by construction rather than by coincidence.
+    """
+    filters = _drone_works_filters_from_args(request.args)
+    conds = _drone_work_conditions(filters)
+    data = _drone_works_report_data(conds)
+    context = _drone_works_pickers()
+    return render_template(
+        'drones/works_debts.html',
         data=data,
         filters=filters,
         link_args=_drone_works_link_args(filters),

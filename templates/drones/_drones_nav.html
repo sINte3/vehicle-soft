@@ -27,5 +27,5 @@
   <a href="{{ url_for('drones.customers') }}" class="vs-btn{% if nav_current == 'drones.customers' %} vs-btn-primary{% endif %}">{{ 'Заказчики' if nav_is_ru else 'Буюртмачилар' }}</a>
   {# Marked active on every page the launcher is the entry point for, so the
      strip keeps saying «you are inside reports» after a tile is clicked. #}
-  <a href="{{ url_for('drones.reports') }}" class="vs-btn{% if nav_current in ('drones.reports', 'drones.sources', 'drones.works_reports', 'drones.works_assignment_hints') %} vs-btn-primary{% endif %}">{{ 'Отчёты' if nav_is_ru else 'Ҳисоботлар' }}</a>
+  <a href="{{ url_for('drones.reports') }}" class="vs-btn{% if nav_current in ('drones.reports', 'drones.sources', 'drones.works_reports', 'drones.works_debts', 'drones.works_assignment_hints') %} vs-btn-primary{% endif %}">{{ 'Отчёты' if nav_is_ru else 'Ҳисоботлар' }}</a>
 </div>

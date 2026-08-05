@@ -17,13 +17,17 @@
 <div class="vs-hero vs-mb">
   <div>
     <div class="vs-hero-title">{{ 'Отчёты по работам' if is_ru else 'Ишлар ҳисоботлари' }}</div>
-    <div class="vs-hero-sub">{{ 'Пять разрезов и долги. Каждый разрез сверяется с общим итогом; строки, где чего-то не хватает, показаны своими строками и входят в итог — они не теряются.' if is_ru else 'Бешта кесим ва қарзлар. Ҳар бир кесим умумий якун билан солиштирилади; бирор нарса етишмайдиган қаторлар ўз қатори билан кўрсатилади ва якунга киради — улар йўқолмайди.' }}</div>
+    <div class="vs-hero-sub">{{ 'Пять разрезов. Каждый сверяется с общим итогом; строки, где чего-то не хватает, показаны своими строками и входят в итог — они не теряются. Долги вынесены на отдельную страницу.' if is_ru else 'Бешта кесим. Ҳар бири умумий якун билан солиштирилади; бирор нарса етишмайдиган қаторлар ўз қатори билан кўрсатилади ва якунга киради — улар йўқолмайди. Қарзлар алоҳида саҳифага чиқарилган.' }}</div>
   </div>
   <div class="vs-row-end">
     <a href="{{ url_for('drones.works', **link_args) }}" class="vs-btn">{{ 'К ведомости' if is_ru else 'Ведомостга' }}</a>
     <a href="{{ url_for('drones.works_assignment_hints', month=filters.period or None) }}" class="vs-btn">{{ 'Подсказка по назначениям' if is_ru else 'Бириктиришлар маслаҳати' }}</a>
+    {# DRONE-REPORTS-HUB-001: the debt tables and their «Excel — долги» button
+       moved to /drones/works/debts. The link stays so this page is not a dead
+       end for somebody who arrived here looking for them -- which is exactly
+       what happened on 2026-08-05. #}
+    <a href="{{ url_for('drones.works_debts', **link_args) }}" class="vs-btn">{{ 'Долги' if is_ru else 'Қарзлар' }}</a>
     <a href="{{ url_for('drones.works_reports_xlsx', **link_args) }}" class="vs-btn vs-btn-success">Excel</a>
-    <a href="{{ url_for('drones.works_debt_xlsx', **link_args) }}" class="vs-btn vs-btn-success">{{ 'Excel — долги' if is_ru else 'Excel — қарзлар' }}</a>
   </div>
 </div>
 
@@ -190,73 +194,5 @@
              data.by_payment,
              'Строка «Тип оплаты не указан» — это работы из листов, где разделения на «Справка» и «Нақд» нет вовсе: в сентябрьских и октябрьских ведомостях оно живёт только в сводных листах, которые не импортируются. Такие строки не отброшены и не угаданы — тип проставляется вручную на экране «Работы».' if is_ru else '«Тўлов тури кўрсатилмаган» қатори — «Справка» ва «Нақд»га бўлиниш умуман бўлмаган варақлардаги ишлар: сентябрь ва октябрь ведомостларида у фақат импорт қилинмайдиган жамланма варақларда бор. Бундай қаторлар на ташлаб юборилган, на тахмин қилинган — тури «Ишлар» экранида қўлда қўйилади.') }}
 
-{% macro debt_table(title, first_column, debt) %}
-<div class="vs-table-wrap vs-mb">
-  <div class="vs-card-header">
-    <span class="vs-card-title">{{ title }}</span>
-  </div>
-  {% if not debt.reconciled %}<div class="vs-alert is-danger">{{ mismatch_text }}</div>{% endif %}
-  {% if debt.rows or debt.rest %}
-  <div class="vs-table-scroll">
-  <table class="vs-table">
-    <thead>
-      <tr>
-        <th>{{ first_column }}</th>
-        <th class="right">{{ t_jobs }}</th>
-        <th class="right">{{ t_amount }}</th>
-        <th class="right">{{ t_received }}</th>
-        <th class="right">{{ t_outstanding }}</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for r in debt.rows %}
-      <tr>
-        <td>{{ r.label }}</td>
-        <td class="right">{{ r.jobs }}</td>
-        <td class="right">{{ '%.0f'|format(r.amount) }}</td>
-        <td class="right">{{ '%.0f'|format(r.received) }}</td>
-        <td class="right">{{ '%.0f'|format(r.outstanding) }}</td>
-      </tr>
-      {% endfor %}
-      {% if debt.rest %}
-      <tr class="vs-muted">
-        <td>{{ debt.rest.label }}</td>
-        <td class="right">{{ debt.rest.jobs }}</td>
-        <td class="right">{{ '%.0f'|format(debt.rest.amount) }}</td>
-        <td class="right">{{ '%.0f'|format(debt.rest.received) }}</td>
-        <td class="right">{{ '%.0f'|format(debt.rest.outstanding) }}</td>
-      </tr>
-      {% endif %}
-      <tr style="font-weight:700;">
-        <td>{{ t_total }}</td>
-        <td class="right">{{ debt.total.jobs }}</td>
-        <td class="right">{{ '%.0f'|format(debt.total.amount) }}</td>
-        <td class="right">{{ '%.0f'|format(debt.total.received) }}</td>
-        <td class="right">{{ '%.0f'|format(debt.total.outstanding) }}</td>
-      </tr>
-    </tbody>
-  </table>
-  </div>
-  {% else %}
-  <div class="vs-empty"><div class="vs-empty-title">{{ t_empty }}</div></div>
-  {% endif %}
-</div>
-{% endmacro %}
-
-<div class="vs-alert is-info vs-mb">
-  {{ 'Долг — это «олинмаган пуллар» ведомостей: сумма минус полученное. Движение денег этот модуль не ведёт и не претендует вести: он хранит правду о факте и его цене, деньги живут в другой системе. Строка «Долга нет (остальные)» показана намеренно — без неё столбец не сходился бы с итогом, и таблица читалась бы как «это все заказчики».' if is_ru else 'Қарз — ведомостлардаги «олинмаган пуллар»: сумма минус кирим қилинган. Бу модуль пул ҳаракатини юритмайди ва юритишга даъво ҳам қилмайди: у факт ва унинг нархи ҳақидаги ҳақиқатни сақлайди, пул бошқа тизимда яшайди. «Қарзи йўқ (қолганлари)» қатори атайлаб кўрсатилган — усиз устун якун билан тўғри келмас ва жадвал «бу барча буюртмачилар» деб ўқилар эди.' }}
-</div>
-
-{% if data.operator_due.jobs %}
-<div class="vs-alert is-warning vs-mb">
-  {{ 'Из колонки «Получено» ' if is_ru else '«Кирим қилинган» устунидан ' }}<b>{{ '%.0f'|format(data.operator_due.amount) }}</b>{{ ' на ' if is_ru else ' сўм, ' }}{{ data.operator_due.jobs }}{{ ' работах взято из графы «Оператор топшириши керак» — это деньги, которые оператор ЕЩЁ ДОЛЖЕН сдать, а не сданные. В ведомостях обе графы стоят на одном месте и обе равны «сумма минус расходы», поэтому они и различаются в базе отдельным полем. Итоги ниже их не разделяют: разделение — отдельное решение владельца, а не догадка отчёта.' if is_ru else ' ишда «Оператор топшириши керак» графасидан олинган — бу оператор ҲАЛИ ТОПШИРИШИ КЕРАК бўлган пул, топширилгани эмас. Ведомостларда иккала графа бир жойда туради ва иккаласи ҳам «сумма минус харажат»га тенг, шунинг учун улар базада алоҳида майдон билан фарқланади. Қуйидаги якунлар уларни ажратмайди: ажратиш — эганинг алоҳида қарори, ҳисоботнинг тахмини эмас.' }}
-</div>
-{% endif %}
-
-{{ debt_table('Долги — по заказчикам' if is_ru else 'Қарзлар — буюртмачилар бўйича',
-              'Заказчик' if is_ru else 'Буюртмачи', data.debt_by_customer) }}
-
-{{ debt_table('Долги — по операторам' if is_ru else 'Қарзлар — операторлар бўйича',
-              'Оператор' if is_ru else 'Оператор', data.debt_by_operator) }}
 
 {% endblock %}
