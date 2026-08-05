@@ -12,7 +12,20 @@
 
    Nothing here is recomputed: the route calls the SAME
    _drone_works_report_data() the reports page calls, and the tables are the
-   same _drone_work_debt_cut() output rendered by the same markup. #}
+   same _drone_work_debt_cut() output rendered by the same markup.
+
+   DRONE-DEBTS-DOUBLE-HEADER-001: this template was built by slicing
+   works_reports.html from its «{% set %}» block to its first «{% macro %}»,
+   and that slice took the reports hero, the reports filter form and the
+   first row of summary cards with it. The page shipped two heroes, two
+   forms and two card rows, and the first form carried
+   action="{{ url_for('drones.works_reports') }}" -- pressing «Показать» in
+   the top form left the page. Only the «{% set %}» lines belong to both
+   templates; everything below them is this page's own.
+
+   The cell-by-cell check of DRONE-REPORTS-HUB-001 compared the debt TABLES
+   and passed, correctly. Nothing compared what came with them. The shape
+   assertions in tests/test_drone_works_screens.py are that missing check. #}
 {% set t_jobs = 'Работ' if is_ru else 'Ишлар' %}
 {% set t_area = 'Гектары' if is_ru else 'Гектар' %}
 {% set t_amount = 'Сумма' if is_ru else 'Сумма' %}
@@ -22,91 +35,6 @@
 {% set t_total = 'Итого' if is_ru else 'Жами' %}
 {% set t_empty = 'Нет данных за период' if is_ru else 'Даврда маълумот йўқ' %}
 {% set mismatch_text = 'Сумма таблицы не сходится с общим итогом — расхождение показано, а не скрыто. Сообщите об этом.' if is_ru else 'Жадвал йиғиндиси умумий якунга тўғри келмайди — фарқ яширилмасдан кўрсатилган. Бу ҳақда хабар беринг.' %}
-
-<div class="vs-hero vs-mb">
-  <div>
-    <div class="vs-hero-title">{{ 'Отчёты по работам' if is_ru else 'Ишлар ҳисоботлари' }}</div>
-    <div class="vs-hero-sub">{{ 'Пять разрезов. Каждый сверяется с общим итогом; строки, где чего-то не хватает, показаны своими строками и входят в итог — они не теряются. Долги вынесены на отдельную страницу.' if is_ru else 'Бешта кесим. Ҳар бири умумий якун билан солиштирилади; бирор нарса етишмайдиган қаторлар ўз қатори билан кўрсатилади ва якунга киради — улар йўқолмайди. Қарзлар алоҳида саҳифага чиқарилган.' }}</div>
-  </div>
-  <div class="vs-row-end">
-    <a href="{{ url_for('drones.works', **link_args) }}" class="vs-btn">{{ 'К ведомости' if is_ru else 'Ведомостга' }}</a>
-    <a href="{{ url_for('drones.works_assignment_hints', month=filters.period or None) }}" class="vs-btn">{{ 'Подсказка по назначениям' if is_ru else 'Бириктиришлар маслаҳати' }}</a>
-    {# DRONE-REPORTS-HUB-001: the debt tables and their «Excel — долги» button
-       moved to /drones/works/debts. The link stays so this page is not a dead
-       end for somebody who arrived here looking for them -- which is exactly
-       what happened on 2026-08-05. #}
-    <a href="{{ url_for('drones.works_debts', **link_args) }}" class="vs-btn">{{ 'Долги' if is_ru else 'Қарзлар' }}</a>
-    <a href="{{ url_for('drones.works_reports_xlsx', **link_args) }}" class="vs-btn vs-btn-success">Excel</a>
-  </div>
-</div>
-
-<div class="vs-card vs-mb">
-  <div class="vs-card-body">
-    <form method="get" action="{{ url_for('drones.works_reports') }}" class="vs-form-row">
-      <div class="vs-field" style="min-width:140px;">
-        <label class="vs-label" for="rPeriod">{{ 'Период' if is_ru else 'Давр' }}</label>
-        <select name="period" id="rPeriod" class="vs-select">
-          <option value="">{{ '— все периоды —' if is_ru else '— барча даврлар —' }}</option>
-          {% for p in periods %}<option value="{{ p }}" {% if filters.period == p %}selected{% endif %}>{{ p }}</option>{% endfor %}
-        </select>
-      </div>
-      <div class="vs-field" style="min-width:160px;">
-        <label class="vs-label" for="rPayment">{{ 'Тип оплаты' if is_ru else 'Тўлов тури' }}</label>
-        <select name="payment" id="rPayment" class="vs-select">
-          <option value="">{{ '— все —' if is_ru else '— барчаси —' }}</option>
-          {% for p in payment_types %}<option value="{{ p }}" {% if filters.payment == p %}selected{% endif %}>{{ payment_labels.get(p, p) }}</option>{% endfor %}
-        </select>
-      </div>
-      <div class="vs-field" style="min-width:170px;">
-        <label class="vs-label" for="rSub">{{ 'Подразделение' if is_ru else 'Бўлинма' }}</label>
-        <select name="subdivision" id="rSub" class="vs-select">
-          <option value="">{{ '— все —' if is_ru else '— барчаси —' }}</option>
-          {% for s in subdivisions %}<option value="{{ s }}" {% if filters.subdivision == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
-        </select>
-      </div>
-      <div class="vs-field" style="min-width:190px;">
-        <label class="vs-label" for="rOperator">{{ 'Оператор' if is_ru else 'Оператор' }}</label>
-        <select name="operator_id" id="rOperator" class="vs-select">
-          <option value="">{{ '— все операторы —' if is_ru else '— барча операторлар —' }}</option>
-          <option value="{{ unresolved_key }}" {% if filters.operator_id == unresolved_key %}selected{% endif %}>{{ 'Оператор не определён' if is_ru else 'Оператор аниқланмаган' }}</option>
-          {% for op in operators %}<option value="{{ op.id }}" {% if filters.operator_id == op.id %}selected{% endif %}>{{ op.full_name }}</option>{% endfor %}
-        </select>
-      </div>
-      <div class="vs-field" style="flex:none;">
-        <label class="vs-label">&nbsp;</label>
-        <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
-        <a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.works_reports') }}">{{ 'За всё время' if is_ru else 'Барча вақт' }}</a>
-      </div>
-    </form>
-  </div>
-</div>
-
-<div class="vs-stat-grid vs-mb">
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ t_jobs }}</div>
-    <div class="vs-stat-value">{{ data.totals.jobs }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ t_area }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.area) }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ t_amount }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.amount) }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ t_received }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.received) }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ t_outstanding }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.outstanding) }}</div>
-  </div>
-  <div class="vs-stat">
-    <div class="vs-stat-label">{{ 'Прочие расходы' if is_ru else 'Бошқа харажатлар' }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.other_costs) }}</div>
-  </div>
-</div>
 
 <div class="vs-hero vs-mb">
   <div>

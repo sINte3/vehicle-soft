@@ -1132,6 +1132,32 @@ class DroneReportsHubUzbekTests(unittest.TestCase):
             response = self.client.get(url)
             self.assertEqual(response.status_code, 200, url)
 
+    def test_the_debts_page_hero_is_cyrillic_and_is_its_own(self):
+        """After DRONE-DEBTS-DOUBLE-HEADER-001 there is one hero, and it is
+        «Қарзлар» -- not the reports hero that used to sit above it."""
+        body = self.client.get('/drones/works/debts').data.decode('utf-8')
+        shape = page_shape(body)
+        self.assertEqual(shape['hero_titles'], ['Қарзлар'])
+        self.assertEqual(shape['forms'], ['/drones/works/debts'])
+        self.assertEqual(shape['stat_grids'], 1)
+        title = shape['hero_titles'][0]
+        self.assertEqual(self.latin_runs(title, self.ALLOWED_LATIN), [])
+        # «Қ» must be U+049A, not a Latin K somebody pasted a tail onto.
+        self.assertEqual(ord(title[0]), 0x049A)
+
+    def test_the_uzbek_summary_card_labels_are_cyrillic(self):
+        import re
+        body = self.client.get('/drones/works/debts').data.decode('utf-8')
+        labels = [' '.join(l.split()) for l in re.findall(
+            r'<div class="vs-stat-label">(.*?)</div>', body, re.S)]
+        self.assertEqual(len(labels), 6)
+        for label in labels:
+            self.assertEqual(self.latin_runs(label, self.ALLOWED_LATIN), [],
+                             label)
+        # ... and the control still fires on the same scanner
+        self.assertEqual(self.latin_runs('Кирим qилинган',
+                                         self.ALLOWED_LATIN), ['q'])
+
     def test_the_uzbek_nav_strip_is_cyrillic(self):
         import re
         body = self.client.get('/drones/reports').data.decode('utf-8')
