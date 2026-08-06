@@ -224,20 +224,44 @@ class DroneWorksScreenTests(unittest.TestCase):
         self.assertAlmostEqual(totals['amount'], TOTAL_AMOUNT, places=2)
         self.assertAlmostEqual(totals['received'], TOTAL_RECEIVED, places=2)
 
-    def test_the_unresolved_filters_find_exactly_the_unresolved_rows(self):
-        response = self.client.get('/drones/works?customer_id=-1')
-        self.assertEqual(response.status_code, 200)
+    def _customer_filter_totals(self, query):
         with app.app_context():
             import drones
-            with app.test_request_context('/?customer_id=-1'):
+            with app.test_request_context('/?' + query):
                 filters = drones._drone_works_filters_from_args(
-                    _request_args('customer_id=-1'))
-                totals = drones._drone_works_totals(
+                    _request_args(query))
+                return drones._drone_works_totals(
                     drones._drone_work_conditions(filters))
-        # both the unmatched spelling and the missing one -- the ledger
-        # filter deliberately catches both, the report separates them
-        self.assertEqual(totals['jobs'], 2)
-        self.assertAlmostEqual(totals['area'], 29.0, places=2)
+
+    def test_the_unresolved_filters_find_exactly_the_unresolved_rows(self):
+        """DRONE-UI-CUSTOMER-LABEL-001 NARROWED customer_id=-1.
+
+        It used to catch both kinds of NULL customer and this assertion read
+        2 jobs / 29.0 ha. The two kinds are different facts -- «написание есть,
+        алиаса нет» needs an alias created, «имени в ведомости не было» needs
+        nothing -- so -1 now means only the first and -2 the second. The row
+        counts below are the SAME rows, split; the union assertion at the end
+        is what proves nothing fell out between the two options.
+        """
+        self.assertEqual(
+            self.client.get('/drones/works?customer_id=-1').status_code, 200)
+        self.assertEqual(
+            self.client.get('/drones/works?customer_id=-2').status_code, 200)
+
+        # Fixture row 4: no customer id, but «Хозяйство 4» IS spelled out.
+        unresolved = self._customer_filter_totals('customer_id=-1')
+        self.assertEqual(unresolved['jobs'], 1)
+        self.assertAlmostEqual(unresolved['area'], 5.0, places=2)
+
+        # Fixture row 10: customer_raw is '' -- the holding's own land.
+        unstated = self._customer_filter_totals('customer_id=-2')
+        self.assertEqual(unstated['jobs'], 1)
+        self.assertAlmostEqual(unstated['area'], 24.0, places=2)
+
+        # The pair still covers exactly what the single option used to.
+        self.assertEqual(unresolved['jobs'] + unstated['jobs'], 2)
+        self.assertAlmostEqual(unresolved['area'] + unstated['area'], 29.0,
+                               places=2)
 
     def test_a_manual_job_needs_a_period_when_it_has_no_date(self):
         before = self._count()

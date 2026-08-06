@@ -28,7 +28,10 @@ import re
 import unittest
 from html.parser import HTMLParser
 
+import jinja2
+
 from tests.harness import app, reset_db, create_admin, login
+from models import db, DroneCustomer, DroneWork, User
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CSS_PATH = os.path.join(REPO_ROOT, 'static', 'css', 'design-system.css')
@@ -217,6 +220,287 @@ class TestA2TemplatesCarryTheClasses(unittest.TestCase):
                 if 'vs-stat-grid is-money' in source or 'vs-stat-value is-num' in source:
                     offenders.append(rel)
         self.assertEqual([], offenders)
+
+
+# ---------------------------------------------------------------------------
+# B  DRONE-UI-CUSTOMER-LABEL-001
+# ---------------------------------------------------------------------------
+
+RESOLVED_NAME = 'Миробод АМТ'
+UNRESOLVED_RAW = 'Янги Аср фх'
+
+
+def set_language(user_id, lang):
+    """Both labels are language-dependent; a test that did not pin the
+    language would pass or fail on the default of the day."""
+    with app.app_context():
+        user = db.session.get(User, user_id)
+        user.language = lang
+        db.session.commit()
+
+
+def seed_customer_cases():
+    """The three cases a customer cell can be in, and there are exactly three.
+
+    (a) resolved            drone_customer_id set
+    (b) NOT STATED          NULL id, customer_raw '' -- the holding's own land
+    (c) NOT RESOLVED        NULL id, customer_raw spelled but unmatched
+    """
+    reset_db()
+    ids = {}
+    with app.app_context():
+        customer = DroneCustomer(name=RESOLVED_NAME)
+        db.session.add(customer)
+        db.session.flush()
+        ids['customer_id'] = customer.id
+        for key, cid, raw in (('a', customer.id, RESOLVED_NAME),
+                              ('b', None, ''),
+                              ('c', None, UNRESOLVED_RAW)):
+            row = DroneWork(period_month='2026-04', customer_raw=raw,
+                            drone_customer_id=cid, operator_raw='Ким',
+                            area_ha=1.0, amount=1000.0, payment_type='cash')
+            db.session.add(row)
+            db.session.flush()
+            ids[key] = row.id
+        db.session.commit()
+    return ids
+
+
+CELL_RE = re.compile(r'<td[^>]*>(.*?)</td>', re.S)
+ROW_RE = re.compile(r'<tbody>(.*?)</tbody>', re.S)
+BADGE_RE = re.compile(r'<span class="vs-badge">(.*?)</span>', re.S)
+MUTED_RE = re.compile(r'<div class="vs-muted"[^>]*>(.*?)</div>', re.S)
+
+
+def customer_cells(body):
+    """{customer_raw as rendered: badge text or plain name} per ledger row.
+
+    The customer column is the third <td>; the muted line under it is the
+    verbatim spelling, which is what tells the three fixture rows apart.
+    """
+    tbody = ROW_RE.search(body)
+    if not tbody:
+        return {}
+    cells = {}
+    for row in tbody.group(1).split('<tr>'):
+        tds = CELL_RE.findall(row)
+        if len(tds) < 3:
+            continue
+        customer_td = tds[2]
+        muted = MUTED_RE.search(customer_td)
+        raw = ' '.join(muted.group(1).split()) if muted else ''
+        badge = BADGE_RE.search(customer_td)
+        if badge:
+            rendered = ' '.join(badge.group(1).split())
+        else:
+            without_muted = MUTED_RE.sub('', customer_td)
+            rendered = ' '.join(without_muted.split())
+        cells[raw] = rendered
+    return cells
+
+
+class TestB3LedgerTellsTheTwoCasesApart(unittest.TestCase):
+    """B-3: three works, three distinct cell renderings, in both languages."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ids = seed_customer_cases()
+        cls.admin = create_admin('label_admin')
+
+    def ledger(self, lang):
+        set_language(self.admin, lang)
+        client = app.test_client()
+        login(client, self.admin)
+        response = client.get('/drones/works')
+        self.assertEqual(200, response.status_code)
+        return customer_cells(response.data.decode('utf-8'))
+
+    def test_b3_russian(self):
+        cells = self.ledger('ru')
+        self.assertEqual(RESOLVED_NAME, cells[RESOLVED_NAME])
+        self.assertEqual('Заказчик не указан', cells[''])
+        self.assertEqual('Заказчик не определён', cells[UNRESOLVED_RAW])
+        self.assertEqual(3, len(set(cells.values())),
+                         'the three cases must render three different things')
+
+    def test_b3_uzbek(self):
+        cells = self.ledger('uz')
+        self.assertEqual(RESOLVED_NAME, cells[RESOLVED_NAME])
+        self.assertEqual('Буюртмачи кўрсатилмаган', cells[''])
+        self.assertEqual('Буюртмачи аниқланмаган', cells[UNRESOLVED_RAW])
+        self.assertEqual(3, len(set(cells.values())))
+
+    def test_b3_the_filter_offers_both_options(self):
+        set_language(self.admin, 'ru')
+        client = app.test_client()
+        login(client, self.admin)
+        body = client.get('/drones/works').data.decode('utf-8')
+        select = body.split('id="wCustomer"')[1].split('</select>')[0]
+        self.assertIn('Заказчик не указан', select)
+        self.assertIn('Заказчик не определён', select)
+        self.assertIn('value="-2"', select)
+        self.assertIn('value="-1"', select)
+
+
+# [REASON]: B-4. The pre-commit cell, copied from works.html at c1dbf5a. It is
+# kept here as a string rather than re-checked out, because the point is not
+# that the old file existed -- it is that the B-3 assertion COULD NOT HAVE
+# PASSED against it. A control that cannot fail is not a control.
+PRE_FIX_CELL = (
+    '{% if w.drone_customer %}{{ w.drone_customer.name }}'
+    '{% else %}<span class="vs-badge">{{ t_none_customer }}</span>{% endif %}')
+
+
+class TestB4NegativeControl(unittest.TestCase):
+    """B-4: the same assertion against the pre-fix markup must FAIL on (b)."""
+
+    def render_pre_fix(self, has_customer, lang):
+        t_none_customer = ('Заказчик не определён' if lang == 'ru'
+                           else 'Буюртмачи аниқланмаган')
+        template = jinja2.Environment(autoescape=True).from_string(PRE_FIX_CELL)
+
+        class Work(object):
+            drone_customer = 'x' if has_customer else None
+
+        return template.render(w=Work(), t_none_customer=t_none_customer)
+
+    def test_b4_pre_fix_calls_the_unstated_case_unresolved_ru(self):
+        rendered = self.render_pre_fix(False, 'ru')
+        self.assertIn('Заказчик не определён', rendered)
+        self.assertNotIn(
+            'Заказчик не указан', rendered,
+            'the pre-fix template could not produce the «не указан» label at '
+            'all -- which is why B-3 fails against it, as it must')
+
+    def test_b4_pre_fix_calls_the_unstated_case_unresolved_uz(self):
+        rendered = self.render_pre_fix(False, 'uz')
+        self.assertIn('Буюртмачи аниқланмаган', rendered)
+        self.assertNotIn('Буюртмачи кўрсатилмаган', rendered)
+
+    def test_b4_pre_fix_gave_one_label_to_both_null_cases(self):
+        """The defect stated exactly: blank and non-blank rendered the same."""
+        blank = self.render_pre_fix(False, 'ru')
+        spelled = self.render_pre_fix(False, 'ru')
+        self.assertEqual(blank, spelled)
+
+
+class TestB5FiltersPartitionTheNullCustomers(unittest.TestCase):
+    """B-5: -2 returns only (b), -1 only (c), disjoint, and union is total."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ids = seed_customer_cases()
+        cls.admin = create_admin('filter_admin')
+
+    def ids_for(self, query):
+        import drones
+        from flask import g
+        from urllib.parse import parse_qsl
+        from werkzeug.datastructures import MultiDict
+        with app.test_request_context('/drones/works?' + query):
+            g.lang = 'ru'
+            filters = drones._drone_works_filters_from_args(
+                MultiDict(parse_qsl(query)))
+            conds = drones._drone_work_conditions(filters)
+            return {w.id for w in DroneWork.query.filter(*conds).all()}
+
+    def test_b5_unstated_returns_only_the_blank_one(self):
+        self.assertEqual({self.ids['b']}, self.ids_for('customer_id=-2'))
+
+    def test_b5_unresolved_returns_only_the_spelled_one(self):
+        self.assertEqual({self.ids['c']}, self.ids_for('customer_id=-1'))
+
+    def test_b5_the_two_sets_are_disjoint_and_their_union_is_every_null(self):
+        unstated = self.ids_for('customer_id=-2')
+        unresolved = self.ids_for('customer_id=-1')
+        self.assertEqual(set(), unstated & unresolved)
+        with app.app_context():
+            every_null = {w.id for w in DroneWork.query.filter(
+                DroneWork.drone_customer_id.is_(None)).all()}
+        # [REASON]: asserted explicitly. Two filters that each return
+        # something while together losing a row is the failure worth catching,
+        # and neither of the two assertions above can see it.
+        self.assertEqual(every_null, unstated | unresolved)
+
+    def test_b5_a_resolved_customer_is_in_neither(self):
+        self.assertNotIn(self.ids['a'], self.ids_for('customer_id=-2'))
+        self.assertNotIn(self.ids['a'], self.ids_for('customer_id=-1'))
+
+    def test_b5_whitespace_only_raw_counts_as_not_stated(self):
+        """trim() is in the condition on purpose: a cell holding a space is a
+        cell that said nothing, and the report cut has always read it so."""
+        with app.app_context():
+            row = DroneWork(period_month='2026-04', customer_raw='   ',
+                            drone_customer_id=None, operator_raw='Ким',
+                            area_ha=1.0, payment_type='cash')
+            db.session.add(row)
+            db.session.commit()
+            spaces_id = row.id
+        try:
+            self.assertIn(spaces_id, self.ids_for('customer_id=-2'))
+            self.assertNotIn(spaces_id, self.ids_for('customer_id=-1'))
+        finally:
+            with app.app_context():
+                db.session.delete(db.session.get(DroneWork, spaces_id))
+                db.session.commit()
+
+
+class TestB6LabelsAreOneStringNotTwo(unittest.TestCase):
+    """B-6: the ledger's labels are byte-identical to the report cut's."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ids = seed_customer_cases()
+        cls.admin = create_admin('b6_admin')
+
+    def report_service_labels(self, lang):
+        import drones
+        from flask import g
+        from werkzeug.datastructures import MultiDict
+        with app.test_request_context('/drones/works/reports'):
+            g.lang = lang
+            data = drones._drone_works_report_data(
+                drones._drone_work_conditions(
+                    drones._drone_works_filters_from_args(MultiDict())))
+            return [s['label'] for s in data['by_customer']['services']]
+
+    def ledger_badges(self, lang):
+        set_language(self.admin, lang)
+        client = app.test_client()
+        login(client, self.admin)
+        body = client.get('/drones/works').data.decode('utf-8')
+        return set(customer_cells(body).values()) - {RESOLVED_NAME}
+
+    def test_b6_labels_match_byte_for_byte(self):
+        for lang in ('ru', 'uz'):
+            with self.subTest(lang=lang):
+                report = set(self.report_service_labels(lang))
+                ledger = self.ledger_badges(lang)
+                self.assertEqual(2, len(report),
+                                 'the cut must still carry TWO service rows')
+                # Compared programmatically, not by eye: two spellings of one
+                # idea in one module is its own defect.
+                self.assertEqual(report, ledger)
+
+    def test_b6_one_function_owns_the_wording(self):
+        import drones
+        from flask import g
+        with app.test_request_context('/drones/works'):
+            g.lang = 'ru'
+            labels = drones._drone_customer_service_labels()
+        self.assertEqual(
+            {'Заказчик не указан', 'Заказчик не определён'},
+            set(labels.values()))
+
+    def test_b6_the_two_labels_are_not_the_same_string(self):
+        """The defect was that one string stood for both facts."""
+        import drones
+        from flask import g
+        for lang in ('ru', 'uz'):
+            with app.test_request_context('/drones/works'):
+                g.lang = lang
+                labels = drones._drone_customer_service_labels()
+            self.assertEqual(2, len(set(labels.values())), lang)
 
 
 if __name__ == '__main__':

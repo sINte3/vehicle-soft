@@ -1,7 +1,13 @@
 {% extends g.base_template %}
 {% set is_ru = (lang == 'ru') %}
 {% set can_edit_works = current_user.can_edit %}
-{% set t_none_customer = 'Заказчик не определён' if is_ru else 'Буюртмачи аниқланмаган' %}
+{# DRONE-UI-CUSTOMER-LABEL-001: two labels, not one. A NULL заказчик means
+   «в ведомости имени не было» (собственная земля холдинга, делать нечего) или
+   «написание есть, но алиаса нет» (алиас надо завести). Обе строки приходят из
+   _drone_customer_service_labels() в drones.py — тот же источник, что у
+   служебных строк разреза, поэтому расходиться им негде. #}
+{% set t_customer_unstated = customer_labels[customer_unstated_group] %}
+{% set t_customer_unresolved = customer_labels[customer_unresolved_group] %}
 {% set t_none_operator = 'Оператор не определён' if is_ru else 'Оператор аниқланмаган' %}
 {% set t_no_date = 'Дата не указана' if is_ru else 'Сана кўрсатилмаган' %}
 {% block title %}{{ 'Дроны — работы' if is_ru else 'Дронлар — ишлар' }}{% endblock %}
@@ -46,7 +52,8 @@
         <label class="vs-label" for="wCustomer">{{ 'Заказчик' if is_ru else 'Буюртмачи' }}</label>
         <select name="customer_id" id="wCustomer" class="vs-select">
           <option value="">{{ '— все заказчики —' if is_ru else '— барча буюртмачилар —' }}</option>
-          <option value="{{ unresolved_key }}" {% if filters.customer_id == unresolved_key %}selected{% endif %}>{{ t_none_customer }}</option>
+          <option value="{{ unstated_key }}" {% if filters.customer_id == unstated_key %}selected{% endif %}>{{ t_customer_unstated }}</option>
+          <option value="{{ unresolved_key }}" {% if filters.customer_id == unresolved_key %}selected{% endif %}>{{ t_customer_unresolved }}</option>
           {% for c in customers %}
           <option value="{{ c.id }}" {% if filters.customer_id == c.id %}selected{% endif %}>{{ c.name }}</option>
           {% endfor %}
@@ -292,7 +299,8 @@
         </td>
         <td>
           {% if w.drone_customer %}{{ w.drone_customer.name }}
-          {% else %}<span class="vs-badge">{{ t_none_customer }}</span>{% endif %}
+          {% elif not (w.customer_raw or '').strip() %}<span class="vs-badge">{{ t_customer_unstated }}</span>
+          {% else %}<span class="vs-badge">{{ t_customer_unresolved }}</span>{% endif %}
           <div class="vs-muted" style="font-size:11px;">{{ w.customer_raw }}</div>
         </td>
         <td class="right">{{ '%.2f'|format(w.area_ha or 0)|vs_num }}</td>
