@@ -1987,17 +1987,25 @@ class DroneNumberPlacementTests(unittest.TestCase):
 
     def test_the_filter_is_actually_applied_somewhere_on_every_screen(self):
         """A skipped template would make every assertion above vacuous."""
+        # [REASON]: works_reports.html went from 18 call sites to 16, and no
+        # number lost its grouping. DRONE-REPORT-ZERO-AMOUNT-001 replaced the
+        # three hand-written amount cells -- ordinary row, service row, cut
+        # total -- with one amount_cell() macro that applies the filter once.
+        # This census counts CALL SITES; that the rendered figures are still
+        # grouped is asserted against the rendered page by
+        # DroneDebtsSummaryCardTests.test_the_separator_really_is_the_non_
+        # breaking_space and by the cut-cell assertions in the C tests.
         expected = {
             'customers.html': 2, 'list.html': 3, 'reattach.html': 6,
             'sources.html': 4, 'summary.html': 26, 'works.html': 9,
             'works_assignment_hints.html': 9, 'works_debts.html': 15,
-            'works_reports.html': 18,
+            'works_reports.html': 16,
         }
         actual = {name: self.source(name).count('|vs_num')
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 92)
+        self.assertEqual(sum(actual.values()), 90)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):

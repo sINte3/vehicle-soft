@@ -503,5 +503,258 @@ class TestB6LabelsAreOneStringNotTwo(unittest.TestCase):
             self.assertEqual(2, len(set(labels.values())), lang)
 
 
+# ---------------------------------------------------------------------------
+# C  DRONE-REPORT-ZERO-AMOUNT-001
+# ---------------------------------------------------------------------------
+
+ALL_NULL = 'Бухоро Агрокластер Заминлари МЧЖ'
+MIXED = 'Дўстлик ФХ'
+NONE_NULL = 'Пешку АМТ'
+
+
+def seed_amount_cases():
+    """Three customer groups, one per case the amount column has to tell apart.
+
+    ALL_NULL   2 jobs, neither carries a price  -> «the price was not written»
+    MIXED      2 jobs, one carries a price      -> a sum, and how many did not
+    NONE_NULL  2 jobs, both carry a price       -> just the sum
+    """
+    reset_db()
+    ids = {}
+    with app.app_context():
+        for name, amounts in ((ALL_NULL, (None, None)),
+                              (MIXED, (None, 5000000.0)),
+                              (NONE_NULL, (3000000.0, 4000000.0))):
+            customer = DroneCustomer(name=name)
+            db.session.add(customer)
+            db.session.flush()
+            ids[name] = customer.id
+            for amount in amounts:
+                db.session.add(DroneWork(
+                    period_month='2026-04', customer_raw=name,
+                    drone_customer_id=customer.id, operator_raw='Ким',
+                    area_ha=148.0, amount=amount,
+                    received_amount=None, payment_type='cash'))
+        db.session.commit()
+    return ids
+
+
+def cut_amount_cells(body, title):
+    """{row label: the amount <td> as rendered} for one cut of the report."""
+    after = body.split(title, 1)[1]
+    tbody = after.split('<tbody>')[1].split('</tbody>')[0]
+    cells = {}
+    for row in tbody.split('<tr'):
+        tds = CELL_RE.findall(row)
+        if len(tds) < 4:
+            continue
+        label = ' '.join(re.sub(r'<[^>]+>', ' ', tds[0]).split())
+        cells[label] = tds[3]
+    return cells
+
+
+def text_of(html):
+    return ' '.join(re.sub(r'<[^>]+>', ' ', html).split())
+
+
+class TestC1AmountColumnTellsMissingFromZero(unittest.TestCase):
+    """C-1: three groups, three renderings."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ids = seed_amount_cases()
+        cls.admin = create_admin('amount_admin')
+        set_language(cls.admin, 'ru')
+
+    def setUp(self):
+        self.client = app.test_client()
+        login(self.client, self.admin)
+        body = self.client.get('/drones/works/reports').data.decode('utf-8')
+        self.cells = cut_amount_cells(body, 'По заказчикам')
+
+    def test_c1_all_null_renders_a_dash_and_never_a_zero(self):
+        cell = self.cells[ALL_NULL]
+        self.assertEqual('—', text_of(cell))
+        self.assertNotIn('0', text_of(cell),
+                         'a group with no price must not read as charged zero')
+
+    def test_c1_mixed_renders_the_sum_and_the_count_of_missing(self):
+        cell = self.cells[MIXED]
+        text = text_of(cell)
+        self.assertIn('5\xa0000\xa0000', cell)
+        self.assertIn('сумма не указана', text)
+        # exactly one of the two jobs carried no amount
+        self.assertTrue(text.rstrip().endswith('1'), text)
+
+    def test_c1_none_null_renders_a_plain_sum(self):
+        cell = self.cells[NONE_NULL]
+        self.assertIn('7\xa0000\xa0000', cell)
+        self.assertNotIn('сумма не указана', text_of(cell))
+
+    def test_c1_the_three_cells_are_three_different_renderings(self):
+        rendered = {text_of(self.cells[name])
+                    for name in (ALL_NULL, MIXED, NONE_NULL)}
+        self.assertEqual(3, len(rendered), rendered)
+
+    def test_c1_uzbek_says_it_in_cyrillic(self):
+        set_language(self.admin, 'uz')
+        try:
+            client = app.test_client()
+            login(client, self.admin)
+            body = client.get('/drones/works/reports').data.decode('utf-8')
+            cells = cut_amount_cells(body, 'Буюртмачилар бўйича')
+            self.assertEqual('—', text_of(cells[ALL_NULL]))
+            self.assertIn('сумма кўрсатилмаган', text_of(cells[MIXED]))
+        finally:
+            set_language(self.admin, 'ru')
+
+
+class TestC2NegativeControl(unittest.TestCase):
+    """C-2: the pre-commit expression renders 0 for the all-NULL group."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ids = seed_amount_cases()
+
+    def cut(self):
+        import drones
+        from flask import g
+        from werkzeug.datastructures import MultiDict
+        with app.test_request_context('/drones/works/reports'):
+            g.lang = 'ru'
+            data = drones._drone_works_report_data(
+                drones._drone_work_conditions(
+                    drones._drone_works_filters_from_args(MultiDict())))
+            return data['by_customer']
+
+    def test_c2_the_group_sum_really_is_zero(self):
+        """The data has not changed -- only what the screen says about it."""
+        row = [r for r in self.cut()['rows'] if r['label'] == ALL_NULL][0]
+        self.assertEqual(0.0, row['amount'])
+        self.assertEqual(2, row['jobs'])
+        self.assertEqual(2, row['no_amount'])
+
+    def test_c2_pre_commit_markup_renders_that_zero_as_zero(self):
+        """Rendered through the REAL vs_num filter, so this is what the
+        column actually printed before this commit."""
+        row = [r for r in self.cut()['rows'] if r['label'] == ALL_NULL][0]
+        pre_fix = "{{ '%.0f'|format(cell.amount)|vs_num }}"
+        with app.app_context():
+            rendered = app.jinja_env.from_string(pre_fix).render(cell=row)
+        self.assertEqual('0', rendered.strip())
+
+    def test_c2_and_the_new_markup_does_not(self):
+        row = [r for r in self.cut()['rows'] if r['label'] == ALL_NULL][0]
+        self.assertNotEqual(0, row['no_amount'])
+        self.assertEqual(row['jobs'], row['no_amount'])
+
+
+class TestC3TheCutStillReconciles(unittest.TestCase):
+    """C-3: adding a column must not disturb the totals."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ids = seed_amount_cases()
+
+    def data(self):
+        import drones
+        from flask import g
+        from werkzeug.datastructures import MultiDict
+        with app.test_request_context('/drones/works/reports'):
+            g.lang = 'ru'
+            return drones._drone_works_report_data(
+                drones._drone_work_conditions(
+                    drones._drone_works_filters_from_args(MultiDict())))
+
+    def test_c3_every_cut_reconciles(self):
+        data = self.data()
+        for name in ('by_customer', 'by_operator', 'by_subdivision',
+                     'by_month', 'by_payment'):
+            with self.subTest(cut=name):
+                self.assertTrue(data[name]['reconciled'], name)
+
+    def test_c3_the_amount_total_is_unchanged_by_the_new_column(self):
+        data = self.data()
+        # 5 000 000 + 3 000 000 + 4 000 000; the four NULLs contribute nothing
+        self.assertAlmostEqual(12000000.0, data['totals']['amount'], places=2)
+        self.assertAlmostEqual(12000000.0,
+                               data['by_customer']['total']['amount'], places=2)
+
+    def test_c3_no_amount_sums_over_the_cut(self):
+        """The new column reconciles too, or it is decoration."""
+        data = self.data()
+        cut = data['by_customer']
+        everything = cut['rows'] + cut['services']
+        self.assertEqual(cut['total']['no_amount'],
+                         sum(r['no_amount'] for r in everything))
+        self.assertEqual(3, cut['total']['no_amount'])
+
+    def test_c3_every_cut_agrees_on_how_many_jobs_have_no_amount(self):
+        data = self.data()
+        counts = {name: data[name]['total']['no_amount']
+                  for name in ('by_customer', 'by_operator', 'by_subdivision',
+                               'by_month', 'by_payment')}
+        self.assertEqual({name: 3 for name in counts}, counts)
+
+
+class TestC4ExcelIsUnchanged(unittest.TestCase):
+    """C-4: money in the workbook is still a NUMBER, never a display string."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ids = seed_amount_cases()
+        cls.admin = create_admin('xlsx_admin')
+        set_language(cls.admin, 'ru')
+
+    def workbook(self):
+        from openpyxl import load_workbook
+        import io as _io
+        client = app.test_client()
+        login(client, self.admin)
+        response = client.get('/drones/works/reports.xlsx')
+        self.assertEqual(200, response.status_code)
+        return load_workbook(_io.BytesIO(response.data))
+
+    def test_c4_no_money_cell_is_a_string(self):
+        wb = self.workbook()
+        offenders = []
+        for ws in wb.worksheets:
+            for row in ws.iter_rows():
+                for cell in row:
+                    if not isinstance(cell.value, str):
+                        continue
+                    # A money cell turned into text would carry the grouping
+                    # separator or the em dash the screen uses.
+                    if '\xa0' in cell.value or cell.value.strip() == '—':
+                        offenders.append((ws.title, cell.coordinate,
+                                          cell.value))
+        self.assertEqual([], offenders)
+
+    def test_c4_the_amount_column_holds_numbers(self):
+        wb = self.workbook()
+        ws = wb['По заказчикам']
+        found = {}
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0] in (ALL_NULL, MIXED, NONE_NULL):
+                found[row[0]] = row[3]
+        self.assertEqual(3, len(found))
+        for name, value in found.items():
+            self.assertIsInstance(value, (int, float), name)
+        # The workbook still reports the SUM, zero included -- the screen's
+        # em dash is a display decision and does not travel into accounting.
+        self.assertEqual(0, found[ALL_NULL])
+        self.assertEqual(5000000, found[MIXED])
+        self.assertEqual(7000000, found[NONE_NULL])
+
+    def test_c4_the_workbook_carries_no_no_amount_column(self):
+        """The task changes the screen, not the agreed sheet layout."""
+        wb = self.workbook()
+        ws = wb['По заказчикам']
+        header = [c for c in next(ws.iter_rows(max_row=1, values_only=True))]
+        self.assertEqual(
+            ['Заказчик', 'Работ', 'Гектары', 'Сумма', 'Получено',
+             'Не получено', 'Доля, %'], header)
+
+
 if __name__ == '__main__':
     unittest.main()

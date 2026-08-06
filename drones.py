@@ -3536,18 +3536,27 @@ def _drone_work_cut(conds, group_expr, total_row, service_labels,
         func.coalesce(func.sum(DroneWork.area_ha), 0.0),
         func.coalesce(func.sum(DroneWork.amount), 0.0),
         func.coalesce(func.sum(DroneWork.received_amount), 0.0),
+        # [REASON]: DRONE-REPORT-ZERO-AMOUNT-001. SUM over a group whose every
+        # amount is NULL is 0.0 after the coalesce above, and the cut then
+        # reports «this farm was charged nothing» -- a different and false
+        # statement from «the price was never written down». 15 jobs on
+        # production carry no price and no amount. This counts them so the
+        # screen can tell an empty column from a zero one; the sum itself is
+        # NOT changed, because the totals reconcile against it.
+        func.sum(case((DroneWork.amount.is_(None), 1), else_=0)),
     ).filter(*conds).group_by(group_expr).all()
 
     service_map = dict(service_labels)
     rows = []
     found = {}
-    for key, jobs, area, amount, received in groups:
+    for key, jobs, area, amount, received, no_amount in groups:
         cell = {
             'key': key,
             'jobs': jobs,
             'area': float(area or 0.0),
             'amount': float(amount or 0.0),
             'received': float(received or 0.0),
+            'no_amount': int(no_amount or 0),
         }
         cell['outstanding'] = cell['amount'] - cell['received']
         cell['share'] = _drone_share(cell['area'], total_row['area'])
@@ -3570,6 +3579,7 @@ def _drone_work_cut(conds, group_expr, total_row, service_labels,
         'area': sum(r['area'] for r in everything),
         'amount': sum(r['amount'] for r in everything),
         'received': sum(r['received'] for r in everything),
+        'no_amount': sum(r['no_amount'] for r in everything),
     }
     total['outstanding'] = total['amount'] - total['received']
     reconciled = (total['jobs'] == total_row['jobs']
