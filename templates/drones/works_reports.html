@@ -72,32 +72,49 @@
   </div>
 </div>
 
-<div class="vs-stat-grid vs-mb">
+<div class="vs-stat-grid is-money vs-mb">
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_jobs }}</div>
-    <div class="vs-stat-value">{{ data.totals.jobs }}</div>
+    <div class="vs-stat-value is-num">{{ data.totals.jobs }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_area }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.area)|vs_num }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(data.totals.area)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_amount }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.amount)|vs_num }}</div>
+    <div class="vs-stat-value is-num">{{ '%.0f'|format(data.totals.amount)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_received }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.received)|vs_num }}</div>
+    <div class="vs-stat-value is-num">{{ '%.0f'|format(data.totals.received)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_outstanding }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.outstanding)|vs_num }}</div>
+    <div class="vs-stat-value is-num">{{ '%.0f'|format(data.totals.outstanding)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Прочие расходы' if is_ru else 'Бошқа харажатлар' }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.other_costs)|vs_num }}</div>
+    <div class="vs-stat-value is-num">{{ '%.0f'|format(data.totals.other_costs)|vs_num }}</div>
   </div>
 </div>
+
+{# DRONE-REPORT-ZERO-AMOUNT-001: «цена не записана» и «начислено ноль» — разные
+   утверждения, и группа, где ни у одной работы нет суммы, раньше читалась как
+   второе. Ведомость это уже различает: works.html печатает «—», когда
+   w.amount is none. Здесь то же самое, но по группе, а не по строке.
+   no_amount приходит из _drone_work_cut() и есть у каждой строки, служебной
+   строки и итога — считать его в шаблоне нечем. #}
+{% macro amount_cell(cell) %}
+{%- if cell.jobs and cell.no_amount == cell.jobs -%}
+—
+{%- else -%}
+{{ '%.0f'|format(cell.amount)|vs_num }}
+{%- if cell.no_amount -%}
+<div class="vs-muted" style="font-size:11px;">{{ 'сумма не указана' if is_ru else 'сумма кўрсатилмаган' }}: {{ cell.no_amount }}</div>
+{%- endif -%}
+{%- endif -%}
+{% endmacro %}
 
 {% macro cut_table(title, first_column, cut, extra_note='') %}
 <div class="vs-table-wrap vs-mb">
@@ -125,7 +142,7 @@
         <td>{{ r.label }}</td>
         <td class="right">{{ r.jobs }}</td>
         <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(r.amount)|vs_num }}</td>
+        <td class="right">{{ amount_cell(r) }}</td>
         <td class="right">{{ '%.0f'|format(r.received)|vs_num }}</td>
         <td class="right">{{ '%.0f'|format(r.outstanding)|vs_num }}</td>
         <td class="right">{{ '%.1f'|format(r.share) }}</td>
@@ -144,7 +161,7 @@
         </td>
         <td class="right">{{ service.jobs }}</td>
         <td class="right">{{ '%.2f'|format(service.area)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(service.amount)|vs_num }}</td>
+        <td class="right">{{ amount_cell(service) }}</td>
         <td class="right">{{ '%.0f'|format(service.received)|vs_num }}</td>
         <td class="right">{{ '%.0f'|format(service.outstanding)|vs_num }}</td>
         <td class="right">{{ '%.1f'|format(service.share) }}</td>
@@ -154,7 +171,7 @@
         <td>{{ t_total }}</td>
         <td class="right">{{ cut.total.jobs }}</td>
         <td class="right">{{ '%.2f'|format(cut.total.area)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(cut.total.amount)|vs_num }}</td>
+        <td class="right">{{ amount_cell(cut.total) }}</td>
         <td class="right">{{ '%.0f'|format(cut.total.received)|vs_num }}</td>
         <td class="right">{{ '%.0f'|format(cut.total.outstanding)|vs_num }}</td>
         <td class="right">100.0</td>

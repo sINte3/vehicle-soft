@@ -2736,11 +2736,51 @@ DRONE_WORKS_XLSX_CAP = 20000
 # this module and reusing it would make the two indistinguishable.
 DRONE_WORK_UNRESOLVED = -1
 
+# [REASON]: DRONE-UI-CUSTOMER-LABEL-001. A second sentinel, because a NULL
+# drone_customer_id means two different things and one filter option cannot
+# ask for both. -1 NARROWS here to «a spelling exists and matched no alias»,
+# which is the case somebody has to act on by adding an alias; -2 is «the
+# sheet carried no farm name at all», which is how the holding's own land is
+# written down and needs nothing done. The report cut has always split them --
+# see _drone_works_report_data() -- and the ledger filter now agrees with it.
+DRONE_WORK_CUSTOMER_UNSTATED_FILTER = -2
+
 # Group keys of the two customer service rows. Strings, because the group
 # expression has to produce one column type and the ordinary keys are customer
 # ids rendered with printf.
 DRONE_WORK_CUSTOMER_UNSTATED = 'unstated'
 DRONE_WORK_CUSTOMER_UNRESOLVED = 'unresolved'
+
+
+def _drone_customer_service_labels():
+    """The two labels a NULL drone_customer_id can carry -- and they are two.
+
+    [REASON]: DRONE-UI-CUSTOMER-LABEL-001. These strings existed inline in
+    _drone_works_report_data() and the ledger cell carried a THIRD spelling of
+    its own, «Заказчик не определён», applied to both cases at once. Every job
+    with no customer was therefore reported as an alias somebody must add, and
+    on the production data all 8 such jobs were the other kind -- a person
+    reading the ledger went looking for eight aliases that must not be created.
+    One function owns the wording now, so the cell, the filter option and the
+    report cut cannot drift apart again.
+    """
+    return {
+        DRONE_WORK_CUSTOMER_UNSTATED: _drone_t('Буюртмачи кўрсатилмаган',
+                                               'Заказчик не указан'),
+        DRONE_WORK_CUSTOMER_UNRESOLVED: _drone_t('Буюртмачи аниқланмаган',
+                                                 'Заказчик не определён'),
+    }
+
+
+def _drone_work_customer_unstated_cond():
+    """«The sheet carried no farm name at all.»
+
+    [REASON]: byte-for-byte the same expression the customer_group CASE uses
+    in _drone_works_report_data(). If the two ever diverge, a job could be
+    counted in one service row by the report and returned by the other filter
+    on the ledger, and nothing would report the disagreement.
+    """
+    return func.trim(func.coalesce(DroneWork.customer_raw, '')) == ''
 
 
 def _drone_payment_labels():
@@ -2844,8 +2884,17 @@ def _drone_work_conditions(filters):
         conds.append(DroneWork.drone_operator_id.is_(None))
     elif filters['operator_id']:
         conds.append(DroneWork.drone_operator_id == filters['operator_id'])
+    # [REASON]: DRONE-UI-CUSTOMER-LABEL-001. -1 NARROWED here: it used to mean
+    # every NULL customer and now means only the ones with a spelling that
+    # matched no alias. On the production data of 2026-08-06 that turns 8 rows
+    # into 0, and the 8 move to -2. That is the fix, not a regression: the 8
+    # were never aliases waiting to be created.
     if filters['customer_id'] == DRONE_WORK_UNRESOLVED:
-        conds.append(DroneWork.drone_customer_id.is_(None))
+        conds.append(and_(DroneWork.drone_customer_id.is_(None),
+                          ~_drone_work_customer_unstated_cond()))
+    elif filters['customer_id'] == DRONE_WORK_CUSTOMER_UNSTATED_FILTER:
+        conds.append(and_(DroneWork.drone_customer_id.is_(None),
+                          _drone_work_customer_unstated_cond()))
     elif filters['customer_id']:
         conds.append(DroneWork.drone_customer_id == filters['customer_id'])
     if filters['payment']:
@@ -2975,6 +3024,13 @@ def works():
         pages=pages,
         total=total,
         unresolved_key=DRONE_WORK_UNRESOLVED,
+        # DRONE-UI-CUSTOMER-LABEL-001: the ledger renders the two customer
+        # labels from the same function the report cut uses, so that the two
+        # screens cannot disagree about what a NULL customer means.
+        unstated_key=DRONE_WORK_CUSTOMER_UNSTATED_FILTER,
+        customer_labels=_drone_customer_service_labels(),
+        customer_unstated_group=DRONE_WORK_CUSTOMER_UNSTATED,
+        customer_unresolved_group=DRONE_WORK_CUSTOMER_UNRESOLVED,
         price_suggestions=DRONE_WORK_PRICE_SUGGESTIONS,
         payment_types=DRONE_WORK_PAYMENT_TYPES,
         **context)
@@ -3480,18 +3536,27 @@ def _drone_work_cut(conds, group_expr, total_row, service_labels,
         func.coalesce(func.sum(DroneWork.area_ha), 0.0),
         func.coalesce(func.sum(DroneWork.amount), 0.0),
         func.coalesce(func.sum(DroneWork.received_amount), 0.0),
+        # [REASON]: DRONE-REPORT-ZERO-AMOUNT-001. SUM over a group whose every
+        # amount is NULL is 0.0 after the coalesce above, and the cut then
+        # reports «this farm was charged nothing» -- a different and false
+        # statement from «the price was never written down». 15 jobs on
+        # production carry no price and no amount. This counts them so the
+        # screen can tell an empty column from a zero one; the sum itself is
+        # NOT changed, because the totals reconcile against it.
+        func.sum(case((DroneWork.amount.is_(None), 1), else_=0)),
     ).filter(*conds).group_by(group_expr).all()
 
     service_map = dict(service_labels)
     rows = []
     found = {}
-    for key, jobs, area, amount, received in groups:
+    for key, jobs, area, amount, received, no_amount in groups:
         cell = {
             'key': key,
             'jobs': jobs,
             'area': float(area or 0.0),
             'amount': float(amount or 0.0),
             'received': float(received or 0.0),
+            'no_amount': int(no_amount or 0),
         }
         cell['outstanding'] = cell['amount'] - cell['received']
         cell['share'] = _drone_share(cell['area'], total_row['area'])
@@ -3514,6 +3579,7 @@ def _drone_work_cut(conds, group_expr, total_row, service_labels,
         'area': sum(r['area'] for r in everything),
         'amount': sum(r['amount'] for r in everything),
         'received': sum(r['received'] for r in everything),
+        'no_amount': sum(r['no_amount'] for r in everything),
     }
     total['outstanding'] = total['amount'] - total['received']
     reconciled = (total['jobs'] == total_row['jobs']
@@ -3567,15 +3633,18 @@ def _drone_works_report_data(conds):
     customer_group = case(
         (DroneWork.drone_customer_id.isnot(None),
          func.printf('%d', DroneWork.drone_customer_id)),
-        (func.trim(func.coalesce(DroneWork.customer_raw, '')) == '',
-         DRONE_WORK_CUSTOMER_UNSTATED),
+        (_drone_work_customer_unstated_cond(), DRONE_WORK_CUSTOMER_UNSTATED),
         else_=DRONE_WORK_CUSTOMER_UNRESOLVED)
+    # The wording now comes from _drone_customer_service_labels(), which the
+    # ledger cell and the ledger filter read too -- see DRONE-UI-CUSTOMER-
+    # LABEL-001. The strings are unchanged; only their single owner is new.
+    service_labels = _drone_customer_service_labels()
     by_customer = _drone_work_cut(
         conds, customer_group, totals,
         ((DRONE_WORK_CUSTOMER_UNSTATED,
-          _drone_t('Буюртмачи кўрсатилмаган', 'Заказчик не указан')),
+          service_labels[DRONE_WORK_CUSTOMER_UNSTATED]),
          (DRONE_WORK_CUSTOMER_UNRESOLVED,
-          _drone_t('Буюртмачи аниқланмаган', 'Заказчик не определён'))),
+          service_labels[DRONE_WORK_CUSTOMER_UNRESOLVED])),
         label_map={('%d' % c.id): c.name for c in DroneCustomer.query.all()})
     by_operator = _drone_work_cut(
         conds, DroneWork.drone_operator_id, totals,

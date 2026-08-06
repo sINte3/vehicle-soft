@@ -224,20 +224,44 @@ class DroneWorksScreenTests(unittest.TestCase):
         self.assertAlmostEqual(totals['amount'], TOTAL_AMOUNT, places=2)
         self.assertAlmostEqual(totals['received'], TOTAL_RECEIVED, places=2)
 
-    def test_the_unresolved_filters_find_exactly_the_unresolved_rows(self):
-        response = self.client.get('/drones/works?customer_id=-1')
-        self.assertEqual(response.status_code, 200)
+    def _customer_filter_totals(self, query):
         with app.app_context():
             import drones
-            with app.test_request_context('/?customer_id=-1'):
+            with app.test_request_context('/?' + query):
                 filters = drones._drone_works_filters_from_args(
-                    _request_args('customer_id=-1'))
-                totals = drones._drone_works_totals(
+                    _request_args(query))
+                return drones._drone_works_totals(
                     drones._drone_work_conditions(filters))
-        # both the unmatched spelling and the missing one -- the ledger
-        # filter deliberately catches both, the report separates them
-        self.assertEqual(totals['jobs'], 2)
-        self.assertAlmostEqual(totals['area'], 29.0, places=2)
+
+    def test_the_unresolved_filters_find_exactly_the_unresolved_rows(self):
+        """DRONE-UI-CUSTOMER-LABEL-001 NARROWED customer_id=-1.
+
+        It used to catch both kinds of NULL customer and this assertion read
+        2 jobs / 29.0 ha. The two kinds are different facts -- «написание есть,
+        алиаса нет» needs an alias created, «имени в ведомости не было» needs
+        nothing -- so -1 now means only the first and -2 the second. The row
+        counts below are the SAME rows, split; the union assertion at the end
+        is what proves nothing fell out between the two options.
+        """
+        self.assertEqual(
+            self.client.get('/drones/works?customer_id=-1').status_code, 200)
+        self.assertEqual(
+            self.client.get('/drones/works?customer_id=-2').status_code, 200)
+
+        # Fixture row 4: no customer id, but «Хозяйство 4» IS spelled out.
+        unresolved = self._customer_filter_totals('customer_id=-1')
+        self.assertEqual(unresolved['jobs'], 1)
+        self.assertAlmostEqual(unresolved['area'], 5.0, places=2)
+
+        # Fixture row 10: customer_raw is '' -- the holding's own land.
+        unstated = self._customer_filter_totals('customer_id=-2')
+        self.assertEqual(unstated['jobs'], 1)
+        self.assertAlmostEqual(unstated['area'], 24.0, places=2)
+
+        # The pair still covers exactly what the single option used to.
+        self.assertEqual(unresolved['jobs'] + unstated['jobs'], 2)
+        self.assertAlmostEqual(unresolved['area'] + unstated['area'], 29.0,
+                               places=2)
 
     def test_a_manual_job_needs_a_period_when_it_has_no_date(self):
         before = self._count()
@@ -1360,8 +1384,13 @@ class DroneDebtsSummaryCardTests(unittest.TestCase):
                     if '<div class="vs-help' in grid else len(grid)]
         labels = re.findall(r'<div class="vs-stat-label">(.*?)</div>', grid,
                             re.S)
-        values = re.findall(r'<div class="vs-stat-value">(.*?)</div>', grid,
-                            re.S)
+        # [REASON]: DRONE-UI-CARD-WRAP-001 added `is-num` beside the class, so
+        # the pattern admits FURTHER classes but still anchors on this one --
+        # `vs-stat-value` followed by the quote or by a space and more classes.
+        # Loosening it to a bare substring would let it match vs-stat-value-*
+        # and read numbers this reader was never meant to see.
+        values = re.findall(r'<div class="vs-stat-value(?: [^"]*)?">(.*?)</div>',
+                            grid, re.S)
         return list(zip([' '.join(l.split()) for l in labels],
                         [' '.join(v.split()) for v in values]))
 
@@ -1374,8 +1403,9 @@ class DroneDebtsSummaryCardTests(unittest.TestCase):
         """
         import re
         body = self.client.get(url).data.decode('utf-8')
-        return re.findall(r'<div class="vs-stat-value">(.*?)</div>', body,
-                          re.S)
+        # Same anchoring as cards(), and for the same reason -- see there.
+        return re.findall(r'<div class="vs-stat-value(?: [^"]*)?">(.*?)</div>',
+                          body, re.S)
 
     def test_the_debts_page_shows_the_six_figures(self):
         # Grouped since UI-NUMBER-FORMAT-001; cards() has already turned the
@@ -1957,17 +1987,25 @@ class DroneNumberPlacementTests(unittest.TestCase):
 
     def test_the_filter_is_actually_applied_somewhere_on_every_screen(self):
         """A skipped template would make every assertion above vacuous."""
+        # [REASON]: works_reports.html went from 18 call sites to 16, and no
+        # number lost its grouping. DRONE-REPORT-ZERO-AMOUNT-001 replaced the
+        # three hand-written amount cells -- ordinary row, service row, cut
+        # total -- with one amount_cell() macro that applies the filter once.
+        # This census counts CALL SITES; that the rendered figures are still
+        # grouped is asserted against the rendered page by
+        # DroneDebtsSummaryCardTests.test_the_separator_really_is_the_non_
+        # breaking_space and by the cut-cell assertions in the C tests.
         expected = {
             'customers.html': 2, 'list.html': 3, 'reattach.html': 6,
             'sources.html': 4, 'summary.html': 26, 'works.html': 9,
             'works_assignment_hints.html': 9, 'works_debts.html': 15,
-            'works_reports.html': 18,
+            'works_reports.html': 16,
         }
         actual = {name: self.source(name).count('|vs_num')
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 92)
+        self.assertEqual(sum(actual.values()), 90)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):
