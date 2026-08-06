@@ -1360,8 +1360,13 @@ class DroneDebtsSummaryCardTests(unittest.TestCase):
                     if '<div class="vs-help' in grid else len(grid)]
         labels = re.findall(r'<div class="vs-stat-label">(.*?)</div>', grid,
                             re.S)
-        values = re.findall(r'<div class="vs-stat-value">(.*?)</div>', grid,
-                            re.S)
+        # [REASON]: DRONE-UI-CARD-WRAP-001 added `is-num` beside the class, so
+        # the pattern admits FURTHER classes but still anchors on this one --
+        # `vs-stat-value` followed by the quote or by a space and more classes.
+        # Loosening it to a bare substring would let it match vs-stat-value-*
+        # and read numbers this reader was never meant to see.
+        values = re.findall(r'<div class="vs-stat-value(?: [^"]*)?">(.*?)</div>',
+                            grid, re.S)
         return list(zip([' '.join(l.split()) for l in labels],
                         [' '.join(v.split()) for v in values]))
 
@@ -1374,8 +1379,9 @@ class DroneDebtsSummaryCardTests(unittest.TestCase):
         """
         import re
         body = self.client.get(url).data.decode('utf-8')
-        return re.findall(r'<div class="vs-stat-value">(.*?)</div>', body,
-                          re.S)
+        # Same anchoring as cards(), and for the same reason -- see there.
+        return re.findall(r'<div class="vs-stat-value(?: [^"]*)?">(.*?)</div>',
+                          body, re.S)
 
     def test_the_debts_page_shows_the_six_figures(self):
         # Grouped since UI-NUMBER-FORMAT-001; cards() has already turned the

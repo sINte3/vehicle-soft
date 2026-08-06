@@ -61,30 +61,30 @@
   </div>
 </div>
 
-<div class="vs-stat-grid vs-mb">
+<div class="vs-stat-grid is-money vs-mb">
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Вылетов' if is_ru else 'Парвозлар' }}</div>
-    <div class="vs-stat-value">{{ data.totals.flights }}</div>
+    <div class="vs-stat-value is-num">{{ data.totals.flights }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Гектаров' if is_ru else 'Гектар' }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.area_ha)|vs_num }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(data.totals.area_ha)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Часов в воздухе' if is_ru else 'Ҳавода соат' }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.hours)|vs_num }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(data.totals.hours)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Литров раствора' if is_ru else 'Литр эритма' }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.spray_liters)|vs_num }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(data.totals.spray_liters)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Кг посева' if is_ru else 'Кг уруғ' }}</div>
-    <div class="vs-stat-value">{{ '%.3f'|format(data.totals.sow_kg)|vs_num }}</div>
+    <div class="vs-stat-value is-num">{{ '%.3f'|format(data.totals.sow_kg)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Вылетов с нулевой площадью' if is_ru else 'Ноль майдонли парвозлар' }}</div>
-    <div class="vs-stat-value">{{ data.totals.zero_area }}</div>
+    <div class="vs-stat-value is-num">{{ data.totals.zero_area }}</div>
   </div>
 </div>
 

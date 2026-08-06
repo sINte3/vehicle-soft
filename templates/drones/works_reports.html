@@ -72,30 +72,30 @@
   </div>
 </div>
 
-<div class="vs-stat-grid vs-mb">
+<div class="vs-stat-grid is-money vs-mb">
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_jobs }}</div>
-    <div class="vs-stat-value">{{ data.totals.jobs }}</div>
+    <div class="vs-stat-value is-num">{{ data.totals.jobs }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_area }}</div>
-    <div class="vs-stat-value">{{ '%.2f'|format(data.totals.area)|vs_num }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(data.totals.area)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_amount }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.amount)|vs_num }}</div>
+    <div class="vs-stat-value is-num">{{ '%.0f'|format(data.totals.amount)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_received }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.received)|vs_num }}</div>
+    <div class="vs-stat-value is-num">{{ '%.0f'|format(data.totals.received)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ t_outstanding }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.outstanding)|vs_num }}</div>
+    <div class="vs-stat-value is-num">{{ '%.0f'|format(data.totals.outstanding)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Прочие расходы' if is_ru else 'Бошқа харажатлар' }}</div>
-    <div class="vs-stat-value">{{ '%.0f'|format(data.totals.other_costs)|vs_num }}</div>
+    <div class="vs-stat-value is-num">{{ '%.0f'|format(data.totals.other_costs)|vs_num }}</div>
   </div>
 </div>
 

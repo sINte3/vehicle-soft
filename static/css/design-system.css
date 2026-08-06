@@ -557,6 +557,26 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-stat-value.is-warning { color: var(--vs-warning); }
 .vs-stat-value.is-danger  { color: var(--vs-danger); }
 
+/* [REASON]: DRONE-UI-CARD-WRAP-001 -- a money figure must never break between
+   two digits. `overflow-wrap: anywhere` above is deliberate and stays: it is
+   what keeps a long uppercase RU/UZ label from widening the whole document.
+   It is wrong only for numbers, because it breaks INSIDE a group of three and
+   turns 2 657 997 449 into «2 657 997 44 / 9» -- a different number to anyone
+   reading it. So numbers opt out by class, and the grid that holds them opts
+   into wider cells, so that opting out cannot make the number overflow its
+   card instead. Additive by construction: the two selectors below are (0,2,0)
+   and (0,2,0), so they outrank the (0,1,0) `.vs-stat-grid` rules in the two
+   @media blocks at every viewport without either block being edited.
+   170px was the first candidate and it MEASURED at 2px of slack: at 1440 the
+   text box came to 149px and the number to 147px. Two pixels is a coincidence,
+   not a fit -- the server renders in a different font stack from the machine
+   this was measured on. 200px was chosen by measurement at 1920/1600/1440/
+   1280/1100/380: the narrowest text box is then 176px against the same 147px
+   number, and auto-fit lets the six cards take a second row rather than
+   squeeze. See tools/measure_drone_card_wrap.py. */
+.vs-stat-grid.is-money { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.vs-stat-value.is-num  { overflow-wrap: normal; word-break: keep-all; }
+
 /* Inline alert */
 .vs-alert {
   display: flex; align-items: center; gap: 8px;
