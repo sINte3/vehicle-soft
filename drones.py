@@ -3853,6 +3853,19 @@ DRONE_REPORT_TILES = (
                        'ёнида',
     },
     {
+        # DRONE-ANALYTICS-001/2. Reuses is-warning, the accent of «Долги»:
+        # this is that report read by age, and a shared colour says so.
+        'key': 'debts-aging',
+        'endpoint': 'drones.works_debts_aging',
+        'accent': 'is-warning',
+        'title_ru': 'Возраст долга',
+        'title_uz': 'Қарз ёши',
+        'subtitle_ru': 'Сколько денег и как давно не получено, '
+                       'и кому звонить первым',
+        'subtitle_uz': 'Қанча пул ва қанча вақтдан бери олинмаган, '
+                       'ва биринчи кимга қўнғироқ қилиш керак',
+    },
+    {
         # DRONE-ANALYTICS-001/1. The only tile on a NEW accent: five accents
         # existed and all five were already in use, so a sixth report either
         # repeats a colour or brings one rule. --vs-purple / --vs-purple-bg
@@ -4774,3 +4787,255 @@ def spray_usage_xlsx():
                                     8: '0.00', 9: '0.00'},
                    bold_rows=(ws.max_row,))
     return _drone_xlsx_response(wb, 'drone_spray_usage', filters)
+
+
+# ─── DRONE-ANALYTICS-001/2: debt aging ───────────────────────────────────────
+
+# [REASON]: the boundaries are INCLUSIVE UPPER -- 0..30, 31..60, and so on --
+# so a debt is in exactly one bucket and the seam is where a reader expects it:
+# «thirty days» belongs to the first bucket, «thirty-one» to the second. The
+# undated bucket is not in this tuple; it is appended last by name, because it
+# is not an age at all and sorting it among ages would imply one.
+DRONE_DEBT_AGE_BUCKETS = (
+    (0, 30),
+    (31, 60),
+    (61, 90),
+    (91, 180),
+    (181, 365),
+    (366, None),
+)
+
+
+def _drone_debt_bucket_labels():
+    """Ordered [(key, label)] for the age buckets, undated last."""
+    labels = []
+    for low, high in DRONE_DEBT_AGE_BUCKETS:
+        key = '%d-%s' % (low, high if high is not None else 'inf')
+        if high is None:
+            labels.append((key, _drone_t('365 кундан ортиқ',
+                                         'более 365 дней')))
+        else:
+            labels.append((key, _drone_t('%d-%d кун' % (low, high),
+                                         '%d-%d дней' % (low, high))))
+    labels.append(('undated', _drone_t('Муддати аниқланмаган',
+                                       'Срок не определён')))
+    return labels
+
+
+def _drone_debt_bucket_for(age_days):
+    """The bucket key for an age in days, or 'undated' when there is no date."""
+    if age_days is None:
+        return 'undated'
+    for low, high in DRONE_DEBT_AGE_BUCKETS:
+        if age_days >= low and (high is None or age_days <= high):
+            return '%d-%s' % (low, high if high is not None else 'inf')
+    # Only reachable for a NEGATIVE age -- a job dated in the future, which the
+    # ledger permits. It is a debt that exists today, so it belongs in the
+    # youngest bucket rather than in a seventh one nobody asked for.
+    return '%d-%d' % DRONE_DEBT_AGE_BUCKETS[0]
+
+
+def _drone_works_debt_aging_data(conds):
+    """Outstanding money by age, plus the per-customer collection worklist.
+
+    [REASON]: 753 439 010 so'm outstanding and no age attached to any of it. A
+    thirty-day debt and a three-hundred-day debt are different objects and the
+    debts page, which answers only «who», cannot tell them apart.
+
+    [REASON]: AGE IS MEASURED FROM work_date_from AND FROM NOTHING ELSE. A job
+    with no date goes to «Срок не определён» and is NOT given a date derived
+    from period_month. Synthesising one would make every bucket tidy and one
+    of them wrong: period_month is the month of the SOURCE BOOK, and one book
+    is filed as 2026-03 while its rows run 17.03--25.04. Inventing a date to
+    fill a bucket is the exact class of error this module documents against
+    itself -- see the same refusal in _drone_work_month_expr().
+
+    [REASON]: THREE KINDS OF ROW, and the order of the tests is load-bearing,
+    exactly as in _drone_work_debt_cut(). A job whose amount was never
+    recorded has amount 0, received 0 and therefore outstanding 0, so testing
+    «settled» first swallows it into «no debt» and the page states the customer
+    owes nothing -- a wrong SENTENCE, not a wrong number. Unknown is tested
+    before settled here too, and the wording is taken from the debts page so
+    the two screens cannot disagree.
+    """
+    today = _drone_today_local()
+    rows = (db.session.query(
+        DroneWork.id,
+        DroneWork.drone_customer_id,
+        DroneWork.customer_raw,
+        DroneWork.work_date_from,
+        DroneWork.amount,
+        DroneWork.received_amount,
+        DroneWork.area_ha,
+    ).filter(*conds).all())
+
+    customer_names = {c.id: c.name for c in DroneCustomer.query.all()}
+    label_unstated = _drone_t('Буюртмачи кўрсатилмаган', 'Заказчик не указан')
+
+    bucket_labels = _drone_debt_bucket_labels()
+    buckets = {key: {'key': key, 'label': label, 'jobs': 0, 'area': 0.0,
+                     'amount': 0.0, 'received': 0.0, 'outstanding': 0.0,
+                     'no_amount': 0, 'oldest': None}
+               for key, label in bucket_labels}
+    unknown = {'jobs': 0, 'area': 0.0, 'amount': 0.0, 'received': 0.0,
+               'outstanding': 0.0, 'no_amount': 0}
+    settled = {'jobs': 0, 'area': 0.0, 'amount': 0.0, 'received': 0.0,
+               'outstanding': 0.0, 'no_amount': 0}
+    by_customer = {}
+
+    for (work_id, customer_id, customer_raw, date_from, amount, received,
+         area) in rows:
+        amount_f = float(amount or 0.0)
+        received_f = float(received or 0.0)
+        outstanding = amount_f - received_f
+        area_f = float(area or 0.0)
+        no_amount = 1 if amount is None else 0
+        age = None if date_from is None else (today - date_from).days
+
+        if outstanding > 0.005:
+            target = buckets[_drone_debt_bucket_for(age)]
+            if age is not None and (target['oldest'] is None
+                                    or age > target['oldest']):
+                target['oldest'] = age
+            key = customer_id if customer_id is not None else ('raw',
+                                                               customer_raw)
+            entry = by_customer.setdefault(key, {
+                'customer_id': customer_id,
+                'label': (customer_names.get(customer_id)
+                          if customer_id is not None
+                          else (customer_raw or label_unstated)),
+                'jobs': 0, 'area': 0.0, 'amount': 0.0, 'received': 0.0,
+                'outstanding': 0.0, 'oldest': None, 'undated_jobs': 0})
+            entry['jobs'] += 1
+            entry['area'] += area_f
+            entry['amount'] += amount_f
+            entry['received'] += received_f
+            entry['outstanding'] += outstanding
+            if age is None:
+                entry['undated_jobs'] += 1
+            elif entry['oldest'] is None or age > entry['oldest']:
+                entry['oldest'] = age
+        elif no_amount:
+            # Unknown BEFORE settled: see the third [REASON] above.
+            target = unknown
+        else:
+            target = settled
+
+        target['jobs'] += 1
+        target['area'] += area_f
+        target['amount'] += amount_f
+        target['received'] += received_f
+        target['outstanding'] += outstanding
+        target['no_amount'] += no_amount
+
+    bucket_rows = [buckets[key] for key, _label in bucket_labels]
+    for entry in by_customer.values():
+        entry['bucket'] = buckets[_drone_debt_bucket_for(entry['oldest'])]['label']
+    # Oldest first -- this is a collection worklist, not a ranking by size.
+    # An undated debt has no age to sort on and goes last rather than being
+    # given one; -1 would put it at the top and imply it is the freshest.
+    worklist = sorted(by_customer.values(),
+                      key=lambda e: (e['oldest'] is None,
+                                     -(e['oldest'] or 0),
+                                     -e['outstanding']))
+
+    totals = _drone_works_totals(conds)
+    counted = {
+        'jobs': sum(b['jobs'] for b in bucket_rows) + unknown['jobs']
+        + settled['jobs'],
+        'area': sum(b['area'] for b in bucket_rows) + unknown['area']
+        + settled['area'],
+        'amount': sum(b['amount'] for b in bucket_rows) + unknown['amount']
+        + settled['amount'],
+        'received': sum(b['received'] for b in bucket_rows)
+        + unknown['received'] + settled['received'],
+    }
+    counted['outstanding'] = counted['amount'] - counted['received']
+    reconciled = (counted['jobs'] == totals['jobs']
+                  and abs(counted['area'] - totals['area']) < 0.005
+                  and abs(counted['amount'] - totals['amount']) < 0.005
+                  and abs(counted['received'] - totals['received']) < 0.005)
+    return {
+        'buckets': bucket_rows,
+        # Same wording as the debts page, deliberately: two screens that say
+        # the same thing in two phrasings read as two different facts.
+        'unknown': dict(unknown, label=_drone_t(
+            'Қарз номаълум — сумма ёзилмаган',
+            'Долг неизвестен — сумма не записана')),
+        'settled': dict(settled, label=_drone_t(
+            'Қарзи йўқ (қолганлари)', 'Долга нет (остальные)')),
+        'worklist': worklist,
+        'totals': totals,
+        'counted': counted,
+        'reconciled': reconciled,
+        'today': today,
+    }
+
+
+@drones_bp.route('/works/debts/aging')
+@module_required('drones')
+def works_debts_aging():
+    """How old the money is, and who to call first."""
+    filters = _drone_works_filters_from_args(request.args)
+    conds = _drone_work_conditions(filters)
+    data = _drone_works_debt_aging_data(conds)
+    context = _drone_works_pickers()
+    return render_template(
+        'drones/works_debts_aging.html',
+        data=data,
+        filters=filters,
+        link_args=_drone_works_link_args(filters),
+        unresolved_key=DRONE_WORK_UNRESOLVED,
+        payment_types=DRONE_WORK_PAYMENT_TYPES,
+        **context)
+
+
+@drones_bp.route('/works/debts/aging.xlsx')
+@module_required('drones')
+def works_debts_aging_xlsx():
+    """Two sheets: the buckets and the collection worklist, plus the filters."""
+    from openpyxl import Workbook
+
+    filters = _drone_works_filters_from_args(request.args)
+    conds = _drone_work_conditions(filters)
+    data = _drone_works_debt_aging_data(conds)
+    st = _drone_xlsx_styler()
+
+    wb = Workbook()
+    _drone_works_filter_sheet(wb, st, filters, data['totals'])
+
+    ws = wb.create_sheet(_drone_t('Қарз ёши', 'Возраст долга'))
+    ws.append([_drone_t('Гуруҳ', 'Группа'),
+               _drone_t('Ишлар', 'Работ'),
+               _drone_t('Гектар', 'Гектары'),
+               _drone_t('Сумма', 'Сумма'),
+               _drone_t('Кирим қилинган', 'Получено'),
+               _drone_t('Олинмаган', 'Не получено')])
+    for row in data['buckets']:
+        ws.append([row['label'], row['jobs'], row['area'], row['amount'],
+                   row['received'], row['outstanding']])
+    for row in (data['unknown'], data['settled']):
+        # The service lines carry the same blank-versus-zero rule as every
+        # other workbook in this module: unknown money is an EMPTY cell.
+        ws.append([row['label'], row['jobs'], row['area'],
+                   _drone_money_or_blank(row, 'amount', 'no_amount'),
+                   row['received'],
+                   _drone_money_or_blank(row, 'outstanding', 'no_amount')])
+    ws.append([_drone_t('Жами', 'Итого'), data['counted']['jobs'],
+               data['counted']['area'], data['counted']['amount'],
+               data['counted']['received'], data['counted']['outstanding']])
+    st.style_table(ws, num_formats={3: '0.00', 4: '0.00', 5: '0.00',
+                                    6: '0.00'},
+                   bold_rows=(ws.max_row,))
+
+    ws = wb.create_sheet(_drone_t('Ундириш рўйхати', 'Список взыскания'))
+    ws.append([_drone_t('Буюртмачи', 'Заказчик'),
+               _drone_t('Ишлар', 'Работ'),
+               _drone_t('Олинмаган', 'Не получено'),
+               _drone_t('Энг эски қарз, кун', 'Старейший долг, дней'),
+               _drone_t('Гуруҳ', 'Группа')])
+    for row in data['worklist']:
+        ws.append([_drone_xlsx_safe(row['label']), row['jobs'],
+                   row['outstanding'], row['oldest'], row['bucket']])
+    st.style_table(ws, num_formats={3: '0.00'})
+    return _drone_works_xlsx_response(wb, 'drone_debt_aging', filters)

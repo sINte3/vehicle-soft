@@ -43,6 +43,10 @@
   </div>
   <div class="vs-row-end">
     <a href="{{ url_for('drones.works_reports', **link_args) }}" class="vs-btn">{{ 'Отчёты по работам' if is_ru else 'Ишлар ҳисоботлари' }}</a>
+    {# DRONE-ANALYTICS-001/2: эта страница отвечает «кто», соседняя — «как
+       давно». Ссылка ведёт с ТЕМИ ЖЕ фильтрами, иначе два экрана про одни и
+       те же деньги показывают разные выборки. Обратная ссылка есть там. #}
+    <a href="{{ url_for('drones.works_debts_aging', **link_args) }}" class="vs-btn">{{ 'Возраст долга' if is_ru else 'Қарз ёши' }}</a>
     <a href="{{ url_for('drones.works_debt_xlsx', **link_args) }}" class="vs-btn vs-btn-success">{{ 'Excel — долги' if is_ru else 'Excel — қарзлар' }}</a>
   </div>
 </div>

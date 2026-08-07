@@ -446,3 +446,189 @@ class TestA17UnattributedNeverVotes(unittest.TestCase):
                 with_unattr, data['median'], delta=0.005,
                 msg='a bucket of unknowns must not set the standard')
         self.assertIn('must not set the standard', str(caught.exception))
+
+
+# ══ A2  debt aging ═══════════════════════════════════════════════════════════
+
+def _work(customer_id, area, amount, received, date_from, period='2026-04',
+          operator_id=None, customer_raw='Фикстура ФХ', payment='cash'):
+    return DroneWork(
+        period_month=period,
+        work_date_from=date_from,
+        work_date_to=date_from,
+        drone_customer_id=customer_id,
+        customer_raw=customer_raw,
+        drone_operator_id=operator_id,
+        area_ha=area,
+        amount=amount,
+        received_amount=received,
+        # NOT NULL on the table.
+        payment_type=payment,
+    )
+
+
+class TestA2DebtAging(unittest.TestCase):
+    """Buckets by age; undated and never-recorded kept apart from settled."""
+
+    @classmethod
+    def setUpClass(cls):
+        reset_db()
+        cls.user_id = create_admin('a2admin')
+        with app.app_context():
+            today = drones._drone_today_local()
+            cls.today = today
+            customers = {}
+            for name in ('Дўстлик ФХ', 'Пешку АМТ', 'Миробод АМТ'):
+                row = DroneCustomer(name=name)
+                db.session.add(row)
+                db.session.flush()
+                customers[name] = row.id
+            cls.c1 = customers['Дўстлик ФХ']
+            cls.c2 = customers['Пешку АМТ']
+            cls.c3 = customers['Миробод АМТ']
+
+            # A2.4 boundary: exactly 30 and exactly 31 days old.
+            db.session.add(_work(cls.c1, 10.0, 1000000.0, 0.0,
+                                 today - timedelta(days=30)))
+            db.session.add(_work(cls.c1, 10.0, 2000000.0, 0.0,
+                                 today - timedelta(days=31)))
+            # One in each remaining bucket.
+            for days in (75, 120, 200, 400):
+                db.session.add(_work(cls.c2, 5.0, 500000.0, 0.0,
+                                     today - timedelta(days=days)))
+            # A2.3: undated, outstanding 500 000.
+            db.session.add(_work(cls.c3, 7.0, 500000.0, 0.0, None))
+            # A2.2: amount NULL, received NULL, dated 200 days ago.
+            db.session.add(_work(cls.c3, 3.0, None, None,
+                                 today - timedelta(days=200)))
+            # Settled.
+            db.session.add(_work(cls.c2, 4.0, 900000.0, 900000.0,
+                                 today - timedelta(days=10)))
+            db.session.commit()
+
+    @staticmethod
+    def _data(args=None):
+        # MultiDict, not dict: _drone_works_filters_from_args uses Werkzeug's
+        # .get(key, type=int), which a plain dict does not have.
+        from werkzeug.datastructures import MultiDict
+        with app.app_context():
+            filters = drones._drone_works_filters_from_args(
+                args if args is not None else MultiDict())
+            return drones._drone_works_debt_aging_data(
+                drones._drone_work_conditions(filters))
+
+    def test_a2_1_reconciles_under_three_filter_sets(self):
+        from werkzeug.datastructures import MultiDict
+        lines = []
+        for args in (MultiDict(), MultiDict({'period': '2026-04'}),
+                     MultiDict({'payment': 'cash'})):
+            data = self._data(args)
+            lines.append((dict(args), data['reconciled'], data['counted'],
+                          data['totals']))
+            self.assertTrue(data['reconciled'], 'filters=%r' % dict(args))
+            self.assertEqual(data['counted']['jobs'], data['totals']['jobs'])
+            self.assertAlmostEqual(data['counted']['amount'],
+                                   data['totals']['amount'], delta=0.005)
+        self.assertEqual(len(lines), 3)
+
+    def test_a2_2_amount_never_recorded_is_its_own_line(self):
+        """A2.2 positive: NULL amount lands in «unknown», not 181-365."""
+        data = self._data()
+        self.assertEqual(data['unknown']['jobs'], 1)
+        self.assertEqual(data['unknown']['no_amount'], 1)
+        bucket = [b for b in data['buckets'] if b['key'] == '181-365'][0]
+        self.assertEqual(bucket['jobs'], 1,
+                         'only the real 200-day debt belongs here')
+        self.assertAlmostEqual(bucket['outstanding'], 500000.0, delta=0.005)
+        # And it is not in «settled» either.
+        self.assertEqual(data['settled']['no_amount'], 0)
+
+    def test_a2_2_negative_control_settled_tested_before_unknown(self):
+        """A2.2 negative: test settled first and the unknown job vanishes.
+
+        The SAME rows are bucketed twice -- once in the order the module
+        ships, once with the two branches swapped -- and the two counts are
+        compared. Swapping them is the whole of the defect being guarded
+        against, and it is the order _drone_work_debt_cut() calls
+        load-bearing in its own docstring.
+        """
+        with app.app_context():
+            rows = db.session.query(
+                DroneWork.amount, DroneWork.received_amount).all()
+
+        def bucket(order):
+            unknown = settled = 0
+            for amount, received in rows:
+                outstanding = float(amount or 0.0) - float(received or 0.0)
+                no_amount = amount is None
+                if outstanding > 0.005:
+                    continue
+                if order == 'unknown-first':
+                    if no_amount:
+                        unknown += 1
+                    else:
+                        settled += 1
+                else:                        # settled-first: the defect
+                    settled += 1
+            return unknown, settled
+
+        right_unknown, right_settled = bucket('unknown-first')
+        wrong_unknown, wrong_settled = bucket('settled-first')
+        self.assertEqual(right_unknown, 1)
+        self.assertEqual(wrong_unknown, 0,
+                         'the broken order produces no unknown line at all')
+        self.assertEqual(wrong_settled, right_settled + 1,
+                         'the job it loses is the one that moved to «settled»')
+        with self.assertRaises(AssertionError) as caught:
+            self.assertEqual(wrong_unknown, 1,
+                             'the never-recorded job must have its own line')
+        self.assertIn('own line', str(caught.exception))
+
+    def test_a2_3_undated_bucket_and_the_column_still_sums(self):
+        """A2.3 positive: an undated debt is visible and inside the total."""
+        data = self._data()
+        undated = [b for b in data['buckets'] if b['key'] == 'undated'][0]
+        self.assertEqual(undated['jobs'], 1)
+        self.assertAlmostEqual(undated['outstanding'], 500000.0, delta=0.005)
+        self.assertTrue(data['reconciled'])
+
+    def test_a2_3_negative_control_dropping_the_undated_bucket(self):
+        """A2.3 negative: drop the undated bucket and the column stops summing."""
+        data = self._data()
+        full = (sum(b['amount'] for b in data['buckets'])
+                + data['unknown']['amount'] + data['settled']['amount'])
+        without = (sum(b['amount'] for b in data['buckets']
+                       if b['key'] != 'undated')
+                   + data['unknown']['amount'] + data['settled']['amount'])
+        self.assertAlmostEqual(full, data['totals']['amount'], delta=0.005)
+        self.assertAlmostEqual(data['totals']['amount'] - without, 500000.0,
+                               delta=0.005)
+        with self.assertRaises(AssertionError) as caught:
+            self.assertAlmostEqual(without, data['totals']['amount'],
+                                   delta=0.005,
+                                   msg='buckets must sum to the grand total')
+        self.assertIn('sum to the grand total', str(caught.exception))
+
+    def test_a2_4_boundary_30_and_31_days(self):
+        data = self._data()
+        first = [b for b in data['buckets'] if b['key'] == '0-30'][0]
+        second = [b for b in data['buckets'] if b['key'] == '31-60'][0]
+        # Only jobs with outstanding > 0.005 enter a bucket, so the settled
+        # 10-day job is NOT here: 0-30 holds the 30-day debt and nothing else.
+        self.assertEqual(first['jobs'], 1)
+        self.assertEqual(second['jobs'], 1)
+        self.assertAlmostEqual(first['outstanding'], 1000000.0, delta=0.005)
+        self.assertAlmostEqual(second['outstanding'], 2000000.0, delta=0.005)
+        self.assertEqual(drones._drone_debt_bucket_for(30), '0-30')
+        self.assertEqual(drones._drone_debt_bucket_for(31), '31-60')
+
+    def test_a2_5_the_two_pages_link_to_each_other(self):
+        with app.test_client() as client:
+            login(client, self.user_id)
+            debts = client.get('/drones/works/debts').get_data(as_text=True)
+            aging = client.get(
+                '/drones/works/debts/aging').get_data(as_text=True)
+        self.assertIn('href="/drones/works/debts/aging"', debts)
+        # And back. The aging page's own form posts to /aging, so the back
+        # link is matched with the closing quote to exclude it.
+        self.assertIn('href="/drones/works/debts"', aging)

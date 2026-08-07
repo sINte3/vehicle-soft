@@ -1,0 +1,186 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Дроны — возраст долга' if is_ru else 'Дронлар — қарз ёши' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+{# DRONE-ANALYTICS-001/2. Долг по возрасту и список взыскания.
+
+   Возраст считается от work_date_from и больше ни от чего. Работа без даты
+   попадает в «Срок не определён», и дата ей НЕ придумывается из
+   period_month: period_month — это месяц исходной книги, а одна книга заведена
+   как 2026-03, тогда как её строки идут с 17.03 по 25.04. Придумать дату ради
+   красивой корзины — ровно тот класс ошибки, от которого модуль защищается в
+   _drone_work_month_expr().
+
+   Формулировки служебных строк взяты со страницы «Долги» ДОСЛОВНО. Два экрана,
+   говорящие одно и то же двумя формулировками, читаются как два разных факта.
+
+   Классы строк — is-warning-row и is-danger-row: единственные два правила
+   design-system.css, которые красят СТРОКУ (646-649). #}
+{% set t_jobs = 'Работ' if is_ru else 'Ишлар' %}
+{% set t_area = 'Гектары' if is_ru else 'Гектар' %}
+{% set t_amount = 'Сумма' if is_ru else 'Сумма' %}
+{% set t_received = 'Получено' if is_ru else 'Кирим қилинган' %}
+{% set t_outstanding = 'Не получено' if is_ru else 'Олинмаган' %}
+{% set t_total = 'Итого' if is_ru else 'Жами' %}
+{% set t_empty = 'Нет данных за период' if is_ru else 'Даврда маълумот йўқ' %}
+{% set mismatch_text = 'Сумма таблицы не сходится с общим итогом — расхождение показано, а не скрыто. Сообщите об этом.' if is_ru else 'Жадвал йиғиндиси умумий якунга тўғри келмайди — фарқ яширилмасдан кўрсатилган. Бу ҳақда хабар беринг.' %}
+
+{% from 'drones/_money_cell.html' import money_cell with context %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Возраст долга' if is_ru else 'Қарз ёши' }}</div>
+    <div class="vs-hero-sub">{{ 'Сколько денег и как давно не получено. Тридцатидневный долг и трёхсотдневный — разные вещи, и страница «Долги» их не различает.' if is_ru else 'Қанча пул ва қанча вақтдан бери олинмаган. Ўттиз кунлик қарз ва уч юз кунлик қарз — турли нарсалар, «Қарзлар» саҳифаси эса уларни ажратмайди.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('drones.works_debts', **link_args) }}" class="vs-btn">{{ 'Долги — кто должен' if is_ru else 'Қарзлар — ким қарздор' }}</a>
+    <a href="{{ url_for('drones.works_debts_aging_xlsx', **link_args) }}" class="vs-btn vs-btn-success">{{ 'Excel' if is_ru else 'Excel' }}</a>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <form method="get" action="{{ url_for('drones.works_debts_aging') }}" class="vs-form-row">
+      <div class="vs-field" style="min-width:140px;">
+        <label class="vs-label" for="aPeriod">{{ 'Период' if is_ru else 'Давр' }}</label>
+        <select name="period" id="aPeriod" class="vs-select">
+          <option value="">{{ '— все периоды —' if is_ru else '— барча даврлар —' }}</option>
+          {% for p in periods %}<option value="{{ p }}" {% if filters.period == p %}selected{% endif %}>{{ p }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:160px;">
+        <label class="vs-label" for="aPayment">{{ 'Тип оплаты' if is_ru else 'Тўлов тури' }}</label>
+        <select name="payment" id="aPayment" class="vs-select">
+          <option value="">{{ '— все —' if is_ru else '— барчаси —' }}</option>
+          {% for p in payment_types %}<option value="{{ p }}" {% if filters.payment == p %}selected{% endif %}>{{ payment_labels.get(p, p) }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:170px;">
+        <label class="vs-label" for="aSub">{{ 'Подразделение' if is_ru else 'Бўлинма' }}</label>
+        <select name="subdivision" id="aSub" class="vs-select">
+          <option value="">{{ '— все —' if is_ru else '— барчаси —' }}</option>
+          {% for s in subdivisions %}<option value="{{ s }}" {% if filters.subdivision == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:190px;">
+        <label class="vs-label" for="aOperator">{{ 'Оператор' if is_ru else 'Оператор' }}</label>
+        <select name="operator_id" id="aOperator" class="vs-select">
+          <option value="">{{ '— все операторы —' if is_ru else '— барча операторлар —' }}</option>
+          <option value="{{ unresolved_key }}" {% if filters.operator_id == unresolved_key %}selected{% endif %}>{{ 'Оператор не определён' if is_ru else 'Оператор аниқланмаган' }}</option>
+          {% for op in operators %}<option value="{{ op.id }}" {% if filters.operator_id == op.id %}selected{% endif %}>{{ op.full_name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+        <a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.works_debts_aging') }}">{{ 'За всё время' if is_ru else 'Барча вақт' }}</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="vs-alert is-info vs-mb">
+  {{ 'Возраст считается от «даты с» работы до сегодняшнего дня. Работа без даты попадает в «Срок не определён» — дата ей не придумывается из периода ведомости: период — это месяц книги, а одна книга заведена как март, тогда как её строки идут с 17 марта по 25 апреля. В корзины входят только работы, где не получено больше нуля. Строка «Долг неизвестен — сумма не записана» — это работы, у которых цену не записали: их долг не ноль, а неизвестен, и денежные колонки в ней стоят прочерками.' if is_ru else 'Ёш ишнинг «сана дан»идан бугунги кунгача ҳисобланади. Санасиз иш «Муддати аниқланмаган»га тушади — унга ведомост давридан сана тўқилмайди: давр — китобнинг ойи, бир китоб эса март деб очилган, унинг қаторлари эса 17 мартдан 25 апрелгача боради. Корзиналарга фақат олинмагани нолдан катта ишлар киради. «Қарз номаълум — сумма ёзилмаган» қатори — нархи ёзилмаган ишлар: уларнинг қарзи нол эмас, номаълум, ва пул устунлари унда чизиқча бўлиб туради.' }}
+</div>
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Долг по возрасту' if is_ru else 'Ёш бўйича қарз' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'На' if is_ru else 'Сана' }}: {{ data.today }}</span>
+  </div>
+  {% if not data.reconciled %}<div class="vs-alert is-danger">{{ mismatch_text }}</div>{% endif %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Возраст' if is_ru else 'Ёши' }}</th>
+        <th class="right">{{ t_jobs }}</th>
+        <th class="right">{{ t_area }}</th>
+        <th class="right">{{ t_amount }}</th>
+        <th class="right">{{ t_received }}</th>
+        <th class="right">{{ t_outstanding }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for b in data.buckets %}
+      <tr{% if b.jobs and b.key in ('181-365', '366-inf') %} class="is-danger-row"{% elif b.jobs and b.key in ('91-180', 'undated') %} class="is-warning-row"{% endif %}>
+        <td>{{ b.label }}</td>
+        <td class="right">{{ b.jobs|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(b.area)|vs_num }}</td>
+        <td class="right">{{ money_cell(b.amount, b.jobs, b.no_amount, 'amount') }}</td>
+        <td class="right">{{ money_cell(b.received, b.jobs, 0) }}</td>
+        <td class="right">{{ money_cell(b.outstanding, b.jobs, b.no_amount) }}</td>
+      </tr>
+      {% endfor %}
+      {# «Долг неизвестен» стоит ВЫШЕ «долга нет» — как на странице «Долги».
+         Это не «долга нет», а «сказать нечего». #}
+      {% if data.unknown.jobs %}
+      <tr class="is-warning-row">
+        <td><b>{{ data.unknown.label }}</b></td>
+        <td class="right">{{ data.unknown.jobs|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(data.unknown.area)|vs_num }}</td>
+        <td class="right">{{ money_cell(data.unknown.amount, data.unknown.jobs, data.unknown.no_amount, 'amount') }}</td>
+        <td class="right">{{ money_cell(data.unknown.received, data.unknown.jobs, 0) }}</td>
+        <td class="right">{{ money_cell(data.unknown.outstanding, data.unknown.jobs, data.unknown.no_amount) }}</td>
+      </tr>
+      {% endif %}
+      {% if data.settled.jobs %}
+      <tr class="vs-muted">
+        <td>{{ data.settled.label }}</td>
+        <td class="right">{{ data.settled.jobs|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(data.settled.area)|vs_num }}</td>
+        <td class="right">{{ money_cell(data.settled.amount, data.settled.jobs, data.settled.no_amount, 'amount') }}</td>
+        <td class="right">{{ money_cell(data.settled.received, data.settled.jobs, 0) }}</td>
+        <td class="right">{{ money_cell(data.settled.outstanding, data.settled.jobs, data.settled.no_amount) }}</td>
+      </tr>
+      {% endif %}
+      <tr style="font-weight:700;">
+        <td>{{ t_total }}</td>
+        <td class="right">{{ data.counted.jobs|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(data.counted.area)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(data.counted.amount)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(data.counted.received)|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(data.counted.outstanding)|vs_num }}</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Список взыскания — по заказчикам' if is_ru else 'Ундириш рўйхати — буюртмачилар бўйича' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'Заказчиков' if is_ru else 'Буюртмачилар' }}: {{ data.worklist|length|vs_num }}</span>
+  </div>
+  {% if data.worklist %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Заказчик' if is_ru else 'Буюртмачи' }}</th>
+        <th class="right">{{ t_jobs }}</th>
+        <th class="right">{{ t_outstanding }}</th>
+        <th class="right">{{ 'Старейший долг, дней' if is_ru else 'Энг эски қарз, кун' }}</th>
+        <th>{{ 'Группа' if is_ru else 'Гуруҳ' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in data.worklist %}
+      <tr{% if r.oldest is not none and r.oldest > 180 %} class="is-danger-row"{% elif r.oldest is not none and r.oldest > 90 %} class="is-warning-row"{% endif %}>
+        <td>{{ r.label }}</td>
+        <td class="right">{{ r.jobs|vs_num }}</td>
+        <td class="right">{{ '%.0f'|format(r.outstanding)|vs_num }}</td>
+        <td class="right">{% if r.oldest is none %}—{% else %}{{ r.oldest|vs_num }}{% endif %}</td>
+        <td>{{ r.bucket }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty"><div class="vs-empty-title">{{ t_empty }}</div></div>
+  {% endif %}
+</div>
+{% endblock %}
