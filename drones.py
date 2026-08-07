@@ -3544,12 +3544,19 @@ def _drone_work_cut(conds, group_expr, total_row, service_labels,
         # screen can tell an empty column from a zero one; the sum itself is
         # NOT changed, because the totals reconcile against it.
         func.sum(case((DroneWork.amount.is_(None), 1), else_=0)),
+        # [REASON]: DRONE-ZERO-VS-UNKNOWN-001. received_amount carries the
+        # same NULL-versus-zero distinction as amount, and the NULLs are real:
+        # of the 904 imported jobs 852 carry a received figure and 52 do not.
+        # «Получено» printed 0 for both, so the column said «this farm handed
+        # in nothing» about a group where nobody had written the figure down.
+        # Counted exactly like no_amount, and for the same reason.
+        func.sum(case((DroneWork.received_amount.is_(None), 1), else_=0)),
     ).filter(*conds).group_by(group_expr).all()
 
     service_map = dict(service_labels)
     rows = []
     found = {}
-    for key, jobs, area, amount, received, no_amount in groups:
+    for key, jobs, area, amount, received, no_amount, no_received in groups:
         cell = {
             'key': key,
             'jobs': jobs,
@@ -3557,6 +3564,7 @@ def _drone_work_cut(conds, group_expr, total_row, service_labels,
             'amount': float(amount or 0.0),
             'received': float(received or 0.0),
             'no_amount': int(no_amount or 0),
+            'no_received': int(no_received or 0),
         }
         cell['outstanding'] = cell['amount'] - cell['received']
         cell['share'] = _drone_share(cell['area'], total_row['area'])
@@ -3580,6 +3588,7 @@ def _drone_work_cut(conds, group_expr, total_row, service_labels,
         'amount': sum(r['amount'] for r in everything),
         'received': sum(r['received'] for r in everything),
         'no_amount': sum(r['no_amount'] for r in everything),
+        'no_received': sum(r['no_received'] for r in everything),
     }
     total['outstanding'] = total['amount'] - total['received']
     reconciled = (total['jobs'] == total_row['jobs']
@@ -3604,12 +3613,21 @@ def _drone_work_debt_cut(cut, no_debt_label):
     owing.sort(key=lambda r: r['outstanding'], reverse=True)
     rest = None
     if settled:
+        # [REASON]: DRONE-ZERO-VS-UNKNOWN-001. This dict is assembled by naming
+        # its keys, so every counter _drone_work_cut() adds to an ordinary row
+        # has to be named here too or it silently does not reach the service
+        # row. no_amount was added by DRONE-REPORT-ZERO-AMOUNT-001 and never
+        # arrived; nothing rendered it, so nothing failed. The moment the debts
+        # template started calling money_cell() this row would have printed a
+        # sum where the ordinary rows print a dash.
         rest = {
             'label': no_debt_label,
             'jobs': sum(r['jobs'] for r in settled),
             'area': sum(r['area'] for r in settled),
             'amount': sum(r['amount'] for r in settled),
             'received': sum(r['received'] for r in settled),
+            'no_amount': sum(r['no_amount'] for r in settled),
+            'no_received': sum(r['no_received'] for r in settled),
         }
         rest['outstanding'] = rest['amount'] - rest['received']
     return {'rows': owing, 'rest': rest, 'total': cut['total'],
