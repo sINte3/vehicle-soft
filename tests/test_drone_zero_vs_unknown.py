@@ -559,8 +559,12 @@ class TestB2WithContextIsLoadBearing(unittest.TestCase):
     NOTE_CALL = "{{ money_cell(5000000, 2, 1, '%s') }}"
 
     def test_b2_the_note_is_non_empty_in_both_languages(self):
+        # NARROWED by DRONE-RECEIVED-BLANK-IS-ZERO-001: the loop used to run
+        # ('amount', 'received'). «Получено» has no note any more and its two
+        # strings were deleted from the dictionary, so asking for them here
+        # would assert that a deliberately removed key still resolves.
         for lang in ('ru', 'uz'):
-            for note in ('amount', 'received'):
+            for note in ('amount',):
                 with self.subTest(lang=lang, note=note):
                     wording = note_text(
                         render_macro(self.NOTE_CALL % note, lang=lang))
@@ -568,10 +572,11 @@ class TestB2WithContextIsLoadBearing(unittest.TestCase):
                                     'empty note for %s/%s' % (lang, note))
                     self.assertNotIn(':', wording)
 
-    def test_b2_the_four_notes_are_four_distinct_strings(self):
+    def test_b2_the_two_notes_are_two_distinct_strings(self):
+        """Was four: two keys x two languages. One key remains."""
         seen = {note_text(render_macro(self.NOTE_CALL % note, lang=lang))
-                for lang in ('ru', 'uz') for note in ('amount', 'received')}
-        self.assertEqual(4, len(seen), seen)
+                for lang in ('ru', 'uz') for note in ('amount',)}
+        self.assertEqual(2, len(seen), seen)
 
     def test_b2_without_with_context_the_note_is_empty(self):
         """The negative control for the control: this is the failure mode."""
@@ -743,9 +748,13 @@ class TestC1TheRuleOnBothScreens(ScreenMixin, unittest.TestCase):
         self.assertEqual('—', text_of(outstanding),
                          'a debt computed from an unknown amount is unknown, '
                          'not zero')
-        # ALL_NULL also has every received NULL, so «Получено» is a dash here
-        # by its OWN counter.
-        self.assertEqual('—', text_of(received))
+        # INVERTED by DRONE-RECEIVED-BLANK-IS-ZERO-001. This line read
+        # `self.assertEqual('—', text_of(received))` under «ALL_NULL also has
+        # every received NULL, so «Получено» is a dash here by its OWN
+        # counter». The owner decided on 2026-08-07 that a blank «олинмаган
+        # пуллар» means nothing was collected, so the column has no dash at
+        # all now. The two neighbours above are untouched and still asserted.
+        self.assertEqual('0', text_of(received))
 
     def test_c1_the_debts_page_no_longer_hides_it(self):
         """INVERTED by commit 4 rather than deleted.
@@ -766,18 +775,22 @@ class TestC1TheRuleOnBothScreens(ScreenMixin, unittest.TestCase):
         self.assertEqual('', note_text(amount))
         self.assertEqual('0', text_of(outstanding))
 
-    def test_c1_received_keys_off_its_own_counter_not_off_no_amount(self):
+    def test_c1_received_has_no_dash_rule_of_its_own_any_more(self):
         """NO_RECEIVED: amounts known, received all NULL.
 
-        «Сумма» prints its sum, «Получено» is a dash, «Не получено» prints
-        the debt -- the amount is known, so the debt is known.
+        REVERSED by DRONE-RECEIVED-BLANK-IS-ZERO-001. This test was called
+        test_c1_received_keys_off_its_own_counter_not_off_no_amount and
+        asserted `self.assertEqual('—', text_of(received))` -- «Получено» is
+        a dash. It keys off nothing now: a blank means nothing was collected,
+        so the row reads 13 000 000 charged, 0 collected, 13 000 000 due.
+        «Сумма» and «Не получено» are unchanged and still asserted.
         """
         for url, title, _uz, first in PAGES:
             with self.subTest(page=url):
                 amount, received, outstanding = \
                     self.money_columns(url, title, first)[NO_RECEIVED]
                 self.assertIn('13\xa0000\xa0000', amount)
-                self.assertEqual('—', text_of(received))
+                self.assertEqual('0', text_of(received))
                 self.assertIn('13\xa0000\xa0000', outstanding)
 
     def test_c1_outstanding_keys_off_no_amount_not_off_its_own(self):
@@ -792,7 +805,8 @@ class TestC1TheRuleOnBothScreens(ScreenMixin, unittest.TestCase):
         label = [k for k in cells if UNSTATED_LABEL_RU in k][0]
         amount, received, outstanding = cells[label]
         self.assertEqual('—', text_of(amount))
-        self.assertEqual('—', text_of(received))
+        # was '—'; see DRONE-RECEIVED-BLANK-IS-ZERO-001 above
+        self.assertEqual('0', text_of(received))
         self.assertEqual('—', text_of(outstanding))
 
     def test_c1_a_partial_group_shows_its_sum_and_the_count(self):
@@ -820,19 +834,24 @@ class TestC1TheRuleOnBothScreens(ScreenMixin, unittest.TestCase):
                     self.assertNotIn('vs-muted', cell)
                     self.assertNotEqual('—', text_of(cell))
 
-    def test_c1_the_received_note_renders_where_it_belongs(self):
-        """0 < no_received < jobs on a cut that mixes the groups.
+    def test_c1_the_received_note_renders_nowhere_now(self):
+        """INVERTED by DRONE-RECEIVED-BLANK-IS-ZERO-001.
 
-        by_operator puts NONE_NULL (0 of 2 missing) and NO_RECEIVED (2 of 2)
-        into op2 together with the two service jobs, so op2 is partial.
+        This asserted the opposite: op1 is the group with
+        0 < no_received < jobs, and the note «получено не указано» had to
+        render on it. «Получено» has no note any more, so the same cut is
+        asserted to carry none -- and the amount note on the same page is
+        asserted to survive, or this would pass on a page that lost both.
         """
         cells = self.money_columns('/drones/works/reports',
                                    'По операторам', 3)
-        partial = [c for label, c in cells.items()
-                   if note_text(c[1])]
-        self.assertTrue(partial, 'no «Получено» note rendered anywhere')
-        self.assertEqual({'получено не указано'},
-                         {note_text(c[1]) for c in partial})
+        self.assertTrue(cells, 'the operator cut was not found')
+        self.assertEqual([], [label for label, c in cells.items()
+                              if note_text(c[1])])
+        amount_notes = [label for label, c in cells.items()
+                        if note_text(c[0])]
+        self.assertTrue(amount_notes,
+                        'no «Сумма» note either -- the check proves nothing')
 
 
 class TestC2NegativeControl(ScreenMixin, PreCommitMixin, unittest.TestCase):
@@ -1237,13 +1256,18 @@ class TestD5TheLabelIsCyrillicUzbek(unittest.TestCase):
 class TestD6TheBucketOnTheRenderedPage(ScreenMixin, unittest.TestCase):
     """The row itself: three dashes, its jobs, and above «Долга нет»."""
 
-    def test_d6_the_unknown_row_prints_three_dashes(self):
+    def test_d6_the_unknown_row_prints_two_dashes_and_a_zero(self):
+        """Was three dashes. DRONE-RECEIVED-BLANK-IS-ZERO-001 makes the
+        middle a 0, and that reading is coherent and intended: nothing was
+        collected, and what was owed is unknown."""
         cells = self.money_columns('/drones/works/debts',
                                    'Долги — по заказчикам', 2)
         row = [c for label, c in cells.items() if UNKNOWN_LABEL_RU in label]
         self.assertEqual(1, len(row), cells.keys())
-        for cell in row[0]:
-            self.assertEqual('—', text_of(cell))
+        amount, received, outstanding = row[0]
+        self.assertEqual('—', text_of(amount))
+        self.assertEqual('0', text_of(received))
+        self.assertEqual('—', text_of(outstanding))
 
     def table(self):
         """The <tbody> of the customer debt table, alone.
