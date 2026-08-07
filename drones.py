@@ -1579,12 +1579,33 @@ def operators_add():
 @drones_bp.route('/operators/<int:op_id>')
 @module_required('drones')
 def operator_card(op_id):
-    """One pilot: his details and the full history of his assignments."""
+    """One pilot: his details and the full history of his assignments.
+
+    [REASON]: DRONE-ANALYTICS-001/5. The three prefill_* arguments carry a
+    SUGGESTION from the assignment-hints screen into this form and do nothing
+    else. They are validated here and dropped on the floor when they do not
+    resolve -- an invalid or stale bookmark must render an EMPTY form and a
+    200, never a 500 and never a plausible-looking wrong value. Nothing is
+    written: the human still reads the values, corrects them and presses Save,
+    and operator_assignment_add() is untouched.
+
+    prefill_to is deliberately absent from the contract. See the note on the
+    link in _drone_assignment_hints().
+    """
     operator = DroneOperator.query.get(op_id)
     if operator is None:
         abort(404)
     assignments = _drone_assignments_by_operator([op_id]).get(op_id, [])
     today = _drone_today_local()
+
+    prefill_unit = request.args.get('prefill_unit', type=int)
+    unit = DroneUnit.query.get(prefill_unit) if prefill_unit else None
+    prefill_from = _drone_parse_date(request.args.get('prefill_from'))
+    # Both halves must resolve before anything is offered. Half a suggestion
+    # -- a machine with no date, or a date with no machine -- is a form the
+    # reader has to finish without knowing where the value came from.
+    prefilled = bool(unit and prefill_from)
+
     return render_template(
         'drones/operator_card.html',
         operator=operator,
@@ -1593,6 +1614,9 @@ def operator_card(op_id):
                        for a in assignments},
         units=DroneUnit.query.order_by(DroneUnit.number).all(),
         today=today,
+        prefilled=prefilled,
+        prefill_unit_id=unit.id if prefilled else None,
+        prefill_from=prefill_from.isoformat() if prefilled else '',
     )
 
 
@@ -4358,6 +4382,21 @@ def _drone_assignment_hints(month):
     which is precisely why a close match is evidence and not proof, and why
     the human decides. A screen that could write an assignment would turn that
     one wrong answer into a silently wrong report.
+
+    [REASON]: DRONE-ANALYTICS-001/5, owner's decision of 2026-08-07. THE
+    PARAGRAPH ABOVE IS NOT REVERSED and the screen still creates nothing.
+    What changed is that each suggested pairing now carries a LINK to the
+    operator's card which pre-fills the existing «add assignment» form
+    through GET arguments. The link transports values; it does not write one.
+    There is no POST route on this screen, the human still reads the
+    pre-filled values, corrects them and presses Save, and the validation in
+    _drone_assignment_form_values() is untouched and still where it was.
+
+    prefill_from is the FIRST DAY OF THE HINT'S MONTH. prefill_to is NOT
+    pre-filled and no default is invented: the April reconciliation turned on
+    an operator who changed machines on the 13th, and a pre-filled month end
+    would quietly manufacture twelve tidy monthly assignments a year, each of
+    them wrong in the same invisible way.
     """
     work_month = _drone_work_month_expr()
     ledger = (db.session.query(

@@ -94,6 +94,17 @@
         <td>
           {% if r.best %}№ {{ r.best.number }}
             {% if r.best.taken_by %}<div class="vs-muted" style="font-size:11px;">{{ 'уже за' if is_ru else 'аллақачон' }}: {{ r.best.taken_by|join(', ') }}</div>{% endif %}
+            {# DRONE-ANALYTICS-001/5: ссылка ПЕРЕНОСИТ значения в форму на
+               карточке оператора и ничего не создаёт. POST-маршрута на этом
+               экране нет и не появилось; сохраняет по-прежнему человек,
+               прочитав и поправив подставленное.
+
+               prefill_from — ПЕРВОЕ ЧИСЛО месяца подсказки. prefill_to не
+               передаётся и не придумывается: апрельская сверка сработала на
+               операторе, сменившем машину 13-го, и подставленный конец
+               месяца тихо изготовил бы двенадцать аккуратных назначений в
+               год, каждое неверное одинаково незаметно. #}
+            <div style="margin-top:4px;"><a class="vs-btn vs-btn-ghost" style="font-size:12px;" href="{{ url_for('drones.operator_card', op_id=r.operator_id, prefill_unit=r.best.unit_id, prefill_from=month ~ '-01') }}">{{ 'Назначить…' if is_ru else 'Бириктириш…' }}</a></div>
           {% else %}<span class="vs-muted">—</span>{% endif %}
         </td>
         <td class="right">{% if r.best %}{{ '%.2f'|format(r.best.area)|vs_num }}{% else %}—{% endif %}</td>

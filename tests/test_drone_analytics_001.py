@@ -1084,3 +1084,131 @@ class TestA4FlightCalendar(unittest.TestCase):
             for row in data['rows']:
                 self.assertEqual(len(row['cells']), length, month)
             self.assertEqual(len(data['day_totals']), length, month)
+
+
+# ══ A5  the prefill link ═════════════════════════════════════════════════════
+
+class TestA5PrefillLink(unittest.TestCase):
+    """The hints screen carries values to a form and still creates nothing."""
+
+    @classmethod
+    def setUpClass(cls):
+        reset_db()
+        cls.user_id = create_admin('a5admin')
+        with app.app_context():
+            ids = _units([7])
+            cls.u7 = ids[7]
+            operator = DroneOperator(full_name='Жўраев Туйғун')
+            db.session.add(operator)
+            db.session.flush()
+            cls.op_id = operator.id
+            customer = DroneCustomer(name='Пешку АМТ')
+            db.session.add(customer)
+            db.session.flush()
+            db.session.add(_work(customer.id, 120.0, 500000.0, 0.0,
+                                 date(2026, 4, 12), period='2026-04',
+                                 operator_id=operator.id))
+            db.session.add(_flight(cls.u7, datetime(2026, 4, 12, 6), 121.0,
+                                   0, 600.0))
+            db.session.commit()
+
+    def test_a5_1_no_post_route_on_the_hints_screen(self):
+        """A5.1: grep the url map -- no POST anywhere under assignment-hints."""
+        offenders = []
+        for rule in app.url_map.iter_rules():
+            if 'assignment-hints' in str(rule):
+                methods = sorted(rule.methods - {'HEAD', 'OPTIONS'})
+                if 'POST' in methods:
+                    offenders.append((str(rule), methods))
+        self.assertEqual(offenders, [])
+        # And in the source: no methods=['POST'] near the hints endpoint.
+        with open(os.path.join(REPO_ROOT, 'drones.py'), encoding='utf-8') as fh:
+            source = fh.read()
+        hints = source.split("@drones_bp.route('/works/assignment-hints'")[1]
+        self.assertNotIn('POST', hints.split('def works_assignment_hints')[0])
+
+    def test_a5_2_link_carries_month_start_and_no_prefill_to(self):
+        with app.test_client() as client:
+            login(client, self.user_id)
+            html = client.get(
+                '/drones/works/assignment-hints?month=2026-04'
+            ).get_data(as_text=True)
+        hrefs = re.findall(r'href="([^"]*prefill_unit[^"]*)"', html)
+        self.assertTrue(hrefs, 'the hint row must carry a prefill link')
+        href = hrefs[0]
+        self.assertIn('prefill_from=2026-04-01', href.replace('&amp;', '&'))
+        self.assertNotIn('prefill_to', href)
+
+    def test_a5_3_garbage_arguments_render_an_empty_form(self):
+        """A5.3 negative: a stale bookmark is a 200 and an empty form."""
+        with app.test_client() as client:
+            login(client, self.user_id)
+            resp = client.get(
+                '/drones/operators/%d?prefill_unit=999999'
+                '&prefill_from=not-a-date' % self.op_id)
+            html = resp.get_data(as_text=True)
+        self.assertEqual(resp.status_code, 200, 'never a 500')
+        date_field = re.search(
+            r'<input type="date" name="date_from" id="addAsgFrom"[^>]*>', html)
+        self.assertIsNotNone(date_field)
+        self.assertIn('value=""', date_field.group(0))
+        # No machine option is preselected in the add form.
+        add_form = html.split('name="drone_unit_id" id="addAsgUnit"')[1]
+        add_form = add_form.split('</select>')[0]
+        self.assertNotIn('selected', add_form)
+        # And the note is absent, because nothing was pre-filled.
+        self.assertNotIn('подставлены из подсказки', html)
+
+    def test_a5_3_valid_arguments_do_prefill(self):
+        """The positive half: without it A5.3 would pass on a broken feature."""
+        with app.test_client() as client:
+            login(client, self.user_id)
+            html = client.get(
+                '/drones/operators/%d?prefill_unit=%d&prefill_from=2026-04-01'
+                % (self.op_id, self.u7)).get_data(as_text=True)
+        date_field = re.search(
+            r'<input type="date" name="date_from" id="addAsgFrom"[^>]*>', html)
+        self.assertIn('value="2026-04-01"', date_field.group(0))
+        add_form = html.split('name="drone_unit_id" id="addAsgUnit"')[1]
+        add_form = add_form.split('</select>')[0]
+        self.assertIn('selected', add_form)
+
+    def test_a5_4_empty_date_from_is_still_refused(self):
+        """A5.4: the mandatory-field rule is untouched."""
+        with app.test_client() as client:
+            login(client, self.user_id)
+            resp = client.post(
+                '/drones/operators/%d/assignments/add' % self.op_id,
+                data={'csrf_token': 'test-csrf-token',
+                      'drone_unit_id': str(self.u7), 'date_from': ''},
+                follow_redirects=True)
+            html = resp.get_data(as_text=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(
+            'обязательна' in html or 'мажбурий' in html,
+            'the flash must still refuse a dateless assignment')
+        with app.app_context():
+            from models import DroneOperatorAssignment
+            self.assertEqual(
+                DroneOperatorAssignment.query.filter_by(
+                    operator_id=self.op_id).count(), 0,
+                'and nothing may have been written')
+
+    def test_a5_5_the_note_renders_in_both_languages(self):
+        seen = {}
+        with app.test_client() as client:
+            login(client, self.user_id)
+            for lang in ('ru', 'uz'):
+                set_language(self.user_id, lang)
+                html = client.get(
+                    '/drones/operators/%d?prefill_unit=%d'
+                    '&prefill_from=2026-04-01'
+                    % (self.op_id, self.u7)).get_data(as_text=True)
+                block = html.split('vs-alert is-warning vs-mb">')[1]
+                seen[lang] = block.split('</div>')[0].strip()
+        self.assertIn('подсказки', seen['ru'])
+        self.assertIn('маслаҳат', seen['uz'])
+        self.assertNotEqual(seen['ru'], seen['uz'])
+        # X-4 locally: the Uzbek note carries no Latin letters.
+        latin = [ch for ch in seen['uz'] if 'a' <= ch.lower() <= 'z']
+        self.assertEqual(latin, [], 'Uzbek is Cyrillic only')
