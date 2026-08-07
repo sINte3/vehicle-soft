@@ -1323,3 +1323,9 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 .vs-report-tile.is-danger  .vs-report-tile-icon { color: var(--vs-danger);  background: var(--vs-danger-bg); }
 @media (max-width: 1200px) { .vs-report-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 720px)  { .vs-report-tiles { grid-template-columns: 1fr; } }
+
+/* DRONE-ANALYTICS-001: additive only. Nothing above this line is modified.
+   The sixth report tile accent. --vs-purple / --vs-purple-bg were defined at
+   line 53 and used by no tile; the five existing accents were all taken, so a
+   sixth report either repeated a colour or brought this one rule. */
+.vs-report-tile.is-purple .vs-report-tile-icon { color: var(--vs-purple); background: var(--vs-purple-bg); }

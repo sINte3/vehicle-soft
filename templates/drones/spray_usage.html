@@ -1,0 +1,186 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Дроны — расход рабочего раствора' if is_ru else 'Дронлар — иш эритмаси сарфи' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+{# DRONE-ANALYTICS-001/1. Литры на гектар по машине и месяцу.
+
+   Считается ТОЛЬКО по вылетам опрыскивания (usage_type == 0). На странице
+   «Сводка» колонка «Л/га» делит литры на ПОЛНУЮ площадь, включая посевные
+   вылеты, и занижает расход у любой машины, которая ещё и сеяла. Здесь
+   площадь непуркающих вылетов вынесена в свою колонку, поэтому итог по
+   площади по-прежнему сходится с общим — флаг сходимости показан, а не
+   спрятан.
+
+   Прочерк в колонке «Л/га» — это «литры не записаны», а не ноль, и такая
+   строка НИКОГДА не красится: обвинить машину в дозе, которую никто не
+   измерял, хуже, чем промолчать. Правило то же, что у money_cell() в
+   работах, только столбец другой.
+
+   Классы строк: is-warning-row и is-danger-row — единственные два правила
+   design-system.css, которые красят СТРОКУ таблицы (строки 646-649).
+   is-warning на <tr> не делает ничего и однажды уже уехал в прод. #}
+{% set t_machine = 'Машина' if is_ru else 'Машина' %}
+{% set t_month = 'Месяц' if is_ru else 'Ой' %}
+{% set t_total = 'Итого' if is_ru else 'Жами' %}
+{% set t_unattr = 'Не распознано' if is_ru else 'Аниқланмаган' %}
+{% set t_empty = 'Нет вылетов за период' if is_ru else 'Даврда парвозлар йўқ' %}
+{% set mismatch_text = 'Сумма таблицы не сходится с общим итогом — расхождение показано, а не скрыто. Сообщите об этом.' if is_ru else 'Жадвал йиғиндиси умумий якунга тўғри келмайди — фарқ яширилмасдан кўрсатилган. Бу ҳақда хабар беринг.' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Расход рабочего раствора' if is_ru else 'Иш эритмаси сарфи' }}</div>
+    <div class="vs-hero-sub">{{ 'Литры на гектар по машине и месяцу — только по вылетам опрыскивания. Площадь остальных вылетов показана отдельной колонкой.' if is_ru else 'Машина ва ой бўйича 1 гектарга литр — фақат пуркаш парвозлари бўйича. Қолган парвозлар майдони алоҳида устунда кўрсатилган.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('drones.reports') }}" class="vs-btn">{{ 'Все отчёты' if is_ru else 'Барча ҳисоботлар' }}</a>
+    <a href="{{ url_for('drones.spray_usage_xlsx', **link_args) }}" class="vs-btn vs-btn-success">{{ 'Excel' if is_ru else 'Excel' }}</a>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <form method="get" action="{{ url_for('drones.spray_usage') }}" class="vs-form-row">
+      <div class="vs-field" style="width:160px;">
+        <label class="vs-label" for="sFrom">{{ 'Период с' if is_ru else 'Давр дан' }}</label>
+        <input type="date" name="date_from" id="sFrom" class="vs-input" value="{{ filters.date_from_s }}">
+      </div>
+      <div class="vs-field" style="width:160px;">
+        <label class="vs-label" for="sTo">{{ 'Период по' if is_ru else 'Давр гача' }}</label>
+        <input type="date" name="date_to" id="sTo" class="vs-input" value="{{ filters.date_to_s }}">
+      </div>
+      <div class="vs-field" style="min-width:170px;">
+        <label class="vs-label" for="sUnit">{{ 'Машина' if is_ru else 'Машина' }}</label>
+        <select name="unit_id" id="sUnit" class="vs-select">
+          <option value="">{{ '— все машины —' if is_ru else '— барча машиналар —' }}</option>
+          {% for u in units %}<option value="{{ u.id }}" {% if filters.unit_id == u.id %}selected{% endif %}>{{ '№ %s'|format(u.number) }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="width:120px;">
+        <label class="vs-label" for="sBand">{{ 'Коридор, %' if is_ru else 'Йўлак, %' }}</label>
+        <input type="number" name="band" id="sBand" class="vs-input" min="5" max="100" step="1" value="{{ data.band }}">
+      </div>
+      {# Порог оценки. 0 — законное значение и означает «судить всё»: это
+         способ владельца посмотреть ровно те строки, которые правило прячет
+         из медианы. #}
+      <div class="vs-field" style="width:140px;">
+        <label class="vs-label" for="sMinArea">{{ 'Порог оценки, га' if is_ru else 'Баҳолаш чегараси, га' }}</label>
+        <input type="number" name="min_area" id="sMinArea" class="vs-input" min="0" max="1000" step="0.1" value="{{ '%g'|format(data.min_area) }}">
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+        <a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.spray_usage') }}">{{ 'За всё время' if is_ru else 'Барча вақт' }}</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Вылеты' if is_ru else 'Парвозлар' }}</div>
+    <div class="vs-stat-value is-num">{{ data.total.flights|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Из них опрыскивание' if is_ru else 'Шундан пуркаш' }}</div>
+    <div class="vs-stat-value is-num">{{ data.total.spray_flights|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Гектары опрыскивания' if is_ru else 'Пуркаш гектари' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(data.total.area_spray)|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Прочие гектары' if is_ru else 'Бошқа гектар' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(data.total.area_other)|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Литры' if is_ru else 'Литр' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(data.total.liters)|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Л/га по всем' if is_ru else 'Барчаси бўйича л/га' }}</div>
+    <div class="vs-stat-value is-num">{% if data.total.rate is none %}—{% else %}{{ '%.2f'|format(data.total.rate)|vs_num }}{% endif %}</div>
+  </div>
+</div>
+
+{# Коридор объяснён СЛОВАМИ и числами: читатель должен видеть, что означает
+   цвет, иначе цвет — это утверждение без источника. #}
+<div class="vs-alert is-info vs-mb">
+  {% if data.median is none %}
+  {{ 'Медиану посчитать не из чего: ни в одной паре «машина × месяц» за этот период не записаны литры. Пока литров нет, коридор не строится и ни одна строка не красится.' if is_ru else 'Медианани ҳисоблашга асос йўқ: бу даврда бирорта «машина × ой» жуфтлигида литр ёзилмаган. Литр бўлмагунча йўлак қурилмайди ва бирорта қатор бўялмайди.' }}
+  {% else %}
+  {# Счётчик стоит ПОСЛЕ существительного и через двоеточие: «по 1 парам»
+     не согласуется ни при каком числе, а склонять числительное в шаблоне —
+     это три ветки на каждую строку. #}
+  {{ 'Медиана расхода — ' if is_ru else 'Медиана сарфи — ' }}<b>{{ '%.2f'|format(data.median)|vs_num }}</b>{{ ' л/га. Считана по парам «машина × месяц», у которых расход вообще считается: ' if is_ru else ' л/га. Сарфи умуман ҳисобланадиган «машина × ой» жуфтликлари бўйича ҳисобланган: ' }}<b>{{ data.rated_cells|vs_num }}</b>{{ '. Пары с площадью опрыскивания меньше ' if is_ru else '. Пуркаш майдони ' }}<b>{{ '%g'|format(data.min_area) }}</b>{{ ' га, а также строка «не распознано», в медиану не входят и не красятся: расход, посчитанный на почти нулевой площади, — это арифметика, а не свидетельство. Таких пар ' if is_ru else ' га дан кам жуфтликлар, шунингдек «аниқланмаган» қатори медианага кирмайди ва бўялмайди: деярли нол майдонда ҳисобланган сарф — бу арифметика, далил эмас. Бундай жуфтликлар ' }}<b>{{ data.unjudged_cells|vs_num }}</b>{{ ', их расход показан. Коридор ± ' if is_ru else ' та, уларнинг сарфи кўрсатилган. Йўлак ± ' }}<b>{{ data.band }}</b>{{ ' %, то есть от ' if is_ru else ' %, яъни ' }}<b>{{ '%.2f'|format(data.low)|vs_num }}</b>{{ ' до ' if is_ru else ' дан ' }}<b>{{ '%.2f'|format(data.high)|vs_num }}</b>{{ ' л/га — строки вне него отмечены жёлтым. Вне двойного коридора, то есть ниже ' if is_ru else ' л/га гача — ундан ташқаридаги қаторлар сариқ билан белгиланган. Икки баравар йўлакдан ташқарида, яъни ' }}<b>{{ '%.2f'|format(data.low2)|vs_num }}</b>{{ ' или выше ' if is_ru else ' дан паст ёки ' }}<b>{{ '%.2f'|format(data.high2)|vs_num }}</b>{{ ' л/га — красным. Цвет означает «на это стоит посмотреть», а не «здесь ошибка»: разные препараты дают разную норму, и коридор про это ничего не знает.' if is_ru else ' л/га дан юқори — қизил билан. Ранг «бунга қараш керак» дегани, «бу ерда хато» дегани эмас: турли препаратлар турли меъёр беради ва йўлак бу ҳақда ҳеч нима билмайди.' }}
+  {% endif %}
+</div>
+
+<div class="vs-alert is-warning vs-mb">
+  {{ 'Прочерк в колонке «Л/га» — это «литры не записаны», а не ноль: у всех вылетов опрыскивания в этой паре пустое поле литров. Такая строка не красится и в медиану не входит. Ноль означал бы, что машина прошла гектары вообще без раствора, — этого никто не измерял. Колонка «Прочие гектары» — это посев и вылеты, у которых тип работы не записан: их площадь в расход не входит, но в общий итог по гектарам входит.' if is_ru else '«Л/га» устунидаги чизиқча «литр ёзилмаган» дегани, нол эмас: бу жуфтликдаги барча пуркаш парвозларида литр майдони бўш. Бундай қатор бўялмайди ва медианага кирмайди. Нол машина гектарларни умуман эритмасиз ўтган дегани бўлар эди — буни ҳеч ким ўлчамаган. «Бошқа гектар» устуни — экиш ва иш тури ёзилмаган парвозлар: уларнинг майдони сарфга кирмайди, аммо гектар бўйича умумий якунга киради.' }}
+</div>
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Расход по машинам и месяцам' if is_ru else 'Машина ва ойлар бўйича сарф' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'Строк' if is_ru else 'Қаторлар' }}: {{ data.rows|length|vs_num }}</span>
+  </div>
+  {% if not data.reconciled %}<div class="vs-alert is-danger">{{ mismatch_text }}</div>{% endif %}
+  {% if data.rows %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ t_machine }}</th>
+        <th>{{ t_month }}</th>
+        <th class="right">{{ 'Вылеты — опрыскивание' if is_ru else 'Парвозлар — пуркаш' }}</th>
+        <th class="right">{{ 'Без записанных литров' if is_ru else 'Литри ёзилмаган' }}</th>
+        <th class="right">{{ 'Гектары опрыскивания' if is_ru else 'Пуркаш гектари' }}</th>
+        <th class="right">{{ 'Прочие гектары' if is_ru else 'Бошқа гектар' }}</th>
+        <th class="right">{{ 'Всего гектаров' if is_ru else 'Жами гектар' }}</th>
+        <th class="right">{{ 'Литры' if is_ru else 'Литр' }}</th>
+        <th class="right">{{ 'Л/га' if is_ru else 'Л/га' }}</th>
+        {# Колонка существует, чтобы читатель ВИДЕЛ, почему строка не
+           покрашена, а не гадал. Пустая — значит строка оценивалась. #}
+        <th>{{ 'Примечание' if is_ru else 'Изоҳ' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in data.rows %}
+      <tr{% if r.flag %} class="{{ r.flag }}"{% endif %}>
+        <td>{% if r.number is none %}<b>{{ t_unattr }}</b>{% else %}{{ '№ %s'|format(r.number) }}{% endif %}</td>
+        <td>{{ r.month }}</td>
+        <td class="right">{{ r.spray_flights|vs_num }}</td>
+        <td class="right{% if r.no_liters %} vs-muted{% endif %}">{{ r.no_liters|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(r.area_spray)|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(r.area_other)|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(r.area_total)|vs_num }}</td>
+        <td class="right">{% if r.spray_flights > r.no_liters %}{{ '%.2f'|format(r.liters)|vs_num }}{% else %}—{% endif %}</td>
+        <td class="right">{% if r.rate is none %}—{% else %}<b>{{ '%.2f'|format(r.rate)|vs_num }}</b>{% endif %}</td>
+        <td class="vs-muted" style="font-size:11px;">{{ r.note }}</td>
+      </tr>
+      {% endfor %}
+      <tr style="font-weight:700;">
+        <td>{{ t_total }}</td>
+        <td></td>
+        <td class="right">{{ data.total.spray_flights|vs_num }}</td>
+        <td class="right">{{ data.total.no_liters|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(data.total.area_spray)|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(data.total.area_other)|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(data.total.area_total)|vs_num }}</td>
+        <td class="right">{% if data.total.spray_flights > data.total.no_liters %}{{ '%.2f'|format(data.total.liters)|vs_num }}{% else %}—{% endif %}</td>
+        {# Итоговая строка НЕ красится: сравнивать агрегат с медианой его же
+           слагаемых бессмысленно, и цвет тут читался бы как приговор всему
+           парку. #}
+        <td class="right">{% if data.total.rate is none %}—{% else %}{{ '%.2f'|format(data.total.rate)|vs_num }}{% endif %}</td>
+        <td></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty"><div class="vs-empty-title">{{ t_empty }}</div></div>
+  {% endif %}
+</div>
+{% endblock %}

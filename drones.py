@@ -3853,6 +3853,22 @@ DRONE_REPORT_TILES = (
                        'ёнида',
     },
     {
+        # DRONE-ANALYTICS-001/1. The only tile on a NEW accent: five accents
+        # existed and all five were already in use, so a sixth report either
+        # repeats a colour or brings one rule. --vs-purple / --vs-purple-bg
+        # were already defined (design-system.css line 53) and unused by any
+        # tile; the rule that binds them is additive and modifies nothing.
+        'key': 'spray',
+        'endpoint': 'drones.spray_usage',
+        'accent': 'is-purple',
+        'title_ru': 'Расход рабочего раствора',
+        'title_uz': 'Иш эритмаси сарфи',
+        'subtitle_ru': 'Литры на гектар по машинам и месяцам, '
+                       'с коридором вокруг медианы',
+        'subtitle_uz': 'Машина ва ойлар бўйича гектарига литр, '
+                       'медиана атрофида йўлак билан',
+    },
+    {
         'key': 'sources',
         'endpoint': 'drones.sources',
         'accent': 'is-danger',
@@ -4372,3 +4388,389 @@ def works_assignment_hints():
         month=month,
         periods=periods,
     )
+
+
+# ─── DRONE-ANALYTICS-001/1: working-solution consumption ─────────────────────
+
+# [REASON]: the corridor half-width, in per cent of the median. 30 % is a
+# starting point the owner can move with ?band=, NOT a measured tolerance --
+# nobody has yet established what spread is normal for these treatments. It is
+# named and printed on the page in words for exactly that reason: a threshold
+# whose value is invisible gets believed.
+DRONE_SPRAY_BAND_DEFAULT = 30
+DRONE_SPRAY_BAND_MIN = 5
+DRONE_SPRAY_BAND_MAX = 100
+
+# [REASON]: a rate computed on a denominator near zero is arithmetic, not
+# evidence. Measured on staging 2026-08-07: machine No 9 flew 25 flights
+# totalling 0.25 ha and its litres-per-hectare comes out at 141.91 -- that is
+# not a machine over-dosing five-fold, it is 35 litres divided by a quarter of
+# a hectare. Grouped by machine PER MONTH, as this report is, such cells are
+# common rather than exceptional: production 2026-01 holds 12 flights and
+# 0.19 ha for the whole fleet. A machine-month below this area still SHOWS its
+# rate -- hiding a number because it is inconvenient is the other failure --
+# but it does not vote in the median and is never coloured.
+DRONE_SPRAY_MIN_AREA_HA = 10.0
+DRONE_SPRAY_MIN_AREA_MAX = 1000.0
+
+
+def _drone_spray_band(args):
+    """The corridor half-width in per cent: 5..100, anything else -> 30."""
+    raw = args.get('band', type=int)
+    if raw is None or raw < DRONE_SPRAY_BAND_MIN or raw > DRONE_SPRAY_BAND_MAX:
+        return DRONE_SPRAY_BAND_DEFAULT
+    return raw
+
+
+def _drone_spray_min_area(args):
+    """The judging threshold in hectares: 0..1000, anything else -> 10.0.
+
+    0 is LEGAL and means «judge everything». It is how the owner inspects
+    exactly the rows this rule keeps out of the median, so it must not be
+    folded into the «anything else» branch: a falsy 0 that silently became
+    10.0 would make the escape hatch look broken rather than absent.
+    """
+    raw = args.get('min_area', type=float)
+    if raw is None or raw < 0.0 or raw > DRONE_SPRAY_MIN_AREA_MAX:
+        return DRONE_SPRAY_MIN_AREA_HA
+    return raw
+
+
+def _drone_median(values):
+    """Median of a list of floats, or None when there is nothing to take."""
+    ordered = sorted(values)
+    count = len(ordered)
+    if not count:
+        return None
+    middle = count // 2
+    if count % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2.0
+
+
+def _drone_spray_usage_data(conds, band, min_area=DRONE_SPRAY_MIN_AREA_HA):
+    """Litres per hectare by machine x month, with the corridor around it.
+
+    [REASON]: THE RATE IS COMPUTED OVER SPRAY FLIGHTS ONLY (usage_type == 0)
+    and NOT over every flight. _drone_summary_data's liters_per_ha divides
+    total litres by TOTAL area, seeding included, which depresses the figure
+    for any machine that also sowed -- the machine looks under-dosed when it
+    was simply doing another job. The area of everything that is not a spray
+    flight is carried in its own column so the machine's total area still
+    reconciles with the grand total and the reader can see where it went.
+
+    [REASON]: usage_type is NULLABLE, and `usage_type == 0` is NULL -- not
+    true -- for those rows, so a flight whose type was never recorded lands in
+    the OTHER column. That is deliberate: an unknown job type is not evidence
+    of spraying, and quietly counting it as spray would move litres and area
+    into a rate that is supposed to describe one treatment. MEASURED
+    2026-08-07: sowing is 63 flights of 28 832 (17.13 ha of 28 835.34) and
+    touches only machines No 10 and No 13, moving their rate by 0.25 and 0.07
+    l/ha. So this filter is CORRECTNESS, not a large correction -- it is what
+    makes the column mean one thing, and it does not explain the spread.
+
+    [REASON]: DRONE-ZERO-VS-UNKNOWN-001 again, on a third column, and READ
+    THIS BEFORE DELETING THE BRANCH AS UNREACHABLE. The NULL-litres branch is
+    DEFENSIVE, NOT DESCRIPTIVE. Measured on 2026-08-07: the number of spray
+    flights with spray_liters IS NULL is ZERO across 28 832 production
+    flights and ZERO across 10 409 on staging. The branch exists because the
+    column is NULLABLE and one collector failure is all it takes: without it,
+    SUM over an all-NULL group is 0.0 after the coalesce and the cell reads
+    0.00 l/ha -- «this machine sprayed nothing over 40 hectares», a false
+    sentence, which the corridor then paints red into a false accusation. A
+    gap must not become a fabricated zero.
+    It is NOT the explanation of the eleven-fold spread. That spread is real
+    data: machine No 8 genuinely reports 3.54 l/ha over 2 384.30 ha, with no
+    NULLs and no sowing involved. The counter that decides the branch is
+    no_liters, in the same shape _drone_work_cut() uses for no_amount, and
+    the only thing that exercises it today is the fixture in A1.3 -- which
+    makes that negative control the whole of this branch's coverage, and
+    therefore more necessary rather than less.
+    """
+    month_expr = _drone_flight_month_expr()
+    # usage_type == 0 is spray; see the second [REASON] above for NULL.
+    is_spray = (DroneFlight.usage_type == 0)
+
+    groups = (db.session.query(
+        DroneFlight.drone_unit_id,
+        month_expr,
+        func.count(DroneFlight.id),
+        func.coalesce(
+            func.sum(case((is_spray, DroneFlight.area_ha), else_=0.0)), 0.0),
+        func.coalesce(
+            func.sum(case((is_spray, 0.0), else_=DroneFlight.area_ha)), 0.0),
+        # SUM skips NULLs by itself, so this is litres over the spray flights
+        # that HAVE a figure -- which is why no_liters below is needed to tell
+        # «nothing recorded» from «recorded as nothing».
+        func.coalesce(
+            func.sum(case((is_spray, DroneFlight.spray_liters), else_=None)),
+            0.0),
+        func.sum(case((is_spray, 1), else_=0)),
+        func.sum(case((and_(is_spray, DroneFlight.spray_liters.is_(None)), 1),
+                      else_=0)),
+    ).filter(*conds).group_by(DroneFlight.drone_unit_id, month_expr).all())
+
+    unit_numbers = {u.id: u.number for u in DroneUnit.query.all()}
+    rows = []
+    for (unit_id, month, flights, area_spray, area_other, liters,
+         spray_flights, no_liters) in groups:
+        area_spray = float(area_spray or 0.0)
+        area_other = float(area_other or 0.0)
+        liters = float(liters or 0.0)
+        spray_flights = int(spray_flights or 0)
+        no_liters = int(no_liters or 0)
+        # The whole point of the counter: all-NULL is unknown, not zero.
+        if spray_flights and spray_flights > no_liters:
+            rate = _drone_rate(liters, area_spray)
+        else:
+            rate = None
+        rows.append({
+            'unit_id': unit_id,
+            'number': unit_numbers.get(unit_id),
+            'month': month,
+            'flights': flights,
+            'spray_flights': spray_flights,
+            'other_flights': flights - spray_flights,
+            'area_spray': area_spray,
+            'area_other': area_other,
+            'area_total': area_spray + area_other,
+            'liters': liters,
+            'no_liters': no_liters,
+            'rate': rate,
+        })
+
+    # Machine number ascending, NULL machine last, newest month first inside
+    # each machine: the row a reader looks for is this month's, and the
+    # unattributed line must stay visible rather than sort into the middle of
+    # the fleet. Two passes, relying on sort stability, so neither key has to
+    # encode the other's direction.
+    rows.sort(key=lambda r: r['month'] or '', reverse=True)
+    rows.sort(key=lambda r: (r['number'] is None, r['number'] or 0))
+
+    # [REASON]: WHICH ROWS ARE JUDGED, and it is not «all of them».
+    #
+    #   * a rate that could not be computed cannot be compared;
+    #   * a machine-month under min_area hectares has a denominator too small
+    #     to mean anything -- see DRONE_SPRAY_MIN_AREA_HA;
+    #   * THE UNATTRIBUTED LINE NEVER VOTES. It aggregates some forty nickname
+    #     spellings across an unknown set of machines, so its rate is a mixture
+    #     of an unknown number of treatments. A report that judges machines
+    #     must not take its standard from a bucket of unknowns, and must not
+    #     accuse that bucket either.
+    #
+    # Every excluded row STILL SHOWS ITS RATE and carries a label saying why
+    # it is uncoloured. Hiding the number would be the opposite failure.
+    for row in rows:
+        if row['rate'] is None:
+            row['judged'] = False
+            row['note'] = ''
+        elif row['unit_id'] is None:
+            row['judged'] = False
+            row['note'] = _drone_t('аниқланмаган', 'не распознано')
+        elif row['area_spray'] < min_area:
+            row['judged'] = False
+            row['note'] = _drone_t('майдон кам', 'мало площади')
+        else:
+            row['judged'] = True
+            row['note'] = ''
+
+    median = _drone_median([r['rate'] for r in rows if r['judged']])
+    low = high = low2 = high2 = None
+    if median is not None:
+        low = median * (1.0 - band / 100.0)
+        high = median * (1.0 + band / 100.0)
+        low2 = median * (1.0 - 2.0 * band / 100.0)
+        high2 = median * (1.0 + 2.0 * band / 100.0)
+    for row in rows:
+        # A cell with no rate is never coloured: an em dash means «nobody
+        # wrote it down», and painting it red would accuse the machine of a
+        # dose nobody measured. Nor is a row that did not vote in the median.
+        row['flag'] = ''
+        if median is not None and row['judged']:
+            if row['rate'] < low2 or row['rate'] > high2:
+                row['flag'] = 'is-danger-row'
+            elif row['rate'] < low or row['rate'] > high:
+                row['flag'] = 'is-warning-row'
+
+    grand = (db.session.query(
+        func.count(DroneFlight.id),
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+    ).filter(*conds).one())
+    total = {
+        'flights': sum(r['flights'] for r in rows),
+        'spray_flights': sum(r['spray_flights'] for r in rows),
+        'other_flights': sum(r['other_flights'] for r in rows),
+        'area_spray': sum(r['area_spray'] for r in rows),
+        'area_other': sum(r['area_other'] for r in rows),
+        'liters': sum(r['liters'] for r in rows),
+        'no_liters': sum(r['no_liters'] for r in rows),
+    }
+    total['area_total'] = total['area_spray'] + total['area_other']
+    total['rate'] = (_drone_rate(total['liters'], total['area_spray'])
+                     if total['spray_flights'] > total['no_liters'] else None)
+    # A1.2: area_spray + area_other over every row against the grand total of
+    # the same filter. Shown on the page as the other cuts show it, never
+    # hidden -- a breakdown that quietly loses hectares is the defect this
+    # module has already paid for once.
+    reconciled = (total['flights'] == (grand[0] or 0)
+                  and abs(total['area_total'] - float(grand[1] or 0.0)) < 0.005)
+    return {
+        'rows': rows,
+        'total': total,
+        'grand': {'flights': grand[0] or 0, 'area': float(grand[1] or 0.0)},
+        'reconciled': reconciled,
+        'band': band,
+        'min_area': min_area,
+        'median': median,
+        'low': low,
+        'high': high,
+        'low2': low2,
+        'high2': high2,
+        # Cells that VOTED, not cells that have a rate: the sentence on the
+        # page says «the median was taken over N pairs» and must name the
+        # number that was actually used.
+        'rated_cells': sum(1 for r in rows if r['judged']),
+        'unjudged_cells': sum(1 for r in rows
+                              if r['rate'] is not None and not r['judged']),
+    }
+
+
+@drones_bp.route('/reports/spray')
+@module_required('drones')
+def spray_usage():
+    """Litres per hectare by machine and month, against a median corridor.
+
+    [REASON]: across the fleet the figure runs from 3.54 to 38.53 l/ha against
+    a mean of 25.98 -- an eleven-fold spread nobody looks at. Three
+    explanations demand three different actions (a different treatment; an
+    under-filled tank the customer paid for; a broken flow meter) and nothing
+    in the module tells them apart. This screen does not decide which it is;
+    it makes the spread visible per machine-month so somebody can go and ask.
+    """
+    filters = _drone_filters_from_args(request.args,
+                                       default_current_month=False)
+    band = _drone_spray_band(request.args)
+    min_area = _drone_spray_min_area(request.args)
+    data = _drone_spray_usage_data(_drone_flight_conditions(filters), band,
+                                   min_area)
+    link_args = _drone_link_args(filters)
+    if band != DRONE_SPRAY_BAND_DEFAULT:
+        link_args['band'] = band
+    # Compared to the constant, not to a falsy test: min_area=0 is a real
+    # choice and has to survive into the Excel link.
+    if min_area != DRONE_SPRAY_MIN_AREA_HA:
+        link_args['min_area'] = min_area
+    return render_template(
+        'drones/spray_usage.html',
+        data=data,
+        filters=filters,
+        link_args=link_args,
+        units=DroneUnit.query.order_by(DroneUnit.number).all(),
+    )
+
+
+@drones_bp.route('/reports/spray.xlsx')
+@module_required('drones')
+def spray_usage_xlsx():
+    """The same table, two sheets: the numbers and the filters that made them.
+
+    [REASON]: a cell that is an em dash on screen is an EMPTY cell here, never
+    0 -- the same rule _drone_money_or_blank() applies to the works workbooks,
+    for the same reason: the workbook is the copy that gets believed, and a 0
+    in a litres-per-hectare column is an accusation.
+    """
+    from openpyxl import Workbook
+
+    filters = _drone_filters_from_args(request.args,
+                                       default_current_month=False)
+    band = _drone_spray_band(request.args)
+    min_area = _drone_spray_min_area(request.args)
+    data = _drone_spray_usage_data(_drone_flight_conditions(filters), band,
+                                   min_area)
+    st = _drone_xlsx_styler()
+    unbounded = _drone_t('чекланмаган', 'не ограничен')
+    label_unattr = _drone_t('Аниқланмаган', 'Не распознано')
+    label_total = _drone_t('Жами', 'Итого')
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = _drone_t('Жамланма', 'Сводка')
+    ws.append([_drone_t('Кўрсаткич', 'Показатель'),
+               _drone_t('Қиймат', 'Значение')])
+    for label, value in (
+        (_drone_t('Давр: бошланиши', 'Период: с'),
+         filters['date_from_s'] or unbounded),
+        (_drone_t('Давр: тугаши', 'Период: по'),
+         filters['date_to_s'] or unbounded),
+        (_drone_t('Йўлак, %', 'Коридор, %'), band),
+        (_drone_t('Баҳолаш чегараси, га', 'Порог оценки, га'), min_area),
+        (_drone_t('Медиана, л/га', 'Медиана, л/га'),
+         data['median'] if data['median'] is not None else ''),
+        (_drone_t('Медианага кирган жуфтликлар',
+                  'Пар вошло в медиану'), data['rated_cells']),
+        (_drone_t('Баҳоланмаган жуфтликлар',
+                  'Пар не оценивалось'), data['unjudged_cells']),
+        (_drone_t('Парвозлар', 'Вылеты'), data['total']['flights']),
+        (_drone_t('Пуркаш парвозлари', 'Вылеты с опрыскиванием'),
+         data['total']['spray_flights']),
+        (_drone_t('Пуркаш гектари', 'Гектары опрыскивания'),
+         data['total']['area_spray']),
+        (_drone_t('Бошқа гектар', 'Прочие гектары'),
+         data['total']['area_other']),
+        (_drone_t('Литр', 'Литры'), data['total']['liters']),
+        (_drone_t('Литри ёзилмаган парвозлар',
+                  'Вылетов без записанных литров'),
+         data['total']['no_liters']),
+    ):
+        ws.append([label, _drone_xlsx_safe(value)])
+    st.style_table(ws)
+
+    # [REASON]: no slash in a sheet title -- openpyxl refuses «Л/га» with
+    # ValueError and the whole export becomes a 500. Excel forbids / \ ? * [ ]
+    # in sheet names; the column header inside the sheet still reads «Л/га».
+    ws = wb.create_sheet(_drone_t('Литр гектарига', 'Литров на гектар'))
+    ws.append([
+        _drone_t('Машина', 'Машина'),
+        _drone_t('Ой', 'Месяц'),
+        _drone_t('Пуркаш парвозлари', 'Вылеты с опрыскиванием'),
+        _drone_t('Литри ёзилмаган', 'Без записанных литров'),
+        _drone_t('Пуркаш гектари', 'Гектары опрыскивания'),
+        _drone_t('Бошқа гектар', 'Прочие гектары'),
+        _drone_t('Жами гектар', 'Всего гектаров'),
+        _drone_t('Литр', 'Литры'),
+        _drone_t('Л/га', 'Л/га'),
+        _drone_t('Изоҳ', 'Примечание'),
+    ])
+    def _liters_cell(row):
+        """Litres for a workbook cell, or None when none were ever recorded.
+
+        Same rule as _drone_money_or_blank(): the figure is unknown exactly
+        when every spray flight of the group is missing the thing it is
+        computed from. An empty cell, never 0 -- 0 litres over 40 hectares is
+        a statement about the machine, and nobody made it.
+        """
+        return row['liters'] if row['spray_flights'] > row['no_liters'] else None
+
+    for r in data['rows']:
+        ws.append([
+            (('№ %s' % r['number']) if r['number'] is not None
+             else label_unattr),
+            r['month'],
+            r['spray_flights'],
+            r['no_liters'],
+            r['area_spray'],
+            r['area_other'],
+            r['area_total'],
+            _liters_cell(r),
+            r['rate'],
+            r['note'],
+        ])
+    ws.append([label_total, '',
+               data['total']['spray_flights'], data['total']['no_liters'],
+               data['total']['area_spray'], data['total']['area_other'],
+               data['total']['area_total'], _liters_cell(data['total']),
+               data['total']['rate'], ''])
+    st.style_table(ws, num_formats={5: '0.00', 6: '0.00', 7: '0.00',
+                                    8: '0.00', 9: '0.00'},
+                   bold_rows=(ws.max_row,))
+    return _drone_xlsx_response(wb, 'drone_spray_usage', filters)
