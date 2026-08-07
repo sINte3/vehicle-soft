@@ -166,6 +166,28 @@ def by_label(cut):
     return {r['label']: r for r in cut['rows'] + list(cut['services'])}
 
 
+_CELL_RE = re.compile(r'<td[^>]*>(.*?)</td>', re.S)
+
+
+def cut_cells(body, title, column):
+    """{row label: one <td> as rendered} for one table of a rendered page.
+
+    column is the 0-based index inside the row. The report cuts run
+    label, jobs, area, amount, received, outstanding, share; the debt tables
+    run label, jobs, amount, received, outstanding.
+    """
+    after = body.split(title, 1)[1]
+    tbody = after.split('<tbody>')[1].split('</tbody>')[0]
+    cells = {}
+    for row in tbody.split('<tr'):
+        tds = _CELL_RE.findall(row)
+        if len(tds) <= column:
+            continue
+        label = text_of(tds[0])
+        cells[label] = tds[column]
+    return cells
+
+
 # ── the pre-commit tree, loaded out of git ───────────────────────────────────
 _PRE_COMMIT_CACHE = {}
 
@@ -357,6 +379,251 @@ class TestA3NegativeControl(PreCommitMixin, unittest.TestCase):
         module = self.pre_commit()
         self.assertIsNot(module, drones)
         self.assertNotEqual(module.__file__, drones.__file__)
+
+
+# ---------------------------------------------------------------------------
+# B  commit 2 -- one macro, shared by two templates
+# ---------------------------------------------------------------------------
+
+PARTIAL = 'templates/drones/_money_cell.html'
+REPORTS_TEMPLATE = 'templates/drones/works_reports.html'
+DEBTS_TEMPLATE = 'templates/drones/works_debts.html'
+MACRO_TEMPLATES = (REPORTS_TEMPLATE, DEBTS_TEMPLATE)
+
+IMPORT_LINE = ("{% from 'drones/_money_cell.html' import money_cell "
+               "with context %}")
+
+
+def read_template(relative_path):
+    with io.open(os.path.join(REPO_ROOT, relative_path), encoding='utf-8') as f:
+        return f.read()
+
+
+def render_macro(call, lang='ru', with_context=True):
+    """Render one money_cell() call through the REAL application Jinja env.
+
+    with_context=False reproduces exactly the mistake §4 of the task warns
+    about, so the check that catches it can be shown to catch it.
+    """
+    from flask import g
+    source = ("{%% set is_ru = (lang == 'ru') %%}"
+              "{%% from 'drones/_money_cell.html' import money_cell%s %%}"
+              "%s") % (' with context' if with_context else '', call)
+    with app.test_request_context('/drones/works/reports'):
+        g.lang = lang
+        return app.jinja_env.from_string(source).render(lang=lang)
+
+
+# [REASON]: NBSP is NOT whitespace here. str.split() eats U+00A0, so the
+# obvious ' '.join(text.split()) turns «5\xa0000\xa0000» into «5 000 000» and
+# every assertion that looks for the grouped number then matches the ungrouped
+# one -- a check that gives the same answer for right and wrong code. The
+# grouping separator IS the vs_num filter's output and has to survive.
+_WS_RE = re.compile(r'[^\S\xa0]+')
+_NOTE_RE = re.compile(r'<div class="vs-muted"[^>]*>(.*?)</div>', re.S)
+
+
+def text_of(html):
+    return _WS_RE.sub(' ', re.sub(r'<[^>]+>', ' ', html)).strip()
+
+
+def note_text(rendered):
+    """The muted note's WORDING alone: «сумма не указана: 1» -> the words.
+
+    Returns '' when there is no note at all and when the note rendered with
+    an empty wording -- the two ways this can be broken, kept apart by the
+    caller asserting which one it expects.
+    """
+    match = _NOTE_RE.search(rendered)
+    if match is None:
+        return ''
+    return _WS_RE.sub(' ', match.group(1)).rsplit(':', 1)[0].strip()
+
+
+class TestB1TheFourCombinations(unittest.TestCase):
+    """B-1: the partial rendered directly, one case per row of §2's table."""
+
+    def test_b1_missing_equals_jobs_is_a_dash(self):
+        out = render_macro("{{ money_cell(0, 2, 2, 'amount') }}")
+        self.assertEqual('—', text_of(out))
+        self.assertNotIn('0', text_of(out))
+
+    def test_b1_partial_with_a_note_shows_the_value_and_the_count(self):
+        out = render_macro("{{ money_cell(5000000, 2, 1, 'amount') }}")
+        self.assertIn('5\xa0000\xa0000', out)
+        self.assertIn('сумма не указана', text_of(out))
+        self.assertTrue(text_of(out).endswith('1'), text_of(out))
+
+    def test_b1_partial_without_a_note_shows_the_value_only(self):
+        """«Не получено» keys off no_amount and gets no note of its own."""
+        out = render_macro("{{ money_cell(5000000, 2, 1) }}")
+        self.assertIn('5\xa0000\xa0000', out)
+        self.assertNotIn('vs-muted', out)
+        self.assertEqual('5\xa0000\xa0000', text_of(out))
+
+    def test_b1_missing_zero_shows_the_value_only(self):
+        out = render_macro("{{ money_cell(7000000, 2, 0, 'amount') }}")
+        self.assertIn('7\xa0000\xa0000', out)
+        self.assertNotIn('vs-muted', out)
+
+    def test_b1_the_four_renderings_are_four(self):
+        rendered = {text_of(render_macro(call)) for call in (
+            "{{ money_cell(0, 2, 2, 'amount') }}",
+            "{{ money_cell(5000000, 2, 1, 'amount') }}",
+            "{{ money_cell(5000000, 2, 1) }}",
+            "{{ money_cell(7000000, 2, 0, 'amount') }}")}
+        self.assertEqual(4, len(rendered), rendered)
+
+    def test_b1_a_partial_group_is_never_a_dash(self):
+        """Two of six missing is a lower bound with a count, not a dash."""
+        out = render_macro("{{ money_cell(12000000, 6, 2, 'amount') }}")
+        self.assertNotEqual('—', text_of(out))
+        self.assertIn('12\xa0000\xa0000', out)
+        self.assertTrue(text_of(out).endswith('2'), text_of(out))
+
+    def test_b1_zero_jobs_is_not_a_dash(self):
+        """jobs == 0 and missing == 0 are equal but mean «nothing here»."""
+        self.assertEqual('0', text_of(render_macro(
+            "{{ money_cell(0, 0, 0, 'amount') }}")))
+
+
+class TestB2WithContextIsLoadBearing(unittest.TestCase):
+    """B-2: the note is non-empty in both languages, and empty without
+    `with context`.
+
+    [REASON]: the note text is selected by a DICTIONARY LOOKUP on `lang`
+    rather than by `if is_ru`. With a ternary, a macro imported without
+    context evaluates `lang == 'ru'` to False and silently renders the Uzbek
+    branch -- non-empty, plausible, and wrong in Russian. The lookup makes the
+    same mistake produce an empty string, which is what these assertions can
+    see. Verified by deleting `with context` once; the raw output is in the
+    PR body.
+    """
+
+    NOTE_CALL = "{{ money_cell(5000000, 2, 1, '%s') }}"
+
+    def test_b2_the_note_is_non_empty_in_both_languages(self):
+        for lang in ('ru', 'uz'):
+            for note in ('amount', 'received'):
+                with self.subTest(lang=lang, note=note):
+                    wording = note_text(
+                        render_macro(self.NOTE_CALL % note, lang=lang))
+                    self.assertTrue(wording,
+                                    'empty note for %s/%s' % (lang, note))
+                    self.assertNotIn(':', wording)
+
+    def test_b2_the_four_notes_are_four_distinct_strings(self):
+        seen = {note_text(render_macro(self.NOTE_CALL % note, lang=lang))
+                for lang in ('ru', 'uz') for note in ('amount', 'received')}
+        self.assertEqual(4, len(seen), seen)
+
+    def test_b2_without_with_context_the_note_is_empty(self):
+        """The negative control for the control: this is the failure mode."""
+        for lang in ('ru', 'uz'):
+            with self.subTest(lang=lang):
+                rendered = render_macro(self.NOTE_CALL % 'amount', lang=lang,
+                                        with_context=False)
+                self.assertIn('vs-muted', rendered,
+                              'the note div is still emitted -- only its '
+                              'wording is lost')
+                self.assertEqual('', note_text(rendered),
+                                 'the check cannot tell the two cases apart')
+                # the value itself still renders -- only the wording is lost,
+                # which is why nothing else on the page would look wrong
+                self.assertIn('5\xa0000\xa0000', rendered)
+
+    def test_b2_the_note_is_non_empty_rendered_through_the_real_page(self):
+        """Not the macro in isolation -- the page, through the real route.
+
+        The MIXED group is the only one with 0 < no_amount < jobs, so its
+        «Сумма» cell is the one carrying a note. Commit 3 extends this to the
+        debts page and to «Получено» (C-4).
+        """
+        seed()
+        admin = create_admin('b2_admin')
+        for lang, title in (('ru', 'По заказчикам'),
+                            ('uz', 'Буюртмачилар бўйича')):
+            with self.subTest(lang=lang):
+                set_language(admin, lang)
+                client = app.test_client()
+                login(client, admin)
+                body = client.get(
+                    '/drones/works/reports').data.decode('utf-8')
+                cell = cut_cells(body, title, 3)[MIXED]
+                self.assertIn('vs-muted', cell, 'no note rendered at all')
+                self.assertTrue(note_text(cell),
+                                'the note rendered with an EMPTY wording -- '
+                                'this is what a missing `with context` looks '
+                                'like on the page')
+
+    def test_b2_both_templates_import_with_context(self):
+        for path in MACRO_TEMPLATES:
+            with self.subTest(template=path):
+                source = read_template(path)
+                # assertTrue, not assertIn: assertIn would dump the whole
+                # template into the failure message.
+                self.assertTrue(IMPORT_LINE in source,
+                                '%s does not import money_cell WITH CONTEXT'
+                                % path)
+                self.assertEqual(
+                    1, source.count("import money_cell"),
+                    'exactly one import of the macro per template')
+
+    def test_b2_the_note_wording_lives_only_in_the_partial(self):
+        """One owner for the wording, or the two spellings come back."""
+        for path in MACRO_TEMPLATES:
+            with self.subTest(template=path):
+                self.assertNotIn('сумма не указана', read_template(path))
+                self.assertNotIn('сумма кўрсатилмаган', read_template(path))
+
+    def test_b2_the_partial_selects_by_lookup_not_by_a_ternary(self):
+        """The property B-2 rests on, asserted where it can be seen.
+
+        A ternary on is_ru would make test_b2_without_with_context_the_note
+        _is_empty pass by accident in Uzbek and fail to protect Russian.
+        """
+        source = read_template(PARTIAL)
+        macro_body = source.split('{% macro money_cell', 1)[1]
+        self.assertIn(".get(lang, {})", macro_body)
+        self.assertNotIn('if is_ru', macro_body)
+
+
+class TestB3TheOldMacroIsGone(unittest.TestCase):
+    """B-3: works_reports.html no longer defines its own amount_cell."""
+
+    DECL = re.compile(r'\{%-?\s*macro\s+([A-Za-z_][A-Za-z0-9_]*)')
+
+    def test_b3_no_template_declares_amount_cell(self):
+        offenders = []
+        for root, _dirs, files in os.walk(os.path.join(REPO_ROOT,
+                                                       'templates')):
+            for name in files:
+                if not name.endswith('.html'):
+                    continue
+                path = os.path.join(root, name)
+                with io.open(path, encoding='utf-8') as fh:
+                    for macro in self.DECL.findall(fh.read()):
+                        if macro == 'amount_cell':
+                            offenders.append(os.path.relpath(path, REPO_ROOT))
+        self.assertEqual([], offenders)
+
+    def test_b3_nothing_calls_amount_cell_any_more(self):
+        for path in MACRO_TEMPLATES:
+            with self.subTest(template=path):
+                self.assertNotIn('amount_cell(', read_template(path))
+
+    def test_b3_money_cell_is_declared_exactly_once_in_the_repo(self):
+        declarations = []
+        for root, _dirs, files in os.walk(os.path.join(REPO_ROOT,
+                                                       'templates')):
+            for name in files:
+                if not name.endswith('.html'):
+                    continue
+                path = os.path.join(root, name)
+                with io.open(path, encoding='utf-8') as fh:
+                    if 'money_cell' in self.DECL.findall(fh.read()):
+                        declarations.append(os.path.relpath(path, REPO_ROOT))
+        self.assertEqual([PARTIAL], declarations)
 
 
 if __name__ == '__main__':

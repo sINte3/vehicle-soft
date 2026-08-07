@@ -1894,10 +1894,10 @@ class DroneNumberFormatTests(unittest.TestCase):
 class DroneNumberPlacementTests(unittest.TestCase):
     """WHERE the filter is applied -- the half a unit test usually misses."""
 
-    TEMPLATES = ('_drones_nav.html', 'customers.html', 'list.html',
-                 'operator_card.html', 'operators.html', 'reattach.html',
-                 'reports.html', 'sources.html', 'summary.html',
-                 'unit_card.html', 'units.html', 'works.html',
+    TEMPLATES = ('_drones_nav.html', '_money_cell.html', 'customers.html',
+                 'list.html', 'operator_card.html', 'operators.html',
+                 'reattach.html', 'reports.html', 'sources.html',
+                 'summary.html', 'unit_card.html', 'units.html', 'works.html',
                  'works_assignment_hints.html', 'works_debts.html',
                  'works_reports.html')
 
@@ -1995,11 +1995,19 @@ class DroneNumberPlacementTests(unittest.TestCase):
         # grouped is asserted against the rendered page by
         # DroneDebtsSummaryCardTests.test_the_separator_really_is_the_non_
         # breaking_space and by the cut-cell assertions in the C tests.
+        #
+        # DRONE-ZERO-VS-UNKNOWN-001 moved that macro out to
+        # _money_cell.html and generalised it to all three money columns, so
+        # call sites keep MIGRATING out of the two report screens into the one
+        # partial. The per-file numbers move; the TOTAL is the invariant --
+        # a call site that vanished without arriving in the partial is a
+        # number that lost its grouping, and the sum below is what catches it.
         expected = {
+            '_money_cell.html': 1,
             'customers.html': 2, 'list.html': 3, 'reattach.html': 6,
             'sources.html': 4, 'summary.html': 26, 'works.html': 9,
             'works_assignment_hints.html': 9, 'works_debts.html': 15,
-            'works_reports.html': 16,
+            'works_reports.html': 15,
         }
         actual = {name: self.source(name).count('|vs_num')
                   for name in self.TEMPLATES

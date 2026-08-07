@@ -115,6 +115,16 @@
   </div>
 </div>
 
+{# DRONE-ZERO-VS-UNKNOWN-001: та же денежная ячейка, что на странице отчётов,
+   и именно та же — не копия. Копия во второй шаблон дала бы два написания
+   одной мысли в одном модуле, а расходиться они начинают с первой правки,
+   которую внесли в одно место из двух.
+
+   `with context` обязателен и его отсутствие молчаливо: без него макрос не
+   видит lang, и текст примечания становится пустым — ни разбор Jinja, ни
+   баланс <div>, ни py_compile этого не ловят. #}
+{% from 'drones/_money_cell.html' import money_cell with context %}
+
 {% macro debt_table(title, first_column, debt) %}
 <div class="vs-table-wrap vs-mb">
   <div class="vs-card-header">
