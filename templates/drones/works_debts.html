@@ -115,13 +115,23 @@
   </div>
 </div>
 
+{# DRONE-ZERO-VS-UNKNOWN-001: та же денежная ячейка, что на странице отчётов,
+   и именно та же — не копия. Копия во второй шаблон дала бы два написания
+   одной мысли в одном модуле, а расходиться они начинают с первой правки,
+   которую внесли в одно место из двух.
+
+   `with context` обязателен и его отсутствие молчаливо: без него макрос не
+   видит lang, и текст примечания становится пустым — ни разбор Jinja, ни
+   баланс <div>, ни py_compile этого не ловят. #}
+{% from 'drones/_money_cell.html' import money_cell with context %}
+
 {% macro debt_table(title, first_column, debt) %}
 <div class="vs-table-wrap vs-mb">
   <div class="vs-card-header">
     <span class="vs-card-title">{{ title }}</span>
   </div>
   {% if not debt.reconciled %}<div class="vs-alert is-danger">{{ mismatch_text }}</div>{% endif %}
-  {% if debt.rows or debt.rest %}
+  {% if debt.rows or debt.unknown or debt.rest %}
   <div class="vs-table-scroll">
   <table class="vs-table">
     <thead>
@@ -138,26 +148,60 @@
       <tr>
         <td>{{ r.label }}</td>
         <td class="right">{{ r.jobs }}</td>
-        <td class="right">{{ '%.0f'|format(r.amount)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(r.received)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(r.outstanding)|vs_num }}</td>
+        <td class="right">{{ money_cell(r.amount, r.jobs, r.no_amount, 'amount') }}</td>
+        <td class="right">{{ money_cell(r.received, r.jobs, r.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(r.outstanding, r.jobs, r.no_amount) }}</td>
       </tr>
       {% endfor %}
+      {# DRONE-ZERO-VS-UNKNOWN-001: третья корзина, и она стоит ВЫШЕ «долга
+         нет» — это не «долга нет», а «сказать нечего». Группа, у которой цену
+         не записали, имеет amount = 0 и received = 0, поэтому по outstanding
+         она неотличима от расплатившейся и раньше печаталась под «Долга нет
+         (остальные)»: страница утверждала, что хозяйство ничего не должно.
+         Это не неверное число, это неверное предложение.
+
+         is-warning-row, а не vs-muted: строка требует действия — сумму надо
+         внести на экране «Работы», — в отличие от расплатившихся, которые не
+         требуют ничего.
+
+         Класс именно is-warning-row: `.vs-table tr.is-warning-row` —
+         единственное правило design-system.css, которое красит СТРОКУ
+         таблицы (строки 646 и 649). Класс is-warning существует только как
+         модификатор .vs-mini, .vs-stat-value, .vs-alert и .vs-report-tile,
+         поэтому <tr class="is-warning"> не даёт ни фона, ни левой полосы:
+         строка, которая существует ради того, чтобы её заметили, рисуется
+         как все остальные. Проверка, которая это ловит, —
+         TestF1EveryClassIsReachable в
+         tests/test_drone_zero_vs_unknown.py.
+
+         Три денежные колонки здесь всегда прочерки: jobs == no_amount по
+         построению корзины, и money_cell() выводит это сам. Отдельного
+         «печатай прочерк» тут нет и быть не должно — иначе правило окажется
+         записано в двух местах и разойдётся. #}
+      {% if debt.unknown %}
+      <tr class="is-warning-row">
+        <td><b>{{ debt.unknown.label }}</b></td>
+        <td class="right">{{ debt.unknown.jobs }}</td>
+        <td class="right">{{ money_cell(debt.unknown.amount, debt.unknown.jobs, debt.unknown.no_amount, 'amount') }}</td>
+        <td class="right">{{ money_cell(debt.unknown.received, debt.unknown.jobs, debt.unknown.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(debt.unknown.outstanding, debt.unknown.jobs, debt.unknown.no_amount) }}</td>
+      </tr>
+      {% endif %}
       {% if debt.rest %}
       <tr class="vs-muted">
         <td>{{ debt.rest.label }}</td>
         <td class="right">{{ debt.rest.jobs }}</td>
-        <td class="right">{{ '%.0f'|format(debt.rest.amount)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(debt.rest.received)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(debt.rest.outstanding)|vs_num }}</td>
+        <td class="right">{{ money_cell(debt.rest.amount, debt.rest.jobs, debt.rest.no_amount, 'amount') }}</td>
+        <td class="right">{{ money_cell(debt.rest.received, debt.rest.jobs, debt.rest.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(debt.rest.outstanding, debt.rest.jobs, debt.rest.no_amount) }}</td>
       </tr>
       {% endif %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
         <td class="right">{{ debt.total.jobs }}</td>
-        <td class="right">{{ '%.0f'|format(debt.total.amount)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(debt.total.received)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(debt.total.outstanding)|vs_num }}</td>
+        <td class="right">{{ money_cell(debt.total.amount, debt.total.jobs, debt.total.no_amount, 'amount') }}</td>
+        <td class="right">{{ money_cell(debt.total.received, debt.total.jobs, debt.total.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(debt.total.outstanding, debt.total.jobs, debt.total.no_amount) }}</td>
       </tr>
     </tbody>
   </table>
@@ -169,7 +213,7 @@
 {% endmacro %}
 
 <div class="vs-alert is-info vs-mb">
-  {{ 'Долг — это «олинмаган пуллар» ведомостей: сумма минус полученное. Движение денег этот модуль не ведёт и не претендует вести: он хранит правду о факте и его цене, деньги живут в другой системе. Строка «Долга нет (остальные)» показана намеренно — без неё столбец не сходился бы с итогом, и таблица читалась бы как «это все заказчики».' if is_ru else 'Қарз — ведомостлардаги «олинмаган пуллар»: сумма минус кирим қилинган. Бу модуль пул ҳаракатини юритмайди ва юритишга даъво ҳам қилмайди: у факт ва унинг нархи ҳақидаги ҳақиқатни сақлайди, пул бошқа тизимда яшайди. «Қарзи йўқ (қолганлари)» қатори атайлаб кўрсатилган — усиз устун якун билан тўғри келмас ва жадвал «бу барча буюртмачилар» деб ўқилар эди.' }}
+  {{ 'Долг — это «олинмаган пуллар» ведомостей: сумма минус полученное. Движение денег этот модуль не ведёт и не претендует вести: он хранит правду о факте и его цене, деньги живут в другой системе. Строка «Долга нет (остальные)» показана намеренно — без неё столбец не сходился бы с итогом, и таблица читалась бы как «это все заказчики». Строка «Долг неизвестен — сумма не записана» — это группы, у которых цену не записали ни в одной работе: их долг не ноль, а неизвестен, и три денежные колонки в ней стоят прочерками. Раньше такие группы попадали в «Долга нет», и страница утверждала, что хозяйство ничего не должно. Сумму вносят на экране «Работы».' if is_ru else 'Қарз — ведомостлардаги «олинмаган пуллар»: сумма минус кирим қилинган. Бу модуль пул ҳаракатини юритмайди ва юритишга даъво ҳам қилмайди: у факт ва унинг нархи ҳақидаги ҳақиқатни сақлайди, пул бошқа тизимда яшайди. «Қарзи йўқ (қолганлари)» қатори атайлаб кўрсатилган — усиз устун якун билан тўғри келмас ва жадвал «бу барча буюртмачилар» деб ўқилар эди. «Қарз номаълум — сумма ёзилмаган» қатори — бирорта ишида ҳам нархи ёзилмаган гуруҳлар: уларнинг қарзи нол эмас, номаълум, ва учта пул устуни унда чизиқча бўлиб туради. Илгари бундай гуруҳлар «Қарзи йўқ»га тушар эди ва саҳифа хўжалик ҳеч нима қарздор эмас деб тасдиқлар эди. Сумма «Ишлар» экранида киритилади.' }}
 </div>
 
 {% if data.operator_due.jobs %}

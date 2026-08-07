@@ -104,17 +104,14 @@
    второе. Ведомость это уже различает: works.html печатает «—», когда
    w.amount is none. Здесь то же самое, но по группе, а не по строке.
    no_amount приходит из _drone_work_cut() и есть у каждой строки, служебной
-   строки и итога — считать его в шаблоне нечем. #}
-{% macro amount_cell(cell) %}
-{%- if cell.jobs and cell.no_amount == cell.jobs -%}
-—
-{%- else -%}
-{{ '%.0f'|format(cell.amount)|vs_num }}
-{%- if cell.no_amount -%}
-<div class="vs-muted" style="font-size:11px;">{{ 'сумма не указана' if is_ru else 'сумма кўрсатилмаган' }}: {{ cell.no_amount }}</div>
-{%- endif -%}
-{%- endif -%}
-{% endmacro %}
+   строки и итога — считать его в шаблоне нечем.
+
+   DRONE-ZERO-VS-UNKNOWN-001: макрос amount_cell жил здесь и был нужен ещё и
+   на странице долгов. Он переехал в drones/_money_cell.html как money_cell()
+   и обобщён до любой из трёх денежных колонок; второго написания в модуле
+   нет. `with context` обязателен и его отсутствие молчаливо: без него макрос
+   не видит lang, и текст примечания становится пустым. #}
+{% from 'drones/_money_cell.html' import money_cell with context %}
 
 {% macro cut_table(title, first_column, cut, extra_note='') %}
 <div class="vs-table-wrap vs-mb">
@@ -142,14 +139,25 @@
         <td>{{ r.label }}</td>
         <td class="right">{{ r.jobs }}</td>
         <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
-        <td class="right">{{ amount_cell(r) }}</td>
-        <td class="right">{{ '%.0f'|format(r.received)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(r.outstanding)|vs_num }}</td>
+        <td class="right">{{ money_cell(r.amount, r.jobs, r.no_amount, 'amount') }}</td>
+        <td class="right">{{ money_cell(r.received, r.jobs, r.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(r.outstanding, r.jobs, r.no_amount) }}</td>
         <td class="right">{{ '%.1f'|format(r.share) }}</td>
       </tr>
       {% endfor %}
       {% for service in cut.services %}
-      <tr class="is-warning">
+      {# DRONE-ZERO-VS-UNKNOWN-001: is-warning-row, не is-warning. Красит
+         СТРОКУ таблицы только `.vs-table tr.is-warning-row` (design-system.css,
+         строки 646 и 649); is-warning существует лишь как модификатор
+         .vs-mini, .vs-stat-value, .vs-alert и .vs-report-tile, поэтому
+         <tr class="is-warning"> не давал ни фона, ни левой полосы. Служебные
+         строки пяти разрезов — «Заказчик не указан», «Оператор не определён»,
+         «Подразделение не указано» — рисовались как обычные с 9f018e1.
+
+         Это те же самые «сказать нечего» строки, ради которых заведена третья
+         корзина на странице долгов. Покрасить одну и оставить другие значит
+         заставить два экрана расходиться в одной мысли. #}
+      <tr class="is-warning-row">
         <td>
           <b>{{ service.label }}</b>
           {% if service.periods %}
@@ -161,9 +169,9 @@
         </td>
         <td class="right">{{ service.jobs }}</td>
         <td class="right">{{ '%.2f'|format(service.area)|vs_num }}</td>
-        <td class="right">{{ amount_cell(service) }}</td>
-        <td class="right">{{ '%.0f'|format(service.received)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(service.outstanding)|vs_num }}</td>
+        <td class="right">{{ money_cell(service.amount, service.jobs, service.no_amount, 'amount') }}</td>
+        <td class="right">{{ money_cell(service.received, service.jobs, service.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(service.outstanding, service.jobs, service.no_amount) }}</td>
         <td class="right">{{ '%.1f'|format(service.share) }}</td>
       </tr>
       {% endfor %}
@@ -171,9 +179,9 @@
         <td>{{ t_total }}</td>
         <td class="right">{{ cut.total.jobs }}</td>
         <td class="right">{{ '%.2f'|format(cut.total.area)|vs_num }}</td>
-        <td class="right">{{ amount_cell(cut.total) }}</td>
-        <td class="right">{{ '%.0f'|format(cut.total.received)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(cut.total.outstanding)|vs_num }}</td>
+        <td class="right">{{ money_cell(cut.total.amount, cut.total.jobs, cut.total.no_amount, 'amount') }}</td>
+        <td class="right">{{ money_cell(cut.total.received, cut.total.jobs, cut.total.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(cut.total.outstanding, cut.total.jobs, cut.total.no_amount) }}</td>
         <td class="right">100.0</td>
       </tr>
     </tbody>
