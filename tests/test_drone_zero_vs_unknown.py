@@ -691,23 +691,24 @@ class TestC1TheRuleOnBothScreens(ScreenMixin, unittest.TestCase):
         # by its OWN counter.
         self.assertEqual('—', text_of(received))
 
-    def test_c1_the_debts_page_still_hides_it_at_this_commit(self):
-        """Where the all-NULL group sits BEFORE commit 4: inside «Долга нет».
+    def test_c1_the_debts_page_no_longer_hides_it(self):
+        """INVERTED by commit 4 rather than deleted.
 
-        Its three columns are not dashes there, because the row it is folded
-        into also holds a fully-priced group. That is the sentence commit 4
-        fixes: the page says this farm owes nothing.
+        At commit 3 this assertion read the other way round: the all-NULL
+        group was not a row of the debts table at all and «Долга нет» carried
+        it. The «сумма не указана: 3» note on that folded row was commit 1's
+        counter reaching the screen -- the folded row at least admitted three
+        of its five jobs had no price. Commit 4 takes those three jobs out of
+        it, so the note is gone and the row is honest without one.
         """
         cells = self.money_columns('/drones/works/debts',
                                    'Долги — по заказчикам', 2)
-        self.assertNotIn(ALL_NULL, cells)
         rest = [label for label in cells if 'Долга нет' in label]
         self.assertEqual(1, len(rest), cells.keys())
         amount, _received, outstanding = cells[rest[0]]
-        self.assertNotEqual('—', text_of(outstanding))
-        # commit 1's fix reaching the screen: `rest` now carries no_amount,
-        # so the folded row at least admits three of its five jobs have none.
-        self.assertEqual('сумма не указана', note_text(amount))
+        # Nothing unpriced is left inside it, so no note and a real zero.
+        self.assertEqual('', note_text(amount))
+        self.assertEqual('0', text_of(outstanding))
 
     def test_c1_received_keys_off_its_own_counter_not_off_no_amount(self):
         """NO_RECEIVED: amounts known, received all NULL.
@@ -820,16 +821,19 @@ class TestC2NegativeControl(ScreenMixin, PreCommitMixin, unittest.TestCase):
         self.assertEqual('—', text_of(cells[ALL_NULL][2]))
         self.assertNotIn('0', text_of(cells[ALL_NULL][2]))
 
-    def test_c2_the_debts_page_gets_its_own_control_in_d4(self):
-        """Named so the gap is visible rather than implied.
-
-        On the debts page the all-NULL group is not a row until commit 4, so
-        there is no “Не получено” cell of its own to compare against the
-        pre-commit 0. D-4 is that control.
-        """
+    def test_c2_and_the_current_debts_page_does_not(self):
+        """The debts page never gives an unpriced group a row of its OWN --
+        before commit 4 it was folded into «Долга нет», after it into the
+        «Долг неизвестен» line. So the cell to compare against the pre-commit
+        0 is that line's, and it is a dash."""
         cells = self.money_columns('/drones/works/debts',
                                    'Долги — по заказчикам', 2)
         self.assertNotIn(ALL_NULL, cells)
+        unknown = [c for label, c in cells.items()
+                   if 'Долг неизвестен' in label]
+        self.assertEqual(1, len(unknown), cells.keys())
+        self.assertEqual('—', text_of(unknown[0][2]))
+        self.assertNotIn('0', text_of(unknown[0][2]))
 
 
 class TestC3DivBalance(unittest.TestCase):
@@ -905,6 +909,316 @@ class TestC4BothLanguages(ScreenMixin, unittest.TestCase):
         for url, _ru, title_uz, _first in PAGES:
             with self.subTest(page=url):
                 self.assertIn(title_uz, self.page(url, lang='uz'))
+
+
+# ---------------------------------------------------------------------------
+# D  commit 4 -- the third bucket on the debts page
+# ---------------------------------------------------------------------------
+
+UNKNOWN_LABEL_RU = 'Долг неизвестен — сумма не записана'
+UNKNOWN_LABEL_UZ = 'Қарз номаълум — сумма ёзилмаган'
+NO_DEBT_LABEL_RU = 'Долга нет (остальные)'
+
+DEBT_CUTS = ('debt_by_customer', 'debt_by_operator')
+
+
+class TestD1EveryGroupLandsInOneBucket(unittest.TestCase):
+    """D-1: three kinds, three buckets, nothing in two and nothing in none."""
+
+    @classmethod
+    def setUpClass(cls):
+        seed()
+
+    def setUp(self):
+        self.data = report_data()
+        self.debt = self.data['debt_by_customer']
+
+    def buckets(self):
+        return {'owing': list(self.debt['rows']),
+                'unknown': ([self.debt['unknown']]
+                            if self.debt['unknown'] else []),
+                'rest': [self.debt['rest']] if self.debt['rest'] else []}
+
+    def test_d1_the_three_buckets_all_exist_on_this_fixture(self):
+        """A fixture missing a bucket cannot prove anything about it."""
+        self.assertTrue(self.debt['rows'])
+        self.assertIsNotNone(self.debt['unknown'])
+        self.assertIsNotNone(self.debt['rest'])
+
+    def test_d1_owing_holds_exactly_the_groups_that_owe(self):
+        self.assertEqual(
+            {MIXED, NO_RECEIVED, UNRESOLVED_LABEL_RU},
+            {r['label'] for r in self.debt['rows']})
+
+    def test_d1_unknown_holds_exactly_the_unpriced_groups(self):
+        """ALL_NULL (2 jobs) + UNSTATED (1 job), by construction of the
+        fixture -- the two groups where every job's amount is NULL."""
+        unknown = self.debt['unknown']
+        self.assertEqual(UNKNOWN_LABEL_RU, unknown['label'])
+        self.assertEqual(3, unknown['jobs'])
+        self.assertEqual(3, unknown['no_amount'])
+        self.assertEqual(unknown['jobs'], unknown['no_amount'])
+        self.assertAlmostEqual(0.0, unknown['amount'], places=2)
+
+    def test_d1_settled_holds_only_the_genuinely_settled(self):
+        rest = self.debt['rest']
+        self.assertEqual(NO_DEBT_LABEL_RU, rest['label'])
+        self.assertEqual(2, rest['jobs'])
+        self.assertEqual(0, rest['no_amount'],
+                         'an unpriced group in «Долга нет» is the defect')
+        self.assertAlmostEqual(7000000.0, rest['amount'], places=2)
+
+    def test_d1_no_group_is_in_two_buckets_or_in_none(self):
+        for name in DEBT_CUTS:
+            with self.subTest(cut=name):
+                debt = self.data[name]
+                source = name.replace('debt_', '')
+                cut = self.data[source]
+                everything = cut['rows'] + list(cut['services'])
+                buckets = [debt['rows'],
+                           [debt['unknown']] if debt['unknown'] else [],
+                           [debt['rest']] if debt['rest'] else []]
+                placed = sum(len(b) for b in buckets)
+                collapsed = sum(1 for b in buckets[1:] for _ in b)
+                # every ordinary group is its own row in `owing`; the two
+                # service lines each stand for >= 1 group, so compare JOBS
+                self.assertEqual(
+                    sum(r['jobs'] for r in everything),
+                    sum(r['jobs'] for b in buckets for r in b))
+                self.assertGreaterEqual(placed, 1)
+                self.assertLessEqual(collapsed, 2)
+
+    def test_d1_unknown_is_tested_before_settled(self):
+        """The ordering §6 calls load-bearing, asserted where it decides.
+
+        Every group in `unknown` has outstanding <= 0.005, so with the two
+        tests in the other order every one of them would land in `rest`.
+        """
+        unknown = self.debt['unknown']
+        self.assertLessEqual(unknown['outstanding'], 0.005)
+        self.assertNotIn(UNKNOWN_LABEL_RU, [self.debt['rest']['label']])
+
+
+class TestD2BucketsSumToTheCutTotal(unittest.TestCase):
+    """D-2: assert the reconciliation; do not reason about it."""
+
+    @classmethod
+    def setUpClass(cls):
+        seed()
+
+    def test_d2_the_three_buckets_equal_the_total(self):
+        data = report_data()
+        for name in DEBT_CUTS:
+            with self.subTest(cut=name):
+                debt = data[name]
+                rows = list(debt['rows'])
+                for bucket in (debt['unknown'], debt['rest']):
+                    if bucket is not None:
+                        rows.append(bucket)
+                self.assertEqual(debt['total']['jobs'],
+                                 sum(r['jobs'] for r in rows))
+                for key in ('area', 'amount', 'received'):
+                    self.assertAlmostEqual(
+                        debt['total'][key], sum(r[key] for r in rows),
+                        delta=0.01, msg='%s / %s' % (name, key))
+
+    def test_d2_the_counters_reconcile_too(self):
+        data = report_data()
+        for name in DEBT_CUTS:
+            with self.subTest(cut=name):
+                debt = data[name]
+                rows = list(debt['rows'])
+                for bucket in (debt['unknown'], debt['rest']):
+                    if bucket is not None:
+                        rows.append(bucket)
+                for key in ('no_amount', 'no_received'):
+                    self.assertEqual(debt['total'][key],
+                                     sum(r[key] for r in rows),
+                                     '%s / %s' % (name, key))
+
+    def test_d2_three_buckets_cover_what_two_covered(self):
+        """owing + unknown + settled == owing + settled, as it was."""
+        after = report_data()
+        module = pre_commit_drones()
+        if module is None:
+            self.skipTest('git cannot produce %s:drones.py' % BASE_COMMIT)
+        from flask import g
+        from werkzeug.datastructures import MultiDict
+        with app.test_request_context('/drones/works/debts'):
+            g.lang = 'ru'
+            before = module._drone_works_report_data(
+                module._drone_work_conditions(
+                    module._drone_works_filters_from_args(MultiDict())))
+        for name in DEBT_CUTS:
+            with self.subTest(cut=name):
+                old = before[name]
+                old_rows = list(old['rows']) + (
+                    [old['rest']] if old['rest'] else [])
+                new = after[name]
+                new_rows = list(new['rows']) + [
+                    b for b in (new['unknown'], new['rest']) if b]
+                self.assertEqual(sum(r['jobs'] for r in old_rows),
+                                 sum(r['jobs'] for r in new_rows))
+                for key in ('amount', 'received', 'outstanding'):
+                    self.assertAlmostEqual(sum(r[key] for r in old_rows),
+                                           sum(r[key] for r in new_rows),
+                                           delta=0.01,
+                                           msg='%s / %s' % (name, key))
+
+
+class TestD3ReconciledIsUnchanged(PreCommitMixin, unittest.TestCase):
+    """D-3: reconciled stays True wherever it was True before."""
+
+    @classmethod
+    def setUpClass(cls):
+        seed()
+
+    def test_d3_reconciled_survives_the_split(self):
+        before = self.pre_commit_report_data()
+        after = report_data()
+        for name in DEBT_CUTS + ('by_customer', 'by_operator',
+                                 'by_subdivision', 'by_month', 'by_payment'):
+            with self.subTest(cut=name):
+                if before[name]['reconciled']:
+                    self.assertTrue(after[name]['reconciled'], name)
+
+    def test_d3_it_was_true_before_so_the_check_is_not_vacuous(self):
+        before = self.pre_commit_report_data()
+        self.assertTrue(all(before[name]['reconciled'] for name in DEBT_CUTS))
+
+
+class TestD4NegativeControl(PreCommitMixin, unittest.TestCase):
+    """D-4: pre-commit, an unpriced group is INSIDE «Долга нет»."""
+
+    @classmethod
+    def setUpClass(cls):
+        seed()
+
+    def test_d4_pre_commit_puts_the_unpriced_jobs_in_the_no_debt_row(self):
+        """The assertion that proves it, quoted in the commit message:
+
+            self.assertEqual(5, rest['jobs'])
+
+        Five jobs, not two: ALL_NULL's two and UNSTATED's one are folded in
+        beside NONE_NULL's two. After commit 4 the same row holds 2.
+        """
+        rest = self.pre_commit_report_data()['debt_by_customer']['rest']
+        self.assertEqual(NO_DEBT_LABEL_RU, rest['label'])
+        self.assertEqual(5, rest['jobs'])
+        self.assertAlmostEqual(7000000.0, rest['amount'], places=2)
+
+    def test_d4_pre_commit_has_no_third_bucket_at_all(self):
+        debt = self.pre_commit_report_data()['debt_by_customer']
+        self.assertNotIn('unknown', debt)
+
+    def test_d4_after_the_commit_the_same_row_holds_two_jobs(self):
+        rest = report_data()['debt_by_customer']['rest']
+        self.assertEqual(2, rest['jobs'])
+        self.assertEqual(0, rest['no_amount'])
+
+    def test_d4_the_three_unpriced_jobs_moved_and_were_not_lost(self):
+        before = self.pre_commit_report_data()['debt_by_customer']
+        after = report_data()['debt_by_customer']
+        self.assertEqual(before['rest']['jobs'],
+                         after['rest']['jobs'] + after['unknown']['jobs'])
+
+
+class TestD5TheLabelIsCyrillicUzbek(unittest.TestCase):
+    """D-5: the new label in both languages, Uzbek Cyrillic by code point."""
+
+    # Latin is allowed only in product and brand names -- none appear in this
+    # label, so the allowance is empty here on purpose.
+    LATIN = re.compile(r'[A-Za-z]')
+
+    def label(self, lang):
+        import drones
+        from flask import g
+        with app.test_request_context('/drones/works/debts'):
+            g.lang = lang
+            return drones._drone_t('Қарз номаълум — сумма ёзилмаган',
+                                   'Долг неизвестен — сумма не записана')
+
+    def test_d5_both_languages_exist_and_differ(self):
+        self.assertEqual(UNKNOWN_LABEL_RU, self.label('ru'))
+        self.assertEqual(UNKNOWN_LABEL_UZ, self.label('uz'))
+        self.assertNotEqual(self.label('ru'), self.label('uz'))
+
+    def test_d5_the_uzbek_label_carries_no_latin_letter(self):
+        self.assertIsNone(self.LATIN.search(UNKNOWN_LABEL_UZ),
+                          UNKNOWN_LABEL_UZ)
+
+    def test_d5_it_is_cyrillic_by_code_point_not_by_eye(self):
+        """«Қ» is U+049A. A Latin K with a tail pasted on is not it."""
+        letters = [ch for ch in UNKNOWN_LABEL_UZ if ch.isalpha()]
+        self.assertTrue(letters)
+        for ch in letters:
+            self.assertTrue(0x0400 <= ord(ch) <= 0x04FF,
+                            '%r is U+%04X, outside Cyrillic'
+                            % (ch, ord(ch)))
+        self.assertIn('Қ', UNKNOWN_LABEL_UZ)
+
+    def test_d5_the_scan_fires_on_a_planted_latin_string(self):
+        """Negative control: a check that cannot fail is not a check."""
+        planted = 'Qarz nomalum - summa yozilmagan'
+        self.assertIsNotNone(self.LATIN.search(planted))
+        with self.assertRaises(AssertionError):
+            for ch in [c for c in planted if c.isalpha()]:
+                self.assertTrue(0x0400 <= ord(ch) <= 0x04FF)
+
+    def test_d5_the_label_reaches_both_rendered_pages(self):
+        seed()
+        admin = create_admin('d5_admin')
+        for lang, expected in (('ru', UNKNOWN_LABEL_RU),
+                               ('uz', UNKNOWN_LABEL_UZ)):
+            with self.subTest(lang=lang):
+                set_language(admin, lang)
+                client = app.test_client()
+                login(client, admin)
+                body = client.get('/drones/works/debts').data.decode('utf-8')
+                self.assertIn(expected, body)
+
+
+class TestD6TheBucketOnTheRenderedPage(ScreenMixin, unittest.TestCase):
+    """The row itself: three dashes, its jobs, and above «Долга нет»."""
+
+    def test_d6_the_unknown_row_prints_three_dashes(self):
+        cells = self.money_columns('/drones/works/debts',
+                                   'Долги — по заказчикам', 2)
+        row = [c for label, c in cells.items() if UNKNOWN_LABEL_RU in label]
+        self.assertEqual(1, len(row), cells.keys())
+        for cell in row[0]:
+            self.assertEqual('—', text_of(cell))
+
+    def table(self):
+        """The <tbody> of the customer debt table, alone.
+
+        [REASON]: both labels also appear in the explanatory alert above the
+        tables, and there «Долга нет» comes first. Comparing positions over
+        the whole page measured the prose, not the table -- and it did fail
+        that way before this was narrowed.
+        """
+        body = self.page('/drones/works/debts')
+        after = body.split('Долги — по заказчикам', 1)[1]
+        return after.split('<tbody>')[1].split('</tbody>')[0]
+
+    def test_d6_it_sits_above_the_no_debt_row(self):
+        tbody = self.table()
+        self.assertLess(tbody.index(UNKNOWN_LABEL_RU),
+                        tbody.index(NO_DEBT_LABEL_RU))
+
+    def test_d6_its_jobs_are_shown(self):
+        row = [r for r in self.table().split('<tr')
+               if UNKNOWN_LABEL_RU in r][0]
+        self.assertEqual('3', text_of(_CELL_RE.findall(row)[1]))
+
+    def test_d6_the_page_explains_the_new_row(self):
+        """A visible service row nobody explains is a support ticket."""
+        for lang, needle in (('ru', 'Долг неизвестен'),
+                             ('uz', 'Қарз номаълум')):
+            with self.subTest(lang=lang):
+                body = self.page('/drones/works/debts', lang=lang)
+                self.assertIn(needle, body.split('<table', 1)[0]
+                              + body.rsplit('</table>', 1)[-1])
 
 
 if __name__ == '__main__':

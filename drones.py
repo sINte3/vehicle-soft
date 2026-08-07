@@ -3599,38 +3599,72 @@ def _drone_work_cut(conds, group_expr, total_row, service_labels,
             'reconciled': reconciled}
 
 
-def _drone_work_debt_cut(cut, no_debt_label):
-    """The same cut, re-read as money: who owes, and how much.
+def _drone_work_bucket_row(label, rows):
+    """One collapsed service line over `rows`, or None when there are none.
+
+    Every key an ordinary row carries is named here. A counter that is not
+    named does not reach the line, and nothing raises -- see the note on
+    no_amount below.
+    """
+    if not rows:
+        return None
+    # [REASON]: DRONE-ZERO-VS-UNKNOWN-001. This dict is assembled by naming its
+    # keys, so every counter _drone_work_cut() adds to an ordinary row has to
+    # be named here too or it silently does not reach the service row.
+    # no_amount was added by DRONE-REPORT-ZERO-AMOUNT-001 and never arrived;
+    # nothing rendered it, so nothing failed. The moment the debts template
+    # started calling money_cell() this row would have printed a sum where the
+    # ordinary rows print a dash.
+    row = {
+        'label': label,
+        'jobs': sum(r['jobs'] for r in rows),
+        'area': sum(r['area'] for r in rows),
+        'amount': sum(r['amount'] for r in rows),
+        'received': sum(r['received'] for r in rows),
+        'no_amount': sum(r['no_amount'] for r in rows),
+        'no_received': sum(r['no_received'] for r in rows),
+    }
+    row['outstanding'] = row['amount'] - row['received']
+    return row
+
+
+def _drone_work_debt_cut(cut, no_debt_label, unknown_label):
+    """The same cut, re-read as money: who owes, how much, and who cannot say.
 
     [REASON]: rows with nothing outstanding are collapsed into ONE visible
     service line rather than dropped, so the column still sums to the grand
     total. A debt table that silently omits the settled rows reads as "this is
     everybody" and there is no way to tell it apart from a filter mistake.
+
+    [REASON]: DRONE-ZERO-VS-UNKNOWN-001 -- THREE buckets, not two. A group
+    whose price was never written down has amount = 0, received = 0 and
+    therefore outstanding = 0, so two buckets put it under «Долга нет
+    (остальные)» and the page stated that the farm owes nothing. That is not a
+    wrong number, it is a wrong sentence: the debt is unknown, and unknown is
+    not zero. It gets its own line.
+
+    ORDER OF EVALUATION IS LOAD-BEARING: unknown is tested BEFORE settled, or
+    every unknown group stays exactly where it was. owing is tested first and
+    is unchanged; it cannot collide with unknown, because a group with every
+    amount NULL sums to 0 and its outstanding can never exceed 0.005.
     """
     everything = cut['rows'] + list(cut['services'])
-    owing = [r for r in everything if r['outstanding'] > 0.005]
-    settled = [r for r in everything if r['outstanding'] <= 0.005]
+    owing, unknown, settled = [], [], []
+    # One pass, so «which bucket» is decided in exactly one place and every
+    # row lands in exactly one of them by construction rather than by three
+    # comprehensions agreeing with each other.
+    for row in everything:
+        if row['outstanding'] > 0.005:
+            owing.append(row)
+        elif row['jobs'] and row['jobs'] == row['no_amount']:
+            unknown.append(row)
+        else:
+            settled.append(row)
     owing.sort(key=lambda r: r['outstanding'], reverse=True)
-    rest = None
-    if settled:
-        # [REASON]: DRONE-ZERO-VS-UNKNOWN-001. This dict is assembled by naming
-        # its keys, so every counter _drone_work_cut() adds to an ordinary row
-        # has to be named here too or it silently does not reach the service
-        # row. no_amount was added by DRONE-REPORT-ZERO-AMOUNT-001 and never
-        # arrived; nothing rendered it, so nothing failed. The moment the debts
-        # template started calling money_cell() this row would have printed a
-        # sum where the ordinary rows print a dash.
-        rest = {
-            'label': no_debt_label,
-            'jobs': sum(r['jobs'] for r in settled),
-            'area': sum(r['area'] for r in settled),
-            'amount': sum(r['amount'] for r in settled),
-            'received': sum(r['received'] for r in settled),
-            'no_amount': sum(r['no_amount'] for r in settled),
-            'no_received': sum(r['no_received'] for r in settled),
-        }
-        rest['outstanding'] = rest['amount'] - rest['received']
-    return {'rows': owing, 'rest': rest, 'total': cut['total'],
+    return {'rows': owing,
+            'unknown': _drone_work_bucket_row(unknown_label, unknown),
+            'rest': _drone_work_bucket_row(no_debt_label, settled),
+            'total': cut['total'],
             'reconciled': cut['reconciled']}
 
 
@@ -3706,6 +3740,13 @@ def _drone_works_report_data(conds):
             for period, jobs, area in breakdown]
 
     no_debt = _drone_t('Қарзи йўқ (қолганлари)', 'Долга нет (остальные)')
+    # [REASON]: DRONE-ZERO-VS-UNKNOWN-001. Its own wording, because the row
+    # says something «Долга нет» cannot: not «this farm owes nothing» but «we
+    # cannot say what this farm owes, because the price was never written
+    # down». The two are different sentences and the second one names the
+    # action -- somebody has to enter the amount on the works screen.
+    debt_unknown = _drone_t('Қарз номаълум — сумма ёзилмаган',
+                            'Долг неизвестен — сумма не записана')
     # [REASON]: what the debt column is actually made of. «Кирим қилинган» is
     # money handed in; «Оператор топшириши керак» is what the operator still
     # owes and is NOT a collection. Both live in received_amount, so the debt
@@ -3726,8 +3767,10 @@ def _drone_works_report_data(conds):
         'by_payment': by_payment,
         'operator_due': {'jobs': operator_due[0] or 0,
                          'amount': float(operator_due[1] or 0.0)},
-        'debt_by_customer': _drone_work_debt_cut(by_customer, no_debt),
-        'debt_by_operator': _drone_work_debt_cut(by_operator, no_debt),
+        'debt_by_customer': _drone_work_debt_cut(by_customer, no_debt,
+                                                 debt_unknown),
+        'debt_by_operator': _drone_work_debt_cut(by_operator, no_debt,
+                                                 debt_unknown),
     }
 
 
@@ -3952,10 +3995,15 @@ def _drone_work_debt_sheet(wb, st, title, first_column, debt):
     for row in debt['rows']:
         ws.append([_drone_xlsx_safe(row['label']), row['jobs'], row['amount'],
                    row['received'], row['outstanding']])
-    if debt['rest'] is not None:
-        r = debt['rest']
-        ws.append([r['label'], r['jobs'], r['amount'], r['received'],
-                   r['outstanding']])
+    # [REASON]: DRONE-ZERO-VS-UNKNOWN-001. The third bucket is a row of the
+    # sheet for the same reason it is a row of the screen: the printed rows
+    # have to add up to the printed total. Dropping it here would leave the
+    # workbook short by exactly the groups nobody has priced -- the ones the
+    # bucket exists to make visible.
+    for bucket in (debt.get('unknown'), debt['rest']):
+        if bucket is not None:
+            ws.append([bucket['label'], bucket['jobs'], bucket['amount'],
+                       bucket['received'], bucket['outstanding']])
     ws.append([_drone_t('Жами', 'Итого'), debt['total']['jobs'],
                debt['total']['amount'], debt['total']['received'],
                debt['total']['outstanding']])
