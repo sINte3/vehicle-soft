@@ -222,8 +222,8 @@ def cut_cells(body, title, column):
 _PRE_COMMIT_CACHE = {}
 
 
-def pre_commit_drones():
-    """drones.py as of BASE_COMMIT, imported as a SECOND module object.
+def pre_commit_drones(commit=None):
+    """drones.py as of `commit`, imported as a SEPARATE module object.
 
     [REASON]: a negative control that quotes the old code into the test file
     proves only that the quote differs. This loads the real pre-commit module
@@ -234,26 +234,33 @@ def pre_commit_drones():
     never registered on the app, so the live blueprint is untouched. models.db
     is shared, which is exactly what makes the comparison meaningful.
 
+    `commit` defaults to BASE_COMMIT, the base of DRONE-ZERO-VS-UNKNOWN-001.
+    DRONE-RECEIVED-BLANK-IS-ZERO-001 passes its own base instead: each task's
+    control has to run against the tree IT changed, or it measures somebody
+    else's commit. One loader, one cache keyed by commit, two callers.
+
     Returns None when git cannot produce the blob (a shallow clone, a tarball
     export). Callers skip in that case -- loudly, never silently passing.
     """
-    if 'module' in _PRE_COMMIT_CACHE:
-        return _PRE_COMMIT_CACHE['module']
-    _PRE_COMMIT_CACHE['module'] = None
+    commit = commit or BASE_COMMIT
+    if commit in _PRE_COMMIT_CACHE:
+        return _PRE_COMMIT_CACHE[commit]
+    _PRE_COMMIT_CACHE[commit] = None
     try:
         source = subprocess.check_output(
-            ['git', 'show', '%s:drones.py' % BASE_COMMIT],
+            ['git', 'show', '%s:drones.py' % commit],
             cwd=REPO_ROOT, stderr=subprocess.DEVNULL)
     except (OSError, subprocess.CalledProcessError):
         return None
     handle, path = tempfile.mkstemp(prefix='drones_pre_', suffix='.py')
     with os.fdopen(handle, 'wb') as fh:
         fh.write(source)
-    spec = importlib.util.spec_from_file_location('drones_pre_commit', path)
+    name = 'drones_at_%s' % commit
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
-    sys.modules['drones_pre_commit'] = module
+    sys.modules[name] = module
     spec.loader.exec_module(module)
-    _PRE_COMMIT_CACHE['module'] = module
+    _PRE_COMMIT_CACHE[commit] = module
     return module
 
 
@@ -1323,7 +1330,21 @@ class WorkbookMixin(object):
 
 
 class TestE1UnknownCellsAreEmpty(WorkbookMixin, unittest.TestCase):
-    """E-1: read back with openpyxl -- None, not 0, not '', not '—'."""
+    """E-1: an unknown figure reads back as None -- not 0, not '', not '—'.
+
+    NARROWED to «Сумма» and «Не получено» by
+    DRONE-RECEIVED-BLANK-IS-ZERO-001. «Получено» is no longer a column that
+    can be unknown: the owner decided on 2026-08-07 that a blank «олинмаган
+    пуллар» cell means nothing was collected. So the received column is
+    asserted to be a NUMBER here, with the same force the blank used to be
+    asserted with -- inverted, not dropped. See
+    tests/test_drone_received_blank_is_zero.py for that task's own tests.
+    """
+
+    # Column indices of (amount, outstanding) -- the two that can still be
+    # unknown. received deliberately absent; it has its own assertions.
+    CUT_UNKNOWNABLE = (CUT_MONEY[0], CUT_MONEY[2])
+    DEBT_UNKNOWNABLE = (DEBT_MONEY[0], DEBT_MONEY[2])
 
     def unknown_rows(self, wb):
         """Every row of every sheet whose group has no priced job at all.
@@ -1337,13 +1358,13 @@ class TestE1UnknownCellsAreEmpty(WorkbookMixin, unittest.TestCase):
                 continue
             for label, row in self.sheet_rows(wb[title]).items():
                 if label in (ALL_NULL, UNSTATED_LABEL_RU):
-                    found.append((title, label, row, CUT_MONEY))
+                    found.append((title, label, row, self.CUT_UNKNOWNABLE))
         for title in DEBT_SHEETS:
             if title not in wb.sheetnames:
                 continue
             for label, row in self.sheet_rows(wb[title]).items():
                 if label == UNKNOWN_LABEL_RU:
-                    found.append((title, label, row, DEBT_MONEY))
+                    found.append((title, label, row, self.DEBT_UNKNOWNABLE))
         return found
 
     def test_e1_the_unknown_cells_read_back_as_none(self):
@@ -1362,6 +1383,30 @@ class TestE1UnknownCellsAreEmpty(WorkbookMixin, unittest.TestCase):
                         self.assertNotEqual(0, value)
                         self.assertNotEqual('', value)
                         self.assertNotEqual('—', value)
+
+    def test_e1_the_received_cell_of_an_unknown_row_is_a_number(self):
+        """The half DRONE-RECEIVED-BLANK-IS-ZERO-001 inverted.
+
+        Same rows, same workbooks, opposite expectation: «Получено» holds 0,
+        not a blank. Asserted here rather than deleted so the reversal is
+        visible where the old rule was written down.
+        """
+        for url in XLSX_ROUTES:
+            wb = self.workbook(url)
+            for title in CUT_SHEETS:
+                if title not in wb.sheetnames:
+                    continue
+                for label, row in self.sheet_rows(wb[title]).items():
+                    if label in (ALL_NULL, UNSTATED_LABEL_RU):
+                        with self.subTest(url=url, sheet=title, label=label):
+                            self.assertEqual(0, row[CUT_MONEY[1]])
+            for title in DEBT_SHEETS:
+                if title not in wb.sheetnames:
+                    continue
+                for label, row in self.sheet_rows(wb[title]).items():
+                    if label == UNKNOWN_LABEL_RU:
+                        with self.subTest(url=url, sheet=title, label=label):
+                            self.assertEqual(0, row[DEBT_MONEY[1]])
 
     def test_e1_the_scan_saw_every_sheet_it_should_have(self):
         """A scan that found nothing would pass every assertion above.
@@ -1386,16 +1431,19 @@ class TestE1UnknownCellsAreEmpty(WorkbookMixin, unittest.TestCase):
              ('Долги — операторы', UNKNOWN_LABEL_RU)],
             [(title, label) for title, label, _row, _cols in debts])
 
-    def test_e1_a_received_only_gap_blanks_only_received(self):
+    def test_e1_a_received_only_gap_blanks_nothing_now(self):
         """NO_RECEIVED: amounts known, every received NULL.
 
-        The three columns are not one rule. «Сумма» and «Не получено» stay
-        numbers; only «Получено» is blank.
+        REVERSED by DRONE-RECEIVED-BLANK-IS-ZERO-001. This test used to read
+        `self.assertIsNone(row[CUT_MONEY[1]])` under «only «Получено» is
+        blank». It is now the clearest single case of the new rule: nothing
+        was collected, so the column says 0, and the debt is the whole amount.
         """
         wb = self.workbook(XLSX_ROUTES[0])
         row = self.sheet_rows(wb['По заказчикам'])[NO_RECEIVED]
         self.assertEqual(13000000, row[CUT_MONEY[0]])
-        self.assertIsNone(row[CUT_MONEY[1]])
+        self.assertEqual(0, row[CUT_MONEY[1]])
+        self.assertIsNotNone(row[CUT_MONEY[1]])
         self.assertEqual(13000000, row[CUT_MONEY[2]])
 
     def test_e1_a_partial_group_keeps_all_three_numbers(self):
@@ -1407,22 +1455,38 @@ class TestE1UnknownCellsAreEmpty(WorkbookMixin, unittest.TestCase):
         self.assertEqual(2000000, row[CUT_MONEY[2]])
 
     def test_e1_the_workbook_agrees_with_the_screen_cell_for_cell(self):
-        """The property §7 is actually about, asserted directly."""
+        """The property §7 is actually about, asserted directly.
+
+        The received column dropped out of the pairing when
+        DRONE-RECEIVED-BLANK-IS-ZERO-001 made it unconditional: `None` is the
+        missing_key it would need, and «no rule» is not a rule to compare
+        against. Its own agreement is asserted by
+        test_e1_the_received_cell_is_never_blank_and_matches_the_row below.
+        """
         data = report_data()
         wb = self.workbook(XLSX_ROUTES[0])
         rows = self.sheet_rows(wb['По заказчикам'])
         for row in data['by_customer']['rows'] + \
                 list(data['by_customer']['services']):
-            for index, (value_key, missing_key) in zip(
-                    CUT_MONEY, (('amount', 'no_amount'),
-                                ('received', 'no_received'),
-                                ('outstanding', 'no_amount'))):
+            for index, missing_key in ((CUT_MONEY[0], 'no_amount'),
+                                       (CUT_MONEY[2], 'no_amount')):
                 with self.subTest(label=row['label'], column=index):
                     screen_is_dash = (row['jobs']
                                       and row[missing_key] == row['jobs'])
                     cell = rows[row['label']][index]
                     self.assertEqual(screen_is_dash, cell is None,
                                      'screen and workbook disagree')
+
+    def test_e1_the_received_cell_is_never_blank_and_matches_the_row(self):
+        """Received: no dash rule at all, and the figure still agrees."""
+        data = report_data()
+        rows = self.sheet_rows(self.workbook(XLSX_ROUTES[0])['По заказчикам'])
+        for row in data['by_customer']['rows'] + \
+                list(data['by_customer']['services']):
+            with self.subTest(label=row['label']):
+                cell = rows[row['label']][CUT_MONEY[1]]
+                self.assertIsNotNone(cell)
+                self.assertAlmostEqual(row['received'], cell, places=2)
 
 
 class TestE2EveryOtherMoneyCellIsStillANumber(WorkbookMixin,
@@ -1535,12 +1599,20 @@ class TestE3NegativeControl(WorkbookMixin, unittest.TestCase):
             NO_RECEIVED][CUT_MONEY[1]])
 
     def test_e3_and_this_commit_writes_none_for_the_same_cells(self):
+        """NARROWED to the two columns that can still be unknown.
+
+        It used to cover all three and to add
+        `self.assertIsNone(rows[NO_RECEIVED][CUT_MONEY[1]])`.
+        DRONE-RECEIVED-BLANK-IS-ZERO-001 made «Получено» unconditional, so
+        those two lines moved to the assertion below rather than vanishing.
+        """
         wb = self.workbook(XLSX_ROUTES[0])
         rows = self.sheet_rows(wb['По заказчикам'])
-        for index in CUT_MONEY:
+        for index in (CUT_MONEY[0], CUT_MONEY[2]):
             with self.subTest(column=index):
                 self.assertIsNone(rows[ALL_NULL][index])
-        self.assertIsNone(rows[NO_RECEIVED][CUT_MONEY[1]])
+        self.assertEqual(0, rows[ALL_NULL][CUT_MONEY[1]])
+        self.assertEqual(0, rows[NO_RECEIVED][CUT_MONEY[1]])
 
     def test_e3_pre_commit_debt_sheet_hides_the_unpriced_jobs(self):
         """The workbook's half of D-4: five jobs under «Долга нет»."""
