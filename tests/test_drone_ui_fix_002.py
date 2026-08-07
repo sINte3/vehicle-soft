@@ -698,7 +698,14 @@ class TestC3TheCutStillReconciles(unittest.TestCase):
 
 
 class TestC4ExcelIsUnchanged(unittest.TestCase):
-    """C-4: money in the workbook is still a NUMBER, never a display string."""
+    """C-4: money in the workbook is still a NUMBER, never a display string.
+
+    The class name is kept for traceability, but one of its assertions is no
+    longer «unchanged»: DRONE-ZERO-VS-UNKNOWN-001 §7 reverses what an UNKNOWN
+    figure writes -- see the docstring on
+    test_c4_the_amount_column_holds_numbers. The layout, the column order and
+    the never-a-string rule are unchanged and still asserted here.
+    """
 
     @classmethod
     def setUpClass(cls):
@@ -731,6 +738,26 @@ class TestC4ExcelIsUnchanged(unittest.TestCase):
         self.assertEqual([], offenders)
 
     def test_c4_the_amount_column_holds_numbers(self):
+        """REVERSED by DRONE-ZERO-VS-UNKNOWN-001 §7, deliberately and with
+        its reasoning stated, not weakened.
+
+        This assertion used to read
+
+            self.assertEqual(0, found[ALL_NULL])
+
+        under the comment «the workbook still reports the SUM, zero included
+        -- the screen's em dash is a display decision and does not travel
+        into accounting.» DRONE-ZERO-VS-UNKNOWN-001 overrules exactly that
+        sentence, and its argument is: the workbook is what goes to
+        management, so a screen printing «—» beside a workbook printing 0
+        fixes nothing, because the 0 is the copy that gets believed. The
+        0 was never a measured figure -- it is SUM over an all-NULL column.
+
+        What did NOT change, and is still asserted below: money in these
+        workbooks stays a NUMBER. The unknown cell becomes EMPTY, which is
+        absent data in a numeric column; «—» would turn the column into text
+        and break every SUM over it.
+        """
         wb = self.workbook()
         ws = wb['По заказчикам']
         found = {}
@@ -738,13 +765,16 @@ class TestC4ExcelIsUnchanged(unittest.TestCase):
             if row[0] in (ALL_NULL, MIXED, NONE_NULL):
                 found[row[0]] = row[3]
         self.assertEqual(3, len(found))
-        for name, value in found.items():
-            self.assertIsInstance(value, (int, float), name)
-        # The workbook still reports the SUM, zero included -- the screen's
-        # em dash is a display decision and does not travel into accounting.
-        self.assertEqual(0, found[ALL_NULL])
         self.assertEqual(5000000, found[MIXED])
         self.assertEqual(7000000, found[NONE_NULL])
+        for name in (MIXED, NONE_NULL):
+            self.assertIsInstance(found[name], (int, float), name)
+        # The group nobody priced: empty, and none of the three things it
+        # must not be.
+        self.assertIsNone(found[ALL_NULL])
+        self.assertNotEqual(0, found[ALL_NULL])
+        self.assertNotEqual('', found[ALL_NULL])
+        self.assertNotEqual('—', found[ALL_NULL])
 
     def test_c4_the_workbook_carries_no_no_amount_column(self):
         """The task changes the screen, not the agreed sheet layout."""

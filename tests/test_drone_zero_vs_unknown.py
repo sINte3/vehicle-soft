@@ -70,13 +70,44 @@ UNRESOLVED_LABEL_RU = 'Заказчик не определён'
 UNSTATED_LABEL_UZ = 'Буюртмачи кўрсатилмаган'
 UNRESOLVED_LABEL_UZ = 'Буюртмачи аниқланмаган'
 
-# (amount, received) per job, in group order.
+# (amount, received, operator) per job, in group order.
+#
+# [REASON]: the operator is assigned PER JOB, not per group, and deliberately
+# cuts across the customer grouping. With one operator per customer the two
+# cuts are the same partition under two names, and three of the things this
+# task has to get right are never exercised: the operator debt cut had no
+# «unknown» bucket at all, no «settled» bucket, and no group with
+# 0 < no_received < jobs -- so the «получено не указано» NOTE (as opposed to
+# the dash) rendered nowhere in it. The assignment below gives the operator
+# cut all three buckets and that partial group:
+#
+#   op1  MIXED x2 + NO_RECEIVED's second job   3 jobs  no_received 1  -> note
+#   op2  NO_RECEIVED's first job + UNRESOLVED  2 jobs  owing
+#   op3  ALL_NULL x2 + UNSTATED                3 jobs  unknown
+#   op4  NONE_NULL x2                          2 jobs  settled
 GROUPS = (
-    (ALL_NULL, ((None, None), (None, None))),
-    (MIXED, ((None, 1000000.0), (5000000.0, 2000000.0))),
-    (NONE_NULL, ((3000000.0, 3000000.0), (4000000.0, 4000000.0))),
-    (NO_RECEIVED, ((6000000.0, None), (7000000.0, None))),
+    (ALL_NULL, ((None, None, 'op3'), (None, None, 'op3'))),
+    (MIXED, ((None, 1000000.0, 'op1'), (5000000.0, 2000000.0, 'op1'))),
+    (NONE_NULL, ((3000000.0, 3000000.0, 'op4'),
+                 (4000000.0, 4000000.0, 'op4'))),
+    (NO_RECEIVED, ((6000000.0, None, 'op2'), (7000000.0, None, 'op1'))),
 )
+
+# What the operator cut must look like, so a change to the assignment above
+# that quietly collapses a bucket is caught rather than absorbed.
+#           jobs amount     received  no_amount no_received
+OPERATORS = {
+    'op1': (3, 12000000.0, 3000000.0, 1, 1),
+    'op2': (2, 7000000.0, 0.0, 0, 2),
+    'op3': (3, 0.0, 0.0, 3, 3),
+    'op4': (2, 7000000.0, 7000000.0, 0, 0),
+}
+OPERATOR_NAMES = {
+    'op1': 'Файзуллаев Фурқат',
+    'op2': 'Хамроев Шохрух',
+    'op3': 'Холмуродов Шахзод',
+    'op4': 'Болтаев Шахзод',
+}
 
 EXPECTED = {
     #             jobs amount     received   no_amount no_received
@@ -101,9 +132,9 @@ def seed():
     reset_db()
     with app.app_context():
         operators = {}
-        for key, name in (('op1', 'Файзуллаев Фурқат'),
-                          ('op2', 'Хамроев Шохрух')):
-            row = DroneOperator(full_name=name, subdivision_name='Гарден')
+        for key in sorted(OPERATOR_NAMES):
+            row = DroneOperator(full_name=OPERATOR_NAMES[key],
+                                subdivision_name='Гарден')
             db.session.add(row)
             db.session.flush()
             operators[key] = row.id
@@ -120,15 +151,14 @@ def seed():
                 source_file='fixture.xlsx', source_sheet='свод ичи',
                 import_batch='zero-vs-unknown'))
 
-        for index, (name, jobs) in enumerate(GROUPS):
+        for name, jobs in GROUPS:
             customer = DroneCustomer(name=name)
             db.session.add(customer)
             db.session.flush()
             db.session.add(DroneCustomerAlias(
                 raw_name=name, normalized_key=name.casefold(),
                 drone_customer_id=customer.id, is_active=True))
-            operator = 'op1' if index < 2 else 'op2'
-            for amount, received in jobs:
+            for amount, received, operator in jobs:
                 add(amount, received, customer.id, name, operator)
 
         # [REASON]: the two service rows are DIFFERENT facts and the cut keeps
@@ -137,7 +167,7 @@ def seed():
         # be in the fixture, because both are ordinary groups as far as the
         # three columns and the three buckets are concerned, and a fixture
         # that only exercised named customers would never render them.
-        add(None, None, None, '', 'op2')
+        add(None, None, None, '', 'op3')
         add(1000000.0, None, None, 'Хўжалик номаълум', 'op2')
         db.session.commit()
 
@@ -294,6 +324,25 @@ class TestA1Counters(unittest.TestCase):
         self.assertEqual(TOTAL_JOBS, total['jobs'])
         self.assertEqual(TOTAL_NO_AMOUNT, total['no_amount'])
         self.assertEqual(TOTAL_NO_RECEIVED, total['no_received'])
+
+    def test_a1_the_operator_cut_is_the_partition_the_fixture_claims(self):
+        """The operator dimension cuts ACROSS the customer one on purpose.
+
+        If this drifts back to one-operator-per-customer, the operator debt
+        cut silently loses its «unknown» and «settled» buckets and its only
+        partially-missing «Получено» group, and D-1, D-2 and C-1 stop
+        exercising them without any of them failing.
+        """
+        rows = by_label(report_data()['by_operator'])
+        for key, (jobs, amount, received, no_amount, no_received) in \
+                OPERATORS.items():
+            with self.subTest(operator=key):
+                row = rows[OPERATOR_NAMES[key]]
+                self.assertEqual(jobs, row['jobs'])
+                self.assertAlmostEqual(amount, row['amount'], places=2)
+                self.assertAlmostEqual(received, row['received'], places=2)
+                self.assertEqual(no_amount, row['no_amount'])
+                self.assertEqual(no_received, row['no_received'])
 
 
 class TestA2CountersAddUp(unittest.TestCase):
@@ -1219,6 +1268,273 @@ class TestD6TheBucketOnTheRenderedPage(ScreenMixin, unittest.TestCase):
                 body = self.page('/drones/works/debts', lang=lang)
                 self.assertIn(needle, body.split('<table', 1)[0]
                               + body.rsplit('</table>', 1)[-1])
+
+
+# ---------------------------------------------------------------------------
+# E  commit 5 -- Excel must not disagree with the screen
+# ---------------------------------------------------------------------------
+
+XLSX_ROUTES = ('/drones/works/reports.xlsx', '/drones/works/debt.xlsx')
+
+# Both writers DO emit per-group rows. reports.xlsx writes five cut sheets
+# through _drone_work_cut_sheet() and both debt sheets through
+# _drone_work_debt_sheet(); debt.xlsx writes the two debt sheets. Nothing was
+# skipped and no row was invented.
+CUT_SHEETS = ('По заказчикам', 'По операторам', 'По подразделениям',
+              'По месяцам', 'По типам оплаты')
+DEBT_SHEETS = ('Долги — заказчики', 'Долги — операторы')
+# 0-based index of (amount, received, outstanding) in each sheet kind.
+CUT_MONEY = (3, 4, 5)
+DEBT_MONEY = (2, 3, 4)
+
+
+class WorkbookMixin(object):
+    @classmethod
+    def setUpClass(cls):
+        seed()
+        cls.admin = create_admin(cls.__name__.lower()[:24])
+        set_language(cls.admin, 'ru')
+
+    def workbook(self, url):
+        from openpyxl import load_workbook
+        client = app.test_client()
+        login(client, self.admin)
+        response = client.get(url)
+        self.assertEqual(200, response.status_code, url)
+        return load_workbook(io.BytesIO(response.data))
+
+    def sheet_rows(self, ws):
+        return {row[0]: row
+                for row in ws.iter_rows(min_row=2, values_only=True)}
+
+
+class TestE1UnknownCellsAreEmpty(WorkbookMixin, unittest.TestCase):
+    """E-1: read back with openpyxl -- None, not 0, not '', not '—'."""
+
+    def unknown_rows(self, wb):
+        """Every row of every sheet whose group has no priced job at all.
+
+        On the cut sheets that is ALL_NULL and «Заказчик не указан»; on the
+        debt sheets it is the collapsed «Долг неизвестен» line.
+        """
+        found = []
+        for title in CUT_SHEETS:
+            if title not in wb.sheetnames:
+                continue
+            for label, row in self.sheet_rows(wb[title]).items():
+                if label in (ALL_NULL, UNSTATED_LABEL_RU):
+                    found.append((title, label, row, CUT_MONEY))
+        for title in DEBT_SHEETS:
+            if title not in wb.sheetnames:
+                continue
+            for label, row in self.sheet_rows(wb[title]).items():
+                if label == UNKNOWN_LABEL_RU:
+                    found.append((title, label, row, DEBT_MONEY))
+        return found
+
+    def test_e1_the_unknown_cells_read_back_as_none(self):
+        for url in XLSX_ROUTES:
+            wb = self.workbook(url)
+            rows = self.unknown_rows(wb)
+            self.assertTrue(rows, 'no unknown row found in %s' % url)
+            for title, label, row, columns in rows:
+                for index in columns:
+                    with self.subTest(url=url, sheet=title, label=label,
+                                      column=index):
+                        value = row[index]
+                        self.assertIsNone(value)
+                        # spelled out, because each of these is a way the
+                        # old behaviour could come back wearing a new coat
+                        self.assertNotEqual(0, value)
+                        self.assertNotEqual('', value)
+                        self.assertNotEqual('—', value)
+
+    def test_e1_the_scan_saw_every_sheet_it_should_have(self):
+        """A scan that found nothing would pass every assertion above.
+
+        The counts are measured, not guessed. ALL_NULL and «Заказчик не
+        указан» are CUSTOMER labels, so they appear on the customer cut sheet
+        only -- the other four cuts group by operator, subdivision, month and
+        payment type and label their rows accordingly. The «Долг неизвестен»
+        line appears on both debt sheets in both workbooks, which is the
+        thing the per-job operator assignment in the fixture buys.
+        """
+        reports = self.unknown_rows(self.workbook(XLSX_ROUTES[0]))
+        debts = self.unknown_rows(self.workbook(XLSX_ROUTES[1]))
+        self.assertEqual(
+            [('По заказчикам', ALL_NULL), ('По заказчикам',
+                                           UNSTATED_LABEL_RU),
+             ('Долги — заказчики', UNKNOWN_LABEL_RU),
+             ('Долги — операторы', UNKNOWN_LABEL_RU)],
+            [(title, label) for title, label, _row, _cols in reports])
+        self.assertEqual(
+            [('Долги — заказчики', UNKNOWN_LABEL_RU),
+             ('Долги — операторы', UNKNOWN_LABEL_RU)],
+            [(title, label) for title, label, _row, _cols in debts])
+
+    def test_e1_a_received_only_gap_blanks_only_received(self):
+        """NO_RECEIVED: amounts known, every received NULL.
+
+        The three columns are not one rule. «Сумма» and «Не получено» stay
+        numbers; only «Получено» is blank.
+        """
+        wb = self.workbook(XLSX_ROUTES[0])
+        row = self.sheet_rows(wb['По заказчикам'])[NO_RECEIVED]
+        self.assertEqual(13000000, row[CUT_MONEY[0]])
+        self.assertIsNone(row[CUT_MONEY[1]])
+        self.assertEqual(13000000, row[CUT_MONEY[2]])
+
+    def test_e1_a_partial_group_keeps_all_three_numbers(self):
+        """MIXED: one of two jobs unpriced -- a lower bound, not a blank."""
+        wb = self.workbook(XLSX_ROUTES[0])
+        row = self.sheet_rows(wb['По заказчикам'])[MIXED]
+        self.assertEqual(5000000, row[CUT_MONEY[0]])
+        self.assertEqual(3000000, row[CUT_MONEY[1]])
+        self.assertEqual(2000000, row[CUT_MONEY[2]])
+
+    def test_e1_the_workbook_agrees_with_the_screen_cell_for_cell(self):
+        """The property §7 is actually about, asserted directly."""
+        data = report_data()
+        wb = self.workbook(XLSX_ROUTES[0])
+        rows = self.sheet_rows(wb['По заказчикам'])
+        for row in data['by_customer']['rows'] + \
+                list(data['by_customer']['services']):
+            for index, (value_key, missing_key) in zip(
+                    CUT_MONEY, (('amount', 'no_amount'),
+                                ('received', 'no_received'),
+                                ('outstanding', 'no_amount'))):
+                with self.subTest(label=row['label'], column=index):
+                    screen_is_dash = (row['jobs']
+                                      and row[missing_key] == row['jobs'])
+                    cell = rows[row['label']][index]
+                    self.assertEqual(screen_is_dash, cell is None,
+                                     'screen and workbook disagree')
+
+
+class TestE2EveryOtherMoneyCellIsStillANumber(WorkbookMixin,
+                                              unittest.TestCase):
+    """E-2: numbers stay numbers, and no separator character travels."""
+
+    def test_e2_no_money_cell_is_a_string(self):
+        for url in XLSX_ROUTES:
+            wb = self.workbook(url)
+            offenders = []
+            for ws in wb.worksheets:
+                for row in ws.iter_rows():
+                    for cell in row:
+                        if not isinstance(cell.value, str):
+                            continue
+                        if '\xa0' in cell.value or cell.value.strip() == '—':
+                            offenders.append((url, ws.title, cell.coordinate,
+                                              cell.value))
+            self.assertEqual([], offenders)
+
+    def test_e2_every_known_money_cell_is_numeric(self):
+        for url, sheets, columns in (
+                (XLSX_ROUTES[0], CUT_SHEETS, CUT_MONEY),
+                (XLSX_ROUTES[0], DEBT_SHEETS, DEBT_MONEY),
+                (XLSX_ROUTES[1], DEBT_SHEETS, DEBT_MONEY)):
+            wb = self.workbook(url)
+            checked = 0
+            for title in sheets:
+                for label, row in self.sheet_rows(wb[title]).items():
+                    for index in columns:
+                        if row[index] is None:
+                            continue
+                        checked += 1
+                        with self.subTest(url=url, sheet=title, label=label):
+                            self.assertIsInstance(row[index], (int, float))
+                            self.assertNotIsInstance(row[index], bool)
+            self.assertGreater(checked, 10, '%s / %s' % (url, sheets[0]))
+
+    def test_e2_the_totals_still_add_up_inside_the_sheet(self):
+        """A blank must not have been achieved by dropping a number."""
+        wb = self.workbook(XLSX_ROUTES[0])
+        ws = wb['По заказчикам']
+        rows = list(ws.iter_rows(min_row=2, values_only=True))
+        body, total = rows[:-1], rows[-1]
+        self.assertEqual('Итого', total[0])
+        self.assertEqual(TOTAL_JOBS, total[1])
+        self.assertEqual(TOTAL_JOBS, sum(r[1] for r in body))
+        for index, expected in zip(CUT_MONEY, (TOTAL_AMOUNT, TOTAL_RECEIVED,
+                                               TOTAL_OUTSTANDING)):
+            with self.subTest(column=index):
+                self.assertAlmostEqual(
+                    expected, sum(r[index] or 0.0 for r in body), places=2)
+                self.assertAlmostEqual(expected, total[index], places=2)
+
+    def test_e2_the_sheet_layout_is_unchanged(self):
+        """Blanking a cell must not move or rename a column."""
+        wb = self.workbook(XLSX_ROUTES[0])
+        self.assertEqual(
+            ['Заказчик', 'Работ', 'Гектары', 'Сумма', 'Получено',
+             'Не получено', 'Доля, %'],
+            list(next(wb['По заказчикам'].iter_rows(max_row=1,
+                                                    values_only=True))))
+        self.assertEqual(
+            ['Заказчик', 'Работ', 'Сумма', 'Получено', 'Не получено'],
+            list(next(wb['Долги — заказчики'].iter_rows(max_row=1,
+                                                        values_only=True))))
+
+
+class TestE3NegativeControl(WorkbookMixin, unittest.TestCase):
+    """E-3: pre-commit, the same cells read back as 0."""
+
+    def pre_commit_cut_sheet_values(self):
+        """The pre-commit writers, run over the same rows into a real
+        workbook, and read back with openpyxl."""
+        module = pre_commit_drones()
+        if module is None:
+            self.skipTest('git cannot produce %s:drones.py' % BASE_COMMIT)
+        from flask import g
+        from openpyxl import Workbook, load_workbook
+        from werkzeug.datastructures import MultiDict
+        with app.test_request_context('/drones/works/reports'):
+            g.lang = 'ru'
+            data = module._drone_works_report_data(
+                module._drone_work_conditions(
+                    module._drone_works_filters_from_args(MultiDict())))
+            st = module._drone_xlsx_styler()
+            wb = Workbook()
+            wb.remove(wb.active)
+            module._drone_work_cut_sheet(wb, st, 'По заказчикам', 'Заказчик',
+                                         data['by_customer'])
+            module._drone_work_debt_sheet(wb, st, 'Долги — заказчики',
+                                          'Заказчик',
+                                          data['debt_by_customer'])
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+        return load_workbook(buffer)
+
+    def test_e3_pre_commit_writes_zero_where_this_commit_writes_nothing(self):
+        wb = self.pre_commit_cut_sheet_values()
+        rows = self.sheet_rows(wb['По заказчикам'])
+        for index in CUT_MONEY:
+            with self.subTest(column=index):
+                self.assertEqual(0, rows[ALL_NULL][index])
+                self.assertIsNotNone(rows[ALL_NULL][index])
+
+    def test_e3_pre_commit_no_received_column_is_zero_too(self):
+        wb = self.pre_commit_cut_sheet_values()
+        self.assertEqual(0, self.sheet_rows(wb['По заказчикам'])[
+            NO_RECEIVED][CUT_MONEY[1]])
+
+    def test_e3_and_this_commit_writes_none_for_the_same_cells(self):
+        wb = self.workbook(XLSX_ROUTES[0])
+        rows = self.sheet_rows(wb['По заказчикам'])
+        for index in CUT_MONEY:
+            with self.subTest(column=index):
+                self.assertIsNone(rows[ALL_NULL][index])
+        self.assertIsNone(rows[NO_RECEIVED][CUT_MONEY[1]])
+
+    def test_e3_pre_commit_debt_sheet_hides_the_unpriced_jobs(self):
+        """The workbook's half of D-4: five jobs under «Долга нет»."""
+        wb = self.pre_commit_cut_sheet_values()
+        rows = self.sheet_rows(wb['Долги — заказчики'])
+        self.assertIn(NO_DEBT_LABEL_RU, rows)
+        self.assertNotIn(UNKNOWN_LABEL_RU, rows)
+        self.assertEqual(5, rows[NO_DEBT_LABEL_RU][1])
 
 
 if __name__ == '__main__':

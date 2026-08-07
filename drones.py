@@ -3956,6 +3956,36 @@ def _drone_works_filter_sheet(wb, st, filters, totals):
     return ws
 
 
+def _drone_money_or_blank(row, key, missing_key):
+    """A money figure for a workbook cell, or None when it is not known.
+
+    [REASON]: DRONE-ZERO-VS-UNKNOWN-001. The workbook is what goes to
+    management, so a screen that prints «—» beside a workbook that prints 0
+    fixes nothing -- the 0 is the copy that gets believed. This is the SAME
+    rule money_cell() applies in Jinja, written once here so the two cannot
+    drift: the figure is unknown exactly when every job in the group is
+    missing the thing it is computed from.
+
+    An EMPTY cell, never 0 and never a string. An empty cell is absent data in
+    a numeric column; «—» would turn the column into text and break every SUM
+    over it, and money in these workbooks stays a number.
+    """
+    if row['jobs'] and row[missing_key] == row['jobs']:
+        return None
+    return row[key]
+
+
+def _drone_work_money_cells(row):
+    """(amount, received, outstanding) for one row of a cut or a debt table.
+
+    «Не получено» keys off no_amount, not off its own counter: the debt is
+    unknown when the amount is unknown, whatever was received.
+    """
+    return (_drone_money_or_blank(row, 'amount', 'no_amount'),
+            _drone_money_or_blank(row, 'received', 'no_received'),
+            _drone_money_or_blank(row, 'outstanding', 'no_amount'))
+
+
 def _drone_work_cut_sheet(wb, st, title, first_column, cut):
     """One cut as one sheet: rows, the service row, and the total."""
     ws = wb.create_sheet(title)
@@ -3967,18 +3997,17 @@ def _drone_work_cut_sheet(wb, st, title, first_column, cut):
                _drone_t('Олинмаган', 'Не получено'),
                _drone_t('Улуш, %', 'Доля, %')])
     for row in cut['rows']:
-        ws.append([_drone_xlsx_safe(row['label']), row['jobs'], row['area'],
-                   row['amount'], row['received'], row['outstanding'],
-                   row['share']])
+        ws.append([_drone_xlsx_safe(row['label']), row['jobs'], row['area']]
+                  + list(_drone_work_money_cells(row)) + [row['share']])
     # The service rows are part of the table AND part of the total -- never a
     # remainder printed outside it.
     for service in cut['services']:
-        ws.append([service['label'], service['jobs'], service['area'],
-                   service['amount'], service['received'],
-                   service['outstanding'], service['share']])
+        ws.append([service['label'], service['jobs'], service['area']]
+                  + list(_drone_work_money_cells(service))
+                  + [service['share']])
     ws.append([_drone_t('Жами', 'Итого'), cut['total']['jobs'],
-               cut['total']['area'], cut['total']['amount'],
-               cut['total']['received'], cut['total']['outstanding'], 100.0])
+               cut['total']['area']]
+              + list(_drone_work_money_cells(cut['total'])) + [100.0])
     st.style_table(ws, num_formats={3: '0.00', 4: '0.00', 5: '0.00',
                                     6: '0.00', 7: '0.0'},
                    bold_rows=(ws.max_row,))
@@ -3993,8 +4022,8 @@ def _drone_work_debt_sheet(wb, st, title, first_column, debt):
                _drone_t('Кирим қилинган', 'Получено'),
                _drone_t('Олинмаган', 'Не получено')])
     for row in debt['rows']:
-        ws.append([_drone_xlsx_safe(row['label']), row['jobs'], row['amount'],
-                   row['received'], row['outstanding']])
+        ws.append([_drone_xlsx_safe(row['label']), row['jobs']]
+                  + list(_drone_work_money_cells(row)))
     # [REASON]: DRONE-ZERO-VS-UNKNOWN-001. The third bucket is a row of the
     # sheet for the same reason it is a row of the screen: the printed rows
     # have to add up to the printed total. Dropping it here would leave the
@@ -4002,11 +4031,10 @@ def _drone_work_debt_sheet(wb, st, title, first_column, debt):
     # bucket exists to make visible.
     for bucket in (debt.get('unknown'), debt['rest']):
         if bucket is not None:
-            ws.append([bucket['label'], bucket['jobs'], bucket['amount'],
-                       bucket['received'], bucket['outstanding']])
-    ws.append([_drone_t('Жами', 'Итого'), debt['total']['jobs'],
-               debt['total']['amount'], debt['total']['received'],
-               debt['total']['outstanding']])
+            ws.append([bucket['label'], bucket['jobs']]
+                      + list(_drone_work_money_cells(bucket)))
+    ws.append([_drone_t('Жами', 'Итого'), debt['total']['jobs']]
+              + list(_drone_work_money_cells(debt['total'])))
     st.style_table(ws, num_formats={3: '0.00', 4: '0.00', 5: '0.00'},
                    bold_rows=(ws.max_row,))
     return ws
