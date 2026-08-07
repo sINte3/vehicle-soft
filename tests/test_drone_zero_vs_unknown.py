@@ -1674,19 +1674,20 @@ def unreachable_classes(path, compounds=None):
     return findings
 
 
-# [REASON]: ONE known exemption, named, with the reason it is not fixed here.
-# works_reports.html carries the same mistake on the service rows of the five
-# report cuts. It is NOT this task's: `git log -S` puts it in 9f018e1, the
-# original DRONE-WORKS-001 reports commit, and it is present at the merge base
-# 116e15a. Fixing it would change how an already-accepted screen LOOKS -- five
-# cuts' service rows would gain a background and a left bar for the first time
-# since they shipped -- and that is the owner's call, not a side effect of a
-# review fix on a different page. test_f1_the_exemption_list_is_exactly_this
-# asserts the list holds exactly this one entry, so a NEW occurrence anywhere,
-# including a second one in this same file, fails.
-KNOWN_UNREACHABLE = {
-    (REPORTS_TEMPLATE, 'tr', 'is-warning'),
-}
+# [REASON]: EMPTY, and the constant stays so that it is empty ON PURPOSE
+# rather than by never having existed. It briefly held one entry --
+# (works_reports.html, 'tr', 'is-warning'), the same mistake on the service
+# rows of the five report cuts, dating from 9f018e1 and present at the merge
+# base 116e15a. It was left out of the review fix as an already-accepted
+# screen's appearance, and the owner overruled that: those service rows are
+# «Заказчик не указан», «Оператор не определён», «Подразделение не указано» --
+# the same «we cannot say» rows the third debt bucket exists for. Painting one
+# and not the others makes two screens disagree about one idea.
+#
+# test_f1_the_exemption_list_is_exactly_this asserts the SCAN FINDS NOTHING,
+# so adding an entry here is a deliberate act against a test that says the
+# list must stay empty -- not a quiet place to put the next one.
+KNOWN_UNREACHABLE = set()
 
 
 class TestF1EveryClassIsReachable(unittest.TestCase):
@@ -1712,10 +1713,17 @@ class TestF1EveryClassIsReachable(unittest.TestCase):
             for p, l, t, c, w in offenders))
 
     def test_f1_the_exemption_list_is_exactly_this(self):
-        """An allowlist nobody checks becomes a place to hide things."""
+        """The list must stay EMPTY: the scan finds nothing to exempt.
+
+        An allowlist nobody checks becomes a place to hide things. This
+        asserts both directions at once -- no template has an unreachable
+        class, AND the constant carries no entry papering over one. Adding an
+        entry means editing this assertion too, which is the point.
+        """
         seen = {(path, tag, css_class)
                 for path, _line, tag, css_class, _why in self.findings()}
-        self.assertEqual(KNOWN_UNREACHABLE, seen)
+        self.assertEqual(set(), seen)
+        self.assertEqual(set(), KNOWN_UNREACHABLE)
 
     def test_f1_the_unknown_bucket_row_is_the_class_that_paints_a_row(self):
         """The defect this check exists for, asserted on its own.

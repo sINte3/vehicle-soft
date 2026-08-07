@@ -146,7 +146,18 @@
       </tr>
       {% endfor %}
       {% for service in cut.services %}
-      <tr class="is-warning">
+      {# DRONE-ZERO-VS-UNKNOWN-001: is-warning-row, не is-warning. Красит
+         СТРОКУ таблицы только `.vs-table tr.is-warning-row` (design-system.css,
+         строки 646 и 649); is-warning существует лишь как модификатор
+         .vs-mini, .vs-stat-value, .vs-alert и .vs-report-tile, поэтому
+         <tr class="is-warning"> не давал ни фона, ни левой полосы. Служебные
+         строки пяти разрезов — «Заказчик не указан», «Оператор не определён»,
+         «Подразделение не указано» — рисовались как обычные с 9f018e1.
+
+         Это те же самые «сказать нечего» строки, ради которых заведена третья
+         корзина на странице долгов. Покрасить одну и оставить другие значит
+         заставить два экрана расходиться в одной мысли. #}
+      <tr class="is-warning-row">
         <td>
           <b>{{ service.label }}</b>
           {% if service.periods %}
