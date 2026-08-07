@@ -3547,9 +3547,21 @@ def _drone_work_cut(conds, group_expr, total_row, service_labels,
         # [REASON]: DRONE-ZERO-VS-UNKNOWN-001. received_amount carries the
         # same NULL-versus-zero distinction as amount, and the NULLs are real:
         # of the 904 imported jobs 852 carry a received figure and 52 do not.
-        # «Получено» printed 0 for both, so the column said «this farm handed
-        # in nothing» about a group where nobody had written the figure down.
-        # Counted exactly like no_amount, and for the same reason.
+        #
+        # [REASON]: DRONE-RECEIVED-BLANK-IS-ZERO-001, and read this before
+        # deleting the column. no_received is COMPUTED AND DELIBERATELY NOT
+        # RENDERED. On 2026-08-07 the owner decided that a blank «олинмаган
+        # пуллар» cell in the dispatcher sheets means NOTHING WAS COLLECTED,
+        # not «nobody wrote it down», so «Получено» prints 0 and never a dash
+        # and never a note. The counter stays because it is a real measurement
+        # that costs one SUM over a column already being scanned, and because
+        # the decision is the owner's to reverse -- if he does, the number is
+        # already here and only the rendering changes back.
+        #
+        # A counter computed and never shown is normally a smell. This one is
+        # the exception, and it says so here so that nobody removes it in six
+        # months believing they are cleaning up an oversight -- or, worse,
+        # restores the dash believing they are fixing one.
         func.sum(case((DroneWork.received_amount.is_(None), 1), else_=0)),
     ).filter(*conds).group_by(group_expr).all()
 
@@ -3615,6 +3627,13 @@ def _drone_work_bucket_row(label, rows):
     # nothing rendered it, so nothing failed. The moment the debts template
     # started calling money_cell() this row would have printed a sum where the
     # ordinary rows print a dash.
+    #
+    # [REASON]: DRONE-RECEIVED-BLANK-IS-ZERO-001. no_received is summed here
+    # and DELIBERATELY NOT RENDERED anywhere -- the owner decided on
+    # 2026-08-07 that a blank «олинмаган пуллар» means nothing was collected,
+    # so «Получено» never dashes. It is kept because it is a real measurement
+    # and because reversing that decision must not need a new query. Do not
+    # drop it as dead weight; see the same note in _drone_work_cut().
     row = {
         'label': label,
         'jobs': sum(r['jobs'] for r in rows),
@@ -3980,9 +3999,18 @@ def _drone_work_money_cells(row):
 
     «Не получено» keys off no_amount, not off its own counter: the debt is
     unknown when the amount is unknown, whatever was received.
+
+    [REASON]: DRONE-RECEIVED-BLANK-IS-ZERO-001. «Получено» is NOT blanked, and
+    that is the OWNER'S DECISION of 2026-08-07, not something derived from the
+    data: in the dispatcher sheets an empty «олинмаган пуллар» cell means
+    NOTHING WAS COLLECTED, not «nobody wrote it down». DRONE-ZERO-VS-UNKNOWN-
+    001 had treated it like a blank «Сумма» and printed a dash, which produced
+    rows saying two things at once -- «Бухоро Сервис Агрокластер 3
+    55 429 140 — 55 429 140», i.e. «collected: unknown; uncollected: all of
+    it». Only «Сумма» and «Не получено» can be unknown now.
     """
     return (_drone_money_or_blank(row, 'amount', 'no_amount'),
-            _drone_money_or_blank(row, 'received', 'no_received'),
+            row['received'],
             _drone_money_or_blank(row, 'outstanding', 'no_amount'))
 
 

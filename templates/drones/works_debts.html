@@ -149,7 +149,7 @@
         <td>{{ r.label }}</td>
         <td class="right">{{ r.jobs }}</td>
         <td class="right">{{ money_cell(r.amount, r.jobs, r.no_amount, 'amount') }}</td>
-        <td class="right">{{ money_cell(r.received, r.jobs, r.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(r.received, r.jobs, 0) }}</td>
         <td class="right">{{ money_cell(r.outstanding, r.jobs, r.no_amount) }}</td>
       </tr>
       {% endfor %}
@@ -183,7 +183,7 @@
         <td><b>{{ debt.unknown.label }}</b></td>
         <td class="right">{{ debt.unknown.jobs }}</td>
         <td class="right">{{ money_cell(debt.unknown.amount, debt.unknown.jobs, debt.unknown.no_amount, 'amount') }}</td>
-        <td class="right">{{ money_cell(debt.unknown.received, debt.unknown.jobs, debt.unknown.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(debt.unknown.received, debt.unknown.jobs, 0) }}</td>
         <td class="right">{{ money_cell(debt.unknown.outstanding, debt.unknown.jobs, debt.unknown.no_amount) }}</td>
       </tr>
       {% endif %}
@@ -192,7 +192,7 @@
         <td>{{ debt.rest.label }}</td>
         <td class="right">{{ debt.rest.jobs }}</td>
         <td class="right">{{ money_cell(debt.rest.amount, debt.rest.jobs, debt.rest.no_amount, 'amount') }}</td>
-        <td class="right">{{ money_cell(debt.rest.received, debt.rest.jobs, debt.rest.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(debt.rest.received, debt.rest.jobs, 0) }}</td>
         <td class="right">{{ money_cell(debt.rest.outstanding, debt.rest.jobs, debt.rest.no_amount) }}</td>
       </tr>
       {% endif %}
@@ -200,7 +200,7 @@
         <td>{{ t_total }}</td>
         <td class="right">{{ debt.total.jobs }}</td>
         <td class="right">{{ money_cell(debt.total.amount, debt.total.jobs, debt.total.no_amount, 'amount') }}</td>
-        <td class="right">{{ money_cell(debt.total.received, debt.total.jobs, debt.total.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(debt.total.received, debt.total.jobs, 0) }}</td>
         <td class="right">{{ money_cell(debt.total.outstanding, debt.total.jobs, debt.total.no_amount) }}</td>
       </tr>
     </tbody>
