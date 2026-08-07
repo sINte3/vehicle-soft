@@ -1690,10 +1690,55 @@ def unreachable_classes(path, compounds=None):
 KNOWN_UNREACHABLE = set()
 
 
-class TestF1EveryClassIsReachable(unittest.TestCase):
-    """F-1: the check DRONE-UI-FIX-002 had as X-5 and this task dropped."""
+DRONES_TEMPLATE_DIR = os.path.join(REPO_ROOT, 'templates', 'drones')
 
-    TEMPLATES = MACRO_TEMPLATES + (PARTIAL,)
+# Every template this task edited. works_assignment_hints.html joined the list
+# when its «Машина не распознана» row was fixed.
+TOUCHED_TEMPLATES = MACRO_TEMPLATES + (
+    PARTIAL, 'templates/drones/works_assignment_hints.html')
+
+
+def drones_templates():
+    """Every template under templates/drones/, sorted, repo-relative.
+
+    [REASON]: scanning only the templates a task touched WAS the defect. It is
+    why <tr class="is-warning"> survived on works_assignment_hints.html --
+    nothing had changed that file, so nothing looked at it. A check that only
+    reads where the last edit happened misses the next one the same way: it
+    measures recency, not correctness. The directory is enumerated rather than
+    listed, so a new template is covered the day it appears rather than the
+    day somebody remembers to add it.
+
+    F-1 does NOT use this yet, and the reason is scope, not doubt. Running it
+    over the whole module surfaces three more findings, all in customers.html
+    and none of them this increment's:
+
+        customers.html:136  <tr class="is-focus">      is-focus is in no CSS
+        customers.html:164  <label class="vs-check">   vs-check is in no CSS
+        customers.html:190  <label class="vs-check">   (.vs-check-card and
+                                                        .vs-check-grid exist;
+                                                        vs-check does not)
+
+    Fixing them would repaint a screen this PR has no business repainting --
+    a highlighted row and two checkbox labels that have never been styled.
+    They are recorded in the PR body with file, line, tag and class. Widening
+    F-1 is one line: TEMPLATES = drones_templates().
+    """
+    return tuple(sorted(
+        'templates/drones/' + name
+        for name in os.listdir(DRONES_TEMPLATE_DIR)
+        if name.endswith('.html')))
+
+
+class TestF1EveryClassIsReachable(unittest.TestCase):
+    """F-1: the check DRONE-UI-FIX-002 had as X-5 and this task dropped.
+
+    Scope is the templates this task touched. drones_templates() is the
+    module-wide scan and its docstring records what it finds and why this PR
+    does not act on it.
+    """
+
+    TEMPLATES = TOUCHED_TEMPLATES
 
     def findings(self):
         compounds = css_last_compounds()
@@ -1744,6 +1789,35 @@ class TestF1EveryClassIsReachable(unittest.TestCase):
         compounds = css_last_compounds()
         self.assertIn(('tr', frozenset({'is-warning-row'})), compounds)
         self.assertNotIn(('tr', frozenset({'is-warning'})), compounds)
+
+    def test_f1_the_assignment_hints_row_is_covered_now(self):
+        """It was fixed, so the file is touched, so F-1 scans it.
+
+        The point of the entry: before this commit that template was outside
+        every scope, which is exactly how its row survived.
+        """
+        path = 'templates/drones/works_assignment_hints.html'
+        self.assertIn(path, self.TEMPLATES)
+        source = _JINJA_COMMENT_RE.sub('', read_template(path))
+        self.assertTrue('<tr class="is-warning-row">' in source,
+                        'the «Машина не распознана» row lost the fix')
+        self.assertFalse('<tr class="is-warning">' in source,
+                         'a <tr> still carries the class that paints nothing')
+
+    def test_f1_the_module_wide_gap_is_visible_in_code(self):
+        """What F-1 does NOT scan, asserted rather than left to memory.
+
+        drones_templates() is live and one line from being F-1's scope. This
+        pins the gap so it cannot quietly close by accident or be forgotten:
+        the module has templates this check does not read, and the three
+        findings in them are named in drones_templates()' docstring and in
+        the PR body.
+        """
+        unscanned = set(drones_templates()) - set(self.TEMPLATES)
+        self.assertTrue(unscanned, 'nothing is unscanned -- widen F-1')
+        self.assertIn('templates/drones/customers.html', unscanned)
+        self.assertEqual(set(self.TEMPLATES) - set(drones_templates()), set(),
+                         'F-1 scans a template that is not in the module')
 
     def test_f1_the_scan_actually_read_something(self):
         """A parser that found no classes would pass every assertion above."""

@@ -147,7 +147,20 @@
       </tr>
       {% endfor %}
       {% if data.unattributed.flights %}
-      <tr class="is-warning">
+      {# DRONE-ZERO-VS-UNKNOWN-001: is-warning-row, не is-warning. Строку
+         таблицы красит только `.vs-table tr.is-warning-row`
+         (design-system.css, строки 646 и 649); is-warning существует лишь как
+         модификатор .vs-mini, .vs-stat-value, .vs-alert и .vs-report-tile,
+         поэтому <tr class="is-warning"> не давал ни фона, ни левой полосы.
+
+         Это третья и последняя такая строка в модуле: «Машина не распознана»
+         — та же «сказать нечего», что и служебные строки пяти разрезов и
+         третья корзина на странице долгов. Все три теперь красятся одинаково.
+         Ловит их TestF1EveryClassIsReachable в
+         tests/test_drone_zero_vs_unknown.py, который с этого коммита читает
+         ВСЕ шаблоны templates/drones/, а не только изменённые задачей: узкая
+         область и была настоящим дефектом — из-за неё эта строка и дожила. #}
+      <tr class="is-warning-row">
         <td><b>{{ 'Машина не распознана' if is_ru else 'Машина аниқланмаган' }}</b></td>
         <td class="right">{{ data.unattributed.flights }}</td>
         <td class="right">{{ '%.2f'|format(data.unattributed.area)|vs_num }}</td>
