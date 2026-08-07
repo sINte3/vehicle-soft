@@ -3853,6 +3853,19 @@ DRONE_REPORT_TILES = (
                        'ёнида',
     },
     {
+        # DRONE-ANALYTICS-001/3. Reuses is-info, the accent of the works
+        # report: this compares that report's hectares against the flights.
+        'key': 'reconcile',
+        'endpoint': 'drones.works_flights_reconcile',
+        'accent': 'is-info',
+        'title_ru': 'Ведомости против вылетов',
+        'title_uz': 'Ведомостлар ва парвозлар',
+        'subtitle_ru': 'Гектары ведомостей рядом с гектарами DJI, '
+                       'по месяцам',
+        'subtitle_uz': 'Ведомост гектарлари DJI гектарлари ёнида, '
+                       'ойлар бўйича',
+    },
+    {
         # DRONE-ANALYTICS-001/2. Reuses is-warning, the accent of «Долги»:
         # this is that report read by age, and a shared colour says so.
         'key': 'debts-aging',
@@ -5039,3 +5052,131 @@ def works_debts_aging_xlsx():
                    row['outstanding'], row['oldest'], row['bucket']])
     st.style_table(ws, num_formats={3: '0.00'})
     return _drone_works_xlsx_response(wb, 'drone_debt_aging', filters)
+
+
+# ─── DRONE-ANALYTICS-001/3: ledger against flights, by month ─────────────────
+
+def _drone_works_flights_reconcile_data():
+    """Ledger hectares beside flight hectares, one row per month.
+
+    [REASON]: NO EXCEL, AND THAT IS A DECISION RATHER THAN AN OMISSION. This
+    is a monitoring screen: it says «these two numbers disagree, go and look»,
+    and the answer changes as books are entered. A workbook is a document sent
+    onward and quoted back weeks later; a monitoring figure that keeps moving
+    is exactly what must not acquire a filename. The four cuts that ARE
+    documents keep their exports.
+
+    [REASON]: THE TWO SIDES MEASURE DIFFERENT POPULATIONS AND ARE NOT
+    EXPECTED TO MATCH. Ledger hectares (15 878.64 in total) cover billed work
+    only; flight hectares (28 835.34) cover everything flown, including the
+    holding's own land and every test flight. So a month with flights and no
+    ledger book is NOT «-100 %» -- it is «Ведомости не заведены», a sentence
+    about the books rather than a measurement of a gap. Only months with both
+    sides non-zero get a percentage, and only those can be coloured; anything
+    else would invent a discrepancy out of an absence.
+
+    [REASON]: THE COLOUR IS ON COVERAGE, NOT ON THE SIGNED DIFFERENCE, and
+    this is the correction of 2026-08-07. The signed difference does its job
+    on a month where both sides are complete -- April 2026 reads -0.68 % on
+    ledger 6 336.15 against flights 6 379.24 -- and fails exactly where the
+    report matters most: June 2026 reads -99.08 % and July -98.83 %, which is
+    not a reconciliation discrepancy but the near-total ABSENCE of a ledger.
+    A reader scanning a column of percentages cannot tell those two apart,
+    and the second is the whole point of the screen. Coverage -- ledger as a
+    percentage of flights -- separates them: 99 % is «the books agree», 1 %
+    is «the books are missing», and they no longer look alike.
+
+    The signed difference in hectares STAYS as a column, because it is what a
+    person checks by hand. It simply no longer decides the colour.
+
+    [REASON]: hectares only. Invariant Р6 -- this module does not build a
+    cash contour, and a reconciliation screen is exactly where somebody would
+    be tempted to start one.
+    """
+    work_month = _drone_work_month_expr()
+    ledger = dict(
+        (row[0], (row[1], float(row[2] or 0.0))) for row in db.session.query(
+            work_month,
+            func.count(DroneWork.id),
+            func.coalesce(func.sum(DroneWork.area_ha), 0.0),
+        ).group_by(work_month).all() if row[0])
+
+    flight_month = _drone_flight_month_expr()
+    flights = dict(
+        (row[0], (row[1], float(row[2] or 0.0))) for row in db.session.query(
+            flight_month,
+            func.count(DroneFlight.id),
+            func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+        ).group_by(flight_month).all() if row[0])
+
+    note_no_books = _drone_t('Ведомостлар киритилмаган',
+                             'Ведомости не заведены')
+    note_no_flights = _drone_t('Бу ойда парвозлар йўқ',
+                               'Вылетов в этом месяце нет')
+
+    rows = []
+    # Every month present on EITHER side, exactly once. A union, not the
+    # ledger's month list: a month that flew and was never billed is the most
+    # interesting row on the page and a ledger-driven loop drops it.
+    for month in sorted(set(ledger) | set(flights), reverse=True):
+        ledger_jobs, ledger_area = ledger.get(month, (0, 0.0))
+        flight_count, flight_area = flights.get(month, (0, 0.0))
+        row = {
+            'month': month,
+            'ledger_jobs': ledger_jobs,
+            'ledger_area': ledger_area,
+            'flights': flight_count,
+            'flight_area': flight_area,
+            'diff': ledger_area - flight_area,
+            'percent': None,
+            'coverage': None,
+            'note': '',
+            'flag': '',
+        }
+        if ledger_area > 0.005 and flight_area > 0.005:
+            row['percent'] = (ledger_area - flight_area) * 100.0 / flight_area
+            row['coverage'] = ledger_area * 100.0 / flight_area
+            # Danger is tested FIRST: a coverage of 8 434 % is outside the
+            # band and also far outside it, and «warning» would be the wrong
+            # word for a month whose ledger claims eighty times what flew.
+            if row['coverage'] < 50.0 or row['coverage'] > 200.0:
+                row['flag'] = 'is-danger-row'
+            elif row['coverage'] < 90.0 or row['coverage'] > 110.0:
+                row['flag'] = 'is-warning-row'
+        elif flight_area > 0.005:
+            row['note'] = note_no_books
+        else:
+            row['note'] = note_no_flights
+        rows.append(row)
+
+    total_ledger = sum(r['ledger_area'] for r in rows)
+    total_flight = sum(r['flight_area'] for r in rows)
+    # [REASON]: the total obeys the SAME rule as a row, and it has to be said
+    # out loud because it was written the other way first. With flights but no
+    # ledger anywhere, `(0 - F) * 100 / F` is -100.00 %, and the total line
+    # printed exactly the sentence every row is forbidden to print. A footer
+    # that contradicts the column above it is worse than no footer.
+    both_sides = total_ledger > 0.005 and total_flight > 0.005
+    return {
+        'rows': rows,
+        'total': {
+            'ledger_jobs': sum(r['ledger_jobs'] for r in rows),
+            'ledger_area': total_ledger,
+            'flights': sum(r['flights'] for r in rows),
+            'flight_area': total_flight,
+            'diff': total_ledger - total_flight,
+            'percent': (((total_ledger - total_flight) * 100.0 / total_flight)
+                        if both_sides else None),
+            'coverage': ((total_ledger * 100.0 / total_flight)
+                         if both_sides else None),
+        },
+        'months': len(rows),
+    }
+
+
+@drones_bp.route('/reports/reconcile')
+@module_required('drones')
+def works_flights_reconcile():
+    """Dispatchers' hectares against DJI hectares, month by month."""
+    return render_template('drones/works_flights_reconcile.html',
+                           data=_drone_works_flights_reconcile_data())

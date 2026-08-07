@@ -632,3 +632,259 @@ class TestA2DebtAging(unittest.TestCase):
         # And back. The aging page's own form posts to /aging, so the back
         # link is matched with the closing quote to exclude it.
         self.assertIn('href="/drones/works/debts"', aging)
+
+
+# ══ A3  ledger against flights ═══════════════════════════════════════════════
+
+class TestA3Reconcile(unittest.TestCase):
+    """Months from both sides; a month with no books is a phrase, not -100 %."""
+
+    @classmethod
+    def setUpClass(cls):
+        reset_db()
+        cls.user_id = create_admin('a3admin')
+        with app.app_context():
+            ids = _units([1])
+            cls.u1 = ids[1]
+            customer = DroneCustomer(name='Пешку АМТ')
+            db.session.add(customer)
+            db.session.flush()
+            cls.cid = customer.id
+
+            # 2026-04: both sides, ledger 90 ha against flights 100 ha (-10 %)
+            db.session.add(_work(cls.cid, 90.0, 100.0, 0.0,
+                                 date(2026, 4, 12), period='2026-04'))
+            db.session.add(_flight(cls.u1, datetime(2026, 4, 12, 6), 100.0,
+                                   0, 500.0))
+            # 2026-05: flights only -- A3.2, the «no books» month.
+            db.session.add(_flight(cls.u1, datetime(2026, 5, 12, 6), 40.0,
+                                   0, 200.0))
+            # 2026-06: ledger only -- A3.3, no division by zero.
+            db.session.add(_work(cls.cid, 25.0, 100.0, 0.0,
+                                 date(2026, 6, 12), period='2026-06'))
+            # 2026-03: both sides, within 5 % -- must stay uncoloured.
+            db.session.add(_work(cls.cid, 100.0, 100.0, 0.0,
+                                 date(2026, 3, 12), period='2026-03'))
+            db.session.add(_flight(cls.u1, datetime(2026, 3, 12, 6), 102.0,
+                                   0, 500.0))
+            db.session.commit()
+
+    @staticmethod
+    def _data():
+        with app.app_context():
+            return drones._drone_works_flights_reconcile_data()
+
+    def test_a3_1_every_month_of_the_union_appears_exactly_once(self):
+        data = self._data()
+        months = [r['month'] for r in data['rows']]
+        with app.app_context():
+            work_months = set(
+                row[0] for row in db.session.query(
+                    drones._drone_work_month_expr()).distinct().all() if row[0])
+            flight_months = set(
+                row[0] for row in db.session.query(
+                    drones._drone_flight_month_expr()).distinct().all()
+                if row[0])
+        union = work_months | flight_months
+        self.assertEqual(len(months), len(union))
+        self.assertEqual(len(months), len(set(months)), 'no month twice')
+        self.assertEqual(set(months), union)
+        self.assertEqual(months, sorted(months, reverse=True), 'descending')
+
+    def test_a3_2_month_with_flights_and_no_books(self):
+        """A3.2 positive: the phrase, no percentage, no colour."""
+        data = self._data()
+        row = [r for r in data['rows'] if r['month'] == '2026-05'][0]
+        self.assertEqual(row['ledger_jobs'], 0)
+        self.assertGreater(row['flight_area'], 0.005)
+        self.assertIsNone(row['percent'], 'no percentage without books')
+        self.assertEqual(row['flag'], '', 'and therefore no colour')
+        self.assertIn(row['note'], ('Ведомости не заведены',
+                                    'Ведомостлар киритилмаган'))
+
+    def test_a3_2_negative_control_computing_the_percentage_anyway(self):
+        """A3.2 negative: compute it anyway and -100.0 appears."""
+        data = self._data()
+        row = [r for r in data['rows'] if r['month'] == '2026-05'][0]
+        naive = ((row['ledger_area'] - row['flight_area']) * 100.0
+                 / row['flight_area'])
+        self.assertEqual(naive, -100.0,
+                         'the naive formula states a 100 % shortfall')
+        with self.assertRaises(AssertionError) as caught:
+            self.assertIsNone(naive, 'no percentage without books')
+        self.assertIn('no percentage without books', str(caught.exception))
+
+    def test_a3_3_month_with_books_and_no_flights(self):
+        """A3.3: no ZeroDivisionError, no is-danger-row."""
+        data = self._data()
+        row = [r for r in data['rows'] if r['month'] == '2026-06'][0]
+        self.assertEqual(row['flights'], 0)
+        self.assertEqual(row['flight_area'], 0.0)
+        self.assertIsNone(row['percent'])
+        self.assertNotEqual(row['flag'], 'is-danger-row')
+        self.assertEqual(row['flag'], '')
+        self.assertIn(row['note'], ('Вылетов в этом месяце нет',
+                                    'Бу ойда парвозлар йўқ'))
+
+    def test_a3_3_negative_control_dividing_by_zero(self):
+        """A3.3 negative: the naive formula raises on the same row."""
+        data = self._data()
+        row = [r for r in data['rows'] if r['month'] == '2026-06'][0]
+        with self.assertRaises(ZeroDivisionError):
+            _ = ((row['ledger_area'] - row['flight_area']) * 100.0
+                 / row['flight_area'])
+
+    def test_a3_colouring_only_where_both_sides_exist(self):
+        data = self._data()
+        by_month = {r['month']: r for r in data['rows']}
+        # The COLOUR comes from coverage, not from the signed difference.
+        # 2026-04: ledger 90 of flights 100 -> coverage exactly 90.0 %, which
+        # is the inclusive edge of the no-colour band. The signed difference
+        # is -10 %, which under the old rule painted it warning.
+        self.assertAlmostEqual(by_month['2026-04']['coverage'], 90.0,
+                               delta=0.005)
+        self.assertAlmostEqual(by_month['2026-04']['percent'], -10.0,
+                               delta=0.005)
+        self.assertEqual(by_month['2026-04']['flag'], '',
+                         '90 % coverage is inside the band, inclusive')
+        # 2026-03: ledger 100 of flights 102 -> coverage 98.04 %.
+        self.assertAlmostEqual(by_month['2026-03']['coverage'], 98.0392,
+                               delta=0.001)
+        self.assertEqual(by_month['2026-03']['flag'], '')
+        self.assertAlmostEqual(by_month['2026-03']['percent'], -1.9608,
+                               delta=0.001)
+
+    def test_a3_page_renders_and_has_no_xlsx_route(self):
+        with app.test_client() as client:
+            login(client, self.user_id)
+            resp = client.get('/drones/reports/reconcile')
+            self.assertEqual(resp.status_code, 200)
+        # The absence of an export is a decision; assert it stays absent.
+        routes = [str(r) for r in app.url_map.iter_rules()]
+        self.assertNotIn('/drones/reports/reconcile.xlsx', routes)
+
+
+class TestA35Coverage(unittest.TestCase):
+    """A3.5 -- the colour is taken from coverage, not the signed difference.
+
+    [REASON]: the signed difference works where both sides are complete
+    (April 2026: -0.68 %) and fails where the report matters most -- June
+    2026 reads -99.08 %, which is not a discrepancy but a missing ledger.
+    Four months here sit at coverage 99 %, 60 %, 1 % and «no books at all»,
+    which are the four sentences the column has to keep apart.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        reset_db()
+        cls.user_id = create_admin('a35admin')
+        with app.app_context():
+            ids = _units([51])
+            cls.u = ids[51]
+            customer = DroneCustomer(name='Пешку АМТ')
+            db.session.add(customer)
+            db.session.flush()
+            cid = customer.id
+
+            def month(period, day, ledger_ha, flight_ha):
+                if ledger_ha:
+                    db.session.add(_work(cid, ledger_ha, 100.0, 0.0,
+                                         date(2026, day, 12), period=period))
+                if flight_ha:
+                    db.session.add(_flight(cls.u, datetime(2026, day, 12, 6),
+                                           flight_ha, 0, 100.0))
+
+            month('2026-01', 1, 99.0, 100.0)     # coverage  99 %  -> no colour
+            month('2026-02', 2, 60.0, 100.0)     # coverage  60 %  -> warning
+            month('2026-03', 3, 1.0, 100.0)      # coverage   1 %  -> danger
+            month('2026-04', 4, 0.0, 100.0)      # no books        -> no colour
+            db.session.commit()
+
+    @staticmethod
+    def _rows():
+        with app.app_context():
+            data = drones._drone_works_flights_reconcile_data()
+        return {r['month']: r for r in data['rows']}
+
+    def test_a3_5_the_four_states(self):
+        rows = self._rows()
+        expected = {
+            '2026-01': (99.0, ''),
+            '2026-02': (60.0, 'is-warning-row'),
+            '2026-03': (1.0, 'is-danger-row'),
+        }
+        for month, (coverage, flag) in expected.items():
+            row = rows[month]
+            self.assertAlmostEqual(row['coverage'], coverage, delta=0.005,
+                                   msg=month)
+            self.assertEqual(row['flag'], flag, month)
+
+        # The fourth: no ledger rows at all -- a phrase, no coverage, no colour.
+        no_books = rows['2026-04']
+        self.assertIsNone(no_books['coverage'])
+        self.assertIsNone(no_books['percent'])
+        self.assertEqual(no_books['flag'], '')
+        self.assertIn(no_books['note'], ('Ведомости не заведены',
+                                         'Ведомостлар киритилмаган'))
+
+    def test_a3_5_negative_control_colouring_on_the_signed_difference(self):
+        """Colour on the signed difference and the 99 % month goes yellow."""
+        rows = self._rows()
+        good = rows['2026-01']
+        # The old rule: warning above 5 %, danger above 15 %, on |percent|.
+        spread = abs(good['percent'])
+        old_flag = ('is-danger-row' if spread > 15.0
+                    else 'is-warning-row' if spread > 5.0 else '')
+        self.assertAlmostEqual(good['coverage'], 99.0, delta=0.005)
+        self.assertEqual(good['flag'], '', 'coverage 99 % is not a problem')
+        self.assertEqual(old_flag, '',
+                         'at 99 % coverage the two rules happen to agree')
+
+        # Where they disagree: the 60 % month is a 40 % shortfall either way,
+        # but the 1 % month is the one the old rule cannot grade -- it caps
+        # out at «danger» exactly like a 16 % discrepancy does.
+        thin = rows['2026-03']
+        thin_old = ('is-danger-row' if abs(thin['percent']) > 15.0
+                    else 'is-warning-row')
+        mild = rows['2026-02']
+        mild_old = ('is-danger-row' if abs(mild['percent']) > 15.0
+                    else 'is-warning-row')
+        self.assertEqual(thin_old, mild_old,
+                         'the signed rule gives 1 % and 60 % coverage the '
+                         'SAME colour -- it cannot tell them apart')
+        self.assertNotEqual(thin['flag'], mild['flag'],
+                            'coverage does tell them apart')
+        with self.assertRaises(AssertionError) as caught:
+            self.assertNotEqual(
+                thin_old, mild_old,
+                'a missing ledger must not look like a discrepancy')
+        self.assertIn('must not look like a discrepancy',
+                      str(caught.exception))
+
+    def test_a3_5_the_total_line_obeys_the_same_rule(self):
+        """A footer that contradicts its own column is worse than no footer.
+
+        Written because the first draft did contradict it: with flights and no
+        ledger at all, the total printed -100.00 %, the one sentence every row
+        is forbidden to print.
+        """
+        reset_db()
+        create_admin('a35totadmin')
+        with app.app_context():
+            ids = _units([52])
+            db.session.add(_flight(ids[52], datetime(2026, 4, 12, 6),
+                                   100.0, 0, 500.0))
+            db.session.commit()
+            data = drones._drone_works_flights_reconcile_data()
+        self.assertAlmostEqual(data['total']['flight_area'], 100.0, delta=0.005)
+        self.assertEqual(data['total']['ledger_area'], 0.0)
+        self.assertIsNone(data['total']['percent'],
+                          'the total must not print -100 % either')
+        self.assertIsNone(data['total']['coverage'])
+        # The signed difference in hectares IS shown -- it is a real quantity.
+        self.assertAlmostEqual(data['total']['diff'], -100.0, delta=0.005)
+        # And the naive formula, for the record, is the forbidden sentence.
+        naive = ((data['total']['ledger_area'] - data['total']['flight_area'])
+                 * 100.0 / data['total']['flight_area'])
+        self.assertEqual(naive, -100.0)
+
