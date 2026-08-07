@@ -148,26 +148,26 @@
       <tr>
         <td>{{ r.label }}</td>
         <td class="right">{{ r.jobs }}</td>
-        <td class="right">{{ '%.0f'|format(r.amount)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(r.received)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(r.outstanding)|vs_num }}</td>
+        <td class="right">{{ money_cell(r.amount, r.jobs, r.no_amount, 'amount') }}</td>
+        <td class="right">{{ money_cell(r.received, r.jobs, r.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(r.outstanding, r.jobs, r.no_amount) }}</td>
       </tr>
       {% endfor %}
       {% if debt.rest %}
       <tr class="vs-muted">
         <td>{{ debt.rest.label }}</td>
         <td class="right">{{ debt.rest.jobs }}</td>
-        <td class="right">{{ '%.0f'|format(debt.rest.amount)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(debt.rest.received)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(debt.rest.outstanding)|vs_num }}</td>
+        <td class="right">{{ money_cell(debt.rest.amount, debt.rest.jobs, debt.rest.no_amount, 'amount') }}</td>
+        <td class="right">{{ money_cell(debt.rest.received, debt.rest.jobs, debt.rest.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(debt.rest.outstanding, debt.rest.jobs, debt.rest.no_amount) }}</td>
       </tr>
       {% endif %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
         <td class="right">{{ debt.total.jobs }}</td>
-        <td class="right">{{ '%.0f'|format(debt.total.amount)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(debt.total.received)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(debt.total.outstanding)|vs_num }}</td>
+        <td class="right">{{ money_cell(debt.total.amount, debt.total.jobs, debt.total.no_amount, 'amount') }}</td>
+        <td class="right">{{ money_cell(debt.total.received, debt.total.jobs, debt.total.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(debt.total.outstanding, debt.total.jobs, debt.total.no_amount) }}</td>
       </tr>
     </tbody>
   </table>

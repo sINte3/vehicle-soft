@@ -1996,24 +1996,36 @@ class DroneNumberPlacementTests(unittest.TestCase):
         # DroneDebtsSummaryCardTests.test_the_separator_really_is_the_non_
         # breaking_space and by the cut-cell assertions in the C tests.
         #
-        # DRONE-ZERO-VS-UNKNOWN-001 moved that macro out to
-        # _money_cell.html and generalised it to all three money columns, so
-        # call sites keep MIGRATING out of the two report screens into the one
-        # partial. The per-file numbers move; the TOTAL is the invariant --
-        # a call site that vanished without arriving in the partial is a
-        # number that lost its grouping, and the sum below is what catches it.
+        # DRONE-ZERO-VS-UNKNOWN-001 moved that macro out to _money_cell.html
+        # and generalised it to all three money columns of both report
+        # screens. Fifteen hand-written call sites -- three rows x (amount,
+        # received, outstanding) on the debts page, three rows x (received,
+        # outstanding) on the reports page -- collapsed into the ONE call site
+        # inside money_cell(). works_reports.html 15 -> 9,
+        # works_debts.html 15 -> 6, total 90 -> 75.
+        #
+        # [REASON]: the total is NOT an invariant and must not be read as one.
+        # A shared macro applies the filter once for many cells, so a falling
+        # total is the expected shape of this refactor and a census alone
+        # cannot tell it apart from a number that lost its grouping. What
+        # tells them apart is reading the RENDERED page: the cut-cell
+        # assertions in tests/test_drone_zero_vs_unknown.py (C-1) look for
+        # «13\xa0000\xa0000» in the rendered <td>, and
+        # DroneDebtsSummaryCardTests.test_the_separator_really_is_the_non_
+        # breaking_space does the same for the cards. This census only pins
+        # WHERE the filter is written.
         expected = {
             '_money_cell.html': 1,
             'customers.html': 2, 'list.html': 3, 'reattach.html': 6,
             'sources.html': 4, 'summary.html': 26, 'works.html': 9,
-            'works_assignment_hints.html': 9, 'works_debts.html': 15,
-            'works_reports.html': 15,
+            'works_assignment_hints.html': 9, 'works_debts.html': 6,
+            'works_reports.html': 9,
         }
         actual = {name: self.source(name).count('|vs_num')
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 90)
+        self.assertEqual(sum(actual.values()), 75)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):

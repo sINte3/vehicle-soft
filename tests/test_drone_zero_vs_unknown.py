@@ -626,5 +626,286 @@ class TestB3TheOldMacroIsGone(unittest.TestCase):
         self.assertEqual([PARTIAL], declarations)
 
 
+# ---------------------------------------------------------------------------
+# C  commit 3 -- the two screens
+# ---------------------------------------------------------------------------
+
+# (page, table title RU, table title UZ, column index of «Сумма»)
+# Report cuts:  label jobs area amount received outstanding share
+# Debt tables:  label jobs      amount received outstanding
+PAGES = (
+    ('/drones/works/reports', 'По заказчикам', 'Буюртмачилар бўйича', 3),
+    ('/drones/works/debts', 'Долги — по заказчикам',
+     'Қарзлар — буюртмачилар бўйича', 2),
+)
+
+
+class ScreenMixin(object):
+    @classmethod
+    def setUpClass(cls):
+        seed()
+        cls.admin = create_admin(cls.__name__.lower()[:24])
+        set_language(cls.admin, 'ru')
+
+    def page(self, url, lang='ru'):
+        set_language(self.admin, lang)
+        client = app.test_client()
+        login(client, self.admin)
+        response = client.get(url)
+        self.assertEqual(200, response.status_code, url)
+        return response.data.decode('utf-8')
+
+    def money_columns(self, url, title, first, lang='ru'):
+        """{label: (amount cell, received cell, outstanding cell)}."""
+        body = self.page(url, lang=lang)
+        columns = [cut_cells(body, title, first + offset)
+                   for offset in (0, 1, 2)]
+        return {label: tuple(column[label] for column in columns)
+                for label in columns[0]}
+
+
+class TestC1TheRuleOnBothScreens(ScreenMixin, unittest.TestCase):
+    """C-1: the rule of §2, in all three columns, on both pages.
+
+    ORDERING, stated rather than adapted to: §5's C-1 asks for the all-NULL
+    group to be asserted on BOTH pages at this commit. On the debts page it
+    is not a row yet -- it has outstanding == 0, so _drone_work_debt_cut()
+    folds it into «Долга нет (остальные)», which is the defect commit 4
+    removes. Asserting it here would mean writing a test that only passes two
+    commits later and leaving this tree red. So the all-NULL group is checked
+    on the reports page here and on the debts page in D-1, and
+    test_c1_the_debts_page_still_hides_it_at_this_commit records exactly where
+    it currently sits -- that assertion INVERTS in commit 4 and is rewritten
+    there.
+    """
+
+    def test_c1_amount_and_outstanding_are_dashes_received_follows_its_own(
+            self):
+        cells = self.money_columns('/drones/works/reports', 'По заказчикам', 3)
+        amount, received, outstanding = cells[ALL_NULL]
+        self.assertEqual('—', text_of(amount))
+        self.assertEqual('—', text_of(outstanding),
+                         'a debt computed from an unknown amount is unknown, '
+                         'not zero')
+        # ALL_NULL also has every received NULL, so «Получено» is a dash here
+        # by its OWN counter.
+        self.assertEqual('—', text_of(received))
+
+    def test_c1_the_debts_page_still_hides_it_at_this_commit(self):
+        """Where the all-NULL group sits BEFORE commit 4: inside «Долга нет».
+
+        Its three columns are not dashes there, because the row it is folded
+        into also holds a fully-priced group. That is the sentence commit 4
+        fixes: the page says this farm owes nothing.
+        """
+        cells = self.money_columns('/drones/works/debts',
+                                   'Долги — по заказчикам', 2)
+        self.assertNotIn(ALL_NULL, cells)
+        rest = [label for label in cells if 'Долга нет' in label]
+        self.assertEqual(1, len(rest), cells.keys())
+        amount, _received, outstanding = cells[rest[0]]
+        self.assertNotEqual('—', text_of(outstanding))
+        # commit 1's fix reaching the screen: `rest` now carries no_amount,
+        # so the folded row at least admits three of its five jobs have none.
+        self.assertEqual('сумма не указана', note_text(amount))
+
+    def test_c1_received_keys_off_its_own_counter_not_off_no_amount(self):
+        """NO_RECEIVED: amounts known, received all NULL.
+
+        «Сумма» prints its sum, «Получено» is a dash, «Не получено» prints
+        the debt -- the amount is known, so the debt is known.
+        """
+        for url, title, _uz, first in PAGES:
+            with self.subTest(page=url):
+                amount, received, outstanding = \
+                    self.money_columns(url, title, first)[NO_RECEIVED]
+                self.assertIn('13\xa0000\xa0000', amount)
+                self.assertEqual('—', text_of(received))
+                self.assertIn('13\xa0000\xa0000', outstanding)
+
+    def test_c1_outstanding_keys_off_no_amount_not_off_its_own(self):
+        """UNSTATED: one job, no amount, no received.
+
+        Proves «Не получено» reads no_amount: its own value is 0.0 and a
+        column keyed off «is it zero» would print 0 here. On the reports page
+        for the same reason as above -- the debts page folds it until
+        commit 4.
+        """
+        cells = self.money_columns('/drones/works/reports', 'По заказчикам', 3)
+        label = [k for k in cells if UNSTATED_LABEL_RU in k][0]
+        amount, received, outstanding = cells[label]
+        self.assertEqual('—', text_of(amount))
+        self.assertEqual('—', text_of(received))
+        self.assertEqual('—', text_of(outstanding))
+
+    def test_c1_a_partial_group_shows_its_sum_and_the_count(self):
+        for url, title, _uz, first in PAGES:
+            with self.subTest(page=url):
+                amount, received, outstanding = \
+                    self.money_columns(url, title, first)[MIXED]
+                self.assertIn('5\xa0000\xa0000', amount)
+                self.assertEqual('сумма не указана', note_text(amount))
+                # 0 of 2 missing -> a plain sum, no note
+                self.assertIn('3\xa0000\xa0000', received)
+                self.assertEqual('', note_text(received))
+                # «Не получено» never carries a note of its own
+                self.assertIn('2\xa0000\xa0000', outstanding)
+                self.assertEqual('', note_text(outstanding))
+
+    def test_c1_a_fully_known_group_is_three_plain_numbers(self):
+        for url, title, _uz, first in PAGES:
+            with self.subTest(page=url):
+                cells = self.money_columns(url, title, first)
+                if NONE_NULL not in cells:
+                    # settled groups live under «Долга нет» on the debts page
+                    continue
+                for cell in cells[NONE_NULL]:
+                    self.assertNotIn('vs-muted', cell)
+                    self.assertNotEqual('—', text_of(cell))
+
+    def test_c1_the_received_note_renders_where_it_belongs(self):
+        """0 < no_received < jobs on a cut that mixes the groups.
+
+        by_operator puts NONE_NULL (0 of 2 missing) and NO_RECEIVED (2 of 2)
+        into op2 together with the two service jobs, so op2 is partial.
+        """
+        cells = self.money_columns('/drones/works/reports',
+                                   'По операторам', 3)
+        partial = [c for label, c in cells.items()
+                   if note_text(c[1])]
+        self.assertTrue(partial, 'no «Получено» note rendered anywhere')
+        self.assertEqual({'получено не указано'},
+                         {note_text(c[1]) for c in partial})
+
+
+class TestC2NegativeControl(ScreenMixin, PreCommitMixin, unittest.TestCase):
+    """C-2: the pre-commit tree prints 0 in «Не получено» on both pages."""
+
+    def test_c2_the_group_really_does_have_zero_outstanding(self):
+        """The data has not changed -- only what the screens say about it."""
+        row = by_label(self.pre_commit_report_data()['by_customer'])[ALL_NULL]
+        self.assertEqual(0.0, row['amount'])
+        self.assertEqual(0.0, row['received'])
+        self.assertEqual(0.0, row['outstanding'])
+        self.assertEqual(2, row['jobs'])
+
+    def test_c2_pre_commit_markup_prints_that_zero_as_zero(self):
+        """The exact expressions the two templates carried at 116e15a,
+        rendered through the REAL vs_num filter."""
+        row = by_label(self.pre_commit_report_data()['by_customer'])[ALL_NULL]
+        for column in ('received', 'outstanding'):
+            with self.subTest(column=column):
+                pre_fix = "{{ '%%.0f'|format(cell.%s)|vs_num }}" % column
+                with app.app_context():
+                    rendered = app.jinja_env.from_string(pre_fix).render(
+                        cell=row)
+                self.assertEqual('0', rendered.strip())
+
+    def test_c2_the_pre_commit_expression_really_is_what_shipped(self):
+        """Quoting an expression proves nothing unless it is THE expression."""
+        for path, names in ((REPORTS_TEMPLATE,
+                             ('r.received', 'r.outstanding')),
+                            (DEBTS_TEMPLATE, ('r.amount', 'r.received',
+                                              'r.outstanding'))):
+            source = subprocess.check_output(
+                ['git', 'show', '%s:%s' % (BASE_COMMIT, path)],
+                cwd=REPO_ROOT).decode('utf-8')
+            for name in names:
+                with self.subTest(template=path, cell=name):
+                    self.assertIn("{{ '%%.0f'|format(%s)|vs_num }}" % name,
+                                  source)
+
+    def test_c2_and_the_current_reports_page_does_not(self):
+        cells = self.money_columns('/drones/works/reports', 'По заказчикам', 3)
+        self.assertEqual('—', text_of(cells[ALL_NULL][2]))
+        self.assertNotIn('0', text_of(cells[ALL_NULL][2]))
+
+    def test_c2_the_debts_page_gets_its_own_control_in_d4(self):
+        """Named so the gap is visible rather than implied.
+
+        On the debts page the all-NULL group is not a row until commit 4, so
+        there is no “Не получено” cell of its own to compare against the
+        pre-commit 0. D-4 is that control.
+        """
+        cells = self.money_columns('/drones/works/debts',
+                                   'Долги — по заказчикам', 2)
+        self.assertNotIn(ALL_NULL, cells)
+
+
+class TestC3DivBalance(unittest.TestCase):
+    """C-3: report the counts, do not assert they are equal.
+
+    The macro legitimately adds a muted <div> per partial group, and moving
+    the amount cell out removed one; asserting equality would only be true by
+    coincidence. tools/check_templates.py is what enforces BALANCE (open ==
+    close) per file, and it is a blocking CI check.
+    """
+
+    OPEN_RE = re.compile(r'<div(?=[\s>/])', re.I)
+    CLOSE_RE = re.compile(r'</div\s*>', re.I)
+    COMMENT_RE = re.compile(r'\{#.*?#\}', re.S)
+
+    def counts(self, source):
+        stripped = self.COMMENT_RE.sub('', source)
+        return (len(self.OPEN_RE.findall(stripped)),
+                len(self.CLOSE_RE.findall(stripped)))
+
+    def test_c3_both_templates_are_balanced_now(self):
+        for path in MACRO_TEMPLATES + (PARTIAL,):
+            with self.subTest(template=path):
+                opened, closed = self.counts(read_template(path))
+                self.assertEqual(opened, closed, path)
+
+    def test_c3_report_the_before_and_after(self):
+        """Recorded, not asserted equal. The numbers go in the PR body."""
+        reported = {}
+        for path in MACRO_TEMPLATES:
+            before = subprocess.check_output(
+                ['git', 'show', '%s:%s' % (BASE_COMMIT, path)],
+                cwd=REPO_ROOT).decode('utf-8')
+            reported[path] = (self.counts(before),
+                              self.counts(read_template(path)))
+        self.assertEqual(
+            {REPORTS_TEMPLATE: ((41, 41), (40, 40)),
+             DEBTS_TEMPLATE: ((39, 39), (39, 39))},
+            reported)
+
+
+class TestC4BothLanguages(ScreenMixin, unittest.TestCase):
+    """C-4: RU and UZ, both pages, no empty label in the three columns."""
+
+    def test_c4_no_money_cell_renders_empty_in_either_language(self):
+        for url, title_ru, title_uz, first in PAGES:
+            for lang, title in (('ru', title_ru), ('uz', title_uz)):
+                with self.subTest(page=url, lang=lang):
+                    cells = self.money_columns(url, title, first, lang=lang)
+                    self.assertTrue(cells, 'the table was not found at all')
+                    for label, three in cells.items():
+                        for index, cell in enumerate(three):
+                            self.assertTrue(
+                                text_of(cell),
+                                'empty cell: %s / %s / column %d'
+                                % (url, label, first + index))
+
+    def test_c4_every_note_that_renders_has_wording(self):
+        for url, title_ru, title_uz, first in PAGES:
+            for lang, title in (('ru', title_ru), ('uz', title_uz)):
+                with self.subTest(page=url, lang=lang):
+                    for label, cells in self.money_columns(
+                            url, title, first, lang=lang).items():
+                        for cell in cells:
+                            if 'vs-muted' not in cell:
+                                continue
+                            self.assertTrue(note_text(cell),
+                                            'empty wording: %s / %s'
+                                            % (url, label))
+
+    def test_c4_the_uzbek_pages_really_are_uzbek(self):
+        """Guards against the language switch silently not switching."""
+        for url, _ru, title_uz, _first in PAGES:
+            with self.subTest(page=url):
+                self.assertIn(title_uz, self.page(url, lang='uz'))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

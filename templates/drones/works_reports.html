@@ -140,8 +140,8 @@
         <td class="right">{{ r.jobs }}</td>
         <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
         <td class="right">{{ money_cell(r.amount, r.jobs, r.no_amount, 'amount') }}</td>
-        <td class="right">{{ '%.0f'|format(r.received)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(r.outstanding)|vs_num }}</td>
+        <td class="right">{{ money_cell(r.received, r.jobs, r.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(r.outstanding, r.jobs, r.no_amount) }}</td>
         <td class="right">{{ '%.1f'|format(r.share) }}</td>
       </tr>
       {% endfor %}
@@ -159,8 +159,8 @@
         <td class="right">{{ service.jobs }}</td>
         <td class="right">{{ '%.2f'|format(service.area)|vs_num }}</td>
         <td class="right">{{ money_cell(service.amount, service.jobs, service.no_amount, 'amount') }}</td>
-        <td class="right">{{ '%.0f'|format(service.received)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(service.outstanding)|vs_num }}</td>
+        <td class="right">{{ money_cell(service.received, service.jobs, service.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(service.outstanding, service.jobs, service.no_amount) }}</td>
         <td class="right">{{ '%.1f'|format(service.share) }}</td>
       </tr>
       {% endfor %}
@@ -169,8 +169,8 @@
         <td class="right">{{ cut.total.jobs }}</td>
         <td class="right">{{ '%.2f'|format(cut.total.area)|vs_num }}</td>
         <td class="right">{{ money_cell(cut.total.amount, cut.total.jobs, cut.total.no_amount, 'amount') }}</td>
-        <td class="right">{{ '%.0f'|format(cut.total.received)|vs_num }}</td>
-        <td class="right">{{ '%.0f'|format(cut.total.outstanding)|vs_num }}</td>
+        <td class="right">{{ money_cell(cut.total.received, cut.total.jobs, cut.total.no_received, 'received') }}</td>
+        <td class="right">{{ money_cell(cut.total.outstanding, cut.total.jobs, cut.total.no_amount) }}</td>
         <td class="right">100.0</td>
       </tr>
     </tbody>
