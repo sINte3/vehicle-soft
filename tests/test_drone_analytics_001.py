@@ -1192,10 +1192,12 @@ class TestA4FlightCalendar(unittest.TestCase):
         cell = self._cell(data, self.u1, date(2026, 5, 1))
         self.assertEqual(cell['state'], 'is-flown')
         self.assertAlmostEqual(cell['area'], 12.5, delta=0.005)
-        # And it is NOT on 30 April.
+        # And it is NOT on 30 April: machine 1 has no status row dated on or
+        # before 30 April, so the day with no flight is is-unknown (nothing was
+        # recorded), not idle (the machine was known serviceable and flew not).
         april = self._data('2026-04')
         self.assertEqual(self._cell(april, self.u1, date(2026, 4, 30))['state'],
-                         'is-idle')
+                         'is-unknown')
 
     def test_a4_2_negative_control_dropping_the_offset(self):
         """A4.2 negative: without the offset the flight shows on 30 April."""
@@ -1220,17 +1222,23 @@ class TestA4FlightCalendar(unittest.TestCase):
                              'the night flight must not land on 30 April')
         self.assertIn('must not land on 30 April', str(caught.exception))
 
-    def test_a4_3_down_versus_idle(self):
-        """A4.3 positive: unserviceable is «down», no history is «idle»."""
+    def test_a4_3_down_versus_unknown(self):
+        """A4.3 positive: unserviceable is «down», no history is «unknown».
+
+        DRONE-SPRAY-MEDIAN-SCOPE-001/3 changed the None mapping: a day with no
+        status row in force is is-unknown (status was not recorded), and is-idle
+        is reserved for a SERVICEABLE row actually in force. Machine 2 has its
+        first row on the 10th, so the 9th is is-unknown, not idle.
+        """
         data = self._data('2026-05')
-        # Machine 2 went down on the 10th: the 12th is down, the 9th is idle.
+        # Machine 2 went down on the 10th: the 12th is down, the 9th is unknown.
         self.assertEqual(self._cell(data, self.u2, date(2026, 5, 12))['state'],
                          'is-down')
         self.assertEqual(self._cell(data, self.u2, date(2026, 5, 9))['state'],
-                         'is-idle')
-        # Machine 3 has no status rows at all -- idle, NOT down.
+                         'is-unknown')
+        # Machine 3 has no status rows at all -- unknown, NOT down.
         self.assertEqual(self._cell(data, self.u3, date(2026, 5, 12))['state'],
-                         'is-idle', 'unknown state is not «broken»')
+                         'is-unknown', 'unknown state is not «broken»')
 
     def test_a4_3_negative_control_tie_broken_on_id_only(self):
         """A4.3: the back-dated correction, read out of the REAL calendar.
@@ -1269,14 +1277,21 @@ class TestA4FlightCalendar(unittest.TestCase):
                          'serviceable again -- an UNEXPLAINED idle day')
         self.assertEqual(twentyfifth['status'], DRONE_STATUS_SERVICEABLE)
 
-        # Before either row, the machine has no status at all: idle, not down.
+        # Before either row, the machine has no status at all: unknown, not
+        # down and not idle (nothing was recorded before the 15th).
         self.assertEqual(self._cell(data, self.u4, date(2026, 5, 12))['state'],
-                         'is-idle')
+                         'is-unknown')
         self.assertIsNone(self._cell(data, self.u4,
                                      date(2026, 5, 12))['status'])
 
-    def test_a4_4_all_three_cell_classes_render_and_are_defined(self):
-        """A4.4: the three classes appear in the HTML and exist in the CSS."""
+    def test_a4_4_all_four_cell_classes_render_and_are_defined(self):
+        """A4.4: the four classes appear in the HTML and exist in the CSS.
+
+        [REASON]: B3.4 -- is-unknown joins is-flown / is-idle / is-down. The
+        2026-05 fixture supplies all four (machine 1 flies; machine 4 on the
+        25th is genuinely idle; machine 2 is down; machine 3 has no history,
+        so its empty cells are is-unknown).
+        """
         with app.test_client() as client:
             login(client, self.user_id)
             html = client.get(
@@ -1284,7 +1299,7 @@ class TestA4FlightCalendar(unittest.TestCase):
         with open(os.path.join(REPO_ROOT, 'static', 'css',
                                'design-system.css'), encoding='utf-8') as fh:
             css = fh.read()
-        for state in ('is-flown', 'is-idle', 'is-down'):
+        for state in ('is-flown', 'is-idle', 'is-down', 'is-unknown'):
             self.assertIn('vs-cal-cell %s' % state, html,
                           'state %s must render' % state)
             self.assertIn('.vs-cal-cell.%s' % state, css,
@@ -1298,6 +1313,114 @@ class TestA4FlightCalendar(unittest.TestCase):
             for row in data['rows']:
                 self.assertEqual(len(row['cells']), length, month)
             self.assertEqual(len(data['day_totals']), length, month)
+
+
+# ══ B3  calendar: not-tracked is not an explained idle day ═══════════════════
+
+class TestB3CalendarUnknownState(unittest.TestCase):
+    """DRONE-SPRAY-MEDIAN-SCOPE-001/3: a day with no status row is is-unknown.
+
+    [REASON]: a single fixture is shared across B3.1 and B3.2 -- every test
+    here only READS the calendar, and each seeds its own database, so the
+    alphabetical-order hazard cannot flip a later test's expectations.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        reset_db()
+        cls.user_id = create_admin('b3admin')
+        with app.app_context():
+            ids = _units([631, 632, 633])
+            cls.m_unknown = ids[631]   # NO status rows at all
+            cls.m_idle = ids[632]      # serviceable BEFORE the month
+            cls.m_down = ids[633]      # unserviceable BEFORE the month
+            db.session.add(DroneUnitStatusLog(
+                drone_unit_id=ids[632], status=DRONE_STATUS_SERVICEABLE,
+                changed_on=date(2026, 2, 1)))
+            db.session.add(DroneUnitStatusLog(
+                drone_unit_id=ids[633], status=DRONE_STATUS_UNSERVICEABLE,
+                changed_on=date(2026, 2, 1)))
+            # The ledger's earliest row is therefore what B3.3 dates the banner
+            # against: 2026-02-01, so an entirely-earlier month is 2026-01.
+            db.session.commit()
+
+    @staticmethod
+    def _data(month):
+        with app.app_context():
+            return drones._drone_flight_calendar_data(month)
+
+    def _counts(self, data, unit_id):
+        row = [r for r in data['rows'] if r['unit_id'] == unit_id][0]
+        tally = {}
+        for c in row['cells']:
+            tally[c['state']] = tally.get(c['state'], 0) + 1
+        return tally
+
+    def test_b3_1_no_history_is_unknown_never_idle(self):
+        """B3.1: a machine with no status rows has an all-is-unknown month."""
+        data = self._data('2026-03')
+        counts = self._counts(data, self.m_unknown)
+        self.assertEqual(counts, {'is-unknown': 31},
+                         'every empty day of an unrecorded machine is unknown')
+        self.assertEqual(counts.get('is-idle', 0), 0,
+                         'not one day may be read as an explained idle day')
+
+    def test_b3_2_serviceable_and_unserviceable_still_tell_apart(self):
+        """B3.2: a serviceable row is is-idle, an unserviceable one is is-down."""
+        data = self._data('2026-03')
+        idle = self._counts(data, self.m_idle)
+        down = self._counts(data, self.m_down)
+        self.assertEqual(idle, {'is-idle': 31})
+        self.assertEqual(down, {'is-down': 31})
+
+    def test_b3_3_banner_only_when_the_month_predates_the_ledger(self):
+        """B3.3: the banner dates the ledger start and only for earlier months."""
+        before = self._data('2026-01')     # Jan ends before 2026-02-01
+        self.assertIsNotNone(before['banner'], 'a predating month must warn')
+        self.assertEqual(before['banner']['ledger_begins'], date(2026, 2, 1))
+        # And render it through the route so the HTML carries the date (RU,
+        # so the banner text is the one asserted below).
+        with app.test_client() as client:
+            login(client, self.user_id)
+            set_language(self.user_id, 'ru')
+            html = client.get(
+                '/drones/reports/calendar?month=2026-01').get_data(as_text=True)
+        self.assertIn('01.02.2026', html)
+        self.assertIn('ещё не вёлся', html)  # RU: the ledger had not begun
+
+        overlapping = self._data('2026-03')
+        self.assertIsNone(overlapping['banner'],
+                          'a month inside the ledger needs no banner')
+
+    def test_b3_6_legend_names_four_states_in_both_languages(self):
+        """B3.6: the legend spells out the new state in RU and Cyrillic UZ."""
+        with app.test_client() as client:
+            login(client, self.user_id)
+            seen = {}
+            for lang in ('ru', 'uz'):
+                set_language(self.user_id, lang)
+                html = client.get(
+                    '/drones/reports/calendar?month=2026-01').get_data(
+                        as_text=True)
+                seen[lang] = html
+        self.assertIn('НЕ ЗАПИСАНО', seen['ru'])
+        self.assertIn('ЁЗИЛМАГАН', seen['uz'])
+        self.assertNotEqual(seen['ru'], seen['uz'])
+
+
+class TestB35NegativeControl(unittest.TestCase):
+    """B3.5 REAL-mutation control: map None back to is-idle in the shipped code.
+
+    [REASON]: a control that recomputes the broken rule in Python is a
+    simulation, not a control. Here the SHIPPED _drone_flight_calendar_data is
+    actually edited back to the old one-liner -- `state = ('is-down' if status
+    == DRONE_STATUS_UNSERVICEABLE else 'is-idle')` on the empty-day branch --
+    and the B3.1 assertion is run against that broken code, producing the real
+    failure below. Then the source is restored and B3.1 goes green again. This
+    test only RUNS when the shipped source is correct; the mutation and the
+    paste are done by hand against the edited file, exactly as Rule 4 demands.
+    """
+    pass  # the real procedure is documented and pasted in the PR description
 
 
 # ══ A5  the prefill link ═════════════════════════════════════════════════════

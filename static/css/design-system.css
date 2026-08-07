@@ -1338,6 +1338,22 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 .vs-cal-cell.is-idle { background: var(--vs-surface-3); }
 .vs-cal-cell.is-flown { font-variant-numeric: tabular-nums; }
 
+/* DRONE-SPRAY-MEDIAN-SCOPE-001/3: the fourth cell state -- is-unknown. A day
+   with no flights and NO status row in force: the status was not being
+   recorded, so nothing is known. Additive, appended, nothing above modified.
+
+   The first draft was the addendum-mandated
+   `background: var(--vs-surface-2)`, but surface-2 (#f7f9fc) and surface-3
+   (#f1f5fa) are two characters of shade apart -- indistinguishable on screen,
+   the same trap that caught --vs-info == --vs-primary before this module.
+   So the state is carried by a dotted border in --vs-border (idle has no
+   border): dashed is how a screen says "provisional". */
+.vs-cal-cell.is-unknown {
+  background: var(--vs-surface-2);
+  border: 1px dotted var(--vs-border);
+  box-sizing: border-box;
+}
+
 /* DRONE-CUSTOMERS-DEAD-CLASSES-001. customers.html used `is-focus` on a <tr>
    (line 136) and `vs-check` on a <label> (164, 190); neither had a rule, so
    the highlighted row was drawn like every other row and the checkbox label

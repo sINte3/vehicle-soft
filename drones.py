@@ -5379,7 +5379,14 @@ def works_flights_reconcile():
 # ─── DRONE-ANALYTICS-001/4: flight calendar ──────────────────────────────────
 
 def _drone_status_on_day_map(month_first, month_last):
-    """{unit_id: [(changed_on, status), ...]} sorted, for a day-by-day walk.
+    """({unit_id: [(changed_on, status), ...]}, earliest_on) for the walk.
+
+    earliest_on is the first changed_on in the WHOLE ledger, unconstrained by
+    the month: DRONE-SPRAY-MEDIAN-SCOPE-001/3. The calendar can only display
+    months that lie entirely before the first status row (production's only
+    status rows are a 2026-08-02 snapshot), and for those months every status is
+    None. The banner over the grid needs the ledger's very first date to say
+    where recording began, so it is read here, from the data, never hardcoded.
 
     [REASON]: the status IN FORCE on a day is the row with the greatest
     changed_on <= that day, ties broken by the greatest id -- the same rule
@@ -5402,15 +5409,26 @@ def _drone_status_on_day_map(month_first, month_last):
     for row in rows:
         by_unit.setdefault(row.drone_unit_id, []).append(
             (row.changed_on, row.status))
-    return by_unit
+    # The ledger's very first row, UNBOUNDED by the month: `history` above is
+    # rightly cut at month_last -- the status in force on a day is the row with
+    # the greatest changed_on <= that day -- but the banner must date where
+    # recording began even when that began AFTER the displayed month. For a
+    # month that entirely predates the ledger, `history` is empty and so cannot
+    # carry the date; a second, unbounded MIN() over the same table is the one
+    # query the addendum reserves for it.
+    earliest_on = (db.session.query(func.min(DroneUnitStatusLog.changed_on))
+                   .scalar())
+    return by_unit, earliest_on
 
 
 def _drone_status_on(history, day):
     """The status in force on `day`, or None when the machine has no history.
 
     None is NOT «serviceable»: a machine nobody has ever reported on has an
-    unknown state, and A4.3 turns on the difference -- an unknown state must
-    render as «idle», never as «down».
+    unknown state, and DRONE-SPRAY-MEDIAN-SCOPE-001/3 turned on the
+    difference -- the caller maps None to is-unknown, never to idle and never
+    to down. This function is intentionally unchanged; the distinction is the
+    caller's to render.
     """
     found = None
     for changed_on, status in history:
@@ -5450,7 +5468,16 @@ def _drone_flight_calendar_data(month):
             'flights': flights, 'area': float(area or 0.0)}
 
     units = DroneUnit.query.order_by(DroneUnit.number).all()
-    history = _drone_status_on_day_map(first, last)
+    history, earliest_on = _drone_status_on_day_map(first, last)
+    # [REASON]: THE FOURTH STATE, is-unknown -- DRONE-SPRAY-MEDIAN-SCOPE-001/3.
+    # _drone_status_on() returns None for a day with no status row in force, and
+    # this is the case the distinction exists for. None must NOT become idle:
+    # is-idle means "a status row exists, it says serviceable, and the machine
+    # did not fly". A machine with no history at all has an UNKNOWN state -- the
+    # status was not being recorded that month -- and painting those days idle
+    # turns "nobody recorded it" into the definite accusation "it stood idle and
+    # nobody explained it". SERVER measures nothing here; it only refuses to
+    # lie. The two states deliberately render differently (see the CSS).
     # A machine with no flights at all this month still gets a row: an absent
     # row is indistinguishable from a machine nobody looked at, which is the
     # failure the sources screen already exists to prevent.
@@ -5469,8 +5496,12 @@ def _drone_flight_calendar_data(month):
                               'flights': hit['flights'], 'area': hit['area']})
             else:
                 status = _drone_status_on(history.get(unit.id, []), day)
-                state = ('is-down' if status == DRONE_STATUS_UNSERVICEABLE
-                         else 'is-idle')
+                if status is None:
+                    state = 'is-unknown'
+                elif status == DRONE_STATUS_UNSERVICEABLE:
+                    state = 'is-down'
+                else:
+                    state = 'is-idle'
                 cells.append({'day': day, 'state': state, 'flights': 0,
                               'area': 0.0, 'status': status})
         rows.append({'unit_id': unit.id, 'number': unit.number,
@@ -5506,6 +5537,15 @@ def _drone_flight_calendar_data(month):
             + unattr_cells[index]['area'],
         })
 
+    # [REASON]: THE BANNER -- DRONE-SPRAY-MEDIAN-SCOPE-001/3. When the whole
+    # displayed month lies before the ledger's first row, EVERY empty cell is
+    # is-unknown and a reader would take that (correctly) as "not recorded".
+    # The banner says it out loud and dates it, so the empty days are read as
+    # "the machine did not fly, and nothing else was known" and not as a
+    # judgement. earliest_on comes from the data, never hardcoded. When the
+    # month overlaps the ledger (earliest_on within or after the month) there
+    # is no banner, because the calendar can then genuinely tell that state apart.
+    before_ledger = earliest_on is not None and last < earliest_on
     return {
         'month': month,
         'days': days,
@@ -5513,6 +5553,9 @@ def _drone_flight_calendar_data(month):
         'unattributed': {'cells': unattr_cells, 'flights': unattr_flights,
                          'area': unattr_area} if unattr_flights else None,
         'day_totals': day_totals,
+        'banner': {
+            'ledger_begins': earliest_on,
+        } if before_ledger else None,
         'total': {
             'flights': sum(r['flights'] for r in rows) + unattr_flights,
             'area': sum(r['area'] for r in rows) + unattr_area,
