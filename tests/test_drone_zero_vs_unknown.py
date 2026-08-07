@@ -1260,6 +1260,20 @@ class TestD6TheBucketOnTheRenderedPage(ScreenMixin, unittest.TestCase):
                if UNKNOWN_LABEL_RU in r][0]
         self.assertEqual('3', text_of(_CELL_RE.findall(row)[1]))
 
+    def test_d6_the_rendered_row_carries_the_class_that_paints_a_row(self):
+        """Not the template source -- the bytes the browser receives.
+
+        `.vs-table tr.is-warning-row` is the only rule in design-system.css
+        that paints a table row; `is-warning` alone paints nothing on a <tr>,
+        so the row that exists to be noticed rendered like every other row.
+        F-1 is the check that catches the class of defect; this asserts the
+        one row.
+        """
+        row = [r for r in self.table().split('<tr')
+               if UNKNOWN_LABEL_RU in r][0]
+        self.assertIn('class="is-warning-row"', '<tr' + row)
+        self.assertNotIn('class="is-warning"', '<tr' + row)
+
     def test_d6_the_page_explains_the_new_row(self):
         """A visible service row nobody explains is a support ticket."""
         for lang, needle in (('ru', 'Долг неизвестен'),
@@ -1535,6 +1549,271 @@ class TestE3NegativeControl(WorkbookMixin, unittest.TestCase):
         self.assertIn(NO_DEBT_LABEL_RU, rows)
         self.assertNotIn(UNKNOWN_LABEL_RU, rows)
         self.assertEqual(5, rows[NO_DEBT_LABEL_RU][1])
+
+
+# ---------------------------------------------------------------------------
+# F  every CSS class this task's templates use is REACHABLE on the element
+#    it is used on
+# ---------------------------------------------------------------------------
+#
+# [REASON]: DRONE-UI-FIX-002 carried this check as its X-5 and the prompt for
+# DRONE-ZERO-VS-UNKNOWN-001 dropped it, so a defect walked straight through to
+# review: the third debt bucket shipped as <tr class="is-warning">, and
+# `is-warning` does not style a table row. design-system.css defines
+# `.vs-table tr.is-warning-row` (lines 646 and 649) for that, and defines
+# `is-warning` only as a modifier of .vs-mini, .vs-stat-value, .vs-alert and
+# .vs-report-tile. The row that exists to be noticed rendered like every other
+# row, and nothing failed.
+#
+# «Is the class defined anywhere in the CSS» would NOT have caught it --
+# is-warning IS defined, four times over. What catches it is asking whether
+# the class is defined for THE ELEMENT IT IS USED ON: a rule reaches
+# <tr class="X"> only if some selector's last compound carries .X, names
+# either no tag or `tr`, and requires no class the element does not have.
+
+CSS_PATH = os.path.join(REPO_ROOT, 'static', 'css', 'design-system.css')
+
+_CSS_COMMENT_RE = re.compile(r'/\*.*?\*/', re.S)
+_CSS_RULE_RE = re.compile(r'([^{}]+)\{', re.S)
+_CSS_PSEUDO_RE = re.compile(r'::?[a-zA-Z-]+(\([^)]*\))?')
+_CSS_ATTR_RE = re.compile(r'\[[^\]]*\]')
+_CSS_COMBINATOR_RE = re.compile(r'\s+|>|\+|~')
+_COMPOUND_RE = re.compile(r'^([a-zA-Z][a-zA-Z0-9]*)?((?:\.[A-Za-z0-9_-]+)*)$')
+
+_JINJA_RE = re.compile(r'\{\{.*?\}\}|\{%.*?%\}', re.S)
+_JINJA_COMMENT_RE = re.compile(r'\{#.*?#\}', re.S)
+_TAG_RE = re.compile(r'<([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>', re.S)
+_CLASS_ATTR_RE = re.compile(r'''\bclass\s*=\s*(?:"([^"]*)"|'([^']*)')''', re.S)
+_PLAIN_CLASS_RE = re.compile(r'^[A-Za-z0-9_-]+$')
+
+
+def css_last_compounds(path=CSS_PATH):
+    """[(tag or None, frozenset(classes))] -- one per class-bearing selector.
+
+    Only the LAST compound of each selector matters: it is what decides which
+    element the rule paints. Ancestor requirements are deliberately ignored --
+    checking them would need a DOM, and the defect class this catches does not
+    need one.
+    """
+    with io.open(path, encoding='utf-8') as handle:
+        source = _CSS_COMMENT_RE.sub('', handle.read())
+    compounds = []
+    for block in _CSS_RULE_RE.findall(source):
+        block = block.strip()
+        # @media / @supports / @keyframes wrappers are not selectors; the
+        # rules nested inside them are matched separately by the same regex.
+        if not block or block.startswith('@'):
+            continue
+        for selector in block.split(','):
+            selector = _CSS_PSEUDO_RE.sub(
+                '', _CSS_ATTR_RE.sub('', selector)).strip()
+            if not selector:
+                continue
+            parts = [p for p in _CSS_COMBINATOR_RE.split(selector) if p]
+            if not parts:
+                continue
+            match = _COMPOUND_RE.match(parts[-1])
+            if match is None:
+                continue
+            classes = frozenset(c for c in match.group(2).split('.') if c)
+            if classes:
+                compounds.append((match.group(1), classes))
+    return compounds
+
+
+def template_class_usages(path):
+    """[(line, tag, frozenset(classes))] for one template.
+
+    Jinja comments are blanked rather than deleted so reported line numbers
+    are the ones in the file. Jinja expressions inside a class attribute are
+    blanked too: `class="vs-btn {{ x }}"` contributes vs-btn and nothing else,
+    because what x expands to is not knowable here.
+    """
+    with io.open(os.path.join(REPO_ROOT, path), encoding='utf-8') as handle:
+        source = handle.read()
+    source = _JINJA_COMMENT_RE.sub(
+        lambda m: re.sub(r'[^\n]', ' ', m.group(0)), source)
+    usages = []
+    for match in _TAG_RE.finditer(source):
+        for attr in _CLASS_ATTR_RE.finditer(match.group(2)):
+            raw = _JINJA_RE.sub(' ', attr.group(1) or attr.group(2) or '')
+            classes = frozenset(c for c in raw.split()
+                                if _PLAIN_CLASS_RE.match(c))
+            if classes:
+                usages.append((source[:match.start()].count('\n') + 1,
+                               match.group(1).lower(), classes))
+    return usages
+
+
+def unreachable_classes(path, compounds=None):
+    """[(line, tag, css_class, why)] for classes no rule can paint here."""
+    compounds = css_last_compounds() if compounds is None else compounds
+    defined = set()
+    for _tag, classes in compounds:
+        defined |= classes
+    findings = []
+    for line, tag, classes in template_class_usages(path):
+        for css_class in sorted(classes):
+            if css_class not in defined:
+                findings.append((line, tag, css_class,
+                                 'not defined in design-system.css at all'))
+                continue
+            if any(css_class in required
+                   and (rule_tag is None or rule_tag == tag)
+                   and required <= classes
+                   for rule_tag, required in compounds):
+                continue
+            where = sorted({'%s.%s' % (rule_tag or '',
+                                       '.'.join(sorted(required)))
+                            for rule_tag, required in compounds
+                            if css_class in required})
+            findings.append((line, tag, css_class,
+                             'defined, but only as %s -- none of those can '
+                             'paint <%s> with these classes'
+                             % (', '.join(where), tag)))
+    return findings
+
+
+# [REASON]: ONE known exemption, named, with the reason it is not fixed here.
+# works_reports.html carries the same mistake on the service rows of the five
+# report cuts. It is NOT this task's: `git log -S` puts it in 9f018e1, the
+# original DRONE-WORKS-001 reports commit, and it is present at the merge base
+# 116e15a. Fixing it would change how an already-accepted screen LOOKS -- five
+# cuts' service rows would gain a background and a left bar for the first time
+# since they shipped -- and that is the owner's call, not a side effect of a
+# review fix on a different page. test_f1_the_exemption_list_is_exactly_this
+# asserts the list holds exactly this one entry, so a NEW occurrence anywhere,
+# including a second one in this same file, fails.
+KNOWN_UNREACHABLE = {
+    (REPORTS_TEMPLATE, 'tr', 'is-warning'),
+}
+
+
+class TestF1EveryClassIsReachable(unittest.TestCase):
+    """F-1: the check DRONE-UI-FIX-002 had as X-5 and this task dropped."""
+
+    TEMPLATES = MACRO_TEMPLATES + (PARTIAL,)
+
+    def findings(self):
+        compounds = css_last_compounds()
+        found = []
+        for path in self.TEMPLATES:
+            for line, tag, css_class, why in unreachable_classes(path,
+                                                                 compounds):
+                found.append((path, line, tag, css_class, why))
+        return found
+
+    def test_f1_no_template_uses_a_class_no_rule_can_paint(self):
+        offenders = [(path, line, tag, css_class, why)
+                     for path, line, tag, css_class, why in self.findings()
+                     if (path, tag, css_class) not in KNOWN_UNREACHABLE]
+        self.assertEqual([], offenders, '\n'.join(
+            '%s:%d <%s class="%s"> -- %s' % (p, l, t, c, w)
+            for p, l, t, c, w in offenders))
+
+    def test_f1_the_exemption_list_is_exactly_this(self):
+        """An allowlist nobody checks becomes a place to hide things."""
+        seen = {(path, tag, css_class)
+                for path, _line, tag, css_class, _why in self.findings()}
+        self.assertEqual(KNOWN_UNREACHABLE, seen)
+
+    def test_f1_the_unknown_bucket_row_is_the_class_that_paints_a_row(self):
+        """The defect this check exists for, asserted on its own.
+
+        Jinja comments are stripped first: the comment above the row QUOTES
+        the broken markup to explain why it is broken, and a naive substring
+        assertion matches the explanation instead of the row. It did, on the
+        first run.
+        """
+        source = _JINJA_COMMENT_RE.sub('', read_template(DEBTS_TEMPLATE))
+        self.assertTrue('<tr class="is-warning-row">' in source,
+                        'the unknown-bucket row does not carry is-warning-row')
+        self.assertFalse('<tr class="is-warning">' in source,
+                         'a <tr> still carries the class that paints nothing')
+
+    def test_f1_that_class_is_defined_for_a_table_row(self):
+        """Read out of the real CSS, not asserted from the task text."""
+        compounds = css_last_compounds()
+        self.assertIn(('tr', frozenset({'is-warning-row'})), compounds)
+        self.assertNotIn(('tr', frozenset({'is-warning'})), compounds)
+
+    def test_f1_the_scan_actually_read_something(self):
+        """A parser that found no classes would pass every assertion above."""
+        compounds = css_last_compounds()
+        self.assertGreater(len(compounds), 200)
+        total = sum(len(template_class_usages(path))
+                    for path in self.TEMPLATES)
+        self.assertGreater(total, 40, 'the template scan read almost nothing')
+
+
+class TestF2NegativeControl(unittest.TestCase):
+    """F-2: plant a class that does not exist, prove the check catches it.
+
+    Two plants, because they fail for two different reasons and only the
+    second one is the defect that got through review:
+
+      * a class defined NOWHERE                  -- the obvious case
+      * a class defined, but not for this element -- what <tr class=
+        "is-warning"> was, and what a plain «is it in the file» check misses
+
+    The plants go through the same unreachable_classes() the live check uses,
+    against a temporary file, so the control exercises the real detector.
+    """
+
+    def scan_source(self, source):
+        handle, path = tempfile.mkstemp(prefix='class_probe_', suffix='.html',
+                                        dir=REPO_ROOT)
+        with os.fdopen(handle, 'w', encoding='utf-8') as fh:
+            fh.write(source)
+        try:
+            return unreachable_classes(os.path.basename(path))
+        finally:
+            os.unlink(path)
+
+    def test_f2_a_class_that_does_not_exist_is_caught(self):
+        findings = self.scan_source(
+            '<div class="vs-card vs-not-a-real-class-at-all"></div>')
+        self.assertEqual(1, len(findings), findings)
+        line, tag, css_class, why = findings[0]
+        self.assertEqual(1, line)
+        self.assertEqual('div', tag)
+        self.assertEqual('vs-not-a-real-class-at-all', css_class)
+        self.assertIn('not defined', why)
+
+    def test_f2_a_class_defined_for_another_element_is_caught(self):
+        """The exact shape of the defect, planted and caught."""
+        findings = self.scan_source('<table class="vs-table">\n'
+                                    '<tr class="is-warning"></tr>\n'
+                                    '</table>')
+        self.assertEqual(1, len(findings), findings)
+        line, tag, css_class, why = findings[0]
+        self.assertEqual(2, line)
+        self.assertEqual('tr', tag)
+        self.assertEqual('is-warning', css_class)
+        self.assertIn('vs-alert', why)
+
+    def test_f2_the_fixed_row_passes_the_same_scan(self):
+        """The control must ACCEPT the fix, or it is measuring nothing."""
+        self.assertEqual([], self.scan_source(
+            '<table class="vs-table">\n'
+            '<tr class="is-warning-row"><td>x</td></tr>\n'
+            '</table>'))
+
+    def test_f2_a_plain_is_it_in_the_file_check_would_have_missed_it(self):
+        """Why the check is element-aware, demonstrated rather than claimed."""
+        with io.open(CSS_PATH, encoding='utf-8') as handle:
+            css = handle.read()
+        self.assertIn('is-warning', css)
+        findings = self.scan_source('<tr class="is-warning"></tr>')
+        self.assertEqual(1, len(findings),
+                         'the element-aware check catches what the substring '
+                         'check cannot')
+
+    def test_f2_jinja_expressions_do_not_become_class_names(self):
+        """Guard against the parser inventing findings out of {{ ... }}."""
+        self.assertEqual([], self.scan_source(
+            '<div class="vs-card {{ extra_class }}">'
+            '<span class="{{ \'vs-badge\' if x else \'\' }}"></span></div>'))
 
 
 if __name__ == '__main__':

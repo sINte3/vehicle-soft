@@ -160,17 +160,26 @@
          (остальные)»: страница утверждала, что хозяйство ничего не должно.
          Это не неверное число, это неверное предложение.
 
-         is-warning, а не vs-muted: строка требует действия — сумму надо
+         is-warning-row, а не vs-muted: строка требует действия — сумму надо
          внести на экране «Работы», — в отличие от расплатившихся, которые не
-         требуют ничего. Тот же класс, что у служебных строк разрезов, по той
-         же причине.
+         требуют ничего.
+
+         Класс именно is-warning-row: `.vs-table tr.is-warning-row` —
+         единственное правило design-system.css, которое красит СТРОКУ
+         таблицы (строки 646 и 649). Класс is-warning существует только как
+         модификатор .vs-mini, .vs-stat-value, .vs-alert и .vs-report-tile,
+         поэтому <tr class="is-warning"> не даёт ни фона, ни левой полосы:
+         строка, которая существует ради того, чтобы её заметили, рисуется
+         как все остальные. Проверка, которая это ловит, —
+         TestF1EveryClassIsReachable в
+         tests/test_drone_zero_vs_unknown.py.
 
          Три денежные колонки здесь всегда прочерки: jobs == no_amount по
          построению корзины, и money_cell() выводит это сам. Отдельного
          «печатай прочерк» тут нет и быть не должно — иначе правило окажется
          записано в двух местах и разойдётся. #}
       {% if debt.unknown %}
-      <tr class="is-warning">
+      <tr class="is-warning-row">
         <td><b>{{ debt.unknown.label }}</b></td>
         <td class="right">{{ debt.unknown.jobs }}</td>
         <td class="right">{{ money_cell(debt.unknown.amount, debt.unknown.jobs, debt.unknown.no_amount, 'amount') }}</td>
