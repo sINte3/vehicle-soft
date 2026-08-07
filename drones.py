@@ -4591,8 +4591,25 @@ def _drone_median(values):
     return (ordered[middle - 1] + ordered[middle]) / 2.0
 
 
-def _drone_spray_usage_data(conds, band, min_area=DRONE_SPRAY_MIN_AREA_HA):
+def _drone_spray_usage_data(period_conds, view_conds, band,
+                            min_area=DRONE_SPRAY_MIN_AREA_HA):
     """Litres per hectare by machine x month, with the corridor around it.
+
+    [REASON]: THE STANDARD IS THE FLEET; THE FILTER PICKS THE ROWS YOU LOOK AT,
+    NEVER WHAT THEY ARE JUDGED AGAINST -- DRONE-SPRAY-MEDIAN-SCOPE-001. The
+    median and the corridor are computed over EVERY machine-month in the
+    selected PERIOD, ignoring the machine (and region) filter entirely. Filter
+    the page to one machine and that machine must not become its own standard:
+    measured on staging, machine No 8 sat at 4.25 l/ha against a fleet median
+    of 28.98, and one click on the machine filter flipped the finding to a
+    0.43 l/ha median that called the pathological 27.65 l/ha month "normal".
+    The period filter DOES still narrow the median -- comparing an April
+    machine to the April fleet is meaningful, comparing it to the whole year
+    is not. Rows displayed, the totals row and the reconciliation are all
+    still computed over the FILTERED set (view_conds); only the median and
+    the corridor escape it. period_conds and view_conds are built apart at
+    the call site, never un-picked from one list: a filter you have to remove
+    by inspection breaks the next time a filter is added.
 
     [REASON]: THE RATE IS COMPUTED OVER SPRAY FLIGHTS ONLY (usage_type == 0)
     and NOT over every flight. _drone_summary_data's liters_per_ha divides
@@ -4634,53 +4651,79 @@ def _drone_spray_usage_data(conds, band, min_area=DRONE_SPRAY_MIN_AREA_HA):
     # usage_type == 0 is spray; see the second [REASON] above for NULL.
     is_spray = (DroneFlight.usage_type == 0)
 
-    groups = (db.session.query(
-        DroneFlight.drone_unit_id,
-        month_expr,
-        func.count(DroneFlight.id),
-        func.coalesce(
-            func.sum(case((is_spray, DroneFlight.area_ha), else_=0.0)), 0.0),
-        func.coalesce(
-            func.sum(case((is_spray, 0.0), else_=DroneFlight.area_ha)), 0.0),
-        # SUM skips NULLs by itself, so this is litres over the spray flights
-        # that HAVE a figure -- which is why no_liters below is needed to tell
-        # «nothing recorded» from «recorded as nothing».
-        func.coalesce(
-            func.sum(case((is_spray, DroneFlight.spray_liters), else_=None)),
-            0.0),
-        func.sum(case((is_spray, 1), else_=0)),
-        func.sum(case((and_(is_spray, DroneFlight.spray_liters.is_(None)), 1),
-                      else_=0)),
-    ).filter(*conds).group_by(DroneFlight.drone_unit_id, month_expr).all())
+    def _aggregate(conds):
+        """One machine-month row per machine, over `conds`.
+
+        A local closure so the fleet population and the display table are built
+        by the same query, and a filter added on one side cannot silently leave
+        the other computing something different.
+        """
+        return (db.session.query(
+            DroneFlight.drone_unit_id,
+            month_expr,
+            func.count(DroneFlight.id),
+            func.coalesce(
+                func.sum(case((is_spray, DroneFlight.area_ha), else_=0.0)),
+                0.0),
+            func.coalesce(
+                func.sum(case((is_spray, 0.0), else_=DroneFlight.area_ha)),
+                0.0),
+            # SUM skips NULLs by itself, so this is litres over the spray
+            # flights that HAVE a figure -- which is why no_liters below is
+            # needed to tell «nothing recorded» from «recorded as nothing».
+            func.coalesce(
+                func.sum(case((is_spray, DroneFlight.spray_liters),
+                              else_=None)),
+                0.0),
+            func.sum(case((is_spray, 1), else_=0)),
+            func.sum(case((and_(is_spray,
+                                DroneFlight.spray_liters.is_(None)), 1),
+                          else_=0)),
+        ).filter(*conds).group_by(DroneFlight.drone_unit_id, month_expr).all())
 
     unit_numbers = {u.id: u.number for u in DroneUnit.query.all()}
-    rows = []
-    for (unit_id, month, flights, area_spray, area_other, liters,
-         spray_flights, no_liters) in groups:
-        area_spray = float(area_spray or 0.0)
-        area_other = float(area_other or 0.0)
-        liters = float(liters or 0.0)
-        spray_flights = int(spray_flights or 0)
-        no_liters = int(no_liters or 0)
-        # The whole point of the counter: all-NULL is unknown, not zero.
-        if spray_flights and spray_flights > no_liters:
-            rate = _drone_rate(liters, area_spray)
-        else:
-            rate = None
-        rows.append({
-            'unit_id': unit_id,
-            'number': unit_numbers.get(unit_id),
-            'month': month,
-            'flights': flights,
-            'spray_flights': spray_flights,
-            'other_flights': flights - spray_flights,
-            'area_spray': area_spray,
-            'area_other': area_other,
-            'area_total': area_spray + area_other,
-            'liters': liters,
-            'no_liters': no_liters,
-            'rate': rate,
-        })
+
+    def _to_rows(groups):
+        out = []
+        for (unit_id, month, flights, area_spray, area_other, liters,
+             spray_flights, no_liters) in groups:
+            area_spray = float(area_spray or 0.0)
+            area_other = float(area_other or 0.0)
+            liters = float(liters or 0.0)
+            spray_flights = int(spray_flights or 0)
+            no_liters = int(no_liters or 0)
+            # The whole point of the counter: all-NULL is unknown, not zero.
+            if spray_flights and spray_flights > no_liters:
+                rate = _drone_rate(liters, area_spray)
+            else:
+                rate = None
+            out.append({
+                'unit_id': unit_id,
+                'number': unit_numbers.get(unit_id),
+                'month': month,
+                'flights': flights,
+                'spray_flights': spray_flights,
+                'other_flights': flights - spray_flights,
+                'area_spray': area_spray,
+                'area_other': area_other,
+                'area_total': area_spray + area_other,
+                'liters': liters,
+                'no_liters': no_liters,
+                'rate': rate,
+            })
+        return out
+
+    # THE FLEET is the median population: every machine-month in the selected
+    # PERIOD, ignoring the machine AND region filter. It is aggregated here,
+    # once, and judged here; the median comes from IT, not from the rows the
+    # machine filter left on screen. See _drone_spray_usage_data's [REASON].
+    fleet = _to_rows(_aggregate(period_conds))
+
+    # What the page actually DISPLAYS: the same machine-months, narrowed by the
+    # machine/region filter. Everything a reader sees -- rows, the totals row,
+    # the reconciliation -- is computed over THIS set. Only the median and the
+    # corridor come from `fleet`.
+    rows = _to_rows(_aggregate(period_conds + view_conds))
 
     # Machine number ascending, NULL machine last, newest month first inside
     # each machine: the row a reader looks for is this month's, and the
@@ -4702,22 +4745,24 @@ def _drone_spray_usage_data(conds, band, min_area=DRONE_SPRAY_MIN_AREA_HA):
     #     accuse that bucket either.
     #
     # Every excluded row STILL SHOWS ITS RATE and carries a label saying why
-    # it is uncoloured. Hiding the number would be the opposite failure.
-    for row in rows:
+    # it is uncoloured. Hiding the number would be the opposite failure. The
+    # eligibility is judged on THE FLEET: a machine-month excluded by min_area
+    # is excluded whether or not the machine filter left it on screen.
+    def _judge(row):
         if row['rate'] is None:
-            row['judged'] = False
-            row['note'] = ''
-        elif row['unit_id'] is None:
-            row['judged'] = False
-            row['note'] = _drone_t('аниқланмаган', 'не распознано')
-        elif row['area_spray'] < min_area:
-            row['judged'] = False
-            row['note'] = _drone_t('майдон кам', 'мало площади')
-        else:
-            row['judged'] = True
-            row['note'] = ''
+            return (False, '')
+        if row['unit_id'] is None:
+            return (False, _drone_t('аниқланмаган', 'не распознано'))
+        if row['area_spray'] < min_area:
+            return (False, _drone_t('майдон кам', 'мало площади'))
+        return (True, '')
 
-    median = _drone_median([r['rate'] for r in rows if r['judged']])
+    for row in fleet:
+        row['judged'], row['note'] = _judge(row)
+    for row in rows:
+        row['judged'], row['note'] = _judge(row)
+
+    median = _drone_median([r['rate'] for r in fleet if r['judged']])
     low = high = low2 = high2 = None
     if median is not None:
         low = median * (1.0 - band / 100.0)
@@ -4738,7 +4783,7 @@ def _drone_spray_usage_data(conds, band, min_area=DRONE_SPRAY_MIN_AREA_HA):
     grand = (db.session.query(
         func.count(DroneFlight.id),
         func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
-    ).filter(*conds).one())
+    ).filter(*(period_conds + view_conds)).one())
     total = {
         'flights': sum(r['flights'] for r in rows),
         'spray_flights': sum(r['spray_flights'] for r in rows),
@@ -4771,9 +4816,11 @@ def _drone_spray_usage_data(conds, band, min_area=DRONE_SPRAY_MIN_AREA_HA):
         'high2': high2,
         # Cells that VOTED, not cells that have a rate: the sentence on the
         # page says «the median was taken over N pairs» and must name the
-        # number that was actually used.
-        'rated_cells': sum(1 for r in rows if r['judged']),
-        'unjudged_cells': sum(1 for r in rows
+        # number that was actually used. Counted over THE FLEET, not over the
+        # rows the machine filter left on screen: a filter must not shrink the
+        # number the sentence names, any more than it moves the median itself.
+        'rated_cells': sum(1 for r in fleet if r['judged']),
+        'unjudged_cells': sum(1 for r in fleet
                               if r['rate'] is not None and not r['judged']),
     }
 
@@ -4794,8 +4841,15 @@ def spray_usage():
                                        default_current_month=False)
     band = _drone_spray_band(request.args)
     min_area = _drone_spray_min_area(request.args)
-    data = _drone_spray_usage_data(_drone_flight_conditions(filters), band,
-                                   min_area)
+    # [REASON]: the median must be the FLEET's for the period, so the period
+    # conditions and the machine/region (display) conditions are built apart
+    # here and passed separately -- the median uses only period_conds, the
+    # displayed rows and the reconciliation use period_conds + view_conds.
+    period_conds = _drone_flight_conditions(dict(filters, unit_id=None,
+                                                 region=''))
+    view_conds = _drone_flight_conditions(dict(filters, date_from=None,
+                                               date_to=None))
+    data = _drone_spray_usage_data(period_conds, view_conds, band, min_area)
     link_args = _drone_link_args(filters)
     if band != DRONE_SPRAY_BAND_DEFAULT:
         link_args['band'] = band
@@ -4828,8 +4882,12 @@ def spray_usage_xlsx():
                                        default_current_month=False)
     band = _drone_spray_band(request.args)
     min_area = _drone_spray_min_area(request.args)
-    data = _drone_spray_usage_data(_drone_flight_conditions(filters), band,
-                                   min_area)
+    # Same split as spray_usage(): the workbook and the page share the report.
+    period_conds = _drone_flight_conditions(dict(filters, unit_id=None,
+                                                 region=''))
+    view_conds = _drone_flight_conditions(dict(filters, date_from=None,
+                                               date_to=None))
+    data = _drone_spray_usage_data(period_conds, view_conds, band, min_area)
     st = _drone_xlsx_styler()
     unbounded = _drone_t('чекланмаган', 'не ограничен')
     label_unattr = _drone_t('Аниқланмаган', 'Не распознано')

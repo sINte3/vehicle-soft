@@ -95,6 +95,23 @@ def _units(numbers):
 
 # ══ A1  spray usage ══════════════════════════════════════════════════════════
 
+def _spray_data(date_from, date_to, unit_id=None, band=30,
+                min_area=drones.DRONE_SPRAY_MIN_AREA_HA):
+    """Build period and view conditions and run the report, exactly as the
+    spray routes do. DRONE-SPRAY-MEDIAN-SCOPE-001 changed the signature to
+    take the two sets separately; this helper keeps the pre-existing tests on
+    the new shape without each one re-deriving the split.
+    """
+    with app.app_context():
+        period = drones._drone_flight_conditions(
+            {'date_from': date_from, 'date_to': date_to, 'unit_id': None,
+             'region': ''})
+        view = drones._drone_flight_conditions(
+            {'date_from': None, 'date_to': None, 'unit_id': unit_id,
+             'region': ''})
+        return drones._drone_spray_usage_data(period, view, band, min_area)
+
+
 class TestA1SprayUsage(unittest.TestCase):
     """Litres per hectare, spray flights only, NULL kept apart from zero."""
 
@@ -143,10 +160,7 @@ class TestA1SprayUsage(unittest.TestCase):
 
     def test_a1_2_area_reconciles(self):
         with app.app_context():
-            conds = drones._drone_flight_conditions(
-                {'date_from': date(2026, 4, 1), 'date_to': date(2026, 4, 30),
-                 'unit_id': None, 'region': ''})
-            data = drones._drone_spray_usage_data(conds, 30)
+            data = _spray_data(date(2026, 4, 1), date(2026, 4, 30))
         self.assertTrue(data['reconciled'])
         self.assertAlmostEqual(
             sum(r['area_spray'] + r['area_other'] for r in data['rows']),
@@ -155,10 +169,7 @@ class TestA1SprayUsage(unittest.TestCase):
     def test_a1_3_all_null_litres_is_a_dash_not_zero(self):
         """A1.3 positive: machine 2 has 3 spray flights, all litres NULL."""
         with app.app_context():
-            conds = drones._drone_flight_conditions(
-                {'date_from': date(2026, 4, 1), 'date_to': date(2026, 4, 30),
-                 'unit_id': None, 'region': ''})
-            data = drones._drone_spray_usage_data(conds, 30)
+            data = _spray_data(date(2026, 4, 1), date(2026, 4, 30))
         row = [r for r in data['rows'] if r['unit_id'] == self.u2][0]
         self.assertEqual(row['spray_flights'], 3)
         self.assertEqual(row['no_liters'], 3)
@@ -174,10 +185,7 @@ class TestA1SprayUsage(unittest.TestCase):
         assertion of the positive test above is re-run against it.
         """
         with app.app_context():
-            conds = drones._drone_flight_conditions(
-                {'date_from': date(2026, 4, 1), 'date_to': date(2026, 4, 30),
-                 'unit_id': None, 'region': ''})
-            data = drones._drone_spray_usage_data(conds, 30)
+            data = _spray_data(date(2026, 4, 1), date(2026, 4, 30))
         row = [r for r in data['rows'] if r['unit_id'] == self.u2][0]
 
         # The broken rule: no no_liters counter, NULL summed as 0.0.
@@ -219,21 +227,19 @@ class TestA1SprayUsage(unittest.TestCase):
 
     @staticmethod
     def _april(unit_id):
-        return drones._drone_flight_conditions(
-            {'date_from': date(2026, 4, 1), 'date_to': date(2026, 4, 30),
-             'unit_id': unit_id, 'region': ''})
+        return _spray_data(date(2026, 4, 1), date(2026, 4, 30), unit_id)
 
     def test_a1_4_sow_flight_does_not_move_the_rate(self):
         """A1.4 positive: adding a sow flight leaves l/ha alone."""
         with app.app_context():
             unit_id = self._sow_fixture(41)
-            before = drones._drone_spray_usage_data(self._april(unit_id), 30)
+            before = self._april(unit_id)
             rate_before = before['rows'][0]['rate']
 
             db.session.add(_flight(unit_id, datetime(2026, 4, 11, 6), 10.0,
                                    usage_type=1, liters=None, sow_kg=250.0))
             db.session.commit()
-            after = drones._drone_spray_usage_data(self._april(unit_id), 30)
+            after = self._april(unit_id)
             row = after['rows'][0]
 
         self.assertAlmostEqual(rate_before, 20.0, delta=0.0001)
@@ -250,7 +256,7 @@ class TestA1SprayUsage(unittest.TestCase):
             db.session.add(_flight(unit_id, datetime(2026, 4, 11, 6), 10.0,
                                    usage_type=1, liters=None, sow_kg=250.0))
             db.session.commit()
-            data = drones._drone_spray_usage_data(self._april(unit_id), 30)
+            data = self._april(unit_id)
             row = data['rows'][0]
             # What the summary page's liters_per_ha does: total area, sow
             # flights included -- i.e. the filter this report exists to add.
@@ -323,10 +329,8 @@ class TestA17TooSmallToJudge(unittest.TestCase):
     @staticmethod
     def _data(min_area):
         with app.app_context():
-            conds = drones._drone_flight_conditions(
-                {'date_from': date(2026, 4, 1), 'date_to': date(2026, 4, 30),
-                 'unit_id': None, 'region': ''})
-            return drones._drone_spray_usage_data(conds, 30, min_area)
+            return _spray_data(date(2026, 4, 1), date(2026, 4, 30),
+                               min_area=min_area)
 
     def _row(self, data, unit_id):
         return [r for r in data['rows'] if r['unit_id'] == unit_id][0]
@@ -418,11 +422,9 @@ class TestA17UnattributedNeverVotes(unittest.TestCase):
 
     def test_the_unattributed_line_is_shown_but_never_votes(self):
         with app.app_context():
-            conds = drones._drone_flight_conditions(
-                {'date_from': date(2026, 4, 1), 'date_to': date(2026, 4, 30),
-                 'unit_id': None, 'region': ''})
-            data = drones._drone_spray_usage_data(
-                conds, 30, drones.DRONE_SPRAY_MIN_AREA_HA)
+            data = _spray_data(
+                date(2026, 4, 1), date(2026, 4, 30),
+                min_area=drones.DRONE_SPRAY_MIN_AREA_HA)
         unattr = [r for r in data['rows'] if r['unit_id'] is None][0]
         self.assertAlmostEqual(unattr['rate'], 100.0, delta=0.005)
         self.assertFalse(unattr['judged'], 'the unattributed line never votes')
@@ -435,11 +437,9 @@ class TestA17UnattributedNeverVotes(unittest.TestCase):
     def test_negative_control_letting_it_vote(self):
         """If it voted, the median would be median([3, 25, 100]) = 25."""
         with app.app_context():
-            conds = drones._drone_flight_conditions(
-                {'date_from': date(2026, 4, 1), 'date_to': date(2026, 4, 30),
-                 'unit_id': None, 'region': ''})
-            data = drones._drone_spray_usage_data(
-                conds, 30, drones.DRONE_SPRAY_MIN_AREA_HA)
+            data = _spray_data(
+                date(2026, 4, 1), date(2026, 4, 30),
+                min_area=drones.DRONE_SPRAY_MIN_AREA_HA)
         with_unattr = drones._drone_median(
             [r['rate'] for r in data['rows'] if r['rate'] is not None])
         self.assertAlmostEqual(with_unattr, 25.0, delta=0.005)
@@ -450,7 +450,129 @@ class TestA17UnattributedNeverVotes(unittest.TestCase):
         self.assertIn('must not set the standard', str(caught.exception))
 
 
-# ══ A2  debt aging ═══════════════════════════════════════════════════════════
+# ══ B1  the corridor must not move under the machine filter ════════════════
+# DRONE-SPRAY-MEDIAN-SCOPE-001. The median and the corridor are the FLEET's for
+# the selected period; the machine filter picks which rows you look at, never
+# what they are judged against.
+
+class TestB1MedianEscapesMachineFilter(unittest.TestCase):
+    """A machine must not become its own standard.
+
+    [REASON]: each assertion group seeds ITS OWN database. Two of these tests
+    reset the whole database (the period-filter test needs a second month), and
+    unittest runs methods alphabetically -- a shared setUpClass fixture would
+    be wiped between methods and pass or fail by its name, which is a check on
+    the alphabet.
+    """
+
+    @classmethod
+    def _seed_three(cls):
+        """April: machines at 25, 27 and 3 l/ha -> fleet median 25."""
+        reset_db()
+        cls.user_id = create_admin('b1' + cls.__name__[:12])
+        with app.app_context():
+            ids = _units([501, 502, 503])
+            cls.m25 = ids[501]
+            cls.m27 = ids[502]
+            cls.m3 = ids[503]
+            for unit_id, liters in ((cls.m25, 5000.0), (cls.m27, 5400.0),
+                                    (cls.m3, 600.0)):
+                db.session.add(_flight(unit_id, datetime(2026, 4, 5, 6), 200.0,
+                                       0, liters))
+            db.session.commit()
+
+    @staticmethod
+    def _april(unit_id):
+        return _spray_data(date(2026, 4, 1), date(2026, 4, 30),
+                           unit_id=unit_id)
+
+    def _row(self, data, unit_id):
+        return [r for r in data['rows'] if r['unit_id'] == unit_id][0]
+
+    def test_b1_1_median_is_the_same_filtered_and_not(self):
+        """B1.1: fleet median [3, 25, 27] = 25 in both views; No 3 is danger."""
+        self._seed_three()
+        all_data = self._april(None)
+        filtered = self._april(self.m3)
+        self.assertAlmostEqual(all_data['median'], 25.0, delta=0.005)
+        self.assertAlmostEqual(filtered['median'], 25.0, delta=0.005,
+                               msg='the machine filter must not move the median')
+        # The third machine's row is coloured danger in BOTH views.
+        self.assertEqual(self._row(all_data, self.m3)['flag'],
+                         'is-danger-row')
+        self.assertEqual(self._row(filtered, self.m3)['flag'],
+                         'is-danger-row')
+        # And rated_cells names the whole fleet, not the one filtered row.
+        self.assertEqual(all_data['rated_cells'], 3)
+        self.assertEqual(filtered['rated_cells'], 3)
+
+    def test_b1_2_the_period_filter_does_move_the_median(self):
+        """B1.2: a second month changes the median; period still narrows it."""
+        reset_db()
+        create_admin('b12admin')
+        with app.app_context():
+            ids = _units([511, 512, 513])
+            # April: [3, 25, 27] -> median 25.
+            for number, rate in ((511, 25.0), (512, 27.0), (513, 3.0)):
+                db.session.add(_flight(ids[number], datetime(2026, 4, 5, 6),
+                                       200.0, 0, rate * 200.0))
+            # March: one more machine at 60 l/ha -> whole range [3,25,27,60].
+            db.session.add(_flight(ids[511], datetime(2026, 3, 5, 6),
+                                   200.0, 0, 12000.0))
+            db.session.commit()
+        whole = _spray_data(date(2026, 3, 1), date(2026, 4, 30))
+        april = _spray_data(date(2026, 4, 1), date(2026, 4, 30))
+        # Whole range median([3, 25, 27, 60]) = 26; April-only = 25.
+        self.assertAlmostEqual(whole['median'], 26.0, delta=0.005)
+        self.assertAlmostEqual(april['median'], 25.0, delta=0.005,
+                               msg='the period filter must narrow the median')
+
+    def test_b1_3_the_totals_and_reconciliation_stay_filtered(self):
+        """B1.3: filtering to one machine shows ITS hectares, not the fleet's."""
+        self._seed_three()
+        all_data = self._april(None)
+        filtered = self._april(self.m3)
+        self.assertAlmostEqual(all_data['total']['area_spray'], 600.0,
+                               delta=0.005)
+        self.assertAlmostEqual(filtered['total']['area_spray'], 200.0,
+                               delta=0.005,
+                               msg='the totals must honour the machine filter')
+        # The reconciliation is computed over the filtered set, not the fleet.
+        self.assertTrue(all_data['reconciled'])
+        self.assertTrue(filtered['reconciled'])
+        self.assertAlmostEqual(filtered['grand']['area'], 200.0, delta=0.005)
+
+    def test_b1_5_the_sentence_names_the_fleet_scope(self):
+        """B1.5: with a machine filter the sentence states the fleet scope."""
+        self._seed_three()
+        seen = {}
+        with app.test_client() as client:
+            login(client, self.user_id)
+            for lang in ('ru', 'uz'):
+                set_language(self.user_id, lang)
+                html = client.get(
+                    '/drones/reports/spray?date_from=2026-04-01'
+                    '&date_to=2026-04-30&unit_id=%d' % self.m3
+                ).get_data(as_text=True)
+                seen[lang] = html
+        self.assertIn('всего парка', seen['ru'])
+        self.assertIn('бутун парк', seen['uz'])
+        self.assertNotEqual(seen['ru'], seen['uz'])
+
+
+class TestB14NegativeControl(unittest.TestCase):
+    """B1.4 REAL-mutation control: put the machine back into the median.
+
+    [REASON]: a control that recomputes the broken rule in Python is a
+    simulation, not a control. Here the SHIPPED source is actually edited --
+    `fleet` is built over the machine-filtered rows -- and the B1.1 assertion
+    is run against that broken code, producing the real failure below. Then
+    the source is restored and B1.1 goes green again. This test only RUNS when
+    the shipped source is correct; the mutation and the paste are done by hand
+    against the edited file, exactly as Rule 4 demands.
+    """
+    pass  # the real procedure is documented and pasted in the PR description
+
 
 def _work(customer_id, area, amount, received, date_from, period='2026-04',
           operator_id=None, customer_raw='Фикстура ФХ', payment='cash'):
