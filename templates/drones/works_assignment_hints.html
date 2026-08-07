@@ -37,7 +37,19 @@
   </div>
 </div>
 
-{% if not data %}
+{% if no_flights_at_all %}
+{# DRONE-SPRAY-MEDIAN-SCOPE-001/2: no flights have EVER been synced. The
+   fallback month is the current one, but an empty screen with no explanation
+   is exactly the failure being fixed -- so the screen says the DJI half is
+   missing and there is nothing to compare. #}
+<div class="vs-alert is-warning vs-mb">
+  {{ 'Полётов нет вообще: из DJI не загружено ни одного вылета. Сравнивать не с чем — первая колонка подсказки (гектары из ведомостей) есть, а вторая (гектары из данных DJI) строится из вылетов.' if is_ru else 'Умуман парвозлар йўқ: DJI дан ҳеч бир парвоз юкланмаган. Солиштирадиган нарса йўқ — маслаҳатнинг биринчи устуни (ведомостлардаги гектарлар) бор, аммо иккинчиси (DJI маълумотларидаги гектарлар) парвозлар асосида қурилади.' }}</div>
+<div class="vs-empty">
+  <div class="vs-empty-ico">🧭</div>
+  <div class="vs-empty-title">{{ 'Полётов ещё нет' if is_ru else 'Парвозлар ҳали йўқ' }}</div>
+  <div class="vs-empty-sub">{{ 'Сначала импорт вылетов из DJI, потом сравнение.' if is_ru else 'Аввал DJI дан парвозлар импорти, кейин солиштириш.' }}</div>
+</div>
+{% elif not data %}
 <div class="vs-empty">
   <div class="vs-empty-ico">🧭</div>
   <div class="vs-empty-title">{{ 'Работ ещё нет' if is_ru else 'Ишлар ҳали йўқ' }}</div>

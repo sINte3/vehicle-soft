@@ -560,16 +560,108 @@ class TestB1MedianEscapesMachineFilter(unittest.TestCase):
         self.assertNotEqual(seen['ru'], seen['uz'])
 
 
-class TestB14NegativeControl(unittest.TestCase):
-    """B1.4 REAL-mutation control: put the machine back into the median.
+class TestB2HintsDefaultToLatestFlightMonth(unittest.TestCase):
+    """DRONE-SPRAY-MEDIAN-SCOPE-001/2: the screen opens on a month with flights.
+
+    [REASON]: each test seeds its OWN database because one of them (B2.3)
+    asserts the NO-FLIGHTS path and would wipe the shared fixture for any test
+    alphabetically after it.
+    """
+
+    # ── B2.1 ────────────────────────────────────────────────────────────────
+    def _selected_month(self, client):
+        """The value of the month <option> marked selected in #hintMonth."""
+        html = client.get('/drones/works/assignment-hints').get_data(
+            as_text=True)
+        select = html.split('id="hintMonth"')[1]
+        select = select.split('</select>')[0]
+        opt = re.search(r'<option value="([^"]+)" selected', select)
+        self.assertIsNotNone(opt,
+                             'the month control must have a selected option')
+        return opt.group(1)
+
+    @staticmethod
+    def _seed_flights_and_work():
+        """Flights in 2026-02 and 2026-03; work billed in the CURRENT month.
+
+        [REASON]: the ledger's newest month must be a month with NO flight, so
+        the old bug -- defaulting to the newest worked month -- would pick the
+        empty month and the screen would open showing nothing. Two flight months
+        let B2.2 prove an EXPLICIT earlier month wins over the latest default.
+        """
+        reset_db()
+        with app.app_context():
+            ids = _units([521])
+            # Flights in 2026-02 and 2026-03 (latest).
+            db.session.add(_flight(ids[521], datetime(2026, 3, 5, 6), 50.0,
+                                   0, 100.0))
+            db.session.add(_flight(ids[521], datetime(2026, 2, 4, 6), 30.0,
+                                   0, 60.0))
+            operator = DroneOperator(full_name='Б2 Оператор')
+            db.session.add(operator)
+            db.session.flush()
+            customer = DroneCustomer(name='Б2 Заказчик')
+            db.session.add(customer)
+            db.session.flush()
+            # Work billed in the CURRENT month (UTC+5, like the app), which has
+            # no flight -- that is the "empty month" the default must escape.
+            today = drones._drone_today_local()
+            current = today.strftime('%Y-%m')
+            db.session.add(_work(customer.id, 40.0, 200000.0, 0.0,
+                                 today, period=current,
+                                 operator_id=operator.id))
+            db.session.commit()
+
+    def test_b2_1_opens_on_the_latest_month_that_has_flights(self):
+        """B2.1: latest flight month is 2026-03, work only in current -> 2026-03."""
+        self._seed_flights_and_work()
+        user_id = create_admin('b21admin')
+        with app.test_client() as client:
+            login(client, user_id)
+            selected = self._selected_month(client)
+        self.assertEqual(selected, '2026-03',
+                         'the default must be the latest month with flights, '
+                         'not the current (worked) month')
+
+    def test_b2_2_explicit_month_still_wins(self):
+        """B2.2: ?month=2026-02 shows that month, not the 2026-03 default."""
+        self._seed_flights_and_work()
+        user_id = create_admin('b22admin')
+        with app.test_client() as client:
+            login(client, user_id)
+            html = client.get(
+                '/drones/works/assignment-hints?month=2026-02'
+            ).get_data(as_text=True)
+        select = html.split('id="hintMonth"')[1].split('</select>')[0]
+        opt = re.search(r'<option value="([^"]+)" selected', select)
+        self.assertEqual(opt.group(1), '2026-02',
+                         'an explicit ?month= must win over the fallback')
+
+    def test_b2_3_no_flights_at_all_says_so(self):
+        """B2.3: with no flights at all the page is 200 and says there are none."""
+        reset_db()
+        user_id = create_admin('b23admin')
+        set_language(user_id, 'ru')
+        with app.test_client() as client:
+            login(client, user_id)
+            resp = client.get('/drones/works/assignment-hints')
+            html = resp.get_data(as_text=True)
+        self.assertEqual(resp.status_code, 200, 'never a 500, never blank')
+        self.assertIn('Полётов ещё нет', html)
+        self.assertIn('DJI не загружено ни одного вылета', html)
+        self.assertNotIn('Traceback', html)
+
+
+class TestB24NegativeControl(unittest.TestCase):
+    """B2.4 REAL-mutation control: make the default the current month again.
 
     [REASON]: a control that recomputes the broken rule in Python is a
-    simulation, not a control. Here the SHIPPED source is actually edited --
-    `fleet` is built over the machine-filtered rows -- and the B1.1 assertion
-    is run against that broken code, producing the real failure below. Then
-    the source is restored and B1.1 goes green again. This test only RUNS when
-    the shipped source is correct; the mutation and the paste are done by hand
-    against the edited file, exactly as Rule 4 demands.
+    simulation, not a control. Here the SHIPPED route is actually edited back
+    to the old default -- the flight-month fallback is removed -- and the B2.1
+    assertion is run against that broken code, producing the real failure
+    below. Then the source is restored and B2.1 goes green again. This test
+    only RUNS when the shipped source is correct; the mutation and the paste
+    are done by hand against the edited file, exactly as Rule 4 demands.
     """
     pass  # the real procedure is documented and pasted in the PR description
 

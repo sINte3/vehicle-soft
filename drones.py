@@ -4520,16 +4520,35 @@ def _drone_assignment_hints(month):
 @module_required('drones')
 def works_assignment_hints():
     """Read-only. Suggests a machine for an operator; creates nothing."""
-    periods = _drone_work_periods()
+    # The month picker is built from the months that have FLIGHTS, not from
+    # the work ledger: a month the machines never flew has no DJI half to
+    # compare against, and offering it invites the reader to conclude a machine
+    # stood idle when in fact nothing was ever synced -- the same rule
+    # _drone_flight_months() spells out for the calendar.
+    periods = _drone_flight_months()
     month = (request.args.get('month') or '').strip()
+    # [REASON]: AN EXPLICIT ?month= ALWAYS WINS; a bookmark must keep pointing
+    # where it pointed. Otherwise the screen opens on the most recent month
+    # that HAS FLIGHTS, not the most recent worked month: DRONE-SPRAY-MEDIAN-
+    # SCOPE-001/2. Work is billed for a month the machines never flew, so the
+    # ledger's newest worked month is exactly the month where building the DJI
+    # half of the comparison is empty -- measured on staging, 2026-08 has work
+    # but no flights, and the screen opened showing nothing to assign. If there
+    # are NO flights at all, fall back to the current month and SAY so, rather
+    # than silently showing one empty month for another.
     if not re.match(r'^\d{4}-\d{2}$', month or ''):
-        month = periods[0] if periods else ''
+        if periods:
+            month = periods[0]
+        else:
+            month = _drone_today_local().strftime('%Y-%m')
+            no_flights_at_all = True
     data = _drone_assignment_hints(month) if month else None
     return render_template(
         'drones/works_assignment_hints.html',
         data=data,
         month=month,
         periods=periods,
+        no_flights_at_all=locals().get('no_flights_at_all', False),
     )
 
 
