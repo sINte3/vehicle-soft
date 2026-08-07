@@ -1329,3 +1329,11 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
    line 53 and used by no tile; the five existing accents were all taken, so a
    sixth report either repeated a colour or brought this one rule. */
 .vs-report-tile.is-purple .vs-report-tile-icon { color: var(--vs-purple); background: var(--vs-purple-bg); }
+
+/* DRONE-ANALYTICS-001/4: flight calendar cells. Additive, on existing tokens.
+   The three states are the point of the screen: a day that flew, a day the
+   machine was down (explained), and a day it stood idle while serviceable
+   (unexplained). Painting the last two alike would answer nothing. */
+.vs-cal-cell.is-down { background: var(--vs-danger-bg); }
+.vs-cal-cell.is-idle { background: var(--vs-surface-3); }
+.vs-cal-cell.is-flown { font-variant-numeric: tabular-nums; }

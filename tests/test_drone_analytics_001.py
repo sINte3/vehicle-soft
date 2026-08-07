@@ -33,6 +33,8 @@ import re
 import unittest
 from datetime import date, datetime, timedelta
 
+from sqlalchemy import func
+
 from tests.harness import app, reset_db, create_admin, login
 from models import db, DroneFlight, DroneUnit, DroneOperator, DroneWork, \
     DroneCustomer, DroneUnitStatusLog, Organization, User, \
@@ -888,3 +890,197 @@ class TestA35Coverage(unittest.TestCase):
                  * 100.0 / data['total']['flight_area'])
         self.assertEqual(naive, -100.0)
 
+
+# ══ A4  flight calendar ══════════════════════════════════════════════════════
+
+class TestA4FlightCalendar(unittest.TestCase):
+    """Machine x day in UTC+5, with the serviceability overlay."""
+
+    @classmethod
+    def setUpClass(cls):
+        reset_db()
+        cls.user_id = create_admin('a4admin')
+        with app.app_context():
+            ids = _units([1, 2, 3, 4])
+            cls.u1, cls.u2, cls.u3 = ids[1], ids[2], ids[3]
+            cls.u4 = ids[4]
+            # A4.2: 2026-04-30 20:30 UTC is 2026-05-01 01:30 in UTC+5.
+            db.session.add(_flight(cls.u1, datetime(2026, 4, 30, 20, 30),
+                                   12.5, 0, 250.0))
+            # Ordinary May flights for machine 1.
+            db.session.add(_flight(cls.u1, datetime(2026, 5, 3, 6), 20.0,
+                                   0, 400.0))
+            db.session.add(_flight(cls.u1, datetime(2026, 5, 3, 9), 5.0,
+                                   0, 100.0))
+            # A4.3: machine 2 goes unserviceable on the 10th, never flies.
+            db.session.add(DroneUnitStatusLog(
+                drone_unit_id=cls.u2, status=DRONE_STATUS_UNSERVICEABLE,
+                changed_on=date(2026, 5, 10)))
+            # Machine 3 has NO status rows at all and never flies.
+            #
+            # A4.3 tie-breaking, machine 4: the back-dated correction. The
+            # row saying «serviceable again from the 20th» is typed FIRST and
+            # therefore has the LOWER id; the row saying «it was in fact
+            # unserviceable from the 15th» is typed SECOND and has the higher
+            # id. Back-dating is normal here -- changed_on is a date a human
+            # enters, and a machine is reported broken after the fact.
+            #
+            # The fixture lives in setUpClass, not inside the test, so the
+            # test only READS. A test that writes status rows into a machine
+            # the other tests share passes or fails by unittest's alphabetical
+            # method order, which is a check on the alphabet.
+            first = DroneUnitStatusLog(
+                drone_unit_id=cls.u4, status=DRONE_STATUS_SERVICEABLE,
+                changed_on=date(2026, 5, 20))
+            db.session.add(first)
+            db.session.flush()
+            second = DroneUnitStatusLog(
+                drone_unit_id=cls.u4, status=DRONE_STATUS_UNSERVICEABLE,
+                changed_on=date(2026, 5, 15))
+            db.session.add(second)
+            db.session.flush()
+            assert first.id < second.id, 'the back-dated row must be typed last'
+            db.session.commit()
+
+    @staticmethod
+    def _data(month):
+        with app.app_context():
+            return drones._drone_flight_calendar_data(month)
+
+    def _cell(self, data, unit_id, day):
+        row = [r for r in data['rows'] if r['unit_id'] == unit_id][0]
+        return [c for c in row['cells'] if c['day'] == day][0]
+
+    def test_a4_1_row_totals_match_the_month_aggregation(self):
+        """A4.1: every machine's row total against a plain SQL aggregation."""
+        data = self._data('2026-05')
+        with app.app_context():
+            conds = drones._drone_flight_conditions(
+                {'date_from': date(2026, 5, 1), 'date_to': date(2026, 5, 31),
+                 'unit_id': None, 'region': ''})
+            summary = drones._drone_summary_data(conds)
+        by_unit = {r['unit_id']: r['area'] for r in summary['by_machine']['rows']}
+        compared = 0
+        for row in data['rows']:
+            expected = by_unit.get(row['unit_id'], 0.0)
+            self.assertAlmostEqual(row['area'], expected, delta=0.005,
+                                   msg='machine %s' % row['number'])
+            compared += 1
+        # Four machines now: No 4 carries the A4.3 tie-breaking fixture and
+        # never flies, so it reconciles at 0.00 on both sides.
+        self.assertEqual(compared, 4)
+        self.assertAlmostEqual(data['total']['area'],
+                               summary['totals']['area_ha'], delta=0.005)
+
+    def test_a4_2_night_flight_lands_on_the_next_local_day(self):
+        """A4.2 positive: 30 Apr 20:30 UTC is 1 May in the calendar."""
+        data = self._data('2026-05')
+        cell = self._cell(data, self.u1, date(2026, 5, 1))
+        self.assertEqual(cell['state'], 'is-flown')
+        self.assertAlmostEqual(cell['area'], 12.5, delta=0.005)
+        # And it is NOT on 30 April.
+        april = self._data('2026-04')
+        self.assertEqual(self._cell(april, self.u1, date(2026, 4, 30))['state'],
+                         'is-idle')
+
+    def test_a4_2_negative_control_dropping_the_offset(self):
+        """A4.2 negative: without the offset the flight shows on 30 April."""
+        with app.app_context():
+            # The same query, with the offset removed -- i.e. plain UTC.
+            naive_day = func.strftime('%Y-%m-%d', DroneFlight.started_at)
+            rows = (db.session.query(naive_day, func.count(DroneFlight.id))
+                    .filter(DroneFlight.drone_unit_id == self.u1)
+                    .group_by(naive_day).all())
+            shifted = (db.session.query(drones._drone_flight_day_expr(),
+                                        func.count(DroneFlight.id))
+                       .filter(DroneFlight.drone_unit_id == self.u1)
+                       .group_by(drones._drone_flight_day_expr()).all())
+        naive_days = dict(rows)
+        shifted_days = dict(shifted)
+        self.assertIn('2026-04-30', naive_days,
+                      'plain UTC puts the night flight on 30 April')
+        self.assertNotIn('2026-04-30', shifted_days)
+        self.assertIn('2026-05-01', shifted_days)
+        with self.assertRaises(AssertionError) as caught:
+            self.assertNotIn('2026-04-30', naive_days,
+                             'the night flight must not land on 30 April')
+        self.assertIn('must not land on 30 April', str(caught.exception))
+
+    def test_a4_3_down_versus_idle(self):
+        """A4.3 positive: unserviceable is «down», no history is «idle»."""
+        data = self._data('2026-05')
+        # Machine 2 went down on the 10th: the 12th is down, the 9th is idle.
+        self.assertEqual(self._cell(data, self.u2, date(2026, 5, 12))['state'],
+                         'is-down')
+        self.assertEqual(self._cell(data, self.u2, date(2026, 5, 9))['state'],
+                         'is-idle')
+        # Machine 3 has no status rows at all -- idle, NOT down.
+        self.assertEqual(self._cell(data, self.u3, date(2026, 5, 12))['state'],
+                         'is-idle', 'unknown state is not «broken»')
+
+    def test_a4_3_negative_control_tie_broken_on_id_only(self):
+        """A4.3: the back-dated correction, read out of the REAL calendar.
+
+        Machine 4 carries two status rows (see setUpClass): «serviceable from
+        the 20th» typed first, «unserviceable from the 15th» typed second and
+        back-dated. The status in force on a day is the row with the greatest
+        changed_on <= that day, ties broken by the greatest id -- so:
+
+            17 May  the 15th governs      -> unserviceable -> is-down
+            25 May  the 20th governs      -> serviceable   -> is-idle
+
+        [REASON]: this asserts on CELL STATES produced by
+        _drone_flight_calendar_data(), NOT on a rule recomputed here. An
+        earlier draft sorted the rows two ways inside the test and compared
+        the two answers to each other; that version passed against a
+        drones.py whose ORDER BY had been broken, because it never asked
+        drones.py anything. Dropping changed_on from the ORDER BY inverts
+        BOTH assertions below, which is what makes them a control.
+
+        Why it matters: with the ordering broken the machine reads as broken
+        from the 15th onwards forever, so every idle day after the repair is
+        silently explained away -- and unexplained idle days are the entire
+        point of this screen.
+        """
+        data = self._data('2026-05')
+
+        seventeenth = self._cell(data, self.u4, date(2026, 5, 17))
+        self.assertEqual(seventeenth['state'], 'is-down',
+                         'on 17 May the back-dated 15th governs')
+        self.assertEqual(seventeenth['status'], DRONE_STATUS_UNSERVICEABLE)
+
+        twentyfifth = self._cell(data, self.u4, date(2026, 5, 25))
+        self.assertEqual(twentyfifth['state'], 'is-idle',
+                         'on 25 May the 20th governs and the machine is '
+                         'serviceable again -- an UNEXPLAINED idle day')
+        self.assertEqual(twentyfifth['status'], DRONE_STATUS_SERVICEABLE)
+
+        # Before either row, the machine has no status at all: idle, not down.
+        self.assertEqual(self._cell(data, self.u4, date(2026, 5, 12))['state'],
+                         'is-idle')
+        self.assertIsNone(self._cell(data, self.u4,
+                                     date(2026, 5, 12))['status'])
+
+    def test_a4_4_all_three_cell_classes_render_and_are_defined(self):
+        """A4.4: the three classes appear in the HTML and exist in the CSS."""
+        with app.test_client() as client:
+            login(client, self.user_id)
+            html = client.get(
+                '/drones/reports/calendar?month=2026-05').get_data(as_text=True)
+        with open(os.path.join(REPO_ROOT, 'static', 'css',
+                               'design-system.css'), encoding='utf-8') as fh:
+            css = fh.read()
+        for state in ('is-flown', 'is-idle', 'is-down'):
+            self.assertIn('vs-cal-cell %s' % state, html,
+                          'state %s must render' % state)
+            self.assertIn('.vs-cal-cell.%s' % state, css,
+                          'state %s must be defined' % state)
+
+    def test_a4_5_month_lengths(self):
+        for month, length in (('2026-02', 28), ('2026-04', 30),
+                              ('2026-05', 31)):
+            data = self._data(month)
+            self.assertEqual(len(data['days']), length, month)
+            for row in data['rows']:
+                self.assertEqual(len(row['cells']), length, month)
+            self.assertEqual(len(data['day_totals']), length, month)

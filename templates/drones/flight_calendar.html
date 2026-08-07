@@ -1,0 +1,127 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Дроны — календарь вылетов' if is_ru else 'Дронлар — парвозлар тақвими' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+{# DRONE-ANALYTICS-001/4. Машины по строкам, дни месяца по колонкам.
+
+   День берётся _drone_flight_day_expr(), который выводит смещение из
+   DRONE_DISPLAY_UTC_OFFSET. Здесь это важнее, чем где-либо ещё: эти дроны
+   опрыскивают НОЧЬЮ, и вылет, записанный как 2026-04-30 20:30 UTC, для тех,
+   кто его выполнял, был 1 мая в 01:30. Литерал «+5 hours» здесь — это дефект,
+   а не сокращение.
+
+   Три состояния ячейки и в этом весь смысл экрана: летал; стоял неисправным
+   (объяснено); стоял исправным (не объяснено). Необъяснённые простои — это
+   деньги. Классы is-down / is-idle / is-flown добавлены в design-system.css
+   тем же инкрементом; ни одно существующее правило не изменено.
+
+   Excel здесь нет: это экран наблюдения, как и «Ведомости против вылетов». #}
+{% set t_total = 'Итого' if is_ru else 'Жами' %}
+{% set t_empty = 'Вылетов ещё нет ни за один месяц' if is_ru else 'Ҳали бирорта ойда парвоз йўқ' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Календарь вылетов' if is_ru else 'Парвозлар тақвими' }}</div>
+    <div class="vs-hero-sub">{{ 'Гектары каждой машины по дням месяца. Пустой день показан по-разному в зависимости от того, была машина исправна или нет.' if is_ru else 'Ҳар бир машинанинг ой кунлари бўйича гектарлари. Бўш кун машина соз бўлган ёки бўлмаганига қараб турлича кўрсатилади.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('drones.reports') }}" class="vs-btn">{{ 'Все отчёты' if is_ru else 'Барча ҳисоботлар' }}</a>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <form method="get" action="{{ url_for('drones.flight_calendar') }}" class="vs-form-row">
+      <div class="vs-field" style="min-width:170px;">
+        <label class="vs-label" for="cMonth">{{ 'Месяц' if is_ru else 'Ой' }}</label>
+        {# Список месяцев построен из месяцев, в которых ЕСТЬ вылеты: месяц
+           без вылетов в выпадающем списке приглашает решить, что машина
+           простаивала, тогда как на деле ничего не синхронизировали. #}
+        <select name="month" id="cMonth" class="vs-select" onchange="this.form.submit()">
+          {% for m in months %}<option value="{{ m }}" {% if m == month %}selected{% endif %}>{{ m }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if data %}
+<div class="vs-alert is-info vs-mb">
+  <b>{{ 'Обозначения:' if is_ru else 'Белгилар:' }}</b>
+  {{ ' в ячейке стоят гектары — машина в этот день летала. Серая пустая ячейка — машина была исправна и не летала: этот простой ничем не объяснён, и ради этих клеток экран и сделан. Розовая пустая ячейка — машина числилась неисправной, простой объяснён. Машина, о состоянии которой не записано ничего, считается исправной и красится серым, а не розовым: неизвестно — это не «сломана». День берётся в часовом поясе операторов (UTC+5), поэтому ночной вылет попадает в те же сутки, в которые его выполняли, а не в предыдущие.' if is_ru else ' катакда гектар турса — машина ўша куни учган. Кулранг бўш катак — машина соз эди ва учмади: бу бекор туриш ҳеч нима билан изоҳланмаган, экран айнан шу катаклар учун қилинган. Пушти бўш катак — машина носоз деб қайд этилган, бекор туриш изоҳланган. Ҳолати ҳақида ҳеч нима ёзилмаган машина соз ҳисобланади ва пушти эмас, кулранг бўялади: номаълум — «бузилган» дегани эмас. Кун операторлар вақт минтақасида (UTC+5) олинади, шунинг учун тунги парвоз ўзи бажарилган суткага тушади, олдингисига эмас.' }}
+</div>
+
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Месяц' if is_ru else 'Ой' }}</div>
+    <div class="vs-stat-value">{{ data.month }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Дней' if is_ru else 'Кунлар' }}</div>
+    <div class="vs-stat-value is-num">{{ data.days|length|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Вылеты' if is_ru else 'Парвозлар' }}</div>
+    <div class="vs-stat-value is-num">{{ data.total.flights|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Гектары' if is_ru else 'Гектар' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(data.total.area)|vs_num }}</div>
+  </div>
+</div>
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Гектары по дням' if is_ru else 'Кунлар бўйича гектар' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Машина' if is_ru else 'Машина' }}</th>
+        {% for d in data.days %}<th class="right">{{ d.day }}</th>{% endfor %}
+        <th class="right">{{ t_total }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in data.rows %}
+      <tr>
+        <td>{{ '№ %s'|format(r.number) }}</td>
+        {% for c in r.cells %}
+        <td class="right vs-cal-cell {{ c.state }}">{% if c.state == 'is-flown' %}{{ '%.2f'|format(c.area)|vs_num }}{% endif %}</td>
+        {% endfor %}
+        <td class="right"><b>{{ '%.2f'|format(r.area)|vs_num }}</b></td>
+      </tr>
+      {% endfor %}
+      {% if data.unattributed %}
+      {# Вылеты, чей ник не разрешился ни в одну машину. Показаны, а не
+         отброшены — как везде в этом модуле. #}
+      <tr class="is-warning-row">
+        <td><b>{{ 'Не распознано' if is_ru else 'Аниқланмаган' }}</b></td>
+        {% for c in data.unattributed.cells %}
+        <td class="right vs-cal-cell {{ c.state }}">{% if c.state == 'is-flown' %}{{ '%.2f'|format(c.area)|vs_num }}{% endif %}</td>
+        {% endfor %}
+        <td class="right"><b>{{ '%.2f'|format(data.unattributed.area)|vs_num }}</b></td>
+      </tr>
+      {% endif %}
+      <tr style="font-weight:700;">
+        <td>{{ t_total }}</td>
+        {% for t in data.day_totals %}
+        <td class="right">{% if t.flights %}{{ '%.2f'|format(t.area)|vs_num }}{% endif %}</td>
+        {% endfor %}
+        <td class="right">{{ '%.2f'|format(data.total.area)|vs_num }}</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+{% else %}
+<div class="vs-empty"><div class="vs-empty-title">{{ t_empty }}</div></div>
+{% endif %}
+{% endblock %}

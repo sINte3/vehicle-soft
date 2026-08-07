@@ -3853,6 +3853,19 @@ DRONE_REPORT_TILES = (
                        'ёнида',
     },
     {
+        # DRONE-ANALYTICS-001/4. Reuses is-primary, the accent of the flight
+        # summary: this is the same flight data laid out by day.
+        'key': 'calendar',
+        'endpoint': 'drones.flight_calendar',
+        'accent': 'is-primary',
+        'title_ru': 'Календарь вылетов',
+        'title_uz': 'Парвозлар тақвими',
+        'subtitle_ru': 'Машины по дням месяца: летала, простаивала '
+                       'или числилась неисправной',
+        'subtitle_uz': 'Ой кунлари бўйича машиналар: учган, бекор турган '
+                       'ёки носоз ҳисобланган',
+    },
+    {
         # DRONE-ANALYTICS-001/3. Reuses is-info, the accent of the works
         # report: this compares that report's hectares against the flights.
         'key': 'reconcile',
@@ -4274,6 +4287,36 @@ def _drone_flight_month_expr():
     return func.strftime('%Y-%m',
                          func.datetime(DroneFlight.started_at,
                                        '%+d minutes' % offset_minutes))
+
+
+def _drone_flight_day_expr():
+    """'YYYY-MM-DD' of a flight in the operators' timezone (UTC+5).
+
+    Derived from DRONE_DISPLAY_UTC_OFFSET in exactly the same way as
+    _drone_flight_month_expr(), and this is where it matters most: THESE
+    DRONES SPRAY AT NIGHT. A flight stored at 2026-04-30 20:30 UTC happened
+    at 01:30 on 1 May for the people who flew it, and a missing or literal
+    offset moves it to the wrong day, the wrong column and the wrong month
+    total. A hardcoded '+5 hours' anywhere near this is the defect, not a
+    shortcut.
+    """
+    offset_minutes = int(DRONE_DISPLAY_UTC_OFFSET.total_seconds() // 60)
+    return func.strftime('%Y-%m-%d',
+                         func.datetime(DroneFlight.started_at,
+                                       '%+d minutes' % offset_minutes))
+
+
+def _drone_flight_months():
+    """Every month that actually has flights, newest first.
+
+    [REASON]: the month picker is built from THIS and not from a calendar
+    range. A picker offering months with no flights invites the reader to
+    conclude a machine stood idle when in fact nothing was ever synced.
+    """
+    month = _drone_flight_month_expr()
+    return [row[0] for row in
+            db.session.query(month).distinct().order_by(month.desc()).all()
+            if row[0]]
 
 
 def _drone_month_bounds(month):
@@ -5180,3 +5223,160 @@ def works_flights_reconcile():
     """Dispatchers' hectares against DJI hectares, month by month."""
     return render_template('drones/works_flights_reconcile.html',
                            data=_drone_works_flights_reconcile_data())
+
+
+# ─── DRONE-ANALYTICS-001/4: flight calendar ──────────────────────────────────
+
+def _drone_status_on_day_map(month_first, month_last):
+    """{unit_id: [(changed_on, status), ...]} sorted, for a day-by-day walk.
+
+    [REASON]: the status IN FORCE on a day is the row with the greatest
+    changed_on <= that day, ties broken by the greatest id -- the same rule
+    _drone_current_status_rows() resolves for «now», and it has to be the same
+    rule or the calendar and the machine card disagree about the same machine.
+    Ties are real: changed_on is a DATE entered by a human, so two corrections
+    typed on one day carry the same date and only the id orders them.
+
+    The whole ledger up to month_last is loaded, not just the month: a machine
+    marked unserviceable in March and untouched since is unserviceable all
+    through April, and a query bounded below by month_first would find no row
+    for it and silently call it serviceable.
+    """
+    rows = (DroneUnitStatusLog.query
+            .filter(DroneUnitStatusLog.changed_on <= month_last)
+            .order_by(DroneUnitStatusLog.changed_on.asc(),
+                      DroneUnitStatusLog.id.asc())
+            .all())
+    by_unit = {}
+    for row in rows:
+        by_unit.setdefault(row.drone_unit_id, []).append(
+            (row.changed_on, row.status))
+    return by_unit
+
+
+def _drone_status_on(history, day):
+    """The status in force on `day`, or None when the machine has no history.
+
+    None is NOT «serviceable»: a machine nobody has ever reported on has an
+    unknown state, and A4.3 turns on the difference -- an unknown state must
+    render as «idle», never as «down».
+    """
+    found = None
+    for changed_on, status in history:
+        if changed_on <= day:
+            found = status
+        else:
+            break
+    return found
+
+
+def _drone_flight_calendar_data(month):
+    """Machines down the rows, days of `month` across the columns.
+
+    [REASON]: THE POINT OF THE SCREEN IS THE DIFFERENCE BETWEEN «down» AND
+    «idle». A day with no flights and an unserviceable machine is explained;
+    a day with no flights and a serviceable machine is not, and unexplained
+    idle days are the money. A calendar that painted every empty cell the
+    same colour would answer a question nobody has.
+    """
+    first, last = _drone_month_bounds(month)
+    days = [first + timedelta(days=offset)
+            for offset in range((last - first).days + 1)]
+
+    day_expr = _drone_flight_day_expr()
+    groups = (db.session.query(
+        DroneFlight.drone_unit_id,
+        day_expr,
+        func.count(DroneFlight.id),
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+    ).filter(day_expr >= first.isoformat())
+        .filter(day_expr <= last.isoformat())
+        .group_by(DroneFlight.drone_unit_id, day_expr).all())
+
+    flown = {}
+    for unit_id, day_text, flights, area in groups:
+        flown.setdefault(unit_id, {})[day_text] = {
+            'flights': flights, 'area': float(area or 0.0)}
+
+    units = DroneUnit.query.order_by(DroneUnit.number).all()
+    history = _drone_status_on_day_map(first, last)
+    # A machine with no flights at all this month still gets a row: an absent
+    # row is indistinguishable from a machine nobody looked at, which is the
+    # failure the sources screen already exists to prevent.
+    rows = []
+    for unit in units:
+        cells = []
+        row_flights = 0
+        row_area = 0.0
+        for day in days:
+            key = day.isoformat()
+            hit = flown.get(unit.id, {}).get(key)
+            if hit:
+                row_flights += hit['flights']
+                row_area += hit['area']
+                cells.append({'day': day, 'state': 'is-flown',
+                              'flights': hit['flights'], 'area': hit['area']})
+            else:
+                status = _drone_status_on(history.get(unit.id, []), day)
+                state = ('is-down' if status == DRONE_STATUS_UNSERVICEABLE
+                         else 'is-idle')
+                cells.append({'day': day, 'state': state, 'flights': 0,
+                              'area': 0.0, 'status': status})
+        rows.append({'unit_id': unit.id, 'number': unit.number,
+                     'cells': cells, 'flights': row_flights,
+                     'area': row_area})
+
+    # The unattributed line: flights whose nickname resolved to no machine.
+    # Same rule as everywhere in this module -- shown, never dropped.
+    unattr_cells = []
+    unattr_flights = 0
+    unattr_area = 0.0
+    for day in days:
+        hit = flown.get(None, {}).get(day.isoformat())
+        if hit:
+            unattr_flights += hit['flights']
+            unattr_area += hit['area']
+            unattr_cells.append({'day': day, 'state': 'is-flown',
+                                 'flights': hit['flights'],
+                                 'area': hit['area']})
+        else:
+            # An unattributed bucket has no serviceability of its own, so its
+            # empty days are blank rather than «idle» or «down».
+            unattr_cells.append({'day': day, 'state': '', 'flights': 0,
+                                 'area': 0.0})
+
+    day_totals = []
+    for index, day in enumerate(days):
+        day_totals.append({
+            'day': day,
+            'flights': sum(r['cells'][index]['flights'] for r in rows)
+            + unattr_cells[index]['flights'],
+            'area': sum(r['cells'][index]['area'] for r in rows)
+            + unattr_cells[index]['area'],
+        })
+
+    return {
+        'month': month,
+        'days': days,
+        'rows': rows,
+        'unattributed': {'cells': unattr_cells, 'flights': unattr_flights,
+                         'area': unattr_area} if unattr_flights else None,
+        'day_totals': day_totals,
+        'total': {
+            'flights': sum(r['flights'] for r in rows) + unattr_flights,
+            'area': sum(r['area'] for r in rows) + unattr_area,
+        },
+    }
+
+
+@drones_bp.route('/reports/calendar')
+@module_required('drones')
+def flight_calendar():
+    """One month, machines down, days across. Flown, idle or down per cell."""
+    months = _drone_flight_months()
+    month = (request.args.get('month') or '').strip()
+    if not re.match(r'^\d{4}-\d{2}$', month or ''):
+        month = months[0] if months else ''
+    data = _drone_flight_calendar_data(month) if month else None
+    return render_template('drones/flight_calendar.html',
+                           data=data, month=month, months=months)
