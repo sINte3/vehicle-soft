@@ -1337,3 +1337,13 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 .vs-cal-cell.is-down { background: var(--vs-danger-bg); }
 .vs-cal-cell.is-idle { background: var(--vs-surface-3); }
 .vs-cal-cell.is-flown { font-variant-numeric: tabular-nums; }
+
+/* DRONE-CUSTOMERS-DEAD-CLASSES-001. customers.html used `is-focus` on a <tr>
+   (line 136) and `vs-check` on a <label> (164, 190); neither had a rule, so
+   the highlighted row was drawn like every other row and the checkbox label
+   had no layout at all. .vs-check-card / .vs-check-grid existed and are
+   different things. Additive, on existing tokens; nothing above is modified. */
+.vs-table tr.is-focus { background: var(--vs-primary-soft); }
+.vs-table tr.is-focus td:first-child { border-left: 3px solid var(--vs-primary); }
+.vs-check { display: inline-flex; align-items: center; gap: 6px; }
+.vs-check input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--vs-primary); }

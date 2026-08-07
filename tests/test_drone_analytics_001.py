@@ -1212,3 +1212,234 @@ class TestA5PrefillLink(unittest.TestCase):
         # X-4 locally: the Uzbek note carries no Latin letters.
         latin = [ch for ch in seen['uz'] if 'a' <= ch.lower() <= 'z']
         self.assertEqual(latin, [], 'Uzbek is Cyrillic only')
+
+
+# ══ A6  the four small defects ═══════════════════════════════════════════════
+
+CSS_PATH = os.path.join(REPO_ROOT, 'static', 'css', 'design-system.css')
+DRONE_TEMPLATES = os.path.join(REPO_ROOT, 'templates', 'drones')
+
+
+def _css_text(path=CSS_PATH):
+    with open(path, encoding='utf-8') as fh:
+        return fh.read()
+
+
+def _defined_classes(css):
+    """Every class name that appears in a selector of the stylesheet."""
+    # Strip comments first: a class named only inside /* ... */ is not defined.
+    stripped = re.sub(r'/\*.*?\*/', ' ', css, flags=re.S)
+    selectors = re.findall(r'([^{}]+)\{', stripped)
+    names = set()
+    for chunk in selectors:
+        if chunk.strip().startswith('@'):
+            continue
+        names.update(re.findall(r'\.([A-Za-z0-9_-]+)', chunk))
+    return names
+
+
+def _used_classes(directory=DRONE_TEMPLATES):
+    """{class name: {template, ...}} for every static class= in the templates.
+
+    Only STATIC class names are collected. A name produced by a Jinja
+    expression is not a literal in the file and cannot be resolved here; those
+    are covered by the render-time assertion in A4.4 instead.
+    """
+    used = {}
+    for name in sorted(os.listdir(directory)):
+        if not name.endswith('.html'):
+            continue
+        with open(os.path.join(directory, name), encoding='utf-8') as fh:
+            source = fh.read()
+        source = re.sub(r'\{#.*?#\}', ' ', source, flags=re.S)
+        for value in re.findall(r'class="([^"]*)"', source):
+            # Drop the Jinja parts; keep the literal words around them.
+            literal = re.sub(r'\{[\{%].*?[\}%]\}', ' ', value, flags=re.S)
+            for token in literal.split():
+                used.setdefault(token, set()).add(name)
+    return used
+
+
+class TestA6TheFourDefects(unittest.TestCase):
+    """6.1 dead classes, 6.2 the summary cell, 6.3 the script, 6.4 vs_num."""
+
+    # ── 6.1 / A6.1 / A6.2 ────────────────────────────────────────────────
+    def test_a6_1_every_class_used_in_a_drones_template_is_defined(self):
+        css = _css_text()
+        defined = _defined_classes(css)
+        used = _used_classes()
+        # Names that are deliberately not CSS: Jinja leftovers and the
+        # bootstrap-era `right` helper defined on th/td, not as a class.
+        missing = sorted(name for name in used
+                         if name not in defined and name != 'right')
+        self.assertEqual(missing, [],
+                         'undefined classes: %r' % missing)
+        # The count of what was actually checked, so «0 missing» cannot be
+        # produced by an empty scan.
+        self.assertGreaterEqual(len(used), 50,
+                                'checked only %d classes' % len(used))
+        self.assertIn('vs-check', used)
+        self.assertIn('is-focus', used)
+        self.assertIn('vs-cal-cell', used)
+
+    def test_a6_2_negative_control_renaming_vs_check_in_the_css(self):
+        """A6.2: rename .vs-check in a COPY of the CSS and the check fails."""
+        css = _css_text()
+        # EVERY selector defining .vs-check must be renamed, not just the
+        # first: .vs-check input[type=checkbox] defines the name too, and
+        # renaming one of the two leaves the check passing on broken CSS --
+        # which is how this negative control failed on its first draft.
+        broken = re.sub(r'\.vs-check\b(?!-)', '.vs-checkX', css)
+        self.assertNotEqual(broken, css, 'the rule must exist to be renamed')
+        self.assertNotIn('.vs-check ', broken)
+        defined = _defined_classes(broken)
+        used = _used_classes()
+        missing = sorted(name for name in used
+                         if name not in defined and name != 'right')
+        self.assertEqual(missing, ['vs-check'],
+                         'the renamed class must surface as missing')
+        with self.assertRaises(AssertionError) as caught:
+            self.assertEqual(missing, [], 'undefined classes: %r' % missing)
+        self.assertIn('undefined classes', str(caught.exception))
+
+    def test_a6_1_the_focus_row_differs_from_its_neighbour(self):
+        """Rendered, not read: the highlighted row carries the class."""
+        reset_db()
+        user_id = create_admin('a61admin')
+        with app.app_context():
+            first = DroneCustomer(name='Дўстлик ФХ')
+            second = DroneCustomer(name='Пешку АМТ')
+            db.session.add_all([first, second])
+            db.session.commit()
+            focus_id = first.id
+        with app.test_client() as client:
+            login(client, user_id)
+            html = client.get(
+                '/drones/customers?focus=%d' % focus_id).get_data(as_text=True)
+        self.assertIn('<tr class="is-focus">', html)
+        self.assertEqual(html.count('<tr class="is-focus">'), 1)
+        css = _css_text()
+        self.assertIn('.vs-table tr.is-focus', css)
+
+    # ── 6.2 / A6.3 ───────────────────────────────────────────────────────
+    def test_a6_3_summary_sheet_blank_versus_recorded_zero(self):
+        """A6.3: all-NULL amount is an EMPTY cell; a recorded 0 prints 0."""
+        from openpyxl import load_workbook
+        reset_db()
+        user_id = create_admin('a63admin')
+        with app.app_context():
+            customer = DroneCustomer(name='Пешку АМТ')
+            db.session.add(customer)
+            db.session.flush()
+            for _ in range(3):
+                db.session.add(_work(customer.id, 5.0, None, None,
+                                     date(2026, 4, 10)))
+            db.session.commit()
+
+        def summary_cells():
+            with app.test_client() as client:
+                login(client, user_id)
+                resp = client.get('/drones/works/reports.xlsx')
+                self.assertEqual(resp.status_code, 200)
+                wb = load_workbook(io.BytesIO(resp.data))
+            ws = wb.worksheets[0]
+            return {row[0]: row[1]
+                    for row in ws.iter_rows(min_row=2, values_only=True)}
+
+        cells = summary_cells()
+        amount_label = [k for k in cells if k in ('Сумма',)][0]
+        self.assertIsNone(cells[amount_label],
+                          'every amount NULL must give an EMPTY cell, not 0')
+
+        # Now record a zero on one row. A recorded zero and an unrecorded
+        # value are different statements, and the cell must say so.
+        with app.app_context():
+            row = DroneWork.query.first()
+            row.amount = 0.0
+            db.session.commit()
+        cells = summary_cells()
+        self.assertEqual(cells[amount_label], 0.0,
+                         'a RECORDED zero must print 0')
+
+    def test_a6_2_totals_carry_the_three_counters(self):
+        reset_db()
+        create_admin('a62admin')
+        with app.app_context():
+            customer = DroneCustomer(name='Пешку АМТ')
+            db.session.add(customer)
+            db.session.flush()
+            db.session.add(_work(customer.id, 5.0, None, None,
+                                 date(2026, 4, 10)))
+            db.session.add(_work(customer.id, 5.0, 100.0, 50.0,
+                                 date(2026, 4, 11)))
+            db.session.commit()
+            totals = drones._drone_works_totals([])
+        self.assertEqual(totals['no_amount'], 1)
+        self.assertEqual(totals['no_received'], 1)
+        self.assertEqual(totals['no_other_costs'], 2)
+        # The sums are UNCHANGED -- every cut reconciles against them.
+        self.assertEqual(totals['jobs'], 2)
+        self.assertAlmostEqual(totals['amount'], 100.0, delta=0.005)
+
+    # ── 6.3 / A6.4 ───────────────────────────────────────────────────────
+    def test_a6_4_the_amount_script_guards_a_typed_value(self):
+        """A6.4: simulate the script's guard over the same sequence.
+
+        The browser is not driven here. What is asserted is the GUARD, which
+        is the whole of the defect risk: the script may write the field only
+        when it is empty or holds a value the script itself wrote.
+        """
+        ours = {}
+
+        def recalc(current, area, price):
+            if current != '' and current not in ours:
+                return current           # typed by hand -- never touched
+            nxt = str(round(area * price))
+            ours[nxt] = True
+            return nxt
+
+        # Type 123, then change the price: the field must still read 123.
+        self.assertEqual(recalc('123', 10.0, 200000.0), '123')
+        # Clear it, change the price: it recomputes.
+        computed = recalc('', 10.0, 200000.0)
+        self.assertEqual(computed, '2000000')
+        # Change the price again over the script's OWN value: it recomputes.
+        self.assertEqual(recalc(computed, 10.0, 85633.0), '856330')
+        # And a hand-typed value that merely looks numeric is still safe.
+        self.assertEqual(recalc('76458', 10.0, 200000.0), '76458')
+
+    def test_a6_4_script_is_present_and_reuses_the_existing_guard(self):
+        with open(os.path.join(DRONE_TEMPLATES, 'works.html'),
+                  encoding='utf-8') as fh:
+            source = fh.read()
+        self.assertIn('oursAmount', source)
+        self.assertIn("getElementById('addWAmount')", source)
+        self.assertIn("getElementById('addWArea')", source)
+        # No tojson anywhere in an attribute of this template (X-3, locally).
+        self.assertNotIn('|tojson', source)
+        # The out-of-scope decision is recorded rather than left looking
+        # forgotten.
+        self.assertIn('В ЭТОТ ИНКРЕМЕНТ НЕ', source)
+
+    # ── 6.4 / A6.5 ───────────────────────────────────────────────────────
+    def test_a6_5_grouping_threshold(self):
+        cases = {28832: '28' + NBSP + '832', 5977: '5977', 2026: '2026'}
+        for value, expected in cases.items():
+            rendered = drones.drone_group_number(value)
+            self.assertEqual(rendered, expected,
+                             '%d -> %r' % (value, rendered))
+
+    def test_a6_5_counts_carry_the_filter_in_the_three_templates(self):
+        offenders = []
+        for name in ('summary.html', 'sources.html', 'reattach.html'):
+            with open(os.path.join(DRONE_TEMPLATES, name),
+                      encoding='utf-8') as fh:
+                source = fh.read()
+            # A DOTTED path only. `t_flights` is a translated column header,
+            # not a count, and matching it would demand a filter on a label.
+            for match in re.findall(
+                    r'\{\{\s*([A-Za-z_][\w]*(?:\.[\w]+)+)\s*\}\}', source):
+                if re.search(r'(flights|jobs)', match):
+                    offenders.append('%s: %s' % (name, match))
+        self.assertEqual(offenders, [],
+                         'counts still printed raw: %r' % offenders)

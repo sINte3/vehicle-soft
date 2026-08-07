@@ -254,7 +254,51 @@
     if (!next) { return; }              // 'unknown' — leave the field alone
     var current = String(price.value || '').trim();
     if (current === '' || ours[current]) { price.value = next; }
+    recalcAmount();
   });
+
+  /* DRONE-WORKS-AMOUNT-CALC-001. «Сумма» = «Цена за га» × «Площадь, га» по
+     мере набора. Гвардия ТА ЖЕ, что у цены выше, и намеренно та же, а не
+     вторая своя: скрипт перетирает поле, только если оно пустое или в нём
+     стоит нетронутым значение, которое он сам туда и положил. Набранную
+     руками сумму не трогаем никогда — по этой ведомости выставляют счета, и
+     разовый платёж вводится суммой при пустой цене за гектар.
+
+     Формы построчного редактирования ниже по странице В ЭТОТ ИНКРЕМЕНТ НЕ
+     ВХОДЯТ. Это решение, а не забывчивость: там поле уже заполнено
+     сохранённым значением, «наше» от «набранного» неотличимо, и та же
+     гвардия там не работает — ей нужен свой разговор с владельцем. */
+  var area = document.getElementById('addWArea');
+  var amount = document.getElementById('addWAmount');
+
+  function parseNum(text) {
+    var clean = String(text || '').replace(/ /g, '').replace(/\s/g, '')
+      .replace(',', '.');
+    if (clean === '') { return null; }
+    var value = Number(clean);
+    return isFinite(value) ? value : null;
+  }
+
+  // Everything the amount script is allowed to overwrite: its own output.
+  var oursAmount = {};
+
+  function recalcAmount() {
+    if (!area || !amount) { return; }
+    var current = String(amount.value || '').trim();
+    if (current !== '' && !oursAmount[current]) { return; }
+    var a = parseNum(area.value);
+    var p = parseNum(price.value);
+    if (a === null || p === null) { return; }
+    // Целые сумы: копеек в этих ведомостях нет.
+    var next = String(Math.round(a * p));
+    amount.value = next;
+    oursAmount[next] = true;
+  }
+
+  if (area && amount) {
+    area.addEventListener('input', recalcAmount);
+    price.addEventListener('input', recalcAmount);
+  }
 })();
 </script>
 {% endif %}

@@ -2977,12 +2977,36 @@ def _drone_work_subdivisions():
 
 
 def _drone_works_totals(conds):
+    """The grand total, with the «not recorded» counters beside the sums.
+
+    [REASON]: DRONE-SUMMARY-ZERO-CELL-001. Each sum is coalesced to 0.0, which
+    is correct for the total itself and wrong for the cell that prints it: a
+    filter whose every row carries a NULL «Сумма» produced 0 on the «Сводка»
+    sheet of both work workbooks, while every other sheet in the same file
+    printed an empty cell for the same fact. One workbook stated «charged
+    nothing» and «never written down» in two different ways, and the 0 is the
+    copy that gets believed. The counters answer that; THE SUMS ARE UNCHANGED,
+    because every cut reconciles against them.
+
+    [REASON]: DRONE-RECEIVED-BLANK-IS-ZERO-001. no_received is COMPUTED AND
+    DELIBERATELY NOT RENDERED, exactly as in _drone_work_cut(). On 2026-08-07
+    the owner decided that a blank «олинмаган пуллар» cell means NOTHING WAS
+    COLLECTED, not «nobody wrote it down», so «Получено» prints 0 and never a
+    dash. The counter stays because it is a real measurement costing one SUM
+    over a column already being scanned, and because the decision is the
+    owner's to reverse -- if he does, the number is already here and only the
+    rendering changes back. Do not drop it as dead weight; see the same note
+    in _drone_work_cut() and _drone_work_bucket_row().
+    """
     row = db.session.query(
         func.count(DroneWork.id),
         func.coalesce(func.sum(DroneWork.area_ha), 0.0),
         func.coalesce(func.sum(DroneWork.amount), 0.0),
         func.coalesce(func.sum(DroneWork.received_amount), 0.0),
         func.coalesce(func.sum(DroneWork.other_costs), 0.0),
+        func.sum(case((DroneWork.amount.is_(None), 1), else_=0)),
+        func.sum(case((DroneWork.received_amount.is_(None), 1), else_=0)),
+        func.sum(case((DroneWork.other_costs.is_(None), 1), else_=0)),
     ).filter(*conds).one()
     return {
         'jobs': row[0] or 0,
@@ -2991,6 +3015,9 @@ def _drone_works_totals(conds):
         'received': float(row[3] or 0.0),
         'other_costs': float(row[4] or 0.0),
         'outstanding': float(row[2] or 0.0) - float(row[3] or 0.0),
+        'no_amount': int(row[5] or 0),
+        'no_received': int(row[6] or 0),
+        'no_other_costs': int(row[7] or 0),
     }
 
 
@@ -4040,11 +4067,19 @@ def _drone_works_filter_sheet(wb, st, filters, totals):
          filters['subdivision'] or unbounded, None),
         (_drone_t('Ишлар', 'Работ'), totals['jobs'], None),
         (_drone_t('Гектар', 'Гектаров'), totals['area'], '0.00'),
-        (_drone_t('Сумма', 'Сумма'), totals['amount'], '0.00'),
+        # DRONE-SUMMARY-ZERO-CELL-001: an EMPTY cell when every contributing
+        # row was NULL, through the same helper the cut sheets use, so the
+        # «Сводка» sheet can no longer disagree with the sheets beside it.
+        # «Получено» is NOT blanked -- owner's decision of 2026-08-07, see
+        # _drone_works_totals(); it passes its own counter as a literal 0.
+        (_drone_t('Сумма', 'Сумма'),
+         _drone_money_or_blank(totals, 'amount', 'no_amount'), '0.00'),
         (_drone_t('Кирим қилинган', 'Получено'), totals['received'], '0.00'),
-        (_drone_t('Олинмаган', 'Не получено'), totals['outstanding'], '0.00'),
+        (_drone_t('Олинмаган', 'Не получено'),
+         _drone_money_or_blank(totals, 'outstanding', 'no_amount'), '0.00'),
         (_drone_t('Бошқа харажатлар', 'Прочие расходы'),
-         totals['other_costs'], '0.00'),
+         _drone_money_or_blank(totals, 'other_costs', 'no_other_costs'),
+         '0.00'),
     ]
     for label, value, fmt in rows:
         ws.append([label, _drone_xlsx_safe(value)])

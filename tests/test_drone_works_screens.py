@@ -860,7 +860,12 @@ def debt_tables(body):
 
 
 class DroneReportsLauncherTests(unittest.TestCase):
-    """/drones/reports -- five tiles, no data, no filters, no export."""
+    """/drones/reports -- nine tiles, no data, no filters, no export.
+
+    Was five. DRONE-ANALYTICS-001 added four reports; the census below is
+    updated rather than relaxed, because its whole purpose is that a tile
+    cannot appear, move or change accent without somebody saying so here.
+    """
 
     @classmethod
     def setUpClass(cls):
@@ -872,18 +877,27 @@ class DroneReportsLauncherTests(unittest.TestCase):
         self.client = app.test_client()
         login(self.client, self.admin)
 
-    def test_the_launcher_opens_with_five_tiles_in_order(self):
+    def test_the_launcher_opens_with_nine_tiles_in_order(self):
         import re
         response = self.client.get('/drones/reports')
         self.assertEqual(response.status_code, 200)
         body = response.data.decode('utf-8')
         tiles = re.findall(
             r'<a class="vs-card vs-report-tile ([\w-]+)" href="([^"]+)"', body)
+        # DRONE-ANALYTICS-001: four tiles added. Five accents existed and all
+        # five were in use, so three of the four REUSE an accent that says
+        # what they are next to -- calendar beside the flight summary,
+        # reconcile beside the works report, aging beside the debts -- and
+        # only spray brings the sixth, is-purple, on tokens already defined.
         self.assertEqual(tiles, [
             ('is-primary', '/drones/summary'),
             ('is-info', '/drones/works/reports'),
             ('is-warning', '/drones/works/debts'),
             ('is-success', '/drones/works/assignment-hints'),
+            ('is-primary', '/drones/reports/calendar'),
+            ('is-info', '/drones/reports/reconcile'),
+            ('is-warning', '/drones/works/debts/aging'),
+            ('is-purple', '/drones/reports/spray'),
             ('is-danger', '/drones/sources'),
         ])
 
@@ -906,7 +920,10 @@ class DroneReportsLauncherTests(unittest.TestCase):
         """UI-FONT-LOCAL-001: no CDN, no icon font, no remote asset."""
         body = self.client.get('/drones/reports').data.decode('utf-8')
         tiles = body.split('vs-report-tiles')[1]
-        self.assertEqual(tiles.count('<svg'), 5)
+        # One inline <svg> per tile, nine tiles. This is also X-6: a tile key
+        # with no icon branch renders an EMPTY icon box and nothing fails, so
+        # the count is the only thing that catches it.
+        self.assertEqual(tiles.count('<svg'), 9)
         for marker in ('http://', 'https://', '<img', '@font-face', 'url('):
             self.assertNotIn(marker, tiles, marker)
 
@@ -1895,10 +1912,12 @@ class DroneNumberPlacementTests(unittest.TestCase):
     """WHERE the filter is applied -- the half a unit test usually misses."""
 
     TEMPLATES = ('_drones_nav.html', '_money_cell.html', 'customers.html',
-                 'list.html', 'operator_card.html', 'operators.html',
-                 'reattach.html', 'reports.html', 'sources.html',
-                 'summary.html', 'unit_card.html', 'units.html', 'works.html',
+                 'flight_calendar.html', 'list.html', 'operator_card.html',
+                 'operators.html', 'reattach.html', 'reports.html',
+                 'sources.html', 'spray_usage.html', 'summary.html',
+                 'unit_card.html', 'units.html', 'works.html',
                  'works_assignment_hints.html', 'works_debts.html',
+                 'works_debts_aging.html', 'works_flights_reconcile.html',
                  'works_reports.html')
 
     def source(self, name):
@@ -1940,7 +1959,11 @@ class DroneNumberPlacementTests(unittest.TestCase):
                                      '%s: %s option %r'
                                      % (name, match.group(1), option))
         # The scan must have found the selects, or it proved nothing.
-        self.assertEqual(seen, 4, 'expected 4 period selects, saw %d' % seen)
+        # DRONE-ANALYTICS-001 brought two more: the period picker on the debt
+        # aging page and the month picker on the flight calendar. Both are
+        # covered by the assertions above; the count is raised so the scan
+        # still cannot pass by finding nothing.
+        self.assertEqual(seen, 6, 'expected 6 period selects, saw %d' % seen)
 
     def test_the_period_scan_would_notice_a_filter(self):
         """Negative control for the scan above: plant one, see it caught."""
@@ -2014,18 +2037,39 @@ class DroneNumberPlacementTests(unittest.TestCase):
         # DroneDebtsSummaryCardTests.test_the_separator_really_is_the_non_
         # breaking_space does the same for the cards. This census only pins
         # WHERE the filter is written.
+        #
+        # DRONE-ANALYTICS-001 raised the census twice over, in two ways that
+        # must not be confused with each other:
+        #
+        #   UI-NUMBER-FORMAT-002 applied the filter to counts of FLIGHTS and
+        #   JOBS, which were printed raw everywhere. summary.html 26 -> 42,
+        #   sources.html 4 -> 7, reattach.html 6 -> 12. Nothing else in those
+        #   three templates changed. Counts of MACHINES (sources: silent,
+        #   never), of DAYS (silent_days), machine numbers, ids and periods
+        #   deliberately did NOT get the filter -- the task names flights and
+        #   jobs, and a filter on a year or an id is the defect, not the fix.
+        #
+        #   Four new screens brought their own call sites: spray_usage 28,
+        #   works_flights_reconcile 14, works_debts_aging 15, flight_calendar
+        #   9. These are new numbers on new pages, not a change to old ones.
+        #   works_flights_reconcile deliberately has NO filter on its two
+        #   percentage cells and none on «Покрытие»: a percentage never gets
+        #   the grouping filter, and that rule is asserted separately by
+        #   test_no_percentage_carries_the_filter.
         expected = {
             '_money_cell.html': 1,
-            'customers.html': 2, 'list.html': 3, 'reattach.html': 6,
-            'sources.html': 4, 'summary.html': 26, 'works.html': 9,
+            'customers.html': 2, 'flight_calendar.html': 9, 'list.html': 3,
+            'reattach.html': 12, 'sources.html': 7, 'spray_usage.html': 28,
+            'summary.html': 42, 'works.html': 9,
             'works_assignment_hints.html': 9, 'works_debts.html': 6,
-            'works_reports.html': 9,
+            'works_debts_aging.html': 15,
+            'works_flights_reconcile.html': 14, 'works_reports.html': 9,
         }
         actual = {name: self.source(name).count('|vs_num')
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 75)
+        self.assertEqual(sum(actual.values()), 166)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):
@@ -2199,8 +2243,12 @@ class DroneExcelUntouchedTests(unittest.TestCase):
                 self.assertNotIn('vs_num', body, node.name)
                 self.assertNotIn('drone_group_number', body, node.name)
                 self.assertNotIn('DRONE_GROUP_SEPARATOR', body, node.name)
+        # DRONE-ANALYTICS-001 added two exports; both are covered by the
+        # assertions in the loop above, and the roster is updated so a third
+        # one cannot appear without passing through this check.
         self.assertEqual(sorted(names),
-                         ['flights_xlsx', 'summary_xlsx', 'works_debt_xlsx',
+                         ['flights_xlsx', 'spray_usage_xlsx', 'summary_xlsx',
+                          'works_debt_xlsx', 'works_debts_aging_xlsx',
                           'works_reports_xlsx', 'works_xlsx'])
 
 

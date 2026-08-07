@@ -24,7 +24,7 @@
 <div class="vs-table-wrap vs-mb">
   <div class="vs-card-header">
     <span class="vs-card-title">{{ 'Распознаётся картой ников' if is_ru else 'Никлар харитаси бўйича танилади' }}</span>
-    <span class="vs-soft" style="font-size:12px;">{{ 'Вылетов' if is_ru else 'Парвозлар' }}: {{ totals.resolvable_flights }} · {{ '%.2f'|format(totals.resolvable_area)|vs_num }} {{ 'га' if is_ru else 'га' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'Вылетов' if is_ru else 'Парвозлар' }}: {{ totals.resolvable_flights|vs_num }} · {{ '%.2f'|format(totals.resolvable_area)|vs_num }} {{ 'га' if is_ru else 'га' }}</span>
   </div>
   {% if resolvable %}
   <div class="vs-table-scroll">
@@ -41,14 +41,14 @@
       {% for r in resolvable %}
       <tr>
         <td><span class="vs-badge">{{ r.nickname if r.nickname else ('— пусто —' if is_ru else '— бўш —') }}</span></td>
-        <td class="right">{{ r.flights }}</td>
+        <td class="right">{{ r.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
         <td style="font-weight:700;">№ {{ r.unit_number }}</td>
       </tr>
       {% endfor %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
-        <td class="right">{{ totals.resolvable_flights }}</td>
+        <td class="right">{{ totals.resolvable_flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(totals.resolvable_area)|vs_num }}</td>
         <td>—</td>
       </tr>
@@ -74,7 +74,7 @@
 <div class="vs-table-wrap vs-mb">
   <div class="vs-card-header">
     <span class="vs-card-title">{{ 'Не распознаётся' if is_ru else 'Танилмайди' }}</span>
-    <span class="vs-soft" style="font-size:12px;">{{ 'Вылетов' if is_ru else 'Парвозлар' }}: {{ totals.unresolvable_flights }} · {{ '%.2f'|format(totals.unresolvable_area)|vs_num }} {{ 'га' if is_ru else 'га' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'Вылетов' if is_ru else 'Парвозлар' }}: {{ totals.unresolvable_flights|vs_num }} · {{ '%.2f'|format(totals.unresolvable_area)|vs_num }} {{ 'га' if is_ru else 'га' }}</span>
   </div>
   {% if unresolvable %}
   <div class="vs-alert is-info">{{ 'Для этих написаний в карте ников нет подходящей записи, либо нормализованное совпадение указывает более чем на одну машину. Какой машине принадлежит написание — решение владельца: заведите ник на странице машин и вернитесь сюда.' if is_ru else 'Бу ёзилишлар учун никлар харитасида мос ёзув йўқ ёки нормаллаштирилган мослик бирдан ортиқ машинага ишора қилади. Ёзилиш қайси машинага тегишли эканини эгаси ҳал қилади: никни машиналар саҳифасида киритинг ва бу ерга қайтинг.' }}</div>
@@ -92,14 +92,14 @@
       {% for r in unresolvable %}
       <tr>
         <td><span class="vs-badge vs-badge-warning">{{ r.nickname if r.nickname else ('— пусто —' if is_ru else '— бўш —') }}</span></td>
-        <td class="right">{{ r.flights }}</td>
+        <td class="right">{{ r.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
         <td class="vs-muted">{{ 'не распознаётся' if is_ru else 'танилмайди' }}</td>
       </tr>
       {% endfor %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
-        <td class="right">{{ totals.unresolvable_flights }}</td>
+        <td class="right">{{ totals.unresolvable_flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(totals.unresolvable_area)|vs_num }}</td>
         <td>—</td>
       </tr>

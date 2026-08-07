@@ -64,7 +64,7 @@
 <div class="vs-stat-grid is-money vs-mb">
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Вылетов' if is_ru else 'Парвозлар' }}</div>
-    <div class="vs-stat-value is-num">{{ data.totals.flights }}</div>
+    <div class="vs-stat-value is-num">{{ data.totals.flights|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Гектаров' if is_ru else 'Гектар' }}</div>
@@ -84,7 +84,7 @@
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Вылетов с нулевой площадью' if is_ru else 'Ноль майдонли парвозлар' }}</div>
-    <div class="vs-stat-value is-num">{{ data.totals.zero_area }}</div>
+    <div class="vs-stat-value is-num">{{ data.totals.zero_area|vs_num }}</div>
   </div>
 </div>
 
@@ -131,7 +131,7 @@
            TypeError на разборе вызова, то есть 500 вместо страницы. Слияние
            через dict() оставляет приоритет за машиной строки. #}
         <td style="font-weight:700;"><a href="{{ url_for('drones.index', **dict(link_args, unit_id=r.unit_id)) }}">№ {{ r.number }}</a></td>
-        <td class="right">{{ r.flights }}</td>
+        <td class="right">{{ r.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
         <td class="right">{% if r.ha_per_hour is not none %}{{ '%.2f'|format(r.ha_per_hour)|vs_num }}{% else %}—{% endif %}</td>
@@ -141,7 +141,7 @@
       {% if data.by_machine.unattributed %}
       <tr>
         <td><span class="vs-badge vs-badge-warning">{{ 'Не распознано' if is_ru else 'Аниқланмаган' }}</span></td>
-        <td class="right">{{ data.by_machine.unattributed.flights }}</td>
+        <td class="right">{{ data.by_machine.unattributed.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(data.by_machine.unattributed.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(data.by_machine.unattributed.share) }}</td>
         <td class="right">{% if data.by_machine.unattributed.ha_per_hour is not none %}{{ '%.2f'|format(data.by_machine.unattributed.ha_per_hour)|vs_num }}{% else %}—{% endif %}</td>
@@ -150,7 +150,7 @@
       {% endif %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
-        <td class="right">{{ data.by_machine.total.flights }}</td>
+        <td class="right">{{ data.by_machine.total.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(data.by_machine.total.area)|vs_num }}</td>
         <td class="right">100.0</td>
         <td class="right">{% if data.by_machine.total.ha_per_hour is not none %}{{ '%.2f'|format(data.by_machine.total.ha_per_hour)|vs_num }}{% else %}—{% endif %}</td>
@@ -190,7 +190,7 @@
       {% for r in data.by_operator.rows %}
       <tr>
         <td><a href="{{ url_for('drones.operator_card', op_id=r.operator_id) }}">{{ r.name }}</a></td>
-        <td class="right">{{ r.flights }}</td>
+        <td class="right">{{ r.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
       </tr>
@@ -198,7 +198,7 @@
       {% if data.by_operator.undetermined.flights %}
       <tr>
         <td><span class="vs-badge vs-badge-warning">{{ t_op_none }}</span></td>
-        <td class="right">{{ data.by_operator.undetermined.flights }}</td>
+        <td class="right">{{ data.by_operator.undetermined.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(data.by_operator.undetermined.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(data.by_operator.undetermined.share) }}</td>
       </tr>
@@ -206,14 +206,14 @@
       {% if data.by_operator.multiple.flights %}
       <tr>
         <td><span class="vs-badge vs-badge-warning">{{ t_op_many }}</span></td>
-        <td class="right">{{ data.by_operator.multiple.flights }}</td>
+        <td class="right">{{ data.by_operator.multiple.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(data.by_operator.multiple.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(data.by_operator.multiple.share) }}</td>
       </tr>
       {% endif %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
-        <td class="right">{{ data.by_operator.total.flights }}</td>
+        <td class="right">{{ data.by_operator.total.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(data.by_operator.total.area)|vs_num }}</td>
         <td class="right">100.0</td>
       </tr>
@@ -255,7 +255,7 @@
         {# Ссылка несёт СЫРОЕ значение — фильтр сравнивает его; подписью
            служит перевод. #}
         <td><a href="{{ url_for('drones.index', **dict(link_args, region=r.region)) }}">{{ r.label or r.region }}</a></td>
-        <td class="right">{{ r.flights }}</td>
+        <td class="right">{{ r.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
       </tr>
@@ -263,14 +263,14 @@
       {% if data.by_region.undetermined %}
       <tr>
         <td><span class="vs-badge vs-badge-warning">{{ 'Область не определена' if is_ru else 'Вилоят аниқланмаган' }}</span></td>
-        <td class="right">{{ data.by_region.undetermined.flights }}</td>
+        <td class="right">{{ data.by_region.undetermined.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(data.by_region.undetermined.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(data.by_region.undetermined.share) }}</td>
       </tr>
       {% endif %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
-        <td class="right">{{ data.by_region.total.flights }}</td>
+        <td class="right">{{ data.by_region.total.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(data.by_region.total.area)|vs_num }}</td>
         <td class="right">100.0</td>
       </tr>
@@ -307,7 +307,7 @@
       {% for r in data.by_usage.rows %}
       <tr>
         <td>{{ r.label }}</td>
-        <td class="right">{{ r.flights }}</td>
+        <td class="right">{{ r.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
         <td class="right">{% if r.spray_liters is not none %}{{ '%.2f'|format(r.spray_liters)|vs_num }}{% else %}—{% endif %}</td>
@@ -316,7 +316,7 @@
       {% endfor %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
-        <td class="right">{{ data.by_usage.total.flights }}</td>
+        <td class="right">{{ data.by_usage.total.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(data.by_usage.total.area)|vs_num }}</td>
         <td class="right">100.0</td>
         <td class="right">—</td>
@@ -354,14 +354,14 @@
       {% for r in data.by_month.rows %}
       <tr>
         <td style="font-weight:600;">{{ r.month }}</td>
-        <td class="right">{{ r.flights }}</td>
+        <td class="right">{{ r.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
         <td class="right vs-muted">{{ '%.1f'|format(r.share) }}</td>
       </tr>
       {% endfor %}
       <tr style="font-weight:700;">
         <td>{{ t_total }}</td>
-        <td class="right">{{ data.by_month.total.flights }}</td>
+        <td class="right">{{ data.by_month.total.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(data.by_month.total.area)|vs_num }}</td>
         <td class="right">100.0</td>
       </tr>
