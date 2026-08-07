@@ -76,3 +76,8 @@ logs/
 schema.txt
 
 drone_verify_007_*.txt
+
+# docs/archive/ -- our archive, not a build artefact. The Archive/ rule above
+# matches it and would hide anything newly added there, without a word.
+!docs/archive/
+!docs/archive/**
