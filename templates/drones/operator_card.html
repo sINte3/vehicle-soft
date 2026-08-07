@@ -81,6 +81,15 @@
     <span class="vs-card-title">{{ 'Назначить на машину' if is_ru else 'Машинага бириктириш' }}</span>
   </div>
   <div class="vs-card-body">
+    {# DRONE-ANALYTICS-001/5: значения могли прийти ссылкой с экрана подсказок.
+       Предупреждение стоит НАД формой и обязательно: подставленное — это
+       догадка отчёта, а не факт, и апрельская сверка уже дала один уверенный
+       неверный ответ на операторе, сменившем машину 13-го. Проверять по
+       ведомостям и править — работа человека; форма ничего не сохраняет сама.
+       «Дата по» намеренно осталась пустой. #}
+    {% if prefilled %}
+    <div class="vs-alert is-warning vs-mb">{{ 'Значения подставлены из подсказки по назначениям — это догадка отчёта, а не факт. Сверьте машину и дату с ведомостями и поправьте, прежде чем сохранять. «Дата по» намеренно оставлена пустой: подставленный конец месяца скрыл бы смену машины в середине месяца.' if is_ru else 'Қийматлар бириктиришлар бўйича маслаҳатдан олиб қўйилган — бу ҳисоботнинг тахмини, факт эмас. Сақлашдан олдин машина ва санани ведомостлар билан солиштиринг ва тузатинг. «Сана гача» атайлаб бўш қолдирилган: қўйиб берилган ой охири машинанинг ой ўртасида алмашганини яширар эди.' }}</div>
+    {% endif %}
     <form method="post" action="{{ url_for('drones.operator_assignment_add', op_id=operator.id) }}" class="vs-form-row">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="vs-field" style="min-width:200px;">
@@ -88,13 +97,13 @@
         <select name="drone_unit_id" id="addAsgUnit" class="vs-select" required>
           <option value="">{{ '— выберите машину —' if is_ru else '— машинани танланг —' }}</option>
           {% for u in units %}
-          <option value="{{ u.id }}">№ {{ u.number }}{% if u.hardware_id %} — {{ u.hardware_id }}{% endif %}</option>
+          <option value="{{ u.id }}" {% if prefill_unit_id == u.id %}selected{% endif %}>№ {{ u.number }}{% if u.hardware_id %} — {{ u.hardware_id }}{% endif %}</option>
           {% endfor %}
         </select>
       </div>
       <div class="vs-field" style="width:170px;">
         <label class="vs-label" for="addAsgFrom">{{ 'Дата с *' if is_ru else 'Сана дан *' }}</label>
-        <input type="date" name="date_from" id="addAsgFrom" class="vs-input" required>
+        <input type="date" name="date_from" id="addAsgFrom" class="vs-input" value="{{ prefill_from }}" required>
       </div>
       <div class="vs-field" style="width:170px;">
         <label class="vs-label" for="addAsgTo">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>

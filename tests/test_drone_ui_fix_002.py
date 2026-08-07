@@ -45,6 +45,23 @@ MONEY_TEMPLATES = (
     'templates/drones/summary.html',
 )
 
+# [REASON]: DRONE-ANALYTICS-001. Screens that use `vs-stat-value is-num`
+# WITHOUT being one of the six-card money grids above. The distinction is
+# real and must not be blurred by widening MONEY_TEMPLATES: that tuple means
+# «a .vs-stat-grid.is-money whose six values all opt out of word-wrapping»,
+# and test_a2_six_cards_per_screen pins the six. These four carry a plain
+# .vs-stat-grid with four to six cards; they need the is-num opt-out on their
+# numbers for the same reason, and nothing else about them is the same.
+#
+# They are listed rather than exempted by directory, so a screen belonging to
+# ANOTHER TRACK still cannot pick up these classes unnoticed -- which is the
+# whole point of the scan below.
+DRONES_PLAIN_NUM_TEMPLATES = (
+    'templates/drones/spray_usage.html',
+    'templates/drones/works_flights_reconcile.html',
+    'templates/drones/flight_calendar.html',
+)
+
 # [REASON]: this line is the rule the fix opts OUT of, and it must survive the
 # fix unchanged. It exists so a long uppercase RU/UZ label wraps inside its
 # card instead of widening the whole document; deleting it to stop numbers
@@ -213,13 +230,40 @@ class TestA2TemplatesCarryTheClasses(unittest.TestCase):
                     continue
                 path = os.path.join(root, name)
                 rel = os.path.relpath(path, REPO_ROOT).replace('\\', '/')
-                if rel in MONEY_TEMPLATES:
+                if rel in MONEY_TEMPLATES or rel in DRONES_PLAIN_NUM_TEMPLATES:
                     continue
                 with open(path, encoding='utf-8') as fh:
                     source = fh.read()
                 if 'vs-stat-grid is-money' in source or 'vs-stat-value is-num' in source:
                     offenders.append(rel)
         self.assertEqual([], offenders)
+        # The whitelist must name only files that exist, or a rename empties
+        # the scan silently and this test starts proving nothing.
+        for rel in MONEY_TEMPLATES + DRONES_PLAIN_NUM_TEMPLATES:
+            self.assertTrue(os.path.exists(os.path.join(REPO_ROOT, rel)), rel)
+
+    def test_a2_the_plain_num_screens_really_carry_is_num(self):
+        """The other half: a screen on the whitelist that stopped using the
+        class would sit there forever as a stale exemption.
+
+        [REASON]: this asserts that is-num is USED, not that every card has
+        it. A .vs-stat-value holding «2026-05» is a period, not a number, and
+        the opt-out that stops a long figure word-wrapping has nothing to do
+        with it -- sources.html has printed plain non-numeric stat values
+        since DRONE-FLEET-001. Demanding is-num on every card would push the
+        class onto strings to satisfy a test.
+        """
+        for rel in DRONES_PLAIN_NUM_TEMPLATES:
+            with self.subTest(template=rel):
+                parsed = parse_template(rel)
+                self.assertEqual(
+                    0, parsed.money_grids,
+                    '%s is a plain grid; move it to MONEY_TEMPLATES' % rel)
+                numeric = [v for v in parsed.values
+                           if 'is-num' in v['classes']]
+                self.assertGreater(
+                    len(numeric), 0,
+                    '%s is whitelisted but no longer uses is-num' % rel)
 
 
 # ---------------------------------------------------------------------------

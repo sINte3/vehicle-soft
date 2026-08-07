@@ -1,0 +1,117 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Дроны — ведомости против вылетов' if is_ru else 'Дронлар — ведомостлар ва парвозлар' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+{# DRONE-ANALYTICS-001/3. Гектары ведомостей против гектаров DJI по месяцам.
+
+   Экспорта в Excel здесь НЕТ, и это решение, а не упущение: это экран
+   наблюдения, его число меняется по мере ввода ведомостей, а выгрузка —
+   документ, который цитируют неделями позже. Причина записана в [REASON]
+   у _drone_works_flights_reconcile_data().
+
+   Две стороны меряют РАЗНЫЕ совокупности и совпадать не обязаны: ведомости
+   покрывают только оплачиваемую работу, вылеты — всё, что летало. Поэтому
+   месяц с вылетами и без ведомостей — это «Ведомости не заведены», а не
+   −100 %: это утверждение о книгах, а не измерение расхождения. Процент и
+   цвет получают только месяцы, где обе стороны ненулевые.
+
+   ЦВЕТ БЕРЁТСЯ С КОЛОНКИ «ПОКРЫТИЕ», а не со знаковой разницы. Знаковая
+   разница работает там, где обе стороны полны (апрель 2026: −0.68 %), и
+   отказывает ровно там, где отчёт нужнее всего: июнь 2026 даёт −99.08 %, а
+   июль −98.83 %, и это не расхождение сверки, а почти полное отсутствие
+   ведомостей. В колонке процентов эти два случая неразличимы. Покрытие
+   90–110 % — без цвета, вне полосы — жёлтый, ниже 50 % или выше 200 % —
+   красный. Знаковая разница в гектарах остаётся: её проверяют руками. #}
+{% set t_total = 'Итого' if is_ru else 'Жами' %}
+{% set t_empty = 'Ни ведомостей, ни вылетов' if is_ru else 'На ведомост, на парвоз' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Ведомости против вылетов' if is_ru else 'Ведомостлар ва парвозлар' }}</div>
+    <div class="vs-hero-sub">{{ 'Гектары из ведомостей диспетчеров рядом с гектарами из полётных данных DJI, по месяцам.' if is_ru else 'Диспетчерлар ведомостларидаги гектарлар DJI парвоз маълумотларидаги гектарлар ёнида, ойлар бўйича.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('drones.reports') }}" class="vs-btn">{{ 'Все отчёты' if is_ru else 'Барча ҳисоботлар' }}</a>
+  </div>
+</div>
+
+<div class="vs-alert is-info vs-mb">
+  {{ 'Две стороны меряют разное и совпадать не обязаны. Ведомости — это только оплачиваемая работа; вылеты — всё, что машина пролетела, включая землю самого холдинга и облёты. Поэтому разница в плюс-минус несколько процентов — это норма, а не ошибка. Цвет строки берётся с колонки «Покрытие» — это гектары ведомостей в процентах от гектаров вылетов. 90–110 % — без цвета, вне полосы — жёлтым, ниже 50 % или выше 200 % — красным. Знаковая разница для этого не годится: месяц, где ведомостей почти нет, даёт −99 %, и в колонке процентов он неотличим от настоящего расхождения. Смотреть стоит на месяцы, где покрытие далеко от ста процентов или где ведомостей нет вовсе. Процент считается от гектаров вылетов и показывается только там, где обе стороны ненулевые: в месяце без ведомостей он был бы −100 %, а это утверждение не о гектарах, а о том, что книги ещё не завели. Выгрузки в Excel у этого экрана нет намеренно: число меняется по мере ввода ведомостей, а выгрузку цитируют неделями позже.' if is_ru else 'Икки томон турли нарсани ўлчайди ва мос келиши шарт эмас. Ведомостлар — фақат ҳақ тўланадиган иш; парвозлар — машина учиб ўтган ҳамма нарса, холдингнинг ўз ери ва синов учишлари билан бирга. Шунинг учун бир неча фоиз фарқ — меъёр, хато эмас. Қатор ранги «Қамров» устунидан олинади — бу ведомост гектарларининг парвоз гектарларига нисбатан фоизи. 90–110 % — рангсиз, полосадан ташқарида — сариқ, 50 % дан паст ёки 200 % дан юқори — қизил. Ишорали фарқ бунга ярамайди: ведомости деярли йўқ ой −99 % беради ва фоиз устунида у ҳақиқий фарқдан ажралмайди. Қамрови юз фоиздан узоқ ёки ведомости умуман йўқ ойларга қараш керак. Фоиз парвоз гектарларидан ҳисобланади ва фақат иккала томон ҳам нолдан фарқли бўлган жойда кўрсатилади: ведомостсиз ойда у −100 % бўлар эди, бу эса гектар ҳақида эмас, китоблар ҳали очилмагани ҳақидаги гап. Бу экранда Excel юклаб олиш атайлаб йўқ: сон ведомостлар киритилиши билан ўзгаради, юклаб олинган файлни эса ҳафталар ўтиб иқтибос келтиришади.' }}
+</div>
+
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Месяцев' if is_ru else 'Ойлар' }}</div>
+    <div class="vs-stat-value is-num">{{ data.months|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Гектары ведомостей' if is_ru else 'Ведомост гектарлари' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(data.total.ledger_area)|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Гектары вылетов' if is_ru else 'Парвоз гектарлари' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(data.total.flight_area)|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Разница' if is_ru else 'Фарқ' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(data.total.diff)|vs_num }}</div>
+  </div>
+</div>
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'По месяцам' if is_ru else 'Ойлар бўйича' }}</span>
+  </div>
+  {% if data.rows %}
+  <div class="vs-table-scroll">
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Месяц' if is_ru else 'Ой' }}</th>
+        <th class="right">{{ 'Работ' if is_ru else 'Ишлар' }}</th>
+        <th class="right">{{ 'Гектары ведомостей' if is_ru else 'Ведомост гектарлари' }}</th>
+        <th class="right">{{ 'Вылеты' if is_ru else 'Парвозлар' }}</th>
+        <th class="right">{{ 'Гектары вылетов' if is_ru else 'Парвоз гектарлари' }}</th>
+        <th class="right">{{ 'Разница' if is_ru else 'Фарқ' }}</th>
+        <th class="right">{{ 'Разница, %' if is_ru else 'Фарқ, %' }}</th>
+        {# Цвет строки берётся ИМЕННО ОТСЮДА, а не из знаковой разницы:
+           −99.08 % за июнь — это не расхождение сверки, а почти полное
+           отсутствие ведомостей, и в колонке процентов эти два случая
+           неразличимы. Покрытие их разводит. #}
+        <th class="right">{{ 'Покрытие' if is_ru else 'Қамров' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in data.rows %}
+      <tr{% if r.flag %} class="{{ r.flag }}"{% endif %}>
+        <td>{{ r.month }}</td>
+        <td class="right">{{ r.ledger_jobs|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(r.ledger_area)|vs_num }}</td>
+        <td class="right">{{ r.flights|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(r.flight_area)|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(r.diff)|vs_num }}</td>
+        {# Процент ИЛИ фраза — никогда оба и никогда −100 %. #}
+        <td class="right">{% if r.percent is none %}<span class="vs-muted">{{ r.note }}</span>{% else %}{{ '%.2f'|format(r.percent) }}{% endif %}</td>
+        <td class="right">{% if r.coverage is none %}<span class="vs-muted">—</span>{% else %}<b>{{ '%.1f'|format(r.coverage) }} %</b>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      <tr style="font-weight:700;">
+        <td>{{ t_total }}</td>
+        <td class="right">{{ data.total.ledger_jobs|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(data.total.ledger_area)|vs_num }}</td>
+        <td class="right">{{ data.total.flights|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(data.total.flight_area)|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(data.total.diff)|vs_num }}</td>
+        <td class="right">{% if data.total.percent is none %}—{% else %}{{ '%.2f'|format(data.total.percent) }}{% endif %}</td>
+        <td class="right">{% if data.total.coverage is none %}—{% else %}{{ '%.1f'|format(data.total.coverage) }} %{% endif %}</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty"><div class="vs-empty-title">{{ t_empty }}</div></div>
+  {% endif %}
+</div>
+{% endblock %}

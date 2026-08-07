@@ -1323,3 +1323,27 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 .vs-report-tile.is-danger  .vs-report-tile-icon { color: var(--vs-danger);  background: var(--vs-danger-bg); }
 @media (max-width: 1200px) { .vs-report-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 720px)  { .vs-report-tiles { grid-template-columns: 1fr; } }
+
+/* DRONE-ANALYTICS-001: additive only. Nothing above this line is modified.
+   The sixth report tile accent. --vs-purple / --vs-purple-bg were defined at
+   line 53 and used by no tile; the five existing accents were all taken, so a
+   sixth report either repeated a colour or brought this one rule. */
+.vs-report-tile.is-purple .vs-report-tile-icon { color: var(--vs-purple); background: var(--vs-purple-bg); }
+
+/* DRONE-ANALYTICS-001/4: flight calendar cells. Additive, on existing tokens.
+   The three states are the point of the screen: a day that flew, a day the
+   machine was down (explained), and a day it stood idle while serviceable
+   (unexplained). Painting the last two alike would answer nothing. */
+.vs-cal-cell.is-down { background: var(--vs-danger-bg); }
+.vs-cal-cell.is-idle { background: var(--vs-surface-3); }
+.vs-cal-cell.is-flown { font-variant-numeric: tabular-nums; }
+
+/* DRONE-CUSTOMERS-DEAD-CLASSES-001. customers.html used `is-focus` on a <tr>
+   (line 136) and `vs-check` on a <label> (164, 190); neither had a rule, so
+   the highlighted row was drawn like every other row and the checkbox label
+   had no layout at all. .vs-check-card / .vs-check-grid existed and are
+   different things. Additive, on existing tokens; nothing above is modified. */
+.vs-table tr.is-focus { background: var(--vs-primary-soft); }
+.vs-table tr.is-focus td:first-child { border-left: 3px solid var(--vs-primary); }
+.vs-check { display: inline-flex; align-items: center; gap: 6px; }
+.vs-check input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--vs-primary); }

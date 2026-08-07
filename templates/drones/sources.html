@@ -37,7 +37,7 @@
 <div class="vs-stat-grid vs-mb">
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Вылетов за период' if is_ru else 'Даврдаги парвозлар' }}</div>
-    <div class="vs-stat-value">{{ totals.flights }}</div>
+    <div class="vs-stat-value">{{ totals.flights|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Гектаров за период' if is_ru else 'Даврдаги гектарлар' }}</div>
@@ -95,7 +95,7 @@
         </td>
         {# Ноль показан нулём, а не пустой ячейкой: пустая читается как
            «не смотрели», а это ровно то, что страница обязана различать. #}
-        <td class="right{% if r.flights == 0 %} vs-muted{% endif %}">{{ r.flights }}</td>
+        <td class="right{% if r.flights == 0 %} vs-muted{% endif %}">{{ r.flights|vs_num }}</td>
         <td class="right{% if r.flights == 0 %} vs-muted{% endif %}">{{ '%.2f'|format(r.area)|vs_num }}</td>
         <td>
           {% if r.status == 'serviceable' %}
@@ -120,7 +120,7 @@
       <tr style="font-weight:700;">
         <td>{{ 'Итого' if is_ru else 'Жами' }}</td>
         <td colspan="2"></td>
-        <td class="right">{{ totals.flights }}</td>
+        <td class="right">{{ totals.flights|vs_num }}</td>
         <td class="right">{{ '%.2f'|format(totals.area)|vs_num }}</td>
         <td></td>
       </tr>

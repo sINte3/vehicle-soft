@@ -1579,12 +1579,33 @@ def operators_add():
 @drones_bp.route('/operators/<int:op_id>')
 @module_required('drones')
 def operator_card(op_id):
-    """One pilot: his details and the full history of his assignments."""
+    """One pilot: his details and the full history of his assignments.
+
+    [REASON]: DRONE-ANALYTICS-001/5. The three prefill_* arguments carry a
+    SUGGESTION from the assignment-hints screen into this form and do nothing
+    else. They are validated here and dropped on the floor when they do not
+    resolve -- an invalid or stale bookmark must render an EMPTY form and a
+    200, never a 500 and never a plausible-looking wrong value. Nothing is
+    written: the human still reads the values, corrects them and presses Save,
+    and operator_assignment_add() is untouched.
+
+    prefill_to is deliberately absent from the contract. See the note on the
+    link in _drone_assignment_hints().
+    """
     operator = DroneOperator.query.get(op_id)
     if operator is None:
         abort(404)
     assignments = _drone_assignments_by_operator([op_id]).get(op_id, [])
     today = _drone_today_local()
+
+    prefill_unit = request.args.get('prefill_unit', type=int)
+    unit = DroneUnit.query.get(prefill_unit) if prefill_unit else None
+    prefill_from = _drone_parse_date(request.args.get('prefill_from'))
+    # Both halves must resolve before anything is offered. Half a suggestion
+    # -- a machine with no date, or a date with no machine -- is a form the
+    # reader has to finish without knowing where the value came from.
+    prefilled = bool(unit and prefill_from)
+
     return render_template(
         'drones/operator_card.html',
         operator=operator,
@@ -1593,6 +1614,9 @@ def operator_card(op_id):
                        for a in assignments},
         units=DroneUnit.query.order_by(DroneUnit.number).all(),
         today=today,
+        prefilled=prefilled,
+        prefill_unit_id=unit.id if prefilled else None,
+        prefill_from=prefill_from.isoformat() if prefilled else '',
     )
 
 
@@ -2953,12 +2977,36 @@ def _drone_work_subdivisions():
 
 
 def _drone_works_totals(conds):
+    """The grand total, with the «not recorded» counters beside the sums.
+
+    [REASON]: DRONE-SUMMARY-ZERO-CELL-001. Each sum is coalesced to 0.0, which
+    is correct for the total itself and wrong for the cell that prints it: a
+    filter whose every row carries a NULL «Сумма» produced 0 on the «Сводка»
+    sheet of both work workbooks, while every other sheet in the same file
+    printed an empty cell for the same fact. One workbook stated «charged
+    nothing» and «never written down» in two different ways, and the 0 is the
+    copy that gets believed. The counters answer that; THE SUMS ARE UNCHANGED,
+    because every cut reconciles against them.
+
+    [REASON]: DRONE-RECEIVED-BLANK-IS-ZERO-001. no_received is COMPUTED AND
+    DELIBERATELY NOT RENDERED, exactly as in _drone_work_cut(). On 2026-08-07
+    the owner decided that a blank «олинмаган пуллар» cell means NOTHING WAS
+    COLLECTED, not «nobody wrote it down», so «Получено» prints 0 and never a
+    dash. The counter stays because it is a real measurement costing one SUM
+    over a column already being scanned, and because the decision is the
+    owner's to reverse -- if he does, the number is already here and only the
+    rendering changes back. Do not drop it as dead weight; see the same note
+    in _drone_work_cut() and _drone_work_bucket_row().
+    """
     row = db.session.query(
         func.count(DroneWork.id),
         func.coalesce(func.sum(DroneWork.area_ha), 0.0),
         func.coalesce(func.sum(DroneWork.amount), 0.0),
         func.coalesce(func.sum(DroneWork.received_amount), 0.0),
         func.coalesce(func.sum(DroneWork.other_costs), 0.0),
+        func.sum(case((DroneWork.amount.is_(None), 1), else_=0)),
+        func.sum(case((DroneWork.received_amount.is_(None), 1), else_=0)),
+        func.sum(case((DroneWork.other_costs.is_(None), 1), else_=0)),
     ).filter(*conds).one()
     return {
         'jobs': row[0] or 0,
@@ -2967,6 +3015,9 @@ def _drone_works_totals(conds):
         'received': float(row[3] or 0.0),
         'other_costs': float(row[4] or 0.0),
         'outstanding': float(row[2] or 0.0) - float(row[3] or 0.0),
+        'no_amount': int(row[5] or 0),
+        'no_received': int(row[6] or 0),
+        'no_other_costs': int(row[7] or 0),
     }
 
 
@@ -3853,6 +3904,61 @@ DRONE_REPORT_TILES = (
                        'ёнида',
     },
     {
+        # DRONE-ANALYTICS-001/4. Reuses is-primary, the accent of the flight
+        # summary: this is the same flight data laid out by day.
+        'key': 'calendar',
+        'endpoint': 'drones.flight_calendar',
+        'accent': 'is-primary',
+        'title_ru': 'Календарь вылетов',
+        'title_uz': 'Парвозлар тақвими',
+        'subtitle_ru': 'Машины по дням месяца: летала, простаивала '
+                       'или числилась неисправной',
+        'subtitle_uz': 'Ой кунлари бўйича машиналар: учган, бекор турган '
+                       'ёки носоз ҳисобланган',
+    },
+    {
+        # DRONE-ANALYTICS-001/3. Reuses is-info, the accent of the works
+        # report: this compares that report's hectares against the flights.
+        'key': 'reconcile',
+        'endpoint': 'drones.works_flights_reconcile',
+        'accent': 'is-info',
+        'title_ru': 'Ведомости против вылетов',
+        'title_uz': 'Ведомостлар ва парвозлар',
+        'subtitle_ru': 'Гектары ведомостей рядом с гектарами DJI, '
+                       'по месяцам',
+        'subtitle_uz': 'Ведомост гектарлари DJI гектарлари ёнида, '
+                       'ойлар бўйича',
+    },
+    {
+        # DRONE-ANALYTICS-001/2. Reuses is-warning, the accent of «Долги»:
+        # this is that report read by age, and a shared colour says so.
+        'key': 'debts-aging',
+        'endpoint': 'drones.works_debts_aging',
+        'accent': 'is-warning',
+        'title_ru': 'Возраст долга',
+        'title_uz': 'Қарз ёши',
+        'subtitle_ru': 'Сколько денег и как давно не получено, '
+                       'и кому звонить первым',
+        'subtitle_uz': 'Қанча пул ва қанча вақтдан бери олинмаган, '
+                       'ва биринчи кимга қўнғироқ қилиш керак',
+    },
+    {
+        # DRONE-ANALYTICS-001/1. The only tile on a NEW accent: five accents
+        # existed and all five were already in use, so a sixth report either
+        # repeats a colour or brings one rule. --vs-purple / --vs-purple-bg
+        # were already defined (design-system.css line 53) and unused by any
+        # tile; the rule that binds them is additive and modifies nothing.
+        'key': 'spray',
+        'endpoint': 'drones.spray_usage',
+        'accent': 'is-purple',
+        'title_ru': 'Расход рабочего раствора',
+        'title_uz': 'Иш эритмаси сарфи',
+        'subtitle_ru': 'Литры на гектар по машинам и месяцам, '
+                       'с коридором вокруг медианы',
+        'subtitle_uz': 'Машина ва ойлар бўйича гектарига литр, '
+                       'медиана атрофида йўлак билан',
+    },
+    {
         'key': 'sources',
         'endpoint': 'drones.sources',
         'accent': 'is-danger',
@@ -3961,11 +4067,19 @@ def _drone_works_filter_sheet(wb, st, filters, totals):
          filters['subdivision'] or unbounded, None),
         (_drone_t('Ишлар', 'Работ'), totals['jobs'], None),
         (_drone_t('Гектар', 'Гектаров'), totals['area'], '0.00'),
-        (_drone_t('Сумма', 'Сумма'), totals['amount'], '0.00'),
+        # DRONE-SUMMARY-ZERO-CELL-001: an EMPTY cell when every contributing
+        # row was NULL, through the same helper the cut sheets use, so the
+        # «Сводка» sheet can no longer disagree with the sheets beside it.
+        # «Получено» is NOT blanked -- owner's decision of 2026-08-07, see
+        # _drone_works_totals(); it passes its own counter as a literal 0.
+        (_drone_t('Сумма', 'Сумма'),
+         _drone_money_or_blank(totals, 'amount', 'no_amount'), '0.00'),
         (_drone_t('Кирим қилинган', 'Получено'), totals['received'], '0.00'),
-        (_drone_t('Олинмаган', 'Не получено'), totals['outstanding'], '0.00'),
+        (_drone_t('Олинмаган', 'Не получено'),
+         _drone_money_or_blank(totals, 'outstanding', 'no_amount'), '0.00'),
         (_drone_t('Бошқа харажатлар', 'Прочие расходы'),
-         totals['other_costs'], '0.00'),
+         _drone_money_or_blank(totals, 'other_costs', 'no_other_costs'),
+         '0.00'),
     ]
     for label, value, fmt in rows:
         ws.append([label, _drone_xlsx_safe(value)])
@@ -4234,6 +4348,36 @@ def _drone_flight_month_expr():
                                        '%+d minutes' % offset_minutes))
 
 
+def _drone_flight_day_expr():
+    """'YYYY-MM-DD' of a flight in the operators' timezone (UTC+5).
+
+    Derived from DRONE_DISPLAY_UTC_OFFSET in exactly the same way as
+    _drone_flight_month_expr(), and this is where it matters most: THESE
+    DRONES SPRAY AT NIGHT. A flight stored at 2026-04-30 20:30 UTC happened
+    at 01:30 on 1 May for the people who flew it, and a missing or literal
+    offset moves it to the wrong day, the wrong column and the wrong month
+    total. A hardcoded '+5 hours' anywhere near this is the defect, not a
+    shortcut.
+    """
+    offset_minutes = int(DRONE_DISPLAY_UTC_OFFSET.total_seconds() // 60)
+    return func.strftime('%Y-%m-%d',
+                         func.datetime(DroneFlight.started_at,
+                                       '%+d minutes' % offset_minutes))
+
+
+def _drone_flight_months():
+    """Every month that actually has flights, newest first.
+
+    [REASON]: the month picker is built from THIS and not from a calendar
+    range. A picker offering months with no flights invites the reader to
+    conclude a machine stood idle when in fact nothing was ever synced.
+    """
+    month = _drone_flight_month_expr()
+    return [row[0] for row in
+            db.session.query(month).distinct().order_by(month.desc()).all()
+            if row[0]]
+
+
 def _drone_month_bounds(month):
     """('YYYY-MM-01', last day) for an assignment-overlap test."""
     year, mon = int(month[:4]), int(month[5:7])
@@ -4273,6 +4417,21 @@ def _drone_assignment_hints(month):
     which is precisely why a close match is evidence and not proof, and why
     the human decides. A screen that could write an assignment would turn that
     one wrong answer into a silently wrong report.
+
+    [REASON]: DRONE-ANALYTICS-001/5, owner's decision of 2026-08-07. THE
+    PARAGRAPH ABOVE IS NOT REVERSED and the screen still creates nothing.
+    What changed is that each suggested pairing now carries a LINK to the
+    operator's card which pre-fills the existing «add assignment» form
+    through GET arguments. The link transports values; it does not write one.
+    There is no POST route on this screen, the human still reads the
+    pre-filled values, corrects them and presses Save, and the validation in
+    _drone_assignment_form_values() is untouched and still where it was.
+
+    prefill_from is the FIRST DAY OF THE HINT'S MONTH. prefill_to is NOT
+    pre-filled and no default is invented: the April reconciliation turned on
+    an operator who changed machines on the 13th, and a pre-filled month end
+    would quietly manufacture twelve tidy monthly assignments a year, each of
+    them wrong in the same invisible way.
     """
     work_month = _drone_work_month_expr()
     ledger = (db.session.query(
@@ -4372,3 +4531,926 @@ def works_assignment_hints():
         month=month,
         periods=periods,
     )
+
+
+# ─── DRONE-ANALYTICS-001/1: working-solution consumption ─────────────────────
+
+# [REASON]: the corridor half-width, in per cent of the median. 30 % is a
+# starting point the owner can move with ?band=, NOT a measured tolerance --
+# nobody has yet established what spread is normal for these treatments. It is
+# named and printed on the page in words for exactly that reason: a threshold
+# whose value is invisible gets believed.
+DRONE_SPRAY_BAND_DEFAULT = 30
+DRONE_SPRAY_BAND_MIN = 5
+DRONE_SPRAY_BAND_MAX = 100
+
+# [REASON]: a rate computed on a denominator near zero is arithmetic, not
+# evidence. Measured on staging 2026-08-07: machine No 9 flew 25 flights
+# totalling 0.25 ha and its litres-per-hectare comes out at 141.91 -- that is
+# not a machine over-dosing five-fold, it is 35 litres divided by a quarter of
+# a hectare. Grouped by machine PER MONTH, as this report is, such cells are
+# common rather than exceptional: production 2026-01 holds 12 flights and
+# 0.19 ha for the whole fleet. A machine-month below this area still SHOWS its
+# rate -- hiding a number because it is inconvenient is the other failure --
+# but it does not vote in the median and is never coloured.
+DRONE_SPRAY_MIN_AREA_HA = 10.0
+DRONE_SPRAY_MIN_AREA_MAX = 1000.0
+
+
+def _drone_spray_band(args):
+    """The corridor half-width in per cent: 5..100, anything else -> 30."""
+    raw = args.get('band', type=int)
+    if raw is None or raw < DRONE_SPRAY_BAND_MIN or raw > DRONE_SPRAY_BAND_MAX:
+        return DRONE_SPRAY_BAND_DEFAULT
+    return raw
+
+
+def _drone_spray_min_area(args):
+    """The judging threshold in hectares: 0..1000, anything else -> 10.0.
+
+    0 is LEGAL and means «judge everything». It is how the owner inspects
+    exactly the rows this rule keeps out of the median, so it must not be
+    folded into the «anything else» branch: a falsy 0 that silently became
+    10.0 would make the escape hatch look broken rather than absent.
+    """
+    raw = args.get('min_area', type=float)
+    if raw is None or raw < 0.0 or raw > DRONE_SPRAY_MIN_AREA_MAX:
+        return DRONE_SPRAY_MIN_AREA_HA
+    return raw
+
+
+def _drone_median(values):
+    """Median of a list of floats, or None when there is nothing to take."""
+    ordered = sorted(values)
+    count = len(ordered)
+    if not count:
+        return None
+    middle = count // 2
+    if count % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2.0
+
+
+def _drone_spray_usage_data(conds, band, min_area=DRONE_SPRAY_MIN_AREA_HA):
+    """Litres per hectare by machine x month, with the corridor around it.
+
+    [REASON]: THE RATE IS COMPUTED OVER SPRAY FLIGHTS ONLY (usage_type == 0)
+    and NOT over every flight. _drone_summary_data's liters_per_ha divides
+    total litres by TOTAL area, seeding included, which depresses the figure
+    for any machine that also sowed -- the machine looks under-dosed when it
+    was simply doing another job. The area of everything that is not a spray
+    flight is carried in its own column so the machine's total area still
+    reconciles with the grand total and the reader can see where it went.
+
+    [REASON]: usage_type is NULLABLE, and `usage_type == 0` is NULL -- not
+    true -- for those rows, so a flight whose type was never recorded lands in
+    the OTHER column. That is deliberate: an unknown job type is not evidence
+    of spraying, and quietly counting it as spray would move litres and area
+    into a rate that is supposed to describe one treatment. MEASURED
+    2026-08-07: sowing is 63 flights of 28 832 (17.13 ha of 28 835.34) and
+    touches only machines No 10 and No 13, moving their rate by 0.25 and 0.07
+    l/ha. So this filter is CORRECTNESS, not a large correction -- it is what
+    makes the column mean one thing, and it does not explain the spread.
+
+    [REASON]: DRONE-ZERO-VS-UNKNOWN-001 again, on a third column, and READ
+    THIS BEFORE DELETING THE BRANCH AS UNREACHABLE. The NULL-litres branch is
+    DEFENSIVE, NOT DESCRIPTIVE. Measured on 2026-08-07: the number of spray
+    flights with spray_liters IS NULL is ZERO across 28 832 production
+    flights and ZERO across 10 409 on staging. The branch exists because the
+    column is NULLABLE and one collector failure is all it takes: without it,
+    SUM over an all-NULL group is 0.0 after the coalesce and the cell reads
+    0.00 l/ha -- «this machine sprayed nothing over 40 hectares», a false
+    sentence, which the corridor then paints red into a false accusation. A
+    gap must not become a fabricated zero.
+    It is NOT the explanation of the eleven-fold spread. That spread is real
+    data: machine No 8 genuinely reports 3.54 l/ha over 2 384.30 ha, with no
+    NULLs and no sowing involved. The counter that decides the branch is
+    no_liters, in the same shape _drone_work_cut() uses for no_amount, and
+    the only thing that exercises it today is the fixture in A1.3 -- which
+    makes that negative control the whole of this branch's coverage, and
+    therefore more necessary rather than less.
+    """
+    month_expr = _drone_flight_month_expr()
+    # usage_type == 0 is spray; see the second [REASON] above for NULL.
+    is_spray = (DroneFlight.usage_type == 0)
+
+    groups = (db.session.query(
+        DroneFlight.drone_unit_id,
+        month_expr,
+        func.count(DroneFlight.id),
+        func.coalesce(
+            func.sum(case((is_spray, DroneFlight.area_ha), else_=0.0)), 0.0),
+        func.coalesce(
+            func.sum(case((is_spray, 0.0), else_=DroneFlight.area_ha)), 0.0),
+        # SUM skips NULLs by itself, so this is litres over the spray flights
+        # that HAVE a figure -- which is why no_liters below is needed to tell
+        # «nothing recorded» from «recorded as nothing».
+        func.coalesce(
+            func.sum(case((is_spray, DroneFlight.spray_liters), else_=None)),
+            0.0),
+        func.sum(case((is_spray, 1), else_=0)),
+        func.sum(case((and_(is_spray, DroneFlight.spray_liters.is_(None)), 1),
+                      else_=0)),
+    ).filter(*conds).group_by(DroneFlight.drone_unit_id, month_expr).all())
+
+    unit_numbers = {u.id: u.number for u in DroneUnit.query.all()}
+    rows = []
+    for (unit_id, month, flights, area_spray, area_other, liters,
+         spray_flights, no_liters) in groups:
+        area_spray = float(area_spray or 0.0)
+        area_other = float(area_other or 0.0)
+        liters = float(liters or 0.0)
+        spray_flights = int(spray_flights or 0)
+        no_liters = int(no_liters or 0)
+        # The whole point of the counter: all-NULL is unknown, not zero.
+        if spray_flights and spray_flights > no_liters:
+            rate = _drone_rate(liters, area_spray)
+        else:
+            rate = None
+        rows.append({
+            'unit_id': unit_id,
+            'number': unit_numbers.get(unit_id),
+            'month': month,
+            'flights': flights,
+            'spray_flights': spray_flights,
+            'other_flights': flights - spray_flights,
+            'area_spray': area_spray,
+            'area_other': area_other,
+            'area_total': area_spray + area_other,
+            'liters': liters,
+            'no_liters': no_liters,
+            'rate': rate,
+        })
+
+    # Machine number ascending, NULL machine last, newest month first inside
+    # each machine: the row a reader looks for is this month's, and the
+    # unattributed line must stay visible rather than sort into the middle of
+    # the fleet. Two passes, relying on sort stability, so neither key has to
+    # encode the other's direction.
+    rows.sort(key=lambda r: r['month'] or '', reverse=True)
+    rows.sort(key=lambda r: (r['number'] is None, r['number'] or 0))
+
+    # [REASON]: WHICH ROWS ARE JUDGED, and it is not «all of them».
+    #
+    #   * a rate that could not be computed cannot be compared;
+    #   * a machine-month under min_area hectares has a denominator too small
+    #     to mean anything -- see DRONE_SPRAY_MIN_AREA_HA;
+    #   * THE UNATTRIBUTED LINE NEVER VOTES. It aggregates some forty nickname
+    #     spellings across an unknown set of machines, so its rate is a mixture
+    #     of an unknown number of treatments. A report that judges machines
+    #     must not take its standard from a bucket of unknowns, and must not
+    #     accuse that bucket either.
+    #
+    # Every excluded row STILL SHOWS ITS RATE and carries a label saying why
+    # it is uncoloured. Hiding the number would be the opposite failure.
+    for row in rows:
+        if row['rate'] is None:
+            row['judged'] = False
+            row['note'] = ''
+        elif row['unit_id'] is None:
+            row['judged'] = False
+            row['note'] = _drone_t('аниқланмаган', 'не распознано')
+        elif row['area_spray'] < min_area:
+            row['judged'] = False
+            row['note'] = _drone_t('майдон кам', 'мало площади')
+        else:
+            row['judged'] = True
+            row['note'] = ''
+
+    median = _drone_median([r['rate'] for r in rows if r['judged']])
+    low = high = low2 = high2 = None
+    if median is not None:
+        low = median * (1.0 - band / 100.0)
+        high = median * (1.0 + band / 100.0)
+        low2 = median * (1.0 - 2.0 * band / 100.0)
+        high2 = median * (1.0 + 2.0 * band / 100.0)
+    for row in rows:
+        # A cell with no rate is never coloured: an em dash means «nobody
+        # wrote it down», and painting it red would accuse the machine of a
+        # dose nobody measured. Nor is a row that did not vote in the median.
+        row['flag'] = ''
+        if median is not None and row['judged']:
+            if row['rate'] < low2 or row['rate'] > high2:
+                row['flag'] = 'is-danger-row'
+            elif row['rate'] < low or row['rate'] > high:
+                row['flag'] = 'is-warning-row'
+
+    grand = (db.session.query(
+        func.count(DroneFlight.id),
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+    ).filter(*conds).one())
+    total = {
+        'flights': sum(r['flights'] for r in rows),
+        'spray_flights': sum(r['spray_flights'] for r in rows),
+        'other_flights': sum(r['other_flights'] for r in rows),
+        'area_spray': sum(r['area_spray'] for r in rows),
+        'area_other': sum(r['area_other'] for r in rows),
+        'liters': sum(r['liters'] for r in rows),
+        'no_liters': sum(r['no_liters'] for r in rows),
+    }
+    total['area_total'] = total['area_spray'] + total['area_other']
+    total['rate'] = (_drone_rate(total['liters'], total['area_spray'])
+                     if total['spray_flights'] > total['no_liters'] else None)
+    # A1.2: area_spray + area_other over every row against the grand total of
+    # the same filter. Shown on the page as the other cuts show it, never
+    # hidden -- a breakdown that quietly loses hectares is the defect this
+    # module has already paid for once.
+    reconciled = (total['flights'] == (grand[0] or 0)
+                  and abs(total['area_total'] - float(grand[1] or 0.0)) < 0.005)
+    return {
+        'rows': rows,
+        'total': total,
+        'grand': {'flights': grand[0] or 0, 'area': float(grand[1] or 0.0)},
+        'reconciled': reconciled,
+        'band': band,
+        'min_area': min_area,
+        'median': median,
+        'low': low,
+        'high': high,
+        'low2': low2,
+        'high2': high2,
+        # Cells that VOTED, not cells that have a rate: the sentence on the
+        # page says «the median was taken over N pairs» and must name the
+        # number that was actually used.
+        'rated_cells': sum(1 for r in rows if r['judged']),
+        'unjudged_cells': sum(1 for r in rows
+                              if r['rate'] is not None and not r['judged']),
+    }
+
+
+@drones_bp.route('/reports/spray')
+@module_required('drones')
+def spray_usage():
+    """Litres per hectare by machine and month, against a median corridor.
+
+    [REASON]: across the fleet the figure runs from 3.54 to 38.53 l/ha against
+    a mean of 25.98 -- an eleven-fold spread nobody looks at. Three
+    explanations demand three different actions (a different treatment; an
+    under-filled tank the customer paid for; a broken flow meter) and nothing
+    in the module tells them apart. This screen does not decide which it is;
+    it makes the spread visible per machine-month so somebody can go and ask.
+    """
+    filters = _drone_filters_from_args(request.args,
+                                       default_current_month=False)
+    band = _drone_spray_band(request.args)
+    min_area = _drone_spray_min_area(request.args)
+    data = _drone_spray_usage_data(_drone_flight_conditions(filters), band,
+                                   min_area)
+    link_args = _drone_link_args(filters)
+    if band != DRONE_SPRAY_BAND_DEFAULT:
+        link_args['band'] = band
+    # Compared to the constant, not to a falsy test: min_area=0 is a real
+    # choice and has to survive into the Excel link.
+    if min_area != DRONE_SPRAY_MIN_AREA_HA:
+        link_args['min_area'] = min_area
+    return render_template(
+        'drones/spray_usage.html',
+        data=data,
+        filters=filters,
+        link_args=link_args,
+        units=DroneUnit.query.order_by(DroneUnit.number).all(),
+    )
+
+
+@drones_bp.route('/reports/spray.xlsx')
+@module_required('drones')
+def spray_usage_xlsx():
+    """The same table, two sheets: the numbers and the filters that made them.
+
+    [REASON]: a cell that is an em dash on screen is an EMPTY cell here, never
+    0 -- the same rule _drone_money_or_blank() applies to the works workbooks,
+    for the same reason: the workbook is the copy that gets believed, and a 0
+    in a litres-per-hectare column is an accusation.
+    """
+    from openpyxl import Workbook
+
+    filters = _drone_filters_from_args(request.args,
+                                       default_current_month=False)
+    band = _drone_spray_band(request.args)
+    min_area = _drone_spray_min_area(request.args)
+    data = _drone_spray_usage_data(_drone_flight_conditions(filters), band,
+                                   min_area)
+    st = _drone_xlsx_styler()
+    unbounded = _drone_t('чекланмаган', 'не ограничен')
+    label_unattr = _drone_t('Аниқланмаган', 'Не распознано')
+    label_total = _drone_t('Жами', 'Итого')
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = _drone_t('Жамланма', 'Сводка')
+    ws.append([_drone_t('Кўрсаткич', 'Показатель'),
+               _drone_t('Қиймат', 'Значение')])
+    for label, value in (
+        (_drone_t('Давр: бошланиши', 'Период: с'),
+         filters['date_from_s'] or unbounded),
+        (_drone_t('Давр: тугаши', 'Период: по'),
+         filters['date_to_s'] or unbounded),
+        (_drone_t('Йўлак, %', 'Коридор, %'), band),
+        (_drone_t('Баҳолаш чегараси, га', 'Порог оценки, га'), min_area),
+        (_drone_t('Медиана, л/га', 'Медиана, л/га'),
+         data['median'] if data['median'] is not None else ''),
+        (_drone_t('Медианага кирган жуфтликлар',
+                  'Пар вошло в медиану'), data['rated_cells']),
+        (_drone_t('Баҳоланмаган жуфтликлар',
+                  'Пар не оценивалось'), data['unjudged_cells']),
+        (_drone_t('Парвозлар', 'Вылеты'), data['total']['flights']),
+        (_drone_t('Пуркаш парвозлари', 'Вылеты с опрыскиванием'),
+         data['total']['spray_flights']),
+        (_drone_t('Пуркаш гектари', 'Гектары опрыскивания'),
+         data['total']['area_spray']),
+        (_drone_t('Бошқа гектар', 'Прочие гектары'),
+         data['total']['area_other']),
+        (_drone_t('Литр', 'Литры'), data['total']['liters']),
+        (_drone_t('Литри ёзилмаган парвозлар',
+                  'Вылетов без записанных литров'),
+         data['total']['no_liters']),
+    ):
+        ws.append([label, _drone_xlsx_safe(value)])
+    st.style_table(ws)
+
+    # [REASON]: no slash in a sheet title -- openpyxl refuses «Л/га» with
+    # ValueError and the whole export becomes a 500. Excel forbids / \ ? * [ ]
+    # in sheet names; the column header inside the sheet still reads «Л/га».
+    ws = wb.create_sheet(_drone_t('Литр гектарига', 'Литров на гектар'))
+    ws.append([
+        _drone_t('Машина', 'Машина'),
+        _drone_t('Ой', 'Месяц'),
+        _drone_t('Пуркаш парвозлари', 'Вылеты с опрыскиванием'),
+        _drone_t('Литри ёзилмаган', 'Без записанных литров'),
+        _drone_t('Пуркаш гектари', 'Гектары опрыскивания'),
+        _drone_t('Бошқа гектар', 'Прочие гектары'),
+        _drone_t('Жами гектар', 'Всего гектаров'),
+        _drone_t('Литр', 'Литры'),
+        _drone_t('Л/га', 'Л/га'),
+        _drone_t('Изоҳ', 'Примечание'),
+    ])
+    def _liters_cell(row):
+        """Litres for a workbook cell, or None when none were ever recorded.
+
+        Same rule as _drone_money_or_blank(): the figure is unknown exactly
+        when every spray flight of the group is missing the thing it is
+        computed from. An empty cell, never 0 -- 0 litres over 40 hectares is
+        a statement about the machine, and nobody made it.
+        """
+        return row['liters'] if row['spray_flights'] > row['no_liters'] else None
+
+    for r in data['rows']:
+        ws.append([
+            (('№ %s' % r['number']) if r['number'] is not None
+             else label_unattr),
+            r['month'],
+            r['spray_flights'],
+            r['no_liters'],
+            r['area_spray'],
+            r['area_other'],
+            r['area_total'],
+            _liters_cell(r),
+            r['rate'],
+            r['note'],
+        ])
+    ws.append([label_total, '',
+               data['total']['spray_flights'], data['total']['no_liters'],
+               data['total']['area_spray'], data['total']['area_other'],
+               data['total']['area_total'], _liters_cell(data['total']),
+               data['total']['rate'], ''])
+    st.style_table(ws, num_formats={5: '0.00', 6: '0.00', 7: '0.00',
+                                    8: '0.00', 9: '0.00'},
+                   bold_rows=(ws.max_row,))
+    return _drone_xlsx_response(wb, 'drone_spray_usage', filters)
+
+
+# ─── DRONE-ANALYTICS-001/2: debt aging ───────────────────────────────────────
+
+# [REASON]: the boundaries are INCLUSIVE UPPER -- 0..30, 31..60, and so on --
+# so a debt is in exactly one bucket and the seam is where a reader expects it:
+# «thirty days» belongs to the first bucket, «thirty-one» to the second. The
+# undated bucket is not in this tuple; it is appended last by name, because it
+# is not an age at all and sorting it among ages would imply one.
+DRONE_DEBT_AGE_BUCKETS = (
+    (0, 30),
+    (31, 60),
+    (61, 90),
+    (91, 180),
+    (181, 365),
+    (366, None),
+)
+
+
+def _drone_debt_bucket_labels():
+    """Ordered [(key, label)] for the age buckets, undated last."""
+    labels = []
+    for low, high in DRONE_DEBT_AGE_BUCKETS:
+        key = '%d-%s' % (low, high if high is not None else 'inf')
+        if high is None:
+            labels.append((key, _drone_t('365 кундан ортиқ',
+                                         'более 365 дней')))
+        else:
+            labels.append((key, _drone_t('%d-%d кун' % (low, high),
+                                         '%d-%d дней' % (low, high))))
+    labels.append(('undated', _drone_t('Муддати аниқланмаган',
+                                       'Срок не определён')))
+    return labels
+
+
+def _drone_debt_bucket_for(age_days):
+    """The bucket key for an age in days, or 'undated' when there is no date."""
+    if age_days is None:
+        return 'undated'
+    for low, high in DRONE_DEBT_AGE_BUCKETS:
+        if age_days >= low and (high is None or age_days <= high):
+            return '%d-%s' % (low, high if high is not None else 'inf')
+    # Only reachable for a NEGATIVE age -- a job dated in the future, which the
+    # ledger permits. It is a debt that exists today, so it belongs in the
+    # youngest bucket rather than in a seventh one nobody asked for.
+    return '%d-%d' % DRONE_DEBT_AGE_BUCKETS[0]
+
+
+def _drone_works_debt_aging_data(conds):
+    """Outstanding money by age, plus the per-customer collection worklist.
+
+    [REASON]: 753 439 010 so'm outstanding and no age attached to any of it. A
+    thirty-day debt and a three-hundred-day debt are different objects and the
+    debts page, which answers only «who», cannot tell them apart.
+
+    [REASON]: AGE IS MEASURED FROM work_date_from AND FROM NOTHING ELSE. A job
+    with no date goes to «Срок не определён» and is NOT given a date derived
+    from period_month. Synthesising one would make every bucket tidy and one
+    of them wrong: period_month is the month of the SOURCE BOOK, and one book
+    is filed as 2026-03 while its rows run 17.03--25.04. Inventing a date to
+    fill a bucket is the exact class of error this module documents against
+    itself -- see the same refusal in _drone_work_month_expr().
+
+    [REASON]: THREE KINDS OF ROW, and the order of the tests is load-bearing,
+    exactly as in _drone_work_debt_cut(). A job whose amount was never
+    recorded has amount 0, received 0 and therefore outstanding 0, so testing
+    «settled» first swallows it into «no debt» and the page states the customer
+    owes nothing -- a wrong SENTENCE, not a wrong number. Unknown is tested
+    before settled here too, and the wording is taken from the debts page so
+    the two screens cannot disagree.
+    """
+    today = _drone_today_local()
+    rows = (db.session.query(
+        DroneWork.id,
+        DroneWork.drone_customer_id,
+        DroneWork.customer_raw,
+        DroneWork.work_date_from,
+        DroneWork.amount,
+        DroneWork.received_amount,
+        DroneWork.area_ha,
+    ).filter(*conds).all())
+
+    customer_names = {c.id: c.name for c in DroneCustomer.query.all()}
+    label_unstated = _drone_t('Буюртмачи кўрсатилмаган', 'Заказчик не указан')
+
+    bucket_labels = _drone_debt_bucket_labels()
+    buckets = {key: {'key': key, 'label': label, 'jobs': 0, 'area': 0.0,
+                     'amount': 0.0, 'received': 0.0, 'outstanding': 0.0,
+                     'no_amount': 0, 'oldest': None}
+               for key, label in bucket_labels}
+    unknown = {'jobs': 0, 'area': 0.0, 'amount': 0.0, 'received': 0.0,
+               'outstanding': 0.0, 'no_amount': 0}
+    settled = {'jobs': 0, 'area': 0.0, 'amount': 0.0, 'received': 0.0,
+               'outstanding': 0.0, 'no_amount': 0}
+    by_customer = {}
+
+    for (work_id, customer_id, customer_raw, date_from, amount, received,
+         area) in rows:
+        amount_f = float(amount or 0.0)
+        received_f = float(received or 0.0)
+        outstanding = amount_f - received_f
+        area_f = float(area or 0.0)
+        no_amount = 1 if amount is None else 0
+        age = None if date_from is None else (today - date_from).days
+
+        if outstanding > 0.005:
+            target = buckets[_drone_debt_bucket_for(age)]
+            if age is not None and (target['oldest'] is None
+                                    or age > target['oldest']):
+                target['oldest'] = age
+            key = customer_id if customer_id is not None else ('raw',
+                                                               customer_raw)
+            entry = by_customer.setdefault(key, {
+                'customer_id': customer_id,
+                'label': (customer_names.get(customer_id)
+                          if customer_id is not None
+                          else (customer_raw or label_unstated)),
+                'jobs': 0, 'area': 0.0, 'amount': 0.0, 'received': 0.0,
+                'outstanding': 0.0, 'oldest': None, 'undated_jobs': 0})
+            entry['jobs'] += 1
+            entry['area'] += area_f
+            entry['amount'] += amount_f
+            entry['received'] += received_f
+            entry['outstanding'] += outstanding
+            if age is None:
+                entry['undated_jobs'] += 1
+            elif entry['oldest'] is None or age > entry['oldest']:
+                entry['oldest'] = age
+        elif no_amount:
+            # Unknown BEFORE settled: see the third [REASON] above.
+            target = unknown
+        else:
+            target = settled
+
+        target['jobs'] += 1
+        target['area'] += area_f
+        target['amount'] += amount_f
+        target['received'] += received_f
+        target['outstanding'] += outstanding
+        target['no_amount'] += no_amount
+
+    bucket_rows = [buckets[key] for key, _label in bucket_labels]
+    for entry in by_customer.values():
+        entry['bucket'] = buckets[_drone_debt_bucket_for(entry['oldest'])]['label']
+    # Oldest first -- this is a collection worklist, not a ranking by size.
+    # An undated debt has no age to sort on and goes last rather than being
+    # given one; -1 would put it at the top and imply it is the freshest.
+    worklist = sorted(by_customer.values(),
+                      key=lambda e: (e['oldest'] is None,
+                                     -(e['oldest'] or 0),
+                                     -e['outstanding']))
+
+    totals = _drone_works_totals(conds)
+    counted = {
+        'jobs': sum(b['jobs'] for b in bucket_rows) + unknown['jobs']
+        + settled['jobs'],
+        'area': sum(b['area'] for b in bucket_rows) + unknown['area']
+        + settled['area'],
+        'amount': sum(b['amount'] for b in bucket_rows) + unknown['amount']
+        + settled['amount'],
+        'received': sum(b['received'] for b in bucket_rows)
+        + unknown['received'] + settled['received'],
+    }
+    counted['outstanding'] = counted['amount'] - counted['received']
+    reconciled = (counted['jobs'] == totals['jobs']
+                  and abs(counted['area'] - totals['area']) < 0.005
+                  and abs(counted['amount'] - totals['amount']) < 0.005
+                  and abs(counted['received'] - totals['received']) < 0.005)
+    return {
+        'buckets': bucket_rows,
+        # Same wording as the debts page, deliberately: two screens that say
+        # the same thing in two phrasings read as two different facts.
+        'unknown': dict(unknown, label=_drone_t(
+            'Қарз номаълум — сумма ёзилмаган',
+            'Долг неизвестен — сумма не записана')),
+        'settled': dict(settled, label=_drone_t(
+            'Қарзи йўқ (қолганлари)', 'Долга нет (остальные)')),
+        'worklist': worklist,
+        'totals': totals,
+        'counted': counted,
+        'reconciled': reconciled,
+        'today': today,
+    }
+
+
+@drones_bp.route('/works/debts/aging')
+@module_required('drones')
+def works_debts_aging():
+    """How old the money is, and who to call first."""
+    filters = _drone_works_filters_from_args(request.args)
+    conds = _drone_work_conditions(filters)
+    data = _drone_works_debt_aging_data(conds)
+    context = _drone_works_pickers()
+    return render_template(
+        'drones/works_debts_aging.html',
+        data=data,
+        filters=filters,
+        link_args=_drone_works_link_args(filters),
+        unresolved_key=DRONE_WORK_UNRESOLVED,
+        payment_types=DRONE_WORK_PAYMENT_TYPES,
+        **context)
+
+
+@drones_bp.route('/works/debts/aging.xlsx')
+@module_required('drones')
+def works_debts_aging_xlsx():
+    """Two sheets: the buckets and the collection worklist, plus the filters."""
+    from openpyxl import Workbook
+
+    filters = _drone_works_filters_from_args(request.args)
+    conds = _drone_work_conditions(filters)
+    data = _drone_works_debt_aging_data(conds)
+    st = _drone_xlsx_styler()
+
+    wb = Workbook()
+    _drone_works_filter_sheet(wb, st, filters, data['totals'])
+
+    ws = wb.create_sheet(_drone_t('Қарз ёши', 'Возраст долга'))
+    ws.append([_drone_t('Гуруҳ', 'Группа'),
+               _drone_t('Ишлар', 'Работ'),
+               _drone_t('Гектар', 'Гектары'),
+               _drone_t('Сумма', 'Сумма'),
+               _drone_t('Кирим қилинган', 'Получено'),
+               _drone_t('Олинмаган', 'Не получено')])
+    for row in data['buckets']:
+        ws.append([row['label'], row['jobs'], row['area'], row['amount'],
+                   row['received'], row['outstanding']])
+    for row in (data['unknown'], data['settled']):
+        # The service lines carry the same blank-versus-zero rule as every
+        # other workbook in this module: unknown money is an EMPTY cell.
+        ws.append([row['label'], row['jobs'], row['area'],
+                   _drone_money_or_blank(row, 'amount', 'no_amount'),
+                   row['received'],
+                   _drone_money_or_blank(row, 'outstanding', 'no_amount')])
+    ws.append([_drone_t('Жами', 'Итого'), data['counted']['jobs'],
+               data['counted']['area'], data['counted']['amount'],
+               data['counted']['received'], data['counted']['outstanding']])
+    st.style_table(ws, num_formats={3: '0.00', 4: '0.00', 5: '0.00',
+                                    6: '0.00'},
+                   bold_rows=(ws.max_row,))
+
+    ws = wb.create_sheet(_drone_t('Ундириш рўйхати', 'Список взыскания'))
+    ws.append([_drone_t('Буюртмачи', 'Заказчик'),
+               _drone_t('Ишлар', 'Работ'),
+               _drone_t('Олинмаган', 'Не получено'),
+               _drone_t('Энг эски қарз, кун', 'Старейший долг, дней'),
+               _drone_t('Гуруҳ', 'Группа')])
+    for row in data['worklist']:
+        ws.append([_drone_xlsx_safe(row['label']), row['jobs'],
+                   row['outstanding'], row['oldest'], row['bucket']])
+    st.style_table(ws, num_formats={3: '0.00'})
+    return _drone_works_xlsx_response(wb, 'drone_debt_aging', filters)
+
+
+# ─── DRONE-ANALYTICS-001/3: ledger against flights, by month ─────────────────
+
+def _drone_works_flights_reconcile_data():
+    """Ledger hectares beside flight hectares, one row per month.
+
+    [REASON]: NO EXCEL, AND THAT IS A DECISION RATHER THAN AN OMISSION. This
+    is a monitoring screen: it says «these two numbers disagree, go and look»,
+    and the answer changes as books are entered. A workbook is a document sent
+    onward and quoted back weeks later; a monitoring figure that keeps moving
+    is exactly what must not acquire a filename. The four cuts that ARE
+    documents keep their exports.
+
+    [REASON]: THE TWO SIDES MEASURE DIFFERENT POPULATIONS AND ARE NOT
+    EXPECTED TO MATCH. Ledger hectares (15 878.64 in total) cover billed work
+    only; flight hectares (28 835.34) cover everything flown, including the
+    holding's own land and every test flight. So a month with flights and no
+    ledger book is NOT «-100 %» -- it is «Ведомости не заведены», a sentence
+    about the books rather than a measurement of a gap. Only months with both
+    sides non-zero get a percentage, and only those can be coloured; anything
+    else would invent a discrepancy out of an absence.
+
+    [REASON]: THE COLOUR IS ON COVERAGE, NOT ON THE SIGNED DIFFERENCE, and
+    this is the correction of 2026-08-07. The signed difference does its job
+    on a month where both sides are complete -- April 2026 reads -0.68 % on
+    ledger 6 336.15 against flights 6 379.24 -- and fails exactly where the
+    report matters most: June 2026 reads -99.08 % and July -98.83 %, which is
+    not a reconciliation discrepancy but the near-total ABSENCE of a ledger.
+    A reader scanning a column of percentages cannot tell those two apart,
+    and the second is the whole point of the screen. Coverage -- ledger as a
+    percentage of flights -- separates them: 99 % is «the books agree», 1 %
+    is «the books are missing», and they no longer look alike.
+
+    The signed difference in hectares STAYS as a column, because it is what a
+    person checks by hand. It simply no longer decides the colour.
+
+    [REASON]: hectares only. Invariant Р6 -- this module does not build a
+    cash contour, and a reconciliation screen is exactly where somebody would
+    be tempted to start one.
+    """
+    work_month = _drone_work_month_expr()
+    ledger = dict(
+        (row[0], (row[1], float(row[2] or 0.0))) for row in db.session.query(
+            work_month,
+            func.count(DroneWork.id),
+            func.coalesce(func.sum(DroneWork.area_ha), 0.0),
+        ).group_by(work_month).all() if row[0])
+
+    flight_month = _drone_flight_month_expr()
+    flights = dict(
+        (row[0], (row[1], float(row[2] or 0.0))) for row in db.session.query(
+            flight_month,
+            func.count(DroneFlight.id),
+            func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+        ).group_by(flight_month).all() if row[0])
+
+    note_no_books = _drone_t('Ведомостлар киритилмаган',
+                             'Ведомости не заведены')
+    note_no_flights = _drone_t('Бу ойда парвозлар йўқ',
+                               'Вылетов в этом месяце нет')
+
+    rows = []
+    # Every month present on EITHER side, exactly once. A union, not the
+    # ledger's month list: a month that flew and was never billed is the most
+    # interesting row on the page and a ledger-driven loop drops it.
+    for month in sorted(set(ledger) | set(flights), reverse=True):
+        ledger_jobs, ledger_area = ledger.get(month, (0, 0.0))
+        flight_count, flight_area = flights.get(month, (0, 0.0))
+        row = {
+            'month': month,
+            'ledger_jobs': ledger_jobs,
+            'ledger_area': ledger_area,
+            'flights': flight_count,
+            'flight_area': flight_area,
+            'diff': ledger_area - flight_area,
+            'percent': None,
+            'coverage': None,
+            'note': '',
+            'flag': '',
+        }
+        if ledger_area > 0.005 and flight_area > 0.005:
+            row['percent'] = (ledger_area - flight_area) * 100.0 / flight_area
+            row['coverage'] = ledger_area * 100.0 / flight_area
+            # Danger is tested FIRST: a coverage of 8 434 % is outside the
+            # band and also far outside it, and «warning» would be the wrong
+            # word for a month whose ledger claims eighty times what flew.
+            if row['coverage'] < 50.0 or row['coverage'] > 200.0:
+                row['flag'] = 'is-danger-row'
+            elif row['coverage'] < 90.0 or row['coverage'] > 110.0:
+                row['flag'] = 'is-warning-row'
+        elif flight_area > 0.005:
+            row['note'] = note_no_books
+        else:
+            row['note'] = note_no_flights
+        rows.append(row)
+
+    total_ledger = sum(r['ledger_area'] for r in rows)
+    total_flight = sum(r['flight_area'] for r in rows)
+    # [REASON]: the total obeys the SAME rule as a row, and it has to be said
+    # out loud because it was written the other way first. With flights but no
+    # ledger anywhere, `(0 - F) * 100 / F` is -100.00 %, and the total line
+    # printed exactly the sentence every row is forbidden to print. A footer
+    # that contradicts the column above it is worse than no footer.
+    both_sides = total_ledger > 0.005 and total_flight > 0.005
+    return {
+        'rows': rows,
+        'total': {
+            'ledger_jobs': sum(r['ledger_jobs'] for r in rows),
+            'ledger_area': total_ledger,
+            'flights': sum(r['flights'] for r in rows),
+            'flight_area': total_flight,
+            'diff': total_ledger - total_flight,
+            'percent': (((total_ledger - total_flight) * 100.0 / total_flight)
+                        if both_sides else None),
+            'coverage': ((total_ledger * 100.0 / total_flight)
+                         if both_sides else None),
+        },
+        'months': len(rows),
+    }
+
+
+@drones_bp.route('/reports/reconcile')
+@module_required('drones')
+def works_flights_reconcile():
+    """Dispatchers' hectares against DJI hectares, month by month."""
+    return render_template('drones/works_flights_reconcile.html',
+                           data=_drone_works_flights_reconcile_data())
+
+
+# ─── DRONE-ANALYTICS-001/4: flight calendar ──────────────────────────────────
+
+def _drone_status_on_day_map(month_first, month_last):
+    """{unit_id: [(changed_on, status), ...]} sorted, for a day-by-day walk.
+
+    [REASON]: the status IN FORCE on a day is the row with the greatest
+    changed_on <= that day, ties broken by the greatest id -- the same rule
+    _drone_current_status_rows() resolves for «now», and it has to be the same
+    rule or the calendar and the machine card disagree about the same machine.
+    Ties are real: changed_on is a DATE entered by a human, so two corrections
+    typed on one day carry the same date and only the id orders them.
+
+    The whole ledger up to month_last is loaded, not just the month: a machine
+    marked unserviceable in March and untouched since is unserviceable all
+    through April, and a query bounded below by month_first would find no row
+    for it and silently call it serviceable.
+    """
+    rows = (DroneUnitStatusLog.query
+            .filter(DroneUnitStatusLog.changed_on <= month_last)
+            .order_by(DroneUnitStatusLog.changed_on.asc(),
+                      DroneUnitStatusLog.id.asc())
+            .all())
+    by_unit = {}
+    for row in rows:
+        by_unit.setdefault(row.drone_unit_id, []).append(
+            (row.changed_on, row.status))
+    return by_unit
+
+
+def _drone_status_on(history, day):
+    """The status in force on `day`, or None when the machine has no history.
+
+    None is NOT «serviceable»: a machine nobody has ever reported on has an
+    unknown state, and A4.3 turns on the difference -- an unknown state must
+    render as «idle», never as «down».
+    """
+    found = None
+    for changed_on, status in history:
+        if changed_on <= day:
+            found = status
+        else:
+            break
+    return found
+
+
+def _drone_flight_calendar_data(month):
+    """Machines down the rows, days of `month` across the columns.
+
+    [REASON]: THE POINT OF THE SCREEN IS THE DIFFERENCE BETWEEN «down» AND
+    «idle». A day with no flights and an unserviceable machine is explained;
+    a day with no flights and a serviceable machine is not, and unexplained
+    idle days are the money. A calendar that painted every empty cell the
+    same colour would answer a question nobody has.
+    """
+    first, last = _drone_month_bounds(month)
+    days = [first + timedelta(days=offset)
+            for offset in range((last - first).days + 1)]
+
+    day_expr = _drone_flight_day_expr()
+    groups = (db.session.query(
+        DroneFlight.drone_unit_id,
+        day_expr,
+        func.count(DroneFlight.id),
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+    ).filter(day_expr >= first.isoformat())
+        .filter(day_expr <= last.isoformat())
+        .group_by(DroneFlight.drone_unit_id, day_expr).all())
+
+    flown = {}
+    for unit_id, day_text, flights, area in groups:
+        flown.setdefault(unit_id, {})[day_text] = {
+            'flights': flights, 'area': float(area or 0.0)}
+
+    units = DroneUnit.query.order_by(DroneUnit.number).all()
+    history = _drone_status_on_day_map(first, last)
+    # A machine with no flights at all this month still gets a row: an absent
+    # row is indistinguishable from a machine nobody looked at, which is the
+    # failure the sources screen already exists to prevent.
+    rows = []
+    for unit in units:
+        cells = []
+        row_flights = 0
+        row_area = 0.0
+        for day in days:
+            key = day.isoformat()
+            hit = flown.get(unit.id, {}).get(key)
+            if hit:
+                row_flights += hit['flights']
+                row_area += hit['area']
+                cells.append({'day': day, 'state': 'is-flown',
+                              'flights': hit['flights'], 'area': hit['area']})
+            else:
+                status = _drone_status_on(history.get(unit.id, []), day)
+                state = ('is-down' if status == DRONE_STATUS_UNSERVICEABLE
+                         else 'is-idle')
+                cells.append({'day': day, 'state': state, 'flights': 0,
+                              'area': 0.0, 'status': status})
+        rows.append({'unit_id': unit.id, 'number': unit.number,
+                     'cells': cells, 'flights': row_flights,
+                     'area': row_area})
+
+    # The unattributed line: flights whose nickname resolved to no machine.
+    # Same rule as everywhere in this module -- shown, never dropped.
+    unattr_cells = []
+    unattr_flights = 0
+    unattr_area = 0.0
+    for day in days:
+        hit = flown.get(None, {}).get(day.isoformat())
+        if hit:
+            unattr_flights += hit['flights']
+            unattr_area += hit['area']
+            unattr_cells.append({'day': day, 'state': 'is-flown',
+                                 'flights': hit['flights'],
+                                 'area': hit['area']})
+        else:
+            # An unattributed bucket has no serviceability of its own, so its
+            # empty days are blank rather than «idle» or «down».
+            unattr_cells.append({'day': day, 'state': '', 'flights': 0,
+                                 'area': 0.0})
+
+    day_totals = []
+    for index, day in enumerate(days):
+        day_totals.append({
+            'day': day,
+            'flights': sum(r['cells'][index]['flights'] for r in rows)
+            + unattr_cells[index]['flights'],
+            'area': sum(r['cells'][index]['area'] for r in rows)
+            + unattr_cells[index]['area'],
+        })
+
+    return {
+        'month': month,
+        'days': days,
+        'rows': rows,
+        'unattributed': {'cells': unattr_cells, 'flights': unattr_flights,
+                         'area': unattr_area} if unattr_flights else None,
+        'day_totals': day_totals,
+        'total': {
+            'flights': sum(r['flights'] for r in rows) + unattr_flights,
+            'area': sum(r['area'] for r in rows) + unattr_area,
+        },
+    }
+
+
+@drones_bp.route('/reports/calendar')
+@module_required('drones')
+def flight_calendar():
+    """One month, machines down, days across. Flown, idle or down per cell."""
+    months = _drone_flight_months()
+    month = (request.args.get('month') or '').strip()
+    if not re.match(r'^\d{4}-\d{2}$', month or ''):
+        month = months[0] if months else ''
+    data = _drone_flight_calendar_data(month) if month else None
+    return render_template('drones/flight_calendar.html',
+                           data=data, month=month, months=months)
