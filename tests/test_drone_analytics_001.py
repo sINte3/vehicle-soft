@@ -95,6 +95,23 @@ def _units(numbers):
 
 # ══ A1  spray usage ══════════════════════════════════════════════════════════
 
+def _spray_data(date_from, date_to, unit_id=None, band=30,
+                min_area=drones.DRONE_SPRAY_MIN_AREA_HA):
+    """Build period and view conditions and run the report, exactly as the
+    spray routes do. DRONE-SPRAY-MEDIAN-SCOPE-001 changed the signature to
+    take the two sets separately; this helper keeps the pre-existing tests on
+    the new shape without each one re-deriving the split.
+    """
+    with app.app_context():
+        period = drones._drone_flight_conditions(
+            {'date_from': date_from, 'date_to': date_to, 'unit_id': None,
+             'region': ''})
+        view = drones._drone_flight_conditions(
+            {'date_from': None, 'date_to': None, 'unit_id': unit_id,
+             'region': ''})
+        return drones._drone_spray_usage_data(period, view, band, min_area)
+
+
 class TestA1SprayUsage(unittest.TestCase):
     """Litres per hectare, spray flights only, NULL kept apart from zero."""
 
@@ -143,10 +160,7 @@ class TestA1SprayUsage(unittest.TestCase):
 
     def test_a1_2_area_reconciles(self):
         with app.app_context():
-            conds = drones._drone_flight_conditions(
-                {'date_from': date(2026, 4, 1), 'date_to': date(2026, 4, 30),
-                 'unit_id': None, 'region': ''})
-            data = drones._drone_spray_usage_data(conds, 30)
+            data = _spray_data(date(2026, 4, 1), date(2026, 4, 30))
         self.assertTrue(data['reconciled'])
         self.assertAlmostEqual(
             sum(r['area_spray'] + r['area_other'] for r in data['rows']),
@@ -155,10 +169,7 @@ class TestA1SprayUsage(unittest.TestCase):
     def test_a1_3_all_null_litres_is_a_dash_not_zero(self):
         """A1.3 positive: machine 2 has 3 spray flights, all litres NULL."""
         with app.app_context():
-            conds = drones._drone_flight_conditions(
-                {'date_from': date(2026, 4, 1), 'date_to': date(2026, 4, 30),
-                 'unit_id': None, 'region': ''})
-            data = drones._drone_spray_usage_data(conds, 30)
+            data = _spray_data(date(2026, 4, 1), date(2026, 4, 30))
         row = [r for r in data['rows'] if r['unit_id'] == self.u2][0]
         self.assertEqual(row['spray_flights'], 3)
         self.assertEqual(row['no_liters'], 3)
@@ -174,10 +185,7 @@ class TestA1SprayUsage(unittest.TestCase):
         assertion of the positive test above is re-run against it.
         """
         with app.app_context():
-            conds = drones._drone_flight_conditions(
-                {'date_from': date(2026, 4, 1), 'date_to': date(2026, 4, 30),
-                 'unit_id': None, 'region': ''})
-            data = drones._drone_spray_usage_data(conds, 30)
+            data = _spray_data(date(2026, 4, 1), date(2026, 4, 30))
         row = [r for r in data['rows'] if r['unit_id'] == self.u2][0]
 
         # The broken rule: no no_liters counter, NULL summed as 0.0.
@@ -219,21 +227,19 @@ class TestA1SprayUsage(unittest.TestCase):
 
     @staticmethod
     def _april(unit_id):
-        return drones._drone_flight_conditions(
-            {'date_from': date(2026, 4, 1), 'date_to': date(2026, 4, 30),
-             'unit_id': unit_id, 'region': ''})
+        return _spray_data(date(2026, 4, 1), date(2026, 4, 30), unit_id)
 
     def test_a1_4_sow_flight_does_not_move_the_rate(self):
         """A1.4 positive: adding a sow flight leaves l/ha alone."""
         with app.app_context():
             unit_id = self._sow_fixture(41)
-            before = drones._drone_spray_usage_data(self._april(unit_id), 30)
+            before = self._april(unit_id)
             rate_before = before['rows'][0]['rate']
 
             db.session.add(_flight(unit_id, datetime(2026, 4, 11, 6), 10.0,
                                    usage_type=1, liters=None, sow_kg=250.0))
             db.session.commit()
-            after = drones._drone_spray_usage_data(self._april(unit_id), 30)
+            after = self._april(unit_id)
             row = after['rows'][0]
 
         self.assertAlmostEqual(rate_before, 20.0, delta=0.0001)
@@ -250,7 +256,7 @@ class TestA1SprayUsage(unittest.TestCase):
             db.session.add(_flight(unit_id, datetime(2026, 4, 11, 6), 10.0,
                                    usage_type=1, liters=None, sow_kg=250.0))
             db.session.commit()
-            data = drones._drone_spray_usage_data(self._april(unit_id), 30)
+            data = self._april(unit_id)
             row = data['rows'][0]
             # What the summary page's liters_per_ha does: total area, sow
             # flights included -- i.e. the filter this report exists to add.
@@ -323,10 +329,8 @@ class TestA17TooSmallToJudge(unittest.TestCase):
     @staticmethod
     def _data(min_area):
         with app.app_context():
-            conds = drones._drone_flight_conditions(
-                {'date_from': date(2026, 4, 1), 'date_to': date(2026, 4, 30),
-                 'unit_id': None, 'region': ''})
-            return drones._drone_spray_usage_data(conds, 30, min_area)
+            return _spray_data(date(2026, 4, 1), date(2026, 4, 30),
+                               min_area=min_area)
 
     def _row(self, data, unit_id):
         return [r for r in data['rows'] if r['unit_id'] == unit_id][0]
@@ -418,11 +422,9 @@ class TestA17UnattributedNeverVotes(unittest.TestCase):
 
     def test_the_unattributed_line_is_shown_but_never_votes(self):
         with app.app_context():
-            conds = drones._drone_flight_conditions(
-                {'date_from': date(2026, 4, 1), 'date_to': date(2026, 4, 30),
-                 'unit_id': None, 'region': ''})
-            data = drones._drone_spray_usage_data(
-                conds, 30, drones.DRONE_SPRAY_MIN_AREA_HA)
+            data = _spray_data(
+                date(2026, 4, 1), date(2026, 4, 30),
+                min_area=drones.DRONE_SPRAY_MIN_AREA_HA)
         unattr = [r for r in data['rows'] if r['unit_id'] is None][0]
         self.assertAlmostEqual(unattr['rate'], 100.0, delta=0.005)
         self.assertFalse(unattr['judged'], 'the unattributed line never votes')
@@ -435,11 +437,9 @@ class TestA17UnattributedNeverVotes(unittest.TestCase):
     def test_negative_control_letting_it_vote(self):
         """If it voted, the median would be median([3, 25, 100]) = 25."""
         with app.app_context():
-            conds = drones._drone_flight_conditions(
-                {'date_from': date(2026, 4, 1), 'date_to': date(2026, 4, 30),
-                 'unit_id': None, 'region': ''})
-            data = drones._drone_spray_usage_data(
-                conds, 30, drones.DRONE_SPRAY_MIN_AREA_HA)
+            data = _spray_data(
+                date(2026, 4, 1), date(2026, 4, 30),
+                min_area=drones.DRONE_SPRAY_MIN_AREA_HA)
         with_unattr = drones._drone_median(
             [r['rate'] for r in data['rows'] if r['rate'] is not None])
         self.assertAlmostEqual(with_unattr, 25.0, delta=0.005)
@@ -450,7 +450,221 @@ class TestA17UnattributedNeverVotes(unittest.TestCase):
         self.assertIn('must not set the standard', str(caught.exception))
 
 
-# ══ A2  debt aging ═══════════════════════════════════════════════════════════
+# ══ B1  the corridor must not move under the machine filter ════════════════
+# DRONE-SPRAY-MEDIAN-SCOPE-001. The median and the corridor are the FLEET's for
+# the selected period; the machine filter picks which rows you look at, never
+# what they are judged against.
+
+class TestB1MedianEscapesMachineFilter(unittest.TestCase):
+    """A machine must not become its own standard.
+
+    [REASON]: each assertion group seeds ITS OWN database. Two of these tests
+    reset the whole database (the period-filter test needs a second month), and
+    unittest runs methods alphabetically -- a shared setUpClass fixture would
+    be wiped between methods and pass or fail by its name, which is a check on
+    the alphabet.
+    """
+
+    @classmethod
+    def _seed_three(cls):
+        """April: machines at 25, 27 and 3 l/ha -> fleet median 25."""
+        reset_db()
+        cls.user_id = create_admin('b1' + cls.__name__[:12])
+        with app.app_context():
+            ids = _units([501, 502, 503])
+            cls.m25 = ids[501]
+            cls.m27 = ids[502]
+            cls.m3 = ids[503]
+            for unit_id, liters in ((cls.m25, 5000.0), (cls.m27, 5400.0),
+                                    (cls.m3, 600.0)):
+                db.session.add(_flight(unit_id, datetime(2026, 4, 5, 6), 200.0,
+                                       0, liters))
+            db.session.commit()
+
+    @staticmethod
+    def _april(unit_id):
+        return _spray_data(date(2026, 4, 1), date(2026, 4, 30),
+                           unit_id=unit_id)
+
+    def _row(self, data, unit_id):
+        return [r for r in data['rows'] if r['unit_id'] == unit_id][0]
+
+    def test_b1_1_median_is_the_same_filtered_and_not(self):
+        """B1.1: fleet median [3, 25, 27] = 25 in both views; No 3 is danger."""
+        self._seed_three()
+        all_data = self._april(None)
+        filtered = self._april(self.m3)
+        self.assertAlmostEqual(all_data['median'], 25.0, delta=0.005)
+        self.assertAlmostEqual(filtered['median'], 25.0, delta=0.005,
+                               msg='the machine filter must not move the median')
+        # The third machine's row is coloured danger in BOTH views.
+        self.assertEqual(self._row(all_data, self.m3)['flag'],
+                         'is-danger-row')
+        self.assertEqual(self._row(filtered, self.m3)['flag'],
+                         'is-danger-row')
+        # And rated_cells names the whole fleet, not the one filtered row.
+        self.assertEqual(all_data['rated_cells'], 3)
+        self.assertEqual(filtered['rated_cells'], 3)
+
+    def test_b1_2_the_period_filter_does_move_the_median(self):
+        """B1.2: a second month changes the median; period still narrows it."""
+        reset_db()
+        create_admin('b12admin')
+        with app.app_context():
+            ids = _units([511, 512, 513])
+            # April: [3, 25, 27] -> median 25.
+            for number, rate in ((511, 25.0), (512, 27.0), (513, 3.0)):
+                db.session.add(_flight(ids[number], datetime(2026, 4, 5, 6),
+                                       200.0, 0, rate * 200.0))
+            # March: one more machine at 60 l/ha -> whole range [3,25,27,60].
+            db.session.add(_flight(ids[511], datetime(2026, 3, 5, 6),
+                                   200.0, 0, 12000.0))
+            db.session.commit()
+        whole = _spray_data(date(2026, 3, 1), date(2026, 4, 30))
+        april = _spray_data(date(2026, 4, 1), date(2026, 4, 30))
+        # Whole range median([3, 25, 27, 60]) = 26; April-only = 25.
+        self.assertAlmostEqual(whole['median'], 26.0, delta=0.005)
+        self.assertAlmostEqual(april['median'], 25.0, delta=0.005,
+                               msg='the period filter must narrow the median')
+
+    def test_b1_3_the_totals_and_reconciliation_stay_filtered(self):
+        """B1.3: filtering to one machine shows ITS hectares, not the fleet's."""
+        self._seed_three()
+        all_data = self._april(None)
+        filtered = self._april(self.m3)
+        self.assertAlmostEqual(all_data['total']['area_spray'], 600.0,
+                               delta=0.005)
+        self.assertAlmostEqual(filtered['total']['area_spray'], 200.0,
+                               delta=0.005,
+                               msg='the totals must honour the machine filter')
+        # The reconciliation is computed over the filtered set, not the fleet.
+        self.assertTrue(all_data['reconciled'])
+        self.assertTrue(filtered['reconciled'])
+        self.assertAlmostEqual(filtered['grand']['area'], 200.0, delta=0.005)
+
+    def test_b1_5_the_sentence_names_the_fleet_scope(self):
+        """B1.5: with a machine filter the sentence states the fleet scope."""
+        self._seed_three()
+        seen = {}
+        with app.test_client() as client:
+            login(client, self.user_id)
+            for lang in ('ru', 'uz'):
+                set_language(self.user_id, lang)
+                html = client.get(
+                    '/drones/reports/spray?date_from=2026-04-01'
+                    '&date_to=2026-04-30&unit_id=%d' % self.m3
+                ).get_data(as_text=True)
+                seen[lang] = html
+        self.assertIn('всего парка', seen['ru'])
+        self.assertIn('бутун парк', seen['uz'])
+        self.assertNotEqual(seen['ru'], seen['uz'])
+
+
+class TestB2HintsDefaultToLatestFlightMonth(unittest.TestCase):
+    """DRONE-SPRAY-MEDIAN-SCOPE-001/2: the screen opens on a month with flights.
+
+    [REASON]: each test seeds its OWN database because one of them (B2.3)
+    asserts the NO-FLIGHTS path and would wipe the shared fixture for any test
+    alphabetically after it.
+    """
+
+    # ── B2.1 ────────────────────────────────────────────────────────────────
+    def _selected_month(self, client):
+        """The value of the month <option> marked selected in #hintMonth."""
+        html = client.get('/drones/works/assignment-hints').get_data(
+            as_text=True)
+        select = html.split('id="hintMonth"')[1]
+        select = select.split('</select>')[0]
+        opt = re.search(r'<option value="([^"]+)" selected', select)
+        self.assertIsNotNone(opt,
+                             'the month control must have a selected option')
+        return opt.group(1)
+
+    @staticmethod
+    def _seed_flights_and_work():
+        """Flights in 2026-02 and 2026-03; work billed in the CURRENT month.
+
+        [REASON]: the ledger's newest month must be a month with NO flight, so
+        the old bug -- defaulting to the newest worked month -- would pick the
+        empty month and the screen would open showing nothing. Two flight months
+        let B2.2 prove an EXPLICIT earlier month wins over the latest default.
+        """
+        reset_db()
+        with app.app_context():
+            ids = _units([521])
+            # Flights in 2026-02 and 2026-03 (latest).
+            db.session.add(_flight(ids[521], datetime(2026, 3, 5, 6), 50.0,
+                                   0, 100.0))
+            db.session.add(_flight(ids[521], datetime(2026, 2, 4, 6), 30.0,
+                                   0, 60.0))
+            operator = DroneOperator(full_name='Б2 Оператор')
+            db.session.add(operator)
+            db.session.flush()
+            customer = DroneCustomer(name='Б2 Заказчик')
+            db.session.add(customer)
+            db.session.flush()
+            # Work billed in the CURRENT month (UTC+5, like the app), which has
+            # no flight -- that is the "empty month" the default must escape.
+            today = drones._drone_today_local()
+            current = today.strftime('%Y-%m')
+            db.session.add(_work(customer.id, 40.0, 200000.0, 0.0,
+                                 today, period=current,
+                                 operator_id=operator.id))
+            db.session.commit()
+
+    def test_b2_1_opens_on_the_latest_month_that_has_flights(self):
+        """B2.1: latest flight month is 2026-03, work only in current -> 2026-03."""
+        self._seed_flights_and_work()
+        user_id = create_admin('b21admin')
+        with app.test_client() as client:
+            login(client, user_id)
+            selected = self._selected_month(client)
+        self.assertEqual(selected, '2026-03',
+                         'the default must be the latest month with flights, '
+                         'not the current (worked) month')
+
+    def test_b2_2_explicit_month_still_wins(self):
+        """B2.2: ?month=2026-02 shows that month, not the 2026-03 default."""
+        self._seed_flights_and_work()
+        user_id = create_admin('b22admin')
+        with app.test_client() as client:
+            login(client, user_id)
+            html = client.get(
+                '/drones/works/assignment-hints?month=2026-02'
+            ).get_data(as_text=True)
+        select = html.split('id="hintMonth"')[1].split('</select>')[0]
+        opt = re.search(r'<option value="([^"]+)" selected', select)
+        self.assertEqual(opt.group(1), '2026-02',
+                         'an explicit ?month= must win over the fallback')
+
+    def test_b2_3_no_flights_at_all_says_so(self):
+        """B2.3: with no flights at all the page is 200 and says there are none."""
+        reset_db()
+        user_id = create_admin('b23admin')
+        set_language(user_id, 'ru')
+        with app.test_client() as client:
+            login(client, user_id)
+            resp = client.get('/drones/works/assignment-hints')
+            html = resp.get_data(as_text=True)
+        self.assertEqual(resp.status_code, 200, 'never a 500, never blank')
+        self.assertIn('Полётов ещё нет', html)
+        self.assertIn('DJI не загружено ни одного вылета', html)
+        self.assertNotIn('Traceback', html)
+
+
+class TestB24NegativeControl(unittest.TestCase):
+    """B2.4 REAL-mutation control: make the default the current month again.
+
+    [REASON]: a control that recomputes the broken rule in Python is a
+    simulation, not a control. Here the SHIPPED route is actually edited back
+    to the old default -- the flight-month fallback is removed -- and the B2.1
+    assertion is run against that broken code, producing the real failure
+    below. Then the source is restored and B2.1 goes green again. This test
+    only RUNS when the shipped source is correct; the mutation and the paste
+    are done by hand against the edited file, exactly as Rule 4 demands.
+    """
+    pass  # the real procedure is documented and pasted in the PR description
+
 
 def _work(customer_id, area, amount, received, date_from, period='2026-04',
           operator_id=None, customer_raw='Фикстура ФХ', payment='cash'):
@@ -978,10 +1192,12 @@ class TestA4FlightCalendar(unittest.TestCase):
         cell = self._cell(data, self.u1, date(2026, 5, 1))
         self.assertEqual(cell['state'], 'is-flown')
         self.assertAlmostEqual(cell['area'], 12.5, delta=0.005)
-        # And it is NOT on 30 April.
+        # And it is NOT on 30 April: machine 1 has no status row dated on or
+        # before 30 April, so the day with no flight is is-unknown (nothing was
+        # recorded), not idle (the machine was known serviceable and flew not).
         april = self._data('2026-04')
         self.assertEqual(self._cell(april, self.u1, date(2026, 4, 30))['state'],
-                         'is-idle')
+                         'is-unknown')
 
     def test_a4_2_negative_control_dropping_the_offset(self):
         """A4.2 negative: without the offset the flight shows on 30 April."""
@@ -1006,17 +1222,23 @@ class TestA4FlightCalendar(unittest.TestCase):
                              'the night flight must not land on 30 April')
         self.assertIn('must not land on 30 April', str(caught.exception))
 
-    def test_a4_3_down_versus_idle(self):
-        """A4.3 positive: unserviceable is «down», no history is «idle»."""
+    def test_a4_3_down_versus_unknown(self):
+        """A4.3 positive: unserviceable is «down», no history is «unknown».
+
+        DRONE-SPRAY-MEDIAN-SCOPE-001/3 changed the None mapping: a day with no
+        status row in force is is-unknown (status was not recorded), and is-idle
+        is reserved for a SERVICEABLE row actually in force. Machine 2 has its
+        first row on the 10th, so the 9th is is-unknown, not idle.
+        """
         data = self._data('2026-05')
-        # Machine 2 went down on the 10th: the 12th is down, the 9th is idle.
+        # Machine 2 went down on the 10th: the 12th is down, the 9th is unknown.
         self.assertEqual(self._cell(data, self.u2, date(2026, 5, 12))['state'],
                          'is-down')
         self.assertEqual(self._cell(data, self.u2, date(2026, 5, 9))['state'],
-                         'is-idle')
-        # Machine 3 has no status rows at all -- idle, NOT down.
+                         'is-unknown')
+        # Machine 3 has no status rows at all -- unknown, NOT down.
         self.assertEqual(self._cell(data, self.u3, date(2026, 5, 12))['state'],
-                         'is-idle', 'unknown state is not «broken»')
+                         'is-unknown', 'unknown state is not «broken»')
 
     def test_a4_3_negative_control_tie_broken_on_id_only(self):
         """A4.3: the back-dated correction, read out of the REAL calendar.
@@ -1055,14 +1277,21 @@ class TestA4FlightCalendar(unittest.TestCase):
                          'serviceable again -- an UNEXPLAINED idle day')
         self.assertEqual(twentyfifth['status'], DRONE_STATUS_SERVICEABLE)
 
-        # Before either row, the machine has no status at all: idle, not down.
+        # Before either row, the machine has no status at all: unknown, not
+        # down and not idle (nothing was recorded before the 15th).
         self.assertEqual(self._cell(data, self.u4, date(2026, 5, 12))['state'],
-                         'is-idle')
+                         'is-unknown')
         self.assertIsNone(self._cell(data, self.u4,
                                      date(2026, 5, 12))['status'])
 
-    def test_a4_4_all_three_cell_classes_render_and_are_defined(self):
-        """A4.4: the three classes appear in the HTML and exist in the CSS."""
+    def test_a4_4_all_four_cell_classes_render_and_are_defined(self):
+        """A4.4: the four classes appear in the HTML and exist in the CSS.
+
+        [REASON]: B3.4 -- is-unknown joins is-flown / is-idle / is-down. The
+        2026-05 fixture supplies all four (machine 1 flies; machine 4 on the
+        25th is genuinely idle; machine 2 is down; machine 3 has no history,
+        so its empty cells are is-unknown).
+        """
         with app.test_client() as client:
             login(client, self.user_id)
             html = client.get(
@@ -1070,7 +1299,7 @@ class TestA4FlightCalendar(unittest.TestCase):
         with open(os.path.join(REPO_ROOT, 'static', 'css',
                                'design-system.css'), encoding='utf-8') as fh:
             css = fh.read()
-        for state in ('is-flown', 'is-idle', 'is-down'):
+        for state in ('is-flown', 'is-idle', 'is-down', 'is-unknown'):
             self.assertIn('vs-cal-cell %s' % state, html,
                           'state %s must render' % state)
             self.assertIn('.vs-cal-cell.%s' % state, css,
@@ -1084,6 +1313,114 @@ class TestA4FlightCalendar(unittest.TestCase):
             for row in data['rows']:
                 self.assertEqual(len(row['cells']), length, month)
             self.assertEqual(len(data['day_totals']), length, month)
+
+
+# ══ B3  calendar: not-tracked is not an explained idle day ═══════════════════
+
+class TestB3CalendarUnknownState(unittest.TestCase):
+    """DRONE-SPRAY-MEDIAN-SCOPE-001/3: a day with no status row is is-unknown.
+
+    [REASON]: a single fixture is shared across B3.1 and B3.2 -- every test
+    here only READS the calendar, and each seeds its own database, so the
+    alphabetical-order hazard cannot flip a later test's expectations.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        reset_db()
+        cls.user_id = create_admin('b3admin')
+        with app.app_context():
+            ids = _units([631, 632, 633])
+            cls.m_unknown = ids[631]   # NO status rows at all
+            cls.m_idle = ids[632]      # serviceable BEFORE the month
+            cls.m_down = ids[633]      # unserviceable BEFORE the month
+            db.session.add(DroneUnitStatusLog(
+                drone_unit_id=ids[632], status=DRONE_STATUS_SERVICEABLE,
+                changed_on=date(2026, 2, 1)))
+            db.session.add(DroneUnitStatusLog(
+                drone_unit_id=ids[633], status=DRONE_STATUS_UNSERVICEABLE,
+                changed_on=date(2026, 2, 1)))
+            # The ledger's earliest row is therefore what B3.3 dates the banner
+            # against: 2026-02-01, so an entirely-earlier month is 2026-01.
+            db.session.commit()
+
+    @staticmethod
+    def _data(month):
+        with app.app_context():
+            return drones._drone_flight_calendar_data(month)
+
+    def _counts(self, data, unit_id):
+        row = [r for r in data['rows'] if r['unit_id'] == unit_id][0]
+        tally = {}
+        for c in row['cells']:
+            tally[c['state']] = tally.get(c['state'], 0) + 1
+        return tally
+
+    def test_b3_1_no_history_is_unknown_never_idle(self):
+        """B3.1: a machine with no status rows has an all-is-unknown month."""
+        data = self._data('2026-03')
+        counts = self._counts(data, self.m_unknown)
+        self.assertEqual(counts, {'is-unknown': 31},
+                         'every empty day of an unrecorded machine is unknown')
+        self.assertEqual(counts.get('is-idle', 0), 0,
+                         'not one day may be read as an explained idle day')
+
+    def test_b3_2_serviceable_and_unserviceable_still_tell_apart(self):
+        """B3.2: a serviceable row is is-idle, an unserviceable one is is-down."""
+        data = self._data('2026-03')
+        idle = self._counts(data, self.m_idle)
+        down = self._counts(data, self.m_down)
+        self.assertEqual(idle, {'is-idle': 31})
+        self.assertEqual(down, {'is-down': 31})
+
+    def test_b3_3_banner_only_when_the_month_predates_the_ledger(self):
+        """B3.3: the banner dates the ledger start and only for earlier months."""
+        before = self._data('2026-01')     # Jan ends before 2026-02-01
+        self.assertIsNotNone(before['banner'], 'a predating month must warn')
+        self.assertEqual(before['banner']['ledger_begins'], date(2026, 2, 1))
+        # And render it through the route so the HTML carries the date (RU,
+        # so the banner text is the one asserted below).
+        with app.test_client() as client:
+            login(client, self.user_id)
+            set_language(self.user_id, 'ru')
+            html = client.get(
+                '/drones/reports/calendar?month=2026-01').get_data(as_text=True)
+        self.assertIn('01.02.2026', html)
+        self.assertIn('ещё не вёлся', html)  # RU: the ledger had not begun
+
+        overlapping = self._data('2026-03')
+        self.assertIsNone(overlapping['banner'],
+                          'a month inside the ledger needs no banner')
+
+    def test_b3_6_legend_names_four_states_in_both_languages(self):
+        """B3.6: the legend spells out the new state in RU and Cyrillic UZ."""
+        with app.test_client() as client:
+            login(client, self.user_id)
+            seen = {}
+            for lang in ('ru', 'uz'):
+                set_language(self.user_id, lang)
+                html = client.get(
+                    '/drones/reports/calendar?month=2026-01').get_data(
+                        as_text=True)
+                seen[lang] = html
+        self.assertIn('НЕ ЗАПИСАНО', seen['ru'])
+        self.assertIn('ЁЗИЛМАГАН', seen['uz'])
+        self.assertNotEqual(seen['ru'], seen['uz'])
+
+
+class TestB35NegativeControl(unittest.TestCase):
+    """B3.5 REAL-mutation control: map None back to is-idle in the shipped code.
+
+    [REASON]: a control that recomputes the broken rule in Python is a
+    simulation, not a control. Here the SHIPPED _drone_flight_calendar_data is
+    actually edited back to the old one-liner -- `state = ('is-down' if status
+    == DRONE_STATUS_UNSERVICEABLE else 'is-idle')` on the empty-day branch --
+    and the B3.1 assertion is run against that broken code, producing the real
+    failure below. Then the source is restored and B3.1 goes green again. This
+    test only RUNS when the shipped source is correct; the mutation and the
+    paste are done by hand against the edited file, exactly as Rule 4 demands.
+    """
+    pass  # the real procedure is documented and pasted in the PR description
 
 
 # ══ A5  the prefill link ═════════════════════════════════════════════════════

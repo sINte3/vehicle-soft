@@ -4520,16 +4520,35 @@ def _drone_assignment_hints(month):
 @module_required('drones')
 def works_assignment_hints():
     """Read-only. Suggests a machine for an operator; creates nothing."""
-    periods = _drone_work_periods()
+    # The month picker is built from the months that have FLIGHTS, not from
+    # the work ledger: a month the machines never flew has no DJI half to
+    # compare against, and offering it invites the reader to conclude a machine
+    # stood idle when in fact nothing was ever synced -- the same rule
+    # _drone_flight_months() spells out for the calendar.
+    periods = _drone_flight_months()
     month = (request.args.get('month') or '').strip()
+    # [REASON]: AN EXPLICIT ?month= ALWAYS WINS; a bookmark must keep pointing
+    # where it pointed. Otherwise the screen opens on the most recent month
+    # that HAS FLIGHTS, not the most recent worked month: DRONE-SPRAY-MEDIAN-
+    # SCOPE-001/2. Work is billed for a month the machines never flew, so the
+    # ledger's newest worked month is exactly the month where building the DJI
+    # half of the comparison is empty -- measured on staging, 2026-08 has work
+    # but no flights, and the screen opened showing nothing to assign. If there
+    # are NO flights at all, fall back to the current month and SAY so, rather
+    # than silently showing one empty month for another.
     if not re.match(r'^\d{4}-\d{2}$', month or ''):
-        month = periods[0] if periods else ''
+        if periods:
+            month = periods[0]
+        else:
+            month = _drone_today_local().strftime('%Y-%m')
+            no_flights_at_all = True
     data = _drone_assignment_hints(month) if month else None
     return render_template(
         'drones/works_assignment_hints.html',
         data=data,
         month=month,
         periods=periods,
+        no_flights_at_all=locals().get('no_flights_at_all', False),
     )
 
 
@@ -4591,8 +4610,25 @@ def _drone_median(values):
     return (ordered[middle - 1] + ordered[middle]) / 2.0
 
 
-def _drone_spray_usage_data(conds, band, min_area=DRONE_SPRAY_MIN_AREA_HA):
+def _drone_spray_usage_data(period_conds, view_conds, band,
+                            min_area=DRONE_SPRAY_MIN_AREA_HA):
     """Litres per hectare by machine x month, with the corridor around it.
+
+    [REASON]: THE STANDARD IS THE FLEET; THE FILTER PICKS THE ROWS YOU LOOK AT,
+    NEVER WHAT THEY ARE JUDGED AGAINST -- DRONE-SPRAY-MEDIAN-SCOPE-001. The
+    median and the corridor are computed over EVERY machine-month in the
+    selected PERIOD, ignoring the machine (and region) filter entirely. Filter
+    the page to one machine and that machine must not become its own standard:
+    measured on staging, machine No 8 sat at 4.25 l/ha against a fleet median
+    of 28.98, and one click on the machine filter flipped the finding to a
+    0.43 l/ha median that called the pathological 27.65 l/ha month "normal".
+    The period filter DOES still narrow the median -- comparing an April
+    machine to the April fleet is meaningful, comparing it to the whole year
+    is not. Rows displayed, the totals row and the reconciliation are all
+    still computed over the FILTERED set (view_conds); only the median and
+    the corridor escape it. period_conds and view_conds are built apart at
+    the call site, never un-picked from one list: a filter you have to remove
+    by inspection breaks the next time a filter is added.
 
     [REASON]: THE RATE IS COMPUTED OVER SPRAY FLIGHTS ONLY (usage_type == 0)
     and NOT over every flight. _drone_summary_data's liters_per_ha divides
@@ -4634,53 +4670,79 @@ def _drone_spray_usage_data(conds, band, min_area=DRONE_SPRAY_MIN_AREA_HA):
     # usage_type == 0 is spray; see the second [REASON] above for NULL.
     is_spray = (DroneFlight.usage_type == 0)
 
-    groups = (db.session.query(
-        DroneFlight.drone_unit_id,
-        month_expr,
-        func.count(DroneFlight.id),
-        func.coalesce(
-            func.sum(case((is_spray, DroneFlight.area_ha), else_=0.0)), 0.0),
-        func.coalesce(
-            func.sum(case((is_spray, 0.0), else_=DroneFlight.area_ha)), 0.0),
-        # SUM skips NULLs by itself, so this is litres over the spray flights
-        # that HAVE a figure -- which is why no_liters below is needed to tell
-        # «nothing recorded» from «recorded as nothing».
-        func.coalesce(
-            func.sum(case((is_spray, DroneFlight.spray_liters), else_=None)),
-            0.0),
-        func.sum(case((is_spray, 1), else_=0)),
-        func.sum(case((and_(is_spray, DroneFlight.spray_liters.is_(None)), 1),
-                      else_=0)),
-    ).filter(*conds).group_by(DroneFlight.drone_unit_id, month_expr).all())
+    def _aggregate(conds):
+        """One machine-month row per machine, over `conds`.
+
+        A local closure so the fleet population and the display table are built
+        by the same query, and a filter added on one side cannot silently leave
+        the other computing something different.
+        """
+        return (db.session.query(
+            DroneFlight.drone_unit_id,
+            month_expr,
+            func.count(DroneFlight.id),
+            func.coalesce(
+                func.sum(case((is_spray, DroneFlight.area_ha), else_=0.0)),
+                0.0),
+            func.coalesce(
+                func.sum(case((is_spray, 0.0), else_=DroneFlight.area_ha)),
+                0.0),
+            # SUM skips NULLs by itself, so this is litres over the spray
+            # flights that HAVE a figure -- which is why no_liters below is
+            # needed to tell «nothing recorded» from «recorded as nothing».
+            func.coalesce(
+                func.sum(case((is_spray, DroneFlight.spray_liters),
+                              else_=None)),
+                0.0),
+            func.sum(case((is_spray, 1), else_=0)),
+            func.sum(case((and_(is_spray,
+                                DroneFlight.spray_liters.is_(None)), 1),
+                          else_=0)),
+        ).filter(*conds).group_by(DroneFlight.drone_unit_id, month_expr).all())
 
     unit_numbers = {u.id: u.number for u in DroneUnit.query.all()}
-    rows = []
-    for (unit_id, month, flights, area_spray, area_other, liters,
-         spray_flights, no_liters) in groups:
-        area_spray = float(area_spray or 0.0)
-        area_other = float(area_other or 0.0)
-        liters = float(liters or 0.0)
-        spray_flights = int(spray_flights or 0)
-        no_liters = int(no_liters or 0)
-        # The whole point of the counter: all-NULL is unknown, not zero.
-        if spray_flights and spray_flights > no_liters:
-            rate = _drone_rate(liters, area_spray)
-        else:
-            rate = None
-        rows.append({
-            'unit_id': unit_id,
-            'number': unit_numbers.get(unit_id),
-            'month': month,
-            'flights': flights,
-            'spray_flights': spray_flights,
-            'other_flights': flights - spray_flights,
-            'area_spray': area_spray,
-            'area_other': area_other,
-            'area_total': area_spray + area_other,
-            'liters': liters,
-            'no_liters': no_liters,
-            'rate': rate,
-        })
+
+    def _to_rows(groups):
+        out = []
+        for (unit_id, month, flights, area_spray, area_other, liters,
+             spray_flights, no_liters) in groups:
+            area_spray = float(area_spray or 0.0)
+            area_other = float(area_other or 0.0)
+            liters = float(liters or 0.0)
+            spray_flights = int(spray_flights or 0)
+            no_liters = int(no_liters or 0)
+            # The whole point of the counter: all-NULL is unknown, not zero.
+            if spray_flights and spray_flights > no_liters:
+                rate = _drone_rate(liters, area_spray)
+            else:
+                rate = None
+            out.append({
+                'unit_id': unit_id,
+                'number': unit_numbers.get(unit_id),
+                'month': month,
+                'flights': flights,
+                'spray_flights': spray_flights,
+                'other_flights': flights - spray_flights,
+                'area_spray': area_spray,
+                'area_other': area_other,
+                'area_total': area_spray + area_other,
+                'liters': liters,
+                'no_liters': no_liters,
+                'rate': rate,
+            })
+        return out
+
+    # THE FLEET is the median population: every machine-month in the selected
+    # PERIOD, ignoring the machine AND region filter. It is aggregated here,
+    # once, and judged here; the median comes from IT, not from the rows the
+    # machine filter left on screen. See _drone_spray_usage_data's [REASON].
+    fleet = _to_rows(_aggregate(period_conds))
+
+    # What the page actually DISPLAYS: the same machine-months, narrowed by the
+    # machine/region filter. Everything a reader sees -- rows, the totals row,
+    # the reconciliation -- is computed over THIS set. Only the median and the
+    # corridor come from `fleet`.
+    rows = _to_rows(_aggregate(period_conds + view_conds))
 
     # Machine number ascending, NULL machine last, newest month first inside
     # each machine: the row a reader looks for is this month's, and the
@@ -4702,22 +4764,24 @@ def _drone_spray_usage_data(conds, band, min_area=DRONE_SPRAY_MIN_AREA_HA):
     #     accuse that bucket either.
     #
     # Every excluded row STILL SHOWS ITS RATE and carries a label saying why
-    # it is uncoloured. Hiding the number would be the opposite failure.
-    for row in rows:
+    # it is uncoloured. Hiding the number would be the opposite failure. The
+    # eligibility is judged on THE FLEET: a machine-month excluded by min_area
+    # is excluded whether or not the machine filter left it on screen.
+    def _judge(row):
         if row['rate'] is None:
-            row['judged'] = False
-            row['note'] = ''
-        elif row['unit_id'] is None:
-            row['judged'] = False
-            row['note'] = _drone_t('аниқланмаган', 'не распознано')
-        elif row['area_spray'] < min_area:
-            row['judged'] = False
-            row['note'] = _drone_t('майдон кам', 'мало площади')
-        else:
-            row['judged'] = True
-            row['note'] = ''
+            return (False, '')
+        if row['unit_id'] is None:
+            return (False, _drone_t('аниқланмаган', 'не распознано'))
+        if row['area_spray'] < min_area:
+            return (False, _drone_t('майдон кам', 'мало площади'))
+        return (True, '')
 
-    median = _drone_median([r['rate'] for r in rows if r['judged']])
+    for row in fleet:
+        row['judged'], row['note'] = _judge(row)
+    for row in rows:
+        row['judged'], row['note'] = _judge(row)
+
+    median = _drone_median([r['rate'] for r in fleet if r['judged']])
     low = high = low2 = high2 = None
     if median is not None:
         low = median * (1.0 - band / 100.0)
@@ -4738,7 +4802,7 @@ def _drone_spray_usage_data(conds, band, min_area=DRONE_SPRAY_MIN_AREA_HA):
     grand = (db.session.query(
         func.count(DroneFlight.id),
         func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
-    ).filter(*conds).one())
+    ).filter(*(period_conds + view_conds)).one())
     total = {
         'flights': sum(r['flights'] for r in rows),
         'spray_flights': sum(r['spray_flights'] for r in rows),
@@ -4771,9 +4835,11 @@ def _drone_spray_usage_data(conds, band, min_area=DRONE_SPRAY_MIN_AREA_HA):
         'high2': high2,
         # Cells that VOTED, not cells that have a rate: the sentence on the
         # page says «the median was taken over N pairs» and must name the
-        # number that was actually used.
-        'rated_cells': sum(1 for r in rows if r['judged']),
-        'unjudged_cells': sum(1 for r in rows
+        # number that was actually used. Counted over THE FLEET, not over the
+        # rows the machine filter left on screen: a filter must not shrink the
+        # number the sentence names, any more than it moves the median itself.
+        'rated_cells': sum(1 for r in fleet if r['judged']),
+        'unjudged_cells': sum(1 for r in fleet
                               if r['rate'] is not None and not r['judged']),
     }
 
@@ -4794,8 +4860,15 @@ def spray_usage():
                                        default_current_month=False)
     band = _drone_spray_band(request.args)
     min_area = _drone_spray_min_area(request.args)
-    data = _drone_spray_usage_data(_drone_flight_conditions(filters), band,
-                                   min_area)
+    # [REASON]: the median must be the FLEET's for the period, so the period
+    # conditions and the machine/region (display) conditions are built apart
+    # here and passed separately -- the median uses only period_conds, the
+    # displayed rows and the reconciliation use period_conds + view_conds.
+    period_conds = _drone_flight_conditions(dict(filters, unit_id=None,
+                                                 region=''))
+    view_conds = _drone_flight_conditions(dict(filters, date_from=None,
+                                               date_to=None))
+    data = _drone_spray_usage_data(period_conds, view_conds, band, min_area)
     link_args = _drone_link_args(filters)
     if band != DRONE_SPRAY_BAND_DEFAULT:
         link_args['band'] = band
@@ -4828,8 +4901,12 @@ def spray_usage_xlsx():
                                        default_current_month=False)
     band = _drone_spray_band(request.args)
     min_area = _drone_spray_min_area(request.args)
-    data = _drone_spray_usage_data(_drone_flight_conditions(filters), band,
-                                   min_area)
+    # Same split as spray_usage(): the workbook and the page share the report.
+    period_conds = _drone_flight_conditions(dict(filters, unit_id=None,
+                                                 region=''))
+    view_conds = _drone_flight_conditions(dict(filters, date_from=None,
+                                               date_to=None))
+    data = _drone_spray_usage_data(period_conds, view_conds, band, min_area)
     st = _drone_xlsx_styler()
     unbounded = _drone_t('чекланмаган', 'не ограничен')
     label_unattr = _drone_t('Аниқланмаган', 'Не распознано')
@@ -5302,7 +5379,14 @@ def works_flights_reconcile():
 # ─── DRONE-ANALYTICS-001/4: flight calendar ──────────────────────────────────
 
 def _drone_status_on_day_map(month_first, month_last):
-    """{unit_id: [(changed_on, status), ...]} sorted, for a day-by-day walk.
+    """({unit_id: [(changed_on, status), ...]}, earliest_on) for the walk.
+
+    earliest_on is the first changed_on in the WHOLE ledger, unconstrained by
+    the month: DRONE-SPRAY-MEDIAN-SCOPE-001/3. The calendar can only display
+    months that lie entirely before the first status row (production's only
+    status rows are a 2026-08-02 snapshot), and for those months every status is
+    None. The banner over the grid needs the ledger's very first date to say
+    where recording began, so it is read here, from the data, never hardcoded.
 
     [REASON]: the status IN FORCE on a day is the row with the greatest
     changed_on <= that day, ties broken by the greatest id -- the same rule
@@ -5325,15 +5409,26 @@ def _drone_status_on_day_map(month_first, month_last):
     for row in rows:
         by_unit.setdefault(row.drone_unit_id, []).append(
             (row.changed_on, row.status))
-    return by_unit
+    # The ledger's very first row, UNBOUNDED by the month: `history` above is
+    # rightly cut at month_last -- the status in force on a day is the row with
+    # the greatest changed_on <= that day -- but the banner must date where
+    # recording began even when that began AFTER the displayed month. For a
+    # month that entirely predates the ledger, `history` is empty and so cannot
+    # carry the date; a second, unbounded MIN() over the same table is the one
+    # query the addendum reserves for it.
+    earliest_on = (db.session.query(func.min(DroneUnitStatusLog.changed_on))
+                   .scalar())
+    return by_unit, earliest_on
 
 
 def _drone_status_on(history, day):
     """The status in force on `day`, or None when the machine has no history.
 
     None is NOT «serviceable»: a machine nobody has ever reported on has an
-    unknown state, and A4.3 turns on the difference -- an unknown state must
-    render as «idle», never as «down».
+    unknown state, and DRONE-SPRAY-MEDIAN-SCOPE-001/3 turned on the
+    difference -- the caller maps None to is-unknown, never to idle and never
+    to down. This function is intentionally unchanged; the distinction is the
+    caller's to render.
     """
     found = None
     for changed_on, status in history:
@@ -5373,7 +5468,16 @@ def _drone_flight_calendar_data(month):
             'flights': flights, 'area': float(area or 0.0)}
 
     units = DroneUnit.query.order_by(DroneUnit.number).all()
-    history = _drone_status_on_day_map(first, last)
+    history, earliest_on = _drone_status_on_day_map(first, last)
+    # [REASON]: THE FOURTH STATE, is-unknown -- DRONE-SPRAY-MEDIAN-SCOPE-001/3.
+    # _drone_status_on() returns None for a day with no status row in force, and
+    # this is the case the distinction exists for. None must NOT become idle:
+    # is-idle means "a status row exists, it says serviceable, and the machine
+    # did not fly". A machine with no history at all has an UNKNOWN state -- the
+    # status was not being recorded that month -- and painting those days idle
+    # turns "nobody recorded it" into the definite accusation "it stood idle and
+    # nobody explained it". SERVER measures nothing here; it only refuses to
+    # lie. The two states deliberately render differently (see the CSS).
     # A machine with no flights at all this month still gets a row: an absent
     # row is indistinguishable from a machine nobody looked at, which is the
     # failure the sources screen already exists to prevent.
@@ -5392,8 +5496,12 @@ def _drone_flight_calendar_data(month):
                               'flights': hit['flights'], 'area': hit['area']})
             else:
                 status = _drone_status_on(history.get(unit.id, []), day)
-                state = ('is-down' if status == DRONE_STATUS_UNSERVICEABLE
-                         else 'is-idle')
+                if status is None:
+                    state = 'is-unknown'
+                elif status == DRONE_STATUS_UNSERVICEABLE:
+                    state = 'is-down'
+                else:
+                    state = 'is-idle'
                 cells.append({'day': day, 'state': state, 'flights': 0,
                               'area': 0.0, 'status': status})
         rows.append({'unit_id': unit.id, 'number': unit.number,
@@ -5429,6 +5537,15 @@ def _drone_flight_calendar_data(month):
             + unattr_cells[index]['area'],
         })
 
+    # [REASON]: THE BANNER -- DRONE-SPRAY-MEDIAN-SCOPE-001/3. When the whole
+    # displayed month lies before the ledger's first row, EVERY empty cell is
+    # is-unknown and a reader would take that (correctly) as "not recorded".
+    # The banner says it out loud and dates it, so the empty days are read as
+    # "the machine did not fly, and nothing else was known" and not as a
+    # judgement. earliest_on comes from the data, never hardcoded. When the
+    # month overlaps the ledger (earliest_on within or after the month) there
+    # is no banner, because the calendar can then genuinely tell that state apart.
+    before_ledger = earliest_on is not None and last < earliest_on
     return {
         'month': month,
         'days': days,
@@ -5436,6 +5553,9 @@ def _drone_flight_calendar_data(month):
         'unattributed': {'cells': unattr_cells, 'flights': unattr_flights,
                          'area': unattr_area} if unattr_flights else None,
         'day_totals': day_totals,
+        'banner': {
+            'ledger_begins': earliest_on,
+        } if before_ledger else None,
         'total': {
             'flights': sum(r['flights'] for r in rows) + unattr_flights,
             'area': sum(r['area'] for r in rows) + unattr_area,
