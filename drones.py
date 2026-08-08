@@ -4527,6 +4527,17 @@ def works_assignment_hints():
     # _drone_flight_months() spells out for the calendar.
     periods = _drone_flight_months()
     month = (request.args.get('month') or '').strip()
+    # [REASON]: DRONE-UI-FIX-003/2. Initialised HERE, before the branch that
+    # can set it, and passed as a plain variable below. It used to be bound
+    # only inside the else branch and read back out of the function's
+    # local-variable dictionary with a `.get(name, False)` default. That
+    # worked, and it broke SILENTLY the first time anyone renamed the
+    # variable, moved the branch or wrapped the block: the lookup would simply
+    # keep returning the default, the screen would stop saying that no flights
+    # were ever synced, and nothing would raise anywhere. A NameError is a bug
+    # report; a wrong default is not. The literal call is deliberately not
+    # spelled here so that grepping this module for it stays a real check.
+    no_flights_at_all = False
     # [REASON]: AN EXPLICIT ?month= ALWAYS WINS; a bookmark must keep pointing
     # where it pointed. Otherwise the screen opens on the most recent month
     # that HAS FLIGHTS, not the most recent worked month: DRONE-SPRAY-MEDIAN-
@@ -4548,7 +4559,7 @@ def works_assignment_hints():
         data=data,
         month=month,
         periods=periods,
-        no_flights_at_all=locals().get('no_flights_at_all', False),
+        no_flights_at_all=no_flights_at_all,
     )
 
 

@@ -18,9 +18,14 @@
 
 {% if unresolved.jobs %}
 <div class="vs-alert is-warning vs-mb">
+  {# [REASON]: DRONE-UI-FIX-003/1, same wrapper as on spray_usage.html. Five
+     flex items (text, <b>, text, <a>, text) laid out in a row with 8px gaps
+     instead of one sentence. Keep the alert down to ONE flex child. #}
+  <div>
   {{ 'Работ без заказчика' if is_ru else 'Буюртмачисиз ишлар' }}: <b>{{ unresolved.jobs }}</b> ({{ '%.2f'|format(unresolved.area)|vs_num }} {{ 'га' if is_ru else 'га' }}).
   <a href="{{ url_for('drones.works', customer_id=-1) }}">{{ 'Показать их' if is_ru else 'Уларни кўрсатиш' }}</a>.
   {{ 'Добавьте написание нужному заказчику — и следующий импорт их привяжет.' if is_ru else 'Керакли буюртмачига ёзилиш қўшинг — кейинги импорт уларни боғлайди.' }}
+  </div>
 </div>
 {% endif %}
 

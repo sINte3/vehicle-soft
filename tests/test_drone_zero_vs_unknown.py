@@ -683,7 +683,21 @@ class TestB3TheOldMacroIsGone(unittest.TestCase):
                 path = os.path.join(root, name)
                 with io.open(path, encoding='utf-8') as fh:
                     if 'money_cell' in self.DECL.findall(fh.read()):
-                        declarations.append(os.path.relpath(path, REPO_ROOT))
+                        # [REASON]: DRONE-UI-FIX-003/3. os.path.relpath returns
+                        # the NATIVE separator, so on the Windows server this
+                        # produced 'templates\drones\_money_cell.html' and could
+                        # never equal PARTIAL, which is written with forward
+                        # slashes. The assertion therefore failed on every run
+                        # on the machine it is meant to protect, while passing
+                        # in the POSIX container -- a check that always fails
+                        # where it runs is not a check, it trains the team to
+                        # read a red suite as normal. Normalising here rather
+                        # than changing PARTIAL keeps the expected value
+                        # readable and identical to how the path is written
+                        # everywhere else in this file.
+                        declarations.append(
+                            os.path.relpath(path, REPO_ROOT).replace(os.sep,
+                                                                     '/'))
         self.assertEqual([PARTIAL], declarations)
 
 
@@ -944,9 +958,18 @@ class TestC3DivBalance(unittest.TestCase):
                 cwd=REPO_ROOT).decode('utf-8')
             reported[path] = (self.counts(before),
                               self.counts(read_template(path)))
+        # [REASON]: DRONE-UI-FIX-003/1 moved works_debts.html from 39 to 40
+        # balanced <div> pairs. The alert above the debt tables was wrapped so
+        # it stops laying out as three flex items -- see the wrapper's own
+        # [REASON] in the template. This is a LEDGER of what each increment did
+        # to the div counts, not an invariant, so the recorded «after» number
+        # moves with a deliberate change instead of the change being avoided.
+        # What is invariant is balance, and that is asserted separately by
+        # test_c3_both_templates_are_balanced_now and by
+        # tools/check_templates.py: 40 == 40 still holds.
         self.assertEqual(
             {REPORTS_TEMPLATE: ((41, 41), (40, 40)),
-             DEBTS_TEMPLATE: ((39, 39), (39, 39))},
+             DEBTS_TEMPLATE: ((39, 39), (40, 40))},
             reported)
 
 
