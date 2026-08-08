@@ -961,13 +961,28 @@ def _formula_cells(path):
 
 # ─── Resolution against the database ─────────────────────────────────────────
 
+class ImportPreconditionError(Exception):
+    """A precondition the caller can report. The CLI turns it into exit 2.
+
+    [REASON]: DRONE-WORKS-UPLOAD-001. These three checks used to print and
+    then kill the process with code 2. From a shell that is exactly right.
+    Inside a Waitress worker thread it raises SystemExit on the REQUEST
+    thread instead: the thread dies, the client gets a bare 500, and the
+    message -- which is the entire content of the failure -- goes to a
+    console nobody is watching and into no log the operator reads. Raising
+    lets the web layer show the same sentence on the screen; main() catches
+    it, prints the same text and returns 2, so the shell behaviour does not
+    move. Deliberately no process exit anywhere outside __main__.
+    """
+
+
 def _connect(db_path, read_only):
     if not os.path.exists(db_path):
         # [REASON]: sqlite3.connect(path) creates an empty database when the
         # file is missing. A tool that silently creates one and reports
         # "0 operators, 0 customers" is worse than one that refuses.
-        print('ERROR: database not found at %s - refusing to run.' % db_path)
-        sys.exit(2)
+        raise ImportPreconditionError(
+            'ERROR: database not found at %s - refusing to run.' % db_path)
     if read_only:
         uri = 'file:%s?mode=ro' % path_to_uri(db_path)
         con = sqlite3.connect(uri, uri=True)
@@ -986,9 +1001,9 @@ def _require_tables(con, tables):
         "SELECT name FROM sqlite_master WHERE type='table'")}
     missing = [t for t in tables if t not in have]
     if missing:
-        print('ERROR: table(s) missing: %s. Run migrate_drones_works_001.py '
-              'first.' % ', '.join(missing))
-        sys.exit(2)
+        raise ImportPreconditionError(
+            'ERROR: table(s) missing: %s. Run migrate_drones_works_001.py '
+            'first.' % ', '.join(missing))
 
 
 def _require_received_kind(con):
@@ -1001,9 +1016,9 @@ def _require_received_kind(con):
     """
     columns = {row[1] for row in con.execute('PRAGMA table_info(drone_works)')}
     if 'received_kind' not in columns:
-        print('ERROR: drone_works.received_kind is missing. Run '
-              'migrate_drones_works_002.py first.')
-        sys.exit(2)
+        raise ImportPreconditionError(
+            'ERROR: drone_works.received_kind is missing. Run '
+            'migrate_drones_works_002.py first.')
 
 
 class Directory(object):
@@ -1464,7 +1479,17 @@ def print_console(result, stats, args, batch):
     print('rejected row) is in the UTF-8 report file above.')
 
 
-def write_report(path, result, stats, args, batch):
+def write_report(path, result, stats, args, batch, include_prediction=True):
+    """The UTF-8 report file. include_prediction guards ONE block.
+
+    [REASON]: DRONE-WORKS-UPLOAD-001. EXPECTED_BY_MONTH is the owner's hand
+    parse of all 28 books on 2026-08-04 -- a one-time historical anchor for
+    the one-time run over the whole corpus. In a monthly upload of one or two
+    books through the screen it would report a shortfall of hundreds of rows
+    against a total that has nothing to do with what was uploaded, which is
+    worse than printing nothing. The CLI passes nothing and keeps the default,
+    so its output stays byte-identical; the web path passes False.
+    """
     lines = []
     add = lines.append
     add('DRONE-WORKS-001 — отчёт импорта')
@@ -1520,23 +1545,24 @@ def write_report(path, result, stats, args, batch):
         for lineno, text in result.manifest_problems:
             add('  - строка %d: %s' % (lineno, text))
 
-    add('')
-    add('ПО МЕСЯЦАМ МАНИФЕСТА, ПРОТИВ ПРЕДСКАЗАНИЯ ОТ 2026-08-04')
-    add('  Помесячные строки ОРИЕНТИРОВОЧНЫ: инструмент группирует')
-    add('  датированную строку по её собственной дате, а одна книга лежит')
-    add('  между сентябрём и октябрём. Твёрдое число — итог. Апрель —')
-    add('  якорь: 6 388.83 га сходятся с нашими же данными DJI за апрель')
-    add('  2026 (6 379.24 га на 6 403 вылетах) до 0.15 %.')
-    _expected = dict((m, (r, a)) for m, r, a in EXPECTED_BY_MONTH)
-    for month in sorted(set(stats['manifest_months']) | set(_expected)):
-        count, month_area = stats['manifest_months'].get(month, (0, 0.0))
-        exp_rows, exp_area = _expected.get(month, (0, 0.0))
-        add('  %-8s %5d строк %11.2f га | ожидалось %5d %11.2f | %+.2f'
-            % (month, count, month_area, exp_rows, exp_area,
-               month_area - exp_area))
-    add('  ИТОГО    %5d строк %11.2f га | ожидалось %5d %11.2f | %+.2f'
-        % (stats['rows'], stats['area'], EXPECTED_TOTAL_ROWS,
-           EXPECTED_TOTAL_AREA, stats['area'] - EXPECTED_TOTAL_AREA))
+    if include_prediction:
+        add('')
+        add('ПО МЕСЯЦАМ МАНИФЕСТА, ПРОТИВ ПРЕДСКАЗАНИЯ ОТ 2026-08-04')
+        add('  Помесячные строки ОРИЕНТИРОВОЧНЫ: инструмент группирует')
+        add('  датированную строку по её собственной дате, а одна книга лежит')
+        add('  между сентябрём и октябрём. Твёрдое число — итог. Апрель —')
+        add('  якорь: 6 388.83 га сходятся с нашими же данными DJI за апрель')
+        add('  2026 (6 379.24 га на 6 403 вылетах) до 0.15 %.')
+        _expected = dict((m, (r, a)) for m, r, a in EXPECTED_BY_MONTH)
+        for month in sorted(set(stats['manifest_months']) | set(_expected)):
+            count, month_area = stats['manifest_months'].get(month, (0, 0.0))
+            exp_rows, exp_area = _expected.get(month, (0, 0.0))
+            add('  %-8s %5d строк %11.2f га | ожидалось %5d %11.2f | %+.2f'
+                % (month, count, month_area, exp_rows, exp_area,
+                   month_area - exp_area))
+        add('  ИТОГО    %5d строк %11.2f га | ожидалось %5d %11.2f | %+.2f'
+            % (stats['rows'], stats['area'], EXPECTED_TOTAL_ROWS,
+               EXPECTED_TOTAL_AREA, stats['area'] - EXPECTED_TOTAL_AREA))
 
     add('')
     add('ПРОПУЩЕННЫЕ ЛИСТЫ: %d' % len(result.skipped_sheets))
@@ -1729,30 +1755,39 @@ def main(argv=None):
     files = sorted(f for f in os.listdir(args.dir)
                    if f.lower().endswith('.xlsx') and not f.startswith('~$'))
 
-    con = _connect(args.db, read_only=not args.apply)
     try:
-        _require_tables(con, ('drone_works', 'drone_customers',
-                              'drone_customer_aliases', 'drone_operators'))
-        _require_received_kind(con)
-        dir_obj = Directory(con)
-        result = collect(args.dir, manifest, files, dir_obj,
-                         args.default_payment)
-        result.manifest_problems = manifest_problems
-        resolve(result, dir_obj)
-        stats = summarize(result)
-
-        if args.apply:
-            created, inserted, skipped = apply_rows(con, result, batch)
-        else:
-            created = inserted = skipped = 0
-    except Exception:
+        con = _connect(args.db, read_only=not args.apply)
         try:
-            con.rollback()
-        except sqlite3.Error:
-            pass
-        raise
-    finally:
-        con.close()
+            _require_tables(con, ('drone_works', 'drone_customers',
+                                  'drone_customer_aliases', 'drone_operators'))
+            _require_received_kind(con)
+            dir_obj = Directory(con)
+            result = collect(args.dir, manifest, files, dir_obj,
+                             args.default_payment)
+            result.manifest_problems = manifest_problems
+            resolve(result, dir_obj)
+            stats = summarize(result)
+
+            if args.apply:
+                created, inserted, skipped = apply_rows(con, result, batch)
+            else:
+                created = inserted = skipped = 0
+        except Exception:
+            try:
+                con.rollback()
+            except sqlite3.Error:
+                pass
+            raise
+        finally:
+            con.close()
+    except ImportPreconditionError as exc:
+        # [REASON]: the same text on stdout and the same exit code the three
+        # checks produced when they killed the process themselves. From a
+        # shell nothing about this tool's behaviour has moved; what moved is
+        # that a caller which is not a shell now gets an exception it can
+        # show instead of a dead thread.
+        print(str(exc))
+        return 2
 
     write_report(args.report, result, stats, args, batch)
     print_console(result, stats, args, batch)

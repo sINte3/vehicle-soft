@@ -1,0 +1,142 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{# DRONE-WORKS-UPLOAD-001: загрузка ведомостей диспетчеров через экран.
+   Экран — оболочка вокруг tools/import_drone_works.py, а не второй импортёр.
+   Разбор, дедупликация и запись целиком принадлежат тому модулю. #}
+{% set t_yes = 'да' if is_ru else 'ҳа' %}
+{% set t_no = 'нет' if is_ru else 'йўқ' %}
+{% block title %}{{ 'Дроны — загрузка ведомостей' if is_ru else 'Дронлар — ведомостларни юклаш' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Загрузка ведомостей' if is_ru else 'Ведомостларни юклаш' }}</div>
+    <div class="vs-hero-sub">{{ 'Книги диспетчеров приходят раз в месяц. Файл сохраняется как есть, разбирается без записи, и в базу попадает только после подтверждения на следующем экране. Имя файла не переименовывается: по нему определяются подразделение и оператор, и именно оно вместе с листом и номером строки не даёт повторной загрузке задвоить работы.' if is_ru else 'Диспетчерларнинг китоблари ойда бир марта келади. Файл ўзгаришсиз сақланади, ёзувсиз ўқилади ва базага фақат кейинги экрандаги тасдиқдан сўнг тушади. Файл номи ўзгартирилмайди: ундан бўлим ва оператор аниқланади, ва айнан у варақ ҳамда қатор рақами билан бирга такрорий юкламада ишларни иккиланишига йўл қўймайди.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('drones.works') }}" class="vs-btn">{{ 'К работам' if is_ru else 'Ишларга' }}</a>
+  </div>
+</div>
+
+{# ── Форма загрузки ─────────────────────────────────────────────────────── #}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <div class="vs-card-title">{{ 'Новая загрузка' if is_ru else 'Янги юклама' }}</div>
+  </div>
+  <div class="vs-card-body">
+    <form method="post" action="{{ url_for('drones.works_import_upload') }}" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="vs-form-row">
+        <div class="vs-field" style="max-width:180px;">
+          <label class="vs-label" for="impPeriod">{{ 'Период (ГГГГ-ММ)' if is_ru else 'Давр (ЙЙЙЙ-ОО)' }}</label>
+          <input class="vs-input" type="text" id="impPeriod" name="period_month"
+                 value="{{ default_period }}" pattern="[0-9]{4}-[0-9]{2}"
+                 placeholder="2026-08" required>
+        </div>
+        <div class="vs-field" style="min-width:320px;">
+          <label class="vs-label" for="impBooks">{{ 'Книги ведомостей' if is_ru else 'Ведомость китоблари' }}</label>
+          <input class="vs-input" type="file" id="impBooks" name="books"
+                 accept=".xlsx" multiple required>
+        </div>
+        <div class="vs-field" style="min-width:240px;">
+          <label class="vs-label" for="impNote">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+          <input class="vs-input" type="text" id="impNote" name="note" maxlength="500"
+                 placeholder="{{ 'откуда файлы, кто передал' if is_ru else 'файллар қаердан, ким берган' }}">
+        </div>
+        <div class="vs-field" style="flex:0 0 auto;">
+          <button type="submit" class="vs-btn vs-btn-primary">{{ 'Разобрать без записи' if is_ru else 'Ёзувсиз ўқиш' }}</button>
+        </div>
+      </div>
+      <div class="vs-help vs-mt-sm">
+        {{ 'Период применяется ко всей загрузке и управляет только строками без разбираемой даты: строка с датой попадает в свой месяц по собственной дате, а расхождение показывается на предпросмотре.' if is_ru else 'Давр бутун юкламага қўлланади ва фақат ўқиб бўлмайдиган санали қаторларни бошқаради: санаси бор қатор ўз санаси бўйича ўз ойига тушади, тафовут эса кўриб чиқишда кўрсатилади.' }}
+      </div>
+      <div class="vs-help">
+        {{ 'До' if is_ru else 'Кўпи билан' }} {{ max_files }}
+        {{ 'файлов за раз, до' if is_ru else 'файл, ҳар бири' }} {{ max_file_mb }}
+        {{ 'МБ на файл и до' if is_ru else 'МБ гача ва жами' }} {{ max_upload_mb }}
+        {{ 'МБ на загрузку. Принимается только формат' if is_ru else 'МБ гача. Фақат шу формат қабул қилинади:' }} .xlsx
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ── Журнал ─────────────────────────────────────────────────────────────── #}
+<div class="vs-card">
+  <div class="vs-card-header">
+    <div class="vs-card-title">{{ 'Последние загрузки' if is_ru else 'Сўнгги юкламалар' }}</div>
+  </div>
+  {% if batches %}
+  <div class="vs-table-wrap">
+    <div class="vs-table-scroll">
+      <table class="vs-table is-compact vs-num">
+        <thead>
+          <tr>
+            <th>{{ '№' if is_ru else '№' }}</th>
+            <th>{{ 'Когда' if is_ru else 'Қачон' }}</th>
+            <th>{{ 'Кто' if is_ru else 'Ким' }}</th>
+            <th>{{ 'Период' if is_ru else 'Давр' }}</th>
+            <th>{{ 'Файлы' if is_ru else 'Файллар' }}</th>
+            <th>{{ 'Состояние' if is_ru else 'Ҳолати' }}</th>
+            <th class="right">{{ 'Строк' if is_ru else 'Қатор' }}</th>
+            <th class="right">{{ 'Гектаров' if is_ru else 'Гектар' }}</th>
+            <th class="right">{{ 'Записано' if is_ru else 'Ёзилди' }}</th>
+            <th class="right">{{ 'Уже были' if is_ru else 'Бор эди' }}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in batches %}
+          <tr {% if row.status == status_failed %}class="is-danger-row"{% endif %}>
+            <td><a href="{{ url_for('drones.works_import_preview', batch_id=row.id) }}">{{ row.id }}</a></td>
+            <td>{{ row.created_at[:16].replace('T', ' ') }}</td>
+            <td>{{ row.creator.full_name or row.creator.username if row.creator else '—' }}</td>
+            <td>{{ row.period_month }}</td>
+            <td>
+              {% for meta in batch_files.get(row.id, []) %}
+              <div>{{ meta.get('name') }}</div>
+              {% else %}
+              <span class="vs-muted">—</span>
+              {% endfor %}
+            </td>
+            <td>
+              {% if row.status == status_applied %}
+              <span class="vs-badge vs-badge-success">{{ 'записано' if is_ru else 'ёзилди' }}</span>
+              {% elif row.status == status_failed %}
+              <span class="vs-badge vs-badge-danger">{{ 'ошибка' if is_ru else 'хатолик' }}</span>
+              {% else %}
+              <span class="vs-badge vs-badge-warning">{{ 'ждёт подтверждения' if is_ru else 'тасдиқ кутмоқда' }}</span>
+              {% endif %}
+            </td>
+            <td class="right">{{ row.preview_rows|vs_num if row.preview_rows is not none else '—' }}</td>
+            <td class="right">{{ '%.2f'|format(row.preview_area_ha)|vs_num if row.preview_area_ha is not none else '—' }}</td>
+            <td class="right">{{ row.works_inserted|vs_num if row.works_inserted is not none else '—' }}</td>
+            <td class="right">{{ row.works_skipped_existing|vs_num if row.works_skipped_existing is not none else '—' }}</td>
+            <td class="right">
+              <a class="vs-btn vs-btn-sm" href="{{ url_for('drones.works_import_preview', batch_id=row.id) }}">{{ 'Открыть' if is_ru else 'Очиш' }}</a>
+              {% if row.report_file %}
+              <a class="vs-btn vs-btn-sm" href="{{ url_for('drones.works_import_report', batch_id=row.id) }}">{{ 'Отчёт' if is_ru else 'Ҳисобот' }}</a>
+              {% endif %}
+            </td>
+          </tr>
+          {% if row.error_text %}
+          <tr class="is-danger-row">
+            <td colspan="11">{{ row.error_text }}</td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="vs-card-body">
+    <div class="vs-empty">
+      <div class="vs-empty-title">{{ 'Загрузок ещё не было' if is_ru else 'Ҳали юкламалар бўлмаган' }}</div>
+      <div class="vs-empty-sub">{{ 'Первая загруженная книга появится здесь вместе с числами, которые она дала.' if is_ru else 'Биринчи юкланган китоб у берган рақамлар билан бирга шу ерда кўринади.' }}</div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

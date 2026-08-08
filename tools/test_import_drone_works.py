@@ -23,9 +23,11 @@ Run:
 
 import contextlib
 import datetime
+import io
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -749,6 +751,22 @@ class ResolutionTests(ImportTestBase):
 
 # ─── Writing ─────────────────────────────────────────────────────────────────
 
+class _ReportArgs(object):
+    """The four attributes write_report() reads off the argparse namespace.
+
+    [REASON]: DRONE-WORKS-UPLOAD-001 -- the web path builds the same shape,
+    because write_report() prints the directory, the manifest, the database
+    and the mode into the report header and there is no argparse namespace on
+    that path.
+    """
+
+    def __init__(self, apply, dir, manifest, db):
+        self.apply = apply
+        self.dir = dir
+        self.manifest = manifest
+        self.db = db
+
+
 class ApplyTests(ImportTestBase):
     def _main(self, db, extra=()):
         argv = ['--dir', self.books, '--manifest', self.manifest,
@@ -816,11 +834,128 @@ class ApplyTests(ImportTestBase):
             con.close()
 
     def test_a_missing_database_exits_2_and_creates_no_file(self):
+        """DRONE-WORKS-UPLOAD-001: the SAME shell contract, one layer lower.
+
+        _connect() used to print and kill the process. Inside a Waitress
+        worker thread that killed the request thread and produced a silent
+        500 with the message nowhere, so it now raises
+        ImportPreconditionError and main() turns it into a printed message
+        and a return code of 2.
+
+        This test therefore asserts MORE than it used to, not less: the
+        exception is raised where the web path catches it, main() returns 2
+        in-process instead of killing whatever called it, the message is
+        still printed, and -- the assertion this one replaces -- running the
+        tool as a real process still exits 2. The old form checked the
+        in-process stand-in for the process contract; this checks the process
+        contract itself.
+        """
         missing = os.path.join(self.tmp, 'nope.db')
-        with self.assertRaises(SystemExit) as raised:
-            self._main(missing)
-        self.assertEqual(raised.exception.code, 2)
+
+        with self.assertRaises(imp.ImportPreconditionError) as raised:
+            imp._connect(missing, read_only=True)
+        self.assertIn('refusing to run', str(raised.exception))
         self.assertFalse(os.path.exists(missing))
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            self.assertEqual(self._main(missing), 2)
+        self.assertIn('ERROR: database not found at', buffer.getvalue())
+        self.assertFalse(os.path.exists(missing))
+
+        process = subprocess.run(
+            [sys.executable, os.path.join(HERE, 'import_drone_works.py'),
+             '--dir', self.books, '--manifest', self.manifest,
+             '--db', missing,
+             '--report', os.path.join(self.tmp, 'report.txt')],
+            capture_output=True)
+        self.assertEqual(process.returncode, 2)
+        self.assertIn('ERROR: database not found at',
+                      process.stdout.decode('utf-8', 'replace'))
+        self.assertFalse(os.path.exists(missing))
+
+    def test_the_other_two_preconditions_report_instead_of_killing(self):
+        """_require_tables and _require_received_kind, same contract.
+
+        [REASON]: DRONE-WORKS-UPLOAD-001. All three preconditions are reached
+        from the web path, where a process exit is a dead request thread. The
+        message text is asserted verbatim because the CLI prints it and the
+        screen shows it, and the two must not drift apart.
+        """
+        db = self.fresh_db('precond.db')
+        con = sqlite3.connect(db)
+        try:
+            with self.assertRaises(imp.ImportPreconditionError) as raised:
+                imp._require_tables(con, ('drone_works', 'no_such_table'))
+            self.assertEqual(
+                str(raised.exception),
+                'ERROR: table(s) missing: no_such_table. Run '
+                'migrate_drones_works_001.py first.')
+
+            con.execute('CREATE TABLE kindless (id INTEGER)')
+            with self.assertRaises(imp.ImportPreconditionError) as raised:
+                con.execute('ALTER TABLE drone_works RENAME TO drone_works_x')
+                con.execute('CREATE TABLE drone_works (id INTEGER, '
+                            'payment_type TEXT)')
+                imp._require_received_kind(con)
+            self.assertEqual(
+                str(raised.exception),
+                'ERROR: drone_works.received_kind is missing. Run '
+                'migrate_drones_works_002.py first.')
+        finally:
+            con.close()
+
+    def test_the_report_prediction_block_is_optional(self):
+        """DRONE-WORKS-UPLOAD-001: include_prediction guards ONE block.
+
+        The CLI passes nothing and keeps the block -- its output is
+        byte-identical to the base commit. The web path passes False, because
+        EXPECTED_BY_MONTH is a hand parse of all 28 real books and comparing
+        a two-book monthly upload against it would report a shortfall of
+        hundreds of rows against a total that has nothing to do with the
+        upload.
+        """
+        db = self.fresh_db('prediction.db')
+        con = imp._connect(db, read_only=True)
+        try:
+            dir_obj = imp.Directory(con)
+            manifest, _problems = imp.read_manifest(self.manifest)
+            files = sorted(f for f in os.listdir(self.books)
+                           if f.lower().endswith('.xlsx'))
+            result = imp.collect(self.books, manifest, files, dir_obj, None)
+            imp.resolve(result, dir_obj)
+            stats = imp.summarize(result)
+        finally:
+            con.close()
+
+        args = _ReportArgs(apply=False, dir=self.books,
+                           manifest=self.manifest, db=db)
+        with_block = os.path.join(self.tmp, 'with_prediction.txt')
+        without = os.path.join(self.tmp, 'without_prediction.txt')
+        imp.write_report(with_block, result, stats, args, 'b')
+        imp.write_report(without, result, stats, args, 'b',
+                         include_prediction=False)
+        with open(with_block, encoding='utf-8') as fh:
+            text_with = fh.read()
+        with open(without, encoding='utf-8') as fh:
+            text_without = fh.read()
+
+        marker = 'ПО МЕСЯЦАМ МАНИФЕСТА, ПРОТИВ ПРЕДСКАЗАНИЯ ОТ 2026-08-04'
+        self.assertIn(marker, text_with)
+        self.assertNotIn(marker, text_without)
+        # Nothing ELSE moved: the guarded block is the whole difference.
+        removed = [line for line in text_with.splitlines()
+                   if line not in text_without.splitlines()]
+        self.assertTrue(removed)
+        self.assertTrue(all('ожидалось' in line or 'ПРЕДСКАЗАНИЯ' in line
+                            or 'ОРИЕНТИРОВОЧНЫ' in line
+                            or 'датированную' in line
+                            or 'между сентябрём' in line
+                            or 'якорь' in line
+                            or '2026 (6 379.24' in line
+                            for line in removed),
+                        'the guard removed something other than the '
+                        'prediction block: %r' % removed)
 
     def test_the_report_file_carries_the_cyrillic_detail(self):
         db = self.fresh_db('report.db')

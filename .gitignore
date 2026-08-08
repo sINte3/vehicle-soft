@@ -75,6 +75,15 @@ logs/
 
 schema.txt
 
+# DRONE-WORKS-UPLOAD-001: the dispatchers' books uploaded through the screen.
+# They are kept on disk next to the database -- the importer has been repaired
+# once already and without the originals re-parsing the past is impossible --
+# but they are operational data, Cyrillic-named and up to 25 MB each. The
+# `instance/` rule above already covers the default location; this rule covers
+# the directory by NAME, so moving the database does not silently start
+# committing books.
+drone_work_books/
+
 drone_verify_007_*.txt
 
 # docs/archive/ -- our archive, not a build artefact. The Archive/ rule above
