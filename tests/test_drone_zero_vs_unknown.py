@@ -683,7 +683,21 @@ class TestB3TheOldMacroIsGone(unittest.TestCase):
                 path = os.path.join(root, name)
                 with io.open(path, encoding='utf-8') as fh:
                     if 'money_cell' in self.DECL.findall(fh.read()):
-                        declarations.append(os.path.relpath(path, REPO_ROOT))
+                        # [REASON]: DRONE-UI-FIX-003/3. os.path.relpath returns
+                        # the NATIVE separator, so on the Windows server this
+                        # produced 'templates\drones\_money_cell.html' and could
+                        # never equal PARTIAL, which is written with forward
+                        # slashes. The assertion therefore failed on every run
+                        # on the machine it is meant to protect, while passing
+                        # in the POSIX container -- a check that always fails
+                        # where it runs is not a check, it trains the team to
+                        # read a red suite as normal. Normalising here rather
+                        # than changing PARTIAL keeps the expected value
+                        # readable and identical to how the path is written
+                        # everywhere else in this file.
+                        declarations.append(
+                            os.path.relpath(path, REPO_ROOT).replace(os.sep,
+                                                                     '/'))
         self.assertEqual([PARTIAL], declarations)
 
 
