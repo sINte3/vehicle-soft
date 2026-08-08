@@ -1,0 +1,437 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{# DRONE-WORKS-UPLOAD-001: предпросмотр одной партии.
+   Числа читаются из preview.json, записанного в момент загрузки: GET ничего
+   не разбирает заново, поэтому обновление страницы дёшево и безопасно.
+   Подтверждение сверяет свежий разбор с этим же файлом и отказывается писать
+   при любом расхождении. #}
+{% set t_dash = '—' %}
+{% set t_payment = {
+     'cash': ('наличные', 'нақд'),
+     'transfer': ('справка', 'справка'),
+     'internal': ('свои земли', 'ўз ерлари'),
+     'unknown': ('не указан', 'кўрсатилмаган')
+   } %}
+{% set t_kind = {
+     'date': ('точная дата', 'аниқ сана'),
+     'span': ('период', 'давр'),
+     'none': ('даты нет', 'сана йўқ'),
+     'unparsed': ('дата не разобрана', 'сана ўқилмади')
+   } %}
+{% block title %}{{ 'Дроны — предпросмотр загрузки' if is_ru else 'Дронлар — юкламани кўриб чиқиш' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Предпросмотр загрузки' if is_ru else 'Юкламани кўриб чиқиш' }} № {{ row.id }}</div>
+    <div class="vs-hero-sub">
+      {{ 'Период' if is_ru else 'Давр' }}: <strong>{{ row.period_month }}</strong> ·
+      {{ 'загрузил' if is_ru else 'юклаган' }}:
+      <strong>{{ row.creator.full_name or row.creator.username if row.creator else t_dash }}</strong> ·
+      {{ row.created_at[:16].replace('T', ' ') }}
+      {% if row.note %} · {{ row.note }}{% endif %}
+    </div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('drones.works_import') }}" class="vs-btn">{{ 'К журналу' if is_ru else 'Журналга' }}</a>
+    {% if row.report_file %}
+    <a href="{{ url_for('drones.works_import_report', batch_id=row.id) }}" class="vs-btn">{{ 'Отчёт' if is_ru else 'Ҳисобот' }}</a>
+    {% endif %}
+  </div>
+</div>
+
+{% if row.status == status_failed %}
+<div class="vs-alert is-danger vs-mb">
+  <div>
+    <strong>{{ 'Разбор не удался. В базу ничего не попало.' if is_ru else 'Ўқиш амалга ошмади. Базага ҳеч нарса тушмади.' }}</strong>
+    <div>{{ 'Файлы сохранены и не удалены: книга, на которой сломался разбор, — единственное место, где найдётся её причина.' if is_ru else 'Файллар сақланди ва ўчирилмади: ўқиш бузилган китоб — унинг сабабини топиш мумкин бўлган ягона жой.' }}</div>
+    {% if row.error_text %}<div class="vs-mt-sm"><code>{{ row.error_text }}</code></div>{% endif %}
+  </div>
+</div>
+{% elif row.status == status_applied %}
+<div class="vs-alert is-success vs-mb">
+  <div>
+    <strong>{{ 'Партия уже записана' if is_ru else 'Партия аллақачон ёзилган' }}
+      {{ row.applied_at[:16].replace('T', ' ') if row.applied_at else '' }}.</strong>
+    <div>
+      {{ 'Добавлено работ' if is_ru else 'Ишлар қўшилди' }}: <strong>{{ row.works_inserted }}</strong> ·
+      {{ 'уже были' if is_ru else 'аллақачон бор эди' }}: <strong>{{ row.works_skipped_existing }}</strong> ·
+      {{ 'заведено заказчиков' if is_ru else 'буюртмачилар яратилди' }}: <strong>{{ row.customers_created }}</strong> ·
+      {{ 'партия' if is_ru else 'партия' }}: <strong>{{ row.import_batch }}</strong>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if snapshot %}
+
+{# ── Итоги ──────────────────────────────────────────────────────────────── #}
+<div class="vs-stat-grid vs-stat-grid-4 vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Строк принято' if is_ru else 'Қатор қабул қилинди' }}</div>
+    <div class="vs-stat-value is-num">{{ snapshot.totals.rows }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Гектаров' if is_ru else 'Гектар' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(snapshot.totals.area) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Сумма' if is_ru else 'Сумма' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(snapshot.totals.amount) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Получено' if is_ru else 'Олинган' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(snapshot.totals.received) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Прочие расходы' if is_ru else 'Бошқа харажатлар' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(snapshot.totals.other_costs) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Написаний заказчика' if is_ru else 'Буюртмачи ёзилишлари' }}</div>
+    <div class="vs-stat-value is-num">{{ snapshot.totals.customers }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Строк с ценой' if is_ru else 'Нархи бор қаторлар' }}</div>
+    <div class="vs-stat-value is-num">{{ snapshot.totals.priced }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Уже есть в базе' if is_ru else 'Базада аллақачон бор' }}</div>
+    <div class="vs-stat-value is-num {% if snapshot.already_in_db %}is-warning{% else %}is-muted{% endif %}">{{ snapshot.already_in_db }}</div>
+  </div>
+</div>
+
+{# ── Файлы ──────────────────────────────────────────────────────────────── #}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <div class="vs-card-title">{{ 'Файлы партии' if is_ru else 'Партия файллари' }}</div>
+  </div>
+  <div class="vs-table-wrap">
+    <div class="vs-table-scroll">
+      <table class="vs-table is-compact vs-num">
+        <thead>
+          <tr>
+            <th>{{ 'Файл' if is_ru else 'Файл' }}</th>
+            <th class="right">{{ 'Размер, КБ' if is_ru else 'Ҳажми, КБ' }}</th>
+            <th>{{ 'Подразделение' if is_ru else 'Бўлим' }}</th>
+            <th class="right">{{ 'Листов' if is_ru else 'Варақ' }}</th>
+            <th class="right">{{ 'Из них разобрано' if is_ru else 'Улардан ўқилди' }}</th>
+            <th class="right">{{ 'Строк' if is_ru else 'Қатор' }}</th>
+            <th class="right">{{ 'Гектаров' if is_ru else 'Гектар' }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% set sizes = {} %}
+          {% for meta in files %}{% set _ = sizes.update({meta.get('name'): meta.get('size')}) %}{% endfor %}
+          {% for entry in snapshot.files %}
+          <tr>
+            <td>{{ entry.name }}</td>
+            <td class="right">{{ '%.1f'|format((sizes.get(entry.name) or 0) / 1024.0) }}</td>
+            <td>{{ entry.subdivision or ('не определено' if is_ru else 'аниқланмаган') }}</td>
+            <td class="right">{{ entry.sheets }}</td>
+            <td class="right">{{ entry.detail_sheets }}</td>
+            <td class="right">{{ entry.rows }}</td>
+            <td class="right">{{ '%.2f'|format(entry.area) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{# ── Разрезы ────────────────────────────────────────────────────────────── #}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <div class="vs-card-title">{{ 'По типам оплаты и по виду даты' if is_ru else 'Тўлов тури ва сана тури бўйича' }}</div>
+  </div>
+  <div class="vs-table-wrap">
+    <div class="vs-table-scroll">
+      <table class="vs-table is-compact vs-num">
+        <thead>
+          <tr>
+            <th>{{ 'Тип оплаты' if is_ru else 'Тўлов тури' }}</th>
+            <th class="right">{{ 'Строк' if is_ru else 'Қатор' }}</th>
+            <th class="right">{{ 'Гектаров' if is_ru else 'Гектар' }}</th>
+            <th>{{ 'Вид даты' if is_ru else 'Сана тури' }}</th>
+            <th class="right">{{ 'Строк' if is_ru else 'Қатор' }}</th>
+            <th class="right">{{ 'Гектаров' if is_ru else 'Гектар' }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for pair in snapshot.payments %}
+          <tr>
+            <td>{{ t_payment.get(pair.type, (pair.type, pair.type))[0 if is_ru else 1] }}</td>
+            <td class="right">{{ pair.rows }}</td>
+            <td class="right">{{ '%.2f'|format(pair.area) }}</td>
+            {% set kind = snapshot.date_kinds[loop.index0] if loop.index0 < snapshot.date_kinds|length else none %}
+            {% if kind %}
+            <td>{{ t_kind.get(kind.kind, (kind.kind, kind.kind))[0 if is_ru else 1] }}</td>
+            <td class="right">{{ kind.rows }}</td>
+            <td class="right">{{ '%.2f'|format(kind.area) }}</td>
+            {% else %}
+            <td></td><td></td><td></td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-help">{{ 'Тип оплаты «не указан» — это факт источника, а не ошибка: в сентябрьских и октябрьских листах разделения нет вовсе, оно живёт только в сводных листах, которые не импортируются. Тип проставляется потом на экране работ.' if is_ru else '«Кўрсатилмаган» тўлов тури — бу манбанинг ҳақиқати, хато эмас: сентябрь ва октябрь варақларида бўлиниш умуман йўқ, у фақат импорт қилинмайдиган йиғма варақларда бор. Тури кейин ишлар экранида қўйилади.' }}</div>
+  </div>
+</div>
+
+{# ── По месяцам ─────────────────────────────────────────────────────────── #}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <div class="vs-card-title">{{ 'По месяцам' if is_ru else 'Ойлар бўйича' }}</div>
+  </div>
+  <div class="vs-table-wrap">
+    <div class="vs-table-scroll">
+      <table class="vs-table is-compact vs-num">
+        <thead>
+          <tr>
+            <th>{{ 'Месяц' if is_ru else 'Ой' }}</th>
+            <th class="right">{{ 'Строк' if is_ru else 'Қатор' }}</th>
+            <th class="right">{{ 'Гектаров' if is_ru else 'Гектар' }}</th>
+            <th>{{ 'Вне объявленного периода' if is_ru else 'Эълон қилинган даврдан ташқарида' }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for bucket in snapshot.months %}
+          <tr {% if bucket.outside_declared_month %}class="is-warning-row"{% endif %}>
+            <td>{{ bucket.month }}</td>
+            <td class="right">{{ bucket.rows }}</td>
+            <td class="right">{{ '%.2f'|format(bucket.area) }}</td>
+            <td>{{ ('ДА' if is_ru else 'ҲА') if bucket.outside_declared_month else t_dash }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-help">{{ 'Строка с датой попадает в свой месяц по собственной дате; период с формы наследуют только строки без даты. Отмеченные строки — самый полезный признак книги, подшитой не в тот месяц.' if is_ru else 'Санаси бор қатор ўз санаси бўйича ўз ойига тушади; формадаги даврни фақат санасиз қаторлар мерос қилиб олади. Белгиланган қаторлар — нотўғри ойга тикилган китобнинг энг фойдали белгиси.' }}</div>
+    {% if snapshot.month_outliers %}
+    <div class="vs-alert is-warning vs-mt-sm">
+      <div>
+        {% for outlier in snapshot.month_outliers %}
+        <div>{{ outlier.file }}: {{ outlier.months|join(', ') }}</div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Заказчики и операторы ──────────────────────────────────────────────── #}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <div class="vs-card-title">{{ 'Заказчики и операторы' if is_ru else 'Буюртмачилар ва операторлар' }}</div>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-help vs-mb-sm">
+      {{ 'Сопоставлено с алиасом строк' if is_ru else 'Алиас билан мосланган қаторлар' }}: <strong>{{ snapshot.customers_matched }}</strong> ·
+      {{ 'оператор определён у строк' if is_ru else 'оператори аниқланган қаторлар' }}: <strong>{{ snapshot.operators_matched }}</strong> ·
+      {{ 'строк без имени заказчика' if is_ru else 'буюртмачи номи йўқ қаторлар' }}: <strong>{{ snapshot.empty_customer_rows }}</strong>
+    </div>
+
+    <div class="vs-label-upper vs-label">{{ 'Будут заведены новые написания заказчика' if is_ru else 'Буюртмачининг янги ёзилишлари яратилади' }} ({{ snapshot.customers_to_create|length }})</div>
+    {% if snapshot.customers_to_create %}
+    <div class="vs-stack-sm">
+      {% for name in snapshot.customers_to_create %}
+      <div>+ {{ name }}</div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="vs-muted">{{ 'ни одного — все написания уже известны' if is_ru else 'бирорта ҳам эмас — барча ёзилишлар аллақачон маълум' }}</div>
+    {% endif %}
+
+    <div class="vs-label-upper vs-label vs-mt-sm">{{ 'Операторы, которых не удалось определить' if is_ru else 'Аниқлаб бўлмаган операторлар' }}</div>
+    {% if snapshot.operators_unresolved %}
+    <div class="vs-table-scroll">
+      <table class="vs-table is-compact vs-num">
+        <thead>
+          <tr>
+            <th>{{ 'Как написано' if is_ru else 'Қандай ёзилган' }}</th>
+            <th>{{ 'Почему не определён' if is_ru else 'Нега аниқланмади' }}</th>
+            <th class="right">{{ 'Строк' if is_ru else 'Қатор' }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in snapshot.operators_unresolved %}
+          <tr>
+            <td>{{ item.operator or t_dash }}</td>
+            <td>{{ item.reason }}</td>
+            <td class="right">{{ item.rows }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="vs-help">{{ 'Строка не отклоняется: оператор остаётся пустым и проставляется вручную. Между двумя людьми разбор никогда не угадывает — «Шахзод» это разные люди в разных подразделениях.' if is_ru else 'Қатор рад этилмайди: оператор бўш қолади ва қўлда қўйилади. Ўқиш ҳеч қачон икки одам орасидан тахмин қилмайди — «Шахзод» турли бўлимларда турли одамлар.' }}</div>
+    {% else %}
+    <div class="vs-muted">{{ 'все операторы определены' if is_ru else 'барча операторлар аниқланган' }}</div>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Отклонённые строки ─────────────────────────────────────────────────── #}
+<div class="vs-card vs-mb {% if snapshot.rejections %}vs-card-accent-warning{% endif %}">
+  <div class="vs-card-header">
+    <div class="vs-card-title">{{ 'Отклонённые строки' if is_ru else 'Рад этилган қаторлар' }} ({{ snapshot.rejections|length }})</div>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-help">{{ 'Одна плохая строка не отменяет книгу: остальные строки импортируются, а эти показаны целиком, вместе с причиной и исходными ячейками.' if is_ru else 'Битта ёмон қатор китобни бекор қилмайди: қолган қаторлар импорт қилинади, булар эса сабаби ва бошланғич катаклари билан тўлиқ кўрсатилган.' }}</div>
+  </div>
+  {% if snapshot.rejections %}
+  <div class="vs-table-wrap">
+    <div class="vs-table-scroll">
+      <table class="vs-table is-compact">
+        <thead>
+          <tr>
+            <th>{{ 'Файл' if is_ru else 'Файл' }}</th>
+            <th>{{ 'Лист' if is_ru else 'Варақ' }}</th>
+            <th class="right">{{ 'Строка' if is_ru else 'Қатор' }}</th>
+            <th>{{ 'Причина' if is_ru else 'Сабаби' }}</th>
+            <th>{{ 'Ячейки' if is_ru else 'Катаклар' }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in snapshot.rejections %}
+          <tr class="is-warning-row">
+            <td>{{ item.file }}</td>
+            <td>{{ item.sheet }}</td>
+            <td class="right">{{ item.row }}</td>
+            <td>{{ item.reason }}</td>
+            <td><code>{{ item.cells }}</code></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{# ── Дубли внутри прогона ───────────────────────────────────────────────── #}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <div class="vs-card-title">{{ 'Дубли внутри загрузки' if is_ru else 'Юклама ичидаги дубллар' }} ({{ snapshot.duplicates|length }})</div>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-help">{{ 'Совпадение по заказчику, площади, дате и сумме. Показаны обе принадлежности: ни одна строка не склеена молча и не посчитана дважды.' if is_ru else 'Буюртмачи, майдон, сана ва сумма бўйича мослик. Иккала тегишлилик кўрсатилган: бирорта қатор жимгина бирлаштирилмаган ва икки марта саналмаган.' }}</div>
+  </div>
+  {% if snapshot.duplicates %}
+  <div class="vs-table-wrap">
+    <div class="vs-table-scroll">
+      <table class="vs-table is-compact vs-num">
+        <thead>
+          <tr>
+            <th>{{ 'Заказчик' if is_ru else 'Буюртмачи' }}</th>
+            <th class="right">{{ 'Гектаров' if is_ru else 'Гектар' }}</th>
+            <th>{{ 'Дата' if is_ru else 'Сана' }}</th>
+            <th class="right">{{ 'Сумма' if is_ru else 'Сумма' }}</th>
+            <th>{{ 'Принято' if is_ru else 'Қабул қилинди' }}</th>
+            <th>{{ 'Пропущено' if is_ru else 'Ўтказиб юборилди' }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in snapshot.duplicates %}
+          <tr>
+            <td>{{ item.customer or t_dash }}</td>
+            <td class="right">{{ '%.2f'|format(item.area) }}</td>
+            <td>{{ item.date or t_dash }}</td>
+            <td class="right">{{ '%.2f'|format(item.amount) if item.amount is not none else t_dash }}</td>
+            <td>{{ item.accepted.file }} / {{ item.accepted.sheet }} / {{ item.accepted.row }}</td>
+            <td>{{ item.skipped.file }} / {{ item.skipped.sheet }} / {{ item.skipped.row }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{# ── Пропущенные листы и незнакомые заголовки ───────────────────────────── #}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <div class="vs-card-title">{{ 'Пропущенные листы и незнакомые заголовки' if is_ru else 'Ўтказиб юборилган варақлар ва нотаниш сарлавҳалар' }}</div>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-label-upper vs-label">{{ 'Листы, пропущенные как несводные' if is_ru else 'Тафсилот эмас деб ўтказиб юборилган варақлар' }} ({{ snapshot.skipped_sheets|length }})</div>
+    {% if snapshot.skipped_sheets %}
+    <div class="vs-stack-sm">
+      {% for item in snapshot.skipped_sheets %}
+      <div>{{ item.file }} / {{ item.sheet }}</div>
+      {% endfor %}
+    </div>
+    <div class="vs-help">{{ 'Импортируются только листы, чьё название начинается на «свод ичи». Сводки и реестры повторяют уже импортированные строки, а строки «ЖАМИ:» вообще не являются работами.' if is_ru else 'Фақат номи «свод ичи» билан бошланадиган варақлар импорт қилинади. Йиғмалар ва реестрлар аллақачон импорт қилинган қаторларни такрорлайди, «ЖАМИ:» қаторлари эса умуман иш эмас.' }}</div>
+    {% else %}
+    <div class="vs-muted">{{ 'нет' if is_ru else 'йўқ' }}</div>
+    {% endif %}
+
+    <div class="vs-label-upper vs-label vs-mt-sm">{{ 'Заголовки, не совпавшие ни с одной известной фразой' if is_ru else 'Ҳеч бир маълум ибора билан мос келмаган сарлавҳалар' }} ({{ snapshot.unmatched_headers|length }})</div>
+    {% if snapshot.unmatched_headers %}
+    <div class="vs-stack-sm">
+      {% for item in snapshot.unmatched_headers %}
+      <div>«{{ item.header }}» — {{ item.count }} · {{ item.places|join('; ') }}</div>
+      {% endfor %}
+    </div>
+    <div class="vs-help">{{ 'Поле остаётся пустым, строка всё равно импортируется. Настоящих раскладок двадцать четыре; двадцать пятая найдётся именно здесь.' if is_ru else 'Майдон бўш қолади, қатор барибир импорт қилинади. Ҳақиқий жойлашувлар йигирма тўртта; йигирма бешинчиси айнан шу ерда топилади.' }}</div>
+    {% else %}
+    <div class="vs-muted">{{ 'нет' if is_ru else 'йўқ' }}</div>
+    {% endif %}
+  </div>
+</div>
+
+{% if snapshot.formula_no_cache %}
+<div class="vs-alert is-warning vs-mb">
+  <div>
+    <strong>{{ 'Ячейки с формулой без сохранённого значения' if is_ru else 'Сақланган қиймати йўқ формулали катаклар' }}: {{ snapshot.formula_no_cache }}</strong>
+    <div>{{ 'Книгу сохранила программа, которая формулы не считала, поэтому суммы у этих строк могут отсутствовать не потому, что их не заполнили. Откройте книгу, пересчитайте, сохраните и загрузите заново.' if is_ru else 'Китобни формулаларни ҳисобламайдиган дастур сақлаган, шунинг учун бу қаторларда суммалар тўлдирилмагани учун эмас, балки шу сабабли йўқ бўлиши мумкин. Китобни очинг, қайта ҳисобланг, сақланг ва қайтадан юкланг.' }}</div>
+  </div>
+</div>
+{% endif %}
+
+{# ── Подтверждение ──────────────────────────────────────────────────────── #}
+{% if row.status == status_preview %}
+<div class="vs-card vs-card-accent-top">
+  <div class="vs-card-header">
+    <div class="vs-card-title">{{ 'Подтверждение записи' if is_ru else 'Ёзишни тасдиқлаш' }}</div>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-help vs-mb-sm">
+      {{ 'До этой кнопки в базу не записано ничего. После неё будет записано' if is_ru else 'Бу тугмагача базага ҳеч нарса ёзилмаган. Ундан кейин ёзилади' }}
+      <strong>{{ snapshot.totals.rows }}</strong>
+      {{ 'строк на' if is_ru else 'қатор,' }}
+      <strong>{{ '%.2f'|format(snapshot.totals.area) }}</strong>
+      {{ 'га. Файлы будут перепроверены по контрольной сумме, а разбор — повторён и сверен с этими же числами: при любом расхождении запись не состоится.' if is_ru else 'га. Файллар назорат йиғиндиси бўйича қайта текширилади, ўқиш эса такрорланиб, шу рақамлар билан солиштирилади: ҳар қандай тафовутда ёзиш амалга ошмайди.' }}
+      {% if snapshot.already_in_db %}
+      <div class="vs-mt-sm">{{ 'Из них уже есть в базе' if is_ru else 'Улардан базада аллақачон бор' }}: <strong>{{ snapshot.already_in_db }}</strong>. {{ 'Они будут пропущены, а не задвоены.' if is_ru else 'Улар иккиланмайди, ўтказиб юборилади.' }}</div>
+      {% endif %}
+    </div>
+    <form method="post" action="{{ url_for('drones.works_import_apply', batch_id=row.id) }}" class="vs-row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="vs-btn vs-btn-primary">{{ 'Записать в базу' if is_ru else 'Базага ёзиш' }}</button>
+      <a href="{{ url_for('drones.works_import') }}" class="vs-btn">{{ 'Не записывать, вернуться' if is_ru else 'Ёзмасдан қайтиш' }}</a>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% else %}
+
+{% if row.status != status_failed %}
+<div class="vs-alert is-danger">
+  <div>{{ 'Файл предпросмотра не найден или не прочитан. Записывать нечего: загрузите ведомость заново.' if is_ru else 'Кўриб чиқиш файли топилмади ёки ўқилмади. Ёзадиган нарса йўқ: ведомостни қайтадан юкланг.' }}</div>
+</div>
+{% endif %}
+
+{% endif %}
+
+{% endblock %}
