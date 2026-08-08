@@ -23,6 +23,7 @@ and Excel (DRONE-004).
 
 import io
 import json
+import os
 import re
 
 from datetime import datetime, timedelta
@@ -34,6 +35,7 @@ from sqlalchemy import and_, case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased, joinedload
 
+import drone_works_upload as works_upload
 from ingest_common import verify_api_token, extract_token
 from models import (
     db,
@@ -50,6 +52,9 @@ from models import (
     DRONE_WORK_PAYMENT_TYPES,
     DRONE_WORK_PAYMENT_UNKNOWN,
     DRONE_WORK_PRICE_SUGGESTIONS,
+    DRONE_WORK_IMPORT_APPLIED,
+    DRONE_WORK_IMPORT_FAILED,
+    DRONE_WORK_IMPORT_PREVIEW,
     DRONE_RECEIVED_KIND_OPERATOR_DUE,
     DRONE_RECEIVED_KIND_RECEIVED,
     DroneBattery,
@@ -64,6 +69,7 @@ from models import (
     DroneReattachRun,
     DroneSyncLog,
     DroneWork,
+    DroneWorkImport,
     module_required,
 )
 
@@ -3216,6 +3222,373 @@ def works_update(work_id):
     flash(_drone_t('Иш янгиланди: «%s».', 'Работа обновлена: «%s».')
           % values['customer_raw'], 'success')
     return _drone_work_redirect(filters)
+
+
+# ─── DRONE-WORKS-UPLOAD-001: the dispatchers' books, uploaded on a screen ────
+
+# [REASON]: owner's decision -- this screen is ADMIN ONLY, a second and
+# stricter gate on top of @module_required('drones'). The module's ordinary
+# write gate is current_user.can_edit and it stays what it is everywhere else;
+# an upload writes hundreds of ledger rows in one transaction, which is not
+# the same act as editing one of them.
+def _drone_require_import_admin():
+    if not current_user.is_admin:
+        abort(403)
+
+
+def _drone_books_root():
+    """(db_path, books_root). Raises UploadRejected on a non-SQLite database."""
+    db_path = works_upload.db_path_from_uri(
+        current_app.config.get('SQLALCHEMY_DATABASE_URI', ''))
+    return db_path, works_upload.books_root_for_db(db_path)
+
+
+def _drone_import_files(row):
+    """files_json as a list. A malformed value is shown as empty, not a 500."""
+    try:
+        parsed = json.loads(row.files_json or '[]')
+    except ValueError:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _drone_import_reject(exc):
+    """Flash an UploadRejected in the reader's language."""
+    flash(exc.text(_drone_lang() == 'ru'), 'warning')
+
+
+@drones_bp.route('/works/import')
+@module_required('drones')
+def works_import():
+    """The journal of the last 50 upload batches, and the upload form."""
+    _drone_require_import_admin()
+    batches = (DroneWorkImport.query
+               .order_by(DroneWorkImport.created_at.desc(),
+                         DroneWorkImport.id.desc())
+               .limit(50).all())
+    return render_template(
+        'drones/works_import.html',
+        batches=batches,
+        batch_files=dict((row.id, _drone_import_files(row))
+                         for row in batches),
+        default_period=_drone_today_local().strftime('%Y-%m'),
+        status_preview=DRONE_WORK_IMPORT_PREVIEW,
+        status_applied=DRONE_WORK_IMPORT_APPLIED,
+        status_failed=DRONE_WORK_IMPORT_FAILED,
+        max_files=works_upload.MAX_FILES_PER_BATCH,
+        max_file_mb=works_upload.MAX_FILE_BYTES // (1024 * 1024),
+        max_upload_mb=works_upload.MAX_UPLOAD_BYTES // (1024 * 1024))
+
+
+@drones_bp.route('/works/import/upload', methods=['POST'])
+@module_required('drones')
+def works_import_upload():
+    """Store the books, parse them dry, write the preview. Nothing is applied.
+
+    Order matters and is the order below: validate everything that can be
+    validated first, so a bad name leaves no directory and no journal row
+    behind; then take the id, because the batch directory is named after it
+    and so is import_batch.
+    """
+    _drone_require_import_admin()
+
+    # [REASON]: checked BEFORE the body is read. MAX_CONTENT_LENGTH is a
+    # global shared with every other module (app.py sets 300 MB when it is
+    # unset) and is deliberately not touched here; 300 MB is larger than the
+    # 100 MB this screen wants, so Werkzeug's own limit never fires first and
+    # nothing about the other modules moves.
+    length = request.content_length
+    if length is not None and length > works_upload.MAX_UPLOAD_BYTES:
+        flash(_drone_t(
+            'Юклама %d МБ дан катта.' % (works_upload.MAX_UPLOAD_BYTES
+                                         // (1024 * 1024)),
+            'Загрузка больше %d МБ.' % (works_upload.MAX_UPLOAD_BYTES
+                                        // (1024 * 1024))), 'warning')
+        return redirect(url_for('drones.works_import'))
+
+    period_month = (request.form.get('period_month') or '').strip()
+    if not re.match(r'^\d{4}-\d{2}$', period_month):
+        flash(_drone_t('Давр ЙЙЙЙ-ОО кўринишида бўлиши керак.',
+                       'Период должен быть в виде ГГГГ-ММ.'), 'warning')
+        return redirect(url_for('drones.works_import'))
+
+    note = (request.form.get('note') or '').strip() or None
+    files = [f for f in request.files.getlist('books')
+             if getattr(f, 'filename', '')]
+
+    try:
+        # Names and sizes first: nothing is created on disk and no row is
+        # written until every file in the batch has passed.
+        checked = works_upload.validate_batch(files)
+        db_path, books_root = _drone_books_root()
+    except works_upload.UploadRejected as exc:
+        _drone_import_reject(exc)
+        return redirect(url_for('drones.works_import'))
+
+    row = DroneWorkImport(
+        created_at=datetime.utcnow().isoformat(),
+        created_by=(current_user.id
+                    if getattr(current_user, 'is_authenticated', False)
+                    else None),
+        period_month=period_month,
+        status=DRONE_WORK_IMPORT_PREVIEW,
+        storage_dir='',
+        files_json=json.dumps([{'name': name, 'size': size}
+                               for name, size in checked],
+                              ensure_ascii=False),
+        note=note)
+    db.session.add(row)
+    # flush() assigns the id; the batch directory and import_batch are both
+    # named after it, which is what makes the works of one batch deletable.
+    db.session.flush()
+    row.storage_dir = str(row.id)
+    db.session.commit()
+
+    batch_path = works_upload.batch_path_for(books_root, row.storage_dir)
+    report_path = os.path.join(batch_path, works_upload.REPORT_FILE)
+    try:
+        files_meta = works_upload.store_batch(books_root, row.storage_dir,
+                                              files)
+        result, stats, _counts = works_upload.run_import(
+            db_path, batch_path, files_meta, period_month, apply=False,
+            batch=_drone_import_batch_value(row.id), report_path=report_path)
+        works_upload.write_preview(batch_path,
+                                   works_upload.preview_snapshot(result,
+                                                                 stats))
+    except Exception as exc:  # noqa: BLE001 - recorded, not swallowed
+        # [REASON]: the files and the directory are KEPT. A book that broke
+        # the parser is the one book worth still having, and the twenty-fifth
+        # header layout will be found in it and nowhere else.
+        db.session.rollback()
+        row = DroneWorkImport.query.get(row.id)
+        if row is not None:
+            row.status = DRONE_WORK_IMPORT_FAILED
+            row.error_text = _drone_text(
+                '%s: %s' % (type(exc).__name__, exc), 4000)
+            db.session.commit()
+        current_app.logger.exception('drone works import batch %s failed',
+                                     row.id if row is not None else '?')
+        flash(_drone_t('Ведомостни ўқиб бўлмади. Файллар сақланди, хатолик '
+                       'журналда кўрсатилган.',
+                       'Не удалось разобрать ведомость. Файлы сохранены, '
+                       'ошибка показана в журнале.'), 'danger')
+        return redirect(url_for('drones.works_import'))
+
+    row = DroneWorkImport.query.get(row.id)
+    row.files_json = json.dumps(files_meta, ensure_ascii=False)
+    row.preview_rows = stats['rows']
+    row.preview_area_ha = round(stats['area'], 2)
+    row.preview_amount = round(stats['amount'], 2)
+    row.rows_rejected = len(result.rejections)
+    row.rows_duplicate = len(result.duplicates)
+    row.report_file = works_upload.REPORT_FILE
+    db.session.commit()
+    return redirect(url_for('drones.works_import_preview', batch_id=row.id))
+
+
+def _drone_import_batch_value(batch_id):
+    """import_batch for one upload. Derived from the journal row id.
+
+    [REASON]: rows already written into drone_works by an apply are ordinary
+    imported works and are not rolled back by reverting any commit. They are
+    removed, if anybody wants them removed, by deleting on this value -- which
+    is exactly why it is derived from the id and not from a timestamp.
+    """
+    return 'upload-%d' % batch_id
+
+
+@drones_bp.route('/works/import/<int:batch_id>')
+@module_required('drones')
+def works_import_preview(batch_id):
+    """The preview. Reads preview.json; never re-parses, so refresh is cheap."""
+    _drone_require_import_admin()
+    row = DroneWorkImport.query.get(batch_id)
+    if row is None:
+        abort(404)
+    try:
+        _db_path, books_root = _drone_books_root()
+    except works_upload.UploadRejected as exc:
+        _drone_import_reject(exc)
+        return redirect(url_for('drones.works_import'))
+
+    batch_path = works_upload.batch_path_for(books_root, row.storage_dir)
+    snapshot = None
+    if row.status != DRONE_WORK_IMPORT_FAILED:
+        try:
+            snapshot = works_upload.read_preview(batch_path)
+        except (IOError, OSError, ValueError):
+            snapshot = None
+    return render_template(
+        'drones/works_import_preview.html',
+        row=row,
+        files=_drone_import_files(row),
+        snapshot=snapshot,
+        status_preview=DRONE_WORK_IMPORT_PREVIEW,
+        status_applied=DRONE_WORK_IMPORT_APPLIED,
+        status_failed=DRONE_WORK_IMPORT_FAILED)
+
+
+@drones_bp.route('/works/import/<int:batch_id>/apply', methods=['POST'])
+@module_required('drones')
+def works_import_apply(batch_id):
+    """Confirm and write. Four refusals stand between here and the ledger."""
+    _drone_require_import_admin()
+    row = DroneWorkImport.query.get(batch_id)
+    if row is None:
+        abort(404)
+
+    # 1. Status. This alone makes a double-submit harmless: the second POST
+    #    meets 'applied' and stops before it touches a file.
+    if row.status != DRONE_WORK_IMPORT_PREVIEW:
+        flash(_drone_t(
+            'Бу партия аллақачон қайта ишланган (ҳолати: %s). Ҳеч нарса '
+            'ёзилмади.' % row.status,
+            'Эта партия уже обработана (статус: %s). Ничего не записано.'
+            % row.status), 'warning')
+        return redirect(url_for('drones.works_import_preview',
+                                batch_id=batch_id))
+
+    try:
+        db_path, books_root = _drone_books_root()
+    except works_upload.UploadRejected as exc:
+        _drone_import_reject(exc)
+        return redirect(url_for('drones.works_import'))
+    batch_path = works_upload.batch_path_for(books_root, row.storage_dir)
+    files_meta = _drone_import_files(row)
+
+    try:
+        # 2. The bytes behind the numbers the operator agreed to.
+        works_upload.verify_unchanged(batch_path, files_meta)
+    except works_upload.UploadRejected as exc:
+        _drone_import_reject(exc)
+        return redirect(url_for('drones.works_import_preview',
+                                batch_id=batch_id))
+
+    # 3. Re-parse and compare with the snapshot. The two CANNOT differ when
+    #    the files have not changed, so a difference means something is wrong
+    #    that nobody has understood yet -- and writing would be the wrong
+    #    response to that.
+    try:
+        snapshot = works_upload.read_preview(batch_path)
+    except (IOError, OSError, ValueError):
+        flash(_drone_t('Кўриб чиқиш файли ўқилмади. Ҳеч нарса ёзилмади.',
+                       'Файл предпросмотра не прочитан. Ничего не записано.'),
+              'danger')
+        return redirect(url_for('drones.works_import_preview',
+                                batch_id=batch_id))
+
+    recheck_path = os.path.join(batch_path, 'report_recheck.txt')
+    try:
+        _result, stats, _counts = works_upload.run_import(
+            db_path, batch_path, files_meta, row.period_month, apply=False,
+            batch=_drone_import_batch_value(batch_id),
+            report_path=recheck_path)
+    except Exception as exc:  # noqa: BLE001 - reported, nothing written
+        current_app.logger.exception(
+            'drone works import batch %s re-parse failed', batch_id)
+        flash(_drone_t('Қайта ўқишда хатолик: %s. Ҳеч нарса ёзилмади.'
+                       % type(exc).__name__,
+                       'Ошибка при повторном разборе: %s. Ничего не записано.'
+                       % type(exc).__name__), 'danger')
+        return redirect(url_for('drones.works_import_preview',
+                                batch_id=batch_id))
+
+    if (stats['rows'] != snapshot.get('rows')
+            or round(stats['area'], 2) != snapshot.get('area')):
+        flash(_drone_t(
+            'Қайта ўқиш кўриб чиқиш билан мос келмади (%d қатор / %.2f га '
+            'ўрнига %s қатор / %s га). Ҳеч нарса ёзилмади.'
+            % (stats['rows'], stats['area'], snapshot.get('rows'),
+               snapshot.get('area')),
+            'Повторный разбор не совпал с предпросмотром (%d строк / %.2f га '
+            'вместо %s строк / %s га). Ничего не записано.'
+            % (stats['rows'], stats['area'], snapshot.get('rows'),
+               snapshot.get('area'))), 'danger')
+        return redirect(url_for('drones.works_import_preview',
+                                batch_id=batch_id))
+
+    # 4. The ORM session must be settled BEFORE the read-write sqlite3
+    #    connection opens: WAL allows many readers with one writer, and two
+    #    writers on the same file block each other for the whole busy_timeout
+    #    and then fail. Nothing below writes through the ORM until the
+    #    sqlite3 connection has been closed inside run_import().
+    db.session.commit()
+
+    batch_value = _drone_import_batch_value(batch_id)
+    report_path = os.path.join(batch_path, works_upload.REPORT_FILE)
+    try:
+        result, stats, counts = works_upload.run_import(
+            db_path, batch_path, files_meta, row.period_month, apply=True,
+            batch=batch_value, report_path=report_path)
+    except Exception as exc:  # noqa: BLE001 - recorded, not swallowed
+        current_app.logger.exception(
+            'drone works import batch %s apply failed', batch_id)
+        row = DroneWorkImport.query.get(batch_id)
+        row.status = DRONE_WORK_IMPORT_FAILED
+        row.error_text = _drone_text('%s: %s' % (type(exc).__name__, exc),
+                                     4000)
+        db.session.commit()
+        flash(_drone_t('Ёзишда хатолик, бутун прогон қайтарилди. Ҳеч нарса '
+                       'ёзилмади.',
+                       'Ошибка при записи, весь прогон откачен. Ничего не '
+                       'записано.'), 'danger')
+        return redirect(url_for('drones.works_import_preview',
+                                batch_id=batch_id))
+
+    row = DroneWorkImport.query.get(batch_id)
+    row.status = DRONE_WORK_IMPORT_APPLIED
+    row.applied_at = datetime.utcnow().isoformat()
+    row.applied_by = (current_user.id
+                      if getattr(current_user, 'is_authenticated', False)
+                      else None)
+    row.import_batch = batch_value
+    row.works_inserted = counts['works_inserted']
+    row.works_skipped_existing = counts['works_skipped_existing']
+    row.customers_created = counts['customers_created']
+    row.rows_rejected = counts['rows_rejected']
+    row.rows_duplicate = counts['rows_duplicate']
+    row.report_file = works_upload.REPORT_FILE
+    db.session.commit()
+
+    # The numbers ACTUALLY written, not the ones predicted. Re-uploading a
+    # book already in the ledger legitimately inserts zero and reports the
+    # rest as already present -- apply_rows() skips any row whose
+    # (source_file, source_sheet, source_row) is present.
+    flash(_drone_t(
+        'Ёзилди: %d иш қўшилди, %d аллақачон бор эди, %d буюртмачи '
+        'яратилди, %d қатор рад этилди.'
+        % (counts['works_inserted'], counts['works_skipped_existing'],
+           counts['customers_created'], counts['rows_rejected']),
+        'Записано: %d работ добавлено, %d уже были, %d заказчиков заведено, '
+        '%d строк отклонено.'
+        % (counts['works_inserted'], counts['works_skipped_existing'],
+           counts['customers_created'], counts['rows_rejected'])), 'success')
+    return redirect(url_for('drones.works', period=row.period_month))
+
+
+@drones_bp.route('/works/import/<int:batch_id>/report')
+@module_required('drones')
+def works_import_report(batch_id):
+    """The UTF-8 report of one batch, as an attachment."""
+    _drone_require_import_admin()
+    row = DroneWorkImport.query.get(batch_id)
+    if row is None:
+        abort(404)
+    try:
+        _db_path, books_root = _drone_books_root()
+    except works_upload.UploadRejected as exc:
+        _drone_import_reject(exc)
+        return redirect(url_for('drones.works_import'))
+    # basename() even though this project wrote the value: a path that came
+    # out of a database column is not the same thing as a path in the code.
+    name = os.path.basename(row.report_file or works_upload.REPORT_FILE)
+    path = os.path.join(
+        works_upload.batch_path_for(books_root, row.storage_dir), name)
+    if not os.path.isfile(path):
+        abort(404)
+    return send_file(path, mimetype='text/plain; charset=utf-8',
+                     as_attachment=True,
+                     download_name='drone_works_import_%d.txt' % batch_id)
 
 
 # ─── DRONE-WORKS-001: the customer directory and its aliases ─────────────────
