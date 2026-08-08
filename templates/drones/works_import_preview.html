@@ -55,9 +55,9 @@
     <strong>{{ 'Партия уже записана' if is_ru else 'Партия аллақачон ёзилган' }}
       {{ row.applied_at[:16].replace('T', ' ') if row.applied_at else '' }}.</strong>
     <div>
-      {{ 'Добавлено работ' if is_ru else 'Ишлар қўшилди' }}: <strong>{{ row.works_inserted }}</strong> ·
-      {{ 'уже были' if is_ru else 'аллақачон бор эди' }}: <strong>{{ row.works_skipped_existing }}</strong> ·
-      {{ 'заведено заказчиков' if is_ru else 'буюртмачилар яратилди' }}: <strong>{{ row.customers_created }}</strong> ·
+      {{ 'Добавлено работ' if is_ru else 'Ишлар қўшилди' }}: <strong>{{ row.works_inserted|vs_num }}</strong> ·
+      {{ 'уже были' if is_ru else 'аллақачон бор эди' }}: <strong>{{ row.works_skipped_existing|vs_num }}</strong> ·
+      {{ 'заведено заказчиков' if is_ru else 'буюртмачилар яратилди' }}: <strong>{{ row.customers_created|vs_num }}</strong> ·
       {{ 'партия' if is_ru else 'партия' }}: <strong>{{ row.import_batch }}</strong>
     </div>
   </div>
@@ -70,35 +70,35 @@
 <div class="vs-stat-grid vs-stat-grid-4 vs-mb">
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Строк принято' if is_ru else 'Қатор қабул қилинди' }}</div>
-    <div class="vs-stat-value is-num">{{ snapshot.totals.rows }}</div>
+    <div class="vs-stat-value is-num">{{ snapshot.totals.rows|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Гектаров' if is_ru else 'Гектар' }}</div>
-    <div class="vs-stat-value is-num">{{ '%.2f'|format(snapshot.totals.area) }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(snapshot.totals.area)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Сумма' if is_ru else 'Сумма' }}</div>
-    <div class="vs-stat-value is-num">{{ '%.2f'|format(snapshot.totals.amount) }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(snapshot.totals.amount)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Получено' if is_ru else 'Олинган' }}</div>
-    <div class="vs-stat-value is-num">{{ '%.2f'|format(snapshot.totals.received) }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(snapshot.totals.received)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Прочие расходы' if is_ru else 'Бошқа харажатлар' }}</div>
-    <div class="vs-stat-value is-num">{{ '%.2f'|format(snapshot.totals.other_costs) }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(snapshot.totals.other_costs)|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Написаний заказчика' if is_ru else 'Буюртмачи ёзилишлари' }}</div>
-    <div class="vs-stat-value is-num">{{ snapshot.totals.customers }}</div>
+    <div class="vs-stat-value is-num">{{ snapshot.totals.customers|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Строк с ценой' if is_ru else 'Нархи бор қаторлар' }}</div>
-    <div class="vs-stat-value is-num">{{ snapshot.totals.priced }}</div>
+    <div class="vs-stat-value is-num">{{ snapshot.totals.priced|vs_num }}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Уже есть в базе' if is_ru else 'Базада аллақачон бор' }}</div>
-    <div class="vs-stat-value is-num {% if snapshot.already_in_db %}is-warning{% else %}is-muted{% endif %}">{{ snapshot.already_in_db }}</div>
+    <div class="vs-stat-value is-num {% if snapshot.already_in_db %}is-warning{% else %}is-muted{% endif %}">{{ snapshot.already_in_db|vs_num }}</div>
   </div>
 </div>
 
@@ -127,12 +127,12 @@
           {% for entry in snapshot.files %}
           <tr>
             <td>{{ entry.name }}</td>
-            <td class="right">{{ '%.1f'|format((sizes.get(entry.name) or 0) / 1024.0) }}</td>
+            <td class="right">{{ '%.1f'|format((sizes.get(entry.name) or 0) / 1024.0)|vs_num }}</td>
             <td>{{ entry.subdivision or ('не определено' if is_ru else 'аниқланмаган') }}</td>
             <td class="right">{{ entry.sheets }}</td>
             <td class="right">{{ entry.detail_sheets }}</td>
-            <td class="right">{{ entry.rows }}</td>
-            <td class="right">{{ '%.2f'|format(entry.area) }}</td>
+            <td class="right">{{ entry.rows|vs_num }}</td>
+            <td class="right">{{ '%.2f'|format(entry.area)|vs_num }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -163,13 +163,13 @@
           {% for pair in snapshot.payments %}
           <tr>
             <td>{{ t_payment.get(pair.type, (pair.type, pair.type))[0 if is_ru else 1] }}</td>
-            <td class="right">{{ pair.rows }}</td>
-            <td class="right">{{ '%.2f'|format(pair.area) }}</td>
+            <td class="right">{{ pair.rows|vs_num }}</td>
+            <td class="right">{{ '%.2f'|format(pair.area)|vs_num }}</td>
             {% set kind = snapshot.date_kinds[loop.index0] if loop.index0 < snapshot.date_kinds|length else none %}
             {% if kind %}
             <td>{{ t_kind.get(kind.kind, (kind.kind, kind.kind))[0 if is_ru else 1] }}</td>
-            <td class="right">{{ kind.rows }}</td>
-            <td class="right">{{ '%.2f'|format(kind.area) }}</td>
+            <td class="right">{{ kind.rows|vs_num }}</td>
+            <td class="right">{{ '%.2f'|format(kind.area)|vs_num }}</td>
             {% else %}
             <td></td><td></td><td></td>
             {% endif %}
@@ -204,8 +204,8 @@
           {% for bucket in snapshot.months %}
           <tr {% if bucket.outside_declared_month %}class="is-warning-row"{% endif %}>
             <td>{{ bucket.month }}</td>
-            <td class="right">{{ bucket.rows }}</td>
-            <td class="right">{{ '%.2f'|format(bucket.area) }}</td>
+            <td class="right">{{ bucket.rows|vs_num }}</td>
+            <td class="right">{{ '%.2f'|format(bucket.area)|vs_num }}</td>
             <td>{{ ('ДА' if is_ru else 'ҲА') if bucket.outside_declared_month else t_dash }}</td>
           </tr>
           {% endfor %}
@@ -234,9 +234,9 @@
   </div>
   <div class="vs-card-body">
     <div class="vs-help vs-mb-sm">
-      {{ 'Сопоставлено с алиасом строк' if is_ru else 'Алиас билан мосланган қаторлар' }}: <strong>{{ snapshot.customers_matched }}</strong> ·
-      {{ 'оператор определён у строк' if is_ru else 'оператори аниқланган қаторлар' }}: <strong>{{ snapshot.operators_matched }}</strong> ·
-      {{ 'строк без имени заказчика' if is_ru else 'буюртмачи номи йўқ қаторлар' }}: <strong>{{ snapshot.empty_customer_rows }}</strong>
+      {{ 'Сопоставлено с алиасом строк' if is_ru else 'Алиас билан мосланган қаторлар' }}: <strong>{{ snapshot.customers_matched|vs_num }}</strong> ·
+      {{ 'оператор определён у строк' if is_ru else 'оператори аниқланган қаторлар' }}: <strong>{{ snapshot.operators_matched|vs_num }}</strong> ·
+      {{ 'строк без имени заказчика' if is_ru else 'буюртмачи номи йўқ қаторлар' }}: <strong>{{ snapshot.empty_customer_rows|vs_num }}</strong>
     </div>
 
     <div class="vs-label-upper vs-label">{{ 'Будут заведены новые написания заказчика' if is_ru else 'Буюртмачининг янги ёзилишлари яратилади' }} ({{ snapshot.customers_to_create|length }})</div>
@@ -266,7 +266,7 @@
           <tr>
             <td>{{ item.operator or t_dash }}</td>
             <td>{{ item.reason }}</td>
-            <td class="right">{{ item.rows }}</td>
+            <td class="right">{{ item.rows|vs_num }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -343,9 +343,9 @@
           {% for item in snapshot.duplicates %}
           <tr>
             <td>{{ item.customer or t_dash }}</td>
-            <td class="right">{{ '%.2f'|format(item.area) }}</td>
+            <td class="right">{{ '%.2f'|format(item.area)|vs_num }}</td>
             <td>{{ item.date or t_dash }}</td>
-            <td class="right">{{ '%.2f'|format(item.amount) if item.amount is not none else t_dash }}</td>
+            <td class="right">{{ '%.2f'|format(item.amount)|vs_num if item.amount is not none else t_dash }}</td>
             <td>{{ item.accepted.file }} / {{ item.accepted.sheet }} / {{ item.accepted.row }}</td>
             <td>{{ item.skipped.file }} / {{ item.skipped.sheet }} / {{ item.skipped.row }}</td>
           </tr>
@@ -392,7 +392,7 @@
 {% if snapshot.formula_no_cache %}
 <div class="vs-alert is-warning vs-mb">
   <div>
-    <strong>{{ 'Ячейки с формулой без сохранённого значения' if is_ru else 'Сақланган қиймати йўқ формулали катаклар' }}: {{ snapshot.formula_no_cache }}</strong>
+    <strong>{{ 'Ячейки с формулой без сохранённого значения' if is_ru else 'Сақланган қиймати йўқ формулали катаклар' }}: {{ snapshot.formula_no_cache|vs_num }}</strong>
     <div>{{ 'Книгу сохранила программа, которая формулы не считала, поэтому суммы у этих строк могут отсутствовать не потому, что их не заполнили. Откройте книгу, пересчитайте, сохраните и загрузите заново.' if is_ru else 'Китобни формулаларни ҳисобламайдиган дастур сақлаган, шунинг учун бу қаторларда суммалар тўлдирилмагани учун эмас, балки шу сабабли йўқ бўлиши мумкин. Китобни очинг, қайта ҳисобланг, сақланг ва қайтадан юкланг.' }}</div>
   </div>
 </div>
@@ -407,12 +407,12 @@
   <div class="vs-card-body">
     <div class="vs-help vs-mb-sm">
       {{ 'До этой кнопки в базу не записано ничего. После неё будет записано' if is_ru else 'Бу тугмагача базага ҳеч нарса ёзилмаган. Ундан кейин ёзилади' }}
-      <strong>{{ snapshot.totals.rows }}</strong>
+      <strong>{{ snapshot.totals.rows|vs_num }}</strong>
       {{ 'строк на' if is_ru else 'қатор,' }}
-      <strong>{{ '%.2f'|format(snapshot.totals.area) }}</strong>
+      <strong>{{ '%.2f'|format(snapshot.totals.area)|vs_num }}</strong>
       {{ 'га. Файлы будут перепроверены по контрольной сумме, а разбор — повторён и сверен с этими же числами: при любом расхождении запись не состоится.' if is_ru else 'га. Файллар назорат йиғиндиси бўйича қайта текширилади, ўқиш эса такрорланиб, шу рақамлар билан солиштирилади: ҳар қандай тафовутда ёзиш амалга ошмайди.' }}
       {% if snapshot.already_in_db %}
-      <div class="vs-mt-sm">{{ 'Из них уже есть в базе' if is_ru else 'Улардан базада аллақачон бор' }}: <strong>{{ snapshot.already_in_db }}</strong>. {{ 'Они будут пропущены, а не задвоены.' if is_ru else 'Улар иккиланмайди, ўтказиб юборилади.' }}</div>
+      <div class="vs-mt-sm">{{ 'Из них уже есть в базе' if is_ru else 'Улардан базада аллақачон бор' }}: <strong>{{ snapshot.already_in_db|vs_num }}</strong>. {{ 'Они будут пропущены, а не задвоены.' if is_ru else 'Улар иккиланмайди, ўтказиб юборилади.' }}</div>
       {% endif %}
     </div>
     <form method="post" action="{{ url_for('drones.works_import_apply', batch_id=row.id) }}" class="vs-row">

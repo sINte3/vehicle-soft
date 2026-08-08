@@ -1918,6 +1918,7 @@ class DroneNumberPlacementTests(unittest.TestCase):
                  'unit_card.html', 'units.html', 'works.html',
                  'works_assignment_hints.html', 'works_debts.html',
                  'works_debts_aging.html', 'works_flights_reconcile.html',
+                 'works_import.html', 'works_import_preview.html',
                  'works_reports.html')
 
     def source(self, name):
@@ -2056,6 +2057,15 @@ class DroneNumberPlacementTests(unittest.TestCase):
         #   percentage cells and none on «Покрытие»: a percentage never gets
         #   the grouping filter, and that rule is asserted separately by
         #   test_no_percentage_carries_the_filter.
+        #
+        #   DRONE-WORKS-UPLOAD-001 brought the two upload screens. They print
+        #   counts of JOBS and MONEY, which is exactly what UI-NUMBER-FORMAT-002
+        #   named, so they carry the filter for the same reason: works_import
+        #   4 (the four numeric journal columns), works_import_preview 30. The
+        #   period on the form, the batch id, the sheet counts and the row
+        #   numbers inside a rejected-row reference deliberately do NOT get it
+        #   -- a period is «2026-08» and an id is an identifier, and the filter
+        #   on either is the defect, not the fix.
         expected = {
             '_money_cell.html': 1,
             'customers.html': 2, 'flight_calendar.html': 9, 'list.html': 3,
@@ -2063,13 +2073,14 @@ class DroneNumberPlacementTests(unittest.TestCase):
             'summary.html': 42, 'works.html': 9,
             'works_assignment_hints.html': 9, 'works_debts.html': 6,
             'works_debts_aging.html': 15,
-            'works_flights_reconcile.html': 14, 'works_reports.html': 9,
+            'works_flights_reconcile.html': 14, 'works_import.html': 4,
+            'works_import_preview.html': 30, 'works_reports.html': 9,
         }
         actual = {name: self.source(name).count('|vs_num')
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 166)
+        self.assertEqual(sum(actual.values()), 200)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):

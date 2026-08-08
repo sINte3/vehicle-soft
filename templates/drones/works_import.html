@@ -108,10 +108,10 @@
               <span class="vs-badge vs-badge-warning">{{ 'ждёт подтверждения' if is_ru else 'тасдиқ кутмоқда' }}</span>
               {% endif %}
             </td>
-            <td class="right">{{ row.preview_rows if row.preview_rows is not none else '—' }}</td>
-            <td class="right">{{ '%.2f'|format(row.preview_area_ha) if row.preview_area_ha is not none else '—' }}</td>
-            <td class="right">{{ row.works_inserted if row.works_inserted is not none else '—' }}</td>
-            <td class="right">{{ row.works_skipped_existing if row.works_skipped_existing is not none else '—' }}</td>
+            <td class="right">{{ row.preview_rows|vs_num if row.preview_rows is not none else '—' }}</td>
+            <td class="right">{{ '%.2f'|format(row.preview_area_ha)|vs_num if row.preview_area_ha is not none else '—' }}</td>
+            <td class="right">{{ row.works_inserted|vs_num if row.works_inserted is not none else '—' }}</td>
+            <td class="right">{{ row.works_skipped_existing|vs_num if row.works_skipped_existing is not none else '—' }}</td>
             <td class="right">
               <a class="vs-btn vs-btn-sm" href="{{ url_for('drones.works_import_preview', batch_id=row.id) }}">{{ 'Открыть' if is_ru else 'Очиш' }}</a>
               {% if row.report_file %}
