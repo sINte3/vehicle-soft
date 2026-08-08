@@ -2321,6 +2321,106 @@ class DroneWork(db.Model):
     )
 
 
+# ─── DRONE-WORKS-UPLOAD-001: the journal of dispatcher-book uploads ──────────
+
+# One upload batch goes through exactly these states and no others.
+#   preview -- the files are stored and parsed, nothing is written to the
+#              ledger yet. This is the ONLY state an apply accepts.
+#   applied -- apply_rows() ran and committed; the counters below are what it
+#              actually wrote, not what the preview predicted.
+#   failed  -- parsing raised. The files and the directory are KEPT: they are
+#              the evidence, and a book that broke the parser is the one book
+#              worth still having.
+DRONE_WORK_IMPORT_PREVIEW = 'preview'
+DRONE_WORK_IMPORT_APPLIED = 'applied'
+DRONE_WORK_IMPORT_FAILED = 'failed'
+DRONE_WORK_IMPORT_STATUSES = (DRONE_WORK_IMPORT_PREVIEW,
+                              DRONE_WORK_IMPORT_APPLIED,
+                              DRONE_WORK_IMPORT_FAILED)
+
+
+class DroneWorkImport(db.Model):
+    """One upload of dispatchers' books through the screen. A JOURNAL row.
+
+    [REASON]: DRONE-WORKS-UPLOAD-001. Nothing here participates in any report
+    and no report may ever join to it: the works themselves are the ledger,
+    this is the record of how a batch of them got in. Deleting a row loses
+    provenance and loses no work.
+
+    [REASON]: ONE ROW PER BATCH, not per file. The dispatchers send a month's
+    books together, they are parsed together -- the duplicate detection in
+    tools/import_drone_works.py is deliberately run-wide, because one book
+    carries two sheets with identical content and two others overlap -- and
+    they are written in one transaction. A per-file row would have to describe
+    a per-file outcome that does not exist.
+
+    [REASON]: the numbers are stored TWICE on purpose. preview_* is what the
+    dry run predicted; works_inserted / works_skipped_existing /
+    customers_created are what the apply wrote. They differ legitimately --
+    re-uploading a book already in the ledger predicts N rows and inserts
+    zero, because apply_rows() skips any row whose (source_file, source_sheet,
+    source_row) is already present. Keeping only one of the two would make
+    that ordinary outcome unreadable afterwards.
+
+    The writing itself does NOT go through this model. It goes through
+    tools/import_drone_works.py:apply_rows() on a plain sqlite3 connection --
+    the same function the CLI calls. An ORM re-implementation of that INSERT
+    would be a second writer that can drift from the first.
+    """
+    __tablename__ = 'drone_work_imports'
+    id                     = db.Column(db.Integer, primary_key=True)
+    # ISO text, not DateTime: written by the route through the ORM but read
+    # back by nothing else, and the sqlite3 side of this increment writes
+    # plain ISO strings everywhere else too.
+    created_at             = db.Column(db.String(40), nullable=False)
+    created_by             = db.Column(db.Integer, db.ForeignKey('users.id'),
+                                       nullable=True)
+    # 'YYYY-MM'. Chosen on the form and applied to every file in the upload.
+    # [REASON]: it governs ONLY rows with no parseable date; a dated row is
+    # bucketed by its own date, and the preview marks every month that falls
+    # outside this one so a book filed under the wrong month is visible.
+    period_month           = db.Column(db.String(7), nullable=False)
+    # One of DRONE_WORK_IMPORT_STATUSES. Enforced in the route, not by a
+    # CHECK: a CHECK on SQLite cannot be altered later without rebuilding.
+    status                 = db.Column(db.String(20), nullable=False)
+    # The value written into DroneWork.import_batch, 'upload-<id>'. Set on
+    # apply. It is derived from this row's id so the works of one batch can be
+    # deleted again by anybody who wants them gone.
+    import_batch           = db.Column(db.String(100), nullable=True)
+    # RELATIVE to the books root, which is derived at runtime from the SQLite
+    # file's own directory. Never absolute: production and staging must not be
+    # able to point at each other's files after a database copy.
+    storage_dir            = db.Column(db.String(200), nullable=False)
+    # [{"name": …, "sha256": …, "size": …}] -- re-hashed before every apply.
+    files_json             = db.Column(db.Text, nullable=False)
+    note                   = db.Column(db.Text, nullable=True)
+
+    preview_rows           = db.Column(db.Integer, nullable=True)
+    preview_area_ha        = db.Column(db.Numeric(asdecimal=False),
+                                       nullable=True)
+    preview_amount         = db.Column(db.Numeric(asdecimal=False),
+                                       nullable=True)
+
+    applied_at             = db.Column(db.String(40), nullable=True)
+    applied_by             = db.Column(db.Integer, db.ForeignKey('users.id'),
+                                       nullable=True)
+    works_inserted         = db.Column(db.Integer, nullable=True)
+    works_skipped_existing = db.Column(db.Integer, nullable=True)
+    customers_created      = db.Column(db.Integer, nullable=True)
+    rows_rejected          = db.Column(db.Integer, nullable=True)
+    rows_duplicate         = db.Column(db.Integer, nullable=True)
+    # File name inside the batch directory, never a path.
+    report_file            = db.Column(db.String(200), nullable=True)
+    error_text             = db.Column(db.Text, nullable=True)
+
+    creator  = db.relationship('User', foreign_keys=[created_by])
+    applier  = db.relationship('User', foreign_keys=[applied_by])
+
+    __table_args__ = (
+        db.Index('ix_drone_work_imports_created', 'created_at'),
+    )
+
+
 # ─── Migration Registry ───────────────────────────────────────────────────────
 
 class SchemaMigration(db.Model):
