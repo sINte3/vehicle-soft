@@ -107,6 +107,27 @@
 {# Коридор объяснён СЛОВАМИ и числами: читатель должен видеть, что означает
    цвет, иначе цвет — это утверждение без источника. #}
 <div class="vs-alert is-info vs-mb">
+  {# [REASON]: DRONE-UI-FIX-003/1. THIS WRAPPER IS LOAD-BEARING, DO NOT DELETE
+     IT AS REDUNDANT MARKUP. .vs-alert is `display: flex`, so EVERY child of
+     the alert -- every element AND every text node between elements -- becomes
+     a flex item. Without this div the sentence below lays out as NINETEEN
+     separate items in a row with 8px gaps, wrapped into columns, and is
+     unreadable on screen. It reads correctly in the DOM, which is why DOM-only
+     QA never saw it. The wrapper gives the alert ONE flex child; the <b>
+     numbers then lay out as ordinary inline markup inside it.
+     .vs-alert itself is used across the whole application and is not touched.
+
+     IT MUST CLOSE AFTER BOTH {% endif %}s, enclosing the fleet-scope sentence
+     that DRONE-SPRAY-MEDIAN-SCOPE-001 renders under {% if filters.unit_id %}.
+     Closing it after the median text instead would leave that sentence outside
+     as a SECOND flex item, and two gapped columns is the same defect, not a
+     smaller one. Measured on the filtered screen: 19 items unwrapped, 1
+     wrapped. Nineteen either way, because the second sentence is separated
+     from the first by whitespace only and the two merge into one anonymous
+     flex item -- so the ITEM COUNT alone cannot catch a wrapper that closes
+     too early. test_c1_2_the_filtered_screen_keeps_both_sentences_in_one_
+     wrapper is what catches that, by asserting both sentences sit inside. #}
+  <div>
   {% if data.median is none %}
   {{ 'Медиану посчитать не из чего: ни в одной паре «машина × месяц» за этот период не записаны литры. Пока литров нет, коридор не строится и ни одна строка не красится.' if is_ru else 'Медианани ҳисоблашга асос йўқ: бу даврда бирорта «машина × ой» жуфтлигида литр ёзилмаган. Литр бўлмагунча йўлак қурилмайди ва бирорта қатор бўялмайди.' }}
   {% else %}
@@ -123,6 +144,7 @@
   {{ 'Медиана и коридор — НЕ этой машины, а всего парка за этот период. Выбор машины её не двигает: машина сравнивается с флотом, а не сама с собой.' if is_ru else 'Медиана ва йўлак — бу МАШИНАНИКИ эмас, балки шу даврдаги бутун паркники. Машина танлаш уни ўзгартирмайди: машина флот билан солиштирилади, ўзи билан эмас.' }}
   {% endif %}
   {% endif %}
+  </div>
 </div>
 
 <div class="vs-alert is-warning vs-mb">

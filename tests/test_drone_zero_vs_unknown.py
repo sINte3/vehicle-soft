@@ -944,9 +944,18 @@ class TestC3DivBalance(unittest.TestCase):
                 cwd=REPO_ROOT).decode('utf-8')
             reported[path] = (self.counts(before),
                               self.counts(read_template(path)))
+        # [REASON]: DRONE-UI-FIX-003/1 moved works_debts.html from 39 to 40
+        # balanced <div> pairs. The alert above the debt tables was wrapped so
+        # it stops laying out as three flex items -- see the wrapper's own
+        # [REASON] in the template. This is a LEDGER of what each increment did
+        # to the div counts, not an invariant, so the recorded «after» number
+        # moves with a deliberate change instead of the change being avoided.
+        # What is invariant is balance, and that is asserted separately by
+        # test_c3_both_templates_are_balanced_now and by
+        # tools/check_templates.py: 40 == 40 still holds.
         self.assertEqual(
             {REPORTS_TEMPLATE: ((41, 41), (40, 40)),
-             DEBTS_TEMPLATE: ((39, 39), (39, 39))},
+             DEBTS_TEMPLATE: ((39, 39), (40, 40))},
             reported)
 
 
