@@ -1924,6 +1924,7 @@ class DroneNumberPlacementTests(unittest.TestCase):
                  'unit_card.html', 'units.html', 'works.html',
                  'works_assignment_hints.html', 'works_debts.html',
                  'works_debts_aging.html', 'works_flights_reconcile.html',
+                 'works_closing.html',
                  'works_import.html', 'works_import_preview.html',
                  'works_reports.html')
 
@@ -2072,13 +2073,22 @@ class DroneNumberPlacementTests(unittest.TestCase):
         #   numbers inside a rejected-row reference deliberately do NOT get it
         #   -- a period is «2026-08» and an id is an identifier, and the filter
         #   on either is the defect, not the fix.
+        #
+        #   DRONE-CLOSE-001 brought works_closing 24. Counts of WORKS and of
+        #   FLIGHTS and hectares carry the filter, in the matrix cells, in the
+        #   row and month totals, in the cards and in the «flew, no book»
+        #   list. The COVERAGE PERCENTAGE deliberately does NOT -- a
+        #   percentage never gets the grouping filter, the same rule
+        #   works_flights_reconcile follows and
+        #   test_no_percentage_carries_the_filter asserts -- and neither does
+        #   the month string «2026-04», which is a period and not a number.
         expected = {
             '_money_cell.html': 1,
             'customers.html': 2, 'flight_calendar.html': 9, 'list.html': 3,
             'reattach.html': 12, 'sources.html': 7, 'spray_usage.html': 28,
             'summary.html': 42, 'works.html': 9,
-            'works_assignment_hints.html': 9, 'works_debts.html': 6,
-            'works_debts_aging.html': 15,
+            'works_assignment_hints.html': 9, 'works_closing.html': 24,
+            'works_debts.html': 6, 'works_debts_aging.html': 15,
             'works_flights_reconcile.html': 14, 'works_import.html': 4,
             'works_import_preview.html': 30, 'works_reports.html': 9,
         }
@@ -2086,7 +2096,7 @@ class DroneNumberPlacementTests(unittest.TestCase):
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 200)
+        self.assertEqual(sum(actual.values()), 224)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):
