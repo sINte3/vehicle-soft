@@ -194,6 +194,50 @@ staging к тому моменту запускается Claude Code CLI с с�
 **Release gate:** `docs/RELEASE_GATE.md` не пуст (`DRONE-WORKS-UPLOAD-001`) —
 прод-деплой закрыт для всего проекта, не только для этого трека.
 
+## 3a. Как поднять среду в новой сессии
+
+Ничего из этого не хранится в репозитории и обнуляется вместе с контейнером.
+Порядок ровно такой; шаги 2 и 3 нужны только если предстоит съёмка.
+
+```
+# 1. Зависимости приложения (контейнер, не сервер).
+pip install -q -r requirements.txt
+
+# 2. Node-инструменты. Браузеры УЖЕ установлены в /opt/pw-browsers --
+#    playwright install не запускать, он скачает вторую копию.
+cd tools/ux && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --silent && cd ../..
+
+# 3. Эфемерный экземпляр: настоящее приложение на одноразовой базе.
+#    Поднимать ОТЦЕПЛЕННЫМ, иначе он умрёт вместе с командой.
+nohup setsid python3 tools/ux/serve_ephemeral.py --port 5099 --rows 22 \
+      > /tmp/serve.log 2>&1 < /dev/null & disown
+#    Готовность: curl даёт 200 на /login примерно через 20 секунд.
+
+# 4. Съёмка (полная матрица ~50 минут, один вьюпорт ~13).
+PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node tools/ux/shoot.mjs
+PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node tools/ux/shoot.mjs --viewports desktop --limit 8
+```
+
+Учётные записи эфемерного экземпляра, пароль у всех `ux-audit-local`:
+`ux_admin` (ru), `ux_admin_uz` (uz), `ux_operator`, `ux_viewer`, `ux_mechanic`.
+
+**Язык интерфейса берётся из учётной записи, а не из адреса.** Прогон на
+узбекском делается `--role ux_admin_uz`; флаг `--lang` — только метка
+каталога. Параметр в адресе приложение игнорирует, и прогон молча снимется
+на русском.
+
+**Проверки перед любым отчётом о готовности:**
+
+```
+python -m compileall -q .
+python tools/check_templates.py
+python tools/test_check_templates.py
+python tools/check_design_system.py
+python tools/test_check_design_system.py
+python -m unittest discover -s tests      # 481 тест, около 70 секунд
+python tools/ux/inventory.py              # числа в документах регенерируются
+```
+
 ## 4. Карта артефактов
 
 | Файл | Что в нём |
