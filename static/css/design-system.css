@@ -1266,6 +1266,71 @@ a.vs-kpi-strip-item:focus-visible { outline: 2px solid var(--vs-primary); outlin
 }
 .vs-multiselect-footer button:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
 
+/* ---------- ADAPT-1: POLOSA RAZDELOV MODULYA -------------------------
+   Podnyato iz DVUH pochti pobaytovo odinakovyh blokov <style> vnutri
+   templates/_spare_nav.html i templates/fuel/_fuel_nav.html -- po 21 stroke
+   kazhdyy, otlichalsya tolko prefiks klassa (.sp-nav / .fuel-nav). Tretya
+   realizaciya, u dronov, risovala tu zhe polosu knopkami .vs-btn i s drugim
+   sostoyaniem aktivnogo punkta. Odna zadacha -- tri vida (PR-011). */
+.vs-modulenav { position: relative; }
+.vs-modulenav .vs-pill { text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+.vs-modulenav .vs-pill:hover { text-decoration: none; }
+.vs-modulenav details { display: inline-flex; }
+.vs-modulenav summary { list-style: none; }
+.vs-modulenav summary::-webkit-details-marker { display: none; }
+.vs-modulenav summary::marker { display: none; content: ''; }
+.vs-modulenav-caret { font-size: 10px; line-height: 1; transition: transform var(--vs-t-fast); }
+.vs-modulenav details[open] .vs-modulenav-caret { transform: rotate(180deg); }
+/* [REASON]: pozicioniruyushchiy kontekst -- OBERTKA, a ne <details>: otkrytoe
+   menyu eto panel vo vsyu shirinu polosy, i togda ono ne mozhet vyyti za kray
+   okna, gde by ni okazalsya trigger posle perenosa ryada. I nikakogo
+   overflow-x ni zdes, ni u predkov: po specifikacii ustanovka odnoy osi v
+   ne-visible vychislyaet vtoruyu v auto, i panel s absolyutnym
+   pozicionirovaniem obrezalas by. Polosa vmesto etogo perenositsya. */
+.vs-modulenav-menu {
+  left: 0; right: 0;
+  display: flex; flex-wrap: wrap; gap: 2px;
+}
+.vs-modulenav-menu .vs-menu-item { width: auto; text-decoration: none; }
+.vs-modulenav-menu .vs-menu-item.is-current { color: var(--vs-primary); font-weight: 700; }
+
+/* [REASON]: ОДНА навигация видна за раз. Вложенный уровень в сайдбаре и
+   полоса внутри страницы несут ОДИН И ТОТ ЖЕ список — показывать оба значит
+   дважды писать одно на одном экране. Сайдбар виден на широких; ниже 768 px
+   он уезжает за край (см. .vs-sidebar в разделе оболочки), и там навигацию
+   несёт полоса. Порог тот же, что у самой панели: разойдутся пороги --
+   останется ширина, на которой не видно ни одной навигации. */
+.vs-modulenav { display: none; }
+@media (max-width: 768px) { .vs-modulenav { display: flex; } }
+
+/* ADAPT-1: vlozhennyy uroven v saydbare pod aktivnym modulem. */
+.vs-side-sub {
+  display: flex; flex-direction: column;
+  margin: 2px 0 6px;
+  padding-left: 30px;
+}
+.vs-side-sublink {
+  position: relative;
+  padding: 6px 12px 6px 12px;
+  margin: 0 10px;
+  border-radius: var(--vs-r-sm);
+  color: var(--vs-side-text-dim);
+  font-size: var(--vs-fs-sm);
+  text-decoration: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vs-side-sublink:hover { background: var(--vs-side-hover); color: var(--vs-side-active-fg); }
+.vs-side-sublink.is-active { color: var(--vs-side-active-fg); font-weight: 700; }
+/* Tochka u aktivnogo punkta vtorogo urovnya: polosa sleva uzhe zanyata
+   aktivnym MODULEM, i vtoraya polosa ryadom chitalas by kak tot zhe uroven. */
+.vs-side-sublink.is-active::before {
+  content: ''; position: absolute; left: 2px; top: 50%;
+  width: 5px; height: 5px; margin-top: -2.5px;
+  border-radius: 50%; background: var(--vs-side-active-bar);
+}
+/* V svernutom saydbare vtorogo urovnya net: tam net mesta dazhe pervomu. */
+.vs-sidebar.is-collapsed .vs-side-sub { display: none; }
+
 /* ---------- 17. TOOLBAR, GROUPS, COLLAPSE CARD, LINE ROW -------------
    Podnyato iz inline-<style> vnutri daily_entry.html pri perevode etalonnogo
    ekrana (P4). Tam bylo 386 strok, i BOLSHAYA IH CHAST -- lokalnaya kopiya

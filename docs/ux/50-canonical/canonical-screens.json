@@ -689,7 +689,7 @@
   "why": "крупнейшая таблица, 190 вхождений vs-* — масштаб на самом плотном экране",
   "status": 200,
   "inlineStyleBlocks": 1,
-  "inlineStyleAttrs": 483,
+  "inlineStyleAttrs": 482,
   "glyphs": 0,
   "tableClasses": [
    "vs-table"
@@ -713,7 +713,7 @@
   "why": "крупнейшая таблица, 190 вхождений vs-* — масштаб на самом плотном экране",
   "status": 200,
   "inlineStyleBlocks": 1,
-  "inlineStyleAttrs": 483,
+  "inlineStyleAttrs": 482,
   "glyphs": 0,
   "tableClasses": [
    "vs-table"
@@ -735,7 +735,7 @@
   "why": "крупнейшая таблица, 190 вхождений vs-* — масштаб на самом плотном экране",
   "status": 200,
   "inlineStyleBlocks": 1,
-  "inlineStyleAttrs": 483,
+  "inlineStyleAttrs": 482,
   "glyphs": 0,
   "tableClasses": [
    "vs-table"
@@ -757,7 +757,7 @@
   "why": "крупнейшая таблица, 190 вхождений vs-* — масштаб на самом плотном экране",
   "status": 200,
   "inlineStyleBlocks": 1,
-  "inlineStyleAttrs": 483,
+  "inlineStyleAttrs": 482,
   "glyphs": 0,
   "tableClasses": [
    "vs-table"
@@ -780,7 +780,7 @@
   "title": "АЗС — выдачи Topaz",
   "why": "таблица на легаси-переменных + свой класс — эталон миграции",
   "status": 200,
-  "inlineStyleBlocks": 2,
+  "inlineStyleBlocks": 1,
   "inlineStyleAttrs": 3,
   "glyphs": 0,
   "tableClasses": [
@@ -790,7 +790,7 @@
   "horizontalOverflow": false,
   "scrollWidth": 1920,
   "clientWidth": 1920,
-  "controlsWithoutName": 4,
+  "controlsWithoutName": 0,
   "file": "after/fuel-transactions-desktop.png",
   "axe": {},
   "axeRules": []
@@ -805,7 +805,7 @@
   "title": "АЗС — выдачи Topaz",
   "why": "таблица на легаси-переменных + свой класс — эталон миграции",
   "status": 200,
-  "inlineStyleBlocks": 2,
+  "inlineStyleBlocks": 1,
   "inlineStyleAttrs": 3,
   "glyphs": 0,
   "tableClasses": [
@@ -815,7 +815,7 @@
   "horizontalOverflow": false,
   "scrollWidth": 1440,
   "clientWidth": 1440,
-  "controlsWithoutName": 4,
+  "controlsWithoutName": 0,
   "file": "after/fuel-transactions-laptop.png"
  },
  {
@@ -828,7 +828,7 @@
   "title": "АЗС — выдачи Topaz",
   "why": "таблица на легаси-переменных + свой класс — эталон миграции",
   "status": 200,
-  "inlineStyleBlocks": 2,
+  "inlineStyleBlocks": 1,
   "inlineStyleAttrs": 3,
   "glyphs": 0,
   "tableClasses": [
@@ -838,7 +838,7 @@
   "horizontalOverflow": false,
   "scrollWidth": 1024,
   "clientWidth": 1024,
-  "controlsWithoutName": 4,
+  "controlsWithoutName": 0,
   "file": "after/fuel-transactions-tablet.png"
  },
  {
@@ -851,7 +851,7 @@
   "title": "АЗС — выдачи Topaz",
   "why": "таблица на легаси-переменных + свой класс — эталон миграции",
   "status": 200,
-  "inlineStyleBlocks": 2,
+  "inlineStyleBlocks": 1,
   "inlineStyleAttrs": 3,
   "glyphs": 0,
   "tableClasses": [
@@ -960,7 +960,7 @@
   "title": "Запчасти — заявка",
   "why": "карточка записи: таймлайн, степпер, 23 эмодзи — максимум по PR-013",
   "status": 200,
-  "inlineStyleBlocks": 2,
+  "inlineStyleBlocks": 1,
   "inlineStyleAttrs": 27,
   "glyphs": 0,
   "tableClasses": [
@@ -969,7 +969,7 @@
   "horizontalOverflow": false,
   "scrollWidth": 1920,
   "clientWidth": 1920,
-  "controlsWithoutName": 4,
+  "controlsWithoutName": 0,
   "file": "after/spare-part-detail-desktop.png",
   "axe": {},
   "axeRules": []
@@ -984,7 +984,7 @@
   "title": "Запчасти — заявка",
   "why": "карточка записи: таймлайн, степпер, 23 эмодзи — максимум по PR-013",
   "status": 200,
-  "inlineStyleBlocks": 2,
+  "inlineStyleBlocks": 1,
   "inlineStyleAttrs": 27,
   "glyphs": 0,
   "tableClasses": [
@@ -993,7 +993,7 @@
   "horizontalOverflow": false,
   "scrollWidth": 1440,
   "clientWidth": 1440,
-  "controlsWithoutName": 4,
+  "controlsWithoutName": 0,
   "file": "after/spare-part-detail-laptop.png"
  },
  {
@@ -1006,7 +1006,7 @@
   "title": "Запчасти — заявка",
   "why": "карточка записи: таймлайн, степпер, 23 эмодзи — максимум по PR-013",
   "status": 200,
-  "inlineStyleBlocks": 2,
+  "inlineStyleBlocks": 1,
   "inlineStyleAttrs": 27,
   "glyphs": 0,
   "tableClasses": [
@@ -1015,7 +1015,7 @@
   "horizontalOverflow": false,
   "scrollWidth": 1024,
   "clientWidth": 1024,
-  "controlsWithoutName": 4,
+  "controlsWithoutName": 0,
   "file": "after/spare-part-detail-tablet.png"
  },
  {
@@ -1028,7 +1028,7 @@
   "title": "Запчасти — заявка",
   "why": "карточка записи: таймлайн, степпер, 23 эмодзи — максимум по PR-013",
   "status": 200,
-  "inlineStyleBlocks": 2,
+  "inlineStyleBlocks": 1,
   "inlineStyleAttrs": 27,
   "glyphs": 0,
   "tableClasses": [
@@ -1148,7 +1148,7 @@
   "title": "АЗС — выдачи, 390 px",
   "why": "тот же экран в мобильном — отдельный эталон адаптивности",
   "status": 200,
-  "inlineStyleBlocks": 2,
+  "inlineStyleBlocks": 1,
   "inlineStyleAttrs": 3,
   "glyphs": 0,
   "tableClasses": [

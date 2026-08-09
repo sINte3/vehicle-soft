@@ -1,0 +1,182 @@
+{# ADAPT-1 · Единый источник вторичной навигации модулей.
+
+   Референс: `shell/shell-02-sectioned-sidebar-with-nested-active.jpg` —
+   один сайдбар с секциями и одним уровнем вложенности у активного модуля.
+   Объём сужен в P2: секции в сайдбаре уже есть (Основное, Модули,
+   Справочники, Администрирование), не хватало только вложенного уровня.
+
+   Что было. ТРИ реализации одного и того же: `_spare_nav.html` 110 строк,
+   `fuel/_fuel_nav.html` 136, `drones/_drones_nav.html` 31. Запчасти и АЗС
+   несли почти побайтово одинаковые блоки `<style>` по 21 строке и
+   одинаковый скрипт закрытия выпадающего списка — отличался только префикс
+   класса. Дроны рисовали ту же полосу кнопками другого компонента и с
+   другим состоянием активного пункта.
+
+   [REASON]: набор пунктов объявлен ДАННЫМИ, а не разметкой, потому что его
+   читают два потребителя: полоса внутри страницы и вложенный уровень в
+   сайдбаре. Разметка годится ровно для одного; данные — для обоих. Импорт
+   обязательно `with context`: права (`current_user.is_admin`,
+   `has_module_access`) вычисляются здесь же, при построении словаря.
+
+   Правило показа сохранено дословно из трёх исходников: пункт, который
+   пользователю не открыть, НЕ показывается вовсе, а не показывается
+   выключенным. Гейты переписаны один в один:
+     • АЗС — только `current_user.is_admin`. У модуля нет гранулярных прав:
+       каждая страница закрыта @module_required('fuel'), а пять
+       административных — @admin_required_fuel, который проверяет ровно
+       is_admin. Строка вида has_module_access('fuel_...') сторожила бы
+       право, которого не существует.
+     • Запчасти — гранулярные права модуля, каждое своё.
+     • Дроны — гейтов нет, кроме загрузки ведомостей (её в полосе и не было).
+#}
+{#- Вторая преграда к тому же: набор строится только для вошедшего.
+    Файл могут импортировать и из другого места, а короткое замыкание `and`
+    в Jinja гарантирует, что has_module_access у анонима не вызовется. -#}
+{% set _auth = current_user.is_authenticated %}
+{% set _ru = (lang == 'ru') %}
+{% set _ep = request.endpoint or '' %}
+
+{% set MODULE_NAV = {
+  'fuel': [
+    {'ep': 'fuel.dashboard',       'ru': 'Остатки',        'uz': 'Қолдиқлар',            'show': True},
+    {'ep': 'fuel.balance_report',  'ru': 'Отчёт остатков', 'uz': 'Қолдиқлар ҳисоботи',   'show': True},
+    {'ep': 'fuel.warehouse_ledger','ru': 'Карточка склада','uz': 'Омбор карточкаси',     'show': True},
+    {'ep': 'fuel.receipts',        'ru': 'Приходы',        'uz': 'Киримлар',             'show': True},
+    {'ep': 'fuel.transactions',    'ru': 'Выдачи',         'uz': 'Беришлар',             'show': True},
+    {'ep': 'fuel.manual_expenses', 'ru': 'Ручной расход',  'uz': 'Қўлда сарф',           'show': _auth and current_user.is_admin},
+    {'ep': 'fuel.reserve_transfers','ru': 'Резерв',        'uz': 'Резерв',               'show': _auth and current_user.is_admin},
+    {'ep': 'fuel.fuel_warnings',   'ru': 'Предупреждения', 'uz': 'Огоҳлантиришлар',      'show': True},
+    {'ep': 'fuel.fuel_report',     'ru': 'Контроль АЗС',   'uz': 'АЗС назорати',         'show': True},
+    {'ep': 'fuel.reports_center',  'ru': 'Отчёты',         'uz': 'Ҳисоботлар',           'show': True,
+     'active': ['fuel.reports_center', 'fuel.station_issues_report']},
+    {'group': 'refs', 'ru': 'Справочники', 'uz': 'Маълумотномалар', 'show': True, 'items': [
+      {'ep': 'fuel.stations',        'ru': 'АЗС',                'uz': 'АЗС',                  'show': _auth and current_user.is_admin},
+      {'ep': 'fuel.warehouses',      'ru': 'Склады',             'uz': 'Омборлар',             'show': _auth and current_user.is_admin},
+      {'ep': 'fuel.card_directory',  'ru': 'Карты',              'uz': 'Карталар',             'show': True},
+      {'ep': 'fuel.initial_balance', 'ru': 'Начальные остатки',  'uz': 'Бошланғич қолдиқлар',  'show': _auth and current_user.is_admin},
+    ]},
+  ],
+
+  'spare_parts': [
+    {'ep': 'spare_parts.desk',   'ru': 'Рабочий стол', 'uz': 'Иш столи', 'show': True},
+    {'ep': 'spare_parts.index',  'ru': 'Заявки',       'uz': 'Сўровлар', 'show': True,
+     'active': ['spare_parts.index', 'spare_parts.new_request', 'spare_parts.detail']},
+    {'ep': 'spare_parts.inventory', 'ru': 'Склад', 'uz': 'Омбор',
+     'show': _auth and current_user.has_module_access('spare_parts_inventory_manage')},
+    {'ep': 'spare_parts.purchase_queue', 'ru': 'Закупка', 'uz': 'Харид',
+     'show': _auth and current_user.has_module_access('spare_parts_inventory_manage')
+             or current_user.has_module_access('spare_parts_approve')},
+    {'ep': 'spare_parts.acts_index', 'ru': 'Акты', 'uz': 'Далолатномалар',
+     'show': _auth and current_user.has_module_access('spare_parts_acts'),
+     'active': ['spare_parts.acts_index', 'spare_parts.act_detail']},
+    {'ep': 'spare_parts.maintenance_due', 'ru': 'Пора менять', 'uz': 'Алмаштириш вақти',
+     'show': _auth and current_user.has_module_access('spare_parts_catalog_manage')},
+    {'ep': 'spare_parts.reports', 'ru': 'Отчёты', 'uz': 'Ҳисоботлар',
+     'show': _auth and current_user.has_module_access('spare_parts_reports')},
+    {'group': 'refs', 'ru': 'Справочники', 'uz': 'Маълумотномалар',
+     'show': _auth and current_user.has_module_access('spare_parts_catalog_manage'), 'items': [
+      {'ep': 'spare_parts.catalog', 'ru': 'Каталог', 'uz': 'Каталог', 'show': True,
+       'active': ['spare_parts.catalog', 'spare_parts.catalog_compatibility']},
+      {'ep': 'spare_parts.skus', 'ru': 'Артикул', 'uz': 'Артикул', 'show': True},
+      {'ep': 'spare_parts.equipment_models', 'ru': 'Модели техники', 'uz': 'Техника моделлари', 'show': True},
+      {'ep': 'spare_parts.maintenance_norms', 'ru': 'Нормы', 'uz': 'Нормалар', 'show': True},
+    ]},
+  ],
+
+  'drones': [
+    {'ep': 'drones.summary',   'ru': 'Сводка',    'uz': 'Жамланма',       'show': True},
+    {'ep': 'drones.index',     'ru': 'Вылеты',    'uz': 'Парвозлар',      'show': True},
+    {'ep': 'drones.units',     'ru': 'Машины',    'uz': 'Машиналар',      'show': True,
+     'active': ['drones.units', 'drones.unit_card']},
+    {'ep': 'drones.operators', 'ru': 'Операторы', 'uz': 'Операторлар',    'show': True,
+     'active': ['drones.operators', 'drones.operator_card']},
+    {'ep': 'drones.works',     'ru': 'Работы',    'uz': 'Ишлар',          'show': True},
+    {'ep': 'drones.customers', 'ru': 'Заказчики', 'uz': 'Буюртмачилар',   'show': True},
+    {'ep': 'drones.reports',   'ru': 'Отчёты',    'uz': 'Ҳисоботлар',     'show': True,
+     'active': ['drones.reports', 'drones.sources', 'drones.works_reports',
+                'drones.works_debts', 'drones.works_assignment_hints']},
+  ],
+} %}
+{#- Заметки к набору выше. Стоят ПОСЛЕ закрытия {% set %}, а не внутри
+    словаря: Jinja не разбирает {# #} внутри выражения, и комментарий в
+    середине литерала даёт «unexpected char '#'» — падает весь шаблон, а не
+    одна строка. Поймано tools/check_templates.py, второй раз за трек.
+
+    • АЗС / «Контроль АЗС» — держит свою пилюлю: это диагностический экран
+      оператора, а не отчёт, и в центр отчётов он намеренно не вынесен.
+    • АЗС / «Отчёты» — простая ссылка, а не выпадающий список (решение
+      владельца); остаётся подсвеченной на отчёте по замечаниям станций.
+    • Запчасти / «Закупка» — гейт тот же, что у самого маршрута
+      (SP-MINSTOCK-004), иначе пилюля вела бы в 403.
+    • Дроны / «Работы» — коммерческая сторона трека, ведомости диспетчеров.
+      Запись отдельная от «Вылетов» намеренно: вылет DJI и работа из
+      ведомости — разные факты и разные таблицы (DRONE-WORKS-001).
+    • Дроны / «Отчёты» — подсвечивается на каждой странице, входом в которую
+      служит лаунчер, чтобы полоса продолжала говорить «вы внутри отчётов».
+-#}
+
+
+{%- macro _label(item) -%}{{ item.ru if _ru else item.uz }}{%- endmacro -%}
+
+{%- macro _is_current(item) -%}
+{{- 'yes' if _ep in (item.active if item.active is defined else [item.ep]) else '' -}}
+{%- endmacro -%}
+
+{# Полоса разделов внутри страницы. Один компонент на три модуля. #}
+{% macro module_nav(module) %}
+{% set items = MODULE_NAV.get(module, []) %}
+{% if items %}
+<nav class="vs-pills vs-modulenav vs-mb"
+     aria-label="{{ ('Разделы модуля' if _ru else 'Модул бўлимлари') }}">
+  {%- for item in items if item.show %}
+    {%- if item.group %}
+      {%- set visible = item['items']|selectattr('show')|list %}
+      {%- if visible %}
+        {#- Группа подсвечена, если открыт любой её пункт. Считается циклом, а
+            не цепочкой фильтров: тест `contains` в Jinja отсутствует, и
+            выражение с ним молча дало бы пустой список — то есть группа
+            никогда бы не подсвечивалась, и это не упало бы ошибкой. -#}
+        {%- set gns = namespace(active=False) %}
+        {%- for sub in visible %}{% if _is_current(sub) %}{% set gns.active = True %}{% endif %}{% endfor %}
+        {%- set group_active = gns.active %}
+  <details class="vs-modulenav-group">
+    <summary class="vs-pill{% if group_active %} is-active{% endif %}">{{ _label(item) }}<span class="vs-modulenav-caret" aria-hidden="true">▾</span></summary>
+    <div class="vs-menu vs-modulenav-menu">
+      {%- for sub in visible %}
+      <a class="vs-menu-item{% if _is_current(sub) %} is-current{% endif %}"
+         href="{{ url_for(sub.ep) }}">{{ _label(sub) }}</a>
+      {%- endfor %}
+    </div>
+  </details>
+      {%- endif %}
+    {%- else %}
+  <a href="{{ url_for(item.ep) }}"
+     class="vs-pill{% if _is_current(item) %} is-active{% endif %}"
+     {% if _is_current(item) %}aria-current="page"{% endif %}>{{ _label(item) }}</a>
+    {%- endif %}
+  {%- endfor %}
+</nav>
+{% endif %}
+{% endmacro %}
+
+{# ADAPT-1: тот же набор — вложенным уровнем в сайдбаре под активным модулем.
+   Группы разворачиваются в плоский список: второй уровень вложенности в
+   сайдбаре референс не предполагает, и мерить его не на чем. #}
+{% macro sidebar_nav(module) %}
+{% set items = MODULE_NAV.get(module, []) %}
+{% if items %}
+<div class="vs-side-sub">
+  {%- for item in items if item.show %}
+    {%- if item.group %}
+      {%- for sub in item['items'] if sub.show %}
+  <a href="{{ url_for(sub.ep) }}" class="vs-side-sublink{% if _is_current(sub) %} is-active{% endif %}"
+     {% if _is_current(sub) %}aria-current="page"{% endif %}>{{ _label(sub) }}</a>
+      {%- endfor %}
+    {%- else %}
+  <a href="{{ url_for(item.ep) }}" class="vs-side-sublink{% if _is_current(item) %} is-active{% endif %}"
+     {% if _is_current(item) %}aria-current="page"{% endif %}>{{ _label(item) }}</a>
+    {%- endif %}
+  {%- endfor %}
+</div>
+{% endif %}
+{% endmacro %}

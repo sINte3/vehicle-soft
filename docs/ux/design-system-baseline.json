@@ -74,8 +74,6 @@
    "templates/workload.html": 5
   },
   "inline-style": {
-   "templates/_spare_nav.html": 20,
-   "templates/fuel/_fuel_nav.html": 23,
    "templates/fuel/balance_report.html": 30,
    "templates/fuel/cards.html": 17,
    "templates/fuel/dashboard.html": 97,

@@ -20,6 +20,7 @@ Run:
 """
 import datetime
 import io
+import re
 import unittest
 
 from tests.harness import app, reset_db, create_admin, login, CSRF
@@ -953,12 +954,21 @@ class DroneNavStripTests(unittest.TestCase):
         self.client = app.test_client()
         login(self.client, self.admin)
 
+    # [REASON]: ADAPT-1 свёл три реализации вторичной навигации в один
+    # компонент (templates/_module_nav.html). Изменился ТОЛЬКО контейнер:
+    # было <div class="vs-row vs-mb" style="..."> у дронов и два других вида
+    # у АЗС и запчастей — стало <nav class="vs-pills vs-modulenav">.
+    # Утверждения ниже не тронуты ни одним символом: те же семь вкладок, тот
+    # же порядок, тот же список ссылок. Правка локатора — не ослабление
+    # проверки; проверка, привязанная к атрибуту style, ловила вёрстку, а не
+    # состав навигации.
+    STRIP_OPEN = '<nav class="vs-pills vs-modulenav vs-mb"'
+
     def _strip(self, url='/drones/reports'):
         import re
         body = self.client.get(url).data.decode('utf-8')
-        strip = body.split(
-            '<div class="vs-row vs-mb" style="gap:8px; flex-wrap:wrap;">')[1]
-        strip = strip[:strip.find('</div>')]
+        strip = body.split(self.STRIP_OPEN)[1]
+        strip = strip[:strip.find('</nav>')]
         return re.findall(r'<a href="([^"]+)"[^>]*>([^<]+)</a>', strip)
 
     def test_the_strip_is_the_seven_tabs_in_order(self):
@@ -982,16 +992,23 @@ class DroneNavStripTests(unittest.TestCase):
                         first.find('/drones/works/reports'))
 
     def test_otchety_is_marked_active_on_the_pages_it_leads_to(self):
+        # Требование не изменилось: на всех ПЯТИ страницах, входом в которые
+        # служит лаунчер, полоса продолжает говорить «вы внутри отчётов».
+        # Изменился признак активности: компонент полосы стал общим для трёх
+        # модулей (ADAPT-1), и активное состояние в нём выражается
+        # `vs-pill is-active`, а не `vs-btn vs-btn-primary`. Заодно
+        # проверяется aria-current — то же самое, сказанное для скринридера;
+        # раньше он этого не сообщал вовсе.
         for url in ('/drones/reports', '/drones/sources',
                     '/drones/works/reports', '/drones/works/debts',
                     '/drones/works/assignment-hints'):
             body = self.client.get(url).data.decode('utf-8')
-            strip = body.split(
-                '<div class="vs-row vs-mb" style="gap:8px; flex-wrap:wrap;">')[1]
-            strip = strip[:strip.find('</div>')]
-            self.assertIn(
-                'href="/drones/reports" class="vs-btn vs-btn-primary"',
-                strip, url)
+            strip = body.split(self.STRIP_OPEN)[1]
+            strip = strip[:strip.find('</nav>')]
+            active = re.search(
+                r'<a href="/drones/reports"\s+class="vs-pill is-active"\s+'
+                r'aria-current="page"', strip)
+            self.assertIsNotNone(active, url)
 
 
 class DroneDebtsPageTests(unittest.TestCase):
@@ -1227,9 +1244,8 @@ class DroneReportsHubUzbekTests(unittest.TestCase):
     def test_the_uzbek_nav_strip_is_cyrillic(self):
         import re
         body = self.client.get('/drones/reports').data.decode('utf-8')
-        strip = body.split(
-            '<div class="vs-row vs-mb" style="gap:8px; flex-wrap:wrap;">')[1]
-        strip = strip[:strip.find('</div>')]
+        strip = body.split('<nav class="vs-pills vs-modulenav vs-mb"')[1]
+        strip = strip[:strip.find('</nav>')]
         labels = [label.strip() for _h, label
                   in re.findall(r'<a href="([^"]+)"[^>]*>([^<]+)</a>', strip)]
         self.assertEqual(labels[-1], 'Ҳисоботлар')
