@@ -103,9 +103,18 @@
 </div>
 
 {# ── Файлы ──────────────────────────────────────────────────────────────── #}
+{# Разбор идёт синхронно внутри запроса, поэтому время его — это ровно то,
+   сколько браузер стоял. Без фильтра разрядов: это длительность, а не деньги
+   и не число работ. Партии, загруженные до DRONE-WORKS-UPLOAD-002, ключа в
+   preview.json не имеют — тогда строка просто не выводится. #}
+{% set parse_seconds = snapshot.get('parse_seconds') %}
 <div class="vs-card vs-mb">
   <div class="vs-card-header">
     <div class="vs-card-title">{{ 'Файлы партии' if is_ru else 'Партия файллари' }}</div>
+    {% if parse_seconds is not none %}
+    <div class="vs-muted">{{ 'Разбор занял' if is_ru else 'Ўқиш давом этди' }}
+      {{ '%.1f'|format(parse_seconds) }} {{ 'с' if is_ru else 'сония' }}</div>
+    {% endif %}
   </div>
   <div class="vs-table-wrap">
     <div class="vs-table-scroll">

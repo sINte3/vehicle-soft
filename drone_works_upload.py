@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 if REPO_ROOT not in sys.path:
@@ -382,6 +383,56 @@ class _ReportArgs(object):
         self.db = db
 
 
+# The header line write_report() ends its own block on. The parse time is
+# inserted directly after it.
+_REPORT_HEADER_ANCHOR = 'Партия импорта: '
+PARSE_SECONDS_LABEL = 'Разбор: '
+
+
+def format_parse_seconds(seconds):
+    """The one rendering of a parse duration, used by the report and the JSON.
+
+    One decimal, and one place that decides that. A duration printed to six
+    digits invites the reader to compare two runs that differ by jitter.
+    """
+    return round(float(seconds), 1)
+
+
+def add_parse_seconds_to_report(report_path, seconds):
+    """Insert «Разбор: N.N с» into the header of a report already written.
+
+    [REASON]: the header is composed by write_report() in
+    tools/import_drone_works.py, which the CLI shares. Adding the line there
+    would change the output of every hand run from a PowerShell prompt, and
+    that output is the artifact the owner compares between corpus runs. So
+    the web path adds its own line to its own copy afterwards, and the
+    importer stays byte-identical -- and out of this diff.
+
+    Never raises. By the time this runs the parse is finished and, on the
+    apply path, the rows are already committed; failing here would mark a
+    batch broken over a diagnostic file. A report whose anchor moved gets the
+    line under the title instead, which is still the header.
+    """
+    try:
+        with open(report_path, encoding='utf-8') as fh:
+            lines = fh.read().split('\n')
+    except (IOError, OSError):
+        return False
+    position = 1
+    for index, line in enumerate(lines):
+        if line.startswith(_REPORT_HEADER_ANCHOR):
+            position = index + 1
+            break
+    lines.insert(position, '%s%.1f с' % (PARSE_SECONDS_LABEL,
+                                         format_parse_seconds(seconds)))
+    try:
+        with open(report_path, 'w', encoding='utf-8') as fh:
+            fh.write('\n'.join(lines))
+    except (IOError, OSError):
+        return False
+    return True
+
+
 def run_import(db_path, batch_path, files_meta, period_month, apply, batch,
                report_path):
     """Parse (and optionally write) one stored batch. (result, stats, counts).
@@ -416,9 +467,19 @@ def run_import(db_path, batch_path, files_meta, period_month, apply, batch,
         _require_tables(con, REQUIRED_TABLES)
         _require_received_kind(con)
         dir_obj = Directory(con)
+        # [REASON]: time.monotonic, never time.time. The wall clock on this
+        # server is corrected by the domain and steps both ways; a parse that
+        # straddled a correction would report a negative duration or a
+        # minute-long one, and the operator would believe it. The span covers
+        # exactly the parse -- openpyxl reading the books, plus the resolve
+        # and the summary that walk what it produced. apply_rows() is outside
+        # it on purpose: this number answers «how long will the browser sit
+        # there before the preview appears», which is the dry pass.
+        parse_started = time.monotonic()
         result = collect(batch_path, manifest, files, dir_obj, None)
         resolve(result, dir_obj)
         stats = summarize(result)
+        parse_seconds = time.monotonic() - parse_started
         if apply:
             created, inserted, skipped = apply_rows(con, result, batch)
         else:
@@ -442,6 +503,7 @@ def run_import(db_path, batch_path, files_meta, period_month, apply, batch,
     # to do with what was uploaded.
     write_report(report_path, result, stats, args, batch,
                  include_prediction=False)
+    add_parse_seconds_to_report(report_path, parse_seconds)
 
     counts = {
         'customers_created': created,
@@ -449,6 +511,7 @@ def run_import(db_path, batch_path, files_meta, period_month, apply, batch,
         'works_skipped_existing': skipped,
         'rows_rejected': len(result.rejections),
         'rows_duplicate': len(result.duplicates),
+        'parse_seconds': parse_seconds,
     }
     return result, stats, counts
 
@@ -463,8 +526,13 @@ def _round(value, places=2):
     return None if value is None else round(float(value), places)
 
 
-def preview_snapshot(result, stats):
+def preview_snapshot(result, stats, parse_seconds):
     """Everything the preview screen renders, as plain JSON-able data.
+
+    parse_seconds is DERIVED and belongs here rather than in a column of
+    drone_work_imports: it is measured once, never queried, never aggregated,
+    and adding a column for it would cost a migration to store a number no
+    report will ever group by. preview.json already exists per batch.
 
     [REASON]: the snapshot is written once at upload time and the GET reads
     it back. A preview that re-parsed on every GET would make a refresh cost
@@ -505,6 +573,7 @@ def preview_snapshot(result, stats):
     return {
         'declared_months': declared,
         'files': [per_file[name] for name in sorted(per_file)],
+        'parse_seconds': format_parse_seconds(parse_seconds),
         'totals': {
             'files': stats['files'],
             'sheets': stats['sheets'],
@@ -592,10 +661,12 @@ def read_preview(batch_path):
 
 __all__ = [
     'BOOKS_DIR_NAME', 'MAX_FILES_PER_BATCH', 'MAX_FILE_BYTES',
-    'MAX_UPLOAD_BYTES', 'MAX_NAME_LENGTH', 'PREVIEW_FILE', 'REPORT_FILE',
+    'MAX_UPLOAD_BYTES', 'MAX_NAME_LENGTH', 'PARSE_SECONDS_LABEL',
+    'PREVIEW_FILE', 'REPORT_FILE',
     'ImportPreconditionError', 'UploadRejected',
-    'batch_path_for', 'books_root_for_db', 'db_path_from_uri',
-    'ensure_books_root', 'preview_snapshot', 'read_preview', 'run_import',
+    'add_parse_seconds_to_report', 'batch_path_for', 'books_root_for_db',
+    'db_path_from_uri', 'ensure_books_root', 'format_parse_seconds',
+    'preview_snapshot', 'read_preview', 'run_import',
     'sha256_of', 'store_batch', 'stream_size', 'validate_batch',
     'validate_upload_name', 'verify_unchanged', 'write_preview',
 ]

@@ -3378,12 +3378,13 @@ def works_import_upload():
     try:
         files_meta = works_upload.store_batch(books_root, row.storage_dir,
                                               files)
-        result, stats, _counts = works_upload.run_import(
+        result, stats, counts = works_upload.run_import(
             db_path, batch_path, files_meta, period_month, apply=False,
             batch=_drone_import_batch_value(row.id), report_path=report_path)
-        works_upload.write_preview(batch_path,
-                                   works_upload.preview_snapshot(result,
-                                                                 stats))
+        works_upload.write_preview(
+            batch_path,
+            works_upload.preview_snapshot(result, stats,
+                                          counts['parse_seconds']))
     except Exception as exc:  # noqa: BLE001 - recorded, not swallowed
         # [REASON]: the files and the directory are KEPT. A book that broke
         # the parser is the one book worth still having, and the twenty-fifth

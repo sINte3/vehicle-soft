@@ -19,17 +19,25 @@ Run:
   python -m unittest tests.test_drone_works_upload_002 -v
 """
 import datetime
+import io
+import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import unittest
+from html.parser import HTMLParser
 
 from tests.harness import app, reset_db, create_admin, login, CSRF
-from models import db, User
+from models import db, DroneOperator, DroneWorkImport, User
 
 import drone_works_upload as works_upload
 import drones
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 
 MIB = 1024 * 1024
@@ -441,6 +449,508 @@ class PreviousMonthOnTheFormTests(unittest.TestCase):
             follow_redirects=True)
         self.assertIn('Период должен быть в виде',
                       response.data.decode('utf-8'))
+
+
+# ─── 3. How long the parse took ──────────────────────────────────────────────
+
+class ParseSecondsUnitTests(unittest.TestCase):
+    """The rendering and the report line, without a database in the way."""
+
+    def test_the_duration_is_carried_at_one_decimal(self):
+        self.assertEqual(works_upload.format_parse_seconds(1.23456), 1.2)
+        self.assertEqual(works_upload.format_parse_seconds(61.57), 61.6)
+        self.assertEqual(works_upload.format_parse_seconds(0), 0.0)
+
+    def test_a_parse_faster_than_fifty_milliseconds_reads_as_zero(self):
+        """Stated rather than hidden: one decimal cannot say «0.02 s».
+
+        [REASON]: the task asks for one decimal AND for a number greater than
+        zero. Both hold on the books this screen exists for -- a 75 MiB book
+        takes far longer than 50 ms -- but on a two-row synthetic book the
+        honest answer at one decimal IS 0.0, and that is «instant», not a
+        missing measurement. The end-to-end evidence for «greater than zero»
+        is therefore taken on a book big enough to be worth timing; see
+        ParseSecondsBigBookTests.
+        """
+        self.assertEqual(works_upload.format_parse_seconds(0.049), 0.0)
+        self.assertEqual(works_upload.format_parse_seconds(0.06), 0.1)
+
+    def test_the_report_line_lands_in_the_header(self):
+        path = os.path.join(tempfile.mkdtemp(prefix='drone_report_002_'),
+                            'report.txt')
+        with open(path, 'w', encoding='utf-8') as handle:
+            handle.write('DRONE-WORKS-001 — отчёт импорта\n'
+                         'Режим: СУХОЙ ПРОГОН (ничего не записано)\n'
+                         'Каталог: /books/7\n'
+                         'Манифест: (не используется)\n'
+                         'База: /db/transport.db\n'
+                         'Партия импорта: upload-7\n'
+                         '\n'
+                         'ИТОГИ\n'
+                         '  файлов разобрано: 2\n')
+        self.assertTrue(works_upload.add_parse_seconds_to_report(path, 3.14))
+        with open(path, encoding='utf-8') as handle:
+            lines = handle.read().split('\n')
+        self.assertEqual(lines[6], 'Разбор: 3.1 с')
+        # Still in the header: before the blank line that opens ИТОГИ.
+        self.assertEqual(lines[7], '')
+        self.assertEqual(lines[8], 'ИТОГИ')
+        # And nothing else moved.
+        self.assertEqual(lines[0], 'DRONE-WORKS-001 — отчёт импорта')
+        self.assertEqual(lines[5], 'Партия импорта: upload-7')
+
+    def test_a_report_without_the_anchor_still_gets_the_line(self):
+        """A moved anchor may not cost a batch its report."""
+        path = os.path.join(tempfile.mkdtemp(prefix='drone_report_002_'),
+                            'report.txt')
+        with open(path, 'w', encoding='utf-8') as handle:
+            handle.write('DRONE-WORKS-001 — отчёт импорта\nИТОГИ\n')
+        self.assertTrue(works_upload.add_parse_seconds_to_report(path, 0.5))
+        with open(path, encoding='utf-8') as handle:
+            self.assertEqual(handle.read().split('\n')[1], 'Разбор: 0.5 с')
+
+    def test_a_missing_report_is_not_an_exception(self):
+        """By the time this runs the rows may be committed."""
+        self.assertFalse(works_upload.add_parse_seconds_to_report(
+            os.path.join(tempfile.mkdtemp(), 'nope.txt'), 1.0))
+
+
+class ParseSecondsEndToEndTests(unittest.TestCase):
+    """A real upload through the real route, and what it leaves behind.
+
+    The books are the synthetic corpus of tools/drone_works_fixtures.py --
+    the dispatchers' real files are not in the repository and will not be.
+    Two of them are posted as a multipart form to the real endpoint, so the
+    number under test travels the whole way: run_import -> counts ->
+    preview_snapshot -> preview.json -> the screen, and run_import -> the
+    report file.
+    """
+
+    BOOKS = ('Гарден Дрон маълумот Апрель.xlsx',
+             'Когон ПТЗ Шохрух Хамроев МАРТ.xlsx')
+
+    @classmethod
+    def setUpClass(cls):
+        from tools import drone_works_fixtures as fixtures
+        reset_db()
+        cls.admin = create_admin('upload002_parse_admin')
+        set_language(cls.admin, 'ru')
+        cls.tmp = tempfile.mkdtemp(prefix='drone_upload_002_books_')
+        cls.books, _manifest = fixtures.build(os.path.join(cls.tmp, 'books'))
+        with app.app_context():
+            for full_name, subdivision in fixtures.OPERATORS:
+                db.session.add(DroneOperator(full_name=full_name,
+                                             subdivision_name=subdivision))
+            db.session.commit()
+        cls.books_root = works_upload.books_root_for_db(
+            works_upload.db_path_from_uri(
+                app.config['SQLALCHEMY_DATABASE_URI']))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+        shutil.rmtree(cls.books_root, ignore_errors=True)
+
+    def setUp(self):
+        self.client = app.test_client()
+        login(self.client, self.admin)
+
+    def upload(self, period='2026-04', books=None):
+        """POST the books to the real endpoint. Returns (id, storage_dir)."""
+        payload = []
+        for name in (books or self.BOOKS):
+            with open(os.path.join(self.books, name), 'rb') as handle:
+                payload.append((io.BytesIO(handle.read()), name))
+        response = self.client.post(
+            '/drones/works/import/upload',
+            data={'csrf_token': CSRF, 'period_month': period,
+                  'books': payload},
+            content_type='multipart/form-data')
+        self.assertEqual(response.status_code, 302, response.data[:400])
+        with app.app_context():
+            row = (DroneWorkImport.query
+                   .order_by(DroneWorkImport.id.desc()).first())
+            self.assertIsNotNone(row)
+            self.assertNotEqual(row.status, 'failed', row.error_text)
+            return row.id, row.storage_dir
+
+    def batch_path(self, storage_dir):
+        return works_upload.batch_path_for(self.books_root, storage_dir)
+
+    def test_the_preview_file_carries_the_key(self):
+        _batch_id, storage_dir = self.upload()
+        snapshot = works_upload.read_preview(self.batch_path(storage_dir))
+        self.assertIn('parse_seconds', snapshot)
+        self.assertIsInstance(snapshot['parse_seconds'], float)
+        self.assertGreaterEqual(snapshot['parse_seconds'], 0.0)
+        self.assertEqual(snapshot['parse_seconds'],
+                         round(snapshot['parse_seconds'], 1))
+
+    def test_the_report_header_carries_the_same_number(self):
+        _batch_id, storage_dir = self.upload()
+        path = self.batch_path(storage_dir)
+        snapshot = works_upload.read_preview(path)
+        with open(os.path.join(path, works_upload.REPORT_FILE),
+                  encoding='utf-8') as handle:
+            lines = handle.read().split('\n')
+        self.assertEqual(lines[6],
+                         'Разбор: %.1f с' % snapshot['parse_seconds'])
+        self.assertEqual(lines[5][:16], 'Партия импорта: ')
+        self.assertEqual(lines[8], 'ИТОГИ')
+
+    def test_the_russian_preview_screen_shows_it(self):
+        batch_id, storage_dir = self.upload()
+        seconds = works_upload.read_preview(
+            self.batch_path(storage_dir))['parse_seconds']
+        set_language(self.admin, 'ru')
+        body = self.client.get(
+            '/drones/works/import/%d' % batch_id).data.decode('utf-8')
+        self.assertIn('Разбор занял', body)
+        self.assertIn('%.1f' % seconds, body)
+        self.assertIn('Разбор занял\n      %.1f с' % seconds, body)
+
+    def test_the_uzbek_preview_screen_shows_it(self):
+        batch_id, storage_dir = self.upload()
+        seconds = works_upload.read_preview(
+            self.batch_path(storage_dir))['parse_seconds']
+        set_language(self.admin, 'uz')
+        try:
+            body = self.client.get(
+                '/drones/works/import/%d' % batch_id).data.decode('utf-8')
+        finally:
+            set_language(self.admin, 'ru')
+        self.assertIn('Ўқиш давом этди', body)
+        self.assertIn('Ўқиш давом этди\n      %.1f сония' % seconds, body)
+        self.assertNotIn('Разбор занял', body)
+
+    def test_the_number_on_the_screen_comes_from_the_clock(self):
+        """The control. A hardcoded 0.1 would satisfy every test above.
+
+        [REASON]: monotonic() is patched to a counter that advances by a known
+        amount across the parse, so the number that reaches preview.json, the
+        report and the page can only be the difference the clock reported. If
+        the code measured the wrong span -- or nothing at all -- 7.3 does not
+        appear anywhere.
+        """
+        ticks = iter([1000.0, 1007.28])
+        real_monotonic = works_upload.time.monotonic
+        works_upload.time.monotonic = lambda: next(ticks, 1007.28)
+        try:
+            batch_id, storage_dir = self.upload()
+        finally:
+            works_upload.time.monotonic = real_monotonic
+        path = self.batch_path(storage_dir)
+        self.assertEqual(works_upload.read_preview(path)['parse_seconds'], 7.3)
+        with open(os.path.join(path, works_upload.REPORT_FILE),
+                  encoding='utf-8') as handle:
+            self.assertIn('Разбор: 7.3 с', handle.read())
+        body = self.client.get(
+            '/drones/works/import/%d' % batch_id).data.decode('utf-8')
+        self.assertIn('7.3 с', body)
+
+    def test_a_preview_written_before_this_increment_still_renders(self):
+        """Batches #1..#5 on staging have no parse_seconds in preview.json."""
+        batch_id, storage_dir = self.upload()
+        path = os.path.join(self.batch_path(storage_dir),
+                            works_upload.PREVIEW_FILE)
+        with open(path, encoding='utf-8') as handle:
+            snapshot = json.load(handle)
+        del snapshot['parse_seconds']
+        with open(path, 'w', encoding='utf-8') as handle:
+            json.dump(snapshot, handle, ensure_ascii=False)
+        response = self.client.get('/drones/works/import/%d' % batch_id)
+        self.assertEqual(response.status_code, 200)
+        body = response.data.decode('utf-8')
+        self.assertNotIn('Разбор занял', body)
+        self.assertIn('Файлы партии', body)
+
+    def test_no_column_was_added_to_carry_it(self):
+        """No migration: the number lives in preview.json and nowhere else."""
+        with app.app_context():
+            columns = {c.name for c in DroneWorkImport.__table__.columns}
+        self.assertNotIn('parse_seconds', columns)
+        # And it really is in the file -- «not in the table» alone would pass
+        # if the number had been dropped altogether.
+        _batch_id, storage_dir = self.upload()
+        self.assertIn('parse_seconds',
+                      works_upload.read_preview(self.batch_path(storage_dir)))
+
+    def test_the_numbers_this_increment_must_not_move(self):
+        """Criterion 9: the same books, the same rows and the same hectares.
+
+        The figures belong to the synthetic corpus and are asserted against a
+        hand-computed prediction by tools/test_import_drone_works.py. Here
+        they are read back off the screen's own snapshot, so a timing change
+        that disturbed the parse would show up as a number, not as a duration.
+        """
+        _batch_id, storage_dir = self.upload()
+        snapshot = works_upload.read_preview(self.batch_path(storage_dir))
+        self.assertEqual(snapshot['rows'], 11)
+        self.assertAlmostEqual(snapshot['area'], 142.50, places=2)
+        self.assertEqual(snapshot['totals']['files'], 2)
+        self.assertEqual(snapshot['totals']['rows'], 11)
+
+
+class ParseSecondsBigBookTests(unittest.TestCase):
+    """«Greater than zero» on a book big enough to be worth timing.
+
+    [REASON]: a two-row synthetic book parses in about twenty milliseconds and
+    one decimal reports that as 0.0, correctly. The screen exists for books
+    that take long enough for an operator to wonder whether the browser has
+    hung, so the assertion that the number is above zero is taken on a book
+    of that shape: 2 000 rows, ~0.3 s on this runner, ten times the rounding
+    step. The real corpus is heavier still -- 78 958 503 bytes for three rows.
+    """
+
+    ROWS = 2000
+    BOOK = 'Большая книга Апрель.xlsx'
+
+    @classmethod
+    def setUpClass(cls):
+        from tools import drone_works_fixtures as fixtures
+        reset_db()
+        cls.admin = create_admin('upload002_bigbook_admin')
+        set_language(cls.admin, 'ru')
+        cls.tmp = tempfile.mkdtemp(prefix='drone_upload_002_big_')
+        rows = [['Тест Дрон маълумот'], ['Справка (апрель ойи)'],
+                fixtures.HEADER]
+        for index in range(cls.ROWS):
+            rows.append([index + 1,
+                         datetime.datetime(2026, 4, (index % 28) + 1),
+                         'Фермер %d' % index, 1.0, 100000, 100000, None,
+                         100000, None])
+        cls.books, _manifest = fixtures.build(
+            os.path.join(cls.tmp, 'books'),
+            books=((cls.BOOK, '2026-04', [('свод ичи (Тест)', rows)]),))
+        cls.books_root = works_upload.books_root_for_db(
+            works_upload.db_path_from_uri(
+                app.config['SQLALCHEMY_DATABASE_URI']))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+        shutil.rmtree(cls.books_root, ignore_errors=True)
+
+    def setUp(self):
+        self.client = app.test_client()
+        login(self.client, self.admin)
+
+    def test_a_book_worth_timing_reports_a_time_above_zero(self):
+        with open(os.path.join(self.books, self.BOOK), 'rb') as handle:
+            payload = io.BytesIO(handle.read())
+        response = self.client.post(
+            '/drones/works/import/upload',
+            data={'csrf_token': CSRF, 'period_month': '2026-04',
+                  'books': [(payload, self.BOOK)]},
+            content_type='multipart/form-data')
+        self.assertEqual(response.status_code, 302, response.data[:400])
+        with app.app_context():
+            row = (DroneWorkImport.query
+                   .order_by(DroneWorkImport.id.desc()).first())
+            self.assertNotEqual(row.status, 'failed', row.error_text)
+            batch_id, storage_dir = row.id, row.storage_dir
+        path = works_upload.batch_path_for(self.books_root, storage_dir)
+
+        snapshot = works_upload.read_preview(path)
+        self.assertGreater(snapshot['parse_seconds'], 0.0)
+        self.assertEqual(snapshot['rows'], self.ROWS)
+
+        with open(os.path.join(path, works_upload.REPORT_FILE),
+                  encoding='utf-8') as handle:
+            report = handle.read()
+        self.assertIn('Разбор: %.1f с' % snapshot['parse_seconds'], report)
+        self.assertNotIn('Разбор: 0.0 с', report)
+
+        body = self.client.get(
+            '/drones/works/import/%d' % batch_id).data.decode('utf-8')
+        self.assertIn('Разбор занял\n      %.1f с' % snapshot['parse_seconds'],
+                      body)
+
+
+# ─── The two screens, as HTML and as source ──────────────────────────────────
+
+VOID_TAGS = frozenset(('area', 'base', 'br', 'col', 'embed', 'hr', 'img',
+                       'input', 'link', 'meta', 'param', 'source', 'track',
+                       'wbr'))
+
+
+class TagReader(HTMLParser):
+    """A real HTML parse of a rendered page.
+
+    [REASON]: the defect class this project was bitten by is invisible to a
+    Jinja parse, to a «<div» count and to py_compile alike -- a value carrying
+    an unescaped double quote terminates its attribute early, and everything
+    after it becomes garbage ATTRIBUTE NAMES on the same tag. So the check is
+    not «does it parse» -- html.parser never refuses anything -- but «are the
+    attribute names still names, and does every div close».
+    """
+
+    def __init__(self):
+        HTMLParser.__init__(self, convert_charrefs=True)
+        self.stack = []
+        self.divs_opened = 0
+        self.divs_closed = 0
+        self.attribute_names = set()
+        self.mismatches = []
+
+    def handle_starttag(self, tag, attrs):
+        for name, _value in attrs:
+            self.attribute_names.add(name)
+        if tag in VOID_TAGS:
+            return
+        if tag == 'div':
+            self.divs_opened += 1
+        self.stack.append(tag)
+
+    def handle_endtag(self, tag):
+        if tag in VOID_TAGS:
+            return
+        if tag == 'div':
+            self.divs_closed += 1
+        if tag in self.stack:
+            while self.stack and self.stack.pop() != tag:
+                pass
+        else:
+            self.mismatches.append(tag)
+
+
+class UploadScreensHtmlTests(unittest.TestCase):
+    """Criterion 7, on the rendered page and on the template source."""
+
+    TEMPLATES = ('works_import.html', 'works_import_preview.html')
+    # CLAUDE.md allows Latin only in product and brand names.
+    ALLOWED_LATIN = ('Excel', 'DJI', 'RFID', '.xlsx')
+
+    @classmethod
+    def setUpClass(cls):
+        from tools import drone_works_fixtures as fixtures
+        reset_db()
+        cls.admin = create_admin('upload002_html_admin')
+        cls.tmp = tempfile.mkdtemp(prefix='drone_upload_002_html_')
+        cls.books, _manifest = fixtures.build(os.path.join(cls.tmp, 'books'))
+        with app.app_context():
+            for full_name, subdivision in fixtures.OPERATORS:
+                db.session.add(DroneOperator(full_name=full_name,
+                                             subdivision_name=subdivision))
+            db.session.commit()
+        cls.books_root = works_upload.books_root_for_db(
+            works_upload.db_path_from_uri(
+                app.config['SQLALCHEMY_DATABASE_URI']))
+        client = app.test_client()
+        login(client, cls.admin)
+        payload = []
+        for name in ('Гарден Дрон маълумот Апрель.xlsx',
+                     'Когон ПТЗ Шохрух Хамроев МАРТ.xlsx'):
+            with open(os.path.join(cls.books, name), 'rb') as handle:
+                payload.append((io.BytesIO(handle.read()), name))
+        client.post('/drones/works/import/upload',
+                    data={'csrf_token': CSRF, 'period_month': '2026-04',
+                          'books': payload},
+                    content_type='multipart/form-data')
+        with app.app_context():
+            cls.batch_id = (DroneWorkImport.query
+                            .order_by(DroneWorkImport.id.desc())
+                            .first().id)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+        shutil.rmtree(cls.books_root, ignore_errors=True)
+
+    def setUp(self):
+        self.client = app.test_client()
+        login(self.client, self.admin)
+
+    def pages(self):
+        for lang in ('ru', 'uz'):
+            set_language(self.admin, lang)
+            for url in ('/drones/works/import',
+                        '/drones/works/import/%d' % self.batch_id):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 200,
+                                 '%s %s' % (lang, url))
+                yield lang, url, response.data.decode('utf-8')
+
+    def source(self, name):
+        with open(os.path.join(REPO_ROOT, 'templates', 'drones', name),
+                  encoding='utf-8') as handle:
+            return handle.read()
+
+    def test_every_rendered_page_parses_and_closes_its_divs(self):
+        seen = 0
+        for lang, url, body in self.pages():
+            reader = TagReader()
+            reader.feed(body)
+            where = '%s %s' % (lang, url)
+            self.assertEqual(reader.mismatches, [], where)
+            self.assertEqual(reader.divs_opened, reader.divs_closed, where)
+            self.assertGreater(reader.divs_opened, 20, where)
+            seen += 1
+        self.assertEqual(seen, 4, 'the scan rendered %d pages' % seen)
+
+    def test_no_attribute_name_on_any_page_is_broken_json(self):
+        """The signature of a value that terminated its attribute early."""
+        pattern = re.compile(r'^[A-Za-z_:@\-][-A-Za-z0-9_:.]*$')
+        for lang, url, body in self.pages():
+            reader = TagReader()
+            reader.feed(body)
+            self.assertGreater(len(reader.attribute_names), 10)
+            for name in sorted(reader.attribute_names):
+                self.assertRegex(name, pattern, '%s %s: %r'
+                                 % (lang, url, name))
+
+    def test_the_reader_would_notice_a_broken_attribute(self):
+        """The control: an attribute cut short by a quote from tojson."""
+        reader = TagReader()
+        reader.feed('<div data-rows="{"a": 1}"><span>x</span></div>')
+        pattern = re.compile(r'^[A-Za-z_:@\-][-A-Za-z0-9_:.]*$')
+        broken = [n for n in reader.attribute_names
+                  if not pattern.match(n)]
+        self.assertNotEqual(broken, [], reader.attribute_names)
+
+    def test_the_reader_would_notice_an_unclosed_div(self):
+        reader = TagReader()
+        reader.feed('<div><div></div>')
+        self.assertNotEqual(reader.divs_opened, reader.divs_closed)
+
+    def test_no_tojson_sits_in_a_double_quoted_attribute(self):
+        for name in self.TEMPLATES:
+            for match in re.finditer(r'="[^"]*\|\s*tojson', self.source(name)):
+                self.fail('%s: %s' % (name, match.group(0)))
+
+    def test_every_uzbek_branch_of_both_templates_is_cyrillic(self):
+        """The UZ half of every «'RU' if is_ru else 'UZ'» pair."""
+        offenders = []
+        halves = 0
+        for name in self.TEMPLATES:
+            for text in re.findall(r"if is_ru else '((?:[^'\\]|\\.)*)'",
+                                   self.source(name)):
+                halves += 1
+                stripped = text
+                for word in self.ALLOWED_LATIN:
+                    stripped = stripped.replace(word, ' ')
+                runs = re.findall(r'[A-Za-z]+', stripped)
+                if runs:
+                    offenders.append((name, text, runs))
+        self.assertEqual(offenders, [])
+        # A scan over an empty list proves nothing.
+        self.assertGreater(halves, 40, 'only %d uzbek halves found' % halves)
+
+    def test_the_uzbek_scan_fires_on_a_planted_latin_string(self):
+        stripped = 'Ўқиш davom etdi'
+        for word in self.ALLOWED_LATIN:
+            stripped = stripped.replace(word, ' ')
+        self.assertEqual(re.findall(r'[A-Za-z]+', stripped),
+                         ['davom', 'etdi'])
+
+    def test_the_new_uzbek_string_is_made_of_cyrillic_code_points(self):
+        """«Ўқиш» is U+040E U+049B U+0438 U+0448, not a Latin lookalike."""
+        halves = re.findall(r"if is_ru else '((?:[^'\\]|\\.)*)'",
+                            self.source('works_import_preview.html'))
+        self.assertIn('Ўқиш давом этди', halves)
+        self.assertIn('сония', halves)
+        self.assertEqual([ord(c) for c in 'Ўқиш'],
+                         [0x040E, 0x049B, 0x0438, 0x0448])
 
 
 if __name__ == '__main__':
