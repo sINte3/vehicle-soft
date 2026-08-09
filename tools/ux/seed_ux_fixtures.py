@@ -28,6 +28,7 @@ import json
 import os
 import random
 import sys
+import zlib
 import tempfile
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -331,7 +332,6 @@ def seed(app, db, rows_per_table=14, verbose=True):
     import sqlalchemy as sa
     from models import User, ROLE_ADMIN, ROLE_OPERATOR, ROLE_VIEWER, ROLE_MECHANIC
 
-    rng = random.Random(SEED)
     created = {}
 
     with app.app_context():
@@ -345,6 +345,19 @@ def seed(app, db, rows_per_table=14, verbose=True):
             model = mapper.class_
             if table is None or table.name == 'users':
                 continue
+
+            # [REASON]: zerno beretsya OT IMENI TABLICY, a ne odno na ves
+            # progon. Obshchiy rng, protyanutyy cherez vse tablicy, delaet
+            # znacheniya kazhdoy tablicy zavisimymi ot TOGO, SKOLKO tablic
+            # bylo do nee: derevo bez odnoy modeli (naprimer bez
+            # daily_record_units, kotoroy do DAILY_UNITS_001 ne
+            # sushchestvovalo) sdvigaet vse posleduyushchie vyborki, i dva
+            # ekzemplyara napolnyayutsya RAZNYMI dannymi pri odinakovom SEED.
+            # Na sravnenii "bylo / stalo" eto chitaetsya kak izmenenie
+            # interfeysa: imenno tak i vyshlo v pervom progone P4.
+            # crc32, a ne vstroennyy hash(): hash strok randomiziruetsya
+            # mezhdu zapuskami Python, i determinizm byl by mnimym.
+            rng = random.Random(SEED ^ zlib.crc32(table.name.encode('utf-8')))
 
             made = 0
             for i in range(rows_per_table):

@@ -279,12 +279,12 @@
   "status": 200,
   "inlineStyleBlocks": 2,
   "inlineStyleAttrs": 310,
-  "glyphs": 3,
+  "glyphs": 4,
   "tableClasses": [],
   "horizontalOverflow": false,
   "scrollWidth": 1920,
   "clientWidth": 1920,
-  "controlsWithoutName": 58,
+  "controlsWithoutName": 55,
   "file": "before/daily-entry-desktop.png"
  },
  {
@@ -299,12 +299,12 @@
   "status": 200,
   "inlineStyleBlocks": 2,
   "inlineStyleAttrs": 310,
-  "glyphs": 3,
+  "glyphs": 4,
   "tableClasses": [],
   "horizontalOverflow": false,
   "scrollWidth": 1440,
   "clientWidth": 1440,
-  "controlsWithoutName": 58,
+  "controlsWithoutName": 55,
   "file": "before/daily-entry-laptop.png"
  },
  {
@@ -319,12 +319,12 @@
   "status": 200,
   "inlineStyleBlocks": 2,
   "inlineStyleAttrs": 310,
-  "glyphs": 3,
+  "glyphs": 4,
   "tableClasses": [],
   "horizontalOverflow": false,
   "scrollWidth": 1024,
   "clientWidth": 1024,
-  "controlsWithoutName": 58,
+  "controlsWithoutName": 55,
   "file": "before/daily-entry-tablet.png"
  },
  {
@@ -339,12 +339,12 @@
   "status": 200,
   "inlineStyleBlocks": 2,
   "inlineStyleAttrs": 310,
-  "glyphs": 3,
+  "glyphs": 4,
   "tableClasses": [],
   "horizontalOverflow": false,
   "scrollWidth": 390,
   "clientWidth": 390,
-  "controlsWithoutName": 58,
+  "controlsWithoutName": 55,
   "file": "before/daily-entry-mobile.png"
  },
  {
@@ -358,8 +358,8 @@
   "why": "карточка записи: таймлайн, степпер, 23 эмодзи — максимум по PR-013",
   "status": 200,
   "inlineStyleBlocks": 3,
-  "inlineStyleAttrs": 30,
-  "glyphs": 4,
+  "inlineStyleAttrs": 27,
+  "glyphs": 2,
   "tableClasses": [
    "vs-table"
   ],
@@ -380,8 +380,8 @@
   "why": "карточка записи: таймлайн, степпер, 23 эмодзи — максимум по PR-013",
   "status": 200,
   "inlineStyleBlocks": 3,
-  "inlineStyleAttrs": 30,
-  "glyphs": 4,
+  "inlineStyleAttrs": 27,
+  "glyphs": 2,
   "tableClasses": [
    "vs-table"
   ],
@@ -402,8 +402,8 @@
   "why": "карточка записи: таймлайн, степпер, 23 эмодзи — максимум по PR-013",
   "status": 200,
   "inlineStyleBlocks": 3,
-  "inlineStyleAttrs": 30,
-  "glyphs": 4,
+  "inlineStyleAttrs": 27,
+  "glyphs": 2,
   "tableClasses": [
    "vs-table"
   ],
@@ -424,8 +424,8 @@
   "why": "карточка записи: таймлайн, степпер, 23 эмодзи — максимум по PR-013",
   "status": 200,
   "inlineStyleBlocks": 3,
-  "inlineStyleAttrs": 30,
-  "glyphs": 4,
+  "inlineStyleAttrs": 27,
+  "glyphs": 2,
   "tableClasses": [
    "vs-table"
   ],
@@ -558,12 +558,12 @@
   "status": 200,
   "inlineStyleBlocks": 2,
   "inlineStyleAttrs": 310,
-  "glyphs": 3,
+  "glyphs": 4,
   "tableClasses": [],
   "horizontalOverflow": false,
   "scrollWidth": 1920,
   "clientWidth": 1920,
-  "controlsWithoutName": 58,
+  "controlsWithoutName": 55,
   "file": "before/daily-entry-uz-desktop.png"
  },
  {
@@ -578,12 +578,12 @@
   "status": 200,
   "inlineStyleBlocks": 2,
   "inlineStyleAttrs": 310,
-  "glyphs": 3,
+  "glyphs": 4,
   "tableClasses": [],
   "horizontalOverflow": false,
   "scrollWidth": 390,
   "clientWidth": 390,
-  "controlsWithoutName": 58,
+  "controlsWithoutName": 55,
   "file": "before/daily-entry-uz-mobile.png"
  },
  {

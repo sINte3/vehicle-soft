@@ -121,11 +121,59 @@ const PROBE = () => {
   };
 };
 
+// Otpechatok DANNYH: vidimyy tekst yacheek spravochnika tehniki.
+// [REASON]: sravnenie "bylo / stalo" imeet smysl TOLKO na odinakovyh
+// fiksturah. Pervyy progon P4 etogo ne proveryal, i dva ekzemplyara
+// napolnilis raznymi dannymi -- derevo "do" ne imelo fayla metrik, poetomu
+// seeder molcha ushel na pustye enum-y i ploskuyu dlinu 18. Na kartinkah eto
+// vyglyadelo kak izmenenie interfeysa, i vladelec sprosil, ne podmeneny li
+// cifry. Vopros pravilnyy, i otvechat na nego dolzhen skript, a ne chelovek.
+// /ref/equipment vybran namerenno: trek ego ne trogal, poetomu lyuboe
+// rashozhdenie zdes -- eto rashozhdenie DANNYH, a ne razmetki.
+async function fixtureFingerprint(page, base) {
+  await page.goto(base + '/ref/equipment', { waitUntil: 'networkidle' });
+  return page.evaluate(() =>
+    [...document.querySelectorAll('table td')]
+      .map((td) => td.textContent.trim())
+      .filter(Boolean)
+      .sort()
+      .join('|'));
+}
+
 const main = async () => {
   fs.mkdirSync(path.join(OUT, 'before'), { recursive: true });
   fs.mkdirSync(path.join(OUT, 'after'), { recursive: true });
 
   const browser = await chromium.launch({ executablePath: CHROME });
+
+  {
+    const ctx = await browser.newContext({ viewport: VIEWPORTS.desktop });
+    const page = await ctx.newPage();
+    await login(page, BEFORE, 'ux_admin');
+    const fpBefore = await fixtureFingerprint(page, BEFORE);
+    await ctx.close();
+
+    const ctx2 = await browser.newContext({ viewport: VIEWPORTS.desktop });
+    const page2 = await ctx2.newPage();
+    await login(page2, AFTER, 'ux_admin');
+    const fpAfter = await fixtureFingerprint(page2, AFTER);
+    await ctx2.close();
+
+    if (fpBefore !== fpAfter) {
+      const b = fpBefore.split('|'), a = fpAfter.split('|');
+      const diff = b.filter((x, i) => a[i] !== x).slice(0, 6);
+      await browser.close();
+      console.error('FIXTURE MISMATCH: the two instances hold different data.');
+      console.error(`  before: ${b.length} cells, after: ${a.length} cells`);
+      console.error(`  first differing values: ${JSON.stringify(diff)}`);
+      console.error('  Comparing screenshots now would attribute a data difference');
+      console.error('  to the interface. Sync tools/ux/ AND docs/ux/10-metrics/');
+      console.error('  into the "before" tree and restart both instances.');
+      process.exit(1);
+    }
+    console.log(`fixtures match: ${fpBefore.split('|').length} cells identical`);
+  }
+
   const results = [];
 
   for (const side of ['before', 'after']) {
