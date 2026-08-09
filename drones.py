@@ -5664,6 +5664,44 @@ def works_debts_aging_xlsx():
 
 # ─── DRONE-ANALYTICS-001/3: ledger against flights, by month ─────────────────
 
+# Coverage is ledger hectares as a percentage of flight hectares. The bands
+# were fixed by DRONE-ANALYTICS-001/3 on the reconcile screen; DRONE-CLOSE-001
+# reads the same data by subdivision and MUST colour it identically, so the
+# four numbers moved out of the function body and into these constants.
+#
+# [REASON]: one source of truth, not two. Two screens showing the same month
+# in different colours is the defect this extraction prevents -- and it is a
+# real risk here, because the second screen sums to the first by construction
+# (see _drone_closing_data) and a reader comparing them would have no way to
+# tell a threshold drift from a data error.
+DRONE_COVERAGE_DANGER_LOW = 50.0
+DRONE_COVERAGE_DANGER_HIGH = 200.0
+DRONE_COVERAGE_WARNING_LOW = 90.0
+DRONE_COVERAGE_WARNING_HIGH = 110.0
+
+
+def _drone_coverage_flag(coverage):
+    """Row/cell class for a coverage percentage. '' when inside the band.
+
+    Danger is tested FIRST: a coverage of 8 434 % is outside the band and also
+    far outside it, and «warning» would be the wrong word for a month whose
+    ledger claims eighty times what flew.
+
+    coverage is None where a percentage would be meaningless -- one of the two
+    sides is absent -- and an absence is never coloured, because a colour on
+    it would invent a discrepancy out of missing data.
+    """
+    if coverage is None:
+        return ''
+    if (coverage < DRONE_COVERAGE_DANGER_LOW
+            or coverage > DRONE_COVERAGE_DANGER_HIGH):
+        return 'is-danger-row'
+    if (coverage < DRONE_COVERAGE_WARNING_LOW
+            or coverage > DRONE_COVERAGE_WARNING_HIGH):
+        return 'is-warning-row'
+    return ''
+
+
 def _drone_works_flights_reconcile_data():
     """Ledger hectares beside flight hectares, one row per month.
 
@@ -5744,13 +5782,10 @@ def _drone_works_flights_reconcile_data():
         if ledger_area > 0.005 and flight_area > 0.005:
             row['percent'] = (ledger_area - flight_area) * 100.0 / flight_area
             row['coverage'] = ledger_area * 100.0 / flight_area
-            # Danger is tested FIRST: a coverage of 8 434 % is outside the
-            # band and also far outside it, and «warning» would be the wrong
-            # word for a month whose ledger claims eighty times what flew.
-            if row['coverage'] < 50.0 or row['coverage'] > 200.0:
-                row['flag'] = 'is-danger-row'
-            elif row['coverage'] < 90.0 or row['coverage'] > 110.0:
-                row['flag'] = 'is-warning-row'
+            # DRONE-CLOSE-001: the thresholds and the order they are tested in
+            # moved into _drone_coverage_flag() unchanged, so the closing
+            # screen colours the same month the same way.
+            row['flag'] = _drone_coverage_flag(row['coverage'])
         elif flight_area > 0.005:
             row['note'] = note_no_books
         else:
@@ -5788,6 +5823,317 @@ def works_flights_reconcile():
     """Dispatchers' hectares against DJI hectares, month by month."""
     return render_template('drones/works_flights_reconcile.html',
                            data=_drone_works_flights_reconcile_data())
+
+
+# ─── DRONE-CLOSE-001: who has not handed in their book ───────────────────────
+
+# The two buckets. Both are ROWS OF THE MATRIX, never a silent omission and
+# never spread across the real subdivisions.
+#
+# [REASON]: they sort last and are marked, because they are not people. A
+# subdivision row is somebody to call; these two are a data gap to fix, and a
+# reader who cannot tell them apart would either call nobody or call everybody.
+DRONE_CLOSING_SUBDIVISION_UNKNOWN = '\x00unknown'
+DRONE_CLOSING_NO_MACHINE = '\x00no-machine'
+
+DRONE_CLOSING_WINDOWS = (12, 24, 0)
+DRONE_CLOSING_DEFAULT_WINDOW = 12
+
+# Cell states. Three of them are the task's; `book_only` is the fourth the
+# data admits and is explained at the branch that produces it.
+DRONE_CLOSING_COVERED = 'covered'
+DRONE_CLOSING_NO_BOOK = 'no_book'
+DRONE_CLOSING_BOOK_ONLY = 'book_only'
+DRONE_CLOSING_IDLE = 'idle'
+
+
+def _drone_closing_window(value):
+    """Months to show. 0 means «all»; anything unknown means the default."""
+    try:
+        window = int(value)
+    except (TypeError, ValueError):
+        return DRONE_CLOSING_DEFAULT_WINDOW
+    return (window if window in DRONE_CLOSING_WINDOWS
+            else DRONE_CLOSING_DEFAULT_WINDOW)
+
+
+def _drone_closing_ledger_by_month_subdivision():
+    """{(month, subdivision key): (works, hectares)} for the whole ledger.
+
+    **THE SUBDIVISION IS NOT DERIVED FROM THE FILE NAME.**
+    Directory.subdivision_for_file() looks for a full fleet subdivision name
+    INSIDE the book's file name, and the fleet's names are «Бухоро
+    Агрокластер», «Когон ПТЗ» and five more; a book called «Гарден Дрон
+    маълумот Апрель.xlsx» contains none of them, so drone_works.
+    subdivision_name is NULL for it. Token matching would be worse, not
+    better: «Бухоро» occurs in three of the seven names.
+
+    So the work is resolved through its OPERATOR, who carries a
+    subdivision_name that the fleet seed filled in. drone_works.
+    subdivision_name is the fallback, and the unknown bucket is what answers
+    when neither does.
+
+    [REASON]: LEFT join, and it has to stay one. An inner join would drop
+    every work whose operator is unresolved -- 177 of them on production --
+    and the screen would still look plausible while disagreeing with the
+    reconcile report by exactly those rows. That disagreement is what
+    test_every_month_equals_the_reconcile_report exists to catch.
+    """
+    work_month = _drone_work_month_expr()
+    # COALESCE, not an if/else on the operator: it also answers the case of an
+    # operator who exists but carries no subdivision, which would otherwise
+    # discard a subdivision the work row itself knows.
+    subdivision = func.coalesce(DroneOperator.subdivision_name,
+                                DroneWork.subdivision_name)
+    rows = (db.session.query(work_month, subdivision,
+                             func.count(DroneWork.id),
+                             func.coalesce(func.sum(DroneWork.area_ha), 0.0))
+            .outerjoin(DroneOperator,
+                       DroneWork.drone_operator_id == DroneOperator.id)
+            .group_by(work_month, subdivision).all())
+    ledger = {}
+    for month, name, jobs, area in rows:
+        if not month:
+            continue
+        key = name or DRONE_CLOSING_SUBDIVISION_UNKNOWN
+        previous = ledger.get((month, key), (0, 0.0))
+        # Accumulated rather than assigned: NULL and '' are different GROUP BY
+        # keys in SQLite and both fold into the unknown bucket here.
+        ledger[(month, key)] = (previous[0] + jobs,
+                                previous[1] + float(area or 0.0))
+    return ledger
+
+
+def _drone_closing_flights_by_month_subdivision():
+    """{(month, subdivision key): (flights, hectares)} for every flight.
+
+    Two queries over a PARTITION of the table -- drone_unit_id IS NULL and IS
+    NOT NULL -- so no flight is counted twice and none is dropped.
+
+    [REASON]: the partition is the point, not an implementation detail.
+    drone_flights.drone_unit_id is nullable BY DESIGN (see the comment on
+    DroneFlight in models.py): roughly six thousand historical 2025 flights
+    carry a nickname that named an operator or an internal number rather than
+    a machine, and no machine could be resolved for them. Folding them into
+    «subdivision unknown» would hide a known, tracked problem
+    (DRONE-REATTACH-001) inside a general-purpose bucket; spreading them
+    across subdivisions would be an invention. They get their own row.
+    """
+    flight_month = _drone_flight_month_expr()
+    flights = {}
+
+    def add(month, key, count, area):
+        if not month:
+            return
+        previous = flights.get((month, key), (0, 0.0))
+        flights[(month, key)] = (previous[0] + count,
+                                 previous[1] + float(area or 0.0))
+
+    attached = (db.session.query(flight_month, DroneUnit.subdivision_name,
+                                 func.count(DroneFlight.id),
+                                 func.coalesce(func.sum(DroneFlight.area_ha),
+                                               0.0))
+                .join(DroneUnit, DroneFlight.drone_unit_id == DroneUnit.id)
+                .filter(DroneFlight.drone_unit_id.isnot(None))
+                .group_by(flight_month, DroneUnit.subdivision_name).all())
+    for month, name, count, area in attached:
+        # A machine whose own subdivision is blank is «unknown», NOT «no
+        # machine»: the machine is known and the gap is in the fleet card.
+        add(month, name or DRONE_CLOSING_SUBDIVISION_UNKNOWN, count, area)
+
+    orphan = (db.session.query(flight_month, func.count(DroneFlight.id),
+                               func.coalesce(func.sum(DroneFlight.area_ha),
+                                             0.0))
+              .filter(DroneFlight.drone_unit_id.is_(None))
+              .group_by(flight_month).all())
+    for month, count, area in orphan:
+        add(month, DRONE_CLOSING_NO_MACHINE, count, area)
+    return flights
+
+
+def _drone_closing_cell(ledger_jobs, ledger_area, flights, flight_area):
+    """One matrix cell: its state, its coverage and its colour.
+
+    **THE BRANCHING IS THE RECONCILE REPORT'S, BRANCH FOR BRANCH.** That
+    function asks `ledger_area > 0.005 and flight_area > 0.005` for a
+    percentage, `elif flight_area > 0.005` for «Ведомости не заведены», and
+    everything else is «Вылетов в этом месяце нет». The only thing added here
+    is that the final else is SPLIT in two, because a cell has to say whether
+    a book exists. Keeping the first two branches identical is what makes a
+    month read 71.3 % on both screens once the subdivisions are summed.
+
+    Four states, and the fourth is the honest consequence of the other three:
+
+      covered    flew and billed. A percentage, coloured by the shared bands.
+      no_book    flew hectares and handed in nothing worth a hectare. THE
+                 POINT OF THE SCREEN. Never rendered as «0.0 %»: zero of a
+                 hundred looks like a measurement, and this is an absence.
+      book_only  a book exists and there are no flight hectares to compare it
+                 with. Not one of the three states the task names, and it
+                 cannot be folded into any of them: calling it «covered»
+                 needs a division by zero, calling it «no book» is false
+                 while a book is sitting there, and calling it «did not fly»
+                 hides the book. It is real -- a subdivision whose operators
+                 billed a month in which every one of its machines' flights
+                 landed in the no-machine bucket produces exactly this.
+      idle       neither hectares flown nor a book. Nothing owed, nothing
+                 missing.
+
+    [REASON]: the no_book branch is reached only when there is no book at
+    all. Written the other way round first -- «flights exist» before «no
+    ledger» -- it painted «НЕ СДАНА» over a subdivision that had handed in
+    ten hectares and merely had no flight area that month. A screen whose
+    job is to accuse must not accuse the wrong person.
+    """
+    coverage = None
+    has_ledger = ledger_jobs > 0 or ledger_area > 0.005
+    if ledger_area > 0.005 and flight_area > 0.005:
+        coverage = ledger_area * 100.0 / flight_area
+        state = DRONE_CLOSING_COVERED
+    elif flight_area > 0.005:
+        state = DRONE_CLOSING_NO_BOOK
+    elif has_ledger:
+        state = DRONE_CLOSING_BOOK_ONLY
+    else:
+        state = DRONE_CLOSING_IDLE
+    return {
+        'state': state,
+        'coverage': coverage,
+        'flag': _drone_coverage_flag(coverage),
+        'ledger_jobs': ledger_jobs,
+        'ledger_area': ledger_area,
+        'flights': flights,
+        'flight_area': flight_area,
+    }
+
+
+def _drone_closing_labels():
+    """Display names for the two buckets, in the reader's language."""
+    return {
+        DRONE_CLOSING_SUBDIVISION_UNKNOWN: _drone_t(
+            'Бўлим аниқланмаган', 'Подразделение не определено'),
+        DRONE_CLOSING_NO_MACHINE: _drone_t(
+            'Машина аниқланмаган', 'Машина не определена'),
+    }
+
+
+def _drone_closing_data(window=DRONE_CLOSING_DEFAULT_WINDOW):
+    """Coverage by subdivision and month, plus the «flew, no book» list.
+
+    [REASON]: THE SCREEN EXISTS BECAUSE A MONTH IS NOT A PERSON. The reconcile
+    report proves the gap -- 11 900 hectares flew in June, July and August 2026
+    and 100 of them reached a book -- but it has one dimension and cannot say
+    whose gap it is. This adds the second dimension so the number stops being
+    a fact and becomes a list of people to call. It collects no books; it makes
+    an absence impossible to overlook and impossible to pin on the wrong
+    subdivision.
+
+    [REASON]: NO EXCEL, for the reason the reconcile report gives: the figure
+    moves as books arrive, and an exported copy gets quoted weeks later as if
+    it were still true.
+
+    [REASON]: THE PER-MONTH TOTALS MUST EQUAL THE RECONCILE REPORT'S, and that
+    is a hard invariant rather than a nicety. Two screens quoting different
+    totals for the same month destroy both. It holds because every work and
+    every flight lands in exactly one bucket -- the LEFT join and the
+    IS NULL / IS NOT NULL partition above are what guarantee it -- and it is
+    asserted month by month by
+    DroneClosingReconciliationTests.test_every_month_equals_the_reconcile_report.
+    """
+    ledger = _drone_closing_ledger_by_month_subdivision()
+    flights = _drone_closing_flights_by_month_subdivision()
+
+    all_months = sorted(set(m for m, _k in ledger) | set(m for m, _k in flights),
+                        reverse=True)
+    months = all_months if not window else all_months[:window]
+    shown = set(months)
+
+    labels = _drone_closing_labels()
+    keys = set(k for _m, k in ledger) | set(k for _m, k in flights)
+    # Real subdivisions first, alphabetically; the two buckets last, in a
+    # fixed order. sorted() on the raw keys already does this -- both bucket
+    # sentinels start with \x00 -- but the intent is written out rather than
+    # left to depend on a control character sorting low.
+    buckets = [k for k in (DRONE_CLOSING_SUBDIVISION_UNKNOWN,
+                           DRONE_CLOSING_NO_MACHINE) if k in keys]
+    ordered = sorted(k for k in keys if k not in buckets) + buckets
+
+    empty_total = {'ledger_jobs': 0, 'ledger_area': 0.0, 'flights': 0,
+                   'flight_area': 0.0}
+    month_totals = dict((month, dict(empty_total)) for month in months)
+    grand = dict(empty_total)
+
+    rows = []
+    missing = []
+    for key in ordered:
+        cells = []
+        row_total = dict(empty_total)
+        for month in months:
+            ledger_jobs, ledger_area = ledger.get((month, key), (0, 0.0))
+            flight_count, flight_area = flights.get((month, key), (0, 0.0))
+            cell = _drone_closing_cell(ledger_jobs, ledger_area,
+                                       flight_count, flight_area)
+            cell['month'] = month
+            cells.append(cell)
+            for field in empty_total:
+                row_total[field] += cell[field]
+                month_totals[month][field] += cell[field]
+                grand[field] += cell[field]
+            if cell['state'] == DRONE_CLOSING_NO_BOOK:
+                missing.append({
+                    'key': key,
+                    'label': labels.get(key, key),
+                    'is_bucket': key in labels,
+                    'month': month,
+                    'flights': flight_count,
+                    'flight_area': flight_area,
+                })
+        # A row that is idle in every shown month is dropped: it is a
+        # subdivision that neither flew nor billed in the window, and a row of
+        # dashes is noise on a screen whose job is to make an absence visible.
+        if any(c['state'] != DRONE_CLOSING_IDLE for c in cells):
+            rows.append({
+                'key': key,
+                'label': labels.get(key, key),
+                'is_bucket': key in labels,
+                'cells': cells,
+                'total': row_total,
+                'coverage': ((row_total['ledger_area'] * 100.0
+                              / row_total['flight_area'])
+                             if (row_total['flight_area'] > 0.005
+                                 and row_total['ledger_area'] > 0.005)
+                             else None),
+            })
+
+    for row in rows:
+        row['flag'] = _drone_coverage_flag(row['coverage'])
+    for month in months:
+        total = month_totals[month]
+        total['coverage'] = ((total['ledger_area'] * 100.0
+                              / total['flight_area'])
+                             if (total['flight_area'] > 0.005
+                                 and total['ledger_area'] > 0.005) else None)
+        total['flag'] = _drone_coverage_flag(total['coverage'])
+    grand['coverage'] = ((grand['ledger_area'] * 100.0 / grand['flight_area'])
+                         if (grand['flight_area'] > 0.005
+                             and grand['ledger_area'] > 0.005) else None)
+
+    # Hectares descending: the biggest unwritten month is the first call.
+    missing.sort(key=lambda item: (-item['flight_area'], item['month'],
+                                   item['label']))
+    return {
+        'months': months,
+        'rows': rows,
+        'month_totals': month_totals,
+        'total': grand,
+        'missing': missing,
+        'missing_area': sum(item['flight_area'] for item in missing),
+        'missing_flights': sum(item['flights'] for item in missing),
+        'window': window,
+        'windows': DRONE_CLOSING_WINDOWS,
+        'months_available': len(all_months),
+        'months_hidden': len(all_months) - len(shown),
+    }
 
 
 # ─── DRONE-ANALYTICS-001/4: flight calendar ──────────────────────────────────
