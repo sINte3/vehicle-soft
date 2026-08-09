@@ -88,8 +88,49 @@
     }
   }
 
+  /* Oblast s gorizontalnoy prokrutkoy dolzhna byt dostizhima s KLAVIATURY.
+   *
+   * [REASON]: .vs-table-scroll prokruchivaetsya myshyu i palcem, no bez
+   * tabindex fokus v nee ne popadaet vovse -- chelovek, rabotayushchiy s
+   * klaviatury, prosto ne mozhet uvidet pravye kolonki shirokoy tablicy.
+   * Eto pravilo axe scrollable-region-focusable, i najdeno ono bylo tolko
+   * kogda proverku zapustili na 390 px: na desktope tablica pomeshchaetsya i
+   * narusheniya net. Otsyuda i vtoroe sledstvie -- proverka dostupnosti
+   * obyazana gonyatsya na uzkom vyeporte tozhe, inache ona ne razlichaet
+   * ispravnyy sluchay i neispravnyy.
+   *
+   * tabindex stavitsya TOLKO kogda soderzhimoe deystvitelno ne pomeshchaetsya:
+   * lishnyaya ostanovka taba na tom, chto i tak vidno celikom, meshaet.
+   */
+  function markScrollRegions() {
+    document.querySelectorAll('.vs-table-scroll').forEach(function (box) {
+      var overflows = box.scrollWidth > box.clientWidth + 1;
+      if (!overflows) {
+        if (box.dataset.vsScrollRegion) {
+          box.removeAttribute('tabindex');
+          box.removeAttribute('role');
+          box.removeAttribute('aria-label');
+          delete box.dataset.vsScrollRegion;
+        }
+        return;
+      }
+      if (box.dataset.vsScrollRegion) return;
+      // Podpis beretsya iz zagolovka kartochki nad tablicey, a ne
+      // pridumyvaetsya zdes: JS ne znaet yazyka interfeysa, a v proekte
+      // vsyakaya stroka dvuyazychna.
+      var card = box.closest('.vs-table-wrap, .vs-card');
+      var title = card && card.querySelector('.vs-card-title');
+      box.setAttribute('tabindex', '0');
+      box.setAttribute('role', 'region');
+      box.setAttribute('aria-label', (title ? title.textContent : document.title).trim());
+      box.dataset.vsScrollRegion = '1';
+    });
+  }
+
   function init() {
     document.querySelectorAll('table.vs-table.is-static[data-sortable]').forEach(enhance);
+    markScrollRegions();
+    window.addEventListener('resize', markScrollRegions);
   }
 
   if (document.readyState === 'loading') {

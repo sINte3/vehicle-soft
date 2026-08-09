@@ -597,7 +597,7 @@
   "why": "главный экран, 44 КБ — проверка, что система не ломает уже сделанное",
   "status": 200,
   "inlineStyleBlocks": 1,
-  "inlineStyleAttrs": 35,
+  "inlineStyleAttrs": 33,
   "glyphs": 0,
   "tableClasses": [
    "vs-table"
@@ -621,7 +621,7 @@
   "why": "главный экран, 44 КБ — проверка, что система не ломает уже сделанное",
   "status": 200,
   "inlineStyleBlocks": 1,
-  "inlineStyleAttrs": 35,
+  "inlineStyleAttrs": 33,
   "glyphs": 0,
   "tableClasses": [
    "vs-table"
@@ -643,7 +643,7 @@
   "why": "главный экран, 44 КБ — проверка, что система не ломает уже сделанное",
   "status": 200,
   "inlineStyleBlocks": 1,
-  "inlineStyleAttrs": 35,
+  "inlineStyleAttrs": 33,
   "glyphs": 0,
   "tableClasses": [
    "vs-table"
@@ -665,7 +665,7 @@
   "why": "главный экран, 44 КБ — проверка, что система не ломает уже сделанное",
   "status": 200,
   "inlineStyleBlocks": 1,
-  "inlineStyleAttrs": 35,
+  "inlineStyleAttrs": 33,
   "glyphs": 0,
   "tableClasses": [
    "vs-table"
@@ -674,7 +674,9 @@
   "scrollWidth": 390,
   "clientWidth": 390,
   "controlsWithoutName": 0,
-  "file": "after/index-mobile.png"
+  "file": "after/index-mobile.png",
+  "axe": {},
+  "axeRules": []
  },
  {
   "side": "after",
@@ -764,7 +766,9 @@
   "scrollWidth": 390,
   "clientWidth": 390,
   "controlsWithoutName": 54,
-  "file": "after/drones-works-mobile.png"
+  "file": "after/drones-works-mobile.png",
+  "axe": {},
+  "axeRules": []
  },
  {
   "side": "after",
@@ -858,7 +862,9 @@
   "scrollWidth": 390,
   "clientWidth": 390,
   "controlsWithoutName": 4,
-  "file": "after/fuel-transactions-mobile.png"
+  "file": "after/fuel-transactions-mobile.png",
+  "axe": {},
+  "axeRules": []
  },
  {
   "side": "after",
@@ -940,7 +946,9 @@
   "scrollWidth": 390,
   "clientWidth": 390,
   "controlsWithoutName": 1,
-  "file": "after/daily-entry-mobile.png"
+  "file": "after/daily-entry-mobile.png",
+  "axe": {},
+  "axeRules": []
  },
  {
   "side": "after",
@@ -1030,7 +1038,9 @@
   "scrollWidth": 390,
   "clientWidth": 390,
   "controlsWithoutName": 4,
-  "file": "after/spare-part-detail-mobile.png"
+  "file": "after/spare-part-detail-mobile.png",
+  "axe": {},
+  "axeRules": []
  },
  {
   "side": "after",
@@ -1124,7 +1134,9 @@
   "scrollWidth": 390,
   "clientWidth": 390,
   "controlsWithoutName": 0,
-  "file": "after/report-mobile.png"
+  "file": "after/report-mobile.png",
+  "axe": {},
+  "axeRules": []
  },
  {
   "side": "after",
@@ -1147,7 +1159,9 @@
   "scrollWidth": 390,
   "clientWidth": 390,
   "controlsWithoutName": 4,
-  "file": "after/fuel-transactions-mobile-mobile.png"
+  "file": "after/fuel-transactions-mobile-mobile.png",
+  "axe": {},
+  "axeRules": []
  },
  {
   "side": "after",
@@ -1189,7 +1203,9 @@
   "scrollWidth": 390,
   "clientWidth": 390,
   "controlsWithoutName": 1,
-  "file": "after/daily-entry-uz-mobile.png"
+  "file": "after/daily-entry-uz-mobile.png",
+  "axe": {},
+  "axeRules": []
  },
  {
   "side": "after",

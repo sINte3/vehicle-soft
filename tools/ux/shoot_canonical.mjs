@@ -218,7 +218,13 @@ const main = async () => {
           await page.screenshot({ path: file, fullPage: true });
           entry.file = path.relative(OUT, file);
 
-          if (side === 'after' && vp === 'desktop') {
+          // [REASON]: axe gonyaetsya na desktope I na 390 px. Narusheniya
+          // rasходyatsya po vyeportam: scrollable-region-focusable
+          // proyavlyaetsya TOLKO tam, gde tablica ne pomeshchaetsya, to est na
+          // uzkom ekrane. Progon odnogo desktopa daval by nol i schitalsya by
+          // dokazatelstvom -- proverkoy, kotoraya ne razlichaet ispravnyy
+          // sluchay i neispravnyy.
+          if (side === 'after' && (vp === 'desktop' || vp === 'mobile')) {
             const scan = await new AxeBuilder({ page })
               .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
             const bySeverity = {};
