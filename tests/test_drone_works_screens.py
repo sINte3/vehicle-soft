@@ -860,11 +860,12 @@ def debt_tables(body):
 
 
 class DroneReportsLauncherTests(unittest.TestCase):
-    """/drones/reports -- nine tiles, no data, no filters, no export.
+    """/drones/reports -- ten tiles, no data, no filters, no export.
 
-    Was five. DRONE-ANALYTICS-001 added four reports; the census below is
-    updated rather than relaxed, because its whole purpose is that a tile
-    cannot appear, move or change accent without somebody saying so here.
+    Was five. DRONE-ANALYTICS-001 added four reports and DRONE-CLOSE-001 a
+    tenth; the census below is updated rather than relaxed, because its whole
+    purpose is that a tile cannot appear, move or change accent without
+    somebody saying so here.
     """
 
     @classmethod
@@ -877,7 +878,7 @@ class DroneReportsLauncherTests(unittest.TestCase):
         self.client = app.test_client()
         login(self.client, self.admin)
 
-    def test_the_launcher_opens_with_nine_tiles_in_order(self):
+    def test_the_launcher_opens_with_ten_tiles_in_order(self):
         import re
         response = self.client.get('/drones/reports')
         self.assertEqual(response.status_code, 200)
@@ -898,6 +899,11 @@ class DroneReportsLauncherTests(unittest.TestCase):
             ('is-info', '/drones/reports/reconcile'),
             ('is-warning', '/drones/works/debts/aging'),
             ('is-purple', '/drones/reports/spray'),
+            # DRONE-CLOSE-001 reuses is-info, the accent `reconcile` carries:
+            # the same comparison read by subdivision rather than by month
+            # alone. A shared colour means shared data, and a new accent here
+            # would claim a new data source that does not exist.
+            ('is-info', '/drones/reports/closing'),
             ('is-danger', '/drones/sources'),
         ])
 
@@ -920,10 +926,10 @@ class DroneReportsLauncherTests(unittest.TestCase):
         """UI-FONT-LOCAL-001: no CDN, no icon font, no remote asset."""
         body = self.client.get('/drones/reports').data.decode('utf-8')
         tiles = body.split('vs-report-tiles')[1]
-        # One inline <svg> per tile, nine tiles. This is also X-6: a tile key
+        # One inline <svg> per tile, ten tiles. This is also X-6: a tile key
         # with no icon branch renders an EMPTY icon box and nothing fails, so
         # the count is the only thing that catches it.
-        self.assertEqual(tiles.count('<svg'), 9)
+        self.assertEqual(tiles.count('<svg'), 10)
         for marker in ('http://', 'https://', '<img', '@font-face', 'url('):
             self.assertNotIn(marker, tiles, marker)
 
@@ -1918,6 +1924,7 @@ class DroneNumberPlacementTests(unittest.TestCase):
                  'unit_card.html', 'units.html', 'works.html',
                  'works_assignment_hints.html', 'works_debts.html',
                  'works_debts_aging.html', 'works_flights_reconcile.html',
+                 'works_closing.html',
                  'works_import.html', 'works_import_preview.html',
                  'works_reports.html')
 
@@ -2066,13 +2073,22 @@ class DroneNumberPlacementTests(unittest.TestCase):
         #   numbers inside a rejected-row reference deliberately do NOT get it
         #   -- a period is «2026-08» and an id is an identifier, and the filter
         #   on either is the defect, not the fix.
+        #
+        #   DRONE-CLOSE-001 brought works_closing 24. Counts of WORKS and of
+        #   FLIGHTS and hectares carry the filter, in the matrix cells, in the
+        #   row and month totals, in the cards and in the «flew, no book»
+        #   list. The COVERAGE PERCENTAGE deliberately does NOT -- a
+        #   percentage never gets the grouping filter, the same rule
+        #   works_flights_reconcile follows and
+        #   test_no_percentage_carries_the_filter asserts -- and neither does
+        #   the month string «2026-04», which is a period and not a number.
         expected = {
             '_money_cell.html': 1,
             'customers.html': 2, 'flight_calendar.html': 9, 'list.html': 3,
             'reattach.html': 12, 'sources.html': 7, 'spray_usage.html': 28,
             'summary.html': 42, 'works.html': 9,
-            'works_assignment_hints.html': 9, 'works_debts.html': 6,
-            'works_debts_aging.html': 15,
+            'works_assignment_hints.html': 9, 'works_closing.html': 24,
+            'works_debts.html': 6, 'works_debts_aging.html': 15,
             'works_flights_reconcile.html': 14, 'works_import.html': 4,
             'works_import_preview.html': 30, 'works_reports.html': 9,
         }
@@ -2080,7 +2096,7 @@ class DroneNumberPlacementTests(unittest.TestCase):
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 200)
+        self.assertEqual(sum(actual.values()), 224)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):

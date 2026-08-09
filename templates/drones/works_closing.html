@@ -1,0 +1,237 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Дроны — кто не сдал ведомость' if is_ru else 'Дронлар — ким ведомост топширмаган' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+{# DRONE-CLOSE-001. Покрытие по подразделениям и месяцам.
+
+   ЗАЧЕМ. Сверка «ведомости против вылетов» доказывает разрыв, но у неё одно
+   измерение — месяц, а месяц не человек. Здесь второе измерение —
+   подразделение, — и число превращается в список тех, кому звонить. Экран
+   книг не собирает: он делает отсутствие незаметным-невозможно.
+
+   ЦВЕТ — общий с экраном сверки: и там, и здесь его считает
+   _drone_coverage_flag(), пороги вынесены в константы модуля. Ниже 50 % или
+   выше 200 % — красный, вне 90–110 % — жёлтый, внутри — без цвета.
+
+   СОСТОЯНИЙ ЯЧЕЙКИ ЧЕТЫРЕ, и каждое подписано словами, а не только цветом:
+   покрыто (процент), НЕ СДАНА (летали, книги нет — главное, ради чего экран
+   существует, и никогда не «0.0 %»: ноль из ста выглядит как измерение, а это
+   отсутствие), «без вылетов» (книга есть, вылетов в этом месяце нет) и
+   прочерк (не летали — ничего не должны).
+
+   ТЕЛЕФОН. Матрица широкая, и это не лечится: месяцев может быть двадцать
+   четыре. Она лежит в .vs-table-scroll и прокручивается горизонтально внутри
+   себя, не утаскивая за собой страницу. Действенное же содержимое вынесено
+   НИЖЕ, в узкий линейный список «летали, книги нет», который на телефоне
+   читается без единой горизонтальной прокрутки. Это и есть ответ на вопрос
+   «как экран деградирует на узком экране»: матрица — обзор, список — работа.
+
+   Выгрузки в Excel нет намеренно, причина — та же, что у сверки. #}
+{% set t_dash = '—' %}
+{% set t_total = 'Итого' if is_ru else 'Жами' %}
+{% set label_no_book = 'НЕ СДАНА' if is_ru else 'ТОПШИРИЛМАГАН' %}
+{# Точные подписи, а не приблизительные. «Без вылетов» было бы неправдой, когда
+   вылеты есть, но все с нулевой площадью — 3 % записей такие. #}
+{% set label_book_only = 'гектаров вылетов нет' if is_ru else 'парвоз гектарлари йўқ' %}
+{% set label_idle = 'ни гектаров, ни ведомостей' if is_ru else 'на гектар, на ведомост' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Кто не сдал ведомость' if is_ru else 'Ким ведомост топширмаган' }}</div>
+    <div class="vs-hero-sub">{{ 'Гектары ведомостей в процентах от гектаров вылетов — по подразделениям и месяцам. Строка ведомости называет оператора, и подразделение берётся у него; вылет называет машину, и подразделение берётся у неё.' if is_ru else 'Ведомост гектарларининг парвоз гектарларига нисбатан фоизи — бўлимлар ва ойлар бўйича. Ведомост қатори операторни атайди, бўлим ундан олинади; парвоз машинани атайди, бўлим ундан олинади.' }}</div>
+  </div>
+  <div class="vs-row-end">
+    <a href="{{ url_for('drones.works_flights_reconcile') }}" class="vs-btn">{{ 'Сверка по месяцам' if is_ru else 'Ойлар бўйича солиштирув' }}</a>
+    <a href="{{ url_for('drones.reports') }}" class="vs-btn">{{ 'Все отчёты' if is_ru else 'Барча ҳисоботлар' }}</a>
+  </div>
+</div>
+
+<div class="vs-alert is-info vs-mb">
+  {{ 'Экран не собирает ведомости — их собирают люди. Он показывает, у кого их нет. Подразделение работы берётся у её оператора, а не из имени файла: в именах книг названий подразделений парка нет, и поиск по ним дал бы пустое поле. Вылеты без опознанной машины стоят отдельной строкой и никогда не размазываются по подразделениям — это известный разрыв привязки, а не чей-то несданный отчёт. Сумма по всем строкам за месяц совпадает с тем же месяцем на экране сверки — по всем четырём числам, и это проверяется тестом. Цвет берётся с покрытия по тем же порогам, что и там: 90–110 % — без цвета, вне полосы — жёлтым, ниже 50 % или выше 200 % — красным. Выгрузки в Excel нет намеренно: число меняется по мере ввода ведомостей, а выгрузку цитируют неделями позже.' if is_ru else 'Экран ведомостларни йиғмайди — уларни одамлар йиғади. У кимда йўқлигини кўрсатади. Ишнинг бўлими унинг операторидан олинади, файл номидан эмас: китоб номларида парк бўлимларининг номлари йўқ ва улар бўйича излаш бўш майдон берарди. Машинаси аниқланмаган парвозлар алоҳида қаторда туради ва ҳеч қачон бўлимлар бўйича тарқатилмайди — бу боғлашдаги маълум узилиш, кимнингдир топширилмаган ҳисоботи эмас. Ойдаги барча қаторлар йиғиндиси солиштирув экранидаги ўша ой билан мос келади — тўртала сон бўйича ҳам, ва буни тест текширади. Ранг қамровдан ўша порогларга кўра олинади: 90–110 % — рангсиз, полосадан ташқарида — сариқ, 50 % дан паст ёки 200 % дан юқори — қизил. Excel юклаб олиш атайлаб йўқ: сон ведомостлар киритилиши билан ўзгаради, юклаб олинган файлни эса ҳафталар ўтиб иқтибос келтиришади.' }}
+</div>
+
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Месяцев показано' if is_ru else 'Кўрсатилган ойлар' }}</div>
+    <div class="vs-stat-value is-num">{{ data.months|length|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Гектары ведомостей' if is_ru else 'Ведомост гектарлари' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(data.total.ledger_area)|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Гектары вылетов' if is_ru else 'Парвоз гектарлари' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.2f'|format(data.total.flight_area)|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Не сдано, гектаров' if is_ru else 'Топширилмаган, гектар' }}</div>
+    <div class="vs-stat-value is-num {% if data.missing %}is-danger{% else %}is-muted{% endif %}">{{ '%.2f'|format(data.missing_area)|vs_num }}</div>
+  </div>
+</div>
+
+{# ── Окно показа ────────────────────────────────────────────────────────── #}
+<form method="get" class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <div class="vs-form-row">
+      <div class="vs-field" style="max-width:260px;">
+        <label class="vs-label" for="closeWindow">{{ 'Сколько месяцев показывать' if is_ru else 'Неча ой кўрсатилсин' }}</label>
+        <select class="vs-input" id="closeWindow" name="window" onchange="this.form.submit()">
+          <option value="12"{% if data.window == 12 %} selected{% endif %}>{{ 'последние 12' if is_ru else 'сўнгги 12' }}</option>
+          <option value="24"{% if data.window == 24 %} selected{% endif %}>{{ 'последние 24' if is_ru else 'сўнгги 24' }}</option>
+          <option value="0"{% if data.window == 0 %} selected{% endif %}>{{ 'все' if is_ru else 'барчаси' }}</option>
+        </select>
+      </div>
+      <div class="vs-field" style="flex:0 0 auto;">
+        <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+      </div>
+      <div class="vs-field">
+        <div class="vs-help">
+          {% if data.months_hidden %}
+          {{ 'Скрыто месяцев за пределами окна:' if is_ru else 'Ойна ташқарисида яширилган ойлар:' }} {{ data.months_hidden|vs_num }}.
+          {% endif %}
+          {{ 'Всего месяцев с данными:' if is_ru else 'Маълумоти бор ойлар жами:' }} {{ data.months_available|vs_num }}.
+        </div>
+      </div>
+    </div>
+  </div>
+</form>
+
+{# ── Матрица ────────────────────────────────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Покрытие по подразделениям' if is_ru else 'Бўлимлар бўйича қамров' }}</span>
+    <span class="vs-muted">{{ 'Новый месяц слева. Таблица прокручивается вбок; список ниже — нет.' if is_ru else 'Янги ой чапда. Жадвал ёнга сурилади; пастдаги рўйхат эса йўқ.' }}</span>
+  </div>
+  {% if data.rows %}
+  <div class="vs-table-scroll">
+  <table class="vs-table is-compact">
+    <thead>
+      <tr>
+        <th>{{ 'Подразделение' if is_ru else 'Бўлим' }}</th>
+        {% for month in data.months %}
+        <th class="right">{{ month }}</th>
+        {% endfor %}
+        <th class="right">{{ t_total }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in data.rows %}
+      <tr>
+        <td>
+          {{ row.label }}
+          {% if row.is_bucket %}<span class="vs-badge vs-badge-sm vs-badge-warning">{{ 'не подразделение' if is_ru else 'бўлим эмас' }}</span>{% endif %}
+        </td>
+        {% for cell in row.cells %}
+        {# Три состояния, которые надо было развести, плюс четвёртое, которое
+           данные допускают. Каждое подписано словом, не только цветом. #}
+        <td class="right" data-state="{{ cell.state }}">
+          {% if cell.state == state_covered %}
+          <span class="vs-badge {% if cell.flag == 'is-danger-row' %}vs-badge-danger{% elif cell.flag == 'is-warning-row' %}vs-badge-warning{% else %}vs-badge-success{% endif %}">{{ '%.1f'|format(cell.coverage) }} %</span>
+          <div class="vs-help">{{ cell.ledger_jobs|vs_num }} · {{ '%.2f'|format(cell.ledger_area)|vs_num }} / {{ '%.2f'|format(cell.flight_area)|vs_num }}</div>
+          {% elif cell.state == state_no_book %}
+          <span class="vs-badge vs-badge-danger">{{ label_no_book }}</span>
+          {# Работы показываются, даже когда их ноль гектаров: иначе ячейка
+             умолчала бы о том, что книга всё-таки заведена. #}
+          <div class="vs-help">{{ cell.flights|vs_num }} · {{ '%.2f'|format(cell.flight_area)|vs_num }}{% if cell.ledger_jobs %} · {{ 'работ' if is_ru else 'иш' }} {{ cell.ledger_jobs|vs_num }}{% endif %}</div>
+          {% elif cell.state == state_book_only %}
+          <span class="vs-badge vs-badge-info">{{ label_book_only }}</span>
+          <div class="vs-help">{{ cell.ledger_jobs|vs_num }} · {{ '%.2f'|format(cell.ledger_area)|vs_num }}</div>
+          {% else %}
+          <span class="vs-muted" title="{{ label_idle }}">{{ t_dash }}</span>
+          {% endif %}
+        </td>
+        {% endfor %}
+        <td class="right">
+          {% if row.coverage is none %}
+          <span class="vs-muted">{{ t_dash }}</span>
+          {% else %}
+          <b>{{ '%.1f'|format(row.coverage) }} %</b>
+          {% endif %}
+          <div class="vs-help">{{ '%.2f'|format(row.total.ledger_area)|vs_num }} / {{ '%.2f'|format(row.total.flight_area)|vs_num }}</div>
+        </td>
+      </tr>
+      {% endfor %}
+      <tr style="font-weight:700;">
+        <td>{{ t_total }}</td>
+        {% for month in data.months %}
+        {% set mt = data.month_totals[month] %}
+        <td class="right">
+          {% if mt.coverage is none %}{{ t_dash }}{% else %}{{ '%.1f'|format(mt.coverage) }} %{% endif %}
+          <div class="vs-help">{{ '%.2f'|format(mt.ledger_area)|vs_num }} / {{ '%.2f'|format(mt.flight_area)|vs_num }}</div>
+        </td>
+        {% endfor %}
+        <td class="right">
+          {% if data.total.coverage is none %}{{ t_dash }}{% else %}{{ '%.1f'|format(data.total.coverage) }} %{% endif %}
+          <div class="vs-help">{{ '%.2f'|format(data.total.ledger_area)|vs_num }} / {{ '%.2f'|format(data.total.flight_area)|vs_num }}</div>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-help">{{ 'В ячейке под процентом: работ · гектары ведомостей / гектары вылетов. «НЕ СДАНА» — гектары налетаны, а ведомостей на них нет. «гектаров вылетов нет» — ведомость есть, а сравнивать её не с чем. Прочерк — ни гектаров, ни ведомостей.' if is_ru else 'Катакда фоиз остида: ишлар · ведомост гектарлари / парвоз гектарлари. «ТОПШИРИЛМАГАН» — гектарлар училган, аммо уларга ведомост йўқ. «парвоз гектарлари йўқ» — ведомост бор, солиштиришга нарса йўқ. Тире — на гектар, на ведомост.' }}</div>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Ни ведомостей, ни вылетов' if is_ru else 'На ведомост, на парвоз' }}</div>
+    <div class="vs-empty-sub">{{ 'Пока не приехало ни одного вылета и не заведено ни одной работы — сравнивать нечего.' if is_ru else 'Ҳали бирорта парвоз келмаган ва бирорта иш киритилмаган — солиштиришга нарса йўқ.' }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{# ── Летали, книги нет ──────────────────────────────────────────────────── #}
+<div class="vs-table-wrap">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Летали, книги нет' if is_ru else 'Учган, китоб йўқ' }}</span>
+    <span class="vs-muted">{{ 'По убыванию гектаров' if is_ru else 'Гектарлар камайиши бўйича' }}</span>
+  </div>
+  {% if data.missing %}
+  <div class="vs-table-scroll">
+  <table class="vs-table is-compact">
+    <thead>
+      <tr>
+        <th>{{ 'Подразделение' if is_ru else 'Бўлим' }}</th>
+        <th>{{ 'Месяц' if is_ru else 'Ой' }}</th>
+        <th class="right">{{ 'Вылеты' if is_ru else 'Парвозлар' }}</th>
+        <th class="right">{{ 'Гектары вылетов' if is_ru else 'Парвоз гектарлари' }}</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in data.missing %}
+      <tr class="is-danger-row">
+        <td>
+          {{ item.label }}
+          {% if item.is_bucket %}<span class="vs-badge vs-badge-sm vs-badge-warning">{{ 'не подразделение' if is_ru else 'бўлим эмас' }}</span>{% endif %}
+        </td>
+        <td>{{ item.month }}</td>
+        <td class="right">{{ item.flights|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(item.flight_area)|vs_num }}</td>
+        <td class="right">
+          {# Ссылка НЕСЁТ ТОЛЬКО МЕСЯЦ. Фильтр реестра по подразделению
+             работает по drone_works.subdivision_name, а этот экран считает
+             подразделение через оператора: ссылка с обоими параметрами
+             вернула бы другой набор строк, чем обещает ячейка. #}
+          <a class="vs-btn vs-btn-sm" href="{{ url_for('drones.works', period=item.month) }}">{{ 'Реестр за месяц' if is_ru else 'Ой реестри' }}</a>
+        </td>
+      </tr>
+      {% endfor %}
+      <tr style="font-weight:700;">
+        <td colspan="2">{{ t_total }}</td>
+        <td class="right">{{ data.missing_flights|vs_num }}</td>
+        <td class="right">{{ '%.2f'|format(data.missing_area)|vs_num }}</td>
+        <td></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Пропусков нет' if is_ru else 'Тушиб қолганлар йўқ' }}</div>
+    <div class="vs-empty-sub">{{ 'В показанном окне нет ни одного месяца, где подразделение летало и не завело ни одной работы.' if is_ru else 'Кўрсатилган ойнада бўлим учган ва бирорта иш киритмаган ой йўқ.' }}</div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
