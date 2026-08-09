@@ -1,0 +1,1816 @@
+{
+ "adoption": {
+  "A_components": 38,
+  "B_mixed": 17,
+  "C_ux_island": 1,
+  "D_legacy_vars": 23,
+  "E_no_signal": 7
+ },
+ "breakpoints": {
+  "480": 2,
+  "600": 1,
+  "640": 5,
+  "700": 5,
+  "720": 1,
+  "760": 5,
+  "768": 7,
+  "900": 4,
+  "1000": 5,
+  "1050": 3,
+  "1100": 5,
+  "1200": 3,
+  "1280": 1
+ },
+ "classes": {
+  "vs_class_distinct": 187,
+  "vs_class_freq": {
+   "vs-accord-l2": 4,
+   "vs-accord-l3": 5,
+   "vs-alert": 67,
+   "vs-avatar": 2,
+   "vs-badge": 85,
+   "vs-badge-cat": 1,
+   "vs-badge-cat-mtz": 1,
+   "vs-badge-cat-yukori": 1,
+   "vs-badge-danger": 11,
+   "vs-badge-info": 1,
+   "vs-badge-purple": 1,
+   "vs-badge-role": 1,
+   "vs-badge-role-admin": 1,
+   "vs-badge-role-operator": 1,
+   "vs-badge-role-viewer": 1,
+   "vs-badge-sm": 20,
+   "vs-badge-success": 27,
+   "vs-badge-warning": 17,
+   "vs-blob-1": 2,
+   "vs-blob-2": 2,
+   "vs-blob-3": 2,
+   "vs-blob-4": 2,
+   "vs-btn": 177,
+   "vs-btn-danger": 6,
+   "vs-btn-ghost": 18,
+   "vs-btn-icon": 5,
+   "vs-btn-lg": 5,
+   "vs-btn-primary": 52,
+   "vs-btn-sm": 44,
+   "vs-btn-success": 12,
+   "vs-cal-cell": 6,
+   "vs-caption": 1,
+   "vs-card": 83,
+   "vs-card-accent": 1,
+   "vs-card-accent-danger": 3,
+   "vs-card-accent-left": 1,
+   "vs-card-accent-success": 3,
+   "vs-card-accent-top": 2,
+   "vs-card-accent-warning": 5,
+   "vs-card-body": 79,
+   "vs-card-flash": 2,
+   "vs-card-header": 97,
+   "vs-card-title": 98,
+   "vs-card-xl": 3,
+   "vs-check": 5,
+   "vs-check-card": 5,
+   "vs-check-grid": 3,
+   "vs-check-row": 1,
+   "vs-content": 7,
+   "vs-crumb": 3,
+   "vs-crumb-sep": 2,
+   "vs-cursor-dot": 3,
+   "vs-date-chip": 3,
+   "vs-dot-fade": 2,
+   "vs-empty": 49,
+   "vs-empty-ico": 16,
+   "vs-empty-sub": 33,
+   "vs-empty-title": 43,
+   "vs-error-msg": 1,
+   "vs-field": 210,
+   "vs-form-row": 42,
+   "vs-help": 39,
+   "vs-hero": 39,
+   "vs-hero-sub": 39,
+   "vs-hero-title": 39,
+   "vs-icon": 4,
+   "vs-input": 117,
+   "vs-input-icon": 4,
+   "vs-input-icon-leading": 3,
+   "vs-input-icon-trailing": 3,
+   "vs-input-lg": 1,
+   "vs-input-search": 3,
+   "vs-kpi": 19,
+   "vs-kpi-cap": 13,
+   "vs-kpi-grid": 6,
+   "vs-kpi-grid-2": 8,
+   "vs-kpi-head": 17,
+   "vs-kpi-label": 17,
+   "vs-kpi-link": 20,
+   "vs-kpi-main": 13,
+   "vs-kpi-value": 14,
+   "vs-label": 212,
+   "vs-label-upper": 5,
+   "vs-lang": 5,
+   "vs-login-card": 2,
+   "vs-login-card-pro": 2,
+   "vs-login-foot": 2,
+   "vs-login-form": 6,
+   "vs-login-head": 3,
+   "vs-login-lang": 6,
+   "vs-login-logo": 2,
+   "vs-login-page": 2,
+   "vs-login-page-pro": 2,
+   "vs-login-sub": 2,
+   "vs-main": 2,
+   "vs-mb": 208,
+   "vs-mb-lg": 1,
+   "vs-mb-sm": 11,
+   "vs-menu": 3,
+   "vs-menu-item": 16,
+   "vs-menu-sep": 1,
+   "vs-mesh": 2,
+   "vs-mesh-blob": 6,
+   "vs-mesh-blob-1": 2,
+   "vs-mesh-blob-2": 2,
+   "vs-mesh-blob-3": 2,
+   "vs-mesh-blob-4": 2,
+   "vs-mini": 40,
+   "vs-mini-l": 31,
+   "vs-mini-v": 32,
+   "vs-ms-arrow": 5,
+   "vs-ms-count": 5,
+   "vs-ms-label": 5,
+   "vs-mt": 2,
+   "vs-mt-sm": 10,
+   "vs-multiselect": 12,
+   "vs-multiselect-dropdown": 8,
+   "vs-multiselect-footer": 6,
+   "vs-multiselect-trigger": 10,
+   "vs-muted": 118,
+   "vs-nextaction": 5,
+   "vs-nextaction-wait": 3,
+   "vs-num": 77,
+   "vs-pill": 40,
+   "vs-pills": 6,
+   "vs-report-tile": 26,
+   "vs-report-tile-arrow": 10,
+   "vs-report-tile-icon": 18,
+   "vs-report-tile-sub": 12,
+   "vs-report-tile-text": 11,
+   "vs-report-tile-title": 12,
+   "vs-report-tiles": 8,
+   "vs-row": 34,
+   "vs-row-actions": 1,
+   "vs-row-end": 28,
+   "vs-screen-title": 3,
+   "vs-segmented": 4,
+   "vs-select": 70,
+   "vs-shell": 2,
+   "vs-side-backdrop": 7,
+   "vs-side-brand": 2,
+   "vs-side-brand-mark": 3,
+   "vs-side-brand-meta": 6,
+   "vs-side-brand-sub": 2,
+   "vs-side-brand-title": 2,
+   "vs-side-foot": 2,
+   "vs-side-icon": 19,
+   "vs-side-label": 22,
+   "vs-side-link": 20,
+   "vs-side-logout": 3,
+   "vs-side-nav": 2,
+   "vs-side-section": 9,
+   "vs-sidebar": 24,
+   "vs-skip-link": 8,
+   "vs-soft": 78,
+   "vs-spacer": 2,
+   "vs-stack": 1,
+   "vs-stack-lg": 1,
+   "vs-stack-sm": 8,
+   "vs-stat": 83,
+   "vs-stat-grid": 21,
+   "vs-stat-grid-4": 3,
+   "vs-stat-label": 83,
+   "vs-stat-value": 93,
+   "vs-step": 8,
+   "vs-step-dot": 5,
+   "vs-step-label": 5,
+   "vs-step-line": 4,
+   "vs-stepper": 4,
+   "vs-stepper-side": 6,
+   "vs-table": 91,
+   "vs-table-scroll": 68,
+   "vs-table-wrap": 58,
+   "vs-textarea": 8,
+   "vs-timeline": 3,
+   "vs-timeline-body": 2,
+   "vs-timeline-dot": 2,
+   "vs-timeline-head": 2,
+   "vs-timeline-item": 6,
+   "vs-timeline-time": 2,
+   "vs-topbar": 6,
+   "vs-topbar-burger": 3,
+   "vs-topbar-title": 2,
+   "vs-user-chip": 3,
+   "vs-user-meta": 2,
+   "vs-user-name": 2,
+   "vs-user-role": 2
+  }
+ },
+ "design_system_css": {
+  "duplicate_color_values": {
+   "#15803d": [
+    "--vs-brand-green",
+    "--vs-success"
+   ],
+   "#e7f6ec": [
+    "--vs-brand-green-s",
+    "--vs-success-bg"
+   ],
+   "#eef2f7": [
+    "--vs-bg",
+    "--vs-border-3"
+   ],
+   "#ffffff": [
+    "--vs-side-active-fg",
+    "--vs-surface"
+   ]
+  },
+  "lines": 1365,
+  "tokens": {
+   "--accent": {
+    "uses_in_css": 0,
+    "uses_in_templates": 47,
+    "value": "var(--vs-primary)"
+   },
+   "--accent-light": {
+    "uses_in_css": 0,
+    "uses_in_templates": 9,
+    "value": "var(--vs-primary-soft)"
+   },
+   "--accent-soft": {
+    "uses_in_css": 0,
+    "uses_in_templates": 0,
+    "value": "var(--vs-primary-soft)"
+   },
+   "--bg": {
+    "uses_in_css": 0,
+    "uses_in_templates": 0,
+    "value": "var(--vs-bg)"
+   },
+   "--border": {
+    "uses_in_css": 0,
+    "uses_in_templates": 60,
+    "value": "var(--vs-border-2)"
+   },
+   "--border-strong": {
+    "uses_in_css": 0,
+    "uses_in_templates": 1,
+    "value": "var(--vs-border-2)"
+   },
+   "--danger": {
+    "uses_in_css": 0,
+    "uses_in_templates": 85,
+    "value": "var(--vs-danger)"
+   },
+   "--danger-light": {
+    "uses_in_css": 0,
+    "uses_in_templates": 15,
+    "value": "var(--vs-danger-bg)"
+   },
+   "--danger-soft": {
+    "uses_in_css": 0,
+    "uses_in_templates": 0,
+    "value": "var(--vs-danger-bg)"
+   },
+   "--info": {
+    "uses_in_css": 0,
+    "uses_in_templates": 38,
+    "value": "var(--vs-info)"
+   },
+   "--info-light": {
+    "uses_in_css": 0,
+    "uses_in_templates": 17,
+    "value": "var(--vs-info-bg)"
+   },
+   "--radius": {
+    "uses_in_css": 0,
+    "uses_in_templates": 24,
+    "value": "var(--vs-r)"
+   },
+   "--shadow": {
+    "uses_in_css": 0,
+    "uses_in_templates": 41,
+    "value": "var(--vs-shadow)"
+   },
+   "--success": {
+    "uses_in_css": 0,
+    "uses_in_templates": 1,
+    "value": "var(--vs-brand-green)"
+   },
+   "--success-light": {
+    "uses_in_css": 0,
+    "uses_in_templates": 1,
+    "value": "var(--vs-success-bg)"
+   },
+   "--success-soft": {
+    "uses_in_css": 0,
+    "uses_in_templates": 0,
+    "value": "var(--vs-brand-green-s)"
+   },
+   "--surface": {
+    "uses_in_css": 0,
+    "uses_in_templates": 40,
+    "value": "var(--vs-surface)"
+   },
+   "--surface2": {
+    "uses_in_css": 0,
+    "uses_in_templates": 25,
+    "value": "var(--vs-surface-2)"
+   },
+   "--text": {
+    "uses_in_css": 0,
+    "uses_in_templates": 19,
+    "value": "var(--vs-text)"
+   },
+   "--text2": {
+    "uses_in_css": 0,
+    "uses_in_templates": 89,
+    "value": "var(--vs-text-muted)"
+   },
+   "--text3": {
+    "uses_in_css": 0,
+    "uses_in_templates": 0,
+    "value": "var(--vs-text-soft)"
+   },
+   "--vs-bg": {
+    "uses_in_css": 2,
+    "uses_in_templates": 1,
+    "value": "#eef2f7"
+   },
+   "--vs-border": {
+    "uses_in_css": 11,
+    "uses_in_templates": 15,
+    "value": "#e6ecf4"
+   },
+   "--vs-border-2": {
+    "uses_in_css": 16,
+    "uses_in_templates": 3,
+    "value": "#e2e8f1"
+   },
+   "--vs-border-3": {
+    "uses_in_css": 11,
+    "uses_in_templates": 0,
+    "value": "#eef2f7"
+   },
+   "--vs-border-input": {
+    "uses_in_css": 13,
+    "uses_in_templates": 5,
+    "value": "#d8e0ea"
+   },
+   "--vs-brand-green": {
+    "uses_in_css": 9,
+    "uses_in_templates": 4,
+    "value": "#15803d"
+   },
+   "--vs-brand-green-h": {
+    "uses_in_css": 3,
+    "uses_in_templates": 0,
+    "value": "#12692f"
+   },
+   "--vs-brand-green-s": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#e7f6ec"
+   },
+   "--vs-content-max": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "1520px"
+   },
+   "--vs-content-pad": {
+    "uses_in_css": 3,
+    "uses_in_templates": 0,
+    "value": "16px"
+   },
+   "--vs-danger": {
+    "uses_in_css": 27,
+    "uses_in_templates": 8,
+    "value": "#c0392b"
+   },
+   "--vs-danger-bg": {
+    "uses_in_css": 12,
+    "uses_in_templates": 2,
+    "value": "#fdeeee"
+   },
+   "--vs-font": {
+    "uses_in_css": 4,
+    "uses_in_templates": 3,
+    "value": "system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif"
+   },
+   "--vs-fs": {
+    "uses_in_css": 17,
+    "uses_in_templates": 1,
+    "value": "13px"
+   },
+   "--vs-fs-2xl": {
+    "uses_in_css": 2,
+    "uses_in_templates": 1,
+    "value": "23px"
+   },
+   "--vs-fs-lg": {
+    "uses_in_css": 2,
+    "uses_in_templates": 0,
+    "value": "17px"
+   },
+   "--vs-fs-md": {
+    "uses_in_css": 3,
+    "uses_in_templates": 0,
+    "value": "14px"
+   },
+   "--vs-fs-sm": {
+    "uses_in_css": 7,
+    "uses_in_templates": 2,
+    "value": "12px"
+   },
+   "--vs-fs-xl": {
+    "uses_in_css": 0,
+    "uses_in_templates": 0,
+    "value": "21px"
+   },
+   "--vs-fs-xs": {
+    "uses_in_css": 9,
+    "uses_in_templates": 2,
+    "value": "11px"
+   },
+   "--vs-info": {
+    "uses_in_css": 10,
+    "uses_in_templates": 5,
+    "value": "#0e7490"
+   },
+   "--vs-info-bg": {
+    "uses_in_css": 8,
+    "uses_in_templates": 1,
+    "value": "#e6f7fb"
+   },
+   "--vs-primary": {
+    "uses_in_css": 57,
+    "uses_in_templates": 21,
+    "value": "#2563eb"
+   },
+   "--vs-primary-hover": {
+    "uses_in_css": 8,
+    "uses_in_templates": 2,
+    "value": "#1d4ed8"
+   },
+   "--vs-primary-soft": {
+    "uses_in_css": 9,
+    "uses_in_templates": 1,
+    "value": "#eaf1fe"
+   },
+   "--vs-purple": {
+    "uses_in_css": 4,
+    "uses_in_templates": 0,
+    "value": "#7c3aed"
+   },
+   "--vs-purple-bg": {
+    "uses_in_css": 3,
+    "uses_in_templates": 0,
+    "value": "#f1eafe"
+   },
+   "--vs-r": {
+    "uses_in_css": 20,
+    "uses_in_templates": 11,
+    "value": "9px"
+   },
+   "--vs-r-lg": {
+    "uses_in_css": 7,
+    "uses_in_templates": 6,
+    "value": "12px"
+   },
+   "--vs-r-md": {
+    "uses_in_css": 5,
+    "uses_in_templates": 1,
+    "value": "10px"
+   },
+   "--vs-r-pill": {
+    "uses_in_css": 4,
+    "uses_in_templates": 2,
+    "value": "999px"
+   },
+   "--vs-r-sm": {
+    "uses_in_css": 18,
+    "uses_in_templates": 3,
+    "value": "8px"
+   },
+   "--vs-r-xl": {
+    "uses_in_css": 7,
+    "uses_in_templates": 0,
+    "value": "14px"
+   },
+   "--vs-r-xs": {
+    "uses_in_css": 0,
+    "uses_in_templates": 1,
+    "value": "6px"
+   },
+   "--vs-ring-primary": {
+    "uses_in_css": 9,
+    "uses_in_templates": 1,
+    "value": "0 0 0 3px rgba(37,99,235,.15)"
+   },
+   "--vs-shadow": {
+    "uses_in_css": 3,
+    "uses_in_templates": 2,
+    "value": "0 2px 8px rgba(16,40,80,.08)"
+   },
+   "--vs-shadow-lg": {
+    "uses_in_css": 4,
+    "uses_in_templates": 0,
+    "value": "0 16px 40px rgba(16,40,80,.16)"
+   },
+   "--vs-shadow-primary": {
+    "uses_in_css": 2,
+    "uses_in_templates": 0,
+    "value": "0 8px 18px rgba(37,99,235,.28)"
+   },
+   "--vs-shadow-sm": {
+    "uses_in_css": 9,
+    "uses_in_templates": 7,
+    "value": "0 1px 3px rgba(16,40,80,.05)"
+   },
+   "--vs-shadow-success": {
+    "uses_in_css": 2,
+    "uses_in_templates": 0,
+    "value": "0 8px 18px rgba(21,128,61,.28)"
+   },
+   "--vs-side-active": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "rgba(79,147,255,.16)"
+   },
+   "--vs-side-active-bar": {
+    "uses_in_css": 2,
+    "uses_in_templates": 0,
+    "value": "#4f93ff"
+   },
+   "--vs-side-active-fg": {
+    "uses_in_css": 2,
+    "uses_in_templates": 0,
+    "value": "#ffffff"
+   },
+   "--vs-side-bg-1": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#0f2b50"
+   },
+   "--vs-side-bg-2": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#0c2244"
+   },
+   "--vs-side-hover": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "rgba(255,255,255,.07)"
+   },
+   "--vs-side-section": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#5f779b"
+   },
+   "--vs-side-text": {
+    "uses_in_css": 2,
+    "uses_in_templates": 0,
+    "value": "#a9bad4"
+   },
+   "--vs-side-text-dim": {
+    "uses_in_css": 2,
+    "uses_in_templates": 0,
+    "value": "#7e93b4"
+   },
+   "--vs-side-w": {
+    "uses_in_css": 2,
+    "uses_in_templates": 0,
+    "value": "252px"
+   },
+   "--vs-side-w-col": {
+    "uses_in_css": 2,
+    "uses_in_templates": 0,
+    "value": "74px"
+   },
+   "--vs-success": {
+    "uses_in_css": 10,
+    "uses_in_templates": 2,
+    "value": "#15803d"
+   },
+   "--vs-success-bg": {
+    "uses_in_css": 8,
+    "uses_in_templates": 1,
+    "value": "#e7f6ec"
+   },
+   "--vs-surface": {
+    "uses_in_css": 7,
+    "uses_in_templates": 11,
+    "value": "#ffffff"
+   },
+   "--vs-surface-2": {
+    "uses_in_css": 11,
+    "uses_in_templates": 4,
+    "value": "#f7f9fc"
+   },
+   "--vs-surface-3": {
+    "uses_in_css": 6,
+    "uses_in_templates": 4,
+    "value": "#f1f5fa"
+   },
+   "--vs-t": {
+    "uses_in_css": 0,
+    "uses_in_templates": 0,
+    "value": ".17s ease"
+   },
+   "--vs-t-fast": {
+    "uses_in_css": 24,
+    "uses_in_templates": 5,
+    "value": ".13s ease"
+   },
+   "--vs-text": {
+    "uses_in_css": 18,
+    "uses_in_templates": 5,
+    "value": "#182230"
+   },
+   "--vs-text-faint": {
+    "uses_in_css": 0,
+    "uses_in_templates": 0,
+    "value": "#b5c0d0"
+   },
+   "--vs-text-muted": {
+    "uses_in_css": 27,
+    "uses_in_templates": 16,
+    "value": "#5b6b80"
+   },
+   "--vs-text-soft": {
+    "uses_in_css": 20,
+    "uses_in_templates": 8,
+    "value": "#8a97a8"
+   },
+   "--vs-top-h": {
+    "uses_in_css": 2,
+    "uses_in_templates": 0,
+    "value": "62px"
+   },
+   "--vs-warning": {
+    "uses_in_css": 13,
+    "uses_in_templates": 6,
+    "value": "#b45309"
+   },
+   "--vs-warning-bg": {
+    "uses_in_css": 10,
+    "uses_in_templates": 3,
+    "value": "#fdf3e3"
+   },
+   "--warn": {
+    "uses_in_css": 0,
+    "uses_in_templates": 37,
+    "value": "var(--vs-warning)"
+   },
+   "--warn-light": {
+    "uses_in_css": 0,
+    "uses_in_templates": 13,
+    "value": "var(--vs-warning-bg)"
+   },
+   "--warn-soft": {
+    "uses_in_css": 0,
+    "uses_in_templates": 0,
+    "value": "var(--vs-warning-bg)"
+   },
+   "--warning-light": {
+    "uses_in_css": 0,
+    "uses_in_templates": 1,
+    "value": "var(--vs-warning-bg)"
+   }
+  },
+  "tokens_declared": 90,
+  "tokens_unused": [
+   "--accent-soft",
+   "--bg",
+   "--danger-soft",
+   "--success-soft",
+   "--text3",
+   "--vs-fs-xl",
+   "--vs-t",
+   "--vs-text-faint",
+   "--warn-soft"
+  ]
+ },
+ "glyphs": {
+  "arrows_subset": 83,
+  "by_glyph": {
+   "←": 20,
+   "→": 59,
+   "↩": 2,
+   "⇄": 2,
+   "⚙": 1,
+   "⚠": 17,
+   "⛽": 1,
+   "✅": 7,
+   "✏": 8,
+   "✓": 8,
+   "✕": 11,
+   "❌": 3,
+   "➕": 4,
+   "⬆": 1,
+   "⬇": 7,
+   "️": 2,
+   "🏢": 1,
+   "🏷": 1,
+   "👤": 1,
+   "💡": 2,
+   "💾": 12,
+   "📄": 1,
+   "📊": 4,
+   "📋": 4,
+   "📎": 2,
+   "📒": 1,
+   "📤": 4,
+   "📥": 5,
+   "📦": 4,
+   "📭": 2,
+   "🔒": 2,
+   "🔗": 4,
+   "🔸": 2,
+   "🕑": 1,
+   "🗑": 3,
+   "🚁": 2,
+   "🚜": 1,
+   "🚫": 5,
+   "🛒": 1,
+   "🤖": 3,
+   "🧭": 2,
+   "🧾": 3,
+   "🪪": 1
+  },
+  "distinct": 43,
+  "total": 227
+ },
+ "hardcoded_colors": {
+  "in_css_outside_root_distinct": 31,
+  "in_css_outside_root_total": 93,
+  "in_css_top": {
+   "#1d4ed8": 1,
+   "#9fb1cc": 1,
+   "#aebccd": 1,
+   "#c7d2e0": 1,
+   "#cdd7e5": 4,
+   "#d6ecdd": 1,
+   "#f1f5fa": 3,
+   "#f3d6d6": 3,
+   "#f3faf5": 1,
+   "#f5f8fc": 1,
+   "#f5f9ff": 1,
+   "#ffb4b4": 1,
+   "#ffffff": 54,
+   "rgba(0,0,0)": 2,
+   "rgba(255,255,255)": 2
+  },
+  "in_templates_distinct": 50,
+  "in_templates_per_file": {
+   "templates/admin_permissions.html": 6,
+   "templates/admin_users.html": 6,
+   "templates/daily_entry.html": 18,
+   "templates/fuel/_legacy_toggle.html": 3,
+   "templates/fuel/balance_report.html": 3,
+   "templates/fuel/cards.html": 4,
+   "templates/fuel/dashboard.html": 4,
+   "templates/fuel/receipts.html": 3,
+   "templates/fuel/report_card_issues.html": 6,
+   "templates/fuel/report_counter_mismatch.html": 6,
+   "templates/fuel/report_station_totals.html": 4,
+   "templates/fuel/reserve_transfers.html": 2,
+   "templates/fuel/station_issues_report.html": 3,
+   "templates/fuel/stations.html": 1,
+   "templates/login.html": 18,
+   "templates/report.html": 13,
+   "templates/spare_part_detail.html": 5,
+   "templates/wialon_auto_match.html": 4,
+   "templates/wialon_mapping_list.html": 3,
+   "templates/wialon_report.html": 2,
+   "templates/work_order_form.html": 1,
+   "templates/workload.html": 5
+  },
+  "in_templates_top": {
+   "#166534": 5,
+   "#2563eb": 3,
+   "#27ae60": 2,
+   "#2980b9": 2,
+   "#444444": 4,
+   "#8b6914": 4,
+   "#bbbbbb": 4,
+   "#dcfce7": 2,
+   "#e74c3c": 2,
+   "#f0f9f0": 3,
+   "#fefce8": 4,
+   "#fffbeb": 2,
+   "#ffffff": 28,
+   "rgba(15,23,42)": 3,
+   "rgba(255,255,255)": 11
+  },
+  "in_templates_total": 120
+ },
+ "schema_version": 1,
+ "tables": {
+  "by_class": {
+   "(no class)": 18,
+   "card-issues-table": 1,
+   "cards-sync-table": 1,
+   "cards-table": 1,
+   "fuel002a-table": 1,
+   "fuel002b-sync-table": 1,
+   "fuel002b-transaction-table": 1,
+   "fuel002c-warehouse-table": 1,
+   "fuel002d-report-table": 3,
+   "fuel002e-stations-table": 1,
+   "fuel002h-dashboard-table": 1,
+   "mismatch-table": 1,
+   "report-table": 3,
+   "station-issues-table": 1,
+   "station-totals-table": 1,
+   "table table-sm": 2,
+   "table table-sm table-striped fuel-balance-summary": 1,
+   "vs-table": 54,
+   "vs-table is-compact": 4,
+   "vs-table is-compact vs-num": 6,
+   "workload-table": 1
+  },
+  "oneoff_classes": {
+   "card-issues-table": 1,
+   "cards-sync-table": 1,
+   "cards-table": 1,
+   "fuel002a-table": 1,
+   "fuel002b-sync-table": 1,
+   "fuel002b-transaction-table": 1,
+   "fuel002c-warehouse-table": 1,
+   "fuel002d-report-table": 3,
+   "fuel002e-stations-table": 1,
+   "fuel002h-dashboard-table": 1,
+   "mismatch-table": 1,
+   "report-table": 3,
+   "station-issues-table": 1,
+   "station-totals-table": 1,
+   "table table-sm": 2,
+   "table table-sm table-striped fuel-balance-summary": 1,
+   "workload-table": 1
+  },
+  "oneoff_count": 17,
+  "total": 104
+ },
+ "templates": {
+  "count": 86,
+  "inline_css_lines": 2249,
+  "inline_js_lines": 2797,
+  "per_template": {
+   "templates/_spare_nav.html": {
+    "category": "B_mixed",
+    "glyphs": 0,
+    "inline_css_lines": 20,
+    "inline_js_lines": 18,
+    "legacy_vars": 0,
+    "lines": 110,
+    "ux_vars": 0,
+    "vs_classes": 19,
+    "vs_vars": 2
+   },
+   "templates/admin_permissions.html": {
+    "category": "E_no_signal",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 50,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/admin_users.html": {
+    "category": "B_mixed",
+    "glyphs": 8,
+    "inline_css_lines": 0,
+    "inline_js_lines": 32,
+    "legacy_vars": 0,
+    "lines": 193,
+    "ux_vars": 0,
+    "vs_classes": 2,
+    "vs_vars": 0
+   },
+   "templates/audit_logs.html": {
+    "category": "E_no_signal",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 81,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/base_next.html": {
+    "category": "A_components",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 100,
+    "legacy_vars": 0,
+    "lines": 393,
+    "ux_vars": 0,
+    "vs_classes": 85,
+    "vs_vars": 0
+   },
+   "templates/change_temporary_password.html": {
+    "category": "E_no_signal",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 32,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/daily_entry.html": {
+    "category": "B_mixed",
+    "glyphs": 7,
+    "inline_css_lines": 386,
+    "inline_js_lines": 336,
+    "legacy_vars": 0,
+    "lines": 1037,
+    "ux_vars": 0,
+    "vs_classes": 6,
+    "vs_vars": 133
+   },
+   "templates/deficiencies.html": {
+    "category": "B_mixed",
+    "glyphs": 2,
+    "inline_css_lines": 0,
+    "inline_js_lines": 20,
+    "legacy_vars": 2,
+    "lines": 185,
+    "ux_vars": 0,
+    "vs_classes": 13,
+    "vs_vars": 0
+   },
+   "templates/drones/_drones_nav.html": {
+    "category": "B_mixed",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 31,
+    "ux_vars": 0,
+    "vs_classes": 16,
+    "vs_vars": 0
+   },
+   "templates/drones/_money_cell.html": {
+    "category": "B_mixed",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 63,
+    "ux_vars": 0,
+    "vs_classes": 1,
+    "vs_vars": 0
+   },
+   "templates/drones/customers.html": {
+    "category": "A_components",
+    "glyphs": 3,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 237,
+    "ux_vars": 0,
+    "vs_classes": 117,
+    "vs_vars": 0
+   },
+   "templates/drones/flight_calendar.html": {
+    "category": "A_components",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 138,
+    "ux_vars": 0,
+    "vs_classes": 44,
+    "vs_vars": 0
+   },
+   "templates/drones/list.html": {
+    "category": "A_components",
+    "glyphs": 3,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 119,
+    "ux_vars": 0,
+    "vs_classes": 46,
+    "vs_vars": 0
+   },
+   "templates/drones/operator_card.html": {
+    "category": "A_components",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 198,
+    "ux_vars": 0,
+    "vs_classes": 93,
+    "vs_vars": 0
+   },
+   "templates/drones/operators.html": {
+    "category": "A_components",
+    "glyphs": 1,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 115,
+    "ux_vars": 0,
+    "vs_classes": 50,
+    "vs_vars": 0
+   },
+   "templates/drones/reattach.html": {
+    "category": "A_components",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 168,
+    "ux_vars": 0,
+    "vs_classes": 51,
+    "vs_vars": 0
+   },
+   "templates/drones/reports.html": {
+    "category": "B_mixed",
+    "glyphs": 1,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 59,
+    "ux_vars": 0,
+    "vs_classes": 12,
+    "vs_vars": 0
+   },
+   "templates/drones/sources.html": {
+    "category": "A_components",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 201,
+    "ux_vars": 0,
+    "vs_classes": 82,
+    "vs_vars": 0
+   },
+   "templates/drones/spray_usage.html": {
+    "category": "A_components",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 216,
+    "ux_vars": 0,
+    "vs_classes": 68,
+    "vs_vars": 0
+   },
+   "templates/drones/summary.html": {
+    "category": "A_components",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 378,
+    "ux_vars": 0,
+    "vs_classes": 114,
+    "vs_vars": 0
+   },
+   "templates/drones/unit_card.html": {
+    "category": "A_components",
+    "glyphs": 2,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 275,
+    "ux_vars": 0,
+    "vs_classes": 119,
+    "vs_vars": 0
+   },
+   "templates/drones/units.html": {
+    "category": "A_components",
+    "glyphs": 1,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 172,
+    "ux_vars": 0,
+    "vs_classes": 66,
+    "vs_vars": 0
+   },
+   "templates/drones/works.html": {
+    "category": "A_components",
+    "glyphs": 3,
+    "inline_css_lines": 0,
+    "inline_js_lines": 69,
+    "legacy_vars": 0,
+    "lines": 468,
+    "ux_vars": 0,
+    "vs_classes": 190,
+    "vs_vars": 0
+   },
+   "templates/drones/works_assignment_hints.html": {
+    "category": "A_components",
+    "glyphs": 2,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 204,
+    "ux_vars": 0,
+    "vs_classes": 76,
+    "vs_vars": 0
+   },
+   "templates/drones/works_debts.html": {
+    "category": "A_components",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 239,
+    "ux_vars": 0,
+    "vs_classes": 64,
+    "vs_vars": 0
+   },
+   "templates/drones/works_debts_aging.html": {
+    "category": "A_components",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 186,
+    "ux_vars": 0,
+    "vs_classes": 49,
+    "vs_vars": 0
+   },
+   "templates/drones/works_flights_reconcile.html": {
+    "category": "A_components",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 117,
+    "ux_vars": 0,
+    "vs_classes": 32,
+    "vs_vars": 0
+   },
+   "templates/drones/works_import.html": {
+    "category": "A_components",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 142,
+    "ux_vars": 0,
+    "vs_classes": 49,
+    "vs_vars": 0
+   },
+   "templates/drones/works_import_preview.html": {
+    "category": "A_components",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 437,
+    "ux_vars": 0,
+    "vs_classes": 139,
+    "vs_vars": 0
+   },
+   "templates/drones/works_reports.html": {
+    "category": "A_components",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 223,
+    "ux_vars": 0,
+    "vs_classes": 63,
+    "vs_vars": 0
+   },
+   "templates/error.html": {
+    "category": "E_no_signal",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 32,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/fuel/_fuel_nav.html": {
+    "category": "A_components",
+    "glyphs": 0,
+    "inline_css_lines": 23,
+    "inline_js_lines": 18,
+    "legacy_vars": 0,
+    "lines": 136,
+    "ux_vars": 0,
+    "vs_classes": 22,
+    "vs_vars": 2
+   },
+   "templates/fuel/_legacy_toggle.html": {
+    "category": "E_no_signal",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 38,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/fuel/_period_picker.html": {
+    "category": "B_mixed",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 63,
+    "ux_vars": 0,
+    "vs_classes": 3,
+    "vs_vars": 0
+   },
+   "templates/fuel/balance_report.html": {
+    "category": "B_mixed",
+    "glyphs": 0,
+    "inline_css_lines": 30,
+    "inline_js_lines": 23,
+    "legacy_vars": 2,
+    "lines": 347,
+    "ux_vars": 0,
+    "vs_classes": 6,
+    "vs_vars": 0
+   },
+   "templates/fuel/cards.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 1,
+    "inline_css_lines": 17,
+    "inline_js_lines": 0,
+    "legacy_vars": 5,
+    "lines": 188,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/fuel/dashboard.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 0,
+    "inline_css_lines": 97,
+    "inline_js_lines": 0,
+    "legacy_vars": 6,
+    "lines": 355,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/fuel/initial_balance.html": {
+    "category": "E_no_signal",
+    "glyphs": 3,
+    "inline_css_lines": 0,
+    "inline_js_lines": 24,
+    "legacy_vars": 0,
+    "lines": 175,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/fuel/ledger.html": {
+    "category": "B_mixed",
+    "glyphs": 0,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 188,
+    "ux_vars": 0,
+    "vs_classes": 4,
+    "vs_vars": 0
+   },
+   "templates/fuel/manual_expenses.html": {
+    "category": "E_no_signal",
+    "glyphs": 1,
+    "inline_css_lines": 2,
+    "inline_js_lines": 24,
+    "legacy_vars": 0,
+    "lines": 197,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/fuel/receipts.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 1,
+    "inline_css_lines": 172,
+    "inline_js_lines": 69,
+    "legacy_vars": 7,
+    "lines": 445,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/fuel/report.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 0,
+    "inline_css_lines": 143,
+    "inline_js_lines": 23,
+    "legacy_vars": 9,
+    "lines": 449,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/fuel/report_card_issues.html": {
+    "category": "B_mixed",
+    "glyphs": 0,
+    "inline_css_lines": 16,
+    "inline_js_lines": 0,
+    "legacy_vars": 1,
+    "lines": 118,
+    "ux_vars": 0,
+    "vs_classes": 9,
+    "vs_vars": 0
+   },
+   "templates/fuel/report_counter_mismatch.html": {
+    "category": "B_mixed",
+    "glyphs": 0,
+    "inline_css_lines": 19,
+    "inline_js_lines": 0,
+    "legacy_vars": 1,
+    "lines": 119,
+    "ux_vars": 0,
+    "vs_classes": 9,
+    "vs_vars": 0
+   },
+   "templates/fuel/report_station_totals.html": {
+    "category": "B_mixed",
+    "glyphs": 0,
+    "inline_css_lines": 15,
+    "inline_js_lines": 0,
+    "legacy_vars": 1,
+    "lines": 108,
+    "ux_vars": 0,
+    "vs_classes": 9,
+    "vs_vars": 0
+   },
+   "templates/fuel/reports.html": {
+    "category": "A_components",
+    "glyphs": 7,
+    "inline_css_lines": 13,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 165,
+    "ux_vars": 0,
+    "vs_classes": 68,
+    "vs_vars": 5
+   },
+   "templates/fuel/reserve_transfers.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 0,
+    "inline_css_lines": 5,
+    "inline_js_lines": 0,
+    "legacy_vars": 1,
+    "lines": 135,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/fuel/station_issues_report.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 3,
+    "inline_css_lines": 19,
+    "inline_js_lines": 0,
+    "legacy_vars": 6,
+    "lines": 179,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/fuel/stations.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 2,
+    "inline_css_lines": 161,
+    "inline_js_lines": 43,
+    "legacy_vars": 10,
+    "lines": 360,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/fuel/transactions.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 1,
+    "inline_css_lines": 153,
+    "inline_js_lines": 11,
+    "legacy_vars": 11,
+    "lines": 367,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/fuel/warehouses.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 2,
+    "inline_css_lines": 171,
+    "inline_js_lines": 21,
+    "legacy_vars": 14,
+    "lines": 364,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/fuel/warnings.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 0,
+    "inline_css_lines": 142,
+    "inline_js_lines": 0,
+    "legacy_vars": 13,
+    "lines": 302,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/index.html": {
+    "category": "A_components",
+    "glyphs": 19,
+    "inline_css_lines": 4,
+    "inline_js_lines": 90,
+    "legacy_vars": 0,
+    "lines": 779,
+    "ux_vars": 0,
+    "vs_classes": 382,
+    "vs_vars": 10
+   },
+   "templates/login.html": {
+    "category": "A_components",
+    "glyphs": 0,
+    "inline_css_lines": 152,
+    "inline_js_lines": 39,
+    "legacy_vars": 0,
+    "lines": 275,
+    "ux_vars": 0,
+    "vs_classes": 72,
+    "vs_vars": 10
+   },
+   "templates/profile.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 1,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 1,
+    "lines": 41,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/ref_customers.html": {
+    "category": "B_mixed",
+    "glyphs": 0,
+    "inline_css_lines": 11,
+    "inline_js_lines": 0,
+    "legacy_vars": 4,
+    "lines": 160,
+    "ux_vars": 0,
+    "vs_classes": 2,
+    "vs_vars": 0
+   },
+   "templates/ref_equipment.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 7,
+    "inline_css_lines": 14,
+    "inline_js_lines": 156,
+    "legacy_vars": 5,
+    "lines": 441,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/ref_organizations.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 0,
+    "inline_css_lines": 10,
+    "inline_js_lines": 0,
+    "legacy_vars": 4,
+    "lines": 116,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/ref_work_types.html": {
+    "category": "B_mixed",
+    "glyphs": 0,
+    "inline_css_lines": 11,
+    "inline_js_lines": 77,
+    "legacy_vars": 4,
+    "lines": 265,
+    "ux_vars": 0,
+    "vs_classes": 2,
+    "vs_vars": 0
+   },
+   "templates/report.html": {
+    "category": "C_ux_island",
+    "glyphs": 4,
+    "inline_css_lines": 186,
+    "inline_js_lines": 70,
+    "legacy_vars": 14,
+    "lines": 584,
+    "ux_vars": 14,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/spare_part_act.html": {
+    "category": "A_components",
+    "glyphs": 4,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 79,
+    "ux_vars": 0,
+    "vs_classes": 37,
+    "vs_vars": 0
+   },
+   "templates/spare_part_compatibility.html": {
+    "category": "A_components",
+    "glyphs": 2,
+    "inline_css_lines": 0,
+    "inline_js_lines": 12,
+    "legacy_vars": 1,
+    "lines": 69,
+    "ux_vars": 0,
+    "vs_classes": 26,
+    "vs_vars": 0
+   },
+   "templates/spare_part_detail.html": {
+    "category": "A_components",
+    "glyphs": 29,
+    "inline_css_lines": 27,
+    "inline_js_lines": 170,
+    "legacy_vars": 10,
+    "lines": 708,
+    "ux_vars": 0,
+    "vs_classes": 196,
+    "vs_vars": 6
+   },
+   "templates/spare_part_form.html": {
+    "category": "A_components",
+    "glyphs": 9,
+    "inline_css_lines": 30,
+    "inline_js_lines": 513,
+    "legacy_vars": 9,
+    "lines": 669,
+    "ux_vars": 0,
+    "vs_classes": 60,
+    "vs_vars": 0
+   },
+   "templates/spare_parts_acts.html": {
+    "category": "A_components",
+    "glyphs": 2,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 93,
+    "ux_vars": 0,
+    "vs_classes": 36,
+    "vs_vars": 0
+   },
+   "templates/spare_parts_catalog.html": {
+    "category": "A_components",
+    "glyphs": 7,
+    "inline_css_lines": 0,
+    "inline_js_lines": 142,
+    "legacy_vars": 0,
+    "lines": 479,
+    "ux_vars": 0,
+    "vs_classes": 135,
+    "vs_vars": 1
+   },
+   "templates/spare_parts_desk.html": {
+    "category": "A_components",
+    "glyphs": 18,
+    "inline_css_lines": 11,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 217,
+    "ux_vars": 0,
+    "vs_classes": 98,
+    "vs_vars": 2
+   },
+   "templates/spare_parts_equipment_models.html": {
+    "category": "A_components",
+    "glyphs": 3,
+    "inline_css_lines": 0,
+    "inline_js_lines": 20,
+    "legacy_vars": 0,
+    "lines": 161,
+    "ux_vars": 0,
+    "vs_classes": 62,
+    "vs_vars": 0
+   },
+   "templates/spare_parts_inventory.html": {
+    "category": "A_components",
+    "glyphs": 4,
+    "inline_css_lines": 5,
+    "inline_js_lines": 15,
+    "legacy_vars": 0,
+    "lines": 360,
+    "ux_vars": 0,
+    "vs_classes": 128,
+    "vs_vars": 0
+   },
+   "templates/spare_parts_list.html": {
+    "category": "A_components",
+    "glyphs": 1,
+    "inline_css_lines": 0,
+    "inline_js_lines": 21,
+    "legacy_vars": 1,
+    "lines": 160,
+    "ux_vars": 0,
+    "vs_classes": 57,
+    "vs_vars": 0
+   },
+   "templates/spare_parts_maintenance_due.html": {
+    "category": "B_mixed",
+    "glyphs": 1,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 60,
+    "ux_vars": 0,
+    "vs_classes": 18,
+    "vs_vars": 0
+   },
+   "templates/spare_parts_maintenance_norms.html": {
+    "category": "A_components",
+    "glyphs": 2,
+    "inline_css_lines": 0,
+    "inline_js_lines": 20,
+    "legacy_vars": 0,
+    "lines": 131,
+    "ux_vars": 0,
+    "vs_classes": 44,
+    "vs_vars": 0
+   },
+   "templates/spare_parts_purchase_queue.html": {
+    "category": "A_components",
+    "glyphs": 2,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 95,
+    "ux_vars": 0,
+    "vs_classes": 25,
+    "vs_vars": 0
+   },
+   "templates/spare_parts_report_page.html": {
+    "category": "A_components",
+    "glyphs": 4,
+    "inline_css_lines": 0,
+    "inline_js_lines": 22,
+    "legacy_vars": 0,
+    "lines": 350,
+    "ux_vars": 0,
+    "vs_classes": 97,
+    "vs_vars": 0
+   },
+   "templates/spare_parts_reports.html": {
+    "category": "B_mixed",
+    "glyphs": 1,
+    "inline_css_lines": 0,
+    "inline_js_lines": 0,
+    "legacy_vars": 0,
+    "lines": 49,
+    "ux_vars": 0,
+    "vs_classes": 12,
+    "vs_vars": 0
+   },
+   "templates/spare_parts_skus.html": {
+    "category": "A_components",
+    "glyphs": 3,
+    "inline_css_lines": 0,
+    "inline_js_lines": 53,
+    "legacy_vars": 0,
+    "lines": 181,
+    "ux_vars": 0,
+    "vs_classes": 58,
+    "vs_vars": 0
+   },
+   "templates/wialon.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 9,
+    "inline_css_lines": 0,
+    "inline_js_lines": 51,
+    "legacy_vars": 5,
+    "lines": 221,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/wialon_auto_match.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 9,
+    "inline_css_lines": 12,
+    "inline_js_lines": 83,
+    "legacy_vars": 3,
+    "lines": 239,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/wialon_mapping.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 8,
+    "inline_css_lines": 0,
+    "inline_js_lines": 24,
+    "legacy_vars": 1,
+    "lines": 202,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/wialon_mapping_list.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 10,
+    "inline_css_lines": 19,
+    "inline_js_lines": 234,
+    "legacy_vars": 4,
+    "lines": 488,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/wialon_report.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 5,
+    "inline_css_lines": 9,
+    "inline_js_lines": 8,
+    "legacy_vars": 7,
+    "lines": 237,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/work_order_close.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 1,
+    "inline_css_lines": 11,
+    "inline_js_lines": 0,
+    "legacy_vars": 2,
+    "lines": 76,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/work_order_detail.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 3,
+    "inline_css_lines": 26,
+    "inline_js_lines": 0,
+    "legacy_vars": 9,
+    "lines": 150,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/work_order_form.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 2,
+    "inline_css_lines": 12,
+    "inline_js_lines": 134,
+    "legacy_vars": 1,
+    "lines": 285,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/work_orders_list.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 0,
+    "inline_css_lines": 27,
+    "inline_js_lines": 0,
+    "legacy_vars": 8,
+    "lines": 177,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   },
+   "templates/workload.html": {
+    "category": "D_legacy_vars",
+    "glyphs": 3,
+    "inline_css_lines": 68,
+    "inline_js_lines": 12,
+    "legacy_vars": 8,
+    "lines": 284,
+    "ux_vars": 0,
+    "vs_classes": 0,
+    "vs_vars": 0
+   }
+  },
+  "total_lines": 20178
+ }
+}
