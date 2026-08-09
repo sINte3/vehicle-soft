@@ -1,0 +1,86 @@
+{# Одна строка работы в форме дневного ввода.
+
+   [REASON]: до этого разметка строки существовала ДВАЖДЫ — серверный макрос и
+   JS-шаблон кнопки «добавить работу», — и их приходилось править парой. Ровно
+   на этом трек уже спотыкался в UI-P4-001: поле единицы измерения было
+   заменено в одном месте из двух, и форма осталась наполовину со свободным
+   вводом, причём на экране это не видно: вторая строка появляется только по
+   нажатию кнопки. Один макрос на оба применения делает такую ошибку
+   невозможной, а не маловероятной.
+
+   Имена и идентификаторы приходят СТРОКАМИ, потому что во втором применении
+   их подставляет не Jinja, а JavaScript:
+     сервер : name_prefix='eq_5_line_0',           eq_expr='5',        idx_expr='0'
+     клиент : name_prefix='eq_${eqId}_line_${idx}', eq_expr='${eqId}', idx_expr='${idx}'
+   Разметка поэтому не должна содержать ни обратных кавычек, ни собственных
+   последовательностей ${...}: она попадает внутрь JS-строки в обратных
+   кавычках.
+
+   rec — сохранённая строка или None (у добавляемой строки истории нет).
+#}
+{% macro daily_line(name_prefix, id_prefix, eq_expr, idx_expr, rec, unit_chosen, default_price, unit_select) %}
+<div class="vs-line-row" id="{{ id_prefix }}" data-line-idx="{{ idx_expr }}">
+    <div class="vs-field">
+        <label class="vs-label" for="{{ id_prefix }}-wt">{{ t('Иш тури') }}</label>
+        <select class="vs-select" id="{{ id_prefix }}-wt" name="{{ name_prefix }}_work_type"
+                onchange="onWorkTypeChange(this, {{ eq_expr }}, {{ idx_expr }}); markFormDirty();">
+            <option value="">—</option>
+            {% for wt in work_types %}
+            <option value="{{ wt.name }}"
+                    data-unit="{{ work_type_unit_code.get(wt.id, '') }}" data-price="{{ wt.default_price }}"
+                    {% if rec and rec.work_type == wt.name %}selected{% endif %}>{{ wt.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="vs-field">
+        <label class="vs-label" for="{{ id_prefix }}-customer">{{ t('Буюртмачи') }}</label>
+        <input type="text" class="vs-input" id="{{ id_prefix }}-customer" name="{{ name_prefix }}_customer"
+               list="customers-list" value="{{ rec.customer if rec else '' }}"
+               placeholder="{{ t('Буюртмачи номи') }}" oninput="markFormDirty()">
+    </div>
+    <div class="vs-field">
+        <label class="vs-label" for="{{ id_prefix }}-unit">{{ t('Ўлчов') }}</label>
+        {{ unit_select(name_prefix ~ '_unit', id_prefix ~ '-unit', unit_chosen) }}
+    </div>
+    <div class="vs-field">
+        <label class="vs-label" for="{{ id_prefix }}-qty">{{ t('Миқдор') }}</label>
+        <input type="number" class="vs-input" min="0.1" step="0.1" inputmode="decimal"
+               name="{{ name_prefix }}_quantity" id="{{ id_prefix }}-qty"
+               value="{{ rec.quantity if rec and rec.quantity else '' }}" placeholder="0.0"
+               oninput="calcAmount({{ eq_expr }}); markFormDirty()" onwheel="this.blur()">
+        <span class="vs-help">{{ t('Миқдор 0 дан катта бўлиши керак') }}</span>
+    </div>
+    <div class="vs-field">
+        <label class="vs-label" for="{{ id_prefix }}-price">{{ t('Нарх') }}</label>
+        <input type="number" class="vs-input" min="0" step="1" inputmode="numeric"
+               name="{{ name_prefix }}_price" id="{{ id_prefix }}-price"
+               value="{{ rec.price|int if rec and rec.price else (default_price|int if default_price else '') }}"
+               placeholder="0" oninput="calcAmount({{ eq_expr }}); markFormDirty()" onwheel="this.blur()">
+        <span class="vs-help">{{ t('Нарх манфий бўлмаслиги керак') }}</span>
+    </div>
+    <div class="vs-field">
+        <label class="vs-label" for="{{ id_prefix }}-payment">{{ t('Тўлов тури') }}</label>
+        <select class="vs-select" id="{{ id_prefix }}-payment" name="{{ name_prefix }}_payment_type" onchange="markFormDirty()">
+            <option value="internal" {% if not rec or rec.payment_type == 'internal' %}selected{% endif %}>{{ t('Тизим') }}</option>
+            <option value="transfer" {% if rec and rec.payment_type == 'transfer' %}selected{% endif %}>{{ t('Пул кўч.') }}</option>
+            <option value="cash" {% if rec and rec.payment_type == 'cash' %}selected{% endif %}>{{ t('Нақд') }}</option>
+            <option value="other" {% if rec and rec.payment_type == 'other' %}selected{% endif %}>{{ t('Бошқа') }}</option>
+        </select>
+    </div>
+    <div class="vs-field vs-field-grow">
+        <label class="vs-label" for="{{ id_prefix }}-note">{{ t('Изоҳ') }}</label>
+        <input type="text" class="vs-input" id="{{ id_prefix }}-note" name="{{ name_prefix }}_note"
+               value="{{ rec.note if rec else '' }}" placeholder="{{ t('Қисқа изоҳ') }}" oninput="markFormDirty()">
+    </div>
+    <div class="vs-field vs-field-action">
+        <button type="button" class="vs-btn vs-btn-sm vs-btn-danger"
+                onclick="removeLine({{ eq_expr }}, {{ idx_expr }})"
+                title="{{ t('Бу қаторни ўчириш') }}"
+                aria-label="{{ t('Бу қаторни ўчириш') }}">{{ icon('close', 14) }}</button>
+    </div>
+    {# Подсказка живёт в разметке и потому переводится. Показывается правилом
+       .vs-line-row.is-incomplete — раньше тот же текст стоял в CSS в
+       `content:` одной русской строкой и на узбекском интерфейсе не менялся. #}
+    <span class="vs-line-row-hint">{{ t('Иш тури, миқдор ва нархни текширинг') }}</span>
+</div>
+{% endmacro %}

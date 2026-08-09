@@ -1359,6 +1359,43 @@ def create_app():
         flash('Камчилик ўчирилди', 'warning')
         return redirect(url_for('deficiencies_list', date=sel.isoformat()))
 
+    # ─── UI KITCHEN SINK (dev only) ──────────────────────────────────────
+    @app.route('/__ui/kitchen-sink')
+    @login_required
+    def ui_kitchen_sink():
+        """Все компоненты дизайн-системы во всех состояниях, одной страницей.
+
+        Замена Storybook без второго источника правды: страница собирается тем
+        же Jinja и тем же CSS, что и продукт, поэтому показывает компонент
+        таким, каким он выходит в приложении, а не таким, каким задуман.
+
+        [REASON]: маршрут отдаёт 404 вне dev-конфигурации, а не прячется
+        отсутствием ссылки. Это служебная поверхность; на production она не
+        нужна никому, и «его всё равно никто не найдёт» защитой не является.
+        Флаг отдельный, не DEBUG: `app.run(debug=False)` присваивает app.debug
+        и перезаписывает config['DEBUG'], поэтому проверка по нему зависела бы
+        от способа запуска сервера, а не от конфигурации.
+        """
+        if not app.config.get('UI_KITCHEN_SINK'):
+            abort(404)
+        rows = [
+            {'name': 'МТЗ-82.1 Беларус', 'status': 'Работал', 'role': 'vs-badge-success', 'amount': 15878.64},
+            {'name': 'Case IH Axial-Flow', 'status': 'Простой', 'role': 'vs-badge-warning', 'amount': 3200.0},
+            {'name': 'John Deere 8R 410', 'status': 'Отклонено', 'role': 'vs-badge-danger', 'amount': 940.5},
+            {'name': 'Amazone ZA-M 1500', 'status': 'Черновик', 'role': '', 'amount': 128.0},
+        ]
+        # Значение длиннее p99 — именно оно проверяет, что колонка обрезается,
+        # а не растягивается (DD-030).
+        long_value = ('м-соат будем считать с 08:00-18:00 если техника работала '
+                      'весь день то ставим 10 моточасов')
+        icon_names = ['save', 'plus', 'edit', 'trash', 'check', 'close', 'warning',
+                      'error', 'info', 'download', 'upload', 'chart', 'list', 'box',
+                      'link', 'doc', 'attach', 'building', 'tag', 'user', 'hint',
+                      'fuel', 'settings', 'empty', 'bot', 'blocked', 'tractor',
+                      'search', 'filter', 'calendar', 'clock', 'receipt']
+        return render_template('__ui_kitchen_sink.html', rows=rows,
+                               long_value=long_value, icon_names=icon_names)
+
     # в”Ђв”Ђв”Ђ REPORT в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     @app.route('/report', methods=['GET', 'POST'])
     @module_required('transport')

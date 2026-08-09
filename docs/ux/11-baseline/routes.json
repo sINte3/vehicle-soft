@@ -6,6 +6,11 @@
    "url": "/"
   },
   {
+   "endpoint": "ui_kitchen_sink",
+   "slug": "__ui-kitchen-sink",
+   "url": "/__ui/kitchen-sink"
+  },
+  {
    "endpoint": "admin_audit_logs",
    "slug": "admin-audit",
    "url": "/admin/audit"

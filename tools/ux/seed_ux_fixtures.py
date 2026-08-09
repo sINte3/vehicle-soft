@@ -237,6 +237,72 @@ def seed_daily_units(db):
     return len(rows) if DailyRecordUnit is not None else 0
 
 
+def seed_closed_set_statuses(db):
+    """Postavit statusam znacheniya iz ih NASTOYASHCHIH naborov.
+
+    [REASON]: eti kolonki -- svobodnyy VARCHAR, no prilozhenie obrashchaetsya
+    k nim kak k klyuchu slovarya: status_labels[req.status][lang]. Obshchiy
+    generator kladet tuda stroku nuzhnoy DLINY ('Каток Опр'), i ekran
+    spare_part_detail padaet s 500 -- 'dict object has no attribute'.
+    Proverено: do etoy pravki marshrut /spare-parts/<id> otdaval 500 na
+    OBOIH ekzemplyarah, i v bazis kadrov P1 on prosto ne popal. Bez etogo
+    kanonicheskiy ekran nevozmozhno ni snyat, ni proverit.
+
+    Enum-kolonki obshchiy generator uzhe zapolnyaet pravilno (_enum_values);
+    zdes tolko te nabory, kotorye zhivut v slovaryah Python, a ne v skheme.
+    """
+    from models import SparePartRequest, SparePartRequestItem, SparePartStatusHistory
+
+    request_statuses = ['draft', 'submitted', 'returned_for_revision',
+                        'approved', 'rejected', 'cancelled', 'issued']
+    price_statuses = ['pending', 'confirmed', 'rejected', 'returned']
+
+    touched = 0
+    for i, req in enumerate(SparePartRequest.query.order_by(SparePartRequest.id).all()):
+        req.status = request_statuses[i % len(request_statuses)]
+        touched += 1
+    for i, item in enumerate(SparePartRequestItem.query.order_by(SparePartRequestItem.id).all()):
+        item.price_status = price_statuses[i % len(price_statuses)]
+    # Zhurnal statusov chitaetsya toy zhe kartoy podpisey na ekrane zayavki.
+    for i, ev in enumerate(SparePartStatusHistory.query.order_by(SparePartStatusHistory.id).all()):
+        ev.old_status = request_statuses[i % len(request_statuses)]
+        ev.new_status = request_statuses[(i + 1) % len(request_statuses)]
+    db.session.commit()
+    return touched
+
+
+def concentrate_equipment(db, target_orgs=2):
+    """Sobrat tehniku v neskolko organizaciy vmesto ravnomernoy razmazki.
+
+    [REASON]: obshchiy generator razdaet vneshnie klyuchi po krugu, i 24
+    edinicy tehniki lozhatsya po odnoy na 22 organizacii. Ekran dnevnogo vvoda
+    pri etom snimaetsya s ODNOY kartochkoy, hotya po metrikam boevoy bazy on
+    neset 83 % vsey raboty cheloveka i pokazyvaet desyatki mashin srazu.
+    Kadr s odnoy kartochkoy ne pokazyvaet ni plotnosti, ni gruppirovki po
+    kategoriyam, ni togo, kak vedet sebya lipkaya polka sohraneniya pri
+    dlinnom spiske -- to est ne pokazyvaet imenno togo, radi chego ekran
+    vzyat etalonnym.
+
+    Kategorii tozhe raskladyvayutsya po realnomu naboru: bez etogo vse mashiny
+    popadayut v odnu gruppu i razdel po kategoriyam ne viden.
+    """
+    from models import CATEGORIES, Equipment, Organization
+
+    org_ids = [o.id for o in Organization.query.order_by(Organization.id).limit(target_orgs).all()]
+    if not org_ids:
+        return 0
+    cat_codes = list(CATEGORIES.keys())
+    items = Equipment.query.order_by(Equipment.id).all()
+    for i, eq in enumerate(items):
+        # Pervaya organizaciya poluchaet bolshinstvo: nuzhen odin PLOTNYY
+        # ekran, a ne dva srednih.
+        eq.organization_id = org_ids[1 % len(org_ids)] if i % 4 == 3 else org_ids[0]
+        eq.category = cat_codes[i % len(cat_codes)]
+        eq.is_active = True
+    db.session.commit()
+    return len(items)
+
+
 def ordered_models(db):
     """Modeli v poryadke zavisimostey: roditel ranshe rebenka."""
     models = [m for m in db.Model.registry.mappers]
@@ -325,7 +391,9 @@ def seed(app, db, rows_per_table=14, verbose=True):
                     sa.select(list(table.primary_key.columns)[0]).limit(60))]
                 pk_pool[table.name] = pks
 
+        concentrate_equipment(db)
         created['daily_record_units'] = seed_daily_units(db)
+        seed_closed_set_statuses(db)
 
         # Polzovateli -- otdelno i yavno: nuzhny vse chetyre roli, chtoby snyat
         # sostoyaniya "net prav", i predskazuemye loginy dlya obhoda.
