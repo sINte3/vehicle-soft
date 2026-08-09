@@ -1,0 +1,591 @@
+{
+ "routes": [
+  {
+   "endpoint": "index",
+   "slug": "root",
+   "url": "/"
+  },
+  {
+   "endpoint": "admin_audit_logs",
+   "slug": "admin-audit",
+   "url": "/admin/audit"
+  },
+  {
+   "endpoint": "admin_permissions",
+   "slug": "admin-permissions",
+   "url": "/admin/permissions"
+  },
+  {
+   "endpoint": "admin_users",
+   "slug": "admin-users",
+   "url": "/admin/users"
+  },
+  {
+   "endpoint": "bot_api.catalog",
+   "slug": "api-bot-catalog",
+   "url": "/api/bot/catalog"
+  },
+  {
+   "endpoint": "bot_api.list_equipment",
+   "slug": "api-bot-equipment",
+   "url": "/api/bot/equipment"
+  },
+  {
+   "endpoint": "bot_api.health",
+   "slug": "api-bot-health",
+   "url": "/api/bot/health"
+  },
+  {
+   "endpoint": "bot_api.me",
+   "slug": "api-bot-me",
+   "url": "/api/bot/me"
+  },
+  {
+   "endpoint": "bot_api.list_requests",
+   "slug": "api-bot-requests",
+   "url": "/api/bot/requests"
+  },
+  {
+   "endpoint": "work_orders.api_equipment_by_org",
+   "slug": "api-work-orders-equipment-by-org",
+   "url": "/api/work-orders/equipment-by-org"
+  },
+  {
+   "endpoint": "work_orders.api_work_type_price",
+   "slug": "api-work-orders-work-type-price",
+   "url": "/api/work-orders/work-type-price"
+  },
+  {
+   "endpoint": "sec003a_change_temp_password",
+   "slug": "change-temporary-password",
+   "url": "/change-temporary-password"
+  },
+  {
+   "endpoint": "deficiencies_list",
+   "slug": "deficiencies",
+   "url": "/deficiencies"
+  },
+  {
+   "endpoint": "drones.index",
+   "slug": "drones",
+   "url": "/drones/"
+  },
+  {
+   "endpoint": "drones.customers",
+   "slug": "drones-customers",
+   "url": "/drones/customers"
+  },
+  {
+   "endpoint": "drones.flights_xlsx",
+   "slug": "drones-flights.xlsx",
+   "url": "/drones/flights.xlsx"
+  },
+  {
+   "endpoint": "drones.operators",
+   "slug": "drones-operators",
+   "url": "/drones/operators"
+  },
+  {
+   "endpoint": "drones.operator_card",
+   "slug": "drones-operators-1",
+   "url": "/drones/operators/1"
+  },
+  {
+   "endpoint": "drones.reports",
+   "slug": "drones-reports",
+   "url": "/drones/reports"
+  },
+  {
+   "endpoint": "drones.flight_calendar",
+   "slug": "drones-reports-calendar",
+   "url": "/drones/reports/calendar"
+  },
+  {
+   "endpoint": "drones.works_flights_reconcile",
+   "slug": "drones-reports-reconcile",
+   "url": "/drones/reports/reconcile"
+  },
+  {
+   "endpoint": "drones.spray_usage",
+   "slug": "drones-reports-spray",
+   "url": "/drones/reports/spray"
+  },
+  {
+   "endpoint": "drones.spray_usage_xlsx",
+   "slug": "drones-reports-spray.xlsx",
+   "url": "/drones/reports/spray.xlsx"
+  },
+  {
+   "endpoint": "drones.sources",
+   "slug": "drones-sources",
+   "url": "/drones/sources"
+  },
+  {
+   "endpoint": "drones.summary",
+   "slug": "drones-summary",
+   "url": "/drones/summary"
+  },
+  {
+   "endpoint": "drones.summary_xlsx",
+   "slug": "drones-summary.xlsx",
+   "url": "/drones/summary.xlsx"
+  },
+  {
+   "endpoint": "drones.units",
+   "slug": "drones-units",
+   "url": "/drones/units"
+  },
+  {
+   "endpoint": "drones.unit_card",
+   "slug": "drones-units-1",
+   "url": "/drones/units/1"
+  },
+  {
+   "endpoint": "drones.reattach",
+   "slug": "drones-units-reattach",
+   "url": "/drones/units/reattach"
+  },
+  {
+   "endpoint": "drones.works",
+   "slug": "drones-works",
+   "url": "/drones/works"
+  },
+  {
+   "endpoint": "drones.works_xlsx",
+   "slug": "drones-works.xlsx",
+   "url": "/drones/works.xlsx"
+  },
+  {
+   "endpoint": "drones.works_assignment_hints",
+   "slug": "drones-works-assignment-hints",
+   "url": "/drones/works/assignment-hints"
+  },
+  {
+   "endpoint": "drones.works_debt_xlsx",
+   "slug": "drones-works-debt.xlsx",
+   "url": "/drones/works/debt.xlsx"
+  },
+  {
+   "endpoint": "drones.works_debts",
+   "slug": "drones-works-debts",
+   "url": "/drones/works/debts"
+  },
+  {
+   "endpoint": "drones.works_debts_aging",
+   "slug": "drones-works-debts-aging",
+   "url": "/drones/works/debts/aging"
+  },
+  {
+   "endpoint": "drones.works_debts_aging_xlsx",
+   "slug": "drones-works-debts-aging.xlsx",
+   "url": "/drones/works/debts/aging.xlsx"
+  },
+  {
+   "endpoint": "drones.works_import",
+   "slug": "drones-works-import",
+   "url": "/drones/works/import"
+  },
+  {
+   "endpoint": "drones.works_import_preview",
+   "slug": "drones-works-import-20",
+   "url": "/drones/works/import/20"
+  },
+  {
+   "endpoint": "drones.works_import_report",
+   "slug": "drones-works-import-20-report",
+   "url": "/drones/works/import/20/report"
+  },
+  {
+   "endpoint": "drones.works_reports",
+   "slug": "drones-works-reports",
+   "url": "/drones/works/reports"
+  },
+  {
+   "endpoint": "drones.works_reports_xlsx",
+   "slug": "drones-works-reports.xlsx",
+   "url": "/drones/works/reports.xlsx"
+  },
+  {
+   "endpoint": "daily_entry",
+   "slug": "entry",
+   "url": "/entry"
+  },
+  {
+   "endpoint": "fuel.dashboard",
+   "slug": "fuel",
+   "url": "/fuel/"
+  },
+  {
+   "endpoint": "fuel.api_fuel_ping",
+   "slug": "fuel-api-fuel_ping",
+   "url": "/fuel/api/fuel_ping"
+  },
+  {
+   "endpoint": "fuel.balance_report",
+   "slug": "fuel-balance-report",
+   "url": "/fuel/balance-report"
+  },
+  {
+   "endpoint": "fuel.balance_report_export",
+   "slug": "fuel-balance-report-export",
+   "url": "/fuel/balance-report/export"
+  },
+  {
+   "endpoint": "fuel.card_directory",
+   "slug": "fuel-cards",
+   "url": "/fuel/cards"
+  },
+  {
+   "endpoint": "fuel.initial_balance",
+   "slug": "fuel-initial-balance",
+   "url": "/fuel/initial-balance"
+  },
+  {
+   "endpoint": "fuel.warehouse_ledger",
+   "slug": "fuel-ledger",
+   "url": "/fuel/ledger"
+  },
+  {
+   "endpoint": "fuel.warehouse_ledger_export",
+   "slug": "fuel-ledger-export",
+   "url": "/fuel/ledger/export"
+  },
+  {
+   "endpoint": "fuel.manual_expenses",
+   "slug": "fuel-manual-expenses",
+   "url": "/fuel/manual-expenses"
+  },
+  {
+   "endpoint": "fuel.receipts",
+   "slug": "fuel-receipts",
+   "url": "/fuel/receipts"
+  },
+  {
+   "endpoint": "fuel.fuel_report",
+   "slug": "fuel-report",
+   "url": "/fuel/report"
+  },
+  {
+   "endpoint": "fuel.reports_center",
+   "slug": "fuel-reports",
+   "url": "/fuel/reports"
+  },
+  {
+   "endpoint": "fuel.card_issues_report",
+   "slug": "fuel-reports-card-issues",
+   "url": "/fuel/reports/card-issues"
+  },
+  {
+   "endpoint": "fuel.card_issues_export",
+   "slug": "fuel-reports-card-issues-export",
+   "url": "/fuel/reports/card-issues/export"
+  },
+  {
+   "endpoint": "fuel.counter_mismatch_report",
+   "slug": "fuel-reports-counter-mismatch",
+   "url": "/fuel/reports/counter-mismatch"
+  },
+  {
+   "endpoint": "fuel.counter_mismatch_export",
+   "slug": "fuel-reports-counter-mismatch-export",
+   "url": "/fuel/reports/counter-mismatch/export"
+  },
+  {
+   "endpoint": "fuel.station_issues_report",
+   "slug": "fuel-reports-station-issues",
+   "url": "/fuel/reports/station-issues"
+  },
+  {
+   "endpoint": "fuel.station_issues_export",
+   "slug": "fuel-reports-station-issues-export",
+   "url": "/fuel/reports/station-issues/export"
+  },
+  {
+   "endpoint": "fuel.station_totals_report",
+   "slug": "fuel-reports-station-totals",
+   "url": "/fuel/reports/station-totals"
+  },
+  {
+   "endpoint": "fuel.station_totals_export",
+   "slug": "fuel-reports-station-totals-export",
+   "url": "/fuel/reports/station-totals/export"
+  },
+  {
+   "endpoint": "fuel.reserve_transfers",
+   "slug": "fuel-reserve-transfers",
+   "url": "/fuel/reserve-transfers"
+  },
+  {
+   "endpoint": "fuel.stations",
+   "slug": "fuel-stations",
+   "url": "/fuel/stations"
+  },
+  {
+   "endpoint": "fuel.transactions",
+   "slug": "fuel-transactions",
+   "url": "/fuel/transactions"
+  },
+  {
+   "endpoint": "fuel.warehouses",
+   "slug": "fuel-warehouses",
+   "url": "/fuel/warehouses"
+  },
+  {
+   "endpoint": "fuel.fuel_warnings",
+   "slug": "fuel-warnings",
+   "url": "/fuel/warnings"
+  },
+  {
+   "endpoint": "login",
+   "slug": "login",
+   "url": "/login"
+  },
+  {
+   "endpoint": "logout",
+   "slug": "logout",
+   "url": "/logout"
+  },
+  {
+   "endpoint": "profile",
+   "slug": "profile",
+   "url": "/profile"
+  },
+  {
+   "endpoint": "ref_customers",
+   "slug": "ref-customers",
+   "url": "/ref/customers"
+  },
+  {
+   "endpoint": "export_customers_diagnostics",
+   "slug": "ref-customers-export_diagnostics",
+   "url": "/ref/customers/export_diagnostics"
+  },
+  {
+   "endpoint": "ref_equipment",
+   "slug": "ref-equipment",
+   "url": "/ref/equipment"
+  },
+  {
+   "endpoint": "export_equipment",
+   "slug": "ref-equipment-export",
+   "url": "/ref/equipment/export"
+  },
+  {
+   "endpoint": "ref_organizations",
+   "slug": "ref-organizations",
+   "url": "/ref/organizations"
+  },
+  {
+   "endpoint": "ref_work_types",
+   "slug": "ref-work_types",
+   "url": "/ref/work_types"
+  },
+  {
+   "endpoint": "export_work_types_diagnostics",
+   "slug": "ref-work_types-export_diagnostics",
+   "url": "/ref/work_types/export_diagnostics"
+  },
+  {
+   "endpoint": "report",
+   "slug": "report",
+   "url": "/report"
+  },
+  {
+   "endpoint": "spare_parts.index",
+   "slug": "spare-parts",
+   "url": "/spare-parts/"
+  },
+  {
+   "endpoint": "spare_parts.acts_index",
+   "slug": "spare-parts-acts",
+   "url": "/spare-parts/acts"
+  },
+  {
+   "endpoint": "spare_parts.act_detail",
+   "slug": "spare-parts-acts-1",
+   "url": "/spare-parts/acts/1"
+  },
+  {
+   "endpoint": "spare_parts.act_pdf",
+   "slug": "spare-parts-acts-1-pdf",
+   "url": "/spare-parts/acts/1/pdf"
+  },
+  {
+   "endpoint": "spare_parts.api_catalog_search",
+   "slug": "spare-parts-api-catalog-search",
+   "url": "/spare-parts/api/catalog-search"
+  },
+  {
+   "endpoint": "spare_parts.api_equipment_by_org",
+   "slug": "spare-parts-api-equipment-by-org",
+   "url": "/spare-parts/api/equipment-by-org"
+  },
+  {
+   "endpoint": "spare_parts.api_price_suggestions",
+   "slug": "spare-parts-api-price-suggestions",
+   "url": "/spare-parts/api/price-suggestions"
+  },
+  {
+   "endpoint": "spare_parts.api_repeat_check",
+   "slug": "spare-parts-api-repeat-check",
+   "url": "/spare-parts/api/repeat-check"
+  },
+  {
+   "endpoint": "spare_parts.api_skus_by_part",
+   "slug": "spare-parts-api-skus-by-part",
+   "url": "/spare-parts/api/skus-by-part"
+  },
+  {
+   "endpoint": "spare_parts.catalog",
+   "slug": "spare-parts-catalog",
+   "url": "/spare-parts/catalog"
+  },
+  {
+   "endpoint": "spare_parts.desk",
+   "slug": "spare-parts-desk",
+   "url": "/spare-parts/desk"
+  },
+  {
+   "endpoint": "spare_parts.equipment_models",
+   "slug": "spare-parts-equipment-models",
+   "url": "/spare-parts/equipment-models"
+  },
+  {
+   "endpoint": "spare_parts.inventory",
+   "slug": "spare-parts-inventory",
+   "url": "/spare-parts/inventory"
+  },
+  {
+   "endpoint": "spare_parts.maintenance_due",
+   "slug": "spare-parts-maintenance",
+   "url": "/spare-parts/maintenance"
+  },
+  {
+   "endpoint": "spare_parts.maintenance_norms",
+   "slug": "spare-parts-maintenance-norms",
+   "url": "/spare-parts/maintenance-norms"
+  },
+  {
+   "endpoint": "spare_parts.new_request",
+   "slug": "spare-parts-new",
+   "url": "/spare-parts/new"
+  },
+  {
+   "endpoint": "spare_parts.purchase_queue",
+   "slug": "spare-parts-purchase-queue",
+   "url": "/spare-parts/purchase-queue"
+  },
+  {
+   "endpoint": "spare_parts.purchase_queue_export",
+   "slug": "spare-parts-purchase-queue-export",
+   "url": "/spare-parts/purchase-queue/export"
+  },
+  {
+   "endpoint": "spare_parts.reports",
+   "slug": "spare-parts-reports",
+   "url": "/spare-parts/reports"
+  },
+  {
+   "endpoint": "spare_parts.skus",
+   "slug": "spare-parts-skus",
+   "url": "/spare-parts/skus"
+  },
+  {
+   "endpoint": "wialon_index",
+   "slug": "wialon",
+   "url": "/wialon"
+  },
+  {
+   "endpoint": "wialon_auto_match",
+   "slug": "wialon-auto_match",
+   "url": "/wialon/auto_match"
+  },
+  {
+   "endpoint": "wialon_mapping_list",
+   "slug": "wialon-mapping",
+   "url": "/wialon/mapping"
+  },
+  {
+   "endpoint": "wialon_report",
+   "slug": "wialon-report",
+   "url": "/wialon/report"
+  },
+  {
+   "endpoint": "wialon_report_export",
+   "slug": "wialon-report-export",
+   "url": "/wialon/report/export"
+  },
+  {
+   "endpoint": "wialon_workload",
+   "slug": "wialon-workload",
+   "url": "/wialon/workload"
+  },
+  {
+   "endpoint": "wialon_workload_export",
+   "slug": "wialon-workload-export",
+   "url": "/wialon/workload/export"
+  },
+  {
+   "endpoint": "work_orders.index",
+   "slug": "work-orders",
+   "url": "/work-orders"
+  },
+  {
+   "endpoint": "work_orders.new",
+   "slug": "work-orders-new",
+   "url": "/work-orders/new"
+  }
+ ],
+ "skipped": [
+  {
+   "endpoint": "bot_api.get_request",
+   "reason": "no id available for ['rid']",
+   "rule": "/api/bot/requests/<int:rid>"
+  },
+  {
+   "endpoint": "api_work_type_defaults",
+   "reason": "no id available for ['wid']",
+   "rule": "/api/work_type_defaults/<int:wid>"
+  },
+  {
+   "endpoint": "spare_parts.detail",
+   "reason": "no id available for ['rid']",
+   "rule": "/spare-parts/<int:rid>"
+  },
+  {
+   "endpoint": "spare_parts.attachment_file",
+   "reason": "no id available for ['att_id']",
+   "rule": "/spare-parts/attachments/<int:att_id>"
+  },
+  {
+   "endpoint": "spare_parts.catalog_compatibility",
+   "reason": "no id available for ['pid']",
+   "rule": "/spare-parts/catalog/<int:pid>/compatibility"
+  },
+  {
+   "endpoint": "spare_parts.report_page",
+   "reason": "no id available for ['key']",
+   "rule": "/spare-parts/reports/<key>"
+  },
+  {
+   "endpoint": "spare_parts.report_export_pdf",
+   "reason": "no id available for ['key']",
+   "rule": "/spare-parts/reports/<key>/export.pdf"
+  },
+  {
+   "endpoint": "spare_parts.report_export_xlsx",
+   "reason": "no id available for ['key']",
+   "rule": "/spare-parts/reports/<key>/export.xlsx"
+  },
+  {
+   "endpoint": "work_orders.detail",
+   "reason": "no id available for ['wo_id']",
+   "rule": "/work-orders/<int:wo_id>"
+  },
+  {
+   "endpoint": "work_orders.close",
+   "reason": "no id available for ['wo_id']",
+   "rule": "/work-orders/<int:wo_id>/close"
+  }
+ ]
+}
