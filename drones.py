@@ -190,6 +190,24 @@ def _drone_today_local():
     return (datetime.utcnow() + DRONE_DISPLAY_UTC_OFFSET).date()
 
 
+def _drone_previous_month(today):
+    """The calendar month before `today`, as «YYYY-MM».
+
+    [REASON]: DRONE-WORKS-UPLOAD-002. Computed by YEAR/MONTH ARITHMETIC, never
+    by subtracting days. «Today minus 30 days» lands in the same month from
+    the 31st of a 31-day month and skips February entirely from 30 March; from
+    1 January it has to answer the previous December, and only the year
+    borrow below does that. The month a book belongs to is not a distance in
+    days from anything.
+    """
+    year, month = today.year, today.month
+    if month == 1:
+        year, month = year - 1, 12
+    else:
+        month -= 1
+    return '%04d-%02d' % (year, month)
+
+
 def _drone_fmt_date(value):
     return value.strftime('%d.%m.%Y') if value else '—'
 
@@ -3271,7 +3289,14 @@ def works_import():
         batches=batches,
         batch_files=dict((row.id, _drone_import_files(row))
                          for row in batches),
-        default_period=_drone_today_local().strftime('%Y-%m'),
+        # [REASON]: the PREVIOUS month, not the current one. Dispatcher books
+        # arrive for the month that has just ended, so on 2026-08-09 the form
+        # offered 2026-08 for an April book and staging did exactly that:
+        # batch #2 was declared August while every dated row in it was April.
+        # This is a default and nothing more -- the field stays an editable
+        # plain YYYY-MM text input, because a book for an older month is
+        # ordinary and must not need a fight with the form.
+        default_period=_drone_previous_month(_drone_today_local()),
         status_preview=DRONE_WORK_IMPORT_PREVIEW,
         status_applied=DRONE_WORK_IMPORT_APPLIED,
         status_failed=DRONE_WORK_IMPORT_FAILED,
@@ -3293,10 +3318,14 @@ def works_import_upload():
     _drone_require_import_admin()
 
     # [REASON]: checked BEFORE the body is read. MAX_CONTENT_LENGTH is a
-    # global shared with every other module (app.py sets 300 MB when it is
-    # unset) and is deliberately not touched here; 300 MB is larger than the
-    # 100 MB this screen wants, so Werkzeug's own limit never fires first and
-    # nothing about the other modules moves.
+    # global shared with every other module (app.py sets 300 * 1024 * 1024 =
+    # 314 572 800 bytes when it is unset) and is deliberately not touched
+    # here. MAX_UPLOAD_BYTES is kept at 80 % of it -- 240 MiB -- so the
+    # remaining fifth absorbs the multipart envelope and Werkzeug's own limit
+    # never fires first: a 413 raised before any view runs would replace the
+    # bilingual refusal below with a bare error page naming no file and no
+    # rule. Raising the global to fit a bigger batch would move every other
+    # module's ceiling too.
     length = request.content_length
     if length is not None and length > works_upload.MAX_UPLOAD_BYTES:
         flash(_drone_t(
@@ -3349,12 +3378,13 @@ def works_import_upload():
     try:
         files_meta = works_upload.store_batch(books_root, row.storage_dir,
                                               files)
-        result, stats, _counts = works_upload.run_import(
+        result, stats, counts = works_upload.run_import(
             db_path, batch_path, files_meta, period_month, apply=False,
             batch=_drone_import_batch_value(row.id), report_path=report_path)
-        works_upload.write_preview(batch_path,
-                                   works_upload.preview_snapshot(result,
-                                                                 stats))
+        works_upload.write_preview(
+            batch_path,
+            works_upload.preview_snapshot(result, stats,
+                                          counts['parse_seconds']))
     except Exception as exc:  # noqa: BLE001 - recorded, not swallowed
         # [REASON]: the files and the directory are KEPT. A book that broke
         # the parser is the one book worth still having, and the twenty-fifth
