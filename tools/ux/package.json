@@ -9,5 +9,8 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.10.1",
     "playwright": "1.55.0"
+  },
+  "dependencies": {
+    "pngjs": "^7.0.0"
   }
 }

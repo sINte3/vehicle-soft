@@ -119,3 +119,9 @@ docs/ux/11-baseline/*-ux_*/
 # are committed; the images are not.
 docs/ux/50-canonical/before/
 docs/ux/50-canonical/after/
+
+# P5 regression frames, same rule as the two sets above: run artefact of
+# tools/ux/shoot_regression.mjs against two disposable instances. The numbers
+# (regression.json) are committed; the images are not.
+docs/ux/51-regression/before/
+docs/ux/51-regression/after/

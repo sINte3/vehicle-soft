@@ -1084,12 +1084,23 @@ a.vs-kpi-strip-item:focus-visible { outline: 2px solid var(--vs-primary); outlin
 @media (max-width: 1280px) {
   .vs-stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
-@media (max-width: 1100px) {
+/* DD-024: shkala iz CHETYREH znacheniy -- 1280 / 1024 / 768 / 480. Bylo
+   trinadcat, iz nih opasnye bliznecy: 768 i 760, 720 i 700, 1100 i 1050
+   (PR-004). Kazhdoe pravilo perenositsya po SODERZHANIYU, a ne po blizosti
+   chisla: 640 mozhet znachit i "telefon", i "uzkiy planshet", i reshaet eto
+   telo pravila.
+
+   Znacheniya sovpadayut s matricey vyeportov obhoda namerenno: syomka
+   popadaet VNUTR vetki CSS, a ne na ee granicu. Poetomu pri okne rovno
+   1024 px pravilo nizhe deystvuet. */
+@media (max-width: 1024px) {
+  /* Bylo 1100. Vtoraya stupen plotnosti setok pokazateley; pervaya -- 1280. */
   .vs-kpi-grid    { grid-template-columns: 1fr; }
   .vs-stat-grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .vs-stat-grid   { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-@media (max-width: 900px) {
+  /* Bylo 900. Shkala nazyvaet 1024 imenno etim perekhodom -- "planshet:
+     saydbar svorachivaetsya v ikonochnyy rels". Eto ono i est, i teper ono
+     proishodit tam, gde obyavleno, a ne na 124 px pozzhe. */
   .vs-sidebar { width: var(--vs-side-w-col); }
   .vs-sidebar .vs-side-label,
   .vs-sidebar .vs-side-section,
@@ -1100,7 +1111,7 @@ a.vs-kpi-strip-item:focus-visible { outline: 2px solid var(--vs-primary); outlin
 /* CYCLE-2-3 Part 6: below 768px the sidebar leaves the flow entirely and
    becomes an off-canvas overlay toggled by the existing topbar burger
    (base_next.html vsToggleSidebar). Full labels are restored inside the
-   overlay — the 900px icon-collapse above only makes sense while the
+   overlay — the 1024px icon-collapse above only makes sense while the
    sidebar still occupies horizontal space. The #vsSidebar id and the
    desktop is-collapsed behavior are untouched. */
 @media (max-width: 768px) {
@@ -1520,14 +1531,24 @@ a.vs-kpi-strip-item:focus-visible { outline: 2px solid var(--vs-primary); outlin
    NOTE: daily_entry.html defines its own local copies of some of these;
    its inline <style> loads later and wins the cascade (intended).
    ========================================================================== */
+/* [REASON]: 29 pravil sloya udaleny v P5 -- ni odno iz nih ne ispolzuetsya ni
+   odnim shablonom, ni odnim skriptom, ni odnim pitonovskim generatorom
+   razmetki. Eto byli utility v duhe Bootstrap (.d-flex, .gap-2, .mb-3,
+   .fw-bold, .text-success...), zavedennye na vsyakiy sluchay i ne
+   ponadobivshiesya ni razu. Sloy sovmestimosti sushchestvuet, chtoby
+   NEMIGRIROVANNYE stranicy prodolzhali rabotat; pravilo, k kotoromu nikto ne
+   obrashchaetsya, etoy zadache ne sluzhit i tolko delaet vid, chto sloy
+   bolshe, chem est. Proverka -- polnyy poisk po repozitoriyu (html/py/js/md)
+   plyus otdelnyy poisk dinamicheskoy sborki imen klassov v JS: sovpadeniy
+   nol. Otsutstvie posledstviy izmereno pikselnym diffom po 72
+   nemigrirovannym stranicam. */
+
 
 /* Cards */
 .card           { background: var(--vs-surface); border: 1px solid var(--vs-border); border-radius: var(--vs-r-lg); box-shadow: var(--vs-shadow-sm); }
 .card-header    { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 14px 18px; border-bottom: 1px solid var(--vs-border-3); font-size: 14px; font-weight: 700; }
 .card-body      { padding: 16px 18px; }
-.card-footer    { padding: 12px 18px; border-top: 1px solid var(--vs-border-3); }
 .card-title     { font-size: 14px; font-weight: 700; margin: 0; }
-.card-subtitle  { font-size: 12.5px; color: var(--vs-text-muted); margin-top: 2px; }
 
 /* Buttons */
 .btn            { display: inline-flex; align-items: center; gap: 7px; padding: 9px 15px; font-family: var(--vs-font); font-size: var(--vs-fs); font-weight: 600; border: 1px solid var(--vs-border-input); border-radius: var(--vs-r); background: #fff; color: var(--vs-text); cursor: pointer; text-decoration: none; transition: all var(--vs-t-fast); }
@@ -1542,22 +1563,17 @@ a.vs-kpi-strip-item:focus-visible { outline: 2px solid var(--vs-primary); outlin
 .btn-danger:hover { background: var(--vs-danger); color: #fff; border-color: var(--vs-danger); }
 .btn-sm         { padding: 6px 12px; font-size: var(--vs-fs-sm); border-radius: var(--vs-r-sm); }
 .btn-lg         { padding: 12px 20px; font-size: 14.5px; border-radius: var(--vs-r); }
-.btn-link       { background: transparent; border: none; color: var(--vs-primary); padding: 0; font-family: var(--vs-font); font-size: var(--vs-fs); cursor: pointer; }
-.btn-link:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .btn-icon       { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--vs-border-input); border-radius: var(--vs-r-sm); background: #fff; color: var(--vs-text-muted); cursor: pointer; transition: all var(--vs-t-fast); }
 .btn-icon:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
 .btn-icon.btn-danger:hover { background: var(--vs-danger); color: #fff; border-color: var(--vs-danger); }
 
 /* Forms */
 .form-group     { margin-bottom: 14px; }
-.form-label, label.form-label { display: block; font-size: var(--vs-fs-xs); font-weight: 600; color: var(--vs-text-muted); margin-bottom: 5px; }
 .form-control   { width: 100%; font-family: var(--vs-font); font-size: var(--vs-fs); padding: 8px 11px; border: 1px solid var(--vs-border-input); border-radius: var(--vs-r-sm); background: #fff; color: var(--vs-text); outline: none; transition: border-color var(--vs-t-fast), box-shadow var(--vs-t-fast); }
 .form-control:focus { border-color: var(--vs-primary); box-shadow: var(--vs-ring-primary); }
 .form-control:disabled { background: var(--vs-surface-2); color: var(--vs-text-muted); }
 .form-inline    { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
 .form-inline .form-group { margin-bottom: 0; }
-.field-help, .form-text { display: block; font-size: var(--vs-fs-xs); color: var(--vs-text-muted); margin-top: 4px; }
-.input-group    { display: flex; }
 .input-group .form-control { border-radius: var(--vs-r-sm) 0 0 var(--vs-r-sm); }
 .input-group .btn { border-radius: 0 var(--vs-r-sm) var(--vs-r-sm) 0; border-left: none; }
 
@@ -1691,38 +1707,14 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 
 /* Alerts */
 .alert          { padding: 10px 14px; border-radius: var(--vs-r); font-size: var(--vs-fs); margin-bottom: 12px; }
-.alert-success  { background: var(--vs-success-bg); color: var(--vs-success); }
 .alert-warning  { background: var(--vs-warning-bg); color: var(--vs-warning); }
-.alert-danger   { background: var(--vs-danger-bg);  color: var(--vs-danger); }
-.alert-info     { background: var(--vs-info-bg);    color: var(--vs-info); }
 
 /* Typography helpers */
 .text-muted     { color: var(--vs-text-muted); }
-.text-soft      { color: var(--vs-text-muted); }
 .text-center    { text-align: center; }
 .text-right     { text-align: right; }
 .text-sm        { font-size: var(--vs-fs-sm); }
 .text-xs        { font-size: var(--vs-fs-xs); }
-.text-success   { color: var(--vs-success); }
-.text-danger    { color: var(--vs-danger); }
-.text-warning   { color: var(--vs-warning); }
-.text-primary   { color: var(--vs-primary); }
-.fw-bold        { font-weight: 700; }
-.fw-semibold    { font-weight: 600; }
-
-/* Layout helpers */
-.d-flex         { display: flex; }
-.align-items-center { align-items: center; }
-.justify-content-between { justify-content: space-between; }
-.gap-2          { gap: 8px; }
-.gap-3          { gap: 12px; }
-.flex-1         { flex: 1; }
-.mb-0           { margin-bottom: 0; }
-.mb-2           { margin-bottom: 8px; }
-.mb-3           { margin-bottom: 14px; }
-.mt-2           { margin-top: 8px; }
-.mt-3           { margin-top: 14px; }
-.ms-auto        { margin-left: auto; }
 .w-100          { width: 100%; }
 
 /* page-header (legacy) */
@@ -1780,7 +1772,11 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
   color: var(--vs-text-muted);
   font-size: var(--vs-fs-md);
 }
-@media (max-width: 640px) {
+/* DD-024: bylo 640. Sobstvennyy kommentariy pravila govorit "on phones", a
+   ne "on tablets" -- znachit shkalnoe znachenie zdes 480 ("odna kolonka"), a
+   ne 768. Perenos na 768 rasshiril by pravilo na planshety, to est pomenyal
+   by ego smysl radi krasoty chisla. */
+@media (max-width: 480px) {
   /* Full-width primary on phones (submit form and scroll anchor alike). */
   .vs-nextaction form { width: 100%; }
   .vs-nextaction .vs-btn-lg { width: 100%; justify-content: center; }
@@ -1884,8 +1880,9 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 .vs-report-tile.is-success .vs-report-tile-icon { color: var(--vs-success); background: var(--vs-success-bg); }
 .vs-report-tile.is-warning .vs-report-tile-icon { color: var(--vs-warning); background: var(--vs-warning-bg); }
 .vs-report-tile.is-danger  .vs-report-tile-icon { color: var(--vs-danger);  background: var(--vs-danger-bg); }
-@media (max-width: 1200px) { .vs-report-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 720px)  { .vs-report-tiles { grid-template-columns: 1fr; } }
+/* DD-024: bylo 1200 i 720 -- dva blizneca k 1280 i 768 bez svoego smysla. */
+@media (max-width: 1280px) { .vs-report-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 768px)  { .vs-report-tiles { grid-template-columns: 1fr; } }
 
 /* DRONE-ANALYTICS-001: additive only. Nothing above this line is modified.
    The sixth report tile accent. --vs-purple / --vs-purple-bg were defined at

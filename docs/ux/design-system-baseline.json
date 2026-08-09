@@ -1,7 +1,6 @@
 {
  "counts": {
   "breakpoint": {
-   "static/css/design-system.css": 5,
    "templates/fuel/dashboard.html": 2,
    "templates/fuel/receipts.html": 2,
    "templates/fuel/report.html": 4,
