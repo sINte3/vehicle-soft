@@ -90,3 +90,13 @@ drone_verify_007_*.txt
 # matches it and would hide anything newly added there, without a word.
 !docs/archive/
 !docs/archive/**
+
+# tools/ux/ -- dev-only UX audit tooling (Playwright, axe-core). Node modules
+# are never committed; package.json and package-lock.json are. This directory
+# is NOT an application dependency: requirements.txt stays untouched.
+tools/ux/node_modules/
+
+# Read-only metrics export produced by tools/ux/collect_metrics.py. Contains no
+# field values, but it is a regenerable artefact of a specific database, so it
+# lands under docs/ux/10-metrics/ by hand, not from the repository root.
+/ux_metrics.json
