@@ -288,6 +288,11 @@
 {% endif %}
 
 {% block scripts %}{% endblock %}
+{# DD-029: klientskaya sortirovka .vs-table.is-static. Vneshniy fayl, a ne
+   inline: on kешiruetsya i ne popolnyaet 2836 strok inline-JS, kotorye trek
+   sokrashchaet. defer -- razmetka uzhe postroena k momentu zapuska. #}
+<script src="{{ static_v('js/vs-table.js') }}" defer></script>
+<script src="{{ static_v('js/vs-multiselect.js') }}" defer></script>
 <script>
 /* CYCLE-2-3 Part 6: burger behavior — off-canvas overlay below 768px,
    original width-collapse toggle above it. */

@@ -179,6 +179,64 @@ def value_for(rng, table, col, index):
     return make_text(rng, length, uz=uz, seed_words=words)
 
 
+def seed_daily_units(db):
+    """Postavit spravochnik edinic dnevnogo vvoda v ego NASTOYASHCHIY vid.
+
+    [REASON]: obshchiy generator zapolnyaet lyubuyu tablicu strokami nuzhnoy
+    DLINY, i dlya daily_record_units eto dalo by shest-chetyrnadcat vydumannyh
+    'edinic' vrode 'ташкилот бригада'. Poyavivsheesya v P4 pole vybora edinicy
+    otrisovalo by imenno ih, i kanonicheskiy ekran snimalsya by s musorom v
+    samom pole, radi kotorogo shag delalsya. Spravochnik malenkiy i zakrytyy --
+    ego stavim yavno, tem zhe naborom, chto migraciya DAILY_UNITS_001.
+
+    Poputno soglasuem daily_records: unit i unit_code dolzhny byt paroy, inache
+    ekran pokazhet kod bez podpisi. Odna stroka OSTAVLENA nerapoznannoy -- eto
+    zakonnoe sostoyanie po DD-004, i ono dolzhno popast v bazis kadrov, a ne
+    prityatsya.
+    """
+    from models import DailyRecord
+
+    rows = [('ga', 'га', 'га', 10), ('soat', 'час', 'соат', 20),
+            ('m_soat', 'моточас', 'мотосоат', 30), ('reys', 'рейс', 'рейс', 40),
+            ('tn_km', 'тн/км', 'тн/км', 50), ('km', 'км', 'км', 60)]
+
+    # [REASON]: tot zhe fayl fikstur zapuskaetsya i protiv STAROGO dereva --
+    # kadry "bylo" dlya gate P4 snimayutsya s koda do treka, i dannye na oboih
+    # storonah obyazany sovpadat, inache raznica fikstur vyglyadela by kak
+    # ulучshenie interfeysa. Do DAILY_UNITS_001 ni modeli, ni kolonki net;
+    # togda stavim tolko daily_records.unit i vyhodim.
+    try:
+        from models import DailyRecordUnit
+    except ImportError:
+        DailyRecordUnit = None
+
+    if DailyRecordUnit is not None:
+        DailyRecordUnit.query.delete()
+        for code, name_ru, name_uz, order in rows:
+            db.session.add(DailyRecordUnit(code=code, name_ru=name_ru, name_uz=name_uz,
+                                           is_active=True, sort_order=order))
+        db.session.commit()
+    has_code = hasattr(DailyRecord, 'unit_code')
+
+    # Ta samaya zapis iz PR-050: v pole edinicy vpisan abzac instrukcii.
+    paragraph = ('м-соат будем считать с 08:00-18:00 если техника работала '
+                 'весь день то ставим 10 моточасов а если меньше то пишем '
+                 'сколько фактически отработала по путевому листу')
+    records = DailyRecord.query.order_by(DailyRecord.id).all()
+    for i, rec in enumerate(records):
+        if i % 7 == 6:
+            unit, code = paragraph, None
+        elif rec.status == 'idle':
+            unit, code = '', None
+        else:
+            code, unit = rows[i % len(rows)][0], rows[i % len(rows)][1]
+        rec.unit = unit
+        if has_code:
+            rec.unit_code = code
+    db.session.commit()
+    return len(rows) if DailyRecordUnit is not None else 0
+
+
 def ordered_models(db):
     """Modeli v poryadke zavisimostey: roditel ranshe rebenka."""
     models = [m for m in db.Model.registry.mappers]
@@ -266,6 +324,8 @@ def seed(app, db, rows_per_table=14, verbose=True):
                 pks = [r[0] for r in db.session.execute(
                     sa.select(list(table.primary_key.columns)[0]).limit(60))]
                 pk_pool[table.name] = pks
+
+        created['daily_record_units'] = seed_daily_units(db)
 
         # Polzovateli -- otdelno i yavno: nuzhny vse chetyre roli, chtoby snyat
         # sostoyaniya "net prav", i predskazuemye loginy dlya obhoda.

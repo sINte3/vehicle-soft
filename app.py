@@ -129,6 +129,11 @@ def create_app():
             return url
 
     app.jinja_env.globals['static_v'] = static_v
+    # [REASON]: макросы компонентов принимают список пар (значение, подпись).
+    # Без zip шаблон вынужден собирать пары циклом с namespace — или, что и
+    # происходило, отказаться от макроса и повторить разметку компонента у
+    # себя. Именно так в продукте появились два разных мультиселекта.
+    app.jinja_env.globals['zip'] = zip
 
     def is_csrf_exempt():
         # Topaz agent API endpoints are protected by FUEL_API_TOKEN and must not

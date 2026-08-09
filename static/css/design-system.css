@@ -498,6 +498,37 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 
 .vs-form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
 .vs-form-row > .vs-field { flex: 1; min-width: 200px; }
+/* Slot v ryadu fil'trov, nesushchiy KNOPKU, a ne pole.
+   [REASON]: do etogo tot zhe rezultat poluchali pustym <label>&nbsp;</label>
+   nad knopkoy -- v shesti shablonakh. Screen reader ozvuchival pustuyu
+   podpis' pered kazhdoy knopkoy "Pokazat", a pri perenose ryada vysota
+   prizrachnoy podpisi sdvigala knopku otnositel'no poley. Slot ne rastyagi-
+   vaetsya i ne trebuet podpisi voobshche. */
+.vs-form-row > .vs-field-action { flex: 0 0 auto; min-width: 0; }
+
+/* Polosa vzaimoisklyuchayushchih pereklyuchateley na radio-knopkakh.
+   [REASON]: podnyato iz sloya sovmestimosti (.toggle-group), gde ono zhilo s
+   pometkoy "used by report.html" -- i pri etom daily_entry.html derzhal SVOYU
+   lokalnuyu kopiyu, kotoraya vyigryvala kaskad. Odin element upravleniya, dva
+   opredeleniya, raznyy vid na dvuh ekranakh iz semi kanonicheskih.
+   Aktivnoe sostoyanie -- CSS po :has(:checked), a ne inline-style ot JS:
+   ranshe fon aktivnoy pilyuli propisyvalsya atributom style pryamo v razmetke,
+   i cvet obhodil tokeny, znachit i temnuyu temu. */
+.vs-toggle-group { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.vs-toggle-group label {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--vs-border-input); border-radius: var(--vs-r);
+  background: var(--vs-surface); color: var(--vs-text);
+  font-size: var(--vs-fs); font-weight: 600;
+  cursor: pointer; transition: all var(--vs-t-fast);
+}
+.vs-toggle-group label:hover { border-color: var(--vs-primary); }
+.vs-toggle-group input[type="radio"] { accent-color: var(--vs-primary); margin: 0; }
+.vs-toggle-group label:has(input[type="radio"]:checked) {
+  background: var(--vs-primary); border-color: var(--vs-primary); color: var(--vs-side-active-fg);
+}
+.vs-toggle-group label:focus-within { box-shadow: var(--vs-ring-primary); }
 
 .vs-check-card {
   display: flex; align-items: center; gap: 8px;
@@ -507,6 +538,15 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   cursor: pointer; transition: all var(--vs-t-fast);
 }
 .vs-check-card:hover { border-color: var(--vs-primary); background: #f5f9ff; }
+/* Vybrannaya kartochka vidna sama, bez JS.
+   [REASON]: do etogo vybrannyy tip otcheta podsvechivalsya funkciey
+   styleReportType(), kotoraya stavila klass .active po sobytiyu change. Pri
+   otkluchennom JS -- i pri lyuboy oshibke vyshe po skriptu -- vybor perestaval
+   byt viden voobshche, hotya radio-knopka byla otmechena. */
+.vs-check-card:has(input:checked) {
+  border-color: var(--vs-primary); background: var(--vs-primary-soft);
+}
+.vs-check-card:focus-within { box-shadow: var(--vs-ring-primary); }
 .vs-check-card input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--vs-primary); }
 .vs-check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 7px; }
 
@@ -726,7 +766,87 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-table tr.is-danger-row td:first-child { border-left: 3px solid var(--vs-danger); }
 .vs-table tr.is-warning-row td:first-child { border-left: 3px solid var(--vs-warning); }
 
+/* DD-028: REZHIM PO OBEMU OBYAVLYAETSYA YAVNO.
+   [REASON]: razbros obemov -- pyat poryadkov, ot 394 817 strok
+   (fuel_transactions2) do 3 (work_orders), plyus dvenadcat vsegda pustyh
+   tablic. Odin komponent bez obyavlennyh rezhimov oba konca ne pokryvaet, i
+   imenno otsutstvie etogo resheniya porodilo 17 odnorazovyh klassov (PR-010).
+   Klass rezhima ne kosmetika: on govorit chitatelyu, gde schitayutsya itogi i
+   otkuda beretsya sortirovka. is-static -- klient, is-paged/is-stream --
+   server. */
+.vs-table.is-static  { --vs-table-mode: static; }
+.vs-table.is-paged   { --vs-table-mode: paged; }
+.vs-table.is-stream  { --vs-table-mode: stream; }
+
+/* DD-029: zagolovok sortiruemoy kolonki -- KNOPKA, a ne tekst: dostupna s
+   klaviatury i neset aria-sort. Tri sostoyaniya, strelka risuetsya iz teksta
+   psevdoelementom, poetomu ne trebuet ni ikonki, ni kartinki. */
+.vs-table th.vs-th-sort { padding: 0; }
+.vs-table th.vs-th-sort > button {
+  display: flex; align-items: center; gap: 5px;
+  width: 100%; min-height: 34px;
+  padding: 10px 14px;
+  background: none; border: 0; cursor: pointer;
+  font: inherit; color: inherit;
+  text-transform: inherit; letter-spacing: inherit;
+  text-align: inherit;
+}
+.vs-table th.vs-th-sort.right > button  { justify-content: flex-end; }
+.vs-table th.vs-th-sort.center > button { justify-content: center; }
+.vs-table th.vs-th-sort > button:hover  { color: var(--vs-text); }
+.vs-table th.vs-th-sort > button:focus-visible {
+  outline: 2px solid var(--vs-primary); outline-offset: -2px;
+}
+.vs-table th.vs-th-sort > button::after {
+  content: '\2195'; opacity: .38; font-size: 11px; line-height: 1;
+}
+.vs-table th[aria-sort="ascending"]  > button::after { content: '\2191'; opacity: 1; }
+.vs-table th[aria-sort="descending"] > button::after { content: '\2193'; opacity: 1; }
+.vs-table th[aria-sort] > button { color: var(--vs-text); }
+
+/* DD-030: PEREPOLNENIE KOLONKI.
+   [REASON]: shirina proektiruetsya po p90 dliny polya, obrezaetsya posle p99.
+   Bez etogo odna anomalnaya stroka lomaet shirinu VSEY tablicy: u
+   daily_records.idle_reason p99 = 50, a max = 211; u deficiencies.text
+   p99 = 161, max = 314. Polnoe znachenie ostaetsya dostupnym -- title na
+   yacheyke i kartochka zapisi. */
+.vs-table td.vs-cell-clip {
+  max-width: var(--vs-cell-max, 22ch);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vs-table td.vs-cell-clip-wide { --vs-cell-max: 40ch; }
+/* Tot zhe kontrakt dlya STROCHNOGO bloka vnutri yacheyki -- vtoraya stroka
+   pod nazvaniem, primechanie pod statusom. Yacheyka pri etom ostaetsya
+   obychnoy: obrezaetsya imenno etot blok. */
+.vs-table td .vs-clip {
+  display: block; max-width: var(--vs-cell-max, 22ch);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* DD-031: DEYSTVIYA STROKI -- fiksirovannaya zona sprava, zona nazhatiya ne
+   menshe 32x32 px. Do etogo .vs-row-actions sushchestvoval i byl ispolzovan
+   ROVNO ODIN raz pri 104 tablicah (PR-012). */
 .vs-row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.vs-table td.vs-row-actions-cell { width: 1%; white-space: nowrap; }
+.vs-row-actions > a, .vs-row-actions > button {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 32px; min-height: 32px;
+}
+
+/* Podval tablicy: schetchik, stranicy, "dalshe" po kursoru. Odna polka na vse
+   tri rezhima, chtoby stranica ne izobretala svoyu na kazhdom ekrane. */
+.vs-table-foot {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px;
+  border-top: 1px solid var(--vs-border-2);
+  background: var(--vs-surface-2);
+  font-size: var(--vs-fs-sm); color: var(--vs-text-muted);
+}
+.vs-table-foot .vs-table-count { margin-right: auto; }
+/* [REASON]: v rezhime is-stream itogi schitayutsya TOLKO po vidimomu oknu, i
+   eto obyazano byt podpisano. Bez podpisi chislo chitaetsya kak itog po vsey
+   vyborke -- na 394 817 strokah raznica na poryadki. */
+.vs-table-foot .vs-table-scope { font-style: italic; }
 
 .vs-accord-l2 td:nth-child(2) { padding-left: 34px; }
 .vs-accord-l3 td:nth-child(2) { padding-left: 56px; }

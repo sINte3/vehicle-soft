@@ -1,367 +1,225 @@
 {% extends g.base_template %}
-{% block title %}АЗС — {{ 'Выдачи топлива из Topaz' if lang == 'ru' else 'Topazдан ёқилғи беришлар' }}{% endblock %}
+{% from '_icons.html' import icon %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}АЗС — {{ 'Выдачи топлива из Topaz' if is_ru else 'Topazдан ёқилғи беришлар' }}{% endblock %}
 {% block content %}
 {% include 'fuel/_fuel_nav.html' %}
 
-<style>
-/* FUEL002B_MARKER: fuel transactions UX refresh, template-only. */
-.fuel002b-page-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 16px;
-  margin-bottom: 14px;
-}
+{# UI-P4: эталонный экран миграции. Собственного CSS у страницы НЕТ — было 154
+   строки inline-<style> и два одноразовых класса таблиц
+   (fuel002b-transaction-table, fuel002b-sync-table), названных по коду задачи.
+   Всё, чего не хватало, стало компонентом дизайн-системы, а не правилом здесь:
+   это и есть проверка, что система собирается. #}
 
-.fuel002b-page-header h1 {
-  margin-bottom: 6px;
-}
+{% set L_title = 'Выдачи топлива из Topaz' if is_ru else 'Topazдан ёқилғи беришлар' %}
+{% set L_note = 'Это история фактических выдач ДТ с подведомственных АЗС. Цены и суммы не используются.' if is_ru else 'Бу тасарруфимиздаги АЗСлардан ДТ беришлар тарихи. Нарх ва сумма ишлатилмайди.' %}
+{% set L_from = 'С' if is_ru else 'Дан' %}
+{% set L_to = 'По' if is_ru else 'Гача' %}
+{% set L_wh = 'Склад' if is_ru else 'Омбор' %}
+{% set L_all = '— все —' if is_ru else '— барчаси —' %}
+{% set L_show = 'Показать' if is_ru else 'Кўрсатиш' %}
+{% set L_total_l = 'Итого литров' if is_ru else 'Жами литр' %}
+{% set L_fuel = 'Топливо' if is_ru else 'Ёқилғи' %}
+{% set L_transactions = 'Транзакции' if is_ru else 'Транзакциялар' %}
+{% set L_datetime = 'Дата/время' if is_ru else 'Сана/вақт' %}
+{% set L_station = 'АЗС' if is_ru else 'АЗС' %}
+{% set L_liter = 'Литры' if is_ru else 'Литр' %}
+{% set L_card = 'Карта' if is_ru else 'Карта' %}
+{% set L_card_name = 'Имя карты' if is_ru else 'Карта номи' %}
+{% set L_no_data = 'За выбранный период выдач топлива нет.' if is_ru else 'Танланган давр учун ёқилғи беришлар йўқ.' %}
+{% set L_agent = 'Убедитесь, что агент Topaz настроен и работает.' if is_ru else 'Topaz агенти созланганига ва ишлаётганига ишонинг.' %}
+{% set L_sync = 'История синхронизаций' if is_ru else 'Синхронизация тарихи' %}
+{% set L_time = 'Время' if is_ru else 'Вақт' %}
+{% set L_received = 'Получено' if is_ru else 'Қабул қилинди' %}
+{% set L_new = 'Новых' if is_ru else 'Янги' %}
+{% set L_dup = 'Дублей' if is_ru else 'Такрор' %}
+{% set L_unknown = 'Неизв. АЗС' if is_ru else 'Номаълум АЗС' %}
+{% set L_status = 'Статус' if is_ru else 'Ҳолат' %}
+{% set L_error = 'Ошибка' if is_ru else 'Хато' %}
+{% set L_cs_period = 'Период' if is_ru else 'Давр' %}
+{% set L_cs_rows = 'Строк на экране' if is_ru else 'Экрандаги қаторлар' %}
+{% set L_cs_sync = 'Sync-логи' if is_ru else 'Синхр. логлари' %}
+{% set L_gd_1_title = '1. Выберите период' if is_ru else '1. Даврни танланг' %}
+{% set L_gd_1_text = 'По умолчанию показывается текущий день. Для сверки задайте нужный диапазон.' if is_ru else 'Стандарт бўйича жорий кун кўрсатилади. Солиштириш учун керакли даврни белгиланг.' %}
+{% set L_gd_2_title = '2. Сузьте по складу' if is_ru else '2. Омбор бўйича торайтиринг' %}
+{% set L_gd_2_text = 'Фильтр по складу помогает быстро найти выдачи конкретного подразделения.' if is_ru else 'Омбор фильтри маълум бўлинманинг беришларини тез топишга ёрдам беради.' %}
+{% set L_gd_3_title = '3. Проверяйте лимит' if is_ru else '3. Лимитни назорат қилинг' %}
+{% set L_gd_3_text = 'На странице выводится до 500 последних транзакций по выбранному фильтру.' if is_ru else 'Саҳифада танланган фильтр бўйича охирги 500 тагача транзакция кўрсатилади.' %}
+{# DD-028: подпись охвата для режима is-stream. Итог считается ПО ВИДИМОМУ
+   ОКНУ, и это обязано быть сказано словами: без подписи число читается как
+   итог по всей выборке, а в fuel_transactions2 394 817 строк. #}
+{% set L_scope = 'итог — по показанным строкам, не по всей выборке' if is_ru else 'жами — кўрсатилган қаторлар бўйича, бутун танлов бўйича эмас' %}
 
-.fuel002b-subtitle {
-  color: var(--text2);
-  font-size: 13px;
-  line-height: 1.45;
-  margin-top: 2px;
-}
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ L_title }}</div>
+    <div class="vs-hero-sub">{{ L_note }}</div>
+  </div>
+</div>
 
-.fuel002b-context-strip {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(140px, 1fr));
-  gap: 10px;
-  margin: 0 0 14px 0;
-}
+<div class="vs-stat-grid-4 vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ L_cs_period }}</div>
+    <div class="vs-stat-value">{{ d_from.strftime('%d.%m.%Y') if d_from else '—' }} — {{ d_to.strftime('%d.%m.%Y') if d_to else '—' }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ L_cs_rows }}</div>
+    <div class="vs-stat-value">{{ items|length }} / 500</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ L_total_l }}</div>
+    <div class="vs-stat-value is-info">{{ '%.0f'|format(total_qty or 0) }} л</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ L_cs_sync }}</div>
+    <div class="vs-stat-value">{{ sync_logs|length }}</div>
+  </div>
+</div>
 
-.fuel002b-pill {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: 10px;
-  padding: 10px 12px;
-  box-shadow: var(--shadow);
-}
-
-.fuel002b-pill span {
-  display: block;
-  color: var(--text2);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .04em;
-  margin-bottom: 4px;
-}
-
-.fuel002b-pill strong {
-  display: block;
-  font-size: 15px;
-  color: var(--text);
-}
-
-.fuel002b-guidance-panel {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(180px, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.fuel002b-guidance-card {
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--accent);
-  background: var(--surface);
-  border-radius: 10px;
-  padding: 11px 13px;
-  box-shadow: var(--shadow);
-}
-
-.fuel002b-guidance-card strong {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.fuel002b-guidance-card span {
-  display: block;
-  color: var(--text2);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.fuel002b-filter-form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 10px;
-  margin-bottom: 14px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-}
-
-.fuel002b-filter-form input,
-.fuel002b-filter-form select {
-  min-height: 36px;
-}
-
-.fuel002b-table-wrap {
-  width: 100%;
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  margin-bottom: 16px;
-}
-
-.fuel002b-table-wrap .table {
-  margin-bottom: 0;
-}
-
-.fuel002b-transaction-table {
-  min-width: 980px;
-}
-
-.fuel002b-sync-table {
-  min-width: 900px;
-}
-
-.fuel002b-transaction-table th,
-.fuel002b-sync-table th {
-  white-space: nowrap;
-  font-size: 12px;
-  background: var(--surface2);
-}
-
-.fuel002b-transaction-table td,
-.fuel002b-sync-table td {
-  vertical-align: middle;
-}
-
-@media (max-width: 1100px) {
-  .fuel002b-context-strip,
-  .fuel002b-guidance-panel {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-@media (max-width: 760px) {
-  .fuel002b-page-header,
-  .fuel002b-context-strip,
-  .fuel002b-guidance-panel {
-    grid-template-columns: 1fr;
-  }
-
-  .fuel002b-filter-form {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
-}
-/* FUEL002B_END */
-</style>
-
-
-
-{% set L_title = 'Выдачи топлива из Topaz' if lang == 'ru' else 'Topazдан ёқилғи беришлар' %}
-{% set L_note = 'Это история фактических выдач ДТ с подведомственных АЗС. Цены и суммы не используются.' if lang == 'ru' else 'Бу тасарруфимиздаги АЗСлардан ДТ беришлар тарихи. Нарх ва сумма ишлатилмайди.' %}
-{% set L_from = 'С' if lang == 'ru' else 'Дан' %}
-{% set L_to = 'По' if lang == 'ru' else 'Гача' %}
-{% set L_wh = 'Склад' if lang == 'ru' else 'Омбор' %}
-{% set L_all = '— все —' if lang == 'ru' else '— барчаси —' %}
-{% set L_show = 'Показать' if lang == 'ru' else 'Кўрсатиш' %}
-{% set L_count = 'Кол-во выдач' if lang == 'ru' else 'Беришлар сони' %}
-{% set L_total_l = 'Итого литров' if lang == 'ru' else 'Жами литр' %}
-{% set L_fuel = 'Топливо' if lang == 'ru' else 'Ёқилғи' %}
-{% set L_transactions = 'Транзакции' if lang == 'ru' else 'Транзакциялар' %}
-{% set L_datetime = 'Дата/время' if lang == 'ru' else 'Сана/вақт' %}
-{% set L_station = 'АЗС' if lang == 'ru' else 'АЗС' %}
-{% set L_liter = 'Литры' if lang == 'ru' else 'Литр' %}
-{% set L_card = 'Карта' if lang == 'ru' else 'Карта' %}
-{% set L_card_name = 'Имя карты' if lang == 'ru' else 'Карта номи' %}
-{% set L_no_data = 'За выбранный период выдач топлива нет.' if lang == 'ru' else 'Танланган давр учун ёқилғи беришлар йўқ.' %}
-{% set L_agent = 'Убедитесь, что агент Topaz настроен и работает.' if lang == 'ru' else 'Topaz агенти созланганига ва ишлаётганига ишонинг.' %}
-{% set L_sync = 'История синхронизаций' if lang == 'ru' else 'Синхронизация тарихи' %}
-{% set L_time = 'Время' if lang == 'ru' else 'Вақт' %}
-{% set L_received = 'Получено' if lang == 'ru' else 'Қабул қилинди' %}
-{% set L_new = 'Новых' if lang == 'ru' else 'Янги' %}
-{% set L_dup = 'Дублей' if lang == 'ru' else 'Такрор' %}
-{% set L_unknown = 'Неизв. АЗС' if lang == 'ru' else 'Номаълум АЗС' %}
-{% set L_status = 'Статус' if lang == 'ru' else 'Ҳолат' %}
-{% set L_error = 'Ошибка' if lang == 'ru' else 'Хато' %}
-{% set L_cs_period = 'Период' if lang == 'ru' else 'Давр' %}
-{% set L_cs_rows = 'Строк на экране' if lang == 'ru' else 'Экрандаги қаторлар' %}
-{% set L_cs_total_l = 'Итого литров' if lang == 'ru' else 'Жами литр' %}
-{% set L_cs_sync = 'Sync-логи' if lang == 'ru' else 'Синхр. логлари' %}
-{% set L_gd_1_title = '1. Выберите период' if lang == 'ru' else '1. Даврни танланг' %}
-{% set L_gd_1_text = 'По умолчанию показывается текущий день. Для сверки задайте нужный диапазон.' if lang == 'ru' else 'Стандарт бўйича жорий кун кўрсатилади. Солиштириш учун керакли даврни белгиланг.' %}
-{% set L_gd_2_title = '2. Сузьте по складу' if lang == 'ru' else '2. Омбор бўйича торайтиринг' %}
-{% set L_gd_2_text = 'Фильтр по складу помогает быстро найти выдачи конкретного подразделения.' if lang == 'ru' else 'Омбор фильтри маълум бўлинманинг беришларини тез топишга ёрдам беради.' %}
-{% set L_gd_3_title = '3. Проверяйте лимит' if lang == 'ru' else '3. Лимитни назорат қилинг' %}
-{% set L_gd_3_text = 'На странице выводится до 500 последних транзакций по выбранному фильтру.' if lang == 'ru' else 'Саҳифада танланган фильтр бўйича охирги 500 тагача транзакция кўрсатилади.' %}
-
-<div class="page-header fuel002b-page-header">
-    <div>
-        <h1>{{ L_title }}</h1>
-        <div class="text-muted text-sm">{{ L_note }}</div>
+<div class="vs-kpi-grid vs-mb">
+  <div class="vs-card vs-card-accent-left">
+    <div class="vs-card-body">
+      <div class="vs-card-title">{{ L_gd_1_title }}</div>
+      <p class="vs-help">{{ L_gd_1_text }}</p>
     </div>
-</div>
-
-<div class="card" style="margin-bottom:16px;">
-    <div class="card-body" style="padding:12px 20px;">
-        
-<div class="fuel002b-context-strip FUEL002B_MARKER">
-  <div class="fuel002b-pill">
-    <span>{{ L_cs_period }}</span>
-    <strong>{{ d_from.strftime('%d.%m.%Y') if d_from else '' }}  {{ d_to.strftime('%d.%m.%Y') if d_to else '' }}</strong>
   </div>
-  <div class="fuel002b-pill">
-    <span>{{ L_cs_rows }}</span>
-    <strong>{{ items|length }} / 500</strong>
-  </div>
-  <div class="fuel002b-pill">
-    <span>{{ L_cs_total_l }}</span>
-    <strong>{{ '%.0f'|format(total_qty or 0) }} л</strong>
-  </div>
-  <div class="fuel002b-pill">
-    <span>{{ L_cs_sync }}</span>
-    <strong>{{ sync_logs|length }}</strong>
-  </div>
-</div>
-
-<div class="fuel002b-guidance-panel">
-  <div class="fuel002b-guidance-card">
-    <strong>{{ L_gd_1_title }}</strong>
-    <span>{{ L_gd_1_text }}</span>
-  </div>
-  <div class="fuel002b-guidance-card">
-    <strong>{{ L_gd_2_title }}</strong>
-    <span>{{ L_gd_2_text }}</span>
-  </div>
-  <div class="fuel002b-guidance-card">
-    <strong>{{ L_gd_3_title }}</strong>
-    <span>{{ L_gd_3_text }}</span>
-  </div>
-</div>
-
-<form method="get" class="form-inline fuel002b-filter-form">
-            <div class="form-group" style="margin-bottom:0;">
-                <label>{{ L_from }}</label>
-                <input type="date" name="date_from" value="{{ d_from.isoformat() }}" class="form-control">
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>{{ L_to }}</label>
-                <input type="date" name="date_to" value="{{ d_to.isoformat() }}" class="form-control">
-            </div>
-            <div class="form-group" style="margin-bottom:0; flex:1;">
-                <label>{{ L_wh }}</label>
-                <select name="warehouse_id" class="form-control">
-                    <option value="">{{ L_all }}</option>
-                    {% for wh in warehouses %}
-                    <option value="{{ wh.id }}" {% if selected_wh_id == wh.id %}selected{% endif %}>{{ wh.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>&nbsp;</label>
-                <button type="submit" class="btn btn-primary btn-sm">{{ L_show }}</button>
-            </div>
-        </form>
+  <div class="vs-card vs-card-accent-left">
+    <div class="vs-card-body">
+      <div class="vs-card-title">{{ L_gd_2_title }}</div>
+      <p class="vs-help">{{ L_gd_2_text }}</p>
     </div>
+  </div>
+  <div class="vs-card vs-card-accent-left">
+    <div class="vs-card-body">
+      <div class="vs-card-title">{{ L_gd_3_title }}</div>
+      <p class="vs-help">{{ L_gd_3_text }}</p>
+    </div>
+  </div>
 </div>
 
-<div class="card" style="margin-bottom:24px;">
-    <div class="card-header">{{ L_transactions }} ({{ items|length }})</div>
-    <div style="overflow-x:auto;">
-    <div class="fuel002b-table-wrap FUEL002B_TX_TABLE_WRAP_MARKER">
-<table class="fuel002b-transaction-table">
-        <thead>
-            <tr>
-                <th>{{ L_datetime }}</th>
-                <th>{{ L_station }}</th>
-                <th>{{ L_wh }}</th>
-                <th>{{ L_fuel }}</th>
-                <th class="text-right">{{ L_liter }}</th>
-                <th>{{ L_card }}</th>
-                <th>{{ L_card_name }}</th>
-                <th class="text-muted text-sm">Topaz ID</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for txn in items %}
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <form method="get" class="vs-form-row">
+      <div class="vs-field" style="min-width:150px;">
+        <label class="vs-label" for="fxFrom">{{ L_from }}</label>
+        <input type="date" id="fxFrom" name="date_from" value="{{ d_from.isoformat() }}" class="vs-input">
+      </div>
+      <div class="vs-field" style="min-width:150px;">
+        <label class="vs-label" for="fxTo">{{ L_to }}</label>
+        <input type="date" id="fxTo" name="date_to" value="{{ d_to.isoformat() }}" class="vs-input">
+      </div>
+      <div class="vs-field" style="min-width:220px;">
+        <label class="vs-label" for="fxWh">{{ L_wh }}</label>
+        <select name="warehouse_id" id="fxWh" class="vs-select">
+          <option value="">{{ L_all }}</option>
+          {% for wh in warehouses %}
+          <option value="{{ wh.id }}" {% if selected_wh_id == wh.id %}selected{% endif %}>{{ wh.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field vs-field-action">
+        <button type="submit" class="vs-btn vs-btn-primary">{{ icon('filter', 15) }}{{ L_show }}</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# DD-028, режим is-stream: под фильтром лежит таблица на 394 817 строк, на
+   экран берётся последнее окно в 500. Сортировка и разбиение — серверные,
+   поэтому заголовки НЕ кнопки: клиентская сортировка переставила бы строки
+   внутри окна и выглядела бы как сортировка всей выборки. #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">{{ L_transactions }} ({{ items|length }})</span></div>
+  <div class="vs-table-scroll">
+    <table class="vs-table vs-num is-stream is-compact">
+      <thead>
         <tr>
-            <td class="text-sm">{{ txn.txn_datetime.strftime('%d.%m.%Y %H:%M') }}</td>
-            <td>{{ txn.station.name }}</td>
-            <td class="text-muted text-sm">{{ txn.station.warehouse_name }}</td>
-            <td><span style="font-size:11px; padding:1px 6px; background:var(--info-light); color:var(--info); border-radius:2px; font-weight:700;">{{ txn.fuel_type }}</span></td>
-            <td class="text-right" style="font-weight:700; color:var(--danger);">{{ '%.2f'|format(txn.quantity) }}</td>
-            <td class="text-sm text-muted">{{ txn.card_number or '—' }}</td>
-            {# UI-CARD-NAME: display name via the page-wide map; em dash when no alias #}
-            <td class="text-sm">{{ card_names.get((txn.card_number or '')|trim, '—') }}</td>
-            <td class="text-muted" style="font-size:10px;">{{ txn.topaz_txn_id or '' }}</td>
+          <th>{{ L_datetime }}</th>
+          <th>{{ L_station }}</th>
+          <th>{{ L_wh }}</th>
+          <th>{{ L_fuel }}</th>
+          <th class="right">{{ L_liter }}</th>
+          <th>{{ L_card }}</th>
+          <th>{{ L_card_name }}</th>
+          <th>Topaz ID</th>
         </tr>
-        {% else %}
+      </thead>
+      <tbody>
+      {% for txn in items %}
         <tr>
-            <td colspan="8" class="text-center text-muted" style="padding:60px;">
-                <div style="font-size:36px; margin-bottom:12px;">⛽</div>
-                {{ L_no_data }}<br><small>{{ L_agent }}</small>
-            </td>
+          <td>{{ txn.txn_datetime.strftime('%d.%m.%Y %H:%M') }}</td>
+          <td class="vs-cell-clip" title="{{ txn.station.name }}">{{ txn.station.name }}</td>
+          <td class="vs-cell-clip vs-muted" title="{{ txn.station.warehouse_name }}">{{ txn.station.warehouse_name }}</td>
+          <td><span class="vs-badge vs-badge-info">{{ txn.fuel_type }}</span></td>
+          <td class="right"><strong>{{ '%.2f'|format(txn.quantity) }}</strong></td>
+          <td class="vs-muted">{{ txn.card_number or '—' }}</td>
+          {# UI-CARD-NAME: display name via the page-wide map; em dash when no alias #}
+          <td class="vs-cell-clip" title="{{ card_names.get((txn.card_number or '')|trim, '') }}">{{ card_names.get((txn.card_number or '')|trim, '—') }}</td>
+          <td class="vs-muted">{{ txn.topaz_txn_id or '' }}</td>
         </tr>
-        {% endfor %}
-        </tbody>
+      {% else %}
+        <tr>
+          <td colspan="8">
+            <div class="vs-empty">
+              <div class="vs-empty-icon">{{ icon('fuel', 28) }}</div>
+              <p class="vs-empty-title">{{ L_no_data }}</p>
+              <p class="vs-empty-sub">{{ L_agent }}</p>
+            </div>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
     </table>
-</div>
-    </div>
+  </div>
+  {% if items %}
+  <div class="vs-table-foot">
+    <span class="vs-table-count">{{ L_cs_rows }}: <strong>{{ items|length }}</strong> / 500</span>
+    <span class="vs-table-scope">{{ L_total_l }}: {{ '%.0f'|format(total_qty or 0) }} л — {{ L_scope }}</span>
+  </div>
+  {% endif %}
 </div>
 
 {% if sync_logs %}
-<div class="card">
-    <div class="card-header">{{ L_sync }} (10)</div>
-    <div class="fuel002b-table-wrap FUEL002B_SYNC_TABLE_WRAP_MARKER">
-<table class="fuel002b-sync-table">
-        <thead>
-            <tr>
-                <th>{{ L_time }}</th>
-                <th>{{ t('Агент IP') }}</th>
-                <th class="text-right">{{ L_received }}</th>
-                <th class="text-right">{{ L_new }}</th>
-                <th class="text-right">{{ L_dup }}</th>
-                <th class="text-right">{{ L_unknown }}</th>
-                <th>{{ L_status }}</th>
-                <th>{{ L_error }}</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for log in sync_logs %}
+{# DD-028, режим is-static: десять строк, всё помещается — сортировка на
+   клиенте, по умолчанию по времени вниз. #}
+<div class="vs-table-wrap">
+  <div class="vs-card-header"><span class="vs-card-title">{{ L_sync }} ({{ sync_logs|length }})</span></div>
+  <div class="vs-table-scroll">
+    <table class="vs-table vs-num is-static is-compact" data-sortable data-sort-default="0:descending">
+      <thead>
         <tr>
-            <td class="text-sm">{{ log.synced_at.strftime('%d.%m.%Y %H:%M:%S') }}</td>
-            <td class="text-sm text-muted">{{ log.agent_ip }}</td>
-            <td class="text-right">{{ log.transactions_received }}</td>
-            <td class="text-right" style="font-weight:600; color:var(--accent);">{{ log.transactions_new }}</td>
-            <td class="text-right text-muted">{{ log.transactions_dup }}</td>
-            <td class="text-right">{{ log.unknown_stations }}</td>
-            <td>{% if log.status == 'ok' %}<span class="working-badge">OK</span>{% else %}<span class="idle-badge">{{ log.status }}</span>{% endif %}</td>
-            <td class="text-sm text-muted" style="max-width:200px; overflow:hidden; text-overflow:ellipsis;">{{ log.error_msg or '' }}</td>
+          <th data-sort>{{ L_time }}</th>
+          <th data-sort>{{ t('Агент IP') }}</th>
+          <th class="right" data-sort>{{ L_received }}</th>
+          <th class="right" data-sort>{{ L_new }}</th>
+          <th class="right" data-sort>{{ L_dup }}</th>
+          <th class="right" data-sort>{{ L_unknown }}</th>
+          <th data-sort>{{ L_status }}</th>
+          <th>{{ L_error }}</th>
         </tr>
-        {% endfor %}
-        </tbody>
+      </thead>
+      <tbody>
+      {% for log in sync_logs %}
+        <tr>
+          {# data-sort-value: сравнение идёт по СЫРОМУ значению. По видимой
+             строке «09.08.2026 13:44:27» сортировка пошла бы по дню месяца. #}
+          <td data-sort-value="{{ log.synced_at.isoformat() }}">{{ log.synced_at.strftime('%d.%m.%Y %H:%M:%S') }}</td>
+          <td class="vs-muted">{{ log.agent_ip }}</td>
+          <td class="right">{{ log.transactions_received }}</td>
+          <td class="right"><strong>{{ log.transactions_new }}</strong></td>
+          <td class="right vs-muted">{{ log.transactions_dup }}</td>
+          <td class="right">{{ log.unknown_stations }}</td>
+          <td>
+            {% if log.status == 'ok' %}<span class="vs-badge vs-badge-success">OK</span>
+            {% else %}<span class="vs-badge vs-badge-danger">{{ log.status }}</span>{% endif %}
+          </td>
+          <td class="vs-cell-clip vs-muted" title="{{ log.error_msg or '' }}">{{ log.error_msg or '' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
     </table>
-</div>
+  </div>
 </div>
 {% endif %}
-
-{% endblock %}
-
-{% block scripts %}
-
-<script>
-// FUEL002B_JS_MARKER: visual-only page helper, no data changes.
-(function () {
-  const filter = document.querySelector('.fuel002b-filter-form');
-  if (!filter) return;
-  filter.querySelectorAll('input, select').forEach(function (field) {
-    field.addEventListener('change', function () {
-      field.classList.add('fuel002b-filter-touched');
-    });
-  });
-})();
-</script>
 
 {% endblock %}

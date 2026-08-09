@@ -1,0 +1,42 @@
+{# Компонент «выбор нескольких значений». Разметка — здесь, поведение —
+   static/js/vs-multiselect.js, оформление — .vs-multiselect в дизайн-системе.
+
+   [REASON]: до этого в продукте было ДВА непохожих элемента управления для
+   одной задачи: .vs-multiselect с инлайновым JS внутри index.html и .ms-*
+   с отдельной реализацией в base_next.html — их использовали report.html и
+   ref_equipment.html. Разные подписи, разное поведение при «выбрано всё»,
+   разная клавиатура. Компонент существует ровно затем, чтобы этого больше
+   не было; повторение разметки на каждом экране и есть способ, которым
+   расхождение возникает.
+
+   options — последовательность пар (value, label).
+   selected — множество/список отмеченных значений.
+   all_when_empty — пустой выбор считать «выбрано всё» (так ведут себя
+   фильтры отчёта: не выбрано ничего = ограничения нет).
+#}
+{% macro vs_multiselect(dom_id, name, options, selected, label_all, label_selected, label_clear, all_when_empty=True) -%}
+<div class="vs-multiselect" id="{{ dom_id }}">
+  <button type="button" class="vs-multiselect-trigger" aria-expanded="false"
+          onclick="vsmsToggle('{{ dom_id }}')">
+    <span class="vs-ms-label" data-all-label="{{ label_all }}" data-selected-label="{{ label_selected }}">{{ label_all }}</span>
+    <span class="vs-ms-count"></span>
+    <span class="vs-ms-arrow" aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+    </span>
+  </button>
+  <div class="vs-multiselect-dropdown">
+    {%- for value, label in options %}
+    <label>
+      <input type="checkbox" name="{{ name }}" value="{{ value }}"
+             {% if value in selected or (all_when_empty and not selected) %}checked{% endif %}
+             onchange="vsmsUpdate('{{ dom_id }}')">
+      <span>{{ label }}</span>
+    </label>
+    {%- endfor %}
+    <div class="vs-multiselect-footer">
+      <button type="button" onclick="vsmsAll('{{ dom_id }}', true)">{{ label_all }}</button>
+      <button type="button" onclick="vsmsAll('{{ dom_id }}', false)">{{ label_clear }}</button>
+    </div>
+  </div>
+</div>
+{%- endmacro %}
