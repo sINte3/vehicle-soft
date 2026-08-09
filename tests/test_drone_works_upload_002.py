@@ -18,15 +18,18 @@ real book -- `os.SEEK_END` does not care what lies in between.
 Run:
   python -m unittest tests.test_drone_works_upload_002 -v
 """
+import datetime
 import os
+import re
 import shutil
 import tempfile
 import unittest
 
-from tests.harness import app, reset_db, create_admin, login
+from tests.harness import app, reset_db, create_admin, login, CSRF
 from models import db, User
 
 import drone_works_upload as works_upload
+import drones
 
 
 MIB = 1024 * 1024
@@ -290,6 +293,154 @@ class UploadLimitsOnTheFormTests(unittest.TestCase):
             self.assertIn(template % (works_upload.MAX_FILE_BYTES // MIB,
                                       works_upload.MAX_UPLOAD_BYTES // MIB),
                           body, lang)
+
+
+# ─── 2. The month the form offers ────────────────────────────────────────────
+
+class PreviousMonthTests(unittest.TestCase):
+    """The default period is the month that has just ended.
+
+    The clock is frozen by passing the date in: _drone_previous_month() takes
+    `today` rather than reading it, so «freeze the clock at 2026-08-09» is a
+    literal argument and not a patched module global.
+    """
+
+    CASES = (
+        (datetime.date(2026, 8, 9), '2026-07'),
+        (datetime.date(2026, 1, 15), '2025-12'),
+        (datetime.date(2026, 3, 1), '2026-02'),
+    )
+
+    def test_the_three_frozen_dates(self):
+        for today, expected in self.CASES:
+            self.assertEqual(drones._drone_previous_month(today), expected,
+                             today.isoformat())
+
+    def test_january_borrows_the_year(self):
+        """The case «today minus 30 days» cannot reach at all."""
+        self.assertEqual(drones._drone_previous_month(
+            datetime.date(2026, 1, 1)), '2025-12')
+        self.assertEqual(drones._drone_previous_month(
+            datetime.date(2026, 1, 31)), '2025-12')
+
+    def test_every_day_of_a_whole_year_answers_its_own_previous_month(self):
+        """No day of any month may disagree with the other days of it."""
+        day = datetime.date(2025, 12, 1)
+        checked = 0
+        while day <= datetime.date(2027, 1, 31):
+            year = day.year if day.month > 1 else day.year - 1
+            month = day.month - 1 if day.month > 1 else 12
+            self.assertEqual(drones._drone_previous_month(day),
+                             '%04d-%02d' % (year, month), day.isoformat())
+            checked += 1
+            day += datetime.timedelta(days=1)
+        self.assertGreater(checked, 400)
+
+    def test_subtracting_thirty_days_would_have_been_wrong_twice(self):
+        """The negative control the task names, run rather than asserted.
+
+        [REASON]: «wrong twice a year» is not a figure of speech. From the
+        31st of a 31-day month, minus thirty days stays inside the SAME month
+        and the form would offer the month the operator is standing in; from
+        1 March it overshoots January and skips February altogether. Both are
+        computed here against the real function, so a future rewrite in terms
+        of timedelta fails this test instead of passing the three above.
+        """
+        naive = []
+        for today in (datetime.date(2026, 3, 31), datetime.date(2026, 3, 1)):
+            naive.append(((today - datetime.timedelta(days=30))
+                          .strftime('%Y-%m'),
+                          drones._drone_previous_month(today)))
+        self.assertEqual(naive, [('2026-03', '2026-02'),
+                                 ('2026-01', '2026-02')])
+        for wrong, right in naive:
+            self.assertNotEqual(wrong, right)
+
+
+class PreviousMonthOnTheFormTests(unittest.TestCase):
+    """The value that actually reaches the input, with the clock frozen."""
+
+    @classmethod
+    def setUpClass(cls):
+        reset_db()
+        cls.admin = create_admin('upload002_period_admin')
+        # The flash messages asserted below are the Russian half of the pair.
+        set_language(cls.admin, 'ru')
+
+    def setUp(self):
+        self.client = app.test_client()
+        login(self.client, self.admin)
+        self.real_today = drones._drone_today_local
+
+    def tearDown(self):
+        drones._drone_today_local = self.real_today
+
+    def form_value(self, today):
+        drones._drone_today_local = lambda: today
+        response = self.client.get('/drones/works/import')
+        self.assertEqual(response.status_code, 200)
+        body = response.data.decode('utf-8')
+        match = re.search(r'id="impPeriod"[^>]*?value="([^"]*)"', body, re.S)
+        self.assertIsNotNone(match, 'period input not found on the page')
+        return match.group(1), body
+
+    def test_the_form_offers_the_previous_month(self):
+        for today, expected in PreviousMonthTests.CASES:
+            value, _body = self.form_value(today)
+            self.assertEqual(value, expected, today.isoformat())
+
+    def test_the_form_does_not_offer_the_current_month(self):
+        """The defect itself: on 2026-08-09 the form used to say 2026-08."""
+        value, _body = self.form_value(datetime.date(2026, 8, 9))
+        self.assertNotEqual(value, '2026-08')
+
+    def test_the_probe_would_notice_the_old_behaviour(self):
+        """The control: the same regex reads back a planted current month."""
+        planted = ('<input class="vs-input" type="text" id="impPeriod" '
+                   'name="period_month" value="2026-08">')
+        match = re.search(r'id="impPeriod"[^>]*?value="([^"]*)"', planted,
+                          re.S)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), '2026-08')
+
+    def test_the_field_stays_an_editable_plain_text_input(self):
+        """A default, not a constraint: books for older months are normal."""
+        _value, body = self.form_value(datetime.date(2026, 8, 9))
+        match = re.search(r'<input[^>]*id="impPeriod"[^>]*>', body, re.S)
+        self.assertIsNotNone(match)
+        tag = match.group(0)
+        self.assertIn('type="text"', tag)
+        self.assertNotIn('readonly', tag)
+        self.assertNotIn('disabled', tag)
+        self.assertNotIn('min=', tag)
+        self.assertNotIn('max=', tag)
+        self.assertIn('pattern="[0-9]{4}-[0-9]{2}"', tag)
+
+    def test_an_older_month_is_still_accepted_by_the_route(self):
+        """The default did not become a rule: 2025-09 goes through.
+
+        The upload is rejected for having no file, which is the point -- the
+        period passed its own validation and the refusal names the file, not
+        the month.
+        """
+        drones._drone_today_local = lambda: datetime.date(2026, 8, 9)
+        response = self.client.post(
+            '/drones/works/import/upload',
+            data={'csrf_token': CSRF, 'period_month': '2025-09'},
+            follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        body = response.data.decode('utf-8')
+        self.assertIn('Ни одного файла не выбрано', body)
+        self.assertNotIn('Период должен быть в виде', body)
+
+    def test_a_malformed_period_is_still_refused(self):
+        """The negative control for the test above."""
+        response = self.client.post(
+            '/drones/works/import/upload',
+            data={'csrf_token': CSRF, 'period_month': 'сентябрь'},
+            follow_redirects=True)
+        self.assertIn('Период должен быть в виде',
+                      response.data.decode('utf-8'))
 
 
 if __name__ == '__main__':

@@ -190,6 +190,24 @@ def _drone_today_local():
     return (datetime.utcnow() + DRONE_DISPLAY_UTC_OFFSET).date()
 
 
+def _drone_previous_month(today):
+    """The calendar month before `today`, as «YYYY-MM».
+
+    [REASON]: DRONE-WORKS-UPLOAD-002. Computed by YEAR/MONTH ARITHMETIC, never
+    by subtracting days. «Today minus 30 days» lands in the same month from
+    the 31st of a 31-day month and skips February entirely from 30 March; from
+    1 January it has to answer the previous December, and only the year
+    borrow below does that. The month a book belongs to is not a distance in
+    days from anything.
+    """
+    year, month = today.year, today.month
+    if month == 1:
+        year, month = year - 1, 12
+    else:
+        month -= 1
+    return '%04d-%02d' % (year, month)
+
+
 def _drone_fmt_date(value):
     return value.strftime('%d.%m.%Y') if value else '—'
 
@@ -3271,7 +3289,14 @@ def works_import():
         batches=batches,
         batch_files=dict((row.id, _drone_import_files(row))
                          for row in batches),
-        default_period=_drone_today_local().strftime('%Y-%m'),
+        # [REASON]: the PREVIOUS month, not the current one. Dispatcher books
+        # arrive for the month that has just ended, so on 2026-08-09 the form
+        # offered 2026-08 for an April book and staging did exactly that:
+        # batch #2 was declared August while every dated row in it was April.
+        # This is a default and nothing more -- the field stays an editable
+        # plain YYYY-MM text input, because a book for an older month is
+        # ordinary and must not need a fight with the form.
+        default_period=_drone_previous_month(_drone_today_local()),
         status_preview=DRONE_WORK_IMPORT_PREVIEW,
         status_applied=DRONE_WORK_IMPORT_APPLIED,
         status_failed=DRONE_WORK_IMPORT_FAILED,
