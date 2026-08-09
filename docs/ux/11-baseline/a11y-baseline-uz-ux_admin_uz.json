@@ -19,14 +19,14 @@
  },
  "/admin/audit": {
   "bySeverity": {
-   "serious": 7,
+   "serious": 4,
    "critical": 5
   },
   "rules": [
    {
     "id": "color-contrast",
     "impact": "serious",
-    "nodes": 7
+    "nodes": 4
    },
    {
     "id": "label",

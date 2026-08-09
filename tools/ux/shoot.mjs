@@ -122,11 +122,22 @@ const main = async () => {
     await page.addStyleTag({ content: FREEZE_CSS }).catch(() => {});
     await login(page);
 
-    const dir = path.join(OUT, LANG ? `${vp}-${LANG}` : vp);
+    // [REASON]: v imya kataloga vhodyat I yazyk, I rol. Bez roli progon pod
+    // ux_viewer perezapisyval kadry ux_admin v desktop/: otchety JSON u nih
+    // raznye suffiksy, a PNG lozhilis v odnu papku, i administratorskiy nabor
+    // molcha podmenyalsya stranicami 403.
+    const dirName = [vp, LANG, ROLE === 'ux_admin' ? null : ROLE]
+      .filter(Boolean).join('-');
+    const dir = path.join(OUT, dirName);
     fs.mkdirSync(dir, { recursive: true });
 
     for (const route of list) {
-      const url = BASE + route.url + (LANG ? (route.url.includes('?') ? '&' : '?') + 'lang=' + LANG : '');
+      // [REASON]: LANG -- tolko METKA progona, v URL ne podstavlyaetsya.
+      // Yazyk interfeysa prihodit iz uchetnoy zapisi (g.lang =
+      // current_user.language), poetomu progon na uzbekskom delaetsya
+      // --role ux_admin_uz, a ne query-parametrom: parametr prilozhenie
+      // prosto ignoriruet, i progon molcha snimalsya by na russkom.
+      const url = BASE + route.url;
       const started = Date.now();
       let status = 0;
       try {

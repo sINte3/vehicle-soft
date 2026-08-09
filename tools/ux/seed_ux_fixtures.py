@@ -270,8 +270,14 @@ def seed(app, db, rows_per_table=14, verbose=True):
         # Polzovateli -- otdelno i yavno: nuzhny vse chetyre roli, chtoby snyat
         # sostoyaniya "net prav", i predskazuemye loginy dlya obhoda.
         made_users = []
+        # [REASON]: yazyk interfeysa beretsya iz uchetnoy zapisi
+        # (g.lang = current_user.language), a ne iz query-parametra. Poetomu
+        # progon na uzbekskom trebuet OTDELNOGO polzovatelya, a ne flaga u
+        # kraulera; i chtoby snyat na uzbekskom ves obhod, vklyuchaya admin-
+        # ekrany, nuzhen imenno administrator s language='uz'.
         for username, role, lang in (
                 ('ux_admin', ROLE_ADMIN, 'ru'),
+                ('ux_admin_uz', ROLE_ADMIN, 'uz'),
                 ('ux_operator', ROLE_OPERATOR, 'uz'),
                 ('ux_viewer', ROLE_VIEWER, 'uz'),
                 ('ux_mechanic', ROLE_MECHANIC, 'uz')):

@@ -1,0 +1,458 @@
+[
+ {
+  "viewport": "desktop",
+  "url": "/",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/admin/audit",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/admin/permissions",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/admin/users",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/deficiencies",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/customers",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/operators",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/operators/1",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/reports",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/reports/calendar",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/reports/reconcile",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/reports/spray",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/sources",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/summary",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/units",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/units/1",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/units/reattach",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/works",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/works/assignment-hints",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/works/debts",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/works/debts/aging",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/works/import",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/works/import/20",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/works/import/20/report",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/drones/works/reports",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/entry",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/balance-report",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/cards",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/initial-balance",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/ledger",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/manual-expenses",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/receipts",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/report",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/reports",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/reports/card-issues",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/reports/counter-mismatch",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/reports/station-issues",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/reports/station-totals",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/reserve-transfers",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/stations",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/transactions",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/warehouses",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/fuel/warnings",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/login",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/ref/customers",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/ref/equipment",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/ref/organizations",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/ref/work_types",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/report",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/acts",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/acts/1",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/acts/1/pdf",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/api/catalog-search",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/api/equipment-by-org",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/api/price-suggestions",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/api/repeat-check",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/api/skus-by-part",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/catalog",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/desk",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/equipment-models",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/inventory",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/maintenance",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/maintenance-norms",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/new",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/purchase-queue",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/reports",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/spare-parts/skus",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/wialon",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/wialon/auto_match",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/wialon/mapping",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/wialon/report",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/wialon/workload",
+  "status": 403,
+  "note": "HTTP error"
+ },
+ {
+  "viewport": "desktop",
+  "url": "/work-orders/new",
+  "status": 403,
+  "note": "HTTP error"
+ }
+]
