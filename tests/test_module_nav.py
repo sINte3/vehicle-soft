@@ -130,6 +130,46 @@ class ModuleNavPermissionTests(unittest.TestCase):
         resp = app.test_client().get('/login')
         self.assertEqual(resp.status_code, 200)
 
+    def test_the_second_barrier_actually_holds(self):
+        """Шаблон импортируется анонимом НАПРЯМУЮ и не падает.
+
+        [REASON]: проверка выше держит только ПЕРВУЮ преграду — импорт стоит
+        внутри ветки для авторизованных, поэтому страница входа сюда не
+        заходит. Вторая преграда (короткое замыкание `_auth and ...`) при
+        этом может быть сломана и ничем себя не выдать. Так и было: у
+        единственного пункта с двумя правами скобки разъехались, выражение
+        читалось как `(_auth and A) or B`, и B вызывался у анонима всегда.
+        Здесь шаблон рендерится вне всякой оболочки — сломанная преграда
+        падает с UndefinedError.
+        """
+        from flask import render_template_string
+        # render_template_string, а не jinja_env.from_string: только он
+        # применяет контекстные процессоры приложения, из которых приходит
+        # current_user. Без них тест падал бы на «current_user is undefined»
+        # — и это было бы падение по другой причине, то есть проверка не
+        # различала бы исправную преграду и сломанную.
+        with app.test_request_context('/login'):
+            rendered = render_template_string(
+                "{% from '_module_nav.html' import module_nav with context %}"
+                "{{ module_nav('spare_parts') }}{{ module_nav('fuel') }}"
+                "{{ module_nav('drones') }}")
+        # Держится ДВА условия. Первое: рендер вообще состоялся — сломанная
+        # преграда падает с UndefinedError и до сюда не доходит.
+        self.assertIn('vs-modulenav', rendered)
+        # Второе: ни один пункт, закрытый правом, не отрисован. Пункты без
+        # гейта отрисовываются, и это верно — их защищает @module_required на
+        # самом маршруте, а не разметка.
+        #
+        # [REASON]: сравнение по АДРЕСУ, а не по подписи. Подстрока врёт:
+        # «Омбор» (Склад, закрыт правом) входит в «Омбор карточкаси»
+        # (Карточка склада, открыта всем), и проверка по подписи падала на
+        # верном коде.
+        for gated in ('/fuel/manual-expenses', '/fuel/reserve-transfers',
+                      '/fuel/warehouses', '/fuel/initial-balance',
+                      '/spare-parts/inventory', '/spare-parts/purchase-queue',
+                      '/spare-parts/acts', '/spare-parts/maintenance-due'):
+            self.assertNotIn('"%s"' % gated, rendered, gated)
+
     def test_the_three_partials_carry_no_markup_of_their_own(self):
         # Смысл ADAPT-1: три реализации свелись к одной. Разметка,
         # вернувшаяся в партиал, — регрессия, а не мелочь.

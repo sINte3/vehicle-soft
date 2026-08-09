@@ -36,6 +36,12 @@ const LIMIT = parseInt(arg('limit', '0'), 10);
 const VIEWPORTS = {
   laptop: { width: 1440, height: 900 },
   tablet: { width: 1024, height: 768 },
+  // [REASON]: 600 px dobavlen, kogda pravila shablonov poehali s 700/760/640/600
+  // na shkalu. Bez nego polosa 480-768, gde imenno i menyaetsya chislo kolonok,
+  // ne snimalas voobshche: 1440 i 1024 vyshe nee, 390 nizhe. Proverka, ne
+  // popadayushchaya v izmenennuyu vetku, daet odinakovyy otvet pri vernom i
+  // nevernom kode -- to est proverkoy ne yavlyaetsya.
+  narrow: { width: 600, height: 900 },
   mobile: { width: 390, height: 844 },
 };
 

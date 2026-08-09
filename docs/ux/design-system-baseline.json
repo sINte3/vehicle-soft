@@ -6,12 +6,7 @@
    "templates/fuel/report.html": 4,
    "templates/fuel/stations.html": 2,
    "templates/fuel/warehouses.html": 2,
-   "templates/fuel/warnings.html": 4,
-   "templates/ref_customers.html": 2,
-   "templates/ref_equipment.html": 2,
-   "templates/ref_organizations.html": 2,
-   "templates/ref_work_types.html": 2,
-   "templates/wialon_mapping_list.html": 2
+   "templates/fuel/warnings.html": 4
   },
   "glyph": {
    "templates/admin_users.html": 7,

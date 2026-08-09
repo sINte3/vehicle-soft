@@ -31,7 +31,15 @@
 #}
 {#- Вторая преграда к тому же: набор строится только для вошедшего.
     Файл могут импортировать и из другого места, а короткое замыкание `and`
-    в Jinja гарантирует, что has_module_access у анонима не вызовется. -#}
+    в Jinja гарантирует, что has_module_access у анонима не вызовется.
+
+    [REASON]: у единственного пункта с двумя правами скобки ОБЯЗАТЕЛЬНЫ —
+    нужно `_auth and (A or B)`, а не `_auth and A or B`. `and` связывает
+    сильнее `or`, поэтому вторая форма читается как `(_auth and A) or B` и
+    вызывает B у анонима всегда. Для вошедшего результат тот же, и потому
+    ошибка не видна ничем, кроме падения страницы входа — а страница входа
+    сюда не заходит, пока импорт стоит внутри ветки для авторизованных.
+    То есть преграда молча переставала быть преградой. -#}
 {% set _auth = current_user.is_authenticated %}
 {% set _ru = (lang == 'ru') %}
 {% set _ep = request.endpoint or '' %}
@@ -64,8 +72,8 @@
     {'ep': 'spare_parts.inventory', 'ru': 'Склад', 'uz': 'Омбор',
      'show': _auth and current_user.has_module_access('spare_parts_inventory_manage')},
     {'ep': 'spare_parts.purchase_queue', 'ru': 'Закупка', 'uz': 'Харид',
-     'show': _auth and current_user.has_module_access('spare_parts_inventory_manage')
-             or current_user.has_module_access('spare_parts_approve')},
+     'show': _auth and (current_user.has_module_access('spare_parts_inventory_manage')
+                        or current_user.has_module_access('spare_parts_approve'))},
     {'ep': 'spare_parts.acts_index', 'ru': 'Акты', 'uz': 'Далолатномалар',
      'show': _auth and current_user.has_module_access('spare_parts_acts'),
      'active': ['spare_parts.acts_index', 'spare_parts.act_detail']},
