@@ -827,6 +827,19 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-empty-title { font-size: 18px; font-weight: 700; margin: 0 0 6px; }
 .vs-empty-sub   { color: var(--vs-text-muted); font-size: 13.5px; margin: 0; }
 
+/* Ikonka pustogo sostoyaniya.
+   [REASON]: PR-040 -- ran'she zdes' stoyal emodzi 48px pryamo v razmetke, na
+   ekrane, kotoryy nesyot 83 % raboty cheloveka. Emodzi risuetsya sistemnym
+   shriftom: drugoy vektor, ves i bazovaya liniya, chem u vsego ostal'nogo.
+   Razmer i cvet zadayutsya zdes', a ne inline-stilem v shablone. */
+.vs-empty-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 64px; height: 64px; margin: 0 auto 16px;
+  border-radius: var(--vs-r);
+  background: var(--vs-surface-3);
+  color: var(--vs-text-muted);
+}
+
 /* ---------- 13. UTILITIES -------------------------------------------- */
 .vs-stack    { display: flex; flex-direction: column; gap: 14px; }
 .vs-stack-sm { display: flex; flex-direction: column; gap: 8px; }

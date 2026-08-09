@@ -19,7 +19,6 @@
   },
   "glyph": {
    "templates/admin_users.html": 7,
-   "templates/daily_entry.html": 6,
    "templates/deficiencies.html": 2,
    "templates/drones/customers.html": 1,
    "templates/drones/list.html": 1,
@@ -35,7 +34,6 @@
    "templates/fuel/stations.html": 2,
    "templates/fuel/transactions.html": 1,
    "templates/fuel/warehouses.html": 1,
-   "templates/index.html": 2,
    "templates/profile.html": 1,
    "templates/ref_equipment.html": 7,
    "templates/report.html": 3,

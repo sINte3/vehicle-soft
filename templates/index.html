@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}{{ t('Бош саҳифа') }}{% endblock %}
 
 {% block content %}
@@ -320,7 +321,7 @@
         </table>
       </div>
       {% else %}
-      <div style="padding:24px; text-align:center; color:var(--vs-success); font-weight:600;">{{ 'Просроченных нарядов нет ✓' if lang == 'ru' else 'Муддати ўтган нарядлар йўқ ✓' }}</div>
+      <div style="padding:24px; text-align:center; color:var(--vs-success); font-weight:600;">{{ icon('check') }} {{ 'Просроченных нарядов нет' if lang == 'ru' else 'Муддати ўтган нарядлар йўқ' }}</div>
       {% endif %}
     </div>
 

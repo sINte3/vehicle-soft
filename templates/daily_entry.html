@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}{{ t('Маълумот киритиш') }}{% endblock %}
 {% block content %}
 
@@ -455,7 +456,8 @@
         <button type="button" class="btn btn-danger btn-sm"
                 onclick="removeLine({{ eq.id }}, {{ idx }})"
                 title="{{ t('Бу қаторни ўчириш') }}"
-                style="padding:6px 10px;">✕</button>
+                aria-label="{{ t('Бу қаторни ўчириш') }}"
+                style="padding:6px 10px;">{{ icon('close', 14) }}</button>
     </div>
 </div>
 {% endmacro %}
@@ -612,7 +614,7 @@
             </div>
         </div>
         <div class="entry-warning">
-            ⚠ {{ t('Сана ёки ташкилот ўзгарса, сақланмаган маълумотлар йўқолади. Аввал сақланг.') }}
+            {{ icon('warning') }} {{ t('Сана ёки ташкилот ўзгарса, сақланмаган маълумотлар йўқолади. Аввал сақланг.') }}
         </div>
         {% endif %}
     </div>
@@ -630,7 +632,7 @@
     </div>
 
     <div class="entry-toolbar">
-        <button type="submit" class="btn btn-primary btn-lg vs-btn vs-btn-success">{{ t('💾 Сақлаш') }}</button>
+        <button type="submit" class="btn btn-primary btn-lg vs-btn vs-btn-success">{{ icon('save') }} {{ t('Сақлаш') }}</button>
         <button type="button" class="btn btn-secondary" onclick="setAllIdle()">{{ t('Ҳаммасини «бўш» қилиш') }}</button>
         <button type="button" class="btn btn-secondary" onclick="expandAllCards()">{{ t('Барчасини очиш') }}</button>
         <button type="button" class="btn btn-secondary" onclick="collapseAllCards()">{{ t('Барчасини ёпиш') }}</button>
@@ -669,7 +671,7 @@
     {% endfor %}
 
     <div class="entry-bottom-save">
-        <button type="submit" class="btn btn-primary btn-lg vs-btn vs-btn-success">{{ t('💾 Сақлаш') }}</button>
+        <button type="submit" class="btn btn-primary btn-lg vs-btn vs-btn-success">{{ icon('save') }} {{ t('Сақлаш') }}</button>
         <span class="text-muted text-sm">{{ t('Сақлашдан олдин қизил билан белгиланган майдонларни текширинг.') }}</span>
     </div>
 </form>
@@ -684,7 +686,7 @@
 {% else %}
 <div class="card">
     <div class="card-body entry-empty-state">
-        <div style="font-size:48px; margin-bottom:16px;">🚜</div>
+        <div class="vs-empty-icon">{{ icon('tractor', 40) }}</div>
         <h3 style="margin-bottom:8px;">{{ t('Ташкилотни танланг') }}</h3>
         <p class="text-muted">{{ t('Юқоридан ташкилотни танлаб, маълумот киритишни бошланг') }}</p>
     </div>
@@ -898,7 +900,7 @@ function addLine(eqId) {
         <div class="form-group" style="margin-bottom:0"><label>{{ t('Нарх') }}</label><input type="number" min="0" step="1" inputmode="numeric" name="eq_${eqId}_line_${idx}_price" oninput="calcAmount(${eqId}); markFormDirty()" onwheel="this.blur()" id="eq-${eqId}-line-${idx}-price" placeholder="0"><div class="field-help">{{ t('Нарх манфий бўлмаслиги керак') }}</div></div>
         <div class="form-group" style="margin-bottom:0"><label>{{ t('Тўлов тури') }}</label><select name="eq_${eqId}_line_${idx}_payment_type" onchange="markFormDirty()"><option value="internal">{{ t('Тизим') }}</option><option value="transfer">{{ t('Пул кўч.') }}</option><option value="cash">{{ t('Нақд') }}</option><option value="other">{{ t('Бошқа') }}</option></select></div>
         <div class="form-group" style="margin-bottom:0; flex:1;"><label>{{ t('Изоҳ') }}</label><input type="text" name="eq_${eqId}_line_${idx}_note" placeholder="{{ t('Қисқа изоҳ') }}" oninput="markFormDirty()"></div>
-        <div class="form-group" style="margin-bottom:0"><label>&nbsp;</label><button type="button" class="btn btn-danger btn-sm" onclick="removeLine(${eqId}, ${idx})" style="padding:6px 10px;">✕</button></div>
+        <div class="form-group" style="margin-bottom:0"><label>&nbsp;</label><button type="button" class="btn btn-danger btn-sm" onclick="removeLine(${eqId}, ${idx})" aria-label="{{ t('Бу қаторни ўчириш') }}" style="padding:6px 10px;">{{ icon('close', 14) }}</button></div>
     </div>`;
     container.insertAdjacentHTML('beforeend', html);
     markFormDirty();
