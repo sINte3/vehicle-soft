@@ -387,18 +387,18 @@
       <div style="margin-top:14px;">
         <div id="dayFields" style="{% if mode != 'day' %}display:none;{% endif %}">
           <div class="vs-field" style="max-width:200px;">
-            <label class="vs-label">{{ t('Сана') }}</label>
-            <input class="vs-input" type="date" name="date" value="{{ d_from.isoformat() }}" onchange="document.getElementById('dateForm').submit()">
+            <label class="vs-label" for="dashDate">{{ t('Сана') }}</label>
+            <input class="vs-input" id="dashDate" type="date" name="date" value="{{ d_from.isoformat() }}" onchange="document.getElementById('dateForm').submit()">
           </div>
         </div>
         <div id="rangeFields" class="vs-form-row" style="{% if mode != 'range' %}display:none;{% endif %}">
           <div class="vs-field" style="max-width:200px;">
-            <label class="vs-label">{{ t('Дан') }}</label>
-            <input class="vs-input" type="date" name="date_from" value="{{ d_from.isoformat() }}">
+            <label class="vs-label" for="dashFrom">{{ t('Дан') }}</label>
+            <input class="vs-input" id="dashFrom" type="date" name="date_from" value="{{ d_from.isoformat() }}">
           </div>
           <div class="vs-field" style="max-width:200px;">
-            <label class="vs-label">{{ t('Гача') }}</label>
-            <input class="vs-input" type="date" name="date_to" value="{{ d_to.isoformat() }}">
+            <label class="vs-label" for="dashTo">{{ t('Гача') }}</label>
+            <input class="vs-input" id="dashTo" type="date" name="date_to" value="{{ d_to.isoformat() }}">
           </div>
         </div>
         <div id="autoFields" class="vs-soft" style="{% if mode not in ('week', 'month') %}display:none;{% endif %} font-size:13px;">
@@ -570,7 +570,7 @@
       <tbody>
       {% for od in orgs_data %}
       <tr class="is-clickable" onclick="toggleOrg({{ od.org.id }})">
-        <td class="center"><span class="toggle-icon" id="icon-org-{{ od.org.id }}">▶</span></td>
+        <td class="center"><span class="vs-disclosure" id="icon-org-{{ od.org.id }}">{{ icon('chevron', 13) }}</span></td>
         <td style="font-weight:700;">{{ od.org.name }}</td>
         <td class="center vs-num">{{ od.working_count }}</td>
         <td class="center vs-num vs-muted">{{ od.idle_count }}</td>
@@ -585,7 +585,7 @@
       <tr class="vs-accord-l2 org-{{ od.org.id }}-eq is-clickable" style="display:none;" onclick="toggleEq({{ od.org.id }}, {{ eqid }}); event.stopPropagation();">
         <td class="center">
           {% if ed.records|length > 0 %}
-          <span class="toggle-icon toggle-sm" id="icon-eq-{{ od.org.id }}-{{ eqid }}">▶</span>
+          <span class="vs-disclosure" id="icon-eq-{{ od.org.id }}-{{ eqid }}">{{ icon('chevron', 11) }}</span>
           {% endif %}
         </td>
         <td>
@@ -743,9 +743,9 @@ document.addEventListener('DOMContentLoaded', function() {
 function toggleOrg(orgId) {
     const rows = document.querySelectorAll('.org-' + orgId + '-eq');
     const icon = document.getElementById('icon-org-' + orgId);
-    const isOpen = icon.classList.contains('open');
+    const isOpen = icon.classList.contains('is-open');
     rows.forEach(r => r.style.display = isOpen ? 'none' : '');
-    icon.classList.toggle('open');
+    icon.classList.toggle('is-open');
     if (isOpen) {
         document.querySelectorAll('[class*="eq-' + orgId + '-"][class*="-rec"]').forEach(r => r.style.display = 'none');
         document.querySelectorAll('[id^="icon-eq-' + orgId + '-"]').forEach(i => i.classList.remove('open'));
@@ -756,9 +756,9 @@ function toggleEq(orgId, eqId) {
     const rows = document.querySelectorAll('.eq-' + orgId + '-' + eqId + '-rec');
     const icon = document.getElementById('icon-eq-' + orgId + '-' + eqId);
     if (!icon) return;
-    const isOpen = icon.classList.contains('open');
+    const isOpen = icon.classList.contains('is-open');
     rows.forEach(r => r.style.display = isOpen ? 'none' : '');
-    icon.classList.toggle('open');
+    icon.classList.toggle('is-open');
 }
 
 function toggleAllOrgs(open) {
@@ -772,9 +772,4 @@ function toggleAllOrgs(open) {
     }
 }
 </script>
-<style>
-.toggle-icon { display:inline-block; font-size:10px; color: var(--vs-text-muted); transition: transform 0.15s; }
-.toggle-icon.open { transform: rotate(90deg); }
-.toggle-sm { font-size: 8px; }
-</style>
 {% endblock %}

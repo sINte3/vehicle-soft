@@ -649,10 +649,17 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-mini.is-success .vs-mini-v { color: var(--vs-success); }
 .vs-mini.is-warning { border-color: #fdebd0; background: #fdf6ec; }
 .vs-mini.is-warning .vs-mini-v { color: var(--vs-warning); }
-.vs-mini.is-warning .vs-mini-l { color: #b07d3a; }
+.vs-mini.is-warning .vs-mini-l { color: var(--vs-warning); }
+/* [REASON]: DD-020, найдено axe на эталонном экране P4. Было #b07d3a на
+   #fdf6ec — 3.35 при пороге AA 4.5, и подпись эта набрана 11.5 px, то
+   есть послабление для крупного текста к ней неприменимо. Токен
+   --vs-warning на том же фоне даёт 4.68; отдельного оттенка «чуть
+   светлее основного» здесь не нужно было вовсе. */
 .vs-mini.is-danger  { border-color: #f6d4d4; background: var(--vs-danger-bg); }
 .vs-mini.is-danger  .vs-mini-v { color: var(--vs-danger); }
-.vs-mini.is-danger  .vs-mini-l { color: #b5544a; }
+.vs-mini.is-danger  .vs-mini-l { color: var(--vs-danger); }
+/* [REASON]: то же самое: #b5544a на #fdeeee — 4.30, не дотягивало 0.20
+   до порога. Токен --vs-danger даёт 4.83. */
 
 .vs-stat {
   padding: 14px 15px;
@@ -854,6 +861,19 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
    eto obyazano byt podpisano. Bez podpisi chislo chitaetsya kak itog po vsey
    vyborke -- na 394 817 strokah raznica na poryadki. */
 .vs-table-foot .vs-table-scope { font-style: italic; }
+
+/* Treugolnik raskrytiya v strokah-akkordeonah.
+   [REASON]: bylo simvolom '\25B6' s povorotom po klassu .open i tremya
+   pravilami v inline-<style> glavnogo ekrana. Simvol risuetsya SHRIFTOM: na
+   Windows ego beret Segoe UI Symbol, i on ne sovpadaet po opticheskomu vesu
+   i baseline ni s odnoy ikonkoy nabora. Teper eto ta zhe SVG-ikonka
+   'chevron', chto i vezde, i cvet u nee nasleduetsya ot teksta. */
+.vs-disclosure {
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--vs-text-muted);
+  transition: transform var(--vs-t-fast);
+}
+.vs-disclosure.is-open { transform: rotate(90deg); }
 
 .vs-accord-l2 td:nth-child(2) { padding-left: 34px; }
 .vs-accord-l3 td:nth-child(2) { padding-left: 56px; }
