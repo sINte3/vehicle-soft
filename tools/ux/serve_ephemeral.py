@@ -59,6 +59,44 @@ sys.path.insert(0, os.path.join(REPO_ROOT, 'tools', 'ux'))
 import seed_ux_fixtures  # noqa: E402
 
 
+def create_non_model_tables():
+    """Sozdat tablicy, u kotoryh net modeli SQLAlchemy.
+
+    [REASON]: audit_logs sozdaetsya migraciey migrate_sec003a_real.py syrym
+    SQL i modeli ne imeet, poetomu db.create_all() ee ne sozdaet vovse -- i
+    /admin/audit padaet s 500 "no such table". Eto ne defekt produkta, a
+    probel odnorazovoy bazy, i bez etoy funkcii on popadal by v otchet obhoda
+    kak oshibka interfeysa. Nabor kolonok povtoryaet migraciyu; pri ee
+    izmenenii pravitsya i zdes.
+    """
+    from sqlalchemy import text
+    db.session.execute(text("""
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            user_id INTEGER,
+            username_snapshot TEXT,
+            full_name_snapshot TEXT,
+            role_snapshot TEXT,
+            action TEXT NOT NULL,
+            entity_type TEXT,
+            entity_id INTEGER,
+            entity_label TEXT,
+            module TEXT,
+            route TEXT,
+            method TEXT,
+            ip_address TEXT,
+            user_agent TEXT,
+            before_json TEXT,
+            after_json TEXT,
+            changes_json TEXT,
+            status TEXT DEFAULT 'ok',
+            description TEXT
+        )
+    """))
+    db.session.commit()
+
+
 def collect_routes():
     """Spisok GET-marshrutov dlya obhoda.
 
@@ -143,6 +181,7 @@ def main():
 
     with app.app_context():
         db.create_all()
+        create_non_model_tables()
     seed_ux_fixtures.seed(app, db, rows_per_table=args.rows)
 
     routes, skipped = collect_routes()

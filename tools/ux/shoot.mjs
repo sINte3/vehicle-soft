@@ -168,14 +168,20 @@ const main = async () => {
   await browser.close();
 
   const suffix = (LANG ? `-${LANG}` : '') + (ROLE === 'ux_admin' ? '' : `-${ROLE}`);
-  const stable = (o) => JSON.stringify(o, Object.keys(o).sort ? undefined : undefined, 1);
   results.sort((a, b) => (a.viewport + a.url).localeCompare(b.viewport + b.url));
   errors.sort((a, b) => (a.viewport + a.url).localeCompare(b.viewport + b.url));
 
-  fs.writeFileSync(path.join(OUT, `pages${suffix}.json`), stable(results) + '\n');
+  // [REASON]: vtoroy argument JSON.stringify -- eto REPLACER. Massiv klyuchey
+  // rabotaet kak belyy spisok SVOYSTV, poetomu JSON.stringify(a11y, keys, 1)
+  // vyrezal bySeverity/rules i ostavlyal {} po kazhdomu marshrutu. Poryadok
+  // klyuchey nuzhno zadavat peresborkoy obyekta, a ne replacerom.
+  const sortedKeys = (obj) => Object.fromEntries(
+    Object.keys(obj).sort().map((k) => [k, obj[k]]));
+
+  fs.writeFileSync(path.join(OUT, `pages${suffix}.json`), JSON.stringify(results, null, 1) + '\n');
   if (RUN_AXE) fs.writeFileSync(path.join(OUT, `a11y-baseline${suffix}.json`),
-    JSON.stringify(a11y, Object.keys(a11y).sort(), 1) + '\n');
-  fs.writeFileSync(path.join(OUT, `errors${suffix}.json`), stable(errors) + '\n');
+    JSON.stringify(sortedKeys(a11y), null, 1) + '\n');
+  fs.writeFileSync(path.join(OUT, `errors${suffix}.json`), JSON.stringify(errors, null, 1) + '\n');
 
   const overflow = results.filter(r => r.horizontalOverflow);
   console.log(`shots: ${results.length}, errors: ${errors.length}, horizontal overflow: ${overflow.length}`);
