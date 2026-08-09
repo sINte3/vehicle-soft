@@ -860,11 +860,12 @@ def debt_tables(body):
 
 
 class DroneReportsLauncherTests(unittest.TestCase):
-    """/drones/reports -- nine tiles, no data, no filters, no export.
+    """/drones/reports -- ten tiles, no data, no filters, no export.
 
-    Was five. DRONE-ANALYTICS-001 added four reports; the census below is
-    updated rather than relaxed, because its whole purpose is that a tile
-    cannot appear, move or change accent without somebody saying so here.
+    Was five. DRONE-ANALYTICS-001 added four reports and DRONE-CLOSE-001 a
+    tenth; the census below is updated rather than relaxed, because its whole
+    purpose is that a tile cannot appear, move or change accent without
+    somebody saying so here.
     """
 
     @classmethod
@@ -877,7 +878,7 @@ class DroneReportsLauncherTests(unittest.TestCase):
         self.client = app.test_client()
         login(self.client, self.admin)
 
-    def test_the_launcher_opens_with_nine_tiles_in_order(self):
+    def test_the_launcher_opens_with_ten_tiles_in_order(self):
         import re
         response = self.client.get('/drones/reports')
         self.assertEqual(response.status_code, 200)
@@ -898,6 +899,11 @@ class DroneReportsLauncherTests(unittest.TestCase):
             ('is-info', '/drones/reports/reconcile'),
             ('is-warning', '/drones/works/debts/aging'),
             ('is-purple', '/drones/reports/spray'),
+            # DRONE-CLOSE-001 reuses is-info, the accent `reconcile` carries:
+            # the same comparison read by subdivision rather than by month
+            # alone. A shared colour means shared data, and a new accent here
+            # would claim a new data source that does not exist.
+            ('is-info', '/drones/reports/closing'),
             ('is-danger', '/drones/sources'),
         ])
 
@@ -920,10 +926,10 @@ class DroneReportsLauncherTests(unittest.TestCase):
         """UI-FONT-LOCAL-001: no CDN, no icon font, no remote asset."""
         body = self.client.get('/drones/reports').data.decode('utf-8')
         tiles = body.split('vs-report-tiles')[1]
-        # One inline <svg> per tile, nine tiles. This is also X-6: a tile key
+        # One inline <svg> per tile, ten tiles. This is also X-6: a tile key
         # with no icon branch renders an EMPTY icon box and nothing fails, so
         # the count is the only thing that catches it.
-        self.assertEqual(tiles.count('<svg'), 9)
+        self.assertEqual(tiles.count('<svg'), 10)
         for marker in ('http://', 'https://', '<img', '@font-face', 'url('):
             self.assertNotIn(marker, tiles, marker)
 

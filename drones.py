@@ -4362,6 +4362,22 @@ DRONE_REPORT_TILES = (
                        'медиана атрофида йўлак билан',
     },
     {
+        # DRONE-CLOSE-001. Reuses is-info, the accent `reconcile` carries:
+        # the module's rule is that a shared colour means shared data, and
+        # this is that same comparison read by subdivision instead of by
+        # month alone. A new accent would say «new data», which would be a
+        # lie about where the numbers come from.
+        'key': 'closing',
+        'endpoint': 'drones.works_closing',
+        'accent': 'is-info',
+        'title_ru': 'Кто не сдал ведомость',
+        'title_uz': 'Ким ведомост топширмаган',
+        'subtitle_ru': 'Покрытие по подразделениям и месяцам: где летали, '
+                       'а книгу не завели',
+        'subtitle_uz': 'Бўлимлар ва ойлар бўйича қамров: қаерда учган, '
+                       'аммо китоб очилмаган',
+    },
+    {
         'key': 'sources',
         'endpoint': 'drones.sources',
         'accent': 'is-danger',
@@ -6134,6 +6150,25 @@ def _drone_closing_data(window=DRONE_CLOSING_DEFAULT_WINDOW):
         'months_available': len(all_months),
         'months_hidden': len(all_months) - len(shown),
     }
+
+
+@drones_bp.route('/reports/closing')
+@module_required('drones')
+def works_closing():
+    """Who has not handed in their book: subdivisions against months.
+
+    No Excel, deliberately, and the screen says so: the figure moves as books
+    arrive and an exported copy gets quoted weeks later as if it were still
+    true. The reason is the reconcile report's and is written out there.
+    """
+    return render_template(
+        'drones/works_closing.html',
+        data=_drone_closing_data(_drone_closing_window(
+            request.args.get('window'))),
+        state_covered=DRONE_CLOSING_COVERED,
+        state_no_book=DRONE_CLOSING_NO_BOOK,
+        state_book_only=DRONE_CLOSING_BOOK_ONLY,
+        state_idle=DRONE_CLOSING_IDLE)
 
 
 # ─── DRONE-ANALYTICS-001/4: flight calendar ──────────────────────────────────
