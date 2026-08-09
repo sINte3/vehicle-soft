@@ -8,28 +8,34 @@
 профессионально; для образца направления идей и вдохновения — не константа
 для выполнения; вправе ничего не взять и предложить своё».
 
-**PROBLEM-ID пуст у всех строк намеренно.** Он проставляется в P1, когда
-проблемный регистр будет построен на скриншотах реального интерфейса.
-Паттерн, не нашедший к тому моменту проблемы, из спецификации выпадает.
+**PROBLEM-ID проставлен в P2** по `docs/ux/12-problem-register.md`. Правило
+фазы: паттерн без привязки к измеренной проблеме в спецификацию не идёт.
+Два кандидата отсеяны именно по нему, и оба отсева подтверждены исходником:
+`ADOPT-3` уже реализован (`vs-kpi-link` в каждой карточке `index.html`), а
+`ADAPT-3` экономит ноль действий (`daily_entry` — второй пункт сайдбара на
+каждой странице).
+
+Пустой PROBLEM-ID у строк INSPIRE и REJECT — так и задумано: первые влияют
+только на направление, вторые отклонены.
 
 | Файл | Паттерн одной фразой | PROBLEM-ID | Вердикт |
 |---|---|---|---|
-| `dashboards-04-divided-kpi-strip-no-cards.jpg` | метрики в одной полосе, разделённые тонкими линиями, без карточек и теней | — | **ADOPT-1** |
-| `dashboards-05-divided-kpi-strip-four-metrics.jpg` | та же полоса на четыре метрики, независимый источник | — | **ADOPT-1** |
-| `density-01-six-metric-strip-and-ranked-lists.jpg` | та же полоса на шесть метрик плюс ранжированные списки и воронка полосами | — | **ADOPT-1** |
-| `tables-02-status-as-dot-plus-colored-text.jpg` | статус в таблице — точка и цветная подпись вместо залитой пилюли | — | **ADOPT-2** |
-| `tables-01-list-with-category-dot-and-right-aligned-amounts.jpg` | список операций: категория точкой, суммы выровнены по правому краю | — | **ADOPT-2** (вторичный) |
-| `dashboards-06-kpi-with-footer-link-to-detail.jpg` | ссылка в подвале KPI ведёт в раздел разбора; запись вида `120/154` | — | **ADOPT-3** |
-| `shell-02-sectioned-sidebar-with-nested-active.jpg` | один сайдбар с секциями и одним уровнем вложенности | — | **ADAPT-1** |
-| `dashboards-07-split-by-decision-working-vs-attention.jpg` | дашборд поделён на «что работает» и «что требует внимания» | — | **ADAPT-2** |
-| `shell-03-quick-actions-block-under-nav.jpg` | блок частых действий под навигацией | — | **ADAPT-3** |
-| `filters-01-sortby-filter-period-triplet-in-card-header.jpg` | сортировка, фильтр и период группой в шапке карточки таблицы | — | **ADAPT-4** |
-| `filters-02-multi-facet-chip-rows-inline.jpg` | многогранный фильтр рядами чипов без модального окна | — | **ADAPT-4** (вторичный) |
+| `dashboards-04-divided-kpi-strip-no-cards.jpg` | метрики в одной полосе, разделённые тонкими линиями, без карточек и теней | PR-043, PR-044 | **ADOPT-1** |
+| `dashboards-05-divided-kpi-strip-four-metrics.jpg` | та же полоса на четыре метрики, независимый источник | PR-043 | **ADOPT-1** |
+| `density-01-six-metric-strip-and-ranked-lists.jpg` | та же полоса на шесть метрик плюс ранжированные списки и воронка полосами | PR-043 | **ADOPT-1** |
+| `tables-02-status-as-dot-plus-colored-text.jpg` | статус в таблице — точка и цветная подпись вместо залитой пилюли | PR-012 | **ADAPT-5** |
+| `tables-01-list-with-category-dot-and-right-aligned-amounts.jpg` | список операций: категория точкой, суммы выровнены по правому краю | PR-012 | ADAPT-5 (вторичный) |
+| `dashboards-06-kpi-with-footer-link-to-detail.jpg` | ссылка в подвале KPI ведёт в раздел разбора; запись вида `120/154` | — | ~~ADOPT-3~~ отсеян: уже реализовано (`vs-kpi-link`) |
+| `shell-02-sectioned-sidebar-with-nested-active.jpg` | один сайдбар с секциями и одним уровнем вложенности | PR-011 | **ADAPT-1** |
+| `dashboards-07-split-by-decision-working-vs-attention.jpg` | дашборд поделён на «что работает» и «что требует внимания» | PR-043 | **ADAPT-2** |
+| `shell-03-quick-actions-block-under-nav.jpg` | блок частых действий под навигацией | — | ~~ADAPT-3~~ отсеян: экономит ноль действий |
+| `filters-01-sortby-filter-period-triplet-in-card-header.jpg` | сортировка, фильтр и период группой в шапке карточки таблицы | PR-062 | **ADAPT-4** |
+| `filters-02-multi-facet-chip-rows-inline.jpg` | многогранный фильтр рядами чипов без модального окна | PR-062 | ADAPT-4 (вторичный) |
 | `shell-01-record-tabs-above-sidebar.jpg` | вкладки открытых записей над сайдбаром | — | INSPIRE |
 | `density-02-dense-admin-three-column-layout.jpg` | предел плотности трёхколоночного админа | — | INSPIRE |
 | `forms-02-persistent-create-panel-instead-of-modal.jpg` | постоянная панель создания вместо модального окна | — | INSPIRE |
 | `shell-04-icon-only-rail-collapsed.jpg` | свёрнутый до иконок рельс навигации | — | INSPIRE |
-| `forms-01-modal-labelled-fields-single-primary-action.jpg` | модальное окно: подписи над полями, одно основное действие в подвале; пустое состояние с действием | — | INSPIRE |
+| `forms-01-modal-labelled-fields-single-primary-action.jpg` | модальное окно: подписи над полями, одно основное действие в подвале; пустое состояние с действием | PR-040 (частично) | INSPIRE |
 | `dashboards-09-saturated-color-blocks-antipattern.jpg` | шесть залитых цветных плиток, цвет назначен по кругу | — | **REJECT-1** |
 | `shell-03-quick-actions-block-under-nav.jpg` (кольца) | три кольцевые диаграммы при легендах, содержащих все значения | — | **REJECT-2** |
 | `dashboards-10-presentation-infographic-antipattern.jpg` | шаблон слайдов: кольца, радары, градиентные столбцы | — | **REJECT-3** |
