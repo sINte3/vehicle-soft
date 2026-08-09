@@ -187,13 +187,13 @@
   },
   {
    "endpoint": "drones.works_import_preview",
-   "slug": "drones-works-import-20",
-   "url": "/drones/works/import/20"
+   "slug": "drones-works-import-8",
+   "url": "/drones/works/import/8"
   },
   {
    "endpoint": "drones.works_import_report",
-   "slug": "drones-works-import-20-report",
-   "url": "/drones/works/import/20/report"
+   "slug": "drones-works-import-8-report",
+   "url": "/drones/works/import/8/report"
   },
   {
    "endpoint": "drones.works_reports",

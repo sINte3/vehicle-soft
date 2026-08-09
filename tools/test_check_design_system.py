@@ -132,6 +132,40 @@ class TokenDuplicates(unittest.TestCase):
         counts, _ = cds.scan_css(css)
         self.assertEqual(sum(counts.get('token-dup', {}).values()), 1)
 
+    def test_duplicates_are_found_through_the_palette_layer(self):
+        """Posle DD-023 roli ssylayutsya na palitru. Bez razresheniya var()
+        proverka perestala by videt dubli voobshche -- i imenno tak
+        --vs-bg = --vs-border-3 proshel by mimo."""
+        css = (':root { --p-a: #eef2f7; --p-b: #eef2f7;'
+               ' --vs-bg: var(--p-a); --vs-border-3: var(--p-b); }')
+        counts, detail = cds.scan_css(css)
+        self.assertEqual(sum(counts.get('token-dup', {}).values()), 1)
+        self.assertIn('--vs-bg', detail['token-dup'][0][1])
+        self.assertIn('--vs-border-3', detail['token-dup'][0][1])
+
+    def test_palette_entries_sharing_a_value_are_not_reported(self):
+        """Sovpadenie VNUTRI palitry -- ne defekt: palitra ne neset smysla."""
+        css = ':root { --p-a: #eef2f7; --p-b: #eef2f7; }'
+        counts, _ = cds.scan_css(css)
+        self.assertEqual(sum(counts.get('token-dup', {}).values()), 0)
+
+    def test_compat_aliases_are_not_reported(self):
+        """--info: var(--vs-info) sovpadaet po postroeniyu; soobshchat o nem --
+        shum, kotoryy pryachet nastoyashchie sovpadeniya."""
+        css = (':root { --p-teal: #0e7490; --vs-info: var(--p-teal);'
+               ' --info: var(--vs-info); }')
+        counts, _ = cds.scan_css(css)
+        self.assertEqual(sum(counts.get('token-dup', {}).values()), 0)
+
+    def test_alias_exclusion_does_not_hide_a_real_duplicate(self):
+        """Otricatelnyy kontrol k predydushchemu: otsev psevdonimov ne dolzhen
+        zaglushat sluchay, kogda dve roli nezavisimo dayut odin cvet."""
+        css = (':root { --p-teal: #0e7490; --vs-info: var(--p-teal);'
+               ' --info: var(--vs-info); --vs-accent: #0e7490; }')
+        counts, detail = cds.scan_css(css)
+        self.assertEqual(sum(counts.get('token-dup', {}).values()), 1)
+        self.assertIn('--vs-accent', detail['token-dup'][0][1])
+
 
 class Ratchet(unittest.TestCase):
     def test_growth_is_a_regression_and_shrink_is_not(self):

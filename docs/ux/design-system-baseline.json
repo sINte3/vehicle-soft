@@ -159,7 +159,7 @@
    "templates/workload.html": 1
   },
   "token-dup": {
-   "static/css/design-system.css": 4
+   "static/css/design-system.css": 1
   }
  },
  "note": "Ratchet baseline. Counts may only decrease. Regenerate with tools/check_design_system.py --update-baseline",

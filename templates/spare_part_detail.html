@@ -483,7 +483,7 @@
     {% for e in timeline %}
       {% set dot = 'var(--vs-info)' %}
       {% if e.type == 'status' %}{% set dot = status_colors.get(e.new_status, 'var(--vs-info)') %}
-      {% elif e.type == 'price' %}{% set dot = ('var(--vs-danger)' if e.price_action == 'reject' else ('var(--vs-warning)' if e.price_action == 'return' else 'var(--vs-brand-green)')) %}
+      {% elif e.type == 'price' %}{% set dot = ('var(--vs-danger)' if e.price_action == 'reject' else ('var(--vs-warning)' if e.price_action == 'return' else 'var(--vs-success)')) %}
       {% elif e.type == 'attachment' %}{% set dot = 'var(--vs-text-muted)' %}{% endif %}
       <div class="vs-timeline-item">
         <div class="vs-timeline-dot" style="background:{{ dot }};"></div>

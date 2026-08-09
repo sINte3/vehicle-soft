@@ -82,6 +82,7 @@ RE_JINJA_COMMENT = re.compile(r'\{#.*?#\}', re.S)
 RE_CSS_COMMENT = re.compile(r'/\*.*?\*/', re.S)
 RE_ROOT = re.compile(r':root\s*\{(.*?)\}', re.S)
 RE_DECL = re.compile(r'(--[a-z0-9-]+)\s*:\s*([^;]+);')
+RE_VAR_REF = re.compile(r'var\(\s*(--[a-z0-9-]+)\s*\)')
 RE_GLYPH = re.compile('[\U0001F000-\U0001FAFF☀-➿⬀-⯿]')
 
 CHECKS = ('table-class', 'hardcoded-color', 'breakpoint',
@@ -182,8 +183,34 @@ def scan_css(css_text):
     for block in RE_ROOT.findall(css_text):
         for name, value in RE_DECL.findall(block):
             declared[name] = value.strip()
+
+    # [REASON]: posle perehoda na dva urovnya (DD-023) roli ssylayutsya na
+    # palitru cherez var(--p-*), i sravnenie literalnyh znacheniy perestalo
+    # by videt dubli VOOBSHCHE -- proverka, nashedshaya --vs-bg = --vs-border-3,
+    # molcha prekratila by rabotat. Poetomu ssylki razreshayutsya do konechnogo
+    # znacheniya, s zashchitoy ot cikla.
+    def resolve(name, depth=0):
+        value = declared.get(name, '')
+        ref = RE_VAR_REF.fullmatch(value.strip())
+        if ref and depth < 8:
+            return resolve(ref.group(1), depth + 1)
+        return value.strip()
+
     by_value = collections.defaultdict(list)
-    for name, value in declared.items():
+    for name, raw in declared.items():
+        # Sravnivayutsya tolko ROLI: sovpadenie dvuh znacheniy vnutri samoy
+        # palitry ozhidaemo i o nem soobshchat ne nado.
+        if name.startswith('--p-'):
+            continue
+        # [REASON]: psevdonim, obyavlennyy kak var(--vs-*), sovpadaet po
+        # znacheniyu PO POSTROENIYU -- imenno v etom rabota sloya
+        # sovmestimosti (--info: var(--vs-info) i tak dalee). Soobshchat o nem
+        # -- shum, kotoryy pryachet nastoyashchie sovpadeniya: bez etogo
+        # otseva ih 15 vmesto odnogo.
+        ref = RE_VAR_REF.fullmatch(raw.strip())
+        if ref and ref.group(1).startswith('--vs-'):
+            continue
+        value = resolve(name)
         if RE_HEX.fullmatch(value) or value.lower().startswith('rgb'):
             by_value[norm_color(value)].append(name)
     dups = {v: sorted(names) for v, names in by_value.items() if len(names) > 1}

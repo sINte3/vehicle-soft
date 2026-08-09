@@ -5,64 +5,132 @@
    ===================================================================== */
 
 /* ---------- 1. TOKENS -------------------------------------------------- */
+/* Dva urovnya, DD-023. Uroven 1 -- PALITRA: syrye znacheniya, smysla ne
+   nesut. Uroven 2 -- ROLI: chto etot cvet znachit. Ves ostalnoy kod
+   obrashchaetsya TOLKO k rolyam (--vs-*). Obrashchenie k palitre (--p-*) vne
+   bloka roley obhodit pereklyuchenie temy i snova razvedet interfeys na dva
+   vida -- eto proveryaet tools/check_design_system.py.
+
+   [REASON]: temnaya tema (DD-001) vklyuchaetsya zapolneniem odnogo bloka
+   [data-theme="dark"] v konce etoy sekcii. Bez razdeleniya na dva urovnya
+   prishlos by pravit kazhdoe mesto, gde cvet ispolzovan -- a takih mest
+   sverkh tokenov eshche 213 (PR-003). Blok uezzhaet PUSTYM: mesto postroeno,
+   cveta ne podobrany. */
 :root {
+  /* --- Uroven 1: PALITRA ---------------------------------------------- */
+  --p-blue-600:   #2563eb;
+  --p-blue-700:   #1d4ed8;
+  --p-blue-050:   #eaf1fe;
+  --p-blue-400:   #4f93ff;
+
+  --p-navy-900:   #0f2b50;
+  --p-navy-950:   #0c2244;
+  --p-navy-200:   #a9bad4;
+  --p-navy-300:   #7e93b4;
+  --p-navy-350:   #7f93b1;
+
+  --p-slate-950:  #182230;
+  --p-slate-500:  #5b6b80;
+  --p-slate-100:  #eef2f7;
+  --p-slate-090:  #f1f5fa;
+  --p-slate-070:  #f7f9fc;
+  --p-slate-150:  #e6ecf4;
+  --p-slate-170:  #e2e8f1;
+  --p-slate-160:  #e4eaf2;
+  --p-slate-200:  #d8e0ea;
+  --p-white:      #ffffff;
+
+  --p-green-700:  #157e3c;
+  --p-green-800:  #12692f;
+  --p-green-050:  #e7f6ec;
+  --p-amber-700:  #b45309;
+  --p-amber-050:  #fdf3e3;
+  --p-red-600:    #c0392b;
+  --p-red-050:    #fdeeee;
+  --p-teal-700:   #0e7490;
+  --p-teal-050:   #e6f7fb;
+  --p-violet-600: #7c3aed;
+  --p-violet-050: #f1eafe;
+
+  /* --- Uroven 2: ROLI -------------------------------------------------- */
   /* Brand */
-  --vs-primary:        #2563eb;
-  --vs-primary-hover:  #1d4ed8;
-  --vs-primary-soft:   #eaf1fe;
-  --vs-brand-green:    #15803d;
-  --vs-brand-green-h:  #12692f;
-  --vs-brand-green-s:  #e7f6ec;
+  --vs-primary:        var(--p-blue-600);
+  --vs-primary-hover:  var(--p-blue-700);
+  --vs-primary-soft:   var(--p-blue-050);
 
   /* Sidebar (navy) */
-  --vs-side-bg-1:      #0f2b50;
-  --vs-side-bg-2:      #0c2244;
-  --vs-side-text:      #a9bad4;
-  --vs-side-text-dim:  #7e93b4;
-  --vs-side-section:   #5f779b;
+  --vs-side-bg-1:      var(--p-navy-900);
+  --vs-side-bg-2:      var(--p-navy-950);
+  --vs-side-text:      var(--p-navy-200);
+  --vs-side-text-dim:  var(--p-navy-300);
+  /* [REASON]: DD-021 -- bylo #5f779b, 3.10 na fone saydbara. Zagolovki
+     sekciy -- melkie propisnye, poslablenie dlya krupnogo teksta k nim
+     neprimenimo. Stalo 4.53. */
+  --vs-side-section:   var(--p-navy-350);
   --vs-side-hover:     rgba(255,255,255,.07);
   --vs-side-active:    rgba(79,147,255,.16);
-  --vs-side-active-bar:#4f93ff;
-  --vs-side-active-fg: #ffffff;
+  --vs-side-active-bar:var(--p-blue-400);
+  /* [REASON]: DD-022 -- sovpadaet po znacheniyu s --vs-surface i eto
+     osoznanno: belyy tekst na temnom saydbare i belaya poverhnost kartochki
+     -- raznye roli, v temnoy teme oni razoydutsya. */
+  --vs-side-active-fg: var(--p-white);
 
   /* Neutrals */
-  --vs-bg:             #eef2f7;
-  --vs-surface:        #ffffff;
-  --vs-surface-2:      #f7f9fc;
-  --vs-surface-3:      #f1f5fa;
-  --vs-border:         #e6ecf4;
-  --vs-border-2:       #e2e8f1;
-  --vs-border-3:       #eef2f7;
-  --vs-border-input:   #d8e0ea;
+  --vs-bg:             var(--p-slate-100);
+  --vs-surface:        var(--p-white);
+  --vs-surface-2:      var(--p-slate-070);
+  --vs-surface-3:      var(--p-slate-090);
+  --vs-border:         var(--p-slate-150);
+  --vs-border-2:       var(--p-slate-170);
+  /* [REASON]: PR-001/DD-021 -- bylo #eef2f7, bayt v bayt ravno --vs-bg.
+     Granica poverh fona stranicy ne byla vidna VOVSE: razrabotchik pisal
+     border i poluchal nichto, prichem molcha. */
+  --vs-border-3:       var(--p-slate-160);
+  --vs-border-input:   var(--p-slate-200);
 
-  /* Text */
-  --vs-text:           #182230;
-  --vs-text-muted:     #5b6b80;
-  --vs-text-soft:      #8a97a8;
-  --vs-text-faint:     #b5c0d0;
+  /* Text -- DVA urovnya, ne chetyre.
+     [REASON]: DD-020. Chtoby --vs-text-soft (#8a97a8, 2.97 na belom) proshel
+     AA na samom temnom iz fonov, ego nuzhno zatemnit do #616f82. No
+     --vs-text-muted -- #5b6b80: shest edinic yarkosti, na glaz nerazlichimy.
+     Uroven, privedennyy k norme, perestaet byt otdelnym urovnem, a nizhe
+     muted mesta net -- 4.5 na svetlom fone i est nizhnyaya granica.
+     --vs-text-soft i --vs-text-faint udaleny, ih ispolzovaniya perevedeny
+     na --vs-text-muted. */
+  --vs-text:           var(--p-slate-950);
+  --vs-text-muted:     var(--p-slate-500);
 
-  /* Status */
-  --vs-success:        #15803d;   --vs-success-bg: #e7f6ec;
-  --vs-warning:        #b45309;   --vs-warning-bg: #fdf3e3;
-  --vs-danger:         #c0392b;   --vs-danger-bg:  #fdeeee;
+  /* Status.
+     [REASON]: DD-022 -- --vs-brand-green/-h/-s udaleny: oni byli bayt v bayt
+     ravny --vs-success/-bg, to est odno i to zhe pod dvumya imenami, i vybor
+     mezhdu nimi byl proizvolen. */
+  /* [REASON]: DD-021 -- bylo #15803d, 4.49 na --vs-success-bg: ne dotyagival
+     0.01 do poroga AA. Odna edinica yarkosti, ton sohranen, stalo 4.60. */
+  --vs-success:        var(--p-green-700); --vs-success-bg: var(--p-green-050);
+  --vs-success-h:      var(--p-green-800);
+  --vs-warning:        var(--p-amber-700); --vs-warning-bg: var(--p-amber-050);
+  --vs-danger:         var(--p-red-600);   --vs-danger-bg:  var(--p-red-050);
   /* [REASON]: UI-ACCENT-DUP-001 — --vs-info used to be byte-identical to
      --vs-primary (#2563eb), so five semantic accents rendered as four
      colours. Teal-cyan: 5.36:1 on white, 4.86:1 on --vs-info-bg (WCAG AA
      for text). */
-  --vs-info:           #0e7490;   --vs-info-bg:    #e6f7fb;
-  --vs-purple:         #7c3aed;   --vs-purple-bg:  #f1eafe;
+  --vs-info:           var(--p-teal-700);  --vs-info-bg:    var(--p-teal-050);
+  --vs-purple:         var(--p-violet-600);--vs-purple-bg:  var(--p-violet-050);
 
-  /* Radii */
-  --vs-r-xs: 6px; --vs-r-sm: 8px; --vs-r:   9px;
-  --vs-r-md:10px; --vs-r-lg:12px; --vs-r-xl:14px;
-  --vs-r-pill: 999px;
+  /* Radii -- TRI stupeni plyus pill.
+     [REASON]: DD-025 -- bylo shest (6/8/9/10/12/14). 9px ne otlichim ot 8 i
+     10 na glaz, no treboval resheniya pri kazhdom novom komponente, i
+     reshenie prinimalos naugad. sm -- polya i chipy, r -- kartochki i
+     tablicy, lg -- modalnye okna i vydvizhnye paneli. */
+  --vs-r-sm: 6px; --vs-r: 10px; --vs-r-lg: 14px; --vs-r-pill: 999px;
 
-  /* Elevation */
+  /* Elevation -- TRI stupeni.
+     [REASON]: DD-026 -- --vs-shadow-primary i --vs-shadow-success udaleny.
+     Ten cveta knopki ne nesla ni vysoty, ni sostoyaniya, i pri etom byla
+     moshchnee teni modalnogo okna -- shkala vysot byla perevernuta.
+     Sostoyanie knopki nesut cvet fona i kolco fokusa. */
   --vs-shadow-sm: 0 1px 3px rgba(16,40,80,.05);
   --vs-shadow:    0 2px 8px rgba(16,40,80,.08);
   --vs-shadow-lg: 0 16px 40px rgba(16,40,80,.16);
-  --vs-shadow-primary: 0 8px 18px rgba(37,99,235,.28);
-  --vs-shadow-success: 0 8px 18px rgba(21,128,61,.28);
 
   /* Focus ring */
   --vs-ring-primary: 0 0 0 3px rgba(37,99,235,.15);
@@ -75,14 +143,24 @@
   --vs-content-max: 1520px;
 
   /* Type — UI-FONT-LOCAL-001: system stack only, no external font (the app
-     runs on-premises with no guaranteed internet route) */
+     runs on-premises with no guaranteed internet route).
+     [REASON]: DD-027 -- shkala 11/12/13/14/17/23 pri bazovom 13px sohranena:
+     ona plotnaya i dlya ERP umestnaya, zamechaniy izmerenie ne dalo.
+     --vs-fs-xl (21px) udalen -- ispolzovaniy nol. */
   --vs-font: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
   --vs-fs-xs: 11px; --vs-fs-sm: 12px; --vs-fs:    13px;
-  --vs-fs-md:14px;  --vs-fs-lg: 17px; --vs-fs-xl: 21px; --vs-fs-2xl: 23px;
+  --vs-fs-md:14px;  --vs-fs-lg: 17px; --vs-fs-2xl: 23px;
 
-  /* Motion */
+  /* Motion.
+     [REASON]: DD-027 -- --vs-t (.17s) udalen, ispolzovaniy nol. Realnaya
+     shkala vremeni sostoit iz odnogo znacheniya. */
   --vs-t-fast: .13s ease;
-  --vs-t:      .17s ease;
+}
+
+/* Temnaya tema pereopredelyaet TOLKO uroven 2 i nichego bolshe.
+   Seychas blok pust -- mesto zalozheno (DD-001), cveta ne podobrany. */
+[data-theme="dark"] {
+  /* --vs-surface: var(--p-slate-950); --vs-text: var(--p-white); ... */
 }
 
 /* ---------- 2. RESET + GLOBALS ---------------------------------------- */
@@ -126,7 +204,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 /* Typography helpers */
 .vs-num { font-variant-numeric: tabular-nums; }
 .vs-muted { color: var(--vs-text-muted); }
-.vs-soft  { color: var(--vs-text-soft); }
+.vs-soft  { color: var(--vs-text-muted); }
 .vs-caption {
   font-size: var(--vs-fs-xs);
   font-weight: 600;
@@ -162,7 +240,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 }
 .vs-side-brand-mark {
   flex: none; width: 40px; height: 40px;
-  border-radius: var(--vs-r-md);
+  border-radius: var(--vs-r);
   background: #fff;
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 2px 8px rgba(0,0,0,.25);
@@ -247,7 +325,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-topbar-burger:hover { background: #f1f5fa; color: var(--vs-primary); border-color: #cdd7e5; }
 .vs-topbar-title { flex: 1; min-width: 0; }
 .vs-crumb {
-  font-size: 11px; color: var(--vs-text-soft);
+  font-size: 11px; color: var(--vs-text-muted);
   font-weight: 500; letter-spacing: .2px;
   display: flex; align-items: center; gap: 5px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -273,7 +351,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-user-chip {
   display: flex; align-items: center; gap: 9px;
   padding: 5px 8px 5px 6px;
-  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r-md);
+  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r);
   background: #fff; cursor: pointer; font-family: inherit;
   transition: border-color var(--vs-t-fast);
 }
@@ -286,7 +364,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 }
 .vs-user-meta { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; line-height: 1.2; }
 .vs-user-name { font-size: 12.5px; font-weight: 600; color: var(--vs-text); white-space: nowrap; }
-.vs-user-role { font-size: 10.5px; color: var(--vs-text-soft); white-space: nowrap; }
+.vs-user-role { font-size: 10.5px; color: var(--vs-text-muted); white-space: nowrap; }
 
 /* Content area */
 .vs-content {
@@ -317,14 +395,14 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   background: var(--vs-primary); color: #fff; border-color: var(--vs-primary);
   font-weight: 700;
 }
-.vs-btn-primary:hover { background: var(--vs-primary-hover); border-color: var(--vs-primary-hover); color: #fff; box-shadow: var(--vs-shadow-primary); }
+.vs-btn-primary:hover { background: var(--vs-primary-hover); border-color: var(--vs-primary-hover); color: #fff; }
 .vs-btn-primary:focus-visible { box-shadow: var(--vs-ring-primary); }
 
 .vs-btn-success {
-  background: var(--vs-brand-green); color: #fff; border-color: var(--vs-brand-green);
+  background: var(--vs-success); color: #fff; border-color: var(--vs-success);
   font-weight: 700;
 }
-.vs-btn-success:hover { background: var(--vs-brand-green-h); border-color: var(--vs-brand-green-h); color: #fff; box-shadow: var(--vs-shadow-success); }
+.vs-btn-success:hover { background: var(--vs-success-h); border-color: var(--vs-success-h); color: #fff; }
 
 .vs-btn-danger { color: var(--vs-danger); border-color: #f3d6d6; }
 .vs-btn-danger:hover { background: var(--vs-danger); color: #fff; border-color: var(--vs-danger); }
@@ -333,7 +411,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-btn-ghost:hover { background: #f1f5fa; color: var(--vs-primary); border-color: transparent; }
 
 .vs-btn-sm { padding: 6px 12px; font-size: var(--vs-fs-sm); border-radius: var(--vs-r-sm); }
-.vs-btn-lg { padding: 12px 20px; font-size: 14.5px; border-radius: var(--vs-r-md); }
+.vs-btn-lg { padding: 12px 20px; font-size: 14.5px; border-radius: var(--vs-r); }
 
 /* Icon-only square buttons (table actions) */
 .vs-btn-icon {
@@ -398,7 +476,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   box-shadow: var(--vs-ring-primary);
 }
 .vs-input:disabled, .vs-select:disabled, .vs-textarea:disabled {
-  background: var(--vs-surface-2); color: var(--vs-text-soft); cursor: not-allowed;
+  background: var(--vs-surface-2); color: var(--vs-text-muted); cursor: not-allowed;
 }
 .vs-input.is-error, .vs-select.is-error, .vs-textarea.is-error {
   border-color: var(--vs-danger);
@@ -412,10 +490,10 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-input-search .vs-input { padding-left: 36px; padding-top: 9px; padding-bottom: 9px; }
 .vs-input-search .vs-icon {
   position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
-  color: var(--vs-text-soft); display: flex; pointer-events: none;
+  color: var(--vs-text-muted); display: flex; pointer-events: none;
 }
 
-.vs-help { display: block; font-size: var(--vs-fs-xs); color: var(--vs-text-soft); margin-top: 5px; }
+.vs-help { display: block; font-size: var(--vs-fs-xs); color: var(--vs-text-muted); margin-top: 5px; }
 .vs-error-msg { display: block; font-size: var(--vs-fs-xs); color: var(--vs-danger); margin-top: 5px; font-weight: 500; }
 
 .vs-form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
@@ -436,10 +514,10 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-card {
   background: var(--vs-surface);
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-lg);
+  border-radius: var(--vs-r);
   box-shadow: var(--vs-shadow-sm);
 }
-.vs-card-xl { border-radius: var(--vs-r-xl); }
+.vs-card-xl { border-radius: var(--vs-r-lg); }
 
 .vs-card-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -454,14 +532,14 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-card-accent-left   { border-left: 4px solid var(--vs-primary); }
 .vs-card-accent-warning { border-left: 4px solid var(--vs-warning); }
 .vs-card-accent-danger  { border-left: 4px solid var(--vs-danger);  }
-.vs-card-accent-success { border-left: 4px solid var(--vs-brand-green); }
+.vs-card-accent-success { border-left: 4px solid var(--vs-success); }
 
 .vs-hero {
   display: flex; justify-content: space-between; align-items: flex-start;
   gap: 16px; flex-wrap: wrap;
   padding: 20px 22px;
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-xl);
+  border-radius: var(--vs-r-lg);
   background: linear-gradient(135deg, #ffffff, #f5f8fc);
   box-shadow: var(--vs-shadow-sm);
 }
@@ -487,7 +565,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   padding: 17px;
   background: #fff;
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-xl);
+  border-radius: var(--vs-r-lg);
   box-shadow: var(--vs-shadow-sm);
 }
 .vs-kpi-head {
@@ -518,7 +596,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   background: var(--vs-surface-2);
 }
 .vs-mini-v { display: block; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.vs-mini-l { display: block; margin-top: 2px; color: var(--vs-text-soft); font-size: 11.5px; }
+.vs-mini-l { display: block; margin-top: 2px; color: var(--vs-text-muted); font-size: 11.5px; }
 
 .vs-mini.is-success { border-color: #d6ecdd; background: #f3faf5; }
 .vs-mini.is-success .vs-mini-v { color: var(--vs-success); }
@@ -532,12 +610,12 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-stat {
   padding: 14px 15px;
   background: #fff;
-  border: 1px solid var(--vs-border); border-radius: var(--vs-r-lg);
+  border: 1px solid var(--vs-border); border-radius: var(--vs-r);
   box-shadow: var(--vs-shadow-sm);
 }
 .vs-stat-label {
   font-size: 10.5px; font-weight: 600;
-  color: var(--vs-text-soft);
+  color: var(--vs-text-muted);
   text-transform: uppercase; letter-spacing: .4px; line-height: 1.3;
 }
 .vs-stat-value {
@@ -553,7 +631,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-stat-value.is-success { color: var(--vs-success); }
 .vs-stat-value.is-info    { color: var(--vs-info); }
 .vs-stat-value.is-purple  { color: var(--vs-purple); }
-.vs-stat-value.is-muted   { color: var(--vs-text-soft); }
+.vs-stat-value.is-muted   { color: var(--vs-text-muted); }
 .vs-stat-value.is-warning { color: var(--vs-warning); }
 .vs-stat-value.is-danger  { color: var(--vs-danger); }
 
@@ -592,7 +670,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-table-wrap {
   background: var(--vs-surface);
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-xl);
+  border-radius: var(--vs-r-lg);
   box-shadow: var(--vs-shadow-sm);
   overflow: hidden;
 }
@@ -705,7 +783,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-login-form .vs-btn-primary { width: 100%; margin-top: 24px; padding: 13px; font-size: 14.5px; border-radius: var(--vs-r); }
 .vs-login-foot {
   text-align: center; padding: 16px;
-  font-size: 11.5px; color: var(--vs-text-soft);
+  font-size: 11.5px; color: var(--vs-text-muted);
   border-top: 1px solid var(--vs-border-3);
 }
 
@@ -714,7 +792,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   position: absolute; top: calc(100% + 8px); right: 0;
   min-width: 188px;
   background: #fff;
-  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r-lg);
+  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r);
   box-shadow: var(--vs-shadow-lg);
   padding: 6px; z-index: 50;
 }
@@ -735,19 +813,19 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 /* ---------- 12. EMPTY / PLACEHOLDER ---------------------------------- */
 .vs-empty {
   border: 1px dashed #cdd7e5;
-  border-radius: var(--vs-r-xl);
+  border-radius: var(--vs-r-lg);
   background: #fff;
   padding: 64px 32px; text-align: center;
 }
 .vs-empty-ico {
   display: inline-flex; align-items: center; justify-content: center;
   width: 56px; height: 56px;
-  border-radius: var(--vs-r-xl);
+  border-radius: var(--vs-r-lg);
   background: var(--vs-primary-soft); color: var(--vs-primary);
   margin-bottom: 16px;
 }
 .vs-empty-title { font-size: 18px; font-weight: 700; margin: 0 0 6px; }
-.vs-empty-sub   { color: var(--vs-text-soft); font-size: 13.5px; margin: 0; }
+.vs-empty-sub   { color: var(--vs-text-muted); font-size: 13.5px; margin: 0; }
 
 /* ---------- 13. UTILITIES -------------------------------------------- */
 .vs-stack    { display: flex; flex-direction: column; gap: 14px; }
@@ -836,7 +914,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .ms-trigger::after {
   content: '▾'; position: absolute; right: 11px; top: 50%;
   transform: translateY(-50%); pointer-events: none;
-  color: var(--vs-text-soft);
+  color: var(--vs-text-muted);
 }
 .ms-trigger:hover { border-color: var(--vs-primary); }
 .ms-trigger:focus { outline: none; border-color: var(--vs-primary); box-shadow: var(--vs-ring-primary); }
@@ -845,7 +923,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   top: calc(100% + 3px); left: 0; z-index: 500;
   background: #fff;
   border: 1px solid var(--vs-border-2);
-  border-radius: var(--vs-r-lg);
+  border-radius: var(--vs-r);
   box-shadow: var(--vs-shadow-lg);
   min-width: 100%;
   max-height: 340px; overflow-y: auto;
@@ -900,7 +978,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   display: none;
 }
 .vs-multiselect-trigger .vs-ms-arrow {
-  flex: none; color: var(--vs-text-soft); display: flex;
+  flex: none; color: var(--vs-text-muted); display: flex;
   transition: transform var(--vs-t-fast);
 }
 .vs-multiselect.is-open .vs-multiselect-trigger .vs-ms-arrow {
@@ -911,7 +989,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   position: absolute; top: calc(100% + 4px); left: 0; z-index: 500;
   min-width: 240px; max-width: 360px; max-height: 320px;
   background: #fff;
-  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r-lg);
+  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r);
   box-shadow: var(--vs-shadow-lg);
   overflow-y: auto;
   padding: 6px;
@@ -954,7 +1032,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
    ========================================================================== */
 
 /* Cards */
-.card           { background: var(--vs-surface); border: 1px solid var(--vs-border); border-radius: var(--vs-r-xl); box-shadow: var(--vs-shadow-sm); }
+.card           { background: var(--vs-surface); border: 1px solid var(--vs-border); border-radius: var(--vs-r-lg); box-shadow: var(--vs-shadow-sm); }
 .card-header    { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 14px 18px; border-bottom: 1px solid var(--vs-border-3); font-size: 14px; font-weight: 700; }
 .card-body      { padding: 16px 18px; }
 .card-footer    { padding: 12px 18px; border-top: 1px solid var(--vs-border-3); }
@@ -965,15 +1043,15 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .btn            { display: inline-flex; align-items: center; gap: 7px; padding: 9px 15px; font-family: var(--vs-font); font-size: var(--vs-fs); font-weight: 600; border: 1px solid var(--vs-border-input); border-radius: var(--vs-r); background: #fff; color: var(--vs-text); cursor: pointer; text-decoration: none; transition: all var(--vs-t-fast); }
 .btn:hover      { border-color: var(--vs-primary); color: var(--vs-primary); }
 .btn-primary    { background: var(--vs-primary); color: #fff; border-color: var(--vs-primary); font-weight: 700; }
-.btn-primary:hover { background: var(--vs-primary-hover); border-color: var(--vs-primary-hover); color: #fff; box-shadow: var(--vs-shadow-primary); }
-.btn-success    { background: var(--vs-brand-green); color: #fff; border-color: var(--vs-brand-green); font-weight: 700; }
-.btn-success:hover { background: var(--vs-brand-green-h); color: #fff; box-shadow: var(--vs-shadow-success); }
+.btn-primary:hover { background: var(--vs-primary-hover); border-color: var(--vs-primary-hover); color: #fff; }
+.btn-success    { background: var(--vs-success); color: #fff; border-color: var(--vs-success); font-weight: 700; }
+.btn-success:hover { background: var(--vs-success-h); color: #fff; }
 .btn-secondary  { background: #fff; color: var(--vs-text); border-color: var(--vs-border-input); }
 .btn-secondary:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
 .btn-danger     { color: var(--vs-danger); border-color: #f3d6d6; background: #fff; }
 .btn-danger:hover { background: var(--vs-danger); color: #fff; border-color: var(--vs-danger); }
 .btn-sm         { padding: 6px 12px; font-size: var(--vs-fs-sm); border-radius: var(--vs-r-sm); }
-.btn-lg         { padding: 12px 20px; font-size: 14.5px; border-radius: var(--vs-r-md); }
+.btn-lg         { padding: 12px 20px; font-size: 14.5px; border-radius: var(--vs-r); }
 .btn-link       { background: transparent; border: none; color: var(--vs-primary); padding: 0; font-family: var(--vs-font); font-size: var(--vs-fs); cursor: pointer; }
 .btn-link:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .btn-icon       { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--vs-border-input); border-radius: var(--vs-r-sm); background: #fff; color: var(--vs-text-muted); cursor: pointer; transition: all var(--vs-t-fast); }
@@ -985,10 +1063,10 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .form-label, label.form-label { display: block; font-size: var(--vs-fs-xs); font-weight: 600; color: var(--vs-text-muted); margin-bottom: 5px; }
 .form-control   { width: 100%; font-family: var(--vs-font); font-size: var(--vs-fs); padding: 8px 11px; border: 1px solid var(--vs-border-input); border-radius: var(--vs-r-sm); background: #fff; color: var(--vs-text); outline: none; transition: border-color var(--vs-t-fast), box-shadow var(--vs-t-fast); }
 .form-control:focus { border-color: var(--vs-primary); box-shadow: var(--vs-ring-primary); }
-.form-control:disabled { background: var(--vs-surface-2); color: var(--vs-text-soft); }
+.form-control:disabled { background: var(--vs-surface-2); color: var(--vs-text-muted); }
 .form-inline    { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
 .form-inline .form-group { margin-bottom: 0; }
-.field-help, .form-text { display: block; font-size: var(--vs-fs-xs); color: var(--vs-text-soft); margin-top: 4px; }
+.field-help, .form-text { display: block; font-size: var(--vs-fs-xs); color: var(--vs-text-muted); margin-top: 4px; }
 .input-group    { display: flex; }
 .input-group .form-control { border-radius: var(--vs-r-sm) 0 0 var(--vs-r-sm); }
 .input-group .btn { border-radius: 0 var(--vs-r-sm) var(--vs-r-sm) 0; border-left: none; }
@@ -1085,13 +1163,13 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
   padding: 14px 15px;
   background: #fff;
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-lg);
+  border-radius: var(--vs-r);
   box-shadow: var(--vs-shadow-sm);
 }
 .stat-card .label {
   font-size: 10.5px;
   font-weight: 600;
-  color: var(--vs-text-soft);
+  color: var(--vs-text-muted);
   text-transform: uppercase;
   letter-spacing: .4px;
   line-height: 1.3;
@@ -1130,7 +1208,7 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 
 /* Typography helpers */
 .text-muted     { color: var(--vs-text-muted); }
-.text-soft      { color: var(--vs-text-soft); }
+.text-soft      { color: var(--vs-text-muted); }
 .text-center    { text-align: center; }
 .text-right     { text-align: right; }
 .text-sm        { font-size: var(--vs-fs-sm); }
@@ -1174,23 +1252,18 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
   --border:        var(--vs-border-2);
   --border-strong: var(--vs-border-2);
   --accent:        var(--vs-primary);
-  --accent-soft:   var(--vs-primary-soft);
   --accent-light:  var(--vs-primary-soft);
   --success-light: var(--vs-success-bg);
   --warning-light: var(--vs-warning-bg);
   --warn:          var(--vs-warning);
-  --warn-soft:     var(--vs-warning-bg);
   --warn-light:    var(--vs-warning-bg);
   --danger:        var(--vs-danger);
-  --danger-soft:   var(--vs-danger-bg);
   --danger-light:  var(--vs-danger-bg);
   --info:          var(--vs-info);
   --info-light:    var(--vs-info-bg);
-  --success:       var(--vs-brand-green);
-  --success-soft:  var(--vs-brand-green-s);
+  --success:       var(--vs-success);
   --text:          var(--vs-text);
   --text2:         var(--vs-text-muted);
-  --text3:         var(--vs-text-soft);
   --bg:            var(--vs-bg);
   --radius:        var(--vs-r);
   --shadow:        var(--vs-shadow);
@@ -1208,7 +1281,7 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 .vs-nextaction {
   background: var(--vs-surface);
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-lg);
+  border-radius: var(--vs-r);
   box-shadow: var(--vs-shadow);
   padding: 14px 18px;
 }
@@ -1236,17 +1309,17 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
   display: flex; align-items: center; justify-content: center;
   border-radius: 50%;
   font-size: 12px; font-weight: 700; line-height: 1;
-  background: var(--vs-surface); color: var(--vs-text-soft);
+  background: var(--vs-surface); color: var(--vs-text-muted);
   border: 2px solid var(--vs-border);
 }
 .vs-step-label { font-size: var(--vs-fs-sm); color: var(--vs-text-muted); white-space: nowrap; }
-.vs-step.is-done .vs-step-dot { background: var(--vs-brand-green); border-color: var(--vs-brand-green); color: #fff; }
+.vs-step.is-done .vs-step-dot { background: var(--vs-success); border-color: var(--vs-success); color: #fff; }
 .vs-step.is-done .vs-step-label { color: var(--vs-text); }
 .vs-step.is-current .vs-step-dot { background: var(--vs-primary); border-color: var(--vs-primary); color: #fff; box-shadow: var(--vs-ring-primary); }
 .vs-step.is-current .vs-step-label { color: var(--vs-text); font-weight: 700; }
 .vs-step.is-future .vs-step-dot { background: var(--vs-surface-2); }
 .vs-step-line { flex: 1 1 16px; min-width: 10px; max-width: 56px; height: 2px; border-radius: 1px; background: var(--vs-border-2); }
-.vs-step-line.is-done { background: var(--vs-brand-green); }
+.vs-step-line.is-done { background: var(--vs-success); }
 .vs-stepper-side {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 10px;
@@ -1286,7 +1359,7 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 }
 .vs-timeline-item > div:last-child { flex: 1; min-width: 0; }
 .vs-timeline-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.vs-timeline-time { color: var(--vs-text-soft); font-size: var(--vs-fs-xs); }
+.vs-timeline-time { color: var(--vs-text-muted); font-size: var(--vs-fs-xs); }
 .vs-timeline-body { margin-top: 1px; font-size: var(--vs-fs); overflow-wrap: anywhere; }
 
 /* Scroll-target highlight — next-action anchors flash the card they lead to.
@@ -1311,7 +1384,7 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
    never use `box-shadow: none` here, it would also kill the resting
    --vs-shadow-sm that .vs-card paints. */
 .vs-report-tile:hover { text-decoration: none; color: inherit; }
-.vs-report-tile-icon { flex: none; width: 44px; height: 44px; border-radius: var(--vs-r-md); display: flex; align-items: center; justify-content: center; }
+.vs-report-tile-icon { flex: none; width: 44px; height: 44px; border-radius: var(--vs-r); display: flex; align-items: center; justify-content: center; }
 .vs-report-tile-text { flex: 1; min-width: 0; }
 .vs-report-tile-title { font-size: var(--vs-fs-lg); font-weight: 700; }
 .vs-report-tile-sub { font-size: var(--vs-fs-sm); color: var(--vs-text-muted); margin-top: 4px; }

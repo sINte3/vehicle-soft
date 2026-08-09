@@ -343,7 +343,7 @@
           <line x1="0" y1="46" x2="280" y2="46" stroke="var(--vs-border-2)" stroke-width="1"/>
           {% for bar in bars %}
           {% if loop.index0 % 3 == 0 %}
-          <text x="{{ loop.index0 * 20 + 10 }}" y="56" text-anchor="middle" font-size="8" fill="var(--vs-text-soft)">{{ bar.label }}</text>
+          <text x="{{ loop.index0 * 20 + 10 }}" y="56" text-anchor="middle" font-size="8" fill="var(--vs-text-muted)">{{ bar.label }}</text>
           {% endif %}
           {% endfor %}
         </svg>
@@ -772,7 +772,7 @@ function toggleAllOrgs(open) {
 }
 </script>
 <style>
-.toggle-icon { display:inline-block; font-size:10px; color: var(--vs-text-soft); transition: transform 0.15s; }
+.toggle-icon { display:inline-block; font-size:10px; color: var(--vs-text-muted); transition: transform 0.15s; }
 .toggle-icon.open { transform: rotate(90deg); }
 .toggle-sm { font-size: 8px; }
 </style>

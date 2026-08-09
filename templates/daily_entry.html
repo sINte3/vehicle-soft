@@ -84,7 +84,7 @@
 .entry002a-guidance-card {
   border: 1px solid var(--vs-border);
   background: var(--vs-surface);
-  border-radius: var(--vs-r-lg);
+  border-radius: var(--vs-r);
   padding: 12px 14px;
   box-shadow: var(--vs-shadow-sm);
 }
@@ -114,7 +114,7 @@
 
 .entry002a-save-form .org-section {
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-lg);
+  border-radius: var(--vs-r);
   overflow: hidden;
   margin-bottom: 14px;
   background: var(--vs-surface);
@@ -135,7 +135,7 @@
 
 .entry002a-save-form .eq-card {
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-lg);
+  border-radius: var(--vs-r);
   overflow: hidden;
   margin-bottom: 10px;
   background: var(--vs-surface);
@@ -143,7 +143,7 @@
 
 .entry002a-save-form .eq-card.working,
 .entry002a-save-form .eq-card.entry002a-working {
-  border-left: 4px solid var(--vs-brand-green);
+  border-left: 4px solid var(--vs-success);
 }
 
 .entry002a-save-form .eq-card.idle,
@@ -194,7 +194,7 @@
   background: rgba(255,255,255,0.96);
   backdrop-filter: blur(8px);
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-lg);
+  border-radius: var(--vs-r);
   padding: 12px;
   box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.08);
 }
@@ -264,7 +264,7 @@
 .card {
   background: var(--vs-surface);
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-lg);
+  border-radius: var(--vs-r);
   box-shadow: var(--vs-shadow-sm);
 }
 .card-body { padding: 16px 18px; }
@@ -287,7 +287,7 @@
   letter-spacing: .2px;
 }
 .form-inline { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
-.field-help { font-size: var(--vs-fs-xs); color: var(--vs-text-soft); margin-top: 4px; }
+.field-help { font-size: var(--vs-fs-xs); color: var(--vs-text-muted); margin-top: 4px; }
 
 /* Buttons */
 .btn {
@@ -308,7 +308,7 @@
 .btn-danger { color: var(--vs-danger); border-color: #f3d6d6; }
 .btn-danger:hover { background: var(--vs-danger); color: #fff; border-color: var(--vs-danger); }
 .btn-sm { padding: 6px 12px; font-size: var(--vs-fs-sm); border-radius: var(--vs-r-sm); }
-.btn-lg { padding: 12px 20px; font-size: 14.5px; border-radius: var(--vs-r-md); }
+.btn-lg { padding: 12px 20px; font-size: 14.5px; border-radius: var(--vs-r); }
 
 /* Text helpers */
 .text-muted { color: var(--vs-text-muted); }
@@ -317,14 +317,14 @@
 /* Equipment card */
 .eq-card {
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-lg);
+  border-radius: var(--vs-r);
   overflow: hidden;
   margin-bottom: 10px;
   background: var(--vs-surface);
   box-shadow: var(--vs-shadow-sm);
 }
-.eq-card.working { border-left: 4px solid var(--vs-brand-green); }
-.eq-card.idle    { border-left: 4px solid var(--vs-text-soft); }
+.eq-card.working { border-left: 4px solid var(--vs-success); }
+.eq-card.idle    { border-left: 4px solid var(--vs-text-muted); }
 .eq-card-header {
   display: flex; align-items: center; gap: 10px;
   padding: 12px 14px;

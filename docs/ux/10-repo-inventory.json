@@ -214,25 +214,8 @@
   }
  },
  "design_system_css": {
-  "duplicate_color_values": {
-   "#15803d": [
-    "--vs-brand-green",
-    "--vs-success"
-   ],
-   "#e7f6ec": [
-    "--vs-brand-green-s",
-    "--vs-success-bg"
-   ],
-   "#eef2f7": [
-    "--vs-bg",
-    "--vs-border-3"
-   ],
-   "#ffffff": [
-    "--vs-side-active-fg",
-    "--vs-surface"
-   ]
-  },
-  "lines": 1365,
+  "duplicate_color_values": {},
+  "lines": 1438,
   "tokens": {
    "--accent": {
     "uses_in_css": 0,
@@ -242,11 +225,6 @@
    "--accent-light": {
     "uses_in_css": 0,
     "uses_in_templates": 9,
-    "value": "var(--vs-primary-soft)"
-   },
-   "--accent-soft": {
-    "uses_in_css": 0,
-    "uses_in_templates": 0,
     "value": "var(--vs-primary-soft)"
    },
    "--bg": {
@@ -274,11 +252,6 @@
     "uses_in_templates": 15,
     "value": "var(--vs-danger-bg)"
    },
-   "--danger-soft": {
-    "uses_in_css": 0,
-    "uses_in_templates": 0,
-    "value": "var(--vs-danger-bg)"
-   },
    "--info": {
     "uses_in_css": 0,
     "uses_in_templates": 38,
@@ -288,6 +261,156 @@
     "uses_in_css": 0,
     "uses_in_templates": 17,
     "value": "var(--vs-info-bg)"
+   },
+   "--p-amber-050": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#fdf3e3"
+   },
+   "--p-amber-700": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#b45309"
+   },
+   "--p-blue-050": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#eaf1fe"
+   },
+   "--p-blue-400": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#4f93ff"
+   },
+   "--p-blue-600": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#2563eb"
+   },
+   "--p-blue-700": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#1d4ed8"
+   },
+   "--p-green-050": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#e7f6ec"
+   },
+   "--p-green-700": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#157e3c"
+   },
+   "--p-green-800": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#12692f"
+   },
+   "--p-navy-200": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#a9bad4"
+   },
+   "--p-navy-300": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#7e93b4"
+   },
+   "--p-navy-350": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#7f93b1"
+   },
+   "--p-navy-900": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#0f2b50"
+   },
+   "--p-navy-950": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#0c2244"
+   },
+   "--p-red-050": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#fdeeee"
+   },
+   "--p-red-600": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#c0392b"
+   },
+   "--p-slate-070": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#f7f9fc"
+   },
+   "--p-slate-090": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#f1f5fa"
+   },
+   "--p-slate-100": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#eef2f7"
+   },
+   "--p-slate-150": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#e6ecf4"
+   },
+   "--p-slate-160": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#e4eaf2"
+   },
+   "--p-slate-170": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#e2e8f1"
+   },
+   "--p-slate-200": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#d8e0ea"
+   },
+   "--p-slate-500": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#5b6b80"
+   },
+   "--p-slate-950": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#182230"
+   },
+   "--p-teal-050": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#e6f7fb"
+   },
+   "--p-teal-700": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#0e7490"
+   },
+   "--p-violet-050": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#f1eafe"
+   },
+   "--p-violet-600": {
+    "uses_in_css": 1,
+    "uses_in_templates": 0,
+    "value": "#7c3aed"
+   },
+   "--p-white": {
+    "uses_in_css": 2,
+    "uses_in_templates": 0,
+    "value": "#ffffff"
    },
    "--radius": {
     "uses_in_css": 0,
@@ -302,17 +425,12 @@
    "--success": {
     "uses_in_css": 0,
     "uses_in_templates": 1,
-    "value": "var(--vs-brand-green)"
+    "value": "var(--vs-success)"
    },
    "--success-light": {
     "uses_in_css": 0,
     "uses_in_templates": 1,
     "value": "var(--vs-success-bg)"
-   },
-   "--success-soft": {
-    "uses_in_css": 0,
-    "uses_in_templates": 0,
-    "value": "var(--vs-brand-green-s)"
    },
    "--surface": {
     "uses_in_css": 0,
@@ -334,50 +452,30 @@
     "uses_in_templates": 89,
     "value": "var(--vs-text-muted)"
    },
-   "--text3": {
-    "uses_in_css": 0,
-    "uses_in_templates": 0,
-    "value": "var(--vs-text-soft)"
-   },
    "--vs-bg": {
     "uses_in_css": 2,
     "uses_in_templates": 1,
-    "value": "#eef2f7"
+    "value": "var(--p-slate-100)"
    },
    "--vs-border": {
     "uses_in_css": 11,
     "uses_in_templates": 15,
-    "value": "#e6ecf4"
+    "value": "var(--p-slate-150)"
    },
    "--vs-border-2": {
     "uses_in_css": 16,
     "uses_in_templates": 3,
-    "value": "#e2e8f1"
+    "value": "var(--p-slate-170)"
    },
    "--vs-border-3": {
     "uses_in_css": 11,
     "uses_in_templates": 0,
-    "value": "#eef2f7"
+    "value": "var(--p-slate-160)"
    },
    "--vs-border-input": {
     "uses_in_css": 13,
     "uses_in_templates": 5,
-    "value": "#d8e0ea"
-   },
-   "--vs-brand-green": {
-    "uses_in_css": 9,
-    "uses_in_templates": 4,
-    "value": "#15803d"
-   },
-   "--vs-brand-green-h": {
-    "uses_in_css": 3,
-    "uses_in_templates": 0,
-    "value": "#12692f"
-   },
-   "--vs-brand-green-s": {
-    "uses_in_css": 1,
-    "uses_in_templates": 0,
-    "value": "#e7f6ec"
+    "value": "var(--p-slate-200)"
    },
    "--vs-content-max": {
     "uses_in_css": 1,
@@ -392,12 +490,12 @@
    "--vs-danger": {
     "uses_in_css": 27,
     "uses_in_templates": 8,
-    "value": "#c0392b"
+    "value": "var(--p-red-600)"
    },
    "--vs-danger-bg": {
-    "uses_in_css": 12,
+    "uses_in_css": 11,
     "uses_in_templates": 2,
-    "value": "#fdeeee"
+    "value": "var(--p-red-050)"
    },
    "--vs-font": {
     "uses_in_css": 4,
@@ -429,11 +527,6 @@
     "uses_in_templates": 2,
     "value": "12px"
    },
-   "--vs-fs-xl": {
-    "uses_in_css": 0,
-    "uses_in_templates": 0,
-    "value": "21px"
-   },
    "--vs-fs-xs": {
     "uses_in_css": 9,
     "uses_in_templates": 2,
@@ -442,52 +535,47 @@
    "--vs-info": {
     "uses_in_css": 10,
     "uses_in_templates": 5,
-    "value": "#0e7490"
+    "value": "var(--p-teal-700)"
    },
    "--vs-info-bg": {
     "uses_in_css": 8,
     "uses_in_templates": 1,
-    "value": "#e6f7fb"
+    "value": "var(--p-teal-050)"
    },
    "--vs-primary": {
     "uses_in_css": 57,
     "uses_in_templates": 21,
-    "value": "#2563eb"
+    "value": "var(--p-blue-600)"
    },
    "--vs-primary-hover": {
     "uses_in_css": 8,
     "uses_in_templates": 2,
-    "value": "#1d4ed8"
+    "value": "var(--p-blue-700)"
    },
    "--vs-primary-soft": {
-    "uses_in_css": 9,
+    "uses_in_css": 8,
     "uses_in_templates": 1,
-    "value": "#eaf1fe"
+    "value": "var(--p-blue-050)"
    },
    "--vs-purple": {
     "uses_in_css": 4,
     "uses_in_templates": 0,
-    "value": "#7c3aed"
+    "value": "var(--p-violet-600)"
    },
    "--vs-purple-bg": {
     "uses_in_css": 3,
     "uses_in_templates": 0,
-    "value": "#f1eafe"
+    "value": "var(--p-violet-050)"
    },
    "--vs-r": {
-    "uses_in_css": 20,
-    "uses_in_templates": 11,
-    "value": "9px"
+    "uses_in_css": 32,
+    "uses_in_templates": 18,
+    "value": "10px"
    },
    "--vs-r-lg": {
     "uses_in_css": 7,
-    "uses_in_templates": 6,
-    "value": "12px"
-   },
-   "--vs-r-md": {
-    "uses_in_css": 5,
-    "uses_in_templates": 1,
-    "value": "10px"
+    "uses_in_templates": 0,
+    "value": "14px"
    },
    "--vs-r-pill": {
     "uses_in_css": 4,
@@ -496,17 +584,7 @@
    },
    "--vs-r-sm": {
     "uses_in_css": 18,
-    "uses_in_templates": 3,
-    "value": "8px"
-   },
-   "--vs-r-xl": {
-    "uses_in_css": 7,
-    "uses_in_templates": 0,
-    "value": "14px"
-   },
-   "--vs-r-xs": {
-    "uses_in_css": 0,
-    "uses_in_templates": 1,
+    "uses_in_templates": 4,
     "value": "6px"
    },
    "--vs-ring-primary": {
@@ -524,20 +602,10 @@
     "uses_in_templates": 0,
     "value": "0 16px 40px rgba(16,40,80,.16)"
    },
-   "--vs-shadow-primary": {
-    "uses_in_css": 2,
-    "uses_in_templates": 0,
-    "value": "0 8px 18px rgba(37,99,235,.28)"
-   },
    "--vs-shadow-sm": {
     "uses_in_css": 9,
     "uses_in_templates": 7,
     "value": "0 1px 3px rgba(16,40,80,.05)"
-   },
-   "--vs-shadow-success": {
-    "uses_in_css": 2,
-    "uses_in_templates": 0,
-    "value": "0 8px 18px rgba(21,128,61,.28)"
    },
    "--vs-side-active": {
     "uses_in_css": 1,
@@ -547,22 +615,22 @@
    "--vs-side-active-bar": {
     "uses_in_css": 2,
     "uses_in_templates": 0,
-    "value": "#4f93ff"
+    "value": "var(--p-blue-400)"
    },
    "--vs-side-active-fg": {
     "uses_in_css": 2,
     "uses_in_templates": 0,
-    "value": "#ffffff"
+    "value": "var(--p-white)"
    },
    "--vs-side-bg-1": {
     "uses_in_css": 1,
     "uses_in_templates": 0,
-    "value": "#0f2b50"
+    "value": "var(--p-navy-900)"
    },
    "--vs-side-bg-2": {
     "uses_in_css": 1,
     "uses_in_templates": 0,
-    "value": "#0c2244"
+    "value": "var(--p-navy-950)"
    },
    "--vs-side-hover": {
     "uses_in_css": 1,
@@ -572,17 +640,17 @@
    "--vs-side-section": {
     "uses_in_css": 1,
     "uses_in_templates": 0,
-    "value": "#5f779b"
+    "value": "var(--p-navy-350)"
    },
    "--vs-side-text": {
     "uses_in_css": 2,
     "uses_in_templates": 0,
-    "value": "#a9bad4"
+    "value": "var(--p-navy-200)"
    },
    "--vs-side-text-dim": {
     "uses_in_css": 2,
     "uses_in_templates": 0,
-    "value": "#7e93b4"
+    "value": "var(--p-navy-300)"
    },
    "--vs-side-w": {
     "uses_in_css": 2,
@@ -594,35 +662,30 @@
     "uses_in_templates": 0,
     "value": "74px"
    },
-   "--vs-success": {
-    "uses_in_css": 10,
-    "uses_in_templates": 2,
-    "value": "#15803d"
-   },
    "--vs-success-bg": {
     "uses_in_css": 8,
     "uses_in_templates": 1,
-    "value": "#e7f6ec"
+    "value": "var(--p-green-050)"
+   },
+   "--vs-success-h": {
+    "uses_in_css": 3,
+    "uses_in_templates": 0,
+    "value": "var(--p-green-800)"
    },
    "--vs-surface": {
     "uses_in_css": 7,
     "uses_in_templates": 11,
-    "value": "#ffffff"
+    "value": "var(--p-white)"
    },
    "--vs-surface-2": {
     "uses_in_css": 11,
     "uses_in_templates": 4,
-    "value": "#f7f9fc"
+    "value": "var(--p-slate-070)"
    },
    "--vs-surface-3": {
     "uses_in_css": 6,
     "uses_in_templates": 4,
-    "value": "#f1f5fa"
-   },
-   "--vs-t": {
-    "uses_in_css": 0,
-    "uses_in_templates": 0,
-    "value": ".17s ease"
+    "value": "var(--p-slate-090)"
    },
    "--vs-t-fast": {
     "uses_in_css": 24,
@@ -632,22 +695,12 @@
    "--vs-text": {
     "uses_in_css": 18,
     "uses_in_templates": 5,
-    "value": "#182230"
-   },
-   "--vs-text-faint": {
-    "uses_in_css": 0,
-    "uses_in_templates": 0,
-    "value": "#b5c0d0"
+    "value": "var(--p-slate-950)"
    },
    "--vs-text-muted": {
-    "uses_in_css": 27,
-    "uses_in_templates": 16,
-    "value": "#5b6b80"
-   },
-   "--vs-text-soft": {
-    "uses_in_css": 20,
-    "uses_in_templates": 8,
-    "value": "#8a97a8"
+    "uses_in_css": 46,
+    "uses_in_templates": 24,
+    "value": "var(--p-slate-500)"
    },
    "--vs-top-h": {
     "uses_in_css": 2,
@@ -657,12 +710,12 @@
    "--vs-warning": {
     "uses_in_css": 13,
     "uses_in_templates": 6,
-    "value": "#b45309"
+    "value": "var(--p-amber-700)"
    },
    "--vs-warning-bg": {
-    "uses_in_css": 10,
+    "uses_in_css": 9,
     "uses_in_templates": 3,
-    "value": "#fdf3e3"
+    "value": "var(--p-amber-050)"
    },
    "--warn": {
     "uses_in_css": 0,
@@ -674,28 +727,15 @@
     "uses_in_templates": 13,
     "value": "var(--vs-warning-bg)"
    },
-   "--warn-soft": {
-    "uses_in_css": 0,
-    "uses_in_templates": 0,
-    "value": "var(--vs-warning-bg)"
-   },
    "--warning-light": {
     "uses_in_css": 0,
     "uses_in_templates": 1,
     "value": "var(--vs-warning-bg)"
    }
   },
-  "tokens_declared": 90,
+  "tokens_declared": 103,
   "tokens_unused": [
-   "--accent-soft",
-   "--bg",
-   "--danger-soft",
-   "--success-soft",
-   "--text3",
-   "--vs-fs-xl",
-   "--vs-t",
-   "--vs-text-faint",
-   "--warn-soft"
+   "--bg"
   ]
  },
  "glyphs": {
