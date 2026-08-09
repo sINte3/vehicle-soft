@@ -271,6 +271,14 @@ class DailyRecord(db.Model):
     # row on close (Phase 2). Nullable; existing rows and manual entries stay NULL.
     work_order_id = db.Column(db.Integer, db.ForeignKey('work_orders.id'), nullable=True)
 
+    # [REASON]: DAILY_UNITS_001 — приведённое значение единицы измерения.
+    # `unit` остаётся историческим снимком и не переписывается никогда; отчёты
+    # группируют по `unit_code`, иначе «га» и «Га» расходятся по разным строкам.
+    # NULL означает «не распознано» — это состояние, а не пробел заполнения.
+    # Добавлено миграцией migrate_daily_units_001.py для существующих баз;
+    # модель держится в синхроне, чтобы db.create_all() поднимал чистую базу.
+    unit_code = db.Column(db.String(30), nullable=True)
+
     __table_args__ = (
         db.Index('ix_daily_date_eq', 'work_date', 'equipment_id', 'line_index'),
     )
@@ -279,6 +287,37 @@ class DailyRecord(db.Model):
     def total_amount(self):
         return ((self.amount_cash or 0) + (self.amount_transfer or 0) +
                 (self.amount_internal or 0) + (self.amount_other or 0))
+
+
+class DailyRecordUnit(db.Model):
+    """Управляемый двуязычный справочник единиц дневного ввода.
+
+    Решение владельца (2026-08-09, docs/ux/30-design-decisions.md, DD-004):
+    единица перестаёт быть свободной строкой. `code` — короткий стабильный
+    латинский ключ, он и пишется в `DailyRecord.unit_code`; `name_ru` и
+    `name_uz` — изменяемые подписи, поэтому переименование никогда не ломает
+    сохранённые данные.
+
+    [REASON]: исторические значения `DailyRecord.unit` — снимки и НЕ
+    переписываются. Справочник управляет только тем, что предлагается
+    дальше. Значение, не попавшее в карту приведения, остаётся с
+    `unit_code = NULL` и в справочник не добавляется: среди накопленного
+    есть запись длиной 253 символа, и авторегистрация завела бы абзац текста
+    в справочник единиц измерения.
+
+    Форма повторяет SparePartUnit. Наполняется migrate_daily_units_001.py.
+    """
+    __tablename__ = 'daily_record_units'
+    id         = db.Column(db.Integer, primary_key=True)
+    code       = db.Column(db.String(30), nullable=False, unique=True)
+    name_ru    = db.Column(db.String(100), nullable=False)
+    name_uz    = db.Column(db.String(100), nullable=False)
+    is_active  = db.Column(db.Boolean, nullable=False, default=True)
+    sort_order = db.Column(db.Integer, nullable=False, default=100)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def label(self, lang):
+        return self.name_uz if lang == 'uz' else self.name_ru
 
 
 class Deficiency(db.Model):
