@@ -56,10 +56,18 @@ MONEY_TEMPLATES = (
 # They are listed rather than exempted by directory, so a screen belonging to
 # ANOTHER TRACK still cannot pick up these classes unnoticed -- which is the
 # whole point of the scan below.
+#
+# [REASON]: DRONE-WORKS-UPLOAD-001 adds the upload preview to the same
+# category. Its grid is a plain .vs-stat-grid of eight cards -- rows,
+# hectares, amount, received, other costs, customer spellings, priced rows,
+# rows already in the database -- and it needs the same opt-out for the same
+# reason. It is NOT a six-card money grid, so MONEY_TEMPLATES stays what it
+# means.
 DRONES_PLAIN_NUM_TEMPLATES = (
     'templates/drones/spray_usage.html',
     'templates/drones/works_flights_reconcile.html',
     'templates/drones/flight_calendar.html',
+    'templates/drones/works_import_preview.html',
 )
 
 # [REASON]: this line is the rule the fix opts OUT of, and it must survive the
