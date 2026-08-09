@@ -388,20 +388,32 @@ def seed(app, db, rows_per_table=14, verbose=True):
                         break
                 if not ok:
                     continue
+                # [REASON]: SAVEPOINT, a ne rollback vsey tranzakcii. Do etogo
+                # neudacha ODNOY stroki otkatyvala VSE uzhe nakoplennye stroki
+                # etoy tablicy, a schetchik `made` prodolzhal ih schitat --
+                # to est vral. Popadet tablica v bazu ili ostanetsya pustoy,
+                # zaviselo ot togo, povezlo li POSLEDNEY stroke: esli padala
+                # ona, commit nizhe sohranyal nichego.
+                # Tak i sluchilos so spare_part_write_off_acts posle perehoda
+                # na potablichnoe zerno: act_number UNIQUE, tri kollizii, i
+                # poslednyaya iz nih na poslednem ryadu -- tablica opustela,
+                # a obhod poteryal dva marshruta. Molcha.
                 try:
-                    obj = model(**kwargs)
-                    db.session.add(obj)
-                    db.session.flush()
-                    made += 1
+                    with db.session.begin_nested():
+                        db.session.add(model(**kwargs))
+                        db.session.flush()
                 except Exception:
-                    db.session.rollback()
                     continue
 
+            db.session.commit()
+            # Schitaem po BAZE, a ne po schetchiku popytok: schetchik ne znaet
+            # pro otkaty i ne otlichaet "sozdano" ot "probovali sozdat".
+            pk_col = list(table.primary_key.columns)[0]
+            pks = [r[0] for r in db.session.execute(sa.select(pk_col).limit(60))]
+            made = db.session.execute(
+                sa.select(sa.func.count()).select_from(table)).scalar() or 0
             if made:
-                db.session.commit()
                 created[table.name] = made
-                pks = [r[0] for r in db.session.execute(
-                    sa.select(list(table.primary_key.columns)[0]).limit(60))]
                 pk_pool[table.name] = pks
 
         concentrate_equipment(db)
