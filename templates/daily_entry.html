@@ -1,5 +1,6 @@
 {% extends g.base_template %}
 {% from '_icons.html' import icon %}
+{% from '_daily_unit_field.html' import unit_select with context %}
 {% block title %}{{ t('Маълумот киритиш') }}{% endblock %}
 {% block content %}
 
@@ -402,7 +403,7 @@
             <option value="">—</option>
             {% for wt in work_types %}
             <option value="{{ wt.name }}"
-                    data-unit="{{ wt.default_unit }}" data-price="{{ wt.default_price }}"
+                    data-unit="{{ work_type_unit_code.get(wt.id, '') }}" data-price="{{ wt.default_price }}"
                     {% if rec and rec.work_type == wt.name %}selected{% endif %}>
                 {{ wt.name }}
             </option>
@@ -415,11 +416,10 @@
                value="{{ rec.customer if rec else '' }}" placeholder="{{ t('Буюртмачи номи') }}" oninput="markFormDirty()">
     </div>
     <div class="form-group" style="margin-bottom:0">
-        <label>{{ t('Ўлчов') }}</label>
-        <input type="text" name="eq_{{ eq.id }}_line_{{ idx }}_unit"
-               value="{{ rec.unit if rec else eq.default_unit }}"
-               placeholder="га" style="width:70px;"
-               id="eq-{{ eq.id }}-line-{{ idx }}-unit" oninput="markFormDirty()">
+        <label for="eq-{{ eq.id }}-line-{{ idx }}-unit">{{ t('Ўлчов') }}</label>
+        {{ unit_select('eq_%d_line_%d_unit'|format(eq.id, idx),
+                       'eq-%d-line-%d-unit'|format(eq.id, idx),
+                       record_unit_choice.get(rec.id, '') if rec else equipment_unit_code.get(eq.id, '')) }}
     </div>
     <div class="form-group" style="margin-bottom:0">
         <label>{{ t('Миқдор') }}</label>
@@ -477,7 +477,7 @@
             <div class="eq-sub-title">
                 <span class="eq-pill">№ {{ eq.plate or '—' }}</span>
                 {% if eq.eq_type %}<span class="eq-pill">{{ eq.eq_type }}</span>{% endif %}
-                {% if eq.default_unit %}<span class="eq-pill">{{ t('Ўлчов') }}: {{ eq.default_unit }}</span>{% endif %}
+                {% if eq.default_unit %}<span class="eq-pill">{{ t('Ўлчов') }}: {{ unit_labels.get(equipment_unit_code.get(eq.id, ''), eq.default_unit) }}</span>{% endif %}
             </div>
         </div>
         <div class="eq-card-tools">
@@ -846,7 +846,14 @@ function onStatusChange(eqId, status) {
 
 function onWorkTypeChange(sel, eqId, lineIdx) {
     const opt = sel.selectedOptions[0];
-    if (opt && opt.dataset.unit) document.getElementById('eq-' + eqId + '-line-' + lineIdx + '-unit').value = opt.dataset.unit;
+    // DD-004: поле единицы — <select>, и dataset.unit несёт КОД справочника.
+    // [REASON]: присваивание select.value кодом, которого нет среди option,
+    // не бросает ошибку — браузер молча сбрасывает выбор на пустой. Поэтому
+    // сначала проверяем, что такой вариант есть, и только тогда ставим.
+    const unitEl = document.getElementById('eq-' + eqId + '-line-' + lineIdx + '-unit');
+    if (unitEl && opt && opt.dataset.unit && unitEl.querySelector('option[value="' + opt.dataset.unit + '"]')) {
+        unitEl.value = opt.dataset.unit;
+    }
     if (opt && opt.dataset.price && opt.dataset.price !== '0') document.getElementById('eq-' + eqId + '-line-' + lineIdx + '-price').value = parseInt(opt.dataset.price);
     calcAmount(eqId);
     markFormDirty();
@@ -892,10 +899,10 @@ function addLine(eqId) {
         <div class="form-group" style="margin-bottom:0"><label>{{ t('Иш тури') }}</label>
             <select name="eq_${eqId}_line_${idx}_work_type" onchange="onWorkTypeChange(this, ${eqId}, ${idx})">
                 <option value="">—</option>
-                {% for wt in work_types %}<option value="{{ wt.name }}" data-unit="{{ wt.default_unit }}" data-price="{{ wt.default_price }}">{{ wt.name }}</option>{% endfor %}
+                {% for wt in work_types %}<option value="{{ wt.name }}" data-unit="{{ work_type_unit_code.get(wt.id, '') }}" data-price="{{ wt.default_price }}">{{ wt.name }}</option>{% endfor %}
             </select></div>
         <div class="form-group" style="margin-bottom:0"><label>{{ t('Буюртмачи') }}</label><input type="text" name="eq_${eqId}_line_${idx}_customer" list="customers-list" placeholder="{{ t('Буюртмачи номи') }}" oninput="markFormDirty()"></div>
-        <div class="form-group" style="margin-bottom:0"><label>{{ t('Ўлчов') }}</label><input type="text" name="eq_${eqId}_line_${idx}_unit" placeholder="га" style="width:70px;" id="eq-${eqId}-line-${idx}-unit" oninput="markFormDirty()"></div>
+        <div class="form-group" style="margin-bottom:0"><label for="eq-${eqId}-line-${idx}-unit">{{ t('Ўлчов') }}</label>{{ unit_select('eq_${eqId}_line_${idx}_unit', 'eq-${eqId}-line-${idx}-unit', '') }}</div>
         <div class="form-group" style="margin-bottom:0"><label>{{ t('Миқдор') }}</label><input type="number" min="0.1" step="0.1" inputmode="decimal" name="eq_${eqId}_line_${idx}_quantity" oninput="calcAmount(${eqId}); markFormDirty()" onwheel="this.blur()" id="eq-${eqId}-line-${idx}-qty" placeholder="0.0"><div class="field-help">{{ t('Миқдор 0 дан катта бўлиши керак') }}</div></div>
         <div class="form-group" style="margin-bottom:0"><label>{{ t('Нарх') }}</label><input type="number" min="0" step="1" inputmode="numeric" name="eq_${eqId}_line_${idx}_price" oninput="calcAmount(${eqId}); markFormDirty()" onwheel="this.blur()" id="eq-${eqId}-line-${idx}-price" placeholder="0"><div class="field-help">{{ t('Нарх манфий бўлмаслиги керак') }}</div></div>
         <div class="form-group" style="margin-bottom:0"><label>{{ t('Тўлов тури') }}</label><select name="eq_${eqId}_line_${idx}_payment_type" onchange="markFormDirty()"><option value="internal">{{ t('Тизим') }}</option><option value="transfer">{{ t('Пул кўч.') }}</option><option value="cash">{{ t('Нақд') }}</option><option value="other">{{ t('Бошқа') }}</option></select></div>
