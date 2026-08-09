@@ -52,8 +52,27 @@ REPORT_FILE = 'report.txt'
 # Limits. The route checks the request size before the body is read; these
 # two are checked per batch and per file once Werkzeug has parsed the form.
 MAX_FILES_PER_BATCH = 12
-MAX_FILE_BYTES = 25 * 1024 * 1024
-MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+
+# [REASON]: DRONE-WORKS-UPLOAD-002. 25 MB rejected two of the twenty-eight
+# real dispatcher books -- «Агрокластер Дрон маълумот Март.xlsx» is 78 958 503
+# bytes for THREE rows and «Имомов Бехзод Пешку ПТЗ Апрель.xlsx» is 39 340 234
+# for twenty. The weight is embedded images, not data: the size of a book says
+# nothing about how much of it is a ledger, so a limit sized from the row
+# count is the wrong limit. 100 MiB clears the largest book observed with room
+# for a bigger one.
+MAX_FILE_BYTES = 100 * 1024 * 1024
+
+# [REASON]: 240 MiB is EXACTLY 80 % of app.py's MAX_CONTENT_LENGTH
+# (300 * 1024 * 1024 = 314 572 800 bytes), and it is capped by that and by
+# nothing else. Above 80 % the multipart envelope -- boundaries, per-part
+# headers, the period and note fields -- can push a batch that this module
+# would have accepted over Werkzeug's global limit, and Werkzeug answers 413
+# before any view runs: the operator would get a bare error page instead of
+# the bilingual refusal below, naming no file and no rule. MAX_CONTENT_LENGTH
+# is shared with every other module and is deliberately NOT raised to make a
+# larger batch fit.
+MAX_UPLOAD_BYTES = 240 * 1024 * 1024
+
 MAX_NAME_LENGTH = 150
 
 # [REASON]: the four tables tools/import_drone_works.py reads and writes.

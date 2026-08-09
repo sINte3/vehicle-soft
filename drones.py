@@ -3293,10 +3293,14 @@ def works_import_upload():
     _drone_require_import_admin()
 
     # [REASON]: checked BEFORE the body is read. MAX_CONTENT_LENGTH is a
-    # global shared with every other module (app.py sets 300 MB when it is
-    # unset) and is deliberately not touched here; 300 MB is larger than the
-    # 100 MB this screen wants, so Werkzeug's own limit never fires first and
-    # nothing about the other modules moves.
+    # global shared with every other module (app.py sets 300 * 1024 * 1024 =
+    # 314 572 800 bytes when it is unset) and is deliberately not touched
+    # here. MAX_UPLOAD_BYTES is kept at 80 % of it -- 240 MiB -- so the
+    # remaining fifth absorbs the multipart envelope and Werkzeug's own limit
+    # never fires first: a 413 raised before any view runs would replace the
+    # bilingual refusal below with a bare error page naming no file and no
+    # rule. Raising the global to fit a bigger batch would move every other
+    # module's ceiling too.
     length = request.content_length
     if length is not None and length > works_upload.MAX_UPLOAD_BYTES:
         flash(_drone_t(
