@@ -63,11 +63,18 @@ MONEY_TEMPLATES = (
 # rows already in the database -- and it needs the same opt-out for the same
 # reason. It is NOT a six-card money grid, so MONEY_TEMPLATES stays what it
 # means.
+#
+# [REASON]: DRONE-CLOSE-001 adds the closing screen for the same reason. Its
+# grid is a plain .vs-stat-grid of four cards -- months shown, ledger
+# hectares, flight hectares, hectares not handed in -- and every one of them
+# is a figure that must not word-wrap mid-number. It is NOT a six-card money
+# grid, so MONEY_TEMPLATES stays what it means.
 DRONES_PLAIN_NUM_TEMPLATES = (
     'templates/drones/spray_usage.html',
     'templates/drones/works_flights_reconcile.html',
     'templates/drones/flight_calendar.html',
     'templates/drones/works_import_preview.html',
+    'templates/drones/works_closing.html',
 )
 
 # [REASON]: this line is the rule the fix opts OUT of, and it must survive the
