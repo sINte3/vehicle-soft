@@ -1,13 +1,6 @@
 {
  "counts": {
-  "breakpoint": {
-   "templates/fuel/dashboard.html": 2,
-   "templates/fuel/receipts.html": 2,
-   "templates/fuel/report.html": 4,
-   "templates/fuel/stations.html": 2,
-   "templates/fuel/warehouses.html": 2,
-   "templates/fuel/warnings.html": 4
-  },
+  "breakpoint": {},
   "glyph": {
    "templates/admin_users.html": 7,
    "templates/deficiencies.html": 2,

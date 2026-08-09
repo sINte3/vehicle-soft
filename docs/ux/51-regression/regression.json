@@ -5,15 +5,19 @@
   "viewport": "tablet",
   "pct": 73.81,
   "heightBefore": 1822,
-  "heightAfter": 1771
+  "heightAfter": 1771,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/acts/1",
   "slug": "spare-parts-acts-1",
   "viewport": "tablet",
-  "pct": 67.11,
+  "pct": 67.09,
   "heightBefore": 770,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/reports/reconcile",
@@ -21,7 +25,9 @@
   "viewport": "tablet",
   "pct": 63.84,
   "heightBefore": 1229,
-  "heightAfter": 1127
+  "heightAfter": 1127,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/login",
@@ -29,15 +35,19 @@
   "viewport": "tablet",
   "pct": 62.87,
   "heightBefore": 1953,
-  "heightAfter": 1778
+  "heightAfter": 1778,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/",
   "slug": "fuel",
   "viewport": "tablet",
-  "pct": 60.59,
+  "pct": 60.58,
   "heightBefore": 1054,
-  "heightAfter": 863
+  "heightAfter": 863,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/import",
@@ -45,23 +55,39 @@
   "viewport": "tablet",
   "pct": 60.53,
   "heightBefore": 2970,
-  "heightAfter": 2932
+  "heightAfter": 2932,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reports",
   "slug": "fuel-reports",
   "viewport": "tablet",
-  "pct": 55.92,
+  "pct": 55.9,
   "heightBefore": 870,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/initial-balance",
   "slug": "fuel-initial-balance",
   "viewport": "tablet",
-  "pct": 55.23,
+  "pct": 55.25,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/drones/reports",
+  "slug": "drones-reports",
+  "viewport": "tablet",
+  "pct": 54.81,
+  "heightBefore": 1006,
+  "heightAfter": 831,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reports/counter-mismatch",
@@ -69,15 +95,19 @@
   "viewport": "tablet",
   "pct": 54.8,
   "heightBefore": 1598,
-  "heightAfter": 1312
+  "heightAfter": 1312,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/drones/reports",
-  "slug": "drones-reports",
+  "url": "/fuel/report",
+  "slug": "fuel-report",
   "viewport": "tablet",
-  "pct": 54.79,
-  "heightBefore": 1006,
-  "heightAfter": 831
+  "pct": 53.97,
+  "heightBefore": 3031,
+  "heightAfter": 2803,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/new",
@@ -85,15 +115,9 @@
   "viewport": "tablet",
   "pct": 53.97,
   "heightBefore": 1093,
-  "heightAfter": 952
- },
- {
-  "url": "/fuel/report",
-  "slug": "fuel-report",
-  "viewport": "tablet",
-  "pct": 53.96,
-  "heightBefore": 3031,
-  "heightAfter": 2803
+  "heightAfter": 952,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reports/card-issues",
@@ -101,7 +125,9 @@
   "viewport": "tablet",
   "pct": 52.06,
   "heightBefore": 968,
-  "heightAfter": 793
+  "heightAfter": 793,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/units/1",
@@ -109,15 +135,19 @@
   "viewport": "tablet",
   "pct": 51.34,
   "heightBefore": 1979,
-  "heightAfter": 1799
+  "heightAfter": 1799,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/debts",
   "slug": "drones-works-debts",
   "viewport": "tablet",
-  "pct": 50.75,
+  "pct": 50.74,
   "heightBefore": 2221,
-  "heightAfter": 2101
+  "heightAfter": 2101,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/operators/1",
@@ -125,15 +155,19 @@
   "viewport": "tablet",
   "pct": 50.48,
   "heightBefore": 1249,
-  "heightAfter": 1023
+  "heightAfter": 1023,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/wialon/report",
   "slug": "wialon-report",
   "viewport": "tablet",
-  "pct": 49.6,
+  "pct": 49.62,
   "heightBefore": 947,
-  "heightAfter": 857
+  "heightAfter": 857,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/manual-expenses",
@@ -141,7 +175,9 @@
   "viewport": "tablet",
   "pct": 49.12,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reports/station-totals",
@@ -149,7 +185,9 @@
   "viewport": "tablet",
   "pct": 48.29,
   "heightBefore": 923,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/debts/aging",
@@ -157,7 +195,9 @@
   "viewport": "tablet",
   "pct": 47.98,
   "heightBefore": 1671,
-  "heightAfter": 1619
+  "heightAfter": 1619,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/assignment-hints",
@@ -165,15 +205,19 @@
   "viewport": "tablet",
   "pct": 47.55,
   "heightBefore": 2400,
-  "heightAfter": 2262
+  "heightAfter": 2262,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/reports",
   "slug": "spare-parts-reports",
   "viewport": "tablet",
-  "pct": 47.09,
+  "pct": 47.12,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/inventory",
@@ -181,7 +225,9 @@
   "viewport": "tablet",
   "pct": 45.14,
   "heightBefore": 1708,
-  "heightAfter": 1604
+  "heightAfter": 1604,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/units/reattach",
@@ -189,7 +235,9 @@
   "viewport": "tablet",
   "pct": 44.14,
   "heightBefore": 1929,
-  "heightAfter": 1893
+  "heightAfter": 1893,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/balance-report",
@@ -197,7 +245,9 @@
   "viewport": "tablet",
   "pct": 43.95,
   "heightBefore": 1277,
-  "heightAfter": 1096
+  "heightAfter": 1096,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/spare-parts/",
@@ -205,7 +255,9 @@
   "viewport": "tablet",
   "pct": 43.6,
   "heightBefore": 2767,
-  "heightAfter": 2569
+  "heightAfter": 2569,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/wialon/mapping",
@@ -213,7 +265,9 @@
   "viewport": "tablet",
   "pct": 42.79,
   "heightBefore": 3231,
-  "heightAfter": 2076
+  "heightAfter": 2076,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/ledger",
@@ -221,7 +275,9 @@
   "viewport": "tablet",
   "pct": 42.77,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/wialon/auto_match",
@@ -229,15 +285,19 @@
   "viewport": "tablet",
   "pct": 42.38,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/stations",
   "slug": "fuel-stations",
   "viewport": "tablet",
-  "pct": 42.34,
+  "pct": 42.33,
   "heightBefore": 2217,
-  "heightAfter": 2167
+  "heightAfter": 2167,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/summary",
@@ -245,15 +305,19 @@
   "viewport": "tablet",
   "pct": 42.2,
   "heightBefore": 3103,
-  "heightAfter": 3054
+  "heightAfter": 3054,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/warehouses",
   "slug": "fuel-warehouses",
   "viewport": "tablet",
-  "pct": 41.86,
+  "pct": 41.85,
   "heightBefore": 1131,
-  "heightAfter": 1115
+  "heightAfter": 1115,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/",
@@ -261,31 +325,39 @@
   "viewport": "tablet",
   "pct": 41.68,
   "heightBefore": 1706,
-  "heightAfter": 1619
+  "heightAfter": 1619,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/purchase-queue",
   "slug": "spare-parts-purchase-queue",
   "viewport": "tablet",
-  "pct": 41.2,
+  "pct": 41.18,
   "heightBefore": 1582,
-  "heightAfter": 1357
+  "heightAfter": 1357,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/receipts",
   "slug": "fuel-receipts",
   "viewport": "tablet",
-  "pct": 39.88,
+  "pct": 39.89,
   "heightBefore": 1187,
-  "heightAfter": 1171
+  "heightAfter": 1171,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/admin/users",
   "slug": "admin-users",
   "viewport": "tablet",
-  "pct": 39.58,
+  "pct": 39.6,
   "heightBefore": 1394,
-  "heightAfter": 1210
+  "heightAfter": 1210,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/drones/customers",
@@ -293,7 +365,9 @@
   "viewport": "tablet",
   "pct": 39.34,
   "heightBefore": 3670,
-  "heightAfter": 3533
+  "heightAfter": 3533,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/deficiencies",
@@ -301,31 +375,39 @@
   "viewport": "tablet",
   "pct": 38.77,
   "heightBefore": 773,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/reports",
   "slug": "drones-works-reports",
   "viewport": "tablet",
-  "pct": 38.74,
+  "pct": 38.75,
   "heightBefore": 6557,
-  "heightAfter": 5142
+  "heightAfter": 5142,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/acts",
   "slug": "spare-parts-acts",
   "viewport": "tablet",
-  "pct": 38.6,
+  "pct": 38.59,
   "heightBefore": 1917,
-  "heightAfter": 1794
+  "heightAfter": 1794,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/import/14",
   "slug": "drones-works-import-14",
   "viewport": "tablet",
-  "pct": 38.28,
+  "pct": 38.25,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/maintenance",
@@ -333,23 +415,39 @@
   "viewport": "tablet",
   "pct": 37.41,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/maintenance-norms",
   "slug": "spare-parts-maintenance-norms",
   "viewport": "tablet",
-  "pct": 37.39,
+  "pct": 37.4,
   "heightBefore": 3039,
-  "heightAfter": 2364
+  "heightAfter": 2364,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/sources",
   "slug": "drones-sources",
   "viewport": "tablet",
-  "pct": 37.11,
+  "pct": 37.1,
   "heightBefore": 3474,
-  "heightAfter": 3407
+  "heightAfter": 3407,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/fuel/warehouses",
+  "slug": "fuel-warehouses",
+  "viewport": "narrow",
+  "pct": 36.97,
+  "heightBefore": 1610,
+  "heightAfter": 1369,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/operators",
@@ -357,7 +455,9 @@
   "viewport": "tablet",
   "pct": 36.88,
   "heightBefore": 2627,
-  "heightAfter": 2083
+  "heightAfter": 2083,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/warnings",
@@ -365,7 +465,9 @@
   "viewport": "tablet",
   "pct": 36.7,
   "heightBefore": 12077,
-  "heightAfter": 11523
+  "heightAfter": 11523,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/reports/spray",
@@ -373,23 +475,39 @@
   "viewport": "tablet",
   "pct": 36.57,
   "heightBefore": 2323,
-  "heightAfter": 2289
+  "heightAfter": 2289,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reports/station-issues",
   "slug": "fuel-reports-station-issues",
   "viewport": "tablet",
-  "pct": 36.14,
+  "pct": 36.16,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/ref/organizations",
   "slug": "ref-organizations",
   "viewport": "tablet",
-  "pct": 36.01,
+  "pct": 36.02,
   "heightBefore": 2587,
-  "heightAfter": 2550
+  "heightAfter": 2550,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/fuel/receipts",
+  "slug": "fuel-receipts",
+  "viewport": "narrow",
+  "pct": 35.84,
+  "heightBefore": 1973,
+  "heightAfter": 1381,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/catalog",
@@ -397,7 +515,9 @@
   "viewport": "tablet",
   "pct": 35.73,
   "heightBefore": 4853,
-  "heightAfter": 4640
+  "heightAfter": 4640,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/units",
@@ -405,15 +525,19 @@
   "viewport": "tablet",
   "pct": 35.7,
   "heightBefore": 3094,
-  "heightAfter": 3042
+  "heightAfter": 3042,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reserve-transfers",
   "slug": "fuel-reserve-transfers",
   "viewport": "tablet",
-  "pct": 35.59,
+  "pct": 35.6,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/cards",
@@ -421,15 +545,29 @@
   "viewport": "tablet",
   "pct": 35.02,
   "heightBefore": 2261,
-  "heightAfter": 2238
+  "heightAfter": 2238,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/fuel/report",
+  "slug": "fuel-report",
+  "viewport": "narrow",
+  "pct": 34.77,
+  "heightBefore": 3328,
+  "heightAfter": 3291,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/ref/work_types",
   "slug": "ref-work_types",
   "viewport": "tablet",
-  "pct": 34.74,
+  "pct": 34.73,
   "heightBefore": 2788,
-  "heightAfter": 2137
+  "heightAfter": 2137,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/equipment-models",
@@ -437,7 +575,9 @@
   "viewport": "tablet",
   "pct": 34.02,
   "heightBefore": 2984,
-  "heightAfter": 2900
+  "heightAfter": 2900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/wialon/workload",
@@ -445,7 +585,9 @@
   "viewport": "tablet",
   "pct": 33.51,
   "heightBefore": 2414,
-  "heightAfter": 2398
+  "heightAfter": 2398,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/desk",
@@ -453,7 +595,9 @@
   "viewport": "tablet",
   "pct": 33.16,
   "heightBefore": 1960,
-  "heightAfter": 1944
+  "heightAfter": 1944,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/skus",
@@ -461,7 +605,9 @@
   "viewport": "tablet",
   "pct": 33.1,
   "heightBefore": 2390,
-  "heightAfter": 2373
+  "heightAfter": 2373,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/work-orders",
@@ -469,15 +615,19 @@
   "viewport": "tablet",
   "pct": 33.03,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/ref/customers",
   "slug": "ref-customers",
   "viewport": "tablet",
-  "pct": 32.9,
+  "pct": 32.89,
   "heightBefore": 3115,
-  "heightAfter": 3039
+  "heightAfter": 3039,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/wialon",
@@ -485,7 +635,9 @@
   "viewport": "tablet",
   "pct": 32.01,
   "heightBefore": 1954,
-  "heightAfter": 1588
+  "heightAfter": 1588,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/profile",
@@ -493,15 +645,19 @@
   "viewport": "tablet",
   "pct": 31.96,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/change-temporary-password",
   "slug": "change-temporary-password",
   "viewport": "tablet",
-  "pct": 31.2,
+  "pct": 31.18,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/work-orders/new",
@@ -509,15 +665,29 @@
   "viewport": "tablet",
   "pct": 31.05,
   "heightBefore": 779,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/ref/equipment",
   "slug": "ref-equipment",
   "viewport": "tablet",
-  "pct": 28.91,
+  "pct": 28.9,
   "heightBefore": 3310,
-  "heightAfter": 3173
+  "heightAfter": 3173,
+  "overflowBefore": true,
+  "overflowAfter": true
+ },
+ {
+  "url": "/fuel/stations",
+  "slug": "fuel-stations",
+  "viewport": "narrow",
+  "pct": 27.82,
+  "heightBefore": 2621,
+  "heightAfter": 2358,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/admin/permissions",
@@ -525,7 +695,19 @@
   "viewport": "tablet",
   "pct": 27.7,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/fuel/warnings",
+  "slug": "fuel-warnings",
+  "viewport": "narrow",
+  "pct": 26.74,
+  "heightBefore": 12807,
+  "heightAfter": 12386,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/wialon/mapping",
@@ -533,7 +715,9 @@
   "viewport": "narrow",
   "pct": 22.29,
   "heightBefore": 3521,
-  "heightAfter": 3305
+  "heightAfter": 3305,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/ref/organizations",
@@ -541,7 +725,9 @@
   "viewport": "narrow",
   "pct": 17.15,
   "heightBefore": 2903,
-  "heightAfter": 2724
+  "heightAfter": 2724,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/ref/customers",
@@ -549,7 +735,9 @@
   "viewport": "narrow",
   "pct": 17.06,
   "heightBefore": 3350,
-  "heightAfter": 3171
+  "heightAfter": 3171,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/ref/work_types",
@@ -557,7 +745,9 @@
   "viewport": "narrow",
   "pct": 16.42,
   "heightBefore": 3065,
-  "heightAfter": 2886
+  "heightAfter": 2886,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/ref/equipment",
@@ -565,47 +755,39 @@
   "viewport": "narrow",
   "pct": 13.1,
   "heightBefore": 3657,
-  "heightAfter": 3478
+  "heightAfter": 3478,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/fuel/api/fuel_ping",
   "slug": "fuel-api-fuel_ping",
   "viewport": "mobile",
-  "pct": 0.08,
+  "pct": 0.12,
   "heightBefore": 844,
-  "heightAfter": 844
+  "heightAfter": 844,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/api/fuel_ping",
   "slug": "fuel-api-fuel_ping",
   "viewport": "narrow",
-  "pct": 0.07,
+  "pct": 0.08,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/api/fuel_ping",
   "slug": "fuel-api-fuel_ping",
   "viewport": "tablet",
-  "pct": 0.05,
+  "pct": 0.06,
   "heightBefore": 768,
-  "heightAfter": 768
- },
- {
-  "url": "/fuel/report",
-  "slug": "fuel-report",
-  "viewport": "narrow",
-  "pct": 0.04,
-  "heightBefore": 3328,
-  "heightAfter": 3328
- },
- {
-  "url": "/fuel/report",
-  "slug": "fuel-report",
-  "viewport": "mobile",
-  "pct": 0.04,
-  "heightBefore": 4134,
-  "heightAfter": 4134
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/api/fuel_ping",
@@ -613,63 +795,49 @@
   "viewport": "laptop",
   "pct": 0.03,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/fuel/manual-expenses",
-  "slug": "fuel-manual-expenses",
+  "url": "/fuel/reports/station-totals",
+  "slug": "fuel-reports-station-totals",
   "viewport": "laptop",
   "pct": 0.02,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/fuel/report",
-  "slug": "fuel-report",
-  "viewport": "laptop",
-  "pct": 0.02,
-  "heightBefore": 2678,
-  "heightAfter": 2678
- },
- {
-  "url": "/fuel/reports/card-issues",
-  "slug": "fuel-reports-card-issues",
+  "url": "/spare-parts/new",
+  "slug": "spare-parts-new",
   "viewport": "laptop",
   "pct": 0.02,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/wialon",
-  "slug": "wialon",
-  "viewport": "laptop",
-  "pct": 0.02,
-  "heightBefore": 1604,
-  "heightAfter": 1604
- },
- {
-  "url": "/fuel/",
-  "slug": "fuel",
-  "viewport": "narrow",
-  "pct": 0.02,
-  "heightBefore": 1180,
-  "heightAfter": 1180
- },
- {
-  "url": "/fuel/",
-  "slug": "fuel",
-  "viewport": "mobile",
-  "pct": 0.02,
-  "heightBefore": 1743,
-  "heightAfter": 1743
- },
- {
-  "url": "/change-temporary-password",
-  "slug": "change-temporary-password",
+  "url": "/admin/permissions",
+  "slug": "admin-permissions",
   "viewport": "laptop",
   "pct": 0.01,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/deficiencies",
+  "slug": "deficiencies",
+  "viewport": "laptop",
+  "pct": 0.01,
+  "heightBefore": 900,
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/",
@@ -677,7 +845,9 @@
   "viewport": "laptop",
   "pct": 0.01,
   "heightBefore": 1359,
-  "heightAfter": 1359
+  "heightAfter": 1359,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/operators",
@@ -685,15 +855,19 @@
   "viewport": "laptop",
   "pct": 0.01,
   "heightBefore": 1646,
-  "heightAfter": 1646
+  "heightAfter": 1646,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/drones/operators/1",
-  "slug": "drones-operators-1",
+  "url": "/drones/reports/calendar",
+  "slug": "drones-reports-calendar",
   "viewport": "laptop",
   "pct": 0.01,
-  "heightBefore": 954,
-  "heightAfter": 954
+  "heightBefore": 1610,
+  "heightAfter": 1610,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/reports/reconcile",
@@ -701,23 +875,29 @@
   "viewport": "laptop",
   "pct": 0.01,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/drones/units/1",
-  "slug": "drones-units-1",
+  "url": "/drones/units/reattach",
+  "slug": "drones-units-reattach",
   "viewport": "laptop",
   "pct": 0.01,
-  "heightBefore": 1515,
-  "heightAfter": 1515
+  "heightBefore": 1890,
+  "heightAfter": 1890,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/drones/works/assignment-hints",
-  "slug": "drones-works-assignment-hints",
+  "url": "/drones/works/import/14",
+  "slug": "drones-works-import-14",
   "viewport": "laptop",
   "pct": 0.01,
-  "heightBefore": 2154,
-  "heightAfter": 2154
+  "heightBefore": 900,
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/",
@@ -725,7 +905,9 @@
   "viewport": "laptop",
   "pct": 0.01,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/balance-report",
@@ -733,23 +915,49 @@
   "viewport": "laptop",
   "pct": 0.01,
   "heightBefore": 1058,
-  "heightAfter": 1058
+  "heightAfter": 1058,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/fuel/cards",
-  "slug": "fuel-cards",
-  "viewport": "laptop",
-  "pct": 0.01,
-  "heightBefore": 1961,
-  "heightAfter": 1961
- },
- {
-  "url": "/fuel/reports",
-  "slug": "fuel-reports",
+  "url": "/fuel/initial-balance",
+  "slug": "fuel-initial-balance",
   "viewport": "laptop",
   "pct": 0.01,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/fuel/ledger",
+  "slug": "fuel-ledger",
+  "viewport": "laptop",
+  "pct": 0.01,
+  "heightBefore": 900,
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/fuel/report",
+  "slug": "fuel-report",
+  "viewport": "laptop",
+  "pct": 0.01,
+  "heightBefore": 2678,
+  "heightAfter": 2678,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/fuel/reports/counter-mismatch",
+  "slug": "fuel-reports-counter-mismatch",
+  "viewport": "laptop",
+  "pct": 0.01,
+  "heightBefore": 1309,
+  "heightAfter": 1309,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reports/station-issues",
@@ -757,31 +965,9 @@
   "viewport": "laptop",
   "pct": 0.01,
   "heightBefore": 900,
-  "heightAfter": 900
- },
- {
-  "url": "/fuel/reports/station-totals",
-  "slug": "fuel-reports-station-totals",
-  "viewport": "laptop",
-  "pct": 0.01,
-  "heightBefore": 900,
-  "heightAfter": 900
- },
- {
-  "url": "/fuel/reserve-transfers",
-  "slug": "fuel-reserve-transfers",
-  "viewport": "laptop",
-  "pct": 0.01,
-  "heightBefore": 900,
-  "heightAfter": 900
- },
- {
-  "url": "/fuel/warehouses",
-  "slug": "fuel-warehouses",
-  "viewport": "laptop",
-  "pct": 0.01,
-  "heightBefore": 967,
-  "heightAfter": 967
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/login",
@@ -789,15 +975,9 @@
   "viewport": "laptop",
   "pct": 0.01,
   "heightBefore": 1615,
-  "heightAfter": 1615
- },
- {
-  "url": "/profile",
-  "slug": "profile",
-  "viewport": "laptop",
-  "pct": 0.01,
-  "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 1615,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/ref/customers",
@@ -805,7 +985,19 @@
   "viewport": "laptop",
   "pct": 0.01,
   "heightBefore": 2174,
-  "heightAfter": 2174
+  "heightAfter": 2174,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/ref/organizations",
+  "slug": "ref-organizations",
+  "viewport": "laptop",
+  "pct": 0.01,
+  "heightBefore": 1941,
+  "heightAfter": 1941,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/",
@@ -813,7 +1005,19 @@
   "viewport": "laptop",
   "pct": 0.01,
   "heightBefore": 2380,
-  "heightAfter": 2380
+  "heightAfter": 2380,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/spare-parts/acts",
+  "slug": "spare-parts-acts",
+  "viewport": "laptop",
+  "pct": 0.01,
+  "heightBefore": 1779,
+  "heightAfter": 1779,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/desk",
@@ -821,7 +1025,9 @@
   "viewport": "laptop",
   "pct": 0.01,
   "heightBefore": 1165,
-  "heightAfter": 1165
+  "heightAfter": 1165,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/equipment-models",
@@ -829,23 +1035,19 @@
   "viewport": "laptop",
   "pct": 0.01,
   "heightBefore": 2256,
-  "heightAfter": 2256
+  "heightAfter": 2256,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/spare-parts/new",
-  "slug": "spare-parts-new",
+  "url": "/spare-parts/inventory",
+  "slug": "spare-parts-inventory",
   "viewport": "laptop",
   "pct": 0.01,
-  "heightBefore": 900,
-  "heightAfter": 900
- },
- {
-  "url": "/spare-parts/purchase-queue",
-  "slug": "spare-parts-purchase-queue",
-  "viewport": "laptop",
-  "pct": 0.01,
-  "heightBefore": 1373,
-  "heightAfter": 1373
+  "heightBefore": 1458,
+  "heightAfter": 1458,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/reports",
@@ -853,23 +1055,29 @@
   "viewport": "laptop",
   "pct": 0.01,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/spare-parts/skus",
-  "slug": "spare-parts-skus",
+  "url": "/wialon",
+  "slug": "wialon",
   "viewport": "laptop",
   "pct": 0.01,
-  "heightBefore": 2173,
-  "heightAfter": 2173
+  "heightBefore": 1604,
+  "heightAfter": 1604,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/wialon/report",
-  "slug": "wialon-report",
+  "url": "/wialon/mapping",
+  "slug": "wialon-mapping",
   "viewport": "laptop",
   "pct": 0.01,
-  "heightBefore": 900,
-  "heightAfter": 900
+  "heightBefore": 1887,
+  "heightAfter": 1887,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/work-orders/new",
@@ -877,55 +1085,19 @@
   "viewport": "laptop",
   "pct": 0.01,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/login",
-  "slug": "login",
-  "viewport": "narrow",
-  "pct": 0.01,
-  "heightBefore": 2337,
-  "heightAfter": 2337
- },
- {
-  "url": "/wialon",
-  "slug": "wialon",
-  "viewport": "narrow",
-  "pct": 0.01,
-  "heightBefore": 2416,
-  "heightAfter": 2416
- },
- {
-  "url": "/login",
-  "slug": "login",
+  "url": "/fuel/report",
+  "slug": "fuel-report",
   "viewport": "mobile",
   "pct": 0.01,
-  "heightBefore": 2694,
-  "heightAfter": 2694
- },
- {
-  "url": "/spare-parts/inventory",
-  "slug": "spare-parts-inventory",
-  "viewport": "mobile",
-  "pct": 0.01,
-  "heightBefore": 2412,
-  "heightAfter": 2412
- },
- {
-  "url": "/wialon",
-  "slug": "wialon",
-  "viewport": "mobile",
-  "pct": 0.01,
-  "heightBefore": 2527,
-  "heightAfter": 2527
- },
- {
-  "url": "/admin/permissions",
-  "slug": "admin-permissions",
-  "viewport": "laptop",
-  "pct": 0,
-  "heightBefore": 900,
-  "heightAfter": 900
+  "heightBefore": 4134,
+  "heightAfter": 4134,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/admin/users",
@@ -933,15 +1105,19 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 1022,
-  "heightAfter": 1022
+  "heightAfter": 1022,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/deficiencies",
-  "slug": "deficiencies",
+  "url": "/change-temporary-password",
+  "slug": "change-temporary-password",
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/customers",
@@ -949,7 +1125,19 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 3442,
-  "heightAfter": 3442
+  "heightAfter": 3442,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/drones/operators/1",
+  "slug": "drones-operators-1",
+  "viewport": "laptop",
+  "pct": 0,
+  "heightBefore": 954,
+  "heightAfter": 954,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/reports",
@@ -957,15 +1145,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
- },
- {
-  "url": "/drones/reports/calendar",
-  "slug": "drones-reports-calendar",
-  "viewport": "laptop",
-  "pct": 0,
-  "heightBefore": 1610,
-  "heightAfter": 1610
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/reports/spray",
@@ -973,7 +1155,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 2193,
-  "heightAfter": 2193
+  "heightAfter": 2193,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/sources",
@@ -981,7 +1165,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 3140,
-  "heightAfter": 3140
+  "heightAfter": 3140,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/summary",
@@ -989,7 +1175,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 3001,
-  "heightAfter": 3001
+  "heightAfter": 3001,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/units",
@@ -997,15 +1185,29 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 3007,
-  "heightAfter": 3007
+  "heightAfter": 3007,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/drones/units/reattach",
-  "slug": "drones-units-reattach",
+  "url": "/drones/units/1",
+  "slug": "drones-units-1",
   "viewport": "laptop",
   "pct": 0,
-  "heightBefore": 1890,
-  "heightAfter": 1890
+  "heightBefore": 1515,
+  "heightAfter": 1515,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/drones/works/assignment-hints",
+  "slug": "drones-works-assignment-hints",
+  "viewport": "laptop",
+  "pct": 0,
+  "heightBefore": 2154,
+  "heightAfter": 2154,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/debts",
@@ -1013,7 +1215,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 2012,
-  "heightAfter": 2012
+  "heightAfter": 2012,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/debts/aging",
@@ -1021,7 +1225,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 1530,
-  "heightAfter": 1530
+  "heightAfter": 1530,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/import",
@@ -1029,15 +1235,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 2881,
-  "heightAfter": 2881
- },
- {
-  "url": "/drones/works/import/14",
-  "slug": "drones-works-import-14",
-  "viewport": "laptop",
-  "pct": 0,
-  "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 2881,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/reports",
@@ -1045,23 +1245,29 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 4972,
-  "heightAfter": 4972
+  "heightAfter": 4972,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/fuel/initial-balance",
-  "slug": "fuel-initial-balance",
+  "url": "/fuel/cards",
+  "slug": "fuel-cards",
+  "viewport": "laptop",
+  "pct": 0,
+  "heightBefore": 1961,
+  "heightAfter": 1961,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/fuel/manual-expenses",
+  "slug": "fuel-manual-expenses",
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
- },
- {
-  "url": "/fuel/ledger",
-  "slug": "fuel-ledger",
-  "viewport": "laptop",
-  "pct": 0,
-  "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/receipts",
@@ -1069,15 +1275,39 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 927,
-  "heightAfter": 927
+  "heightAfter": 927,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/fuel/reports/counter-mismatch",
-  "slug": "fuel-reports-counter-mismatch",
+  "url": "/fuel/reports",
+  "slug": "fuel-reports",
   "viewport": "laptop",
   "pct": 0,
-  "heightBefore": 1309,
-  "heightAfter": 1309
+  "heightBefore": 900,
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/fuel/reports/card-issues",
+  "slug": "fuel-reports-card-issues",
+  "viewport": "laptop",
+  "pct": 0,
+  "heightBefore": 900,
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/fuel/reserve-transfers",
+  "slug": "fuel-reserve-transfers",
+  "viewport": "laptop",
+  "pct": 0,
+  "heightBefore": 900,
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/stations",
@@ -1085,7 +1315,19 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 1946,
-  "heightAfter": 1946
+  "heightAfter": 1946,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/fuel/warehouses",
+  "slug": "fuel-warehouses",
+  "viewport": "laptop",
+  "pct": 0,
+  "heightBefore": 967,
+  "heightAfter": 967,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/warnings",
@@ -1093,7 +1335,19 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 8009,
-  "heightAfter": 8009
+  "heightAfter": 8009,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/profile",
+  "slug": "profile",
+  "viewport": "laptop",
+  "pct": 0,
+  "heightBefore": 900,
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/ref/equipment",
@@ -1101,15 +1355,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 3052,
-  "heightAfter": 3052
- },
- {
-  "url": "/ref/organizations",
-  "slug": "ref-organizations",
-  "viewport": "laptop",
-  "pct": 0,
-  "heightBefore": 1941,
-  "heightAfter": 1941
+  "heightAfter": 3052,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/ref/work_types",
@@ -1117,15 +1365,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 2064,
-  "heightAfter": 2064
- },
- {
-  "url": "/spare-parts/acts",
-  "slug": "spare-parts-acts",
-  "viewport": "laptop",
-  "pct": 0,
-  "heightBefore": 1779,
-  "heightAfter": 1779
+  "heightAfter": 2064,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/acts/1",
@@ -1133,7 +1375,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/catalog-search",
@@ -1141,7 +1385,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/equipment-by-org",
@@ -1149,7 +1395,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/price-suggestions",
@@ -1157,7 +1405,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/repeat-check",
@@ -1165,7 +1415,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/skus-by-part",
@@ -1173,7 +1425,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/catalog",
@@ -1181,15 +1435,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 4000,
-  "heightAfter": 4000
- },
- {
-  "url": "/spare-parts/inventory",
-  "slug": "spare-parts-inventory",
-  "viewport": "laptop",
-  "pct": 0,
-  "heightBefore": 1458,
-  "heightAfter": 1458
+  "heightAfter": 4000,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/maintenance",
@@ -1197,7 +1445,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/maintenance-norms",
@@ -1205,7 +1455,29 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 2360,
-  "heightAfter": 2360
+  "heightAfter": 2360,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/spare-parts/purchase-queue",
+  "slug": "spare-parts-purchase-queue",
+  "viewport": "laptop",
+  "pct": 0,
+  "heightBefore": 1373,
+  "heightAfter": 1373,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/spare-parts/skus",
+  "slug": "spare-parts-skus",
+  "viewport": "laptop",
+  "pct": 0,
+  "heightBefore": 2173,
+  "heightAfter": 2173,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/wialon/auto_match",
@@ -1213,15 +1485,19 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/wialon/mapping",
-  "slug": "wialon-mapping",
+  "url": "/wialon/report",
+  "slug": "wialon-report",
   "viewport": "laptop",
   "pct": 0,
-  "heightBefore": 1887,
-  "heightAfter": 1887
+  "heightBefore": 900,
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/wialon/workload",
@@ -1229,7 +1505,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 1959,
-  "heightAfter": 1959
+  "heightAfter": 1959,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/work-orders",
@@ -1237,7 +1515,9 @@
   "viewport": "laptop",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/catalog-search",
@@ -1245,7 +1525,9 @@
   "viewport": "tablet",
   "pct": 0,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/equipment-by-org",
@@ -1253,7 +1535,9 @@
   "viewport": "tablet",
   "pct": 0,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/price-suggestions",
@@ -1261,7 +1545,9 @@
   "viewport": "tablet",
   "pct": 0,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/repeat-check",
@@ -1269,7 +1555,9 @@
   "viewport": "tablet",
   "pct": 0,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/skus-by-part",
@@ -1277,7 +1565,9 @@
   "viewport": "tablet",
   "pct": 0,
   "heightBefore": 768,
-  "heightAfter": 768
+  "heightAfter": 768,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/admin/permissions",
@@ -1285,7 +1575,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/admin/users",
@@ -1293,7 +1585,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1424,
-  "heightAfter": 1424
+  "heightAfter": 1424,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/change-temporary-password",
@@ -1301,7 +1595,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/deficiencies",
@@ -1309,7 +1605,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/",
@@ -1317,7 +1615,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1853,
-  "heightAfter": 1853
+  "heightAfter": 1853,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/customers",
@@ -1325,7 +1625,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 3867,
-  "heightAfter": 3867
+  "heightAfter": 3867,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/operators",
@@ -1333,7 +1635,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 2844,
-  "heightAfter": 2844
+  "heightAfter": 2844,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/operators/1",
@@ -1341,7 +1645,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1423,
-  "heightAfter": 1423
+  "heightAfter": 1423,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/reports",
@@ -1349,7 +1655,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1405,
-  "heightAfter": 1405
+  "heightAfter": 1405,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/reports/calendar",
@@ -1357,7 +1665,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1954,
-  "heightAfter": 1954
+  "heightAfter": 1954,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/reports/reconcile",
@@ -1365,7 +1675,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1412,
-  "heightAfter": 1412
+  "heightAfter": 1412,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/reports/spray",
@@ -1373,7 +1685,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 2539,
-  "heightAfter": 2539
+  "heightAfter": 2539,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/sources",
@@ -1381,7 +1695,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 3656,
-  "heightAfter": 3656
+  "heightAfter": 3656,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/summary",
@@ -1389,7 +1705,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 3513,
-  "heightAfter": 3513
+  "heightAfter": 3513,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/units",
@@ -1397,7 +1715,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 3258,
-  "heightAfter": 3258
+  "heightAfter": 3258,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/units/1",
@@ -1405,7 +1725,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 2573,
-  "heightAfter": 2573
+  "heightAfter": 2573,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/units/reattach",
@@ -1413,7 +1735,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 2009,
-  "heightAfter": 2009
+  "heightAfter": 2009,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/assignment-hints",
@@ -1421,7 +1745,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 2546,
-  "heightAfter": 2546
+  "heightAfter": 2546,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/debts",
@@ -1429,7 +1755,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 2838,
-  "heightAfter": 2838
+  "heightAfter": 2838,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/debts/aging",
@@ -1437,7 +1765,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 2183,
-  "heightAfter": 2183
+  "heightAfter": 2183,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/import",
@@ -1445,7 +1775,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 3190,
-  "heightAfter": 3190
+  "heightAfter": 3190,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/import/14",
@@ -1453,7 +1785,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/reports",
@@ -1461,7 +1795,19 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 6977,
-  "heightAfter": 6977
+  "heightAfter": 6977,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/fuel/",
+  "slug": "fuel",
+  "viewport": "narrow",
+  "pct": 0,
+  "heightBefore": 1180,
+  "heightAfter": 1180,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/balance-report",
@@ -1469,7 +1815,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1500,
-  "heightAfter": 1500
+  "heightAfter": 1500,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/fuel/cards",
@@ -1477,7 +1825,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 2477,
-  "heightAfter": 2477
+  "heightAfter": 2477,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/initial-balance",
@@ -1485,7 +1835,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/fuel/ledger",
@@ -1493,7 +1845,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/manual-expenses",
@@ -1501,15 +1855,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 902,
-  "heightAfter": 902
- },
- {
-  "url": "/fuel/receipts",
-  "slug": "fuel-receipts",
-  "viewport": "narrow",
-  "pct": 0,
-  "heightBefore": 1973,
-  "heightAfter": 1973
+  "heightAfter": 902,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reports",
@@ -1517,7 +1865,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1357,
-  "heightAfter": 1357
+  "heightAfter": 1357,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reports/card-issues",
@@ -1525,7 +1875,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1214,
-  "heightAfter": 1214
+  "heightAfter": 1214,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reports/counter-mismatch",
@@ -1533,7 +1885,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1758,
-  "heightAfter": 1758
+  "heightAfter": 1758,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reports/station-issues",
@@ -1541,7 +1895,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 942,
-  "heightAfter": 942
+  "heightAfter": 942,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reports/station-totals",
@@ -1549,7 +1905,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1206,
-  "heightAfter": 1206
+  "heightAfter": 1206,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reserve-transfers",
@@ -1557,31 +1915,19 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
-  "url": "/fuel/stations",
-  "slug": "fuel-stations",
+  "url": "/login",
+  "slug": "login",
   "viewport": "narrow",
   "pct": 0,
-  "heightBefore": 2621,
-  "heightAfter": 2621
- },
- {
-  "url": "/fuel/warehouses",
-  "slug": "fuel-warehouses",
-  "viewport": "narrow",
-  "pct": 0,
-  "heightBefore": 1610,
-  "heightAfter": 1610
- },
- {
-  "url": "/fuel/warnings",
-  "slug": "fuel-warnings",
-  "viewport": "narrow",
-  "pct": 0,
-  "heightBefore": 12807,
-  "heightAfter": 12807
+  "heightBefore": 2337,
+  "heightAfter": 2337,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/profile",
@@ -1589,7 +1935,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/",
@@ -1597,7 +1945,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 2897,
-  "heightAfter": 2897
+  "heightAfter": 2897,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/acts",
@@ -1605,7 +1955,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1999,
-  "heightAfter": 1999
+  "heightAfter": 1999,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/acts/1",
@@ -1613,7 +1965,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 958,
-  "heightAfter": 958
+  "heightAfter": 958,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/catalog-search",
@@ -1621,7 +1975,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/equipment-by-org",
@@ -1629,7 +1985,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/price-suggestions",
@@ -1637,7 +1995,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/repeat-check",
@@ -1645,7 +2005,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/skus-by-part",
@@ -1653,7 +2015,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/catalog",
@@ -1661,7 +2025,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 5039,
-  "heightAfter": 5039
+  "heightAfter": 5039,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/desk",
@@ -1669,7 +2035,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 2040,
-  "heightAfter": 2040
+  "heightAfter": 2040,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/equipment-models",
@@ -1677,7 +2045,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 3170,
-  "heightAfter": 3170
+  "heightAfter": 3170,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/inventory",
@@ -1685,7 +2055,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1895,
-  "heightAfter": 1895
+  "heightAfter": 1895,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/maintenance",
@@ -1693,7 +2065,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/maintenance-norms",
@@ -1701,7 +2075,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 3207,
-  "heightAfter": 3207
+  "heightAfter": 3207,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/new",
@@ -1709,7 +2085,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1190,
-  "heightAfter": 1190
+  "heightAfter": 1190,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/purchase-queue",
@@ -1717,7 +2095,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1806,
-  "heightAfter": 1806
+  "heightAfter": 1806,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/reports",
@@ -1725,7 +2105,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 928,
-  "heightAfter": 928
+  "heightAfter": 928,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/skus",
@@ -1733,7 +2115,19 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 2575,
-  "heightAfter": 2575
+  "heightAfter": 2575,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/wialon",
+  "slug": "wialon",
+  "viewport": "narrow",
+  "pct": 0,
+  "heightBefore": 2416,
+  "heightAfter": 2416,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/wialon/auto_match",
@@ -1741,7 +2135,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/wialon/report",
@@ -1749,7 +2145,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1067,
-  "heightAfter": 1067
+  "heightAfter": 1067,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/wialon/workload",
@@ -1757,7 +2155,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 2483,
-  "heightAfter": 2483
+  "heightAfter": 2483,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/work-orders",
@@ -1765,7 +2165,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 900,
-  "heightAfter": 900
+  "heightAfter": 900,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/work-orders/new",
@@ -1773,7 +2175,9 @@
   "viewport": "narrow",
   "pct": 0,
   "heightBefore": 1167,
-  "heightAfter": 1167
+  "heightAfter": 1167,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/admin/permissions",
@@ -1781,7 +2185,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 844,
-  "heightAfter": 844
+  "heightAfter": 844,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/admin/users",
@@ -1789,7 +2195,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1964,
-  "heightAfter": 1964
+  "heightAfter": 1964,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/change-temporary-password",
@@ -1797,7 +2205,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 844,
-  "heightAfter": 844
+  "heightAfter": 844,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/deficiencies",
@@ -1805,7 +2215,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 986,
-  "heightAfter": 986
+  "heightAfter": 986,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/drones/",
@@ -1813,7 +2225,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 2055,
-  "heightAfter": 2055
+  "heightAfter": 2055,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/customers",
@@ -1821,7 +2235,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 4404,
-  "heightAfter": 4404
+  "heightAfter": 4404,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/operators",
@@ -1829,7 +2245,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 3095,
-  "heightAfter": 3095
+  "heightAfter": 3095,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/operators/1",
@@ -1837,7 +2255,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1903,
-  "heightAfter": 1903
+  "heightAfter": 1903,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/reports",
@@ -1845,7 +2265,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1719,
-  "heightAfter": 1719
+  "heightAfter": 1719,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/reports/calendar",
@@ -1853,7 +2275,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 2322,
-  "heightAfter": 2322
+  "heightAfter": 2322,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/reports/reconcile",
@@ -1861,7 +2285,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1677,
-  "heightAfter": 1677
+  "heightAfter": 1677,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/drones/reports/spray",
@@ -1869,7 +2295,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 2986,
-  "heightAfter": 2986
+  "heightAfter": 2986,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/sources",
@@ -1877,7 +2305,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 3957,
-  "heightAfter": 3957
+  "heightAfter": 3957,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/summary",
@@ -1885,7 +2315,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 4234,
-  "heightAfter": 4234
+  "heightAfter": 4234,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/units",
@@ -1893,7 +2325,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 3420,
-  "heightAfter": 3420
+  "heightAfter": 3420,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/units/1",
@@ -1901,7 +2335,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 3413,
-  "heightAfter": 3413
+  "heightAfter": 3413,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/units/reattach",
@@ -1909,7 +2345,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 2238,
-  "heightAfter": 2238
+  "heightAfter": 2238,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/assignment-hints",
@@ -1917,7 +2355,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 3072,
-  "heightAfter": 3072
+  "heightAfter": 3072,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/debts",
@@ -1925,7 +2365,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 3691,
-  "heightAfter": 3691
+  "heightAfter": 3691,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/debts/aging",
@@ -1933,7 +2375,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 2517,
-  "heightAfter": 2517
+  "heightAfter": 2517,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/import",
@@ -1941,7 +2385,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 3355,
-  "heightAfter": 3355
+  "heightAfter": 3355,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/import/14",
@@ -1949,7 +2395,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 844,
-  "heightAfter": 844
+  "heightAfter": 844,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/drones/works/reports",
@@ -1957,7 +2405,19 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 7743,
-  "heightAfter": 7743
+  "heightAfter": 7743,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/fuel/",
+  "slug": "fuel",
+  "viewport": "mobile",
+  "pct": 0,
+  "heightBefore": 1743,
+  "heightAfter": 1743,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/balance-report",
@@ -1965,7 +2425,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 2037,
-  "heightAfter": 2037
+  "heightAfter": 2037,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/fuel/cards",
@@ -1973,7 +2435,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 2638,
-  "heightAfter": 2638
+  "heightAfter": 2638,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/initial-balance",
@@ -1981,7 +2445,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1083,
-  "heightAfter": 1083
+  "heightAfter": 1083,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/fuel/ledger",
@@ -1989,7 +2455,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1259,
-  "heightAfter": 1259
+  "heightAfter": 1259,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/manual-expenses",
@@ -1997,7 +2465,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1211,
-  "heightAfter": 1211
+  "heightAfter": 1211,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/receipts",
@@ -2005,7 +2475,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 2129,
-  "heightAfter": 2129
+  "heightAfter": 2129,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reports",
@@ -2013,7 +2485,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1676,
-  "heightAfter": 1676
+  "heightAfter": 1676,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reports/card-issues",
@@ -2021,7 +2495,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1587,
-  "heightAfter": 1587
+  "heightAfter": 1587,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reports/counter-mismatch",
@@ -2029,7 +2505,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 2314,
-  "heightAfter": 2314
+  "heightAfter": 2314,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reports/station-issues",
@@ -2037,7 +2515,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1205,
-  "heightAfter": 1205
+  "heightAfter": 1205,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reports/station-totals",
@@ -2045,7 +2525,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1559,
-  "heightAfter": 1559
+  "heightAfter": 1559,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/reserve-transfers",
@@ -2053,7 +2535,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 912,
-  "heightAfter": 912
+  "heightAfter": 912,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/stations",
@@ -2061,7 +2545,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 2927,
-  "heightAfter": 2927
+  "heightAfter": 2927,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/warehouses",
@@ -2069,7 +2555,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1892,
-  "heightAfter": 1892
+  "heightAfter": 1892,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/fuel/warnings",
@@ -2077,7 +2565,19 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 14866,
-  "heightAfter": 14866
+  "heightAfter": 14866,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/login",
+  "slug": "login",
+  "viewport": "mobile",
+  "pct": 0,
+  "heightBefore": 2694,
+  "heightAfter": 2694,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/profile",
@@ -2085,7 +2585,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 844,
-  "heightAfter": 844
+  "heightAfter": 844,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/ref/customers",
@@ -2093,7 +2595,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 3523,
-  "heightAfter": 3523
+  "heightAfter": 3523,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/ref/equipment",
@@ -2101,7 +2605,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 3857,
-  "heightAfter": 3857
+  "heightAfter": 3857,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/ref/organizations",
@@ -2109,7 +2615,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 2993,
-  "heightAfter": 2993
+  "heightAfter": 2993,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/ref/work_types",
@@ -2117,7 +2625,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 3256,
-  "heightAfter": 3256
+  "heightAfter": 3256,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/spare-parts/",
@@ -2125,7 +2635,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 3179,
-  "heightAfter": 3179
+  "heightAfter": 3179,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/acts",
@@ -2133,7 +2645,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 2231,
-  "heightAfter": 2231
+  "heightAfter": 2231,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/acts/1",
@@ -2141,7 +2655,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1132,
-  "heightAfter": 1132
+  "heightAfter": 1132,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/catalog-search",
@@ -2149,7 +2665,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 844,
-  "heightAfter": 844
+  "heightAfter": 844,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/equipment-by-org",
@@ -2157,7 +2675,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 844,
-  "heightAfter": 844
+  "heightAfter": 844,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/price-suggestions",
@@ -2165,7 +2685,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 844,
-  "heightAfter": 844
+  "heightAfter": 844,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/repeat-check",
@@ -2173,7 +2695,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 844,
-  "heightAfter": 844
+  "heightAfter": 844,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/api/skus-by-part",
@@ -2181,7 +2705,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 844,
-  "heightAfter": 844
+  "heightAfter": 844,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/catalog",
@@ -2189,7 +2715,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 5594,
-  "heightAfter": 5594
+  "heightAfter": 5594,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/desk",
@@ -2197,7 +2725,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 2198,
-  "heightAfter": 2198
+  "heightAfter": 2198,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/equipment-models",
@@ -2205,7 +2735,19 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 3528,
-  "heightAfter": 3528
+  "heightAfter": 3528,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/spare-parts/inventory",
+  "slug": "spare-parts-inventory",
+  "viewport": "mobile",
+  "pct": 0,
+  "heightBefore": 2412,
+  "heightAfter": 2412,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/maintenance",
@@ -2213,7 +2755,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 844,
-  "heightAfter": 844
+  "heightAfter": 844,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/maintenance-norms",
@@ -2221,7 +2765,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 3473,
-  "heightAfter": 3473
+  "heightAfter": 3473,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/new",
@@ -2229,7 +2775,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1549,
-  "heightAfter": 1549
+  "heightAfter": 1549,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/purchase-queue",
@@ -2237,7 +2785,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1869,
-  "heightAfter": 1869
+  "heightAfter": 1869,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/reports",
@@ -2245,7 +2795,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1043,
-  "heightAfter": 1043
+  "heightAfter": 1043,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/spare-parts/skus",
@@ -2253,7 +2805,19 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 2885,
-  "heightAfter": 2885
+  "heightAfter": 2885,
+  "overflowBefore": false,
+  "overflowAfter": false
+ },
+ {
+  "url": "/wialon",
+  "slug": "wialon",
+  "viewport": "mobile",
+  "pct": 0,
+  "heightBefore": 2527,
+  "heightAfter": 2527,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/wialon/auto_match",
@@ -2261,7 +2825,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 844,
-  "heightAfter": 844
+  "heightAfter": 844,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/wialon/mapping",
@@ -2269,7 +2835,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 3634,
-  "heightAfter": 3634
+  "heightAfter": 3634,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/wialon/report",
@@ -2277,7 +2845,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1220,
-  "heightAfter": 1220
+  "heightAfter": 1220,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/wialon/workload",
@@ -2285,7 +2855,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 2521,
-  "heightAfter": 2521
+  "heightAfter": 2521,
+  "overflowBefore": true,
+  "overflowAfter": true
  },
  {
   "url": "/work-orders",
@@ -2293,7 +2865,9 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 883,
-  "heightAfter": 883
+  "heightAfter": 883,
+  "overflowBefore": false,
+  "overflowAfter": false
  },
  {
   "url": "/work-orders/new",
@@ -2301,6 +2875,8 @@
   "viewport": "mobile",
   "pct": 0,
   "heightBefore": 1184,
-  "heightAfter": 1184
+  "heightAfter": 1184,
+  "overflowBefore": false,
+  "overflowAfter": false
  }
 ]

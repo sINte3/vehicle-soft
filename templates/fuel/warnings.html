@@ -45,8 +45,8 @@
 .warning-pill.rejected { background:var(--danger-light); color:var(--danger); }
 .warning-form { display:grid; grid-template-columns:minmax(160px,220px) 1fr auto; gap:10px; align-items:end; margin-top:12px; }
 .warning-form textarea { min-height:40px; }
-@media (max-width:1050px) { .warning-filter { grid-template-columns:repeat(2,minmax(130px,1fr)); } .warning-form { grid-template-columns:1fr; } }
-@media (max-width:700px) { .warning-hero { flex-direction:column; } .warning-actions { justify-content:flex-start; } .warning-filter { grid-template-columns:1fr; } }
+@media (max-width:1024px) { .warning-filter { grid-template-columns:repeat(2,minmax(130px,1fr)); } .warning-form { grid-template-columns:1fr; } }
+@media (max-width:480px) { .warning-hero { flex-direction:column; } .warning-actions { justify-content:flex-start; } .warning-filter { grid-template-columns:1fr; } }
 
 /* FUEL002G_MARKER: fuel warnings UX refresh, template/localization only. */
 .fuel002g-page-header {
@@ -152,14 +152,14 @@
   padding-top: 12px;
 }
 
-@media (max-width:1050px) {
+@media (max-width:1024px) {
   .fuel002g-context-strip,
   .fuel002g-guidance-panel {
     grid-template-columns: 1fr 1fr;
   }
 }
 
-@media (max-width:700px) {
+@media (max-width:480px) {
   .fuel002g-context-strip,
   .fuel002g-guidance-panel {
     grid-template-columns: 1fr;

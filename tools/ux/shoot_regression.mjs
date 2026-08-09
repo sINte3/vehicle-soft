@@ -154,6 +154,7 @@ const main = async () => {
     }
     for (const route of list) {
       const files = {};
+      const overflow = {};
       let ok = true;
       for (const side of ['before', 'after']) {
         const { page, base } = ctxs[side];
@@ -163,6 +164,15 @@ const main = async () => {
           await page.addStyleTag({ content: FREEZE_CSS }).catch(() => {});
           await page.evaluate(() => document.fonts && document.fonts.ready).catch(() => {});
           await page.evaluate(() => window.scrollTo(0, 0));
+          // [REASON]: pikselnyy diff ne otlichaet "stranicu razneslo za kray
+          // okna" ot "stranica pomenyalas vnutri okna" -- v oboih sluchayah
+          // eto prosto drugie pikseli. Perenos nizhney stupeni pravil AZS na
+          // 480 ostavlyaet shapku gorizontalnoy do 480, i esli ona ne
+          // pomeshchaetsya -- eto perepolnenie, a ne "stalo inache".
+          overflow[side] = await page.evaluate(() => {
+            const de = document.documentElement;
+            return de.scrollWidth > de.clientWidth + 1;
+          });
           const file = path.join(OUT, side, `${route.slug}-${vpName}.png`);
           await page.screenshot({ path: file, fullPage: true });
           files[side] = file;
@@ -170,7 +180,8 @@ const main = async () => {
       }
       if (!ok) continue;
       const d = pixelDiff(files.before, files.after);
-      results.push({ url: route.url, slug: route.slug, viewport: vpName, ...d });
+      results.push({ url: route.url, slug: route.slug, viewport: vpName, ...d,
+                     overflowBefore: overflow.before, overflowAfter: overflow.after });
     }
     for (const side of ['before', 'after']) await ctxs[side].ctx.close();
     console.log(`${vpName}: ${list.length} routes`);
@@ -188,6 +199,10 @@ const main = async () => {
     const med = sorted[Math.floor(sorted.length / 2)];
     console.log(`  ${vp.padEnd(8)} stranic ${String(arr.length).padStart(3)} · median ${String(med).padStart(6)} · max ${String(Math.max(...arr)).padStart(6)}`);
   }
+  const newOverflow = results.filter((r) => r.overflowAfter && !r.overflowBefore);
+  console.log(`\nNOVOE gorizontalnoe perepolnenie: ${newOverflow.length}`);
+  for (const r of newOverflow) console.log(`  !! ${r.viewport.padEnd(7)} ${r.url}`);
+
   console.log('\nHudshie 12:');
   for (const r of results.slice(0, 12)) {
     console.log(`  ${String(r.pct).padStart(6)}%  ${r.viewport.padEnd(7)} ${r.url}  (vysota ${r.heightBefore} -> ${r.heightAfter})`);
