@@ -80,8 +80,14 @@ async function login(page, base, role) {
   if (page.url().includes('/login')) throw new Error('login failed at ' + base);
 }
 
+// [REASON]: stranica otpechatka obyazana lezhat VNE togo, chto pravit tekushchiy
+// PR: inache sobstvennaya pravka razmetki chitaetsya kak rashozhdenie DANNYH.
+// V P6 modul spravochnikov migriroval pervym, i /ref/equipment perestal
+// goditsya. Znachenie po umolchaniyu ostavleno prezhnim radi progonov P5.
+const FINGERPRINT_URL = arg('fingerprint', '/ref/equipment');
+
 async function fingerprint(page, base) {
-  await page.goto(base + '/ref/equipment', { waitUntil: 'networkidle' });
+  await page.goto(base + FINGERPRINT_URL, { waitUntil: 'networkidle' });
   return page.evaluate(() =>
     [...document.querySelectorAll('table td')].map((td) => td.textContent.trim())
       .filter(Boolean).sort().join('|'));

@@ -1,81 +1,131 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}Журнал действий{% endblock %}
 {% block content %}
-<div class="card" style="margin-bottom:20px;">
-    <div class="card-header">Фильтр</div>
-    <div class="card-body">
-        <form method="get" class="form-inline">
-            <div class="form-group" style="margin-bottom:0;">
-                <label>С даты</label>
-                <input type="date" name="date_from" value="{{ date_from }}" class="form-control" style="width:150px;">
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>По дату</label>
-                <input type="date" name="date_to" value="{{ date_to }}" class="form-control" style="width:150px;">
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>Пользователь</label>
-                <select name="user_id" class="form-control" style="width:180px;">
-                    <option value="">Все</option>
-                    {% for u in users %}
-                    <option value="{{ u.id }}" {% if selected_user_id == u.id %}selected{% endif %}>{{ u.username }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>Действие</label>
-                <select name="action" class="form-control" style="width:190px;">
-                    <option value="">Все</option>
-                    {% for a in actions %}
-                    <option value="{{ a }}" {% if selected_action == a %}selected{% endif %}>{{ a }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>Модуль</label>
-                <select name="module" class="form-control" style="width:140px;">
-                    <option value="">Все</option>
-                    {% for m in modules %}
-                    <option value="{{ m }}" {% if selected_module == m %}selected{% endif %}>{{ m }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <button class="btn btn-primary" type="submit">Показать</button>
-            <a class="btn btn-secondary" href="{{ url_for('admin_audit_logs') }}">Сброс</a>
-        </form>
-    </div>
+{# ЯЗЫК: страница целиком русская — так она была написана до трека. Устав
+   требует двуязычия; узбекских формулировок для «Фильтр», «С даты», «Объект»,
+   «Описание», «Записей нет» в словаре нет, и придумывать их здесь значит
+   ввести термины, которых владелец не видел. Пункт открыт и назван в
+   docs/tracks/ui.md. Миграция вёрстки его не решает и не делает вид, что
+   решила. #}
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">Фильтр</span></div>
+  <div class="vs-card-body">
+    <form method="get" class="vs-form-row">
+      <div class="vs-field" style="min-width:150px;">
+        <label class="vs-label" for="alFrom">С даты</label>
+        <input type="date" id="alFrom" name="date_from" value="{{ date_from }}" class="vs-input">
+      </div>
+      <div class="vs-field" style="min-width:150px;">
+        <label class="vs-label" for="alTo">По дату</label>
+        <input type="date" id="alTo" name="date_to" value="{{ date_to }}" class="vs-input">
+      </div>
+      <div class="vs-field" style="min-width:180px;">
+        <label class="vs-label" for="alUser">Пользователь</label>
+        <select name="user_id" id="alUser" class="vs-select">
+          <option value="">Все</option>
+          {% for u in users %}
+          <option value="{{ u.id }}" {% if selected_user_id == u.id %}selected{% endif %}>{{ u.username }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:190px;">
+        <label class="vs-label" for="alAction">Действие</label>
+        <select name="action" id="alAction" class="vs-select">
+          <option value="">Все</option>
+          {% for a in actions %}
+          <option value="{{ a }}" {% if selected_action == a %}selected{% endif %}>{{ a }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:150px;">
+        <label class="vs-label" for="alModule">Модуль</label>
+        <select name="module" id="alModule" class="vs-select">
+          <option value="">Все</option>
+          {% for m in modules %}
+          <option value="{{ m }}" {% if selected_module == m %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field vs-field-action">
+        <button class="vs-btn vs-btn-primary" type="submit">{{ icon('filter', 15) }}Показать</button>
+      </div>
+      <div class="vs-field vs-field-action">
+        <a class="vs-btn" href="{{ url_for('admin_audit_logs') }}">Сброс</a>
+      </div>
+    </form>
+  </div>
 </div>
-<div class="card">
-    <div class="card-header">Последние действия <span class="text-muted text-sm">{{ logs|length }}</span></div>
-    <table>
-        <thead>
-            <tr>
-                <th>Дата/время</th>
-                <th>Пользователь</th>
-                <th>Действие</th>
-                <th>Модуль</th>
-                <th>Объект</th>
-                <th>Описание</th>
-                <th>IP</th>
-                <th>Статус</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for l in logs %}
-            <tr>
-                <td class="text-sm">{{ l.created_at_local or (l.created_at|replace('T',' ')) }}</td>
-                <td><strong>{{ l.username_snapshot or 'system' }}</strong><br><span class="text-muted text-sm">{{ l.full_name_snapshot }}</span></td>
-                <td><code>{{ l.action }}</code></td>
-                <td>{{ l.module or '—' }}</td>
-                <td>{{ l.entity_type or '—' }} {% if l.entity_label %}<br><span class="text-sm">{{ l.entity_label }}</span>{% endif %}</td>
-                <td class="text-sm">{{ l.description or '—' }}</td>
-                <td class="text-sm">{{ l.ip_address or '—' }}</td>
-                <td>{% if l.status == 'ok' %}<span class="working-badge">OK</span>{% else %}<span class="idle-badge">{{ l.status }}</span>{% endif %}</td>
-            </tr>
-        {% else %}
-            <tr><td colspan="8" class="text-center text-muted">Записей нет</td></tr>
-        {% endfor %}
-        </tbody>
+
+{# DD-028, режим is-stream: на боевой базе 3436 записей, маршрут отдаёт
+   последнее окно. Заголовки НЕ кнопки — сортировка серверная (ORDER BY
+   created_at DESC); клиентская переставила бы строки ВНУТРИ окна и выглядела
+   бы как сортировка всего журнала. Охват окна подписан в подвале, число
+   предела приходит из маршрута. #}
+<div class="vs-table-wrap">
+  <div class="vs-card-header">
+    <span class="vs-card-title">Последние действия</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table is-stream is-compact">
+      <thead>
+        <tr>
+          <th>Дата/время</th>
+          <th>Пользователь</th>
+          <th>Действие</th>
+          <th>Модуль</th>
+          <th>Объект</th>
+          <th>Описание</th>
+          <th>IP</th>
+          <th>Статус</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for l in logs %}
+        <tr>
+          <td class="vs-muted">{{ l.created_at_local or (l.created_at|replace('T',' ')) }}</td>
+          <td>
+            <strong>{{ l.username_snapshot or 'system' }}</strong>
+            {% if l.full_name_snapshot %}<br><span class="vs-muted">{{ l.full_name_snapshot }}</span>{% endif %}
+          </td>
+          <td><code>{{ l.action }}</code></td>
+          <td>{{ l.module or '—' }}</td>
+          <td class="vs-cell-clip" title="{{ l.entity_type or '' }} {{ l.entity_label or '' }}">
+            {{ l.entity_type or '—' }}{% if l.entity_label %} <span class="vs-muted">{{ l.entity_label }}</span>{% endif %}
+          </td>
+          {# DD-030: описание — свободный текст, максимум которого много выше
+             p99. Без обрезки одна аномальная строка растянула бы всю таблицу;
+             полное значение доступно по наведению. #}
+          <td class="vs-cell-clip vs-cell-clip-wide" title="{{ l.description or '' }}">{{ l.description or '—' }}</td>
+          <td class="vs-muted">{{ l.ip_address or '—' }}</td>
+          <td>
+            {% if l.status == 'ok' %}
+            <span class="vs-badge vs-badge-success">OK</span>
+            {% else %}
+            <span class="vs-badge vs-badge-danger">{{ l.status }}</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr>
+          <td colspan="8">
+            <div class="vs-empty">
+              <div class="vs-empty-icon">{{ icon('list', 28) }}</div>
+              <p class="vs-empty-title">Записей нет</p>
+              <p class="vs-empty-sub">Измените условия фильтра</p>
+            </div>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
     </table>
+  </div>
+  <div class="vs-table-foot">
+    <span class="vs-table-count">Показано: <strong>{{ logs|length }}</strong> / {{ audit_log_limit }}</span>
+    {% if logs|length >= audit_log_limit %}
+    <span class="vs-table-scope">окно последних {{ audit_log_limit }} записей — журнал длиннее, сузьте фильтр</span>
+    {% endif %}
+  </div>
 </div>
 {% endblock %}

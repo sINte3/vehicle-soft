@@ -24,7 +24,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '..', '..');
-const OUT = path.join(ROOT, 'docs', 'ux', '50-canonical');
 const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 function arg(name, fallback) {
@@ -35,6 +34,16 @@ function arg(name, fallback) {
 const BEFORE = arg('before', 'http://127.0.0.1:5098');
 const AFTER = arg('after', 'http://127.0.0.1:5099');
 const PASSWORD = 'ux-audit-local';
+
+// [REASON]: v P6 modulya shest, i kazhdyy trebuet svoego lista "bylo/stalo" s
+// temi zhe pravilami -- sverka fikstur, proverka na redirect v /login, axe na
+// desktope I na 390 px. Kopirovat skript pod kazhdyy modul znachit razmnozhit
+// eti pravila i dat im razoytis. Poetomu spisok ekranov -- vhodnoy parametr,
+// a ne konstanta; bez nego skript vedet sebya kak ran'she i snimaet sem
+// etalonov P4.
+const SCREENS_FILE = arg('screens', '');
+const OUT = path.join(ROOT, 'docs', 'ux', arg('out', '50-canonical'));
+const FINGERPRINT_URL = arg('fingerprint', '/ref/equipment');
 
 const VIEWPORTS = {
   desktop: { width: 1920, height: 1080 },
@@ -47,7 +56,7 @@ const VIEWPORTS = {
 // vp -- vyeporty, na kotoryh ekran snimaetsya. Sedmoy ekran -- tot zhe
 // fuel/transactions na 390 px: eto ОТДЕЛЬНЫЙ etalon adaptivnosti, a ne punkt
 // chek-lista, poetomu on stoit v spiske otdelnoy strokoy.
-const SCREENS = [
+const P4_SCREENS = [
   { n: 1, slug: 'index', url: '/', role: 'ux_admin',
     title: 'Дашборд', why: 'главный экран, 44 КБ — проверка, что система не ломает уже сделанное' },
   { n: 2, slug: 'drones-works', url: '/drones/works', role: 'ux_admin',
@@ -72,6 +81,22 @@ const SCREENS = [
     title: 'Kitchen sink', why: 'все компоненты во всех состояниях; на стороне «было» его нет',
     afterOnly: true, only: ['desktop'] },
 ];
+
+const SCREENS = SCREENS_FILE
+  ? JSON.parse(fs.readFileSync(path.resolve(SCREENS_FILE), 'utf8'))
+  : P4_SCREENS;
+if (!Array.isArray(SCREENS) || !SCREENS.length) {
+  console.error('screens list is empty: nothing to shoot');
+  process.exit(1);
+}
+for (const s of SCREENS) {
+  // Skript pishet kadry po slug i sobiraet list po nemu zhe: propushchennyy
+  // slug tiho slozhil by neskolko ekranov v odin fayl.
+  if (!s.slug || !s.url || !s.role) {
+    console.error('screen without slug/url/role: ' + JSON.stringify(s));
+    process.exit(1);
+  }
+}
 
 const FREEZE_CSS = `
 *, *::before, *::after {
@@ -130,8 +155,18 @@ const PROBE = () => {
 // cifry. Vopros pravilnyy, i otvechat na nego dolzhen skript, a ne chelovek.
 // /ref/equipment vybran namerenno: trek ego ne trogal, poetomu lyuboe
 // rashozhdenie zdes -- eto rashozhdenie DANNYH, a ne razmetki.
+/* Otpechatok fikstur: dokazatelstvo, chto oba ekzemplyara derzhat ODNI I TE
+   ZHE dannye. Sravnivayutsya teksty yacheek tablicy.
+ *
+ * [REASON]: stranica otpechatka OBYAZANA lezhat VNE togo, chto pravit tekushchiy
+ * PR, i poetomu ona parametr, a ne konstanta. V P4 zdes stoyal /ref/equipment
+ * i eto bylo verno. V P6 pervym migriruet imenno modul spravochnikov: posle
+ * pravki pustaya yacheyka "edinica izmereniya" stala risovat tire, chislo
+ * NEPUSTYH yacheek vyroslo na chetyre, i sverka soobshchila o rashozhdenii
+ * DANNYH, kotorogo net. Proverka, reagiruyushchaya na sobstvennuyu pravku
+ * razmetki, perestaet otvechat na svoy vopros. */
 async function fixtureFingerprint(page, base) {
-  await page.goto(base + '/ref/equipment', { waitUntil: 'networkidle' });
+  await page.goto(base + FINGERPRINT_URL, { waitUntil: 'networkidle' });
   return page.evaluate(() =>
     [...document.querySelectorAll('table td')]
       .map((td) => td.textContent.trim())

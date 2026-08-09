@@ -125,3 +125,8 @@ docs/ux/50-canonical/after/
 # (regression.json) are committed; the images are not.
 docs/ux/51-regression/before/
 docs/ux/51-regression/after/
+
+# P6 per-module before/after frames, one directory per module PR. Same rule:
+# numbers and the comparison sheet are committed, the PNG are not.
+docs/ux/5?-p6-*/before/
+docs/ux/5?-p6-*/after/

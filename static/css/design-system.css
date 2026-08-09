@@ -940,6 +940,51 @@ a.vs-kpi-strip-item:focus-visible { outline: 2px solid var(--vs-primary); outlin
    vyborke -- na 394 817 strokah raznica na poryadki. */
 .vs-table-foot .vs-table-scope { font-style: italic; }
 
+/* ---- P6, spravochniki: yacheyka s formoy vnutri stroki ------------------
+   Spravochniki pravyatsya PRYAMO V TABLICE: v yacheyke lezhit forma s polyami
+   i knopkoy. Bez etogo yacheyka szhimaet formu do shiriny kolonki i polya
+   nalezayut drug na druga.
+   [REASON]: `white-space: nowrap` zdes NELZYA -- pri uzkom okne stroka
+   redaktirovaniya dolzhna perenosit polya, a ne uezzhat za kray okna (v P5
+   izmereno, chto pikselnyy diff perepolneniya ne vidit). Perenos daet
+   .vs-form-row, poetomu yacheyke nuzhen tolko vertikalnyy zazor. */
+.vs-table td.vs-cell-form { white-space: normal; padding-top: 7px; padding-bottom: 7px; }
+.vs-table td.vs-cell-form .vs-form-row { gap: 7px; align-items: center; }
+.vs-table td.vs-cell-form .vs-input,
+.vs-table td.vs-cell-form .vs-select { padding: 6px 9px; font-size: var(--vs-fs-sm); }
+
+/* Forma iz odnoy knopki vnutri zony deystviy stroki: bez etogo <form> --
+   blochnyy element i lomaet ryad ikonok na neskolko strok. */
+.vs-inline-form { display: inline-flex; }
+
+/* Otklyuchennaya zapis spravochnika: stroka priglushena, no chitaema.
+   Bylo `.ref-eq-inactive{opacity:.68}` v inline-<style> odnogo shablona. */
+.vs-table tr.vs-row-muted { background: var(--vs-surface-2); }
+.vs-table tr.vs-row-muted td { color: var(--vs-text-muted); }
+.vs-table tr.vs-row-muted td strong { font-weight: 600; }
+
+/* [REASON]: yavnaya zashchita dlya `hidden` na <tr>. Obshchaya stroka
+   redaktirovaniya pryachetsya atributom `hidden`, a ne inline-stilem. UA
+   ob'yavlyaet `[hidden]{display:none}`, no lyuboe budushchee pravilo vida
+   `.vs-table tbody tr { display: ... }` pobedilo by ego po specifichnosti i
+   skrytaya forma vylezla by v seredine tablicy. */
+.vs-table tr[hidden] { display: none; }
+
+/* Spisok diagnostiki spravochnika v kartochke-preduprezhdenii.
+   Bylo `.ref-quality-list` -- v chetyreh shablonah, v treh iz nih odinakovo,
+   v odnom (ref_customers) s `max-height: 220px; overflow: auto`.
+   [REASON]: `max-height` + `overflow` SNYATY, a ne pereneseny v obshchee
+   pravilo. Prokruchivaemaya oblast bez tabindex nedostizhima s klaviatury --
+   eto pravilo axe scrollable-region-focusable, seryeznost serious. Ono uzhe
+   narushalos na /ref/customers do treka, i unifikaciya "po samomu polnomu
+   variantu" razmnozhila by defekt eshche na tri stranicy. Spisok korotkiy:
+   neskolko <li> diagnostiki, i kartochka nizhe ekrana ne uydet. */
+.vs-diag-list {
+  margin: 8px 0 0; padding-left: 18px;
+  color: var(--vs-text-muted); font-size: var(--vs-fs-sm);
+}
+.vs-new-model-box { margin-top: 4px; }
+
 /* Treugolnik raskrytiya v strokah-akkordeonah.
    [REASON]: bylo simvolom '\25B6' s povorotom po klassu .open i tremya
    pravilami v inline-<style> glavnogo ekrana. Simvol risuetsya SHRIFTOM: na
@@ -982,14 +1027,22 @@ a.vs-kpi-strip-item:focus-visible { outline: 2px solid var(--vs-primary); outlin
 .vs-badge-info    { background: var(--vs-info-bg);    color: var(--vs-info); }
 .vs-badge-purple  { background: var(--vs-purple-bg);  color: var(--vs-purple); }
 
-.vs-badge-cat-mtz          { background: var(--vs-info-bg);    color: var(--vs-info); }
-.vs-badge-cat-yukori       { background: var(--vs-purple-bg);  color: var(--vs-purple); }
-.vs-badge-cat-yuk_transport{ background: var(--vs-warning-bg); color: var(--vs-warning); }
+/* DD-032: KLASSOV POD ZNACHENIE SPRAVOCHNIKA BOLSHE NET.
+   Zdes stoyali .vs-badge-cat-mtz, .vs-badge-cat-yukori,
+   .vs-badge-cat-yuk_transport, .vs-badge-role-admin, -operator,
+   -branch_operator, -viewer -- sem pravil, po odnomu na znachenie dannyh.
+   Vsego statusnykh znacheniy v sisteme okolo 25, i takoy podhod znachit
+   dvadcat pyat klassov vmesto odnogo komponenta.
 
-.vs-badge-role-admin           { background: var(--vs-danger-bg);  color: var(--vs-danger); }
-.vs-badge-role-operator        { background: var(--vs-success-bg); color: var(--vs-success); }
-.vs-badge-role-branch_operator { background: #e3f5f2;              color: #0d7d72; }
-.vs-badge-role-viewer          { background: var(--vs-info-bg);    color: var(--vs-info); }
+   [REASON]: udaleny imenno seychas, potomu chto do etogo kommita ih ne
+   ispolzovala NI ODNA razmetka: rol krasilas inline-stilem s tremya
+   hardkod-heksami pryamo v stroke tablicy (admin_users, admin_permissions),
+   a klass .vs-badge-role-* prosto lezhal ryadom i sozdaval vpechatlenie, chto
+   komponent est. Proverka pered udaleniem -- polnyy poisk po html/py/js:
+   sovpadeniy nol vne etogo fayla i dokumentacii.
+   Semantika teper peredaetsya parametrom: .vs-badge + .vs-badge-danger /
+   -success / -warning / -info / -purple, a sootvetstvie "rol -> ton"
+   ob'yavleno v shablone, gde ono i est reshenie o pokaze. */
 
 /* ---------- 10. LOGIN ------------------------------------------------- */
 .vs-login-page {

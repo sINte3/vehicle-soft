@@ -1,0 +1,383 @@
+<!doctype html><meta charset="utf-8"><title>P4 — эталонные экраны: было / стало</title>
+<style>
+ body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 24px; background: #eef2f7; color: #182230; }
+ h1 { font-size: 23px; margin: 0 0 4px; }
+ .sub { color: #5b6b80; margin-bottom: 24px; }
+ section { background: #fff; border: 1px solid #e6ecf4; border-radius: 14px; padding: 16px; margin-bottom: 20px; }
+ h2 { font-size: 17px; margin: 0 0 2px; }
+ .why { color: #5b6b80; font-size: 13px; margin-bottom: 10px; }
+ .vp { font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: #5b6b80; margin: 14px 0 6px; }
+ .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+ .pane { border: 1px solid #e6ecf4; border-radius: 10px; overflow: hidden; background: #f7f9fc; }
+ .pane.empty { padding: 24px; color: #5b6b80; font-size: 13px; }
+ .lbl { padding: 6px 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; background: #f1f5fa; border-bottom: 1px solid #e6ecf4; }
+ img { display: block; width: 100%; height: auto; }
+ style-count { display: block; font-size: 12px; color: #5b6b80; margin-top: 6px; }
+ b { color: #182230; }
+ .axe { margin-top: 8px; font-size: 12px; }
+ .axe b { color: #c0392b; }
+</style>
+<h1>P4 — семь эталонных экранов: было / стало</h1>
+<div class="sub">Слева — код до трека (коммит 493fd72), справа — рабочее дерево. Одни и те же фикстуры с обеих сторон.
+Полные страницы, не окно просмотра.</div>
+
+<section>
+  <h2>1. Справочник техники — desktop</h2>
+  <div class="why">самая крупная таблица модуля — 336 строк на бою; выше порога is-static, режим объявлен явно · <code>/ref/equipment</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-equipment-desktop.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-equipment-desktop.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>42</b> · эмодзи: <b>24</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>12</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>23</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count><div class="axe">axe: serious <b>0</b>, critical <b>0</b>, moderate 0, minor 0</div></div>
+  </div>
+</section>
+<section>
+  <h2>1. Справочник техники — laptop</h2>
+  <div class="why">самая крупная таблица модуля — 336 строк на бою; выше порога is-static, режим объявлен явно · <code>/ref/equipment</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-equipment-laptop.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-equipment-laptop.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>42</b> · эмодзи: <b>24</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>12</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>23</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count></div>
+  </div>
+</section>
+<section>
+  <h2>1. Справочник техники — tablet</h2>
+  <div class="why">самая крупная таблица модуля — 336 строк на бою; выше порога is-static, режим объявлен явно · <code>/ref/equipment</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-equipment-tablet.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-equipment-tablet.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>42</b> · эмодзи: <b>24</b> · переполнение по ширине: <b>ДА</b> · контролов без имени: <b>29</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>23</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>17</b></style-count></div>
+  </div>
+</section>
+<section>
+  <h2>1. Справочник техники — mobile</h2>
+  <div class="why">самая крупная таблица модуля — 336 строк на бою; выше порога is-static, режим объявлен явно · <code>/ref/equipment</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-equipment-mobile.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-equipment-mobile.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>42</b> · эмодзи: <b>24</b> · переполнение по ширине: <b>ДА</b> · контролов без имени: <b>12</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>23</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count><div class="axe">axe: serious <b>0</b>, critical <b>0</b>, moderate 0, minor 0</div></div>
+  </div>
+</section>
+<section>
+  <h2>2. Виды работ — desktop</h2>
+  <div class="why">104 строки, строка редактирования внутри таблицы — проверка, что сортировка её не ломает · <code>/ref/work_types</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-work-types-desktop.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-work-types-desktop.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>13</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>7</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>6</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count><div class="axe">axe: serious <b>0</b>, critical <b>0</b>, moderate 0, minor 0</div></div>
+  </div>
+</section>
+<section>
+  <h2>2. Виды работ — laptop</h2>
+  <div class="why">104 строки, строка редактирования внутри таблицы — проверка, что сортировка её не ломает · <code>/ref/work_types</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-work-types-laptop.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-work-types-laptop.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>13</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>7</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>6</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count></div>
+  </div>
+</section>
+<section>
+  <h2>2. Виды работ — tablet</h2>
+  <div class="why">104 строки, строка редактирования внутри таблицы — проверка, что сортировка её не ломает · <code>/ref/work_types</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-work-types-tablet.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-work-types-tablet.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>13</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>24</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>6</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>17</b></style-count></div>
+  </div>
+</section>
+<section>
+  <h2>2. Виды работ — mobile</h2>
+  <div class="why">104 строки, строка редактирования внутри таблицы — проверка, что сортировка её не ломает · <code>/ref/work_types</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-work-types-mobile.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-work-types-mobile.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>13</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>ДА</b> · контролов без имени: <b>7</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>6</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count><div class="axe">axe: serious <b>0</b>, critical <b>0</b>, moderate 0, minor 0</div></div>
+  </div>
+</section>
+<section>
+  <h2>3. Заказчики — desktop</h2>
+  <div class="why">карточка диагностики + правка прямо в строке · <code>/ref/customers</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-customers-desktop.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-customers-desktop.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>98</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>2</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>48</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count><div class="axe">axe: serious <b>0</b>, critical <b>0</b>, moderate 0, minor 0</div></div>
+  </div>
+</section>
+<section>
+  <h2>3. Заказчики — laptop</h2>
+  <div class="why">карточка диагностики + правка прямо в строке · <code>/ref/customers</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-customers-laptop.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-customers-laptop.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>98</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>2</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>48</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count></div>
+  </div>
+</section>
+<section>
+  <h2>3. Заказчики — tablet</h2>
+  <div class="why">карточка диагностики + правка прямо в строке · <code>/ref/customers</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-customers-tablet.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-customers-tablet.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>98</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>19</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>48</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>17</b></style-count></div>
+  </div>
+</section>
+<section>
+  <h2>3. Заказчики — mobile</h2>
+  <div class="why">карточка диагностики + правка прямо в строке · <code>/ref/customers</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-customers-mobile.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-customers-mobile.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>98</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>ДА</b> · контролов без имени: <b>2</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>48</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count><div class="axe">axe: serious <b>0</b>, critical <b>0</b>, moderate 0, minor 0</div></div>
+  </div>
+</section>
+<section>
+  <h2>4. Организации — desktop</h2>
+  <div class="why">порядок задан владельцем вручную (sort_order) — клиентское умолчание сортировки НЕ объявлено · <code>/ref/organizations</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-organizations-desktop.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-organizations-desktop.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>71</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>7</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>45</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count><div class="axe">axe: serious <b>0</b>, critical <b>0</b>, moderate 0, minor 0</div></div>
+  </div>
+</section>
+<section>
+  <h2>4. Организации — laptop</h2>
+  <div class="why">порядок задан владельцем вручную (sort_order) — клиентское умолчание сортировки НЕ объявлено · <code>/ref/organizations</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-organizations-laptop.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-organizations-laptop.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>71</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>7</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>45</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count></div>
+  </div>
+</section>
+<section>
+  <h2>4. Организации — tablet</h2>
+  <div class="why">порядок задан владельцем вручную (sort_order) — клиентское умолчание сортировки НЕ объявлено · <code>/ref/organizations</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-organizations-tablet.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-organizations-tablet.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>71</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>24</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>45</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>17</b></style-count></div>
+  </div>
+</section>
+<section>
+  <h2>4. Организации — mobile</h2>
+  <div class="why">порядок задан владельцем вручную (sort_order) — клиентское умолчание сортировки НЕ объявлено · <code>/ref/organizations</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-organizations-mobile.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-organizations-mobile.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>71</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>ДА</b> · контролов без имени: <b>7</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>45</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count><div class="axe">axe: serious <b>0</b>, critical <b>0</b>, moderate 0, minor 0</div></div>
+  </div>
+</section>
+<section>
+  <h2>5. Пользователи — desktop</h2>
+  <div class="why">роль красилась инлайновыми хардкод-цветами; 7 эмодзи в строке действий · <code>/admin/users</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/admin-users-desktop.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/admin-users-desktop.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>37</b> · эмодзи: <b>15</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>3</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>4</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count><div class="axe">axe: serious <b>0</b>, critical <b>0</b>, moderate 0, minor 0</div></div>
+  </div>
+</section>
+<section>
+  <h2>5. Пользователи — laptop</h2>
+  <div class="why">роль красилась инлайновыми хардкод-цветами; 7 эмодзи в строке действий · <code>/admin/users</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/admin-users-laptop.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/admin-users-laptop.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>37</b> · эмодзи: <b>15</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>3</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>4</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count></div>
+  </div>
+</section>
+<section>
+  <h2>5. Пользователи — tablet</h2>
+  <div class="why">роль красилась инлайновыми хардкод-цветами; 7 эмодзи в строке действий · <code>/admin/users</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/admin-users-tablet.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/admin-users-tablet.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>37</b> · эмодзи: <b>15</b> · переполнение по ширине: <b>ДА</b> · контролов без имени: <b>20</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>4</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>17</b></style-count></div>
+  </div>
+</section>
+<section>
+  <h2>5. Пользователи — mobile</h2>
+  <div class="why">роль красилась инлайновыми хардкод-цветами; 7 эмодзи в строке действий · <code>/admin/users</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/admin-users-mobile.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/admin-users-mobile.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>37</b> · эмодзи: <b>15</b> · переполнение по ширине: <b>ДА</b> · контролов без имени: <b>3</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>4</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count><div class="axe">axe: serious <b>0</b>, critical <b>0</b>, moderate 0, minor 0</div></div>
+  </div>
+</section>
+<section>
+  <h2>6. Права модулей — desktop</h2>
+  <div class="why">матрица флажков без доступных имён · <code>/admin/permissions</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/admin-permissions-desktop.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/admin-permissions-desktop.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>148</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>0</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count><div class="axe">axe: serious <b>0</b>, critical <b>0</b>, moderate 0, minor 0</div></div>
+  </div>
+</section>
+<section>
+  <h2>6. Права модулей — laptop</h2>
+  <div class="why">матрица флажков без доступных имён · <code>/admin/permissions</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/admin-permissions-laptop.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/admin-permissions-laptop.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>148</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>0</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count></div>
+  </div>
+</section>
+<section>
+  <h2>6. Права модулей — tablet</h2>
+  <div class="why">матрица флажков без доступных имён · <code>/admin/permissions</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/admin-permissions-tablet.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/admin-permissions-tablet.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>148</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>17</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>0</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>17</b></style-count></div>
+  </div>
+</section>
+<section>
+  <h2>6. Права модулей — mobile</h2>
+  <div class="why">матрица флажков без доступных имён · <code>/admin/permissions</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/admin-permissions-mobile.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/admin-permissions-mobile.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>148</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>0</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count><div class="axe">axe: serious <b>0</b>, critical <b>0</b>, moderate 0, minor 0</div></div>
+  </div>
+</section>
+<section>
+  <h2>7. Журнал действий — desktop</h2>
+  <div class="why">единственный is-stream модуля: окно 300 из 3436 записей, охват обязан быть подписан · <code>/admin/audit</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/admin-audit-desktop.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/admin-audit-desktop.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>11</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>2</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>5</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count><div class="axe">axe: serious <b>0</b>, critical <b>0</b>, moderate 0, minor 0</div></div>
+  </div>
+</section>
+<section>
+  <h2>7. Журнал действий — laptop</h2>
+  <div class="why">единственный is-stream модуля: окно 300 из 3436 записей, охват обязан быть подписан · <code>/admin/audit</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/admin-audit-laptop.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/admin-audit-laptop.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>11</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>2</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>5</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count></div>
+  </div>
+</section>
+<section>
+  <h2>7. Журнал действий — tablet</h2>
+  <div class="why">единственный is-stream модуля: окно 300 из 3436 записей, охват обязан быть подписан · <code>/admin/audit</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/admin-audit-tablet.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/admin-audit-tablet.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>11</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>19</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>5</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>17</b></style-count></div>
+  </div>
+</section>
+<section>
+  <h2>7. Журнал действий — mobile</h2>
+  <div class="why">единственный is-stream модуля: окно 300 из 3436 записей, охват обязан быть подписан · <code>/admin/audit</code> · роль ux_admin</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/admin-audit-mobile.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/admin-audit-mobile.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>11</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>ДА</b> · контролов без имени: <b>2</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>5</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count><div class="axe">axe: serious <b>0</b>, critical <b>0</b>, moderate 0, minor 0</div></div>
+  </div>
+</section>
+<section>
+  <h2>8. Справочник техники (узбекский) — desktop</h2>
+  <div class="why">узбекские подписи на 19–47 % длиннее русских — проверка, что шапка таблицы держит · <code>/ref/equipment</code> · роль ux_admin_uz</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-equipment-uz-desktop.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-equipment-uz-desktop.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>42</b> · эмодзи: <b>24</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>12</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>23</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count><div class="axe">axe: serious <b>0</b>, critical <b>0</b>, moderate 0, minor 0</div></div>
+  </div>
+</section>
+<section>
+  <h2>8. Справочник техники (узбекский) — mobile</h2>
+  <div class="why">узбекские подписи на 19–47 % длиннее русских — проверка, что шапка таблицы держит · <code>/ref/equipment</code> · роль ux_admin_uz</div>
+  <div class="row">
+    <div class="pane"><div class="lbl">БЫЛО · HTTP 200</div><img src="before/ref-equipment-uz-mobile.png" alt="БЫЛО"></div>
+    <div class="pane"><div class="lbl">СТАЛО · HTTP 200</div><img src="after/ref-equipment-uz-mobile.png" alt="СТАЛО"></div>
+  </div>
+  <div class="row">
+    <div><style-count>inline &lt;style&gt;: <b>2</b> · style-атрибутов: <b>42</b> · эмодзи: <b>24</b> · переполнение по ширине: <b>ДА</b> · контролов без имени: <b>12</b></style-count></div>
+    <div><style-count>inline &lt;style&gt;: <b>1</b> · style-атрибутов: <b>23</b> · эмодзи: <b>0</b> · переполнение по ширине: <b>нет</b> · контролов без имени: <b>0</b></style-count><div class="axe">axe: serious <b>0</b>, critical <b>0</b>, moderate 0, minor 0</div></div>
+  </div>
+</section>

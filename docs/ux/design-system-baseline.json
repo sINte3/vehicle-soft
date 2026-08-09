@@ -2,7 +2,6 @@
  "counts": {
   "breakpoint": {},
   "glyph": {
-   "templates/admin_users.html": 7,
    "templates/deficiencies.html": 2,
    "templates/drones/customers.html": 1,
    "templates/drones/list.html": 1,
@@ -17,7 +16,6 @@
    "templates/fuel/stations.html": 2,
    "templates/fuel/warehouses.html": 1,
    "templates/profile.html": 1,
-   "templates/ref_equipment.html": 7,
    "templates/spare_part_act.html": 2,
    "templates/spare_part_form.html": 7,
    "templates/spare_parts_acts.html": 2,
@@ -39,9 +37,7 @@
    "templates/workload.html": 2
   },
   "hardcoded-color": {
-   "static/css/design-system.css": 91,
-   "templates/admin_permissions.html": 6,
-   "templates/admin_users.html": 6,
+   "static/css/design-system.css": 89,
    "templates/fuel/_legacy_toggle.html": 3,
    "templates/fuel/balance_report.html": 3,
    "templates/fuel/cards.html": 4,
@@ -77,10 +73,6 @@
    "templates/fuel/warehouses.html": 171,
    "templates/fuel/warnings.html": 142,
    "templates/login.html": 152,
-   "templates/ref_customers.html": 11,
-   "templates/ref_equipment.html": 14,
-   "templates/ref_organizations.html": 10,
-   "templates/ref_work_types.html": 11,
    "templates/spare_part_form.html": 30,
    "templates/spare_parts_desk.html": 11,
    "templates/spare_parts_inventory.html": 5,
@@ -94,9 +86,6 @@
    "templates/workload.html": 68
   },
   "table-class": {
-   "templates/admin_permissions.html": 1,
-   "templates/admin_users.html": 1,
-   "templates/audit_logs.html": 1,
    "templates/fuel/balance_report.html": 2,
    "templates/fuel/cards.html": 2,
    "templates/fuel/dashboard.html": 1,
@@ -112,10 +101,6 @@
    "templates/fuel/station_issues_report.html": 1,
    "templates/fuel/stations.html": 1,
    "templates/fuel/warehouses.html": 1,
-   "templates/ref_customers.html": 1,
-   "templates/ref_equipment.html": 1,
-   "templates/ref_organizations.html": 1,
-   "templates/ref_work_types.html": 1,
    "templates/wialon.html": 1,
    "templates/wialon_auto_match.html": 1,
    "templates/wialon_mapping.html": 2,

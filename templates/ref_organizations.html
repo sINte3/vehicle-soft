@@ -1,116 +1,156 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}{{ t('Ташкилотлар') }}{% endblock %}
 {% block content %}
-{% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
-{% set L_used = 'Используется' if lang == 'ru' else 'Ишлатилган' %}
-{% set L_linked_tip = 'Есть связанные данные. Удаление заблокировано для сохранения истории.' if lang == 'ru' else 'Боғланган маълумотлар мавжуд. Тарихни сақлаш учун ўчириш блокланган.' %}
+{% set is_ru = (lang == 'ru') %}
+{% set L_delete = 'Удалить' if is_ru else 'Ўчириш' %}
+{% set L_used = 'Используется' if is_ru else 'Ишлатилган' %}
+{% set L_linked_tip = 'Есть связанные данные. Удаление заблокировано для сохранения истории.' if is_ru else 'Боғланган маълумотлар мавжуд. Тарихни сақлаш учун ўчириш блокланган.' %}
+{% set L_save = 'Сохранить' if is_ru else 'Сақлаш' %}
+{% set L_short = 'Короткое имя' if is_ru else 'Қисқа номи' %}
+{% set L_search = 'Поиск' if is_ru else 'Қидириш' %}
+{% set L_reset = 'Сбросить' if is_ru else 'Тозалаш' %}
+{% set L_rows = 'Строк' if is_ru else 'Қаторлар' %}
 
-
-<style>
-/* TASK_REF_001B_ORG_TEMPLATE_MARKER */
-.ref-filter-card{margin-bottom:14px}
-.ref-stats-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin-bottom:14px}
-.ref-stat-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow);padding:12px 14px}
-.ref-stat-card .label{color:var(--text2);font-size:12px;margin-bottom:4px}
-.ref-stat-card .value{font-size:22px;font-weight:800}
-.ref-linked-count{color:var(--text2);font-size:12px;margin-top:4px}
-@media(max-width:1024px){.ref-stats-grid{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:480px){.ref-stats-grid{grid-template-columns:1fr}}
-</style>
-
-<div class="card ref-filter-card">
-    <div class="card-body">
-        <form method="get" action="{{ url_for('ref_organizations') }}" class="form-inline" style="gap:12px; align-items:flex-end;">
-            <div class="form-group" style="margin-bottom:0; flex:1; min-width:240px;">
-                <label>{{ 'Поиск' if lang == 'ru' else 'Қидириш' }}</label>
-                <input type="text" name="q" value="{{ search_q or '' }}" placeholder="{{ 'название или короткое имя' if lang == 'ru' else 'номи ёки қисқа номи' }}" class="form-control">
-            </div>
-            <button type="submit" class="btn btn-primary btn-sm">{{ 'Искать' if lang == 'ru' else 'Қидириш' }}</button>
-            <a href="{{ url_for('ref_organizations') }}" class="btn btn-secondary btn-sm">{{ 'Сбросить' if lang == 'ru' else 'Тозалаш' }}</a>
-        </form>
+{# ADOPT-1: полоса показателей вместо четырёх отдельных карточек. Все числа
+   стоят на одной базовой линии, глаз сравнивает их одним горизонтальным
+   проходом. Тот же компонент, что на главной. #}
+<div class="vs-kpi-strip">
+  <div class="vs-kpi-strip-head">
+    <span class="vs-kpi-strip-title">{{ 'Справочник организаций' if is_ru else 'Ташкилотлар справочниги' }}</span>
+  </div>
+  <div class="vs-kpi-strip-body">
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Всего организаций' if is_ru else 'Жами ташкилотлар' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ org_stats.total }}</span>
     </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Показано по фильтру' if is_ru else 'Фильтр бўйича' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ org_stats.filtered }}</span>
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'С техникой' if is_ru else 'Техника бор' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ org_stats.with_equipment }}</span>
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Без техники' if is_ru else 'Техника йўқ' }}</span>
+      <span class="vs-kpi-strip-value vs-num {% if org_stats.without_equipment %}is-warning{% endif %}">{{ org_stats.without_equipment }}</span>
+    </div>
+  </div>
 </div>
 
-<div class="ref-stats-grid">
-    <div class="ref-stat-card">
-        <div class="label">{{ 'Всего организаций' if lang == 'ru' else 'Жами ташкилотлар' }}</div>
-        <div class="value">{{ org_stats.total }}</div>
-    </div>
-    <div class="ref-stat-card">
-        <div class="label">{{ 'Показано по фильтру' if lang == 'ru' else 'Фильтр бўйича' }}</div>
-        <div class="value">{{ org_stats.filtered }}</div>
-    </div>
-    <div class="ref-stat-card">
-        <div class="label">{{ 'С техникой' if lang == 'ru' else 'Техника бор' }}</div>
-        <div class="value">{{ org_stats.with_equipment }}</div>
-    </div>
-    <div class="ref-stat-card">
-        <div class="label">{{ 'Без техники' if lang == 'ru' else 'Техника йўқ' }}</div>
-        <div class="value">{{ org_stats.without_equipment }}</div>
-    </div>
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <form method="get" action="{{ url_for('ref_organizations') }}" class="vs-form-row">
+      <div class="vs-field">
+        <label class="vs-label" for="orgQ">{{ L_search }}</label>
+        <input type="text" id="orgQ" name="q" value="{{ search_q or '' }}" class="vs-input"
+               placeholder="{{ 'название или короткое имя' if is_ru else 'номи ёки қисқа номи' }}">
+      </div>
+      <div class="vs-field vs-field-action">
+        <button type="submit" class="vs-btn vs-btn-primary">{{ icon('search', 15) }}{{ L_search }}</button>
+      </div>
+      <div class="vs-field vs-field-action">
+        <a href="{{ url_for('ref_organizations') }}" class="vs-btn">{{ L_reset }}</a>
+      </div>
+    </form>
+  </div>
 </div>
 
-<div class="card" style="margin-bottom:20px;">
-    <div class="card-header">{{ t('Янги ташкилот') }}</div>
-    <div class="card-body">
-        <form method="post" action="{{ url_for('save_organization') }}" class="form-inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <div class="form-group" style="margin-bottom:0; flex:1; min-width:260px;">
-                <label>{{ t('Ташкилот номи') }}</label>
-                <input type="text" name="name" required placeholder="Когон ПТЗ" class="form-control">
-            </div>
-            <div class="form-group" style="margin-bottom:0; min-width:180px;">
-                <label>{{ 'Короткое имя' if lang == 'ru' else 'Қисқа номи' }}</label>
-                <input type="text" name="short_name" placeholder="Когон" class="form-control">
-            </div>
-            <button type="submit" class="btn btn-primary">{{ t('Қўшиш') }}</button>
-        </form>
-    </div>
+<div class="vs-card vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">{{ t('Янги ташкилот') }}</span></div>
+  <div class="vs-card-body">
+    <form method="post" action="{{ url_for('save_organization') }}" class="vs-form-row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="vs-field">
+        <label class="vs-label" for="orgName">{{ t('Ташкилот номи') }}</label>
+        <input type="text" id="orgName" name="name" required placeholder="Когон ПТЗ" class="vs-input">
+      </div>
+      <div class="vs-field">
+        <label class="vs-label" for="orgShort">{{ L_short }}</label>
+        <input type="text" id="orgShort" name="short_name" placeholder="Когон" class="vs-input">
+      </div>
+      <div class="vs-field vs-field-action">
+        <button type="submit" class="vs-btn vs-btn-primary">{{ icon('plus', 15) }}{{ t('Қўшиш') }}</button>
+      </div>
+    </form>
+  </div>
 </div>
 
-<div class="card">
-    <table>
-        <thead>
-            <tr>
-                <th></th>
-                <th>{{ t('Ташкилот номи') }}</th>
-                <th>{{ 'Короткое имя' if lang == 'ru' else 'Қисқа номи' }}</th>
-                <th>{{ t('Техника сони:') }}</th>
-                <th>{{ 'Связи' if lang == 'ru' else 'Боғланишлар' }}</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for org in organizations %}
-        {% set del_info = org_delete_info.get(org.id) %}
+{# DD-028, режим is-static: 22 организации на боевой базе, всё помещается,
+   сортировка на клиенте.
+
+   DD-029, сортировка по умолчанию объявлена явно: её НЕТ — строки лежат в
+   порядке справочника (`ORDER BY sort_order`), который владелец расставил
+   руками. Клиентский `data-sort-default` по названию переставил бы список и
+   стёр этот порядок при каждой загрузке. Сортировка по колонке остаётся
+   доступной по нажатию. #}
+<div class="vs-table-wrap">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ t('Ташкилотлар') }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static" data-sortable>
+      <thead>
         <tr>
-            <td>{{ loop.index }}</td>
-            <td colspan="2">
-                <form method="post" action="{{ url_for('save_organization') }}" class="form-inline" style="gap:6px;">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <input type="hidden" name="id" value="{{ org.id }}">
-                    <input type="text" name="name" value="{{ org.name }}" required style="width:260px;" class="form-control">
-                    <input type="text" name="short_name" value="{{ org.short_name or '' }}" placeholder="{{ 'Короткое имя' if lang == 'ru' else 'Қисқа номи' }}" style="width:160px;" class="form-control">
-                    <button type="submit" class="btn btn-sm btn-secondary">{{ 'Сохранить' if lang == 'ru' else 'Сақлаш' }}</button>
-                </form>
-            </td>
-            <td>{{ del_info.linked.equipment_count if del_info else org.equipment.count() }}</td>
-            <td>{{ del_info.linked_total if del_info else 0 }}</td>
-            <td>
-                {% if del_info and del_info.can_delete %}
-                <form method="post" action="{{ url_for('delete_organization', oid=org.id) }}" style="display:inline;"
-                      onsubmit="return confirm('{{ L_delete }}: {{ org.name }}?')">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-sm btn-danger" title="{{ L_delete }}">{{ L_delete }}</button>
-                </form>
-                {% else %}
-                <span class="idle-badge" title="{{ L_linked_tip }}">{{ L_used }}</span>
-                {% if del_info and del_info.linked_total %}<div class="ref-linked-count">{{ del_info.linked_total }}</div>{% endif %}
-                {% endif %}
-            </td>
+          <th style="width:40px;">№</th>
+          <th data-sort>{{ t('Ташкилот номи') }}</th>
+          <th class="right" data-sort>{{ t('Техника сони:') }}</th>
+          <th class="right" data-sort>{{ 'Связи' if is_ru else 'Боғланишлар' }}</th>
+          <th class="right">{{ 'Действия' if is_ru else 'Амаллар' }}</th>
         </tr>
-        {% endfor %}
-        </tbody>
+      </thead>
+      <tbody>
+      {% for org in organizations %}
+      {% set del_info = org_delete_info.get(org.id) %}
+      <tr>
+        <td class="vs-muted">{{ loop.index }}</td>
+        <td class="vs-cell-form" data-sort-value="{{ org.name }}">
+          <form method="post" action="{{ url_for('save_organization') }}" class="vs-form-row">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="id" value="{{ org.id }}">
+            <input type="text" name="name" value="{{ org.name }}" required class="vs-input"
+                   aria-label="{{ t('Ташкилот номи') }}" style="width:240px;">
+            <input type="text" name="short_name" value="{{ org.short_name or '' }}" class="vs-input"
+                   aria-label="{{ L_short }}" placeholder="{{ L_short }}" style="width:150px;">
+            <button type="submit" class="vs-btn vs-btn-sm">{{ icon('save', 14) }}{{ L_save }}</button>
+          </form>
+        </td>
+        <td class="right vs-num">{{ del_info.linked.equipment_count if del_info else org.equipment.count() }}</td>
+        <td class="right vs-num">{{ del_info.linked_total if del_info else 0 }}</td>
+        <td class="vs-row-actions-cell">
+          <span class="vs-row-actions">
+            {% if del_info and del_info.can_delete %}
+            <form method="post" action="{{ url_for('delete_organization', oid=org.id) }}"
+                  onsubmit="return confirm('{{ L_delete }}: {{ org.name }}?')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="vs-btn vs-btn-icon is-danger"
+                      aria-label="{{ L_delete }}: {{ org.name }}" title="{{ L_delete }}">{{ icon('trash', 14) }}</button>
+            </form>
+            {% else %}
+            <span class="vs-badge vs-badge-warning" title="{{ L_linked_tip }}">
+              {{ L_used }}{% if del_info and del_info.linked_total %} · {{ del_info.linked_total }}{% endif %}
+            </span>
+            {% endif %}
+          </span>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="5">
+          <div class="vs-empty">
+            <div class="vs-empty-icon">{{ icon('building', 28) }}</div>
+            <p class="vs-empty-title">{{ 'Ничего не найдено' if is_ru else 'Ҳеч нарса топилмади' }}</p>
+            <p class="vs-empty-sub">{{ 'Измените условия поиска или добавьте организацию' if is_ru else 'Қидирув шартларини ўзгартиринг ёки ташкилот қўшинг' }}</p>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
     </table>
+  </div>
+  <div class="vs-table-foot">
+    <span class="vs-table-count">{{ L_rows }}: <strong>{{ organizations|length }}</strong></span>
+  </div>
 </div>
 {% endblock %}

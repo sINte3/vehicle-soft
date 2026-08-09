@@ -1754,7 +1754,13 @@ def create_app():
         if module:
             q += ' AND module = :module'
             params['module'] = module
-        q += ' ORDER BY created_at DESC LIMIT 300'
+        # [REASON]: predel vyborki peredaetsya v shablon, a ne pishetsya tam
+        # vtoroy raz. Kontrakt DD-028 dlya rezhima is-stream trebuet, chtoby
+        # ohvat vidimogo okna byl PODPISAN; chislo, prostavlennoe v shablone
+        # ruchnoy konstantoy, moglo by razoytis s etim ORDER BY ... LIMIT i
+        # podpis stala by lozhnoy molcha.
+        audit_log_limit = 300
+        q += ' ORDER BY created_at DESC LIMIT %d' % audit_log_limit
         raw_logs = db.session.execute(text(q), params).mappings().all()
         logs = []
         for row in raw_logs:
@@ -1771,7 +1777,8 @@ def create_app():
         modules = [r[0] for r in db.session.execute(text('SELECT DISTINCT module FROM audit_logs WHERE module IS NOT NULL AND module != "" ORDER BY module')).all()]
         return render_template('audit_logs.html', logs=logs, users=users, actions=actions, modules=modules,
                                date_from=date_from, date_to=date_to, selected_user_id=user_id,
-                               selected_action=action, selected_module=module)
+                               selected_action=action, selected_module=module,
+                               audit_log_limit=audit_log_limit)
 
     @app.route('/ref/organizations')
     @module_required('transport')
