@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}АЗС — {{ 'Центр отчётов' if is_ru else 'Ҳисоботлар маркази' }}{% endblock %}
 {% block content %}
@@ -34,20 +35,6 @@
    accent, no arrow (an arrow promises navigation), and a «скоро» badge.
    Building the three reports themselves is F2.4, a separate increment.
    =========================================================================== #}
-<style>
-/* FUEL-REPORTS-HUB-016 scoped styles: the planned-tile state, on existing
-   design-system tokens. Overrides .vs-report-tile:hover by document order —
-   equal specificity (both 0,2,0), and this block comes after the stylesheet in
-   <head>. The hover rule restates --vs-shadow-sm instead of using `none`:
-   `none` cancels the resting shadow .vs-card paints with that same token, so a
-   planned tile went flatter under the cursor than at rest. */
-.fuel-tile-soon { cursor: default; }
-.fuel-tile-soon .vs-report-tile-icon { color: var(--vs-text-muted); background: var(--vs-surface-3); }
-.fuel-tile-soon .vs-report-tile-title { color: var(--vs-text-muted); }
-.fuel-tile-soon:hover { box-shadow: var(--vs-shadow-sm); transform: none; }
-/* UI-TILE-HOVER-001: the scoped hover workaround that lived here is gone —
-   the shared fix now sits in design-system.css (.vs-report-tile:hover). */
-</style>
 
 <div class="vs-hero vs-mb">
   <div>

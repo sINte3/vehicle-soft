@@ -8,38 +8,21 @@
    "templates/drones/operators.html": 1,
    "templates/drones/units.html": 1,
    "templates/drones/works_assignment_hints.html": 2,
-   "templates/fuel/cards.html": 1,
-   "templates/fuel/initial_balance.html": 3,
-   "templates/fuel/manual_expenses.html": 1,
    "templates/profile.html": 1,
    "templates/workload.html": 2
   },
   "hardcoded-color": {
    "static/css/design-system.css": 91,
    "templates/fuel/_legacy_toggle.html": 3,
-   "templates/fuel/balance_report.html": 3,
-   "templates/fuel/cards.html": 4,
    "templates/fuel/dashboard.html": 2,
-   "templates/fuel/reserve_transfers.html": 2,
    "templates/login.html": 18,
    "templates/workload.html": 5
   },
   "inline-style": {
-   "templates/fuel/balance_report.html": 30,
-   "templates/fuel/cards.html": 17,
-   "templates/fuel/manual_expenses.html": 2,
-   "templates/fuel/reports.html": 13,
-   "templates/fuel/reserve_transfers.html": 5,
    "templates/login.html": 152,
    "templates/workload.html": 68
   },
   "table-class": {
-   "templates/fuel/balance_report.html": 2,
-   "templates/fuel/cards.html": 2,
-   "templates/fuel/initial_balance.html": 1,
-   "templates/fuel/ledger.html": 1,
-   "templates/fuel/manual_expenses.html": 1,
-   "templates/fuel/reserve_transfers.html": 1,
    "templates/workload.html": 1
   },
   "token-dup": {
