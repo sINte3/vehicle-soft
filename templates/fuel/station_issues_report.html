@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}АЗС — {{ 'Выдача топлива по АЗС' if lang == 'ru' else 'АЗС бўйича ёқилғи бериш' }}{% endblock %}
 {% block content %}
 {% include 'fuel/_fuel_nav.html' %}
@@ -28,39 +29,19 @@
 {% set L_grand_total = 'ВСЕГО' if lang == 'ru' else 'ЖАМИ' %}
 
 {# FUEL-REPORT-012C: Station issue detail report page #}
-<style>
-.station-issues-header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; flex-wrap:wrap; }
-.station-issues-summary { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px; margin-bottom:18px; }
-.station-issues-summary .stat-card { border-radius:10px; box-shadow:var(--shadow); }
-.station-issues-empty { text-align:center; padding:48px 20px; color:var(--text2); }
-.station-issues-filter-card { border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:16px; background:var(--surface); box-shadow:var(--shadow); }
-.station-issues-filter-card .filter-row { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
-.station-issues-filter-card label { font-size:12px; font-weight:600; display:block; margin-bottom:2px; color:var(--text2); }
-.station-issues-filter-card select,
-.station-issues-filter-card input { padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; }
-/* F2.3 · FUEL-STATION-REPORT-006: columns even in width (fixed layout),
-   font one step larger than the module's 13px default. */
-.station-issues-table { min-width:600px; width:100%; table-layout:fixed; font-size:14px; }
-.station-issues-table th { white-space:nowrap; font-size:13px; }
-.station-issues-table td { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.station-issues-table details { display:inline-block; }
-.station-issues-table summary { cursor:pointer; color:var(--text2); font-size:12px; list-style:none; }
-.station-issues-table summary::-webkit-details-marker { display:none; }
-.station-issues-total-row { font-weight:700; background:#fefce8; }
-</style>
 
-<div class="station-issues-header">
+<div class="vs-row-end vs-mb">
     <div>
         <h1>{{ L_title }}</h1>
         <p class="text-muted text-sm" style="margin-top:4px;">{{ L_subtitle }}</p>
     </div>
 </div>
 
-<div class="station-issues-filter-card">
+<div class="vs-card vs-card-body vs-mb">
     <form method="GET" action="{{ url_for('fuel.station_issues_report') }}">
         {# F2.1 FUEL-DATETIME-004: shared period picker — dates, times, presets #}
         {% include 'fuel/_period_picker.html' %}
-        <div class="filter-row" style="margin-top:10px;">
+        <div class="vs-form-row" style="margin-top:10px;">
             <div>
                 <label>{{ L_station }}</label>
                 <select name="station_id" style="min-width:240px;" class="form-control">
@@ -81,16 +62,16 @@
 
 {% if not station_id %}
 
-<div class="station-issues-empty">
-    <div style="font-size:48px; margin-bottom:12px;">📋</div>
+<div class="vs-empty">
+    <div class="vs-empty-icon">{{ icon('list', 28) }}</div>
     <h3>{{ L_empty1_title }}</h3>
     <p>{{ L_empty1_text }}</p>
 </div>
 
 {% elif txns|length == 0 %}
 
-<div class="station-issues-empty">
-    <div style="font-size:48px; margin-bottom:12px;">📭</div>
+<div class="vs-empty">
+    <div class="vs-empty-icon">{{ icon('empty', 28) }}</div>
     <h3>{{ L_empty2_title }}</h3>
     <p>{{ 'Для АЗС «' if lang == 'ru' else '«' }}{{ station_name }}{{ '» (Topaz ' if lang == 'ru' else '» (Topaz ' }}{{ topaz_id }}{{ ') за период ' if lang == 'ru' else ') ' }}{{ start_date.strftime('%d.%m.%Y') }} — {{ end_date.strftime('%d.%m.%Y') }}{{ ' нет записей о выдачах.' if lang == 'ru' else ' даврида беришлар йўқ.' }}</p>
     <p class="text-muted text-sm" style="margin-top:8px;">{{ L_empty2_hint }}</p>
@@ -98,7 +79,7 @@
 
 {% else %}
 
-<div class="station-issues-summary">
+<div class="vs-kpi-strip-body vs-mb">
     <div class="stat-card">
         <div class="label">{{ L_count }}</div>
         <div class="value">{{ summary.count }}</div>
@@ -118,7 +99,7 @@
 </div>
 
 <div style="margin-bottom:12px;">
-    <a href="{{ url_for('fuel.station_issues_export', start_date=period.start_date, end_date=period.end_date, start_time=period.start_time, end_time=period.end_time, station_id=station_id) }}" class="btn btn-primary btn-sm">📥 Excel</a>
+    <a href="{{ url_for('fuel.station_issues_export', start_date=period.start_date, end_date=period.end_date, start_time=period.start_time, end_time=period.end_time, station_id=station_id) }}" class="btn btn-primary btn-sm">{{ icon('download', 15) }} Excel</a>
     <span class="text-muted text-sm" style="margin-left:8px;">{{ summary.count }} {{ L_records }}</span>
 </div>
 
@@ -130,7 +111,7 @@
            subtotals already worked and are not rebuilt. The «Остаток на
            карте, л» column is deliberately absent: that value exists nowhere
            in this system until F4.4 delivers it from Topaz. #}
-        <table class="station-issues-table">
+        <table class="vs-table is-static" data-sortable>
             <thead>
                 <tr>
                     <th>{{ L_th_num }}</th>
@@ -144,8 +125,8 @@
                 {% set grouped = txns|groupby('txn_date') %}
                 {% for date_group, day_txns in grouped|sort(attribute='grouper') %}
                     {% set day_total = day_txns|sum(attribute='quantity') %}
-                    <tr style="background:#f0f9f0;">
-                        <td colspan="5" style="font-weight:600; color:#166534; font-size:13px; padding:6px 10px;">
+                    <tr class="is-group">
+                        <td colspan="5">
                             {{ date_group[8:10] }}.{{ date_group[5:7] }}.{{ date_group[0:4] }} — {{ day_txns|length }} {{ L_day_issues }} {{ '%.2f'|format(day_total) }} л
                         </td>
                     </tr>
@@ -165,7 +146,7 @@
                     </tr>
                     {% endfor %}
                 {% endfor %}
-                <tr class="station-issues-total-row">
+                <tr class="is-total">
                     <td colspan="4" style="text-align:right; font-size:14px; padding:8px 10px;">{{ L_grand_total }}</td>
                     <td class="text-right" style="font-size:15px; padding:8px 10px;">{{ '%.2f'|format(summary.total_liters) }} л</td>
                 </tr>

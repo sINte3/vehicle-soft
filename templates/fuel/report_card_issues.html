@@ -8,24 +8,7 @@
    much, at which station, on which vehicle if known. Grouped by card with a
    per-card subtotal and a period total. Names/vehicles via the card
    directory; unknown cards group under their raw number at the end. #}
-<style>
-.card-issues-table { width:100%; font-size:14px; }
-.card-issues-group { background:#f0f9f0; font-weight:600; color:#166534; }
-.fuel-print-footer { display:none; }
-@media print {
-  @page { size: A4 landscape; margin: 12mm 10mm 16mm; }
-  body { background:#fff; }
-  .vs-sidebar, .vs-topbar, .vs-side-backdrop, .vs-skip-link, .fuel-nav,
-  .fuel-no-print, .vs-alert { display:none !important; }
-  .vs-content { padding:0; max-width:none; }
-  .card { box-shadow:none; border-color:#bbb; }
-  table { font-size:10px; white-space:normal !important; }
-  table thead { display:table-header-group; }
-  .fuel-print-footer { display:block !important; position:fixed; bottom:0; left:0; right:0;
-    text-align:center; font-size:10px; color:#444; }
-}
-</style>
-<div class="fuel-print-footer">{{ 'Реестр выдачи топлива по картам' if is_ru else 'Карталар бўйича ёқилғи бериш реестри' }} — {{ start_date.strftime('%d.%m.%Y') }}{% if period.start_time != '00:00' %} {{ period.start_time }}{% endif %} — {{ end_date.strftime('%d.%m.%Y') }}{% if period.end_time != '23:59' %} {{ period.end_time }}{% endif %}</div>
+<div class="vs-print-footer">{{ 'Реестр выдачи топлива по картам' if is_ru else 'Карталар бўйича ёқилғи бериш реестри' }} — {{ start_date.strftime('%d.%m.%Y') }}{% if period.start_time != '00:00' %} {{ period.start_time }}{% endif %} — {{ end_date.strftime('%d.%m.%Y') }}{% if period.end_time != '23:59' %} {{ period.end_time }}{% endif %}</div>
 
 <div class="page-header">
     <div>
@@ -76,7 +59,7 @@
         <span>{{ start_date.strftime('%d.%m.%Y') }}{% if period.start_time != '00:00' %} {{ period.start_time }}{% endif %} — {{ end_date.strftime('%d.%m.%Y') }}{% if period.end_time != '23:59' %} {{ period.end_time }}{% endif %}</span>
     </div>
     <div style="overflow-x:auto;">
-        <table class="card-issues-table">
+        <table class="vs-table is-static" data-sortable>
             <thead>
                 <tr>
                     <th>№</th>
@@ -88,7 +71,7 @@
             </thead>
             <tbody>
                 {% for g in groups %}
-                <tr class="card-issues-group">
+                <tr class="is-group">
                     <td colspan="5" style="padding:6px 10px;">
                         {{ g.display_name or ((('карта без имени (' if is_ru else 'номсиз карта (') ~ (g.card_number or '—') ~ ')')) }}
                         {%- if g.car_number or g.car_model %} · {{ [g.car_number, g.car_model]|select|join(' ') }}{% endif %}
@@ -105,7 +88,7 @@
                 </tr>
                 {% endfor %}
                 {% endfor %}
-                <tr style="font-weight:700; background:#fefce8;">
+                <tr class="is-total">
                     <td colspan="4" style="text-align:right; padding:8px 10px;">{{ 'ВСЕГО' if is_ru else 'ЖАМИ' }}</td>
                     <td class="text-right" style="padding:8px 10px;">{{ '%.2f'|format(total.litres) }} л</td>
                 </tr>

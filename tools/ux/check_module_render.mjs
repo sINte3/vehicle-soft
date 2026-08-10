@@ -48,5 +48,5 @@ for(const u of URLS){
   if(!ok) bad++;
   console.log(`${ok?'ok  ':'FAIL'} ${String(st).padStart(3)} glyph=${glyph} noMode=${noMode} js=${errs.length} ${u}${errs.length?' :: '+errs[0].slice(0,70):''}`);
 }
-await b.close(); console.log(bad?`\n${bad} FAILED`:'\nall spare-parts screens render clean');
+await b.close(); console.log(bad?`\n${bad} FAILED`:`\nall ${URLS.length} screens render clean`);
 process.exit(bad?1:0);

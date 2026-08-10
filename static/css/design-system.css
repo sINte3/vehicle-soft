@@ -129,6 +129,14 @@
      moshchnee teni modalnogo okna -- shkala vysot byla perevernuta.
      Sostoyanie knopki nesut cvet fona i kolco fokusa. */
   --vs-shadow-sm: 0 1px 3px rgba(16,40,80,.05);
+
+  /* PECHAT. Otdelnye tokeny, a ne ekrannye: na bumage net temy, net fona
+     prilozheniya i net podsvetok -- belyy list, seraya ramka, seryy koluntitul.
+     Derzhat ih tokenami nuzhno po toy zhe prichine, chto i vse ostalnoe: chtoby
+     pravka byla v odnom meste, a ne v @media print. */
+  --vs-print-bg: #fff;
+  --vs-print-border: #bbb;
+  --vs-print-muted: #444;
   --vs-shadow:    0 2px 8px rgba(16,40,80,.08);
   --vs-shadow-lg: 0 16px 40px rgba(16,40,80,.16);
 
@@ -2207,3 +2215,51 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 /* Nol na stole zapchastey -- normalnoe tikhoe sostoyanie, a ne trevoga. */
 .sp-desk-zero { color: var(--vs-text-muted); }
 .sp-desk-my .vs-kpi-value { font-size: 24px; }
+
+/* ---- PECHAT OTCHETOV ----------------------------------------------------
+   Odin nabor pravil na ves produkt. Do etogo TOT ZHE blok @media print lezhal
+   v inline-<style> chetyreh shablonov otchetov AZS -- tri iz nih sovpadali
+   pobaytovo (md5 24778f9f9f91), chetvertyy otlichalsya tolko spiskom
+   dopolnitelno pryachemyh elementov svoego ekrana.
+   [REASON]: pravilo pechati -- povedenie produkta, a ne odnogo ekrana. Poka
+   ono lezhalo v shablonah, kazhdyy novyy otchet nachinalsya s kopirovaniya
+   bloka, i lyubaya pravka (naprimer, novyy element, kotoryy nado skryt pri
+   pechati) trebovala chetyreh odinakovyh pravok -- to est rano ili pozdno
+   razoshlas by.
+   Skryvaemoe ob'yavlyaetsya klassom .vs-no-print: ekran dobavlyaet ego svoim
+   elementam i ne trogaet obshchee pravilo. */
+@media print {
+  @page { size: A4 landscape; margin: 12mm 10mm 16mm; }
+  body { background: var(--vs-print-bg); }
+  .vs-sidebar, .vs-topbar, .vs-side-backdrop, .vs-skip-link,
+  .vs-modulenav, .fuel-nav, .fuel-no-print, .vs-no-print,
+  .vs-alert { display: none !important; }
+  .vs-content { padding: 0; max-width: none; }
+  .vs-card, .card, .vs-table-wrap { box-shadow: none; border-color: var(--vs-print-border); }
+  table { font-size: 10px; white-space: normal !important; }
+  table thead { display: table-header-group; }
+  .vs-print-footer {
+    display: block !important; position: fixed; bottom: 0; left: 0; right: 0;
+    text-align: center; font-size: 10px; color: var(--vs-print-muted);
+  }
+}
+.vs-print-footer { display: none; }
+
+/* Stroka-gruppa v tablice otcheta: zagolovok razdela vnutri tela tablicy.
+   Bylo `background:#f0f9f0; color:#166534` v dvuh shablonah -- hardkod, mimo
+   tokenov i mimo proverki kontrasta DD-021. */
+.vs-table tbody tr.is-group td {
+  background: var(--vs-success-bg); color: var(--vs-success);
+  font-weight: 700;
+}
+/* Raskryvayushchayasya podrobnost vnutri yacheyki (details/summary). */
+/* Itogovaya stroka vnutri tela tablicy (ne tfoot): tri otcheta AZS risovali
+   ee inline `background:#fefce8` -- odin i tot zhe hardkod v treh mestah. */
+.vs-table tbody tr.is-total td { background: var(--vs-warning-bg); font-weight: 700; }
+
+.vs-table details { display: inline-block; }
+.vs-table summary {
+  cursor: pointer; list-style: none;
+  color: var(--vs-text-muted); font-size: var(--vs-fs-sm);
+}
+.vs-table summary::-webkit-details-marker { display: none; }
