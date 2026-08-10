@@ -5,67 +5,150 @@
    ===================================================================== */
 
 /* ---------- 1. TOKENS -------------------------------------------------- */
+/* Dva urovnya, DD-023. Uroven 1 -- PALITRA: syrye znacheniya, smysla ne
+   nesut. Uroven 2 -- ROLI: chto etot cvet znachit. Ves ostalnoy kod
+   obrashchaetsya TOLKO k rolyam (--vs-*). Obrashchenie k palitre (--p-*) vne
+   bloka roley obhodit pereklyuchenie temy i snova razvedet interfeys na dva
+   vida -- eto proveryaet tools/check_design_system.py.
+
+   [REASON]: temnaya tema (DD-001) vklyuchaetsya zapolneniem odnogo bloka
+   [data-theme="dark"] v konce etoy sekcii. Bez razdeleniya na dva urovnya
+   prishlos by pravit kazhdoe mesto, gde cvet ispolzovan -- a takih mest
+   sverkh tokenov eshche 213 (PR-003). Blok uezzhaet PUSTYM: mesto postroeno,
+   cveta ne podobrany. */
 :root {
+  /* --- Uroven 1: PALITRA ---------------------------------------------- */
+  --p-blue-600:   #2563eb;
+  --p-blue-700:   #1d4ed8;
+  --p-blue-050:   #eaf1fe;
+  --p-blue-400:   #4f93ff;
+
+  --p-navy-900:   #0f2b50;
+  --p-navy-950:   #0c2244;
+  --p-navy-200:   #a9bad4;
+  --p-navy-300:   #7e93b4;
+  --p-navy-350:   #7f93b1;
+
+  --p-slate-950:  #182230;
+  --p-slate-500:  #5b6b80;
+  --p-slate-100:  #eef2f7;
+  --p-slate-090:  #f1f5fa;
+  --p-slate-070:  #f7f9fc;
+  --p-slate-150:  #e6ecf4;
+  --p-slate-170:  #e2e8f1;
+  --p-slate-160:  #e4eaf2;
+  --p-slate-200:  #d8e0ea;
+  --p-white:      #ffffff;
+
+  --p-green-700:  #157e3c;
+  --p-green-800:  #12692f;
+  --p-green-050:  #e7f6ec;
+  --p-amber-700:  #b45309;
+  --p-amber-050:  #fdf3e3;
+  --p-red-600:    #c0392b;
+  --p-red-050:    #fdeeee;
+  --p-teal-700:   #0e7490;
+  --p-teal-050:   #e6f7fb;
+  --p-violet-600: #7c3aed;
+  --p-violet-050: #f1eafe;
+
+  /* --- Uroven 2: ROLI -------------------------------------------------- */
   /* Brand */
-  --vs-primary:        #2563eb;
-  --vs-primary-hover:  #1d4ed8;
-  --vs-primary-soft:   #eaf1fe;
-  --vs-brand-green:    #15803d;
-  --vs-brand-green-h:  #12692f;
-  --vs-brand-green-s:  #e7f6ec;
+  --vs-primary:        var(--p-blue-600);
+  --vs-primary-hover:  var(--p-blue-700);
+  --vs-primary-soft:   var(--p-blue-050);
 
   /* Sidebar (navy) */
-  --vs-side-bg-1:      #0f2b50;
-  --vs-side-bg-2:      #0c2244;
-  --vs-side-text:      #a9bad4;
-  --vs-side-text-dim:  #7e93b4;
-  --vs-side-section:   #5f779b;
+  --vs-side-bg-1:      var(--p-navy-900);
+  --vs-side-bg-2:      var(--p-navy-950);
+  --vs-side-text:      var(--p-navy-200);
+  --vs-side-text-dim:  var(--p-navy-300);
+  /* [REASON]: DD-021 -- bylo #5f779b, 3.10 na fone saydbara. Zagolovki
+     sekciy -- melkie propisnye, poslablenie dlya krupnogo teksta k nim
+     neprimenimo. Stalo 4.53. */
+  --vs-side-section:   var(--p-navy-350);
   --vs-side-hover:     rgba(255,255,255,.07);
   --vs-side-active:    rgba(79,147,255,.16);
-  --vs-side-active-bar:#4f93ff;
-  --vs-side-active-fg: #ffffff;
+  --vs-side-active-bar:var(--p-blue-400);
+  /* [REASON]: DD-022 -- sovpadaet po znacheniyu s --vs-surface i eto
+     osoznanno: belyy tekst na temnom saydbare i belaya poverhnost kartochki
+     -- raznye roli, v temnoy teme oni razoydutsya. */
+  --vs-side-active-fg: var(--p-white);
 
   /* Neutrals */
-  --vs-bg:             #eef2f7;
-  --vs-surface:        #ffffff;
-  --vs-surface-2:      #f7f9fc;
-  --vs-surface-3:      #f1f5fa;
-  --vs-border:         #e6ecf4;
-  --vs-border-2:       #e2e8f1;
-  --vs-border-3:       #eef2f7;
-  --vs-border-input:   #d8e0ea;
+  --vs-bg:             var(--p-slate-100);
+  --vs-surface:        var(--p-white);
+  --vs-surface-2:      var(--p-slate-070);
+  --vs-surface-3:      var(--p-slate-090);
+  --vs-border:         var(--p-slate-150);
+  --vs-border-2:       var(--p-slate-170);
+  /* [REASON]: PR-001/DD-021 -- bylo #eef2f7, bayt v bayt ravno --vs-bg.
+     Granica poverh fona stranicy ne byla vidna VOVSE: razrabotchik pisal
+     border i poluchal nichto, prichem molcha. */
+  --vs-border-3:       var(--p-slate-160);
+  --vs-border-input:   var(--p-slate-200);
 
-  /* Text */
-  --vs-text:           #182230;
-  --vs-text-muted:     #5b6b80;
-  --vs-text-soft:      #8a97a8;
-  --vs-text-faint:     #b5c0d0;
+  /* Text -- DVA urovnya, ne chetyre.
+     [REASON]: DD-020. Chtoby --vs-text-soft (#8a97a8, 2.97 na belom) proshel
+     AA na samom temnom iz fonov, ego nuzhno zatemnit do #616f82. No
+     --vs-text-muted -- #5b6b80: shest edinic yarkosti, na glaz nerazlichimy.
+     Uroven, privedennyy k norme, perestaet byt otdelnym urovnem, a nizhe
+     muted mesta net -- 4.5 na svetlom fone i est nizhnyaya granica.
+     --vs-text-soft i --vs-text-faint udaleny, ih ispolzovaniya perevedeny
+     na --vs-text-muted. */
+  --vs-text:           var(--p-slate-950);
+  --vs-text-muted:     var(--p-slate-500);
 
-  /* Status */
-  --vs-success:        #15803d;   --vs-success-bg: #e7f6ec;
-  --vs-warning:        #b45309;   --vs-warning-bg: #fdf3e3;
-  --vs-danger:         #c0392b;   --vs-danger-bg:  #fdeeee;
+  /* Status.
+     [REASON]: DD-022 -- --vs-brand-green/-h/-s udaleny: oni byli bayt v bayt
+     ravny --vs-success/-bg, to est odno i to zhe pod dvumya imenami, i vybor
+     mezhdu nimi byl proizvolen. */
+  /* [REASON]: DD-021 -- bylo #15803d, 4.49 na --vs-success-bg: ne dotyagival
+     0.01 do poroga AA. Odna edinica yarkosti, ton sohranen, stalo 4.60. */
+  --vs-success:        var(--p-green-700); --vs-success-bg: var(--p-green-050);
+  --vs-success-h:      var(--p-green-800);
+  --vs-warning:        var(--p-amber-700); --vs-warning-bg: var(--p-amber-050);
+  --vs-danger:         var(--p-red-600);   --vs-danger-bg:  var(--p-red-050);
   /* [REASON]: UI-ACCENT-DUP-001 — --vs-info used to be byte-identical to
      --vs-primary (#2563eb), so five semantic accents rendered as four
      colours. Teal-cyan: 5.36:1 on white, 4.86:1 on --vs-info-bg (WCAG AA
      for text). */
-  --vs-info:           #0e7490;   --vs-info-bg:    #e6f7fb;
-  --vs-purple:         #7c3aed;   --vs-purple-bg:  #f1eafe;
+  --vs-info:           var(--p-teal-700);  --vs-info-bg:    var(--p-teal-050);
+  --vs-purple:         var(--p-violet-600);--vs-purple-bg:  var(--p-violet-050);
 
-  /* Radii */
-  --vs-r-xs: 6px; --vs-r-sm: 8px; --vs-r:   9px;
-  --vs-r-md:10px; --vs-r-lg:12px; --vs-r-xl:14px;
-  --vs-r-pill: 999px;
+  /* Radii -- TRI stupeni plyus pill.
+     [REASON]: DD-025 -- bylo shest (6/8/9/10/12/14). 9px ne otlichim ot 8 i
+     10 na glaz, no treboval resheniya pri kazhdom novom komponente, i
+     reshenie prinimalos naugad. sm -- polya i chipy, r -- kartochki i
+     tablicy, lg -- modalnye okna i vydvizhnye paneli. */
+  --vs-r-sm: 6px; --vs-r: 10px; --vs-r-lg: 14px; --vs-r-pill: 999px;
 
-  /* Elevation */
+  /* Elevation -- TRI stupeni.
+     [REASON]: DD-026 -- --vs-shadow-primary i --vs-shadow-success udaleny.
+     Ten cveta knopki ne nesla ni vysoty, ni sostoyaniya, i pri etom byla
+     moshchnee teni modalnogo okna -- shkala vysot byla perevernuta.
+     Sostoyanie knopki nesut cvet fona i kolco fokusa. */
   --vs-shadow-sm: 0 1px 3px rgba(16,40,80,.05);
+
+  /* PECHAT. Otdelnye tokeny, a ne ekrannye: na bumage net temy, net fona
+     prilozheniya i net podsvetok -- belyy list, seraya ramka, seryy koluntitul.
+     Derzhat ih tokenami nuzhno po toy zhe prichine, chto i vse ostalnoe: chtoby
+     pravka byla v odnom meste, a ne v @media print. */
+  --vs-print-bg: #fff;
+  --vs-print-border: #bbb;
+  --vs-print-muted: #444;
   --vs-shadow:    0 2px 8px rgba(16,40,80,.08);
   --vs-shadow-lg: 0 16px 40px rgba(16,40,80,.16);
-  --vs-shadow-primary: 0 8px 18px rgba(37,99,235,.28);
-  --vs-shadow-success: 0 8px 18px rgba(21,128,61,.28);
 
   /* Focus ring */
   --vs-ring-primary: 0 0 0 3px rgba(37,99,235,.15);
+
+  /* Zatemnenie pod modalnym oknom i lightbox-om.
+     [REASON]: rol, a ne znachenie. V temnoy teme fon pod oknom -- ne "tot zhe
+     temno-siniy, tolko poverh temnogo", i pereopredelyaetsya on zdes, odnoy
+     strokoy. Do P4 eto znachenie stoyalo syrym rgba() vnutri inline-<style>
+     odnogo shablona. */
+  --vs-overlay: rgba(15,23,42,.78);
 
   /* Layout */
   --vs-side-w:        252px;
@@ -75,14 +158,24 @@
   --vs-content-max: 1520px;
 
   /* Type — UI-FONT-LOCAL-001: system stack only, no external font (the app
-     runs on-premises with no guaranteed internet route) */
+     runs on-premises with no guaranteed internet route).
+     [REASON]: DD-027 -- shkala 11/12/13/14/17/23 pri bazovom 13px sohranena:
+     ona plotnaya i dlya ERP umestnaya, zamechaniy izmerenie ne dalo.
+     --vs-fs-xl (21px) udalen -- ispolzovaniy nol. */
   --vs-font: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
   --vs-fs-xs: 11px; --vs-fs-sm: 12px; --vs-fs:    13px;
-  --vs-fs-md:14px;  --vs-fs-lg: 17px; --vs-fs-xl: 21px; --vs-fs-2xl: 23px;
+  --vs-fs-md:14px;  --vs-fs-lg: 17px; --vs-fs-2xl: 23px;
 
-  /* Motion */
+  /* Motion.
+     [REASON]: DD-027 -- --vs-t (.17s) udalen, ispolzovaniy nol. Realnaya
+     shkala vremeni sostoit iz odnogo znacheniya. */
   --vs-t-fast: .13s ease;
-  --vs-t:      .17s ease;
+}
+
+/* Temnaya tema pereopredelyaet TOLKO uroven 2 i nichego bolshe.
+   Seychas blok pust -- mesto zalozheno (DD-001), cveta ne podobrany. */
+[data-theme="dark"] {
+  /* --vs-surface: var(--p-slate-950); --vs-text: var(--p-white); ... */
 }
 
 /* ---------- 2. RESET + GLOBALS ---------------------------------------- */
@@ -126,7 +219,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 /* Typography helpers */
 .vs-num { font-variant-numeric: tabular-nums; }
 .vs-muted { color: var(--vs-text-muted); }
-.vs-soft  { color: var(--vs-text-soft); }
+.vs-soft  { color: var(--vs-text-muted); }
 .vs-caption {
   font-size: var(--vs-fs-xs);
   font-weight: 600;
@@ -162,7 +255,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 }
 .vs-side-brand-mark {
   flex: none; width: 40px; height: 40px;
-  border-radius: var(--vs-r-md);
+  border-radius: var(--vs-r);
   background: #fff;
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 2px 8px rgba(0,0,0,.25);
@@ -247,7 +340,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-topbar-burger:hover { background: #f1f5fa; color: var(--vs-primary); border-color: #cdd7e5; }
 .vs-topbar-title { flex: 1; min-width: 0; }
 .vs-crumb {
-  font-size: 11px; color: var(--vs-text-soft);
+  font-size: 11px; color: var(--vs-text-muted);
   font-weight: 500; letter-spacing: .2px;
   display: flex; align-items: center; gap: 5px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -273,7 +366,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-user-chip {
   display: flex; align-items: center; gap: 9px;
   padding: 5px 8px 5px 6px;
-  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r-md);
+  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r);
   background: #fff; cursor: pointer; font-family: inherit;
   transition: border-color var(--vs-t-fast);
 }
@@ -286,7 +379,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 }
 .vs-user-meta { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; line-height: 1.2; }
 .vs-user-name { font-size: 12.5px; font-weight: 600; color: var(--vs-text); white-space: nowrap; }
-.vs-user-role { font-size: 10.5px; color: var(--vs-text-soft); white-space: nowrap; }
+.vs-user-role { font-size: 10.5px; color: var(--vs-text-muted); white-space: nowrap; }
 
 /* Content area */
 .vs-content {
@@ -317,14 +410,14 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   background: var(--vs-primary); color: #fff; border-color: var(--vs-primary);
   font-weight: 700;
 }
-.vs-btn-primary:hover { background: var(--vs-primary-hover); border-color: var(--vs-primary-hover); color: #fff; box-shadow: var(--vs-shadow-primary); }
+.vs-btn-primary:hover { background: var(--vs-primary-hover); border-color: var(--vs-primary-hover); color: #fff; }
 .vs-btn-primary:focus-visible { box-shadow: var(--vs-ring-primary); }
 
 .vs-btn-success {
-  background: var(--vs-brand-green); color: #fff; border-color: var(--vs-brand-green);
+  background: var(--vs-success); color: #fff; border-color: var(--vs-success);
   font-weight: 700;
 }
-.vs-btn-success:hover { background: var(--vs-brand-green-h); border-color: var(--vs-brand-green-h); color: #fff; box-shadow: var(--vs-shadow-success); }
+.vs-btn-success:hover { background: var(--vs-success-h); border-color: var(--vs-success-h); color: #fff; }
 
 .vs-btn-danger { color: var(--vs-danger); border-color: #f3d6d6; }
 .vs-btn-danger:hover { background: var(--vs-danger); color: #fff; border-color: var(--vs-danger); }
@@ -333,7 +426,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-btn-ghost:hover { background: #f1f5fa; color: var(--vs-primary); border-color: transparent; }
 
 .vs-btn-sm { padding: 6px 12px; font-size: var(--vs-fs-sm); border-radius: var(--vs-r-sm); }
-.vs-btn-lg { padding: 12px 20px; font-size: 14.5px; border-radius: var(--vs-r-md); }
+.vs-btn-lg { padding: 12px 20px; font-size: 14.5px; border-radius: var(--vs-r); }
 
 /* Icon-only square buttons (table actions) */
 .vs-btn-icon {
@@ -372,6 +465,20 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-pill.is-active { background: var(--vs-primary); color: #fff; border-color: var(--vs-primary); }
 
 /* ---------- 5. FORMS -------------------------------------------------- */
+/* [REASON]: `hidden` OBYAZAN pobezhdat lyuboe pravilo raskladki.
+   Naydeno na skrinshote UI-P6-002: pole perioda otcheta s atributom `hidden`
+   prodolzhalo risovatsya. Prichina -- brauzernyy stil ob'yavlyaet
+   `[hidden]{display:none}`, no ON UA-urovnya, i lyuboe AVTORSKOE pravilo,
+   zadayushchee display, ego perebivaet; `.vs-field{display:block}` -- rovno
+   takoe. Specifichnost pri etom RAVNA (odin klass protiv odnogo atributa), i
+   ishod reshaet poryadok v fayle -- to est zavisit ot togo, kuda kto dopishet
+   pravilo zavtra.
+   Proverka atributom v testah takogo ne lovit: v HTML `hidden` STOIT, i test
+   chesten, prosto on proveryaet ne to. Lovit tolko render -- poetomu zdes
+   !important, a v tools/ux/check_wialon_interactions.mjs eto proveryaetsya
+   nastoyashchim brauzerom. */
+[hidden] { display: none !important; }
+
 .vs-field { display: block; }
 .vs-label {
   display: block;
@@ -398,7 +505,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   box-shadow: var(--vs-ring-primary);
 }
 .vs-input:disabled, .vs-select:disabled, .vs-textarea:disabled {
-  background: var(--vs-surface-2); color: var(--vs-text-soft); cursor: not-allowed;
+  background: var(--vs-surface-2); color: var(--vs-text-muted); cursor: not-allowed;
 }
 .vs-input.is-error, .vs-select.is-error, .vs-textarea.is-error {
   border-color: var(--vs-danger);
@@ -412,14 +519,45 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-input-search .vs-input { padding-left: 36px; padding-top: 9px; padding-bottom: 9px; }
 .vs-input-search .vs-icon {
   position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
-  color: var(--vs-text-soft); display: flex; pointer-events: none;
+  color: var(--vs-text-muted); display: flex; pointer-events: none;
 }
 
-.vs-help { display: block; font-size: var(--vs-fs-xs); color: var(--vs-text-soft); margin-top: 5px; }
+.vs-help { display: block; font-size: var(--vs-fs-xs); color: var(--vs-text-muted); margin-top: 5px; }
 .vs-error-msg { display: block; font-size: var(--vs-fs-xs); color: var(--vs-danger); margin-top: 5px; font-weight: 500; }
 
 .vs-form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
 .vs-form-row > .vs-field { flex: 1; min-width: 200px; }
+/* Slot v ryadu fil'trov, nesushchiy KNOPKU, a ne pole.
+   [REASON]: do etogo tot zhe rezultat poluchali pustym <label>&nbsp;</label>
+   nad knopkoy -- v shesti shablonakh. Screen reader ozvuchival pustuyu
+   podpis' pered kazhdoy knopkoy "Pokazat", a pri perenose ryada vysota
+   prizrachnoy podpisi sdvigala knopku otnositel'no poley. Slot ne rastyagi-
+   vaetsya i ne trebuet podpisi voobshche. */
+.vs-form-row > .vs-field-action { flex: 0 0 auto; min-width: 0; }
+
+/* Polosa vzaimoisklyuchayushchih pereklyuchateley na radio-knopkakh.
+   [REASON]: podnyato iz sloya sovmestimosti (.toggle-group), gde ono zhilo s
+   pometkoy "used by report.html" -- i pri etom daily_entry.html derzhal SVOYU
+   lokalnuyu kopiyu, kotoraya vyigryvala kaskad. Odin element upravleniya, dva
+   opredeleniya, raznyy vid na dvuh ekranakh iz semi kanonicheskih.
+   Aktivnoe sostoyanie -- CSS po :has(:checked), a ne inline-style ot JS:
+   ranshe fon aktivnoy pilyuli propisyvalsya atributom style pryamo v razmetke,
+   i cvet obhodil tokeny, znachit i temnuyu temu. */
+.vs-toggle-group { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.vs-toggle-group label {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--vs-border-input); border-radius: var(--vs-r);
+  background: var(--vs-surface); color: var(--vs-text);
+  font-size: var(--vs-fs); font-weight: 600;
+  cursor: pointer; transition: all var(--vs-t-fast);
+}
+.vs-toggle-group label:hover { border-color: var(--vs-primary); }
+.vs-toggle-group input[type="radio"] { accent-color: var(--vs-primary); margin: 0; }
+.vs-toggle-group label:has(input[type="radio"]:checked) {
+  background: var(--vs-primary); border-color: var(--vs-primary); color: var(--vs-side-active-fg);
+}
+.vs-toggle-group label:focus-within { box-shadow: var(--vs-ring-primary); }
 
 .vs-check-card {
   display: flex; align-items: center; gap: 8px;
@@ -429,6 +567,15 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   cursor: pointer; transition: all var(--vs-t-fast);
 }
 .vs-check-card:hover { border-color: var(--vs-primary); background: #f5f9ff; }
+/* Vybrannaya kartochka vidna sama, bez JS.
+   [REASON]: do etogo vybrannyy tip otcheta podsvechivalsya funkciey
+   styleReportType(), kotoraya stavila klass .active po sobytiyu change. Pri
+   otkluchennom JS -- i pri lyuboy oshibke vyshe po skriptu -- vybor perestaval
+   byt viden voobshche, hotya radio-knopka byla otmechena. */
+.vs-check-card:has(input:checked) {
+  border-color: var(--vs-primary); background: var(--vs-primary-soft);
+}
+.vs-check-card:focus-within { box-shadow: var(--vs-ring-primary); }
 .vs-check-card input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--vs-primary); }
 .vs-check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 7px; }
 
@@ -436,10 +583,10 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-card {
   background: var(--vs-surface);
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-lg);
+  border-radius: var(--vs-r);
   box-shadow: var(--vs-shadow-sm);
 }
-.vs-card-xl { border-radius: var(--vs-r-xl); }
+.vs-card-xl { border-radius: var(--vs-r-lg); }
 
 .vs-card-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -450,18 +597,13 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-card-title { font-size: var(--vs-fs-md); font-weight: 700; }
 .vs-card-body { padding: 16px 18px; }
 
-.vs-card-accent-top    { border-top: 3px solid var(--vs-primary); }
-.vs-card-accent-left   { border-left: 4px solid var(--vs-primary); }
-.vs-card-accent-warning { border-left: 4px solid var(--vs-warning); }
-.vs-card-accent-danger  { border-left: 4px solid var(--vs-danger);  }
-.vs-card-accent-success { border-left: 4px solid var(--vs-brand-green); }
 
 .vs-hero {
   display: flex; justify-content: space-between; align-items: flex-start;
   gap: 16px; flex-wrap: wrap;
   padding: 20px 22px;
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-xl);
+  border-radius: var(--vs-r-lg);
   background: linear-gradient(135deg, #ffffff, #f5f8fc);
   box-shadow: var(--vs-shadow-sm);
 }
@@ -487,7 +629,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   padding: 17px;
   background: #fff;
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-xl);
+  border-radius: var(--vs-r-lg);
   box-shadow: var(--vs-shadow-sm);
 }
 .vs-kpi-head {
@@ -512,32 +654,134 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-kpi-value { font-size: 31px; font-weight: 800; line-height: 1; letter-spacing: -.8px; font-variant-numeric: tabular-nums; }
 .vs-kpi-cap   { margin-top: 5px; color: var(--vs-text-muted); font-size: 12.5px; }
 
+/* AKCENT-POLOSKA KARTOCHKI. Pravila stoyat ZDES, POSLE .vs-kpi, i eto ne
+   kosmetika poryadka.
+   [REASON]: .vs-kpi zadaet ramku SOKRASHCHENIEM `border: 1px solid ...`, a
+   akcent -- dlinnym svoystvom `border-left`. Specifichnost u nih ODINAKOVAYA
+   (odin klass), poetomu resheniyu reshaet poryadok v fayle: poka akcenty
+   stoyali vyshe, sokrashchenie .vs-kpi molcha stiralo polosku u lyubogo
+   elementa s oboimi klassami. Defekt byl uzhe naiden -- v
+   spare_parts_desk.html lezhalo pravilo-obhod s kommentariem "design-system.css
+   pravit nelzya". Teper pravit mozhno, i pochineno v istochnike; obhod udalen.
+   V razmetke takoe sochetanie na ves produkt odno (plitka "gotovo k vydache"
+   na stole zapchastey), poetomu perenos nichego bolshe ne zatragivaet. */
+.vs-card-accent-top    { border-top: 3px solid var(--vs-primary); }
+.vs-card-accent-left   { border-left: 4px solid var(--vs-primary); }
+.vs-card-accent-warning { border-left: 4px solid var(--vs-warning); }
+.vs-card-accent-danger  { border-left: 4px solid var(--vs-danger);  }
+.vs-card-accent-success { border-left: 4px solid var(--vs-success); }
+
 .vs-mini {
   padding: 9px 11px;
   border: 1px solid var(--vs-border-3); border-radius: var(--vs-r);
   background: var(--vs-surface-2);
 }
 .vs-mini-v { display: block; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.vs-mini-l { display: block; margin-top: 2px; color: var(--vs-text-soft); font-size: 11.5px; }
+.vs-mini-l { display: block; margin-top: 2px; color: var(--vs-text-muted); font-size: 11.5px; }
 
 .vs-mini.is-success { border-color: #d6ecdd; background: #f3faf5; }
 .vs-mini.is-success .vs-mini-v { color: var(--vs-success); }
 .vs-mini.is-warning { border-color: #fdebd0; background: #fdf6ec; }
 .vs-mini.is-warning .vs-mini-v { color: var(--vs-warning); }
-.vs-mini.is-warning .vs-mini-l { color: #b07d3a; }
+.vs-mini.is-warning .vs-mini-l { color: var(--vs-warning); }
+/* [REASON]: DD-020, найдено axe на эталонном экране P4. Было #b07d3a на
+   #fdf6ec — 3.35 при пороге AA 4.5, и подпись эта набрана 11.5 px, то
+   есть послабление для крупного текста к ней неприменимо. Токен
+   --vs-warning на том же фоне даёт 4.68; отдельного оттенка «чуть
+   светлее основного» здесь не нужно было вовсе. */
 .vs-mini.is-danger  { border-color: #f6d4d4; background: var(--vs-danger-bg); }
 .vs-mini.is-danger  .vs-mini-v { color: var(--vs-danger); }
-.vs-mini.is-danger  .vs-mini-l { color: #b5544a; }
+.vs-mini.is-danger  .vs-mini-l { color: var(--vs-danger); }
+/* [REASON]: то же самое: #b5544a на #fdeeee — 4.30, не дотягивало 0.20
+   до порога. Токен --vs-danger даёт 4.83. */
+
+/* ---------- ADOPT-1: RAZDELENNAYA POLOSA METRIK ----------------------
+   Referensy: dashboards-04, dashboards-05, density-01. Tri nezavisimyh
+   istochnika soshlis na odnom reshenii, ne zaimstvuya drug u druga.
+
+   Mekhanizm: otdelnaya kartochka na metriku platit za KAZHDUYU granicu, ten i
+   vnutrenniy otstup -- pri semi modulyah po chetyre chisla eto 28 ramok
+   vokrug 28 chisel (PR-043). Polosa platit odin raz za modul. Vtoroy effekt
+   vazhnee ekonomii ploshchadi: vse znacheniya stoyat na ODNOY bazovoy linii, i
+   glaz sravnivaet ih za odin gorizontalnyy prohod, a ne prygaet mezhdu
+   kartochkami.
+
+   [REASON]: razdeliteli sdelany PROMEZHUTKOM (gap) na fone cveta granicy, a ne
+   svoystvom border-left u yacheyki. Pri border-left perenos stroki ostavlyaet
+   visyachuyu vertikalnuyu chertu sleva u pervoy yacheyki novogo ryada -- a
+   perenos zdes neizbezhen: kirillicheskaya podpis vtroe dlinnee ieroglificheskoy
+   v istochnike, i chislo metrik v ryadu opredelyaetsya fakticheskoy shirinoy
+   (M6), a ne perenositsya iz obrazca. Promezhutok risuet linii i po
+   gorizontali, i po vertikali sam. */
+.vs-kpi-strip {
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r);
+  box-shadow: var(--vs-shadow-sm);
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.vs-kpi-strip-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--vs-border);
+  background: var(--vs-surface-3);
+}
+.vs-kpi-strip-title {
+  font-size: var(--vs-fs-xs); font-weight: 700;
+  text-transform: uppercase; letter-spacing: .5px;
+  color: var(--vs-text-muted);
+}
+.vs-kpi-strip-body {
+  display: flex; flex-wrap: wrap;
+  gap: 1px; background: var(--vs-border-3);
+}
+.vs-kpi-strip-item {
+  flex: 1 1 var(--vs-strip-min, 168px);
+  min-width: 0;
+  padding: 11px 14px;
+  background: var(--vs-surface);
+}
+.vs-kpi-strip-label {
+  display: block;
+  font-size: var(--vs-fs-xs); color: var(--vs-text-muted);
+  margin-bottom: 3px;
+  overflow-wrap: anywhere;
+}
+.vs-kpi-strip-value {
+  display: block;
+  font-size: 22px; font-weight: 800; line-height: 1.15;
+  letter-spacing: -.4px; font-variant-numeric: tabular-nums;
+}
+/* Znachenie ne chislo, a stroka -- vremya sinhronizacii, "net dannyh". */
+.vs-kpi-strip-value.is-text { font-size: var(--vs-fs-md); font-weight: 700; letter-spacing: 0; }
+.vs-kpi-strip-value.is-success { color: var(--vs-success); }
+.vs-kpi-strip-value.is-warning { color: var(--vs-warning); }
+.vs-kpi-strip-value.is-danger  { color: var(--vs-danger); }
+
+/* ADAPT-2: blok "trebuet vnimaniya" stoit PERED tem, chto prosto rabotaet.
+   [REASON]: obychnyy dashbord pridaet vsem pokazatelyam odinakovyy ves, i
+   chelovek kazhdyy raz sam reshaet, kuda smotret. Delenie po RESHENIYU
+   snimaet etot shag. Yacheyka zdes -- ssylka: uvidel chislo, nazhal, popal
+   tuda, gde eto chinyat. */
+.vs-kpi-strip.is-attention { border-color: var(--vs-warning); }
+.vs-kpi-strip.is-attention .vs-kpi-strip-head {
+  background: var(--vs-warning-bg); border-bottom-color: var(--vs-warning);
+}
+.vs-kpi-strip.is-attention .vs-kpi-strip-title { color: var(--vs-warning); }
+a.vs-kpi-strip-item { text-decoration: none; color: inherit; display: block; }
+a.vs-kpi-strip-item:hover { background: var(--vs-surface-2); }
+a.vs-kpi-strip-item:focus-visible { outline: 2px solid var(--vs-primary); outline-offset: -2px; }
 
 .vs-stat {
   padding: 14px 15px;
   background: #fff;
-  border: 1px solid var(--vs-border); border-radius: var(--vs-r-lg);
+  border: 1px solid var(--vs-border); border-radius: var(--vs-r);
   box-shadow: var(--vs-shadow-sm);
 }
 .vs-stat-label {
   font-size: 10.5px; font-weight: 600;
-  color: var(--vs-text-soft);
+  color: var(--vs-text-muted);
   text-transform: uppercase; letter-spacing: .4px; line-height: 1.3;
 }
 .vs-stat-value {
@@ -553,7 +797,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-stat-value.is-success { color: var(--vs-success); }
 .vs-stat-value.is-info    { color: var(--vs-info); }
 .vs-stat-value.is-purple  { color: var(--vs-purple); }
-.vs-stat-value.is-muted   { color: var(--vs-text-soft); }
+.vs-stat-value.is-muted   { color: var(--vs-text-muted); }
 .vs-stat-value.is-warning { color: var(--vs-warning); }
 .vs-stat-value.is-danger  { color: var(--vs-danger); }
 
@@ -592,7 +836,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-table-wrap {
   background: var(--vs-surface);
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-xl);
+  border-radius: var(--vs-r-lg);
   box-shadow: var(--vs-shadow-sm);
   overflow: hidden;
 }
@@ -648,7 +892,222 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-table tr.is-danger-row td:first-child { border-left: 3px solid var(--vs-danger); }
 .vs-table tr.is-warning-row td:first-child { border-left: 3px solid var(--vs-warning); }
 
+/* DD-028: REZHIM PO OBEMU OBYAVLYAETSYA YAVNO.
+   [REASON]: razbros obemov -- pyat poryadkov, ot 394 817 strok
+   (fuel_transactions2) do 3 (work_orders), plyus dvenadcat vsegda pustyh
+   tablic. Odin komponent bez obyavlennyh rezhimov oba konca ne pokryvaet, i
+   imenno otsutstvie etogo resheniya porodilo 17 odnorazovyh klassov (PR-010).
+   Klass rezhima ne kosmetika: on govorit chitatelyu, gde schitayutsya itogi i
+   otkuda beretsya sortirovka. is-static -- klient, is-paged/is-stream --
+   server. */
+.vs-table.is-static  { --vs-table-mode: static; }
+.vs-table.is-paged   { --vs-table-mode: paged; }
+.vs-table.is-stream  { --vs-table-mode: stream; }
+
+/* DD-029: zagolovok sortiruemoy kolonki -- KNOPKA, a ne tekst: dostupna s
+   klaviatury i neset aria-sort. Tri sostoyaniya, strelka risuetsya iz teksta
+   psevdoelementom, poetomu ne trebuet ni ikonki, ni kartinki. */
+.vs-table th.vs-th-sort { padding: 0; }
+.vs-table th.vs-th-sort > button {
+  display: flex; align-items: center; gap: 5px;
+  width: 100%; min-height: 34px;
+  padding: 10px 14px;
+  background: none; border: 0; cursor: pointer;
+  font: inherit; color: inherit;
+  text-transform: inherit; letter-spacing: inherit;
+  text-align: inherit;
+}
+.vs-table th.vs-th-sort.right > button  { justify-content: flex-end; }
+.vs-table th.vs-th-sort.center > button { justify-content: center; }
+.vs-table th.vs-th-sort > button:hover  { color: var(--vs-text); }
+.vs-table th.vs-th-sort > button:focus-visible {
+  outline: 2px solid var(--vs-primary); outline-offset: -2px;
+}
+.vs-table th.vs-th-sort > button::after {
+  content: '\2195'; opacity: .38; font-size: 11px; line-height: 1;
+}
+.vs-table th[aria-sort="ascending"]  > button::after { content: '\2191'; opacity: 1; }
+.vs-table th[aria-sort="descending"] > button::after { content: '\2193'; opacity: 1; }
+.vs-table th[aria-sort] > button { color: var(--vs-text); }
+
+/* DD-030: PEREPOLNENIE KOLONKI.
+   [REASON]: shirina proektiruetsya po p90 dliny polya, obrezaetsya posle p99.
+   Bez etogo odna anomalnaya stroka lomaet shirinu VSEY tablicy: u
+   daily_records.idle_reason p99 = 50, a max = 211; u deficiencies.text
+   p99 = 161, max = 314. Polnoe znachenie ostaetsya dostupnym -- title na
+   yacheyke i kartochka zapisi. */
+.vs-table td.vs-cell-clip {
+  max-width: var(--vs-cell-max, 22ch);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vs-table td.vs-cell-clip-wide { --vs-cell-max: 40ch; }
+/* Tot zhe kontrakt dlya STROCHNOGO bloka vnutri yacheyki -- vtoraya stroka
+   pod nazvaniem, primechanie pod statusom. Yacheyka pri etom ostaetsya
+   obychnoy: obrezaetsya imenno etot blok. */
+.vs-table td .vs-clip {
+  display: block; max-width: var(--vs-cell-max, 22ch);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* DD-031: DEYSTVIYA STROKI -- fiksirovannaya zona sprava, zona nazhatiya ne
+   menshe 32x32 px. Do etogo .vs-row-actions sushchestvoval i byl ispolzovan
+   ROVNO ODIN raz pri 104 tablicah (PR-012). */
 .vs-row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.vs-table td.vs-row-actions-cell { width: 1%; white-space: nowrap; }
+.vs-row-actions > a, .vs-row-actions > button {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 32px; min-height: 32px;
+}
+
+/* Podval tablicy: schetchik, stranicy, "dalshe" po kursoru. Odna polka na vse
+   tri rezhima, chtoby stranica ne izobretala svoyu na kazhdom ekrane. */
+.vs-table-foot {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px;
+  border-top: 1px solid var(--vs-border-2);
+  background: var(--vs-surface-2);
+  font-size: var(--vs-fs-sm); color: var(--vs-text-muted);
+}
+.vs-table-foot .vs-table-count { margin-right: auto; }
+/* [REASON]: v rezhime is-stream itogi schitayutsya TOLKO po vidimomu oknu, i
+   eto obyazano byt podpisano. Bez podpisi chislo chitaetsya kak itog po vsey
+   vyborke -- na 394 817 strokah raznica na poryadki. */
+.vs-table-foot .vs-table-scope { font-style: italic; }
+
+/* ---- P6, spravochniki: yacheyka s formoy vnutri stroki ------------------
+   Spravochniki pravyatsya PRYAMO V TABLICE: v yacheyke lezhit forma s polyami
+   i knopkoy. Bez etogo yacheyka szhimaet formu do shiriny kolonki i polya
+   nalezayut drug na druga.
+   [REASON]: `white-space: nowrap` zdes NELZYA -- pri uzkom okne stroka
+   redaktirovaniya dolzhna perenosit polya, a ne uezzhat za kray okna (v P5
+   izmereno, chto pikselnyy diff perepolneniya ne vidit). Perenos daet
+   .vs-form-row, poetomu yacheyke nuzhen tolko vertikalnyy zazor. */
+.vs-table td.vs-cell-form { white-space: normal; padding-top: 7px; padding-bottom: 7px; }
+.vs-table td.vs-cell-form .vs-form-row { gap: 7px; align-items: center; }
+.vs-table td.vs-cell-form .vs-input,
+.vs-table td.vs-cell-form .vs-select { padding: 6px 9px; font-size: var(--vs-fs-sm); }
+
+/* Forma iz odnoy knopki vnutri zony deystviy stroki: bez etogo <form> --
+   blochnyy element i lomaet ryad ikonok na neskolko strok. */
+.vs-inline-form { display: inline-flex; }
+
+/* Otklyuchennaya zapis spravochnika: stroka priglushena, no chitaema.
+   Bylo `.ref-eq-inactive{opacity:.68}` v inline-<style> odnogo shablona. */
+.vs-table tr.vs-row-muted { background: var(--vs-surface-2); }
+.vs-table tr.vs-row-muted td { color: var(--vs-text-muted); }
+.vs-table tr.vs-row-muted td strong { font-weight: 600; }
+
+/* [REASON]: yavnaya zashchita dlya `hidden` na <tr>. Obshchaya stroka
+   redaktirovaniya pryachetsya atributom `hidden`, a ne inline-stilem. UA
+   ob'yavlyaet `[hidden]{display:none}`, no lyuboe budushchee pravilo vida
+   `.vs-table tbody tr { display: ... }` pobedilo by ego po specifichnosti i
+   skrytaya forma vylezla by v seredine tablicy. */
+.vs-table tr[hidden] { display: none; }
+
+/* Spisok diagnostiki spravochnika v kartochke-preduprezhdenii.
+   Bylo `.ref-quality-list` -- v chetyreh shablonah, v treh iz nih odinakovo,
+   v odnom (ref_customers) s `max-height: 220px; overflow: auto`.
+   [REASON]: `max-height` + `overflow` SNYATY, a ne pereneseny v obshchee
+   pravilo. Prokruchivaemaya oblast bez tabindex nedostizhima s klaviatury --
+   eto pravilo axe scrollable-region-focusable, seryeznost serious. Ono uzhe
+   narushalos na /ref/customers do treka, i unifikaciya "po samomu polnomu
+   variantu" razmnozhila by defekt eshche na tri stranicy. Spisok korotkiy:
+   neskolko <li> diagnostiki, i kartochka nizhe ekrana ne uydet. */
+.vs-diag-list {
+  margin: 8px 0 0; padding-left: 18px;
+  color: var(--vs-text-muted); font-size: var(--vs-fs-sm);
+}
+.vs-new-model-box { margin-top: 4px; }
+
+/* ---- P6, Vialon: to, chto ran'she zhilo v inline-<style> treh shablonov ---
+   Vse pravila nizhe sobrany iz sobstvennogo CSS wialon_*.html i perevedeny na
+   tokeny. Imena vzyaty obshchie (vs-*), potomu chto kazhdoe iz nih otvechaet na
+   zadachu, kotoraya vstretitsya i v drugih modulyah. */
+
+/* Kartochka-tablica, u kotoroy vsya ramka neset smysl "trebuet vnimaniya" /
+   "oshibka". Ran'she cvet stoyal fonom shapki inline v treh mestah, i vezde
+   po-svoemu (#e8f5ed, var(--warn-light), var(--danger-light)). */
+.vs-table-wrap-warning { border-color: var(--vs-warning); }
+.vs-table-wrap-warning > .vs-card-header {
+  background: var(--vs-warning-bg); border-bottom-color: var(--vs-warning);
+}
+.vs-table-wrap-warning > .vs-card-header .vs-card-title { color: var(--vs-warning); }
+.vs-table-wrap-danger { border-color: var(--vs-danger); }
+.vs-table-wrap-danger > .vs-card-header {
+  background: var(--vs-danger-bg); border-bottom-color: var(--vs-danger);
+}
+.vs-table-wrap-danger > .vs-card-header .vs-card-title { color: var(--vs-danger); }
+
+/* Ton chisla v yacheyke: ne badzh i ne knopka, prosto okrashennoe znachenie.
+   [REASON]: znacheniya vzyaty iz tokenov, proshedshih raschet kontrasta v
+   DD-021 (>= 4.5 na svetlom fone). Do etogo cvet stoyal inline vyrazheniem
+   `color:{% if pct>=0.9 %}var(--accent){% elif ... %}` pryamo v atribute. */
+.vs-tone.is-success { color: var(--vs-success); }
+.vs-tone.is-warning { color: var(--vs-warning); }
+.vs-tone.is-danger  { color: var(--vs-danger); }
+
+/* DD-033, tip 4: polosa-dolya "skolko iz skolkih". Edinstvennaya
+   vizualizaciya, kotoraya v produkte uzhe byla -- narisovannaya dvumya
+   vlozhennymi <div> s inline-shirinoy. Gradientov vnutri net namerenno:
+   gradient delaet dlinu polosy neodnoznachnoy. Chislo stoit ryadom tekstom --
+   grafik ne mozhet byt edinstvennym nositelem znacheniya. */
+.vs-meter {
+  height: 10px; border-radius: var(--vs-r-pill);
+  background: var(--vs-surface-3);
+  overflow: hidden;
+}
+.vs-meter-fill { display: block; height: 100%; border-radius: var(--vs-r-pill); background: var(--vs-primary); }
+.vs-meter-fill.is-success { background: var(--vs-success); }
+.vs-meter-fill.is-warning { background: var(--vs-warning); }
+.vs-meter-fill.is-danger  { background: var(--vs-danger); }
+.vs-meter-label { display: block; margin-top: 3px; font-size: var(--vs-fs-sm); font-weight: 600; }
+
+/* Itogovaya stroka pod naborom tablic. */
+.vs-grand-label { font-size: var(--vs-fs-md); font-weight: 700; }
+.vs-grand-value { font-size: 22px; font-weight: 800; color: var(--vs-primary); }
+
+/* Ryad "tekst sleva, deystvie sprava" vnutri kartochki. */
+.vs-notice-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+}
+/* Ryad iz badzhey, kotorye perenosyatsya. */
+.vs-chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.vs-btn-warning { background: var(--vs-warning); color: #fff; border-color: var(--vs-warning); font-weight: 700; }
+.vs-btn-warning:hover { background: var(--vs-warning); color: #fff; border-color: var(--vs-warning); filter: brightness(.94); }
+
+.vs-hint { font-size: var(--vs-fs-sm); color: var(--vs-text-muted); margin-top: 4px; }
+.vs-inset-panel { background: var(--vs-surface-2); border-bottom: 1px solid var(--vs-border-3); }
+.vs-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.vs-ml-auto { margin-left: auto; }
+.vs-mt-xxs { margin-top: 4px; }
+
+/* Panel instrumentov, prilipayushchaya pod verhney polosoy: na ekrane
+   auto-match spisok dlinnyy, i poisk dolzhen ostavatsya pod rukoy. */
+.vs-toolbar.is-sticky { position: sticky; top: 56px; z-index: 40; }
+@media (max-width: 768px) { .vs-toolbar.is-sticky { top: 0; } }
+
+/* Stroki, kotorye pryachet i podsvechivaet skript ekrana auto-match. Imena
+   sohraneny: ih stavit i snimaet JS po stroke. */
+.automatch-row-hidden { display: none; }
+.automatch-row-error {
+  outline: 2px solid var(--vs-danger); outline-offset: -2px;
+  background: var(--vs-danger-bg);
+}
+
+/* Treugolnik raskrytiya v strokah-akkordeonah.
+   [REASON]: bylo simvolom '\25B6' s povorotom po klassu .open i tremya
+   pravilami v inline-<style> glavnogo ekrana. Simvol risuetsya SHRIFTOM: na
+   Windows ego beret Segoe UI Symbol, i on ne sovpadaet po opticheskomu vesu
+   i baseline ni s odnoy ikonkoy nabora. Teper eto ta zhe SVG-ikonka
+   'chevron', chto i vezde, i cvet u nee nasleduetsya ot teksta. */
+.vs-disclosure {
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--vs-text-muted);
+  transition: transform var(--vs-t-fast);
+}
+.vs-disclosure.is-open { transform: rotate(90deg); }
 
 .vs-accord-l2 td:nth-child(2) { padding-left: 34px; }
 .vs-accord-l3 td:nth-child(2) { padding-left: 56px; }
@@ -668,20 +1127,33 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   line-height: 1.5;
 }
 .vs-badge-sm { padding: 1px 7px; font-size: 10px; }
+/* Ikonka vnutri badzha vyravnivaetsya po tekstu, a ne po baseline glifa. */
+.vs-badge { display: inline-flex; align-items: center; gap: 4px; }
+/* DD-032: obvedennyy variant vmesto vtorogo nabora klassov pod kazhdoe
+   znachenie. Fon prozrachnyy, granica -- tekushchiy cvet roli. */
+.vs-badge.is-outline { background: transparent; border: 1px dashed currentColor; }
 .vs-badge-success { background: var(--vs-success-bg); color: var(--vs-success); }
 .vs-badge-warning { background: var(--vs-warning-bg); color: var(--vs-warning); }
 .vs-badge-danger  { background: var(--vs-danger-bg);  color: var(--vs-danger); }
 .vs-badge-info    { background: var(--vs-info-bg);    color: var(--vs-info); }
 .vs-badge-purple  { background: var(--vs-purple-bg);  color: var(--vs-purple); }
 
-.vs-badge-cat-mtz          { background: var(--vs-info-bg);    color: var(--vs-info); }
-.vs-badge-cat-yukori       { background: var(--vs-purple-bg);  color: var(--vs-purple); }
-.vs-badge-cat-yuk_transport{ background: var(--vs-warning-bg); color: var(--vs-warning); }
+/* DD-032: KLASSOV POD ZNACHENIE SPRAVOCHNIKA BOLSHE NET.
+   Zdes stoyali .vs-badge-cat-mtz, .vs-badge-cat-yukori,
+   .vs-badge-cat-yuk_transport, .vs-badge-role-admin, -operator,
+   -branch_operator, -viewer -- sem pravil, po odnomu na znachenie dannyh.
+   Vsego statusnykh znacheniy v sisteme okolo 25, i takoy podhod znachit
+   dvadcat pyat klassov vmesto odnogo komponenta.
 
-.vs-badge-role-admin           { background: var(--vs-danger-bg);  color: var(--vs-danger); }
-.vs-badge-role-operator        { background: var(--vs-success-bg); color: var(--vs-success); }
-.vs-badge-role-branch_operator { background: #e3f5f2;              color: #0d7d72; }
-.vs-badge-role-viewer          { background: var(--vs-info-bg);    color: var(--vs-info); }
+   [REASON]: udaleny imenno seychas, potomu chto do etogo kommita ih ne
+   ispolzovala NI ODNA razmetka: rol krasilas inline-stilem s tremya
+   hardkod-heksami pryamo v stroke tablicy (admin_users, admin_permissions),
+   a klass .vs-badge-role-* prosto lezhal ryadom i sozdaval vpechatlenie, chto
+   komponent est. Proverka pered udaleniem -- polnyy poisk po html/py/js:
+   sovpadeniy nol vne etogo fayla i dokumentacii.
+   Semantika teper peredaetsya parametrom: .vs-badge + .vs-badge-danger /
+   -success / -warning / -info / -purple, a sootvetstvie "rol -> ton"
+   ob'yavleno v shablone, gde ono i est reshenie o pokaze. */
 
 /* ---------- 10. LOGIN ------------------------------------------------- */
 .vs-login-page {
@@ -705,7 +1177,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-login-form .vs-btn-primary { width: 100%; margin-top: 24px; padding: 13px; font-size: 14.5px; border-radius: var(--vs-r); }
 .vs-login-foot {
   text-align: center; padding: 16px;
-  font-size: 11.5px; color: var(--vs-text-soft);
+  font-size: 11.5px; color: var(--vs-text-muted);
   border-top: 1px solid var(--vs-border-3);
 }
 
@@ -714,7 +1186,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   position: absolute; top: calc(100% + 8px); right: 0;
   min-width: 188px;
   background: #fff;
-  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r-lg);
+  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r);
   box-shadow: var(--vs-shadow-lg);
   padding: 6px; z-index: 50;
 }
@@ -735,19 +1207,32 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 /* ---------- 12. EMPTY / PLACEHOLDER ---------------------------------- */
 .vs-empty {
   border: 1px dashed #cdd7e5;
-  border-radius: var(--vs-r-xl);
+  border-radius: var(--vs-r-lg);
   background: #fff;
   padding: 64px 32px; text-align: center;
 }
 .vs-empty-ico {
   display: inline-flex; align-items: center; justify-content: center;
   width: 56px; height: 56px;
-  border-radius: var(--vs-r-xl);
+  border-radius: var(--vs-r-lg);
   background: var(--vs-primary-soft); color: var(--vs-primary);
   margin-bottom: 16px;
 }
 .vs-empty-title { font-size: 18px; font-weight: 700; margin: 0 0 6px; }
-.vs-empty-sub   { color: var(--vs-text-soft); font-size: 13.5px; margin: 0; }
+.vs-empty-sub   { color: var(--vs-text-muted); font-size: 13.5px; margin: 0; }
+
+/* Ikonka pustogo sostoyaniya.
+   [REASON]: PR-040 -- ran'she zdes' stoyal emodzi 48px pryamo v razmetke, na
+   ekrane, kotoryy nesyot 83 % raboty cheloveka. Emodzi risuetsya sistemnym
+   shriftom: drugoy vektor, ves i bazovaya liniya, chem u vsego ostal'nogo.
+   Razmer i cvet zadayutsya zdes', a ne inline-stilem v shablone. */
+.vs-empty-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 64px; height: 64px; margin: 0 auto 16px;
+  border-radius: var(--vs-r);
+  background: var(--vs-surface-3);
+  color: var(--vs-text-muted);
+}
 
 /* ---------- 13. UTILITIES -------------------------------------------- */
 .vs-stack    { display: flex; flex-direction: column; gap: 14px; }
@@ -763,12 +1248,23 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 @media (max-width: 1280px) {
   .vs-stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
-@media (max-width: 1100px) {
+/* DD-024: shkala iz CHETYREH znacheniy -- 1280 / 1024 / 768 / 480. Bylo
+   trinadcat, iz nih opasnye bliznecy: 768 i 760, 720 i 700, 1100 i 1050
+   (PR-004). Kazhdoe pravilo perenositsya po SODERZHANIYU, a ne po blizosti
+   chisla: 640 mozhet znachit i "telefon", i "uzkiy planshet", i reshaet eto
+   telo pravila.
+
+   Znacheniya sovpadayut s matricey vyeportov obhoda namerenno: syomka
+   popadaet VNUTR vetki CSS, a ne na ee granicu. Poetomu pri okne rovno
+   1024 px pravilo nizhe deystvuet. */
+@media (max-width: 1024px) {
+  /* Bylo 1100. Vtoraya stupen plotnosti setok pokazateley; pervaya -- 1280. */
   .vs-kpi-grid    { grid-template-columns: 1fr; }
   .vs-stat-grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .vs-stat-grid   { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-@media (max-width: 900px) {
+  /* Bylo 900. Shkala nazyvaet 1024 imenno etim perekhodom -- "planshet:
+     saydbar svorachivaetsya v ikonochnyy rels". Eto ono i est, i teper ono
+     proishodit tam, gde obyavleno, a ne na 124 px pozzhe. */
   .vs-sidebar { width: var(--vs-side-w-col); }
   .vs-sidebar .vs-side-label,
   .vs-sidebar .vs-side-section,
@@ -779,7 +1275,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 /* CYCLE-2-3 Part 6: below 768px the sidebar leaves the flow entirely and
    becomes an off-canvas overlay toggled by the existing topbar burger
    (base_next.html vsToggleSidebar). Full labels are restored inside the
-   overlay — the 900px icon-collapse above only makes sense while the
+   overlay — the 1024px icon-collapse above only makes sense while the
    sidebar still occupies horizontal space. The #vsSidebar id and the
    desktop is-collapsed behavior are untouched. */
 @media (max-width: 768px) {
@@ -836,7 +1332,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .ms-trigger::after {
   content: '▾'; position: absolute; right: 11px; top: 50%;
   transform: translateY(-50%); pointer-events: none;
-  color: var(--vs-text-soft);
+  color: var(--vs-text-muted);
 }
 .ms-trigger:hover { border-color: var(--vs-primary); }
 .ms-trigger:focus { outline: none; border-color: var(--vs-primary); box-shadow: var(--vs-ring-primary); }
@@ -845,7 +1341,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   top: calc(100% + 3px); left: 0; z-index: 500;
   background: #fff;
   border: 1px solid var(--vs-border-2);
-  border-radius: var(--vs-r-lg);
+  border-radius: var(--vs-r);
   box-shadow: var(--vs-shadow-lg);
   min-width: 100%;
   max-height: 340px; overflow-y: auto;
@@ -900,7 +1396,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   display: none;
 }
 .vs-multiselect-trigger .vs-ms-arrow {
-  flex: none; color: var(--vs-text-soft); display: flex;
+  flex: none; color: var(--vs-text-muted); display: flex;
   transition: transform var(--vs-t-fast);
 }
 .vs-multiselect.is-open .vs-multiselect-trigger .vs-ms-arrow {
@@ -911,7 +1407,7 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
   position: absolute; top: calc(100% + 4px); left: 0; z-index: 500;
   min-width: 240px; max-width: 360px; max-height: 320px;
   background: #fff;
-  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r-lg);
+  border: 1px solid var(--vs-border-2); border-radius: var(--vs-r);
   box-shadow: var(--vs-shadow-lg);
   overflow-y: auto;
   padding: 6px;
@@ -945,6 +1441,253 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 }
 .vs-multiselect-footer button:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
 
+/* ---------- ADAPT-1: POLOSA RAZDELOV MODULYA -------------------------
+   Podnyato iz DVUH pochti pobaytovo odinakovyh blokov <style> vnutri
+   templates/_spare_nav.html i templates/fuel/_fuel_nav.html -- po 21 stroke
+   kazhdyy, otlichalsya tolko prefiks klassa (.sp-nav / .fuel-nav). Tretya
+   realizaciya, u dronov, risovala tu zhe polosu knopkami .vs-btn i s drugim
+   sostoyaniem aktivnogo punkta. Odna zadacha -- tri vida (PR-011). */
+.vs-modulenav { position: relative; }
+.vs-modulenav .vs-pill { text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+.vs-modulenav .vs-pill:hover { text-decoration: none; }
+.vs-modulenav details { display: inline-flex; }
+.vs-modulenav summary { list-style: none; }
+.vs-modulenav summary::-webkit-details-marker { display: none; }
+.vs-modulenav summary::marker { display: none; content: ''; }
+.vs-modulenav-caret { font-size: 10px; line-height: 1; transition: transform var(--vs-t-fast); }
+.vs-modulenav details[open] .vs-modulenav-caret { transform: rotate(180deg); }
+/* [REASON]: pozicioniruyushchiy kontekst -- OBERTKA, a ne <details>: otkrytoe
+   menyu eto panel vo vsyu shirinu polosy, i togda ono ne mozhet vyyti za kray
+   okna, gde by ni okazalsya trigger posle perenosa ryada. I nikakogo
+   overflow-x ni zdes, ni u predkov: po specifikacii ustanovka odnoy osi v
+   ne-visible vychislyaet vtoruyu v auto, i panel s absolyutnym
+   pozicionirovaniem obrezalas by. Polosa vmesto etogo perenositsya. */
+.vs-modulenav-menu {
+  left: 0; right: 0;
+  display: flex; flex-wrap: wrap; gap: 2px;
+}
+.vs-modulenav-menu .vs-menu-item { width: auto; text-decoration: none; }
+.vs-modulenav-menu .vs-menu-item.is-current { color: var(--vs-primary); font-weight: 700; }
+
+/* [REASON]: ОДНА навигация видна за раз. Вложенный уровень в сайдбаре и
+   полоса внутри страницы несут ОДИН И ТОТ ЖЕ список — показывать оба значит
+   дважды писать одно на одном экране. Сайдбар виден на широких; ниже 768 px
+   он уезжает за край (см. .vs-sidebar в разделе оболочки), и там навигацию
+   несёт полоса. Порог тот же, что у самой панели: разойдутся пороги --
+   останется ширина, на которой не видно ни одной навигации. */
+.vs-modulenav { display: none; }
+@media (max-width: 768px) { .vs-modulenav { display: flex; } }
+
+/* ADAPT-1: vlozhennyy uroven v saydbare pod aktivnym modulem. */
+.vs-side-sub {
+  display: flex; flex-direction: column;
+  margin: 2px 0 6px;
+  padding-left: 30px;
+}
+.vs-side-sublink {
+  position: relative;
+  padding: 6px 12px 6px 12px;
+  margin: 0 10px;
+  border-radius: var(--vs-r-sm);
+  color: var(--vs-side-text-dim);
+  font-size: var(--vs-fs-sm);
+  text-decoration: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vs-side-sublink:hover { background: var(--vs-side-hover); color: var(--vs-side-active-fg); }
+.vs-side-sublink.is-active { color: var(--vs-side-active-fg); font-weight: 700; }
+/* Tochka u aktivnogo punkta vtorogo urovnya: polosa sleva uzhe zanyata
+   aktivnym MODULEM, i vtoraya polosa ryadom chitalas by kak tot zhe uroven. */
+.vs-side-sublink.is-active::before {
+  content: ''; position: absolute; left: 2px; top: 50%;
+  width: 5px; height: 5px; margin-top: -2.5px;
+  border-radius: 50%; background: var(--vs-side-active-bar);
+}
+/* V svernutom saydbare vtorogo urovnya net: tam net mesta dazhe pervomu. */
+.vs-sidebar.is-collapsed .vs-side-sub { display: none; }
+
+/* ---------- 17. TOOLBAR, GROUPS, COLLAPSE CARD, LINE ROW -------------
+   Podnyato iz inline-<style> vnutri daily_entry.html pri perevode etalonnogo
+   ekrana (P4). Tam bylo 386 strok, i BOLSHAYA IH CHAST -- lokalnaya kopiya
+   sloya sovmestimosti: .card, .btn, .btn-primary, .form-group, .text-muted
+   pereobyavlyalis zanovo, hotya vse eto uzhe est nizhe v etom fayle.
+   [REASON]: kopiya gruzilas POZZHE i vyigryvala kaskad, poetomu samyy
+   nagruzhennyy ekran sistemy (83 % vsekh deystviy cheloveka) vyglyadel
+   pohozhe na ostalnye, no upravlyalsya otdelno. Lyuboe izmenenie knopki v
+   dizayn-sisteme ego ne kasalos -- i eto ne bylo vidno nikomu. */
+
+/* Lipkaya polka deystviy nad spiskom. */
+.vs-toolbar {
+  position: sticky; top: var(--vs-top-h); z-index: 50;
+  display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  margin-bottom: 16px; padding: 10px;
+  background: var(--vs-bg);
+  border: 1px solid var(--vs-border); border-radius: var(--vs-r);
+  box-shadow: var(--vs-shadow);
+}
+.vs-toolbar .vs-toolbar-search { min-width: 240px; max-width: 360px; flex: 1; }
+/* Lipkaya polka sohraneniya vnizu formy. */
+.vs-sticky-actions {
+  position: sticky; bottom: 0; z-index: 20;
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  margin-top: 20px; padding: 12px;
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-border); border-radius: var(--vs-r);
+  box-shadow: var(--vs-shadow);
+}
+
+/* Gruppa strok pod obshchim zagolovkom (kategoriya tehniki, podrazdelenie). */
+.vs-group { margin-bottom: 14px; border: 1px solid var(--vs-border); border-radius: var(--vs-r); overflow: hidden; background: var(--vs-surface); }
+.vs-group-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 11px 14px;
+  background: var(--vs-surface-3); border-bottom: 1px solid var(--vs-border);
+  font-weight: 700; font-size: var(--vs-fs);
+}
+.vs-group-body { padding: 10px; }
+
+/* Kartochka s razvorachivaemym telom. */
+.vs-collapse-card {
+  border: 1px solid var(--vs-border); border-radius: var(--vs-r);
+  overflow: hidden; margin-bottom: 10px;
+  background: var(--vs-surface); box-shadow: var(--vs-shadow-sm);
+}
+.vs-collapse-card.is-working { border-left: 4px solid var(--vs-success); }
+.vs-collapse-card.is-idle    { border-left: 4px solid var(--vs-text-muted); }
+.vs-collapse-head {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 12px 14px;
+  background: var(--vs-surface-3);
+  border: 0; font: inherit; color: inherit; text-align: left; cursor: pointer;
+}
+/* [REASON]: golovka -- <button>, a ne <div onclick>. Ona razvorachivaet telo
+   kartochki, i s klaviatury eto dolzhno rabotat: 872 elementa upravleniya v
+   proekte uzhe bez dostupnogo imeni (PR-032), novyh dobavlyat nekuda. */
+.vs-collapse-head:focus-visible { outline: 2px solid var(--vs-primary); outline-offset: -2px; }
+.vs-collapse-title-wrap { flex: 1; min-width: 220px; }
+.vs-collapse-title { font-weight: 700; font-size: var(--vs-fs-md); line-height: 1.25; }
+.vs-collapse-sub { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.vs-collapse-tools { display: flex; gap: 8px; align-items: center; }
+.vs-collapse-amount { min-width: 120px; text-align: right; font-weight: 800; color: var(--vs-primary); font-variant-numeric: tabular-nums; }
+.vs-collapse-body { padding: 14px; }
+
+/* Povtoryayushchayasya stroka formy (odna rabota, odna pozitsiya). */
+.vs-line-row {
+  display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;
+  border: 1px solid transparent; border-radius: var(--vs-r);
+  padding: 8px; background: var(--vs-surface);
+}
+.vs-line-row:nth-child(even) { background: var(--vs-surface-2); }
+.vs-line-row.is-error { border-color: var(--vs-danger); background: var(--vs-danger-bg); }
+/* Stroka nachata, no ne dopolnena -- podskazka DO otpravki formy.
+   [REASON]: tekst podskazki prihodit iz RAZMETKI (.vs-line-row-hint), a ne iz
+   `content:` v CSS, kak bylo do P4. Tam stoyala odna russkaya stroka
+   "Проверьте вид работы, количество и цену" -- na uzbekskom interfeyse
+   pokazyvalas ona zhe, mimo t() i mimo pravila o dvuyazychnosti. Perevesti
+   `content:` nechem: CSS ne znaet yazyka polzovatelya. */
+.vs-line-row.is-incomplete { outline: 1px dashed var(--vs-warning); background: var(--vs-warning-bg); }
+.vs-line-row-hint { display: none; flex-basis: 100%; margin-top: 4px; color: var(--vs-warning); font-size: var(--vs-fs-sm); font-weight: 700; }
+.vs-line-row.is-incomplete .vs-line-row-hint { display: block; }
+.vs-line-row > .vs-field { flex: 0 1 auto; min-width: 0; }
+.vs-line-row > .vs-field-grow { flex: 1 1 160px; }
+
+/* Soedinennyy variant polosy pereklyucheniya: radio spryatan, vidna pilyulya. */
+.vs-toggle-group.is-joined {
+  border: 1px solid var(--vs-border-input); border-radius: var(--vs-r-sm);
+  overflow: hidden; gap: 0;
+}
+.vs-toggle-group.is-joined label {
+  border: 0; border-radius: 0; padding: 8px 16px;
+  background: var(--vs-surface); color: var(--vs-text-muted);
+}
+.vs-toggle-group.is-joined label + label { border-left: 1px solid var(--vs-border-input); }
+.vs-toggle-group.is-joined label:hover { background: var(--vs-surface-2); }
+.vs-toggle-group.is-joined input[type="radio"] {
+  position: absolute; opacity: 0; width: 0; height: 0; margin: 0;
+}
+.vs-toggle-group.is-joined label:has(input[type="radio"]:checked) {
+  background: var(--vs-primary); color: var(--vs-side-active-fg);
+}
+/* [REASON]: variant "prostoy" -- ne uspeh i ne otkaz, a predupreditelnaya
+   rol. Cvet zadaetsya modifikatorom na GRUPPE, a ne inline-stilem na
+   aktivnoy podpisi, kak bylo do P4. */
+.vs-toggle-group.is-joined.is-warning label:has(input[type="radio"]:checked) {
+  background: var(--vs-warning);
+}
+
+/* ---------- 18. ATTACHMENTS: PICKER, WARNING LINES, LIGHTBOX ----------
+   Podnyato iz inline-<style> vnutri spare_part_detail.html pri perevode
+   etalonnogo ekrana (P4). Tam eti 27 strok byli napisany na LEGACY-
+   peremennyh (--danger, --surface2, --text2, --warn-light) s fallback-
+   znacheniyami -- to est mimo dvuhurovnevoy skhemy DD-023 i mimo temnoy temy.
+   Zdes oni na tokenah.
+
+   [REASON]: imena klassov OSTAVLENY s prefiksom .sp-. Ih stroit
+   static/js/spare_parts_upload.js -- 16 obrashcheniy -- i tot zhe vidzhet
+   stoit v spare_part_form.html. Pereimenovanie radi krasoty prefiksa
+   slomalo by vidzhet MOLCHA: testy u zagruzki servernye i razmetku ne
+   proveryayut. Pereimenovanie -- otdelnaya zadacha migracii modulya (P6),
+   gde ono delaetsya vmeste s JS i s pereszemkoy. */
+.sp-upload-btn.is-error { border-color: var(--vs-danger) !important; color: var(--vs-danger); }
+.sp-upload-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.sp-upload-item {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--vs-surface-2); border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-sm); padding: 3px 5px;
+}
+.sp-upload-thumb {
+  width: 28px; height: 28px; flex: none;
+  border-radius: var(--vs-r-sm); overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--vs-surface); font-size: 15px;
+}
+.sp-upload-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.sp-upload-meta { flex: 1; min-width: 0; }
+.sp-upload-name {
+  font-size: 10.5px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; max-width: 110px;
+}
+.sp-upload-size { font-size: 10px; color: var(--vs-text-muted); }
+.sp-upload-remove {
+  flex: none; border: none; background: none; color: var(--vs-danger);
+  cursor: pointer; font-size: 12px; padding: 2px 4px;
+  min-width: 32px; min-height: 32px;
+}
+.sp-upload-msg { font-size: 10.5px; color: var(--vs-danger); margin-top: 4px; display: none; }
+
+.sp-warn {
+  margin-top: 4px; padding: 6px 8px;
+  border-radius: var(--vs-r-sm); font-size: var(--vs-fs-sm); line-height: 1.4;
+  display: flex; align-items: flex-start; gap: 5px;
+}
+.sp-warn.is-red    { background: var(--vs-danger-bg);  color: var(--vs-danger);  border: 1px solid var(--vs-danger); }
+.sp-warn.is-yellow { background: var(--vs-warning-bg); color: var(--vs-warning); border: 1px solid var(--vs-warning); }
+
+.sp-lightbox {
+  position: fixed; inset: 0; z-index: 100;
+  display: none; align-items: center; justify-content: center;
+  background: var(--vs-overlay); padding: 24px;
+}
+.sp-lightbox.is-open { display: flex; }
+.sp-lightbox-panel {
+  background: var(--vs-surface); border-radius: var(--vs-r-lg);
+  max-width: min(92vw, 980px); max-height: 92vh;
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: var(--vs-shadow-lg);
+}
+.sp-lightbox-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; border-bottom: 1px solid var(--vs-border);
+}
+.sp-lightbox-meta { flex: 1; min-width: 0; }
+.sp-lightbox-name {
+  font-weight: 600; font-size: var(--vs-fs);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sp-lightbox-size { font-size: 11.5px; color: var(--vs-text-muted); }
+.sp-lightbox-body { overflow: auto; display: flex; align-items: center; justify-content: center; padding: 12px; }
+.sp-lightbox-body img { max-width: 100%; max-height: calc(92vh - 90px); border-radius: var(--vs-r-sm); }
+
 /* ==========================================================================
    COMPATIBILITY LAYER — maps legacy class names to vs-* tokens.
    Covers ~30 templates that use .card/.btn/.form-group/table etc.
@@ -952,44 +1695,49 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
    NOTE: daily_entry.html defines its own local copies of some of these;
    its inline <style> loads later and wins the cascade (intended).
    ========================================================================== */
+/* [REASON]: 29 pravil sloya udaleny v P5 -- ni odno iz nih ne ispolzuetsya ni
+   odnim shablonom, ni odnim skriptom, ni odnim pitonovskim generatorom
+   razmetki. Eto byli utility v duhe Bootstrap (.d-flex, .gap-2, .mb-3,
+   .fw-bold, .text-success...), zavedennye na vsyakiy sluchay i ne
+   ponadobivshiesya ni razu. Sloy sovmestimosti sushchestvuet, chtoby
+   NEMIGRIROVANNYE stranicy prodolzhali rabotat; pravilo, k kotoromu nikto ne
+   obrashchaetsya, etoy zadache ne sluzhit i tolko delaet vid, chto sloy
+   bolshe, chem est. Proverka -- polnyy poisk po repozitoriyu (html/py/js/md)
+   plyus otdelnyy poisk dinamicheskoy sborki imen klassov v JS: sovpadeniy
+   nol. Otsutstvie posledstviy izmereno pikselnym diffom po 72
+   nemigrirovannym stranicam. */
+
 
 /* Cards */
-.card           { background: var(--vs-surface); border: 1px solid var(--vs-border); border-radius: var(--vs-r-xl); box-shadow: var(--vs-shadow-sm); }
+.card           { background: var(--vs-surface); border: 1px solid var(--vs-border); border-radius: var(--vs-r-lg); box-shadow: var(--vs-shadow-sm); }
 .card-header    { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 14px 18px; border-bottom: 1px solid var(--vs-border-3); font-size: 14px; font-weight: 700; }
 .card-body      { padding: 16px 18px; }
-.card-footer    { padding: 12px 18px; border-top: 1px solid var(--vs-border-3); }
 .card-title     { font-size: 14px; font-weight: 700; margin: 0; }
-.card-subtitle  { font-size: 12.5px; color: var(--vs-text-muted); margin-top: 2px; }
 
 /* Buttons */
 .btn            { display: inline-flex; align-items: center; gap: 7px; padding: 9px 15px; font-family: var(--vs-font); font-size: var(--vs-fs); font-weight: 600; border: 1px solid var(--vs-border-input); border-radius: var(--vs-r); background: #fff; color: var(--vs-text); cursor: pointer; text-decoration: none; transition: all var(--vs-t-fast); }
 .btn:hover      { border-color: var(--vs-primary); color: var(--vs-primary); }
 .btn-primary    { background: var(--vs-primary); color: #fff; border-color: var(--vs-primary); font-weight: 700; }
-.btn-primary:hover { background: var(--vs-primary-hover); border-color: var(--vs-primary-hover); color: #fff; box-shadow: var(--vs-shadow-primary); }
-.btn-success    { background: var(--vs-brand-green); color: #fff; border-color: var(--vs-brand-green); font-weight: 700; }
-.btn-success:hover { background: var(--vs-brand-green-h); color: #fff; box-shadow: var(--vs-shadow-success); }
+.btn-primary:hover { background: var(--vs-primary-hover); border-color: var(--vs-primary-hover); color: #fff; }
+.btn-success    { background: var(--vs-success); color: #fff; border-color: var(--vs-success); font-weight: 700; }
+.btn-success:hover { background: var(--vs-success-h); color: #fff; }
 .btn-secondary  { background: #fff; color: var(--vs-text); border-color: var(--vs-border-input); }
 .btn-secondary:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
 .btn-danger     { color: var(--vs-danger); border-color: #f3d6d6; background: #fff; }
 .btn-danger:hover { background: var(--vs-danger); color: #fff; border-color: var(--vs-danger); }
 .btn-sm         { padding: 6px 12px; font-size: var(--vs-fs-sm); border-radius: var(--vs-r-sm); }
-.btn-lg         { padding: 12px 20px; font-size: 14.5px; border-radius: var(--vs-r-md); }
-.btn-link       { background: transparent; border: none; color: var(--vs-primary); padding: 0; font-family: var(--vs-font); font-size: var(--vs-fs); cursor: pointer; }
-.btn-link:hover { color: var(--vs-primary-hover); text-decoration: underline; }
+.btn-lg         { padding: 12px 20px; font-size: 14.5px; border-radius: var(--vs-r); }
 .btn-icon       { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--vs-border-input); border-radius: var(--vs-r-sm); background: #fff; color: var(--vs-text-muted); cursor: pointer; transition: all var(--vs-t-fast); }
 .btn-icon:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
 .btn-icon.btn-danger:hover { background: var(--vs-danger); color: #fff; border-color: var(--vs-danger); }
 
 /* Forms */
 .form-group     { margin-bottom: 14px; }
-.form-label, label.form-label { display: block; font-size: var(--vs-fs-xs); font-weight: 600; color: var(--vs-text-muted); margin-bottom: 5px; }
 .form-control   { width: 100%; font-family: var(--vs-font); font-size: var(--vs-fs); padding: 8px 11px; border: 1px solid var(--vs-border-input); border-radius: var(--vs-r-sm); background: #fff; color: var(--vs-text); outline: none; transition: border-color var(--vs-t-fast), box-shadow var(--vs-t-fast); }
 .form-control:focus { border-color: var(--vs-primary); box-shadow: var(--vs-ring-primary); }
-.form-control:disabled { background: var(--vs-surface-2); color: var(--vs-text-soft); }
+.form-control:disabled { background: var(--vs-surface-2); color: var(--vs-text-muted); }
 .form-inline    { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
 .form-inline .form-group { margin-bottom: 0; }
-.field-help, .form-text { display: block; font-size: var(--vs-fs-xs); color: var(--vs-text-soft); margin-top: 4px; }
-.input-group    { display: flex; }
 .input-group .form-control { border-radius: var(--vs-r-sm) 0 0 var(--vs-r-sm); }
 .input-group .btn { border-radius: 0 var(--vs-r-sm) var(--vs-r-sm) 0; border-left: none; }
 
@@ -1085,13 +1833,13 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
   padding: 14px 15px;
   background: #fff;
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-lg);
+  border-radius: var(--vs-r);
   box-shadow: var(--vs-shadow-sm);
 }
 .stat-card .label {
   font-size: 10.5px;
   font-weight: 600;
-  color: var(--vs-text-soft);
+  color: var(--vs-text-muted);
   text-transform: uppercase;
   letter-spacing: .4px;
   line-height: 1.3;
@@ -1123,38 +1871,14 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 
 /* Alerts */
 .alert          { padding: 10px 14px; border-radius: var(--vs-r); font-size: var(--vs-fs); margin-bottom: 12px; }
-.alert-success  { background: var(--vs-success-bg); color: var(--vs-success); }
 .alert-warning  { background: var(--vs-warning-bg); color: var(--vs-warning); }
-.alert-danger   { background: var(--vs-danger-bg);  color: var(--vs-danger); }
-.alert-info     { background: var(--vs-info-bg);    color: var(--vs-info); }
 
 /* Typography helpers */
 .text-muted     { color: var(--vs-text-muted); }
-.text-soft      { color: var(--vs-text-soft); }
 .text-center    { text-align: center; }
 .text-right     { text-align: right; }
 .text-sm        { font-size: var(--vs-fs-sm); }
 .text-xs        { font-size: var(--vs-fs-xs); }
-.text-success   { color: var(--vs-success); }
-.text-danger    { color: var(--vs-danger); }
-.text-warning   { color: var(--vs-warning); }
-.text-primary   { color: var(--vs-primary); }
-.fw-bold        { font-weight: 700; }
-.fw-semibold    { font-weight: 600; }
-
-/* Layout helpers */
-.d-flex         { display: flex; }
-.align-items-center { align-items: center; }
-.justify-content-between { justify-content: space-between; }
-.gap-2          { gap: 8px; }
-.gap-3          { gap: 12px; }
-.flex-1         { flex: 1; }
-.mb-0           { margin-bottom: 0; }
-.mb-2           { margin-bottom: 8px; }
-.mb-3           { margin-bottom: 14px; }
-.mt-2           { margin-top: 8px; }
-.mt-3           { margin-top: 14px; }
-.ms-auto        { margin-left: auto; }
 .w-100          { width: 100%; }
 
 /* page-header (legacy) */
@@ -1174,23 +1898,18 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
   --border:        var(--vs-border-2);
   --border-strong: var(--vs-border-2);
   --accent:        var(--vs-primary);
-  --accent-soft:   var(--vs-primary-soft);
   --accent-light:  var(--vs-primary-soft);
   --success-light: var(--vs-success-bg);
   --warning-light: var(--vs-warning-bg);
   --warn:          var(--vs-warning);
-  --warn-soft:     var(--vs-warning-bg);
   --warn-light:    var(--vs-warning-bg);
   --danger:        var(--vs-danger);
-  --danger-soft:   var(--vs-danger-bg);
   --danger-light:  var(--vs-danger-bg);
   --info:          var(--vs-info);
   --info-light:    var(--vs-info-bg);
-  --success:       var(--vs-brand-green);
-  --success-soft:  var(--vs-brand-green-s);
+  --success:       var(--vs-success);
   --text:          var(--vs-text);
   --text2:         var(--vs-text-muted);
-  --text3:         var(--vs-text-soft);
   --bg:            var(--vs-bg);
   --radius:        var(--vs-r);
   --shadow:        var(--vs-shadow);
@@ -1208,7 +1927,7 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 .vs-nextaction {
   background: var(--vs-surface);
   border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-lg);
+  border-radius: var(--vs-r);
   box-shadow: var(--vs-shadow);
   padding: 14px 18px;
 }
@@ -1217,7 +1936,11 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
   color: var(--vs-text-muted);
   font-size: var(--vs-fs-md);
 }
-@media (max-width: 640px) {
+/* DD-024: bylo 640. Sobstvennyy kommentariy pravila govorit "on phones", a
+   ne "on tablets" -- znachit shkalnoe znachenie zdes 480 ("odna kolonka"), a
+   ne 768. Perenos na 768 rasshiril by pravilo na planshety, to est pomenyal
+   by ego smysl radi krasoty chisla. */
+@media (max-width: 480px) {
   /* Full-width primary on phones (submit form and scroll anchor alike). */
   .vs-nextaction form { width: 100%; }
   .vs-nextaction .vs-btn-lg { width: 100%; justify-content: center; }
@@ -1236,17 +1959,17 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
   display: flex; align-items: center; justify-content: center;
   border-radius: 50%;
   font-size: 12px; font-weight: 700; line-height: 1;
-  background: var(--vs-surface); color: var(--vs-text-soft);
+  background: var(--vs-surface); color: var(--vs-text-muted);
   border: 2px solid var(--vs-border);
 }
 .vs-step-label { font-size: var(--vs-fs-sm); color: var(--vs-text-muted); white-space: nowrap; }
-.vs-step.is-done .vs-step-dot { background: var(--vs-brand-green); border-color: var(--vs-brand-green); color: #fff; }
+.vs-step.is-done .vs-step-dot { background: var(--vs-success); border-color: var(--vs-success); color: #fff; }
 .vs-step.is-done .vs-step-label { color: var(--vs-text); }
 .vs-step.is-current .vs-step-dot { background: var(--vs-primary); border-color: var(--vs-primary); color: #fff; box-shadow: var(--vs-ring-primary); }
 .vs-step.is-current .vs-step-label { color: var(--vs-text); font-weight: 700; }
 .vs-step.is-future .vs-step-dot { background: var(--vs-surface-2); }
 .vs-step-line { flex: 1 1 16px; min-width: 10px; max-width: 56px; height: 2px; border-radius: 1px; background: var(--vs-border-2); }
-.vs-step-line.is-done { background: var(--vs-brand-green); }
+.vs-step-line.is-done { background: var(--vs-success); }
 .vs-stepper-side {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 10px;
@@ -1286,7 +2009,7 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 }
 .vs-timeline-item > div:last-child { flex: 1; min-width: 0; }
 .vs-timeline-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.vs-timeline-time { color: var(--vs-text-soft); font-size: var(--vs-fs-xs); }
+.vs-timeline-time { color: var(--vs-text-muted); font-size: var(--vs-fs-xs); }
 .vs-timeline-body { margin-top: 1px; font-size: var(--vs-fs); overflow-wrap: anywhere; }
 
 /* Scroll-target highlight — next-action anchors flash the card they lead to.
@@ -1311,7 +2034,7 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
    never use `box-shadow: none` here, it would also kill the resting
    --vs-shadow-sm that .vs-card paints. */
 .vs-report-tile:hover { text-decoration: none; color: inherit; }
-.vs-report-tile-icon { flex: none; width: 44px; height: 44px; border-radius: var(--vs-r-md); display: flex; align-items: center; justify-content: center; }
+.vs-report-tile-icon { flex: none; width: 44px; height: 44px; border-radius: var(--vs-r); display: flex; align-items: center; justify-content: center; }
 .vs-report-tile-text { flex: 1; min-width: 0; }
 .vs-report-tile-title { font-size: var(--vs-fs-lg); font-weight: 700; }
 .vs-report-tile-sub { font-size: var(--vs-fs-sm); color: var(--vs-text-muted); margin-top: 4px; }
@@ -1321,8 +2044,9 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 .vs-report-tile.is-success .vs-report-tile-icon { color: var(--vs-success); background: var(--vs-success-bg); }
 .vs-report-tile.is-warning .vs-report-tile-icon { color: var(--vs-warning); background: var(--vs-warning-bg); }
 .vs-report-tile.is-danger  .vs-report-tile-icon { color: var(--vs-danger);  background: var(--vs-danger-bg); }
-@media (max-width: 1200px) { .vs-report-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 720px)  { .vs-report-tiles { grid-template-columns: 1fr; } }
+/* DD-024: bylo 1200 i 720 -- dva blizneca k 1280 i 768 bez svoego smysla. */
+@media (max-width: 1280px) { .vs-report-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 768px)  { .vs-report-tiles { grid-template-columns: 1fr; } }
 
 /* DRONE-ANALYTICS-001: additive only. Nothing above this line is modified.
    The sixth report tile accent. --vs-purple / --vs-purple-bg were defined at
@@ -1363,3 +2087,208 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 .vs-table tr.is-focus td:first-child { border-left: 3px solid var(--vs-primary); }
 .vs-check { display: inline-flex; align-items: center; gap: 6px; }
 .vs-check input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--vs-primary); }
+
+/* ---- P6, naryady: dva vida odnogo spiska --------------------------------
+   Na uzkom ekrane tablica iz vosmi kolonok chitaetsya ploho dazhe s
+   prokrutkoy, poetomu spisok pokazyvaetsya kartochkami. Razmetka otdaetsya
+   celikom v oboih vidah, pereklyuchaet ih CSS.
+   [REASON]: granica -- 768 po shkale DD-024, ta zhe, na kotoroy saydbar
+   uhodit v overlay. Odno chislo na dva resheniya, a ne dva blizkih. */
+.vs-table-wrap.is-wide-only { display: block; }
+.vs-list-cards { display: none; }
+@media (max-width: 768px) {
+  .vs-table-wrap.is-wide-only { display: none; }
+  .vs-list-cards { display: block; }
+}
+.vs-list-card {
+  display: block; text-decoration: none; color: inherit;
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-border); border-radius: var(--vs-r);
+  box-shadow: var(--vs-shadow-sm);
+  padding: 14px; margin-bottom: 10px;
+}
+.vs-list-card:hover { border-color: var(--vs-primary); }
+.vs-list-card:focus-visible { outline: 2px solid var(--vs-primary); outline-offset: 2px; }
+.vs-list-card-top {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 8px;
+}
+.vs-list-card-row { font-size: var(--vs-fs-sm); margin-top: 3px; }
+.vs-nowrap { white-space: nowrap; }
+
+/* ---- P6, karta zapisi: setka "podpis -> znachenie" ----------------------
+   Byla `.wod-grid`/`.wod-card` v inline-<style> odnogo shablona. Zadacha
+   obshchaya: pokazat dvenadcat polya odnoy zapisi tak, chtoby glaz shel po
+   podpisyam, a ne po ramkam. */
+.vs-def-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr));
+  gap: 12px; margin-bottom: 16px;
+}
+.vs-def-item {
+  background: var(--vs-surface); border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r); box-shadow: var(--vs-shadow-sm); padding: 12px;
+}
+.vs-def-item.is-full { grid-column: 1 / -1; }
+.vs-def-label {
+  color: var(--vs-text-muted); font-size: var(--vs-fs-xs); font-weight: 700;
+  text-transform: uppercase; letter-spacing: .4px; margin-bottom: 4px;
+}
+@media (max-width: 768px) { .vs-def-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 480px) { .vs-def-grid { grid-template-columns: 1fr; } }
+
+/* Lenta sobytiy zapisi. Bylo `.history-*` bez prefiksa v inline-<style> --
+   imena bez prefiksa opasny: oni stolknutsya s lyubym drugim ekranom. */
+.vs-history-entry {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline;
+  padding: 8px 0; border-bottom: 1px dashed var(--vs-border);
+  font-size: var(--vs-fs-sm);
+}
+.vs-history-entry:last-child { border-bottom: none; }
+.vs-history-time { color: var(--vs-text-muted); font-size: var(--vs-fs-xs); min-width: 120px; }
+.vs-history-actor { font-weight: 700; }
+.vs-history-event { color: var(--vs-text-muted); font-size: var(--vs-fs-xs); }
+.vs-history-comment { color: var(--vs-text-muted); font-style: italic; }
+@media (max-width: 768px) { .vs-history-entry { flex-direction: column; gap: 2px; } }
+
+.vs-mr-auto { margin-right: auto; }
+
+/* ---- P6, forma naryada -------------------------------------------------- */
+.vs-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.vs-form-grid .full { grid-column: 1 / -1; }
+@media (max-width: 768px) { .vs-form-grid { grid-template-columns: 1fr; } }
+
+.vs-hint.is-warning { color: var(--vs-warning); }
+/* Svodka oshibok formy: pokazyvaetsya skriptom pered otpravkoy. */
+.vs-form-errors { display: none; }
+.vs-form-errors.is-visible { display: block; }
+.vs-form-errors ul { margin: 6px 0 0 18px; }
+/* Imya sohraneno: klass stavit i snimaet skript ekrana pered otpravkoy. */
+.wof-err { border-color: var(--vs-danger) !important; box-shadow: var(--vs-ring-danger, 0 0 0 2px var(--vs-danger-bg)); }
+
+/* Tochka lenty sobytiy beret ton iz togo zhe nabora, chto i badzh statusa
+   (DD-032). Do etogo cvet prihodil inline iz slovarya cvetov v Python. */
+.vs-timeline-dot.is-info    { background: var(--vs-info); }
+.vs-timeline-dot.is-success { background: var(--vs-success); }
+.vs-timeline-dot.is-warning { background: var(--vs-warning); }
+.vs-timeline-dot.is-danger  { background: var(--vs-danger); }
+.vs-timeline-dot.is-muted   { background: var(--vs-text-muted); }
+
+/* ---- P6, zapchasti: to, chto zhilo v inline-<style> treh shablonov -------
+   Imena sohraneny s prefiksom sp-: ih stavit i snimaet skript formy
+   (static/js/spare_parts_upload.js i inline-obrabotchiki ekrana), pereimenovanie
+   potrebovalo by pravki JS bez vygody. Selektory `.sp-form-scope ...` snyaty --
+   oblast deystviya zadavalas obertkoy, kotoraya nuzhna byla tolko potomu, chto
+   pravila lezhali v shablone. */
+.sp-hint { font-size: 11.5px; color: var(--vs-text-muted); margin-top: 3px; line-height: 1.35; }
+.sp-hint.is-catalog { color: var(--vs-success); }
+.sp-hint.is-new     { color: var(--vs-warning); }
+
+.sp-repeat { display: none; margin-top: 4px; padding: 6px 8px; border-radius: var(--vs-r-sm); font-size: 11.5px; line-height: 1.4; }
+.sp-repeat.is-red     { display: block; background: var(--vs-danger-bg);  color: var(--vs-danger);  border: 1px solid var(--vs-danger); }
+.sp-repeat.is-yellow  { display: block; background: var(--vs-warning-bg); color: var(--vs-warning); border: 1px solid var(--vs-warning); }
+.sp-repeat.is-history { display: block; background: var(--vs-surface-2);  color: var(--vs-text-muted); border: 1px solid var(--vs-border); }
+
+.sp-fuzzy-label { font-size: var(--vs-fs-xs); color: var(--vs-text-muted); margin-top: 4px; }
+.sp-fuzzy-item {
+  display: inline-block; margin: 3px 4px 0 0; padding: 3px 8px;
+  font-size: 11.5px; line-height: 1.3;
+  background: var(--vs-surface-2); border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-pill); color: var(--vs-text); cursor: pointer;
+}
+.sp-fuzzy-item:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
+
+.sp-eq-ref { font-size: var(--vs-fs-sm); color: var(--vs-text-muted); margin-top: 4px; }
+.sp-eq-ref strong { color: var(--vs-text); }
+
+/* [REASON]: modifikator, a ne svoy klass tablicy. Pervaya redakciya postavila
+   syuda `.sp-form-table`, i chekery srazu ukazal: table-class 20 -> 21. On prav
+   -- kontrakt razreshaet u .vs-table tolko modifikatory is-*, i imenno tak
+   odnorazovye klassy tablic i zavodilis ran'she. Vyravnivanie po verhu nuzhno
+   vezde, gde v yacheykah mnogostrochnye redaktory. */
+.vs-table.is-top td { vertical-align: top; }
+.sp-toolbar { position: sticky; top: 0; z-index: 30; }
+
+/* Inline-forma osvobozhdeniya rezerva v tablice ostatkov. */
+.sp-res-release-form { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
+.sp-res-note { width: 150px; font-size: var(--vs-fs-sm); padding: 4px 6px; }
+
+/* Nol na stole zapchastey -- normalnoe tikhoe sostoyanie, a ne trevoga. */
+.sp-desk-zero { color: var(--vs-text-muted); }
+.sp-desk-my .vs-kpi-value { font-size: 24px; }
+
+/* ---- PECHAT OTCHETOV ----------------------------------------------------
+   Odin nabor pravil na ves produkt. Do etogo TOT ZHE blok @media print lezhal
+   v inline-<style> chetyreh shablonov otchetov AZS -- tri iz nih sovpadali
+   pobaytovo (md5 24778f9f9f91), chetvertyy otlichalsya tolko spiskom
+   dopolnitelno pryachemyh elementov svoego ekrana.
+   [REASON]: pravilo pechati -- povedenie produkta, a ne odnogo ekrana. Poka
+   ono lezhalo v shablonah, kazhdyy novyy otchet nachinalsya s kopirovaniya
+   bloka, i lyubaya pravka (naprimer, novyy element, kotoryy nado skryt pri
+   pechati) trebovala chetyreh odinakovyh pravok -- to est rano ili pozdno
+   razoshlas by.
+   Skryvaemoe ob'yavlyaetsya klassom .vs-no-print: ekran dobavlyaet ego svoim
+   elementam i ne trogaet obshchee pravilo. */
+@media print {
+  @page { size: A4 landscape; margin: 12mm 10mm 16mm; }
+  body { background: var(--vs-print-bg); }
+  .vs-sidebar, .vs-topbar, .vs-side-backdrop, .vs-skip-link,
+  .vs-modulenav, .fuel-nav, .fuel-no-print, .vs-no-print,
+  .vs-alert { display: none !important; }
+  .vs-content { padding: 0; max-width: none; }
+  .vs-card, .card, .vs-table-wrap { box-shadow: none; border-color: var(--vs-print-border); }
+  table { font-size: 10px; white-space: normal !important; }
+  table thead { display: table-header-group; }
+  .vs-print-footer {
+    display: block !important; position: fixed; bottom: 0; left: 0; right: 0;
+    text-align: center; font-size: 10px; color: var(--vs-print-muted);
+  }
+}
+.vs-print-footer { display: none; }
+
+/* Stroka-gruppa v tablice otcheta: zagolovok razdela vnutri tela tablicy.
+   Bylo `background:#f0f9f0; color:#166534` v dvuh shablonah -- hardkod, mimo
+   tokenov i mimo proverki kontrasta DD-021. */
+.vs-table tbody tr.is-group td {
+  background: var(--vs-success-bg); color: var(--vs-success);
+  font-weight: 700;
+}
+/* Raskryvayushchayasya podrobnost vnutri yacheyki (details/summary). */
+/* Itogovaya stroka vnutri tela tablicy (ne tfoot): tri otcheta AZS risovali
+   ee inline `background:#fefce8` -- odin i tot zhe hardkod v treh mestah. */
+.vs-table tbody tr.is-total td { background: var(--vs-warning-bg); font-weight: 700; }
+
+.vs-table details { display: inline-block; }
+.vs-table summary {
+  cursor: pointer; list-style: none;
+  color: var(--vs-text-muted); font-size: var(--vs-fs-sm);
+}
+.vs-table summary::-webkit-details-marker { display: none; }
+
+/* ---- P6, AZS: setka podskazok pod shapkoy ekrana ------------------------
+   Byla `.fuel002X-guidance-panel` + `.fuel002X-guidance-card` -- odin i tot zhe
+   komponent pod TREMYA raznymi imenami, po odnomu na ekran (002a, 002c, 002e).
+   Eto tot samyy simptom, radi kotorogo trek zaveden: inkrement delaet svoy CSS
+   vmesto obshchego komponenta. */
+.vs-guide-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 10px; margin-bottom: 16px;
+}
+.vs-guide-card { padding: 10px 12px; }
+.vs-guide-card strong { display: block; margin-bottom: 4px; font-size: var(--vs-fs-sm); }
+.vs-guide-card span { display: block; color: var(--vs-text-muted); font-size: var(--vs-fs-xs); line-height: 1.4; }
+@media (max-width: 1024px) { .vs-guide-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 480px)  { .vs-guide-grid { grid-template-columns: 1fr; } }
+
+/* [REASON]: `.fuel002c-delete-submitted` skript veshaet na formu udaleniya pri
+   otpravke -- i pravila u etogo klassa NE BYLO NIKOGDA, ni v inline-<style>
+   shablona, ni zdes (provereno po istorii fayla). To est zashchita ot vtorogo
+   nazhatiya byla ob'yavlena imenem i nichego ne delala: forma udaleniya
+   ostavalas nazhimaemoy, poka shel zapros.
+   Pravilo napisano rovno po smyslu imeni i nichego k nemu ne dobavlyaet. */
+.fuel002c-delete-submitted { pointer-events: none; opacity: .55; }
+
+/* Kartochka preduprezhdeniya v spiske AZS: ne tablica, a lenta zapisey s
+   akcentom po tyazhesti. Bylo `.warning-card` + `.danger/.warning/.info` v
+   inline-<style> odnogo ekrana; akcent teper obshchiy .vs-card-accent-*. */
+.vs-warn-card { padding: 14px; margin-bottom: 12px; }
+.vs-warn-title { font-weight: 700; margin-bottom: 4px; }

@@ -39,6 +39,12 @@
 
 {# ===== AUTHENTICATED SHELL ===== #}
 {% set current = request.endpoint or '' %}
+{# [REASON]: импорт стоит ЗДЕСЬ, а не в шапке файла. Набор разделов
+   строится сразу при импорте и обращается к правам
+   (current_user.has_module_access). На странице входа current_user
+   анонимен, такого метода у него нет, и вызов Undefined роняет
+   страницу входа целиком — то есть весь вход в систему. #}
+{% from '_module_nav.html' import sidebar_nav with context %}
 {# CYCLE-2-3 Part 3 (SP-F-004/RE-SP-004): skip-to-content link — first
    focusable element on the page, visually hidden until keyboard focus. #}
 <a href="#vsContent" class="vs-skip-link">{{ 'Перейти к содержимому' if g.lang == 'ru' else 'Мазмунга ўтиш' }}</a>
@@ -112,6 +118,7 @@
         </span>
         <span class="vs-side-label">{{ 'Запчасти' if g.lang == 'ru' else 'Эҳтиёт қисмлар' }}</span>
       </a>
+      {% if current and current.startswith('spare_parts.') %}{{ sidebar_nav('spare_parts') }}{% endif %}
       {% endif %}
 
       {# [REASON]: UI-SIDEBAR-GATE-001 — same permission that gates the route:
@@ -126,6 +133,7 @@
         </span>
         <span class="vs-side-label">{{ 'АЗС' if g.lang == 'ru' else 'АЁҚШ' }}</span>
       </a>
+      {% if current and current.startswith('fuel.') %}{{ sidebar_nav('fuel') }}{% endif %}
       {% endif %}
 
       {# [REASON]: DRONE-001 — same permission that gates the routes: without
@@ -141,6 +149,7 @@
         </span>
         <span class="vs-side-label">{{ 'Дроны' if g.lang == 'ru' else 'Дронлар' }}</span>
       </a>
+      {% if current and current.startswith('drones.') %}{{ sidebar_nav('drones') }}{% endif %}
       {% endif %}
 
       <a href="{{ url_for('wialon_index') }}" class="vs-side-link{% if current and current.startswith('wialon') %} is-active{% endif %}">
@@ -288,6 +297,12 @@
 {% endif %}
 
 {% block scripts %}{% endblock %}
+{# DD-029: klientskaya sortirovka .vs-table.is-static. Vneshniy fayl, a ne
+   inline: on kешiruetsya i ne popolnyaet 2836 strok inline-JS, kotorye trek
+   sokrashchaet. defer -- razmetka uzhe postroena k momentu zapuska. #}
+<script src="{{ static_v('js/vs-table.js') }}" defer></script>
+<script src="{{ static_v('js/vs-multiselect.js') }}" defer></script>
+<script src="{{ static_v('js/vs-nav.js') }}" defer></script>
 <script>
 /* CYCLE-2-3 Part 6: burger behavior — off-canvas overlay below 768px,
    original width-collapse toggle above it. */

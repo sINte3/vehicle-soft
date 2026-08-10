@@ -1,16 +1,11 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти — склад' if is_ru else 'Эҳтиёт қисмлар — омбор' }}{% endblock %}
 {% block content %}
 {% include '_spare_nav.html' %}
 {# SP-F-013: programmatic label associations (for=/id, aria-label) — additive only. #}
 
-<style>
-/* SP-RESERVE-003 scoped styles: inline release form in the active
-   reservations table (design-system.css must not be edited). */
-.sp-res-release-form { display:flex; gap:6px; justify-content:flex-end; align-items:center; }
-.sp-res-note { width:150px; font-size:12px; padding:4px 6px; }
-</style>
 
 {# SP-DESK-001: the old cross-navigation cluster moved to the shared tab strip. #}
 <div class="vs-hero vs-mb">
@@ -101,7 +96,7 @@
             </div>
             <div class="vs-field" style="flex:none;">
                 <label class="vs-label">&nbsp;</label>
-                <button type="submit" class="vs-btn vs-btn-primary">💾 {{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+                <button type="submit" class="vs-btn vs-btn-primary">{{ icon('save', 14) }} {{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
             </div>
         </form>
     </div>
@@ -114,7 +109,7 @@
     </div>
     {% if inventory_rows %}
     <div class="vs-table-scroll">
-    <table class="vs-table">
+    <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
                 <th style="width:40px;">№</th>
@@ -156,7 +151,7 @@
     </div>
     {% else %}
     <div class="vs-empty">
-        <div class="vs-empty-ico">📦</div>
+        <div class="vs-empty-ico">{{ icon('box', 28) }}</div>
         <div class="vs-empty-title">{{ 'Остатков пока нет' if is_ru else 'Ҳозирча қолдиқ йўқ' }}</div>
         <div class="vs-empty-sub">{{ 'Строки появляются после первого прихода или корректировки.' if is_ru else 'Қаторлар биринчи кирим ёки тузатишдан кейин пайдо бўлади.' }}</div>
     </div>
@@ -201,7 +196,7 @@
         </form>
         {% if min_levels %}
         <div class="vs-table-scroll">
-        <table class="vs-table">
+        <table class="vs-table is-static" data-sortable>
             <thead>
                 <tr>
                     <th>{{ 'Запчасть' if is_ru else 'Эҳтиёт қисм' }}</th>
@@ -239,7 +234,7 @@
     </div>
     {% if reservations %}
     <div class="vs-table-scroll">
-    <table class="vs-table">
+    <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
                 <th>{{ 'Запчасть' if is_ru else 'Эҳтиёт қисм' }}</th>
@@ -279,7 +274,7 @@
     </div>
     {% else %}
     <div class="vs-empty">
-        <div class="vs-empty-ico">🔒</div>
+        <div class="vs-empty-ico">{{ icon('blocked', 28) }}</div>
         <div class="vs-empty-title">{{ 'Активных резервов нет' if is_ru else 'Фаол захиралар йўқ' }}</div>
         <div class="vs-empty-sub">{{ 'Резерв создаётся при утверждении заявки и снимается при выдаче.' if is_ru else 'Захира сўров тасдиқланганда яратилади ва беришда ечилади.' }}</div>
     </div>
@@ -293,7 +288,7 @@
     </div>
     {% if movements %}
     <div class="vs-table-scroll">
-    <table class="vs-table">
+    <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
                 <th>{{ 'Дата' if is_ru else 'Сана' }}</th>
@@ -332,7 +327,7 @@
     </div>
     {% else %}
     <div class="vs-empty">
-        <div class="vs-empty-ico">📄</div>
+        <div class="vs-empty-ico">{{ icon('doc', 28) }}</div>
         <div class="vs-empty-title">{{ 'Движений пока нет' if is_ru else 'Ҳозирча ҳаракат йўқ' }}</div>
         <div class="vs-empty-sub">{{ 'Здесь появится журнал приходов, корректировок и выдач.' if is_ru else 'Бу ерда кирим, тузатиш ва беришлар журнали пайдо бўлади.' }}</div>
     </div>

@@ -1,177 +1,160 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
-{% block title %}{{ 'Наряды' if is_ru else 'Buyurtmalar' }}{% endblock %}
+{% block title %}{{ 'Наряды' if is_ru else 'Буюртмалар' }}{% endblock %}
 {% block content %}
 
-<style>
-/* WORK-ORDER-001: work orders list, scoped styles reuse base design tokens. */
-.wo-scope .wo-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
-.wo-scope .wo-hero h1 { margin-bottom:6px; }
-.wo-scope .wo-counters { display:grid; grid-template-columns:repeat(4,minmax(140px,1fr)); gap:12px; margin-bottom:16px; }
-.wo-scope .wo-counter { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:14px 16px; box-shadow:var(--shadow); }
-.wo-scope .wo-counter .label { color:var(--text2); font-size:12px; font-weight:600; }
-.wo-scope .wo-counter .value { font-size:24px; font-weight:800; margin-top:4px; letter-spacing:-0.5px; }
-.wo-scope .wo-counter.danger .value { color:var(--danger); }
-.wo-scope .wo-filter { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
-.wo-scope .wo-filter .form-group { margin-bottom:0; }
-.wo-scope .wo-badge { display:inline-flex; align-items:center; border-radius:999px; padding:3px 10px; font-size:12px; font-weight:700; background:var(--surface2); white-space:nowrap; }
-.wo-scope .wo-table-wrap { overflow-x:auto; }
-.wo-scope .wo-number { font-weight:700; white-space:nowrap; }
-.wo-scope .wo-muted { color:var(--text2); font-size:12px; }
-.wo-scope .wo-cards { display:none; }
-.wo-scope .wo-card { display:block; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:14px; margin-bottom:10px; text-decoration:none; color:var(--text); }
-.wo-scope .wo-card-top { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:8px; }
-.wo-scope .wo-card-row { font-size:13px; margin-top:3px; }
-.wo-scope .wo-card-row .k { color:var(--text2); }
-.wo-scope .wo-empty { text-align:center; padding:40px; color:var(--text2); }
-@media (max-width:768px) {
-    .wo-scope .wo-counters { grid-template-columns:1fr 1fr; }
-    .wo-scope .wo-hero { flex-direction:column; }
-    .wo-scope .wo-table-wrap { display:none; }
-    .wo-scope .wo-cards { display:block; }
-}
-</style>
-
-<div class="wo-scope">
-
-<div class="wo-hero">
-    <div>
-        <div class="page-header">
-            <h1>{{ 'Наряды' if is_ru else 'Buyurtmalar' }}</h1>
-            <div class="text-muted text-sm">
-                {{ 'Оперативный журнал нарядов по технике.' if is_ru else 'Texnika bo‘yicha buyurtmalar jurnali.' }}
-            </div>
-        </div>
-    </div>
+{# Заголовок экрана рисует base_next из {% block title %}: свой <h1> был
+   вторым заголовком того же экрана. #}
+<div class="vs-row-end vs-mb">
+    <span class="vs-muted">{{ 'Оперативный журнал нарядов по технике.' if is_ru else 'Техника бўйича буюртмалар журнали.' }}</span>
     {% if can_create %}
-    <a href="{{ url_for('work_orders.new') }}" class="btn btn-primary">
-        + {{ 'Новый наряд' if is_ru else 'Yangi buyurtma' }}
+    <a href="{{ url_for('work_orders.new') }}" class="vs-btn vs-btn-primary">
+        {{ icon('plus', 15) }}{{ 'Новый наряд' if is_ru else 'Янги буюртма' }}
     </a>
     {% endif %}
 </div>
 
-<!-- Counter bar -->
-<div class="wo-counters">
-    <div class="wo-counter">
-        <div class="label">{{ 'Всего открытых' if is_ru else 'Jami ochiq' }}</div>
-        <div class="value">{{ status_counts.total_open }}</div>
+{# ADOPT-1: полоса показателей — тот же компонент, что на главной. #}
+<div class="vs-kpi-strip">
+  <div class="vs-kpi-strip-body">
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Всего открытых' if is_ru else 'Жами очиқ' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ status_counts.total_open }}</span>
     </div>
-    <div class="wo-counter">
-        <div class="label">{{ 'В работе' if is_ru else 'Ishda' }}</div>
-        <div class="value">{{ status_counts.in_progress }}</div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'В работе' if is_ru else 'Ишда' }}</span>
+      <span class="vs-kpi-strip-value vs-num is-warning">{{ status_counts.in_progress }}</span>
     </div>
-    <div class="wo-counter">
-        <div class="label">{{ 'Выполнено сегодня' if is_ru else 'Bugun bajarildi' }}</div>
-        <div class="value">{{ status_counts.done_today }}</div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Выполнено сегодня' if is_ru else 'Бугун бажарилди' }}</span>
+      <span class="vs-kpi-strip-value vs-num is-success">{{ status_counts.done_today }}</span>
     </div>
-    <div class="wo-counter {% if status_counts.overdue > 0 %}danger{% endif %}">
-        <div class="label">{{ 'Просрочено' if is_ru else 'Muddati o‘tgan' }}</div>
-        <div class="value">{{ status_counts.overdue }}</div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Просрочено' if is_ru else 'Муддати ўтган' }}</span>
+      <span class="vs-kpi-strip-value vs-num {% if status_counts.overdue %}is-danger{% endif %}">{{ status_counts.overdue }}</span>
     </div>
+  </div>
 </div>
 
-<!-- Filter toolbar -->
-<div class="card" style="margin-bottom:16px;">
-    <div class="card-body" style="padding:12px 16px;">
-        <form method="get" action="{{ url_for('work_orders.index') }}" class="wo-filter">
-            <div class="form-group" style="min-width:180px;">
-                <label>{{ 'Статус' if is_ru else 'Holat' }}</label>
-                <select name="status" class="form-control">
-                    <option value="" {% if filters.status == '' %}selected{% endif %}>{{ 'Активные' if is_ru else 'Faol' }}</option>
-                    <option value="all" {% if filters.status == 'all' %}selected{% endif %}>{{ 'Все' if is_ru else 'Hammasi' }}</option>
+<div class="vs-card vs-mb">
+    <div class="vs-card-body">
+        <form method="get" action="{{ url_for('work_orders.index') }}" class="vs-form-row">
+            <div class="vs-field" style="min-width:180px;">
+                <label class="vs-label" for="woStatus">{{ 'Статус' if is_ru else 'Ҳолат' }}</label>
+                <select name="status" id="woStatus" class="vs-select">
+                    <option value="" {% if filters.status == '' %}selected{% endif %}>{{ 'Активные' if is_ru else 'Фаол' }}</option>
+                    <option value="all" {% if filters.status == 'all' %}selected{% endif %}>{{ 'Все' if is_ru else 'Ҳаммаси' }}</option>
                     {% for s in statuses %}
                     <option value="{{ s }}" {% if filters.status == s %}selected{% endif %}>{{ status_labels[s] }}</option>
                     {% endfor %}
                 </select>
             </div>
-            <div class="form-group" style="min-width:200px;">
-                <label>{{ 'Организация' if is_ru else 'Tashkilot' }}</label>
-                <select name="org_id" class="form-control">
-                    <option value="">{{ '— все организации —' if is_ru else '— barcha tashkilotlar —' }}</option>
+            <div class="vs-field" style="min-width:200px;">
+                <label class="vs-label" for="woOrg">{{ 'Организация' if is_ru else 'Ташкилот' }}</label>
+                <select name="org_id" id="woOrg" class="vs-select">
+                    <option value="">{{ '— все организации —' if is_ru else '— барча ташкилотлар —' }}</option>
                     {% for org in organizations %}
                     <option value="{{ org.id }}" {% if filters.org_id == org.id %}selected{% endif %}>{{ org.short_name or org.name }}</option>
                     {% endfor %}
                 </select>
             </div>
-            <div class="form-group">
-                <label>{{ 'Дата с' if is_ru else 'Sana dan' }}</label>
-                <input type="date" name="date_from" class="form-control" value="{{ filters.date_from }}">
+            <div class="vs-field" style="min-width:160px;">
+                <label class="vs-label" for="woFrom">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
+                <input type="date" id="woFrom" name="date_from" class="vs-input" value="{{ filters.date_from }}">
             </div>
-            <div class="form-group">
-                <label>{{ 'Дата по' if is_ru else 'Sana gacha' }}</label>
-                <input type="date" name="date_to" class="form-control" value="{{ filters.date_to }}">
+            <div class="vs-field" style="min-width:160px;">
+                <label class="vs-label" for="woTo">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
+                <input type="date" id="woTo" name="date_to" class="vs-input" value="{{ filters.date_to }}">
             </div>
-            <button type="submit" class="btn btn-secondary">{{ 'Показать' if is_ru else 'Ko‘rsatish' }}</button>
+            <div class="vs-field vs-field-action">
+                <button type="submit" class="vs-btn vs-btn-primary">{{ icon('filter', 15) }}{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+            </div>
         </form>
     </div>
 </div>
 
 {% if work_orders %}
-<!-- Desktop table -->
-<div class="card wo-table-wrap">
-    <table>
+{# DD-028, режим is-static: на боевой базе 3 наряда, всё помещается.
+   DD-029: умолчание сортировки не объявлено — маршрут отдаёт свой порядок
+   (плановая дата, затем номер), и клиентская сортировка по одной колонке
+   заменила бы его при каждой загрузке. Сортировка по нажатию доступна. #}
+<div class="vs-table-wrap is-wide-only">
+    <div class="vs-table-scroll">
+    <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
-                <th>№</th>
-                <th>{{ 'Дата' if is_ru else 'Sana' }}</th>
-                <th>{{ 'Организация' if is_ru else 'Tashkilot' }}</th>
-                <th>{{ 'Техника' if is_ru else 'Texnika' }}</th>
-                <th>{{ 'Тип работы' if is_ru else 'Ish turi' }}</th>
-                <th>{{ 'Исполнитель' if is_ru else 'Ijrochi' }}</th>
-                <th>{{ 'Статус' if is_ru else 'Holat' }}</th>
-                <th>{{ 'Действия' if is_ru else 'Amallar' }}</th>
+                <th data-sort>№</th>
+                <th data-sort>{{ 'Дата' if is_ru else 'Сана' }}</th>
+                <th data-sort>{{ 'Организация' if is_ru else 'Ташкилот' }}</th>
+                <th data-sort>{{ 'Техника' if is_ru else 'Техника' }}</th>
+                <th data-sort>{{ 'Тип работы' if is_ru else 'Иш тури' }}</th>
+                <th data-sort>{{ 'Исполнитель' if is_ru else 'Ижрочи' }}</th>
+                <th data-sort>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
+                <th class="right">{{ 'Действия' if is_ru else 'Амаллар' }}</th>
             </tr>
         </thead>
         <tbody>
             {% for wo in work_orders %}
             {% set eq_label = wo.equipment.name ~ ((' — ' ~ wo.equipment.plate) if wo.equipment and wo.equipment.plate else '') if wo.equipment else '—' %}
             <tr>
-                <td class="wo-number"><a href="{{ url_for('work_orders.detail', wo_id=wo.id) }}">{{ wo.number }}</a></td>
-                <td>{{ wo.planned_date.strftime('%d.%m.%Y') }}</td>
-                <td>{{ (wo.organization.short_name or wo.organization.name) if wo.organization else '—' }}</td>
-                <td class="wo-muted">{{ eq_label }}</td>
-                <td>{{ wo.work_type_text or '—' }}</td>
-                <td class="wo-muted">{{ (wo.assignee.full_name or wo.assignee.username) if wo.assignee else '—' }}</td>
-                <td><span class="wo-badge" style="color:{{ status_colors[wo.status] }};">{{ status_labels[wo.status] }}</span></td>
-                <td>
-                    <a href="{{ url_for('work_orders.detail', wo_id=wo.id) }}" class="btn btn-sm btn-secondary">
-                        {{ 'Открыть' if is_ru else 'Ko‘rish' }}
-                    </a>
+                <td class="vs-nowrap"><a href="{{ url_for('work_orders.detail', wo_id=wo.id) }}"><strong>{{ wo.number }}</strong></a></td>
+                <td data-sort-value="{{ wo.planned_date.isoformat() }}">{{ wo.planned_date.strftime('%d.%m.%Y') }}</td>
+                <td class="vs-cell-clip">{{ (wo.organization.short_name or wo.organization.name) if wo.organization else '—' }}</td>
+                <td class="vs-cell-clip vs-muted" title="{{ eq_label }}">{{ eq_label }}</td>
+                <td class="vs-cell-clip">{{ wo.work_type_text or '—' }}</td>
+                <td class="vs-cell-clip vs-muted">{{ (wo.assignee.full_name or wo.assignee.username) if wo.assignee else '—' }}</td>
+                <td data-sort-value="{{ wo.status }}"><span class="vs-badge {{ status_tones.get(wo.status, '') }}">{{ status_labels[wo.status] }}</span></td>
+                <td class="vs-row-actions-cell">
+                    <span class="vs-row-actions">
+                        <a href="{{ url_for('work_orders.detail', wo_id=wo.id) }}" class="vs-btn vs-btn-icon"
+                           aria-label="{{ 'Открыть' if is_ru else 'Кўриш' }} {{ wo.number }}"
+                           title="{{ 'Открыть' if is_ru else 'Кўриш' }}">{{ icon('chevron', 14) }}</a>
+                    </span>
                 </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+    </div>
+    <div class="vs-table-foot">
+        <span class="vs-table-count">{{ 'Строк' if is_ru else 'Қаторлар' }}: <strong>{{ work_orders|length }}</strong></span>
+    </div>
 </div>
 
-<!-- Mobile cards -->
-<div class="wo-cards">
+{# Карточный вид ниже 768 px: те же данные, другая раскладка. Оба вида
+   переключает CSS, разметка отдаётся целиком — на трёх нарядах это ничего не
+   стоит, а поведение остаётся прежним. #}
+<div class="vs-list-cards">
     {% for wo in work_orders %}
     {% set eq_label = wo.equipment.name ~ ((' — ' ~ wo.equipment.plate) if wo.equipment and wo.equipment.plate else '') if wo.equipment else '—' %}
-    <a class="wo-card" href="{{ url_for('work_orders.detail', wo_id=wo.id) }}">
-        <div class="wo-card-top">
-            <span class="wo-number">{{ wo.number }}</span>
-            <span class="wo-badge" style="color:{{ status_colors[wo.status] }};">{{ status_labels[wo.status] }}</span>
+    <a class="vs-list-card" href="{{ url_for('work_orders.detail', wo_id=wo.id) }}">
+        <div class="vs-list-card-top">
+            <strong class="vs-nowrap">{{ wo.number }}</strong>
+            <span class="vs-badge {{ status_tones.get(wo.status, '') }}">{{ status_labels[wo.status] }}</span>
         </div>
-        <div class="wo-card-row"><span class="k">{{ 'Техника' if is_ru else 'Texnika' }}:</span> {{ eq_label }}</div>
-        <div class="wo-card-row"><span class="k">{{ 'Дата' if is_ru else 'Sana' }}:</span> {{ wo.planned_date.strftime('%d.%m.%Y') }}</div>
-        <div class="wo-card-row"><span class="k">{{ 'Тип работы' if is_ru else 'Ish turi' }}:</span> {{ wo.work_type_text or '—' }}</div>
-        <div class="wo-card-row"><span class="k">{{ 'Организация' if is_ru else 'Tashkilot' }}:</span> {{ (wo.organization.short_name or wo.organization.name) if wo.organization else '—' }}</div>
+        <div class="vs-list-card-row"><span class="vs-muted">{{ 'Техника' if is_ru else 'Техника' }}:</span> {{ eq_label }}</div>
+        <div class="vs-list-card-row"><span class="vs-muted">{{ 'Дата' if is_ru else 'Сана' }}:</span> {{ wo.planned_date.strftime('%d.%m.%Y') }}</div>
+        <div class="vs-list-card-row"><span class="vs-muted">{{ 'Тип работы' if is_ru else 'Иш тури' }}:</span> {{ wo.work_type_text or '—' }}</div>
+        <div class="vs-list-card-row"><span class="vs-muted">{{ 'Организация' if is_ru else 'Ташкилот' }}:</span> {{ (wo.organization.short_name or wo.organization.name) if wo.organization else '—' }}</div>
     </a>
     {% endfor %}
 </div>
 {% else %}
-<div class="card">
-    <div class="wo-empty">
-        <div style="margin-bottom:12px;">{{ 'Нарядов нет' if is_ru else 'Buyurtmalar yo‘q' }}</div>
-        {% if can_create %}
-        <a href="{{ url_for('work_orders.new') }}" class="btn btn-primary">
-            + {{ 'Новый наряд' if is_ru else 'Yangi buyurtma' }}
-        </a>
-        {% endif %}
+<div class="vs-card">
+    <div class="vs-card-body">
+        <div class="vs-empty">
+            <div class="vs-empty-icon">{{ icon('doc', 28) }}</div>
+            <p class="vs-empty-title">{{ 'Нарядов нет' if is_ru else 'Буюртмалар йўқ' }}</p>
+            {% if can_create %}
+            <p class="vs-empty-sub">
+                <a href="{{ url_for('work_orders.new') }}" class="vs-btn vs-btn-primary vs-mt-sm">
+                    {{ icon('plus', 15) }}{{ 'Новый наряд' if is_ru else 'Янги буюртма' }}
+                </a>
+            </p>
+            {% endif %}
+        </div>
     </div>
 </div>
 {% endif %}
-
-</div>
 {% endblock %}

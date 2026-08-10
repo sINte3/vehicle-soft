@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Дроны — подсказка по назначениям' if is_ru else 'Дронлар — бириктиришлар бўйича маслаҳат' }}{% endblock %}
 {% block content %}
@@ -45,13 +46,13 @@
 <div class="vs-alert is-warning vs-mb">
   {{ 'Полётов нет вообще: из DJI не загружено ни одного вылета. Сравнивать не с чем — первая колонка подсказки (гектары из ведомостей) есть, а вторая (гектары из данных DJI) строится из вылетов.' if is_ru else 'Умуман парвозлар йўқ: DJI дан ҳеч бир парвоз юкланмаган. Солиштирадиган нарса йўқ — маслаҳатнинг биринчи устуни (ведомостлардаги гектарлар) бор, аммо иккинчиси (DJI маълумотларидаги гектарлар) парвозлар асосида қурилади.' }}</div>
 <div class="vs-empty">
-  <div class="vs-empty-ico">🧭</div>
+  <div class="vs-empty-ico">{{ icon('hint', 28) }}</div>
   <div class="vs-empty-title">{{ 'Полётов ещё нет' if is_ru else 'Парвозлар ҳали йўқ' }}</div>
   <div class="vs-empty-sub">{{ 'Сначала импорт вылетов из DJI, потом сравнение.' if is_ru else 'Аввал DJI дан парвозлар импорти, кейин солиштириш.' }}</div>
 </div>
 {% elif not data %}
 <div class="vs-empty">
-  <div class="vs-empty-ico">🧭</div>
+  <div class="vs-empty-ico">{{ icon('hint', 28) }}</div>
   <div class="vs-empty-title">{{ 'Работ ещё нет' if is_ru else 'Ишлар ҳали йўқ' }}</div>
   <div class="vs-empty-sub">{{ 'Подсказка строится по ведомостям: сначала импорт, потом сравнение.' if is_ru else 'Маслаҳат ведомостлар асосида қурилади: аввал импорт, кейин солиштириш.' }}</div>
 </div>
@@ -84,7 +85,7 @@
   </div>
   {% if data.rows %}
   <div class="vs-table-scroll">
-  <table class="vs-table">
+  <table class="vs-table is-static">
     <thead>
       <tr>
         <th>{{ 'Оператор' if is_ru else 'Оператор' }}</th>
@@ -151,7 +152,7 @@
   </div>
   {% if data.pool or data.unattributed.flights %}
   <div class="vs-table-scroll">
-  <table class="vs-table">
+  <table class="vs-table is-static">
     <thead>
       <tr>
         <th>{{ 'Машина' if is_ru else 'Машина' }}</th>

@@ -45,3 +45,24 @@ jobs:
 
       - name: Migration-drift checker self-test (TOOL-DRIFT-LEGACY-001)
         run: python tools/test_check_migration_drift.py
+
+      # UI-P7: the design-system ratchet. It counts one-off table classes,
+      # colours bypassing tokens, breakpoints off the scale, duplicate tokens,
+      # CSS inside templates, glyphs in markup and t() keys missing from
+      # translations.py, and allows those counts only to DECREASE.
+      #
+      # It ran by hand for the whole of P6, which is exactly why t-key-missing
+      # sat at 17 unnoticed until the owner saw Russian text on a screen. A
+      # ratchet nobody turns is not a ratchet.
+      #
+      # Needs no database and no server: stdlib only, it never imports app
+      # (create_app() calls db.create_all(), which would make a checker a
+      # writer).
+      - name: Design-system ratchet (counts may only decrease)
+        run: python tools/check_design_system.py
+
+      - name: Design-system checker self-test against planted fixtures
+        run: python tools/test_check_design_system.py
+
+      - name: Dictionary integrity (no key redefined, both languages present)
+        run: python -m unittest tests.test_translations_integrity

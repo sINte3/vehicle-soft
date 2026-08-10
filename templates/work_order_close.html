@@ -1,76 +1,63 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
-{% block title %}{{ wo.number }} — {{ 'Закрыть наряд' if is_ru else 'Yopish' }}{% endblock %}
+{% block title %}{{ wo.number }} — {{ 'Закрыть наряд' if is_ru else 'Ёпиш' }}{% endblock %}
 {% block content %}
 
-<style>
-/* WORK-ORDER-001 Phase 2: close form, scoped styles reuse base design tokens. */
-.woc-scope .woc-back { color:var(--text2); text-decoration:none; font-size:13px; display:inline-block; margin-bottom:8px; }
-.woc-scope h1 { margin:0 0 16px 0; font-size:22px; line-height:1.2; }
-.woc-scope .form-group { margin-bottom:14px; }
-.woc-scope label { font-size:13px; font-weight:700; color:var(--text2); display:block; margin-bottom:4px; }
-.woc-scope input, .woc-scope select, .woc-scope textarea { width:100%; max-width:100%; }
-.woc-scope .woc-actions { margin-top:18px; }
-.woc-scope .w-100 { width:100%; }
-.woc-scope .alert { padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; }
-.woc-scope .alert-warning { border-left:4px solid var(--warn); background:var(--warn-light, var(--surface2)); }
-</style>
-
-<div class="woc-scope">
-
-<a href="{{ url_for('work_orders.detail', wo_id=wo.id) }}" class="woc-back">← {{ wo.number }}</a>
-<h1>{{ wo.number }} — {{ 'Закрыть наряд' if is_ru else 'Buyurtmani yopish' }}</h1>
+{# Заголовок экрана рисует base_next из {% block title %}. #}
+<div class="vs-row-end vs-mb">
+    <a href="{{ url_for('work_orders.detail', wo_id=wo.id) }}" class="vs-btn vs-mr-auto">{{ icon('chevron', 15) }}{{ wo.number }}</a>
+</div>
 
 {% if existing_records_count > 0 %}
-<div class="alert alert-warning">
+<div class="vs-card vs-card-accent-warning vs-mb"><div class="vs-card-body">
     {% if is_ru %}
         Внимание: для этой техники уже есть {{ existing_records_count }} записей за эту дату.
     {% else %}
-        Diqqat: bu texnika uchun {{ existing_records_count }} ta yozuv mavjud.
+        Диққат: бу техника учун {{ existing_records_count }} та ёзув мавжуд.
     {% endif %}
-</div>
+</div></div>
 {% endif %}
 
 <form method="post" action="{{ url_for('work_orders.close', wo_id=wo.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-    <div class="card">
-        <div class="card-body">
-            <div class="form-group">
-                <label>{{ 'Фактическая дата' if is_ru else 'Ҳақиқий сана' }}</label>
-                <input type="date" name="actual_date" class="form-control" value="{{ wo.planned_date.strftime('%Y-%m-%d') }}">
+    <div class="vs-card">
+        <div class="vs-card-body">
+            <div class="vs-field vs-mb-sm">
+                <label class="vs-label" for="wof-actual-date">{{ 'Фактическая дата' if is_ru else 'Ҳақиқий сана' }}</label>
+                <input id="wof-actual-date" type="date" name="actual_date" class="vs-input" value="{{ wo.planned_date.strftime('%Y-%m-%d') }}">
             </div>
 
-            <div class="form-group">
-                <label>{{ 'Фактический объём' if is_ru else 'Ҳақиқий ҳажм' }} *</label>
-                <input type="number" name="actual_quantity" class="form-control" step="0.01" min="0" required
+            <div class="vs-field vs-mb-sm">
+                <label class="vs-label" for="wof-actual-quantity">{{ 'Фактический объём' if is_ru else 'Ҳақиқий ҳажм' }} *</label>
+                <input id="wof-actual-quantity" type="number" name="actual_quantity" class="vs-input" step="0.01" min="0" required
                        placeholder="{{ wo.unit }}"
                        value="{{ wo.actual_quantity if wo.actual_quantity is not none else (wo.planned_quantity if wo.planned_quantity is not none else '') }}">
             </div>
 
-            <div class="form-group">
-                <label>{{ 'Тип оплаты' if is_ru else 'To‘lov turi' }}</label>
-                <select name="payment_type" class="form-control">
-                    <option value="naqd"   {{ 'selected' if wo.payment_type == 'naqd'   else '' }}>{{ 'Наличные' if is_ru else 'Naqd' }}</option>
-                    <option value="bank"   {{ 'selected' if wo.payment_type == 'bank'   else '' }}>{{ 'Банк'     if is_ru else 'Bank' }}</option>
-                    <option value="ichki"  {{ 'selected' if wo.payment_type == 'ichki'  else '' }}>{{ 'Внутренний' if is_ru else 'Ichki' }}</option>
-                    <option value="boshqa" {{ 'selected' if wo.payment_type == 'boshqa' else '' }}>{{ 'Прочее'   if is_ru else 'Boshqa' }}</option>
+            <div class="vs-field vs-mb-sm">
+                <label class="vs-label" for="wof-payment-type">{{ 'Тип оплаты' if is_ru else 'Тўлов тури' }}</label>
+                <select id="wof-payment-type" name="payment_type" class="vs-select">
+                    <option value="naqd"   {{ 'selected' if wo.payment_type == 'naqd'   else '' }}>{{ 'Наличные' if is_ru else 'Нақд' }}</option>
+                    <option value="bank"   {{ 'selected' if wo.payment_type == 'bank'   else '' }}>{{ 'Банк'     if is_ru else 'Банк' }}</option>
+                    <option value="ichki"  {{ 'selected' if wo.payment_type == 'ichki'  else '' }}>{{ 'Внутренний' if is_ru else 'Ички' }}</option>
+                    <option value="boshqa" {{ 'selected' if wo.payment_type == 'boshqa' else '' }}>{{ 'Прочее'   if is_ru else 'Бошқа' }}</option>
                 </select>
             </div>
 
-            <div class="form-group">
-                <label>{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
-                <textarea name="note" class="form-control" rows="2"></textarea>
+            <div class="vs-field vs-mb-sm">
+                <label class="vs-label" for="wof-note">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+                <textarea id="wof-note" name="note" class="vs-textarea" rows="2"></textarea>
             </div>
 
-            <div class="woc-actions">
+            <div class="vs-sticky-actions">
                 <button type="submit" class="btn btn-success btn-lg w-100">
-                    {{ 'Закрыть наряд' if is_ru else 'Buyurtmani yopish' }}
+                    {{ 'Закрыть наряд' if is_ru else 'Буюртмани ёпиш' }}
                 </button>
             </div>
         </div>
     </div>
 </form>
 
-</div>
 {% endblock %}

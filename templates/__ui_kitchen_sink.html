@@ -1,0 +1,257 @@
+{% extends g.base_template %}
+{% from '_icons.html' import icon %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}UI kitchen sink{% endblock %}
+{% block content %}
+
+{# Одна страница со всеми компонентами дизайн-системы во всех состояниях,
+   отрендеренная ТЕМ ЖЕ Jinja и ТЕМ ЖЕ CSS, что и продукт.
+
+   [REASON]: это замена Storybook без второго источника правды. Отдельный
+   стенд на своей сборке показывает компонент таким, каким его задумали, а не
+   таким, каким он выходит в приложении: кто угодно может перебить его
+   каскадом из inline-<style> страницы — ровно это и произошло с
+   daily_entry.html, где локальная копия .btn и .card выигрывала каскад и
+   правки дизайн-системы до экрана не доходили. Здесь такого разрыва нет по
+   построению.
+
+   Собственного CSS у страницы нет и не должно быть: если компонент нельзя
+   показать без local-стиля, значит его в системе ещё нет. #}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">UI kitchen sink</div>
+    <div class="vs-hero-sub">{{ 'Все компоненты дизайн-системы во всех состояниях. Служебная страница: в продакшене недоступна.' if is_ru else 'Дизайн-тизимнинг барча компонентлари барча ҳолатларда. Хизматчи саҳифа: продакшенда очилмайди.' }}</div>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">1. {{ 'Кнопки' if is_ru else 'Тугмалар' }}</span></div>
+  <div class="vs-card-body">
+    <div class="vs-row vs-mb-sm">
+      <button class="vs-btn">default</button>
+      <button class="vs-btn vs-btn-primary">primary</button>
+      <button class="vs-btn vs-btn-success">success</button>
+      <button class="vs-btn vs-btn-danger">danger</button>
+      <button class="vs-btn vs-btn-ghost">ghost</button>
+      <button class="vs-btn" disabled>disabled</button>
+    </div>
+    <div class="vs-row">
+      <button class="vs-btn vs-btn-sm">sm</button>
+      <button class="vs-btn">base</button>
+      <button class="vs-btn vs-btn-lg">lg</button>
+      <button class="vs-btn vs-btn-primary">{{ icon('save', 15) }} {{ 'С иконкой' if is_ru else 'Иконка билан' }}</button>
+      <button class="vs-btn vs-btn-icon" aria-label="{{ 'Удалить' if is_ru else 'Ўчириш' }}">{{ icon('trash', 15) }}</button>
+    </div>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">2. {{ 'Поля' if is_ru else 'Майдонлар' }}</span></div>
+  <div class="vs-card-body">
+    <div class="vs-form-row vs-mb">
+      <div class="vs-field">
+        <label class="vs-label" for="ksInput">{{ 'Обычное' if is_ru else 'Оддий' }}</label>
+        <input class="vs-input" id="ksInput" value="{{ 'Бухоро Агрокластер' }}">
+        <span class="vs-help">{{ 'Подсказка под полем' if is_ru else 'Майдон остидаги изоҳ' }}</span>
+      </div>
+      <div class="vs-field">
+        <label class="vs-label" for="ksErr">{{ 'С ошибкой' if is_ru else 'Хато билан' }}</label>
+        <input class="vs-input is-error" id="ksErr" value="-1">
+        <span class="vs-error-msg">{{ 'Значение должно быть больше нуля' if is_ru else 'Қиймат нолдан катта бўлиши керак' }}</span>
+      </div>
+      <div class="vs-field">
+        <label class="vs-label" for="ksSel">{{ 'Список' if is_ru else 'Рўйхат' }}</label>
+        <select class="vs-select" id="ksSel"><option>га</option><option>моточас</option><option>тн/км</option></select>
+      </div>
+      <div class="vs-field">
+        <label class="vs-label" for="ksDis">disabled</label>
+        <input class="vs-input" id="ksDis" value="—" disabled>
+      </div>
+      <div class="vs-field vs-field-action">
+        <button class="vs-btn vs-btn-primary">{{ icon('filter', 15) }}{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+      </div>
+    </div>
+    <div class="vs-row vs-mb">
+      <div class="vs-toggle-group" role="radiogroup" aria-label="toggle">
+        <label><input type="radio" name="ks_tg" checked> {{ 'День' if is_ru else 'Кун' }}</label>
+        <label><input type="radio" name="ks_tg"> {{ 'Неделя' if is_ru else 'Ҳафта' }}</label>
+        <label><input type="radio" name="ks_tg"> {{ 'Месяц' if is_ru else 'Ой' }}</label>
+      </div>
+      <div class="vs-toggle-group is-joined" role="radiogroup" aria-label="joined">
+        <label><input type="radio" name="ks_tgj" checked> {{ 'Работал' if is_ru else 'Ишлаган' }}</label>
+        <label><input type="radio" name="ks_tgj"> {{ 'Простой' if is_ru else 'Бўш' }}</label>
+      </div>
+      <div class="vs-toggle-group is-joined is-warning" role="radiogroup" aria-label="joined warning">
+        <label><input type="radio" name="ks_tgw"> {{ 'Работал' if is_ru else 'Ишлаган' }}</label>
+        <label><input type="radio" name="ks_tgw" checked> {{ 'Простой' if is_ru else 'Бўш' }}</label>
+      </div>
+    </div>
+    <div class="vs-check-grid">
+      <label class="vs-check-card"><input type="radio" name="ks_cc" checked> <span><strong>{{ 'Выбрано' if is_ru else 'Танланган' }}</strong><span class="vs-help">:has(:checked)</span></span></label>
+      <label class="vs-check-card"><input type="radio" name="ks_cc"> <span><strong>{{ 'Не выбрано' if is_ru else 'Танланмаган' }}</strong><span class="vs-help">default</span></span></label>
+    </div>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">3. {{ 'Статус' if is_ru else 'Ҳолат' }} (DD-032)</span></div>
+  <div class="vs-card-body vs-row">
+    <span class="vs-badge">neutral</span>
+    <span class="vs-badge vs-badge-success">success</span>
+    <span class="vs-badge vs-badge-warning">warning</span>
+    <span class="vs-badge vs-badge-danger">danger</span>
+    <span class="vs-badge vs-badge-info">info</span>
+    <span class="vs-badge vs-badge-purple">purple</span>
+    <span class="vs-badge vs-badge-sm">sm</span>
+    <span class="vs-badge vs-badge-danger is-outline">{{ icon('warning', 12) }} outline</span>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">4. {{ 'Сообщения и пустое состояние' if is_ru else 'Хабарлар ва бўш ҳолат' }}</span></div>
+  <div class="vs-card-body">
+    <div class="vs-alert is-info vs-mb-sm">info</div>
+    <div class="vs-alert is-warning vs-mb-sm">warning</div>
+    <div class="vs-alert is-danger vs-mb">danger</div>
+    <div class="vs-empty">
+      <div class="vs-empty-icon">{{ icon('empty', 28) }}</div>
+      <p class="vs-empty-title">{{ 'Данных нет' if is_ru else 'Маълумот йўқ' }}</p>
+      <p class="vs-empty-sub">{{ 'Пустое состояние — основной сценарий двенадцати экранов, а не крайний случай.' if is_ru else 'Бўш ҳолат — ўн иккита экран учун асосий сценарий, истисно эмас.' }}</p>
+    </div>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">5. {{ 'Показатели' if is_ru else 'Кўрсаткичлар' }}</span></div>
+  <div class="vs-card-body">
+    <div class="vs-stat-grid-4 vs-mb">
+      <div class="vs-stat"><div class="vs-stat-label">neutral</div><div class="vs-stat-value">15 878,64</div></div>
+      <div class="vs-stat"><div class="vs-stat-label">success</div><div class="vs-stat-value is-success">12</div></div>
+      <div class="vs-stat"><div class="vs-stat-label">warning</div><div class="vs-stat-value is-warning">3</div></div>
+      <div class="vs-stat"><div class="vs-stat-label">danger</div><div class="vs-stat-value is-danger">1</div></div>
+    </div>
+    <div class="vs-kpi-grid-2">
+      <div class="vs-mini"><span class="vs-mini-v">128</span><span class="vs-mini-l">mini</span></div>
+      <div class="vs-mini is-success"><span class="vs-mini-v">64</span><span class="vs-mini-l">mini success</span></div>
+    </div>
+  </div>
+</div>
+
+{# DD-028: три режима таблицы, каждый со своим происхождением сортировки и
+   своим охватом итогов. На одной странице разница видна сразу. #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">6. {{ 'Таблица' if is_ru else 'Жадвал' }} — is-static (DD-028, {{ 'сортировка на клиенте' if is_ru else 'мижозда сортировка' }})</span></div>
+  <div class="vs-table-scroll">
+    <table class="vs-table vs-num is-static is-compact" data-sortable data-sort-default="2:descending">
+      <thead><tr>
+        <th data-sort>{{ 'Техника' if is_ru else 'Техника' }}</th>
+        <th data-sort>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
+        <th class="right" data-sort>{{ 'Сумма' if is_ru else 'Сумма' }}</th>
+        <th class="right">{{ 'Действия' if is_ru else 'Амаллар' }}</th>
+      </tr></thead>
+      <tbody>
+      {% for row in rows %}
+        <tr>
+          <td class="vs-cell-clip" title="{{ row.name }}">{{ row.name }}</td>
+          <td><span class="vs-badge {{ row.role }}">{{ row.status }}</span></td>
+          <td class="right" data-sort-value="{{ row.amount }}">{{ '%.2f'|format(row.amount) }}</td>
+          <td class="vs-row-actions-cell">
+            <span class="vs-row-actions">
+              <button class="vs-btn vs-btn-icon" aria-label="{{ 'Изменить' if is_ru else 'Таҳрирлаш' }}">{{ icon('edit', 14) }}</button>
+              <button class="vs-btn vs-btn-icon is-danger" aria-label="{{ 'Удалить' if is_ru else 'Ўчириш' }}">{{ icon('trash', 14) }}</button>
+            </span>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="vs-table-foot">
+    <span class="vs-table-count">{{ rows|length }} {{ 'строк' if is_ru else 'қатор' }}</span>
+  </div>
+</div>
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">7. {{ 'Таблица' if is_ru else 'Жадвал' }} — is-stream ({{ 'итог по окну, сортировка серверная' if is_ru else 'жами дарча бўйича, сортировка серверда' }})</span></div>
+  <div class="vs-table-scroll">
+    <table class="vs-table vs-num is-stream is-compact">
+      <thead><tr>
+        <th>{{ 'Техника' if is_ru else 'Техника' }}</th>
+        <th>{{ 'Длинное значение' if is_ru else 'Узун қиймат' }} (DD-030)</th>
+        <th class="right">{{ 'Сумма' if is_ru else 'Сумма' }}</th>
+      </tr></thead>
+      <tbody>
+      {% for row in rows[:3] %}
+        <tr>
+          <td>{{ row.name }}</td>
+          <td class="vs-cell-clip" title="{{ long_value }}">{{ long_value }}</td>
+          <td class="right">{{ '%.2f'|format(row.amount) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="vs-table-foot">
+    <span class="vs-table-count">3 / 500</span>
+    <span class="vs-table-scope">{{ 'итог — по показанным строкам, не по всей выборке' if is_ru else 'жами — кўрсатилган қаторлар бўйича' }}</span>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">8. {{ 'Строка формы' if is_ru else 'Форма қатори' }}</span></div>
+  <div class="vs-card-body">
+    <div class="vs-line-row vs-mb-sm">
+      <div class="vs-field"><label class="vs-label" for="ksL1">{{ 'Вид работы' if is_ru else 'Иш тури' }}</label><select class="vs-select" id="ksL1"><option>Шудгорлаш</option></select></div>
+      <div class="vs-field"><label class="vs-label" for="ksL2">{{ 'Ед. изм.' if is_ru else 'Ўлчов' }}</label><select class="vs-select" id="ksL2"><option>га</option></select></div>
+      <div class="vs-field vs-field-grow"><label class="vs-label" for="ksL3">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label><input class="vs-input" id="ksL3"></div>
+      <div class="vs-field vs-field-action"><button class="vs-btn vs-btn-sm vs-btn-danger" aria-label="{{ 'Удалить строку' if is_ru else 'Қаторни ўчириш' }}">{{ icon('close', 14) }}</button></div>
+    </div>
+    <div class="vs-line-row is-incomplete vs-mb-sm">
+      <div class="vs-field"><label class="vs-label" for="ksL4">{{ 'Вид работы' if is_ru else 'Иш тури' }}</label><select class="vs-select" id="ksL4"><option value="">—</option></select></div>
+      <div class="vs-field vs-field-grow"><label class="vs-label" for="ksL5">{{ 'Количество' if is_ru else 'Миқдор' }}</label><input class="vs-input" id="ksL5"></div>
+      <span class="vs-line-row-hint">is-incomplete</span>
+    </div>
+    <div class="vs-line-row is-error">
+      <div class="vs-field"><label class="vs-label" for="ksL6">{{ 'Количество' if is_ru else 'Миқдор' }}</label><input class="vs-input is-error" id="ksL6" value="0"></div>
+      <div class="vs-field vs-field-grow"><span class="vs-error-msg">is-error</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">9. {{ 'Группа и раскрывающаяся карточка' if is_ru else 'Гуруҳ ва очиладиган карточка' }}</span></div>
+  <div class="vs-card-body">
+    <div class="vs-group">
+      <div class="vs-group-head"><span>{{ '1. Юқори унумли техникалар' }} (2)</span></div>
+      <div class="vs-group-body">
+        {% for row in rows[:2] %}
+        <div class="vs-collapse-card {{ 'is-working' if loop.first else 'is-idle' }}">
+          <button type="button" class="vs-collapse-head" aria-expanded="{{ 'true' if loop.first else 'false' }}" aria-controls="ks-body-{{ loop.index }}">
+            <div><span class="vs-badge {{ 'vs-badge-success' if loop.first else 'vs-badge-warning' }}">{{ ('Ишлаган' if loop.first else 'Бўш') }}</span></div>
+            <div class="vs-collapse-title-wrap">
+              <div class="vs-collapse-title">{{ row.name }}</div>
+              <div class="vs-collapse-sub"><span class="vs-badge">№ 01A123AA</span><span class="vs-badge">га</span></div>
+            </div>
+            <div class="vs-collapse-tools"><span class="vs-collapse-amount">{{ '%.0f'|format(row.amount) }} сўм</span></div>
+          </button>
+          <div class="vs-collapse-body" id="ks-body-{{ loop.index }}" style="{% if not loop.first %}display:none;{% endif %}">
+            <div class="vs-alert is-info vs-mb-sm">{{ 'Тело карточки' if is_ru else 'Карточка таноси' }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="vs-card">
+  <div class="vs-card-header"><span class="vs-card-title">10. {{ 'Иконки' if is_ru else 'Иконкалар' }}</span></div>
+  <div class="vs-card-body vs-row">
+    {% for name in icon_names %}
+    <span class="vs-badge">{{ icon(name, 15) }} {{ name }}</span>
+    {% endfor %}
+  </div>
+</div>
+
+{% endblock %}

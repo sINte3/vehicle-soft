@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}{{ 'Отчёт остатков топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари ҳисоботи' }}{% endblock %}
 
 {% block content %}
@@ -67,38 +68,7 @@
    fixed print-only footer naming the report and the period (repeats on every
    printed page), and everything interactive hidden. Detail rows carry the
    `hidden` attribute, so the collapsed state prints as collapsed. #}
-<style>
-/* [REASON]: QA fix (commit 41) — the collapsed summary table must fit the
-   screen without horizontal scroll, or «Текущий остаток» (the figure the
-   report exists for) lands off-screen. Long organisation/warehouse names may
-   wrap onto several lines; numeric cells never wrap. The nested daily tables
-   are excluded via direct-child selectors and keep their old behaviour. */
-.fuel-balance-summary { white-space: nowrap; margin: 0; font-size: 13px; width: 100%; }
-.fuel-balance-summary > thead > tr > th { white-space: normal; }
-.table.fuel-balance-summary > thead > tr > th,
-.table.fuel-balance-summary > tbody > tr > td,
-.table.fuel-balance-summary > tfoot > tr > th { padding-left: 7px; padding-right: 7px; }
-.fuel-balance-summary > tbody > tr.fuel-balance-row > td:nth-child(2),
-.fuel-balance-summary > tbody > tr.fuel-balance-row > td:nth-child(3) { white-space: normal; }
-.fuel-print-footer { display: none; }
-@media print {
-  @page { size: A4 landscape; margin: 12mm 10mm 16mm; }
-  body { background: #fff; }
-  .vs-sidebar, .vs-topbar, .vs-side-backdrop, .vs-skip-link, .fuel-nav,
-  .fuel-no-print, .fuel-balance-day-controls, .vs-alert,
-  .page-header .btn, .fuel-period-picker { display: none !important; }
-  .vs-content { padding: 0; max-width: none; }
-  .card { box-shadow: none; border-color: #bbb; }
-  table { font-size: 10px; white-space: normal !important; }
-  table thead { display: table-header-group; }
-  .fuel-print-footer {
-    display: block !important;
-    position: fixed; bottom: 0; left: 0; right: 0;
-    text-align: center; font-size: 10px; color: #444;
-  }
-}
-</style>
-<div class="fuel-print-footer">{{ L_title }} — {{ start_date.strftime('%d.%m.%Y') }}{% if period.start_time != '00:00' %} {{ period.start_time }}{% endif %} — {{ end_date.strftime('%d.%m.%Y') }}{% if period.end_time != '23:59' %} {{ period.end_time }}{% endif %}</div>
+<div class="vs-print-footer">{{ L_title }} — {{ start_date.strftime('%d.%m.%Y') }}{% if period.start_time != '00:00' %} {{ period.start_time }}{% endif %} — {{ end_date.strftime('%d.%m.%Y') }}{% if period.end_time != '23:59' %} {{ period.end_time }}{% endif %}</div>
 
 {# FUEL-BIG-001: shared working-vs-archive mode control, same as the dashboard #}
 <div class="fuel-no-print">
@@ -222,7 +192,7 @@
         <span class="text-muted text-sm" style="align-self:center;">{{ 'Нажмите на строку склада, чтобы раскрыть дни.' if lang == 'ru' else 'Кунларни очиш учун омбор қаторини босинг.' }}</span>
     </div>
     <div style="overflow:auto; max-width:100%;">
-        <table class="table table-sm table-striped fuel-balance-summary">
+        <table class="vs-table is-static is-compact" data-sortable>
             <thead>
                 <tr>
                     <th>{{ L_num }}</th>
@@ -277,7 +247,7 @@
                             {% endif %}
                         {% endfor %}
                         {% if movement_days %}
-                        <table class="table table-sm" style="width:auto; min-width:360px; margin:0;">
+                        <table class="vs-table is-static is-compact" data-sortable style="width:auto; min-width:360px; margin:0;">
                             <thead>
                                 <tr>
                                     <th>{{ 'Дата' if lang == 'ru' else 'Сана' }}</th>

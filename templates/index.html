@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}{{ t('Бош саҳифа') }}{% endblock %}
 
 {% block content %}
@@ -28,189 +29,260 @@
   </div>
 </div>
 
-{# ════════ PRIMARY KPI ROW ════════ #}
-<div class="vs-kpi-grid vs-mb">
+{# ════════ ДАШБОРД: ADOPT-1 + ADAPT-2 из разбора референсов ════════
 
-  {# Transport #}
-  <div class="vs-kpi">
-    <div class="vs-kpi-head">
-      <div class="vs-kpi-label">{{ 'Работы транспорта' if lang == 'ru' else 'Транспорт ишлари' }}</div>
-      {% if current_user.can_edit %}
-      <a href="{{ url_for('daily_entry', date=d_from.isoformat()) }}" class="vs-kpi-link">{{ 'Ввод →' if lang == 'ru' else 'Киритиш →' }}</a>
-      {% endif %}
-    </div>
-    <div class="vs-kpi-main">
-      <div class="vs-kpi-value vs-num">{{ dashboard.transport.working_rows }}</div>
-      <div class="vs-kpi-cap">{{ 'рабочих строк' if lang == 'ru' else 'иш қаторлари' }}</div>
-    </div>
-    <div class="vs-kpi-grid-2">
-      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.transport.records }}</span><span class="vs-mini-l">{{ 'всего строк' if lang == 'ru' else 'жами қатор' }}</span></div>
-      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.transport.idle_rows }}</span><span class="vs-mini-l">{{ 'простой/без работ' if lang == 'ru' else 'бўш/ишсиз' }}</span></div>
-      <div class="vs-mini is-success"><span class="vs-mini-v vs-num">{{ dashboard.transport.equipment_working }}</span><span class="vs-mini-l">{{ 'техника работала' if lang == 'ru' else 'техника ишлади' }}</span></div>
-      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.transport.amount|fmt_sum or '0' }}</span><span class="vs-mini-l">{{ 'сумма' if lang == 'ru' else 'сумма, сўм' }}</span></div>
-    </div>
+   ADAPT-2 — экран поделён по РЕШЕНИЮ, а не по типу данных: сначала то, что
+   требует человека, потом то, что просто работает. Блок «требует внимания»
+   собран из УЖЕ существующих данных (простои, предупреждения по топливу,
+   просроченные наряды, неисправные дроны, несвязанный Wialon, заявки на
+   решении) — ни одного нового запроса, ни одной новой сущности.
+
+   ADOPT-1 — метрики стоят разделённой полосой, а не отдельными карточками.
+   Было семь карточек с вложенной сеткой 2×2: 28 чисел, каждое в своей рамке
+   с тенью, и таблица уходила ниже сгиба (PR-043, PR-044).
+
+   [REASON]: пустые пункты в полосу внимания не попадают вовсе. Ноль
+   просроченных нарядов — это не показатель, а отсутствие проблемы; строка
+   «просрочено: 0» занимает место и заставляет читать её каждый раз, чтобы
+   убедиться, что читать нечего. Если пусто всё — блок говорит это словами.
+#}
+{% set fleet = drone_fleet_status() %}
+{% set ns = namespace(attention=0) %}
+
+<div class="vs-kpi-strip is-attention">
+  <div class="vs-kpi-strip-head">
+    <span class="vs-kpi-strip-title">{{ 'Требует внимания' if lang == 'ru' else 'Эътибор талаб қилади' }}</span>
+    <span class="vs-muted vs-caption">{{ d_from.strftime('%d.%m.%Y') }}{% if d_from != d_to %} — {{ d_to.strftime('%d.%m.%Y') }}{% endif %}</span>
   </div>
+  <div class="vs-kpi-strip-body">
+    {% if dashboard.transport.idle_rows %}
+      {% set ns.attention = ns.attention + 1 %}
+    <a class="vs-kpi-strip-item" href="{{ url_for('report') }}">
+      <span class="vs-kpi-strip-label">{{ 'Простой / без работ' if lang == 'ru' else 'Бўш / ишсиз' }}</span>
+      <span class="vs-kpi-strip-value is-warning vs-num">{{ dashboard.transport.idle_rows }}</span>
+    </a>
+    {% endif %}
 
-  {# Fuel #}
-  <div class="vs-kpi{% if dashboard.fuel.danger_warnings %} vs-card-accent-danger{% elif dashboard.fuel.warnings %} vs-card-accent-warning{% endif %}">
-    <div class="vs-kpi-head">
-      <div class="vs-kpi-label">{{ 'Топливо · АЗС' if lang == 'ru' else 'Ёқилғи · АЗС' }}</div>
-      {% if dashboard.module_access.fuel %}
-      <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="vs-kpi-link">{{ 'Открыть →' if lang == 'ru' else 'Очиш →' }}</a>
-      {% endif %}
-    </div>
-    {% if dashboard.module_access.fuel %}
-    <div class="vs-kpi-main">
-      <div class="vs-kpi-value vs-num">{{ '%.2f'|format(dashboard.fuel.issued or 0) }}</div>
-      <div class="vs-kpi-cap">{{ 'литров выдано' if lang == 'ru' else 'литр берилди' }}</div>
-    </div>
-    <div class="vs-kpi-grid-2">
-      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.fuel.transactions }}</span><span class="vs-mini-l">Topaz {{ 'транзакций' if lang == 'ru' else 'транзакция' }}</span></div>
-      <div class="vs-mini"><span class="vs-mini-v" style="font-size:13px;">{{ dashboard.fuel.latest_sync_text or '—' }}</span><span class="vs-mini-l">{{ 'последняя синхронизация' if lang == 'ru' else 'охирги синхронизация' }}</span></div>
-      <div class="vs-mini{% if dashboard.fuel.warnings %} is-warning{% endif %}"><span class="vs-mini-v vs-num">{{ dashboard.fuel.warnings }}</span><span class="vs-mini-l">{{ 'предупреждения' if lang == 'ru' else 'огоҳлантириш' }}</span></div>
-      <div class="vs-mini{% if dashboard.fuel.danger_warnings %} is-danger{% endif %}"><span class="vs-mini-v vs-num">{{ dashboard.fuel.danger_warnings }}</span><span class="vs-mini-l">{{ 'критические' if lang == 'ru' else 'критик' }}</span></div>
-    </div>
-    {% else %}
-    <div class="vs-empty" style="border:none; padding:32px 0; background:transparent;">
-      <div class="vs-empty-sub">{{ 'Нет доступа к модулю' if lang == 'ru' else 'Модулга рухсат йўқ' }}</div>
+    {% if dashboard.module_access.fuel and dashboard.fuel.danger_warnings %}
+      {% set ns.attention = ns.attention + 1 %}
+    <a class="vs-kpi-strip-item" href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">
+      <span class="vs-kpi-strip-label">{{ 'Критические по топливу' if lang == 'ru' else 'Ёқилғи бўйича критик' }}</span>
+      <span class="vs-kpi-strip-value is-danger vs-num">{{ dashboard.fuel.danger_warnings }}</span>
+    </a>
+    {% endif %}
+
+    {% if dashboard.module_access.fuel and dashboard.fuel.warnings %}
+      {% set ns.attention = ns.attention + 1 %}
+    <a class="vs-kpi-strip-item" href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}">
+      <span class="vs-kpi-strip-label">{{ 'Предупреждения по топливу' if lang == 'ru' else 'Ёқилғи огоҳлантиришлари' }}</span>
+      <span class="vs-kpi-strip-value is-warning vs-num">{{ dashboard.fuel.warnings }}</span>
+    </a>
+    {% endif %}
+
+    {% if dashboard.work_orders.overdue %}
+      {% set ns.attention = ns.attention + 1 %}
+    <a class="vs-kpi-strip-item" href="{{ url_for('work_orders.index') }}">
+      <span class="vs-kpi-strip-label">{{ 'Наряды просрочены' if lang == 'ru' else 'Муддати ўтган нарядлар' }}</span>
+      <span class="vs-kpi-strip-value is-danger vs-num">{{ dashboard.work_orders.overdue }}</span>
+    </a>
+    {% endif %}
+
+    {% if dashboard.module_access.spare_parts and dashboard.spare.submitted %}
+      {% set ns.attention = ns.attention + 1 %}
+    <a class="vs-kpi-strip-item" href="{{ url_for('spare_parts.index') }}">
+      <span class="vs-kpi-strip-label">{{ 'Заявки ждут решения' if lang == 'ru' else 'Қарор кутаётган сўровлар' }}</span>
+      <span class="vs-kpi-strip-value is-warning vs-num">{{ dashboard.spare.submitted }}</span>
+    </a>
+    {% endif %}
+
+    {% if dashboard.module_access.wialon and dashboard.wialon.unmapped %}
+      {% set ns.attention = ns.attention + 1 %}
+    <a class="vs-kpi-strip-item" href="{{ url_for('wialon_index') }}">
+      <span class="vs-kpi-strip-label">{{ 'GPS не связано с техникой' if lang == 'ru' else 'GPS техникага боғланмаган' }}</span>
+      <span class="vs-kpi-strip-value is-warning vs-num">{{ dashboard.wialon.unmapped }}</span>
+    </a>
+    {% endif %}
+
+    {% if fleet and not fleet.error and fleet.unserviceable %}
+      {% set ns.attention = ns.attention + 1 %}
+    <a class="vs-kpi-strip-item" href="{{ url_for('drones.units') }}">
+      <span class="vs-kpi-strip-label">{{ 'Дроны неисправны' if lang == 'ru' else 'Носоз дронлар' }}</span>
+      <span class="vs-kpi-strip-value is-danger vs-num">{{ fleet.unserviceable }}</span>
+    </a>
+    {% endif %}
+
+    {% if fleet and not fleet.error and fleet.unknown %}
+      {% set ns.attention = ns.attention + 1 %}
+    <a class="vs-kpi-strip-item" href="{{ url_for('drones.units') }}">
+      {# Машина без единой записи в журнале — «не сказано», а не «исправна». #}
+      <span class="vs-kpi-strip-label">{{ 'Исправность не указана' if lang == 'ru' else 'Созлиги кўрсатилмаган' }}</span>
+      <span class="vs-kpi-strip-value is-warning vs-num">{{ fleet.unknown }}</span>
+    </a>
+    {% endif %}
+
+    {% if ns.attention == 0 %}
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'За выбранный период' if lang == 'ru' else 'Танланган давр учун' }}</span>
+      <span class="vs-kpi-strip-value is-success is-text">{{ icon('check', 18) }} {{ 'Всё в норме' if lang == 'ru' else 'Ҳаммаси меъёрда' }}</span>
     </div>
     {% endif %}
   </div>
-
-  {# Warnings #}
-  <div class="vs-kpi{% if dashboard.fuel.danger_warnings %} vs-card-accent-danger{% elif dashboard.fuel.warnings %} vs-card-accent-warning{% endif %}">
-    <div class="vs-kpi-head">
-      <div class="vs-kpi-label">{{ 'Предупреждения' if lang == 'ru' else 'Огоҳлантиришлар' }}</div>
-      {% if dashboard.module_access.fuel %}
-      <a href="{{ url_for('fuel.fuel_warnings', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="vs-kpi-link">{{ 'Реестр →' if lang == 'ru' else 'Реестр →' }}</a>
-      {% endif %}
-    </div>
-    {% if dashboard.module_access.fuel %}
-    {% if dashboard.fuel.danger_warnings %}
-    <div class="vs-alert is-danger" style="margin-bottom:14px;">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v5"/><circle cx="12" cy="17" r=".5"/></svg>
-      {{ 'Критические — требуется проверка' if lang == 'ru' else 'Критик — текшириш керак' }}
-    </div>
-    {% elif dashboard.fuel.warnings %}
-    <div class="vs-alert is-warning" style="margin-bottom:14px;">
-      {{ 'Есть предупреждения' if lang == 'ru' else 'Огоҳлантиришлар бор' }}
-    </div>
-    {% else %}
-    <div class="vs-alert is-success" style="margin-bottom:14px;">
-      {{ 'Критических нет' if lang == 'ru' else 'Критик йўқ' }}
-    </div>
-    {% endif %}
-    <div class="vs-kpi-main">
-      <div class="vs-kpi-value vs-num">{{ dashboard.fuel.warnings }}</div>
-      <div class="vs-kpi-cap">{{ 'активных по расчёту' if lang == 'ru' else 'ҳисобланган фаол' }}</div>
-    </div>
-    <div class="vs-kpi-grid-2">
-      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.fuel.review_new }}</span><span class="vs-mini-l">{{ 'новые' if lang == 'ru' else 'янги' }}</span></div>
-      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.fuel.review_in_progress }}</span><span class="vs-mini-l">{{ 'в работе' if lang == 'ru' else 'ишда' }}</span></div>
-      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.fuel.review_resolved }}</span><span class="vs-mini-l">{{ 'проверено' if lang == 'ru' else 'текширилди' }}</span></div>
-      <div class="vs-mini{% if dashboard.fuel.danger_warnings %} is-danger{% endif %}"><span class="vs-mini-v vs-num">{{ dashboard.fuel.danger_warnings }}</span><span class="vs-mini-l">{{ 'критические' if lang == 'ru' else 'критик' }}</span></div>
-    </div>
-    {% else %}
-    <div class="vs-empty" style="border:none; padding:32px 0; background:transparent;">
-      <div class="vs-empty-sub">{{ 'Нет доступа к модулю' if lang == 'ru' else 'Модулга рухсат йўқ' }}</div>
-    </div>
-    {% endif %}
-  </div>
-
 </div>
 
-{# ════════ SECONDARY KPI ROW (3 modules) ════════ #}
-<div class="vs-kpi-grid vs-mb">
-
-  {# Spare parts #}
-  <div class="vs-kpi">
-    <div class="vs-kpi-head">
-      <div class="vs-kpi-label">{{ 'Запчасти' if lang == 'ru' else 'Эҳтиёт қисмлар' }}</div>
-      {% if dashboard.module_access.spare_parts %}
-      <a href="{{ url_for('spare_parts.index') }}" class="vs-kpi-link">{{ 'Открыть →' if lang == 'ru' else 'Очиш →' }}</a>
-      {% endif %}
+{# ──────── Что работает ──────── #}
+<div class="vs-kpi-strip">
+  <div class="vs-kpi-strip-head">
+    <span class="vs-kpi-strip-title">{{ 'Работы транспорта' if lang == 'ru' else 'Транспорт ишлари' }}</span>
+    {% if current_user.can_edit %}
+    <a href="{{ url_for('daily_entry', date=d_from.isoformat()) }}" class="vs-kpi-link">{{ 'Ввод →' if lang == 'ru' else 'Киритиш →' }}</a>
+    {% endif %}
+  </div>
+  <div class="vs-kpi-strip-body">
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'рабочих строк' if lang == 'ru' else 'иш қаторлари' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ dashboard.transport.working_rows }}</span>
     </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'всего строк' if lang == 'ru' else 'жами қатор' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ dashboard.transport.records }}</span>
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'техника работала' if lang == 'ru' else 'техника ишлади' }}</span>
+      <span class="vs-kpi-strip-value is-success vs-num">{{ dashboard.transport.equipment_working }}</span>
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'сумма, сўм' if lang == 'ru' else 'сумма, сўм' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ dashboard.transport.amount|fmt_sum or '0' }}</span>
+    </div>
+  </div>
+</div>
+
+<div class="vs-kpi-strip">
+  <div class="vs-kpi-strip-head">
+    <span class="vs-kpi-strip-title">{{ 'Топливо · АЗС' if lang == 'ru' else 'Ёқилғи · АЗС' }}</span>
+    {% if dashboard.module_access.fuel %}
+    <a href="{{ url_for('fuel.fuel_report', date_from=d_from.isoformat(), date_to=d_to.isoformat()) }}" class="vs-kpi-link">{{ 'Открыть →' if lang == 'ru' else 'Очиш →' }}</a>
+    {% endif %}
+  </div>
+  <div class="vs-kpi-strip-body">
+    {% if dashboard.module_access.fuel %}
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'литров выдано' if lang == 'ru' else 'литр берилди' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ '%.2f'|format(dashboard.fuel.issued or 0) }}</span>
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">Topaz {{ 'транзакций' if lang == 'ru' else 'транзакция' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ dashboard.fuel.transactions }}</span>
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'последняя синхронизация' if lang == 'ru' else 'охирги синхронизация' }}</span>
+      <span class="vs-kpi-strip-value is-text">{{ dashboard.fuel.latest_sync_text or '—' }}</span>
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'проверено' if lang == 'ru' else 'текширилди' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ dashboard.fuel.review_resolved }}</span>
+    </div>
+    {% else %}
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-value is-text vs-muted">{{ 'Нет доступа к модулю' if lang == 'ru' else 'Модулга рухсат йўқ' }}</span>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="vs-kpi-strip">
+  <div class="vs-kpi-strip-head">
+    <span class="vs-kpi-strip-title">{{ 'Запчасти' if lang == 'ru' else 'Эҳтиёт қисмлар' }}</span>
     {% if dashboard.module_access.spare_parts %}
-    <div class="vs-kpi-grid-2">
-      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.spare.open }}</span><span class="vs-mini-l">{{ 'открытые' if lang == 'ru' else 'очиқ' }}</span></div>
-      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.spare.submitted }}</span><span class="vs-mini-l">{{ 'отправлено' if lang == 'ru' else 'юборилган' }}</span></div>
-      <div class="vs-mini is-success"><span class="vs-mini-v vs-num">{{ dashboard.spare.approved }}</span><span class="vs-mini-l">{{ 'утверждено' if lang == 'ru' else 'тасдиқланган' }}</span></div>
-      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.spare.rejected }}</span><span class="vs-mini-l">{{ 'отклонено' if lang == 'ru' else 'рад этилган' }}</span></div>
+    <a href="{{ url_for('spare_parts.index') }}" class="vs-kpi-link">{{ 'Открыть →' if lang == 'ru' else 'Очиш →' }}</a>
+    {% endif %}
+  </div>
+  <div class="vs-kpi-strip-body">
+    {% if dashboard.module_access.spare_parts %}
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'открытые' if lang == 'ru' else 'очиқ' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ dashboard.spare.open }}</span>
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'отправлено' if lang == 'ru' else 'юборилган' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ dashboard.spare.submitted }}</span>
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'утверждено' if lang == 'ru' else 'тасдиқланган' }}</span>
+      <span class="vs-kpi-strip-value is-success vs-num">{{ dashboard.spare.approved }}</span>
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'отклонено' if lang == 'ru' else 'рад этилган' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ dashboard.spare.rejected }}</span>
     </div>
     {% else %}
-    <div class="vs-empty" style="border:none; padding:24px 0; background:transparent;">
-      <div class="vs-empty-sub">{{ 'Нет доступа к модулю' if lang == 'ru' else 'Модулга рухсат йўқ' }}</div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-value is-text vs-muted">{{ 'Нет доступа к модулю' if lang == 'ru' else 'Модулга рухсат йўқ' }}</span>
     </div>
     {% endif %}
   </div>
+</div>
 
-  {# Work Orders #}
-  <div class="vs-kpi">
-    <div class="vs-kpi-head">
-      <div class="vs-kpi-label">{{ 'Наряды' if lang == 'ru' else 'Буюртмалар' }}</div>
-      <a href="{{ url_for('work_orders.index') }}" class="vs-kpi-link">{{ 'Открыть →' if lang == 'ru' else 'Очиш →' }}</a>
+<div class="vs-kpi-strip">
+  <div class="vs-kpi-strip-head">
+    <span class="vs-kpi-strip-title">{{ 'Наряды' if lang == 'ru' else 'Буюртмалар' }}</span>
+    <a href="{{ url_for('work_orders.index') }}" class="vs-kpi-link">{{ 'Открыть →' if lang == 'ru' else 'Очиш →' }}</a>
+  </div>
+  <div class="vs-kpi-strip-body">
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'открытые' if lang == 'ru' else 'очиқ' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ dashboard.work_orders.open }}</span>
     </div>
-    <div class="vs-kpi-grid-2">
-      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.work_orders.open }}</span><span class="vs-mini-l">{{ 'открытые' if lang == 'ru' else 'очиқ' }}</span></div>
-      <div class="vs-mini is-success"><span class="vs-mini-v vs-num">{{ dashboard.work_orders.done_today }}</span><span class="vs-mini-l">{{ 'сегодня' if lang == 'ru' else 'бугун' }}</span></div>
-      <div class="vs-mini{% if dashboard.work_orders.overdue > 0 %} is-danger{% endif %}"><span class="vs-mini-v vs-num">{{ dashboard.work_orders.overdue }}</span><span class="vs-mini-l">{{ 'просрочено' if lang == 'ru' else 'муддати ўтган' }}</span></div>
-      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.work_orders.total_amount | fmt_sum or '—' }}</span><span class="vs-mini-l">{{ 'сум выпол.' if lang == 'ru' else 'сўм бажар.' }}</span></div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'сегодня' if lang == 'ru' else 'бугун' }}</span>
+      <span class="vs-kpi-strip-value is-success vs-num">{{ dashboard.work_orders.done_today }}</span>
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'сум выполнено' if lang == 'ru' else 'сўм бажарилди' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ dashboard.work_orders.total_amount | fmt_sum or '—' }}</span>
     </div>
   </div>
+</div>
 
-  {# Wialon #}
-  <div class="vs-kpi">
-    <div class="vs-kpi-head">
-      <div class="vs-kpi-label">Wialon GPS</div>
+<div class="vs-kpi-strip vs-mb">
+  <div class="vs-kpi-strip-head">
+    <span class="vs-kpi-strip-title">Wialon GPS · {{ 'Дроны' if lang == 'ru' else 'Дронлар' }}</span>
+    <span class="vs-row">
       {% if dashboard.module_access.wialon %}
-      <a href="{{ url_for('wialon_index') }}" class="vs-kpi-link">{{ 'Открыть →' if lang == 'ru' else 'Очиш →' }}</a>
+      <a href="{{ url_for('wialon_index') }}" class="vs-kpi-link">Wialon →</a>
       {% endif %}
-    </div>
-    {% if dashboard.module_access.wialon %}
-    <div class="vs-kpi-grid-2">
-      <div class="vs-mini is-success"><span class="vs-mini-v vs-num">{{ dashboard.wialon.linked }}</span><span class="vs-mini-l">{{ 'связано' if lang == 'ru' else 'боғланган' }}</span></div>
-      <div class="vs-mini{% if dashboard.wialon.unmapped > 0 %} is-warning{% endif %}"><span class="vs-mini-v vs-num">{{ dashboard.wialon.unmapped }}</span><span class="vs-mini-l">{{ 'не связано' if lang == 'ru' else 'боғланмаган' }}</span></div>
-      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.wialon.skipped }}</span><span class="vs-mini-l">{{ 'нет в системе' if lang == 'ru' else 'тизимда йўқ' }}</span></div>
-      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ dashboard.wialon.total }}</span><span class="vs-mini-l">{{ 'всего' if lang == 'ru' else 'жами' }}</span></div>
-    </div>
-    {% else %}
-    <div class="vs-empty" style="border:none; padding:24px 0; background:transparent;">
-      <div class="vs-empty-sub">{{ 'Нет доступа к модулю' if lang == 'ru' else 'Модулга рухсат йўқ' }}</div>
-    </div>
-    {% endif %}
-  </div>
-
-  {# Drones — DRONE-FLEET-001. Плитка строго дополняющая: ни одно из правил
-     выше не изменено. Данные приходят из ленивой функции, объявленной
-     блюпринтом дронов (drones.py), поэтому маршрут дашборда не тронут;
-     запрос выполняется только здесь и только при наличии доступа к модулю. #}
-  {% set fleet = drone_fleet_status() %}
-  <div class="vs-kpi">
-    <div class="vs-kpi-head">
-      <div class="vs-kpi-label">{{ 'Дроны — исправность' if lang == 'ru' else 'Дронлар — созлиги' }}</div>
       {% if fleet %}
-      <a href="{{ url_for('drones.units') }}" class="vs-kpi-link">{{ 'Открыть →' if lang == 'ru' else 'Очиш →' }}</a>
+      <a href="{{ url_for('drones.units') }}" class="vs-kpi-link">{{ 'Дроны →' if lang == 'ru' else 'Дронлар →' }}</a>
       {% endif %}
+    </span>
+  </div>
+  <div class="vs-kpi-strip-body">
+    {% if dashboard.module_access.wialon %}
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'GPS связано' if lang == 'ru' else 'GPS боғланган' }}</span>
+      <span class="vs-kpi-strip-value is-success vs-num">{{ dashboard.wialon.linked }}</span>
     </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'GPS всего' if lang == 'ru' else 'GPS жами' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ dashboard.wialon.total }}</span>
+    </div>
+    {% endif %}
     {% if fleet and not fleet.error %}
-    <div class="vs-kpi-grid-2">
-      <div class="vs-mini is-success"><span class="vs-mini-v vs-num">{{ fleet.serviceable }}</span><span class="vs-mini-l">{{ 'исправны' if lang == 'ru' else 'соз' }}</span></div>
-      <div class="vs-mini{% if fleet.unserviceable > 0 %} is-danger{% endif %}"><span class="vs-mini-v vs-num">{{ fleet.unserviceable }}</span><span class="vs-mini-l">{{ 'неисправны' if lang == 'ru' else 'носоз' }}</span></div>
-      {# Машина без единой записи в журнале — «не сказано», а не «исправна». #}
-      <div class="vs-mini{% if fleet.unknown > 0 %} is-warning{% endif %}"><span class="vs-mini-v vs-num">{{ fleet.unknown }}</span><span class="vs-mini-l">{{ 'не указано' if lang == 'ru' else 'кўрсатилмаган' }}</span></div>
-      <div class="vs-mini"><span class="vs-mini-v vs-num">{{ fleet.total }}</span><span class="vs-mini-l">{{ 'всего' if lang == 'ru' else 'жами' }}</span></div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'дроны исправны' if lang == 'ru' else 'соз дронлар' }}</span>
+      <span class="vs-kpi-strip-value is-success vs-num">{{ fleet.serviceable }}</span>
     </div>
-    {% elif fleet %}
-    <div class="vs-empty" style="border:none; padding:24px 0; background:transparent;">
-      <div class="vs-empty-sub">{{ 'Данные об исправности недоступны' if lang == 'ru' else 'Созлик маълумотлари мавжуд эмас' }}</div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'дронов всего' if lang == 'ru' else 'жами дрон' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ fleet.total }}</span>
     </div>
-    {% else %}
-    <div class="vs-empty" style="border:none; padding:24px 0; background:transparent;">
-      <div class="vs-empty-sub">{{ 'Нет доступа к модулю' if lang == 'ru' else 'Модулга рухсат йўқ' }}</div>
+    {% endif %}
+    {% if not dashboard.module_access.wialon and not fleet %}
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-value is-text vs-muted">{{ 'Нет доступа к модулю' if lang == 'ru' else 'Модулга рухсат йўқ' }}</span>
     </div>
     {% endif %}
   </div>
-
 </div>
 
 {# ════════ DASH003 — WORK ORDERS ANALYTICS ════════ #}
@@ -225,7 +297,7 @@
       </div>
       {% if dashboard.work_orders.by_org %}
       <div class="vs-table-scroll">
-        <table class="vs-table is-compact">
+        <table class="vs-table is-compact is-static">
           <thead>
             <tr>
               <th>{{ 'Организация' if lang == 'ru' else 'Ташкилот' }}</th>
@@ -257,7 +329,7 @@
       </div>
       {% if dashboard.work_orders.by_mechanic %}
       <div class="vs-table-scroll">
-        <table class="vs-table is-compact">
+        <table class="vs-table is-compact is-static">
           <thead>
             <tr>
               <th>{{ 'Механик' if lang == 'ru' else 'Механик' }}</th>
@@ -295,7 +367,7 @@
       </div>
       {% if dashboard.work_orders.overdue_list %}
       <div class="vs-table-scroll">
-        <table class="vs-table is-compact">
+        <table class="vs-table is-compact is-static">
           <thead>
             <tr>
               <th>{{ 'Наряд / Техника' if lang == 'ru' else 'Наряд / Техника' }}</th>
@@ -320,7 +392,7 @@
         </table>
       </div>
       {% else %}
-      <div style="padding:24px; text-align:center; color:var(--vs-success); font-weight:600;">{{ 'Просроченных нарядов нет ✓' if lang == 'ru' else 'Муддати ўтган нарядлар йўқ ✓' }}</div>
+      <div style="padding:24px; text-align:center; color:var(--vs-success); font-weight:600;">{{ icon('check') }} {{ 'Просроченных нарядов нет' if lang == 'ru' else 'Муддати ўтган нарядлар йўқ' }}</div>
       {% endif %}
     </div>
 
@@ -343,7 +415,7 @@
           <line x1="0" y1="46" x2="280" y2="46" stroke="var(--vs-border-2)" stroke-width="1"/>
           {% for bar in bars %}
           {% if loop.index0 % 3 == 0 %}
-          <text x="{{ loop.index0 * 20 + 10 }}" y="56" text-anchor="middle" font-size="8" fill="var(--vs-text-soft)">{{ bar.label }}</text>
+          <text x="{{ loop.index0 * 20 + 10 }}" y="56" text-anchor="middle" font-size="8" fill="var(--vs-text-muted)">{{ bar.label }}</text>
           {% endif %}
           {% endfor %}
         </svg>
@@ -386,18 +458,18 @@
       <div style="margin-top:14px;">
         <div id="dayFields" style="{% if mode != 'day' %}display:none;{% endif %}">
           <div class="vs-field" style="max-width:200px;">
-            <label class="vs-label">{{ t('Сана') }}</label>
-            <input class="vs-input" type="date" name="date" value="{{ d_from.isoformat() }}" onchange="document.getElementById('dateForm').submit()">
+            <label class="vs-label" for="dashDate">{{ t('Сана') }}</label>
+            <input class="vs-input" id="dashDate" type="date" name="date" value="{{ d_from.isoformat() }}" onchange="document.getElementById('dateForm').submit()">
           </div>
         </div>
         <div id="rangeFields" class="vs-form-row" style="{% if mode != 'range' %}display:none;{% endif %}">
           <div class="vs-field" style="max-width:200px;">
-            <label class="vs-label">{{ t('Дан') }}</label>
-            <input class="vs-input" type="date" name="date_from" value="{{ d_from.isoformat() }}">
+            <label class="vs-label" for="dashFrom">{{ t('Дан') }}</label>
+            <input class="vs-input" id="dashFrom" type="date" name="date_from" value="{{ d_from.isoformat() }}">
           </div>
           <div class="vs-field" style="max-width:200px;">
-            <label class="vs-label">{{ t('Гача') }}</label>
-            <input class="vs-input" type="date" name="date_to" value="{{ d_to.isoformat() }}">
+            <label class="vs-label" for="dashTo">{{ t('Гача') }}</label>
+            <input class="vs-input" id="dashTo" type="date" name="date_to" value="{{ d_to.isoformat() }}">
           </div>
         </div>
         <div id="autoFields" class="vs-soft" style="{% if mode not in ('week', 'month') %}display:none;{% endif %} font-size:13px;">
@@ -552,7 +624,7 @@
     </div>
   </div>
   <div class="vs-table-scroll">
-    <table class="vs-table">
+    <table class="vs-table is-static">
       <thead>
         <tr>
           <th style="width:36px;"></th>
@@ -569,7 +641,7 @@
       <tbody>
       {% for od in orgs_data %}
       <tr class="is-clickable" onclick="toggleOrg({{ od.org.id }})">
-        <td class="center"><span class="toggle-icon" id="icon-org-{{ od.org.id }}">▶</span></td>
+        <td class="center"><span class="vs-disclosure" id="icon-org-{{ od.org.id }}">{{ icon('chevron', 13) }}</span></td>
         <td style="font-weight:700;">{{ od.org.name }}</td>
         <td class="center vs-num">{{ od.working_count }}</td>
         <td class="center vs-num vs-muted">{{ od.idle_count }}</td>
@@ -584,7 +656,7 @@
       <tr class="vs-accord-l2 org-{{ od.org.id }}-eq is-clickable" style="display:none;" onclick="toggleEq({{ od.org.id }}, {{ eqid }}); event.stopPropagation();">
         <td class="center">
           {% if ed.records|length > 0 %}
-          <span class="toggle-icon toggle-sm" id="icon-eq-{{ od.org.id }}-{{ eqid }}">▶</span>
+          <span class="vs-disclosure" id="icon-eq-{{ od.org.id }}-{{ eqid }}">{{ icon('chevron', 11) }}</span>
           {% endif %}
         </td>
         <td>
@@ -742,9 +814,9 @@ document.addEventListener('DOMContentLoaded', function() {
 function toggleOrg(orgId) {
     const rows = document.querySelectorAll('.org-' + orgId + '-eq');
     const icon = document.getElementById('icon-org-' + orgId);
-    const isOpen = icon.classList.contains('open');
+    const isOpen = icon.classList.contains('is-open');
     rows.forEach(r => r.style.display = isOpen ? 'none' : '');
-    icon.classList.toggle('open');
+    icon.classList.toggle('is-open');
     if (isOpen) {
         document.querySelectorAll('[class*="eq-' + orgId + '-"][class*="-rec"]').forEach(r => r.style.display = 'none');
         document.querySelectorAll('[id^="icon-eq-' + orgId + '-"]').forEach(i => i.classList.remove('open'));
@@ -755,9 +827,9 @@ function toggleEq(orgId, eqId) {
     const rows = document.querySelectorAll('.eq-' + orgId + '-' + eqId + '-rec');
     const icon = document.getElementById('icon-eq-' + orgId + '-' + eqId);
     if (!icon) return;
-    const isOpen = icon.classList.contains('open');
+    const isOpen = icon.classList.contains('is-open');
     rows.forEach(r => r.style.display = isOpen ? 'none' : '');
-    icon.classList.toggle('open');
+    icon.classList.toggle('is-open');
 }
 
 function toggleAllOrgs(open) {
@@ -771,9 +843,4 @@ function toggleAllOrgs(open) {
     }
 }
 </script>
-<style>
-.toggle-icon { display:inline-block; font-size:10px; color: var(--vs-text-soft); transition: transform 0.15s; }
-.toggle-icon.open { transform: rotate(90deg); }
-.toggle-sm { font-size: 8px; }
-</style>
 {% endblock %}

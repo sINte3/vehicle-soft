@@ -28,7 +28,7 @@
   </div>
   {% if resolvable %}
   <div class="vs-table-scroll">
-  <table class="vs-table">
+  <table class="vs-table is-static">
     <thead>
       <tr>
         <th>{{ t_nick }}</th>
@@ -79,7 +79,7 @@
   {% if unresolvable %}
   <div class="vs-alert is-info">{{ 'Для этих написаний в карте ников нет подходящей записи, либо нормализованное совпадение указывает более чем на одну машину. Какой машине принадлежит написание — решение владельца: заведите ник на странице машин и вернитесь сюда.' if is_ru else 'Бу ёзилишлар учун никлар харитасида мос ёзув йўқ ёки нормаллаштирилган мослик бирдан ортиқ машинага ишора қилади. Ёзилиш қайси машинага тегишли эканини эгаси ҳал қилади: никни машиналар саҳифасида киритинг ва бу ерга қайтинг.' }}</div>
   <div class="vs-table-scroll">
-  <table class="vs-table">
+  <table class="vs-table is-static">
     <thead>
       <tr>
         <th>{{ t_nick }}</th>
@@ -121,7 +121,7 @@
   </div>
   {% if runs %}
   <div class="vs-table-scroll">
-  <table class="vs-table">
+  <table class="vs-table is-static">
     <thead>
       <tr>
         <th style="width:60px;">№</th>

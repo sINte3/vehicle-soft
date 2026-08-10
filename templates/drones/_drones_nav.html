@@ -1,31 +1,5 @@
-{# Shared navigation row of the drones module (DRONE-004): one pattern on
-   all pages, the current page marked. /drones/ stays the landing
-   page; promoting the summary is the owner's one-line decision later.
-   DRONE-FLEET-001 added «Операторы», per the task, and «Источники»: the
-   sync-observability screen needs an entry point, and a page nobody can
-   reach reports silence to nobody.
-
-   DRONE-REPORTS-HUB-001 replaced «Источники» in the strip with «Отчёты».
-   Источники did not lose its entry point — it became the fifth tile of the
-   launcher, and the route /drones/sources is unchanged. The strip stays
-   seven tabs wide, which is what it was measured to fit at.
-
-   «Сводка» stays in the strip AND appears as the first tile: it is the
-   module's landing report, and a launcher that omits the main report is
-   confusing. #}
-{% set nav_is_ru = (lang == 'ru') %}
-{% set nav_current = request.endpoint or '' %}
-<div class="vs-row vs-mb" style="gap:8px; flex-wrap:wrap;">
-  <a href="{{ url_for('drones.summary') }}" class="vs-btn{% if nav_current == 'drones.summary' %} vs-btn-primary{% endif %}">{{ 'Сводка' if nav_is_ru else 'Жамланма' }}</a>
-  <a href="{{ url_for('drones.index') }}" class="vs-btn{% if nav_current == 'drones.index' %} vs-btn-primary{% endif %}">{{ 'Вылеты' if nav_is_ru else 'Парвозлар' }}</a>
-  <a href="{{ url_for('drones.units') }}" class="vs-btn{% if nav_current in ('drones.units', 'drones.unit_card') %} vs-btn-primary{% endif %}">{{ 'Машины' if nav_is_ru else 'Машиналар' }}</a>
-  <a href="{{ url_for('drones.operators') }}" class="vs-btn{% if nav_current in ('drones.operators', 'drones.operator_card') %} vs-btn-primary{% endif %}">{{ 'Операторы' if nav_is_ru else 'Операторлар' }}</a>
-  {# DRONE-WORKS-001 добавил «Работы»: коммерческая сторона трека, ведомости
-     диспетчеров. Отдельная запись от «Вылетов» намеренно — вылет DJI и
-     работа из ведомости это разные факты и разные таблицы. #}
-  <a href="{{ url_for('drones.works') }}" class="vs-btn{% if nav_current == 'drones.works' %} vs-btn-primary{% endif %}">{{ 'Работы' if nav_is_ru else 'Ишлар' }}</a>
-  <a href="{{ url_for('drones.customers') }}" class="vs-btn{% if nav_current == 'drones.customers' %} vs-btn-primary{% endif %}">{{ 'Заказчики' if nav_is_ru else 'Буюртмачилар' }}</a>
-  {# Marked active on every page the launcher is the entry point for, so the
-     strip keeps saying «you are inside reports» after a tile is clicked. #}
-  <a href="{{ url_for('drones.reports') }}" class="vs-btn{% if nav_current in ('drones.reports', 'drones.sources', 'drones.works_reports', 'drones.works_debts', 'drones.works_assignment_hints') %} vs-btn-primary{% endif %}">{{ 'Отчёты' if nav_is_ru else 'Ҳисоботлар' }}</a>
-</div>
+{# ADAPT-1: набор разделов и разметка живут в templates/_module_nav.html.
+   Файл сохранён под прежним именем, чтобы 20 шаблонов модуля не правились
+   ради переезда; его единственная задача — назвать модуль. #}
+{% from '_module_nav.html' import module_nav with context %}
+{{ module_nav('drones') }}

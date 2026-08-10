@@ -1,0 +1,2200 @@
+{
+ "activity": {
+  "_note": "business actions written by log_audit(), NOT page views",
+  "by_action": {
+   "customer_created": 1,
+   "customer_deleted": 1,
+   "daily_records_saved": 1896,
+   "deficiency_created": 61,
+   "deficiency_deleted": 1,
+   "deficiency_updated": 17,
+   "equipment_delete_blocked_deactivated": 2,
+   "equipment_reactivated": 1,
+   "fuel_initial_balance_saved": 5,
+   "fuel_manual_expense_created": 6,
+   "fuel_manual_expense_updated": 1,
+   "fuel_receipt_created": 34,
+   "fuel_receipt_deleted": 1,
+   "fuel_receipt_updated": 1,
+   "fuel_reserve_transfer_marked": 6,
+   "fuel_station_delete_blocked_deactivated": 1,
+   "fuel_station_reactivated": 1,
+   "fuel_topaz_sync_completed": 1152,
+   "fuel_warehouse_updated": 2,
+   "login_failed": 32,
+   "login_locked": 12,
+   "login_success": 81,
+   "logout": 7,
+   "module_permissions_updated": 9,
+   "password_changed": 9,
+   "spare_part_catalog_created": 12,
+   "spare_part_catalog_updated": 2,
+   "spare_part_compatibility_updated": 1,
+   "spare_part_inventory_movement_created": 17,
+   "spare_part_item_created": 5,
+   "spare_part_item_photo_uploaded": 3,
+   "spare_part_item_price_confirmed": 1,
+   "spare_part_item_price_set": 1,
+   "spare_part_request_created": 5,
+   "spare_part_request_status_changed": 5,
+   "spare_part_sku_created": 16,
+   "spare_part_sku_updated": 1,
+   "spare_part_warehouse_created": 2,
+   "telegram_link_code_generated": 3,
+   "user_blocked": 3,
+   "user_created": 5,
+   "user_password_reset": 3,
+   "user_updated": 1,
+   "wialon_mapping_updated": 2,
+   "work_type_created": 6,
+   "work_type_updated": 2
+  },
+  "by_entity_type": {
+   "customer": 2,
+   "daily_records": 1896,
+   "deficiency": 79,
+   "equipment": 3,
+   "fuel_initial_balance": 5,
+   "fuel_manual_expense": 7,
+   "fuel_receipt": 36,
+   "fuel_station": 2,
+   "fuel_sync": 1152,
+   "fuel_transaction_reattribution": 6,
+   "fuel_warehouse": 2,
+   "permissions": 9,
+   "spare_part_catalog": 15,
+   "spare_part_inventory_movement": 17,
+   "spare_part_request": 10,
+   "spare_part_request_item": 10,
+   "spare_part_sku": 17,
+   "spare_part_warehouse": 2,
+   "user": 156,
+   "vialon_mapping": 2,
+   "work_type": 8
+  },
+  "by_method": {
+   "GET": 7,
+   "POST": 3429
+  },
+  "by_module": {
+   "admin": 24,
+   "auth": 141,
+   "daily_entry": 1896,
+   "deficiencies": 79,
+   "fuel": 1210,
+   "references": 13,
+   "spare_parts": 71,
+   "wialon": 2
+  },
+  "by_month": {
+   "2026-05": 7,
+   "2026-06": 2072,
+   "2026-07": 1134,
+   "2026-08": 223
+  },
+  "by_role": {
+   "admin": 253,
+   "operator": 2031,
+   "system": 1152
+  },
+  "by_route": {
+   "/admin/permissions/save": 9,
+   "/admin/users/1/telegram-link-code": 2,
+   "/admin/users/5/telegram-link-code": 1,
+   "/admin/users/delete/2": 1,
+   "/admin/users/delete/3": 2,
+   "/admin/users/save": 9,
+   "/change-temporary-password": 7,
+   "/deficiencies/delete/61": 1,
+   "/deficiencies/save": 78,
+   "/entry/save": 1896,
+   "/fuel/api/fuel_sync": 1152,
+   "/fuel/initial-balance/save": 5,
+   "/fuel/manual-expenses/save": 7,
+   "/fuel/receipts/delete/35": 1,
+   "/fuel/receipts/save": 35,
+   "/fuel/reserve-transfers/mark": 6,
+   "/fuel/stations/delete/14": 1,
+   "/fuel/stations/enable/14": 1,
+   "/fuel/warehouses/save": 2,
+   "/login": 125,
+   "/logout": 7,
+   "/profile": 2,
+   "/ref/customers/delete/10": 1,
+   "/ref/customers/save": 1,
+   "/ref/equipment/delete/1": 1,
+   "/ref/equipment/delete/279": 1,
+   "/ref/equipment/enable/1": 1,
+   "/ref/work_types/save": 8,
+   "/spare-parts/2/approve": 1,
+   "/spare-parts/4/approve": 1,
+   "/spare-parts/4/issue": 1,
+   "/spare-parts/4/items/4/photo": 1,
+   "/spare-parts/4/items/4/price/confirm": 1,
+   "/spare-parts/4/items/4/price/set": 1,
+   "/spare-parts/4/submit": 1,
+   "/spare-parts/5/items/5/photo": 1,
+   "/spare-parts/5/submit": 1,
+   "/spare-parts/6/items/6/photo": 1,
+   "/spare-parts/catalog/60/name-uz": 1,
+   "/spare-parts/catalog/69/compatibility/save": 1,
+   "/spare-parts/catalog/75/name-uz": 1,
+   "/spare-parts/catalog/save": 12,
+   "/spare-parts/inventory/movement": 17,
+   "/spare-parts/inventory/warehouse": 2,
+   "/spare-parts/save": 10,
+   "/spare-parts/skus/save": 17,
+   "/wialon/mapping/save": 2
+  },
+  "distinct_users": 7,
+  "period": {
+   "first": "2026-05-26T05:09:15",
+   "last": "2026-08-09T09:33:01"
+  },
+  "role_by_month": [
+   {
+    "month": "2026-05",
+    "n": 4,
+    "role": "admin"
+   },
+   {
+    "month": "2026-05",
+    "n": 3,
+    "role": "operator"
+   },
+   {
+    "month": "2026-06",
+    "n": 1629,
+    "role": "operator"
+   },
+   {
+    "month": "2026-06",
+    "n": 403,
+    "role": "system"
+   },
+   {
+    "month": "2026-06",
+    "n": 40,
+    "role": "admin"
+   },
+   {
+    "month": "2026-07",
+    "n": 540,
+    "role": "system"
+   },
+   {
+    "month": "2026-07",
+    "n": 395,
+    "role": "operator"
+   },
+   {
+    "month": "2026-07",
+    "n": 199,
+    "role": "admin"
+   },
+   {
+    "month": "2026-08",
+    "n": 209,
+    "role": "system"
+   },
+   {
+    "month": "2026-08",
+    "n": 10,
+    "role": "admin"
+   },
+   {
+    "month": "2026-08",
+    "n": 4,
+    "role": "operator"
+   }
+  ],
+  "total_rows": 3436
+ },
+ "enums": {
+  "audit_logs": {
+   "method": {
+    "GET": 7,
+    "POST": 3429
+   },
+   "module": {
+    "admin": 24,
+    "auth": 141,
+    "daily_entry": 1896,
+    "deficiencies": 79,
+    "fuel": 1210,
+    "references": 13,
+    "spare_parts": 71,
+    "wialon": 2
+   },
+   "role_snapshot": {
+    "admin": 253,
+    "operator": 2031,
+    "system": 1152
+   },
+   "status": {
+    "blocked": 12,
+    "failed": 32,
+    "ok": 3392
+   }
+  },
+  "bot003_notification_outbox": {
+   "status": {
+    "sent": 7
+   }
+  },
+  "daily_records": {
+   "status": {
+    "idle": 15546,
+    "working": 8275
+   },
+   "unit": {
+    "": 15630,
+    "1 Рейс": 24,
+    "Га": 211,
+    "М-соат": 72,
+    "Мотосоат": 47,
+    "Реййс": 1,
+    "Рейс": 381,
+    "Соат": 630,
+    "га": 4907,
+    "км": 2,
+    "м-соат": 734,
+    "м-соат будем считать с  08:00–18:00. Порог потери сигнала  >2 часов.  Во сколько машина начала движение с утра и во сколько закончила движение и остановилась вечером Превышение скорости оставляем, остально не нужно. файл с отчётом за 6 апреля прикрепляю": 1,
+    "рейс": 42,
+    "соат": 832,
+    "тн/км": 296,
+    "тонна/км": 11
+   }
+  },
+  "drone_sync_logs": {
+   "kind": {
+    "backfill": 34,
+    "incremental": 24
+   },
+   "status": {
+    "ok": 58
+   }
+  },
+  "drone_unit_status_log": {
+   "status": {
+    "serviceable": 9,
+    "unserviceable": 6
+   }
+  },
+  "equipment": {
+   "category": {
+    "combine": 34,
+    "mini": 4,
+    "motorcycle": 4,
+    "mtz": 116,
+    "passenger": 1,
+    "qatnov": 74,
+    "special": 27,
+    "yuk_transport": 31,
+    "yukori": 45
+   }
+  },
+  "fuel_card_aliases": {
+   "source": {
+    "topaz_dcCards_manual_staging": 9770
+   }
+  },
+  "fuel_card_sync_logs": {
+   "source": {
+    "staging_seed_012h": 1
+   },
+   "status": {
+    "ok": 1
+   }
+  },
+  "fuel_cards": {
+   "source": {
+    "topaz_dcCards_manual_staging": 4885
+   }
+  },
+  "fuel_initial_balances": {
+   "fuel_type": {
+    "ДТ": 30
+   }
+  },
+  "fuel_manual_expenses": {
+   "fuel_type": {
+    "ДТ": 8
+   },
+   "source": {
+    "manual": 8
+   }
+  },
+  "fuel_receipts2": {
+   "fuel_type": {
+    "ДТ": 77
+   }
+  },
+  "fuel_sync_logs": {
+   "status": {
+    "ok": 49
+   }
+  },
+  "fuel_sync_logs2": {
+   "status": {
+    "ok": 3430
+   }
+  },
+  "fuel_transactions2": {
+   "fuel_type": {
+    "ДТ": 394817
+   }
+  },
+  "spare_part_categories": {
+   "kind": {
+    "consumable": 2,
+    "unit": 11
+   }
+  },
+  "spare_part_inventory": {
+   "unit": {
+    "dona": 14,
+    "kv_metr": 1,
+    "metr": 1
+   }
+  },
+  "spare_part_inventory_movements": {
+   "movement_type": {
+    "adjustment": 1,
+    "issue": 1,
+    "receipt": 16
+   }
+  },
+  "spare_part_price_audit": {
+   "action": {
+    "confirm": 1,
+    "set": 1
+   }
+  },
+  "spare_part_request_items": {
+   "unit": {
+    "dona": 6
+   }
+  },
+  "spare_part_requests": {
+   "status": {
+    "approved": 1,
+    "draft": 1,
+    "issued": 1,
+    "submitted": 3
+   }
+  },
+  "spare_part_write_off_act_items": {
+   "unit": {
+    "dona": 1
+   }
+  },
+  "spare_parts": {
+   "category": {
+    "": 250
+   },
+   "status": {
+    "active": 250
+   },
+   "unit": {
+    "dona": 248,
+    "kv_metr": 1,
+    "metr": 1
+   }
+  },
+  "users": {
+   "language": {
+    "ru": 2,
+    "uz": 5
+   },
+   "role": {
+    "admin": 1,
+    "operator": 6
+   }
+  },
+  "work_orders": {
+   "status": {
+    "done": 3
+   },
+   "unit": {
+    "Соат": 1,
+    "га": 2
+   }
+  }
+ },
+ "excluded_columns_rule": [
+  "password",
+  "hash",
+  "token",
+  "secret",
+  "salt",
+  "username",
+  "full_name",
+  "first_name",
+  "last_name",
+  "fio",
+  "phone",
+  "email",
+  "mail",
+  "passport",
+  "inn",
+  "ip_address",
+  "user_agent",
+  "telegram",
+  "tg_",
+  "before_json",
+  "after_json",
+  "changes_json"
+ ],
+ "schema_version": 1,
+ "source_basename": "transport.db",
+ "tables": 73,
+ "text_lengths": {
+  "app_modules": {
+   "code": {
+    "avg": 15.2,
+    "filled": 13,
+    "max": 28,
+    "min": 4,
+    "p90": 25,
+    "p95": 26,
+    "p99": 26
+   },
+   "name_ru": {
+    "avg": 18.9,
+    "filled": 13,
+    "max": 33,
+    "min": 5,
+    "p90": 28,
+    "p95": 30,
+    "p99": 30
+   },
+   "name_uz": {
+    "avg": 22.5,
+    "filled": 13,
+    "max": 38,
+    "min": 6,
+    "p90": 34,
+    "p95": 34,
+    "p99": 34
+   }
+  },
+  "audit_logs": {
+   "action": {
+    "avg": 21.0,
+    "filled": 3436,
+    "max": 39,
+    "min": 6,
+    "p90": 25,
+    "p95": 25,
+    "p99": 28
+   },
+   "created_at": {
+    "avg": 19.0,
+    "filled": 3436,
+    "max": 19,
+    "min": 19,
+    "p90": 19,
+    "p95": 19,
+    "p99": 19
+   },
+   "description": {
+    "avg": 40.6,
+    "filled": 3436,
+    "max": 80,
+    "min": 11,
+    "p90": 54,
+    "p95": 54,
+    "p99": 54
+   },
+   "entity_label": {
+    "avg": 17.0,
+    "filled": 3427,
+    "max": 120,
+    "min": 4,
+    "p90": 20,
+    "p95": 20,
+    "p99": 67
+   },
+   "entity_type": {
+    "avg": 11.4,
+    "filled": 3436,
+    "max": 30,
+    "min": 4,
+    "p90": 13,
+    "p95": 13,
+    "p99": 20
+   },
+   "method": {
+    "avg": 4.0,
+    "filled": 3436,
+    "max": 4,
+    "min": 3,
+    "p90": 4,
+    "p95": 4,
+    "p99": 4
+   },
+   "module": {
+    "avg": 8.2,
+    "filled": 3436,
+    "max": 12,
+    "min": 4,
+    "p90": 11,
+    "p95": 11,
+    "p99": 12
+   },
+   "role_snapshot": {
+    "avg": 7.1,
+    "filled": 3436,
+    "max": 8,
+    "min": 5,
+    "p90": 8,
+    "p95": 8,
+    "p99": 8
+   },
+   "route": {
+    "avg": 14.3,
+    "filled": 3436,
+    "max": 42,
+    "min": 6,
+    "p90": 19,
+    "p95": 19,
+    "p99": 28
+   },
+   "status": {
+    "avg": 2.1,
+    "filled": 3436,
+    "max": 7,
+    "min": 2,
+    "p90": 2,
+    "p95": 2,
+    "p99": 6
+   }
+  },
+  "bot003_notification_outbox": {
+   "available_at": {
+    "avg": 23.0,
+    "filled": 7,
+    "max": 26,
+    "min": 19,
+    "p90": 26,
+    "p95": 26,
+    "p99": 26
+   },
+   "created_at": {
+    "avg": 23.0,
+    "filled": 7,
+    "max": 26,
+    "min": 19,
+    "p90": 26,
+    "p95": 26,
+    "p99": 26
+   },
+   "dedupe_key": {
+    "avg": 26.1,
+    "filled": 7,
+    "max": 34,
+    "min": 16,
+    "p90": 34,
+    "p95": 34,
+    "p99": 34
+   },
+   "event_type": {
+    "avg": 16.9,
+    "filled": 7,
+    "max": 23,
+    "min": 9,
+    "p90": 23,
+    "p95": 23,
+    "p99": 23
+   },
+   "payload_json": {
+    "avg": 203.1,
+    "filled": 7,
+    "max": 233,
+    "min": 166,
+    "p90": 233,
+    "p95": 233,
+    "p99": 233
+   },
+   "sent_at": {
+    "avg": 32.0,
+    "filled": 7,
+    "max": 32,
+    "min": 32,
+    "p90": 32,
+    "p95": 32,
+    "p99": 32
+   },
+   "status": {
+    "avg": 4.0,
+    "filled": 7,
+    "max": 4,
+    "min": 4,
+    "p90": 4,
+    "p95": 4,
+    "p99": 4
+   },
+   "updated_at": {
+    "avg": 32.0,
+    "filled": 7,
+    "max": 32,
+    "min": 32,
+    "p90": 32,
+    "p95": 32,
+    "p99": 32
+   }
+  },
+  "customers": {
+   "customer_type": {
+    "avg": 8.0,
+    "filled": 9,
+    "max": 8,
+    "min": 8,
+    "p90": 8,
+    "p95": 8,
+    "p99": 8
+   },
+   "name": {
+    "avg": 15.7,
+    "filled": 9,
+    "max": 25,
+    "min": 7,
+    "p90": 21,
+    "p95": 21,
+    "p99": 21
+   }
+  },
+  "daily_records": {
+   "customer": {
+    "avg": 15.6,
+    "filled": 8244,
+    "max": 111,
+    "min": 2,
+    "p90": 25,
+    "p95": 32,
+    "p99": 40
+   },
+   "idle_reason": {
+    "avg": 22.7,
+    "filled": 15546,
+    "max": 211,
+    "min": 12,
+    "p90": 37,
+    "p95": 39,
+    "p99": 50
+   },
+   "note": {
+    "avg": 19.3,
+    "filled": 137,
+    "max": 134,
+    "min": 1,
+    "p90": 33,
+    "p95": 41,
+    "p99": 68
+   },
+   "payment_type": {
+    "avg": 7.3,
+    "filled": 8275,
+    "max": 8,
+    "min": 4,
+    "p90": 8,
+    "p95": 8,
+    "p99": 8
+   },
+   "status": {
+    "avg": 5.0,
+    "filled": 23821,
+    "max": 7,
+    "min": 4,
+    "p90": 7,
+    "p95": 7,
+    "p99": 7
+   },
+   "unit": {
+    "avg": 3.0,
+    "filled": 8191,
+    "max": 253,
+    "min": 2,
+    "p90": 6,
+    "p95": 6,
+    "p99": 6
+   },
+   "work_type": {
+    "avg": 11.4,
+    "filled": 8274,
+    "max": 46,
+    "min": 3,
+    "p90": 19,
+    "p95": 23,
+    "p99": 30
+   }
+  },
+  "deficiencies": {
+   "text": {
+    "avg": 76.5,
+    "filled": 96,
+    "max": 314,
+    "min": 34,
+    "p90": 115,
+    "p95": 119,
+    "p99": 161
+   }
+  },
+  "drone_batteries": {
+   "condition": {
+    "avg": 7.3,
+    "filled": 46,
+    "max": 10,
+    "min": 7,
+    "p90": 7,
+    "p95": 10,
+    "p99": 10
+   },
+   "note": {
+    "avg": 197.0,
+    "filled": 46,
+    "max": 330,
+    "min": 140,
+    "p90": 320,
+    "p95": 320,
+    "p99": 330
+   },
+   "serial_number": {
+    "avg": 14.0,
+    "filled": 46,
+    "max": 14,
+    "min": 14,
+    "p90": 14,
+    "p95": 14,
+    "p99": 14
+   }
+  },
+  "drone_customer_aliases": {
+   "normalized_key": {
+    "avg": 16.9,
+    "filled": 713,
+    "max": 58,
+    "min": 2,
+    "p90": 24,
+    "p95": 28,
+    "p99": 41
+   },
+   "raw_name": {
+    "avg": 16.9,
+    "filled": 713,
+    "max": 58,
+    "min": 2,
+    "p90": 24,
+    "p95": 28,
+    "p99": 41
+   }
+  },
+  "drone_customers": {
+   "customer_type": {
+    "avg": 8.0,
+    "filled": 713,
+    "max": 8,
+    "min": 8,
+    "p90": 8,
+    "p95": 8,
+    "p99": 8
+   },
+   "name": {
+    "avg": 16.9,
+    "filled": 713,
+    "max": 58,
+    "min": 2,
+    "p90": 24,
+    "p95": 28,
+    "p99": 41
+   },
+   "note": {
+    "avg": 28.0,
+    "filled": 713,
+    "max": 28,
+    "min": 28,
+    "p90": 28,
+    "p95": 28,
+    "p99": 28
+   }
+  },
+  "drone_flights": {
+   "flyer_name": {
+    "avg": 7.0,
+    "filled": 31059,
+    "max": 7,
+    "min": 7,
+    "p90": 7,
+    "p95": 7,
+    "p99": 7
+   },
+   "location_text": {
+    "avg": 47.0,
+    "filled": 31059,
+    "max": 138,
+    "min": 9,
+    "p90": 57,
+    "p95": 64,
+    "p99": 81
+   },
+   "nickname_raw": {
+    "avg": 9.1,
+    "filled": 31059,
+    "max": 12,
+    "min": 2,
+    "p90": 10,
+    "p95": 10,
+    "p99": 10
+   },
+   "region": {
+    "avg": 14.0,
+    "filled": 31057,
+    "max": 18,
+    "min": 8,
+    "p90": 14,
+    "p95": 14,
+    "p99": 18
+   },
+   "serial_number": {
+    "avg": 11.0,
+    "filled": 31059,
+    "max": 11,
+    "min": 11,
+    "p90": 11,
+    "p95": 11,
+    "p99": 11
+   },
+   "team_name": {
+    "avg": 9.0,
+    "filled": 31059,
+    "max": 9,
+    "min": 7,
+    "p90": 9,
+    "p95": 9,
+    "p99": 9
+   }
+  },
+  "drone_nicknames": {
+   "nickname": {
+    "avg": 9.1,
+    "filled": 20,
+    "max": 10,
+    "min": 8,
+    "p90": 10,
+    "p95": 10,
+    "p99": 10
+   },
+   "normalized": {
+    "avg": 8.0,
+    "filled": 20,
+    "max": 9,
+    "min": 7,
+    "p90": 9,
+    "p95": 9,
+    "p99": 9
+   }
+  },
+  "drone_operators": {
+   "note": {
+    "avg": 150.9,
+    "filled": 17,
+    "max": 326,
+    "min": 140,
+    "p90": 140,
+    "p95": 140,
+    "p99": 140
+   },
+   "subdivision_name": {
+    "avg": 15.5,
+    "filled": 17,
+    "max": 25,
+    "min": 9,
+    "p90": 25,
+    "p95": 25,
+    "p99": 25
+   }
+  },
+  "drone_sync_logs": {
+   "kind": {
+    "avg": 9.2,
+    "filled": 58,
+    "max": 11,
+    "min": 8,
+    "p90": 11,
+    "p95": 11,
+    "p99": 11
+   },
+   "source_ip": {
+    "avg": 12.0,
+    "filled": 58,
+    "max": 12,
+    "min": 12,
+    "p90": 12,
+    "p95": 12,
+    "p99": 12
+   },
+   "status": {
+    "avg": 2.0,
+    "filled": 58,
+    "max": 2,
+    "min": 2,
+    "p90": 2,
+    "p95": 2,
+    "p99": 2
+   }
+  },
+  "drone_unit_status_log": {
+   "comment": {
+    "avg": 366.7,
+    "filled": 15,
+    "max": 422,
+    "min": 337,
+    "p90": 402,
+    "p95": 414,
+    "p99": 414
+   },
+   "status": {
+    "avg": 11.8,
+    "filled": 15,
+    "max": 13,
+    "min": 11,
+    "p90": 13,
+    "p95": 13,
+    "p99": 13
+   }
+  },
+  "drone_units": {
+   "generator_id": {
+    "avg": 13.9,
+    "filled": 14,
+    "max": 14,
+    "min": 13,
+    "p90": 14,
+    "p95": 14,
+    "p99": 14
+   },
+   "hardware_id": {
+    "avg": 14.0,
+    "filled": 15,
+    "max": 14,
+    "min": 14,
+    "p90": 14,
+    "p95": 14,
+    "p99": 14
+   },
+   "model": {
+    "avg": 13.0,
+    "filled": 15,
+    "max": 13,
+    "min": 13,
+    "p90": 13,
+    "p95": 13,
+    "p99": 13
+   },
+   "subdivision_name": {
+    "avg": 16.3,
+    "filled": 15,
+    "max": 25,
+    "min": 9,
+    "p90": 25,
+    "p95": 25,
+    "p99": 25
+   }
+  },
+  "drone_works": {
+   "customer_raw": {
+    "avg": 17.1,
+    "filled": 896,
+    "max": 58,
+    "min": 2,
+    "p90": 26,
+    "p95": 30,
+    "p99": 41
+   },
+   "date_raw": {
+    "avg": 18.6,
+    "filled": 866,
+    "max": 32,
+    "min": 10,
+    "p90": 19,
+    "p95": 19,
+    "p99": 19
+   },
+   "import_batch": {
+    "avg": 21.0,
+    "filled": 904,
+    "max": 21,
+    "min": 21,
+    "p90": 21,
+    "p95": 21,
+    "p99": 21
+   },
+   "note": {
+    "avg": 64.8,
+    "filled": 320,
+    "max": 207,
+    "min": 9,
+    "p90": 93,
+    "p95": 105,
+    "p99": 145
+   },
+   "operator_raw": {
+    "avg": 6.9,
+    "filled": 904,
+    "max": 14,
+    "min": 4,
+    "p90": 12,
+    "p95": 14,
+    "p99": 14
+   },
+   "payment_type": {
+    "avg": 5.8,
+    "filled": 904,
+    "max": 8,
+    "min": 4,
+    "p90": 8,
+    "p95": 8,
+    "p99": 8
+   },
+   "period_month": {
+    "avg": 7.0,
+    "filled": 904,
+    "max": 7,
+    "min": 7,
+    "p90": 7,
+    "p95": 7,
+    "p99": 7
+   },
+   "received_kind": {
+    "avg": 8.8,
+    "filled": 852,
+    "max": 12,
+    "min": 8,
+    "p90": 12,
+    "p95": 12,
+    "p99": 12
+   },
+   "source_file": {
+    "avg": 32.2,
+    "filled": 904,
+    "max": 39,
+    "min": 20,
+    "p90": 37,
+    "p95": 38,
+    "p99": 38
+   },
+   "source_sheet": {
+    "avg": 17.0,
+    "filled": 904,
+    "max": 20,
+    "min": 15,
+    "p90": 17,
+    "p95": 19,
+    "p99": 20
+   },
+   "subdivision_name": {
+    "avg": 10.5,
+    "filled": 424,
+    "max": 12,
+    "min": 9,
+    "p90": 12,
+    "p95": 12,
+    "p99": 12
+   }
+  },
+  "engine_hours_records": {
+   "vialon_name": {
+    "avg": 15.7,
+    "filled": 8850,
+    "max": 38,
+    "min": 10,
+    "p90": 23,
+    "p95": 27,
+    "p99": 33
+   }
+  },
+  "equipment": {
+   "category": {
+    "avg": 5.8,
+    "filled": 336,
+    "max": 13,
+    "min": 3,
+    "p90": 10,
+    "p95": 13,
+    "p99": 13
+   },
+   "eq_type": {
+    "avg": 17.1,
+    "filled": 336,
+    "max": 45,
+    "min": 7,
+    "p90": 27,
+    "p95": 38,
+    "p99": 41
+   },
+   "name": {
+    "avg": 9.7,
+    "filled": 336,
+    "max": 32,
+    "min": 3,
+    "p90": 16,
+    "p95": 18,
+    "p99": 22
+   },
+   "plate": {
+    "avg": 9.2,
+    "filled": 336,
+    "max": 14,
+    "min": 8,
+    "p90": 10,
+    "p95": 10,
+    "p99": 14
+   }
+  },
+  "equipment_models": {
+   "migrated_from_eq_type": {
+    "avg": 19.7,
+    "filled": 55,
+    "max": 45,
+    "min": 7,
+    "p90": 38,
+    "p95": 41,
+    "p99": 42
+   },
+   "name": {
+    "avg": 19.7,
+    "filled": 55,
+    "max": 45,
+    "min": 7,
+    "p90": 38,
+    "p95": 41,
+    "p99": 42
+   }
+  },
+  "fuel_balances": {
+   "fuel_name": {
+    "avg": 6.0,
+    "filled": 4,
+    "max": 6,
+    "min": 6,
+    "p90": 6,
+    "p95": 6,
+    "p99": 6
+   }
+  },
+  "fuel_card_aliases": {
+   "alias_type": {
+    "avg": 8.5,
+    "filled": 9770,
+    "max": 13,
+    "min": 4,
+    "p90": 13,
+    "p95": 13,
+    "p99": 13
+   },
+   "alias_value": {
+    "avg": 14.9,
+    "filled": 9770,
+    "max": 26,
+    "min": 2,
+    "p90": 26,
+    "p95": 26,
+    "p99": 26
+   },
+   "source": {
+    "avg": 28.0,
+    "filled": 9770,
+    "max": 28,
+    "min": 28,
+    "p90": 28,
+    "p95": 28,
+    "p99": 28
+   }
+  },
+  "fuel_card_sync_logs": {
+   "message": {
+    "avg": 68.0,
+    "filled": 1,
+    "max": 68,
+    "min": 68,
+    "p90": 68,
+    "p95": 68,
+    "p99": 68
+   },
+   "source": {
+    "avg": 17.0,
+    "filled": 1,
+    "max": 17,
+    "min": 17,
+    "p90": 17,
+    "p95": 17,
+    "p99": 17
+   },
+   "status": {
+    "avg": 2.0,
+    "filled": 1,
+    "max": 2,
+    "min": 2,
+    "p90": 2,
+    "p95": 2,
+    "p99": 2
+   }
+  },
+  "fuel_cards": {
+   "display_name": {
+    "avg": 21.7,
+    "filled": 4885,
+    "max": 47,
+    "min": 4,
+    "p90": 30,
+    "p95": 33,
+    "p99": 37
+   },
+   "partner_id": {
+    "avg": 1.0,
+    "filled": 4885,
+    "max": 1,
+    "min": 1,
+    "p90": 1,
+    "p95": 1,
+    "p99": 1
+   },
+   "rfid_code": {
+    "avg": 26.0,
+    "filled": 4885,
+    "max": 26,
+    "min": 7,
+    "p90": 26,
+    "p95": 26,
+    "p99": 26
+   },
+   "source": {
+    "avg": 28.0,
+    "filled": 4885,
+    "max": 28,
+    "min": 28,
+    "p90": 28,
+    "p95": 28,
+    "p99": 28
+   },
+   "topaz_card_id": {
+    "avg": 3.8,
+    "filled": 4885,
+    "max": 4,
+    "min": 2,
+    "p90": 4,
+    "p95": 4,
+    "p99": 4
+   },
+   "topaz_transaction_id": {
+    "avg": 8.0,
+    "filled": 4885,
+    "max": 8,
+    "min": 7,
+    "p90": 8,
+    "p95": 8,
+    "p99": 8
+   }
+  },
+  "fuel_initial_balances": {
+   "fuel_type": {
+    "avg": 2.0,
+    "filled": 30,
+    "max": 2,
+    "min": 2,
+    "p90": 2,
+    "p95": 2,
+    "p99": 2
+   },
+   "note": {
+    "avg": 60.5,
+    "filled": 22,
+    "max": 62,
+    "min": 29,
+    "p90": 62,
+    "p95": 62,
+    "p99": 62
+   }
+  },
+  "fuel_manual_expenses": {
+   "fuel_type": {
+    "avg": 2.0,
+    "filled": 8,
+    "max": 2,
+    "min": 2,
+    "p90": 2,
+    "p95": 2,
+    "p99": 2
+   },
+   "note": {
+    "avg": 29.0,
+    "filled": 8,
+    "max": 66,
+    "min": 5,
+    "p90": 39,
+    "p95": 39,
+    "p99": 39
+   },
+   "source": {
+    "avg": 6.0,
+    "filled": 8,
+    "max": 6,
+    "min": 6,
+    "p90": 6,
+    "p95": 6,
+    "p99": 6
+   }
+  },
+  "fuel_receipts2": {
+   "doc_number": {
+    "avg": 13.0,
+    "filled": 1,
+    "max": 13,
+    "min": 13,
+    "p90": 13,
+    "p95": 13,
+    "p99": 13
+   },
+   "fuel_type": {
+    "avg": 2.0,
+    "filled": 77,
+    "max": 2,
+    "min": 2,
+    "p90": 2,
+    "p95": 2,
+    "p99": 2
+   },
+   "note": {
+    "avg": 52.7,
+    "filled": 45,
+    "max": 54,
+    "min": 22,
+    "p90": 54,
+    "p95": 54,
+    "p99": 54
+   },
+   "supplier": {
+    "avg": 16.0,
+    "filled": 1,
+    "max": 16,
+    "min": 16,
+    "p90": 16,
+    "p95": 16,
+    "p99": 16
+   }
+  },
+  "fuel_snapshots": {
+   "fuel_name": {
+    "avg": 4.0,
+    "filled": 8,
+    "max": 4,
+    "min": 4,
+    "p90": 4,
+    "p95": 4,
+    "p99": 4
+   },
+   "tank_name": {
+    "avg": 37.5,
+    "filled": 8,
+    "max": 38,
+    "min": 35,
+    "p90": 38,
+    "p95": 38,
+    "p99": 38
+   }
+  },
+  "fuel_stations": {
+   "pos_name": {
+    "avg": 18.1,
+    "filled": 11,
+    "max": 19,
+    "min": 16,
+    "p90": 19,
+    "p95": 19,
+    "p99": 19
+   }
+  },
+  "fuel_stations2": {
+   "name": {
+    "avg": 10.4,
+    "filled": 24,
+    "max": 14,
+    "min": 7,
+    "p90": 13,
+    "p95": 13,
+    "p99": 13
+   },
+   "notes": {
+    "avg": 59.7,
+    "filled": 6,
+    "max": 83,
+    "min": 35,
+    "p90": 83,
+    "p95": 83,
+    "p99": 83
+   }
+  },
+  "fuel_sync_logs": {
+   "status": {
+    "avg": 2.0,
+    "filled": 49,
+    "max": 2,
+    "min": 2,
+    "p90": 2,
+    "p95": 2,
+    "p99": 2
+   }
+  },
+  "fuel_sync_logs2": {
+   "agent_ip": {
+    "avg": 13.0,
+    "filled": 3430,
+    "max": 13,
+    "min": 13,
+    "p90": 13,
+    "p95": 13,
+    "p99": 13
+   },
+   "status": {
+    "avg": 2.0,
+    "filled": 3430,
+    "max": 2,
+    "min": 2,
+    "p90": 2,
+    "p95": 2,
+    "p99": 2
+   }
+  },
+  "fuel_transaction_reattributions": {
+   "note": {
+    "avg": 17.0,
+    "filled": 6,
+    "max": 22,
+    "min": 5,
+    "p90": 20,
+    "p95": 20,
+    "p99": 20
+   }
+  },
+  "fuel_transactions2": {
+   "card_number": {
+    "avg": 3.5,
+    "filled": 394817,
+    "max": 26,
+    "min": 2,
+    "p90": 4,
+    "p95": 4,
+    "p99": 4
+   },
+   "fuel_type": {
+    "avg": 2.0,
+    "filled": 394817,
+    "max": 2,
+    "min": 2,
+    "p90": 2,
+    "p95": 2,
+    "p99": 2
+   },
+   "topaz_txn_id": {
+    "avg": 5.8,
+    "filled": 394817,
+    "max": 38,
+    "min": 2,
+    "p90": 6,
+    "p95": 6,
+    "p99": 6
+   }
+  },
+  "fuel_warehouses": {
+   "name": {
+    "avg": 10.3,
+    "filled": 30,
+    "max": 16,
+    "min": 5,
+    "p90": 13,
+    "p95": 13,
+    "p99": 14
+   },
+   "notes": {
+    "avg": 105.0,
+    "filled": 19,
+    "max": 105,
+    "min": 105,
+    "p90": 105,
+    "p95": 105,
+    "p99": 105
+   }
+  },
+  "organizations": {
+   "name": {
+    "avg": 13.6,
+    "filled": 22,
+    "max": 28,
+    "min": 5,
+    "p90": 25,
+    "p95": 25,
+    "p99": 25
+   },
+   "short_name": {
+    "avg": 11.7,
+    "filled": 22,
+    "max": 28,
+    "min": 3,
+    "p90": 25,
+    "p95": 25,
+    "p99": 25
+   }
+  },
+  "schema_migrations": {
+   "checksum": {
+    "avg": 64.0,
+    "filled": 21,
+    "max": 64,
+    "min": 64,
+    "p90": 64,
+    "p95": 64,
+    "p99": 64
+   },
+   "description": {
+    "avg": 195.9,
+    "filled": 35,
+    "max": 339,
+    "min": 43,
+    "p90": 298,
+    "p95": 308,
+    "p99": 322
+   },
+   "name": {
+    "avg": 22.0,
+    "filled": 37,
+    "max": 40,
+    "min": 11,
+    "p90": 30,
+    "p95": 34,
+    "p99": 39
+   }
+  },
+  "spare_part_attachments": {
+   "file_path": {
+    "avg": 14.0,
+    "filled": 3,
+    "max": 14,
+    "min": 14,
+    "p90": 14,
+    "p95": 14,
+    "p99": 14
+   },
+   "original_filename": {
+    "avg": 26.0,
+    "filled": 3,
+    "max": 35,
+    "min": 8,
+    "p90": 35,
+    "p95": 35,
+    "p99": 35
+   }
+  },
+  "spare_part_categories": {
+   "kind": {
+    "avg": 4.9,
+    "filled": 13,
+    "max": 10,
+    "min": 4,
+    "p90": 4,
+    "p95": 10,
+    "p99": 10
+   },
+   "name_ru": {
+    "avg": 15.5,
+    "filled": 13,
+    "max": 25,
+    "min": 9,
+    "p90": 19,
+    "p95": 20,
+    "p99": 20
+   },
+   "name_uz": {
+    "avg": 16.4,
+    "filled": 13,
+    "max": 35,
+    "min": 9,
+    "p90": 21,
+    "p95": 22,
+    "p99": 22
+   }
+  },
+  "spare_part_inventory": {
+   "unit": {
+    "avg": 4.2,
+    "filled": 16,
+    "max": 7,
+    "min": 4,
+    "p90": 4,
+    "p95": 4,
+    "p99": 4
+   }
+  },
+  "spare_part_inventory_movements": {
+   "movement_type": {
+    "avg": 7.1,
+    "filled": 18,
+    "max": 10,
+    "min": 5,
+    "p90": 7,
+    "p95": 7,
+    "p99": 7
+   },
+   "note": {
+    "avg": 35.7,
+    "filled": 3,
+    "max": 79,
+    "min": 10,
+    "p90": 18,
+    "p95": 18,
+    "p99": 18
+   },
+   "reference_type": {
+    "avg": 6.3,
+    "filled": 18,
+    "max": 12,
+    "min": 6,
+    "p90": 6,
+    "p95": 6,
+    "p99": 6
+   }
+  },
+  "spare_part_price_audit": {
+   "action": {
+    "avg": 5.0,
+    "filled": 2,
+    "max": 7,
+    "min": 3,
+    "p90": 3,
+    "p95": 3,
+    "p99": 3
+   }
+  },
+  "spare_part_request_items": {
+   "name": {
+    "avg": 10.0,
+    "filled": 6,
+    "max": 23,
+    "min": 4,
+    "p90": 11,
+    "p95": 11,
+    "p99": 11
+   },
+   "note": {
+    "avg": 19.0,
+    "filled": 2,
+    "max": 28,
+    "min": 10,
+    "p90": 10,
+    "p95": 10,
+    "p99": 10
+   },
+   "price_status": {
+    "avg": 7.3,
+    "filled": 6,
+    "max": 9,
+    "min": 7,
+    "p90": 7,
+    "p95": 7,
+    "p99": 7
+   },
+   "unit": {
+    "avg": 4.0,
+    "filled": 6,
+    "max": 4,
+    "min": 4,
+    "p90": 4,
+    "p95": 4,
+    "p99": 4
+   }
+  },
+  "spare_part_requests": {
+   "note": {
+    "avg": 52.7,
+    "filled": 3,
+    "max": 72,
+    "min": 31,
+    "p90": 55,
+    "p95": 55,
+    "p99": 55
+   },
+   "status": {
+    "avg": 7.7,
+    "filled": 6,
+    "max": 9,
+    "min": 5,
+    "p90": 9,
+    "p95": 9,
+    "p99": 9
+   }
+  },
+  "spare_part_skus": {
+   "article_number": {
+    "avg": 12.1,
+    "filled": 16,
+    "max": 14,
+    "min": 11,
+    "p90": 12,
+    "p95": 12,
+    "p99": 12
+   },
+   "brand": {
+    "avg": 7.8,
+    "filled": 5,
+    "max": 12,
+    "min": 5,
+    "p90": 10,
+    "p95": 10,
+    "p99": 10
+   },
+   "supplier": {
+    "avg": 4.0,
+    "filled": 1,
+    "max": 4,
+    "min": 4,
+    "p90": 4,
+    "p95": 4,
+    "p99": 4
+   }
+  },
+  "spare_part_status_history": {
+   "comment": {
+    "avg": 72.4,
+    "filled": 5,
+    "max": 94,
+    "min": 18,
+    "p90": 94,
+    "p95": 94,
+    "p99": 94
+   },
+   "new_status": {
+    "avg": 8.4,
+    "filled": 8,
+    "max": 9,
+    "min": 6,
+    "p90": 9,
+    "p95": 9,
+    "p99": 9
+   },
+   "old_status": {
+    "avg": 7.2,
+    "filled": 5,
+    "max": 9,
+    "min": 5,
+    "p90": 9,
+    "p95": 9,
+    "p99": 9
+   }
+  },
+  "spare_part_units": {
+   "code": {
+    "avg": 4.8,
+    "filled": 6,
+    "max": 8,
+    "min": 2,
+    "p90": 7,
+    "p95": 7,
+    "p99": 7
+   },
+   "name_ru": {
+    "avg": 3.2,
+    "filled": 6,
+    "max": 8,
+    "min": 1,
+    "p90": 5,
+    "p95": 5,
+    "p99": 5
+   },
+   "name_uz": {
+    "avg": 4.7,
+    "filled": 6,
+    "max": 8,
+    "min": 2,
+    "p90": 6,
+    "p95": 6,
+    "p99": 6
+   }
+  },
+  "spare_part_warehouses": {
+   "name": {
+    "avg": 10.0,
+    "filled": 2,
+    "max": 16,
+    "min": 4,
+    "p90": 4,
+    "p95": 4,
+    "p99": 4
+   }
+  },
+  "spare_part_write_off_act_items": {
+   "name": {
+    "avg": 23.0,
+    "filled": 1,
+    "max": 23,
+    "min": 23,
+    "p90": 23,
+    "p95": 23,
+    "p99": 23
+   },
+   "sku_label": {
+    "avg": 34.0,
+    "filled": 1,
+    "max": 34,
+    "min": 34,
+    "p90": 34,
+    "p95": 34,
+    "p99": 34
+   },
+   "unit": {
+    "avg": 4.0,
+    "filled": 1,
+    "max": 4,
+    "min": 4,
+    "p90": 4,
+    "p95": 4,
+    "p99": 4
+   }
+  },
+  "spare_part_write_off_acts": {
+   "act_number": {
+    "avg": 14.0,
+    "filled": 1,
+    "max": 14,
+    "min": 14,
+    "p90": 14,
+    "p95": 14,
+    "p99": 14
+   },
+   "pdf_path": {
+    "avg": 20.0,
+    "filled": 1,
+    "max": 20,
+    "min": 20,
+    "p90": 20,
+    "p95": 20,
+    "p99": 20
+   }
+  },
+  "spare_parts": {
+   "name": {
+    "avg": 19.0,
+    "filled": 250,
+    "max": 42,
+    "min": 5,
+    "p90": 28,
+    "p95": 31,
+    "p99": 36
+   },
+   "name_uz": {
+    "avg": 20.2,
+    "filled": 14,
+    "max": 31,
+    "min": 12,
+    "p90": 28,
+    "p95": 29,
+    "p99": 29
+   },
+   "status": {
+    "avg": 6.0,
+    "filled": 250,
+    "max": 6,
+    "min": 6,
+    "p90": 6,
+    "p95": 6,
+    "p99": 6
+   },
+   "unit": {
+    "avg": 4.0,
+    "filled": 250,
+    "max": 7,
+    "min": 4,
+    "p90": 4,
+    "p95": 4,
+    "p99": 4
+   }
+  },
+  "user_module_permissions": {
+   "module_code": {
+    "avg": 15.2,
+    "filled": 78,
+    "max": 28,
+    "min": 4,
+    "p90": 26,
+    "p95": 28,
+    "p99": 28
+   }
+  },
+  "users": {
+   "language": {
+    "avg": 2.0,
+    "filled": 7,
+    "max": 2,
+    "min": 2,
+    "p90": 2,
+    "p95": 2,
+    "p99": 2
+   },
+   "last_login_ip": {
+    "avg": 12.3,
+    "filled": 7,
+    "max": 13,
+    "min": 12,
+    "p90": 13,
+    "p95": 13,
+    "p99": 13
+   },
+   "role": {
+    "avg": 7.6,
+    "filled": 7,
+    "max": 8,
+    "min": 5,
+    "p90": 8,
+    "p95": 8,
+    "p99": 8
+   },
+   "updated_at": {
+    "avg": 19.0,
+    "filled": 7,
+    "max": 19,
+    "min": 19,
+    "p90": 19,
+    "p95": 19,
+    "p99": 19
+   }
+  },
+  "vialon_imports": {
+   "filename": {
+    "avg": 74.7,
+    "filled": 169,
+    "max": 115,
+    "min": 73,
+    "p90": 73,
+    "p95": 73,
+    "p99": 115
+   },
+   "unknown_vehicles_json": {
+    "avg": 157.1,
+    "filled": 169,
+    "max": 7285,
+    "min": 2,
+    "p90": 621,
+    "p95": 621,
+    "p99": 765
+   }
+  },
+  "vialon_mappings": {
+   "vialon_name": {
+    "avg": 20.6,
+    "filled": 379,
+    "max": 43,
+    "min": 10,
+    "p90": 34,
+    "p95": 36,
+    "p99": 39
+   }
+  },
+  "work_order_status_history": {
+   "comment": {
+    "avg": 16.2,
+    "filled": 9,
+    "max": 36,
+    "min": 7,
+    "p90": 34,
+    "p95": 34,
+    "p99": 34
+   },
+   "event_type": {
+    "avg": 13.0,
+    "filled": 9,
+    "max": 13,
+    "min": 13,
+    "p90": 13,
+    "p95": 13,
+    "p99": 13
+   },
+   "new_value": {
+    "avg": 6.7,
+    "filled": 9,
+    "max": 11,
+    "min": 4,
+    "p90": 11,
+    "p95": 11,
+    "p99": 11
+   },
+   "old_value": {
+    "avg": 8.0,
+    "filled": 6,
+    "max": 11,
+    "min": 5,
+    "p90": 11,
+    "p95": 11,
+    "p99": 11
+   }
+  },
+  "work_orders": {
+   "customer_text": {
+    "avg": 4.0,
+    "filled": 2,
+    "max": 4,
+    "min": 4,
+    "p90": 4,
+    "p95": 4,
+    "p99": 4
+   },
+   "note": {
+    "avg": 4.0,
+    "filled": 2,
+    "max": 4,
+    "min": 4,
+    "p90": 4,
+    "p95": 4,
+    "p99": 4
+   },
+   "number": {
+    "avg": 13.0,
+    "filled": 3,
+    "max": 13,
+    "min": 13,
+    "p90": 13,
+    "p95": 13,
+    "p99": 13
+   },
+   "payment_type": {
+    "avg": 4.0,
+    "filled": 3,
+    "max": 4,
+    "min": 4,
+    "p90": 4,
+    "p95": 4,
+    "p99": 4
+   },
+   "status": {
+    "avg": 4.0,
+    "filled": 3,
+    "max": 4,
+    "min": 4,
+    "p90": 4,
+    "p95": 4,
+    "p99": 4
+   },
+   "unit": {
+    "avg": 2.7,
+    "filled": 3,
+    "max": 4,
+    "min": 2,
+    "p90": 2,
+    "p95": 2,
+    "p99": 2
+   },
+   "work_type_text": {
+    "avg": 11.3,
+    "filled": 3,
+    "max": 12,
+    "min": 11,
+    "p90": 11,
+    "p95": 11,
+    "p99": 11
+   }
+  },
+  "work_types": {
+   "default_unit": {
+    "avg": 3.8,
+    "filled": 103,
+    "max": 8,
+    "min": 2,
+    "p90": 6,
+    "p95": 6,
+    "p99": 8
+   },
+   "name": {
+    "avg": 13.6,
+    "filled": 104,
+    "max": 46,
+    "min": 3,
+    "p90": 23,
+    "p95": 27,
+    "p99": 42
+   }
+  }
+ },
+ "volumes": {
+  "app_modules": 13,
+  "audit_logs": 3436,
+  "bot003_notification_outbox": 7,
+  "bot_api_sessions": 2,
+  "bot_notification_queue": 0,
+  "customers": 9,
+  "daily_records": 23821,
+  "deficiencies": 96,
+  "drone_batteries": 46,
+  "drone_customer_aliases": 713,
+  "drone_customers": 713,
+  "drone_flights": 31059,
+  "drone_nicknames": 20,
+  "drone_operator_assignments": 2,
+  "drone_operators": 17,
+  "drone_reattach_runs": 0,
+  "drone_sync_logs": 58,
+  "drone_unit_status_log": 15,
+  "drone_units": 15,
+  "drone_work_imports": 0,
+  "drone_works": 904,
+  "engine_hours_records": 9870,
+  "equipment": 336,
+  "equipment_models": 55,
+  "field_contours": 0,
+  "fuel_balances": 4,
+  "fuel_card_aliases": 9770,
+  "fuel_card_sync_logs": 1,
+  "fuel_cards": 4885,
+  "fuel_counter_mismatches": 0,
+  "fuel_initial_balances": 30,
+  "fuel_manual_expenses": 8,
+  "fuel_receipts": 0,
+  "fuel_receipts2": 77,
+  "fuel_snapshots": 8,
+  "fuel_stations": 11,
+  "fuel_stations2": 24,
+  "fuel_sync_logs": 49,
+  "fuel_sync_logs2": 3430,
+  "fuel_tanks": 0,
+  "fuel_transaction_reattributions": 6,
+  "fuel_transactions": 0,
+  "fuel_transactions2": 394817,
+  "fuel_warehouses": 30,
+  "fuel_warning_reviews": 0,
+  "organizations": 22,
+  "schema_migrations": 37,
+  "spare_part_attachments": 3,
+  "spare_part_categories": 13,
+  "spare_part_compatibility": 2,
+  "spare_part_inventory": 16,
+  "spare_part_inventory_movements": 18,
+  "spare_part_maintenance_norms": 0,
+  "spare_part_min_levels": 0,
+  "spare_part_price_audit": 2,
+  "spare_part_request_items": 6,
+  "spare_part_requests": 6,
+  "spare_part_reservations": 0,
+  "spare_part_skus": 16,
+  "spare_part_status_history": 8,
+  "spare_part_units": 6,
+  "spare_part_warehouses": 2,
+  "spare_part_write_off_act_items": 1,
+  "spare_part_write_off_acts": 1,
+  "spare_parts": 250,
+  "user_module_permissions": 78,
+  "user_organizations": 102,
+  "users": 7,
+  "vialon_imports": 169,
+  "vialon_mappings": 379,
+  "work_order_status_history": 9,
+  "work_orders": 3,
+  "work_types": 104
+ }
+}

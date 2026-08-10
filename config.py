@@ -12,6 +12,16 @@ class Config:
     # run_server.py exits early if SECRET_KEY is missing so Flask never starts with None.
     SECRET_KEY = os.environ.get('SECRET_KEY')
 
+    # UI-P4: служебная страница /__ui/kitchen-sink — все компоненты
+    # дизайн-системы во всех состояниях. Выключена по умолчанию, включается
+    # только в DevelopmentConfig.
+    # [REASON]: отдельный флаг, а не DEBUG. `app.run(debug=False)` присваивает
+    # app.debug и тем самым ПЕРЕЗАПИСЫВАЕТ config['DEBUG'] — то есть значение
+    # зависит от того, как запущен сервер, а не от того, какая конфигурация
+    # выбрана. Эфемерный экземпляр аудита запускается именно так и на
+    # DEBUG-проверке отдавал 404 при dev-конфигурации.
+    UI_KITCHEN_SINK = False
+
     # [REASON]: Topaz agent API token read from environment; if missing, fuel_sync
     # denies all requests (safe default) rather than accepting a hardcoded token.
     FUEL_API_TOKEN = os.environ.get('FUEL_API_TOKEN')
@@ -38,6 +48,7 @@ class Config:
 class DevelopmentConfig(Config):
     """SQLite — для локальной разработки и тестирования."""
     DEBUG = True
+    UI_KITCHEN_SINK = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///' + os.path.join(BASE_DIR, 'instance', 'transport.db')
 
     # [REASON]: FIX002 - SQLite engine options for multi-process safety.

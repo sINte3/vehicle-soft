@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти — акты списания' if is_ru else 'Эҳтиёт қисмлар — далолатномалар' }}{% endblock %}
 {% block content %}
@@ -48,7 +49,7 @@
     </div>
     {% if acts %}
     <div class="vs-table-scroll">
-    <table class="vs-table">
+    <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
                 <th>{{ 'Номер акта' if is_ru else 'Далолатнома рақами' }}</th>
@@ -75,7 +76,7 @@
                 <td class="text-sm vs-muted">{{ (act.issuer.full_name or act.issuer.username) if act.issuer else '—' }}</td>
                 <td class="right">
                     <a href="{{ url_for('spare_parts.act_detail', act_id=act.id) }}" class="vs-btn vs-btn-sm">{{ 'Открыть' if is_ru else 'Очиш' }}</a>
-                    <a href="{{ url_for('spare_parts.act_pdf', act_id=act.id) }}" target="_blank" class="vs-btn vs-btn-sm">⬇ PDF</a>
+                    <a href="{{ url_for('spare_parts.act_pdf', act_id=act.id) }}" target="_blank" class="vs-btn vs-btn-sm">{{ icon('download', 14) }} PDF</a>
                 </td>
             </tr>
             {% endfor %}
@@ -84,7 +85,7 @@
     </div>
     {% else %}
     <div class="vs-empty">
-        <div class="vs-empty-ico">🧾</div>
+        <div class="vs-empty-ico">{{ icon('receipt', 28) }}</div>
         <div class="vs-empty-title">{{ 'Актов нет' if is_ru else 'Далолатнома йўқ' }}</div>
         <div class="vs-empty-sub">{{ 'Акт создаётся автоматически при выдаче утверждённой заявки.' if is_ru else 'Далолатнома тасдиқланган сўров берилганда автоматик яратилади.' }}</div>
     </div>

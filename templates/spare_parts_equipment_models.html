@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Модели техники' if is_ru else 'Техника моделлари' }}{% endblock %}
 {% block content %}
@@ -94,7 +95,7 @@
         <span class="vs-card-title">{{ 'Всего моделей' if is_ru else 'Жами моделлар' }}: {{ models|length }}</span>
     </div>
     <div class="vs-table-scroll">
-    <table class="vs-table">
+    <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
                 <th style="width:40px;">№</th>
@@ -128,7 +129,7 @@
                 <td class="right">
                     {# CYCLE-2-3 Part 2: primary row actions carry visible text, not just an icon. #}
                     <button class="vs-btn vs-btn-sm"
-                            onclick='editModel({{ m.id }}, {{ m.name|tojson }}, {{ (m.name_uz or "")|tojson }}, {{ (m.manufacturer or "")|tojson }}, {{ (m.is_active|int) }})'>✏ {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
+                            onclick='editModel({{ m.id }}, {{ m.name|tojson }}, {{ (m.name_uz or "")|tojson }}, {{ (m.manufacturer or "")|tojson }}, {{ (m.is_active|int) }})'>{{ icon('edit', 14) }} {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
                 </td>
             </tr>
             {% endfor %}

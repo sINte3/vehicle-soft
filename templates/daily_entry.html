@@ -1,505 +1,71 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
+{% from '_daily_unit_field.html' import unit_select with context %}
+{% from '_daily_line.html' import daily_line with context %}
 {% block title %}{{ t('Маълумот киритиш') }}{% endblock %}
 {% block content %}
 
-<style>
-.entry-context { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin-top:12px; }
-.entry-context-item { background:var(--vs-surface-2); border:1px solid var(--vs-border); border-radius:var(--vs-r); padding:10px 12px; }
-.entry-context-label { font-size:11px; color:var(--vs-text-muted); font-weight:700; text-transform:uppercase; letter-spacing:.3px; }
-.entry-context-value { font-size:15px; font-weight:700; margin-top:2px; }
-.entry-warning { margin-top:10px; padding:10px 12px; background:var(--vs-warning-bg); border:1px solid #f3df9d; border-radius:var(--vs-r); color:#7a5b0d; font-size:12px; }
-.entry-toolbar { position:sticky; top:56px; z-index:50; display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; align-items:center; background:var(--vs-bg); border:1px solid var(--vs-border); border-radius:var(--vs-r); padding:10px; box-shadow:var(--vs-shadow); }
-.entry-toolbar .entry-search { min-width:240px; max-width:360px; }
-.entry-toolbar .entry-stat { font-size:12px; color:var(--vs-text-muted); background:var(--vs-surface); border:1px solid var(--vs-border); border-radius:var(--vs-r); padding:6px 10px; white-space:nowrap; }
-.entry-help-panel { background:var(--vs-info-bg); color:var(--vs-info); border:1px solid #cfe4f4; border-radius:var(--vs-r); padding:10px 12px; font-size:12px; margin-bottom:14px; }
-.entry-help-panel strong { font-weight:700; }
-.eq-card-header { gap:10px; }
-.eq-title-wrap { flex:1; min-width:220px; }
-.eq-main-title { font-weight:700; font-size:14px; line-height:1.25; }
-.eq-sub-title { margin-top:2px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
-.eq-pill { display:inline-flex; align-items:center; gap:4px; padding:2px 7px; border-radius:999px; background:var(--vs-surface); border:1px solid var(--vs-border); color:var(--vs-text-muted); font-size:11px; font-weight:600; }
-.eq-card-tools { display:flex; gap:8px; align-items:center; }
-.eq-toggle-hint { color:var(--vs-text-muted); font-size:11px; white-space:nowrap; }
-.eq-card-body-hint { background:var(--vs-surface-2); border:1px dashed var(--vs-border-2); border-radius:var(--vs-r); padding:8px 10px; margin-bottom:12px; font-size:12px; color:var(--vs-text-muted); }
-.line-row { border:1px solid transparent; border-radius:var(--vs-r); padding:8px; background:var(--vs-surface); }
-.line-row:nth-child(even) { background:var(--vs-surface-2); }
-.line-row.entry-invalid { border-color:var(--vs-danger); background:var(--vs-danger-bg); }
-.entry-field-invalid { border-color:var(--vs-danger) !important; box-shadow:0 0 0 3px var(--vs-danger-bg) !important; }
-.line-actions { display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap; }
-.entry-bottom-save { display:flex; gap:10px; align-items:center; margin-top:20px; padding:14px; background:var(--vs-surface); border:1px solid var(--vs-border); border-radius:var(--vs-r); box-shadow:var(--vs-shadow); }
-.entry-empty-state { text-align:center; padding:60px 20px; }
-@media (max-width:768px) { .entry-toolbar { top:0; } .entry-toolbar .entry-search { max-width:none; width:100%; } }
-
-/* ENTRY002A_MARKER: daily entry UX refresh, template-only/non-blocking JS. */
-.entry002a-page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.entry002a-page-header h1 {
-  margin-bottom: 6px;
-}
-
-.entry002a-subtitle {
-  color: var(--vs-text-muted);
-  font-size: 14px;
-  line-height: 1.45;
-}
-
-.entry002a-context-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.entry002a-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--vs-border);
-  background: var(--vs-surface);
-  color: var(--vs-text);
-  font-size: 12px;
-  font-weight: 800;
-  box-shadow: var(--vs-shadow-sm);
-}
-
-.entry002a-pill strong {
-  color: var(--vs-primary);
-}
-
-.entry002a-guidance-panel {
-  display: grid;
-  grid-template-columns: 1.2fr 1fr;
-  gap: 12px;
-  margin: 0 0 16px;
-}
-
-.entry002a-guidance-card {
-  border: 1px solid var(--vs-border);
-  background: var(--vs-surface);
-  border-radius: var(--vs-r-lg);
-  padding: 12px 14px;
-  box-shadow: var(--vs-shadow-sm);
-}
-
-.entry002a-guidance-title {
-  font-weight: 900;
-  margin-bottom: 5px;
-}
-
-.entry002a-guidance-text {
-  color: var(--vs-text-muted);
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.entry002a-filter-card {
-  border-left: 4px solid var(--vs-primary);
-}
-
-.entry002a-filter-form {
-  gap: 12px;
-}
-
-.entry002a-save-form {
-  margin-top: 8px;
-}
-
-.entry002a-save-form .org-section {
-  border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-lg);
-  overflow: hidden;
-  margin-bottom: 14px;
-  background: var(--vs-surface);
-  box-shadow: var(--vs-shadow-sm);
-}
-
-.entry002a-save-form .org-section-header {
-  background: var(--vs-surface-3);
-  border-bottom: 1px solid var(--vs-border);
-  padding: 11px 14px;
-  font-weight: 900;
-  color: var(--vs-text);
-}
-
-.entry002a-save-form .org-section-body {
-  padding: 10px;
-}
-
-.entry002a-save-form .eq-card {
-  border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-lg);
-  overflow: hidden;
-  margin-bottom: 10px;
-  background: var(--vs-surface);
-}
-
-.entry002a-save-form .eq-card.working,
-.entry002a-save-form .eq-card.entry002a-working {
-  border-left: 4px solid var(--vs-brand-green);
-}
-
-.entry002a-save-form .eq-card.idle,
-.entry002a-save-form .eq-card.entry002a-idle {
-  border-left: 4px solid var(--vs-text-muted);
-}
-
-.entry002a-save-form .eq-card-header {
-  background: var(--vs-surface-3);
-}
-
-.entry002a-save-form .line-row,
-.entry002a-save-form .work-line-row {
-  border-radius: var(--vs-r);
-  padding: 8px;
-}
-
-.entry002a-save-form .entry002a-line-incomplete {
-  outline: 1px dashed var(--vs-warning);
-  background: var(--vs-warning-bg);
-}
-
-.entry002a-save-form .entry002a-line-incomplete::after {
-  content: "Проверьте вид работы, количество и цену";
-  display: block;
-  grid-column: 1 / -1;
-  color: var(--vs-warning);
-  font-size: 12px;
-  font-weight: 800;
-  margin-top: 4px;
-}
-
-.entry002a-save-form input,
-.entry002a-save-form select,
-.entry002a-save-form textarea {
-  min-height: 36px;
-}
-
-.entry002a-save-form .amount-display {
-  font-weight: 900;
-  color: var(--vs-primary);
-}
-
-.entry002a-save-form .entry-bottom-save {
-  position: sticky;
-  bottom: 0;
-  z-index: 20;
-  background: rgba(255,255,255,0.96);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-lg);
-  padding: 12px;
-  box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.08);
-}
-
-@media (max-width: 900px) {
-  .entry002a-page-header {
-    display: block;
-  }
-
-  .entry002a-guidance-panel {
-    grid-template-columns: 1fr;
-  }
-
-  .entry002a-filter-form {
-    display: block;
-  }
-
-  .entry002a-filter-form .form-group,
-  .entry002a-filter-form .btn {
-    width: 100%;
-    margin-top: 8px;
-  }
-
-  .entry002a-save-form .line-row,
-  .entry002a-save-form .work-line-row {
-    display: block;
-  }
-}
-/* ENTRY002A_END */
-
-/* [UI-NEXT]: unified input/select/textarea styling with design tokens */
-.entry002a-save-form input,
-.entry002a-save-form select,
-.entry002a-save-form textarea,
-.entry002a-filter-form input,
-.entry002a-filter-form select {
-  font-family: var(--vs-font);
-  font-size: 13px;
-  padding: 8px 11px;
-  border: 1px solid var(--vs-border-input);
-  border-radius: var(--vs-r-sm);
-  background: #fff;
-  color: var(--vs-text);
-  transition: border-color .15s, box-shadow .15s;
-  line-height: 1.4;
-}
-.entry002a-save-form input:focus,
-.entry002a-save-form select:focus,
-.entry002a-save-form textarea:focus,
-.entry002a-filter-form input:focus,
-.entry002a-filter-form select:focus {
-  outline: none;
-  border-color: var(--vs-primary);
-  box-shadow: var(--vs-ring-primary);
-}
-/* Inputs that should fill their cell */
-.entry002a-save-form .form-group > input[type=text],
-.entry002a-save-form .form-group > select,
-.entry002a-filter-form .form-group > input,
-.entry002a-filter-form .form-group > select {
-  width: 100%;
-}
-
-/* ===== Missing component classes (were in legacy shell) ===== */
-
-/* Cards */
-.card {
-  background: var(--vs-surface);
-  border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-lg);
-  box-shadow: var(--vs-shadow-sm);
-}
-.card-body { padding: 16px 18px; }
-
-/* Page header */
-.page-header h1 {
-  font-size: var(--vs-fs-2xl);
-  font-weight: 800;
-  letter-spacing: -.5px;
-}
-
-/* Form groups + labels */
-.form-group { margin-bottom: 14px; }
-.form-group > label {
-  display: block;
-  font-size: var(--vs-fs-xs);
-  font-weight: 600;
-  color: var(--vs-text-muted);
-  margin-bottom: 5px;
-  letter-spacing: .2px;
-}
-.form-inline { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
-.field-help { font-size: var(--vs-fs-xs); color: var(--vs-text-soft); margin-top: 4px; }
-
-/* Buttons */
-.btn {
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 9px 15px;
-  font-family: var(--vs-font); font-size: var(--vs-fs); font-weight: 600;
-  border: 1px solid var(--vs-border-input);
-  border-radius: var(--vs-r);
-  background: #fff; color: var(--vs-text);
-  cursor: pointer; text-decoration: none; line-height: 1.2;
-  transition: all .13s ease;
-}
-.btn:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
-.btn-primary { background: var(--vs-primary); color: #fff; border-color: var(--vs-primary); font-weight: 700; }
-.btn-primary:hover { background: var(--vs-primary-hover); border-color: var(--vs-primary-hover); color: #fff; }
-.btn-secondary { background: #fff; color: var(--vs-text); border-color: var(--vs-border-input); }
-.btn-secondary:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
-.btn-danger { color: var(--vs-danger); border-color: #f3d6d6; }
-.btn-danger:hover { background: var(--vs-danger); color: #fff; border-color: var(--vs-danger); }
-.btn-sm { padding: 6px 12px; font-size: var(--vs-fs-sm); border-radius: var(--vs-r-sm); }
-.btn-lg { padding: 12px 20px; font-size: 14.5px; border-radius: var(--vs-r-md); }
-
-/* Text helpers */
-.text-muted { color: var(--vs-text-muted); }
-.text-sm { font-size: var(--vs-fs-sm); }
-
-/* Equipment card */
-.eq-card {
-  border: 1px solid var(--vs-border);
-  border-radius: var(--vs-r-lg);
-  overflow: hidden;
-  margin-bottom: 10px;
-  background: var(--vs-surface);
-  box-shadow: var(--vs-shadow-sm);
-}
-.eq-card.working { border-left: 4px solid var(--vs-brand-green); }
-.eq-card.idle    { border-left: 4px solid var(--vs-text-soft); }
-.eq-card-header {
-  display: flex; align-items: center; gap: 10px;
-  padding: 12px 14px;
-  background: var(--vs-surface-3);
-  cursor: pointer;
-}
-.eq-card-body { padding: 14px; }
-
-/* Status badges */
-.working-badge, .idle-badge {
-  display: inline-block;
-  padding: 3px 10px;
-  border-radius: var(--vs-r-pill);
-  font-size: 10.5px; font-weight: 700;
-  white-space: nowrap; letter-spacing: .1px;
-}
-.working-badge { background: var(--vs-success-bg); color: var(--vs-success); }
-.idle-badge    { background: var(--vs-warning-bg); color: var(--vs-warning); }
-
-/* Equipment pills (plate / type / unit) */
-.eq-pill {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 2px 8px;
-  border-radius: var(--vs-r-pill);
-  background: var(--vs-surface); border: 1px solid var(--vs-border);
-  color: var(--vs-text-muted); font-size: 11px; font-weight: 600;
-}
-
-/* Status toggle group (Работал / Простой) — proper segmented control */
-.toggle-group {
-  display: inline-flex;
-  border: 1px solid var(--vs-border-input);
-  border-radius: var(--vs-r-sm);
-  overflow: hidden;
-}
-.toggle-group label {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 8px 16px;
-  font-size: 13px; font-weight: 600;
-  background: #fff; color: var(--vs-text-muted);
-  cursor: pointer;
-  border: none;
-  transition: all .13s ease;
-  margin: 0;
-}
-.toggle-group label + label { border-left: 1px solid var(--vs-border-input); }
-.toggle-group label:hover { background: var(--vs-surface-2); }
-/* The radio inside is visually hidden but keeps its function */
-.toggle-group label input[type=radio] {
-  appearance: none; -webkit-appearance: none;
-  width: 0; height: 0; margin: 0; padding: 0;
-  position: absolute; opacity: 0;
-}
-/* JS sets inline background on the active label; this is the fallback for
-   the :has() capable browsers so the active state looks like the design */
-.toggle-group label:has(input[type=radio]:checked) {
-  background: var(--vs-primary);
-  color: #fff;
-}
-
-/* Hide legacy context tiles — the entry002a pills already show this info */
-.entry-context { display: none; }
-
-</style>
+{# UI-P4: собственного CSS у страницы больше НЕТ — было 386 строк.
+   Большая их часть переобъявляла слой совместимости (.card, .btn,
+   .btn-primary, .form-group, .text-muted), уже существующий в
+   design-system.css. Локальная копия грузилась позже и выигрывала
+   каскад, поэтому самый нагруженный экран системы управлялся отдельно
+   от дизайн-системы, и это не было видно никому. Остальное стало
+   компонентами: .vs-toolbar, .vs-sticky-actions, .vs-group,
+   .vs-collapse-card, .vs-line-row, .vs-toggle-group.is-joined. #}
 
 
 {# ─── MACROS ─── #}
 {% macro render_line(eq, idx, rec) %}
-<div class="line-row work-line-row" id="eq-{{ eq.id }}-line-{{ idx }}" data-line-idx="{{ idx }}">
-    <div class="form-group" style="margin-bottom:0">
-        <label>{{ t('Иш тури') }}</label>
-        <select name="eq_{{ eq.id }}_line_{{ idx }}_work_type"
-                onchange="onWorkTypeChange(this, {{ eq.id }}, {{ idx }}); markFormDirty();">
-            <option value="">—</option>
-            {% for wt in work_types %}
-            <option value="{{ wt.name }}"
-                    data-unit="{{ wt.default_unit }}" data-price="{{ wt.default_price }}"
-                    {% if rec and rec.work_type == wt.name %}selected{% endif %}>
-                {{ wt.name }}
-            </option>
-            {% endfor %}
-        </select>
-    </div>
-    <div class="form-group" style="margin-bottom:0">
-        <label>{{ t('Буюртмачи') }}</label>
-        <input type="text" name="eq_{{ eq.id }}_line_{{ idx }}_customer" list="customers-list"
-               value="{{ rec.customer if rec else '' }}" placeholder="{{ t('Буюртмачи номи') }}" oninput="markFormDirty()">
-    </div>
-    <div class="form-group" style="margin-bottom:0">
-        <label>{{ t('Ўлчов') }}</label>
-        <input type="text" name="eq_{{ eq.id }}_line_{{ idx }}_unit"
-               value="{{ rec.unit if rec else eq.default_unit }}"
-               placeholder="га" style="width:70px;"
-               id="eq-{{ eq.id }}-line-{{ idx }}-unit" oninput="markFormDirty()">
-    </div>
-    <div class="form-group" style="margin-bottom:0">
-        <label>{{ t('Миқдор') }}</label>
-        <input type="number" min="0.1" step="0.1" inputmode="decimal" name="eq_{{ eq.id }}_line_{{ idx }}_quantity"
-               value="{{ rec.quantity if rec and rec.quantity else '' }}"
-               oninput="calcAmount({{ eq.id }}); markFormDirty()" onwheel="this.blur()"
-               id="eq-{{ eq.id }}-line-{{ idx }}-qty" placeholder="0.0">
-        <div class="field-help">{{ t('Миқдор 0 дан катта бўлиши керак') }}</div>
-    </div>
-    <div class="form-group" style="margin-bottom:0">
-        <label>{{ t('Нарх') }}</label>
-        <input type="number" min="0" step="1" inputmode="numeric" name="eq_{{ eq.id }}_line_{{ idx }}_price"
-               value="{{ rec.price|int if rec and rec.price else (eq.default_price|int if eq.default_price else '') }}"
-               oninput="calcAmount({{ eq.id }}); markFormDirty()" onwheel="this.blur()"
-               id="eq-{{ eq.id }}-line-{{ idx }}-price" placeholder="0">
-        <div class="field-help">{{ t('Нарх манфий бўлмаслиги керак') }}</div>
-    </div>
-    <div class="form-group" style="margin-bottom:0">
-        <label>{{ t('Тўлов тури') }}</label>
-        <select name="eq_{{ eq.id }}_line_{{ idx }}_payment_type" onchange="markFormDirty()">
-            <option value="internal" {% if not rec or rec.payment_type == 'internal' %}selected{% endif %}>{{ t('Тизим') }}</option>
-            <option value="transfer" {% if rec and rec.payment_type == 'transfer' %}selected{% endif %}>{{ t('Пул кўч.') }}</option>
-            <option value="cash" {% if rec and rec.payment_type == 'cash' %}selected{% endif %}>{{ t('Нақд') }}</option>
-            <option value="other" {% if rec and rec.payment_type == 'other' %}selected{% endif %}>{{ t('Бошқа') }}</option>
-        </select>
-    </div>
-    <div class="form-group" style="margin-bottom:0; flex:1;">
-        <label>{{ t('Изоҳ') }}</label>
-        <input type="text" name="eq_{{ eq.id }}_line_{{ idx }}_note"
-               value="{{ rec.note if rec else '' }}" placeholder="{{ t('Қисқа изоҳ') }}" oninput="markFormDirty()">
-    </div>
-    <div class="form-group" style="margin-bottom:0">
-        <label>&nbsp;</label>
-        <button type="button" class="btn btn-danger btn-sm"
-                onclick="removeLine({{ eq.id }}, {{ idx }})"
-                title="{{ t('Бу қаторни ўчириш') }}"
-                style="padding:6px 10px;">✕</button>
-    </div>
-</div>
+{{ daily_line('eq_%d_line_%d'|format(eq.id, idx),
+              'eq-%d-line-%d'|format(eq.id, idx),
+              eq.id, idx, rec,
+              record_unit_choice.get(rec.id, '') if rec else equipment_unit_code.get(eq.id, ''),
+              eq.default_price, unit_select) }}
 {% endmacro %}
 
 {% macro render_eq_card(eq) %}
 {% set recs = existing.get(eq.id, []) %}
 {% set rec = recs[0] if recs else None %}
 {% set is_working = rec.status == 'working' if rec else False %}
-<div class="eq-card {{ 'working' if is_working else 'idle' }}" id="eq-card-{{ eq.id }}" data-eq-name="{{ eq.name|lower }}" data-eq-plate="{{ (eq.plate or '')|lower }}" data-eq-type="{{ (eq.eq_type or '')|lower }}">
-    <div class="eq-card-header" onclick="toggleCard({{ eq.id }})">
+<div class="vs-collapse-card {{ 'is-working' if is_working else 'is-idle' }}" id="eq-card-{{ eq.id }}" data-eq-name="{{ eq.name|lower }}" data-eq-plate="{{ (eq.plate or '')|lower }}" data-eq-type="{{ (eq.eq_type or '')|lower }}">
+    <button type="button" class="vs-collapse-head" onclick="toggleCard({{ eq.id }})"
+            aria-expanded="{{ 'true' if (is_working or rec) else 'false' }}"
+            aria-controls="eq-body-{{ eq.id }}">
         <div>
-            {% if is_working %}<span class="working-badge">{{ t('Ишлаган') }}</span>
-            {% else %}<span class="idle-badge">{{ t('Бўш') }}</span>{% endif %}
+            {% if is_working %}<span class="vs-badge vs-badge-success">{{ t('Ишлаган') }}</span>
+            {% else %}<span class="vs-badge vs-badge-warning">{{ t('Бўш') }}</span>{% endif %}
         </div>
-        <div class="eq-title-wrap">
-            <div class="eq-main-title">{{ eq.name }}</div>
-            <div class="eq-sub-title">
-                <span class="eq-pill">№ {{ eq.plate or '—' }}</span>
-                {% if eq.eq_type %}<span class="eq-pill">{{ eq.eq_type }}</span>{% endif %}
-                {% if eq.default_unit %}<span class="eq-pill">{{ t('Ўлчов') }}: {{ eq.default_unit }}</span>{% endif %}
+        <div class="vs-collapse-title-wrap">
+            <div class="vs-collapse-title">{{ eq.name }}</div>
+            <div class="vs-collapse-sub">
+                <span class="vs-badge">№ {{ eq.plate or '—' }}</span>
+                {% if eq.eq_type %}<span class="vs-badge">{{ eq.eq_type }}</span>{% endif %}
+                {% if eq.default_unit %}<span class="vs-badge">{{ t('Ўлчов') }}: {{ unit_labels.get(equipment_unit_code.get(eq.id, ''), eq.default_unit) }}</span>{% endif %}
             </div>
         </div>
-        <div class="eq-card-tools">
-            <span id="eq-amount-{{ eq.id }}" class="amount-display" style="min-width:120px; text-align:right;">
+        <div class="vs-collapse-tools">
+            <span id="eq-amount-{{ eq.id }}" class="vs-collapse-amount">
                 {% if is_working %}
                     {% set ns = namespace(total=0) %}
                     {% for r in recs %}{% set ns.total = ns.total + r.total_amount %}{% endfor %}
                     {{ ns.total|fmt_sum }} сўм
                 {% endif %}
             </span>
-            <span class="eq-toggle-hint">{{ t('Очиш/ёпиш') }}</span>
+            <span class="vs-muted">{{ t('Очиш/ёпиш') }}</span>
         </div>
-    </div>
-    <div class="eq-card-body" id="eq-body-{{ eq.id }}" style="{% if not is_working and not rec %}display:none;{% endif %}">
-        <div class="eq-card-body-hint">{{ t('Ишлаган ҳолатида камида битта иш тури ва миқдор киритилади. Бўш ҳолатида сабаб ёзинг.') }}</div>
-        <div style="display:flex; align-items:center; gap:16px; margin-bottom:12px;">
-            <label style="font-weight:600; font-size:12px; color:var(--vs-text-muted);">{{ t('ҲОЛАТ:') }}</label>
-            <div class="toggle-group">
-                <label {% if is_working %}style="background:var(--vs-primary);color:#fff;"{% endif %}>
+    </button>
+    <div class="vs-collapse-body" id="eq-body-{{ eq.id }}" style="{% if not is_working and not rec %}display:none;{% endif %}">
+        <div class="vs-alert is-info vs-mb-sm">{{ t('Ишлаган ҳолатида камида битта иш тури ва миқдор киритилади. Бўш ҳолатида сабаб ёзинг.') }}</div>
+        <div class="vs-row vs-mb-sm">
+            <span class="vs-label" id="eq-status-label-{{ eq.id }}">{{ t('ҲОЛАТ:') }}</span>
+            <div class="vs-toggle-group is-joined {{ '' if is_working else 'is-warning' }}" id="eq-toggle-{{ eq.id }}" role="radiogroup" aria-labelledby="eq-status-label-{{ eq.id }}">
+                <label>
                     <input type="radio" name="eq_{{ eq.id }}_status" value="working"
                            {% if is_working %}checked{% endif %}
                            onchange="onStatusChange({{ eq.id }}, 'working'); markFormDirty()"> {{ t('Ишлаган') }}
                 </label>
-                <label {% if not is_working %}style="background:var(--vs-warning);color:#fff;"{% endif %}>
+                <label>
                     <input type="radio" name="eq_{{ eq.id }}_status" value="idle"
                            {% if not is_working %}checked{% endif %}
                            onchange="onStatusChange({{ eq.id }}, 'idle'); markFormDirty()"> {{ t('Бўш') }}
@@ -507,11 +73,12 @@
             </div>
         </div>
         <div id="eq-idle-{{ eq.id }}" style="{% if is_working %}display:none;{% endif %}">
-            <div class="form-group">
-                <label>{{ t('Сабаб') }}</label>
-                <input type="text" name="eq_{{ eq.id }}_idle_reason"
+            <div class="vs-field" style="max-width:340px;">
+                <label class="vs-label" for="eq-{{ eq.id }}-idle-reason">{{ t('Сабаб') }}</label>
+                <input type="text" class="vs-input" id="eq-{{ eq.id }}-idle-reason"
+                       name="eq_{{ eq.id }}_idle_reason"
                        value="{{ rec.idle_reason if rec and not is_working else t('Вақтинча бўш') }}"
-                       placeholder="{{ t('Вақтинча бўш') }}" style="width:300px;" oninput="markFormDirty()">
+                       placeholder="{{ t('Вақтинча бўш') }}" oninput="markFormDirty()">
             </div>
         </div>
         <div id="eq-working-{{ eq.id }}" style="{% if not is_working %}display:none;{% endif %}">
@@ -526,11 +93,11 @@
                 {{ render_line(eq, 0, None) }}
             {% endif %}
             </div>
-            <div class="line-actions">
-                <button type="button" class="btn btn-secondary btn-sm vs-btn vs-btn-primary" onclick="addLine({{ eq.id }})">
+            <div class="vs-row vs-mt-sm">
+                <button type="button" class="vs-btn vs-btn-sm vs-btn-primary" onclick="addLine({{ eq.id }})">
                     {{ t('Қўшимча иш қўшиш') }}
                 </button>
-                <span class="text-muted text-sm">{{ t('Бир техникага бир нечта иш турини киритиш мумкин') }}</span>
+                <span class="vs-muted vs-caption">{{ t('Бир техникага бир нечта иш турини киритиш мумкин') }}</span>
             </div>
         </div>
     </div>
@@ -539,55 +106,33 @@
 
 {# ─── PAGE ─── #}
 {% set selected_org = (organizations|selectattr('id', 'equalto', selected_org_id)|list|first) if selected_org_id else None %}
-<div class="page-header entry002a-page-header ENTRY002A_MARKER">
+<div class="vs-hero vs-mb">
   <div>
-    <h1>{{ t('Маълумот киритиш') }}</h1>
-    <div class="entry002a-subtitle">
+    <div class="vs-hero-title">{{ t('Маълумот киритиш') }}</div>
+    <div class="vs-hero-sub">
       {{ t('Ежедневный ввод работы техники: выберите дату и организацию, затем отметьте технику как работающую или свободную.') }}
     </div>
-
-    <div class="entry002a-context-strip">
-      <span class="entry002a-pill">
-        {{ t('Сана') }}:
-        <strong>{{ selected_date.strftime('%d.%m.%Y') }}</strong>
-      </span>
-
-      <span class="entry002a-pill">
-        {{ t('Ташкилот') }}:
-        <strong>
-          {% if selected_org_id %}
-            {{ t('Танланган') }}
-          {% else %}
-            {{ t('Танланмаган') }}
-          {% endif %}
-        </strong>
-      </span>
-
-      <span class="entry002a-pill">
-        {{ t('Техника') }}:
-        <strong>{{ equipment_list|length if selected_org_id else 0 }}</strong>
-      </span>
-
-      <span class="entry002a-pill">
-        {{ t('Иш турлари') }}:
-        <strong>{{ work_types|length }}</strong>
-      </span>
+    <div class="vs-row vs-mt-sm">
+      <span class="vs-badge">{{ t('Сана') }}: <strong>{{ selected_date.strftime('%d.%m.%Y') }}</strong></span>
+      <span class="vs-badge">{{ t('Ташкилот') }}: <strong>{{ selected_org.name if selected_org else t('Танланмаган') }}</strong></span>
+      <span class="vs-badge vs-badge-info">{{ t('Техника') }}: <strong>{{ equipment_list|length if selected_org_id else 0 }}</strong></span>
+      <span class="vs-badge vs-badge-info">{{ t('Иш турлари') }}: <strong>{{ work_types|length }}</strong></span>
     </div>
   </div>
 </div>
 
-<div class="card entry002a-filter-card" style="margin-bottom:20px;">
-    <div class="card-body">
-        <form class="form-inline entry002a-filter-form" method="get" action="{{ url_for('daily_entry') }}" id="filterForm">
-            <div class="form-group" style="margin-bottom:0">
-                <label>{{ t('Сана') }}</label>
-                <input type="date" name="date" id="filterDate"
+<div class="vs-card vs-card-accent-left vs-mb-lg">
+    <div class="vs-card-body">
+        <form class="vs-form-row" method="get" action="{{ url_for('daily_entry') }}" id="filterForm">
+            <div class="vs-field">
+                <label class="vs-label" for="filterDate">{{ t('Сана') }}</label>
+                <input type="date" class="vs-input" name="date" id="filterDate"
                        value="{{ selected_date.isoformat() }}"
                        onchange="confirmFilterChange(this, 'date')">
             </div>
-            <div class="form-group" style="margin-bottom:0; flex:1; min-width:200px;">
-                <label>{{ t('Ташкилот') }}</label>
-                <select name="org_id" id="filterOrg"
+            <div class="vs-field" style="min-width:200px;">
+                <label class="vs-label" for="filterOrg">{{ t('Ташкилот') }}</label>
+                <select name="org_id" id="filterOrg" class="vs-select"
                         onchange="confirmFilterChange(this, 'org')">
                     <option value="">{{ t('— Ташкилотни танланг —') }}</option>
                     {% for org in organizations %}
@@ -597,49 +142,40 @@
             </div>
         </form>
         {% if selected_org_id %}
-        <div class="entry-context">
-            <div class="entry-context-item">
-                <div class="entry-context-label">{{ t('Танланган сана') }}</div>
-                <div class="entry-context-value">{{ selected_date.strftime('%d.%m.%Y') }}</div>
-            </div>
-            <div class="entry-context-item">
-                <div class="entry-context-label">{{ t('Танланган ташкилот') }}</div>
-                <div class="entry-context-value">{{ selected_org.name if selected_org else selected_org_id }}</div>
-            </div>
-            <div class="entry-context-item">
-                <div class="entry-context-label">{{ t('Техника сони:') }}</div>
-                <div class="entry-context-value">{{ equipment_list|length if equipment_list else 0 }}</div>
-            </div>
-        </div>
-        <div class="entry-warning">
-            ⚠ {{ t('Сана ёки ташкилот ўзгарса, сақланмаган маълумотлар йўқолади. Аввал сақланг.') }}
+        {# Плитки «выбранная дата / организация / число техники» удалены, а не
+           спрятаны: те же три числа уже стоят в шапке страницы. Раньше блок
+           оставался в разметке и гасился правилом `.entry-context {
+           display: none }` в собственном CSS страницы — то есть отправлялся
+           клиенту, читался скринридером и не был виден глазами. #}
+        <div class="vs-alert is-warning vs-mt-sm">
+            {{ icon('warning') }} {{ t('Сана ёки ташкилот ўзгарса, сақланмаган маълумотлар йўқолади. Аввал сақланг.') }}
         </div>
         {% endif %}
     </div>
 </div>
 
 {% if selected_org_id and equipment_list %}
-<form method="post" action="{{ url_for('save_entry') }}" id="entryForm" onsubmit="return validateEntryBeforeSubmit()" class="entry002a-save-form">
+<form method="post" action="{{ url_for('save_entry') }}" id="entryForm" onsubmit="return validateEntryBeforeSubmit()">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="work_date" value="{{ selected_date.isoformat() }}">
     <input type="hidden" name="org_id" value="{{ selected_org_id }}">
 
-    <div class="entry-help-panel">
+    <div class="vs-alert is-info vs-mb">
         <strong>{{ t('Қисқа қоида') }}:</strong>
         {{ t('Ишлаган техника учун иш тури ва миқдор шарт. Миқдор 0 дан катта, нарх эса манфий бўлмаслиги керак.') }}
     </div>
 
-    <div class="entry-toolbar">
-        <button type="submit" class="btn btn-primary btn-lg vs-btn vs-btn-success">{{ t('💾 Сақлаш') }}</button>
-        <button type="button" class="btn btn-secondary" onclick="setAllIdle()">{{ t('Ҳаммасини «бўш» қилиш') }}</button>
-        <button type="button" class="btn btn-secondary" onclick="expandAllCards()">{{ t('Барчасини очиш') }}</button>
-        <button type="button" class="btn btn-secondary" onclick="collapseAllCards()">{{ t('Барчасини ёпиш') }}</button>
-        <input class="entry-search" type="text" id="entrySearch" placeholder="{{ t('Техника ёки госномер бўйича қидириш') }}" oninput="filterEquipmentCards()">
+    <div class="vs-toolbar">
+        <button type="submit" class="vs-btn vs-btn-lg vs-btn-success">{{ icon('save') }} {{ t('Сақлаш') }}</button>
+        <button type="button" class="vs-btn" onclick="setAllIdle()">{{ t('Ҳаммасини «бўш» қилиш') }}</button>
+        <button type="button" class="vs-btn" onclick="expandAllCards()">{{ t('Барчасини очиш') }}</button>
+        <button type="button" class="vs-btn" onclick="collapseAllCards()">{{ t('Барчасини ёпиш') }}</button>
+        <input class="vs-input vs-toolbar-search" type="text" id="entrySearch" placeholder="{{ t('Техника ёки госномер бўйича қидириш') }}" oninput="filterEquipmentCards()">
         <div style="flex:1;"></div>
-        <span class="entry-stat">{{ t('Техника сони:') }} <strong id="entry-visible-count">{{ equipment_list|length }}</strong>/<strong>{{ equipment_list|length }}</strong></span>
-        <span class="entry-stat">{{ t('Ишлаган') }}: <strong id="entry-working-count">0</strong></span>
-        <span class="entry-stat">{{ t('Бўш') }}: <strong id="entry-idle-count">0</strong></span>
-        <span class="entry-stat">{{ t('Жами') }}: <strong id="entry-total-amount">0</strong> сўм</span>
+        <span class="vs-badge">{{ t('Техника сони:') }} <strong id="entry-visible-count">{{ equipment_list|length }}</strong>/<strong>{{ equipment_list|length }}</strong></span>
+        <span class="vs-badge">{{ t('Ишлаган') }}: <strong id="entry-working-count">0</strong></span>
+        <span class="vs-badge">{{ t('Бўш') }}: <strong id="entry-idle-count">0</strong></span>
+        <span class="vs-badge">{{ t('Жами') }}: <strong id="entry-total-amount">0</strong> сўм</span>
     </div>
 
     {% set ALL_CATS = [
@@ -657,36 +193,36 @@
     {% for cat_code, cat_name in ALL_CATS %}
         {% set cat_eqs = equipment_list|selectattr('category', 'equalto', cat_code)|list %}
         {% if cat_eqs %}
-        <div class="org-section">
-            <div class="org-section-header">
+        <div class="vs-group">
+            <div class="vs-group-head">
                 <span>{{ t(cat_name) }} ({{ cat_eqs|length }})</span>
             </div>
-            <div class="org-section-body">
+            <div class="vs-group-body">
                 {% for eq in cat_eqs %}{{ render_eq_card(eq) }}{% endfor %}
             </div>
         </div>
         {% endif %}
     {% endfor %}
 
-    <div class="entry-bottom-save">
-        <button type="submit" class="btn btn-primary btn-lg vs-btn vs-btn-success">{{ t('💾 Сақлаш') }}</button>
-        <span class="text-muted text-sm">{{ t('Сақлашдан олдин қизил билан белгиланган майдонларни текширинг.') }}</span>
+    <div class="vs-sticky-actions">
+        <button type="submit" class="vs-btn vs-btn-lg vs-btn-success">{{ icon('save') }} {{ t('Сақлаш') }}</button>
+        <span class="vs-muted vs-caption">{{ t('Сақлашдан олдин қизил билан белгиланган майдонларни текширинг.') }}</span>
     </div>
 </form>
 
 {% elif selected_org_id %}
-<div class="card">
-    <div class="card-body entry-empty-state">
-        <p class="text-muted">{{ t('Бу ташкилотда техника топилмади.') }}</p>
-        <a href="{{ url_for('ref_equipment', org_id=selected_org_id) }}" class="btn btn-secondary" style="margin-top:12px;">{{ t('Техника қўшиш →') }}</a>
+<div class="vs-card">
+    <div class="vs-card-body vs-empty">
+        <p class="vs-muted">{{ t('Бу ташкилотда техника топилмади.') }}</p>
+        <a href="{{ url_for('ref_equipment', org_id=selected_org_id) }}" class="vs-btn" style="margin-top:12px;">{{ t('Техника қўшиш →') }}</a>
     </div>
 </div>
 {% else %}
-<div class="card">
-    <div class="card-body entry-empty-state">
-        <div style="font-size:48px; margin-bottom:16px;">🚜</div>
+<div class="vs-card">
+    <div class="vs-card-body vs-empty">
+        <div class="vs-empty-icon">{{ icon('tractor', 40) }}</div>
         <h3 style="margin-bottom:8px;">{{ t('Ташкилотни танланг') }}</h3>
-        <p class="text-muted">{{ t('Юқоридан ташкилотни танлаб, маълумот киритишни бошланг') }}</p>
+        <p class="vs-muted">{{ t('Юқоридан ташкилотни танлаб, маълумот киритишни бошланг') }}</p>
     </div>
 </div>
 {% endif %}
@@ -718,16 +254,16 @@ function parseAmountText(text) {
 }
 
 function updateEntryStats() {
-    var cards = document.querySelectorAll('.eq-card');
+    var cards = document.querySelectorAll('.vs-collapse-card');
     var working = 0;
     var idle = 0;
     var visible = 0;
     var total = 0;
     cards.forEach(function(card) {
         if (card.style.display !== 'none') visible += 1;
-        if (card.classList.contains('working')) working += 1;
+        if (card.classList.contains('is-working')) working += 1;
         else idle += 1;
-        var amountEl = card.querySelector('.amount-display');
+        var amountEl = card.querySelector('.vs-collapse-amount');
         if (amountEl) total += parseAmountText(amountEl.textContent);
     });
     var visibleEl = document.getElementById('entry-visible-count');
@@ -742,7 +278,7 @@ function updateEntryStats() {
 
 function filterEquipmentCards() {
     var q = (document.getElementById('entrySearch') ? document.getElementById('entrySearch').value : '').toLowerCase().trim();
-    document.querySelectorAll('.eq-card').forEach(function(card) {
+    document.querySelectorAll('.vs-collapse-card').forEach(function(card) {
         var haystack = [card.dataset.eqName || '', card.dataset.eqPlate || '', card.dataset.eqType || ''].join(' ');
         card.style.display = (!q || haystack.indexOf(q) !== -1) ? '' : 'none';
     });
@@ -750,28 +286,28 @@ function filterEquipmentCards() {
 }
 
 function expandAllCards() {
-    document.querySelectorAll('.eq-card-body').forEach(function(body) { body.style.display = 'block'; });
+    document.querySelectorAll('.vs-collapse-body').forEach(function(body) { body.style.display = 'block'; });
 }
 
 function collapseAllCards() {
-    document.querySelectorAll('.eq-card').forEach(function(card) {
-        if (!card.classList.contains('working')) {
-            var body = card.querySelector('.eq-card-body');
+    document.querySelectorAll('.vs-collapse-card').forEach(function(card) {
+        if (!card.classList.contains('is-working')) {
+            var body = card.querySelector('.vs-collapse-body');
             if (body) body.style.display = 'none';
         }
     });
 }
 
 function clearClientValidationMarks() {
-    document.querySelectorAll('.entry-field-invalid').forEach(function(el) { el.classList.remove('entry-field-invalid'); });
-    document.querySelectorAll('.line-row.entry-invalid').forEach(function(el) { el.classList.remove('entry-invalid'); });
+    document.querySelectorAll('.vs-input.is-error, .vs-select.is-error').forEach(function(el) { el.classList.remove('is-error'); });
+    document.querySelectorAll('.vs-line-row.is-error').forEach(function(el) { el.classList.remove('is-error'); });
 }
 
 function markInvalidField(el) {
     if (!el) return;
-    el.classList.add('entry-field-invalid');
-    var row = el.closest('.line-row');
-    if (row) row.classList.add('entry-invalid');
+    el.classList.add('is-error');
+    var row = el.closest('.vs-line-row');
+    if (row) row.classList.add('is-error');
 }
 
 function validateEntryBeforeSubmit() {
@@ -783,7 +319,7 @@ function validateEntryBeforeSubmit() {
         if (!m) return;
         var eqId = parseInt(m[1]);
         var card = document.getElementById('eq-card-' + eqId);
-        var title = card ? (card.querySelector('.eq-main-title') ? card.querySelector('.eq-main-title').textContent.trim() : ('ID ' + eqId)) : ('ID ' + eqId);
+        var title = card ? (card.querySelector('.vs-collapse-title') ? card.querySelector('.vs-collapse-title').textContent.trim() : ('ID ' + eqId)) : ('ID ' + eqId);
         var lines = getValidLines(eqId);
         var filledLines = 0;
         lines.forEach(function(idx) {
@@ -805,7 +341,7 @@ function validateEntryBeforeSubmit() {
     });
     if (errors.length) {
         alert({{ t('Ҳисобот сақланмади. Хатоларни тузатинг:')|tojson }} + '\n\n' + errors.slice(0, 10).join('\n'));
-        var first = document.querySelector('.entry-field-invalid');
+        var first = document.querySelector('.vs-input.is-error, .vs-select.is-error');
         if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
         return false;
     }
@@ -819,7 +355,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
 function toggleCard(eqId) {
     const body = document.getElementById('eq-body-' + eqId);
-    body.style.display = body.style.display === 'none' ? 'block' : 'none';
+    const open = body.style.display === 'none';
+    body.style.display = open ? 'block' : 'none';
+    // [REASON]: заголовок карточки — кнопка с aria-expanded. Меняя только
+    // display, мы оставили бы атрибут врать: скринридер продолжал бы читать
+    // карточку свёрнутой, хотя она раскрыта.
+    const head = document.querySelector('[aria-controls="eq-body-' + eqId + '"]');
+    if (head) head.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
 
@@ -828,23 +370,43 @@ function onStatusChange(eqId, status) {
     const idle = document.getElementById('eq-idle-' + eqId);
     const working = document.getElementById('eq-working-' + eqId);
     const body = document.getElementById('eq-body-' + eqId);
+    const isWorking = status === 'working';
     body.style.display = 'block';
-    card.className = 'eq-card ' + status;
-    if (status === 'working') { idle.style.display = 'none'; working.style.display = 'block'; }
-    else { idle.style.display = 'block'; working.style.display = 'none'; document.getElementById('eq-amount-' + eqId).textContent = ''; }
-    const badge = card.querySelector('.working-badge, .idle-badge');
-    if (badge) { badge.className = status === 'working' ? 'working-badge' : 'idle-badge'; badge.textContent = status === 'working' ? '{{ t("Ишлаган") }}' : '{{ t("Бўш") }}'; }
-    const labels = card.querySelectorAll('.toggle-group label');
-    labels.forEach(l => { l.style.background = ''; l.style.color = ''; });
-    if (status === 'working') { labels[0].style.background = 'var(--vs-primary)'; labels[0].style.color = '#fff'; }
-    else { labels[1].style.background = 'var(--vs-warning)'; labels[1].style.color = '#fff'; }
+    // [REASON]: classList.toggle, а не присваивание className целиком. Прежняя
+    // строка перезаписывала весь список классов карточки — она работала лишь
+    // потому, что других классов на карточке не было, и сломалась бы молча от
+    // любого добавленного модификатора.
+    card.classList.toggle('is-working', isWorking);
+    card.classList.toggle('is-idle', !isWorking);
+    idle.style.display = isWorking ? 'none' : 'block';
+    working.style.display = isWorking ? 'block' : 'none';
+    if (!isWorking) document.getElementById('eq-amount-' + eqId).textContent = '';
+
+    const badge = card.querySelector('.vs-badge-success, .vs-badge-warning');
+    if (badge) {
+        badge.className = 'vs-badge ' + (isWorking ? 'vs-badge-success' : 'vs-badge-warning');
+        badge.textContent = isWorking ? '{{ t("Ишлаган") }}' : '{{ t("Бўш") }}';
+    }
+    // Цвет активной пилюли задаёт CSS по :has(:checked); JS переключает только
+    // РОЛЬ группы. Раньше здесь красили фон и текст инлайновым style, и
+    // белый там записывался литералом — единственный цвет этой страницы мимо
+    // токенов, а значит и мимо тёмной темы.
+    const group = document.getElementById('eq-toggle-' + eqId);
+    if (group) group.classList.toggle('is-warning', !isWorking);
     updateEntryStats();
 }
 
 
 function onWorkTypeChange(sel, eqId, lineIdx) {
     const opt = sel.selectedOptions[0];
-    if (opt && opt.dataset.unit) document.getElementById('eq-' + eqId + '-line-' + lineIdx + '-unit').value = opt.dataset.unit;
+    // DD-004: поле единицы — <select>, и dataset.unit несёт КОД справочника.
+    // [REASON]: присваивание select.value кодом, которого нет среди option,
+    // не бросает ошибку — браузер молча сбрасывает выбор на пустой. Поэтому
+    // сначала проверяем, что такой вариант есть, и только тогда ставим.
+    const unitEl = document.getElementById('eq-' + eqId + '-line-' + lineIdx + '-unit');
+    if (unitEl && opt && opt.dataset.unit && unitEl.querySelector('option[value="' + opt.dataset.unit + '"]')) {
+        unitEl.value = opt.dataset.unit;
+    }
     if (opt && opt.dataset.price && opt.dataset.price !== '0') document.getElementById('eq-' + eqId + '-line-' + lineIdx + '-price').value = parseInt(opt.dataset.price);
     calcAmount(eqId);
     markFormDirty();
@@ -886,20 +448,11 @@ function addLine(eqId) {
     setValidLines(eqId, lines);
 
     const container = document.getElementById('eq-lines-' + eqId);
-    const html = `<div class="line-row work-line-row" id="eq-${eqId}-line-${idx}" data-line-idx="${idx}">
-        <div class="form-group" style="margin-bottom:0"><label>{{ t('Иш тури') }}</label>
-            <select name="eq_${eqId}_line_${idx}_work_type" onchange="onWorkTypeChange(this, ${eqId}, ${idx})">
-                <option value="">—</option>
-                {% for wt in work_types %}<option value="{{ wt.name }}" data-unit="{{ wt.default_unit }}" data-price="{{ wt.default_price }}">{{ wt.name }}</option>{% endfor %}
-            </select></div>
-        <div class="form-group" style="margin-bottom:0"><label>{{ t('Буюртмачи') }}</label><input type="text" name="eq_${eqId}_line_${idx}_customer" list="customers-list" placeholder="{{ t('Буюртмачи номи') }}" oninput="markFormDirty()"></div>
-        <div class="form-group" style="margin-bottom:0"><label>{{ t('Ўлчов') }}</label><input type="text" name="eq_${eqId}_line_${idx}_unit" placeholder="га" style="width:70px;" id="eq-${eqId}-line-${idx}-unit" oninput="markFormDirty()"></div>
-        <div class="form-group" style="margin-bottom:0"><label>{{ t('Миқдор') }}</label><input type="number" min="0.1" step="0.1" inputmode="decimal" name="eq_${eqId}_line_${idx}_quantity" oninput="calcAmount(${eqId}); markFormDirty()" onwheel="this.blur()" id="eq-${eqId}-line-${idx}-qty" placeholder="0.0"><div class="field-help">{{ t('Миқдор 0 дан катта бўлиши керак') }}</div></div>
-        <div class="form-group" style="margin-bottom:0"><label>{{ t('Нарх') }}</label><input type="number" min="0" step="1" inputmode="numeric" name="eq_${eqId}_line_${idx}_price" oninput="calcAmount(${eqId}); markFormDirty()" onwheel="this.blur()" id="eq-${eqId}-line-${idx}-price" placeholder="0"><div class="field-help">{{ t('Нарх манфий бўлмаслиги керак') }}</div></div>
-        <div class="form-group" style="margin-bottom:0"><label>{{ t('Тўлов тури') }}</label><select name="eq_${eqId}_line_${idx}_payment_type" onchange="markFormDirty()"><option value="internal">{{ t('Тизим') }}</option><option value="transfer">{{ t('Пул кўч.') }}</option><option value="cash">{{ t('Нақд') }}</option><option value="other">{{ t('Бошқа') }}</option></select></div>
-        <div class="form-group" style="margin-bottom:0; flex:1;"><label>{{ t('Изоҳ') }}</label><input type="text" name="eq_${eqId}_line_${idx}_note" placeholder="{{ t('Қисқа изоҳ') }}" oninput="markFormDirty()"></div>
-        <div class="form-group" style="margin-bottom:0"><label>&nbsp;</label><button type="button" class="btn btn-danger btn-sm" onclick="removeLine(${eqId}, ${idx})" style="padding:6px 10px;">✕</button></div>
-    </div>`;
+    // Тот же макрос, что рендерит строку на сервере. Подставляются не
+    // значения, а ВЫРАЖЕНИЯ JavaScript: строка попадает внутрь шаблонной
+    // строки в обратных кавычках, и ${eqId}/${idx} раскрывает уже браузер.
+    const html = `{{ daily_line('eq_${eqId}_line_${idx}', 'eq-${eqId}-line-${idx}',
+                                '${eqId}', '${idx}', None, '', None, unit_select) }}`;
     container.insertAdjacentHTML('beforeend', html);
     markFormDirty();
     updateEntryStats();
@@ -989,20 +542,19 @@ function setAllIdle() {
 }
 
 
-/* ENTRY002A_JS_MARKER: visual hints only, no save/copy logic changes. */
+// Подсказка «строка начата, но не дополнена» — до отправки формы.
+// [REASON]: прежняя версия дополнительно вешала на карточку классы
+// entry002a-working / entry002a-idle. Они дублировали is-working / is-idle,
+// которые уже стоят на карточке и которыми она и раскрашена; вторая пара
+// ничего не решала, но требовала синхронизации с первой при каждом
+// изменении статуса.
 document.addEventListener('DOMContentLoaded', function () {
-    function refreshEntry002AVisualHints() {
-        document.querySelectorAll('.eq-card').forEach(function (card) {
-            var statusInput = card.querySelector('input[type="radio"][name$="_status"]:checked');
-            var status = statusInput ? statusInput.value : (card.classList.contains('working') ? 'working' : 'idle');
-            card.classList.toggle('entry002a-working', status === 'working');
-            card.classList.toggle('entry002a-idle', status !== 'working');
-        });
-
-        document.querySelectorAll('.line-row, .work-line-row').forEach(function (row) {
-            var card = row.closest('.eq-card');
-            var cardStatusInput = card ? card.querySelector('input[type="radio"][name$="_status"]:checked') : null;
-            var isWorking = cardStatusInput ? cardStatusInput.value === 'working' : (card && card.classList.contains('working'));
+    function refreshLineHints() {
+        document.querySelectorAll('.vs-line-row').forEach(function (row) {
+            var card = row.closest('.vs-collapse-card');
+            var statusInput = card ? card.querySelector('input[type="radio"][name$="_status"]:checked') : null;
+            var isWorking = statusInput ? statusInput.value === 'working'
+                                        : !!(card && card.classList.contains('is-working'));
 
             var workType = row.querySelector('[name$="_work_type"]');
             var quantity = row.querySelector('[name$="_quantity"]');
@@ -1014,23 +566,17 @@ document.addEventListener('DOMContentLoaded', function () {
                 (price && !price.value)
             ));
 
-            row.classList.toggle('entry002a-line-incomplete', incomplete);
+            row.classList.toggle('is-incomplete', incomplete);
         });
     }
 
-    document.addEventListener('input', function (event) {
-        if (event.target.closest('.line-row, .work-line-row, .eq-card')) {
-            refreshEntry002AVisualHints();
-        }
+    ['input', 'change'].forEach(function (evt) {
+        document.addEventListener(evt, function (event) {
+            if (event.target.closest('.vs-line-row, .vs-collapse-card')) refreshLineHints();
+        });
     });
 
-    document.addEventListener('change', function (event) {
-        if (event.target.closest('.line-row, .work-line-row, .eq-card')) {
-            refreshEntry002AVisualHints();
-        }
-    });
-
-    refreshEntry002AVisualHints();
+    refreshLineHints();
 });
 
 </script>

@@ -1,131 +1,10 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}АЗС — {{ 'Контроль АЗС и синхронизации' if lang == 'ru' else 'АЗС ва синхронизация назорати' }}{% endblock %}
 {% block content %}
 {% include 'fuel/_fuel_nav.html' %}
 {% set show_legacy = request.args.get('show_legacy') == '1' %}
 
-<style>
-/* FUEL002D_MARKER: fuel report UX refresh, template/localization only. */
-.fuel002d-page-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 16px;
-  margin-bottom: 14px;
-}
-
-.fuel002d-page-header h1 {
-  margin-bottom: 6px;
-}
-
-.fuel002d-subtitle {
-  color: var(--text2);
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.fuel002d-context-strip {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
-  gap: 10px;
-  margin: 0 0 14px 0;
-}
-
-.fuel002d-pill {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: 10px;
-  padding: 10px 12px;
-  box-shadow: var(--shadow);
-}
-
-.fuel002d-pill span {
-  display: block;
-  color: var(--text2);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .04em;
-  margin-bottom: 4px;
-}
-
-.fuel002d-pill strong {
-  display: block;
-  font-size: 15px;
-  color: var(--text);
-}
-
-.fuel002d-filter-card {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: 12px;
-  padding: 14px;
-  box-shadow: var(--shadow);
-  margin-bottom: 16px;
-}
-
-.fuel002d-filter-card form,
-form.fuel002d-filter-form {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(140px, 1fr));
-  gap: 10px;
-  align-items: end;
-}
-
-.fuel002d-table-wrap {
-  width: 100%;
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  margin-bottom: 16px;
-}
-
-.fuel002d-table-wrap .table {
-  margin-bottom: 0;
-}
-
-.fuel002d-report-table {
-  min-width: 980px;
-}
-
-.fuel002d-report-table th {
-  white-space: nowrap;
-  font-size: 12px;
-  background: var(--surface2);
-}
-
-.fuel002d-report-table td {
-  vertical-align: middle;
-}
-
-.fuel002d-section-note {
-  color: var(--text2);
-  font-size: 12px;
-  margin: -4px 0 10px 0;
-}
-
-@media (max-width: 1200px) {
-  .fuel002d-context-strip {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .fuel002d-filter-card form,
-  form.fuel002d-filter-form {
-    grid-template-columns: repeat(2, minmax(160px, 1fr));
-  }
-}
-
-@media (max-width: 760px) {
-  .fuel002d-page-header,
-  .fuel002d-context-strip,
-  .fuel002d-filter-card form,
-  form.fuel002d-filter-form {
-    grid-template-columns: 1fr;
-  }
-}
-/* FUEL002D_END */
-</style>
 
 
 
@@ -185,39 +64,15 @@ form.fuel002d-filter-form {
 {% set L_value = 'Значение' if lang == 'ru' else 'Қиймат' %}
 {% set L_warn_count = 'Предупреждения' if lang == 'ru' else 'Огоҳлантиришлар' %}
 
-<style>
-.fuel-report-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
-.fuel-report-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
-.fuel-report-note { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
-.fuel-report-filter { display:grid; grid-template-columns:repeat(5,minmax(150px,1fr)); gap:12px; align-items:end; }
-.fuel-report-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin:16px 0; }
-.fuel-report-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
-.fuel-report-toolbar input { min-width:280px; flex:1; }
-.fuel-status { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; }
-.fuel-status.ok { background:var(--accent-light); color:var(--accent); }
-.fuel-status.warn { background:var(--warn-light); color:var(--warn); }
-.fuel-status.danger { background:var(--danger-light); color:var(--danger); }
-.fuel-pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700; background:var(--info-light); color:var(--info); }
-.fuel-warning-card { border-left:4px solid var(--warn); background:var(--warn-light); padding:12px 14px; border-radius:var(--radius); margin-bottom:10px; }
-.fuel-warning-card.danger { border-left-color:var(--danger); background:var(--danger-light); }
-.fuel-warning-card.info { border-left-color:var(--info); background:var(--info-light); }
-.fuel-warning-title { font-weight:700; margin-bottom:4px; }
-.fuel-warning-card.danger .fuel-warning-title { color:var(--danger); }
-.fuel-warning-card.warning .fuel-warning-title { color:var(--warn); }
-.fuel-warning-card.info .fuel-warning-title { color:var(--info); }
-@media (max-width:1000px) { .fuel-report-filter { grid-template-columns:repeat(2,minmax(150px,1fr)); } }
-@media (max-width:700px) { .fuel-report-hero { flex-direction:column; } .fuel-report-filter { grid-template-columns:1fr; } .fuel-report-actions { justify-content:flex-start; } }
-</style>
 
 <div class="fuel-report-hero">
     <div>
         
-<div class="fuel002d-page-header FUEL002D_MARKER">
+<div class="vs-row-end vs-mb FUEL002D_MARKER">
   <div>
-    <h1>{{ L_title }}</h1>
-    <div class="fuel002d-subtitle">{{ t('Ёқилғи ҳисоботи: омборлар, АЗС, кирим, чиқим ва синхронлаш ҳолати бўйича умумий назорат.') }}</div>
+    <div class="vs-muted">{{ t('Ёқилғи ҳисоботи: омборлар, АЗС, кирим, чиқим ва синхронлаш ҳолати бўйича умумий назорат.') }}</div>
   </div>
-  <div class="fuel002d-section-note">{{ t('Фильтрларни танланг ва ҳисоботни янгиланг.') }}</div>
+  <div class="vs-muted">{{ t('Фильтрларни танланг ва ҳисоботни янгиланг.') }}</div>
 </div>
 
         <div class="text-muted text-sm">{{ L_subtitle }}</div>
@@ -251,34 +106,34 @@ form.fuel002d-filter-form {
 {# F1.3 · FUEL-REPORT-SPLIT-003 — the plates serve the page's new purpose:
    АЗС and synchronisation control. The old set read «Склады 30 · АЗС 24 ·
    Виды топлива 1 · Экспорт XLSX», of which one was useful. #}
-<div class="fuel002d-context-strip" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
-  <div class="fuel002d-pill">
-    <span>{{ 'Активных АЗС' if lang == 'ru' else 'Фаол АЗСлар' }}</span>
-    <strong>{{ station_rows|selectattr('is_active')|list|length }}</strong>
+<div class="vs-kpi-strip vs-kpi-strip-body" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
+  <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ 'Активных АЗС' if lang == 'ru' else 'Фаол АЗСлар' }}</span>
+    <strong class="vs-kpi-strip-value is-text">{{ station_rows|selectattr('is_active')|list|length }}</strong>
   </div>
-  <div class="fuel002d-pill">
-    <span>{{ 'Транзакций за период' if lang == 'ru' else 'Давр учун транзакциялар' }}</span>
-    <strong>{{ totals.transactions }}</strong>
+  <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ 'Транзакций за период' if lang == 'ru' else 'Давр учун транзакциялар' }}</span>
+    <strong class="vs-kpi-strip-value is-text">{{ totals.transactions }}</strong>
   </div>
-  <div class="fuel002d-pill">
-    <span>{{ 'Неизвестных АЗС' if lang == 'ru' else 'Номаълум АЗСлар' }}</span>
+  <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ 'Неизвестных АЗС' if lang == 'ru' else 'Номаълум АЗСлар' }}</span>
     <strong {% if sync_summary.unknown %}style="color:var(--danger);"{% endif %}>{{ sync_summary.unknown }}</strong>
   </div>
-  <div class="fuel002d-pill">
-    <span>{{ 'Открытых предупреждений' if lang == 'ru' else 'Очиқ огоҳлантиришлар' }}</span>
+  <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ 'Открытых предупреждений' if lang == 'ru' else 'Очиқ огоҳлантиришлар' }}</span>
     <strong {% if warnings_summary.danger %}style="color:var(--danger);"{% elif warnings_summary.total %}style="color:var(--warn);"{% endif %}>{{ warnings_summary.total }}</strong>
   </div>
-  <div class="fuel002d-pill">
-    <span>{{ 'Последняя синхронизация' if lang == 'ru' else 'Охирги синхронизация' }}</span>
-    <strong>{% if latest_sync and latest_sync.synced_at %}{{ latest_sync.synced_at.strftime('%d.%m %H:%M') }}{% else %}—{% endif %}</strong>
+  <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ 'Последняя синхронизация' if lang == 'ru' else 'Охирги синхронизация' }}</span>
+    <strong class="vs-kpi-strip-value is-text">{% if latest_sync and latest_sync.synced_at %}{{ latest_sync.synced_at.strftime('%d.%m %H:%M') }}{% else %}—{% endif %}</strong>
   </div>
 </div>
 
 {# F1.3 commit 24: the three-card hint block is gone — a newcomer needs it
    once, a manager never, and it occupied a third of the first screen. #}
 
-<div class="fuel002d-filter-card FUEL002D_FILTER_CARD_MARKER">
-<form method="get" class="fuel-report-filter fuel002d-filter-form" id="fuelReportForm">
+<div class="vs-card FUEL002D_FILTER_CARD_MARKER">
+<form method="get" class="fuel-report-filter vs-form-row" id="fuelReportForm">
             {# FUEL-BIG-001: refreshing the report must not silently drop the archive mode #}
             {% if show_legacy %}<input type="hidden" name="show_legacy" value="1">{% endif %}
             {# F2.1 FUEL-DATETIME-004: shared period picker — dates, times, presets #}
@@ -346,8 +201,8 @@ form.fuel002d-filter-form {
 <div class="card" style="margin-bottom:24px;">
     <div class="card-header">{{ L_stations }} ({{ station_rows|length }})</div>
     <div style="overflow-x:auto;">
-    <div class="fuel002d-table-wrap FUEL002D_TABLE_WRAP_MARKER_2">
-<table id="stationReportTable" class="fuel002d-report-table">
+    <div class="vs-table-scroll FUEL002D_TABLE_WRAP_MARKER_2">
+<table id="stationReportTable" class="vs-table is-static" data-sortable>
         <thead><tr><th>{{ L_station }}</th><th>Topaz ID</th><th>{{ L_wh }}</th><th>{{ L_active }}</th><th class="text-right">{{ L_issued }}</th><th class="text-right">{{ L_tx }}</th><th>{{ L_last }}</th></tr></thead>
         <tbody>
         {% for st in station_rows %}
@@ -370,8 +225,8 @@ form.fuel002d-filter-form {
 <div class="card" style="margin-bottom:24px;">
     <div class="card-header">{{ L_recent }} ({{ recent_txns|length }})</div>
     <div style="overflow-x:auto;">
-    <div class="fuel002d-table-wrap FUEL002D_TABLE_WRAP_MARKER_3">
-<table id="recentFuelTxTable" class="fuel002d-report-table">
+    <div class="vs-table-scroll FUEL002D_TABLE_WRAP_MARKER_3">
+<table id="recentFuelTxTable" class="vs-table is-static" data-sortable>
         <thead><tr><th>{{ L_datetime }}</th><th>{{ L_station }}</th><th>{{ L_wh }}</th><th>{{ L_fuel }}</th><th class="text-right">{{ L_liters }}</th><th>{{ L_card }}</th><th>Topaz ID</th></tr></thead>
         <tbody>
         {% for txn in recent_txns %}
@@ -396,8 +251,8 @@ form.fuel002d-filter-form {
 <div class="card">
     <div class="card-header">{{ L_sync }} ({{ sync_logs|length }})</div>
     <div style="overflow-x:auto;">
-    <div class="fuel002d-table-wrap FUEL002D_TABLE_WRAP_MARKER_4">
-<table class="fuel002d-report-table">
+    <div class="vs-table-scroll FUEL002D_TABLE_WRAP_MARKER_4">
+<table class="vs-table is-static" data-sortable>
         <thead><tr><th>{{ L_time }}</th><th>IP</th><th class="text-right">{{ L_received }}</th><th class="text-right">{{ L_new }}</th><th class="text-right">{{ L_dup }}</th><th class="text-right">{{ L_sync_unknown }}</th><th>{{ L_status }}</th><th>{{ L_error }}</th></tr></thead>
         <tbody>
         {% for log in sync_logs %}

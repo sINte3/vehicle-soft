@@ -19,6 +19,7 @@ from flask_login import (
 from config import get_config
 from models import (
     db, User, Organization, Equipment, EquipmentModel, WorkType, Customer, DailyRecord,
+    DailyRecordUnit,
     Deficiency, VialonMapping, VialonImport, EngineHoursRecord,
     FuelStation, FuelTank, FuelSnapshot, FuelTransaction, FuelSyncLog,
     FuelWarehouse, FuelStation2, FuelInitialBalance, FuelReceipt2, FuelTransaction2,
@@ -36,6 +37,7 @@ from models import (
     module_required,
 )
 from excel_export import generate_report
+from daily_units import RAW_PREFIX, resolve_unit_code, is_raw_unit, raw_unit_value
 from wialon_import import register_wialon_routes
 from fuel_routes import fuel_bp, _collect_fuel_report_data  # noqa: F401 (registered below)
 from excel_daily_activity import generate_daily_activity
@@ -127,6 +129,11 @@ def create_app():
             return url
 
     app.jinja_env.globals['static_v'] = static_v
+    # [REASON]: макросы компонентов принимают список пар (значение, подпись).
+    # Без zip шаблон вынужден собирать пары циклом с namespace — или, что и
+    # происходило, отказаться от макроса и повторить разметку компонента у
+    # себя. Именно так в продукте появились два разных мультиселекта.
+    app.jinja_env.globals['zip'] = zip
 
     def is_csrf_exempt():
         # Topaz agent API endpoints are protected by FUEL_API_TOKEN and must not
@@ -992,10 +999,50 @@ def create_app():
         work_types = WorkType.query.order_by(WorkType.name).all()
         customers = Customer.query.order_by(Customer.name).all()
 
+        # DD-004: единица перестала быть свободной строкой. Справочник даёт
+        # список вариантов, а два соседних справочника — виды работ и техника —
+        # по-прежнему хранят единицу свободным текстом, и его надо привести к
+        # коду. [REASON]: иначе автоподстановка по виду работ положит в
+        # <select> значение «м-соат», такого option нет, и браузер молча
+        # оставит поле на первом варианте — свободный ввод вернётся обратно
+        # уже в виде тихо неверного выбора.
+        unit_options = (DailyRecordUnit.query
+                        .filter_by(is_active=True)
+                        .order_by(DailyRecordUnit.sort_order, DailyRecordUnit.code).all())
+        unit_codes = {u.code for u in unit_options}
+        unit_labels = {u.code: u.label(getattr(g, 'lang', 'uz')) for u in unit_options}
+        work_type_unit_code = {wt.id: (resolve_unit_code(wt.default_unit, unit_codes) or '')
+                               for wt in work_types}
+        equipment_unit_code = {eq.id: (resolve_unit_code(eq.default_unit, unit_codes) or '')
+                               for eq in equipment_list}
+
+        # Что показать в поле для уже сохранённой строки. Решение считается
+        # здесь, а не в шаблоне: у него три исхода, и каждый из них проверяем
+        # тестом только будучи выраженным в коде.
+        # [REASON]: третий исход — `raw:<исходный текст>` — существует ради
+        # строк, чья единица не легла в справочник (DD-004 сознательно не
+        # авторегистрирует незнакомое: среди накопленного есть запись на 253
+        # символа). Без него форма при пересохранении дня молча стёрла бы
+        # значение, которого оператор не касался.
+        record_unit_choice = {}
+        for recs in existing.values():
+            for r in recs:
+                code = r.unit_code if r.unit_code in unit_codes else resolve_unit_code(r.unit, unit_codes)
+                if code:
+                    record_unit_choice[r.id] = code
+                elif (r.unit or '').strip():
+                    record_unit_choice[r.id] = RAW_PREFIX + r.unit
+                else:
+                    record_unit_choice[r.id] = ''
+
         return render_template('daily_entry.html', selected_date=sel,
                                organizations=organizations, selected_org_id=org_id,
                                equipment_list=equipment_list, existing=existing,
-                               work_types=work_types, customers=customers)
+                               work_types=work_types, customers=customers,
+                               unit_options=unit_options, unit_labels=unit_labels,
+                               work_type_unit_code=work_type_unit_code,
+                               equipment_unit_code=equipment_unit_code,
+                               record_unit_choice=record_unit_choice)
 
     @app.route('/entry/save', methods=['POST'])
     @module_required('transport')
@@ -1023,6 +1070,16 @@ def create_app():
                     pass
 
         valid_payments = {'internal', 'cash', 'transfer', 'other'}
+        # DD-004: с формы приходит `code`. Сохраняется `unit_code = code` и
+        # `unit = name_ru` — канонический РУССКИЙ ярлык, а не код и не подпись
+        # по языку интерфейса.
+        # [REASON]: `unit` читают выгрузки Excel и отчёты. Код превратил бы
+        # «га» в «ga» в файлах, уходящих операторам и в бухгалтерию, а менять
+        # согласованное деловое содержание выгрузок устав запрещает. Ярлык
+        # берётся один и тот же при любом языке интерфейса, иначе поле снова
+        # начнёт копить разнописание — ровно то, что чинится.
+        unit_names = {u.code: u.name_ru
+                      for u in DailyRecordUnit.query.filter_by(is_active=True).all()}
         validation_errors = []
         prepared = {}
 
@@ -1054,13 +1111,26 @@ def create_app():
                 lp = f'{p}line_{li}_'
                 work_type = data.get(f'{lp}work_type', '').strip()
                 customer = data.get(f'{lp}customer', '').strip()
-                unit = data.get(f'{lp}unit', '').strip()
+                unit_submitted = data.get(f'{lp}unit', '')
                 qty_s = data.get(f'{lp}quantity', '').strip()
                 price_s = data.get(f'{lp}price', '').strip()
                 payment = data.get(f'{lp}payment_type', 'internal')
                 note = data.get(f'{lp}note', '').strip()
 
-                if not work_type and not qty_s and not price_s and not customer and not unit and not note:
+                # [REASON]: значение с префиксом `raw:` — исходный
+                # нераспознанный текст, показанный в поле только для того,
+                # чтобы форма не стирала молча то, чего оператор не трогал.
+                # Оно не проходит через справочник и не получает кода: NULL в
+                # `unit_code` и есть состояние «не распознано» (DD-004).
+                if is_raw_unit(unit_submitted):
+                    unit = raw_unit_value(unit_submitted)
+                    unit_code = None
+                else:
+                    unit_submitted = unit_submitted.strip()
+                    unit_code = unit_submitted or None
+                    unit = unit_names.get(unit_submitted, '')
+
+                if not work_type and not qty_s and not price_s and not customer and not unit_submitted and not note:
                     continue
 
                 if not work_type:
@@ -1068,6 +1138,9 @@ def create_app():
                     continue
                 if payment not in valid_payments:
                     validation_errors.append(f'{eq.name} {eq.plate}: ' + ui_t('тўлов тури нотўғри', 'некорректный тип оплаты'))
+                    continue
+                if unit_code is not None and unit_code not in unit_names:
+                    validation_errors.append(f'{eq.name} {eq.plate}: ' + ui_t('ўлчов бирлиги нотўғри', 'некорректная единица измерения'))
                     continue
 
                 try:
@@ -1083,6 +1156,7 @@ def create_app():
                     'work_type': work_type,
                     'customer': customer,
                     'unit': unit,
+                    'unit_code': unit_code,
                     'quantity': qty,
                     'price': price,
                     'payment_type': payment,
@@ -1104,7 +1178,7 @@ def create_app():
             )
             return redirect(url_for('daily_entry', date=sel.isoformat(), org_id=org_id))
 
-        daily_fields = ['id', 'work_date', 'equipment_id', 'line_index', 'status', 'work_type', 'customer', 'unit', 'quantity', 'price', 'payment_type', 'idle_reason', 'note', 'amount_cash', 'amount_transfer', 'amount_internal', 'amount_other']
+        daily_fields = ['id', 'work_date', 'equipment_id', 'line_index', 'status', 'work_type', 'customer', 'unit', 'unit_code', 'quantity', 'price', 'payment_type', 'idle_reason', 'note', 'amount_cash', 'amount_transfer', 'amount_internal', 'amount_other']
         before_records = []
         if prepared:
             before_records = [model_snapshot(r, daily_fields) for r in DailyRecord.query.filter(
@@ -1128,6 +1202,7 @@ def create_app():
                 rec = DailyRecord(
                     work_date=sel, equipment_id=eq_id, status='working',
                     work_type=line['work_type'], customer=line['customer'], unit=line['unit'],
+                    unit_code=line['unit_code'],
                     quantity=line['quantity'], price=line['price'],
                     amount_cash=amount if line['payment_type'] == 'cash' else 0,
                     amount_transfer=amount if line['payment_type'] == 'transfer' else 0,
@@ -1171,7 +1246,7 @@ def create_app():
             if not DailyRecord.query.filter_by(work_date=sel, equipment_id=pr.equipment_id).first():
                 new = DailyRecord(work_date=sel, equipment_id=pr.equipment_id,
                                   status='idle', idle_reason='Вақтинча бўш',
-                                  unit=pr.unit, price=pr.price,
+                                  unit=pr.unit, unit_code=pr.unit_code, price=pr.price,
                                   payment_type=pr.payment_type, line_index=0,
                                   created_by=current_user.id)
                 db.session.add(new)
@@ -1283,6 +1358,43 @@ def create_app():
         db.session.commit()
         flash('Камчилик ўчирилди', 'warning')
         return redirect(url_for('deficiencies_list', date=sel.isoformat()))
+
+    # ─── UI KITCHEN SINK (dev only) ──────────────────────────────────────
+    @app.route('/__ui/kitchen-sink')
+    @login_required
+    def ui_kitchen_sink():
+        """Все компоненты дизайн-системы во всех состояниях, одной страницей.
+
+        Замена Storybook без второго источника правды: страница собирается тем
+        же Jinja и тем же CSS, что и продукт, поэтому показывает компонент
+        таким, каким он выходит в приложении, а не таким, каким задуман.
+
+        [REASON]: маршрут отдаёт 404 вне dev-конфигурации, а не прячется
+        отсутствием ссылки. Это служебная поверхность; на production она не
+        нужна никому, и «его всё равно никто не найдёт» защитой не является.
+        Флаг отдельный, не DEBUG: `app.run(debug=False)` присваивает app.debug
+        и перезаписывает config['DEBUG'], поэтому проверка по нему зависела бы
+        от способа запуска сервера, а не от конфигурации.
+        """
+        if not app.config.get('UI_KITCHEN_SINK'):
+            abort(404)
+        rows = [
+            {'name': 'МТЗ-82.1 Беларус', 'status': 'Работал', 'role': 'vs-badge-success', 'amount': 15878.64},
+            {'name': 'Case IH Axial-Flow', 'status': 'Простой', 'role': 'vs-badge-warning', 'amount': 3200.0},
+            {'name': 'John Deere 8R 410', 'status': 'Отклонено', 'role': 'vs-badge-danger', 'amount': 940.5},
+            {'name': 'Amazone ZA-M 1500', 'status': 'Черновик', 'role': '', 'amount': 128.0},
+        ]
+        # Значение длиннее p99 — именно оно проверяет, что колонка обрезается,
+        # а не растягивается (DD-030).
+        long_value = ('м-соат будем считать с 08:00-18:00 если техника работала '
+                      'весь день то ставим 10 моточасов')
+        icon_names = ['save', 'plus', 'edit', 'trash', 'check', 'close', 'warning',
+                      'error', 'info', 'download', 'upload', 'chart', 'list', 'box',
+                      'link', 'doc', 'attach', 'building', 'tag', 'user', 'hint',
+                      'fuel', 'settings', 'empty', 'bot', 'blocked', 'tractor',
+                      'search', 'filter', 'calendar', 'clock', 'receipt']
+        return render_template('__ui_kitchen_sink.html', rows=rows,
+                               long_value=long_value, icon_names=icon_names)
 
     # в”Ђв”Ђв”Ђ REPORT в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
     @app.route('/report', methods=['GET', 'POST'])
@@ -1642,7 +1754,13 @@ def create_app():
         if module:
             q += ' AND module = :module'
             params['module'] = module
-        q += ' ORDER BY created_at DESC LIMIT 300'
+        # [REASON]: predel vyborki peredaetsya v shablon, a ne pishetsya tam
+        # vtoroy raz. Kontrakt DD-028 dlya rezhima is-stream trebuet, chtoby
+        # ohvat vidimogo okna byl PODPISAN; chislo, prostavlennoe v shablone
+        # ruchnoy konstantoy, moglo by razoytis s etim ORDER BY ... LIMIT i
+        # podpis stala by lozhnoy molcha.
+        audit_log_limit = 300
+        q += ' ORDER BY created_at DESC LIMIT %d' % audit_log_limit
         raw_logs = db.session.execute(text(q), params).mappings().all()
         logs = []
         for row in raw_logs:
@@ -1659,7 +1777,8 @@ def create_app():
         modules = [r[0] for r in db.session.execute(text('SELECT DISTINCT module FROM audit_logs WHERE module IS NOT NULL AND module != "" ORDER BY module')).all()]
         return render_template('audit_logs.html', logs=logs, users=users, actions=actions, modules=modules,
                                date_from=date_from, date_to=date_to, selected_user_id=user_id,
-                               selected_action=action, selected_module=module)
+                               selected_action=action, selected_module=module,
+                               audit_log_limit=audit_log_limit)
 
     @app.route('/ref/organizations')
     @module_required('transport')

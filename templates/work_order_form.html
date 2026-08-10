@@ -1,75 +1,56 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
-{% block title %}{{ 'Новый наряд' if is_ru else 'Yangi buyurtma' }}{% endblock %}
+{% block title %}{{ 'Новый наряд' if is_ru else 'Янги буюртма' }}{% endblock %}
 {% block content %}
 
-<style>
-/* WORK-ORDER-001: create form, scoped styles reuse base design tokens. */
-.wof-scope .wof-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
-.wof-scope .wof-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
-.wof-scope .wof-grid .full { grid-column:1 / -1; }
-.wof-scope .wof-note { font-size:11px; color:var(--text2); margin-top:4px; }
-.wof-scope .wof-note.manual { color:var(--warn); }
-.wof-scope .wof-err { border-color:var(--danger) !important; box-shadow:0 0 0 2px rgba(192,57,43,.14); }
-.wof-scope .wof-actions { display:flex; gap:10px; margin-top:18px; flex-wrap:wrap; }
-.wof-scope .wof-errors { display:none; margin-bottom:16px; border-left:4px solid var(--danger); background:var(--danger-light); color:var(--danger); padding:12px 14px; border-radius:var(--radius); }
-.wof-scope .wof-errors ul { margin:6px 0 0 18px; }
-@media (max-width:768px) { .wof-scope .wof-grid { grid-template-columns:1fr; } }
-</style>
-
-<div class="wof-scope">
-
-<div class="wof-hero">
-    <div class="page-header" style="flex:1;">
-        <h1>{{ 'Новый наряд' if is_ru else 'Yangi buyurtma' }}</h1>
-        <div class="text-muted text-sm">
-            {{ 'Заполните дату, организацию и технику, затем тип работы.' if is_ru else 'Sana, tashkilot va texnikani, so‘ng ish turini kiriting.' }}
-        </div>
-    </div>
-    <a href="{{ url_for('work_orders.index') }}" class="btn btn-secondary">{{ '← Список' if is_ru else '← Ro‘yxat' }}</a>
+{# Заголовок экрана рисует base_next из {% block title %}. #}
+<div class="vs-row-end vs-mb">
+    <span class="vs-muted vs-mr-auto">{{ 'Заполните дату, организацию и технику, затем тип работы.' if is_ru else 'Сана, ташкилот ва техникани, сўнг иш турини киритинг.' }}</span>
+    <a href="{{ url_for('work_orders.index') }}" class="vs-btn">{{ icon('list', 15) }}{{ 'Список' if is_ru else 'Рўйхат' }}</a>
 </div>
 
-<div id="wofErrors" class="wof-errors">
-    <strong>{{ 'Проверьте обязательные поля' if is_ru else 'Majburiy maydonlarni tekshiring' }}</strong>
+<div id="wofErrors" class="vs-card vs-card-accent-danger vs-mb vs-form-errors">
+    <strong>{{ 'Проверьте обязательные поля' if is_ru else 'Мажбурий майдонларни текширинг' }}</strong>
     <ul id="wofErrorList"></ul>
 </div>
 
 <form method="post" action="{{ url_for('work_orders.create') }}" id="woForm" onsubmit="return woValidate(event)">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-    <div class="card">
-        <div class="card-body">
-            <div class="wof-grid">
+    <div class="vs-card">
+        <div class="vs-card-body">
+            <div class="vs-form-grid">
 
-                <div class="form-group">
-                    <label>{{ 'Дата' if is_ru else 'Sana' }} *</label>
-                    <input type="date" name="planned_date" id="plannedDate" class="form-control" value="{{ today }}" required>
+                <div class="vs-field">
+                    <label class="vs-label" for="plannedDate">{{ 'Дата' if is_ru else 'Сана' }} *</label>
+                    <input type="date" name="planned_date" id="plannedDate" class="vs-input" value="{{ today }}" required>
                 </div>
 
-                <div class="form-group">
-                    <label>{{ 'Организация' if is_ru else 'Tashkilot' }} *</label>
-                    <select name="organization_id" id="orgSelect" class="form-control" required onchange="loadEquipment(this.value)">
-                        <option value="">{{ '— выберите —' if is_ru else '— tanlang —' }}</option>
+                <div class="vs-field">
+                    <label class="vs-label" for="orgSelect">{{ 'Организация' if is_ru else 'Ташкилот' }} *</label>
+                    <select name="organization_id" id="orgSelect" class="vs-select" required onchange="loadEquipment(this.value)">
+                        <option value="">{{ '— выберите —' if is_ru else '— танланг —' }}</option>
                         {% for org in organizations %}
                         <option value="{{ org.id }}" {% if organizations|length == 1 %}selected{% endif %}>{{ org.name }}</option>
                         {% endfor %}
                     </select>
                 </div>
 
-                <div class="form-group">
-                    <label>{{ 'Техника' if is_ru else 'Texnika' }} *</label>
-                    <select name="equipment_id" id="eqSelect" class="form-control" required>
-                        <option value="">{{ '— сначала выберите организацию —' if is_ru else '— avval tashkilotni tanlang —' }}</option>
+                <div class="vs-field">
+                    <label class="vs-label" for="eqSelect">{{ 'Техника' if is_ru else 'Техника' }} *</label>
+                    <select name="equipment_id" id="eqSelect" class="vs-select" required>
+                        <option value="">{{ '— сначала выберите организацию —' if is_ru else '— аввал ташкилотни танланг —' }}</option>
                         {% for eq in initial_equipment %}
                         <option value="{{ eq.id }}">{{ eq.name }}{% if eq.plate %} — {{ eq.plate }}{% endif %}</option>
                         {% endfor %}
                     </select>
                 </div>
 
-                <div class="form-group">
-                    <label>{{ 'Тип работы' if is_ru else 'Ish turi' }} *</label>
-                    <input type="text" name="work_type_text" id="workTypeText" class="form-control" list="wtList" autocomplete="off"
-                           placeholder="{{ 'Выберите или введите' if is_ru else 'Tanlang yoki kiriting' }}">
+                <div class="vs-field">
+                    <label class="vs-label" for="workTypeText">{{ 'Тип работы' if is_ru else 'Иш тури' }} *</label>
+                    <input type="text" name="work_type_text" id="workTypeText" class="vs-input" list="wtList" autocomplete="off"
+                           placeholder="{{ 'Выберите или введите' if is_ru else 'Танланг ёки киритинг' }}">
                     <input type="hidden" name="work_type_id" id="workTypeId">
                     <datalist id="wtList">
                         {% for wt in work_types %}
@@ -78,9 +59,9 @@
                     </datalist>
                 </div>
 
-                <div class="form-group">
-                    <label>{{ 'Заказчик' if is_ru else 'Buyurtmachi' }}</label>
-                    <input type="text" name="customer_text" id="customerText" class="form-control" list="custList" autocomplete="off">
+                <div class="vs-field">
+                    <label class="vs-label" for="customerText">{{ 'Заказчик' if is_ru else 'Буюртмачи' }}</label>
+                    <input type="text" name="customer_text" id="customerText" class="vs-input" list="custList" autocomplete="off">
                     <input type="hidden" name="customer_id" id="customerId">
                     <datalist id="custList">
                         {% for c in customers %}
@@ -89,38 +70,38 @@
                     </datalist>
                 </div>
 
-                <div class="form-group">
-                    <label>{{ 'Ед. изм.' if is_ru else 'O‘lchov birligi' }}</label>
-                    <input type="text" name="unit" id="unitInput" class="form-control" value="ga">
+                <div class="vs-field">
+                    <label class="vs-label" for="unitInput">{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</label>
+                    <input type="text" name="unit" id="unitInput" class="vs-input" value="ga">
                 </div>
 
-                <div class="form-group">
-                    <label>{{ 'Плановый объём' if is_ru else 'Rejalashtirilgan hajm' }}</label>
-                    <input type="number" name="planned_quantity" id="plannedQty" class="form-control" min="0" step="0.01">
+                <div class="vs-field">
+                    <label class="vs-label" for="plannedQty">{{ 'Плановый объём' if is_ru else 'Режалаштирилган ҳажм' }}</label>
+                    <input type="number" name="planned_quantity" id="plannedQty" class="vs-input" min="0" step="0.01">
                 </div>
 
-                <div class="form-group">
-                    <label>{{ 'Цена за ед.' if is_ru else 'Birlik narxi' }}</label>
-                    <input type="number" name="price" id="priceInput" class="form-control" min="0" step="0.01" value="0">
-                    <div class="wof-note" id="priceNote"></div>
+                <div class="vs-field">
+                    <label class="vs-label" for="priceInput">{{ 'Цена за ед.' if is_ru else 'Бирлик нархи' }}</label>
+                    <input type="number" name="price" id="priceInput" class="vs-input" min="0" step="0.01" value="0">
+                    <div class="vs-hint" id="priceNote"></div>
                 </div>
 
-                <div class="form-group">
-                    <label>{{ 'Тип оплаты' if is_ru else 'To‘lov turi' }}</label>
-                    <select name="payment_type" class="form-control">
-                        <option value="">{{ '— не выбран —' if is_ru else '— tanlanmagan —' }}</option>
-                        <option value="naqd">{{ 'Наличные' if is_ru else 'Naqd' }}</option>
-                        <option value="bank">{{ 'Перечисление' if is_ru else 'Bank o‘tkazma' }}</option>
-                        <option value="ichki">{{ 'Внутренние' if is_ru else 'Ichki' }}</option>
-                        <option value="boshqa">{{ 'Прочее' if is_ru else 'Boshqa' }}</option>
+                <div class="vs-field">
+                    <label class="vs-label" for="wof-payment-type">{{ 'Тип оплаты' if is_ru else 'Тўлов тури' }}</label>
+                    <select id="wof-payment-type" name="payment_type" class="vs-select">
+                        <option value="">{{ '— не выбран —' if is_ru else '— танланмаган —' }}</option>
+                        <option value="naqd">{{ 'Наличные' if is_ru else 'Нақд' }}</option>
+                        <option value="bank">{{ 'Перечисление' if is_ru else 'Банк ўтказма' }}</option>
+                        <option value="ichki">{{ 'Внутренние' if is_ru else 'Ички' }}</option>
+                        <option value="boshqa">{{ 'Прочее' if is_ru else 'Бошқа' }}</option>
                     </select>
                 </div>
 
                 {% if is_admin %}
-                <div class="form-group">
-                    <label>{{ 'Назначить механика' if is_ru else 'Mexanikni tayinlash' }}</label>
-                    <select name="assigned_to" class="form-control">
-                        <option value="">{{ 'Не назначен' if is_ru else 'Tayinlanmagan' }}</option>
+                <div class="vs-field">
+                    <label class="vs-label" for="wof-assigned-to">{{ 'Назначить механика' if is_ru else 'Механикни тайинлаш' }}</label>
+                    <select id="wof-assigned-to" name="assigned_to" class="vs-select">
+                        <option value="">{{ 'Не назначен' if is_ru else 'Тайинланмаган' }}</option>
                         {% for m in mechanics %}
                         <option value="{{ m.id }}">{{ m.full_name or m.username }}</option>
                         {% endfor %}
@@ -129,34 +110,33 @@
                 {% endif %}
 
                 <div class="form-group full">
-                    <label>{{ 'Примечание' if is_ru else 'Izoh' }}</label>
-                    <textarea name="note" class="form-control" rows="2"></textarea>
+                    <label class="vs-label" for="wof-note">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+                    <textarea id="wof-note" name="note" class="vs-textarea" rows="2"></textarea>
                 </div>
 
             </div>
 
-            <div class="wof-actions">
-                <button type="submit" class="btn btn-primary">{{ 'Сохранить' if is_ru else 'Saqlash' }}</button>
-                <a href="{{ url_for('work_orders.index') }}" class="btn btn-secondary">{{ 'Отмена' if is_ru else 'Bekor qilish' }}</a>
+            <div class="vs-sticky-actions">
+                <button type="submit" class="vs-btn vs-btn-primary">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+                <a href="{{ url_for('work_orders.index') }}" class="vs-btn">{{ 'Отмена' if is_ru else 'Бекор қилиш' }}</a>
             </div>
         </div>
     </div>
 </form>
 
-</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
 const WO_TEXT = {
-    fromCatalog: {{ ('Цена из справочника' if is_ru else 'Narx katalogdan')|tojson }},
-    manual: {{ ('Цена изменена вручную' if is_ru else 'Narx qo‘lda o‘zgartirildi')|tojson }},
-    needDate: {{ ('Укажите дату.' if is_ru else 'Sanani kiriting.')|tojson }},
-    needOrg: {{ ('Выберите организацию.' if is_ru else 'Tashkilotni tanlang.')|tojson }},
-    needEq: {{ ('Выберите технику.' if is_ru else 'Texnikani tanlang.')|tojson }},
-    needWorkType: {{ ('Выберите или введите тип работы.' if is_ru else 'Ish turini tanlang yoki kiriting.')|tojson }},
-    placeholderEq: {{ ('— сначала выберите организацию —' if is_ru else '— avval tashkilotni tanlang —')|tojson }},
-    noEq: {{ ('— нет техники —' if is_ru else '— texnika yo‘q —')|tojson }}
+    fromCatalog: {{ ('Цена из справочника' if is_ru else 'Нарх каталогдан')|tojson }},
+    manual: {{ ('Цена изменена вручную' if is_ru else 'Нарх қўлда ўзгартирилди')|tojson }},
+    needDate: {{ ('Укажите дату.' if is_ru else 'Санани киритинг.')|tojson }},
+    needOrg: {{ ('Выберите организацию.' if is_ru else 'Ташкилотни танланг.')|tojson }},
+    needEq: {{ ('Выберите технику.' if is_ru else 'Техникани танланг.')|tojson }},
+    needWorkType: {{ ('Выберите или введите тип работы.' if is_ru else 'Иш турини танланг ёки киритинг.')|tojson }},
+    placeholderEq: {{ ('— сначала выберите организацию —' if is_ru else '— аввал ташкилотни танланг —')|tojson }},
+    noEq: {{ ('— нет техники —' if is_ru else '— техника йўқ —')|tojson }}
 };
 const EQUIP_URL = {{ url_for('work_orders.api_equipment_by_org')|tojson }};
 const PRICE_URL = {{ url_for('work_orders.api_work_type_price')|tojson }};
@@ -259,11 +239,11 @@ function woValidate(event) {
     if (errors.length) {
         list.innerHTML = '';
         errors.forEach(e => { const li = document.createElement('li'); li.textContent = e; list.appendChild(li); });
-        box.style.display = 'block';
+        box.classList.add('is-visible');
         box.scrollIntoView({behavior: 'smooth', block: 'start'});
         return false;
     }
-    box.style.display = 'none';
+    box.classList.remove('is-visible');
     return true;
 }
 

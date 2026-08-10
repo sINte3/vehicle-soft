@@ -376,8 +376,15 @@ def register_wialon_routes(app, editor_required, admin_required):
     @editor_required
     def wialon_index():
         from datetime import date as date_cls, timedelta as td
+        # [REASON]: predel okna peredaetsya v shablon, a ne pishetsya tam vtoroy
+        # raz. Kontrakt DD-028 dlya is-stream trebuet podpisannogo ohvata;
+        # konstanta, prostavlennaya v shablone rukoy, razoshlas by s etim
+        # limit() i podpis stala by lozhnoy molcha. Na boevoy baze zapisey 169,
+        # v okne 30.
+        import_log_limit = 30
         imports = (VialonImport.query
-                   .order_by(VialonImport.created_at.desc()).limit(30).all())
+                   .order_by(VialonImport.created_at.desc())
+                   .limit(import_log_limit).all())
         all_mapped = {m.vialon_name for m in VialonMapping.query.all()}
         pending_count = 0
         for imp in imports:
@@ -390,6 +397,7 @@ def register_wialon_routes(app, editor_required, admin_required):
         return render_template(
             'wialon.html',
             imports=imports,
+            import_log_limit=import_log_limit,
             pending_count=pending_count,
             yesterday=yesterday,
             mapping_count=VialonMapping.query.filter(

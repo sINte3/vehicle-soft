@@ -1,36 +1,55 @@
 {% extends g.base_template %}
-{% set is_ru = (lang == 'ru') %}
-{% set L_title = 'Виалон — Маппинг' if is_ru else 'Wialon — Mapping' %}
-{% set L_header = 'Виалон — Маппинг текшируви' if is_ru else 'Wialon — Mapping tekshiruvi' %}
-{% set L_date_label = 'Сана:' if is_ru else 'Sana:' %}
-{% set L_mapped_header = 'Автоматик аниқланган:' if is_ru else 'Avtomatik aniqlangan:' %}
-{% set L_equip_count = 'та техника' if is_ru else 'ta texnika' %}
-{% set L_mapped_note = '— маппинг жадвалидан топилди, сақланади' if is_ru else '— mapping jadvalidan topildi, saqlanadi' %}
-{% set L_col_wialon = 'Виалон номи' if is_ru else 'Wialon nomi' %}
-{% set L_col_our_system = 'Бизнинг тизим (техника)' if is_ru else 'Bizning tizim (texnika)' %}
-{% set L_col_org = 'Ташкилот' if is_ru else 'Tashkilot' %}
-{% set L_col_engine = 'Мотосоат' if is_ru else 'Motosoat' %}
-{% set L_col_moving = 'Ҳаракатда' if is_ru else 'Harakatda' %}
-{% set L_col_idle = 'Холостой' if is_ru else 'Holostoy' %}
-{% set L_unmapped_header = 'Белгиланмаган техника:' if is_ru else 'Belgilanmagan texnika:' %}
-{% set L_unmapped_note = '— ҳар бири учун қарор қабул қилинг' if is_ru else '— har biri uchun qaror qabul qiling' %}
-{% set L_col_select = 'Бизнинг тизимда (танланг)' if is_ru else 'Bizning tizimda (tanlang)' %}
-{% set L_col_skip = 'Ўтказиб юбориш' if is_ru else "O'tkazib yuborish" %}
-{% set L_placeholder = '— танланг —' if is_ru else '— tanlang —' %}
-{% set L_option_later = '🔸 Кейин (сақламаслик)' if is_ru else '🔸 Keyin (saqlamaslik)' %}
-{% set L_option_skip = '🚫 Бизнинг технологиямизда йўқ' if is_ru else "🚫 Bizning texnologiyamizda yo'q" %}
-{% set L_skip_header = 'Ўтказиб юборилади:' if is_ru else "O'tkazib yuboriladi:" %}
-{% set L_skip_note = '— «тизимда йўқ» деб белгиланган' if is_ru else '— «tizimda yo\'q» deb belgilangan' %}
-{% set L_save_btn = '💾 Сақлаш ва импортни якунлаш' if is_ru else '💾 Saqlash va importni yakunlash' %}
-{% set L_cancel_btn = 'Бекор қилиш' if is_ru else 'Bekor qilish' %}
-{% set L_helper_note = 'Белгиланмаган техника учун «Кейин» танланса — бу импортда сақланмайди. Кейинги импортда яна кўрсатилади.' if is_ru else 'Belgilanmagan texnika uchun «Keyin» tanlansa — bu importda saqlanmaydi. Keyingi importda yana ko\'rsatiladi.' %}
-{% set L_skip_title = 'Тизимда йўқ техника — доим ўтказиб юбориш' if is_ru else 'Tizimda yo\'q texnika — doim o\'tkazib yuborish' %}
-{% set L_hour = 'соат' if is_ru else 'soat' %}
+{% from '_icons.html' import icon %}
+{# ЭТОТ ШАБЛОН СЕЙЧАС НЕДОСТИЖИМ. Найдено при миграции UI-P6-002 и записано
+   здесь, чтобы следующий читатель не считал экран рабочим:
+
+   1. `render_template('wialon_mapping.html', ...)` не вызывается ниоткуда —
+      полный поиск по репозиторию даёт ноль совпадений.
+   2. Форма отправляется на `url_for('wialon_save')`, а такого эндпойнта в
+      приложении нет вовсе. Любая попытка отрисовать шаблон падает
+      BuildError ещё до первой строки разметки.
+
+   То есть экран «ручного разбора импорта» перестал существовать раньше, чем
+   этот файл. Шаблон приведён к контрактам вместе с остальным модулем, но
+   удалять его или восстанавливать тракт — решение владельца, а не миграции
+   вёрстки. Пункт открыт в docs/tracks/ui.md. #}
+{# ЯЗЫК. До миграции обе ветки этого файла были ОДНИМ языком — узбекским — в
+   двух алфавитах: `'Виалон — Маппинг' if is_ru else 'Wialon — Mapping'`.
+   Латиница уставом запрещена, поэтому латинская ветка убрана: это
+   переписывание того, что уже лежало в файле, а не перевод.
+   Следствие названо прямо: русской стороны у этих подписей НЕТ, русский
+   пользователь видит узбекский. Русские формулировки — слово владельца, и
+   пункт открыт в docs/tracks/ui.md. #}
+{% set L_title = 'Виалон — Маппинг' %}
+{% set L_date_label = 'Сана:' %}
+{% set L_mapped_header = 'Автоматик аниқланган:' %}
+{% set L_equip_count = 'та техника' %}
+{% set L_mapped_note = '— маппинг жадвалидан топилди, сақланади' %}
+{% set L_col_wialon = 'Виалон номи' %}
+{% set L_col_our_system = 'Бизнинг тизим (техника)' %}
+{% set L_col_org = 'Ташкилот' %}
+{% set L_col_engine = 'Мотосоат' %}
+{% set L_col_moving = 'Ҳаракатда' %}
+{% set L_col_idle = 'Холостой' %}
+{% set L_unmapped_header = 'Белгиланмаган техника:' %}
+{% set L_unmapped_note = '— ҳар бири учун қарор қабул қилинг' %}
+{% set L_col_select = 'Бизнинг тизимда (танланг)' %}
+{% set L_col_skip = 'Ўтказиб юбориш' %}
+{% set L_placeholder = '— танланг —' %}
+{% set L_option_later = 'Кейин (сақламаслик)' %}
+{% set L_option_skip = 'Бизнинг технологиямизда йўқ' %}
+{% set L_skip_header = 'Ўтказиб юборилади:' %}
+{% set L_skip_note = '— «тизимда йўқ» деб белгиланган' %}
+{% set L_save_btn = 'Сақлаш ва импортни якунлаш' %}
+{% set L_cancel_btn = 'Бекор қилиш' %}
+{% set L_helper_note = 'Белгиланмаган техника учун «Кейин» танланса — бу импортда сақланмайди. Кейинги импортда яна кўрсатилади.' %}
+{% set L_skip_title = 'Тизимда йўқ техника — доим ўтказиб юбориш' %}
+{% set L_hour = 'соат' %}
 {% block title %}{{ L_title }}{% endblock %}
 {% block content %}
-<div class="page-header">
-    <h1>{{ L_header }}</h1>
-    <div class="text-muted text-sm">{{ L_date_label }} <strong>{{ work_date.strftime('%d.%m.%Y') }}</strong></div>
+
+<div class="vs-row-end vs-mb">
+  <span class="vs-muted">{{ L_date_label }} <strong>{{ work_date.strftime('%d.%m.%Y') }}</strong></span>
 </div>
 
 <form method="post" action="{{ url_for('wialon_save') }}">
@@ -38,79 +57,102 @@
     <input type="hidden" name="work_date" value="{{ work_date.isoformat() }}">
     <input type="hidden" name="filename" value="{{ filename }}">
 
-    {# ── Already mapped (auto-processed) ── #}
+    {# ── Already mapped (auto-processed) ──
+
+       DD-028, режим is-static: строк столько, сколько техники в одном файле
+       Виалона — десятки.
+
+       DD-029, СОРТИРОВКИ ЗДЕСЬ НЕТ, И ЭТО НЕ УПУЩЕНИЕ. Маршрут разбирает
+       форму позиционно: getlist('mapped_vialon_name')[i] сопоставляется с
+       getlist('mapped_eq_id')[i]. Порядок значений в форме — это порядок
+       строк в разметке. Клиентская сортировка переставила бы строки, а
+       вместе с ними и пары «объект → техника», и импорт записал бы моточасы
+       НЕ ТОЙ машине — молча, без единой ошибки на экране. #}
     {% if mapped %}
-    <div class="card" style="margin-bottom:20px;">
-        <div class="card-header" style="background:var(--accent-light);">
-            ✅ {{ L_mapped_header }} <strong>{{ mapped|length }} {{ L_equip_count }}</strong>
-            <span class="text-muted text-sm" style="margin-left:8px;">{{ L_mapped_note }}</span>
+    <div class="vs-table-wrap vs-mb">
+        <div class="vs-card-header">
+            <span class="vs-card-title">{{ icon('check', 15) }} {{ L_mapped_header }}
+                <strong>{{ mapped|length }} {{ L_equip_count }}</strong></span>
+            <span class="vs-muted">{{ L_mapped_note }}</span>
         </div>
-        <table>
+        <div class="vs-table-scroll">
+        <table class="vs-table vs-num is-static is-compact">
             <thead>
                 <tr>
                     <th>{{ L_col_wialon }}</th>
                     <th>{{ L_col_our_system }}</th>
                     <th>{{ L_col_org }}</th>
-                    <th class="text-right">{{ L_col_engine }}</th>
-                    <th class="text-right">{{ L_col_moving }}</th>
-                    <th class="text-right">{{ L_col_idle }}</th>
+                    <th class="right">{{ L_col_engine }}</th>
+                    <th class="right">{{ L_col_moving }}</th>
+                    <th class="right">{{ L_col_idle }}</th>
                 </tr>
             </thead>
             <tbody>
             {% for item in mapped %}
-            {# Hidden fields for already-mapped rows #}
-            <input type="hidden" name="mapped_vialon_name" value="{{ item.vialon_name }}">
-            <input type="hidden" name="mapped_eq_id"       value="{{ item.equipment.id }}">
-            <input type="hidden" name="mapped_engine_hours" value="{{ item.engine_hours }}">
-            <input type="hidden" name="mapped_hours_moving" value="{{ item.hours_moving }}">
-            <input type="hidden" name="mapped_hours_idle"   value="{{ item.hours_idle }}">
             <tr>
-                <td class="text-sm text-muted">{{ item.vialon_name }}</td>
-                <td style="font-weight:600;">{{ item.equipment.name }}</td>
-                <td class="text-sm">{{ item.equipment.organization.name }}</td>
-                <td class="text-right" style="font-weight:600; color:var(--accent);">
-                    {{ '%.2f' | format(item.engine_hours) }} {{ L_hour }}
+                {# Скрытые поля лежат ВНУТРИ ячейки. Раньше они стояли прямо в
+                   <tbody>, вне <td>: парсер выносит такие узлы за пределы
+                   таблицы (foster parenting), и они оказывались перед <table>.
+                   Форма всё ещё отправлялась — но разметка была невалидной, а
+                   привязка значений к строке держалась на порядке узлов,
+                   которого в разметке уже не было видно. #}
+                <td class="vs-cell-clip vs-muted" title="{{ item.vialon_name }}">
+                    <input type="hidden" name="mapped_vialon_name" value="{{ item.vialon_name }}">
+                    <input type="hidden" name="mapped_eq_id"       value="{{ item.equipment.id }}">
+                    <input type="hidden" name="mapped_engine_hours" value="{{ item.engine_hours }}">
+                    <input type="hidden" name="mapped_hours_moving" value="{{ item.hours_moving }}">
+                    <input type="hidden" name="mapped_hours_idle"   value="{{ item.hours_idle }}">
+                    {{ item.vialon_name }}
                 </td>
-                <td class="text-right text-sm">{{ '%.2f' | format(item.hours_moving) }} {{ L_hour }}</td>
-                <td class="text-right text-sm">{{ '%.2f' | format(item.hours_idle) }} {{ L_hour }}</td>
+                <td><strong>{{ item.equipment.name }}</strong></td>
+                <td class="vs-cell-clip vs-muted" title="{{ item.equipment.organization.name }}">{{ item.equipment.organization.name }}</td>
+                <td class="right"><strong>{{ '%.2f' | format(item.engine_hours) }}</strong> {{ L_hour }}</td>
+                <td class="right vs-muted">{{ '%.2f' | format(item.hours_moving) }} {{ L_hour }}</td>
+                <td class="right vs-muted">{{ '%.2f' | format(item.hours_idle) }} {{ L_hour }}</td>
             </tr>
             {% endfor %}
             </tbody>
         </table>
+        </div>
+        <div class="vs-table-foot">
+            <span class="vs-table-count">{{ mapped|length }} {{ L_equip_count }}</span>
+        </div>
     </div>
     {% endif %}
 
-    {# ── Unmapped: operator must decide ── #}
+    {# ── Unmapped: operator must decide ── Та же позиционная связка, та же
+       причина не включать сортировку. #}
     {% if unmapped %}
-    <div class="card" style="margin-bottom:20px;">
-        <div class="card-header" style="background:var(--warn-light); color:var(--warn);">
-            ⚠ {{ L_unmapped_header }} <strong>{{ unmapped|length }} {{ L_equip_count }}</strong>
-            <span class="text-muted text-sm" style="margin-left:8px;">{{ L_unmapped_note }}</span>
+    <div class="vs-table-wrap vs-mb vs-table-wrap-warning">
+        <div class="vs-card-header">
+            <span class="vs-card-title">{{ icon('warning', 15) }} {{ L_unmapped_header }}
+                <strong>{{ unmapped|length }} {{ L_equip_count }}</strong></span>
+            <span class="vs-muted">{{ L_unmapped_note }}</span>
         </div>
-        <div class="card-body" style="padding:0;">
-        <table>
+        <div class="vs-table-scroll">
+        <table class="vs-table is-static">
             <thead>
                 <tr>
                     <th>{{ L_col_wialon }}</th>
-                    <th class="text-right">{{ L_col_engine }}</th>
+                    <th class="right">{{ L_col_engine }}</th>
                     <th style="min-width:300px;">{{ L_col_select }}</th>
-                    <th class="text-center">{{ L_col_skip }}</th>
+                    <th class="center">{{ L_col_skip }}</th>
                 </tr>
             </thead>
             <tbody>
             {% for item in unmapped %}
-            <input type="hidden" name="vialon_name"    value="{{ item.vialon_name }}">
-            <input type="hidden" name="engine_hours"   value="{{ item.engine_hours }}">
-            <input type="hidden" name="hours_moving"   value="{{ item.hours_moving }}">
-            <input type="hidden" name="hours_idle"     value="{{ item.hours_idle }}">
             <tr>
-                <td style="font-size:13px;">{{ item.vialon_name }}</td>
-                <td class="text-right" style="font-weight:600;">
-                    {{ '%.2f' | format(item.engine_hours) }} {{ L_hour }}
+                <td class="vs-cell-clip" title="{{ item.vialon_name }}">
+                    <input type="hidden" name="vialon_name"    value="{{ item.vialon_name }}">
+                    <input type="hidden" name="engine_hours"   value="{{ item.engine_hours }}">
+                    <input type="hidden" name="hours_moving"   value="{{ item.hours_moving }}">
+                    <input type="hidden" name="hours_idle"     value="{{ item.hours_idle }}">
+                    {{ item.vialon_name }}
                 </td>
+                <td class="right vs-num"><strong>{{ '%.2f' | format(item.engine_hours) }}</strong> {{ L_hour }}</td>
                 <td>
-                    <select name="eq_choice" class="form-control" onchange="onChoiceChange(this)"
-                            style="width:100%; font-size:13px;"
+                    <select name="eq_choice" class="vs-select" onchange="onChoiceChange(this)"
+                            aria-label="{{ L_col_select }}: {{ item.vialon_name }}"
                             data-skip-col="{{ loop.index0 }}">
                         <option value="">{{ L_placeholder }}</option>
                         <option value="ignore">{{ L_option_later }}</option>
@@ -127,9 +169,10 @@
                         </optgroup>
                     </select>
                 </td>
-                <td class="text-center">
+                <td class="center">
                     <input type="checkbox" id="skip-{{ loop.index0 }}"
                            onclick="setSkip({{ loop.index0 }}, this.checked)"
+                           aria-label="{{ L_skip_title }}: {{ item.vialon_name }}"
                            title="{{ L_skip_title }}">
                 </td>
             </tr>
@@ -137,38 +180,36 @@
             </tbody>
         </table>
         </div>
+        <div class="vs-table-foot">
+            <span class="vs-table-count">{{ unmapped|length }} {{ L_equip_count }}</span>
+        </div>
     </div>
     {% endif %}
 
     {# ── Skipped ── #}
     {% if skipped %}
-    <div class="card" style="margin-bottom:20px;">
-        <div class="card-header">
-            ⏭ {{ L_skip_header }} <strong>{{ skipped|length }} {{ L_equip_count }}</strong>
-            <span class="text-muted text-sm">{{ L_skip_note }}</span>
+    <div class="vs-card vs-mb">
+        <div class="vs-card-header">
+            <span class="vs-card-title">{{ icon('blocked', 15) }} {{ L_skip_header }}
+                <strong>{{ skipped|length }} {{ L_equip_count }}</strong></span>
+            <span class="vs-muted">{{ L_skip_note }}</span>
         </div>
-        <div class="card-body">
-        <div style="display:flex; flex-wrap:wrap; gap:6px;">
+        <div class="vs-card-body">
+            <div class="vs-chip-row">
             {% for item in skipped %}
-            <span class="text-sm text-muted" style="background:var(--surface2);
-                  padding:3px 8px; border-radius:4px; border:1px solid var(--border);">
-                {{ item.vialon_name }}
-            </span>
+            <span class="vs-badge is-outline">{{ item.vialon_name }}</span>
             {% endfor %}
-        </div>
+            </div>
         </div>
     </div>
     {% endif %}
 
-    {# ── Action buttons ── #}
-    <div style="display:flex; gap:12px; margin-top:16px;">
-        <button type="submit" class="btn btn-primary btn-lg">
-            {{ L_save_btn }}
+    <div class="vs-sticky-actions">
+        <button type="submit" class="vs-btn vs-btn-primary vs-btn-lg">
+            {{ icon('save', 16) }}{{ L_save_btn }}
         </button>
-        <a href="{{ url_for('wialon_index') }}" class="btn btn-secondary">{{ L_cancel_btn }}</a>
-        <span class="text-muted text-sm" style="align-self:center;">
-            {{ L_helper_note }}
-        </span>
+        <a href="{{ url_for('wialon_index') }}" class="vs-btn">{{ L_cancel_btn }}</a>
+        <span class="vs-muted">{{ L_helper_note }}</span>
     </div>
 </form>
 {% endblock %}
@@ -190,7 +231,6 @@ function setSkip(idx, checked) {
     // Find the select in same row — iterate rows
     const rows = document.querySelectorAll('select[name="eq_choice"]');
     // idx is loop.index0 = position in unmapped list
-    let cnt = 0;
     for (const sel of rows) {
         if (parseInt(sel.dataset.skipCol) === idx) {
             sel.value = checked ? 'skip' : '';

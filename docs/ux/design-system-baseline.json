@@ -1,0 +1,23 @@
+{
+ "counts": {
+  "breakpoint": {},
+  "glyph": {},
+  "hardcoded-color": {
+   "static/css/design-system.css": 91,
+   "templates/fuel/_legacy_toggle.html": 3,
+   "templates/fuel/dashboard.html": 2,
+   "templates/login.html": 18,
+   "templates/workload.html": 1
+  },
+  "inline-style": {
+   "templates/login.html": 152
+  },
+  "t-key-missing": {},
+  "table-class": {},
+  "token-dup": {
+   "static/css/design-system.css": 1
+  }
+ },
+ "note": "Ratchet baseline. Counts may only decrease. Regenerate with tools/check_design_system.py --update-baseline",
+ "schema_version": 1
+}

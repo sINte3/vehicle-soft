@@ -1,0 +1,1371 @@
+{
+ "/": {
+  "bySeverity": {
+   "serious": 39,
+   "critical": 1
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 39
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/admin/audit": {
+  "bySeverity": {
+   "serious": 4,
+   "critical": 5
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 4
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 2
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 3
+   }
+  ]
+ },
+ "/admin/permissions": {
+  "bySeverity": {
+   "serious": 6,
+   "critical": 105
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 6
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 105
+   }
+  ]
+ },
+ "/admin/users": {
+  "bySeverity": {
+   "serious": 13,
+   "critical": 1
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 13
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/change-temporary-password": {
+  "bySeverity": {
+   "serious": 3,
+   "critical": 1
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/deficiencies": {
+  "bySeverity": {
+   "serious": 4,
+   "critical": 6
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 4
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 5
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/drones/": {
+  "bySeverity": {
+   "serious": 4
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 4
+   }
+  ]
+ },
+ "/drones/customers": {
+  "bySeverity": {
+   "serious": 51,
+   "critical": 22
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 51
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 22
+   }
+  ]
+ },
+ "/drones/operators": {
+  "bySeverity": {
+   "serious": 33
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 33
+   }
+  ]
+ },
+ "/drones/operators/1": {
+  "bySeverity": {
+   "serious": 8,
+   "critical": 4
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 8
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 3
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/drones/reports": {
+  "bySeverity": {
+   "serious": 3
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   }
+  ]
+ },
+ "/drones/reports/calendar": {
+  "bySeverity": {
+   "serious": 8
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 7
+   },
+   {
+    "id": "scrollable-region-focusable",
+    "impact": "serious",
+    "nodes": 1
+   }
+  ]
+ },
+ "/drones/reports/reconcile": {
+  "bySeverity": {
+   "serious": 7
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 7
+   }
+  ]
+ },
+ "/drones/reports/spray": {
+  "bySeverity": {
+   "serious": 10
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 10
+   }
+  ]
+ },
+ "/drones/sources": {
+  "bySeverity": {
+   "serious": 42
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 42
+   }
+  ]
+ },
+ "/drones/summary": {
+  "bySeverity": {
+   "serious": 11
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 11
+   }
+  ]
+ },
+ "/drones/units": {
+  "bySeverity": {
+   "serious": 20,
+   "critical": 26
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 20
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 13
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 13
+   }
+  ]
+ },
+ "/drones/units/1": {
+  "bySeverity": {
+   "serious": 14
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 14
+   }
+  ]
+ },
+ "/drones/units/reattach": {
+  "bySeverity": {
+   "serious": 11
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 11
+   }
+  ]
+ },
+ "/drones/works": {
+  "bySeverity": {
+   "serious": 12
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 12
+   }
+  ]
+ },
+ "/drones/works/assignment-hints": {
+  "bySeverity": {
+   "serious": 18
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 18
+   }
+  ]
+ },
+ "/drones/works/debts": {
+  "bySeverity": {
+   "serious": 9
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 9
+   }
+  ]
+ },
+ "/drones/works/debts/aging": {
+  "bySeverity": {
+   "serious": 5
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 5
+   }
+  ]
+ },
+ "/drones/works/import": {
+  "bySeverity": {
+   "serious": 5
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 5
+   }
+  ]
+ },
+ "/drones/works/import/20": {
+  "bySeverity": {
+   "serious": 3
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   }
+  ]
+ },
+ "/drones/works/import/20/report": {
+  "bySeverity": {
+   "serious": 4
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 4
+   }
+  ]
+ },
+ "/drones/works/reports": {
+  "bySeverity": {
+   "serious": 14
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 14
+   }
+  ]
+ },
+ "/entry": {
+  "bySeverity": {
+   "serious": 3,
+   "critical": 2
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 1
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/fuel/": {
+  "bySeverity": {
+   "serious": 11
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 10
+   },
+   {
+    "id": "link-in-text-block",
+    "impact": "serious",
+    "nodes": 1
+   }
+  ]
+ },
+ "/fuel/api/fuel_ping": {
+  "bySeverity": {
+   "serious": 2
+  },
+  "rules": [
+   {
+    "id": "document-title",
+    "impact": "serious",
+    "nodes": 1
+   },
+   {
+    "id": "html-has-lang",
+    "impact": "serious",
+    "nodes": 1
+   }
+  ]
+ },
+ "/fuel/balance-report": {
+  "bySeverity": {
+   "serious": 5,
+   "critical": 4
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 4
+   },
+   {
+    "id": "link-in-text-block",
+    "impact": "serious",
+    "nodes": 2
+   }
+  ]
+ },
+ "/fuel/cards": {
+  "bySeverity": {
+   "serious": 7
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 7
+   }
+  ]
+ },
+ "/fuel/initial-balance": {
+  "bySeverity": {
+   "serious": 3,
+   "critical": 5
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 3
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 2
+   }
+  ]
+ },
+ "/fuel/ledger": {
+  "bySeverity": {
+   "serious": 4,
+   "critical": 5
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 4
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 4
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/fuel/manual-expenses": {
+  "bySeverity": {
+   "serious": 3,
+   "critical": 5
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 3
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 2
+   }
+  ]
+ },
+ "/fuel/receipts": {
+  "bySeverity": {
+   "serious": 3,
+   "critical": 8
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 6
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 2
+   }
+  ]
+ },
+ "/fuel/report": {
+  "bySeverity": {
+   "serious": 5,
+   "critical": 6
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 4
+   },
+   {
+    "id": "link-in-text-block",
+    "impact": "serious",
+    "nodes": 2
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 2
+   }
+  ]
+ },
+ "/fuel/reports": {
+  "bySeverity": {
+   "serious": 3
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   }
+  ]
+ },
+ "/fuel/reports/card-issues": {
+  "bySeverity": {
+   "serious": 8,
+   "critical": 4
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 7
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 4
+   },
+   {
+    "id": "link-in-text-block",
+    "impact": "serious",
+    "nodes": 1
+   }
+  ]
+ },
+ "/fuel/reports/counter-mismatch": {
+  "bySeverity": {
+   "serious": 6,
+   "critical": 4
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 6
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 4
+   }
+  ]
+ },
+ "/fuel/reports/station-issues": {
+  "bySeverity": {
+   "serious": 3,
+   "critical": 5
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 4
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/fuel/reports/station-totals": {
+  "bySeverity": {
+   "serious": 8,
+   "critical": 4
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 7
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 4
+   },
+   {
+    "id": "link-in-text-block",
+    "impact": "serious",
+    "nodes": 1
+   }
+  ]
+ },
+ "/fuel/reserve-transfers": {
+  "bySeverity": {
+   "serious": 3,
+   "critical": 3
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 2
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/fuel/stations": {
+  "bySeverity": {
+   "serious": 28,
+   "critical": 4
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 28
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 2
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 2
+   }
+  ]
+ },
+ "/fuel/transactions": {
+  "bySeverity": {
+   "serious": 13,
+   "critical": 3
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 13
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 2
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/fuel/warehouses": {
+  "bySeverity": {
+   "serious": 7,
+   "critical": 3
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 7
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 2
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/fuel/warnings": {
+  "bySeverity": {
+   "serious": 3,
+   "critical": 26
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 2
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 24
+   }
+  ]
+ },
+ "/login": {
+  "bySeverity": {
+   "serious": 39,
+   "critical": 1
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 39
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/profile": {
+  "bySeverity": {
+   "serious": 3,
+   "critical": 3
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 3
+   }
+  ]
+ },
+ "/ref/customers": {
+  "bySeverity": {
+   "serious": 4,
+   "critical": 47
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 22
+   },
+   {
+    "id": "scrollable-region-focusable",
+    "impact": "serious",
+    "nodes": 1
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 25
+   }
+  ]
+ },
+ "/ref/equipment": {
+  "bySeverity": {
+   "serious": 3,
+   "critical": 5
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 5
+   }
+  ]
+ },
+ "/ref/organizations": {
+  "bySeverity": {
+   "serious": 3,
+   "critical": 22
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 22
+   }
+  ]
+ },
+ "/ref/work_types": {
+  "bySeverity": {
+   "serious": 3,
+   "critical": 1
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/report": {
+  "bySeverity": {
+   "serious": 14,
+   "critical": 1
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 14
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/spare-parts/": {
+  "bySeverity": {
+   "serious": 13
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 13
+   }
+  ]
+ },
+ "/spare-parts/acts": {
+  "bySeverity": {
+   "serious": 4
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 4
+   }
+  ]
+ },
+ "/spare-parts/acts/1": {
+  "bySeverity": {
+   "serious": 8
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 8
+   }
+  ]
+ },
+ "/spare-parts/acts/1/pdf": {
+  "bySeverity": {
+   "serious": 2
+  },
+  "rules": [
+   {
+    "id": "document-title",
+    "impact": "serious",
+    "nodes": 1
+   },
+   {
+    "id": "html-has-lang",
+    "impact": "serious",
+    "nodes": 1
+   }
+  ]
+ },
+ "/spare-parts/api/catalog-search": {
+  "bySeverity": {
+   "serious": 2
+  },
+  "rules": [
+   {
+    "id": "document-title",
+    "impact": "serious",
+    "nodes": 1
+   },
+   {
+    "id": "html-has-lang",
+    "impact": "serious",
+    "nodes": 1
+   }
+  ]
+ },
+ "/spare-parts/api/equipment-by-org": {
+  "bySeverity": {
+   "serious": 2
+  },
+  "rules": [
+   {
+    "id": "document-title",
+    "impact": "serious",
+    "nodes": 1
+   },
+   {
+    "id": "html-has-lang",
+    "impact": "serious",
+    "nodes": 1
+   }
+  ]
+ },
+ "/spare-parts/api/price-suggestions": {
+  "bySeverity": {
+   "serious": 2
+  },
+  "rules": [
+   {
+    "id": "document-title",
+    "impact": "serious",
+    "nodes": 1
+   },
+   {
+    "id": "html-has-lang",
+    "impact": "serious",
+    "nodes": 1
+   }
+  ]
+ },
+ "/spare-parts/api/repeat-check": {
+  "bySeverity": {
+   "serious": 2
+  },
+  "rules": [
+   {
+    "id": "document-title",
+    "impact": "serious",
+    "nodes": 1
+   },
+   {
+    "id": "html-has-lang",
+    "impact": "serious",
+    "nodes": 1
+   }
+  ]
+ },
+ "/spare-parts/api/skus-by-part": {
+  "bySeverity": {
+   "serious": 2
+  },
+  "rules": [
+   {
+    "id": "document-title",
+    "impact": "serious",
+    "nodes": 1
+   },
+   {
+    "id": "html-has-lang",
+    "impact": "serious",
+    "nodes": 1
+   }
+  ]
+ },
+ "/spare-parts/catalog": {
+  "bySeverity": {
+   "serious": 50
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 50
+   }
+  ]
+ },
+ "/spare-parts/desk": {
+  "bySeverity": {
+   "serious": 3
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   }
+  ]
+ },
+ "/spare-parts/equipment-models": {
+  "bySeverity": {
+   "serious": 26
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 26
+   }
+  ]
+ },
+ "/spare-parts/inventory": {
+  "bySeverity": {
+   "serious": 8
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 8
+   }
+  ]
+ },
+ "/spare-parts/maintenance": {
+  "bySeverity": {
+   "serious": 4
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 4
+   }
+  ]
+ },
+ "/spare-parts/maintenance-norms": {
+  "bySeverity": {
+   "serious": 25
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 25
+   }
+  ]
+ },
+ "/spare-parts/new": {
+  "bySeverity": {
+   "serious": 6
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 6
+   }
+  ]
+ },
+ "/spare-parts/purchase-queue": {
+  "bySeverity": {
+   "serious": 10
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 10
+   }
+  ]
+ },
+ "/spare-parts/reports": {
+  "bySeverity": {
+   "serious": 3
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   }
+  ]
+ },
+ "/spare-parts/skus": {
+  "bySeverity": {
+   "serious": 27
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 27
+   }
+  ]
+ },
+ "/wialon": {
+  "bySeverity": {
+   "serious": 3,
+   "critical": 2
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 2
+   }
+  ]
+ },
+ "/wialon/auto_match": {
+  "bySeverity": {
+   "serious": 6,
+   "critical": 1
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 6
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/wialon/mapping": {
+  "bySeverity": {
+   "serious": 7,
+   "critical": 1
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 7
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/wialon/report": {
+  "bySeverity": {
+   "serious": 6,
+   "critical": 4
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 6
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 3
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/wialon/workload": {
+  "bySeverity": {
+   "serious": 8,
+   "critical": 3
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 8
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 2
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 1
+   }
+  ]
+ },
+ "/work-orders": {
+  "bySeverity": {
+   "serious": 3,
+   "critical": 4
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 2
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 2
+   }
+  ]
+ },
+ "/work-orders/new": {
+  "bySeverity": {
+   "serious": 3,
+   "critical": 10
+  },
+  "rules": [
+   {
+    "id": "color-contrast",
+    "impact": "serious",
+    "nodes": 3
+   },
+   {
+    "id": "label",
+    "impact": "critical",
+    "nodes": 6
+   },
+   {
+    "id": "select-name",
+    "impact": "critical",
+    "nodes": 4
+   }
+  ]
+ }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "vehicle-soft-ux-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dev-only UX audit tooling. NOT an application dependency: requirements.txt is untouched and the Windows server never runs this.",
+  "scripts": {
+    "shoot": "node shoot.mjs"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.1",
+    "playwright": "1.55.0"
+  },
+  "dependencies": {
+    "pngjs": "^7.0.0"
+  }
+}

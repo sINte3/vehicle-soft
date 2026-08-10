@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}АЗС — {{ 'Остатки топлива' if lang == 'ru' else 'Ёқилғи қолдиқлари' }}{% endblock %}
 {% block content %}
 {% include 'fuel/_fuel_nav.html' %}
@@ -74,94 +75,11 @@
 {% set L_negative = 'Отрицательный остаток' if lang == 'ru' else 'Манфий қолдиқ' %}
 {% set L_low = 'Низкий остаток' if lang == 'ru' else 'Кам қолдиқ' %}
 {% set L_ok = 'Норма' if lang == 'ru' else 'Норма' %}
-<style>
-.fuel-hero { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:16px; }
-.fuel-hero h1 { margin-bottom:6px; }
-.fuel-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
-.fuel-note { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
-.fuel-pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700; background:var(--info-light); color:var(--info); }
-.fuel-balance-status { display:block; margin-top:4px; font-size:11px; font-weight:600; color:var(--text2); }
-@media (max-width:768px) { .fuel-hero { flex-direction:column; } .fuel-actions { justify-content:flex-start; } }
-
-/* FUEL002H_MARKER: fuel dashboard UX refresh, template/localization only. */
-.fuel002h-subtitle {
-  color: var(--text2);
-  font-size: 13px;
-  line-height: 1.45;
-  margin-top: 6px;
-}
-
-.fuel002h-context-strip {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
-  gap: 10px;
-  margin: 14px 0 14px 0;
-}
-
-.fuel002h-pill {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: 10px;
-  padding: 10px 12px;
-  box-shadow: var(--shadow);
-}
-
-.fuel002h-pill span {
-  display: block;
-  color: var(--text2);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .04em;
-  margin-bottom: 4px;
-}
-
-.fuel002h-pill strong {
-  display: block;
-  font-size: 15px;
-  color: var(--text);
-}
-
-.fuel002h-balance-card,
-.fuel002h-recent-card {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow);
-  overflow: hidden;
-}
-
-.fuel002h-table-wrap {
-  width: 100%;
-  overflow-x: auto;
-}
-
-.fuel002h-dashboard-table {
-  min-width: 860px;
-}
-
-.fuel002h-dashboard-table th {
-  white-space: nowrap;
-  font-size: 12px;
-}
-
-@media (max-width:1050px) {
-  .fuel002h-context-strip {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-@media (max-width:700px) {
-  .fuel002h-context-strip {
-    grid-template-columns: 1fr;
-  }
-}
-/* FUEL002H_END */
-
-</style>
 
 <div class="fuel-hero">
     <div>
         <h1> {{ L_title }}</h1>
-        <div class="fuel002h-subtitle FUEL002H_MARKER">{{ t('Ёқилғи панели: омбор қолдиқлари, кунлик сарф, АЗС ва охирги беришларни тез кўриш.') }}</div>
+        <div class="vs-muted FUEL002H_MARKER">{{ t('Ёқилғи панели: омбор қолдиқлари, кунлик сарф, АЗС ва охирги беришларни тез кўриш.') }}</div>
         <div class="text-muted text-sm">{{ L_subtitle }}</div>
     </div>
     {# [REASON]: The fuel-actions button row was removed in F1.1 · FUEL-NAV-001 — it duplicated the module navigation strip added by fuel/_fuel_nav.html, so the dashboard showed two menus to the same places. Every one of its ten targets is a pill (or a Справочники item) in that strip, under the same current_user.is_admin gate. L_transactions, L_receipts, L_warehouses, L_initial, L_manual_exp and L_reserve_transfers are now unused but left in place: unused {% set %} is inert in Jinja and they are cleaned up in F1.2, when this header is rewritten. L_stations is still used by the warehouse and station tables below, and L_initial_missing is a different variable that is still used — do not delete the group as a batch. #}
@@ -182,22 +100,6 @@
    come from _fuel_balance_map / the shared bulk helpers only. Every tile is
    clickable and lands on its section with the filter already applied.
    ======================================================================= #}
-<style>
-.fuel-dash-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin-bottom:12px; }
-a.fuel-dash-tile { text-decoration:none; color:inherit; display:block; }
-a.fuel-dash-tile:hover { text-decoration:none; color:inherit; box-shadow:var(--shadow); }
-/* QA fix 47 — the total-fuel tile is a div with two links inside (nested
-   <a> is invalid HTML): the main area and the negative-warehouses line. */
-div.fuel-dash-tile:hover { box-shadow:var(--shadow); }
-.fuel-dash-tile-link { text-decoration:none; color:inherit; display:block; }
-.fuel-dash-tile-link:hover { text-decoration:none; color:inherit; }
-.fuel-dash-tile-neg { display:block; margin-top:6px; font-size:12px; color:var(--danger); text-decoration:none; }
-.fuel-dash-tile-neg:hover { text-decoration:underline; color:var(--danger); }
-.fuel-dash-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
-.fuel-dash-dot.green { background:#16a34a; }
-.fuel-dash-dot.amber { background:#d97706; }
-.fuel-dash-dot.red { background:var(--danger); }
-</style>
 <div class="fuel-dash-tiles">
     {# QA fix 47, owner decision 2026-07-28 (a): positive balances only —
        the question this tile answers is «сколько топлива у нас есть».
@@ -286,14 +188,14 @@ div.fuel-dash-tile:hover { box-shadow:var(--shadow); }
    vessel level until phase 3 — the tooltip says so in both languages),
    today's consumption and a status badge. #}
 {% set L_fill_note = ('Шкала — относительно наибольшего текущего остатка среди складов (' ~ '%.0f'|format(max_balance) ~ ' л), а не реального уровня ёмкости.') if lang == 'ru' else ('Шкала — омборлар орасидаги энг катта жорий қолдиққа (' ~ '%.0f'|format(max_balance) ~ ' л) нисбатан, идишнинг ҳақиқий даражаси эмас.') %}
-<div id="fuelWarehouseTable" class="card fuel002h-balance-card FUEL002H_BALANCE_CARD_MARKER" style="margin-bottom:24px;">
+<div id="fuelWarehouseTable" class="card vs-card FUEL002H_BALANCE_CARD_MARKER" style="margin-bottom:24px;">
     <div class="card-header">
         <span>{{ L_balances }}</span>
         <span class="text-muted text-xs">{{ 'Сортировка: сначала проблемы' if lang == 'ru' else 'Тартиб: аввал муаммолар' }}</span>
     </div>
     <div style="overflow-x:auto;">
-    <div class="fuel002h-table-wrap FUEL002H_BALANCE_TABLE_MARKER">
-<table class="fuel002h-dashboard-table">
+    <div class="vs-table-scroll FUEL002H_BALANCE_TABLE_MARKER">
+<table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
                 <th>{{ L_wh }}</th>

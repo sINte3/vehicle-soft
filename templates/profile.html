@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}{{ t('Профиль') }}{% endblock %}
 {% block content %}
 <div class="page-header">
@@ -34,7 +35,7 @@
                 <label>{{ t('Паролни тасдиқланг') }}</label>
                 <input type="password" name="confirm_password" placeholder="••••••••">
             </div>
-            <button type="submit" class="btn btn-primary">{{ t('💾 Сақлаш') }}</button>
+            <button type="submit" class="btn btn-primary">{{ icon('save', 15) }} {{ t('Сақлаш') }}</button>
         </form>
     </div>
 </div>

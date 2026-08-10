@@ -42,15 +42,18 @@ work_orders_bp = Blueprint('work_orders', __name__)
 # Statuses considered "open" / active for counters and the default list view.
 WO_OPEN_STATUSES = (WO_STATUS_DRAFT, WO_STATUS_ASSIGNED, WO_STATUS_IN_PROGRESS)
 
-# [REASON]: Colours reuse design-system.css --vs-* tokens so badges match the rest
-# of the UI (grey draft, blue assigned, amber in-progress, green done, red
-# cancelled).
-WO_STATUS_COLORS = {
-    WO_STATUS_DRAFT:       'var(--text2)',
-    WO_STATUS_ASSIGNED:    'var(--info)',
-    WO_STATUS_IN_PROGRESS: 'var(--warn)',
-    WO_STATUS_DONE:        'var(--accent)',
-    WO_STATUS_CANCELLED:   'var(--danger)',
+# [REASON]: DD-032 -- odin komponent statusa, SEMANTIKA PARAMETROM. Zdes
+# lezhit imenno semantika ("v rabote -- vnimanie", "otmenen -- otkaz"), a ne
+# cvet: shablon poluchaet imya modifikatora .vs-badge-*, i palitra ostaetsya
+# odna na produkt. Do etogo znacheniyami byli peremennye sloya sovmestimosti
+# (var(--text2), var(--info)...), i status krasilsya inline-stilem v atribute
+# -- to est kazhdyy shablon reshal pro cvet sam.
+WO_STATUS_TONES = {
+    WO_STATUS_DRAFT:       '',                  # neytralnyy badzh po umolchaniyu
+    WO_STATUS_ASSIGNED:    'vs-badge-info',
+    WO_STATUS_IN_PROGRESS: 'vs-badge-warning',
+    WO_STATUS_DONE:        'vs-badge-success',
+    WO_STATUS_CANCELLED:   'vs-badge-danger',
 }
 
 VALID_PAYMENT_TYPES = {'', 'naqd', 'bank', 'ichki', 'boshqa'}
@@ -260,7 +263,7 @@ def index():
         status_counts=status_counts,
         statuses=WO_STATUSES,
         status_labels=_wo_status_labels(),
-        status_colors=WO_STATUS_COLORS,
+        status_tones=WO_STATUS_TONES,
         can_create=_wo_can_create(),
         lang=lang,
     )
@@ -521,7 +524,7 @@ def detail(wo_id):
         can_cancel=_wo_can_cancel(wo),
         can_assign=_wo_can_assign(wo),
         status_labels=_wo_status_labels(),
-        status_colors=WO_STATUS_COLORS,
+        status_tones=WO_STATUS_TONES,
         payment_labels=_wo_payment_labels(),
         lang=lang,
     )

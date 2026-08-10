@@ -61,18 +61,22 @@ STATUS_LABELS = {
     # were physically handed over and a write-off act was generated.
     'issued':    {'uz': 'Берилган',     'ru': 'Выдано'},
 }
-STATUS_COLORS = {
-    'draft':     'var(--text2)',
-    'submitted': 'var(--info)',
-    'returned_for_revision': 'var(--warn)',
-    'approved':  'var(--accent)',
-    'rejected':  'var(--danger)',
-    # [REASON]: SP-CANCEL-008 — deliberately the same token as 'rejected':
+# [REASON]: DD-032 -- odin komponent statusa, SEMANTIKA PARAMETROM. Zdes
+# lezhit imenno semantika, a ne cvet: shablon poluchaet imya modifikatora
+# .vs-badge-*, i palitra ostaetsya odna na produkt. Do etogo znacheniyami byli
+# peremennye sloya sovmestimosti, i status krasilsya inline-stilem v atribute.
+STATUS_TONES = {
+    'draft':     '',
+    'submitted': 'vs-badge-info',
+    'returned_for_revision': 'vs-badge-warning',
+    'approved':  'vs-badge-success',
+    'rejected':  'vs-badge-danger',
+    # [REASON]: SP-CANCEL-008 -- deliberately the SAME tone as 'rejected':
     # cancellation and rejection are the two "did not happen" outcomes and the
-    # label text carries the distinction. NOT var(--text2): a draft badge and
-    # a cancelled badge must not look identical in the list.
-    'cancelled': 'var(--danger)',
-    'issued':    'var(--success)',
+    # label text carries the distinction. NOT the neutral tone: a draft badge
+    # and a cancelled badge must not look identical in the list.
+    'cancelled': 'vs-badge-danger',
+    'issued':    'vs-badge-success',
 }
 
 PRICE_STATUS_LABELS = {
@@ -81,11 +85,11 @@ PRICE_STATUS_LABELS = {
     'rejected':  {'uz': 'Нарх рад этилган',     'ru': 'Цена отклонена'},
     'returned':  {'uz': 'Нарх қайтарилган',     'ru': 'Цена возвращена'},
 }
-PRICE_STATUS_COLORS = {
-    'pending':   'var(--text2)',
-    'confirmed': 'var(--accent)',
-    'rejected':  'var(--danger)',
-    'returned':  'var(--warn)',
+PRICE_STATUS_TONES = {
+    'pending':   '',
+    'confirmed': 'vs-badge-success',
+    'rejected':  'vs-badge-danger',
+    'returned':  'vs-badge-warning',
 }
 
 # ─── SPARE-STAGE2: warning rule 3/4/6 thresholds ─────────────────────────────
@@ -1406,7 +1410,7 @@ def index():
                            counts=counts,
                            organizations=organizations,
                            status_labels=STATUS_LABELS,
-                           status_colors=STATUS_COLORS,
+                           status_tones=STATUS_TONES,
                            lang=lang)
 
 
@@ -1975,9 +1979,9 @@ def detail(rid):
     return render_template('spare_part_detail.html',
                            req=spr,
                            status_labels=STATUS_LABELS,
-                           status_colors=STATUS_COLORS,
+                           status_tones=STATUS_TONES,
                            price_status_labels=PRICE_STATUS_LABELS,
-                           price_status_colors=PRICE_STATUS_COLORS,
+                           price_status_tones=PRICE_STATUS_TONES,
                            can_price=can_price,
                            can_approve=can_approve,
                            can_edit_photos=can_edit_photos,

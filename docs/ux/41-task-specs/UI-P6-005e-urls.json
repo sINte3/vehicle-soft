@@ -1,0 +1,5 @@
+["/fuel/", "/fuel/report", "/fuel/warnings", "/fuel/balance-report", "/fuel/cards",
+ "/fuel/receipts", "/fuel/warehouses", "/fuel/stations", "/fuel/initial-balance",
+ "/fuel/ledger", "/fuel/manual-expenses", "/fuel/reserve-transfers", "/fuel/reports",
+ "/fuel/transactions", "/fuel/reports/card-issues", "/fuel/reports/counter-mismatch",
+ "/fuel/reports/station-totals", "/fuel/reports/station-issues"]

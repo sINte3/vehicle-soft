@@ -1,286 +1,355 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}{{ t('Техникалар') }}{% endblock %}
 {% block content %}
-{% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
-{% set L_deactivate = 'Отключить' if lang == 'ru' else 'Фаол эмас қилиш' %}
-{% set L_disabled = 'Отключена' if lang == 'ru' else 'Фаол эмас' %}
-{% set L_enable = 'Включить' if lang == 'ru' else 'Фаол қилиш' %}
-{% set L_linked_tip = 'Есть связанные записи. Физическое удаление заблокировано.' if lang == 'ru' else 'Боғланган ёзувлар мавжуд. Жисмоний ўчириш блокланган.' %}
+{% set is_ru = (lang == 'ru') %}
+{% set L_delete = 'Удалить' if is_ru else 'Ўчириш' %}
+{% set L_deactivate = 'Отключить' if is_ru else 'Фаол эмас қилиш' %}
+{% set L_disabled = 'Отключена' if is_ru else 'Фаол эмас' %}
+{% set L_enable = 'Включить' if is_ru else 'Фаол қилиш' %}
+{% set L_linked_tip = 'Есть связанные записи. Физическое удаление заблокировано.' if is_ru else 'Боғланган ёзувлар мавжуд. Жисмоний ўчириш блокланган.' %}
+{% set L_edit = 'Изменить' if is_ru else 'Ўзгартириш' %}
+{% set L_search = 'Поиск' if is_ru else 'Қидириш' %}
+{% set L_reset = 'Сбросить' if is_ru else 'Тозалаш' %}
+{% set L_all = 'Все' if is_ru else 'Барчаси' %}
+{% set L_status = 'Статус' if is_ru else 'Ҳолат' %}
+{% set L_model = 'Модель' if is_ru else 'Модель' %}
+{% set L_new_model = 'Новая модель…' if is_ru else 'Янги модель…' %}
+{% set L_manual = '— нет / вручную —' if is_ru else '— йўқ / қўлда —' %}
+{% set L_rows = 'Строк' if is_ru else 'Қаторлар' %}
 
-
-<style>
-/* TASK_REF_001A_TEMPLATE_MARKER */
-.ref-stats-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin-bottom:14px}
-.ref-stat-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow);padding:12px 14px}
-.ref-stat-card .label{color:var(--text2);font-size:12px;margin-bottom:4px}
-.ref-stat-card .value{font-size:22px;font-weight:800}
-.ref-quality-card{border-left:4px solid var(--warn);margin-bottom:14px}
-.ref-quality-list{margin:8px 0 0;padding-left:18px;color:var(--text2);font-size:13px}
-.ref-eq-inactive{opacity:.68;background:var(--surface2)}
-.ref-badge{display:inline-flex;border-radius:999px;padding:2px 7px;font-size:11px;font-weight:700;margin-top:3px}
-.ref-badge.disabled{background:var(--danger-light);color:var(--danger)}
-.ref-link-count{color:var(--text2);font-size:11px;margin-bottom:4px}
-@media(max-width:1000px){.ref-stats-grid{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:640px){.ref-stats-grid{grid-template-columns:1fr}}
-</style>
-
-<div class="card" style="margin-bottom:20px;">
-    <div class="card-body">
-        <form method="get" action="{{ url_for('ref_equipment') }}" class="form-inline" style="flex-wrap:wrap; gap:12px; align-items:flex-end;">
-            <div class="form-group" style="margin-bottom:0;">
-                <label>{{ t('Ташкилот') }}</label>
-                <select name="org_id" style="min-width:180px;" class="form-control">
-                    <option value="">{{ t('— Барчаси —') }}</option>
-                    {% for org in organizations %}
-                    <option value="{{ org.id }}" {% if selected_org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>{{ t('Категория') }}</label>
-                <div class="ms-wrap" id="ms-cats-eq">
-                    <button type="button" class="ms-trigger"></button>
-                    <div class="ms-dropdown">
-                        <label class="ms-item ms-select-all">
-                            <input type="checkbox" class="ms-all"
-                                   {% if not selected_cats %}checked{% endif %}> {{ t('Барчаси') }}
-                        </label>
-                        {% for code, name in CATEGORIES.items() %}
-                        <label class="ms-item">
-                            <input type="checkbox" name="cat_codes" value="{{ code }}"
-                                   {% if not selected_cats or code in selected_cats %}checked{% endif %}>
-                            {{ t(name) }}
-                        </label>
-                        {% endfor %}
-                    </div>
-                </div>
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>{{ t('Тури') }}</label>
-                <div class="ms-wrap" id="ms-eqtypes">
-                    <button type="button" class="ms-trigger"></button>
-                    <div class="ms-dropdown">
-                        <label class="ms-item ms-select-all">
-                            <input type="checkbox" class="ms-all"
-                                   {% if not selected_eq_types %}checked{% endif %}> {{ t('Барчаси') }}
-                        </label>
-                        {% for et in eq_types %}
-                        <label class="ms-item">
-                            <input type="checkbox" name="eq_types" value="{{ et }}"
-                                   {% if not selected_eq_types or et in selected_eq_types %}checked{% endif %}>
-                            {{ et }}
-                        </label>
-                        {% endfor %}
-                    </div>
-                </div>
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>{{ 'Статус' if lang == 'ru' else 'Ҳолат' }}</label>
-                <select name="status" style="min-width:150px;" class="form-control">
-                    <option value="all" {% if selected_status == 'all' %}selected{% endif %}>{{ 'Все' if lang == 'ru' else 'Барчаси' }}</option>
-                    <option value="active" {% if selected_status == 'active' %}selected{% endif %}>{{ 'Активные' if lang == 'ru' else 'Фаол' }}</option>
-                    <option value="inactive" {% if selected_status == 'inactive' %}selected{% endif %}>{{ 'Отключённые' if lang == 'ru' else 'Фаол эмас' }}</option>
-                </select>
-            </div>
-            <div class="form-group" style="margin-bottom:0; min-width:220px; flex:1;">
-                <label>{{ 'Поиск' if lang == 'ru' else 'Қидириш' }}</label>
-                <input type="text" name="q" value="{{ search_q or '' }}" placeholder="{{ 'модель, госномер, тип, организация' if lang == 'ru' else 'модел, давлат рақами, тури, ташкилот' }}" class="form-control">
-            </div>
-            <button type="submit" class="btn btn-primary btn-sm">{{ t('Қидириш') }}</button>
-            <a href="{{ url_for('ref_equipment') }}" class="btn btn-secondary btn-sm">{{ 'Сбросить' if lang == 'ru' else 'Тозалаш' }}</a>
-        </form>
+{# ADOPT-1: полоса показателей — тот же компонент, что на главной. #}
+<div class="vs-kpi-strip">
+  <div class="vs-kpi-strip-head">
+    <span class="vs-kpi-strip-title">{{ 'Справочник техники' if is_ru else 'Техника справочниги' }}</span>
+  </div>
+  <div class="vs-kpi-strip-body">
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Всего в доступных организациях' if is_ru else 'Рухсатли ташкилотларда жами' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ equipment_stats.total }}</span>
     </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Активные / отключённые' if is_ru else 'Фаол / фаол эмас' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ equipment_stats.active }} / {{ equipment_stats.inactive }}</span>
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Показано по фильтру' if is_ru else 'Фильтр бўйича кўрсатилди' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ equipment_stats.filtered }}</span>
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Пустой default unit' if is_ru else 'Бўш default unit' }}</span>
+      <span class="vs-kpi-strip-value vs-num {% if equipment_stats.default_unit_empty %}is-warning{% endif %}">{{ equipment_stats.default_unit_empty }}</span>
+    </div>
+  </div>
 </div>
 
-<div class="ref-stats-grid">
-    <div class="ref-stat-card"><div class="label">{{ 'Всего в доступных организациях' if lang == 'ru' else 'Рухсатли ташкилотларда жами' }}</div><div class="value">{{ equipment_stats.total }}</div></div>
-    <div class="ref-stat-card"><div class="label">{{ 'Активные / отключённые' if lang == 'ru' else 'Фаол / фаол эмас' }}</div><div class="value">{{ equipment_stats.active }} / {{ equipment_stats.inactive }}</div></div>
-    <div class="ref-stat-card"><div class="label">{{ 'Показано по фильтру' if lang == 'ru' else 'Фильтр бўйича кўрсатилди' }}</div><div class="value">{{ equipment_stats.filtered }}</div></div>
-    <div class="ref-stat-card"><div class="label">{{ 'Пустой default unit' if lang == 'ru' else 'Бўш default unit' }}</div><div class="value">{{ equipment_stats.default_unit_empty }}</div></div>
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <form method="get" action="{{ url_for('ref_equipment') }}" class="vs-form-row">
+      <div class="vs-field" style="min-width:190px;">
+        <label class="vs-label" for="eqOrg">{{ t('Ташкилот') }}</label>
+        <select name="org_id" id="eqOrg" class="vs-select">
+          <option value="">{{ t('— Барчаси —') }}</option>
+          {% for org in organizations %}
+          <option value="{{ org.id }}" {% if selected_org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:190px;">
+        <span class="vs-label">{{ t('Категория') }}</span>
+        <div class="ms-wrap" id="ms-cats-eq">
+          <button type="button" class="ms-trigger" aria-label="{{ t('Категория') }}"></button>
+          <div class="ms-dropdown">
+            <label class="ms-item ms-select-all">
+              <input type="checkbox" class="ms-all" {% if not selected_cats %}checked{% endif %}> {{ t('Барчаси') }}
+            </label>
+            {% for code, name in CATEGORIES.items() %}
+            <label class="ms-item">
+              <input type="checkbox" name="cat_codes" value="{{ code }}"
+                     {% if not selected_cats or code in selected_cats %}checked{% endif %}>
+              {{ t(name) }}
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      <div class="vs-field" style="min-width:190px;">
+        <span class="vs-label">{{ t('Тури') }}</span>
+        <div class="ms-wrap" id="ms-eqtypes">
+          <button type="button" class="ms-trigger" aria-label="{{ t('Тури') }}"></button>
+          <div class="ms-dropdown">
+            <label class="ms-item ms-select-all">
+              <input type="checkbox" class="ms-all" {% if not selected_eq_types %}checked{% endif %}> {{ t('Барчаси') }}
+            </label>
+            {% for et in eq_types %}
+            <label class="ms-item">
+              <input type="checkbox" name="eq_types" value="{{ et }}"
+                     {% if not selected_eq_types or et in selected_eq_types %}checked{% endif %}>
+              {{ et }}
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      <div class="vs-field" style="min-width:160px;">
+        <label class="vs-label" for="eqStatus">{{ L_status }}</label>
+        <select name="status" id="eqStatus" class="vs-select">
+          <option value="all" {% if selected_status == 'all' %}selected{% endif %}>{{ L_all }}</option>
+          <option value="active" {% if selected_status == 'active' %}selected{% endif %}>{{ 'Активные' if is_ru else 'Фаол' }}</option>
+          <option value="inactive" {% if selected_status == 'inactive' %}selected{% endif %}>{{ 'Отключённые' if is_ru else 'Фаол эмас' }}</option>
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:220px;">
+        <label class="vs-label" for="eqQ">{{ L_search }}</label>
+        <input type="text" id="eqQ" name="q" value="{{ search_q or '' }}" class="vs-input"
+               placeholder="{{ 'модель, госномер, тип, организация' if is_ru else 'модел, давлат рақами, тури, ташкилот' }}">
+      </div>
+      <div class="vs-field vs-field-action">
+        <button type="submit" class="vs-btn vs-btn-primary">{{ icon('search', 15) }}{{ t('Қидириш') }}</button>
+      </div>
+      <div class="vs-field vs-field-action">
+        <a href="{{ url_for('ref_equipment') }}" class="vs-btn">{{ L_reset }}</a>
+      </div>
+    </form>
+  </div>
 </div>
 
 {% if equipment_stats.duplicate_plate_groups or equipment_stats.default_price_zero %}
-<div class="card ref-quality-card">
-    <div class="card-body">
-        <strong>{{ 'Диагностика справочника' if lang == 'ru' else 'Справочник диагностикаси' }}</strong>
-        <ul class="ref-quality-list">
-            <li>{{ 'Нулевой default price' if lang == 'ru' else 'Ноль default price' }}: {{ equipment_stats.default_price_zero }}</li>
-            <li>{{ 'Группы повторяющихся госномеров после нормализации' if lang == 'ru' else 'Нормаллаштирилгандан кейин такрорий давлат рақамлари гуруҳлари' }}: {{ equipment_stats.duplicate_plate_groups }}</li>
-            {% for item in equipment_stats.duplicate_plate_examples %}
-            <li><strong>{{ item.plate_norm }}</strong>: {{ item.count }}  {{ item.labels|join('; ') }}</li>
-            {% endfor %}
-        </ul>
-    </div>
+<div class="vs-card vs-card-accent-warning vs-mb">
+  <div class="vs-card-body">
+    <strong>{{ 'Диагностика справочника' if is_ru else 'Справочник диагностикаси' }}</strong>
+    <ul class="vs-diag-list">
+      <li>{{ 'Нулевой default price' if is_ru else 'Ноль default price' }}: {{ equipment_stats.default_price_zero }}</li>
+      <li>{{ 'Группы повторяющихся госномеров после нормализации' if is_ru else 'Нормаллаштирилгандан кейин такрорий давлат рақамлари гуруҳлари' }}: {{ equipment_stats.duplicate_plate_groups }}</li>
+      {% for item in equipment_stats.duplicate_plate_examples %}
+      <li><strong>{{ item.plate_norm }}</strong>: {{ item.count }}  {{ item.labels|join('; ') }}</li>
+      {% endfor %}
+    </ul>
+  </div>
 </div>
 {% endif %}
 
-<div class="card" style="margin-bottom:20px;">
-    <div class="card-header">{{ t('Техника номи') }}</div>
-    <div class="card-body">
-        <form method="post" action="{{ url_for('save_equipment') }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <div class="form-inline">
-                <div class="form-group"><label>{{ t('Ташкилот') }}</label>
-                    <select name="organization_id" required class="form-control">
-                        {% for org in organizations %}
-                        <option value="{{ org.id }}" {% if selected_org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="form-group"><label>{{ t('Категория') }}</label>
-                    <select name="category" required class="form-control">
-                        {% for code, name in CATEGORIES.items() %}
-                        <option value="{{ code }}">{{ t(name) }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                {# SPARE-STAGE3: canonical model picker (+ inline "add new"); it auto-fills the eq_type text below, which is still the field legacy readers use. #}
-                <div class="form-group"><label>{{ 'Модель' if lang == 'ru' else 'Модель' }}</label>
-                    <select name="model_id" class="form-control" onchange="onAddModelChange(this)">
-                        <option value="">{{ '— нет / вручную —' if lang == 'ru' else '— йўқ / қўлда —' }}</option>
-                        {% for m in equipment_models %}
-                        <option value="{{ m.id }}">{{ m.name }}</option>
-                        {% endfor %}
-                        <option value="__new__">{{ '➕ Новая модель…' if lang == 'ru' else '➕ Янги модель…' }}</option>
-                    </select>
-                    <input type="text" name="new_model_name" id="add-new-model-name" placeholder="{{ 'Название новой модели' if lang == 'ru' else 'Янги модель номи' }}" class="form-control" style="display:none; margin-top:4px;">
-                </div>
-                <div class="form-group"><label>{{ t('Тури') }}</label>
-                    <input type="text" name="eq_type" id="add-eq-type" placeholder="Трактор МТЗ / Самосвал / Экскаватор..." class="form-control">
-                </div>
-                <div class="form-group"><label>{{ t('Техника номи') }}</label>
-                    <input type="text" name="name" placeholder="МТЗ 261 EA" required class="form-control">
-                </div>
-                <div class="form-group"><label>{{ t('Давлат рақами') }}</label>
-                    <input type="text" name="plate" placeholder="80 561 EA" required class="form-control">
-                </div>
-                <div class="form-group"><label>{{ t('Ўлчов (дефолт)') }}</label>
-                    <input type="text" name="default_unit" placeholder="га" style="width:80px;" class="form-control">
-                </div>
-                <div class="form-group"><label>{{ t('Нарх (дефолт)') }}</label>
-                    <input type="number" name="default_price" placeholder="0" min="0" step="0.01" style="width:120px;" class="form-control">
-                </div>
-                <div class="form-group"><label>&nbsp;</label>
-                    <button type="submit" class="btn btn-primary">+ {{ t('Қўшиш') }}</button>
-                </div>
-            </div>
-        </form>
-    </div>
-</div>
-
-<div class="card">
-    <div class="card-header">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span>{{ t('Жами') }}: <strong>{{ total_count }}</strong> {{ t('та') }}</span>
-            <a href="{{ url_for('export_equipment', org_id=selected_org_id or '', cat_codes=selected_cats, eq_types=selected_eq_types, status=selected_status, q=search_q) }}"
-               class="btn btn-secondary btn-sm">📥 Excel</a>
+<div class="vs-card vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">{{ t('Техника номи') }}</span></div>
+  <div class="vs-card-body">
+    <form method="post" action="{{ url_for('save_equipment') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="vs-form-row">
+        <div class="vs-field" style="min-width:180px;">
+          <label class="vs-label" for="eqNewOrg">{{ t('Ташкилот') }}</label>
+          <select name="organization_id" id="eqNewOrg" required class="vs-select">
+            {% for org in organizations %}
+            <option value="{{ org.id }}" {% if selected_org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
+            {% endfor %}
+          </select>
         </div>
-    </div>
-    <div class="card-body" style="padding:0;">
-        <table>
-            <thead>
-                <tr>
-                    <th style="width:40px;">№</th>
-                    <th>{{ t('Ташкилот') }}</th>
-                    <th>{{ t('Категория') }}</th>
-                    <th>{{ t('Тури') }}</th>
-                    <th>{{ t('Техника номи') }}</th>
-                    <th>{{ t('Давлат рақами') }}</th>
-                    <th>{{ t('Ўлчов (дефолт)') }}</th>
-                    <th class="text-right">{{ t('Нарх (дефолт)') }}</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for eq in equipment %}
-                <tr id="eq-row-{{ eq.id }}"
-                    class="{% if not eq.is_active %}ref-eq-inactive{% endif %}"
-                    data-eq-id="{{ eq.id }}"
-                    data-org-id="{{ eq.organization_id }}"
-                    data-category="{{ eq.category or '' }}"
-                    data-eq-type="{{ eq.eq_type|default('', true)|e }}"
-                    data-model-id="{{ eq.model_id or '' }}"
-                    data-name="{{ eq.name|default('', true)|e }}"
-                    data-plate="{{ eq.plate|default('', true)|e }}"
-                    data-default-unit="{{ eq.default_unit|default('', true)|e }}"
-                    data-default-price="{{ eq.default_price|int if eq.default_price else 0 }}">
-                    <td class="text-center text-sm">{{ loop.index }}</td>
-                    <td class="text-sm">{{ eq.organization.short_name or eq.organization.name }}</td>
-                    <td><span class="text-sm">{{ eq.category_display }}</span></td>
-                    <td class="text-sm text-muted">{{ eq.eq_type }}</td>
-                    <td><strong>{{ eq.name }}</strong>{% if not eq.is_active %}<div><span class="ref-badge disabled">{{ L_disabled }}</span></div>{% endif %}</td>
-                    <td class="text-sm">{{ eq.plate }}</td>
-                    <td class="text-sm">{{ eq.default_unit or '' }}</td>
-                    <td class="text-right text-sm">{{ eq.default_price|fmt_sum }}</td>
-                    <td>
-                        <button class="btn btn-secondary btn-sm" onclick="editEq({{ eq.id }})">✏</button>
-                        {% set del_info = equipment_delete_info.get(eq.id) %}
-                        {% if del_info and del_info.linked_total %}<div class="ref-link-count"> {{ del_info.linked_total }}</div>{% endif %}
-                        {% if del_info and del_info.can_delete %}
-                        <form method="post" action="{{ url_for('delete_equipment', eid=eq.id) }}" style="display:inline;"
-                              onsubmit="return confirm('{{ L_delete }}: {{ eq.name }} {{ eq.plate }}?')">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button class="btn btn-danger btn-sm" type="submit" title="{{ L_delete }}">🗑</button>
-                        </form>
-                        {% elif del_info and del_info.can_deactivate %}
-                        <form method="post" action="{{ url_for('delete_equipment', eid=eq.id) }}" style="display:inline;"
-                              onsubmit="return confirm('{{ L_deactivate }}: {{ eq.name }} {{ eq.plate }}?')">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button class="btn btn-secondary btn-sm" type="submit" title="{{ L_linked_tip }}">{{ L_deactivate }}</button>
-                        </form>
-                        {% elif del_info and del_info.is_disabled %}
-                        <form method="post" action="{{ url_for('enable_equipment', eid=eq.id) }}" style="display:inline;"
-                              onsubmit="return confirm('{{ L_enable }}: {{ eq.name }} {{ eq.plate }}?')">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button class="btn btn-primary btn-sm" type="submit" title="{{ L_linked_tip }}">{{ L_enable }}</button>
-                        </form>
-                        {% else %}
-                        <span class="idle-badge" title="{{ L_linked_tip }}">{{ L_disabled }}</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-                <tr id="ref-equipment-edit-row" class="ref-equipment-shared-edit-row" style="display:none;">
-                    <td colspan="10">
-                        <form method="post" action="{{ url_for('save_equipment') }}" class="form-inline ref-equipment-shared-edit-form">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <input type="hidden" name="id" id="ref-eq-edit-id" value="">
-
-                            <select name="organization_id" id="ref-eq-edit-organization-id" required
-                                    class="ref-equipment-org-select form-control"
-                                    data-selected="">
-                                <option value="">{{ t(' выберите организацию ') }}</option>
-                            </select>
-
-                            <select name="category" id="ref-eq-edit-category" required
-                                    class="ref-equipment-category-select form-control"
-                                    data-selected="">
-                                <option value="">{{ t(' выберите категорию ') }}</option>
-                            </select>
-
-                            {# SPARE-STAGE3: model picker in the shared edit row; options injected by JS (see populateRefEquipmentModelSelect). #}
-                            <select name="model_id" id="ref-eq-edit-model-id" class="form-control" onchange="onEditModelChange(this)">
-                                <option value="">{{ '— нет / вручную —' if lang == 'ru' else '— йўқ / қўлда —' }}</option>
-                                <option value="__new__">{{ '➕ Новая модель…' if lang == 'ru' else '➕ Янги модель…' }}</option>
-                            </select>
-                            <input type="text" name="new_model_name" id="ref-eq-edit-new-model-name" value="" placeholder="{{ 'Новая модель' if lang == 'ru' else 'Янги модель' }}" class="form-control" style="display:none;">
-                            <input type="text" name="eq_type" id="ref-eq-edit-eq-type" value="" class="form-control">
-                            <input type="text" name="name" id="ref-eq-edit-name" value="" required class="form-control">
-                            <input type="text" name="plate" id="ref-eq-edit-plate" value="" required class="form-control">
-                            <input type="text" name="default_unit" id="ref-eq-edit-default-unit" value="" style="width:80px;" class="form-control">
-                            <input type="number" name="default_price" id="ref-eq-edit-default-price" value="0" min="0" step="0.01" style="width:120px;" class="form-control">
-
-                            <button class="btn btn-primary btn-sm" type="submit">{{ 'Сохранить' if lang == 'ru' else 'Сақлаш' }}</button>
-                            <button class="btn btn-secondary btn-sm" type="button" onclick="cancelEqEdit()">{{ 'Отмена' if lang == 'ru' else 'Бекор қилиш' }}</button>
-                        </form>
-                    </td>
-                </tr>
-
-            </tbody>
-        </table>
-    </div>
+        <div class="vs-field" style="min-width:160px;">
+          <label class="vs-label" for="eqNewCat">{{ t('Категория') }}</label>
+          <select name="category" id="eqNewCat" required class="vs-select">
+            {% for code, name in CATEGORIES.items() %}
+            <option value="{{ code }}">{{ t(name) }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {# SPARE-STAGE3: canonical model picker (+ inline "add new"); it auto-fills the eq_type text below, which is still the field legacy readers use. #}
+        <div class="vs-field" style="min-width:180px;">
+          <label class="vs-label" for="eqNewModel">{{ L_model }}</label>
+          <select name="model_id" id="eqNewModel" class="vs-select" onchange="onAddModelChange(this)">
+            <option value="">{{ L_manual }}</option>
+            {% for m in equipment_models %}
+            <option value="{{ m.id }}">{{ m.name }}</option>
+            {% endfor %}
+            <option value="__new__">{{ L_new_model }}</option>
+          </select>
+          <input type="text" name="new_model_name" id="add-new-model-name" class="vs-input vs-new-model-box" hidden
+                 aria-label="{{ 'Название новой модели' if is_ru else 'Янги модель номи' }}"
+                 placeholder="{{ 'Название новой модели' if is_ru else 'Янги модель номи' }}">
+        </div>
+        <div class="vs-field" style="min-width:180px;">
+          <label class="vs-label" for="add-eq-type">{{ t('Тури') }}</label>
+          <input type="text" name="eq_type" id="add-eq-type" placeholder="Трактор МТЗ / Самосвал / Экскаватор..." class="vs-input">
+        </div>
+        <div class="vs-field" style="min-width:170px;">
+          <label class="vs-label" for="eqNewName">{{ t('Техника номи') }}</label>
+          <input type="text" id="eqNewName" name="name" placeholder="МТЗ 261 EA" required class="vs-input">
+        </div>
+        <div class="vs-field" style="min-width:150px;">
+          <label class="vs-label" for="eqNewPlate">{{ t('Давлат рақами') }}</label>
+          <input type="text" id="eqNewPlate" name="plate" placeholder="80 561 EA" required class="vs-input">
+        </div>
+        <div class="vs-field" style="min-width:110px;">
+          <label class="vs-label" for="eqNewUnit">{{ t('Ўлчов (дефолт)') }}</label>
+          <input type="text" id="eqNewUnit" name="default_unit" placeholder="га" class="vs-input">
+        </div>
+        <div class="vs-field" style="min-width:140px;">
+          <label class="vs-label" for="eqNewPrice">{{ t('Нарх (дефолт)') }}</label>
+          <input type="number" id="eqNewPrice" name="default_price" placeholder="0" min="0" step="0.01" class="vs-input">
+        </div>
+        <div class="vs-field vs-field-action">
+          <button type="submit" class="vs-btn vs-btn-primary">{{ icon('plus', 15) }}{{ t('Қўшиш') }}</button>
+        </div>
+      </div>
+    </form>
+  </div>
 </div>
 
+{# DD-028, режим is-static. На боевой базе 336 строк — ВЫШЕ порога ~200, и это
+   записано, а не замято: маршрут отдаёт всё без предела, разбиения нет,
+   сортировка на клиенте. Перевод в is-paged меняет то, как оператор ищет по
+   списку, и это решение владельца, а не миграции вёрстки. Сам порог в DD-028
+   помечен непроверенным предположением, измерение — P7.
+
+   DD-029, сортировка по умолчанию объявлена явно: её НЕТ. Маршрут отдаёт
+   трёхуровневый порядок «организация → категория → название»; клиентский
+   `data-sort-default` по одной колонке заменил бы его при каждой загрузке.
+   Сортировка по колонке доступна по нажатию. #}
+<div class="vs-table-wrap">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ t('Техникалар') }}</span>
+    <a href="{{ url_for('export_equipment', org_id=selected_org_id or '', cat_codes=selected_cats, eq_types=selected_eq_types, status=selected_status, q=search_q) }}"
+       class="vs-btn vs-btn-sm">{{ icon('download', 14) }}Excel</a>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static is-compact" data-sortable>
+      <thead>
+        <tr>
+          <th style="width:40px;">№</th>
+          <th data-sort>{{ t('Ташкилот') }}</th>
+          <th data-sort>{{ t('Категория') }}</th>
+          <th data-sort>{{ t('Тури') }}</th>
+          <th data-sort>{{ t('Техника номи') }}</th>
+          <th data-sort>{{ t('Давлат рақами') }}</th>
+          <th data-sort>{{ t('Ўлчов (дефолт)') }}</th>
+          <th class="right" data-sort>{{ t('Нарх (дефолт)') }}</th>
+          <th class="right">{{ 'Действия' if is_ru else 'Амаллар' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for eq in equipment %}
+        {% set del_info = equipment_delete_info.get(eq.id) %}
+        <tr id="eq-row-{{ eq.id }}"
+            class="{% if not eq.is_active %}vs-row-muted{% endif %}"
+            data-eq-id="{{ eq.id }}"
+            data-org-id="{{ eq.organization_id }}"
+            data-category="{{ eq.category or '' }}"
+            data-eq-type="{{ eq.eq_type|default('', true)|e }}"
+            data-model-id="{{ eq.model_id or '' }}"
+            data-name="{{ eq.name|default('', true)|e }}"
+            data-plate="{{ eq.plate|default('', true)|e }}"
+            data-default-unit="{{ eq.default_unit|default('', true)|e }}"
+            data-default-price="{{ eq.default_price|int if eq.default_price else 0 }}">
+          <td class="vs-muted">{{ loop.index }}</td>
+          <td class="vs-cell-clip" title="{{ eq.organization.name }}">{{ eq.organization.short_name or eq.organization.name }}</td>
+          <td>{{ eq.category_display }}</td>
+          <td class="vs-cell-clip vs-muted" title="{{ eq.eq_type }}">{{ eq.eq_type }}</td>
+          <td class="vs-cell-clip" title="{{ eq.name }}">
+            <strong>{{ eq.name }}</strong>
+            {% if not eq.is_active %}<br><span class="vs-badge vs-badge-danger">{{ L_disabled }}</span>{% endif %}
+          </td>
+          <td>{{ eq.plate }}</td>
+          <td>{% if eq.default_unit %}<span class="vs-badge">{{ eq.default_unit }}</span>{% else %}<span class="vs-muted">—</span>{% endif %}</td>
+          <td class="right vs-num" data-sort-value="{{ eq.default_price or 0 }}">{{ eq.default_price|fmt_sum }}</td>
+          <td class="vs-row-actions-cell">
+            <span class="vs-row-actions">
+              <button type="button" class="vs-btn vs-btn-icon" onclick="editEq({{ eq.id }})"
+                      aria-label="{{ L_edit }}: {{ eq.name }}" title="{{ L_edit }}">{{ icon('edit', 14) }}</button>
+              {% if del_info and del_info.can_delete %}
+              <form method="post" action="{{ url_for('delete_equipment', eid=eq.id) }}" class="vs-inline-form"
+                    onsubmit="return confirm('{{ L_delete }}: {{ eq.name }} {{ eq.plate }}?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="vs-btn vs-btn-icon is-danger" type="submit"
+                        aria-label="{{ L_delete }}: {{ eq.name }}" title="{{ L_delete }}">{{ icon('trash', 14) }}</button>
+              </form>
+              {% elif del_info and del_info.can_deactivate %}
+              <form method="post" action="{{ url_for('delete_equipment', eid=eq.id) }}" class="vs-inline-form"
+                    onsubmit="return confirm('{{ L_deactivate }}: {{ eq.name }} {{ eq.plate }}?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="vs-btn vs-btn-icon" type="submit"
+                        aria-label="{{ L_deactivate }}: {{ eq.name }}" title="{{ L_linked_tip }}">{{ icon('blocked', 14) }}</button>
+              </form>
+              {% elif del_info and del_info.is_disabled %}
+              <form method="post" action="{{ url_for('enable_equipment', eid=eq.id) }}" class="vs-inline-form"
+                    onsubmit="return confirm('{{ L_enable }}: {{ eq.name }} {{ eq.plate }}?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="vs-btn vs-btn-icon" type="submit"
+                        aria-label="{{ L_enable }}: {{ eq.name }}" title="{{ L_linked_tip }}">{{ icon('check', 14) }}</button>
+              </form>
+              {% else %}
+              <span class="vs-badge vs-badge-warning" title="{{ L_linked_tip }}">{{ L_disabled }}</span>
+              {% endif %}
+              {% if del_info and del_info.linked_total %}
+              <span class="vs-badge is-outline" title="{{ L_linked_tip }}">{{ del_info.linked_total }}</span>
+              {% endif %}
+            </span>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="9">
+            <div class="vs-empty">
+              <div class="vs-empty-icon">{{ icon('tractor', 28) }}</div>
+              <p class="vs-empty-title">{{ 'Ничего не найдено' if is_ru else 'Ҳеч нарса топилмади' }}</p>
+              <p class="vs-empty-sub">{{ 'Измените условия фильтра или добавьте технику' if is_ru else 'Фильтр шартларини ўзгартиринг ёки техника қўшинг' }}</p>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+
+        {# Одна общая строка редактирования на всю таблицу: JS переставляет её
+           под изменяемую строку и заполняет из data-атрибутов. #}
+        <tr id="ref-equipment-edit-row" class="ref-equipment-shared-edit-row" hidden>
+          <td colspan="9" class="vs-cell-form">
+            <form method="post" action="{{ url_for('save_equipment') }}" class="vs-form-row ref-equipment-shared-edit-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="id" id="ref-eq-edit-id" value="">
+
+              <select name="organization_id" id="ref-eq-edit-organization-id" required
+                      class="ref-equipment-org-select vs-select" data-selected=""
+                      aria-label="{{ t('Ташкилот') }}" style="width:180px;">
+                <option value="">{{ t('Ташкилотни танланг') }}</option>
+              </select>
+
+              <select name="category" id="ref-eq-edit-category" required
+                      class="ref-equipment-category-select vs-select" data-selected=""
+                      aria-label="{{ t('Категория') }}" style="width:160px;">
+                <option value="">{{ t('Категорияни танланг') }}</option>
+              </select>
+
+              {# SPARE-STAGE3: model picker in the shared edit row; options injected by JS (see populateRefEquipmentModelSelect). #}
+              <select name="model_id" id="ref-eq-edit-model-id" class="vs-select"
+                      onchange="onEditModelChange(this)" aria-label="{{ L_model }}" style="width:170px;">
+                <option value="">{{ L_manual }}</option>
+                <option value="__new__">{{ L_new_model }}</option>
+              </select>
+              <input type="text" name="new_model_name" id="ref-eq-edit-new-model-name" value="" class="vs-input" hidden
+                     aria-label="{{ 'Новая модель' if is_ru else 'Янги модель' }}"
+                     placeholder="{{ 'Новая модель' if is_ru else 'Янги модель' }}" style="width:160px;">
+              <input type="text" name="eq_type" id="ref-eq-edit-eq-type" value="" class="vs-input"
+                     aria-label="{{ t('Тури') }}" style="width:150px;">
+              <input type="text" name="name" id="ref-eq-edit-name" value="" required class="vs-input"
+                     aria-label="{{ t('Техника номи') }}" style="width:160px;">
+              <input type="text" name="plate" id="ref-eq-edit-plate" value="" required class="vs-input"
+                     aria-label="{{ t('Давлат рақами') }}" style="width:140px;">
+              <input type="text" name="default_unit" id="ref-eq-edit-default-unit" value="" class="vs-input"
+                     aria-label="{{ t('Ўлчов (дефолт)') }}" style="width:90px;">
+              <input type="number" name="default_price" id="ref-eq-edit-default-price" value="0" min="0" step="0.01"
+                     class="vs-input" aria-label="{{ t('Нарх (дефолт)') }}" style="width:130px;">
+
+              <button class="vs-btn vs-btn-primary vs-btn-sm" type="submit">{{ icon('save', 14) }}{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+              <button class="vs-btn vs-btn-sm" type="button" onclick="cancelEqEdit()">{{ 'Отмена' if is_ru else 'Бекор қилиш' }}</button>
+            </form>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="vs-table-foot">
+    <span class="vs-table-count">{{ L_rows }}: <strong>{{ total_count }}</strong></span>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
 <script>
 // PERF-REF-BODY-002B_MARKER: one reusable edit row for ref_equipment.
 function setRefEquipmentField(id, value) {
@@ -300,12 +369,12 @@ function editEq(id) {
 
     document.querySelectorAll('tr.ref-equipment-editing').forEach(function(r) {
         r.classList.remove('ref-equipment-editing');
-        r.style.display = '';
+        r.hidden = false;
     });
 
     row.classList.add('ref-equipment-editing');
     row.parentNode.insertBefore(editRow, row.nextSibling);
-    editRow.style.display = '';
+    editRow.hidden = false;
 
     setRefEquipmentField('ref-eq-edit-id', row.dataset.eqId || id);
     setRefEquipmentField('ref-eq-edit-organization-id', row.dataset.orgId || '');
@@ -314,7 +383,7 @@ function editEq(id) {
     // SPARE-STAGE3: preselect the current model; reset the inline "new model" box.
     setRefEquipmentField('ref-eq-edit-new-model-name', '');
     var editNewModelBox = document.getElementById('ref-eq-edit-new-model-name');
-    if (editNewModelBox) editNewModelBox.style.display = 'none';
+    if (editNewModelBox) editNewModelBox.hidden = true;
     var editModelSel = document.getElementById('ref-eq-edit-model-id');
     if (editModelSel) editModelSel.value = row.dataset.modelId || '';
     setRefEquipmentField('ref-eq-edit-name', row.dataset.name || '');
@@ -322,18 +391,18 @@ function editEq(id) {
     setRefEquipmentField('ref-eq-edit-default-unit', row.dataset.defaultUnit || '');
     setRefEquipmentField('ref-eq-edit-default-price', row.dataset.defaultPrice || '0');
 
-    row.style.display = 'none';
+    row.hidden = true;
 }
 
 function cancelEqEdit() {
     var editRow = document.getElementById('ref-equipment-edit-row');
     if (editRow) {
-        editRow.style.display = 'none';
+        editRow.hidden = true;
     }
 
     document.querySelectorAll('tr.ref-equipment-editing').forEach(function(r) {
         r.classList.remove('ref-equipment-editing');
-        r.style.display = '';
+        r.hidden = false;
     });
 }
 
@@ -417,9 +486,9 @@ function onAddModelChange(sel) {
     var box = document.getElementById('add-new-model-name');
     var eqt = document.getElementById('add-eq-type');
     if (sel.value === '__new__') {
-        if (box) { box.style.display = ''; box.focus(); }
+        if (box) { box.hidden = false; box.focus(); }
     } else {
-        if (box) { box.style.display = 'none'; box.value = ''; }
+        if (box) { box.hidden = true; box.value = ''; }
         if (sel.value && eqt) { eqt.value = sel.options[sel.selectedIndex].text; }
     }
 }
@@ -428,14 +497,13 @@ function onEditModelChange(sel) {
     var box = document.getElementById('ref-eq-edit-new-model-name');
     var eqt = document.getElementById('ref-eq-edit-eq-type');
     if (sel.value === '__new__') {
-        if (box) { box.style.display = ''; box.focus(); }
+        if (box) { box.hidden = false; box.focus(); }
     } else {
-        if (box) { box.style.display = 'none'; box.value = ''; }
+        if (box) { box.hidden = true; box.value = ''; }
         if (sel.value && eqt) { eqt.value = sel.options[sel.selectedIndex].text; }
     }
 }
 
 document.addEventListener('DOMContentLoaded', populateRefEquipmentEditSelects);
-
 </script>
 {% endblock %}

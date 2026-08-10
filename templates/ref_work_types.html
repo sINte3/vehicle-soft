@@ -1,197 +1,216 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}{{ t('Иш турлари') }}{% endblock %}
 {% block content %}
-{% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
-{% set L_used = 'Используется' if lang == 'ru' else 'Ишлатилган' %}
-{% set L_linked_tip = 'Используется в ежедневных отчётах. Удаление заблокировано для сохранения истории.' if lang == 'ru' else 'Кунлик ҳисоботларда ишлатилган. Тарихни сақлаш учун ўчириш блокланган.' %}
+{% set is_ru = (lang == 'ru') %}
+{% set L_delete = 'Удалить' if is_ru else 'Ўчириш' %}
+{% set L_used = 'Используется' if is_ru else 'Ишлатилган' %}
+{% set L_linked_tip = 'Используется в ежедневных отчётах. Удаление заблокировано для сохранения истории.' if is_ru else 'Кунлик ҳисоботларда ишлатилган. Тарихни сақлаш учун ўчириш блокланган.' %}
+{% set L_edit = 'Изменить' if is_ru else 'Ўзгартириш' %}
+{% set L_search = 'Поиск' if is_ru else 'Қидириш' %}
+{% set L_reset = 'Сбросить' if is_ru else 'Тозалаш' %}
+{% set L_all = 'Все' if is_ru else 'Барчаси' %}
+{% set L_usage = 'Использование' if is_ru else 'Ишлатилиши' %}
+{% set L_rows = 'Строк' if is_ru else 'Қаторлар' %}
 
 <div class="vs-row-end vs-mb">
-<div class="ref-export-actions TASK_REF_001D_WORK_TYPES_EXPORT_BUTTON">
-  <a class="btn secondary" href="{{ url_for('export_work_types_diagnostics') }}">
-    {{ 'Excel диагностика' if lang == 'ru' else 'Excel диагностика' }}
+  <a class="vs-btn" href="{{ url_for('export_work_types_diagnostics') }}">
+    {{ icon('download', 15) }}{{ 'Excel диагностика' if is_ru else 'Excel диагностика' }}
   </a>
 </div>
+
+{# ADOPT-1: полоса показателей — тот же компонент, что на главной. #}
+<div class="vs-kpi-strip">
+  <div class="vs-kpi-strip-head">
+    <span class="vs-kpi-strip-title">{{ 'Справочник видов работ' if is_ru else 'Иш турлари справочниги' }}</span>
+  </div>
+  <div class="vs-kpi-strip-body">
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Всего видов работ' if is_ru else 'Жами иш турлари' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ work_type_stats.total }}</span>
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Показано / используется' if is_ru else 'Кўрсатилди / ишлатилган' }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ work_type_stats.filtered }} / {{ work_type_stats.used }}</span>
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Пустая ед. / нулевая цена' if is_ru else 'Бўш ўлчов / ноль нарх' }}</span>
+      <span class="vs-kpi-strip-value vs-num {% if work_type_stats.empty_unit or work_type_stats.zero_price %}is-warning{% endif %}">{{ work_type_stats.empty_unit }} / {{ work_type_stats.zero_price }}</span>
+    </div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ 'Дубли / нет в справочнике' if is_ru else 'Дубликат / справочникда йўқ' }}</span>
+      <span class="vs-kpi-strip-value vs-num {% if work_type_stats.duplicate_name_groups or work_type_stats.missing_from_ref_count %}is-warning{% endif %}">{{ work_type_stats.duplicate_name_groups }} / {{ work_type_stats.missing_from_ref_count }}</span>
+    </div>
+  </div>
 </div>
 
-<style>
-/* TASK_REF_001B_WORK_TYPES_TEMPLATE_MARKER */
-.ref-filter-card{margin-bottom:14px}
-.ref-stats-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin-bottom:14px}
-.ref-stat-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow);padding:12px 14px}
-.ref-stat-card .label{color:var(--text2);font-size:12px;margin-bottom:4px}
-.ref-stat-card .value{font-size:22px;font-weight:800}
-.ref-quality-card{border-left:4px solid var(--warn);margin-bottom:14px}
-.ref-quality-list{margin:8px 0 0;padding-left:18px;color:var(--text2);font-size:13px}
-@media(max-width:1000px){.ref-stats-grid{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:640px){.ref-stats-grid{grid-template-columns:1fr}}
-</style>
-
-<div class="card ref-filter-card">
-    <div class="card-body">
-        <form method="get" action="{{ url_for('ref_work_types') }}" class="form-inline" style="gap:12px; align-items:flex-end;">
-            <div class="form-group" style="margin-bottom:0; flex:1; min-width:240px;">
-                <label>{{ 'Поиск' if lang == 'ru' else 'Қидириш' }}</label>
-                <input type="text" name="q" value="{{ search_q or '' }}" placeholder="{{ 'название или единица' if lang == 'ru' else 'номи ёки ўлчов бирлиги' }}" class="form-control">
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>{{ 'Использование' if lang == 'ru' else 'Ишлатилиши' }}</label>
-                <select name="usage" style="min-width:150px;" class="form-control">
-                    <option value="all" {% if selected_usage == 'all' %}selected{% endif %}>{{ 'Все' if lang == 'ru' else 'Барчаси' }}</option>
-                    <option value="used" {% if selected_usage == 'used' %}selected{% endif %}>{{ 'Используемые' if lang == 'ru' else 'Ишлатилган' }}</option>
-                    <option value="unused" {% if selected_usage == 'unused' %}selected{% endif %}>{{ 'Неиспользуемые' if lang == 'ru' else 'Ишлатилмаган' }}</option>
-                </select>
-            </div>
-            <button type="submit" class="btn btn-primary btn-sm">{{ 'Искать' if lang == 'ru' else 'Қидириш' }}</button>
-            <a href="{{ url_for('ref_work_types') }}" class="btn btn-secondary btn-sm">{{ 'Сбросить' if lang == 'ru' else 'Тозалаш' }}</a>
-        </form>
-    </div>
-</div>
-
-<div class="ref-stats-grid">
-    <div class="ref-stat-card">
-        <div class="label">{{ 'Всего видов работ' if lang == 'ru' else 'Жами иш турлари' }}</div>
-        <div class="value">{{ work_type_stats.total }}</div>
-    </div>
-    <div class="ref-stat-card">
-        <div class="label">{{ 'Показано / используется' if lang == 'ru' else 'Кўрсатилди / ишлатилган' }}</div>
-        <div class="value">{{ work_type_stats.filtered }} / {{ work_type_stats.used }}</div>
-    </div>
-    <div class="ref-stat-card">
-        <div class="label">{{ 'Пустая ед. / нулевая цена' if lang == 'ru' else 'Бўш ўлчов / ноль нарх' }}</div>
-        <div class="value">{{ work_type_stats.empty_unit }} / {{ work_type_stats.zero_price }}</div>
-    </div>
-    <div class="ref-stat-card">
-        <div class="label">{{ 'Дубли / нет в справочнике' if lang == 'ru' else 'Дубликат / справочникда йўқ' }}</div>
-        <div class="value">{{ work_type_stats.duplicate_name_groups }} / {{ work_type_stats.missing_from_ref_count }}</div>
-    </div>
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <form method="get" action="{{ url_for('ref_work_types') }}" class="vs-form-row">
+      <div class="vs-field">
+        <label class="vs-label" for="wtQ">{{ L_search }}</label>
+        <input type="text" id="wtQ" name="q" value="{{ search_q or '' }}" class="vs-input"
+               placeholder="{{ 'название или единица' if is_ru else 'номи ёки ўлчов бирлиги' }}">
+      </div>
+      <div class="vs-field" style="min-width:160px;">
+        <label class="vs-label" for="wtUsage">{{ L_usage }}</label>
+        <select name="usage" id="wtUsage" class="vs-select">
+          <option value="all" {% if selected_usage == 'all' %}selected{% endif %}>{{ L_all }}</option>
+          <option value="used" {% if selected_usage == 'used' %}selected{% endif %}>{{ 'Используемые' if is_ru else 'Ишлатилган' }}</option>
+          <option value="unused" {% if selected_usage == 'unused' %}selected{% endif %}>{{ 'Неиспользуемые' if is_ru else 'Ишлатилмаган' }}</option>
+        </select>
+      </div>
+      <div class="vs-field vs-field-action">
+        <button type="submit" class="vs-btn vs-btn-primary">{{ icon('search', 15) }}{{ L_search }}</button>
+      </div>
+      <div class="vs-field vs-field-action">
+        <a href="{{ url_for('ref_work_types') }}" class="vs-btn">{{ L_reset }}</a>
+      </div>
+    </form>
+  </div>
 </div>
 
 {% if work_type_stats.duplicate_name_groups or work_type_stats.missing_from_ref_count or work_type_stats.empty_unit or work_type_stats.zero_price %}
-<div class="card ref-quality-card">
-    <div class="card-body">
-        <strong>{{ 'Диагностика видов работ' if lang == 'ru' else 'Иш турлари диагностикаси' }}</strong>
-        <ul class="ref-quality-list">
-            <li>{{ 'Пустой default unit' if lang == 'ru' else 'Бўш default unit' }}: {{ work_type_stats.empty_unit }}</li>
-            <li>{{ 'Нулевая цена' if lang == 'ru' else 'Ноль нарх' }}: {{ work_type_stats.zero_price }}</li>
-            <li>{{ 'Дубли названий' if lang == 'ru' else 'Ном дубликатлари' }}: {{ work_type_stats.duplicate_name_groups }}</li>
-            {% for item in work_type_stats.duplicate_examples %}
-            <li><strong>{{ item.name }}</strong>: {{ item.count }}  {{ item.labels|join('; ') }}</li>
-            {% endfor %}
-            <li>{{ 'Значения в отчётах, отсутствующие в справочнике' if lang == 'ru' else 'Ҳисоботларда бор, справочникда йўқ қийматлар' }}: {{ work_type_stats.missing_from_ref_count }}</li>
-            {% for item in work_type_stats.missing_from_ref_examples %}
-            <li>{{ item }}</li>
-            {% endfor %}
-        </ul>
-    </div>
+<div class="vs-card vs-card-accent-warning vs-mb">
+  <div class="vs-card-body">
+    <strong>{{ 'Диагностика видов работ' if is_ru else 'Иш турлари диагностикаси' }}</strong>
+    <ul class="vs-diag-list">
+      <li>{{ 'Пустой default unit' if is_ru else 'Бўш default unit' }}: {{ work_type_stats.empty_unit }}</li>
+      <li>{{ 'Нулевая цена' if is_ru else 'Ноль нарх' }}: {{ work_type_stats.zero_price }}</li>
+      <li>{{ 'Дубли названий' if is_ru else 'Ном дубликатлари' }}: {{ work_type_stats.duplicate_name_groups }}</li>
+      {% for item in work_type_stats.duplicate_examples %}
+      <li><strong>{{ item.name }}</strong>: {{ item.count }}  {{ item.labels|join('; ') }}</li>
+      {% endfor %}
+      <li>{{ 'Значения в отчётах, отсутствующие в справочнике' if is_ru else 'Ҳисоботларда бор, справочникда йўқ қийматлар' }}: {{ work_type_stats.missing_from_ref_count }}</li>
+      {% for item in work_type_stats.missing_from_ref_examples %}
+      <li>{{ item }}</li>
+      {% endfor %}
+    </ul>
+  </div>
 </div>
 {% endif %}
 
-<div class="card" style="margin-bottom:20px;">
-    <div class="card-header">{{ t('Иш турлари') }}</div>
-    <div class="card-body">
-        <form method="post" action="{{ url_for('save_work_type') }}" class="form-inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <div class="form-group" style="flex:1;"><label>{{ t('Иш тури номи') }}</label>
-                <input type="text" name="name" placeholder="Шудгор / Чигит экиш / Борона мола..." required class="form-control">
-            </div>
-            <div class="form-group"><label>{{ t('Дефолт ўлчов') }}</label>
-                <input type="text" name="default_unit" placeholder="га / соат / м-соат / Рейс" style="width:120px;" class="form-control">
-            </div>
-            <div class="form-group"><label>{{ t('Дефолт нарх') }}</label>
-                <input type="number" name="default_price" placeholder="0" min="0" step="0.01" style="width:140px;" class="form-control">
-            </div>
-            <div class="form-group"><label>&nbsp;</label>
-                <button type="submit" class="btn btn-primary">+ {{ t('Қўшиш') }}</button>
-            </div>
-        </form>
-    </div>
+<div class="vs-card vs-mb">
+  <div class="vs-card-header"><span class="vs-card-title">{{ t('Иш турлари') }}</span></div>
+  <div class="vs-card-body">
+    <form method="post" action="{{ url_for('save_work_type') }}" class="vs-form-row">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="vs-field">
+        <label class="vs-label" for="wtName">{{ t('Иш тури номи') }}</label>
+        <input type="text" id="wtName" name="name" placeholder="Шудгор / Чигит экиш / Борона мола..." required class="vs-input">
+      </div>
+      <div class="vs-field" style="min-width:130px;">
+        <label class="vs-label" for="wtUnit">{{ t('Дефолт ўлчов') }}</label>
+        <input type="text" id="wtUnit" name="default_unit" placeholder="га / соат / м-соат / Рейс" class="vs-input">
+      </div>
+      <div class="vs-field" style="min-width:150px;">
+        <label class="vs-label" for="wtPrice">{{ t('Дефолт нарх') }}</label>
+        <input type="number" id="wtPrice" name="default_price" placeholder="0" min="0" step="0.01" class="vs-input">
+      </div>
+      <div class="vs-field vs-field-action">
+        <button type="submit" class="vs-btn vs-btn-primary">{{ icon('plus', 15) }}{{ t('Қўшиш') }}</button>
+      </div>
+    </form>
+  </div>
 </div>
 
-<div class="card">
-    <div class="card-header">Жами: {{ work_type_stats.filtered }} та</div>
-    <div class="card-body" style="padding:0;">
-        <table>
-            <thead>
-                <tr>
-                    <th>{{ t('Иш тури') }}</th>
-                    <th>{{ t('Ўлчов бирлиги') }}</th>
-                    <th class="text-right">{{ t('Нарх') }}</th>
-                    <th>{{ 'Использование' if lang == 'ru' else 'Ишлатилиши' }}</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for wt in work_types %}
-                {% set usage_count = work_type_usage.get(wt.id, 0) %}
-                <tr id="wt-row-{{ wt.id }}"
-                    data-wt-id="{{ wt.id }}"
-                    data-name="{{ wt.name }}"
-                    data-default-unit="{{ wt.default_unit or '' }}"
-                    data-default-price="{{ wt.default_price|int if wt.default_price else 0 }}">
-                    <td><strong>{{ wt.name }}</strong></td>
-                    <td>{{ wt.default_unit or '' }}</td>
-                    <td class="text-right">{{ wt.default_price|fmt_sum }}</td>
-                    <td>{{ usage_count }}</td>
-                    <td>
-                        <button class="btn btn-secondary btn-sm" onclick="editWt({{ wt.id }})">{{ "Изм." if lang == "ru" else "Ўзг." }}</button>
-                        {% if usage_count %}
-                        <span class="idle-badge" title="{{ L_linked_tip }}">{{ L_used }} ({{ usage_count }})</span>
-                        {% else %}
-                            <button class="btn btn-danger btn-sm" type="button"
-                                    onclick="deleteWt({{ wt.id }})"
-                                    title="{{ L_delete }}">{{ L_delete }}</button>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-                <tr id="wt-shared-edit-row" style="display:none;">
-                    <td colspan="10">
-                        <form method="post" action="{{ url_for('save_work_type') }}"
-                              id="wt-shared-edit-form" class="form-inline">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <input type="hidden" name="id" id="wt-shared-id" value="">
+{# DD-028, режим is-static: 104 вида работ на боевой базе — ниже порога ~200,
+   всё помещается. Сортировка на клиенте, по умолчанию по названию вверх. #}
+<div class="vs-table-wrap">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ t('Иш турлари') }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static" data-sortable data-sort-default="0:ascending">
+      <thead>
+        <tr>
+          <th data-sort>{{ t('Иш тури') }}</th>
+          <th data-sort>{{ t('Ўлчов бирлиги') }}</th>
+          <th class="right" data-sort>{{ t('Нарх') }}</th>
+          <th class="right" data-sort>{{ L_usage }}</th>
+          <th class="right">{{ 'Действия' if is_ru else 'Амаллар' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for wt in work_types %}
+        {% set usage_count = work_type_usage.get(wt.id, 0) %}
+        <tr id="wt-row-{{ wt.id }}"
+            data-wt-id="{{ wt.id }}"
+            data-name="{{ wt.name }}"
+            data-default-unit="{{ wt.default_unit or '' }}"
+            data-default-price="{{ wt.default_price|int if wt.default_price else 0 }}">
+          <td class="vs-cell-clip" title="{{ wt.name }}"><strong>{{ wt.name }}</strong></td>
+          <td>{% if wt.default_unit %}<span class="vs-badge">{{ wt.default_unit }}</span>{% else %}<span class="vs-muted">—</span>{% endif %}</td>
+          <td class="right vs-num" data-sort-value="{{ wt.default_price or 0 }}">{{ wt.default_price|fmt_sum }}</td>
+          <td class="right vs-num">{{ usage_count }}</td>
+          <td class="vs-row-actions-cell">
+            <span class="vs-row-actions">
+              <button type="button" class="vs-btn vs-btn-icon" onclick="editWt({{ wt.id }})"
+                      aria-label="{{ L_edit }}: {{ wt.name }}" title="{{ L_edit }}">{{ icon('edit', 14) }}</button>
+              {% if usage_count %}
+              <span class="vs-badge vs-badge-warning" title="{{ L_linked_tip }}">{{ L_used }} · {{ usage_count }}</span>
+              {% else %}
+              <button class="vs-btn vs-btn-icon is-danger" type="button" onclick="deleteWt({{ wt.id }})"
+                      aria-label="{{ L_delete }}: {{ wt.name }}" title="{{ L_delete }}">{{ icon('trash', 14) }}</button>
+              {% endif %}
+            </span>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="5">
+            <div class="vs-empty">
+              <div class="vs-empty-icon">{{ icon('list', 28) }}</div>
+              <p class="vs-empty-title">{{ 'Ничего не найдено' if is_ru else 'Ҳеч нарса топилмади' }}</p>
+              <p class="vs-empty-sub">{{ 'Измените условия поиска или добавьте вид работ' if is_ru else 'Қидирув шартларини ўзгартиринг ёки иш тури қўшинг' }}</p>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
 
-                            <div>
-                                <input type="text" name="name" id="wt-shared-name" required class="form-control">
-                            </div>
-                            <div>
-                                <input type="text" name="default_unit" id="wt-shared-default-unit" style="width:120px;" class="form-control">
-                            </div>
-                            <div>
-                                <input type="number" name="default_price" id="wt-shared-default-price" min="0" step="0.01" style="width:140px;" class="form-control">
-                            </div>
-                            <div>
-                                <button type="submit" class="btn btn-primary btn-sm">{{ t('Сақлаш') }}</button>
-                                <button type="button" class="btn btn-secondary btn-sm" onclick="cancelWtEdit()">{{ t('Бекор қилиш') }}</button>
-                            </div>
-                        </form>
-                    </td>
-                </tr>
+        {# Одна общая строка редактирования на всю таблицу: JS переставляет её
+           под изменяемую строку. Скрыта, поэтому клиентская сортировка её
+           положение не портит — при открытии она встаёт заново. #}
+        <tr id="wt-shared-edit-row" hidden>
+          <td colspan="5" class="vs-cell-form">
+            <form method="post" action="{{ url_for('save_work_type') }}"
+                  id="wt-shared-edit-form" class="vs-form-row">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="id" id="wt-shared-id" value="">
+              <input type="text" name="name" id="wt-shared-name" required class="vs-input"
+                     aria-label="{{ t('Иш тури номи') }}" style="width:280px;">
+              <input type="text" name="default_unit" id="wt-shared-default-unit" class="vs-input"
+                     aria-label="{{ t('Дефолт ўлчов') }}" style="width:120px;">
+              <input type="number" name="default_price" id="wt-shared-default-price" min="0" step="0.01"
+                     class="vs-input" aria-label="{{ t('Дефолт нарх') }}" style="width:140px;">
+              <button type="submit" class="vs-btn vs-btn-primary vs-btn-sm">{{ icon('save', 14) }}{{ t('Сақлаш') }}</button>
+              <button type="button" class="vs-btn vs-btn-sm" onclick="cancelWtEdit()">{{ t('Бекор қилиш') }}</button>
+            </form>
+          </td>
+        </tr>
 
-                <tr id="wt-shared-delete-row" style="display:none;">
-                    <td colspan="10">
-                        <form method="post" action="" id="wt-shared-delete-form">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        </form>
-                    </td>
-                </tr>
-
-            </tbody>
-        </table>
-    </div>
+        <tr id="wt-shared-delete-row" hidden>
+          <td colspan="5">
+            <form method="post" action="" id="wt-shared-delete-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            </form>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="vs-table-foot">
+    <span class="vs-table-count">{{ L_rows }}: <strong>{{ work_types|length }}</strong></span>
+  </div>
 </div>
+{% endblock %}
 
-<script>
-function editWt(id) {
-    document.getElementById('wt-row-' + id).style.display = 'none';
-    document.getElementById('wt-edit-' + id).style.display = '';
-}
-function cancelWtEdit(id) {
-    document.getElementById('wt-row-' + id).style.display = '';
-    document.getElementById('wt-edit-' + id).style.display = 'none';
-}
-</script>
-
+{% block scripts %}
+{# [REASON]: подпись объявляется ЗДЕСЬ заново, а не берётся из блока content.
+   Блок {% block %} не видит переменных соседнего блока: {{ L_delete }},
+   объявленный выше, отрендерился бы здесь пустой строкой молча, и
+   подтверждение удаления показало бы «: Шудгор?». #}
+{% set L_delete = 'Удалить' if lang == 'ru' else 'Ўчириш' %}
 <script>
 // PERF-WORK-TYPES-BODY-001B_MARKER: shared work type edit/delete forms.
 const WT_DELETE_URL_TEMPLATE = "{{ url_for('delete_work_type', wid=0) }}";
@@ -216,7 +235,7 @@ function editWt(id) {
 
     row.classList.add('wt-editing');
     row.parentNode.insertBefore(editRow, row.nextSibling);
-    editRow.style.display = '';
+    editRow.hidden = false;
 
     idInput.value = row.dataset.wtId || '';
     nameInput.value = row.dataset.name || '';
@@ -229,16 +248,12 @@ function editWt(id) {
 function cancelWtEdit() {
     var editRow = document.getElementById('wt-shared-edit-row');
     if (editRow) {
-        editRow.style.display = 'none';
+        editRow.hidden = true;
     }
 
     document.querySelectorAll('tr.wt-editing').forEach(function(r) {
         r.classList.remove('wt-editing');
     });
-}
-
-function cancelWtEditLegacy(id) {
-    cancelWtEdit();
 }
 
 function deleteWt(id) {
@@ -261,5 +276,4 @@ function deleteWt(id) {
     form.submit();
 }
 </script>
-
 {% endblock %}

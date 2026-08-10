@@ -1,7 +1,18 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
+{% from '_vs_multiselect.html' import vs_multiselect %}
 {% block title %}{{ t('Ҳисобот') }}{% endblock %}
 {% block content %}
 {% set is_ru = (lang == 'ru') %}
+
+{# UI-P4: эталонный экран. До миграции это был ЕДИНСТВЕННЫЙ файл в проекте,
+   говоривший на собственном языке токенов --ux-* (14 обращений, каждое со
+   своим fallback-значением вида `var(--ux-primary, #2563eb)`). Переменные
+   --ux-* не объявлены нигде — работали именно fallback-и, то есть 13
+   захардкоженных цветов мимо дизайн-системы, притворявшихся токенами.
+   Своего CSS у страницы больше нет: было 186 строк и три одноразовых
+   класса report-table. #}
+
 {% set L_title = 'Отчёт по работам транспорта' if is_ru else 'Транспорт ишлари ҳисоботи' %}
 {% set L_subtitle = 'Фильтры, предварительные итоги и Excel-выгрузка по введённым ежедневным работам.' if is_ru else 'Киритилган кунлик ишлар бўйича фильтрлар, дастлабки якунлар ва Excel юклаш.' %}
 {% set L_rule = 'Проверка на экране показывает предварительные итоги. Excel выгружается по выбранному периоду, организациям и категориям.' if is_ru else 'Экранда дастлабки якунлар кўрсатилади. Excel танланган давр, ташкилотлар ва категориялар бўйича юкланади.' %}
@@ -12,6 +23,9 @@
 {% set L_show = 'Показать' if is_ru else 'Кўрсатиш' %}
 {% set L_export = 'Скачать Excel' if is_ru else 'Excel юклаш' %}
 {% set L_reset = 'Сбросить' if is_ru else 'Тозалаш' %}
+{% set L_clear = 'Очистить' if is_ru else 'Тозалаш' %}
+{% set L_all = 'Все' if is_ru else 'Барчаси' %}
+{% set L_chosen = 'выбрано' if is_ru else 'танланган' %}
 {% set L_preview = 'Предварительный просмотр' if is_ru else 'Дастлабки кўриш' %}
 {% set L_search = 'Поиск по таблице: организация, техника, госномер, работа, заказчик' if is_ru else 'Жадвалдан қидириш: ташкилот, техника, госномер, иш тури, буюртмачи' %}
 {% set L_total_amount = 'Итого сумма' if is_ru else 'Жами сумма' %}
@@ -22,489 +36,275 @@
 {% set L_idle = 'Простой/без работ' if is_ru else 'Бўш/ишсиз' %}
 {% set L_by_org = 'Итоги по организациям' if is_ru else 'Ташкилотлар бўйича якун' %}
 {% set L_by_work = 'Топ видов работ' if is_ru else 'Иш турлари бўйича топ' %}
-{% set L_details = 'Детализация строк' if is_ru else 'Қаторлар детализацияси' %}
 {% set L_limited = 'Показаны первые 300 строк. Для полного набора используйте Excel.' if is_ru else 'Биринчи 300 қатор кўрсатилди. Тўлиқ маълумот учун Excel юкланг.' %}
 {% set L_no_data = 'По выбранным фильтрам данных нет.' if is_ru else 'Танланган фильтрлар бўйича маълумот йўқ.' %}
-{% set L_select_org = 'Выберите хотя бы одну организацию.' if is_ru else 'Камида битта ташкилот танланг.' %}
-{% set L_select_cat = 'Выберите хотя бы одну категорию.' if is_ru else 'Камида битта категория танланг.' %}
+{% set L_scope = 'итог — по показанным строкам, не по всей выборке' if is_ru else 'жами — кўрсатилган қаторлар бўйича, бутун танлов бўйича эмас' %}
 
-<style>
-.report-hero { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:16px; }
-.report-hero h1 { margin-bottom:6px; }
-.report-note { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
-.report-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
-.report-filter-grid { display:grid; grid-template-columns:repeat(3,minmax(220px,1fr)); gap:16px; align-items:start; }
-.report-period-row { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-top:12px; }
-.report-type-grid { display:grid; grid-template-columns:repeat(2,minmax(240px,1fr)); gap:12px; margin-top:16px; }
-.report-type-card { display:flex; gap:10px; align-items:flex-start; border:2px solid var(--border); border-radius:var(--radius); padding:12px; cursor:pointer; background:var(--surface); }
-.report-type-card.active { border-color:var(--accent); background:var(--accent-light); }
-.report-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
-.report-toolbar input[type="text"] { min-width:320px; flex:1; }
-.report-summary-grid { display:grid; grid-template-columns:repeat(6,minmax(130px,1fr)); gap:10px; margin-bottom:16px; }
-.report-mini-grid { display:grid; grid-template-columns:repeat(2,minmax(260px,1fr)); gap:16px; margin-bottom:16px; }
-.report-table-wrap { overflow:auto; max-height:560px; border:1px solid var(--border); border-radius:var(--radius); }
-.report-table { width:100%; border-collapse:collapse; font-size:13px; }
-.report-table th, .report-table td { padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
-.report-table th { position:sticky; top:0; background:var(--surface); z-index:1; text-align:left; font-size:12px; color:var(--text2); }
-.report-status { display:inline-block; padding:3px 8px; border-radius:999px; font-size:11px; font-weight:700; white-space:nowrap; }
-.report-status.worked { background:var(--success-light); color:var(--success); }
-.report-status.idle { background:var(--warning-light); color:var(--warning); }
-.report-muted { color:var(--text2); font-size:12px; }
-.report-amount { text-align:right; white-space:nowrap; font-weight:600; }
-.report-empty { padding:24px; text-align:center; color:var(--text2); }
-@media (max-width:1100px) {
-    .report-filter-grid, .report-summary-grid { grid-template-columns:repeat(2,minmax(180px,1fr)); }
-    .report-mini-grid { grid-template-columns:1fr; }
-}
-@media (max-width:700px) {
-    .report-hero { flex-direction:column; }
-    .report-filter-grid, .report-summary-grid, .report-type-grid { grid-template-columns:1fr; }
-    .report-toolbar input[type="text"] { min-width:100%; }
-}
-
-/* REPORT002A_MARKER: full report UX refresh, template-only. */
-.report-page-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-  margin-bottom: 18px;
-}
-
-.report-page-header h1 {
-  margin-bottom: 6px;
-}
-
-.report-header-subtitle {
-  color: var(--ux-muted, #667085);
-  font-size: 14px;
-  line-height: 1.45;
-}
-
-.report-active-filter-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.report-filter-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--ux-border-soft, #edf1f6);
-  background: var(--ux-surface, #fff);
-  color: var(--ux-text, #1f2937);
-  font-size: 12px;
-  font-weight: 700;
-  box-shadow: var(--ux-shadow-soft, 0 3px 10px rgba(15, 23, 42, 0.05));
-}
-
-.report-filter-pill strong {
-  color: var(--ux-primary, #2563eb);
-}
-
-.report-export-card {
-  border-left: 4px solid var(--ux-primary, #2563eb);
-}
-
-.report-export-card .card-header {
-  font-weight: 800;
-}
-
-.report-form-section {
-  display: grid;
-  gap: 16px;
-}
-
-.report-form-row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  align-items: flex-end;
-}
-
-.report-option-card {
-  background: var(--ux-surface-soft, #f8fafc);
-  border: 1px solid var(--ux-border-soft, #edf1f6);
-  border-radius: var(--ux-radius, 14px);
-  padding: 10px 12px;
-}
-
-.report-action-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 16px;
-}
-
-.report-action-hint {
-  color: var(--ux-muted, #667085);
-  font-size: 13px;
-}
-
-.report-kpi-grid .stat-card {
-  min-height: 92px;
-}
-
-.report-kpi-grid .value {
-  font-size: 20px;
-  line-height: 1.25;
-}
-
-.report-summary-card .card-header,
-.report-preview-card .card-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-}
-
-.report-table {
-  font-size: 13px;
-}
-
-.report-table th {
-  white-space: nowrap;
-}
-
-.report-table td {
-  vertical-align: top;
-}
-
-.report-table .text-muted {
-  font-size: 12px;
-}
-
-.report-truncate {
-  max-width: 280px;
-  white-space: normal;
-  word-break: break-word;
-}
-
-.report-limited-note {
-  margin-top: 10px;
-  padding: 10px 12px;
-  border-radius: var(--ux-radius-sm, 9px);
-  background: var(--ux-warning-soft, #fffbeb);
-  color: var(--ux-warning, #b45309);
-  font-weight: 700;
-  font-size: 13px;
-}
-
-@media (max-width: 900px) {
-  .report-page-header {
-    display: block;
-  }
-
-  .report-form-row,
-  .report-action-row {
-    display: block;
-  }
-
-  .report-action-row .btn,
-  .report-action-row button {
-    width: 100%;
-    margin-top: 8px;
-  }
-}
-/* REPORT002A_END */
-
-</style>
-
-<div class="report-hero">
-    <div>
-        <div class="page-header report-page-header REPORT002A_MARKER">
+<div class="vs-hero vs-mb">
   <div>
-    <h1>{{ L_title }}</h1>
-    <div class="report-header-subtitle">
-      {{ t('Сводный просмотр транспортных работ и подготовка Excel-отчёта по выбранному периоду, организациям и категориям техники.') }}
-    </div>
-
-    <div class="report-active-filter-bar">
-      <span class="report-filter-pill">
-        {{ t('Период') }}:
-        <strong>{{ d_from.strftime('%d.%m.%Y') }}{% if d_from != d_to %}  {{ d_to.strftime('%d.%m.%Y') }}{% endif %}</strong>
-      </span>
-
-      <span class="report-filter-pill">
-        {{ t('Организации') }}:
-        <strong>
-          {% if selected_org_ids|length == organizations|length %}
-            {{ t('Все') }}
-          {% else %}
-            {{ selected_org_ids|length }}
-          {% endif %}
-        </strong>
-      </span>
-
-      <span class="report-filter-pill">
-        {{ t('Категории') }}:
-        <strong>
-          {% if selected_cat_codes %}
-            {{ selected_cat_codes|length }}
-          {% else %}
-            {{ t('Все') }}
-          {% endif %}
-        </strong>
-      </span>
-
-      <span class="report-filter-pill">
-        {{ t('Записей') }}:
-        <strong>{{ preview.records_count }}</strong>
-      </span>
-
-      <span class="report-filter-pill">
-        {{ t('Техники') }}:
-        <strong>{{ preview.equipment_count }}</strong>
-      </span>
+    <div class="vs-hero-title">{{ L_title }}</div>
+    <div class="vs-hero-sub">{{ L_subtitle }}</div>
+    <div class="vs-row vs-mt-sm">
+      <span class="vs-badge">{{ L_period }}: <strong>{{ d_from.strftime('%d.%m.%Y') }}{% if d_from != d_to %} — {{ d_to.strftime('%d.%m.%Y') }}{% endif %}</strong></span>
+      <span class="vs-badge">{{ L_orgs }}: <strong>{% if selected_org_ids|length == organizations|length %}{{ L_all }}{% else %}{{ selected_org_ids|length }}{% endif %}</strong></span>
+      <span class="vs-badge">{{ L_cats }}: <strong>{% if selected_cat_codes %}{{ selected_cat_codes|length }}{% else %}{{ L_all }}{% endif %}</strong></span>
+      <span class="vs-badge vs-badge-info">{{ L_records }}: <strong>{{ preview.records_count }}</strong></span>
+      <span class="vs-badge vs-badge-info">{{ L_equipment }}: <strong>{{ preview.equipment_count }}</strong></span>
     </div>
   </div>
-</div>
-        <div class="text-muted">{{ L_subtitle }}</div>
-    </div>
-    <div class="report-actions">
-        <a class="btn btn-secondary" href="{{ url_for('index') }}">← {{ t('Бош саҳифа') }}</a>
-    </div>
+  <div class="vs-row-end">
+    <a class="vs-btn" href="{{ url_for('index') }}">{{ t('Бош саҳифа') }}</a>
+  </div>
 </div>
 
-<div class="report-note">{{ L_rule }}</div>
+<div class="vs-alert is-info vs-mb">{{ L_rule }}</div>
 
-<div class="card report-export-card" style="margin-bottom:18px;">
-    <div class="card-header">📊 {{ L_filters }}</div>
-    <div class="card-body">
-        <form method="post" action="{{ url_for('report') }}" id="reportForm" onsubmit="return validateReportSelection()" class="report-filter-form">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<div class="vs-card vs-card-accent-left vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ icon('filter', 16) }} {{ L_filters }}</span>
+  </div>
+  <div class="vs-card-body">
+    <form method="post" action="{{ url_for('report') }}" id="reportForm" onsubmit="return validateReportSelection()">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-            <div class="report-filter-grid">
-                <div>
-                    <label style="font-size:12px; font-weight:600; color:var(--text2); display:block; margin-bottom:4px;">{{ L_orgs }}</label>
-                    <div class="ms-wrap" id="ms-orgs-rep">
-                        <button type="button" class="ms-trigger"></button>
-                        <div class="ms-dropdown">
-                            <label class="ms-item ms-select-all">
-                                <input type="checkbox" class="ms-all" {% if selected_org_ids|length == organizations|length %}checked{% endif %}> {{ t('Барчаси') }}
-                            </label>
-                            {% for org in organizations %}
-                            <label class="ms-item">
-                                <input type="checkbox" name="org_ids" value="{{ org.id }}" {% if org.id in selected_org_ids %}checked{% endif %}>
-                                {{ org.name }}
-                            </label>
-                            {% endfor %}
-                        </div>
-                    </div>
-                </div>
+      <div class="vs-form-row">
+        <div class="vs-field">
+          <label class="vs-label">{{ L_orgs }}</label>
+          {{ vs_multiselect('vsms-orgs-rep', 'org_ids',
+                            zip(organizations|map(attribute='id'), organizations|map(attribute='name')),
+                            selected_org_ids, L_all, L_chosen, L_clear) }}
+        </div>
+        <div class="vs-field">
+          <label class="vs-label">{{ L_cats }}</label>
+          {{ vs_multiselect('vsms-cats-rep', 'cat_codes', categories.items(),
+                            selected_cat_codes, L_all, L_chosen, L_clear) }}
+        </div>
+        <div class="vs-field">
+          <label class="vs-label" id="reportModeLabel">{{ L_period }}</label>
+          <div class="vs-toggle-group" role="radiogroup" aria-labelledby="reportModeLabel">
+            {% for m, label in [('day', t('Бугун')),('week', t('Ҳафта')),('month', t('Ой')),('range', t('Ихтиёрий'))] %}
+            <label>
+              <input type="radio" name="mode" value="{{ m }}" {% if mode == m %}checked{% endif %} onchange="onModeChange(this.value)">
+              {{ label }}
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
 
-                <div>
-                    <label style="font-size:12px; font-weight:600; color:var(--text2); display:block; margin-bottom:4px;">{{ L_cats }}</label>
-                    <div class="ms-wrap" id="ms-cats-rep">
-                        <button type="button" class="ms-trigger"></button>
-                        <div class="ms-dropdown">
-                            <label class="ms-item ms-select-all">
-                                <input type="checkbox" class="ms-all" {% if not selected_cat_codes or selected_cat_codes|length == categories|length %}checked{% endif %}> {{ t('Барчаси') }}
-                            </label>
-                            {% for code, name in categories.items() %}
-                            <label class="ms-item">
-                                <input type="checkbox" name="cat_codes" value="{{ code }}" {% if not selected_cat_codes or code in selected_cat_codes %}checked{% endif %}>
-                                {{ name }}
-                            </label>
-                            {% endfor %}
-                        </div>
-                    </div>
-                </div>
+      <div class="vs-form-row vs-mt">
+        <div class="vs-field" id="dayField" style="{% if mode != 'day' %}display:none;{% endif %}">
+          <label class="vs-label" for="repDate">{{ t('САНА') }}</label>
+          <input type="date" id="repDate" name="report_date" value="{{ d_from.isoformat() }}" class="vs-input">
+        </div>
+        <div class="vs-field" id="rangeFieldFrom" style="{% if mode != 'range' %}display:none;{% endif %}">
+          <label class="vs-label" for="repFrom">{{ t('ДАН') }}</label>
+          <input type="date" id="repFrom" name="date_from" value="{{ d_from.isoformat() }}" class="vs-input">
+        </div>
+        <div class="vs-field" id="rangeFieldTo" style="{% if mode != 'range' %}display:none;{% endif %}">
+          <label class="vs-label" for="repTo">{{ t('ГАЧА') }}</label>
+          <input type="date" id="repTo" name="date_to" value="{{ d_to.isoformat() }}" class="vs-input">
+        </div>
+        <div class="vs-field vs-field-action">
+          <button type="button" class="vs-btn" onclick="updatePreview()">{{ L_show }}</button>
+        </div>
+        <div class="vs-field vs-field-action">
+          <a class="vs-btn" href="{{ url_for('report') }}">{{ L_reset }}</a>
+        </div>
+        <div class="vs-field vs-field-action">
+          <button type="submit" class="vs-btn vs-btn-success">{{ icon('download', 15) }}{{ L_export }}</button>
+        </div>
+      </div>
 
-                <div>
-                    <label style="font-size:12px; font-weight:600; color:var(--text2); display:block; margin-bottom:6px;">{{ L_period }}</label>
-                    <div class="toggle-group">
-                        {% for m, label in [('day', t('Бугун')),('week', t('Ҳафта')),('month', t('Ой')),('range', t('Ихтиёрий'))] %}
-                        <label {% if mode == m %}style="background:var(--accent);color:#fff;"{% endif %}>
-                            <input type="radio" name="mode" value="{{ m }}" {% if mode == m %}checked{% endif %} onchange="onModeChange(this.value)">
-                            {{ label }}
-                        </label>
-                        {% endfor %}
-                    </div>
-                </div>
-            </div>
-
-            <div class="report-period-row">
-                <div id="dayField" style="{% if mode != 'day' %}display:none;{% endif %}">
-                    <label style="font-size:12px; font-weight:600; color:var(--text2); display:block; margin-bottom:4px;">{{ t('САНА') }}</label>
-                    <input type="date" name="report_date" value="{{ d_from.isoformat() }}" style="width:180px;" class="form-control">
-                </div>
-
-                <div id="rangeField" style="{% if mode != 'range' %}display:none;{% endif %} gap:12px; align-items:end; flex-wrap:wrap;">
-                    <div>
-                        <label style="font-size:12px; font-weight:600; color:var(--text2); display:block; margin-bottom:4px;">{{ t('ДАН') }}</label>
-                        <input type="date" name="date_from" value="{{ d_from.isoformat() }}" class="form-control">
-                    </div>
-                    <div>
-                        <label style="font-size:12px; font-weight:600; color:var(--text2); display:block; margin-bottom:4px;">{{ t('ГАЧА') }}</label>
-                        <input type="date" name="date_to" value="{{ d_to.isoformat() }}" class="form-control">
-                    </div>
-                </div>
-
-                <button type="button" class="btn btn-secondary" onclick="updatePreview()">{{ L_show }}</button>
-                <a class="btn btn-secondary" href="{{ url_for('report') }}">{{ L_reset }}</a>
-                <button type="submit" class="btn btn-primary">{{ L_export }}</button>
-            </div>
-
-            <div class="report-type-grid">
-                <label class="report-type-card" id="lbl-main">
-                    <input type="radio" name="report_type" value="main" checked style="width:auto;" onchange="styleReportType()">
-                    <div>
-                        <div style="font-weight:700;">📋 {{ t('Асосий ҳисобот') }}</div>
-                        <div class="report-muted">{{ t('8 лист: ОБШИЙ, СВОД, ИЧИ') }}</div>
-                    </div>
-                </label>
-                <label class="report-type-card" id="lbl-activity">
-                    <input type="radio" name="report_type" value="daily_activity" style="width:auto;" onchange="styleReportType()">
-                    <div>
-                        <div style="font-weight:700;">📊 {{ t('Кунлик иш билан банд') }}</div>
-                        <div class="report-muted">{{ t('2 жадвал: техника + юк транспорт') }}</div>
-                    </div>
-                </label>
-            </div>
-        </form>
-    </div>
+      <div class="vs-check-grid vs-mt">
+        <label class="vs-check-card">
+          <input type="radio" name="report_type" value="main" checked>
+          <span>
+            <strong>{{ t('Асосий ҳисобот') }}</strong>
+            <span class="vs-help">{{ t('8 лист: ОБШИЙ, СВОД, ИЧИ') }}</span>
+          </span>
+        </label>
+        <label class="vs-check-card">
+          <input type="radio" name="report_type" value="daily_activity">
+          <span>
+            <strong>{{ t('Кунлик иш билан банд') }}</strong>
+            <span class="vs-help">{{ t('2 жадвал: техника + юк транспорт') }}</span>
+          </span>
+        </label>
+      </div>
+    </form>
+  </div>
 </div>
 
-<div class="card" style="margin-bottom:18px;">
-    <div class="card-header">
-        {{ L_preview }}
-        <span class="report-muted" style="margin-left:8px;">
-            {{ d_from.strftime('%d.%m.%Y') }}{% if d_from != d_to %} — {{ d_to.strftime('%d.%m.%Y') }}{% endif %}
-        </span>
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ L_preview }}</span>
+    <span class="vs-muted">{{ d_from.strftime('%d.%m.%Y') }}{% if d_from != d_to %} — {{ d_to.strftime('%d.%m.%Y') }}{% endif %}</span>
+  </div>
+  <div class="vs-card-body">
+    <div class="vs-stat-grid vs-mb">
+      <div class="vs-stat"><div class="vs-stat-label">{{ L_total_amount }}</div><div class="vs-stat-value">{{ preview.total|fmt_sum }}</div></div>
+      <div class="vs-stat"><div class="vs-stat-label">{{ L_total_qty }}</div><div class="vs-stat-value">{{ '%.2f'|format(preview.total_quantity or 0) }}</div></div>
+      <div class="vs-stat"><div class="vs-stat-label">{{ L_records }}</div><div class="vs-stat-value">{{ preview.records_count }}</div></div>
+      <div class="vs-stat"><div class="vs-stat-label">{{ L_equipment }}</div><div class="vs-stat-value">{{ preview.equipment_count }}</div></div>
+      <div class="vs-stat"><div class="vs-stat-label">{{ L_worked }}</div><div class="vs-stat-value is-success">{{ preview.worked_count }}</div></div>
+      <div class="vs-stat"><div class="vs-stat-label">{{ L_idle }}</div><div class="vs-stat-value is-warning">{{ preview.idle_count }}</div></div>
     </div>
-    <div class="card-body">
-        <div class="report-summary-grid">
-            <div class="stat-card"><div class="label">{{ L_total_amount }}</div><div class="value">{{ preview.total|fmt_sum }}</div></div>
-            <div class="stat-card"><div class="label">{{ L_total_qty }}</div><div class="value">{{ '%.2f'|format(preview.total_quantity or 0) }}</div></div>
-            <div class="stat-card"><div class="label">{{ L_records }}</div><div class="value">{{ preview.records_count }}</div></div>
-            <div class="stat-card"><div class="label">{{ L_equipment }}</div><div class="value">{{ preview.equipment_count }}</div></div>
-            <div class="stat-card"><div class="label">{{ L_worked }}</div><div class="value">{{ preview.worked_count }}</div></div>
-            <div class="stat-card"><div class="label">{{ L_idle }}</div><div class="value">{{ preview.idle_count }}</div></div>
-        </div>
 
-        <div class="stats-grid report-kpi-grid" style="margin-bottom:16px;">
-            <div class="stat-card"><div class="label">{{ t('Нақд') }}</div><div class="value cash">{{ preview.cash|fmt_sum }}</div></div>
-            <div class="stat-card"><div class="label">{{ t('Пул кўчириш') }}</div><div class="value transfer">{{ preview.transfer|fmt_sum }}</div></div>
-            <div class="stat-card"><div class="label">{{ t('Тизим корхонасида ишлади') }}</div><div class="value internal">{{ preview.internal|fmt_sum }}</div></div>
-            <div class="stat-card"><div class="label">{{ t('Бошқа') }}</div><div class="value">{{ preview.other|fmt_sum }}</div></div>
-        </div>
+    <div class="vs-stat-grid-4 vs-mb">
+      <div class="vs-stat"><div class="vs-stat-label">{{ t('Нақд') }}</div><div class="vs-stat-value">{{ preview.cash|fmt_sum }}</div></div>
+      <div class="vs-stat"><div class="vs-stat-label">{{ t('Пул кўчириш') }}</div><div class="vs-stat-value">{{ preview.transfer|fmt_sum }}</div></div>
+      <div class="vs-stat"><div class="vs-stat-label">{{ t('Тизим корхонасида ишлади') }}</div><div class="vs-stat-value">{{ preview.internal|fmt_sum }}</div></div>
+      <div class="vs-stat"><div class="vs-stat-label">{{ t('Бошқа') }}</div><div class="vs-stat-value">{{ preview.other|fmt_sum }}</div></div>
+    </div>
 
-        <div class="report-mini-grid">
-            <div>
-                <h3 style="margin-bottom:8px;">{{ L_by_org }}</h3>
-                {% if org_summary %}
-                <div class="report-table-wrap" style="max-height:300px;">
-                    <table class="report-table">
-                        <thead><tr><th>{{ t('Ташкилот') }}</th><th>{{ L_equipment }}</th><th>{{ L_records }}</th><th>{{ L_total_qty }}</th><th>{{ L_total_amount }}</th></tr></thead>
-                        <tbody>
-                        {% for item in org_summary %}
-                        <tr>
-                            <td>{{ item.name }}</td>
-                            <td>{{ item.equipment_count }}</td>
-                            <td>{{ item.records_count }}</td>
-                            <td>{{ '%.2f'|format(item.quantity or 0) }}</td>
-                            <td class="report-amount">{{ item.amount|fmt_sum }}</td>
-                        </tr>
-                        {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% else %}
-                <div class="report-empty">{{ L_no_data }}</div>
-                {% endif %}
-            </div>
-
-            <div>
-                <h3 style="margin-bottom:8px;">{{ L_by_work }}</h3>
-                {% if work_type_summary %}
-                <div class="report-table-wrap" style="max-height:300px;">
-                    <table class="report-table">
-                        <thead><tr><th>{{ t('Иш тури') }}</th><th>{{ L_records }}</th><th>{{ L_total_qty }}</th><th>{{ L_total_amount }}</th></tr></thead>
-                        <tbody>
-                        {% for item in work_type_summary %}
-                        <tr>
-                            <td>{{ item.name }}</td>
-                            <td>{{ item.records_count }}</td>
-                            <td>{{ '%.2f'|format(item.quantity or 0) }}</td>
-                            <td class="report-amount">{{ item.amount|fmt_sum }}</td>
-                        </tr>
-                        {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% else %}
-                <div class="report-empty">{{ L_no_data }}</div>
-                {% endif %}
-            </div>
-        </div>
-
-        <div class="report-toolbar">
-            <input type="text" id="reportSearch" placeholder="{{ L_search }}" oninput="filterReportRows()" class="form-control">
-            {% if hidden_rows_count > 0 %}
-            <span class="report-muted">{{ L_limited }} {{ hidden_rows_count }} {% if is_ru %}строк скрыто{% else %}қатор яширилган{% endif %}.</span>
-            {% endif %}
-        </div>
-
-        {% if preview_rows %}
-        <div class="report-table-wrap">
-            <table class="report-table" id="reportRowsTable">
-                <thead>
-                    <tr>
-                        <th>{{ t('Сана') }}</th>
-                        <th>{{ t('Ташкилот') }}</th>
-                        <th>{{ t('Техника') }}</th>
-                        <th>{{ t('Иш тури') }}</th>
-                        <th>{{ t('Буюртмачи') }}</th>
-                        <th>{{ t('Миқдор') }}</th>
-                        <th>{{ t('Тўлов тури') }}</th>
-                        <th>{{ L_total_amount }}</th>
-                    </tr>
-                </thead>
-                <tbody>
-                {% for row in preview_rows %}
-                    <tr data-search="{{ (row.organization ~ ' ' ~ row.equipment ~ ' ' ~ row.plate ~ ' ' ~ row.work_type ~ ' ' ~ row.customer ~ ' ' ~ row.category ~ ' ' ~ row.note)|lower }}">
-                        <td>{{ row.date.strftime('%d.%m.%Y') }}</td>
-                        <td>{{ row.organization }}</td>
-                        <td>
-                            <strong>{{ row.equipment }}</strong>
-                            {% if row.plate %}<div class="report-muted">{{ row.plate }}</div>{% endif %}
-                            <div class="report-muted">{{ row.category }}</div>
-                        </td>
-                        <td>
-                            {% if row.status == 'worked' %}
-                            <span class="report-status worked">{{ 'Работа' if is_ru else 'Иш' }}</span>
-                            <div>{{ row.work_type or '—' }}</div>
-                            {% else %}
-                            <span class="report-status idle">{{ 'Простой' if is_ru else 'Бўш' }}</span>
-                            <div class="report-muted">{{ row.note or '—' }}</div>
-                            {% endif %}
-                        </td>
-                        <td>{{ row.customer or '—' }}</td>
-                        <td>{% if row.quantity is not none %}{{ '%.2f'|format(row.quantity) }} {{ row.unit }}{% else %}—{% endif %}</td>
-                        <td>
-                            {% if row.payment_type == 'cash' %}{{ t('Нақд') }}
-                            {% elif row.payment_type == 'transfer' %}{{ t('Пул кўчириш') }}
-                            {% elif row.payment_type == 'internal' %}{{ t('Тизим корхонасида ишлади') }}
-                            {% elif row.payment_type == 'other' %}{{ t('Бошқа') }}
-                            {% else %}—{% endif %}
-                        </td>
-                        <td class="report-amount">{{ row.total|fmt_sum }}</td>
-                    </tr>
-                {% endfor %}
-                </tbody>
+    {# DD-028: обе сводные таблицы короткие (одна строка на организацию, до
+       десятка видов работ) — режим is-static, сортировка на клиенте. #}
+    <div class="vs-kpi-grid-2 vs-mb">
+      <div>
+        <div class="vs-label vs-label-upper">{{ L_by_org }}</div>
+        {% if org_summary %}
+        <div class="vs-table-wrap">
+          <div class="vs-table-scroll">
+            <table class="vs-table vs-num is-static is-compact" data-sortable data-sort-default="4:descending">
+              <thead><tr>
+                <th data-sort>{{ t('Ташкилот') }}</th>
+                <th class="right" data-sort>{{ L_equipment }}</th>
+                <th class="right" data-sort>{{ L_records }}</th>
+                <th class="right" data-sort>{{ L_total_qty }}</th>
+                <th class="right" data-sort>{{ L_total_amount }}</th>
+              </tr></thead>
+              <tbody>
+              {% for item in org_summary %}
+                <tr>
+                  <td class="vs-cell-clip" title="{{ item.name }}">{{ item.name }}</td>
+                  <td class="right">{{ item.equipment_count }}</td>
+                  <td class="right">{{ item.records_count }}</td>
+                  <td class="right" data-sort-value="{{ item.quantity or 0 }}">{{ '%.2f'|format(item.quantity or 0) }}</td>
+                  <td class="right" data-sort-value="{{ item.amount or 0 }}"><strong>{{ item.amount|fmt_sum }}</strong></td>
+                </tr>
+              {% endfor %}
+              </tbody>
             </table>
+          </div>
         </div>
         {% else %}
-        <div class="report-empty">{{ L_no_data }}</div>
+        <div class="vs-empty"><p class="vs-empty-sub">{{ L_no_data }}</p></div>
         {% endif %}
+      </div>
+
+      <div>
+        <div class="vs-label vs-label-upper">{{ L_by_work }}</div>
+        {% if work_type_summary %}
+        <div class="vs-table-wrap">
+          <div class="vs-table-scroll">
+            <table class="vs-table vs-num is-static is-compact" data-sortable data-sort-default="3:descending">
+              <thead><tr>
+                <th data-sort>{{ t('Иш тури') }}</th>
+                <th class="right" data-sort>{{ L_records }}</th>
+                <th class="right" data-sort>{{ L_total_qty }}</th>
+                <th class="right" data-sort>{{ L_total_amount }}</th>
+              </tr></thead>
+              <tbody>
+              {% for item in work_type_summary %}
+                <tr>
+                  <td class="vs-cell-clip" title="{{ item.name }}">{{ item.name }}</td>
+                  <td class="right">{{ item.records_count }}</td>
+                  <td class="right" data-sort-value="{{ item.quantity or 0 }}">{{ '%.2f'|format(item.quantity or 0) }}</td>
+                  <td class="right" data-sort-value="{{ item.amount or 0 }}"><strong>{{ item.amount|fmt_sum }}</strong></td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% else %}
+        <div class="vs-empty"><p class="vs-empty-sub">{{ L_no_data }}</p></div>
+        {% endif %}
+      </div>
     </div>
+
+    <div class="vs-form-row vs-mb">
+      <div class="vs-field">
+        <label class="vs-label" for="reportSearch">{{ L_search }}</label>
+        <input type="text" id="reportSearch" placeholder="{{ L_search }}" oninput="filterReportRows()" class="vs-input">
+      </div>
+      {% if hidden_rows_count > 0 %}
+      <div class="vs-field vs-field-action">
+        <span class="vs-badge vs-badge-warning">{{ L_limited }} {{ hidden_rows_count }} {% if is_ru %}строк скрыто{% else %}қатор яширилган{% endif %}.</span>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if preview_rows %}
+    {# DD-028, is-paged: на экран берётся окно в 300 строк, остальное уходит в
+       Excel. Заголовки не кнопки — окно отобрано сервером, и клиентская
+       сортировка переставила бы строки внутри окна, притворяясь сортировкой
+       всей выборки. #}
+    <div class="vs-table-wrap">
+      <div class="vs-table-scroll">
+        <table class="vs-table vs-num is-paged is-compact" id="reportRowsTable">
+          <thead>
+            <tr>
+              <th>{{ t('Сана') }}</th>
+              <th>{{ t('Ташкилот') }}</th>
+              <th>{{ t('Техника') }}</th>
+              <th>{{ t('Иш тури') }}</th>
+              <th>{{ t('Буюртмачи') }}</th>
+              <th class="right">{{ t('Миқдор') }}</th>
+              <th>{{ t('Тўлов тури') }}</th>
+              <th class="right">{{ L_total_amount }}</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for row in preview_rows %}
+            <tr data-search="{{ (row.organization ~ ' ' ~ row.equipment ~ ' ' ~ row.plate ~ ' ' ~ row.work_type ~ ' ' ~ row.customer ~ ' ' ~ row.category ~ ' ' ~ row.note)|lower }}">
+              <td>{{ row.date.strftime('%d.%m.%Y') }}</td>
+              <td class="vs-cell-clip" title="{{ row.organization }}">{{ row.organization }}</td>
+              <td class="vs-cell-clip" title="{{ row.equipment }} {{ row.plate }}">
+                <strong>{{ row.equipment }}</strong>
+                {% if row.plate %}<div class="vs-muted">{{ row.plate }}</div>{% endif %}
+                <div class="vs-muted">{{ row.category }}</div>
+              </td>
+              <td>
+                {% if row.status == 'worked' %}
+                <span class="vs-badge vs-badge-success">{{ 'Работа' if is_ru else 'Иш' }}</span>
+                <div>{{ row.work_type or '—' }}</div>
+                {% else %}
+                <span class="vs-badge vs-badge-warning">{{ 'Простой' if is_ru else 'Бўш' }}</span>
+                {# DD-030: idle_reason -- p99 = 50, max = 211. Одна аномальная
+                   строка иначе задаёт ширину всей колонки. #}
+                <div class="vs-muted vs-clip" title="{{ row.note or '' }}">{{ row.note or '—' }}</div>
+                {% endif %}
+              </td>
+              {# DD-030: customer -- p99 = 40, max = 111. #}
+              <td class="vs-cell-clip" title="{{ row.customer or '' }}">{{ row.customer or '—' }}</td>
+              <td class="right">{% if row.quantity is not none %}{{ '%.2f'|format(row.quantity) }} {{ row.unit }}{% else %}—{% endif %}</td>
+              <td>
+                {% if row.payment_type == 'cash' %}{{ t('Нақд') }}
+                {% elif row.payment_type == 'transfer' %}{{ t('Пул кўчириш') }}
+                {% elif row.payment_type == 'internal' %}{{ t('Тизим корхонасида ишлади') }}
+                {% elif row.payment_type == 'other' %}{{ t('Бошқа') }}
+                {% else %}—{% endif %}
+              </td>
+              <td class="right"><strong>{{ row.total|fmt_sum }}</strong></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="vs-table-foot">
+        <span class="vs-table-count">{{ L_records }}: <strong>{{ preview_rows|length }}</strong>{% if hidden_rows_count > 0 %} / {{ preview_rows|length + hidden_rows_count }}{% endif %}</span>
+        <span class="vs-table-scope">{{ L_total_amount }}: {{ preview.total|fmt_sum }} — {{ L_scope }}</span>
+      </div>
+    </div>
+    {% else %}
+    <div class="vs-empty">
+      <div class="vs-empty-icon">{{ icon('empty', 28) }}</div>
+      <p class="vs-empty-sub">{{ L_no_data }}</p>
+    </div>
+    {% endif %}
+  </div>
 </div>
 
 {% endblock %}
@@ -518,16 +318,12 @@ const REPORT_TEXT = {
 
 function onModeChange(val) {
     document.getElementById('dayField').style.display = val === 'day' ? '' : 'none';
-    const rf = document.getElementById('rangeField');
-    rf.style.display = val === 'range' ? 'flex' : 'none';
-}
-
-function styleReportType() {
-    const main = document.getElementById('lbl-main');
-    const act = document.getElementById('lbl-activity');
-    const mainR = main.querySelector('input');
-    main.classList.toggle('active', mainR.checked);
-    act.classList.toggle('active', !mainR.checked);
+    // [REASON]: два поля диапазона — два отдельных .vs-field в общем ряду.
+    // Раньше они лежали в одном контейнере с display:flex, который при
+    // показе перебивал раскладку ряда фильтров.
+    const shown = val === 'range' ? '' : 'none';
+    document.getElementById('rangeFieldFrom').style.display = shown;
+    document.getElementById('rangeFieldTo').style.display = shown;
 }
 
 function getCheckedValues(name) {
@@ -575,9 +371,6 @@ function filterReportRows() {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-    if (document.getElementById('ms-orgs-rep')) initMultiselect('ms-orgs-rep', {{ ('Организации' if lang == 'ru' else 'Ташкилотлар')|tojson }});
-    if (document.getElementById('ms-cats-rep')) initMultiselect('ms-cats-rep', {{ ('Категории техники' if lang == 'ru' else 'Техника категориялари')|tojson }});
-    styleReportType();
     onModeChange(document.querySelector('input[name="mode"]:checked').value);
 });
 </script>

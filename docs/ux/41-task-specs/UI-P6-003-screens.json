@@ -1,0 +1,12 @@
+[
+  { "n": 1, "slug": "work-orders-list", "url": "/work-orders?status=all", "role": "ux_admin",
+    "title": "Наряды — список",
+    "why": "два вида одного списка: таблица выше 768 px, карточки ниже; статус — один компонент вместо цвета из Python" },
+  { "n": 2, "slug": "work-order-new", "url": "/work-orders/new", "role": "ux_admin",
+    "title": "Наряды — новый",
+    "why": "форма на две колонки, сводка ошибок, подсказка «цена изменена вручную»" },
+  { "n": 3, "slug": "work-orders-list-uz", "url": "/work-orders?status=all", "role": "ux_admin_uz",
+    "title": "Наряды — список (узбекский)",
+    "why": "весь модуль был на латинице; проверка, что кириллические подписи не ломают раскладку",
+    "only": ["desktop", "mobile"] }
+]

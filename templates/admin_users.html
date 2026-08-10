@@ -1,48 +1,63 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}{{ t('Фойдаланувчилар') }}{% endblock %}
 
 {% block content %}
-<!-- Add/Edit User Form -->
-<div class="card" style="margin-bottom:20px;" id="user-form">
-    <div class="card-header">{{ t('Янги фойдаланувчи қўшиш') }}</div>
-    <div class="card-body">
+{% set is_ru = (lang == 'ru') %}
+{% set L_edit = 'Изменить' if is_ru else 'Ўзгартириш' %}
+{% set L_block = 'Заблокировать' if is_ru else 'Блоклаш' %}
+{% set L_tg_code = 'Код привязки Telegram' if is_ru else 'Telegram боғлаш коди' %}
+{% set L_tg_blocked = 'Пользователь заблокирован' if is_ru else 'Фойдаланувчи блокланган' %}
+{% set L_rows = 'Строк' if is_ru else 'Қаторлар' %}
+
+{# DD-032: роль — один компонент статуса, семантика параметром. Раньше цвет
+   стоял инлайном тремя хардкод-хексами прямо в строке таблицы. #}
+{# Соответствие перенесено ДОСЛОВНО из прежнего инлайнового стиля:
+   там было три ветви — admin, operator и «все остальные». Четвёртого тона
+   не заводим: «механик — предупреждение» это смысл, которого в исходнике
+   не было, и придумывать его миграция вёрстки не должна. #}
+{% set ROLE_TONE = {'admin': 'vs-badge-danger',
+                    'operator': 'vs-badge-success'} %}
+
+<div class="vs-card vs-mb" id="user-form">
+    <div class="vs-card-header"><span class="vs-card-title">{{ t('Янги фойдаланувчи қўшиш') }}</span></div>
+    <div class="vs-card-body">
         <form method="post" action="{{ url_for('admin_save_user') }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="form-user-id" value="">
-            <div class="form-inline" style="margin-bottom:16px;">
-                <div class="form-group" style="margin-bottom:0;">
-                    <label>{{ t('Логин') }}</label>
-                    <input type="text" name="username" id="form-username" required placeholder="operator1" class="form-control" style="width:160px;">
+            <div class="vs-form-row vs-mb">
+                <div class="vs-field" style="min-width:160px;">
+                    <label class="vs-label" for="form-username">{{ t('Логин') }}</label>
+                    <input type="text" name="username" id="form-username" required placeholder="operator1" class="vs-input">
                 </div>
-                <div class="form-group" style="margin-bottom:0;">
-                    <label>{{ t('Тўлиқ исм') }}</label>
-                    <input type="text" name="full_name" id="form-fullname" placeholder="Ахмедов Умид" class="form-control" style="width:200px;">
+                <div class="vs-field" style="min-width:200px;">
+                    <label class="vs-label" for="form-fullname">{{ t('Тўлиқ исм') }}</label>
+                    <input type="text" name="full_name" id="form-fullname" placeholder="Ахмедов Умид" class="vs-input">
                 </div>
-                <div class="form-group" style="margin-bottom:0;">
-                    <label>{{ t('Временный пароль (при вводе потребует смену)') }}</label>
-                    <input type="password" name="password" id="form-password" placeholder="Минимум 8 символов" class="form-control" style="width:150px;">
+                <div class="vs-field" style="min-width:200px;">
+                    <label class="vs-label" for="form-password">{{ t('Вақтинчалик парол (киритилса, алмаштириш талаб қилинади)') }}</label>
+                    <input type="password" name="password" id="form-password" placeholder="Минимум 8 символов" class="vs-input">
                 </div>
-                <div class="form-group" style="margin-bottom:0;">
-                    <label>{{ t('Роль') }}</label>
-                    <select name="role" id="form-role" class="form-control" style="width:160px;" onchange="toggleOrgSection(this.value)">
+                <div class="vs-field" style="min-width:170px;">
+                    <label class="vs-label" for="form-role">{{ t('Роль') }}</label>
+                    <select name="role" id="form-role" class="vs-select" onchange="toggleOrgSection(this.value)">
                         <option value="operator">{{ t('Оператор') }}</option>
                         <option value="mechanic">{{ t('Механик') }}</option>
                         <option value="viewer">{{ t('Наблюдатель') }}</option>
                         <option value="admin">{{ t('Администратор') }}</option>
                     </select>
                 </div>
-                <div class="form-group" style="margin-bottom:0;">
-                    <label>&nbsp;</label>
-                    <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                        <input type="checkbox" name="is_active" checked style="width:auto;"> {{ t('Фаол') }}
+                <div class="vs-field vs-field-action">
+                    <label class="vs-check">
+                        <input type="checkbox" name="is_active" checked> {{ t('Фаол') }}
                     </label>
                 </div>
             </div>
 
-            <!-- Organization assignment (not shown for admin) -->
-            <div id="org-assignment">
-                <div class="form-group">
-                    <label>{{ t('Ташкилотлар (фойдаланувчи бошқара оладиган)') }}</label>
+            {# Привязка организаций: администратору не показывается — у него доступ ко всем. #}
+            <div id="org-assignment" class="vs-mb">
+                <div class="vs-field">
+                    <span class="vs-label">{{ t('Ташкилотлар (фойдаланувчи бошқара оладиган)') }}</span>
                     <div class="vs-check-grid">
                         {% for org in organizations %}
                         <label class="vs-check-card">
@@ -54,105 +69,106 @@
                 </div>
             </div>
 
-            <button type="submit" class="btn btn-primary">💾 {{ t('Сақлаш') }}</button>
-            <button type="button" class="btn btn-secondary" onclick="resetForm()">{{ t('Бекор қилиш') }}</button>
+            <div class="vs-row-end">
+                <button type="button" class="vs-btn" onclick="resetForm()">{{ t('Бекор қилиш') }}</button>
+                <button type="submit" class="vs-btn vs-btn-primary">{{ icon('save', 15) }}{{ t('Сақлаш') }}</button>
+            </div>
         </form>
     </div>
 </div>
 
-<!-- Users table -->
-<div class="card">
-    <div class="card-header">
-        {{ t('Фойдаланувчилар рўйхати') }}
-        <span class="text-sm text-muted">{{ t('Жами') }}: {{ users|length }}</span>
+{# DD-028, режим is-static: семь учётных записей на боевой базе, всё
+   помещается. Сортировка на клиенте, по умолчанию по логину вверх. #}
+<div class="vs-table-wrap">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ t('Фойдаланувчилар рўйхати') }}</span>
     </div>
-    <table>
-        <thead>
+    <div class="vs-table-scroll">
+        <table class="vs-table is-static" data-sortable data-sort-default="0:ascending">
+            <thead>
+                {# Ключи t() оставлены прописными: в словаре есть ровно они.
+                   `t('Охирги кириш')` строчными в словаре ОТСУТСТВУЕТ и вернул
+                   бы ключ как есть — по-узбекски в русском интерфейсе. #}
+                <tr>
+                    <th data-sort>{{ t('ЛОГИН') }}</th>
+                    <th data-sort>{{ t('ТЎЛИҚ ИСМ') }}</th>
+                    <th data-sort>{{ t('РОЛЬ') }}</th>
+                    <th>{{ t('ТАШКИЛОТЛАР') }}</th>
+                    <th data-sort>{{ t('ҲОЛАТ') }}</th>
+                    <th>TELEGRAM</th>
+                    <th data-sort>{{ t('ОХИРГИ КИРИШ') }}</th>
+                    <th class="right">{{ 'Действия' if is_ru else 'Амаллар' }}</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for u in users %}
             <tr>
-                <th>{{ t('ЛОГИН') }}</th>
-                <th>{{ t('ТЎЛИҚ ИСМ') }}</th>
-                <th>{{ t('РОЛЬ') }}</th>
-                <th>{{ t('ТАШКИЛОТЛАР') }}</th>
-                <th>{{ t('ҲОЛАТ') }}</th>
-                <th>{{ t('TELEGRAM') }}</th>
-                <th>{{ t('ОХИРГИ КИРИШ') }}</th>
-                <th></th>
+                <td><strong>{{ u.username }}</strong></td>
+                <td class="vs-cell-clip" title="{{ u.full_name }}">{{ u.full_name }}</td>
+                <td data-sort-value="{{ u.role }}">
+                    <span class="vs-badge {{ ROLE_TONE.get(u.role, 'vs-badge-info') }}">{{ u.role_display }}</span>
+                </td>
+                <td class="vs-cell-clip vs-muted">
+                    {% if u.is_admin %}
+                        <em>{{ t('Барча ташкилотлар') }}</em>
+                    {% else %}
+                        {{ u.organizations|map(attribute='short_name')|join(', ') or '—' }}
+                    {% endif %}
+                </td>
+                <td data-sort-value="{{ '1' if u.is_active else '0' }}">
+                    {% if u.is_active %}
+                        <span class="vs-badge vs-badge-success">{{ t('Фаол') }}</span>
+                    {% else %}
+                        <span class="vs-badge vs-badge-danger">{{ t('Блокланган') }}</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if not u.is_active %}
+                        <button type="button" class="vs-btn vs-btn-icon" disabled
+                                aria-label="{{ L_tg_blocked }}" title="{{ L_tg_blocked }}">{{ icon('link', 14) }}</button>
+                    {% else %}
+                        {% if u.telegram_id %}
+                        <span class="vs-badge vs-badge-success" title="Telegram ID: {{ u.telegram_id }}">
+                            {{ icon('check', 12) }}{{ u.telegram_id }}
+                        </span>
+                        {% else %}
+                        <span class="vs-muted">—</span>
+                        {% endif %}
+                        <form method="post" action="{{ url_for('admin_telegram_link_code', uid=u.id) }}" class="vs-inline-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="vs-btn vs-btn-icon"
+                                    aria-label="{{ L_tg_code }}: {{ u.username }}" title="{{ L_tg_code }}">{{ icon('link', 14) }}</button>
+                        </form>
+                    {% endif %}
+                </td>
+                <td class="vs-muted" data-sort-value="{{ u.last_login.isoformat() if u.last_login else '' }}">
+                    {{ u.last_login.strftime('%d.%m.%Y %H:%M') if u.last_login else '—' }}
+                </td>
+                <td class="vs-row-actions-cell">
+                    <span class="vs-row-actions">
+                        <button type="button" class="vs-btn vs-btn-icon"
+                                aria-label="{{ L_edit }}: {{ u.username }}" title="{{ L_edit }}"
+                                onclick="editUser({{ u.id }}, '{{ u.username }}', '{{ u.full_name }}', '{{ u.role }}', {{ 'true' if u.is_active else 'false' }}, [{{ u.organizations|map(attribute='id')|join(',') }}])">
+                            {{ icon('edit', 14) }}
+                        </button>
+                        {% if u.id != current_user.id %}
+                        <form method="post" action="{{ url_for('admin_delete_user', uid=u.id) }}" class="vs-inline-form"
+                              onsubmit="return confirm('«{{ u.username }}» ни блоклашни тасдиқлайсизми?')">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="vs-btn vs-btn-icon is-danger"
+                                    aria-label="{{ L_block }}: {{ u.username }}" title="{{ L_block }}">{{ icon('blocked', 14) }}</button>
+                        </form>
+                        {% endif %}
+                    </span>
+                </td>
             </tr>
-        </thead>
-        <tbody>
-        {% for u in users %}
-        <tr>
-            <td style="font-weight:600;">{{ u.username }}</td>
-            <td>{{ u.full_name }}</td>
-            <td>
-                <span class="role-badge role-{{ u.role }}"
-                      style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;text-transform:uppercase;
-                      {% if u.role == 'admin' %}background:#e74c3c;color:#fff;{% elif u.role == 'operator' %}background:#27ae60;color:#fff;{% else %}background:#2980b9;color:#fff;{% endif %}">
-                    {{ u.role_display }}
-                </span>
-            </td>
-            <td class="text-sm">
-                {% if u.is_admin %}
-                    <em class="text-muted">{{ t('Барча ташкилотлар') }}</em>
-                {% else %}
-                    {{ u.organizations|map(attribute='short_name')|join(', ') or '—' }}
-                {% endif %}
-            </td>
-            <td>
-                {% if u.is_active %}
-                    <span class="working-badge">{{ t('Фаол') }}</span>
-                {% else %}
-                    <span class="idle-badge">{{ t('Блокланган') }}</span>
-                {% endif %}
-            </td>
-            <td class="text-sm">
-                {% if not u.is_active %}
-                    <button type="button" class="btn btn-sm btn-secondary"
-                            style="font-size:10px;padding:2px 6px;opacity:0.45;cursor:not-allowed;"
-                            disabled
-                            title="Пользователь заблокирован">🔗</button>
-                {% elif u.telegram_id %}
-                    <span style="color:var(--accent);font-weight:600;" title="Telegram ID: {{ u.telegram_id }}">✅ {{ u.telegram_id }}</span>
-                    <form method="post"
-                          action="{{ url_for('admin_telegram_link_code', uid=u.id) }}"
-                          style="display:inline;margin-left:4px;"
-                          title="Telegram боглаш учун 6 рақамли код яратиш">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-sm btn-secondary"
-                                style="font-size:10px;padding:2px 6px;">🔗</button>
-                    </form>
-                {% else %}
-                    <span class="text-muted">—</span>
-                    <form method="post"
-                          action="{{ url_for('admin_telegram_link_code', uid=u.id) }}"
-                          style="display:inline;margin-left:4px;"
-                          title="Telegram боглаш учун 6 рақамли код яратиш">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-sm btn-secondary"
-                                style="font-size:10px;padding:2px 6px;">🔗</button>
-                    </form>
-                {% endif %}
-            </td>
-            <td class="text-sm text-muted">
-                {{ u.last_login.strftime('%d.%m.%Y %H:%M') if u.last_login else '—' }}
-            </td>
-            <td>
-                <button class="btn btn-sm btn-secondary"
-                        onclick="editUser({{ u.id }}, '{{ u.username }}', '{{ u.full_name }}', '{{ u.role }}', {{ 'true' if u.is_active else 'false' }}, [{{ u.organizations|map(attribute='id')|join(',') }}])">
-                    ✏️
-                </button>
-                {% if u.id != current_user.id %}
-                <form method="post" action="{{ url_for('admin_delete_user', uid=u.id) }}" style="display:inline;"
-                      onsubmit="return confirm('«{{ u.username }}» ни блоклашни тасдиқлайсизми?')">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-sm btn-danger">🚫</button>
-                </form>
-                {% endif %}
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <div class="vs-table-foot">
+        <span class="vs-table-count">{{ L_rows }}: <strong>{{ users|length }}</strong></span>
+    </div>
 </div>
 {% endblock %}
 
