@@ -37,8 +37,21 @@ Desktop.ini
 *.swp
 *.swo
 
-# Claude Code agent session and memory files (not project source)
-.claude/
+# Claude Code agent session and memory files (not project source).
+#
+# Исключается СОДЕРЖИМОЕ, а не сам каталог: `.claude/` целиком означало бы,
+# что хук запуска сессии и настройки никогда не уедут в репозиторий, а значит
+# облачные сессии их не получат. Поломка была бы молчаливой — файлы лежат на
+# диске, `git status` чист, и понять, почему в новой сессии среда не
+# поднимается, неоткуда.
+#
+# Git не умеет вернуть файл, если исключён его каталог, — поэтому именно
+# `.claude/*`, а не `.claude/`.
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/*.sh
 
 # One-time migration and fix script log output (runtime artifacts, not source)
 migration_log_*.csv
