@@ -37,6 +37,9 @@ Chto proveryaetsya
   4. token-dup      dva tokena s odnim znacheniem (sverka PO ZNACHENIYU)
   5. inline-style   stroki vnutri <style> v shablone
   6. glyph          emodzi/piktogramma v razmetke vmesto ikonki
+  7. t-key-missing  t('...') s klyuchom, kotorogo net v translations.py:
+                    t vernet sam klyuch, i podpis ostanetsya na yazyke
+                    ishodnika v oboih interfeysah
 
 Pravila proekta, soblyudennye zdes
 ----------------------------------
@@ -86,7 +89,47 @@ RE_VAR_REF = re.compile(r'var\(\s*(--[a-z0-9-]+)\s*\)')
 RE_GLYPH = re.compile('[\U0001F000-\U0001FAFF☀-➿⬀-⯿]')
 
 CHECKS = ('table-class', 'hardcoded-color', 'breakpoint',
-          'token-dup', 'inline-style', 'glyph')
+          'token-dup', 'inline-style', 'glyph', 't-key-missing')
+
+# [REASON]: t(key) pri otsutствii klyucha v slovare vozvrashchaet SAM KLYUCH.
+# Otkaz molchalivyy: v shablone stoit vyzov t(), stranica rendersya bez
+# oshibki, a na ekrane ostaetsya ishodnaya stroka -- to est russkiy tekst v
+# uzbekskom interfeyse ili naoborot. Naydeno vladelcem na ekrane Vialon
+# (shest podpisey), Jinja-parsingom i testami ne lovitsya voobshche.
+RE_T_CALL = re.compile(r"""\bt\(\s*(['"])(.*?)\1\s*\)""", re.S)
+TRANSLATIONS_PATH = os.path.join(REPO_ROOT, 'translations.py')
+
+
+def load_translations():
+    """Prochitat TRANS bez importa prilozheniya.
+
+    [REASON]: translations.py -- chistye dannye bez importov, no ego nelzya
+    razobrat ast.literal_eval: fayl rasshiryaetsya blokami TRANS[...].update().
+    Poetomu ispolnyaem imenno ego, v otdelnom prostranstve imen, i nikogda ne
+    trogaem app.py -- import app vyzval by db.create_all() na importe.
+    """
+    if not os.path.isfile(TRANSLATIONS_PATH):
+        return None
+    namespace = {}
+    with open(TRANSLATIONS_PATH, encoding='utf-8') as handle:
+        code = compile(handle.read(), TRANSLATIONS_PATH, 'exec')
+    exec(code, namespace)  # noqa: S102 - dannye proekta, ne vvod polzovatelya
+    trans = namespace.get('TRANS')
+    if not isinstance(trans, dict):
+        return None
+    return trans
+
+
+def unescape_jinja_literal(text):
+    """Privesti tekst literala k tomu, chto uvidit t() vo vremya rendera.
+
+    [REASON]: Jinja razbiraet \\n i \\" vnutri strokovogo literala, poetomu
+    klyuch v ISHODNIKE i klyuch v SLOVARE otlichayutsya na eti escape.
+    Bez etogo shagi proverka dala by pyat lozhnyh srabatyvaniy na workload.html
+    i tri na daily_entry.html -- i ee by otklyuchili.
+    """
+    return (text.replace('\\n', '\n').replace('\\t', '\t')
+                .replace('\\"', '"').replace("\\'", "'"))
 
 
 def ascii_safe(text):
@@ -118,10 +161,12 @@ def template_paths(root):
     return sorted(out)
 
 
-def scan_templates(paths):
+def scan_templates(paths, trans=None):
     """Poschitat narusheniya pofaylovo. Vozvrashchaet {check: {file: count}}."""
     counts = {check: {} for check in CHECKS}
     detail = collections.defaultdict(list)
+    uz = (trans or {}).get('uz', {})
+    ru = (trans or {}).get('ru', {})
 
     for path in paths:
         body = RE_JINJA_COMMENT.sub('', read(path))
@@ -157,6 +202,20 @@ def scan_templates(paths):
         glyphs = RE_GLYPH.findall(body)
         if glyphs:
             counts['glyph'][key] = len(glyphs)
+
+        # [REASON]: schitaem tolko kogda slovar deystvitelno prochitan. Pri
+        # trans=None pustye uz/ru dali by "vse klyuchi otsutstvuyut" -- to est
+        # proverka pokazala by odin i tot zhe otvet pri vernom i nevernom
+        # kode, a eto ne proverka.
+        if trans:
+            missing = 0
+            for match in RE_T_CALL.finditer(body):
+                literal = unescape_jinja_literal(match.group(2))
+                if literal not in uz or literal not in ru:
+                    missing += 1
+                    detail['t-key-missing'].append((key, literal))
+            if missing:
+                counts['t-key-missing'][key] = missing
 
     return counts, detail
 
@@ -286,8 +345,12 @@ def main():
         print('ERROR: not a directory: ' + ascii_safe(root))
         return 2
 
+    trans = load_translations()
+    if trans is None:
+        print('ERROR: translations.py not readable; t-key-missing cannot run')
+        return 2
     paths = template_paths(root)
-    tpl_counts, tpl_detail = scan_templates(paths)
+    tpl_counts, tpl_detail = scan_templates(paths, trans)
     css_counts, css_detail = scan_css(read(CSS_PATH))
     current = merge(tpl_counts, css_counts)
     detail = collections.defaultdict(list)

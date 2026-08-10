@@ -215,23 +215,47 @@ class RefAdminModuleContracts(unittest.TestCase):
         self.assertIn('/ 7', patched)
         self.assertNotIn('/ 300', patched)
 
-    def test_audit_says_the_window_is_a_window_only_when_it_is_full(self):
-        """Подпись «журнал длиннее» появляется, лишь когда окно набрано
-        целиком: на девяти записях она была бы неправдой."""
-        from flask import render_template
-        short = [{'action': 'a', 'status': 'ok', 'created_at': '2026-01-01'}] * 3
-        full = [{'action': 'a', 'status': 'ok', 'created_at': '2026-01-01'}] * 5
+    def _render_audit(self, rows, limit, lang):
+        from flask import g, render_template
         with app.test_request_context():
-            html_short = render_template(
-                'audit_logs.html', logs=short, users=[], actions=[], modules=[],
+            g.lang = lang
+            return render_template(
+                'audit_logs.html', logs=rows, users=[], actions=[], modules=[],
                 date_from='', date_to='', selected_user_id=None,
-                selected_action='', selected_module='', audit_log_limit=5)
-            html_full = render_template(
-                'audit_logs.html', logs=full, users=[], actions=[], modules=[],
-                date_from='', date_to='', selected_user_id=None,
-                selected_action='', selected_module='', audit_log_limit=5)
-        self.assertNotIn('журнал длиннее', html_short)
-        self.assertIn('журнал длиннее', html_full)
+                selected_action='', selected_module='', audit_log_limit=limit)
+
+    def test_audit_says_the_window_is_a_window_only_when_it_is_full(self):
+        """Подпись про окно появляется, лишь когда окно набрано целиком:
+        на трёх записях из пяти она была бы неправдой.
+
+        Проверяется на ОБОИХ языках: подпись двуязычная, и совпадение только
+        по русской строке пропустило бы поломку узбекской.
+        """
+        row = {'action': 'a', 'status': 'ok', 'created_at': '2026-01-01'}
+        for lang, phrase in (('ru', 'журнал длиннее'),
+                             ('uz', 'журнал узунроқ')):
+            short = self._render_audit([row] * 3, 5, lang)
+            full = self._render_audit([row] * 5, 5, lang)
+            self.assertNotIn(phrase, short, lang)
+            self.assertIn(phrase, full, lang)
+
+    def test_audit_labels_are_the_owner_terms_in_both_languages(self):
+        """Термины владельца (2026-08-10): Фильтр, Объект, Тавсиф/Описание.
+
+        Отрицательный контроль встроен в саму пару: если бы t() возвращал
+        ключ (именно так шесть подписей Виалон оставались русскими), узбекская
+        сторона показала бы «Описание», и вторая половина проверки упала бы.
+        """
+        row = {'action': 'a', 'status': 'ok', 'created_at': '2026-01-01'}
+        ru_html = self._render_audit([row], 5, 'ru')
+        uz_html = self._render_audit([row], 5, 'uz')
+        for html in (ru_html, uz_html):
+            self.assertIn('>Фильтр<', html)
+            self.assertIn('>Объект</th>', html)
+        self.assertIn('>Описание</th>', ru_html)
+        self.assertIn('>Тавсиф</th>', uz_html)
+        self.assertNotIn('>Тавсиф</th>', ru_html)
+        self.assertNotIn('>Описание</th>', uz_html)
 
     # ---- 4. выгрузки -------------------------------------------------------
 

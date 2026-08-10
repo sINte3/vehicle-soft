@@ -12,6 +12,7 @@
   "inline-style": {
    "templates/login.html": 152
   },
+  "t-key-missing": {},
   "table-class": {},
   "token-dup": {
    "static/css/design-system.css": 1

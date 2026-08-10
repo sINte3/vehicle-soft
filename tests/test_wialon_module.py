@@ -284,6 +284,70 @@ class WialonModuleContracts(unittest.TestCase):
             self.assertEqual(latin, 0,
                              'латиница в подписи: %r' % text)
 
+    def test_labels_change_with_the_account_language(self):
+        """Шесть подписей модуля оставались русскими в узбекском интерфейсе.
+
+        Причина: `t()` при отсутствии ключа в `translations.py` возвращает
+        САМ КЛЮЧ. Вызов в шаблоне стоял, страница отрисовывалась без ошибки,
+        и подпись молча оставалась на языке исходника. Нашёл владелец глазами
+        на экране 2026-08-10; ни один тест этого не видел.
+
+        Проверка идёт по СЛЕДСТВИЮ: одна и та же подпись обязана отличаться
+        у ru- и uz-интерфейса. Отрицательный контроль встроен: верни `t()`
+        ключ — обе стороны совпадут, и проверка упадёт.
+        """
+        from translations import TRANS
+        pairs = [
+            ('Юклаш', 'Загрузить'),
+            ('Кўрсатиш/яшириш', 'Показать/скрыть'),
+            ('Маппингни таҳрирлаш', 'Изменить маппинг'),
+        ]
+        for key, ru_value in pairs:
+            self.assertIn(key, TRANS['uz'], 'нет узбекской стороны: %r' % key)
+            self.assertIn(key, TRANS['ru'], 'нет русской стороны: %r' % key)
+            self.assertEqual(TRANS['ru'][key], ru_value, key)
+            self.assertNotEqual(TRANS['uz'][key], TRANS['ru'][key],
+                                'подпись одинакова в двух языках: %r' % key)
+
+    def test_load_report_labels_have_a_russian_side(self):
+        """Десять подписей отчёта по загрузке были узбекскими константами.
+
+        `{% set is_ru = (lang == 'ru') %}` в шаблоне стоял, но НЕ использовался
+        ни одной подписью — русская учётная запись видела узбекские заголовки.
+        Проверка идёт по источнику: каждое объявление `L_*` обязано зависеть
+        от `is_ru`. Отрицательный контроль: убери условие у любой подписи —
+        и тест назовёт её по имени.
+        """
+        source = re.sub(r'\{#.*?#\}', ' ',
+                        open('templates/wialon_report.html', encoding='utf-8').read(),
+                        flags=re.S)
+        found = re.findall(r"\{%-?\s*set\s+(L_\w+)\s*=\s*(.+?)-?%\}", source, re.S)
+        self.assertGreaterEqual(len(found), 10, 'подписи L_* не найдены вовсе')
+        for name, expr in found:
+            self.assertIn('is_ru', expr,
+                          'подпись %s одинакова в обоих языках: %s' % (name, expr.strip()))
+
+    def test_no_template_calls_t_with_a_key_outside_the_dictionary(self):
+        """Тот же класс, но по ПРИЧИНЕ и по всему модулю, а не по трём ключам.
+
+        Комментарии `{# #}` вырезаются: пример дефекта в пояснении дефектом
+        не является. Escape-последовательности разбираются — Jinja разбирает
+        `\\n` в литерале, и сравнение с сырой строкой дало бы ложные срабатывания.
+        """
+        import glob
+        from translations import TRANS
+        call = re.compile(r"""\bt\(\s*(['"])(.*?)\1\s*\)""", re.S)
+        missing = []
+        for path in sorted(glob.glob('templates/wialon*.html')):
+            source = re.sub(r'\{#.*?#\}', ' ', open(path, encoding='utf-8').read(),
+                            flags=re.S)
+            for m in call.finditer(source):
+                key = (m.group(2).replace('\\n', '\n').replace('\\t', '\t')
+                       .replace('\\"', '"').replace("\\'", "'"))
+                if key not in TRANS['uz'] or key not in TRANS['ru']:
+                    missing.append('%s: %r' % (path, key))
+        self.assertEqual(missing, [], 'ключи вне словаря: %s' % missing)
+
     # ---- остатки прежней вёрстки ------------------------------------------
 
     def test_no_local_style_block_left_in_the_module(self):

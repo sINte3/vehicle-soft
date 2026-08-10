@@ -1,58 +1,57 @@
 {% extends g.base_template %}
 {% from '_icons.html' import icon %}
-{% block title %}Журнал действий{% endblock %}
+{% block title %}{{ t('Ҳаракатлар журнали') }}{% endblock %}
 {% block content %}
-{# ЯЗЫК: страница целиком русская — так она была написана до трека. Устав
-   требует двуязычия; узбекских формулировок для «Фильтр», «С даты», «Объект»,
-   «Описание», «Записей нет» в словаре нет, и придумывать их здесь значит
-   ввести термины, которых владелец не видел. Пункт открыт и назван в
-   docs/tracks/ui.md. Миграция вёрстки его не решает и не делает вид, что
-   решила. #}
+{# ЯЗЫК: страница была написана целиком по-русски до трека. Термины «Фильтр»,
+   «Объект» и «Тавсиф» (описание) названы владельцем 2026-08-10; остальные
+   подписи построены по ним и по уже существующим ключам словаря
+   («Фойдаланувчи», «Действие», «Сана/вақт», «Ҳолат», «Барчаси»,
+   «Кўрсатиш», «Тозалаш», «Кўрсатилган»). Ничего не изобретено сверх этого. #}
 
 <div class="vs-card vs-mb">
-  <div class="vs-card-header"><span class="vs-card-title">Фильтр</span></div>
+  <div class="vs-card-header"><span class="vs-card-title">{{ t('Фильтр') }}</span></div>
   <div class="vs-card-body">
     <form method="get" class="vs-form-row">
       <div class="vs-field" style="min-width:150px;">
-        <label class="vs-label" for="alFrom">С даты</label>
+        <label class="vs-label" for="alFrom">{{ t('Санадан') }}</label>
         <input type="date" id="alFrom" name="date_from" value="{{ date_from }}" class="vs-input">
       </div>
       <div class="vs-field" style="min-width:150px;">
-        <label class="vs-label" for="alTo">По дату</label>
+        <label class="vs-label" for="alTo">{{ t('Санагача') }}</label>
         <input type="date" id="alTo" name="date_to" value="{{ date_to }}" class="vs-input">
       </div>
       <div class="vs-field" style="min-width:180px;">
-        <label class="vs-label" for="alUser">Пользователь</label>
+        <label class="vs-label" for="alUser">{{ t('Фойдаланувчи') }}</label>
         <select name="user_id" id="alUser" class="vs-select">
-          <option value="">Все</option>
+          <option value="">{{ t('Барчаси') }}</option>
           {% for u in users %}
           <option value="{{ u.id }}" {% if selected_user_id == u.id %}selected{% endif %}>{{ u.username }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="vs-field" style="min-width:190px;">
-        <label class="vs-label" for="alAction">Действие</label>
+        <label class="vs-label" for="alAction">{{ t('Действие') }}</label>
         <select name="action" id="alAction" class="vs-select">
-          <option value="">Все</option>
+          <option value="">{{ t('Барчаси') }}</option>
           {% for a in actions %}
           <option value="{{ a }}" {% if selected_action == a %}selected{% endif %}>{{ a }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="vs-field" style="min-width:150px;">
-        <label class="vs-label" for="alModule">Модуль</label>
+        <label class="vs-label" for="alModule">{{ t('Модуль') }}</label>
         <select name="module" id="alModule" class="vs-select">
-          <option value="">Все</option>
+          <option value="">{{ t('Барчаси') }}</option>
           {% for m in modules %}
           <option value="{{ m }}" {% if selected_module == m %}selected{% endif %}>{{ m }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="vs-field vs-field-action">
-        <button class="vs-btn vs-btn-primary" type="submit">{{ icon('filter', 15) }}Показать</button>
+        <button class="vs-btn vs-btn-primary" type="submit">{{ icon('filter', 15) }}{{ t('Кўрсатиш') }}</button>
       </div>
       <div class="vs-field vs-field-action">
-        <a class="vs-btn" href="{{ url_for('admin_audit_logs') }}">Сброс</a>
+        <a class="vs-btn" href="{{ url_for('admin_audit_logs') }}">{{ t('Тозалаш') }}</a>
       </div>
     </form>
   </div>
@@ -65,20 +64,20 @@
    предела приходит из маршрута. #}
 <div class="vs-table-wrap">
   <div class="vs-card-header">
-    <span class="vs-card-title">Последние действия</span>
+    <span class="vs-card-title">{{ t('Охирги ҳаракатлар') }}</span>
   </div>
   <div class="vs-table-scroll">
     <table class="vs-table is-stream is-compact">
       <thead>
         <tr>
-          <th>Дата/время</th>
-          <th>Пользователь</th>
-          <th>Действие</th>
-          <th>Модуль</th>
-          <th>Объект</th>
-          <th>Описание</th>
+          <th>{{ t('Сана/вақт') }}</th>
+          <th>{{ t('Фойдаланувчи') }}</th>
+          <th>{{ t('Действие') }}</th>
+          <th>{{ t('Модуль') }}</th>
+          <th>{{ t('Объект') }}</th>
+          <th>{{ t('Тавсиф') }}</th>
           <th>IP</th>
-          <th>Статус</th>
+          <th>{{ t('Ҳолат') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -112,8 +111,8 @@
           <td colspan="8">
             <div class="vs-empty">
               <div class="vs-empty-icon">{{ icon('list', 28) }}</div>
-              <p class="vs-empty-title">Записей нет</p>
-              <p class="vs-empty-sub">Измените условия фильтра</p>
+              <p class="vs-empty-title">{{ t('Ёзувлар йўқ') }}</p>
+              <p class="vs-empty-sub">{{ t('Фильтр шартларини ўзгартиринг') }}</p>
             </div>
           </td>
         </tr>
@@ -122,9 +121,11 @@
     </table>
   </div>
   <div class="vs-table-foot">
-    <span class="vs-table-count">Показано: <strong>{{ logs|length }}</strong> / {{ audit_log_limit }}</span>
+    <span class="vs-table-count">{{ t('Показано') }}: <strong>{{ logs|length }}</strong> / {{ audit_log_limit }}</span>
     {% if logs|length >= audit_log_limit %}
-    <span class="vs-table-scope">окно последних {{ audit_log_limit }} записей — журнал длиннее, сузьте фильтр</span>
+    {# Число стоит МЕЖДУ двумя ключами, а не внутри строки: подстановка внутрь
+       переведённой фразы дала бы разный порядок слов в двух языках. #}
+    <span class="vs-table-scope">{{ t('аудит журнали ойнаси: охирги') }} {{ audit_log_limit }} {{ t('ёзув — журнал узунроқ, фильтрни торайтиринг') }}</span>
     {% endif %}
   </div>
 </div>

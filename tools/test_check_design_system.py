@@ -113,6 +113,74 @@ class ScanTemplates(unittest.TestCase):
         self.assertEqual(self.counts_for(body)['table-class'], 0)
 
 
+class TKeyMissing(unittest.TestCase):
+    """t('...') s klyuchom, kotorogo net v slovare.
+
+    Klass defekta iz zhizni: v module Vialon shest podpisey vyzyvali t(), no
+    klyuchey v translations.py ne bylo, i t vozvrashchal sam klyuch -- russkiy
+    tekst v uzbekskom interfeyse. Naydeno vladelcem glazami na ekrane.
+    """
+
+    TRANS = {'uz': {'Сақлаш': 'Сақлаш', 'Изоҳ\nқатори': 'Изоҳ\nқатори'},
+             'ru': {'Сақлаш': 'Сохранить', 'Изоҳ\nқатори': 'Строка\nпримечания'}}
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix='cds_tkey_')
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def counts_for(self, body, trans=None):
+        path = os.path.join(self.dir, 't.html')
+        with open(path, 'w', encoding='utf-8') as handle:
+            handle.write(body)
+        counts, detail = cds.scan_templates(
+            [path], self.TRANS if trans is None else trans)
+        return sum(counts.get('t-key-missing', {}).values()), detail
+
+    def test_known_key_passes_and_unknown_key_is_counted(self):
+        ok, _ = self.counts_for("<button>{{ t('Сақлаш') }}</button>")
+        bad, detail = self.counts_for("<button>{{ t('Сохранить') }}</button>")
+        self.assertEqual(ok, 0)
+        self.assertEqual(bad, 1)
+        self.assertEqual(detail['t-key-missing'][0][1], 'Сохранить')
+
+    def test_key_present_in_one_language_only_is_still_a_miss(self):
+        """Klyuch est v uz i net v ru -- uzbekskiy tekst v russkom interfeyse."""
+        half = {'uz': {'Фақат ўзбекча': 'Фақат ўзбекча'}, 'ru': {}}
+        bad, _ = self.counts_for("{{ t('Фақат ўзбекча') }}", half)
+        self.assertEqual(bad, 1)
+
+    def test_escapes_in_the_literal_are_resolved_before_lookup(self):
+        """Jinja razbiraet \\n v literale; sravnivat nado s razobrannym.
+
+        Bez etogo pyat zagolovkov workload.html i tri podtverzhdeniya
+        daily_entry.html chitalis by kak otsutstvuyushchie -- lozhnye
+        srabatyvaniya, iz-za kotorykh proverku by otklyuchili.
+        """
+        bad, _ = self.counts_for("{{ t('Изоҳ\\nқатори') }}")
+        self.assertEqual(bad, 0)
+
+    def test_jinja_comment_mentioning_t_is_not_counted(self):
+        """Kommentariy, ob'yasnyayushchiy defekt, ne dolzhen schitatsya defektom."""
+        body = "{# primer oshibki: t('Охирги кириш') #}\n{{ t('Сақлаш') }}"
+        bad, _ = self.counts_for(body)
+        self.assertEqual(bad, 0)
+
+    def test_without_a_dictionary_the_check_stays_silent(self):
+        """Pustoy slovar dal by 'vse klyuchi otsutstvuyut' -- eto ne proverka."""
+        path = os.path.join(self.dir, 'q.html')
+        with open(path, 'w', encoding='utf-8') as handle:
+            handle.write("{{ t('Что угодно') }}")
+        counts, _ = cds.scan_templates([path])
+        self.assertEqual(sum(counts.get('t-key-missing', {}).values()), 0)
+
+    def test_repository_dictionary_loads_and_is_not_empty(self):
+        """Zagruzchik chitaet nastoyashchiy translations.py, a ne pustoy dict."""
+        trans = cds.load_translations()
+        self.assertIsNotNone(trans)
+        self.assertGreater(len(trans['uz']), 100)
+        self.assertGreater(len(trans['ru']), 100)
+
+
 class TokenDuplicates(unittest.TestCase):
     def test_same_value_under_two_names_is_found_by_value_not_by_name(self):
         css = ':root { --vs-bg: #eef2f7; --vs-border-3: #eef2f7; --vs-text: #182230; }'

@@ -22,7 +22,6 @@ import path from 'node:path';
 import { PNG } from 'pngjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..', '..');
-const OUT = path.join(ROOT, 'docs', 'ux', '51-regression');
 const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 function arg(name, fallback) {
@@ -32,6 +31,10 @@ function arg(name, fallback) {
 const BEFORE = arg('before', 'http://127.0.0.1:5098');
 const AFTER = arg('after', 'http://127.0.0.1:5099');
 const LIMIT = parseInt(arg('limit', '0'), 10);
+// [REASON]: kadry dvuh raznyh okon izmereniya nelzya klast v odin katalog --
+// vtoroy progon perezapisal by kadry pervogo, i sravnit ih uzhe ne vyydet.
+// Katalog zadaetsya yavno, po imeni okna.
+const OUT = path.join(ROOT, 'docs', 'ux', arg('out', '51-regression'));
 
 const VIEWPORTS = {
   laptop: { width: 1440, height: 900 },

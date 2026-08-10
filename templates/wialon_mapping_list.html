@@ -102,7 +102,7 @@
 {% endif %}
 
 <div class="vs-toolbar">
-    <button class="vs-btn vs-btn-sm" onclick="toggleAddForm()" type="button">{{ icon('plus', 14) }}{{ t('Добавить') }}</button>
+    <button class="vs-btn vs-btn-sm" onclick="toggleAddForm()" type="button">{{ icon('plus', 14) }}{{ t('Қўшиш') }}</button>
     <input type="text" id="mappingSearch" class="vs-input vs-toolbar-search" aria-label="{{ t('Поиск по Wialon, технике, госномеру или организации') }}" placeholder="{{ t('Поиск по Wialon, технике, госномеру или организации') }}" oninput="filterMappings()">
     <select id="statusFilter" class="vs-select" aria-label="{{ t('Все статусы') }}" onchange="filterMappings()" style="max-width:220px;">
         <option value="all">{{ t('Все статусы') }}</option>
@@ -198,8 +198,8 @@
                 <span class="vs-row-actions">
                     <button type="button" class="vs-btn vs-btn-icon"
                             onclick="editMappingRow(this)"
-                            aria-label="{{ t('Изменить mapping') }}: {{ m.vialon_name }}"
-                            title="{{ t('Изменить mapping') }}">{{ icon('edit', 14) }}</button>
+                            aria-label="{{ t('Маппингни таҳрирлаш') }}: {{ m.vialon_name }}"
+                            title="{{ t('Маппингни таҳрирлаш') }}">{{ icon('edit', 14) }}</button>
                     <button type="button" class="vs-btn vs-btn-icon"
                             onclick="submitMappingRowSkip(this)"
                             aria-label="{{ t('Отметить как отсутствующий в системе') }}: {{ m.vialon_name }}"

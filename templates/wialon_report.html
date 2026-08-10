@@ -4,16 +4,26 @@
 
 {% block content %}
 {% set is_ru = (lang == 'ru') %}
-{% set L_total_hours = 'Жами мотосоат' %}
-{% set L_units = 'Техника сони' %}
-{% set L_orgs = 'Ташкилот сони' %}
-{% set L_days = 'Кун сони' %}
-{% set L_hour = 'соат' %}
-{% set L_norm = 'Меъёр (8 соат)' %}
-{% set L_load = 'Юклама' %}
-{% set L_unit_plate = 'Техника (Давлат рақами)' %}
-{% set L_engine = 'Мотосоат' %}
-{% set L_grand = 'ЖАМИ БАРЧА ТАШКИЛОТЛАР:' %}
+{# ЯЗЫК: `is_ru` объявлялся здесь с самого начала, но НИ ОДНА подпись его не
+   использовала — все десять были узбекскими константами, и русская учётная
+   запись видела узбекские заголовки таблицы. Отказ молчаливый: `{% set %}`
+   не обязан быть двуязычным, и ни Jinja-парсинг, ни тесты этого не видят.
+   Найдено 2026-08-10 после того, как владелец указал на смешанные языки в
+   модуле Виалон. Русская сторона согласована со словарём: «Юклама» →
+   «Загрузка» ('ЎРТАЧА ЮКЛАМА'), «Мотосоат» → «моточасы» ('НОРМА (МОТОСОАТ)').
+   Двуязычие проверяется тестом
+   tests/test_wialon_module.test_load_report_labels_have_a_russian_side. #}
+{% set L_total_hours = 'Всего моточасов' if is_ru else 'Жами мотосоат' %}
+{% set L_units = 'Количество техники' if is_ru else 'Техника сони' %}
+{% set L_orgs = 'Количество организаций' if is_ru else 'Ташкилот сони' %}
+{% set L_days = 'Количество дней' if is_ru else 'Кун сони' %}
+{% set L_hour = 'ч' if is_ru else 'соат' %}
+{% set L_norm = 'Норма (8 часов)' if is_ru else 'Меъёр (8 соат)' %}
+{% set L_load = 'Загрузка' if is_ru else 'Юклама' %}
+{% set L_unit_plate = 'Техника (госномер)' if is_ru else 'Техника (Давлат рақами)' %}
+{% set L_engine = 'Моточасы' if is_ru else 'Мотосоат' %}
+{% set L_total = 'Итого' if is_ru else 'Жами' %}
+{% set L_grand = 'ИТОГО ПО ВСЕМ ОРГАНИЗАЦИЯМ:' if is_ru else 'ЖАМИ БАРЧА ТАШКИЛОТЛАР:' %}
 
 <div class="vs-row-end vs-mb">
   {% if orgs_data %}
@@ -127,7 +137,7 @@
 <div class="vs-table-wrap vs-mb">
   <div class="vs-card-header">
     <span class="vs-card-title">{{ od.org.name }}</span>
-    <span class="vs-muted">Жами: <strong>{{ od.total_hours|round|int }} {{ L_hour }}</strong></span>
+    <span class="vs-muted">{{ L_total }}: <strong>{{ od.total_hours|round|int }} {{ L_hour }}</strong></span>
   </div>
   <div class="vs-table-scroll">
     <table class="vs-table vs-num is-static is-compact">
@@ -170,7 +180,7 @@
       <tfoot>
         <tr>
           <td></td>
-          <td class="total"><strong>Жами {{ od.org.short_name }}:</strong></td>
+          <td class="total"><strong>{{ L_total }} {{ od.org.short_name }}:</strong></td>
           <td class="right total"><strong>{{ od.total_hours|round|int }} {{ L_hour }}</strong></td>
           <td colspan="2"></td>
         </tr>
