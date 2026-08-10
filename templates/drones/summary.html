@@ -108,7 +108,7 @@
   {% if not data.by_machine.reconciled %}<div class="vs-alert is-danger">{{ mismatch_text }}</div>{% endif %}
   {% if data.by_machine.rows or data.by_machine.unattributed %}
   <div class="vs-table-scroll">
-  <table class="vs-table">
+  <table class="vs-table is-static">
     <thead>
       <tr>
         <th>{{ 'Машина' if is_ru else 'Машина' }}</th>
@@ -177,7 +177,7 @@
   {% if not data.by_operator.reconciled %}<div class="vs-alert is-danger">{{ mismatch_text }}</div>{% endif %}
   {% if data.by_operator.rows or data.by_operator.undetermined.flights or data.by_operator.multiple.flights %}
   <div class="vs-table-scroll">
-  <table class="vs-table">
+  <table class="vs-table is-static">
     <thead>
       <tr>
         <th>{{ 'Оператор' if is_ru else 'Оператор' }}</th>
@@ -238,7 +238,7 @@
   {% if not data.by_region.reconciled %}<div class="vs-alert is-danger">{{ mismatch_text }}</div>{% endif %}
   {% if data.by_region.rows or data.by_region.undetermined %}
   <div class="vs-table-scroll">
-  <table class="vs-table">
+  <table class="vs-table is-static">
     <thead>
       <tr>
         <th>{{ 'Область' if is_ru else 'Вилоят' }}</th>
@@ -292,7 +292,7 @@
   {% if not data.by_usage.reconciled %}<div class="vs-alert is-danger">{{ mismatch_text }}</div>{% endif %}
   {% if data.by_usage.rows %}
   <div class="vs-table-scroll">
-  <table class="vs-table">
+  <table class="vs-table is-static">
     <thead>
       <tr>
         <th>{{ 'Тип работы' if is_ru else 'Иш тури' }}</th>
@@ -341,7 +341,7 @@
   {% if not data.by_month.reconciled %}<div class="vs-alert is-danger">{{ mismatch_text }}</div>{% endif %}
   {% if data.by_month.rows %}
   <div class="vs-table-scroll">
-  <table class="vs-table">
+  <table class="vs-table is-static">
     <thead>
       <tr>
         <th>{{ 'Месяц' if is_ru else 'Ой' }}</th>

@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}{{ t('Камчиликлар') }}{% endblock %}
 {% block content %}
 
@@ -93,7 +94,7 @@
     </div>
     {% if items %}
     <div class="vs-table-scroll">
-        <table class="vs-table">
+        <table class="vs-table is-static">
             <thead>
                 <tr>
                     <th style="width:40px;">№</th>
@@ -111,11 +112,11 @@
                     <td id="def-text-{{ d.id }}" style="white-space:pre-wrap;">{{ d.text }}</td>
                     <td class="text-sm text-muted">{{ d.organization.short_name if d.organization else '—' }}</td>
                     <td>
-                        <button class="btn btn-secondary btn-sm" onclick="editDef({{ d.id }})">✏ {{ t('Таҳрирлаш') }}</button>
+                        <button class="vs-btn vs-btn-icon" onclick="editDef({{ d.id }})">{{ icon('edit', 14) }} {{ t('Таҳрирлаш') }}</button>
                         <form method="post" action="{{ url_for('delete_deficiency', did=d.id) }}" style="display:inline;"
                               onsubmit="return confirm('Ўчиришни тасдиқлайсизми?')">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button class="btn btn-danger btn-sm" type="submit">🗑</button>
+                            <button class="vs-btn vs-btn-icon is-danger" type="submit" aria-label="{{ 'Удалить' if lang == 'ru' else 'Ўчириш' }}">{{ icon('trash', 14) }}</button>
                         </form>
                     </td>
                 </tr>

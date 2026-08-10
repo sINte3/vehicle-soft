@@ -1,40 +1,15 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}{{ t('Юклама ҳисобот') }}{% endblock %}
 
 {% block content %}
-<style>
-.workload-scope input.form-control,
-.workload-scope select.form-control {
-    height: 38px;
-    line-height: 1.4;
-    box-sizing: border-box;
-}
-.workload-scope input[type="date"].form-control {
-    -webkit-appearance: none;
-    appearance: none;
-    padding-top: 0;
-    padding-bottom: 0;
-    display: flex;
-    align-items: center;
-}
-.workload-scope .filter-form-group {
-    margin-bottom: 0;
-    min-width: 0;
-}
-.workload-scope .filter-form-group label {
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--text2);
-    white-space: nowrap;
-}
-</style>
 
 <div class="page-header">
     <h1>{{ t('Юклама ҳисобот') }} <span style="font-size:14px; font-weight:400; color:var(--text2);">{{ t('Мотосоатлар бўйича') }}</span></h1>
 </div>
 
 {# ─── FILTER PANEL ─── #}
-<div class="workload-scope card" style="margin-bottom:20px;">
+<div class="vs-card vs-mb">
     <div class="card-body">
         <form method="get" id="filterForm">
             <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:flex-end;">
@@ -54,20 +29,20 @@
                 {# Date fields #}
                 <div style="display:flex; gap:10px; align-items:flex-end;">
                     <div id="dayFields" style="{% if mode!='day' %}display:none;{% endif %}">
-                        <div class="form-group filter-form-group" style="margin-bottom:0;">
+                        <div class="vs-field" style="margin-bottom:0;">
                             <label>{{ t('Сана') }}</label>
-                            <input type="date" name="date" class="form-control" value="{{ d_from.isoformat() }}"
+                            <input type="date" name="date" class="vs-input" value="{{ d_from.isoformat() }}"
                                    onchange="document.getElementById('filterForm').submit()">
                         </div>
                     </div>
                     <div id="rangeFields" style="{% if mode!='range' %}display:none;{% endif %} display:flex; gap:8px; align-items:flex-end;">
-                        <div class="form-group filter-form-group" style="margin-bottom:0;">
+                        <div class="vs-field" style="margin-bottom:0;">
                             <label>{{ t('Дан:') }}</label>
-                            <input type="date" name="date_from" class="form-control" value="{{ d_from.isoformat() }}">
+                            <input type="date" name="date_from" class="vs-input" value="{{ d_from.isoformat() }}">
                         </div>
-                        <div class="form-group filter-form-group" style="margin-bottom:0;">
+                        <div class="vs-field" style="margin-bottom:0;">
                             <label>{{ t('Гача:') }}</label>
-                            <input type="date" name="date_to" class="form-control" value="{{ d_to.isoformat() }}">
+                            <input type="date" name="date_to" class="vs-input" value="{{ d_to.isoformat() }}">
                         </div>
                     </div>
                     <div id="autoFields" style="{% if mode not in ('week','month') %}display:none;{% endif %}">
@@ -79,9 +54,9 @@
                 </div>
 
                 {# Org filter #}
-                <div class="form-group filter-form-group" style="margin-bottom:0; min-width:200px;">
+                <div class="vs-field" style="margin-bottom:0; min-width:200px;">
                     <label>{{ t('Ташкилот') }}</label>
-                    <select name="org_id" class="form-control" onchange="document.getElementById('filterForm').submit()">
+                    <select name="org_id" class="vs-select" onchange="document.getElementById('filterForm').submit()">
                         <option value="">{{ t('— Барча ташкилотлар —') }}</option>
                         {% for org in user_orgs %}
                         <option value="{{ org.id }}" {% if selected_org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
@@ -95,7 +70,7 @@
                                         date_from=d_from.isoformat(), date_to=d_to.isoformat(),
                                         org_id=selected_org_id or '') }}"
                        class="btn btn-primary">
-                        {{ t('📥 Excel юклаш') }}
+                        {{ icon('download', 15) }} {{ t('Excel юклаш') }}
                     </a>
                 </div>
             </div>
@@ -135,7 +110,7 @@
         <span class="text-muted text-sm">{{ t('Виалон мотосоатлар асосида') }}</span>
     </div>
     <div style="overflow-x:auto;">
-    <table class="workload-table">
+    <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
                 <th rowspan="2" style="width:36px;">№</th>
@@ -208,7 +183,7 @@
 {% else %}
 <div class="card">
     <div class="card-body" style="text-align:center; padding:60px;">
-        <div style="font-size:48px; margin-bottom:16px;">📊</div>
+        <div class="vs-empty-icon">{{ icon('chart', 28) }}</div>
         <h3 style="margin-bottom:8px;">{{ t('Маълумот топилмади') }}</h3>
         <p class="text-muted">
             {{ t('Танланган давр учун Виалон мотосоатлари мавжуд эмас.') }}<br>
@@ -224,50 +199,6 @@
 {% endblock %}
 
 {% block scripts %}
-<style>
-.date-mode-tabs { display:flex; gap:4px; }
-.mode-btn { padding:7px 14px; border:1px solid var(--border); border-radius:6px;
-            background:var(--surface); font-size:13px; cursor:pointer; transition:all 0.15s; font-family:inherit; }
-.mode-btn:hover  { background:var(--surface2); }
-.mode-btn.active { background:var(--accent); color:white; border-color:var(--accent); }
-
-.workload-table { width:100%; border-collapse:collapse; font-size:13px; }
-.workload-table th {
-    background:var(--surface2); font-weight:600; font-size:11px;
-    text-transform:uppercase; letter-spacing:0.3px; color:var(--text2);
-    padding:8px 10px; border:1px solid var(--border);
-    white-space:nowrap; vertical-align:middle;
-}
-.workload-table td {
-    padding:7px 10px; border:1px solid var(--border); vertical-align:middle;
-}
-.workload-table th[colspan],
-.workload-table th[rowspan] { text-align:center; }
-
-.org-header-row td { padding:8px 12px; }
-
-.zero-row td     { background:#fff5f5 !important; }
-.zero-row:hover td { background:#ffe8e8 !important; }
-.workload-table tbody tr:hover td { background:var(--surface2); }
-.zero-row td { color:#c0392b; }
-
-.fact-cell { font-weight:600; }
-.idle-days { color:var(--warn); font-weight:600; }
-
-.pct-cell { min-width:90px; }
-.pct-bar-wrap {
-    position:relative; display:flex; align-items:center;
-    height:20px; background:#f0f0f0; border-radius:3px; overflow:hidden;
-}
-.pct-bar {
-    position:absolute; left:0; top:0; height:100%;
-    opacity:0.25; transition:width 0.3s;
-}
-.pct-label {
-    position:relative; z-index:1; font-size:12px; font-weight:600;
-    width:100%; text-align:center;
-}
-</style>
 <script>
 function setMode(mode) {
     document.getElementById('modeInput').value = mode;

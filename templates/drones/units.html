@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
 {% set can_edit_nicks = current_user.can_edit %}
 {% block title %}{{ 'Дроны — машины' if is_ru else 'Дронлар — машиналар' }}{% endblock %}
@@ -57,7 +58,7 @@
   </div>
   {% if units %}
   <div class="vs-table-scroll">
-  <table class="vs-table">
+  <table class="vs-table is-static">
     <thead>
       <tr>
         <th style="width:70px;">№</th>
@@ -162,7 +163,7 @@
   </div>
   {% else %}
   <div class="vs-empty">
-    <div class="vs-empty-ico">🚁</div>
+    <div class="vs-empty-ico">{{ icon('bot', 28) }}</div>
     <div class="vs-empty-title">{{ 'Машины не заведены' if is_ru else 'Машиналар киритилмаган' }}</div>
     <div class="vs-empty-sub">{{ 'Запустите миграцию DRONES_FOUNDATION_001 — она заводит 15 машин и карту ников.' if is_ru else 'Дронлар фундаменти миграцияси ҳали қўлланилмаган — у 15 машина ва никлар харитасини киритади.' }}</div>
   </div>

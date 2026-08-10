@@ -297,7 +297,7 @@
       </div>
       {% if dashboard.work_orders.by_org %}
       <div class="vs-table-scroll">
-        <table class="vs-table is-compact">
+        <table class="vs-table is-compact is-static">
           <thead>
             <tr>
               <th>{{ 'Организация' if lang == 'ru' else 'Ташкилот' }}</th>
@@ -329,7 +329,7 @@
       </div>
       {% if dashboard.work_orders.by_mechanic %}
       <div class="vs-table-scroll">
-        <table class="vs-table is-compact">
+        <table class="vs-table is-compact is-static">
           <thead>
             <tr>
               <th>{{ 'Механик' if lang == 'ru' else 'Механик' }}</th>
@@ -367,7 +367,7 @@
       </div>
       {% if dashboard.work_orders.overdue_list %}
       <div class="vs-table-scroll">
-        <table class="vs-table is-compact">
+        <table class="vs-table is-compact is-static">
           <thead>
             <tr>
               <th>{{ 'Наряд / Техника' if lang == 'ru' else 'Наряд / Техника' }}</th>
@@ -624,7 +624,7 @@
     </div>
   </div>
   <div class="vs-table-scroll">
-    <table class="vs-table">
+    <table class="vs-table is-static">
       <thead>
         <tr>
           <th style="width:36px;"></th>

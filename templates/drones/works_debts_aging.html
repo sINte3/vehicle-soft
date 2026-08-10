@@ -92,7 +92,7 @@
   </div>
   {% if not data.reconciled %}<div class="vs-alert is-danger">{{ mismatch_text }}</div>{% endif %}
   <div class="vs-table-scroll">
-  <table class="vs-table">
+  <table class="vs-table is-static">
     <thead>
       <tr>
         <th>{{ 'Возраст' if is_ru else 'Ёши' }}</th>
@@ -156,7 +156,7 @@
   </div>
   {% if data.worklist %}
   <div class="vs-table-scroll">
-  <table class="vs-table">
+  <table class="vs-table is-static">
     <thead>
       <tr>
         <th>{{ 'Заказчик' if is_ru else 'Буюртмачи' }}</th>

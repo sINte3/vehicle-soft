@@ -109,7 +109,7 @@
   </div>
   <div class="vs-table-wrap">
     <div class="vs-table-scroll">
-      <table class="vs-table is-compact vs-num">
+      <table class="vs-table is-compact vs-num is-static">
         <thead>
           <tr>
             <th>{{ 'Файл' if is_ru else 'Файл' }}</th>
@@ -148,7 +148,7 @@
   </div>
   <div class="vs-table-wrap">
     <div class="vs-table-scroll">
-      <table class="vs-table is-compact vs-num">
+      <table class="vs-table is-compact vs-num is-static">
         <thead>
           <tr>
             <th>{{ 'Тип оплаты' if is_ru else 'Тўлов тури' }}</th>
@@ -191,7 +191,7 @@
   </div>
   <div class="vs-table-wrap">
     <div class="vs-table-scroll">
-      <table class="vs-table is-compact vs-num">
+      <table class="vs-table is-compact vs-num is-static">
         <thead>
           <tr>
             <th>{{ 'Месяц' if is_ru else 'Ой' }}</th>
@@ -253,7 +253,7 @@
     <div class="vs-label-upper vs-label vs-mt-sm">{{ 'Операторы, которых не удалось определить' if is_ru else 'Аниқлаб бўлмаган операторлар' }}</div>
     {% if snapshot.operators_unresolved %}
     <div class="vs-table-scroll">
-      <table class="vs-table is-compact vs-num">
+      <table class="vs-table is-compact vs-num is-static">
         <thead>
           <tr>
             <th>{{ 'Как написано' if is_ru else 'Қандай ёзилган' }}</th>
@@ -290,7 +290,7 @@
   {% if snapshot.rejections %}
   <div class="vs-table-wrap">
     <div class="vs-table-scroll">
-      <table class="vs-table is-compact">
+      <table class="vs-table is-compact is-static">
         <thead>
           <tr>
             <th>{{ 'Файл' if is_ru else 'Файл' }}</th>
@@ -328,7 +328,7 @@
   {% if snapshot.duplicates %}
   <div class="vs-table-wrap">
     <div class="vs-table-scroll">
-      <table class="vs-table is-compact vs-num">
+      <table class="vs-table is-compact vs-num is-static">
         <thead>
           <tr>
             <th>{{ 'Заказчик' if is_ru else 'Буюртмачи' }}</th>

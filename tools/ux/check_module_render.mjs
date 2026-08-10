@@ -31,6 +31,28 @@ const URLS=JSON.parse(fs.readFileSync(arg('urls','docs/ux/41-task-specs/UI-P6-00
 async function login(page){await page.goto(BASE+'/login',{waitUntil:'domcontentloaded'});
  await page.fill('input[name="username"]','ux_admin');await page.fill('input[name="password"]','ux-audit-local');
  await Promise.all([page.waitForLoadState('domcontentloaded'),page.click('form.vs-login-form button[type="submit"]')]);}
+// [REASON]: STALYY PROCESS -- samaya chastaya lozh etoy proverki. Ekzemplyar
+// keshiruet shablony na vremya zhizni processa (auto_reload idet za app.debug,
+// a on False), poetomu server, podnyatyy DO pravki shablona, otdaet staruyu
+// razmetku i proverka rugaetsya na uzhe ispravlennoe. Tri raza za fazu eto
+// dalo lozhnye padeniya, odin raz -- 12 iz 14.
+// Proverka po logu ("Address already in use") okazalas nedostatochnoy.
+// Nadezhno tolko sravnenie vremen: process obyazan byt MOLOZHE samogo svezhego
+// shablona i samogo svezhego CSS.
+{
+  // Vremya samogo svezhego shablona ili CSS. Sravnite ego so vremenem starta
+  // ekzemplyara (`ps -eo pid,lstart,args | grep serve_ephemeral`): esli server
+  // STARSHE -- on otdaet keshirovannye shablony, i lyuboe padenie nizhe lozhno.
+  const newest = Math.max(
+    ...['templates', 'static/css'].flatMap(function walk(d) {
+      return fs.readdirSync(d, {withFileTypes: true}).flatMap((e) =>
+        e.isDirectory() ? walk(d + '/' + e.name)
+                        : [fs.statSync(d + '/' + e.name).mtimeMs]);
+    }));
+  console.log('newest template/CSS: ' + new Date(newest).toISOString()
+    + '  -- stand must have started AFTER this');
+}
+
 const b=await chromium.launch({executablePath:CHROME});
 const ctx=await b.newContext({viewport:{width:1440,height:900}});
 const p=await ctx.newPage(); await login(p);

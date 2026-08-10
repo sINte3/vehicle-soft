@@ -60,7 +60,7 @@
     <span class="vs-soft" style="font-size:12px;">{{ 'сегодня' if is_ru else 'бугун' }}: {{ today.strftime('%d.%m.%Y') }} (UTC+5)</span>
   </div>
   <div class="vs-table-scroll">
-  <table class="vs-table">
+  <table class="vs-table is-static">
     <thead>
       <tr>
         <th style="width:90px;">{{ 'Машина' if is_ru else 'Машина' }}</th>
@@ -140,7 +140,7 @@
   </div>
   {% if log_rows %}
   <div class="vs-table-scroll">
-  <table class="vs-table">
+  <table class="vs-table is-static">
     <thead>
       <tr>
         <th>{{ 'Начало' if is_ru else 'Бошланиши' }}</th>

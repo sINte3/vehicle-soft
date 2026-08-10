@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Дроны — вылеты' if is_ru else 'Дронлар — парвозлар' }}{% endblock %}
 {% block content %}
@@ -60,7 +61,7 @@
   </div>
   {% if flights %}
   <div class="vs-table-scroll">
-  <table class="vs-table">
+  <table class="vs-table is-static">
     <thead>
       <tr>
         <th>{{ 'Дата и время (UTC+5)' if is_ru else 'Сана ва вақт (Тошкент)' }}</th>
@@ -93,7 +94,7 @@
   </div>
   {% else %}
   <div class="vs-empty">
-    <div class="vs-empty-ico">🚁</div>
+    <div class="vs-empty-ico">{{ icon('bot', 28) }}</div>
     <div class="vs-empty-title">{{ 'Вылетов пока нет' if is_ru else 'Ҳозирча парвозлар йўқ' }}</div>
     <div class="vs-empty-sub">{{ 'Данные появятся после первой синхронизации с DJI SmartFarm.' if is_ru else 'Маълумотлар DJI SmartFarm билан биринчи синхронизациядан кейин пайдо бўлади.' }}</div>
   </div>
