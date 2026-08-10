@@ -97,6 +97,13 @@ def create_non_model_tables():
     db.session.commit()
 
 
+# Marshruty, kotorye VNE dev-konfiguracii otdayut 404 namerenno.
+# [REASON]: app.py:1379 delaet abort(404) bez flaga UI_KITCHEN_SINK -- eto
+# sluzhebnaya poverhnost, i na staging/production ee ne dolzhno byt. Bez etoy
+# pometki kazhdyy progon prinosil ee kak "stranica ne otkryvaetsya".
+DEV_ONLY_ENDPOINTS = {'ui_kitchen_sink'}
+
+
 def collect_routes():
     """Spisok GET-marshrutov dlya obhoda.
 
@@ -163,8 +170,18 @@ def collect_routes():
             skipped.append({'rule': str(rule), 'endpoint': rule.endpoint,
                             'reason': 'unresolved converter'})
             continue
-        routes.append({'url': path, 'endpoint': rule.endpoint,
-                       'slug': path.strip('/').replace('/', '-') or 'root'})
+        # [REASON]: UI-P9. Marshrut s podstavlennym id zhivet tolko tam, gde
+        # etot id est. Spisok sobiraetsya na odnorazovoy baze, a proveryaetsya
+        # na staging -- i /drones/works/import/14 tri progona podryad popadal
+        # v otchet kak defekt prilozheniya, hotya on prosto o drugih dannyh.
+        # Pometka nesetsya v faile, chtoby otchet mog otdelit odno ot drugogo.
+        entry = {'url': path, 'endpoint': rule.endpoint,
+                 'slug': path.strip('/').replace('/', '-') or 'root'}
+        if rule.arguments:
+            entry['id_substituted'] = True
+        if rule.endpoint in DEV_ONLY_ENDPOINTS:
+            entry['dev_only'] = True
+        routes.append(entry)
 
     routes.sort(key=lambda r: r['url'])
     skipped.sort(key=lambda r: r['rule'])
