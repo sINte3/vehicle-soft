@@ -2304,11 +2304,17 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
    [REASON]: подчёркиваются ТОЛЬКО ссылки внутри текста. Кнопки, вкладки и
    пилюли исключены поимённо: они опознаются формой, а сплошное подчёркивание
    всех `<a>` сделало бы интерфейс похожим на документ.
+
+   UI-P9-001: к списку добавлен `.vs-alert`. Плашка — это сплошной абзац
+   текста, и ссылка в ней стоит ровно в предложении; на `/drones/customers`
+   синяя ссылка внутри янтарной плашки давала 1.02:1 к окружающему тексту —
+   по цвету она там не различима вовсе.
    ===================================================================== */
 p a:not(.vs-btn):not(.btn):not(.vs-pill):not(.vs-tab),
 .vs-hint a:not(.vs-btn):not(.btn),
 .text-sm a:not(.vs-btn):not(.btn),
 .vs-muted a:not(.vs-btn):not(.btn),
+.vs-alert a:not(.vs-btn):not(.btn):not(.vs-pill),
 .card-body > a:not(.vs-btn):not(.btn):not(.vs-pill),
 .vs-card-body > a:not(.vs-btn):not(.btn):not(.vs-pill) {
   text-decoration: underline;

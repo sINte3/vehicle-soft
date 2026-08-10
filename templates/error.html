@@ -14,7 +14,12 @@
 
 <div class="card" style="max-width:720px; margin:0 auto;">
     <div class="card-body" style="text-align:center; padding:48px 24px;">
-        <div style="font-size:72px; line-height:1; font-weight:800; color:var(--border-strong); margin-bottom:12px;">
+        {# [REASON]: UI-P9-001. Было `var(--border-strong)` — #e2e8f1 на белой
+           карточке, 1.23:1. Это цвет границы, а не текста: на нём код ошибки
+           не читается ни при каком зрении. `--vs-text-muted` даёт 5.44:1;
+           крупному тексту хватило бы и 3:1, но отдельного токена ради этого
+           не заводим. #}
+        <div style="font-size:72px; line-height:1; font-weight:800; color:var(--vs-text-muted); margin-bottom:12px;">
             {{ code }}
         </div>
 

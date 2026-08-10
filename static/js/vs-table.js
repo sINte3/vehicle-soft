@@ -118,11 +118,29 @@
       // Podpis beretsya iz zagolovka kartochki nad tablicey, a ne
       // pridumyvaetsya zdes: JS ne znaet yazyka interfeysa, a v proekte
       // vsyakaya stroka dvuyazychna.
-      var card = box.closest('.vs-table-wrap, .vs-card');
+      //
+      // UI-P9-001: k spisku dobavlen legacy `.card` s `.card-header`.
+      // Kartochki modulya AZS ostalis staroy razmetki, i `.vs-card-title` v
+      // nih net vovse -- podpisyu vseh TREH tablic otcheta /fuel/report
+      // stanovilos odno i to zhe zaglavie stranicy. Otlichit oblasti drug ot
+      // druga s klaviatury pri etom nelzya, hotya formalno axe molchit:
+      // podpis-to neputaya.
+      var card = box.closest('.vs-table-wrap, .vs-card, .card');
+      var text = '';
       var title = card && card.querySelector('.vs-card-title');
+      if (title) {
+        text = title.textContent;
+      } else {
+        var head = card && card.querySelector('.card-header');
+        // Staryy `.card-header` chasto derzhit dva `<span>`: nazvanie i itog
+        // perioda. Beretsya PERVYY -- podpis oblasti dolzhna byt imenem, a ne
+        // predlozheniem so summoy. Esli detey net -- sam tekst zagolovka.
+        if (head) text = (head.firstElementChild || head).textContent;
+      }
+      if (!text.trim()) text = document.title;
       box.setAttribute('tabindex', '0');
       box.setAttribute('role', 'region');
-      box.setAttribute('aria-label', (title ? title.textContent : document.title).trim());
+      box.setAttribute('aria-label', text.trim());
       box.dataset.vsScrollRegion = '1';
     });
   }
