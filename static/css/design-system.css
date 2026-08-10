@@ -2263,3 +2263,26 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
   color: var(--vs-text-muted); font-size: var(--vs-fs-sm);
 }
 .vs-table summary::-webkit-details-marker { display: none; }
+
+/* ---- P6, AZS: setka podskazok pod shapkoy ekrana ------------------------
+   Byla `.fuel002X-guidance-panel` + `.fuel002X-guidance-card` -- odin i tot zhe
+   komponent pod TREMYA raznymi imenami, po odnomu na ekran (002a, 002c, 002e).
+   Eto tot samyy simptom, radi kotorogo trek zaveden: inkrement delaet svoy CSS
+   vmesto obshchego komponenta. */
+.vs-guide-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 10px; margin-bottom: 16px;
+}
+.vs-guide-card { padding: 10px 12px; }
+.vs-guide-card strong { display: block; margin-bottom: 4px; font-size: var(--vs-fs-sm); }
+.vs-guide-card span { display: block; color: var(--vs-text-muted); font-size: var(--vs-fs-xs); line-height: 1.4; }
+@media (max-width: 1024px) { .vs-guide-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 480px)  { .vs-guide-grid { grid-template-columns: 1fr; } }
+
+/* [REASON]: `.fuel002c-delete-submitted` skript veshaet na formu udaleniya pri
+   otpravke -- i pravila u etogo klassa NE BYLO NIKOGDA, ni v inline-<style>
+   shablona, ni zdes (provereno po istorii fayla). To est zashchita ot vtorogo
+   nazhatiya byla ob'yavlena imenem i nichego ne delala: forma udaleniya
+   ostavalas nazhimaemoy, poka shel zapros.
+   Pravilo napisano rovno po smyslu imeni i nichego k nemu ne dobavlyaet. */
+.fuel002c-delete-submitted { pointer-events: none; opacity: .55; }

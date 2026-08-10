@@ -11,9 +11,6 @@
    "templates/fuel/cards.html": 1,
    "templates/fuel/initial_balance.html": 3,
    "templates/fuel/manual_expenses.html": 1,
-   "templates/fuel/receipts.html": 1,
-   "templates/fuel/stations.html": 2,
-   "templates/fuel/warehouses.html": 1,
    "templates/profile.html": 1,
    "templates/workload.html": 2
   },
@@ -23,9 +20,7 @@
    "templates/fuel/balance_report.html": 3,
    "templates/fuel/cards.html": 4,
    "templates/fuel/dashboard.html": 4,
-   "templates/fuel/receipts.html": 3,
    "templates/fuel/reserve_transfers.html": 2,
-   "templates/fuel/stations.html": 1,
    "templates/login.html": 18,
    "templates/workload.html": 5
   },
@@ -34,12 +29,9 @@
    "templates/fuel/cards.html": 17,
    "templates/fuel/dashboard.html": 97,
    "templates/fuel/manual_expenses.html": 2,
-   "templates/fuel/receipts.html": 172,
    "templates/fuel/report.html": 143,
    "templates/fuel/reports.html": 13,
    "templates/fuel/reserve_transfers.html": 5,
-   "templates/fuel/stations.html": 161,
-   "templates/fuel/warehouses.html": 171,
    "templates/fuel/warnings.html": 142,
    "templates/login.html": 152,
    "templates/workload.html": 68
@@ -51,11 +43,8 @@
    "templates/fuel/initial_balance.html": 1,
    "templates/fuel/ledger.html": 1,
    "templates/fuel/manual_expenses.html": 1,
-   "templates/fuel/receipts.html": 1,
    "templates/fuel/report.html": 3,
    "templates/fuel/reserve_transfers.html": 1,
-   "templates/fuel/stations.html": 1,
-   "templates/fuel/warehouses.html": 1,
    "templates/workload.html": 1
   },
   "token-dup": {

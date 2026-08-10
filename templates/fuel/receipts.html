@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}АЗС — {{ 'Приходы топлива' if lang == 'ru' else 'Ёқилғи киримлари' }}{% endblock %}
 {% block content %}
 {% include 'fuel/_fuel_nav.html' %}
@@ -37,212 +38,39 @@
 {% set L_gd_3_title = '3. Проверяйте итог' if lang == 'ru' else '3. Жамини текширинг' %}
 {% set L_gd_3_text = 'Общий объём по выбранному периоду отображается над таблицей.' if lang == 'ru' else 'Танланган давр бўйича умумий ҳажм жадвал устида кўрсатилади.' %}
 
-<style>
-.fuel-toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
-.fuel-toolbar input[type="text"] { min-width:280px; flex:1; }
-.fuel-help { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:10px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
-.fuel-pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700; background:var(--info-light); color:var(--info); }
-.invalid-client { border-color:var(--danger) !important; box-shadow:0 0 0 2px rgba(220,38,38,.12); }
 
-/* FUEL002A_MARKER: fuel receipts UX refresh, template-only. */
-.fuel002a-page-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 16px;
-  margin-bottom: 14px;
-}
+<div class="vs-row-end vs-mb FUEL002A_MARKER">
+    <div><div class="text-muted text-sm">{{ L_rule }}</div>
 
-.fuel002a-page-header h1 {
-  margin-bottom: 6px;
-}
-
-.fuel002a-subtitle {
-  color: var(--text2);
-  font-size: 13px;
-  line-height: 1.45;
-  margin-top: 2px;
-}
-
-.fuel002a-context-strip {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(140px, 1fr));
-  gap: 10px;
-  margin: 0 0 14px 0;
-}
-
-.fuel002a-pill {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: 10px;
-  padding: 10px 12px;
-  box-shadow: var(--shadow);
-}
-
-.fuel002a-pill span {
-  display: block;
-  color: var(--text2);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .04em;
-  margin-bottom: 4px;
-}
-
-.fuel002a-pill strong {
-  display: block;
-  font-size: 15px;
-  color: var(--text);
-}
-
-.fuel002a-guidance-panel {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(180px, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.fuel002a-guidance-card {
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--accent);
-  background: var(--surface);
-  border-radius: 10px;
-  padding: 11px 13px;
-  box-shadow: var(--shadow);
-}
-
-.fuel002a-guidance-card strong {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.fuel002a-guidance-card span {
-  display: block;
-  color: var(--text2);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.fuel002a-form-card,
-.fuel002a-filter-card,
-.fuel002a-table-card {
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: var(--shadow);
-}
-
-.fuel002a-form-card .card-header,
-.fuel002a-table-card .card-header {
-  min-height: 42px;
-}
-
-.fuel002a-receipt-form .form-inline,
-.fuel002a-filter-form {
-  gap: 10px;
-  align-items: flex-end;
-}
-
-.fuel002a-receipt-form input,
-.fuel002a-receipt-form select,
-.fuel002a-filter-form input,
-.fuel002a-filter-form select {
-  min-height: 36px;
-}
-
-.fuel002a-field-missing {
-  border-color: #dc3545 !important;
-  box-shadow: 0 0 0 2px rgba(220, 53, 69, .08);
-}
-
-.fuel002a-table-wrap {
-  width: 100%;
-  overflow-x: auto;
-}
-
-.fuel002a-table {
-  min-width: 980px;
-}
-
-.fuel002a-table th {
-  white-space: nowrap;
-  font-size: 12px;
-}
-
-.fuel002a-table td {
-  vertical-align: middle;
-}
-
-.fuel002a-fuel-badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  background: var(--accent-light);
-  color: var(--accent);
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  font-weight: 600;
-}
-
-@media (max-width: 1024px) {
-  .fuel002a-context-strip,
-  .fuel002a-guidance-panel {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-@media (max-width: 480px) {
-  .fuel002a-page-header {
-    grid-template-columns: 1fr;
-  }
-
-  .fuel002a-context-strip,
-  .fuel002a-guidance-panel {
-    grid-template-columns: 1fr;
-  }
-
-  .fuel002a-receipt-form .form-inline,
-  .fuel002a-filter-form {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
-}
-/* FUEL002A_END */
-
-</style>
-
-<div class="page-header fuel002a-page-header FUEL002A_MARKER">
-    <div><h1>{{ L_title }}</h1><div class="text-muted text-sm">{{ L_rule }}</div>
-
-<div class="fuel002a-context-strip">
-  <div class="fuel002a-pill">
-    <span>{{ L_cs_period }}</span>
-    <strong>{{ d_from.strftime('%d.%m.%Y') if d_from else '' }}  {{ d_to.strftime('%d.%m.%Y') if d_to else '' }}</strong>
+<div class="vs-kpi-strip vs-kpi-strip-body">
+  <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ L_cs_period }}</span>
+    <strong class="vs-kpi-strip-value is-text">{{ d_from.strftime('%d.%m.%Y') if d_from else '' }}  {{ d_to.strftime('%d.%m.%Y') if d_to else '' }}</strong>
   </div>
-  <div class="fuel002a-pill">
-    <span>{{ L_cs_records }}</span>
-    <strong>{{ items|length }}</strong>
+  <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ L_cs_records }}</span>
+    <strong class="vs-kpi-strip-value is-text">{{ items|length }}</strong>
   </div>
-  <div class="fuel002a-pill">
-    <span>{{ L_total }}</span>
-    <strong>{{ '%.0f'|format(total_qty or 0) }} л</strong>
+  <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ L_total }}</span>
+    <strong class="vs-kpi-strip-value is-text">{{ '%.0f'|format(total_qty or 0) }} л</strong>
   </div>
-  <div class="fuel002a-pill">
-    <span>{{ L_cs_warehouses }}</span>
-    <strong>{{ warehouses|length }}</strong>
+  <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ L_cs_warehouses }}</span>
+    <strong class="vs-kpi-strip-value is-text">{{ warehouses|length }}</strong>
   </div>
 </div>
 
-<div class="fuel002a-guidance-panel">
-  <div class="fuel002a-guidance-card fuel002a-form-card">
+<div class="vs-guide-grid">
+  <div class="vs-card vs-card-accent-success vs-guide-card">
     <strong>{{ L_gd_1_title }}</strong>
     <span>{{ L_gd_1_text }}</span>
   </div>
-  <div class="fuel002a-guidance-card fuel002a-filter-card">
+  <div class="vs-card vs-card-accent-success vs-guide-card">
     <strong>{{ L_gd_2_title }}</strong>
     <span>{{ L_gd_2_text }}</span>
   </div>
-  <div class="fuel002a-guidance-card fuel002a-table-card">
+  <div class="vs-card vs-card-accent-success vs-guide-card">
     <strong>{{ L_gd_3_title }}</strong>
     <span>{{ L_gd_3_text }}</span>
   </div>
@@ -255,7 +83,7 @@
 <div class="card" style="margin-bottom:20px;">
     <div class="card-header"><span id="receiptFormTitle">{{ L_add }}</span></div>
     <div class="card-body">
-        <form method="post" action="{{ url_for('fuel.save_receipt') }}" id="receiptForm" onsubmit="return validateReceiptBeforeSubmit()" class="fuel002a-receipt-form">
+        <form method="post" action="{{ url_for('fuel.save_receipt') }}" id="receiptForm" onsubmit="return validateReceiptBeforeSubmit()" class="vs-form-row">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="rId" value="">
             <div class="form-inline">
@@ -308,7 +136,7 @@
 
 <div class="card" style="margin-bottom:16px;">
     <div class="card-body" style="padding:12px 20px;">
-        <form method="get" class="form-inline fuel002a-filter-form">
+        <form method="get" class="form-inline vs-form-row">
             <div class="form-group" style="margin-bottom:0;"><label>{{ L_from }}</label><input type="date" name="date_from" value="{{ d_from.isoformat() }}" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0;"><label>{{ L_to }}</label><input type="date" name="date_to" value="{{ d_to.isoformat() }}" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0; flex:1;">
@@ -334,8 +162,8 @@
         <span style="font-weight:700; color:var(--accent);">{{ L_total }}: {{ '%.0f'|format(total_qty) }} л</span>
     </div>
     <div style="overflow-x:auto;">
-    <div class="fuel002a-table-wrap FUEL002A_TABLE_WRAP_MARKER">
-<table class="fuel002a-table">
+    <div class="vs-table-scroll FUEL002A_TABLE_WRAP_MARKER">
+<table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
                 <th>{{ L_date }}</th><th>{{ L_wh }}</th><th>{{ L_fuel }}</th><th class="text-right">{{ L_qty }}</th><th>{{ L_supplier }}</th><th>{{ L_doc }}</th><th>{{ L_note }}</th><th></th>
@@ -355,7 +183,7 @@
                 <button class="btn btn-secondary btn-sm" onclick='editR({{ r.id }}, {{ r.receipt_date.isoformat()|tojson }}, {{ r.warehouse_id }}, {{ r.quantity }}, {{ (r.supplier or "")|tojson }}, {{ (r.doc_number or "")|tojson }}, {{ (r.note or "")|tojson }})'>{{ L_edit }}</button>
                 <form method="post" action="{{ url_for('fuel.delete_receipt', rid=r.id) }}" style="display:inline;" onsubmit="return confirm('{{ L_delete }}')">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-danger btn-sm">✕</button>
+                    <button type="submit" class="vs-btn vs-btn-icon is-danger" aria-label="{{ L_delete if L_delete is defined else 'Удалить' }}">{{ icon('trash', 14) }}</button>
                 </form>
             </td>
         </tr>
@@ -428,7 +256,7 @@ document.addEventListener('DOMContentLoaded', filterReceipts);
   function refreshRequiredHints() {
     requiredFields.forEach(function (field) {
       const empty = !String(field.value || '').trim();
-      field.classList.toggle('fuel002a-field-missing', empty);
+      field.classList.toggle('is-error', empty);
     });
   }
 

@@ -1,175 +1,9 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}АЗС — {{ 'Склады и АЗС' if lang == 'ru' else 'Омборлар ва АЗС' }}{% endblock %}
 {% block content %}
 {% include 'fuel/_fuel_nav.html' %}
 
-<style>
-/* FUEL002C_MARKER: fuel warehouses UX refresh, template-only. */
-.fuel002c-page-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 16px;
-  margin-bottom: 14px;
-}
-
-.fuel002c-page-header h1 {
-  margin-bottom: 6px;
-}
-
-.fuel002c-subtitle {
-  color: var(--text2);
-  font-size: 13px;
-  line-height: 1.45;
-  margin-top: 2px;
-}
-
-.fuel002c-context-strip {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(140px, 1fr));
-  gap: 10px;
-  margin: 0 0 14px 0;
-}
-
-.fuel002c-pill {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: 10px;
-  padding: 10px 12px;
-  box-shadow: var(--shadow);
-}
-
-.fuel002c-pill span {
-  display: block;
-  color: var(--text2);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .04em;
-  margin-bottom: 4px;
-}
-
-.fuel002c-pill strong {
-  display: block;
-  font-size: 15px;
-  color: var(--text);
-}
-
-.fuel002c-guidance-panel {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(180px, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.fuel002c-guidance-card {
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--accent);
-  background: var(--surface);
-  border-radius: 10px;
-  padding: 11px 13px;
-  box-shadow: var(--shadow);
-}
-
-.fuel002c-guidance-card strong {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.fuel002c-guidance-card span {
-  display: block;
-  color: var(--text2);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.fuel002c-form-card {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: 12px;
-  padding: 14px;
-  box-shadow: var(--shadow);
-  margin-bottom: 16px;
-}
-
-.fuel002c-form-card form,
-form.fuel002c-save-form {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(180px, 1fr));
-  gap: 10px;
-  align-items: end;
-}
-
-.fuel002c-form-card textarea,
-form.fuel002c-save-form textarea {
-  min-height: 76px;
-}
-
-.fuel002c-table-wrap {
-  width: 100%;
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  margin-bottom: 16px;
-}
-
-.fuel002c-table-wrap .table {
-  margin-bottom: 0;
-}
-
-.fuel002c-warehouse-table {
-  min-width: 900px;
-}
-
-.fuel002c-warehouse-table th {
-  white-space: nowrap;
-  font-size: 12px;
-  background: var(--surface2);
-}
-
-.fuel002c-warehouse-table td {
-  vertical-align: middle;
-}
-
-.fuel002c-delete-form {
-  display: inline-block;
-  margin: 0;
-}
-
-.fuel002c-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-
-.fuel002c-linked-note {
-  color: var(--text2);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-@media (max-width: 1024px) {
-  .fuel002c-context-strip,
-  .fuel002c-guidance-panel {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-@media (max-width: 480px) {
-  .fuel002c-page-header,
-  .fuel002c-context-strip,
-  .fuel002c-guidance-panel,
-  .fuel002c-form-card form,
-  form.fuel002c-save-form {
-    grid-template-columns: 1fr;
-  }
-}
-/* FUEL002C_END */
-</style>
 
 
 
@@ -200,15 +34,9 @@ form.fuel002c-save-form textarea {
 {% set L_search = 'Поиск по складу, организации или АЗС' if lang == 'ru' else 'Омбор, ташкилот ёки АЗС бўйича қидириш' %}
 {% set L_add_station = 'Добавить АЗС' if lang == 'ru' else 'АЗС қўшиш' %}
 
-<style>
-.fuel-help { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
-.fuel-toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
-.fuel-toolbar input[type="text"] { min-width:280px; flex:1; }
-.wh-card.is-hidden { display:none; }
-</style>
 
-<div class="page-header fuel002c-page-header">
-    <div><h1>{{ L_title }}</h1><div class="text-muted text-sm">{{ L_subtitle }}</div></div>
+<div class="vs-row-end vs-mb">
+    <div><div class="text-muted text-sm">{{ L_subtitle }}</div></div>
 </div>
 
 <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); margin-bottom:16px;">
@@ -222,43 +50,43 @@ form.fuel002c-save-form textarea {
     <div class="card-header">{{ L_add }}</div>
     <div class="card-body">
         
-<div class="fuel002c-subtitle FUEL002C_L10N_SUBTITLE_MARKER">{{ t('Ёқилғи омборларини бошқариш: ташкилотлар, АЗС, киримлар ва бошланғич қолдиқлар билан боғланиш.') }}</div>
-<div class="fuel002c-context-strip FUEL002C_MARKER">
-  <div class="fuel002c-pill">
-    <span>{{ t('Омборлар') }}</span>
-    <strong>{{ warehouses|length }}</strong>
+<div class="vs-muted FUEL002C_L10N_SUBTITLE_MARKER">{{ t('Ёқилғи омборларини бошқариш: ташкилотлар, АЗС, киримлар ва бошланғич қолдиқлар билан боғланиш.') }}</div>
+<div class="vs-kpi-strip vs-kpi-strip-body FUEL002C_MARKER">
+  <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ t('Омборлар') }}</span>
+    <strong class="vs-kpi-strip-value is-text">{{ warehouses|length }}</strong>
   </div>
-  <div class="fuel002c-pill">
-    <span>{{ t('Ташкилотлар') }}</span>
-    <strong>{{ organizations|length }}</strong>
+  <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ t('Ташкилотлар') }}</span>
+    <strong class="vs-kpi-strip-value is-text">{{ organizations|length }}</strong>
   </div>
-  <div class="fuel002c-pill">
-    <span>{{ t('Режим') }}</span>
-    <strong>{% if edit_warehouse %}{{ t('Таҳрирлаш') }}{% else %}{{ t('Яратиш') }}{% endif %}</strong>
+  <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ t('Режим') }}</span>
+    <strong class="vs-kpi-strip-value is-text">{% if edit_warehouse %}{{ t('Таҳрирлаш') }}{% else %}{{ t('Яратиш') }}{% endif %}</strong>
   </div>
-  <div class="fuel002c-pill">
-    <span>{{ t('Ўчириш') }}</span>
-    <strong>{{ t('Боғланишлар ҳимояси билан') }}</strong>
+  <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ t('Ўчириш') }}</span>
+    <strong class="vs-kpi-strip-value is-text">{{ t('Боғланишлар ҳимояси билан') }}</strong>
   </div>
 </div>
 
-<div class="fuel002c-guidance-panel">
-  <div class="fuel002c-guidance-card">
+<div class="vs-guide-grid">
+  <div class="vs-card vs-card-accent-success vs-guide-card">
     <strong>{{ t('1. Омбор яратинг ёки танланг') }}</strong>
     <span>{{ t('Омбор АЗС, ёқилғи киримлари ва бошланғич қолдиқларни боғлайди.') }}</span>
   </div>
-  <div class="fuel002c-guidance-card">
+  <div class="vs-card vs-card-accent-success vs-guide-card">
     <strong>{{ t('2. Ташкилотни кўрсатинг') }}</strong>
     <span>{{ t('Ташкилот ёқилғини бўлинмалар бўйича ажратишга ёрдам беради.') }}</span>
   </div>
-  <div class="fuel002c-guidance-card">
+  <div class="vs-card vs-card-accent-success vs-guide-card">
     <strong>{{ t('3. Ўчириш ҳимояланган') }}</strong>
     <span>{{ t('Боғланган АЗС, киримлар ёки қолдиқларга эга омбор ўчирилмайди.') }}</span>
   </div>
 </div>
 
-<div class="fuel002c-form-card FUEL002C_FORM_CARD_MARKER">
-<form method="post" action="{{ url_for('fuel.save_warehouse') }}" class="form-inline fuel002c-save-form">
+<div class="vs-card FUEL002C_FORM_CARD_MARKER">
+<form method="post" action="{{ url_for('fuel.save_warehouse') }}" class="form-inline vs-inline-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" value="">
             <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_name }}</label><input type="text" name="name" required class="form-control"></div>
@@ -293,17 +121,17 @@ form.fuel002c-save-form textarea {
             <a class="btn btn-secondary btn-sm" href="{{ url_for('fuel.warehouses', edit_id=wh.id) }}#warehouse-{{ wh.id }}">{{ L_edit_btn }}</a>
             {% set del_info = warehouse_delete_info.get(wh.id) %}
             {% if del_info and del_info.can_delete %}
-            <form method="post" action="{{ url_for('fuel.delete_warehouse', wid=wh.id) }}" style="display:inline;" onsubmit="return confirm('{{ L_delete }}: {{ wh.name }}?')" class="fuel002c-delete-form">
+            <form method="post" action="{{ url_for('fuel.delete_warehouse', wid=wh.id) }}" style="display:inline;" onsubmit="return confirm('{{ L_delete }}: {{ wh.name }}?')" class="vs-inline-form">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-danger btn-sm">{{ L_delete }}</button>
             </form>
-            {% else %}<span class="idle-badge" title="{{ L_linked_tip }}">🔒 {{ L_used }}</span>{% endif %}
+            {% else %}<span class="idle-badge" title="{{ L_linked_tip }}">{{ icon('blocked', 12) }} {{ L_used }}</span>{% endif %}
         </div>
     </div>
 
     {% if edit_warehouse and edit_warehouse.id == wh.id %}
     <div id="warehouse-{{ wh.id }}" class="card-body" style="background:var(--surface); border-bottom:1px solid var(--border);">
         <div style="font-weight:700; margin-bottom:12px;">{{ L_edit }}: {{ wh.name }}</div>
-        <form method="post" action="{{ url_for('fuel.save_warehouse') }}" class="form-inline fuel002c-save-form">
+        <form method="post" action="{{ url_for('fuel.save_warehouse') }}" class="form-inline vs-inline-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="id" value="{{ wh.id }}">
             <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_name }}</label><input type="text" name="name" required value="{{ wh.name }}" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_org }}</label><select name="organization_id" class="form-control"><option value="">{{ L_unlinked }}</option>{% for org in organizations %}<option value="{{ org.id }}" {% if wh.organization_id == org.id %}selected{% endif %}>{{ org.name }}</option>{% endfor %}</select></div>
@@ -314,8 +142,8 @@ form.fuel002c-save-form textarea {
     {% endif %}
 
     <div class="card-body" style="padding:0;">
-        <div class="fuel002c-table-wrap FUEL002C_TABLE_WRAP_MARKER_1">
-<table class="fuel002c-warehouse-table">
+        <div class="vs-table-scroll FUEL002C_TABLE_WRAP_MARKER_1">
+<table class="vs-table is-static" data-sortable>
             <thead><tr><th>{{ L_stations }}</th><th>Topaz ID</th><th>{{ L_status }}</th><th>{{ L_count }}</th></tr></thead>
             <tbody>
             {% if stations %}
