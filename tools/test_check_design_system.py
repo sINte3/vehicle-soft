@@ -234,6 +234,56 @@ class RawText(unittest.TestCase):
         self.assertLess(len(clean), len(dirty))
 
 
+class RawScroll(unittest.TestCase):
+    """Своя область прокрутки, сделанная атрибутом style, а не классом.
+
+    Класс из жизни: восемь таких обёрток в модуле АЗС. Прогон axe на staging
+    нашёл из них **одну** — `scrollable-region-focusable` срабатывает, только
+    когда таблица в самом деле не помещается, а это зависит от данных на
+    площадке. Отсюда и статическая проверка: она видит все восемь независимо
+    от того, сколько строк в базе.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix='cds_scroll_')
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    def counts_for(self, body):
+        path = os.path.join(self.dir, 't.html')
+        with open(path, 'w', encoding='utf-8') as handle:
+            handle.write(body)
+        counts, _ = cds.scan_templates([path])
+        return sum(counts.get('raw-scroll', {}).values())
+
+    def test_inline_overflow_is_counted_and_the_class_is_not(self):
+        dirty = '<div style="overflow-x:auto;"><table class="vs-table"></table></div>'
+        clean = '<div class="vs-table-scroll"><table class="vs-table"></table></div>'
+        self.assertEqual(self.counts_for(dirty), 1)
+        self.assertEqual(self.counts_for(clean), 0,
+                         '.vs-table-scroll — это и есть правильная обёртка')
+
+    def test_every_wrapper_is_counted_not_just_the_first(self):
+        """Отчёт АЗС держит три таблицы в одной странице — считаться должны все."""
+        body = ('<div style="overflow-x:auto;"></div>'
+                '<div style="overflow-x: scroll">"</div>'
+                '<div style="padding:4px; overflow:auto;"></div>')
+        self.assertEqual(self.counts_for(body), 3)
+
+    def test_overflow_hidden_is_not_a_scroll_region(self):
+        """`overflow:hidden` ничего не прокручивает — фокусу там делать нечего."""
+        self.assertEqual(self.counts_for('<div style="overflow:hidden;"></div>'), 0)
+
+    def test_css_block_is_not_markup(self):
+        """Внутри `<style>` и в самой дизайн-системе `overflow-x` законен.
+
+        Отрицательный контроль к правилу: если бы проверка смотрела не на
+        атрибут, а на подстроку, она бы падала на собственном
+        `.vs-table-scroll { overflow-x: auto; }`.
+        """
+        self.assertEqual(
+            self.counts_for('<style>.a { overflow-x: auto; }</style>'), 0)
+
+
 class TokenDuplicates(unittest.TestCase):
     def test_same_value_under_two_names_is_found_by_value_not_by_name(self):
         css = ':root { --vs-bg: #eef2f7; --vs-border-3: #eef2f7; --vs-text: #182230; }'

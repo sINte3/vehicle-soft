@@ -43,6 +43,12 @@ Chto proveryaetsya
   8. raw-text       kirillicheskiy tekst pryamo v razmetke, mimo t() i mimo
                     vetki `{% if is_ru %}`: cherez slovar on ne prohodit
                     voobshche
+  9. raw-scroll     `style="...overflow-x..."` vmesto klassa .vs-table-scroll:
+                    takaya oblast prokruchivaetsya myshyu, no s klaviatury v
+                    nee ne popast (axe scrollable-region-focusable). Proverka
+                    STATICHESKAYA namerenno: axe vidit narushenie, tolko esli
+                    tablica deystvitelno perepolnena, a eto zavisit ot dannyh
+                    -- iz vosmi takih obertok progon na staging nashel odnu
 
 Pravila proekta, soblyudennye zdes
 ----------------------------------
@@ -90,9 +96,15 @@ RE_ROOT = re.compile(r':root\s*\{(.*?)\}', re.S)
 RE_DECL = re.compile(r'(--[a-z0-9-]+)\s*:\s*([^;]+);')
 RE_VAR_REF = re.compile(r'var\(\s*(--[a-z0-9-]+)\s*\)')
 RE_GLYPH = re.compile('[\U0001F000-\U0001FAFF☀-➿⬀-⯿]')
+# Sobstvennaya oblast prokrutki, sdelannaya inline-stilem vmesto klassa.
+# Lovitsya imenno atribut style, a ne <style>-blok: vnutri CSS `overflow-x`
+# zakonen i vstrechaetsya v samoy dizayn-sisteme.
+RE_RAW_SCROLL = re.compile(r'style\s*=\s*"[^"]*overflow(?:-x)?\s*:\s*(?:auto|scroll)',
+                           re.I)
 
 CHECKS = ('table-class', 'hardcoded-color', 'breakpoint',
-          'token-dup', 'inline-style', 'glyph', 't-key-missing', 'raw-text')
+          'token-dup', 'inline-style', 'glyph', 't-key-missing', 'raw-text',
+          'raw-scroll')
 
 # [REASON]: proverka t-key-missing zakryvaet TOLKO vyzovy t(). Stroka,
 # napisannaya pryamo v razmetke, ne prohodit cherez slovar voobshche i
@@ -224,6 +236,11 @@ def scan_templates(paths, trans=None):
         glyphs = RE_GLYPH.findall(body)
         if glyphs:
             counts['glyph'][key] = len(glyphs)
+
+        raw_scroll = RE_RAW_SCROLL.findall(body)
+        if raw_scroll:
+            counts['raw-scroll'][key] = len(raw_scroll)
+            detail['raw-scroll'].append((key, 'style=... overflow -> .vs-table-scroll'))
 
         # [REASON]: schitaem tolko kogda slovar deystvitelno prochitan. Pri
         # trans=None pustye uz/ru dali by "vse klyuchi otsutstvuyut" -- to est

@@ -200,7 +200,6 @@
 
 <div class="card" style="margin-bottom:24px;">
     <div class="card-header">{{ L_stations }} ({{ station_rows|length }})</div>
-    <div style="overflow-x:auto;">
     <div class="vs-table-scroll FUEL002D_TABLE_WRAP_MARKER_2">
 <table id="stationReportTable" class="vs-table is-static" data-sortable>
         <thead><tr><th>{{ L_station }}</th><th>Topaz ID</th><th>{{ L_wh }}</th><th>{{ L_active }}</th><th class="text-right">{{ L_issued }}</th><th class="text-right">{{ L_tx }}</th><th>{{ L_last }}</th></tr></thead>
@@ -219,12 +218,10 @@
         </tbody>
     </table>
 </div>
-    </div>
 </div>
 
 <div class="card" style="margin-bottom:24px;">
     <div class="card-header">{{ L_recent }} ({{ recent_txns|length }})</div>
-    <div style="overflow-x:auto;">
     <div class="vs-table-scroll FUEL002D_TABLE_WRAP_MARKER_3">
 <table id="recentFuelTxTable" class="vs-table is-static" data-sortable>
         <thead><tr><th>{{ L_datetime }}</th><th>{{ L_station }}</th><th>{{ L_wh }}</th><th>{{ L_fuel }}</th><th class="text-right">{{ L_liters }}</th><th>{{ L_card }}</th><th>Topaz ID</th></tr></thead>
@@ -245,12 +242,10 @@
         </tbody>
     </table>
 </div>
-    </div>
 </div>
 
 <div class="card">
     <div class="card-header">{{ L_sync }} ({{ sync_logs|length }})</div>
-    <div style="overflow-x:auto;">
     <div class="vs-table-scroll FUEL002D_TABLE_WRAP_MARKER_4">
 <table class="vs-table is-static" data-sortable>
         <thead><tr><th>{{ L_time }}</th><th>IP</th><th class="text-right">{{ L_received }}</th><th class="text-right">{{ L_new }}</th><th class="text-right">{{ L_dup }}</th><th class="text-right">{{ L_sync_unknown }}</th><th>{{ L_status }}</th><th>{{ L_error }}</th></tr></thead>
@@ -272,7 +267,6 @@
         </tbody>
     </table>
 </div>
-    </div>
 </div>
 
 {% endblock %}
