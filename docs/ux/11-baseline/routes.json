@@ -6,6 +6,7 @@
    "url": "/"
   },
   {
+   "dev_only": true,
    "endpoint": "ui_kitchen_sink",
    "slug": "__ui-kitchen-sink",
    "url": "/__ui/kitchen-sink"
@@ -92,6 +93,7 @@
   },
   {
    "endpoint": "drones.operator_card",
+   "id_substituted": true,
    "slug": "drones-operators-1",
    "url": "/drones/operators/1"
   },
@@ -147,6 +149,7 @@
   },
   {
    "endpoint": "drones.unit_card",
+   "id_substituted": true,
    "slug": "drones-units-1",
    "url": "/drones/units/1"
   },
@@ -197,11 +200,13 @@
   },
   {
    "endpoint": "drones.works_import_preview",
+   "id_substituted": true,
    "slug": "drones-works-import-14",
    "url": "/drones/works/import/14"
   },
   {
    "endpoint": "drones.works_import_report",
+   "id_substituted": true,
    "slug": "drones-works-import-14-report",
    "url": "/drones/works/import/14/report"
   },
@@ -412,11 +417,13 @@
   },
   {
    "endpoint": "spare_parts.act_detail",
+   "id_substituted": true,
    "slug": "spare-parts-acts-1",
    "url": "/spare-parts/acts/1"
   },
   {
    "endpoint": "spare_parts.act_pdf",
+   "id_substituted": true,
    "slug": "spare-parts-acts-1-pdf",
    "url": "/spare-parts/acts/1/pdf"
   },
