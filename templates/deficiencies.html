@@ -64,7 +64,7 @@
                            aria-label="{{ t('Сана') }}"
                            onchange="document.getElementById('viewForm').submit()">
                 </div>
-                <div id="rangeFields" style="{% if mode != 'range' %}display:none;{% endif %} display:flex; gap:10px; align-items:center;">
+                <div id="rangeFields" style="{% if mode != 'range' %}display:none;{% endif %} display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
                     <label for="dhDatefrom" style="font-size:13px; color:var(--text2);">{{ t('Дан:') }}</label>
                     <input id="dhDatefrom" type="date" name="date_from" value="{{ d_from.isoformat() }}" class="form-control">
                     <label for="dhDateto" style="font-size:13px; color:var(--text2);">{{ t('Гача:') }}</label>

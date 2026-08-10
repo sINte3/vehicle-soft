@@ -27,7 +27,7 @@
                 </div>
 
                 {# Date fields #}
-                <div style="display:flex; gap:10px; align-items:flex-end;">
+                <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
                     <div id="dayFields" style="{% if mode!='day' %}display:none;{% endif %}">
                         <div class="vs-field" style="margin-bottom:0;">
                             <label for="whDate">{{ t('Сана') }}</label>
@@ -35,7 +35,7 @@
                                    onchange="document.getElementById('filterForm').submit()">
                         </div>
                     </div>
-                    <div id="rangeFields" style="{% if mode!='range' %}display:none;{% endif %} display:flex; gap:8px; align-items:flex-end;">
+                    <div id="rangeFields" style="{% if mode!='range' %}display:none;{% endif %} display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end;">
                         <div class="vs-field" style="margin-bottom:0;">
                             <label for="whDatefrom">{{ t('Дан:') }}</label>
                             <input id="whDatefrom" type="date" name="date_from" class="vs-input" value="{{ d_from.isoformat() }}">
