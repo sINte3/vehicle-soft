@@ -1,37 +1,13 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}{{ t('Wialon mapping') }}{% endblock %}
 {% block content %}
 
-<style>
-.wialon-summary { display:grid; grid-template-columns:repeat(4,minmax(140px,1fr)); gap:12px; margin-bottom:16px; }
-.wialon-summary .stat-card { min-height:72px; }
-.wialon-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); box-shadow:var(--shadow); margin-bottom:16px; }
-.wialon-toolbar input[type="text"] { min-width:260px; max-width:420px; flex:1; }
-.wialon-status { display:inline-flex; align-items:center; gap:4px; border-radius:999px; padding:4px 9px; font-size:12px; font-weight:700; white-space:nowrap; }
-.wialon-status-ok { background:var(--accent-light); color:var(--accent); }
-.wialon-status-skip { background:var(--warn-light); color:#8B6914; }
-.wialon-status-unknown { background:var(--danger-light); color:var(--danger); }
-.wialon-name { font-family:monospace; font-size:12px; word-break:break-word; }
-.wialon-eq-label { font-weight:700; }
-.wialon-hint { font-size:12px; color:var(--text2); margin-top:4px; }
-.wialon-row-hidden { display:none; }
-.wialon-pending-row { background:#fffaf0; }
-.wialon-inline-form { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
-.wialon-inline-form select { min-width:240px; flex:1; }
-.wialon-actions { display:flex; gap:6px; justify-content:center; align-items:center; flex-wrap:wrap; }
-@media (max-width:1024px) { .wialon-summary { grid-template-columns:repeat(2,minmax(140px,1fr)); } }
-@media (max-width:480px) { .wialon-summary { grid-template-columns:1fr; } .wialon-toolbar input[type="text"] { min-width:100%; } }
-</style>
-
-<div class="page-header">
-    <div>
-        <h1>{{ t('Wialon mapping') }}</h1>
-        <div class="text-muted text-sm">{{ t('Связка объектов Wialon с техникой предприятия') }}</div>
-    </div>
-    <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <a href="{{ url_for('wialon_index') }}" class="btn btn-secondary">{{ t('← Импорт') }}</a>
-        <a href="{{ url_for('wialon_auto_match') }}" class="btn btn-primary">{{ t('🤖 Авто-маппинг') }}</a>
-    </div>
+{# Заголовок экрана рисует base_next из {% block title %}. #}
+<div class="vs-row-end vs-mb">
+    <span class="vs-muted">{{ t('Связка объектов Wialon с техникой предприятия') }}</span>
+    <a href="{{ url_for('wialon_index') }}" class="vs-btn">{{ icon('upload', 15) }}{{ t('Импорт') }}</a>
+    <a href="{{ url_for('wialon_auto_match') }}" class="vs-btn vs-btn-primary">{{ icon('bot', 15) }}{{ t('Авто-маппинг') }}</a>
 </div>
 
 {% set connected_count = mappings|selectattr('equipment_id')|list|length %}
@@ -39,65 +15,75 @@
 {% set pending_count = pending|length if pending is defined and pending else 0 %}
 {% set total_count = mappings|length %}
 
-<div class="wialon-summary">
-    <div class="stat-card">
-        <div class="label">{{ t('Всего маппингов') }}</div>
-        <div class="value">{{ total_count }}</div>
+{# ADOPT-1: полоса показателей — тот же компонент, что на главной. #}
+<div class="vs-kpi-strip">
+  <div class="vs-kpi-strip-body">
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ t('Всего маппингов') }}</span>
+      <span class="vs-kpi-strip-value vs-num">{{ total_count }}</span>
     </div>
-    <div class="stat-card" style="border-left:4px solid var(--accent);">
-        <div class="label">{{ t('Привязано') }}</div>
-        <div class="value" style="color:var(--accent);">{{ connected_count }}</div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ t('Привязано') }}</span>
+      <span class="vs-kpi-strip-value vs-num is-success">{{ connected_count }}</span>
     </div>
-    <div class="stat-card" style="border-left:4px solid var(--warn);">
-        <div class="label">{{ t('Нет в системе') }}</div>
-        <div class="value" style="color:var(--warn);">{{ skipped_count }}</div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ t('Нет в системе') }}</span>
+      <span class="vs-kpi-strip-value vs-num is-warning">{{ skipped_count }}</span>
     </div>
-    <div class="stat-card" style="border-left:4px solid var(--danger);">
-        <div class="label">{{ t('Ожидают решения') }}</div>
-        <div class="value" style="color:var(--danger);">{{ pending_count }}</div>
+    <div class="vs-kpi-strip-item">
+      <span class="vs-kpi-strip-label">{{ t('Ожидают решения') }}</span>
+      <span class="vs-kpi-strip-value vs-num {% if pending_count %}is-danger{% endif %}">{{ pending_count }}</span>
     </div>
+  </div>
 </div>
 
-<div class="flash flash-info" style="margin-bottom:16px;">
-    💡 {{ t('Wialon mapping rule') }}
+<div class="vs-card vs-card-accent-left vs-mb">
+    <div class="vs-card-body">{{ icon('hint', 15) }} {{ t('Wialon mapping rule') }}</div>
 </div>
 
 {% if pending_count > 0 %}
-<div class="card" style="margin-bottom:24px; border-color:var(--warn);">
-    <div class="card-header" style="background:var(--warn-light); color:#8B6914; display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap;">
-        <span>⚠ {{ t('Новые объекты Wialon без решения') }}: <strong>{{ pending_count }}</strong></span>
-        <span class="text-sm" style="font-weight:400;">{{ t('Выберите технику или отметьте объект как отсутствующий в системе.') }}</span>
+{# DD-028, режим is-static: строки ждут решения оператора, их единицы.
+   Сортировка не объявлена — у каждой строки своя форма, и переставлять их
+   незачем. #}
+<div class="vs-table-wrap vs-mb-lg vs-table-wrap-warning">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ icon('warning', 15) }} {{ t('Новые объекты Wialon без решения') }}: <strong>{{ pending_count }}</strong></span>
+        <span class="vs-muted">{{ t('Выберите технику или отметьте объект как отсутствующий в системе.') }}</span>
     </div>
-    <div style="padding:0; overflow-x:auto;">
-    <table>
+    <div class="vs-table-scroll">
+    <table class="vs-table is-static">
         <thead>
             <tr>
                 <th>{{ t('Wialon объект') }}</th>
                 <th>{{ t('Последний импорт') }}</th>
                 <th style="min-width:340px;">{{ t('Техника в системе') }}</th>
-                <th class="text-center" style="width:180px;">{{ t('Действие') }}</th>
+                <th class="right" style="width:180px;">{{ t('Действие') }}</th>
             </tr>
         </thead>
         <tbody>
         {% for item in pending %}
-        <tr class="wialon-pending-row">
-            <td><div class="wialon-name">{{ item.vialon_name }}</div></td>
-            <td class="text-sm text-muted">{{ item.import_date.strftime('%d.%m.%Y') if item.import_date else '—' }}</td>
+        <tr>
+            <td><code class="vs-mono">{{ item.vialon_name }}</code></td>
+            <td class="vs-muted">{{ item.import_date.strftime('%d.%m.%Y') if item.import_date else '—' }}</td>
             <td>
-                <form method="post" action="{{ url_for('wialon_mapping_save') }}" id="pform-{{ loop.index }}" class="wialon-inline-form">
+                <form method="post" action="{{ url_for('wialon_mapping_save') }}" id="pform-{{ loop.index }}" class="vs-form-row">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="vialon_name" value="{{ item.vialon_name }}">
                     <input type="hidden" name="skip" id="pskip-{{ loop.index }}" value="0">
-                    <select name="equipment_id" id="psel-{{ loop.index }}" class="wialon-equipment-select form-control">
+                    <select name="equipment_id" id="psel-{{ loop.index }}" class="wialon-equipment-select vs-select"
+                            aria-label="{{ t('— выберите технику —') }}: {{ item.vialon_name }}">
                         <option value="">{{ t('— выберите технику —') }}</option>
                         {# PERF-WIALON-MAP-001B: options are loaded once by JavaScript. #}
                     </select>
             </td>
-            <td class="text-center">
-                    <div class="wialon-actions">
-                        <button type="button" class="btn btn-primary btn-sm" onclick="savePending({{ loop.index }})">💾 {{ t('Сохранить') }}</button>
-                        <button type="button" class="btn btn-secondary btn-sm" onclick="skipPending({{ loop.index }})" title="{{ t('Отметить как отсутствующий в системе') }}">🚫 {{ t('Нет') }}</button>
-                    </div>
+            <td class="vs-row-actions-cell">
+                    <span class="vs-row-actions">
+                        <button type="button" class="vs-btn vs-btn-icon" onclick="savePending({{ loop.index }})"
+                                aria-label="{{ t('Сохранить') }}: {{ item.vialon_name }}" title="{{ t('Сохранить') }}">{{ icon('save', 14) }}</button>
+                        <button type="button" class="vs-btn vs-btn-icon" onclick="skipPending({{ loop.index }})"
+                                aria-label="{{ t('Отметить как отсутствующий в системе') }}: {{ item.vialon_name }}"
+                                title="{{ t('Отметить как отсутствующий в системе') }}">{{ icon('blocked', 14) }}</button>
+                    </span>
                 </form>
             </td>
         </tr>
@@ -105,63 +91,78 @@
         </tbody>
     </table>
     </div>
+    <div class="vs-table-foot">
+        <span class="vs-table-count">{{ pending_count }}</span>
+    </div>
 </div>
 {% else %}
-<div class="flash flash-success" style="margin-bottom:24px;">
-    ✅ {{ t('Все найденные объекты Wialon уже имеют решение.') }}
+<div class="vs-card vs-card-accent-success vs-mb-lg">
+    <div class="vs-card-body">{{ icon('check', 15) }} {{ t('Все найденные объекты Wialon уже имеют решение.') }}</div>
 </div>
 {% endif %}
 
-<div class="wialon-toolbar">
-    <button class="btn btn-secondary btn-sm" onclick="toggleAddForm()" type="button">{{ t('+ Добавить') }}</button>
-    <input type="text" id="mappingSearch" class="form-control" placeholder="{{ t('Поиск по Wialon, технике, госномеру или организации') }}" oninput="filterMappings()">
-    <select id="statusFilter" class="form-control" onchange="filterMappings()" style="max-width:220px;">
+<div class="vs-toolbar">
+    <button class="vs-btn vs-btn-sm" onclick="toggleAddForm()" type="button">{{ icon('plus', 14) }}{{ t('Добавить') }}</button>
+    <input type="text" id="mappingSearch" class="vs-input vs-toolbar-search" aria-label="{{ t('Поиск по Wialon, технике, госномеру или организации') }}" placeholder="{{ t('Поиск по Wialon, технике, госномеру или организации') }}" oninput="filterMappings()">
+    <select id="statusFilter" class="vs-select" aria-label="{{ t('Все статусы') }}" onchange="filterMappings()" style="max-width:220px;">
         <option value="all">{{ t('Все статусы') }}</option>
         <option value="linked">{{ t('Привязано') }}</option>
         <option value="skip">{{ t('Нет в системе') }}</option>
         <option value="unknown">{{ t('Без решения') }}</option>
     </select>
-    <span class="entry-stat" id="mappingVisibleCount">{{ t('Показано') }}: {{ total_count }}/{{ total_count }}</span>
+    <span class="vs-badge" id="mappingVisibleCount">{{ t('Показано') }}: {{ total_count }}/{{ total_count }}</span>
 </div>
 
-<div class="card">
-    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
-        <span>{{ t('Все маппинги') }}</span>
-        <span class="text-muted text-sm">{{ t('Изменения сохраняются по каждой строке отдельно.') }}</span>
+{# DD-028, режим is-static. На боевой базе 379 связок — ВЫШЕ порога ~200, и
+   это записано, а не замято: маршрут отдаёт всё без предела, разбиения нет.
+   Перевод в is-paged — решение владельца, порог в DD-028 сам помечен
+   непроверенным предположением (измерение — P7).
+   DD-029: умолчание сортировки совпадает с порядком маршрута
+   (ORDER BY vialon_name), то есть ничего не переставляет. Позиционной связки
+   здесь нет — у каждой строки своя форма по id, — поэтому сортировка
+   безопасна, в отличие от экранов решения. #}
+<div class="vs-table-wrap">
+    <div class="vs-card-header">
+        <span class="vs-card-title">{{ t('Все маппинги') }}</span>
+        <span class="vs-muted">{{ t('Изменения сохраняются по каждой строке отдельно.') }}</span>
     </div>
 
-    <div id="addForm" style="display:none; padding:16px; border-bottom:1px solid var(--border); background:var(--surface2);">
-        <form method="post" action="{{ url_for('wialon_mapping_save') }}" class="wialon-inline-form" onsubmit="return validateManualAdd(this)">
+    <div id="addForm" class="vs-card-body vs-inset-panel" hidden>
+        <form method="post" action="{{ url_for('wialon_mapping_save') }}" class="vs-form-row" onsubmit="return validateManualAdd(this)">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <div class="form-group" style="margin-bottom:0; min-width:280px; flex:1;">
-                <label>{{ t('Wialon объект') }}</label>
-                <input type="text" name="vialon_name" class="form-control" required placeholder="Arion-630C 073 HA">
-                <div class="wialon-hint">{{ t('Введите точное имя объекта из Wialon.') }}</div>
+            <div class="vs-field" style="min-width:280px;">
+                <label class="vs-label" for="wmName">{{ t('Wialon объект') }}</label>
+                <input type="text" id="wmName" name="vialon_name" class="vs-input" required placeholder="Arion-630C 073 HA">
+                <div class="vs-hint">{{ t('Введите точное имя объекта из Wialon.') }}</div>
             </div>
-            <div class="form-group" style="margin-bottom:0; min-width:320px; flex:1;">
-                <label>{{ t('Техника в системе') }}</label>
-                <select name="equipment_id" style="width:100%;" class="wialon-equipment-select form-control">
+            <div class="vs-field" style="min-width:320px;">
+                <label class="vs-label" for="wmEq">{{ t('Техника в системе') }}</label>
+                <select name="equipment_id" id="wmEq" class="wialon-equipment-select vs-select">
                     <option value="">{{ t('— выберите технику —') }}</option>
                         {# PERF-WIALON-MAP-001B: options are loaded once by JavaScript. #}
                 </select>
             </div>
-            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; margin-top:20px; white-space:nowrap;">
-                <input type="checkbox" name="skip" value="1" style="width:auto;"> {{ t('Нет в системе') }}
-            </label>
-            <button type="submit" class="btn btn-primary" style="margin-top:20px;">{{ t('Сохранить') }}</button>
+            <div class="vs-field vs-field-action">
+                <label class="vs-check">
+                    <input type="checkbox" name="skip" value="1"> {{ t('Нет в системе') }}
+                </label>
+            </div>
+            <div class="vs-field vs-field-action">
+                <button type="submit" class="vs-btn vs-btn-primary">{{ icon('save', 15) }}{{ t('Сохранить') }}</button>
+            </div>
         </form>
     </div>
 
     {% if mappings %}
-    <div style="overflow-x:auto;">
-    <table>
+    <div class="vs-table-scroll">
+    <table class="vs-table is-static" data-sortable data-sort-default="0:ascending">
         <thead>
             <tr>
-                <th>{{ t('Wialon объект') }}</th>
-                <th>{{ t('Техника') }}</th>
-                <th>{{ t('Организация') }}</th>
-                <th class="text-center">{{ t('Статус') }}</th>
-                <th class="text-center" style="width:260px;">{{ t('Изменить') }}</th>
+                <th data-sort>{{ t('Wialon объект') }}</th>
+                <th data-sort>{{ t('Техника') }}</th>
+                <th data-sort>{{ t('Организация') }}</th>
+                <th data-sort>{{ t('Статус') }}</th>
+                <th class="right" style="width:150px;">{{ t('Изменить') }}</th>
             </tr>
         </thead>
         <tbody>
@@ -172,65 +173,70 @@
             data-status="{{ row_status }}"
             data-map-id="{{ m.id }}"
             data-equipment-id="{{ m.equipment_id or '' }}">
-            <td><div class="wialon-name">{{ m.vialon_name }}</div></td>
-            <td>
+            <td class="vs-cell-clip" title="{{ m.vialon_name }}"><code class="vs-mono">{{ m.vialon_name }}</code></td>
+            <td data-sort-value="{{ m.equipment.name if m.equipment else '' }}">
                 {% if m.equipment %}
-                    <div class="wialon-eq-label">{{ m.equipment.name }}</div>
-                    {% if m.equipment.plate %}<div class="text-sm text-muted">{{ m.equipment.plate }}</div>{% endif %}
+                    <strong>{{ m.equipment.name }}</strong>
+                    {% if m.equipment.plate %}<div class="vs-muted">{{ m.equipment.plate }}</div>{% endif %}
                 {% elif m.skip %}
-                    <span class="text-muted text-sm">—</span>
+                    <span class="vs-muted">—</span>
                 {% else %}
-                    <span style="color:var(--danger); font-weight:700;">{{ t('Не выбрано') }}</span>
+                    <span class="vs-tone is-danger"><strong>{{ t('Не выбрано') }}</strong></span>
                 {% endif %}
             </td>
-            <td class="text-sm text-muted">{% if m.equipment %}{{ m.equipment.organization.short_name or m.equipment.organization.name }}{% else %}—{% endif %}</td>
-            <td class="text-center">
+            <td class="vs-cell-clip vs-muted">{% if m.equipment %}{{ m.equipment.organization.short_name or m.equipment.organization.name }}{% else %}—{% endif %}</td>
+            <td data-sort-value="{{ row_status }}">
                 {% if m.skip %}
-                    <span class="wialon-status wialon-status-skip">🚫 {{ t('Нет в системе') }}</span>
+                    <span class="vs-badge vs-badge-warning">{{ icon('blocked', 12) }}{{ t('Нет в системе') }}</span>
                 {% elif m.equipment %}
-                    <span class="wialon-status wialon-status-ok">✅ {{ t('Привязано') }}</span>
+                    <span class="vs-badge vs-badge-success">{{ icon('check', 12) }}{{ t('Привязано') }}</span>
                 {% else %}
-                    <span class="wialon-status wialon-status-unknown">⚠ {{ t('Без решения') }}</span>
+                    <span class="vs-badge vs-badge-danger">{{ icon('warning', 12) }}{{ t('Без решения') }}</span>
                 {% endif %}
             </td>
-            <td>
-                    <div class="wialon-actions">
-                    <button type="button" class="btn btn-secondary btn-sm"
+            <td class="vs-row-actions-cell">
+                <span class="vs-row-actions">
+                    <button type="button" class="vs-btn vs-btn-icon"
                             onclick="editMappingRow(this)"
-                            title="{{ t('Изменить mapping') }}">Изм.</button>
-                    <button type="button" class="btn btn-secondary btn-sm"
+                            aria-label="{{ t('Изменить mapping') }}: {{ m.vialon_name }}"
+                            title="{{ t('Изменить mapping') }}">{{ icon('edit', 14) }}</button>
+                    <button type="button" class="vs-btn vs-btn-icon"
                             onclick="submitMappingRowSkip(this)"
-                            title="{{ t('Отметить как отсутствующий в системе') }}">Нет</button>
-                    <button type="button" class="btn btn-danger btn-sm"
+                            aria-label="{{ t('Отметить как отсутствующий в системе') }}: {{ m.vialon_name }}"
+                            title="{{ t('Отметить как отсутствующий в системе') }}">{{ icon('blocked', 14) }}</button>
+                    <button type="button" class="vs-btn vs-btn-icon is-danger"
                             onclick="deleteMappingRow(this)"
-                            title="{{ t('Удалить этот mapping?') }}">Удалить</button>
-                </div>
+                            aria-label="{{ t('Удалить этот mapping?') }}: {{ m.vialon_name }}"
+                            title="{{ t('Удалить этот mapping?') }}">{{ icon('trash', 14) }}</button>
+                </span>
             </td>
         </tr>
         {% endfor %}
-        <tr id="wialon-shared-edit-row" class="wialon-shared-edit-row" style="display:none;">
-            <td colspan="6">
+        {# colspan был 6 при пяти колонках — лишняя ячейка растягивала таблицу. #}
+        <tr id="wialon-shared-edit-row" class="wialon-shared-edit-row" hidden>
+            <td colspan="5" class="vs-cell-form">
                 <form method="post" action="{{ url_for('wialon_mapping_save') }}"
-                      id="wialon-shared-edit-form" class="wialon-inline-form">
+                      id="wialon-shared-edit-form" class="vs-form-row">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="id" id="wialon-shared-map-id" value="">
                     <input type="hidden" name="skip" id="wialon-shared-skip" value="0">
 
                     <select name="equipment_id" id="wialon-shared-equipment-id"
-                            class="wialon-equipment-select form-control" style="width:100%; max-width:520px;"
+                            class="wialon-equipment-select vs-select" style="max-width:520px; flex:1;"
+                            aria-label="{{ t('Техника в системе') }}"
                             data-selected="">
                         <option value="">{{ t('— выберите технику —') }}</option>
                         {# PERF-WIALON-MAPPING-BODY-002B: options are loaded once by JavaScript. #}
                     </select>
 
-                    <button type="submit" class="btn btn-primary btn-sm">{{ t('Сохранить') }}</button>
-                    <button type="button" class="btn btn-secondary btn-sm" onclick="cancelMappingEdit()">{{ t('Отмена') }}</button>
+                    <button type="submit" class="vs-btn vs-btn-primary vs-btn-sm">{{ icon('save', 14) }}{{ t('Сохранить') }}</button>
+                    <button type="button" class="vs-btn vs-btn-sm" onclick="cancelMappingEdit()">{{ t('Отмена') }}</button>
                 </form>
             </td>
         </tr>
 
-        <tr id="wialon-shared-delete-row" style="display:none;">
-            <td colspan="6">
+        <tr id="wialon-shared-delete-row" hidden>
+            <td colspan="5">
                 <form method="post" action="" id="wialon-shared-delete-form">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 </form>
@@ -240,10 +246,16 @@
         </tbody>
     </table>
     </div>
+    <div class="vs-table-foot">
+        <span class="vs-table-count">{{ t('Всего маппингов') }}: <strong>{{ total_count }}</strong></span>
+    </div>
     {% else %}
-    <div class="card-body" style="text-align:center; padding:40px;">
-        <p class="text-muted">{{ t('Маппинг пока пуст.') }}</p>
-        <p class="text-sm text-muted" style="margin-top:8px;">{{ t('После импорта неизвестные Wialon объекты появятся здесь.') }}</p>
+    <div class="vs-card-body">
+        <div class="vs-empty">
+            <div class="vs-empty-icon">{{ icon('link', 28) }}</div>
+            <p class="vs-empty-title">{{ t('Маппинг пока пуст.') }}</p>
+            <p class="vs-empty-sub">{{ t('После импорта неизвестные Wialon объекты появятся здесь.') }}</p>
+        </div>
     </div>
     {% endif %}
 </div>
@@ -289,7 +301,7 @@ document.addEventListener('DOMContentLoaded', populateWialonEquipmentSelects);
 
 function toggleAddForm() {
     var f = document.getElementById('addForm');
-    if (f) f.style.display = f.style.display === 'none' ? 'block' : 'none';
+    if (f) f.hidden = !f.hidden;
 }
 
 // PERF-WIALON-MAPPING-BODY-002B_MARKER: shared mapping edit/delete forms.
@@ -316,7 +328,7 @@ function openSharedMappingEdit(row) {
 
     row.classList.add('wialon-mapping-editing');
     row.parentNode.insertBefore(editRow, row.nextSibling);
-    editRow.style.display = '';
+    editRow.hidden = false;
 
     mapId.value = row.dataset.mapId || '';
     skipInput.value = '0';
@@ -338,7 +350,7 @@ function editMappingRow(btn) {
 function cancelMappingEdit() {
     var editRow = document.getElementById('wialon-shared-edit-row');
     if (editRow) {
-        editRow.style.display = 'none';
+        editRow.hidden = true;
     }
 
     document.querySelectorAll('tr.wialon-mapping-editing').forEach(function(r) {

@@ -457,6 +457,20 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-pill.is-active { background: var(--vs-primary); color: #fff; border-color: var(--vs-primary); }
 
 /* ---------- 5. FORMS -------------------------------------------------- */
+/* [REASON]: `hidden` OBYAZAN pobezhdat lyuboe pravilo raskladki.
+   Naydeno na skrinshote UI-P6-002: pole perioda otcheta s atributom `hidden`
+   prodolzhalo risovatsya. Prichina -- brauzernyy stil ob'yavlyaet
+   `[hidden]{display:none}`, no ON UA-urovnya, i lyuboe AVTORSKOE pravilo,
+   zadayushchee display, ego perebivaet; `.vs-field{display:block}` -- rovno
+   takoe. Specifichnost pri etom RAVNA (odin klass protiv odnogo atributa), i
+   ishod reshaet poryadok v fayle -- to est zavisit ot togo, kuda kto dopishet
+   pravilo zavtra.
+   Proverka atributom v testah takogo ne lovit: v HTML `hidden` STOIT, i test
+   chesten, prosto on proveryaet ne to. Lovit tolko render -- poetomu zdes
+   !important, a v tools/ux/check_wialon_interactions.mjs eto proveryaetsya
+   nastoyashchim brauzerom. */
+[hidden] { display: none !important; }
+
 .vs-field { display: block; }
 .vs-label {
   display: block;
@@ -984,6 +998,83 @@ a.vs-kpi-strip-item:focus-visible { outline: 2px solid var(--vs-primary); outlin
   color: var(--vs-text-muted); font-size: var(--vs-fs-sm);
 }
 .vs-new-model-box { margin-top: 4px; }
+
+/* ---- P6, Vialon: to, chto ran'she zhilo v inline-<style> treh shablonov ---
+   Vse pravila nizhe sobrany iz sobstvennogo CSS wialon_*.html i perevedeny na
+   tokeny. Imena vzyaty obshchie (vs-*), potomu chto kazhdoe iz nih otvechaet na
+   zadachu, kotoraya vstretitsya i v drugih modulyah. */
+
+/* Kartochka-tablica, u kotoroy vsya ramka neset smysl "trebuet vnimaniya" /
+   "oshibka". Ran'she cvet stoyal fonom shapki inline v treh mestah, i vezde
+   po-svoemu (#e8f5ed, var(--warn-light), var(--danger-light)). */
+.vs-table-wrap-warning { border-color: var(--vs-warning); }
+.vs-table-wrap-warning > .vs-card-header {
+  background: var(--vs-warning-bg); border-bottom-color: var(--vs-warning);
+}
+.vs-table-wrap-warning > .vs-card-header .vs-card-title { color: var(--vs-warning); }
+.vs-table-wrap-danger { border-color: var(--vs-danger); }
+.vs-table-wrap-danger > .vs-card-header {
+  background: var(--vs-danger-bg); border-bottom-color: var(--vs-danger);
+}
+.vs-table-wrap-danger > .vs-card-header .vs-card-title { color: var(--vs-danger); }
+
+/* Ton chisla v yacheyke: ne badzh i ne knopka, prosto okrashennoe znachenie.
+   [REASON]: znacheniya vzyaty iz tokenov, proshedshih raschet kontrasta v
+   DD-021 (>= 4.5 na svetlom fone). Do etogo cvet stoyal inline vyrazheniem
+   `color:{% if pct>=0.9 %}var(--accent){% elif ... %}` pryamo v atribute. */
+.vs-tone.is-success { color: var(--vs-success); }
+.vs-tone.is-warning { color: var(--vs-warning); }
+.vs-tone.is-danger  { color: var(--vs-danger); }
+
+/* DD-033, tip 4: polosa-dolya "skolko iz skolkih". Edinstvennaya
+   vizualizaciya, kotoraya v produkte uzhe byla -- narisovannaya dvumya
+   vlozhennymi <div> s inline-shirinoy. Gradientov vnutri net namerenno:
+   gradient delaet dlinu polosy neodnoznachnoy. Chislo stoit ryadom tekstom --
+   grafik ne mozhet byt edinstvennym nositelem znacheniya. */
+.vs-meter {
+  height: 10px; border-radius: var(--vs-r-pill);
+  background: var(--vs-surface-3);
+  overflow: hidden;
+}
+.vs-meter-fill { display: block; height: 100%; border-radius: var(--vs-r-pill); background: var(--vs-primary); }
+.vs-meter-fill.is-success { background: var(--vs-success); }
+.vs-meter-fill.is-warning { background: var(--vs-warning); }
+.vs-meter-fill.is-danger  { background: var(--vs-danger); }
+.vs-meter-label { display: block; margin-top: 3px; font-size: var(--vs-fs-sm); font-weight: 600; }
+
+/* Itogovaya stroka pod naborom tablic. */
+.vs-grand-label { font-size: var(--vs-fs-md); font-weight: 700; }
+.vs-grand-value { font-size: 22px; font-weight: 800; color: var(--vs-primary); }
+
+/* Ryad "tekst sleva, deystvie sprava" vnutri kartochki. */
+.vs-notice-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+}
+/* Ryad iz badzhey, kotorye perenosyatsya. */
+.vs-chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.vs-btn-warning { background: var(--vs-warning); color: #fff; border-color: var(--vs-warning); font-weight: 700; }
+.vs-btn-warning:hover { background: var(--vs-warning); color: #fff; border-color: var(--vs-warning); filter: brightness(.94); }
+
+.vs-hint { font-size: var(--vs-fs-sm); color: var(--vs-text-muted); margin-top: 4px; }
+.vs-inset-panel { background: var(--vs-surface-2); border-bottom: 1px solid var(--vs-border-3); }
+.vs-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.vs-ml-auto { margin-left: auto; }
+.vs-mt-xxs { margin-top: 4px; }
+
+/* Panel instrumentov, prilipayushchaya pod verhney polosoy: na ekrane
+   auto-match spisok dlinnyy, i poisk dolzhen ostavatsya pod rukoy. */
+.vs-toolbar.is-sticky { position: sticky; top: 56px; z-index: 40; }
+@media (max-width: 768px) { .vs-toolbar.is-sticky { top: 0; } }
+
+/* Stroki, kotorye pryachet i podsvechivaet skript ekrana auto-match. Imena
+   sohraneny: ih stavit i snimaet JS po stroke. */
+.automatch-row-hidden { display: none; }
+.automatch-row-error {
+  outline: 2px solid var(--vs-danger); outline-offset: -2px;
+  background: var(--vs-danger-bg);
+}
 
 /* Treugolnik raskrytiya v strokah-akkordeonah.
    [REASON]: bylo simvolom '\25B6' s povorotom po klassu .open i tremya
