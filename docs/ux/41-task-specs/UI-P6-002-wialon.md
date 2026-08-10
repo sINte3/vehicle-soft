@@ -88,6 +88,13 @@ docs/ux/design-system-baseline.json, docs/ux/51-regression/regression.json
 | 10 | латиницы в узбекских подписях нет | `test_no_latin_uzbek_left_in_the_mapping_screen` | 26 подписей |
 | 11 | тесты зелёные | `unittest discover` | 532 → **547** |
 | 12 | axe 0 serious/critical | `shoot_canonical.mjs`, десктоп и 390 px | 10 прогонов, 0/0/0/0 |
+| 13 | страницы вне модуля не изменились | `shoot_regression.mjs` против `9bea874` | 264 строки контроля, **макс 0,11 %** |
+| 14 | новых переполнений по ширине нет | там же | **0 новых, 3 снято** |
+
+Единственное движение вне модуля — `/spare-parts/catalog` и
+`/spare-parts/skus`: следствие правки `[hidden]`, названное заранее в описании
+коммита. Обе страницы стали короче на ≈ 68 px — ровно одна строка поля,
+которое код прятал, а каскад показывал.
 
 ## REQUIRED TESTS
 
