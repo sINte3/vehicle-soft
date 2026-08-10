@@ -1,6 +1,6 @@
 {% extends g.base_template %}
 {% from '_icons.html' import icon %}
-{% block title %}{{ t('Виалон') }} импорт{% endblock %}
+{% block title %}{{ t('Виалон') }} {{ t('Импорт') }}{% endblock %}
 {% block content %}
 {% set is_ru = (lang == 'ru') %}
 {% set L_rows = 'Строк' if is_ru else 'Қаторлар' %}
@@ -28,11 +28,11 @@
   <div class="vs-card-body vs-notice-row">
     <span>
       {{ icon('warning', 16) }}
-      <strong>{{ pending_count }} та техника</strong> маппингда белгиланмаган —
-      улар импортда автоматик ўтказиб юборилади.
+      <strong>{{ pending_count }} {{ t('та техника') }}</strong>
+      {{ t('маппингда белгиланмаган — улар импортда автоматик ўтказиб юборилади.') }}
     </span>
     <a href="{{ url_for('wialon_auto_match') }}" class="vs-btn vs-btn-warning">
-      {{ icon('bot', 15) }}Авто-маппингни очиш
+      {{ icon('bot', 15) }}{{ t('Авто-маппингни очиш') }}
     </a>
   </div>
 </div>

@@ -12,6 +12,33 @@
   "inline-style": {
    "templates/login.html": 152
   },
+  "raw-text": {
+   "templates/__ui_kitchen_sink.html": 3,
+   "templates/base_next.html": 2,
+   "templates/daily_entry.html": 2,
+   "templates/fuel/balance_report.html": 1,
+   "templates/fuel/cards.html": 1,
+   "templates/fuel/dashboard.html": 1,
+   "templates/fuel/initial_balance.html": 1,
+   "templates/fuel/ledger.html": 1,
+   "templates/fuel/manual_expenses.html": 1,
+   "templates/fuel/receipts.html": 1,
+   "templates/fuel/report.html": 1,
+   "templates/fuel/report_card_issues.html": 2,
+   "templates/fuel/report_counter_mismatch.html": 2,
+   "templates/fuel/report_station_totals.html": 2,
+   "templates/fuel/reports.html": 1,
+   "templates/fuel/reserve_transfers.html": 1,
+   "templates/fuel/station_issues_report.html": 2,
+   "templates/fuel/stations.html": 1,
+   "templates/fuel/transactions.html": 1,
+   "templates/fuel/warehouses.html": 1,
+   "templates/fuel/warnings.html": 1,
+   "templates/spare_part_act.html": 1,
+   "templates/spare_part_detail.html": 3,
+   "templates/spare_parts_inventory.html": 7,
+   "templates/spare_parts_purchase_queue.html": 1
+  },
   "t-key-missing": {},
   "table-class": {},
   "token-dup": {

@@ -202,12 +202,17 @@
   <div class="vs-card-body">
     <div class="vs-empty">
       <div class="vs-empty-icon">{{ icon('chart', 28) }}</div>
+      {# Порядок слов расходится: по-русски дата стоит ПОСЛЕ «нет данных за»,
+         по-узбекски — ПЕРЕД «учун маълумот йўқ». Подстановка в одну строку
+         дала бы неверный порядок в одном из языков, поэтому ветки целиком
+         разные, а не собираются из кусков. #}
       <p class="vs-empty-title">
-        {{ d_from.strftime('%d.%m.%Y') }}{% if d_from!=d_to %} — {{ d_to.strftime('%d.%m.%Y') }}{% endif %} учун маълумот йўқ
+        {%- set period = d_from.strftime('%d.%m.%Y') ~ (' — ' ~ d_to.strftime('%d.%m.%Y') if d_from != d_to else '') -%}
+        {% if is_ru %}Нет данных за {{ period }}{% else %}{{ period }} учун маълумот йўқ{% endif %}
       </p>
       <p class="vs-empty-sub">
         <a href="{{ url_for('wialon_index') }}" class="vs-btn vs-btn-primary vs-mt-sm">
-          {{ icon('upload', 15) }}Файл юклаш
+          {{ icon('upload', 15) }}{{ t('Виалон файлини юклаш') }}
         </a>
       </p>
     </div>
