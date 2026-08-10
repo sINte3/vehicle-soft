@@ -130,3 +130,10 @@ docs/ux/51-regression/after/
 # numbers and the comparison sheet are committed, the PNG are not.
 docs/ux/5?-p6-*/before/
 docs/ux/5?-p6-*/after/
+
+# P7 clean re-run: one directory per measurement WINDOW, not per module --
+# shoot_regression.mjs got --out precisely so two windows do not overwrite
+# each other's frames. Same rule as every set above: regression.json is
+# committed, the 216 MB of PNG are not.
+docs/ux/5?-regression-*/before/
+docs/ux/5?-regression-*/after/
