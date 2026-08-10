@@ -4098,6 +4098,19 @@ def api_card_sync():
                    aliases_conflicted=aliases_conflicted, rows_skipped=rows_skipped)
 
 
+# [REASON]: UI-P8-003. Na boevoy baze v spravochnike 4885 kart, i stranica
+# vydavala ikh vse odnim spiskom -- 204 444 piksela vysoty, izmereno progonom
+# na staging (UI-P7). Vladelec vybral (2026-08-10) poisk na servere vmesto
+# razbieniya na stranicy: operator ishchet polem, a ne brauzerom.
+#
+# Poisk na servere zdes byl uzhe -- ne bylo predela na vydachu bez poiska.
+# Chislo vzyato po analogii s zhurnalom deystviy (audit_log_limit = 300):
+# eto edinstvennoe okno, kotoroe v etom proekte uzhe pokazano vladelcu i
+# prinyato im. Okhvat podpisan pod tablicey, i predel prikhodit v shablon
+# otsyuda, chtoby podpis i zapros nazyvali odno chislo.
+FUEL_CARD_WINDOW = 300
+
+
 @fuel_bp.route('/cards')
 @module_required('fuel')
 def card_directory():
@@ -4128,14 +4141,18 @@ def card_directory():
     else:
         cards = all_cards
 
+    # Pokazateli schitayutsya po VSEMU naydennomu naboru, a ne po oknu:
+    # inache "vsego kart" pokazyvalo by razmer okna i vralo by.
     total_cards = len(cards)
     active_cards = sum(1 for c in cards if c.enabled)
+    shown_cards = cards[:FUEL_CARD_WINDOW]
     total_aliases = FuelCardAlias.query.count()
     last_sync = FuelCardSyncLog.query.order_by(FuelCardSyncLog.synced_at.desc()).first()
     sync_logs = FuelCardSyncLog.query.order_by(FuelCardSyncLog.synced_at.desc()).limit(20).all()
 
     return render_template('fuel/cards.html',
-        cards=cards, total_cards=total_cards, active_cards=active_cards,
+        cards=shown_cards, total_cards=total_cards, active_cards=active_cards,
+        card_window=FUEL_CARD_WINDOW, cards_truncated=len(cards) > FUEL_CARD_WINDOW,
         total_aliases=total_aliases, last_sync=last_sync,
         sync_logs=sync_logs, q=request.args.get('q', ''))
 

@@ -7,6 +7,8 @@
 {% set L_title = 'Справочник топливных карт' if lang == 'ru' else 'Ёқилғи карталари маълумотномаси' %}
 {% set L_subtitle = 'Каталог карт Topaz: имена, RFID, статус и синхронизация' if lang == 'ru' else 'Topaz карталари каталоги: номлар, RFID, ҳолат ва синхронизация' %}
 {% set L_total_cards = 'Всего карт' if lang == 'ru' else 'Жами карталар' %}
+{% set L_window_prefix = 'окно первых' if lang == 'ru' else 'биринчи' %}
+{% set L_window_suffix = 'карт — справочник длиннее, воспользуйтесь поиском' if lang == 'ru' else 'та карта ойнаси — справочник узунроқ, қидирувдан фойдаланинг' %}
 {% set L_total_aliases = 'Всего alias-привязок' if lang == 'ru' else 'Жами alias боғланишлар' %}
 {% set L_active_cards = 'Активных карт' if lang == 'ru' else 'Фаол карталар' %}
 {% set L_last_sync = 'Последняя синхронизация' if lang == 'ru' else 'Охирги синхронизация' %}
@@ -67,8 +69,8 @@
     <form method="GET" action="{{ url_for('fuel.card_directory') }}">
         <div class="filter-row">
             <div>
-                <label>{{ L_search }}</label>
-                <input type="search" name="q" placeholder="{{ L_search_ph }}" value="{{ q }}" class="form-control">
+                <label for="chQ">{{ L_search }}</label>
+                <input id="chQ" type="search" name="q" placeholder="{{ L_search_ph }}" value="{{ q }}" class="form-control">
             </div>
             <div>
                 <button type="submit" class="btn btn-primary btn-sm">{{ L_find }}</button>
@@ -83,7 +85,7 @@
 {% if cards %}
 
 <div class="card" style="overflow:hidden;">
-    <div style="overflow-x:auto;">
+    <div class="vs-table-scroll">
         <table class="vs-table is-static" data-sortable>
             <thead>
                 <tr>
@@ -113,6 +115,16 @@
             </tbody>
         </table>
     </div>
+    {# DD-028: режим окна. Таблица показывает первые `card_window` карт из
+       `total_cards`; поиск при этом идёт по ВСЕМУ справочнику на сервере, а не
+       по показанному куску. Число предела приходит из маршрута, чтобы подпись
+       и запрос называли одно и то же. #}
+    <div class="vs-table-foot">
+        <span class="vs-table-count">{{ t('Показано') }}: <strong>{{ cards|length }}</strong> / {{ total_cards }}</span>
+        {% if cards_truncated %}
+        <span class="vs-table-scope">{{ L_window_prefix }} {{ card_window }} {{ L_window_suffix }}</span>
+        {% endif %}
+    </div>
 </div>
 
 {% else %}
@@ -134,7 +146,7 @@
 <div class="cards-sync-section">
     <div class="card">
         <div class="card-header">{{ L_sync_title }} {{ sync_logs|length }})</div>
-        <div style="overflow-x:auto;">
+        <div class="vs-table-scroll">
             <table class="vs-table is-static is-compact" data-sortable>
                 <thead>
                     <tr>
