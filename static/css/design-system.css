@@ -2067,3 +2067,80 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 .vs-table tr.is-focus td:first-child { border-left: 3px solid var(--vs-primary); }
 .vs-check { display: inline-flex; align-items: center; gap: 6px; }
 .vs-check input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--vs-primary); }
+
+/* ---- P6, naryady: dva vida odnogo spiska --------------------------------
+   Na uzkom ekrane tablica iz vosmi kolonok chitaetsya ploho dazhe s
+   prokrutkoy, poetomu spisok pokazyvaetsya kartochkami. Razmetka otdaetsya
+   celikom v oboih vidah, pereklyuchaet ih CSS.
+   [REASON]: granica -- 768 po shkale DD-024, ta zhe, na kotoroy saydbar
+   uhodit v overlay. Odno chislo na dva resheniya, a ne dva blizkih. */
+.vs-table-wrap.is-wide-only { display: block; }
+.vs-list-cards { display: none; }
+@media (max-width: 768px) {
+  .vs-table-wrap.is-wide-only { display: none; }
+  .vs-list-cards { display: block; }
+}
+.vs-list-card {
+  display: block; text-decoration: none; color: inherit;
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-border); border-radius: var(--vs-r);
+  box-shadow: var(--vs-shadow-sm);
+  padding: 14px; margin-bottom: 10px;
+}
+.vs-list-card:hover { border-color: var(--vs-primary); }
+.vs-list-card:focus-visible { outline: 2px solid var(--vs-primary); outline-offset: 2px; }
+.vs-list-card-top {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 8px;
+}
+.vs-list-card-row { font-size: var(--vs-fs-sm); margin-top: 3px; }
+.vs-nowrap { white-space: nowrap; }
+
+/* ---- P6, karta zapisi: setka "podpis -> znachenie" ----------------------
+   Byla `.wod-grid`/`.wod-card` v inline-<style> odnogo shablona. Zadacha
+   obshchaya: pokazat dvenadcat polya odnoy zapisi tak, chtoby glaz shel po
+   podpisyam, a ne po ramkam. */
+.vs-def-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr));
+  gap: 12px; margin-bottom: 16px;
+}
+.vs-def-item {
+  background: var(--vs-surface); border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r); box-shadow: var(--vs-shadow-sm); padding: 12px;
+}
+.vs-def-item.is-full { grid-column: 1 / -1; }
+.vs-def-label {
+  color: var(--vs-text-muted); font-size: var(--vs-fs-xs); font-weight: 700;
+  text-transform: uppercase; letter-spacing: .4px; margin-bottom: 4px;
+}
+@media (max-width: 768px) { .vs-def-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 480px) { .vs-def-grid { grid-template-columns: 1fr; } }
+
+/* Lenta sobytiy zapisi. Bylo `.history-*` bez prefiksa v inline-<style> --
+   imena bez prefiksa opasny: oni stolknutsya s lyubym drugim ekranom. */
+.vs-history-entry {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline;
+  padding: 8px 0; border-bottom: 1px dashed var(--vs-border);
+  font-size: var(--vs-fs-sm);
+}
+.vs-history-entry:last-child { border-bottom: none; }
+.vs-history-time { color: var(--vs-text-muted); font-size: var(--vs-fs-xs); min-width: 120px; }
+.vs-history-actor { font-weight: 700; }
+.vs-history-event { color: var(--vs-text-muted); font-size: var(--vs-fs-xs); }
+.vs-history-comment { color: var(--vs-text-muted); font-style: italic; }
+@media (max-width: 768px) { .vs-history-entry { flex-direction: column; gap: 2px; } }
+
+.vs-mr-auto { margin-right: auto; }
+
+/* ---- P6, forma naryada -------------------------------------------------- */
+.vs-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.vs-form-grid .full { grid-column: 1 / -1; }
+@media (max-width: 768px) { .vs-form-grid { grid-template-columns: 1fr; } }
+
+.vs-hint.is-warning { color: var(--vs-warning); }
+/* Svodka oshibok formy: pokazyvaetsya skriptom pered otpravkoy. */
+.vs-form-errors { display: none; }
+.vs-form-errors.is-visible { display: block; }
+.vs-form-errors ul { margin: 6px 0 0 18px; }
+/* Imya sohraneno: klass stavit i snimaet skript ekrana pered otpravkoy. */
+.wof-err { border-color: var(--vs-danger) !important; box-shadow: var(--vs-ring-danger, 0 0 0 2px var(--vs-danger-bg)); }

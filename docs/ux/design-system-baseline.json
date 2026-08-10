@@ -28,7 +28,6 @@
    "templates/spare_parts_purchase_queue.html": 2,
    "templates/spare_parts_report_page.html": 3,
    "templates/spare_parts_skus.html": 2,
-   "templates/work_order_detail.html": 1,
    "templates/workload.html": 2
   },
   "hardcoded-color": {
@@ -45,7 +44,6 @@
    "templates/fuel/station_issues_report.html": 3,
    "templates/fuel/stations.html": 1,
    "templates/login.html": 18,
-   "templates/work_order_form.html": 1,
    "templates/workload.html": 5
   },
   "inline-style": {
@@ -68,10 +66,6 @@
    "templates/spare_part_form.html": 30,
    "templates/spare_parts_desk.html": 11,
    "templates/spare_parts_inventory.html": 5,
-   "templates/work_order_close.html": 11,
-   "templates/work_order_detail.html": 26,
-   "templates/work_order_form.html": 12,
-   "templates/work_orders_list.html": 27,
    "templates/workload.html": 68
   },
   "table-class": {
@@ -90,7 +84,6 @@
    "templates/fuel/station_issues_report.html": 1,
    "templates/fuel/stations.html": 1,
    "templates/fuel/warehouses.html": 1,
-   "templates/work_orders_list.html": 1,
    "templates/workload.html": 1
   },
   "token-dup": {

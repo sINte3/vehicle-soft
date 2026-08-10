@@ -1,96 +1,67 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ wo.number }}{% endblock %}
 {% block content %}
 
-<style>
-/* WORK-ORDER-001 Phase 2: detail page, scoped styles reuse base design tokens. */
-.wod-scope .wod-hero { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
-.wod-scope .wod-hero h1 { margin:0 0 6px 0; font-size:24px; line-height:1.2; }
-.wod-scope .wod-back { color:var(--text2); text-decoration:none; font-size:13px; display:inline-block; margin-bottom:8px; }
-.wod-scope .wod-badge { display:inline-flex; align-items:center; border-radius:999px; padding:6px 12px; font-size:13px; font-weight:700; background:var(--surface2); white-space:nowrap; }
-.wod-scope .wod-grid { display:grid; grid-template-columns:repeat(3,minmax(160px,1fr)); gap:12px; margin-bottom:16px; }
-.wod-scope .wod-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:12px; box-shadow:var(--shadow); }
-.wod-scope .wod-card .label { color:var(--text2); font-size:11px; text-transform:uppercase; font-weight:700; margin-bottom:4px; }
-.wod-scope .wod-card .full { grid-column:1 / -1; }
-.wod-scope .full { grid-column:1 / -1; }
-.wod-scope .wod-actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
-.wod-scope .wod-actions form { display:inline; margin:0; }
-.wod-scope .wod-done-box { border-left:4px solid var(--accent); background:var(--accent-light); border-radius:var(--radius); padding:12px 14px; margin-bottom:16px; }
-.wod-scope .history-entry { display:flex; flex-wrap:wrap; gap:10px; align-items:baseline; padding:8px 0; border-bottom:1px dashed var(--border); font-size:13px; }
-.wod-scope .history-entry:last-child { border-bottom:none; }
-.wod-scope .history-time { color:var(--text2); font-size:12px; min-width:120px; }
-.wod-scope .history-actor { font-weight:700; }
-.wod-scope .history-event { color:var(--text2); font-size:12px; }
-.wod-scope .history-comment { color:var(--text2); font-style:italic; }
-@media (max-width:768px) {
-    .wod-scope .wod-grid { grid-template-columns:1fr 1fr; }
-    .wod-scope .wod-hero { flex-direction:column; }
-    .wod-scope .history-entry { flex-direction:column; gap:2px; }
-}
-@media (max-width:480px) { .wod-scope .wod-grid { grid-template-columns:1fr; } }
-</style>
-
-<div class="wod-scope">
-
 {% set eq_label = wo.equipment.name ~ ((' — ' ~ wo.equipment.plate) if wo.equipment and wo.equipment.plate else '') if wo.equipment else '—' %}
 
-<div class="wod-hero">
-    <div>
-        <a href="{{ url_for('work_orders.index') }}" class="wod-back">← {{ 'Наряды' if is_ru else 'Buyurtmalar' }}</a>
-        <h1>{{ wo.number }}</h1>
-    </div>
-    <span class="wod-badge" style="color:{{ status_colors[wo.status] }};">{{ status_labels[wo.status] }}</span>
+{# Номер наряда — заголовок экрана, его рисует base_next из {% block title %}. #}
+<div class="vs-row-end vs-mb">
+    <a href="{{ url_for('work_orders.index') }}" class="vs-btn vs-mr-auto">{{ icon('list', 15) }}{{ 'Наряды' if is_ru else 'Буюртмалар' }}</a>
+    <span class="vs-badge {{ status_tones.get(wo.status, '') }}">{{ status_labels[wo.status] }}</span>
 </div>
 
 <!-- Info card -->
-<div class="wod-grid">
-    <div class="wod-card"><div class="label">{{ 'Техника' if is_ru else 'Texnika' }}</div><div>{{ eq_label }}</div></div>
-    <div class="wod-card"><div class="label">{{ 'Организация' if is_ru else 'Tashkilot' }}</div><div>{{ (wo.organization.short_name or wo.organization.name) if wo.organization else '—' }}</div></div>
-    <div class="wod-card"><div class="label">{{ 'Плановая дата' if is_ru else 'Rejalashtirilgan sana' }}</div><div>{{ wo.planned_date.strftime('%d.%m.%Y') }}</div></div>
-    <div class="wod-card"><div class="label">{{ 'Тип работы' if is_ru else 'Ish turi' }}</div><div>{{ wo.work_type_text or '—' }}</div></div>
-    <div class="wod-card"><div class="label">{{ 'Заказчик' if is_ru else 'Buyurtmachi' }}</div><div>{{ wo.customer_text or '—' }}</div></div>
-    <div class="wod-card"><div class="label">{{ 'Исполнитель' if is_ru else 'Ijrochi' }}</div><div>{{ (wo.assignee.full_name or wo.assignee.username) if wo.assignee else '—' }}</div></div>
-    <div class="wod-card"><div class="label">{{ 'Плановый объём' if is_ru else 'Rejalashtirilgan hajm' }}</div><div>{{ wo.planned_quantity if wo.planned_quantity is not none else '—' }} {{ wo.unit }}</div></div>
-    <div class="wod-card"><div class="label">{{ 'Цена за ед.' if is_ru else 'Birlik narxi' }}</div><div>{{ wo.price|fmt_sum or '0' }}</div></div>
-    <div class="wod-card"><div class="label">{{ 'Тип оплаты' if is_ru else 'To‘lov turi' }}</div><div>{{ payment_labels.get(wo.payment_type, '—') if wo.payment_type else '—' }}</div></div>
-    <div class="wod-card full"><div class="label">{{ 'Примечание' if is_ru else 'Izoh' }}</div><div>{{ wo.note or '—' }}</div></div>
+<div class="vs-def-grid">
+    <div class="vs-def-item"><div class="vs-def-label">{{ 'Техника' if is_ru else 'Техника' }}</div><div>{{ eq_label }}</div></div>
+    <div class="vs-def-item"><div class="vs-def-label">{{ 'Организация' if is_ru else 'Ташкилот' }}</div><div>{{ (wo.organization.short_name or wo.organization.name) if wo.organization else '—' }}</div></div>
+    <div class="vs-def-item"><div class="vs-def-label">{{ 'Плановая дата' if is_ru else 'Режалаштирилган сана' }}</div><div>{{ wo.planned_date.strftime('%d.%m.%Y') }}</div></div>
+    <div class="vs-def-item"><div class="vs-def-label">{{ 'Тип работы' if is_ru else 'Иш тури' }}</div><div>{{ wo.work_type_text or '—' }}</div></div>
+    <div class="vs-def-item"><div class="vs-def-label">{{ 'Заказчик' if is_ru else 'Буюртмачи' }}</div><div>{{ wo.customer_text or '—' }}</div></div>
+    <div class="vs-def-item"><div class="vs-def-label">{{ 'Исполнитель' if is_ru else 'Ижрочи' }}</div><div>{{ (wo.assignee.full_name or wo.assignee.username) if wo.assignee else '—' }}</div></div>
+    <div class="vs-def-item"><div class="vs-def-label">{{ 'Плановый объём' if is_ru else 'Режалаштирилган ҳажм' }}</div><div>{{ wo.planned_quantity if wo.planned_quantity is not none else '—' }} {{ wo.unit }}</div></div>
+    <div class="vs-def-item"><div class="vs-def-label">{{ 'Цена за ед.' if is_ru else 'Бирлик нархи' }}</div><div>{{ wo.price|fmt_sum or '0' }}</div></div>
+    <div class="vs-def-item"><div class="vs-def-label">{{ 'Тип оплаты' if is_ru else 'Тўлов тури' }}</div><div>{{ payment_labels.get(wo.payment_type, '—') if wo.payment_type else '—' }}</div></div>
+    <div class="vs-def-item is-full"><div class="vs-def-label">{{ 'Примечание' if is_ru else 'Изоҳ' }}</div><div>{{ wo.note or '—' }}</div></div>
 </div>
 
 <!-- Actual results (only when done) -->
 {% if wo.status == 'done' %}
-<div class="wod-done-box">
-    <div style="font-weight:700; margin-bottom:8px;">{{ 'Результат' if is_ru else 'Natija' }}</div>
-    <div class="wod-grid" style="margin-bottom:0;">
-        <div class="wod-card"><div class="label">{{ 'Фактическая дата' if is_ru else 'Haqiqiy sana' }}</div><div>{{ wo.actual_date.strftime('%d.%m.%Y') if wo.actual_date else '—' }}</div></div>
-        <div class="wod-card"><div class="label">{{ 'Фактический объём' if is_ru else 'Haqiqiy hajm' }}</div><div>{{ wo.actual_quantity if wo.actual_quantity is not none else '—' }} {{ wo.unit }}</div></div>
-        <div class="wod-card"><div class="label">{{ 'Сумма' if is_ru else 'Summa' }}</div><div>{{ ((wo.actual_quantity or 0) * (wo.price or 0))|fmt_sum or '0' }}</div></div>
+<div class="vs-card vs-card-accent-success vs-mb">
+  <div class="vs-card-body">
+    <strong>{{ 'Результат' if is_ru else 'Натижа' }}</strong>
+    <div class="vs-def-grid vs-mt-sm">
+        <div class="vs-def-item"><div class="vs-def-label">{{ 'Фактическая дата' if is_ru else 'Ҳақиқий сана' }}</div><div>{{ wo.actual_date.strftime('%d.%m.%Y') if wo.actual_date else '—' }}</div></div>
+        <div class="vs-def-item"><div class="vs-def-label">{{ 'Фактический объём' if is_ru else 'Ҳақиқий ҳажм' }}</div><div>{{ wo.actual_quantity if wo.actual_quantity is not none else '—' }} {{ wo.unit }}</div></div>
+        <div class="vs-def-item"><div class="vs-def-label">{{ 'Сумма' if is_ru else 'Сумма' }}</div><div>{{ ((wo.actual_quantity or 0) * (wo.price or 0))|fmt_sum or '0' }}</div></div>
     </div>
     {% if wo.daily_record_id %}
-    <div style="margin-top:10px; color:var(--text2); font-size:13px;">
-        ✓ {{ 'Запись в отчёте создана' if is_ru else 'Hisobotda yozuv yaratildi' }}
+    <div class="vs-muted vs-mt-sm">
+        {{ icon('check', 14) }} {{ 'Запись в отчёте создана' if is_ru else 'Ҳисоботда ёзув яратилди' }}
     </div>
     {% endif %}
+  </div>
 </div>
 {% endif %}
 
 <!-- Action buttons -->
 {% if can_start or can_close or can_cancel or (can_assign and mechanics) %}
-<div class="wod-actions">
+<div class="vs-sticky-actions">
     {% if can_start %}
     <form method="post" action="{{ url_for('work_orders.start', wo_id=wo.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit"
-                onclick="return confirm('{{ 'Buyurtmani boshlashni tasdiqlaysizmi?' if not is_ru else 'Начать выполнение наряда?' }}')"
-                class="btn btn-primary">
-            {{ 'Начать' if is_ru else 'Boshlash' }}
+                onclick="return confirm('{{ 'Буюртмани бошлашни тасдиқлайсизми?' if not is_ru else 'Начать выполнение наряда?' }}')"
+                class="vs-btn vs-btn-primary">
+            {{ icon('check', 15) }}{{ 'Начать' if is_ru else 'Бошлаш' }}
         </button>
     </form>
     {% endif %}
 
     {% if can_close %}
-    <a href="{{ url_for('work_orders.close', wo_id=wo.id) }}" class="btn btn-success">
-        {{ 'Закрыть' if is_ru else 'Yopish' }}
+    <a href="{{ url_for('work_orders.close', wo_id=wo.id) }}" class="vs-btn vs-btn-success">
+        {{ icon('save', 15) }}{{ 'Закрыть' if is_ru else 'Ёпиш' }}
     </a>
     {% endif %}
 
@@ -98,9 +69,9 @@
     <form method="post" action="{{ url_for('work_orders.cancel', wo_id=wo.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit"
-                onclick="return confirm('{{ 'Buyurtmani bekor qilishni tasdiqlaysizmi?' if not is_ru else 'Отменить наряд?' }}')"
-                class="btn btn-danger">
-            {{ 'Отменить' if is_ru else 'Bekor qilish' }}
+                onclick="return confirm('{{ 'Буюртмани бекор қилишни тасдиқлайсизми?' if not is_ru else 'Отменить наряд?' }}')"
+                class="vs-btn vs-btn-danger">
+            {{ icon('close', 15) }}{{ 'Отменить' if is_ru else 'Бекор қилиш' }}
         </button>
     </form>
     {% endif %}
@@ -108,16 +79,16 @@
     {% if can_assign and mechanics %}
     <form method="post" action="{{ url_for('work_orders.assign', wo_id=wo.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <select name="assigned_to" class="form-control" style="display:inline-block; width:auto;">
-            <option value="">— {{ 'Механик' if is_ru else 'Mexanik' }} —</option>
+        <select name="assigned_to" class="vs-select" aria-label="{{ 'Механик' if is_ru else 'Механик' }}" style="width:auto;">
+            <option value="">— {{ 'Механик' if is_ru else 'Механик' }} —</option>
             {% for m in mechanics %}
             <option value="{{ m.id }}" {{ 'selected' if wo.assigned_to == m.id else '' }}>
                 {{ m.full_name or m.username }}
             </option>
             {% endfor %}
         </select>
-        <button type="submit" class="btn btn-sm btn-secondary">
-            {{ 'Назначить' if is_ru else 'Tayinlash' }}
+        <button type="submit" class="vs-btn vs-btn-sm">
+            {{ 'Назначить' if is_ru else 'Тайинлаш' }}
         </button>
     </form>
     {% endif %}
@@ -125,26 +96,24 @@
 {% endif %}
 
 <!-- History timeline -->
-<div class="card">
-    <div class="card-header">{{ 'История' if is_ru else 'Tarix' }}</div>
-    <div class="card-body">
+<div class="vs-card">
+    <div class="vs-card-header"><span class="vs-card-title">{{ icon('clock', 15) }} {{ 'История' if is_ru else 'Тарих' }}</span></div>
+    <div class="vs-card-body">
         {% for entry in history %}
-        <div class="history-entry">
-            <span class="history-time">{{ entry.changed_at.strftime('%d.%m.%Y %H:%M') }}</span>
-            <span class="history-actor">{{ entry.user.full_name or entry.user.username if entry.user else '—' }}</span>
-            <span class="history-event">{{ entry.event_type }}</span>
+        <div class="vs-history-entry">
+            <span class="vs-history-time">{{ entry.changed_at.strftime('%d.%m.%Y %H:%M') }}</span>
+            <span class="vs-history-actor">{{ entry.user.full_name or entry.user.username if entry.user else '—' }}</span>
+            <span class="vs-history-event">{{ entry.event_type }}</span>
             {% if entry.old_value %}
                 <span>{{ entry.old_value }} → {{ entry.new_value }}</span>
             {% else %}
                 <span>{{ entry.new_value }}</span>
             {% endif %}
-            {% if entry.comment %}<span class="history-comment">{{ entry.comment }}</span>{% endif %}
+            {% if entry.comment %}<span class="vs-history-comment">{{ entry.comment }}</span>{% endif %}
         </div>
         {% else %}
-        <div class="text-muted text-sm">—</div>
+        <div class="vs-muted">—</div>
         {% endfor %}
     </div>
-</div>
-
 </div>
 {% endblock %}
