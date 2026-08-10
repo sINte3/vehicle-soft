@@ -44,10 +44,10 @@
         {% include 'fuel/_period_picker.html' %}
         <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">
             <div class="form-group" style="margin-bottom:0; min-width:280px;">
-                <label>{{ 'Склад' if is_ru else 'Омбор' }}</label>
+                <label for="flWarehouseId">{{ 'Склад' if is_ru else 'Омбор' }}</label>
                 {# [REASON]: duplicate warehouse names exist («Мирзачул ПТЗ» twice),
                    so the id is shown beside the name; the value is always the id. #}
-                <select name="warehouse_id" class="form-control">
+                <select id="flWarehouseId" name="warehouse_id" class="form-control">
                     <option value="">{{ '— выберите склад —' if is_ru else '— омборни танланг —' }}</option>
                     {% for wh in warehouses %}
                     <option value="{{ wh.id }}" {% if selected and selected.id == wh.id %}selected{% endif %}>{{ wh.name }} (ID {{ wh.id }})</option>

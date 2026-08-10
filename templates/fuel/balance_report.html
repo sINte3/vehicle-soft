@@ -191,7 +191,7 @@
         <button type="button" class="btn btn-secondary btn-sm" onclick="fuelBalanceDays(false)">{{ 'Свернуть все' if lang == 'ru' else 'Барчасини йиғиш' }}</button>
         <span class="text-muted text-sm" style="align-self:center;">{{ 'Нажмите на строку склада, чтобы раскрыть дни.' if lang == 'ru' else 'Кунларни очиш учун омбор қаторини босинг.' }}</span>
     </div>
-    <div style="overflow:auto; max-width:100%;">
+    <div class="vs-table-scroll">
         <table class="vs-table is-static is-compact" data-sortable>
             <thead>
                 <tr>

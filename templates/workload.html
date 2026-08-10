@@ -30,19 +30,19 @@
                 <div style="display:flex; gap:10px; align-items:flex-end;">
                     <div id="dayFields" style="{% if mode!='day' %}display:none;{% endif %}">
                         <div class="vs-field" style="margin-bottom:0;">
-                            <label>{{ t('Сана') }}</label>
-                            <input type="date" name="date" class="vs-input" value="{{ d_from.isoformat() }}"
+                            <label for="whDate">{{ t('Сана') }}</label>
+                            <input id="whDate" type="date" name="date" class="vs-input" value="{{ d_from.isoformat() }}"
                                    onchange="document.getElementById('filterForm').submit()">
                         </div>
                     </div>
                     <div id="rangeFields" style="{% if mode!='range' %}display:none;{% endif %} display:flex; gap:8px; align-items:flex-end;">
                         <div class="vs-field" style="margin-bottom:0;">
-                            <label>{{ t('Дан:') }}</label>
-                            <input type="date" name="date_from" class="vs-input" value="{{ d_from.isoformat() }}">
+                            <label for="whDatefrom">{{ t('Дан:') }}</label>
+                            <input id="whDatefrom" type="date" name="date_from" class="vs-input" value="{{ d_from.isoformat() }}">
                         </div>
                         <div class="vs-field" style="margin-bottom:0;">
-                            <label>{{ t('Гача:') }}</label>
-                            <input type="date" name="date_to" class="vs-input" value="{{ d_to.isoformat() }}">
+                            <label for="whDateto">{{ t('Гача:') }}</label>
+                            <input id="whDateto" type="date" name="date_to" class="vs-input" value="{{ d_to.isoformat() }}">
                         </div>
                     </div>
                     <div id="autoFields" style="{% if mode not in ('week','month') %}display:none;{% endif %}">
@@ -55,8 +55,8 @@
 
                 {# Org filter #}
                 <div class="vs-field" style="margin-bottom:0; min-width:200px;">
-                    <label>{{ t('Ташкилот') }}</label>
-                    <select name="org_id" class="vs-select" onchange="document.getElementById('filterForm').submit()">
+                    <label for="whOrgid">{{ t('Ташкилот') }}</label>
+                    <select id="whOrgid" name="org_id" class="vs-select" onchange="document.getElementById('filterForm').submit()">
                         <option value="">{{ t('— Барча ташкилотлар —') }}</option>
                         {% for org in user_orgs %}
                         <option value="{{ org.id }}" {% if selected_org_id == org.id %}selected{% endif %}>{{ org.name }}</option>
@@ -109,7 +109,7 @@
         {{ t('Юклама таҳлили:') }} {{ d_from.strftime('%d.%m.%Y') }}{% if d_from != d_to %} — {{ d_to.strftime('%d.%m.%Y') }}{% endif %}
         <span class="text-muted text-sm">{{ t('Виалон мотосоатлар асосида') }}</span>
     </div>
-    <div style="overflow-x:auto;">
+    <div class="vs-table-scroll">
     <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>

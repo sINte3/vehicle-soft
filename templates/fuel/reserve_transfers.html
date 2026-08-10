@@ -50,11 +50,11 @@
 <div class="card" style="margin-bottom:16px;">
     <div class="card-body" style="padding:12px 20px;">
         <form method="get" class="form-inline">
-            <div class="form-group" style="margin-bottom:0;"><label>{{ L_from }}</label><input type="date" name="start_date" value="{{ d_from.isoformat() }}" class="form-control"></div>
-            <div class="form-group" style="margin-bottom:0;"><label>{{ L_to }}</label><input type="date" name="end_date" value="{{ d_to.isoformat() }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0;"><label for="rtStartdate">{{ L_from }}</label><input id="rtStartdate" type="date" name="start_date" value="{{ d_from.isoformat() }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0;"><label for="rtEnddate">{{ L_to }}</label><input id="rtEnddate" type="date" name="end_date" value="{{ d_to.isoformat() }}" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0; flex:1;">
-                <label>{{ L_source }}</label>
-                <select name="warehouse_id" class="form-control">
+                <label for="rtWarehouseid">{{ L_source }}</label>
+                <select id="rtWarehouseid" name="warehouse_id" class="form-control">
                     {% for wh in warehouses %}<option value="{{ wh.id }}" {% if source_wh_id == wh.id %}selected{% endif %}>{{ wh.name }}</option>{% endfor %}
                 </select>
             </div>
@@ -100,7 +100,7 @@
                         <input type="hidden" name="start_date" value="{{ d_from.isoformat() }}">
                         <input type="hidden" name="end_date" value="{{ d_to.isoformat() }}">
                         <input type="hidden" name="warehouse_id" value="{{ source_wh_id }}">
-                        <input type="text" name="reason" required placeholder="{{ L_reason }}" title="{{ L_reason }}" class="form-control" style="width:200px;">
+                        <input type="text" name="reason" required placeholder="{{ L_reason }}" aria-label="{{ L_reason }}" class="form-control" style="width:200px;">
                         <button type="submit" class="btn btn-danger btn-sm">{{ L_unmark }}</button>
                     </form>
                 {% elif row.is_external %}
@@ -113,7 +113,7 @@
                         <input type="hidden" name="start_date" value="{{ d_from.isoformat() }}">
                         <input type="hidden" name="end_date" value="{{ d_to.isoformat() }}">
                         <input type="hidden" name="warehouse_id" value="{{ source_wh_id }}">
-                        <input type="text" name="note" required placeholder="{{ L_note }}" title="{{ L_note }}" class="form-control" style="width:200px;">
+                        <input type="text" name="note" required placeholder="{{ L_note }}" aria-label="{{ L_note }}" class="form-control" style="width:200px;">
                         <button type="submit" class="btn btn-primary btn-sm">{{ L_mark }}</button>
                     </form>
                 {% endif %}

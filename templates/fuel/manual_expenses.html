@@ -48,12 +48,12 @@
             <input type="hidden" name="id" id="meId" value="">
 
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ L_date }}</label>
+                <label for="meDate">{{ L_date }}</label>
                 <input type="date" name="expense_date" id="meDate" value="{{ today.isoformat() }}" required class="form-control">
             </div>
 
             <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ L_wh }}</label>
+                <label for="meWarehouse">{{ L_wh }}</label>
                 <select name="warehouse_id" id="meWarehouse" required class="form-control">
                     <option value="">{{ L_select }}</option>
                     {% for wh in warehouses %}
@@ -68,12 +68,12 @@
             </div>
 
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ L_qty }}</label>
+                <label for="meQuantity">{{ L_qty }}</label>
                 <input type="number" name="quantity" id="meQuantity" step="0.01" min="0.01" required style="width:130px;" class="form-control" title="{{ L_qty_hint }}">
             </div>
 
             <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ L_note }}</label>
+                <label for="meNote">{{ L_note }}</label>
                 <input type="text" name="note" id="meNote" required placeholder="{{ L_note_hint }}" title="{{ L_note_hint }}" class="form-control">
             </div>
 
@@ -89,11 +89,11 @@
 <div class="card" style="margin-bottom:16px;">
     <div class="card-body" style="padding:12px 20px;">
         <form method="get" class="form-inline">
-            <div class="form-group" style="margin-bottom:0;"><label>{{ L_from }}</label><input type="date" name="date_from" value="{{ d_from.isoformat() }}" class="form-control"></div>
-            <div class="form-group" style="margin-bottom:0;"><label>{{ L_to }}</label><input type="date" name="date_to" value="{{ d_to.isoformat() }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0;"><label for="meDatefrom">{{ L_from }}</label><input id="meDatefrom" type="date" name="date_from" value="{{ d_from.isoformat() }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0;"><label for="meDateto">{{ L_to }}</label><input id="meDateto" type="date" name="date_to" value="{{ d_to.isoformat() }}" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0; flex:1;">
-                <label>{{ L_wh }}</label>
-                <select name="warehouse_id" class="form-control">
+                <label for="meWarehouseid">{{ L_wh }}</label>
+                <select id="meWarehouseid" name="warehouse_id" class="form-control">
                     <option value="">{{ L_all }}</option>
                     {% for wh in warehouses %}<option value="{{ wh.id }}" {% if selected_wh_id == wh.id %}selected{% endif %}>{{ wh.name }}</option>{% endfor %}
                 </select>
@@ -108,7 +108,7 @@
         <span>{{ L_title }} ({{ items|length }})</span>
         <span style="font-weight:700; color:var(--accent);">{{ L_total }}: {{ '%.1f'|format(total_qty) }} л</span>
     </div>
-    <div style="overflow-x:auto;">
+    <div class="vs-table-scroll">
     <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
@@ -144,7 +144,7 @@
                     {% if csrf_token is defined %}
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     {% endif %}
-                    <input type="text" name="reason" required placeholder="{{ L_reason }}" title="{{ L_reason }}"
+                    <input type="text" name="reason" required placeholder="{{ L_reason }}" aria-label="{{ L_reason }}"
                            class="form-control" style="display:inline-block; width:150px;">
                     <button type="submit" class="vs-btn vs-btn-icon is-danger" aria-label="{{ 'Удалить' if lang == 'ru' else 'Ўчириш' }}">{{ icon('trash', 14) }}</button>
                 </form>

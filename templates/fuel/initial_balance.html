@@ -41,7 +41,7 @@
             <input type="hidden" name="id" id="ibId" value="">
 
             <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ L_wh }}</label>
+                <label for="ibWarehouse">{{ L_wh }}</label>
                 <select name="warehouse_id" id="ibWarehouse" required class="form-control">
                     <option value="">{{ L_select }}</option>
                     {% for wh in warehouses %}
@@ -51,7 +51,7 @@
             </div>
 
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ L_fuel_type }}</label>
+                <label for="ibFuelType">{{ L_fuel_type }}</label>
                 <select name="fuel_type" id="ibFuelType" required class="form-control">
                     {% for ft in fuel_types %}
                     <option value="{{ ft }}" {% if ft == 'ДТ' %}selected{% endif %}>{{ ft }}</option>
@@ -60,17 +60,17 @@
             </div>
 
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ L_qty }}</label>
+                <label for="ibQuantity">{{ L_qty }}</label>
                 <input type="number" name="quantity" id="ibQuantity" step="0.1" min="0" required style="width:130px;" class="form-control">
             </div>
 
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ L_date }}</label>
+                <label for="ibDate">{{ L_date }}</label>
                 <input type="date" name="balance_date" id="ibDate" value="{{ today.isoformat() }}" required class="form-control">
             </div>
 
             <div class="form-group" style="margin-bottom:0; flex:1;">
-                <label>{{ L_note }}</label>
+                <label for="ibNote">{{ L_note }}</label>
                 <input type="text" name="note" id="ibNote" placeholder="" class="form-control">
             </div>
 
@@ -85,6 +85,10 @@
 
 <div class="card">
     <div class="card-header">{{ L_table_title }}</div>
+    {# Таблица была БЕЗ обёртки прокрутки, и на узком экране разносила весь
+       документ за край окна: 739 px при окне 390. Прокрутка принадлежит
+       таблице, а не странице. #}
+    <div class="vs-table-scroll">
     <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
@@ -143,6 +147,7 @@
         {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 
 {% endblock %}

@@ -196,17 +196,17 @@
       {% endwith %}
 
       <div class="vs-field">
-        <label class="vs-label">{{ 'Логин' if g.lang == 'ru' else 'Логин' }}</label>
+        <label class="vs-label" for="vsLoginField">{{ 'Логин' if g.lang == 'ru' else 'Логин' }}</label>
         <div class="vs-input-icon">
           <span class="vs-input-icon-leading">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
           </span>
-          <input type="text" name="username" class="vs-input" required autofocus autocomplete="username" placeholder="admin">
+          <input type="text" id="vsLoginField" name="username" class="vs-input" required autofocus autocomplete="username" placeholder="admin">
         </div>
       </div>
 
       <div class="vs-field">
-        <label class="vs-label">{{ 'Пароль' if g.lang == 'ru' else 'Парол' }}</label>
+        <label class="vs-label" for="vsPwField">{{ 'Пароль' if g.lang == 'ru' else 'Парол' }}</label>
         <div class="vs-input-icon">
           <span class="vs-input-icon-leading">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>

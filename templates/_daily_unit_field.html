@@ -18,7 +18,7 @@
    подставляет вызывающая сторона.
 #}
 {% macro unit_select(field_name, field_id, chosen) -%}
-<select name="{{ field_name }}" id="{{ field_id }}" onchange="markFormDirty()" title="{{ t('Ўлчов бирлигини танланг') }}">
+<select name="{{ field_name }}" id="{{ field_id }}" onchange="markFormDirty()" aria-label="{{ t('Ўлчов бирлигини танланг') }}">
     <option value="">—</option>
     {%- if chosen.startswith('raw:') %}
     {#- Историческая единица, не попавшая в справочник: показана как есть и

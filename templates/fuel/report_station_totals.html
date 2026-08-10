@@ -54,7 +54,7 @@
     <div class="card-header">
         <span>{{ start_date.strftime('%d.%m.%Y') }}{% if period.start_time != '00:00' %} {{ period.start_time }}{% endif %} — {{ end_date.strftime('%d.%m.%Y') }}{% if period.end_time != '23:59' %} {{ period.end_time }}{% endif %}</span>
     </div>
-    <div style="overflow-x:auto;">
+    <div class="vs-table-scroll">
         <table class="vs-table is-static" data-sortable>
             <thead>
                 <tr>

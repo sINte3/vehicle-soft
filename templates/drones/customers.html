@@ -148,22 +148,22 @@
             <form method="post" action="{{ url_for('drones.customers_update', customer_id=c.id) }}" class="vs-row" style="gap:6px; flex-wrap:wrap; align-items:flex-end; margin-top:8px;">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <div class="vs-field" style="min-width:220px;">
-                <label class="vs-label">{{ 'Название' if is_ru else 'Номи' }}</label>
-                <input type="text" name="name" class="vs-input" value="{{ c.name }}" maxlength="300" required>
+                <label for="chName" class="vs-label">{{ 'Название' if is_ru else 'Номи' }}</label>
+                <input id="chName" type="text" name="name" class="vs-input" value="{{ c.name }}" maxlength="300" required>
               </div>
               <div class="vs-field" style="width:140px;">
-                <label class="vs-label">{{ 'ИНН' if is_ru else 'СТИР' }}</label>
-                <input type="text" name="inn" class="vs-input" value="{{ c.inn or '' }}" maxlength="20">
+                <label for="chInn" class="vs-label">{{ 'ИНН' if is_ru else 'СТИР' }}</label>
+                <input id="chInn" type="text" name="inn" class="vs-input" value="{{ c.inn or '' }}" maxlength="20">
               </div>
               <div class="vs-field" style="width:160px;">
-                <label class="vs-label">{{ 'Тип' if is_ru else 'Тури' }}</label>
-                <select name="customer_type" class="vs-select">
+                <label for="chCustomertype" class="vs-label">{{ 'Тип' if is_ru else 'Тури' }}</label>
+                <select id="chCustomertype" name="customer_type" class="vs-select">
                   {% for t in customer_types %}<option value="{{ t }}" {% if c.customer_type == t %}selected{% endif %}>{{ type_labels.get(t, t) }}</option>{% endfor %}
                 </select>
               </div>
               <div class="vs-field" style="min-width:180px;">
-                <label class="vs-label">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
-                <input type="text" name="note" class="vs-input" value="{{ c.note or '' }}" maxlength="500">
+                <label for="chNote" class="vs-label">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+                <input id="chNote" type="text" name="note" class="vs-input" value="{{ c.note or '' }}" maxlength="500">
               </div>
               <div class="vs-field" style="flex:none;">
                 <label class="vs-label">&nbsp;</label>
@@ -190,7 +190,8 @@
             <form method="post" action="{{ url_for('drones.customer_alias_update', alias_id=a.id) }}" class="vs-row" style="gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:4px;">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <span class="vs-badge{% if a.is_active is not sameas false %} vs-badge-success{% endif %}">{{ a.raw_name }}</span>
-              <select name="drone_customer_id" class="vs-select" style="width:190px;">
+              <select name="drone_customer_id" class="vs-select" style="width:190px;"
+                      aria-label="{{ 'Заказчик' if is_ru else 'Буюртмачи' }}: {{ a.raw_name }}">
                 {% for target in all_customers %}<option value="{{ target.id }}" {% if target.id == a.drone_customer_id %}selected{% endif %}>{{ target.name }}</option>{% endfor %}
               </select>
               <label class="vs-check"><input type="checkbox" name="is_active" {% if a.is_active is not sameas false %}checked{% endif %}> {{ 'Активно' if is_ru else 'Фаол' }}</label>

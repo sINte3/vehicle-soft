@@ -2292,3 +2292,35 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
    inline-<style> odnogo ekrana; akcent teper obshchiy .vs-card-accent-*. */
 .vs-warn-card { padding: 14px; margin-bottom: 12px; }
 .vs-warn-title { font-weight: 700; margin-bottom: 4px; }
+
+/* =====================================================================
+   UI-P8-002 · Ссылка внутри абзаца обязана отличаться не только цветом.
+
+   WCAG 1.4.1: если ссылка стоит в потоке текста и опознаётся только по
+   цвету, дальтоник её не найдёт. Прогон axe на staging дал 12 нарушений
+   `link-in-text-block` — все на пояснениях отчётов АЗС, где ссылка на
+   соседний отчёт стоит прямо в предложении.
+
+   [REASON]: подчёркиваются ТОЛЬКО ссылки внутри текста. Кнопки, вкладки и
+   пилюли исключены поимённо: они опознаются формой, а сплошное подчёркивание
+   всех `<a>` сделало бы интерфейс похожим на документ.
+   ===================================================================== */
+p a:not(.vs-btn):not(.btn):not(.vs-pill):not(.vs-tab),
+.vs-hint a:not(.vs-btn):not(.btn),
+.text-sm a:not(.vs-btn):not(.btn),
+.vs-muted a:not(.vs-btn):not(.btn),
+.card-body > a:not(.vs-btn):not(.btn):not(.vs-pill),
+.vs-card-body > a:not(.vs-btn):not(.btn):not(.vs-pill) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* UI-P8-003 · Полоса фильтров не имеет права разносить страницу.
+   [REASON]: `.vs-field-action` объявлен `flex: 0 0 auto`, а группа переключателей
+   внутри — `inline-flex`. Такая пара берёт ширину по содержимому и НЕ переносит:
+   на 390 px «ПЕРИОД» с четырьмя режимами занимал 410 px и выносил документ за
+   край окна. Перенос внутри группы уже был — не хватало потолка ширины.
+   Измерено tools/ux/check_overflow.mjs. */
+.vs-form-row > .vs-field,
+.vs-form-row > .vs-field-action,
+.vs-toggle-group { max-width: 100%; }

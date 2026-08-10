@@ -86,15 +86,15 @@
         <form method="post" action="{{ url_for('fuel.save_station') }}" class="form-inline vs-inline-form" id="stationForm" onsubmit="return validateStationBeforeSubmit()">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" id="stId" value="">
-            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_name }}</label><input type="text" name="name" id="stName" required class="form-control"></div>
-            <div class="form-group" style="margin-bottom:0;"><label>Topaz ID</label><input type="number" name="topaz_id" id="stTopazId" required min="1" style="width:130px;" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label for="stName">{{ L_name }}</label><input type="text" name="name" id="stName" required class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0;"><label for="stTopazId">Topaz ID</label><input type="number" name="topaz_id" id="stTopazId" required min="1" style="width:130px;" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ L_wh }}</label>
+                <label for="stWarehouse">{{ L_wh }}</label>
                 <select name="warehouse_id" id="stWarehouse" required class="form-control"><option value="">{{ L_select }}</option>{% for wh in warehouses %}<option value="{{ wh.id }}">{{ wh.name }}</option>{% endfor %}</select>
             </div>
             <div class="form-group" style="margin-bottom:0;">
                 <label>{{ L_active }}</label>
-                <label style="border:none; padding:0; gap:6px; font-weight:normal; font-size:13px;"><input type="checkbox" name="is_active" id="stActive" checked style="width:auto;"> {{ icon('check', 13) }}</label>
+                <label style="border:none; padding:0; gap:6px; font-weight:normal; font-size:13px;"><input type="checkbox" name="is_active" id="stActive" aria-label="{{ L_active }}" checked style="width:auto;"> {{ icon('check', 13) }}</label>
             </div>
             <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button type="submit" class="btn btn-primary">{{ L_save }}</button><button type="button" class="btn btn-secondary" onclick="clearStForm()">{{ L_clear }}</button></div>
         </form>
@@ -108,8 +108,8 @@
 </div>
 
 <div class="fuel-toolbar">
-    <input type="text" id="stationSearch" placeholder="{{ L_search }}" oninput="filterStations()" class="form-control">
-    <select id="stationStatusFilter" onchange="filterStations()" style="max-width:200px;" class="form-control"><option value="all">{{ L_filter_all }}</option><option value="active">{{ L_filter_active }}</option><option value="disabled">{{ L_filter_disabled }}</option></select>
+    <input type="text" id="stationSearch" aria-label="{{ L_search }}" placeholder="{{ L_search }}" oninput="filterStations()" class="form-control">
+    <select id="stationStatusFilter" aria-label="{{ L_filter_all }}" onchange="filterStations()" style="max-width:200px;" class="form-control"><option value="all">{{ L_filter_all }}</option><option value="active">{{ L_filter_active }}</option><option value="disabled">{{ L_filter_disabled }}</option></select>
     <span class="text-muted text-sm" id="stationVisibleCount"></span>
 </div>
 

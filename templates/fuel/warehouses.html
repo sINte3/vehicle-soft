@@ -89,12 +89,12 @@
 <form method="post" action="{{ url_for('fuel.save_warehouse') }}" class="form-inline vs-inline-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="id" value="">
-            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_name }}</label><input type="text" name="name" required class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label for="whName">{{ L_name }}</label><input id="whName" type="text" name="name" required class="form-control"></div>
             <div class="form-group" style="margin-bottom:0; flex:2;">
-                <label>{{ L_org }}</label>
-                <select name="organization_id" class="form-control"><option value="">{{ L_unlinked }}</option>{% for org in organizations %}<option value="{{ org.id }}">{{ org.name }}</option>{% endfor %}</select>
+                <label for="whOrganizationid">{{ L_org }}</label>
+                <select id="whOrganizationid" name="organization_id" class="form-control"><option value="">{{ L_unlinked }}</option>{% for org in organizations %}<option value="{{ org.id }}">{{ org.name }}</option>{% endfor %}</select>
             </div>
-            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_notes }}</label><input type="text" name="notes" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label for="whNotes">{{ L_notes }}</label><input id="whNotes" type="text" name="notes" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button type="submit" class="btn btn-primary">{{ L_save }}</button></div>
         </form>
 </div>
@@ -103,7 +103,7 @@
 {% endif %}
 
 <div class="fuel-toolbar">
-    <input type="text" id="warehouseSearch" placeholder="{{ L_search }}" oninput="filterWarehouses()" class="form-control">
+    <input type="text" id="warehouseSearch" aria-label="{{ L_search }}" placeholder="{{ L_search }}" oninput="filterWarehouses()" class="form-control">
     <span class="text-muted text-sm" id="warehouseVisibleCount"></span>
 </div>
 
@@ -133,9 +133,9 @@
         <div style="font-weight:700; margin-bottom:12px;">{{ L_edit }}: {{ wh.name }}</div>
         <form method="post" action="{{ url_for('fuel.save_warehouse') }}" class="form-inline vs-inline-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="id" value="{{ wh.id }}">
-            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_name }}</label><input type="text" name="name" required value="{{ wh.name }}" class="form-control"></div>
-            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_org }}</label><select name="organization_id" class="form-control"><option value="">{{ L_unlinked }}</option>{% for org in organizations %}<option value="{{ org.id }}" {% if wh.organization_id == org.id %}selected{% endif %}>{{ org.name }}</option>{% endfor %}</select></div>
-            <div class="form-group" style="margin-bottom:0; flex:2;"><label>{{ L_notes }}</label><input type="text" name="notes" value="{{ wh.notes or '' }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label for="whName2">{{ L_name }}</label><input id="whName2" type="text" name="name" required value="{{ wh.name }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label for="whOrganizationid2">{{ L_org }}</label><select id="whOrganizationid2" name="organization_id" class="form-control"><option value="">{{ L_unlinked }}</option>{% for org in organizations %}<option value="{{ org.id }}" {% if wh.organization_id == org.id %}selected{% endif %}>{{ org.name }}</option>{% endfor %}</select></div>
+            <div class="form-group" style="margin-bottom:0; flex:2;"><label for="whNotes2">{{ L_notes }}</label><input id="whNotes2" type="text" name="notes" value="{{ wh.notes or '' }}" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button type="submit" class="btn btn-primary">{{ L_save }}</button><a href="{{ url_for('fuel.warehouses') }}#warehouse-{{ wh.id }}" class="btn btn-secondary">{{ L_reset }}</a></div>
         </form>
     </div>
