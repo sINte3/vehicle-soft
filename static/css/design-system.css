@@ -2286,3 +2286,9 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
    ostavalas nazhimaemoy, poka shel zapros.
    Pravilo napisano rovno po smyslu imeni i nichego k nemu ne dobavlyaet. */
 .fuel002c-delete-submitted { pointer-events: none; opacity: .55; }
+
+/* Kartochka preduprezhdeniya v spiske AZS: ne tablica, a lenta zapisey s
+   akcentom po tyazhesti. Bylo `.warning-card` + `.danger/.warning/.info` v
+   inline-<style> odnogo ekrana; akcent teper obshchiy .vs-card-accent-*. */
+.vs-warn-card { padding: 14px; margin-bottom: 12px; }
+.vs-warn-title { font-weight: 700; margin-bottom: 4px; }

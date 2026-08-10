@@ -1,6 +1,13 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% block title %}АЗС — {{ 'Реестр предупреждений' if lang == 'ru' else 'Огоҳлантиришлар реестри' }}{% endblock %}
 {% block content %}
+{# DD-032: тон статуса и тяжести — параметр компонента, а не свой класс
+   на каждое значение. Раньше здесь было пять правил `.warning-pill.<значение>`
+   в инлайновом <style>. #}
+{% set WARN_TONE = {'danger': 'vs-badge-danger', 'warning': 'vs-badge-warning',
+                    'info': 'vs-badge-info', 'resolved': 'vs-badge-success',
+                    'in_progress': 'vs-badge-info', 'rejected': 'vs-badge-danger'} %}
 {% include 'fuel/_fuel_nav.html' %}
 
 {% set L_title = 'Реестр топливных предупреждений' if lang == 'ru' else 'Ёқилғи огоҳлантиришлари реестри' %}
@@ -25,206 +32,63 @@
 {% set L_cs_in_progress = 'В работе' if lang == 'ru' else 'Ишда' %}
 {% set L_cs_resolved = 'Проверено' if lang == 'ru' else 'Текширилди' %}
 
-<style>
-.warning-hero { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:16px; }
-.warning-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
-.warning-filter { display:grid; grid-template-columns:repeat(6,minmax(130px,1fr)); gap:12px; align-items:end; }
-.warning-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:16px 0; }
-.warning-note { border-left:4px solid var(--info); background:var(--info-light); color:var(--info); padding:12px 14px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; }
-.warning-card { border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin-bottom:12px; background:var(--surface); box-shadow:var(--shadow); }
-.warning-card.danger { border-left:4px solid var(--danger); }
-.warning-card.warning { border-left:4px solid var(--warn); }
-.warning-card.info { border-left:4px solid var(--info); }
-.warning-title { font-weight:700; margin-bottom:4px; }
-.warning-meta { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }
-.warning-pill { display:inline-block; padding:3px 9px; border-radius:999px; font-size:11px; font-weight:700; background:var(--info-light); color:var(--info); }
-.warning-pill.danger { background:var(--danger-light); color:var(--danger); }
-.warning-pill.warning { background:var(--warn-light); color:var(--warn); }
-.warning-pill.resolved { background:var(--accent-light); color:var(--accent); }
-.warning-pill.in_progress { background:var(--info-light); color:var(--info); }
-.warning-pill.rejected { background:var(--danger-light); color:var(--danger); }
-.warning-form { display:grid; grid-template-columns:minmax(160px,220px) 1fr auto; gap:10px; align-items:end; margin-top:12px; }
-.warning-form textarea { min-height:40px; }
-@media (max-width:1024px) { .warning-filter { grid-template-columns:repeat(2,minmax(130px,1fr)); } .warning-form { grid-template-columns:1fr; } }
-@media (max-width:480px) { .warning-hero { flex-direction:column; } .warning-actions { justify-content:flex-start; } .warning-filter { grid-template-columns:1fr; } }
 
-/* FUEL002G_MARKER: fuel warnings UX refresh, template/localization only. */
-.fuel002g-page-header {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: 12px;
-  padding: 14px 16px;
-  box-shadow: var(--shadow);
-}
-
-.fuel002g-page-header h1 {
-  margin-bottom: 6px;
-}
-
-.fuel002g-subtitle {
-  color: var(--text2);
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.fuel002g-context-strip {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(130px, 1fr));
-  gap: 10px;
-  margin: 14px 0 14px 0;
-}
-
-.fuel002g-pill {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: 10px;
-  padding: 10px 12px;
-  box-shadow: var(--shadow);
-}
-
-.fuel002g-pill span {
-  display: block;
-  color: var(--text2);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .04em;
-  margin-bottom: 4px;
-}
-
-.fuel002g-pill strong {
-  display: block;
-  font-size: 15px;
-  color: var(--text);
-}
-
-.fuel002g-guidance-panel {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(190px, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.fuel002g-guidance-card {
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--accent);
-  background: var(--surface);
-  border-radius: 10px;
-  padding: 11px 13px;
-  box-shadow: var(--shadow);
-}
-
-.fuel002g-guidance-card strong {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.fuel002g-guidance-card span {
-  display: block;
-  color: var(--text2);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.fuel002g-filter-card {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow);
-}
-
-.fuel002g-filter-form {
-  align-items: end;
-}
-
-.fuel002g-warning-card {
-  border-radius: 12px;
-  box-shadow: var(--shadow);
-}
-
-.fuel002g-warning-card .warning-title {
-  font-size: 15px;
-  line-height: 1.35;
-}
-
-.fuel002g-review-form {
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
-}
-
-@media (max-width:1024px) {
-  .fuel002g-context-strip,
-  .fuel002g-guidance-panel {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-@media (max-width:480px) {
-  .fuel002g-context-strip,
-  .fuel002g-guidance-panel {
-    grid-template-columns: 1fr;
-  }
-}
-/* FUEL002G_END */
-
-</style>
-
-<div class="warning-hero fuel002g-page-header FUEL002G_MARKER">
+<div class="vs-row-end vs-mb FUEL002G_MARKER">
     <div>
         <h1>{{ L_title }}</h1>
-        <div class="fuel002g-subtitle">{{ t('Ёқилғи огоҳлантиришлари: давр, жиддийлик, ҳолат ва текширув изоҳларини бошқариш.') }}</div>
+        <div class="vs-muted">{{ t('Ёқилғи огоҳлантиришлари: давр, жиддийлик, ҳолат ва текширув изоҳларини бошқариш.') }}</div>
         <div class="text-muted text-sm">{{ L_subtitle }}</div>
     </div>
 </div>
 
-<div class="warning-note">{{ L_hint }}</div>
+<div class="vs-card vs-card-accent-left vs-card-body vs-mb">{{ L_hint }}</div>
 
-<div class="fuel002g-context-strip">
-    <div class="fuel002g-pill">
-        <span>{{ t('Жами огоҳлантиришлар') }}</span>
-        <strong>{{ counts.total }}</strong>
+<div class="vs-kpi-strip vs-kpi-strip-body">
+    <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ t('Жами огоҳлантиришлар') }}</span>
+        <strong class="vs-kpi-strip-value is-text">{{ counts.total }}</strong>
     </div>
-    <div class="fuel002g-pill">
-        <span>{{ t('Кўрсатилган') }}</span>
-        <strong>{{ counts.filtered }}</strong>
+    <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ t('Кўрсатилган') }}</span>
+        <strong class="vs-kpi-strip-value is-text">{{ counts.filtered }}</strong>
     </div>
-    <div class="fuel002g-pill">
-        <span>{{ t('Фаол') }}</span>
-        <strong>{{ counts.current }}</strong>
+    <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ t('Фаол') }}</span>
+        <strong class="vs-kpi-strip-value is-text">{{ counts.current }}</strong>
     </div>
-    <div class="fuel002g-pill">
-        <span>{{ t('Критик') }}</span>
-        <strong>{{ counts.danger }}</strong>
+    <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ t('Критик') }}</span>
+        <strong class="vs-kpi-strip-value is-text">{{ counts.danger }}</strong>
     </div>
-    <div class="fuel002g-pill">
-        <span>{{ L_cs_in_progress }}</span>
-        <strong>{{ counts.in_progress }}</strong>
+    <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ L_cs_in_progress }}</span>
+        <strong class="vs-kpi-strip-value is-text">{{ counts.in_progress }}</strong>
     </div>
-    <div class="fuel002g-pill">
-        <span>{{ L_cs_resolved }}</span>
+    <div class="vs-kpi-strip-item">
+    <span class="vs-kpi-strip-label">{{ L_cs_resolved }}</span>
         <strong style="color:var(--accent);">{{ counts.resolved }}</strong>
     </div>
 </div>
 
-<div class="fuel002g-guidance-panel">
-    <div class="fuel002g-guidance-card">
+<div class="vs-guide-grid">
+    <div class="vs-card vs-card-accent-success vs-guide-card">
         <strong>{{ t('1. Фильтрларни танланг') }}</strong>
         <span>{{ t('Давр, ҳолат, жиддийлик, тур ва қидирув бўйича рўйхатни қисқартиринг.') }}</span>
     </div>
-    <div class="fuel002g-guidance-card">
+    <div class="vs-card vs-card-accent-success vs-guide-card">
         <strong>{{ t('2. Огоҳлантиришни текширинг') }}</strong>
         <span>{{ t('Карточкада сабаб, қиймат ва жорий ёки архив ҳолати кўринади.') }}</span>
     </div>
-    <div class="fuel002g-guidance-card">
+    <div class="vs-card vs-card-accent-success vs-guide-card">
         <strong>{{ t('3. Ҳолат ва изоҳни сақланг') }}</strong>
         <span>{{ t('Ҳар бир огоҳлантириш бўйича иш ҳолати ва текширув изоҳини сақлаш мумкин.') }}</span>
     </div>
 </div>
 
 
-<div class="card fuel002g-filter-card FUEL002G_FILTER_MARKER" style="margin-bottom:16px;">
+<div class="card vs-card FUEL002G_FILTER_MARKER" style="margin-bottom:16px;">
     <div class="card-body">
-        <form method="get" class="warning-filter fuel002g-filter-form">
+        <form method="get" class="vs-form-row">
             <div class="form-group" style="margin-bottom:0;"><label>{{ L_from }}</label><input type="date" name="date_from" value="{{ d_from.isoformat() }}" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0;"><label>{{ L_to }}</label><input type="date" name="date_to" value="{{ d_to.isoformat() }}" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0;">
@@ -258,21 +122,21 @@
 {% set wt = warning_text(w, lang) %}
 {% set w_title = wt[0] %}
 {% set w_details = wt[1] %}
-<div class="warning-card fuel002g-warning-card FUEL002G_CARD_MARKER {{ w.severity }}">
-    <div class="warning-title">{{ w_title }}</div>
+<div class="vs-card vs-card-accent-left vs-warn-card">
+    <div class="vs-warn-title">{{ w_title }}</div>
     <div class="text-sm text-muted">{{ w_details }}</div>
-    <div class="warning-meta">
-        <span class="warning-pill {{ w.severity }}">{{ severity_label(w.severity, lang) }}</span>
-        <span class="warning-pill {{ w.review_status }}">{{ status_label(w.review_status, lang) }}</span>
-        <span class="warning-pill">{{ w.code }}</span>
-        {% if w.is_current %}<span class="warning-pill resolved">{{ L_current }}</span>{% else %}<span class="warning-pill rejected">{{ L_archive }}</span>{% endif %}
-        {% if w.value is not none and w.value|string %}<span class="warning-pill">{{ L_value }}: {{ w.value }}</span>{% endif %}
+    <div class="vs-chip-row">
+        <span class="vs-badge {{ WARN_TONE.get(w.severity, '') }}">{{ severity_label(w.severity, lang) }}</span>
+        <span class="vs-badge {{ WARN_TONE.get(w.review_status, '') }}">{{ status_label(w.review_status, lang) }}</span>
+        <span class="vs-badge">{{ w.code }}</span>
+        {% if w.is_current %}<span class="vs-badge vs-badge-success">{{ L_current }}</span>{% else %}<span class="vs-badge vs-badge-danger">{{ L_archive }}</span>{% endif %}
+        {% if w.value is not none and w.value|string %}<span class="vs-badge">{{ L_value }}: {{ w.value }}</span>{% endif %}
     </div>
     {% if w.review_comment %}<div class="text-sm" style="margin-top:6px;"><strong>{{ L_comment }}:</strong> {{ w.review_comment }}</div>{% endif %}
     {% if w.reviewer_name or w.review_updated_at %}
     <div class="text-xs text-muted" style="margin-top:4px;">{{ L_reviewer }}: {{ w.reviewer_name or '—' }}{% if w.review_updated_at %}; {{ L_updated }}: {{ w.review_updated_at.strftime('%d.%m.%Y %H:%M') }}{% endif %}</div>
     {% endif %}
-    <form method="post" action="{{ url_for('fuel.fuel_warning_update', warning_key=w.key) }}" class="warning-form fuel002g-review-form">
+    <form method="post" action="{{ url_for('fuel.fuel_warning_update', warning_key=w.key) }}" class="vs-form-row">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="return_url" value="{{ request.full_path }}">
         <input type="hidden" name="warning_code" value="{{ w.code }}">
