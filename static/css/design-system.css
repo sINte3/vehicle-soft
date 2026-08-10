@@ -2292,3 +2292,60 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
    inline-<style> odnogo ekrana; akcent teper obshchiy .vs-card-accent-*. */
 .vs-warn-card { padding: 14px; margin-bottom: 12px; }
 .vs-warn-title { font-weight: 700; margin-bottom: 4px; }
+
+/* =====================================================================
+   UI-P8-002 · Ссылка внутри абзаца обязана отличаться не только цветом.
+
+   WCAG 1.4.1: если ссылка стоит в потоке текста и опознаётся только по
+   цвету, дальтоник её не найдёт. Прогон axe на staging дал 12 нарушений
+   `link-in-text-block` — все на пояснениях отчётов АЗС, где ссылка на
+   соседний отчёт стоит прямо в предложении.
+
+   [REASON]: подчёркиваются ТОЛЬКО ссылки внутри текста. Кнопки, вкладки и
+   пилюли исключены поимённо: они опознаются формой, а сплошное подчёркивание
+   всех `<a>` сделало бы интерфейс похожим на документ.
+   ===================================================================== */
+p a:not(.vs-btn):not(.btn):not(.vs-pill):not(.vs-tab),
+.vs-hint a:not(.vs-btn):not(.btn),
+.text-sm a:not(.vs-btn):not(.btn),
+.vs-muted a:not(.vs-btn):not(.btn),
+.card-body > a:not(.vs-btn):not(.btn):not(.vs-pill),
+.vs-card-body > a:not(.vs-btn):not(.btn):not(.vs-pill) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* UI-P8-003 · Полоса фильтров не имеет права разносить страницу.
+   [REASON]: `.vs-field-action` объявлен `flex: 0 0 auto`, а группа переключателей
+   внутри — `inline-flex`. Такая пара берёт ширину по содержимому и НЕ переносит:
+   на 390 px «ПЕРИОД» с четырьмя режимами занимал 410 px и выносил документ за
+   край окна. Перенос внутри группы уже был — не хватало потолка ширины.
+   Измерено tools/ux/check_overflow.mjs. */
+.vs-form-row > .vs-field,
+.vs-form-row > .vs-field-action,
+.vs-toggle-group { max-width: 100%; }
+
+/* UI-P8-004 · Хлебная крошка не должна распирать шапку.
+   [REASON]: у `.vs-crumb` стоит `overflow:hidden` и многоточие, но это
+   flex-контейнер, а его дети по умолчанию `min-width:auto` — то есть
+   отказываются сжиматься уже своего содержимого и раздвигают контейнер
+   изнутри. Длинный заголовок («Дроны — кто не сдал ведомость») выносил
+   документ за край окна на 390 px. Многоточие без `min-width:0` не работает.
+   Измерено tools/ux/check_overflow.mjs. */
+.vs-crumb > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* UI-P8-004 · Полоса показателей обязана доходить до одной колонки.
+   [REASON]: `.vs-stat-grid` спускалась 7 → 4 (≤1280) → 3 (≤1024) и на этом
+   останавливалась. Ниже 1024 ступеней не было, поэтому на телефоне три
+   колонки оставались тремя: `minmax(0, 1fr)` разрешает треку сжаться, но
+   содержимое плитки уже своего минимума не становится и выносило документ
+   за край окна — 394 px при окне 390. Ступени добавлены на объявленной
+   шкале DD-024, новых значений не введено.
+   Измерено tools/ux/check_overflow.mjs на /drones/reports/closing. */
+@media (max-width: 768px) {
+  .vs-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 480px) {
+  .vs-stat-grid,
+  .vs-stat-grid-4 { grid-template-columns: 1fr; }
+}

@@ -148,14 +148,15 @@
         <td colspan="5">
           <form method="post" action="{{ url_for('drones.operator_assignment_update', assign_id=a.id) }}" class="vs-row" style="gap:8px; flex-wrap:wrap; align-items:center;">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <select name="drone_unit_id" class="vs-select" style="width:130px;">
+            <select name="drone_unit_id" class="vs-select" style="width:130px;"
+                    aria-label="{{ 'Машина' if is_ru else 'Машина' }}">
               {% for opt in units %}
               <option value="{{ opt.id }}" {% if opt.id == a.drone_unit_id %}selected{% endif %}>№ {{ opt.number }}</option>
               {% endfor %}
             </select>
-            <input type="date" name="date_from" class="vs-input" style="width:160px;" value="{{ a.date_from.isoformat() if a.date_from else '' }}" required>
-            <input type="date" name="date_to" class="vs-input" style="width:160px;" value="{{ a.date_to.isoformat() if a.date_to else '' }}">
-            <input type="text" name="note" class="vs-input" style="min-width:180px; flex:1;" value="{{ a.note or '' }}" autocomplete="off">
+            <input type="date" name="date_from" class="vs-input" style="width:160px;" aria-label="{{ 'С' if is_ru else 'Дан' }}" value="{{ a.date_from.isoformat() if a.date_from else '' }}" required>
+            <input type="date" name="date_to" class="vs-input" style="width:160px;" aria-label="{{ 'По' if is_ru else 'Гача' }}" value="{{ a.date_to.isoformat() if a.date_to else '' }}">
+            <input type="text" name="note" class="vs-input" style="min-width:180px; flex:1;" aria-label="{{ 'Примечание' if is_ru else 'Изоҳ' }}" value="{{ a.note or '' }}" autocomplete="off">
             <button type="submit" class="vs-btn vs-btn-sm">{{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
             {% if current_flags.get(a.id) %}
             <span class="vs-badge vs-badge-success">{{ 'действует' if is_ru else 'амалда' }}</span>

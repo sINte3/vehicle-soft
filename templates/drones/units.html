@@ -98,8 +98,10 @@
             {% if can_edit_nicks %}
             <form method="post" action="{{ url_for('drones.units_nickname_update', nick_id=n.id) }}" class="vs-row" style="gap:6px; flex-wrap:wrap; align-items:center;">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="text" name="nickname" class="vs-input" style="width:200px;" value="{{ n.nickname }}" maxlength="100" required autocomplete="off">
-              <select name="drone_unit_id" class="vs-select" style="width:110px;">
+              <input type="text" name="nickname" class="vs-input" style="width:200px;"
+                     aria-label="{{ 'Ник (DJI)' if is_ru else 'Ник (DJI)' }}: {{ n.nickname }}" value="{{ n.nickname }}" maxlength="100" required autocomplete="off">
+              <select name="drone_unit_id" class="vs-select" style="width:110px;"
+                      aria-label="{{ 'Машина' if is_ru else 'Машина' }}: {{ n.nickname }}">
                 {% for opt in units %}
                 <option value="{{ opt.id }}" {% if opt.id == n.drone_unit_id %}selected{% endif %}>№ {{ opt.number }}</option>
                 {% endfor %}

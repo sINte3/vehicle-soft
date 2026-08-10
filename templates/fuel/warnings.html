@@ -89,31 +89,31 @@
 <div class="card vs-card FUEL002G_FILTER_MARKER" style="margin-bottom:16px;">
     <div class="card-body">
         <form method="get" class="vs-form-row">
-            <div class="form-group" style="margin-bottom:0;"><label>{{ L_from }}</label><input type="date" name="date_from" value="{{ d_from.isoformat() }}" class="form-control"></div>
-            <div class="form-group" style="margin-bottom:0;"><label>{{ L_to }}</label><input type="date" name="date_to" value="{{ d_to.isoformat() }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0;"><label for="whDatefrom">{{ L_from }}</label><input id="whDatefrom" type="date" name="date_from" value="{{ d_from.isoformat() }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0;"><label for="whDateto">{{ L_to }}</label><input id="whDateto" type="date" name="date_to" value="{{ d_to.isoformat() }}" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ L_status }}</label>
-                <select name="status" class="form-control">
+                <label for="whStatus">{{ L_status }}</label>
+                <select id="whStatus" name="status" class="form-control">
                     <option value="">{{ L_all }}</option>
                     {% for st in status_options %}<option value="{{ st }}" {% if status_filter == st %}selected{% endif %}>{{ status_label(st, lang) }}</option>{% endfor %}
                 </select>
             </div>
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ L_severity }}</label>
-                <select name="severity" class="form-control">
+                <label for="whSeverity">{{ L_severity }}</label>
+                <select id="whSeverity" name="severity" class="form-control">
                     <option value="">{{ L_all }}</option>
                     {% for sev in severity_options %}<option value="{{ sev }}" {% if severity_filter == sev %}selected{% endif %}>{{ severity_label(sev, lang) }}</option>{% endfor %}
                 </select>
             </div>
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ L_type }}</label>
-                <select name="code" class="form-control">
+                <label for="whCode">{{ L_type }}</label>
+                <select id="whCode" name="code" class="form-control">
                     <option value="">{{ L_all }}</option>
                     {% for code in code_options %}<option value="{{ code }}" {% if code_filter == code %}selected{% endif %}>{{ code }}</option>{% endfor %}
                 </select>
             </div>
             <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button type="submit" class="btn btn-primary">{{ L_show }}</button></div>
-            <div class="form-group" style="grid-column:1/-1; margin-bottom:0;"><input type="text" name="q" value="{{ q }}" placeholder="{{ L_search }}" class="form-control"></div>
+            <div class="form-group" style="grid-column:1/-1; margin-bottom:0;"><input type="text" name="q" value="{{ q }}" aria-label="{{ L_search }}" placeholder="{{ L_search }}" class="form-control"></div>
         </form>
     </div>
 </div>
@@ -147,14 +147,14 @@
         <input type="hidden" name="details_snapshot" value="{{ w.details_ru }}">
         <input type="hidden" name="value_snapshot" value="{{ w.value if w.value is not none else '' }}">
         <div class="form-group" style="margin-bottom:0;">
-            <label>{{ L_status }}</label>
-            <select name="status" class="form-control">
+            <label for="whStatus2">{{ L_status }}</label>
+            <select id="whStatus2" name="status" class="form-control">
                 {% for st in status_options %}<option value="{{ st }}" {% if w.review_status == st %}selected{% endif %}>{{ status_label(st, lang) }}</option>{% endfor %}
             </select>
         </div>
         <div class="form-group" style="margin-bottom:0;">
-            <label>{{ L_comment }}</label>
-            <textarea name="comment" placeholder="{{ L_comment }}" class="form-control">{{ w.review_comment }}</textarea>
+            <label for="whComment">{{ L_comment }}</label>
+            <textarea id="whComment" name="comment" placeholder="{{ L_comment }}" class="form-control">{{ w.review_comment }}</textarea>
         </div>
         <div class="form-group" style="margin-bottom:0;"><label>&nbsp;</label><button class="btn btn-primary btn-sm" type="submit">{{ L_save }}</button></div>
     </form>

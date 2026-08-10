@@ -40,6 +40,9 @@ Chto proveryaetsya
   7. t-key-missing  t('...') s klyuchom, kotorogo net v translations.py:
                     t vernet sam klyuch, i podpis ostanetsya na yazyke
                     ishodnika v oboih interfeysah
+  8. raw-text       kirillicheskiy tekst pryamo v razmetke, mimo t() i mimo
+                    vetki `{% if is_ru %}`: cherez slovar on ne prohodit
+                    voobshche
 
 Pravila proekta, soblyudennye zdes
 ----------------------------------
@@ -89,7 +92,26 @@ RE_VAR_REF = re.compile(r'var\(\s*(--[a-z0-9-]+)\s*\)')
 RE_GLYPH = re.compile('[\U0001F000-\U0001FAFF☀-➿⬀-⯿]')
 
 CHECKS = ('table-class', 'hardcoded-color', 'breakpoint',
-          'token-dup', 'inline-style', 'glyph', 't-key-missing')
+          'token-dup', 'inline-style', 'glyph', 't-key-missing', 'raw-text')
+
+# [REASON]: proverka t-key-missing zakryvaet TOLKO vyzovy t(). Stroka,
+# napisannaya pryamo v razmetke, ne prohodit cherez slovar voobshche i
+# ostaetsya na yazyke ishodnika v OBOIH interfeysah. Progon na staging
+# (UI-P7) nashel imenno eto: ekran smeny vremennogo parolya byl celikom
+# russkim, a /profile, /wialon i /wialon/report pokazyvali uzbekskiy tekst
+# russkomu polzovatelyu. Ni odna sushchestvovavshaya proverka etogo ne videla.
+#
+# Schitayutsya SLOVA iz treh i bolee kirillicheskih bukv: edinicy ("l", "ga",
+# "DT", "sum") yazyka ne imeyut, i vklyuchat ih znachilo by utopit otchet v
+# shume. Vetka `{% if is_ru %}...{% endif %}` vyrezaetsya celikom -- eto
+# shtatnyy sposob dvuyazychiya v etom proekte, a ne narushenie.
+RE_LANG_BRANCH = re.compile(
+    r'\{%-?\s*if\s+[^%]*\b(?:is_ru|lang)\b.*?\{%-?\s*endif\s*-?%\}', re.S)
+RE_SCRIPT_BLOCK = re.compile(r'<script[^>]*>.*?</script>', re.S | re.I)
+RE_JINJA_EXPR = re.compile(r'\{\{.*?\}\}|\{%.*?%\}', re.S)
+RE_HTML_TAG = re.compile(r'<[^>]*>', re.S)
+RE_CYR_WORD = re.compile(r'[А-яЁёЎў'
+                         r'ҚқҒғҲҳ]{3,}')
 
 # [REASON]: t(key) pri otsutствii klyucha v slovare vozvrashchaet SAM KLYUCH.
 # Otkaz molchalivyy: v shablone stoit vyzov t(), stranica rendersya bez
@@ -217,7 +239,35 @@ def scan_templates(paths, trans=None):
             if missing:
                 counts['t-key-missing'][key] = missing
 
+        raw = raw_text_fragments(read(path))
+        if raw:
+            counts['raw-text'][key] = len(raw)
+            for fragment in raw:
+                detail['raw-text'].append((key, fragment))
+
     return counts, detail
+
+
+def raw_text_fragments(source):
+    """Kirillicheskiy tekst, napisannyy pryamo v razmetke.
+
+    Vyrezayutsya po ocheredi: kommentarii, <style>, <script>, vetki
+    `{% if is_ru %}...{% endif %}` (shtatnoe dvuyazychie), lyubye vyrazheniya
+    Jinja i sami tegi. Chto ostalos -- vidimyy tekst stranicy, kotoryy nikogda
+    ne prohodit cherez slovar.
+    """
+    body = RE_JINJA_COMMENT.sub(' ', source)
+    body = RE_STYLE.sub(' ', body)
+    body = RE_SCRIPT_BLOCK.sub(' ', body)
+    body = RE_LANG_BRANCH.sub(' ', body)
+    body = RE_JINJA_EXPR.sub(' ', body)
+    body = RE_HTML_TAG.sub('\x00', body)
+    out = []
+    for chunk in body.split('\x00'):
+        text = ' '.join(chunk.split())
+        if text and RE_CYR_WORD.search(text):
+            out.append(text[:60])
+    return out
 
 
 def scan_css(css_text):

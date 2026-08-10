@@ -29,7 +29,7 @@
     ('this_month', 'Текущий месяц'   if lang == 'ru' else 'Жорий ой'),
     ('last_month', 'Прошлый месяц'   if lang == 'ru' else 'Ўтган ой'),
 ] %}
-<div class="fuel-period-picker" style="display:flex; flex-direction:column; gap:10px; width:100%;">
+<div class="vs-stack-sm" style="width:100%;">
   <nav class="vs-pills" aria-label="{{ 'Быстрый выбор периода' if lang == 'ru' else 'Даврни тез танлаш' }}">
     {% for _code, _label in _presets %}
     <a class="vs-pill{% if period.preset == _code %} is-active{% endif %}"
@@ -38,26 +38,32 @@
     <a class="vs-pill{% if period.preset == 'custom' %} is-active{% endif %}"
        href="{{ url_for(request.endpoint, start_date=period.start_date, end_date=period.end_date, start_time=period.start_time, end_time=period.end_time, **_p_args) }}">{{ 'Указанный интервал' if lang == 'ru' else 'Кўрсатилган оралиқ' }}</a>
   </nav>
-  <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">
-    <div class="form-group" style="margin-bottom:0;">
-      <label>{{ 'Дата с' if lang == 'ru' else 'Сана дан' }}</label>
-      <input type="date" name="start_date" value="{{ period.start_date }}" class="form-control" style="width:160px;">
+  {# ДОСТУПНОСТЬ: у четырёх подписей не было `for`, а у полей — `id`. Для
+     программы чтения с экрана такое поле безымянно, и axe выдавал critical
+     `label` на КАЖДОМ экране, куда включён этот блок — восемь отчётов АЗС,
+     32 нарушения из одного файла. Блок включается ровно один раз на страницу
+     (проверено по всем семи включениям), поэтому фиксированные `id` дублей
+     не создают. Найдено прогоном на staging, UI-P7. #}
+  <div class="vs-form-row">
+    <div class="vs-field">
+      <label class="vs-label" for="fppStartDate">{{ 'Дата с' if lang == 'ru' else 'Сана дан' }}</label>
+      <input type="date" id="fppStartDate" name="start_date" value="{{ period.start_date }}" class="vs-input" style="width:160px;">
     </div>
-    <div class="form-group" style="margin-bottom:0;">
-      <label>{{ 'Время с' if lang == 'ru' else 'Вақт дан' }}</label>
-      <input type="time" name="start_time" value="{{ period.start_time }}" class="form-control" style="width:110px;">
+    <div class="vs-field">
+      <label class="vs-label" for="fppStartTime">{{ 'Время с' if lang == 'ru' else 'Вақт дан' }}</label>
+      <input type="time" id="fppStartTime" name="start_time" value="{{ period.start_time }}" class="vs-input" style="width:110px;">
     </div>
-    <div class="form-group" style="margin-bottom:0;">
-      <label>{{ 'Дата по' if lang == 'ru' else 'Сана гача' }}</label>
-      <input type="date" name="end_date" value="{{ period.end_date }}" class="form-control" style="width:160px;">
+    <div class="vs-field">
+      <label class="vs-label" for="fppEndDate">{{ 'Дата по' if lang == 'ru' else 'Сана гача' }}</label>
+      <input type="date" id="fppEndDate" name="end_date" value="{{ period.end_date }}" class="vs-input" style="width:160px;">
     </div>
-    <div class="form-group" style="margin-bottom:0;">
-      <label>{{ 'Время по' if lang == 'ru' else 'Вақт гача' }}</label>
-      <input type="time" name="end_time" value="{{ period.end_time }}" class="form-control" style="width:110px;">
+    <div class="vs-field">
+      <label class="vs-label" for="fppEndTime">{{ 'Время по' if lang == 'ru' else 'Вақт гача' }}</label>
+      <input type="time" id="fppEndTime" name="end_time" value="{{ period.end_time }}" class="vs-input" style="width:110px;">
     </div>
   </div>
   {# Permanent note — this is the one behaviour that will otherwise confuse everyone #}
-  <div class="text-muted text-sm">
+  <div class="vs-hint">
     {{ 'Приходы, ручной расход и начальные остатки хранятся без времени — операция целиком относится к своей дате.' if lang == 'ru' else 'Кирим, қўлда сарф ва бошланғич қолдиқлар вақтсиз сақланади — амал тўлиқ ўз санасига тегишли.' }}
   </div>
 </div>

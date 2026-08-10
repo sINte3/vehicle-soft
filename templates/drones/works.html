@@ -374,68 +374,68 @@
             <form method="post" action="{{ url_for('drones.works_update', work_id=w.id, **link_args) }}" class="vs-row" style="gap:6px; flex-wrap:wrap; align-items:flex-end; margin-top:8px;">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <div class="vs-field" style="width:140px;">
-                <label class="vs-label">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
-                <input type="date" name="work_date_from" class="vs-input" value="{{ w.work_date_from.isoformat() if w.work_date_from else '' }}">
+                <label for="whWorkdatefrom" class="vs-label">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
+                <input id="whWorkdatefrom" type="date" name="work_date_from" class="vs-input" value="{{ w.work_date_from.isoformat() if w.work_date_from else '' }}">
               </div>
               <div class="vs-field" style="width:140px;">
-                <label class="vs-label">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
-                <input type="date" name="work_date_to" class="vs-input" value="{{ w.work_date_to.isoformat() if w.work_date_to else '' }}">
+                <label for="whWorkdateto" class="vs-label">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
+                <input id="whWorkdateto" type="date" name="work_date_to" class="vs-input" value="{{ w.work_date_to.isoformat() if w.work_date_to else '' }}">
               </div>
               <div class="vs-field" style="width:100px;">
-                <label class="vs-label">{{ 'Период' if is_ru else 'Давр' }}</label>
-                <input type="text" name="period_month" class="vs-input" value="{{ w.period_month }}" maxlength="7">
+                <label for="whPeriodmonth" class="vs-label">{{ 'Период' if is_ru else 'Давр' }}</label>
+                <input id="whPeriodmonth" type="text" name="period_month" class="vs-input" value="{{ w.period_month }}" maxlength="7">
               </div>
               <div class="vs-field" style="min-width:200px;">
-                <label class="vs-label">{{ 'Заказчик — как написано' if is_ru else 'Буюртмачи — ёзилганидек' }}</label>
-                <input type="text" name="customer_raw" class="vs-input" value="{{ w.customer_raw }}" maxlength="300" required>
+                <label for="whCustomerraw" class="vs-label">{{ 'Заказчик — как написано' if is_ru else 'Буюртмачи — ёзилганидек' }}</label>
+                <input id="whCustomerraw" type="text" name="customer_raw" class="vs-input" value="{{ w.customer_raw }}" maxlength="300" required>
               </div>
               <div class="vs-field" style="min-width:180px;">
-                <label class="vs-label">{{ 'Заказчик из справочника' if is_ru else 'Маълумотномадаги буюртмачи' }}</label>
-                <select name="drone_customer_id" class="vs-select">
+                <label for="whDronecustomerid" class="vs-label">{{ 'Заказчик из справочника' if is_ru else 'Маълумотномадаги буюртмачи' }}</label>
+                <select id="whDronecustomerid" name="drone_customer_id" class="vs-select">
                   <option value="">{{ '— не выбран —' if is_ru else '— танланмаган —' }}</option>
                   {% for c in customers %}<option value="{{ c.id }}" {% if w.drone_customer_id == c.id %}selected{% endif %}>{{ c.name }}</option>{% endfor %}
                 </select>
               </div>
               <div class="vs-field" style="min-width:180px;">
-                <label class="vs-label">{{ 'Оператор' if is_ru else 'Оператор' }}</label>
-                <select name="drone_operator_id" class="vs-select">
+                <label for="whDroneoperatorid" class="vs-label">{{ 'Оператор' if is_ru else 'Оператор' }}</label>
+                <select id="whDroneoperatorid" name="drone_operator_id" class="vs-select">
                   <option value="">{{ '— не выбран —' if is_ru else '— танланмаган —' }}</option>
                   {% for op in operators %}<option value="{{ op.id }}" {% if w.drone_operator_id == op.id %}selected{% endif %}>{{ op.full_name }}</option>{% endfor %}
                 </select>
               </div>
               <div class="vs-field" style="width:100px;">
-                <label class="vs-label">{{ 'Га' if is_ru else 'Га' }}</label>
-                <input type="text" name="area_ha" class="vs-input" value="{{ w.area_ha }}" required>
+                <label for="whAreaha" class="vs-label">{{ 'Га' if is_ru else 'Га' }}</label>
+                <input id="whAreaha" type="text" name="area_ha" class="vs-input" value="{{ w.area_ha }}" required>
               </div>
               <div class="vs-field" style="width:140px;">
-                <label class="vs-label">{{ 'Оплата' if is_ru else 'Тўлов' }}</label>
-                <select name="payment_type" class="vs-select">
+                <label for="whPaymenttype" class="vs-label">{{ 'Оплата' if is_ru else 'Тўлов' }}</label>
+                <select id="whPaymenttype" name="payment_type" class="vs-select">
                   {% for p in payment_types %}<option value="{{ p }}" {% if w.payment_type == p %}selected{% endif %}>{{ payment_labels.get(p, p) }}</option>{% endfor %}
                 </select>
               </div>
               <div class="vs-field" style="width:120px;">
-                <label class="vs-label">{{ 'Цена за га' if is_ru else '1 га нархи' }}</label>
-                <input type="text" name="price_per_ha" class="vs-input" value="{{ w.price_per_ha if w.price_per_ha is not none else '' }}">
+                <label for="whPriceperha" class="vs-label">{{ 'Цена за га' if is_ru else '1 га нархи' }}</label>
+                <input id="whPriceperha" type="text" name="price_per_ha" class="vs-input" value="{{ w.price_per_ha if w.price_per_ha is not none else '' }}">
               </div>
               <div class="vs-field" style="width:120px;">
-                <label class="vs-label">{{ 'Сумма' if is_ru else 'Сумма' }}</label>
-                <input type="text" name="amount" class="vs-input" value="{{ w.amount if w.amount is not none else '' }}">
+                <label for="whAmount" class="vs-label">{{ 'Сумма' if is_ru else 'Сумма' }}</label>
+                <input id="whAmount" type="text" name="amount" class="vs-input" value="{{ w.amount if w.amount is not none else '' }}">
               </div>
               <div class="vs-field" style="width:120px;">
-                <label class="vs-label">{{ 'Получено' if is_ru else 'Кирим' }}</label>
-                <input type="text" name="received_amount" class="vs-input" value="{{ w.received_amount if w.received_amount is not none else '' }}">
+                <label for="whReceivedamount" class="vs-label">{{ 'Получено' if is_ru else 'Кирим' }}</label>
+                <input id="whReceivedamount" type="text" name="received_amount" class="vs-input" value="{{ w.received_amount if w.received_amount is not none else '' }}">
               </div>
               <div class="vs-field" style="width:120px;">
-                <label class="vs-label">{{ 'Прочие' if is_ru else 'Бошқа' }}</label>
-                <input type="text" name="other_costs" class="vs-input" value="{{ w.other_costs if w.other_costs is not none else '' }}">
+                <label for="whOthercosts" class="vs-label">{{ 'Прочие' if is_ru else 'Бошқа' }}</label>
+                <input id="whOthercosts" type="text" name="other_costs" class="vs-input" value="{{ w.other_costs if w.other_costs is not none else '' }}">
               </div>
               <div class="vs-field" style="min-width:140px;">
-                <label class="vs-label">{{ 'Подразделение' if is_ru else 'Бўлинма' }}</label>
-                <input type="text" name="subdivision_name" class="vs-input" value="{{ w.subdivision_name or '' }}" maxlength="120">
+                <label for="whSubdivisionname" class="vs-label">{{ 'Подразделение' if is_ru else 'Бўлинма' }}</label>
+                <input id="whSubdivisionname" type="text" name="subdivision_name" class="vs-input" value="{{ w.subdivision_name or '' }}" maxlength="120">
               </div>
               <div class="vs-field" style="min-width:160px;">
-                <label class="vs-label">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
-                <input type="text" name="note" class="vs-input" value="{{ w.note or '' }}" maxlength="500">
+                <label for="whNote" class="vs-label">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+                <input id="whNote" type="text" name="note" class="vs-input" value="{{ w.note or '' }}" maxlength="500">
               </div>
               <div class="vs-field" style="flex:none;">
                 <label class="vs-label">&nbsp;</label>

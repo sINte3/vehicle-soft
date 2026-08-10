@@ -141,14 +141,14 @@
                 {% include 'fuel/_period_picker.html' %}
             </div>
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ L_wh }}</label>
+                <label for="warehouseFilter">{{ L_wh }}</label>
                 <select name="warehouse_id" id="warehouseFilter" class="form-control" onchange="filterStationsByWarehouse()">
                     <option value="">{{ L_all }}</option>
                     {% for wh in warehouses %}<option value="{{ wh.id }}" {% if selected_warehouse_id == wh.id %}selected{% endif %}>{{ wh.name }}</option>{% endfor %}
                 </select>
             </div>
             <div class="form-group" style="margin-bottom:0;">
-                <label>{{ L_station }}</label>
+                <label for="stationFilter">{{ L_station }}</label>
                 <select name="station_id" id="stationFilter" class="form-control">
                     <option value="">{{ L_all }}</option>
                     {% for st in stations %}<option value="{{ st.id }}" data-wh="{{ st.warehouse_id }}" {% if selected_station_id == st.id %}selected{% endif %}>{{ st.name }} — {{ st.warehouse_name }}</option>{% endfor %}
@@ -190,7 +190,7 @@
 </div>
 
 <div class="fuel-report-toolbar">
-    <input type="text" id="fuelReportSearch" placeholder="{{ L_search }}" oninput="filterFuelReportTables()">
+    <input type="text" id="fuelReportSearch" aria-label="{{ L_search }}" placeholder="{{ L_search }}" oninput="filterFuelReportTables()">
     <span class="text-muted text-sm" id="fuelReportVisibleCount"></span>
 </div>
 

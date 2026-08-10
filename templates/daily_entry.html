@@ -170,7 +170,7 @@
         <button type="button" class="vs-btn" onclick="setAllIdle()">{{ t('Ҳаммасини «бўш» қилиш') }}</button>
         <button type="button" class="vs-btn" onclick="expandAllCards()">{{ t('Барчасини очиш') }}</button>
         <button type="button" class="vs-btn" onclick="collapseAllCards()">{{ t('Барчасини ёпиш') }}</button>
-        <input class="vs-input vs-toolbar-search" type="text" id="entrySearch" placeholder="{{ t('Техника ёки госномер бўйича қидириш') }}" oninput="filterEquipmentCards()">
+        <input class="vs-input vs-toolbar-search" type="text" id="entrySearch" aria-label="{{ t('Техника ёки госномер бўйича қидириш') }}" placeholder="{{ t('Техника ёки госномер бўйича қидириш') }}" oninput="filterEquipmentCards()">
         <div style="flex:1;"></div>
         <span class="vs-badge">{{ t('Техника сони:') }} <strong id="entry-visible-count">{{ equipment_list|length }}</strong>/<strong>{{ equipment_list|length }}</strong></span>
         <span class="vs-badge">{{ t('Ишлаган') }}: <strong id="entry-working-count">0</strong></span>

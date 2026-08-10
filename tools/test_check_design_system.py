@@ -181,6 +181,59 @@ class TKeyMissing(unittest.TestCase):
         self.assertGreater(len(trans['ru']), 100)
 
 
+class RawText(unittest.TestCase):
+    """Кириллический текст прямо в разметке, мимо `t()` и мимо `is_ru`.
+
+    Класс из жизни: проверка `t-key-missing` закрывает только вызовы `t()`,
+    и экран смены временного пароля прожил всю фазу P6 целиком русским —
+    строки были написаны в разметке и через словарь не проходили вовсе.
+    Найдено прогоном на staging, ни одной проверкой до него.
+    """
+
+    def fragments(self, body):
+        return cds.raw_text_fragments(body)
+
+    def test_bare_text_is_found_and_t_call_is_not(self):
+        bad = self.fragments('<h1>Смена временного пароля</h1>')
+        good = self.fragments("<h1>{{ t('Вақтинчалик паролни алмаштириш') }}</h1>")
+        self.assertEqual(len(bad), 1)
+        self.assertEqual(good, [],
+                         'текст через t() нарушением не является')
+
+    def test_language_branch_is_not_a_violation(self):
+        """`{% if is_ru %}…{% else %}…{% endif %}` — штатное двуязычие.
+
+        Без этого правила проверка нашла бы «нарушение» в каждой корректной
+        двуязычной паре: report.html, work_order_close.html и оба крупных
+        отчёта АЗС дают ровно такую разметку.
+        """
+        body = ('<span>{% if is_ru %}строк скрыто'
+                '{% else %}қатор яширилган{% endif %}</span>')
+        self.assertEqual(self.fragments(body), [])
+
+    def test_units_shorter_than_three_letters_are_ignored(self):
+        """«л», «га», «ДТ», «сўм» языка не имеют.
+
+        Если считать и их, отчёт утонет в шуме и проверку отключат — это
+        уже случалось с чекерами на этом проекте.
+        """
+        self.assertEqual(self.fragments('<td>{{ value }} л</td>'), [])
+        self.assertEqual(self.fragments('<td>{{ value }} га</td>'), [])
+        self.assertGreater(len(self.fragments('<td>литров</td>')), 0)
+
+    def test_comment_script_and_style_are_not_page_text(self):
+        for body in ('{# Пояснение к разметке, целиком по-русски #}',
+                     '<script>var msg = "Сохранить изменения";</script>',
+                     '<style>/* заголовок таблицы */ .a { color: red; }</style>'):
+            self.assertEqual(self.fragments(body), [], body[:30])
+
+    def test_clean_and_dirty_differ(self):
+        """Отрицательный контроль: проверка обязана различать два случая."""
+        clean = self.fragments("<p>{{ t('Ёзувлар йўқ') }}</p>")
+        dirty = self.fragments('<p>Записей нет</p>')
+        self.assertLess(len(clean), len(dirty))
+
+
 class TokenDuplicates(unittest.TestCase):
     def test_same_value_under_two_names_is_found_by_value_not_by_name(self):
         css = ':root { --vs-bg: #eef2f7; --vs-border-3: #eef2f7; --vs-text: #182230; }'

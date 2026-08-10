@@ -88,12 +88,12 @@
             <input type="hidden" name="id" id="rId" value="">
             <div class="form-inline">
                 <div class="form-group" style="margin-bottom:0;">
-                    <label>{{ L_date }}</label>
-                    <input type="date" name="receipt_date" value="{{ today.isoformat() }}" required class="form-control">
+                    <label for="rhReceiptdate">{{ L_date }}</label>
+                    <input id="rhReceiptdate" type="date" name="receipt_date" value="{{ today.isoformat() }}" required class="form-control">
                 </div>
                 <div class="form-group" style="margin-bottom:0; flex:2;">
-                    <label>{{ L_wh }}</label>
-                    <select name="warehouse_id" required class="form-control">
+                    <label for="rhWarehouseid">{{ L_wh }}</label>
+                    <select id="rhWarehouseid" name="warehouse_id" required class="form-control">
                         <option value="">{{ L_select }}</option>
                         {% for wh in warehouses %}
                         <option value="{{ wh.id }}" {% if selected_wh_id == wh.id %}selected{% endif %}>{{ wh.name }}</option>
@@ -106,22 +106,22 @@
                     <div class="fuel-pill">ДТ</div>
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
-                    <label>{{ L_qty }}</label>
-                    <input type="number" name="quantity" class="form-control" step="0.1" min="0.1" required style="width:130px;" title="{{ L_qty_hint }}">
+                    <label for="rhQuantity">{{ L_qty }}</label>
+                    <input id="rhQuantity" type="number" name="quantity" class="form-control" step="0.1" min="0.1" required style="width:130px;" title="{{ L_qty_hint }}">
                     <small class="text-muted">{{ L_qty_hint }}</small>
                 </div>
             </div>
             <div class="form-inline" style="margin-top:10px;">
                 <div class="form-group" style="margin-bottom:0; flex:2;">
-                    <label>{{ L_supplier }}</label>
+                    <label for="rSupplier">{{ L_supplier }}</label>
                     <input type="text" name="supplier" id="rSupplier" placeholder="" class="form-control">
                 </div>
                 <div class="form-group" style="margin-bottom:0; flex:1;">
-                    <label>{{ L_doc }}</label>
+                    <label for="rDoc">{{ L_doc }}</label>
                     <input type="text" name="doc_number" id="rDoc" placeholder="" class="form-control">
                 </div>
                 <div class="form-group" style="margin-bottom:0; flex:2;">
-                    <label>{{ L_note }}</label>
+                    <label for="rNote">{{ L_note }}</label>
                     <input type="text" name="note" id="rNote" class="form-control">
                 </div>
                 <div class="form-group" style="margin-bottom:0;">
@@ -137,11 +137,11 @@
 <div class="card" style="margin-bottom:16px;">
     <div class="card-body" style="padding:12px 20px;">
         <form method="get" class="form-inline vs-form-row">
-            <div class="form-group" style="margin-bottom:0;"><label>{{ L_from }}</label><input type="date" name="date_from" value="{{ d_from.isoformat() }}" class="form-control"></div>
-            <div class="form-group" style="margin-bottom:0;"><label>{{ L_to }}</label><input type="date" name="date_to" value="{{ d_to.isoformat() }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0;"><label for="rhDatefrom">{{ L_from }}</label><input id="rhDatefrom" type="date" name="date_from" value="{{ d_from.isoformat() }}" class="form-control"></div>
+            <div class="form-group" style="margin-bottom:0;"><label for="rhDateto">{{ L_to }}</label><input id="rhDateto" type="date" name="date_to" value="{{ d_to.isoformat() }}" class="form-control"></div>
             <div class="form-group" style="margin-bottom:0; flex:1;">
-                <label>{{ L_wh }}</label>
-                <select name="warehouse_id" class="form-control">
+                <label for="rhWarehouseid2">{{ L_wh }}</label>
+                <select id="rhWarehouseid2" name="warehouse_id" class="form-control">
                     <option value="">{{ L_all }}</option>
                     {% for wh in warehouses %}<option value="{{ wh.id }}" {% if selected_wh_id == wh.id %}selected{% endif %}>{{ wh.name }}</option>{% endfor %}
                 </select>
@@ -152,7 +152,7 @@
 </div>
 
 <div class="fuel-toolbar">
-    <input type="text" id="receiptSearch" placeholder="{{ L_search }}" oninput="filterReceipts()" class="form-control">
+    <input type="text" id="receiptSearch" aria-label="{{ L_search }}" placeholder="{{ L_search }}" oninput="filterReceipts()" class="form-control">
     <span class="text-muted text-sm" id="receiptVisibleCount"></span>
 </div>
 

@@ -43,8 +43,8 @@
         {% include 'fuel/_period_picker.html' %}
         <div class="vs-form-row" style="margin-top:10px;">
             <div>
-                <label>{{ L_station }}</label>
-                <select name="station_id" style="min-width:240px;" class="form-control">
+                <label for="siStationid">{{ L_station }}</label>
+                <select id="siStationid" name="station_id" style="min-width:240px;" class="form-control">
                     <option value="">{{ L_select_station }}</option>
                     {% for st in stations %}
                     <option value="{{ st.id }}" {% if station_id == st.id %}selected{% endif %}>
