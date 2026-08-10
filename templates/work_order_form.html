@@ -23,12 +23,12 @@
             <div class="vs-form-grid">
 
                 <div class="vs-field">
-                    <label class="vs-label">{{ 'Дата' if is_ru else 'Сана' }} *</label>
+                    <label class="vs-label" for="plannedDate">{{ 'Дата' if is_ru else 'Сана' }} *</label>
                     <input type="date" name="planned_date" id="plannedDate" class="vs-input" value="{{ today }}" required>
                 </div>
 
                 <div class="vs-field">
-                    <label class="vs-label">{{ 'Организация' if is_ru else 'Ташкилот' }} *</label>
+                    <label class="vs-label" for="orgSelect">{{ 'Организация' if is_ru else 'Ташкилот' }} *</label>
                     <select name="organization_id" id="orgSelect" class="vs-select" required onchange="loadEquipment(this.value)">
                         <option value="">{{ '— выберите —' if is_ru else '— танланг —' }}</option>
                         {% for org in organizations %}
@@ -38,7 +38,7 @@
                 </div>
 
                 <div class="vs-field">
-                    <label class="vs-label">{{ 'Техника' if is_ru else 'Техника' }} *</label>
+                    <label class="vs-label" for="eqSelect">{{ 'Техника' if is_ru else 'Техника' }} *</label>
                     <select name="equipment_id" id="eqSelect" class="vs-select" required>
                         <option value="">{{ '— сначала выберите организацию —' if is_ru else '— аввал ташкилотни танланг —' }}</option>
                         {% for eq in initial_equipment %}
@@ -48,7 +48,7 @@
                 </div>
 
                 <div class="vs-field">
-                    <label class="vs-label">{{ 'Тип работы' if is_ru else 'Иш тури' }} *</label>
+                    <label class="vs-label" for="workTypeText">{{ 'Тип работы' if is_ru else 'Иш тури' }} *</label>
                     <input type="text" name="work_type_text" id="workTypeText" class="vs-input" list="wtList" autocomplete="off"
                            placeholder="{{ 'Выберите или введите' if is_ru else 'Танланг ёки киритинг' }}">
                     <input type="hidden" name="work_type_id" id="workTypeId">
@@ -60,7 +60,7 @@
                 </div>
 
                 <div class="vs-field">
-                    <label class="vs-label">{{ 'Заказчик' if is_ru else 'Буюртмачи' }}</label>
+                    <label class="vs-label" for="customerText">{{ 'Заказчик' if is_ru else 'Буюртмачи' }}</label>
                     <input type="text" name="customer_text" id="customerText" class="vs-input" list="custList" autocomplete="off">
                     <input type="hidden" name="customer_id" id="customerId">
                     <datalist id="custList">
@@ -71,24 +71,24 @@
                 </div>
 
                 <div class="vs-field">
-                    <label class="vs-label">{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</label>
+                    <label class="vs-label" for="unitInput">{{ 'Ед. изм.' if is_ru else 'Ўлчов бирлиги' }}</label>
                     <input type="text" name="unit" id="unitInput" class="vs-input" value="ga">
                 </div>
 
                 <div class="vs-field">
-                    <label class="vs-label">{{ 'Плановый объём' if is_ru else 'Режалаштирилган ҳажм' }}</label>
+                    <label class="vs-label" for="plannedQty">{{ 'Плановый объём' if is_ru else 'Режалаштирилган ҳажм' }}</label>
                     <input type="number" name="planned_quantity" id="plannedQty" class="vs-input" min="0" step="0.01">
                 </div>
 
                 <div class="vs-field">
-                    <label class="vs-label">{{ 'Цена за ед.' if is_ru else 'Бирлик нархи' }}</label>
+                    <label class="vs-label" for="priceInput">{{ 'Цена за ед.' if is_ru else 'Бирлик нархи' }}</label>
                     <input type="number" name="price" id="priceInput" class="vs-input" min="0" step="0.01" value="0">
                     <div class="vs-hint" id="priceNote"></div>
                 </div>
 
                 <div class="vs-field">
-                    <label class="vs-label">{{ 'Тип оплаты' if is_ru else 'Тўлов тури' }}</label>
-                    <select name="payment_type" class="vs-select">
+                    <label class="vs-label" for="wof-payment-type">{{ 'Тип оплаты' if is_ru else 'Тўлов тури' }}</label>
+                    <select id="wof-payment-type" name="payment_type" class="vs-select">
                         <option value="">{{ '— не выбран —' if is_ru else '— танланмаган —' }}</option>
                         <option value="naqd">{{ 'Наличные' if is_ru else 'Нақд' }}</option>
                         <option value="bank">{{ 'Перечисление' if is_ru else 'Банк ўтказма' }}</option>
@@ -99,8 +99,8 @@
 
                 {% if is_admin %}
                 <div class="vs-field">
-                    <label class="vs-label">{{ 'Назначить механика' if is_ru else 'Механикни тайинлаш' }}</label>
-                    <select name="assigned_to" class="vs-select">
+                    <label class="vs-label" for="wof-assigned-to">{{ 'Назначить механика' if is_ru else 'Механикни тайинлаш' }}</label>
+                    <select id="wof-assigned-to" name="assigned_to" class="vs-select">
                         <option value="">{{ 'Не назначен' if is_ru else 'Тайинланмаган' }}</option>
                         {% for m in mechanics %}
                         <option value="{{ m.id }}">{{ m.full_name or m.username }}</option>
@@ -110,8 +110,8 @@
                 {% endif %}
 
                 <div class="form-group full">
-                    <label class="vs-label">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
-                    <textarea name="note" class="vs-textarea" rows="2"></textarea>
+                    <label class="vs-label" for="wof-note">{{ 'Примечание' if is_ru else 'Изоҳ' }}</label>
+                    <textarea id="wof-note" name="note" class="vs-textarea" rows="2"></textarea>
                 </div>
 
             </div>
