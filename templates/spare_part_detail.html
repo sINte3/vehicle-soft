@@ -123,7 +123,7 @@
         <span class="vs-soft" style="font-size:12px;">{{ req.items|length }}</span>
     </div>
     <div class="vs-table-scroll">
-    <table class="vs-table">
+    <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
                 <th style="width:40px;">№</th>
@@ -280,7 +280,7 @@
         {% if issue_ctx.sku_items %}
         <div class="vs-label vs-mb-sm">{{ 'Будут списаны со склада' if is_ru else 'Омбордан ҳисобдан чиқарилади' }}:</div>
         <div class="vs-table-scroll vs-mb">
-        <table class="vs-table">
+        <table class="vs-table is-static" data-sortable>
             <thead><tr>
                 <th>{{ 'Позиция' if is_ru else 'Позиция' }}</th>
                 <th>Артикул</th>
@@ -310,7 +310,7 @@
                     <td class="right">{{ item.quantity }} {{ item.unit|spare_unit_label or '' }}</td>
                     <td class="right">{{ av_on_hand }}</td>
                     <td class="right{% if not av_reserved %} vs-muted{% endif %}">{{ av_reserved }}</td>
-                    <td class="right" style="color:{{ 'var(--danger)' if (short_here or av_available < 0) else 'var(--text)' }};">
+                    <td class="right{{ ' vs-tone is-danger' if (short_here or av_available < 0) else '' }}">
                         {{ av_available }}
                         {% if short_here %}
                         <div class="vs-soft" style="font-size:10.5px;">{{ 'уйдёт в минус' if is_ru else 'минусга тушади' }}</div>
@@ -357,7 +357,7 @@
     <div class="vs-card-body">
         <div class="vs-soft vs-mb-sm" style="font-size:12.5px;">{{ 'Укажите и подтвердите цену каждой позиции. «Вернуть»/«Отклонить» возвращает всю заявку оператору на доработку. Подсказка показывает последние подтверждённые цены этой детали.' if is_ru else 'Ҳар бир позиция нархини киритинг ва тасдиқланг. «Қайтариш»/«Рад этиш» бутун сўровни операторга қайтаради. Кўрсатма ушбу эҳтиёт қисмнинг охирги тасдиқланган нархларини кўрсатади.' }}</div>
         <div class="vs-table-scroll">
-        <table class="vs-table">
+        <table class="vs-table is-static" data-sortable>
             <thead>
                 <tr>
                     <th style="width:40px;">№</th>
@@ -480,12 +480,14 @@
   <div class="vs-card-body">
     <div class="vs-timeline">
     {% for e in timeline %}
-      {% set dot = 'var(--vs-info)' %}
-      {% if e.type == 'status' %}{% set dot = status_colors.get(e.new_status, 'var(--vs-info)') %}
-      {% elif e.type == 'price' %}{% set dot = ('var(--vs-danger)' if e.price_action == 'reject' else ('var(--vs-warning)' if e.price_action == 'return' else 'var(--vs-success)')) %}
-      {% elif e.type == 'attachment' %}{% set dot = 'var(--vs-text-muted)' %}{% endif %}
+      {# DD-032: точка ленты берёт ТОТ ЖЕ тон, что и бейдж статуса, — из одного
+         словаря, а не из своего набора цветов рядом. #}
+      {% set dot = 'is-info' %}
+      {% if e.type == 'status' %}{% set dot = status_tones.get(e.new_status, '')|replace('vs-badge-','is-') or 'is-muted' %}
+      {% elif e.type == 'price' %}{% set dot = ('is-danger' if e.price_action == 'reject' else ('is-warning' if e.price_action == 'return' else 'is-success')) %}
+      {% elif e.type == 'attachment' %}{% set dot = 'is-muted' %}{% endif %}
       <div class="vs-timeline-item">
-        <div class="vs-timeline-dot" style="background:{{ dot }};"></div>
+        <div class="vs-timeline-dot {{ dot }}"></div>
         <div>
           <div class="vs-timeline-head">
             <strong>{{ e.actor }}</strong>

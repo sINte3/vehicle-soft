@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти — каталог' if is_ru else 'Эҳтиёт қисмлар — каталог' }}{% endblock %}
 {% block content %}
@@ -27,7 +28,7 @@
     <div class="vs-card-body">
         <div class="vs-soft vs-mb-sm" style="font-size:12.5px;">{{ 'Позиции, введённые операторами вручную. Утвердите как новую запись каталога (с категорией) или объедините с существующей. Пока позиция здесь — её заявку нельзя утвердить.' if is_ru else 'Операторлар қўлда киритган позициялар. Янги каталог ёзуви сифатида (категория билан) тасдиқланг ёки мавжуди билан бирлаштиринг. Позиция шу ерда экан — унинг сўровини тасдиқлаб бўлмайди.' }}</div>
         <div class="vs-table-scroll">
-        <table class="vs-table">
+        <table class="vs-table is-static" data-sortable>
             <thead>
                 <tr>
                     <th>{{ 'Название' if is_ru else 'Номи' }}</th>
@@ -58,7 +59,7 @@
                                 <option value="{{ cat.id }}">{{ cat.name_ru if is_ru else cat.name_uz }}</option>
                                 {% endfor %}
                             </select>
-                            <button type="submit" class="vs-btn vs-btn-sm vs-btn-primary">✓ {{ 'Утвердить' if is_ru else 'Тасдиқлаш' }}</button>
+                            <button type="submit" class="vs-btn vs-btn-sm vs-btn-primary">{{ icon('check', 14) }} {{ 'Утвердить' if is_ru else 'Тасдиқлаш' }}</button>
                         </form>
                     </td>
                     <td>
@@ -176,7 +177,7 @@
         <span class="vs-card-title">{{ 'Всего в каталоге' if is_ru else 'Каталогда жами' }}: {{ parts|length }}</span>
     </div>
     <div class="vs-table-scroll">
-    <table class="vs-table">
+    <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
                 <th style="width:40px;">№</th>
@@ -204,7 +205,7 @@
                     <form method="post" action="{{ url_for('spare_parts.catalog_name_uz_save', pid=part.id) }}" class="vs-row" style="gap:4px; flex-wrap:nowrap;">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="text" name="name_uz" class="vs-input" value="{{ part.name_uz or '' }}" placeholder="—" style="min-width:140px; padding:5px 8px; font-size:12px;" aria-label="{{ 'Название (узб.) для' if is_ru else 'Номи (ўзбекча):' }} {{ part.name }}">
-                        <button type="submit" class="vs-btn vs-btn-sm">💾 {{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
+                        <button type="submit" class="vs-btn vs-btn-sm">{{ icon('save', 14) }} {{ 'Сохранить' if is_ru else 'Сақлаш' }}</button>
                     </form>
                 </td>
                 {% endif %}
@@ -227,10 +228,10 @@
                     {% if can_manage and part.status == 'active' %}
                     {# CYCLE-2-3 Part 2: primary row actions carry visible text, not just an icon. #}
                     <button class="vs-btn vs-btn-sm"
-                            onclick='editPart({{ part.id }}, {{ part.name|tojson }}, {{ (part.name_uz or "")|tojson }}, {{ (part.part_number or "")|tojson }}, {{ (part.unit or "")|tojson }}, {{ (part.category_id or "")|tojson }})'>✏ {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
+                            onclick='editPart({{ part.id }}, {{ part.name|tojson }}, {{ (part.name_uz or "")|tojson }}, {{ (part.part_number or "")|tojson }}, {{ (part.unit or "")|tojson }}, {{ (part.category_id or "")|tojson }})'>{{ icon('edit', 14) }} {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
                     {# SPARE-STAGE3: per-part compatibility editor (writes SparePartCompatibility rows). #}
                     <a class="vs-btn vs-btn-sm"
-                       href="{{ url_for('spare_parts.catalog_compatibility', pid=part.id) }}">🔗 {{ 'Совместимость' if is_ru else 'Мослик' }}</a>
+                       href="{{ url_for('spare_parts.catalog_compatibility', pid=part.id) }}">{{ icon('link', 14) }} {{ 'Совместимость' if is_ru else 'Мослик' }}</a>
                     {% endif %}
                 </td>
             </tr>
@@ -286,7 +287,7 @@
         {% endif %}
         {% if categories %}
         <div class="vs-table-scroll">
-        <table class="vs-table">
+        <table class="vs-table is-static" data-sortable>
             <thead>
                 <tr>
                     <th style="width:40px;">№</th>
@@ -318,7 +319,7 @@
                         {% if can_manage %}
                         {# CYCLE-2-3 Part 2: primary row actions carry visible text, not just an icon. #}
                         <button class="vs-btn vs-btn-sm"
-                                onclick='editCategory({{ cat.id }}, {{ cat.name_ru|tojson }}, {{ cat.name_uz|tojson }}, {{ cat.kind|tojson }}, {{ cat.sort_order or 0 }}, {{ 1 if cat.is_active else 0 }})'>✏ {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
+                                onclick='editCategory({{ cat.id }}, {{ cat.name_ru|tojson }}, {{ cat.name_uz|tojson }}, {{ cat.kind|tojson }}, {{ cat.sort_order or 0 }}, {{ 1 if cat.is_active else 0 }})'>{{ icon('edit', 14) }} {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
                         {% endif %}
                     </td>
                 </tr>

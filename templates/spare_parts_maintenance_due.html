@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Пора менять' if is_ru else 'Алмаштириш вақти' }}{% endblock %}
 {% block content %}
@@ -20,7 +21,7 @@
         <span class="vs-card-title">{{ 'К замене' if is_ru else 'Алмаштиришга' }}: {{ rows|length }}</span>
     </div>
     <div class="vs-table-scroll">
-    <table class="vs-table">
+    <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
                 <th style="width:40px;">№</th>
@@ -53,7 +54,7 @@
 {% else %}
 <div class="vs-card">
     <div class="vs-card-body">
-        <div class="vs-soft" style="text-align:center; padding:20px;">✓ {{ 'Нет техники, наработавшей интервал замены (по имеющимся данным).' if is_ru else 'Алмаштириш интервалига етган техника йўқ (мавжуд маълумотлар бўйича).' }}</div>
+        <div class="vs-soft" style="text-align:center; padding:20px;">{{ icon('check', 14) }} {{ 'Нет техники, наработавшей интервал замены (по имеющимся данным).' if is_ru else 'Алмаштириш интервалига етган техника йўқ (мавжуд маълумотлар бўйича).' }}</div>
     </div>
 </div>
 {% endif %}

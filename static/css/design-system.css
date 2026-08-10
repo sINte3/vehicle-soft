@@ -589,11 +589,6 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-card-title { font-size: var(--vs-fs-md); font-weight: 700; }
 .vs-card-body { padding: 16px 18px; }
 
-.vs-card-accent-top    { border-top: 3px solid var(--vs-primary); }
-.vs-card-accent-left   { border-left: 4px solid var(--vs-primary); }
-.vs-card-accent-warning { border-left: 4px solid var(--vs-warning); }
-.vs-card-accent-danger  { border-left: 4px solid var(--vs-danger);  }
-.vs-card-accent-success { border-left: 4px solid var(--vs-success); }
 
 .vs-hero {
   display: flex; justify-content: space-between; align-items: flex-start;
@@ -650,6 +645,23 @@ a:hover { color: var(--vs-primary-hover); text-decoration: underline; }
 .vs-kpi-main { margin-bottom: 14px; }
 .vs-kpi-value { font-size: 31px; font-weight: 800; line-height: 1; letter-spacing: -.8px; font-variant-numeric: tabular-nums; }
 .vs-kpi-cap   { margin-top: 5px; color: var(--vs-text-muted); font-size: 12.5px; }
+
+/* AKCENT-POLOSKA KARTOCHKI. Pravila stoyat ZDES, POSLE .vs-kpi, i eto ne
+   kosmetika poryadka.
+   [REASON]: .vs-kpi zadaet ramku SOKRASHCHENIEM `border: 1px solid ...`, a
+   akcent -- dlinnym svoystvom `border-left`. Specifichnost u nih ODINAKOVAYA
+   (odin klass), poetomu resheniyu reshaet poryadok v fayle: poka akcenty
+   stoyali vyshe, sokrashchenie .vs-kpi molcha stiralo polosku u lyubogo
+   elementa s oboimi klassami. Defekt byl uzhe naiden -- v
+   spare_parts_desk.html lezhalo pravilo-obhod s kommentariem "design-system.css
+   pravit nelzya". Teper pravit mozhno, i pochineno v istochnike; obhod udalen.
+   V razmetke takoe sochetanie na ves produkt odno (plitka "gotovo k vydache"
+   na stole zapchastey), poetomu perenos nichego bolshe ne zatragivaet. */
+.vs-card-accent-top    { border-top: 3px solid var(--vs-primary); }
+.vs-card-accent-left   { border-left: 4px solid var(--vs-primary); }
+.vs-card-accent-warning { border-left: 4px solid var(--vs-warning); }
+.vs-card-accent-danger  { border-left: 4px solid var(--vs-danger);  }
+.vs-card-accent-success { border-left: 4px solid var(--vs-success); }
 
 .vs-mini {
   padding: 9px 11px;
@@ -2144,3 +2156,54 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
 .vs-form-errors ul { margin: 6px 0 0 18px; }
 /* Imya sohraneno: klass stavit i snimaet skript ekrana pered otpravkoy. */
 .wof-err { border-color: var(--vs-danger) !important; box-shadow: var(--vs-ring-danger, 0 0 0 2px var(--vs-danger-bg)); }
+
+/* Tochka lenty sobytiy beret ton iz togo zhe nabora, chto i badzh statusa
+   (DD-032). Do etogo cvet prihodil inline iz slovarya cvetov v Python. */
+.vs-timeline-dot.is-info    { background: var(--vs-info); }
+.vs-timeline-dot.is-success { background: var(--vs-success); }
+.vs-timeline-dot.is-warning { background: var(--vs-warning); }
+.vs-timeline-dot.is-danger  { background: var(--vs-danger); }
+.vs-timeline-dot.is-muted   { background: var(--vs-text-muted); }
+
+/* ---- P6, zapchasti: to, chto zhilo v inline-<style> treh shablonov -------
+   Imena sohraneny s prefiksom sp-: ih stavit i snimaet skript formy
+   (static/js/spare_parts_upload.js i inline-obrabotchiki ekrana), pereimenovanie
+   potrebovalo by pravki JS bez vygody. Selektory `.sp-form-scope ...` snyaty --
+   oblast deystviya zadavalas obertkoy, kotoraya nuzhna byla tolko potomu, chto
+   pravila lezhali v shablone. */
+.sp-hint { font-size: 11.5px; color: var(--vs-text-muted); margin-top: 3px; line-height: 1.35; }
+.sp-hint.is-catalog { color: var(--vs-success); }
+.sp-hint.is-new     { color: var(--vs-warning); }
+
+.sp-repeat { display: none; margin-top: 4px; padding: 6px 8px; border-radius: var(--vs-r-sm); font-size: 11.5px; line-height: 1.4; }
+.sp-repeat.is-red     { display: block; background: var(--vs-danger-bg);  color: var(--vs-danger);  border: 1px solid var(--vs-danger); }
+.sp-repeat.is-yellow  { display: block; background: var(--vs-warning-bg); color: var(--vs-warning); border: 1px solid var(--vs-warning); }
+.sp-repeat.is-history { display: block; background: var(--vs-surface-2);  color: var(--vs-text-muted); border: 1px solid var(--vs-border); }
+
+.sp-fuzzy-label { font-size: var(--vs-fs-xs); color: var(--vs-text-muted); margin-top: 4px; }
+.sp-fuzzy-item {
+  display: inline-block; margin: 3px 4px 0 0; padding: 3px 8px;
+  font-size: 11.5px; line-height: 1.3;
+  background: var(--vs-surface-2); border: 1px solid var(--vs-border);
+  border-radius: var(--vs-r-pill); color: var(--vs-text); cursor: pointer;
+}
+.sp-fuzzy-item:hover { border-color: var(--vs-primary); color: var(--vs-primary); }
+
+.sp-eq-ref { font-size: var(--vs-fs-sm); color: var(--vs-text-muted); margin-top: 4px; }
+.sp-eq-ref strong { color: var(--vs-text); }
+
+/* [REASON]: modifikator, a ne svoy klass tablicy. Pervaya redakciya postavila
+   syuda `.sp-form-table`, i chekery srazu ukazal: table-class 20 -> 21. On prav
+   -- kontrakt razreshaet u .vs-table tolko modifikatory is-*, i imenno tak
+   odnorazovye klassy tablic i zavodilis ran'she. Vyravnivanie po verhu nuzhno
+   vezde, gde v yacheykah mnogostrochnye redaktory. */
+.vs-table.is-top td { vertical-align: top; }
+.sp-toolbar { position: sticky; top: 0; z-index: 30; }
+
+/* Inline-forma osvobozhdeniya rezerva v tablice ostatkov. */
+.sp-res-release-form { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
+.sp-res-note { width: 150px; font-size: var(--vs-fs-sm); padding: 4px 6px; }
+
+/* Nol na stole zapchastey -- normalnoe tikhoe sostoyanie, a ne trevoga. */
+.sp-desk-zero { color: var(--vs-text-muted); }
+.sp-desk-my .vs-kpi-value { font-size: 24px; }

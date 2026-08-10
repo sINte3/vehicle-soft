@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти — артикулы' if is_ru else 'Эҳтиёт қисмлар — артикуллар' }}{% endblock %}
 {% block content %}
@@ -73,7 +74,7 @@
         <span class="vs-card-title">{{ 'Всего артикулов' if is_ru else 'Жами артикуллар' }}: {{ sku_rows|length }}</span>
     </div>
     <div class="vs-table-scroll">
-    <table class="vs-table">
+    <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
                 <th style="width:40px;">№</th>
@@ -107,7 +108,7 @@
                 <td class="right">
                     {# CYCLE-2-3 Part 2: primary row actions carry visible text, not just an icon. #}
                     <button class="vs-btn vs-btn-sm"
-                            onclick='editSku({{ sku.id }}, {{ sku.spare_part_id }}, {{ (sku.brand or "")|tojson }}, {{ (sku.article_number or "")|tojson }}, {{ (sku.supplier or "")|tojson }}, {{ 1 if sku.is_active else 0 }})'>✏ {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
+                            onclick='editSku({{ sku.id }}, {{ sku.spare_part_id }}, {{ (sku.brand or "")|tojson }}, {{ (sku.article_number or "")|tojson }}, {{ (sku.supplier or "")|tojson }}, {{ 1 if sku.is_active else 0 }})'>{{ icon('edit', 14) }} {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
                 </td>
             </tr>
             {% endfor %}
@@ -116,7 +117,7 @@
     </div>
     {% if not sku_rows %}
     <div class="vs-empty">
-        <div class="vs-empty-ico">🏷️</div>
+        <div class="vs-empty-ico">{{ icon('tag', 28) }}</div>
         <div class="vs-empty-title">{{ 'Артикулов пока нет' if is_ru else 'Ҳозирча артикул йўқ' }}</div>
         <div class="vs-empty-sub">{{ 'Добавьте первый вариант поставки в форме выше.' if is_ru else 'Юқоридаги шаклда биринчи таъминот вариантини қўшинг.' }}</div>
     </div>

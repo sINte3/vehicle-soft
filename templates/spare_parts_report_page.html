@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ spec.title_ru if is_ru else spec.title_uz }}{% endblock %}
 {% block content %}
@@ -15,8 +16,8 @@
   </div>
   <div class="vs-row-end">
     <a href="{{ url_for('spare_parts.reports') }}" class="vs-btn">← {{ 'Все отчёты' if is_ru else 'Барча ҳисоботлар' }}</a>
-    <a href="{{ url_for('spare_parts.report_export_xlsx', key=key, date_from=date_from_s, date_to=date_to_s, org_id=org_id, equipment_id=equipment_id, category_id=category_id) }}" class="vs-btn vs-btn-primary">⬇ Excel</a>
-    <a href="{{ url_for('spare_parts.report_export_pdf', key=key, date_from=date_from_s, date_to=date_to_s, org_id=org_id, equipment_id=equipment_id, category_id=category_id) }}" class="vs-btn">⬇ PDF</a>
+    <a href="{{ url_for('spare_parts.report_export_xlsx', key=key, date_from=date_from_s, date_to=date_to_s, org_id=org_id, equipment_id=equipment_id, category_id=category_id) }}" class="vs-btn vs-btn-primary">{{ icon('download', 14) }} Excel</a>
+    <a href="{{ url_for('spare_parts.report_export_pdf', key=key, date_from=date_from_s, date_to=date_to_s, org_id=org_id, equipment_id=equipment_id, category_id=category_id) }}" class="vs-btn">{{ icon('download', 14) }} PDF</a>
   </div>
 </div>
 
@@ -86,7 +87,7 @@
     {% else %}
     <div class="vs-stat">
         <div class="vs-stat-label">{{ 'Повторных предупреждений' if is_ru else 'Такрорий огоҳлантиришлар' }}</div>
-        <div class="vs-stat-value" style="color:{{ 'var(--danger)' if data.repeat_rows else 'var(--accent)' }};">{{ data.repeat_rows|length }}</div>
+        <div class="vs-stat-value vs-tone {{ 'is-danger' if data.repeat_rows else 'is-success' }}">{{ data.repeat_rows|length }}</div>
     </div>
     {% endif %}
 </div>
@@ -100,7 +101,7 @@
     <div class="vs-card-body">
         {% if data.by_equipment %}
         <div class="vs-table-scroll">
-        <table class="vs-table">
+        <table class="vs-table is-static" data-sortable>
             <thead>
                 <tr>
                     <th style="width:40px;">№</th>
@@ -148,7 +149,7 @@
     <div class="vs-card-body">
         {% if data.by_organization %}
         <div class="vs-table-scroll">
-        <table class="vs-table">
+        <table class="vs-table is-static" data-sortable>
             <thead>
                 <tr>
                     <th style="width:40px;">№</th>
@@ -190,7 +191,7 @@
     <div class="vs-card-body">
         {% if data.by_category %}
         <div class="vs-table-scroll">
-        <table class="vs-table">
+        <table class="vs-table is-static" data-sortable>
             <thead>
                 <tr>
                     <th style="width:40px;">№</th>
@@ -230,12 +231,12 @@
 {# ─── Repeat-order warnings ──────────────────────────────────────────── #}
 <div class="vs-card vs-mb">
     <div class="vs-card-header">
-        <div class="vs-card-title">⚠ {{ 'Повторные заказы (красный ≤7 дн., жёлтый ≤30 дн.)' if is_ru else 'Такрорий сўровлар (қизил ≤7 кун, сариқ ≤30 кун)' }}</div>
+        <div class="vs-card-title">{{ icon('warning', 14) }} {{ 'Повторные заказы (красный ≤7 дн., жёлтый ≤30 дн.)' if is_ru else 'Такрорий сўровлар (қизил ≤7 кун, сариқ ≤30 кун)' }}</div>
     </div>
     <div class="vs-card-body">
         {% if data.repeat_rows %}
         <div class="vs-table-scroll">
-        <table class="vs-table">
+        <table class="vs-table is-static" data-sortable>
             <thead>
                 <tr>
                     <th style="width:80px;">{{ 'Заявка' if is_ru else 'Сўров' }}</th>
@@ -257,9 +258,9 @@
                     <td style="font-weight:600;">{{ r.part_name }}</td>
                     <td>
                         {% if r.severity == 'red' %}
-                        <span class="vs-badge vs-badge-sm" style="color:var(--danger);">{{ 'красный' if is_ru else 'қизил' }}</span>
+                        <span class="vs-badge vs-badge-sm vs-badge-danger">{{ 'красный' if is_ru else 'қизил' }}</span>
                         {% else %}
-                        <span class="vs-badge vs-badge-sm" style="color:var(--warn);">{{ 'жёлтый' if is_ru else 'сариқ' }}</span>
+                        <span class="vs-badge vs-badge-sm vs-badge-warning">{{ 'жёлтый' if is_ru else 'сариқ' }}</span>
                         {% endif %}
                     </td>
                     <td class="right" style="font-weight:600;">{{ r.days_since }}</td>
@@ -283,7 +284,7 @@
     <div class="vs-card-body">
         {% if data.top_items %}
         <div class="vs-table-scroll">
-        <table class="vs-table">
+        <table class="vs-table is-static" data-sortable>
             <thead>
                 <tr>
                     <th style="width:40px;">№</th>

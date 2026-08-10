@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
 {# [REASON]: SP-POLISH-006 amendment — quantities are floats in the route rows;
    integer-valued ones must read as «12», not «12.0», while genuinely
@@ -19,7 +20,7 @@
   {% if rows %}
   <div>
     <a class="vs-btn vs-btn-sm"
-       href="{{ url_for('spare_parts.purchase_queue_export', org_id=org_id) }}">⬇ {{ 'Экспорт в Excel' if is_ru else "Excel'га юклаш" }}</a>
+       href="{{ url_for('spare_parts.purchase_queue_export', org_id=org_id) }}">{{ icon('download', 14) }} {{ 'Экспорт в Excel' if is_ru else "Excel'га юклаш" }}</a>
   </div>
   {% endif %}
 </div>
@@ -49,7 +50,7 @@
         <span class="vs-soft" style="font-size:12px;">{{ rows|length }}</span>
     </div>
     <div class="vs-table-scroll">
-    <table class="vs-table">
+    <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
                 <th style="width:40px;">№</th>
@@ -87,7 +88,7 @@
 </div>
 {% else %}
 <div class="vs-empty">
-    <div class="vs-empty-ico">🛒</div>
+    <div class="vs-empty-ico">{{ icon('box', 28) }}</div>
     <div class="vs-empty-title">{{ 'Ничего закупать не нужно' if is_ru else 'Ҳозирча харид қилиш шарт эмас' }}</div>
     <div class="vs-empty-sub">{{ 'Остатков хватает на все утверждённые заявки и на неснижаемый остаток.' if is_ru else 'Барча тасдиқланган сўровлар ва энг кам қолдиқ учун захира етарли.' }}</div>
 </div>

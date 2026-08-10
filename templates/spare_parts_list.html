@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Запчасти — заявки' if is_ru else 'Эҳтиёт қисмлар — сўровлар' }}{% endblock %}
 {% block content %}
@@ -28,7 +29,7 @@
     {% for s, labels in status_labels.items() %}
     <div class="vs-stat">
         <div class="vs-stat-label">{{ labels[lang] }}</div>
-        <div class="vs-stat-value" style="color:{{ status_colors[s] }};">{{ counts[s] }}</div>
+        <div class="vs-stat-value vs-tone {{ status_tones.get(s, '')|replace('vs-badge-','is-') }}">{{ counts[s] }}</div>
     </div>
     {% endfor %}
 </div>
@@ -87,7 +88,7 @@
     </div>
     {% if requests_list %}
     <div class="vs-table-scroll">
-    <table class="vs-table">
+    <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
                 <th style="width:70px;">№</th>
@@ -111,7 +112,7 @@
                 <td class="text-sm vs-muted">{{ eq_label }}</td>
                 <td class="right" style="font-weight:600;">{{ req.items|length }}</td>
                 <td>
-                    <span class="vs-badge" style="color:{{ status_colors.get(req.status, 'var(--text2)') }};">{{ status_labels[req.status][lang] if req.status in status_labels else req.status }}</span>
+                    <span class="vs-badge {{ status_tones.get(req.status, '') }}">{{ status_labels[req.status][lang] if req.status in status_labels else req.status }}</span>
                 </td>
                 <td class="text-sm vs-muted">
                     {{ req.creator.username if req.creator else '—' }}<br>
@@ -127,7 +128,7 @@
     </div>
     {% else %}
     <div class="vs-empty">
-        <div class="vs-empty-ico">📋</div>
+        <div class="vs-empty-ico">{{ icon('list', 28) }}</div>
         <div class="vs-empty-title">{{ 'Заявок нет' if is_ru else 'Сўров йўқ' }}</div>
         <div class="vs-empty-sub">{{ 'Создайте первую заявку кнопкой «Новая заявка».' if is_ru else '«Янги сўров» тугмаси орқали биринчи сўровни яратинг.' }}</div>
     </div>

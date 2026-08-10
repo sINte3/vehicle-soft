@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Акт списания' if is_ru else 'Ҳисобдан чиқариш далолатномаси' }} {{ act.act_number }}{% endblock %}
 {% block content %}
@@ -6,14 +7,14 @@
 
 <div class="vs-hero vs-mb">
   <div>
-    <div class="vs-hero-title">🧾 {{ 'Акт списания' if is_ru else 'Ҳисобдан чиқариш далолатномаси' }} {{ act.act_number }}</div>
+    <div class="vs-hero-title">{{ icon('receipt', 14) }} {{ 'Акт списания' if is_ru else 'Ҳисобдан чиқариш далолатномаси' }} {{ act.act_number }}</div>
     <div class="vs-hero-sub">{{ 'Акт сформирован при выдаче заявки и является постоянным документом — изменение или отмена не предусмотрены.' if is_ru else 'Далолатнома сўров берилганда шакллантирилган ва доимий ҳужжат ҳисобланади — ўзгартириш ёки бекор қилиш кўзда тутилмаган.' }}</div>
   </div>
   {# SP-DESK-001: «Все акты» moved to the shared tab strip (Акты tab is active
      here); the act keeps its PDF actions and its contextual back link to the
      request it was issued for. #}
   <div class="vs-row-end">
-    <a href="{{ url_for('spare_parts.act_pdf', act_id=act.id) }}" target="_blank" class="vs-btn vs-btn-primary">⬇ {{ 'Скачать / печать PDF' if is_ru else 'PDF юклаш / чоп этиш' }}</a>
+    <a href="{{ url_for('spare_parts.act_pdf', act_id=act.id) }}" target="_blank" class="vs-btn vs-btn-primary">{{ icon('download', 14) }} {{ 'Скачать / печать PDF' if is_ru else 'PDF юклаш / чоп этиш' }}</a>
     {# [REASON]: SPARE-STAGE2-QA-FIX1 — explicit per-language download links so the
        act can be printed in RU or UZ without switching the global UI toggle. #}
     <a href="{{ url_for('spare_parts.act_pdf', act_id=act.id, lang='ru') }}" target="_blank" class="vs-btn">{{ 'Скачать (RU)' if is_ru else 'Юклаш (RU)' }}</a>
@@ -36,7 +37,7 @@
         <span class="vs-soft" style="font-size:12px;">{{ act.items|length }}</span>
     </div>
     <div class="vs-table-scroll">
-    <table class="vs-table">
+    <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
                 <th style="width:40px;">№</th>

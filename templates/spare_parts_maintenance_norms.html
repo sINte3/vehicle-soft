@@ -1,4 +1,5 @@
 {% extends g.base_template %}
+{% from '_icons.html' import icon %}
 {% set is_ru = (lang == 'ru') %}
 {% block title %}{{ 'Нормы (моточасы)' if is_ru else 'Нормалар (моточас)' }}{% endblock %}
 {% block content %}
@@ -65,7 +66,7 @@
         <span class="vs-card-title">{{ 'Всего норм' if is_ru else 'Жами нормалар' }}: {{ norms|length }}</span>
     </div>
     <div class="vs-table-scroll">
-    <table class="vs-table">
+    <table class="vs-table is-static" data-sortable>
         <thead>
             <tr>
                 <th style="width:40px;">№</th>
@@ -93,11 +94,11 @@
                 <td class="right">
                     {# CYCLE-2-3 Part 2: primary row actions carry visible text, not just an icon. #}
                     <button class="vs-btn vs-btn-sm"
-                            onclick='editNorm({{ n.id }}, {{ n.spare_part_id }}, {{ (n.equipment_model_id or "")|tojson }}, {{ n.interval_hours|tojson }}, {{ (n.is_active|int) }})'>✏ {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
+                            onclick='editNorm({{ n.id }}, {{ n.spare_part_id }}, {{ (n.equipment_model_id or "")|tojson }}, {{ n.interval_hours|tojson }}, {{ (n.is_active|int) }})'>{{ icon('edit', 14) }} {{ 'Изменить' if is_ru else 'Таҳрирлаш' }}</button>
                     <form method="post" action="{{ url_for('spare_parts.maintenance_norm_delete', nid=n.id) }}" style="display:inline;"
                           onsubmit="return confirm('{{ 'Удалить норму?' if is_ru else 'Норма ўчирилсинми?' }}');">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="vs-btn vs-btn-sm vs-btn-danger">🗑 {{ 'Удалить' if is_ru else 'Ўчириш' }}</button>
+                        <button type="submit" class="vs-btn vs-btn-sm vs-btn-danger">{{ icon('trash', 14) }} {{ 'Удалить' if is_ru else 'Ўчириш' }}</button>
                     </form>
                 </td>
             </tr>

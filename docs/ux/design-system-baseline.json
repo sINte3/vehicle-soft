@@ -16,18 +16,6 @@
    "templates/fuel/stations.html": 2,
    "templates/fuel/warehouses.html": 1,
    "templates/profile.html": 1,
-   "templates/spare_part_act.html": 2,
-   "templates/spare_part_form.html": 7,
-   "templates/spare_parts_acts.html": 2,
-   "templates/spare_parts_catalog.html": 5,
-   "templates/spare_parts_equipment_models.html": 1,
-   "templates/spare_parts_inventory.html": 4,
-   "templates/spare_parts_list.html": 1,
-   "templates/spare_parts_maintenance_due.html": 1,
-   "templates/spare_parts_maintenance_norms.html": 2,
-   "templates/spare_parts_purchase_queue.html": 2,
-   "templates/spare_parts_report_page.html": 3,
-   "templates/spare_parts_skus.html": 2,
    "templates/workload.html": 2
   },
   "hardcoded-color": {
@@ -63,9 +51,6 @@
    "templates/fuel/warehouses.html": 171,
    "templates/fuel/warnings.html": 142,
    "templates/login.html": 152,
-   "templates/spare_part_form.html": 30,
-   "templates/spare_parts_desk.html": 11,
-   "templates/spare_parts_inventory.html": 5,
    "templates/workload.html": 68
   },
   "table-class": {
