@@ -6359,7 +6359,17 @@ def _drone_flight_calendar_data(month):
         else:
             # An unattributed bucket has no serviceability of its own, so its
             # empty days are blank rather than «idle» or «down».
-            unattr_cells.append({'day': day, 'state': '', 'flights': 0,
+            #
+            # [REASON]: DRONE-CAL-CELL-CLASS-001 -- the state is NAMED
+            # (`is-na`) instead of being the empty string. With '' the cell
+            # rendered as a bare `vs-cal-cell`, and no rule for that class
+            # alone exists: the markup declared a hook that styled nothing,
+            # the same defect class as `.fuel002c-delete-submitted` (UI P6
+            # §5.5) and the eleven captions that named nothing. The blank
+            # look is deliberate and now enforced by its own rule, so a base
+            # rule added to `.vs-cal-cell` later cannot silently paint these
+            # cells and turn «not applicable» into a judgement.
+            unattr_cells.append({'day': day, 'state': 'is-na', 'flights': 0,
                                  'area': 0.0})
 
     day_totals = []
