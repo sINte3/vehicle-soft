@@ -6033,6 +6033,27 @@ def _drone_closing_labels():
     }
 
 
+def _drone_closing_bucket_notes():
+    """One line of truth under each bucket: what it is and what it is NOT.
+
+    [REASON]: DRONE-CLOSE-SUBDIV-001 -- «Гарден …, 2026-04 -- НЕ СДАНА»
+    прочиталось как обвинение подразделения, чья книга сдана: её работы без
+    оператора и подразделения лежали в корзине. Корзина -- разрыв привязки,
+    а не несданная книга, и экран, называющий кому звонить, обязан говорить
+    это там же, где печатает корзину, -- иначе позвонят не тому.
+    """
+    return {
+        DRONE_CLOSING_SUBDIVISION_UNKNOWN: _drone_t(
+            'Бўлими аниқланмаган ишлар — бирор бўлимнинг топширилмаган '
+            'китоби эмас',
+            'Работы, чьё подразделение не удалось определить — это не '
+            'несданная книга подразделения'),
+        DRONE_CLOSING_NO_MACHINE: _drone_t(
+            'Машинаси аниқланмаган парвозлар — қўнғироқ қиладиган одам йўқ',
+            'Вылеты без опознанной машины — звонить некому'),
+    }
+
+
 def _drone_closing_data(window=DRONE_CLOSING_DEFAULT_WINDOW):
     """Coverage by subdivision and month, plus the «flew, no book» list.
 
@@ -6065,6 +6086,7 @@ def _drone_closing_data(window=DRONE_CLOSING_DEFAULT_WINDOW):
     shown = set(months)
 
     labels = _drone_closing_labels()
+    bucket_notes = _drone_closing_bucket_notes()
     keys = set(k for _m, k in ledger) | set(k for _m, k in flights)
     # Real subdivisions first, alphabetically; the two buckets last, in a
     # fixed order. sorted() on the raw keys already does this -- both bucket
@@ -6100,6 +6122,7 @@ def _drone_closing_data(window=DRONE_CLOSING_DEFAULT_WINDOW):
                     'key': key,
                     'label': labels.get(key, key),
                     'is_bucket': key in labels,
+                    'bucket_note': bucket_notes.get(key),
                     'month': month,
                     'flights': flight_count,
                     'flight_area': flight_area,
@@ -6112,6 +6135,7 @@ def _drone_closing_data(window=DRONE_CLOSING_DEFAULT_WINDOW):
                 'key': key,
                 'label': labels.get(key, key),
                 'is_bucket': key in labels,
+                'bucket_note': bucket_notes.get(key),
                 'cells': cells,
                 'total': row_total,
                 'coverage': ((row_total['ledger_area'] * 100.0
