@@ -4378,6 +4378,21 @@ DRONE_REPORT_TILES = (
                        'аммо китоб очилмаган',
     },
     {
+        # DRONE-CASH-SPLIT-001. Рядом с долгами и тем же акцентом is-warning:
+        # это вторая половина одного вопроса «кто кому должен». Долги —
+        # заказчик холдингу, подотчёт — оператор кассе; общий цвет говорит
+        # ровно это, а новый акцент заявил бы новый род данных.
+        'key': 'operator-cash',
+        'endpoint': 'drones.operator_cash',
+        'accent': 'is-warning',
+        'title_ru': 'Подотчёт операторов',
+        'title_uz': 'Операторлар ҳисоби',
+        'subtitle_ru': 'Собрано наличными минус затраты минус сданное — '
+                       'остаток у оператора на руках',
+        'subtitle_uz': 'Нақд йиғилган минус харажат минус топширилган — '
+                       'оператор қўлидаги қолдиқ',
+    },
+    {
         # MEGA-3. Переиспользует is-danger, акцент `sources`, и стоит рядом
         # с ним: правило модуля — общий цвет значит общую семантику, и оба
         # экрана кричат о самих данных — там замолчавшая машина, здесь ноль,
@@ -4461,6 +4476,7 @@ def works_debts():
     return render_template(
         'drones/works_debts.html',
         data=data,
+        channels=_drone_debt_channels(conds),
         filters=filters,
         link_args=_drone_works_link_args(filters),
         unresolved_key=DRONE_WORK_UNRESOLVED,
@@ -6585,3 +6601,170 @@ def _drone_health_data():
 def data_health():
     """MEGA-3: экран фактов «ноль там, где ноль невозможен». Read-only."""
     return render_template('drones/health.html', data=_drone_health_data())
+
+
+# ─── DRONE-CASH-SPLIT-001: канал оплаты и подотчёт операторов ────────────────
+
+def _drone_debt_channels(conds):
+    """Долг в разрезе канала оплаты. Одна строка на тип, вместе с харажатом.
+
+    [REASON]: РУКОВОДСТВО ПРОЧИТАЛО ОДНО ЧИСЛО КАК ДЕБИТОРКУ, А ОНО СЛЕПЛЕНО
+    ИЗ ТРЁХ РАЗНЫХ ВЕЩЕЙ. «Сумма минус получено» считалась одинаково для всех
+    работ, а книги диспетчеров вообще не содержат данных о поступлениях по
+    справке: там записаны только гектары, вид оплаты и полученная наличность.
+    Поэтому каждая работа по справке показывала долгом весь свой счёт —
+    284.9 млн на замере 2026-08-11, — и это не долг, а канал, который книги
+    не покрывают. Решение владельца от 2026-08-11: долг по справке остаётся,
+    но показывается ОТДЕЛЬНО; банковские реестры запрошены и лягут позже.
+
+    Харажат берётся в ту же строку не ради красоты: у наличного канала
+    остаток в точности на него и завышен — из 347 полностью рассчитанных
+    строк «сумма минус получено» дало ровно сумму затрат, до копейки.
+    Разводит их экран подотчёта, а здесь видно, о какой части речь.
+    """
+    labels = _drone_payment_labels()
+    notes = _drone_channel_notes()
+    rows = db.session.query(
+        DroneWork.payment_type,
+        func.count(DroneWork.id),
+        func.coalesce(func.sum(DroneWork.area_ha), 0.0),
+        func.coalesce(func.sum(DroneWork.amount), 0.0),
+        func.coalesce(func.sum(DroneWork.received_amount), 0.0),
+        func.coalesce(func.sum(DroneWork.other_costs), 0.0),
+    ).filter(*conds).group_by(DroneWork.payment_type).all()
+
+    out = []
+    for payment, jobs, area, amount, received, other in rows:
+        amount, received = float(amount or 0.0), float(received or 0.0)
+        out.append({
+            'payment': payment,
+            'label': labels.get(payment, payment),
+            'jobs': jobs,
+            'area': float(area or 0.0),
+            'amount': amount,
+            'received': received,
+            'outstanding': amount - received,
+            'other_costs': float(other or 0.0),
+            # [REASON]: подпись у канала, а не в шапке экрана. Строка «долг
+            # 284.9 млн» без слов «поступлений в книгах нет» — это и есть то
+            # недоразумение, ради которого экран правится.
+            'note': notes.get(payment),
+        })
+    order = {DRONE_WORK_PAYMENT_CASH: 0, DRONE_WORK_PAYMENT_TRANSFER: 1,
+             DRONE_WORK_PAYMENT_INTERNAL: 2, DRONE_WORK_PAYMENT_UNKNOWN: 3}
+    out.sort(key=lambda r: (order.get(r['payment'], 9), -r['amount']))
+    total = {
+        'jobs': sum(r['jobs'] for r in out),
+        'area': sum(r['area'] for r in out),
+        'amount': sum(r['amount'] for r in out),
+        'received': sum(r['received'] for r in out),
+        'outstanding': sum(r['outstanding'] for r in out),
+        'other_costs': sum(r['other_costs'] for r in out),
+    }
+    return {'rows': out, 'total': total}
+
+
+def _drone_channel_notes():
+    """Подписи каналов. Считаются при запросе — язык берётся из g.lang."""
+    return {
+        DRONE_WORK_PAYMENT_TRANSFER: _drone_t(
+            'Китобларда тушум ёзилмайди — банк реестри кутилмоқда; бу қарз '
+            'эмас',
+            'Поступления в книгах не записываются — ждём банковский реестр; '
+            'это не долг'),
+        DRONE_WORK_PAYMENT_CASH: _drone_t(
+            'Қолдиқда операторнинг харажатлари бор — «Операторлар ҳисоби» '
+            'экранига қаранг',
+            'Остаток включает затраты операторов — см. экран «Подотчёт '
+            'операторов»'),
+        DRONE_WORK_PAYMENT_INTERNAL: _drone_t(
+            'Ички иш: пул холдинг ичида қолади',
+            'Внутренняя работа: деньги остаются внутри холдинга'),
+        DRONE_WORK_PAYMENT_UNKNOWN: _drone_t(
+            'Қўлда киритилган қатор — тури кўрсатилмаган',
+            'Строка, набранная руками — тип не указан'),
+    }
+
+
+def _drone_operator_cash_data(conds):
+    """Подотчёт операторов: собрано наличными, затраты, сдано, остаток.
+
+    [REASON]: ДВЕ РАЗНЫЕ ЗАДОЛЖЕННОСТИ БЫЛИ СЛИТЫ В ОДНО СЛОВО «ДОЛГ».
+    Дебиторка заказчика — сколько фермер не заплатил; подотчёт оператора —
+    сколько собранной наличности он ещё не сдал. Харажат касается только
+    второй: оператор сдаёт наличность за минусом подтверждённых затрат и не
+    уменьшает ими выручку от заказчика. Решение владельца 2026-08-11, и оно
+    же объясняет, почему экран отдельный: он понадобится для сверки при
+    внедрении кассы.
+
+    Формула: остаток = собрано − затраты − сдано.
+
+    [REASON]: «Кирим қилинган» и «Оператор топшириши керак» лежат в одной
+    колонке received_amount и различаются только received_kind. Первое —
+    сданные деньги, второе — заявление оператора о том, что он ещё должен.
+    Складывать их в «сдано» значит записать долг в приход, поэтому второе
+    показано своей колонкой и в «сдано» не входит. NULL считается сданным:
+    так эти строки считались до появления признака, и менять их смысл
+    задним числом — не то же самое, что различать новые.
+    """
+    handed = case((DroneWork.received_kind == DRONE_RECEIVED_KIND_OPERATOR_DUE,
+                   0.0), else_=func.coalesce(DroneWork.received_amount, 0.0))
+    declared = case((DroneWork.received_kind == DRONE_RECEIVED_KIND_OPERATOR_DUE,
+                     func.coalesce(DroneWork.received_amount, 0.0)), else_=0.0)
+
+    rows = db.session.query(
+        DroneWork.drone_operator_id,
+        func.count(DroneWork.id),
+        func.coalesce(func.sum(DroneWork.area_ha), 0.0),
+        func.coalesce(func.sum(DroneWork.amount), 0.0),
+        func.coalesce(func.sum(DroneWork.other_costs), 0.0),
+        func.sum(handed),
+        func.sum(declared),
+    ).filter(*conds).filter(
+        DroneWork.payment_type == DRONE_WORK_PAYMENT_CASH
+    ).group_by(DroneWork.drone_operator_id).all()
+
+    names = {op.id: (op.full_name or '') for op in DroneOperator.query.all()}
+    unresolved = _drone_t('Оператор аниқланмаган', 'Оператор не определён')
+
+    out = []
+    for op_id, jobs, area, amount, other, handed_sum, declared_sum in rows:
+        amount = float(amount or 0.0)
+        other = float(other or 0.0)
+        handed_sum = float(handed_sum or 0.0)
+        out.append({
+            'operator_id': op_id,
+            'label': names.get(op_id) or unresolved,
+            'is_unresolved': op_id is None,
+            'jobs': jobs,
+            'area': float(area or 0.0),
+            'collected': amount,
+            'costs': other,
+            'handed': handed_sum,
+            'declared': float(declared_sum or 0.0),
+            'balance': amount - other - handed_sum,
+        })
+    # Нераспознанный оператор всегда последним и никогда не выкидывается:
+    # пропущенная строка неотличима от оператора, на которого не посмотрели.
+    out.sort(key=lambda r: (r['is_unresolved'], -r['balance']))
+
+    total = {key: sum(r[key] for r in out)
+             for key in ('jobs', 'area', 'collected', 'costs', 'handed',
+                         'declared', 'balance')}
+    return {'rows': out, 'total': total}
+
+
+@drones_bp.route('/reports/operator-cash')
+@module_required('drones')
+def operator_cash():
+    """Подотчёт операторов по наличным работам. Read-only."""
+    filters = _drone_works_filters_from_args(request.args)
+    conds = _drone_work_conditions(filters)
+    data = _drone_operator_cash_data(conds)
+    context = _drone_works_pickers()
+    return render_template(
+        'drones/operator_cash.html',
+        data=data,
+        filters=filters,
+        link_args=_drone_works_link_args(filters),
+        **context)

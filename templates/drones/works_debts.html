@@ -231,6 +231,69 @@
 </div>
 {% endif %}
 
+{# DRONE-CASH-SPLIT-001. Разделение стоит СРАЗУ ПОСЛЕ пояснений и ПЕРЕД
+   таблицами долгов: ради него страницу и правили, но проза, объясняющая
+   корзины, обязана идти до первой таблицы страницы — это проверяет
+   test_d6_the_page_explains_the_new_row, и первая попытка поставить
+   таблицу выше alert'а его уронила.
+
+   Денежные ячейки БЕЗ .is-money: в дизайн-системе это правило
+   определено только как .is-money.vs-stat-grid и раскрасить <td> не
+   может. Класс, который ничего не красит, — объявление без поведения;
+   сторож test_f1_no_template_uses_a_class_no_rule_can_paint ловит его
+   именно за это. #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Остаток по каналам оплаты' if is_ru else 'Тўлов каналлари бўйича қолдиқ' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'что за число стоит в «остатке»' if is_ru else '«қолдиқ»даги сон нима' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static">
+      <thead>
+        <tr>
+          <th>{{ 'Канал' if is_ru else 'Канал' }}</th>
+          <th class="right">{{ t_jobs }}</th>
+          <th class="right">{{ t_area }}</th>
+          <th class="right">{{ t_amount }}</th>
+          <th class="right">{{ t_received }}</th>
+          <th class="right">{{ t_outstanding }}</th>
+          <th class="right">{{ 'Прочие расходы' if is_ru else 'Бошқа харажатлар' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in channels.rows %}
+        <tr>
+          <td>
+            {{ row.label }}
+            {% if row.note %}<div class="vs-muted">{{ row.note }}</div>{% endif %}
+          </td>
+          <td class="right">{{ row.jobs|vs_num }}</td>
+          <td class="right">{{ '%.2f'|format(row.area)|vs_num }}</td>
+          <td class="right">{{ '%.0f'|format(row.amount)|vs_num }}</td>
+          <td class="right">{{ '%.0f'|format(row.received)|vs_num }}</td>
+          <td class="right">{{ '%.0f'|format(row.outstanding)|vs_num }}</td>
+          <td class="right">{{ '%.0f'|format(row.other_costs)|vs_num }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <th>{{ 'Итого' if is_ru else 'Жами' }}</th>
+          <th class="right">{{ channels.total.jobs|vs_num }}</th>
+          <th class="right">{{ '%.2f'|format(channels.total.area)|vs_num }}</th>
+          <th class="right">{{ '%.0f'|format(channels.total.amount)|vs_num }}</th>
+          <th class="right">{{ '%.0f'|format(channels.total.received)|vs_num }}</th>
+          <th class="right">{{ '%.0f'|format(channels.total.outstanding)|vs_num }}</th>
+          <th class="right">{{ '%.0f'|format(channels.total.other_costs)|vs_num }}</th>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  <div class="vs-card-body">
+    <span class="vs-muted">{{ 'Итог этой таблицы равен «Остатку» в карточках выше — это то же число, разложенное по каналам, а не другой расчёт.' if is_ru else 'Ушбу жадвал жамиси юқоридаги карточкалардаги «Қолдиқ»ка тенг — бу бошқа ҳисоб эмас, ўша сон каналлар бўйича ёйилган.' }}</span>
+  </div>
+</div>
+
 {{ debt_table('Долги — по заказчикам' if is_ru else 'Қарзлар — буюртмачилар бўйича',
               'Заказчик' if is_ru else 'Буюртмачи', data.debt_by_customer) }}
 

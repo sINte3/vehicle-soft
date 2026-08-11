@@ -75,6 +75,12 @@ DRONES_PLAIN_NUM_TEMPLATES = (
     'templates/drones/flight_calendar.html',
     'templates/drones/works_import_preview.html',
     'templates/drones/works_closing.html',
+    # DRONE-CASH-SPLIT-001: пять карточек подотчёта — обычная сетка, не
+    # денежная шестёрка. Числа в них денежные и опт-аут `is-num` им нужен,
+    # но `.vs-stat-grid.is-money` здесь нет и быть не должно: та тройка
+    # означает ровно шесть карточек, и test_a2_six_cards_per_screen их
+    # пересчитывает.
+    'templates/drones/operator_cash.html',
 )
 
 # [REASON]: this line is the rule the fix opts OUT of, and it must survive the
