@@ -1,0 +1,190 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Дроны — контроль данных' if is_ru else 'Дронлар — маълумотлар назорати' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Контроль данных' if is_ru else 'Маълумотлар назорати' }}</div>
+    <div class="vs-hero-sub">{{ 'Факты вида «ноль там, где ноль невозможен»: гектары без единого литра, деньги без единой суммы, закреплённый оператор при молчащей машине. Экран не задаёт норм и порогов — он перечисляет строки, на которые надо посмотреть, и ведёт в первоисточник. Пустая секция — это «аномалий нет», и она показывается пустой, а не прячется.' if is_ru else '«Ноль бўлиши мумкин бўлмаган жойдаги ноль» фактлари: бирорта литрсиз гектарлар, бирорта суммасиз пуллар, машина жим турганда бириктирилган оператор. Экран норма ва порог белгиламайди — қараш керак бўлган қаторларни санайди ва бирламчи манбага олиб боради. Бўш секция — «аномалия йўқ» дегани, у яширилмайди, бўш кўрсатилади.' }}</div>
+  </div>
+</div>
+
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Машино-месяцы без химии' if is_ru else 'Химиясиз машина-ойлар' }}</div>
+    <div class="vs-stat-value">{{ data.counters.dry_months }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Заказчики без сумм' if is_ru else 'Суммасиз буюртмачилар' }}</div>
+    <div class="vs-stat-value">{{ data.counters.zero_money }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Назначения при молчании' if is_ru else 'Сукунатдаги бириктиришлар' }}</div>
+    <div class="vs-stat-value">{{ data.counters.silent_assignments }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Вылетов без машины' if is_ru else 'Машинасиз парвозлар' }}</div>
+    <div class="vs-stat-value">{{ data.counters.unattached_flights|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Работ без цены' if is_ru else 'Нархсиз ишлар' }}</div>
+    <div class="vs-stat-value">{{ data.counters.no_price_works }}</div>
+  </div>
+</div>
+
+{# ── А. Гектары без литров и килограммов ─────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Гектары есть — ни литра, ни килограмма' if is_ru else 'Гектар бор — на литр, на килограмм' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'по машине и месяцу' if is_ru else 'машина ва ой бўйича' }}</span>
+  </div>
+  {% if data.dry_months %}
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static">
+      <thead>
+        <tr>
+          <th>{{ 'Машина' if is_ru else 'Машина' }}</th>
+          <th>{{ 'Месяц' if is_ru else 'Ой' }}</th>
+          <th class="right">{{ 'Вылеты' if is_ru else 'Парвозлар' }}</th>
+          <th class="right">{{ 'Гектары' if is_ru else 'Гектарлар' }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in data.dry_months %}
+        <tr>
+          <td>{% if r.unit_number is not none %}№ {{ r.unit_number }}{% else %}—{% endif %}</td>
+          <td>{{ r.month }}</td>
+          <td class="right">{{ r.flights|vs_num }}</td>
+          <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
+          <td><a href="{{ url_for('drones.index', date_from=r.date_from, date_to=r.date_to, unit_id=r.unit_id) }}">{{ 'вылеты' if is_ru else 'парвозлар' }}</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="vs-card-body"><span class="vs-muted">{{ 'Пусто — у каждого машино-месяца с гектарами записана химия.' if is_ru else 'Бўш — гектарли ҳар бир машина-ойда химия ёзилган.' }}</span></div>
+  {% endif %}
+</div>
+
+{# ── Б. Заказчики: гектары есть, денег нет ───────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Заказчики: гектары есть, сумм нет' if is_ru else 'Буюртмачилар: гектар бор, сумма йўқ' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ '«записанный ноль» и «не записано» различаются' if is_ru else '«ёзилган ноль» ва «ёзилмаган» фарқланади' }}</span>
+  </div>
+  {% if data.zero_money %}
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static">
+      <thead>
+        <tr>
+          <th>{{ 'Заказчик' if is_ru else 'Буюртмачи' }}</th>
+          <th class="right">{{ 'Работ' if is_ru else 'Ишлар' }}</th>
+          <th class="right">{{ 'Гектары' if is_ru else 'Гектарлар' }}</th>
+          <th class="right">{{ 'Сумм записано' if is_ru else 'Ёзилган суммалар' }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in data.zero_money %}
+        <tr>
+          <td>{{ r.name }}</td>
+          <td class="right">{{ r.works|vs_num }}</td>
+          <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
+          <td class="right">{% if r.amounts_recorded %}{{ r.amounts_recorded|vs_num }} · {{ 'все нули' if is_ru else 'барчаси ноль' }}{% else %}{{ 'ни одной' if is_ru else 'бирортаси ҳам' }}{% endif %}</td>
+          <td><a href="{{ url_for('drones.works', customer_id=r.customer_id) }}">{{ 'работы' if is_ru else 'ишлар' }}</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="vs-card-body"><span class="vs-muted">{{ 'Пусто — у каждого заказчика с гектарами есть хотя бы одна ненулевая сумма.' if is_ru else 'Бўш — гектарли ҳар бир буюртмачида камида битта нолдан фарқли сумма бор.' }}</span></div>
+  {% endif %}
+</div>
+
+{# ── В. Назначения при молчащей машине ───────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Оператор закреплён — машина месяц не летала' if is_ru else 'Оператор бириктирилган — машина бир ой учмаган' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'текущий месяц не показан: он неполон' if is_ru else 'жорий ой кўрсатилмаган: у тўлиқ эмас' }}</span>
+  </div>
+  {% if data.silent_assignments %}
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static">
+      <thead>
+        <tr>
+          <th>{{ 'Месяц' if is_ru else 'Ой' }}</th>
+          <th>{{ 'Машина' if is_ru else 'Машина' }}</th>
+          <th>{{ 'Оператор' if is_ru else 'Оператор' }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in data.silent_assignments %}
+        <tr>
+          <td>{{ r.month }}</td>
+          <td>{% if r.unit_number is not none %}№ {{ r.unit_number }}{% else %}—{% endif %}</td>
+          <td>{{ r.operator }}</td>
+          <td><a href="{{ url_for('drones.index', date_from=r.date_from, date_to=r.date_to, unit_id=r.unit_id) }}">{{ 'вылеты месяца' if is_ru else 'ой парвозлари' }}</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="vs-card-body"><span class="vs-muted">{{ 'Пусто — у каждого назначения в каждом полном месяце есть вылеты машины.' if is_ru else 'Бўш — ҳар бир бириктиришда ҳар тўлиқ ойда машина парвозлари бор.' }}</span></div>
+  {% endif %}
+</div>
+
+{# ── Г. Вылеты без машины ────────────────────────────────────────────────── #}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Вылеты без машины' if is_ru else 'Машинасиз парвозлар' }}</span>
+    {% if current_user.can_edit %}<a href="{{ url_for('drones.reattach') }}">{{ 'экран переназначения' if is_ru else 'қайта бириктириш экрани' }}</a>{% endif %}
+  </div>
+  {% if data.unattached %}
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static">
+      <thead>
+        <tr>
+          <th>{{ 'Месяц' if is_ru else 'Ой' }}</th>
+          <th class="right">{{ 'Вылеты' if is_ru else 'Парвозлар' }}</th>
+          <th class="right">{{ 'Гектары' if is_ru else 'Гектарлар' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in data.unattached %}
+        <tr>
+          <td>{{ r.month }}</td>
+          <td class="right">{{ r.flights|vs_num }}</td>
+          <td class="right">{{ '%.2f'|format(r.area)|vs_num }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="vs-card-body"><span class="vs-muted">{{ 'Пусто — у каждого вылета опознана машина.' if is_ru else 'Бўш — ҳар бир парвознинг машинаси аниқланган.' }}</span></div>
+  {% endif %}
+</div>
+
+{# ── Д. Работы без цены ──────────────────────────────────────────────────── #}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Работы без цены' if is_ru else 'Нархсиз ишлар' }}</span>
+    <a href="{{ url_for('drones.works') }}">{{ 'реестр работ' if is_ru else 'ишлар реестри' }}</a>
+  </div>
+  <div class="vs-card-body">
+    {% if data.no_price.works %}
+    <span>{{ data.no_price.works|vs_num }} {{ 'работ' if is_ru else 'иш' }} · {{ '%.2f'|format(data.no_price.area)|vs_num }} {{ 'га' }} · {{ 'сумма' if is_ru else 'сумма' }} <span class="is-money">{{ '%.2f'|format(data.no_price.amount)|vs_num }}</span></span>
+    <div class="vs-muted">{{ 'Цены дописываются в сами книги (решение владельца 2026-08-05) — экран только держит счёт.' if is_ru else 'Нархлар китобларнинг ўзига ёзилади (эга қарори 2026-08-05) — экран фақат ҳисобни юритади.' }}</div>
+    {% else %}
+    <span class="vs-muted">{{ 'Пусто — у каждой работы есть цена.' if is_ru else 'Бўш — ҳар бир ишнинг нархи бор.' }}</span>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
