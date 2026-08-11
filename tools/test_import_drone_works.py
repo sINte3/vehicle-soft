@@ -594,10 +594,14 @@ class ManifestTests(ImportTestBase):
         manifest, problems = imp.read_manifest(path)
         self.assertEqual(problems, [])
         # 28 обычных книг + «Дрон_маълумот_Достон_АКА_АГРОКЛАСТЕР.xlsx»
-        # (DRONE-SVODKA-READER-001, решение владельца 2026-08-11).
-        self.assertEqual(len(manifest), 29)
+        # (DRONE-SVODKA-READER-001, решение владельца 2026-08-11) + две
+        # июньские, загруженные через экран 2026-08-11 (только Агрокластер
+        # и Сервис — остальные подразделения июнь не сдали).
+        self.assertEqual(len(manifest), 31)
         self.assertEqual(
             manifest['Дрон_маълумот_Достон_АКА_АГРОКЛАСТЕР.xlsx'], '2025-09')
+        self.assertEqual(manifest['ИЮНЬ Агрокластер.xlsx'], '2026-06')
+        self.assertEqual(manifest['Сервис Дрон маълумот Июнь.xlsx'], '2026-06')
         self.assertEqual(manifest['Имомов Бехзод Пешку ПТЗ.xlsx'], '2026-03')
         self.assertEqual(manifest['01.07.2026 Июль.xlsx'], '2026-07')
         self.assertEqual(manifest['Ғиждувон ПТЗ Дрон маълумот Март.xlsx'],
