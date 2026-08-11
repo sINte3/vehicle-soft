@@ -113,6 +113,11 @@
    "url": "/drones/reports/closing"
   },
   {
+   "endpoint": "drones.data_health",
+   "slug": "drones-reports-health",
+   "url": "/drones/reports/health"
+  },
+  {
    "endpoint": "drones.works_flights_reconcile",
    "slug": "drones-reports-reconcile",
    "url": "/drones/reports/reconcile"

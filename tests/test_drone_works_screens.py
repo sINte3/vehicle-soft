@@ -879,7 +879,7 @@ class DroneReportsLauncherTests(unittest.TestCase):
         self.client = app.test_client()
         login(self.client, self.admin)
 
-    def test_the_launcher_opens_with_ten_tiles_in_order(self):
+    def test_the_launcher_opens_with_eleven_tiles_in_order(self):
         import re
         response = self.client.get('/drones/reports')
         self.assertEqual(response.status_code, 200)
@@ -905,6 +905,10 @@ class DroneReportsLauncherTests(unittest.TestCase):
             # alone. A shared colour means shared data, and a new accent here
             # would claim a new data source that does not exist.
             ('is-info', '/drones/reports/closing'),
+            # MEGA-3 reuses is-danger, the accent `sources` carries, and
+            # stands beside it: both scream about the data itself -- a
+            # machine gone silent there, a zero that cannot be a zero here.
+            ('is-danger', '/drones/reports/health'),
             ('is-danger', '/drones/sources'),
         ])
 
@@ -1934,7 +1938,8 @@ class DroneNumberPlacementTests(unittest.TestCase):
     """WHERE the filter is applied -- the half a unit test usually misses."""
 
     TEMPLATES = ('_drones_nav.html', '_money_cell.html', 'customers.html',
-                 'flight_calendar.html', 'list.html', 'operator_card.html',
+                 'flight_calendar.html', 'health.html', 'list.html',
+                 'operator_card.html',
                  'operators.html', 'reattach.html', 'reports.html',
                  'sources.html', 'spray_usage.html', 'summary.html',
                  'unit_card.html', 'units.html', 'works.html',
@@ -2098,9 +2103,14 @@ class DroneNumberPlacementTests(unittest.TestCase):
         #   works_flights_reconcile follows and
         #   test_no_percentage_carries_the_filter asserts -- and neither does
         #   the month string «2026-04», which is a period and not a number.
+        #   MEGA-3 brought health 11: flights, hectares, counts and the sum
+        #   carry the filter in all five sections; machine numbers («№ 5»)
+        #   and months deliberately do NOT -- a machine number is an
+        #   identifier and a month is a period.
         expected = {
             '_money_cell.html': 1,
-            'customers.html': 2, 'flight_calendar.html': 9, 'list.html': 3,
+            'customers.html': 2, 'flight_calendar.html': 9,
+            'health.html': 11, 'list.html': 3,
             'reattach.html': 12, 'sources.html': 7, 'spray_usage.html': 28,
             'summary.html': 42, 'works.html': 9,
             'works_assignment_hints.html': 9, 'works_closing.html': 24,
@@ -2112,7 +2122,7 @@ class DroneNumberPlacementTests(unittest.TestCase):
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 224)
+        self.assertEqual(sum(actual.values()), 235)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):
