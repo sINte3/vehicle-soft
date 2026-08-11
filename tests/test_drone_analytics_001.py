@@ -1780,3 +1780,76 @@ class TestA6TheFourDefects(unittest.TestCase):
                     offenders.append('%s: %s' % (name, match))
         self.assertEqual(offenders, [],
                          'counts still printed raw: %r' % offenders)
+
+
+class TestA4NotApplicableCell(unittest.TestCase):
+    """DRONE-CAL-CELL-CLASS-001: пустой день строки «машина не определена».
+
+    Своя фикстура и свой класс, как у TestA17: единственный вылет без машины,
+    добавленный в класс календаря выше, сдвинул бы его итоги и поставил бы
+    утверждения соседних тестов в зависимость от алфавитного порядка методов.
+
+    Проверяется ровно то, что было дефектом: состояние такой клетки НАЗВАНО.
+    Пустая строка состояния давала в разметке голый `vs-cal-cell`, у которого
+    нет ни одного правила, — крючок, не делающий ничего.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        reset_db()
+        create_admin('a4naadmin')
+        with app.app_context():
+            ids = _units([41])
+            cls.unit = ids[41]
+            db.session.add(_flight(cls.unit, datetime(2026, 5, 4, 6), 10.0))
+            # Один вылет без машины: строка «не определена» появляется только
+            # когда такие вылеты в месяце есть.
+            db.session.add(_flight(None, datetime(2026, 5, 6, 6), 7.0))
+            db.session.commit()
+
+    @staticmethod
+    def _data(month):
+        with app.app_context():
+            return drones._drone_flight_calendar_data(month)
+
+    def test_empty_day_of_the_unattributed_row_is_named_is_na(self):
+        data = self._data('2026-05')
+        cells = data['unattributed']['cells']
+        flown = [c for c in cells if c['day'] == date(2026, 5, 6)][0]
+        empty = [c for c in cells if c['day'] == date(2026, 5, 7)][0]
+        self.assertEqual(flown['state'], 'is-flown')
+        self.assertEqual(empty['state'], 'is-na')
+
+    def test_no_cell_anywhere_carries_an_empty_state(self):
+        """Отрицательный контроль: пустых состояний не осталось ни одного.
+
+        Без него тест выше проходил бы и в случае, когда `is-na` появилось у
+        одной клетки, а остальные остались с пустой строкой.
+        """
+        data = self._data('2026-05')
+        states = [c['state'] for c in data['unattributed']['cells']]
+        states += [c['state'] for row in data['rows'] for c in row['cells']]
+        self.assertEqual([s for s in states if not s], [],
+                         'клетки без имени состояния: %r' % states)
+
+    def test_every_state_the_screen_can_render_has_a_css_rule(self):
+        """Каждое состояние обязано иметь составное правило в дизайн-системе.
+
+        Это и есть проверка исходного дефекта: имя состояния, для которого
+        правила нет, — объявление без поведения. Контроль различающий:
+        подложенное несуществующее состояние обязано быть найдено.
+        """
+        css_path = os.path.join(REPO_ROOT, 'static', 'css',
+                                'design-system.css')
+        with open(css_path, encoding='utf-8') as handle:
+            css = handle.read()
+        data = self._data('2026-05')
+        states = {c['state'] for c in data['unattributed']['cells']}
+        states |= {c['state'] for row in data['rows'] for c in row['cells']}
+        missing = [s for s in states
+                   if '.vs-cal-cell.%s' % s not in css]
+        self.assertEqual(missing, [],
+                         'состояния без правила: %r' % missing)
+        self.assertNotIn('.vs-cal-cell.is-nonexistent', css,
+                         'отрицательный контроль: правила быть не должно')
+        self.assertIn('.vs-cal-cell.is-na', css)

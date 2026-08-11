@@ -2124,6 +2124,16 @@ div.fuel-dash-tile:hover { box-shadow: var(--vs-shadow); }
   box-sizing: border-box;
 }
 
+/* DRONE-CAL-CELL-CLASS-001: пятое состояние -- `is-na`, «неприменимо». Строка
+   «машина не определена» не имеет собственной исправности, поэтому её пустые
+   дни не idle, не down и не unknown: сказать о них нечего. Раньше эта клетка
+   получала пустую строку состояния и рендерилась голым `vs-cal-cell`, у
+   которого правила нет ни одного -- разметка объявляла крючок, не делавший
+   ничего. Вид (пустая клетка) не меняется; правило существует затем, чтобы
+   базовое правило `.vs-cal-cell`, если его когда-нибудь заведут, не закрасило
+   эти дни молча. */
+.vs-cal-cell.is-na { background: none; border: 0; }
+
 /* DRONE-CUSTOMERS-DEAD-CLASSES-001. customers.html used `is-focus` on a <tr>
    (line 136) and `vs-check` on a <label> (164, 190); neither had a rule, so
    the highlighted row was drawn like every other row and the checkbox label
