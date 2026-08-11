@@ -4378,6 +4378,22 @@ DRONE_REPORT_TILES = (
                        'аммо китоб очилмаган',
     },
     {
+        # MEGA-3. Переиспользует is-danger, акцент `sources`, и стоит рядом
+        # с ним: правило модуля — общий цвет значит общую семантику, и оба
+        # экрана кричат о самих данных — там замолчавшая машина, здесь ноль,
+        # которого не может быть. Новый акцент значил бы новый CSS в общем
+        # файле ради одной плитки.
+        'key': 'health',
+        'endpoint': 'drones.data_health',
+        'accent': 'is-danger',
+        'title_ru': 'Контроль данных',
+        'title_uz': 'Маълумотлар назорати',
+        'subtitle_ru': 'Ноль там, где ноль невозможен: гектары без химии, '
+                       'деньги без сумм, молчание при назначении',
+        'subtitle_uz': 'Ноль бўлиши мумкин бўлмаган жойдаги ноль: химиясиз '
+                       'гектарлар, суммасиз пуллар, бириктиришдаги сукунат',
+    },
+    {
         'key': 'sources',
         'endpoint': 'drones.sources',
         'accent': 'is-danger',
@@ -6393,3 +6409,169 @@ def flight_calendar():
     data = _drone_flight_calendar_data(month) if month else None
     return render_template('drones/flight_calendar.html',
                            data=data, month=month, months=months)
+
+
+# ─── MEGA-3: Контроль данных ─────────────────────────────────────────────────
+
+def _drone_health_month_bounds(month):
+    """('YYYY-MM-01', last day) of a 'YYYY-MM' string, as dates."""
+    year, mon = int(month[:4]), int(month[5:7])
+    first = datetime(year, mon, 1).date()
+    last = (datetime(year + (1 if mon == 12 else 0),
+                     1 if mon == 12 else mon + 1, 1)
+            - timedelta(days=1)).date()
+    return first, last
+
+
+def _drone_health_data():
+    """Наблюдаемые аномалии данных, каждая строка — со ссылкой в первоисточник.
+
+    [REASON]: MEGA-3 — каталог аномалий жил разовыми охотами (№3 с гектарами
+    при нуле литров, №8 апреля, молчание №12 при живом операторе), и каждая
+    находка стоила ручного запроса к базе. Экран показывает только факты
+    вида «ноль там, где ноль невозможен». Порогов и норм он не выдумывает:
+    норма расхода — решение владельца, а не вывод из данных (инвариант Р5),
+    и коридор расхода остаётся на своём отчёте.
+    """
+    offset_minutes = int(DRONE_DISPLAY_UTC_OFFSET.total_seconds() // 60)
+    flight_month = func.strftime(
+        '%Y-%m',
+        func.datetime(DroneFlight.started_at, '%+d minutes' % offset_minutes))
+
+    units = {u.id: u for u in DroneUnit.query.all()}
+
+    # Все машино-месяцы одним запросом: и для «гектары без литров», и как
+    # множество «летал» для раздела назначений.
+    unit_month_rows = (db.session.query(
+        DroneFlight.drone_unit_id, flight_month.label('m'),
+        func.count(DroneFlight.id),
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
+        func.coalesce(func.sum(DroneFlight.spray_liters), 0.0),
+        func.coalesce(func.sum(DroneFlight.sow_kg), 0.0))
+        .filter(DroneFlight.drone_unit_id.isnot(None))
+        .group_by(DroneFlight.drone_unit_id, 'm').all())
+
+    # 0.005 — не порог, а пыль плавающей точки: тот же гард, что на экране
+    # закрытия. «Ни литра, ни килограмма» значит буквально ноль записей.
+    dry_months = []
+    flown = set()
+    for unit_id, month, flights, area, liters, kg in unit_month_rows:
+        flown.add((unit_id, month))
+        if area > 0.005 and liters <= 0.0005 and kg <= 0.0005:
+            first, last = _drone_health_month_bounds(month)
+            unit = units.get(unit_id)
+            dry_months.append({
+                'unit_id': unit_id,
+                'unit_number': unit.number if unit else None,
+                'month': month,
+                'flights': flights,
+                'area': area,
+                'date_from': first.isoformat(),
+                'date_to': last.isoformat(),
+            })
+    dry_months.sort(key=lambda r: (-r['area'], r['month']))
+
+    # Заказчики: гектары есть, денежная сторона пуста. count(amount) в SQL
+    # считает только непустые — различие «записанный ноль» и «не записано»
+    # (DRONE-ZERO-VS-UNKNOWN-001) сохраняется и здесь.
+    customer_rows = (db.session.query(
+        DroneWork.drone_customer_id, DroneCustomer.name,
+        func.count(DroneWork.id),
+        func.coalesce(func.sum(DroneWork.area_ha), 0.0),
+        func.count(DroneWork.amount),
+        func.coalesce(func.sum(DroneWork.amount), 0.0))
+        .join(DroneCustomer, DroneCustomer.id == DroneWork.drone_customer_id)
+        .group_by(DroneWork.drone_customer_id, DroneCustomer.name).all())
+    zero_money = []
+    for cust_id, name, works, area, amounts_recorded, amount_sum in \
+            customer_rows:
+        if area > 0.005 and amount_sum <= 0.005:
+            zero_money.append({
+                'customer_id': cust_id,
+                'name': name,
+                'works': works,
+                'area': area,
+                'amounts_recorded': amounts_recorded,
+            })
+    zero_money.sort(key=lambda r: -r['area'])
+
+    # Назначения: оператор закреплён, а машина в этот месяц не летала вовсе.
+    # Текущий месяц не показывается: он неполон, и «не летала» в нём — ещё
+    # не факт, а середина месяца. Это гигиена неполных данных, не порог.
+    months_universe = sorted({m for _, m in flown})
+    current_month = (datetime.utcnow()
+                     + DRONE_DISPLAY_UTC_OFFSET).strftime('%Y-%m')
+    silent_assignments = []
+    if months_universe:
+        assignments = (DroneOperatorAssignment.query
+                       .options(joinedload(DroneOperatorAssignment.operator))
+                       .all())
+        for assignment in assignments:
+            for month in months_universe:
+                if month == current_month:
+                    continue
+                first, last = _drone_health_month_bounds(month)
+                if assignment.date_from and assignment.date_from > last:
+                    continue
+                if assignment.date_to and assignment.date_to < first:
+                    continue
+                if (assignment.drone_unit_id, month) in flown:
+                    continue
+                unit = units.get(assignment.drone_unit_id)
+                operator = assignment.operator
+                silent_assignments.append({
+                    'month': month,
+                    'unit_id': assignment.drone_unit_id,
+                    'unit_number': unit.number if unit else None,
+                    'operator': operator.full_name if operator else '',
+                    'date_from': first.isoformat(),
+                    'date_to': last.isoformat(),
+                })
+        silent_assignments.sort(key=lambda r: (r['month'],
+                                               r['unit_number'] or 0))
+
+    # Вылеты без машины, по месяцам: известный разрыв привязки, его чинит
+    # экран переназначения — отсюда только счёт и месяцы.
+    unattached = [{
+        'month': month,
+        'flights': flights,
+        'area': area,
+    } for month, flights, area in (db.session.query(
+        flight_month.label('m'),
+        func.count(DroneFlight.id),
+        func.coalesce(func.sum(DroneFlight.area_ha), 0.0))
+        .filter(DroneFlight.drone_unit_id.is_(None))
+        .group_by('m').order_by('m').all())]
+
+    # Работы без цены: их 15 на момент импорта книг, и цены дописываются в
+    # сами книги решением владельца 2026-08-05 — экран лишь держит счёт.
+    no_price_row = (db.session.query(
+        func.count(DroneWork.id),
+        func.coalesce(func.sum(DroneWork.area_ha), 0.0),
+        func.coalesce(func.sum(DroneWork.amount), 0.0))
+        .filter(DroneWork.price_per_ha.is_(None)).one())
+    no_price = {'works': no_price_row[0], 'area': float(no_price_row[1]),
+                'amount': float(no_price_row[2])}
+
+    return {
+        'dry_months': dry_months,
+        'zero_money': zero_money,
+        'silent_assignments': silent_assignments,
+        'unattached': unattached,
+        'no_price': no_price,
+        'current_month': current_month,
+        'counters': {
+            'dry_months': len(dry_months),
+            'zero_money': len(zero_money),
+            'silent_assignments': len(silent_assignments),
+            'unattached_flights': sum(r['flights'] for r in unattached),
+            'no_price_works': no_price['works'],
+        },
+    }
+
+
+@drones_bp.route('/reports/health')
+@module_required('drones')
+def data_health():
+    """MEGA-3: экран фактов «ноль там, где ноль невозможен». Read-only."""
+    return render_template('drones/health.html', data=_drone_health_data())
