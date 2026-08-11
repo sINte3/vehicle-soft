@@ -1065,6 +1065,13 @@ class Directory(object):
         The candidate list comes from the two subdivision columns already in
         the database, so nothing is hardcoded here: a subdivision the fleet
         directory has never heard of cannot be invented by this tool.
+
+        Two passes, DRONE-CLOSE-SUBDIV-001. First the whole subdivision
+        name as before, longest match wins. Only when no whole name occurs
+        does the second pass run: single words that discriminate exactly one
+        subdivision, derived from the same directory set. «Гарден Дрон
+        маълумот Апрель.xlsx» carries no whole fleet name, but «Гарден»
+        occurs in exactly one of them.
         """
         folded = uz_fold(file_name)
         best = None
@@ -1073,7 +1080,57 @@ class Directory(object):
             if key and key in folded:
                 if best is None or len(key) > len(uz_fold(best)):
                     best = name
-        return best
+        if best is not None:
+            return best
+        return self._subdivision_by_token(folded)
+
+    @staticmethod
+    def _split_words(folded_value):
+        """Words of an uz_fold()-ed string.
+
+        [REASON]: the dispatchers' file names join words with underscores
+        («Ғиждувон_ПТЗ_Дрон_маълумот_Октябрь.xlsx»), and `_` is a \\w
+        character, so a plain \\W split would keep «ғиждувон_птз» glued into
+        one token that matches nothing. Split on non-word AND underscore.
+        Whole-word comparison, never substring: the charter's own example of
+        the substring lie is `L_initial` matching `L_initial_missing`.
+        """
+        return [w for w in re.split(r'[\W_]+', folded_value) if w]
+
+    @staticmethod
+    def discriminating_tokens(subdivisions):
+        """Map word -> the single subdivision that word identifies.
+
+        Derived from the fleet directory, never typed by hand: split every
+        subdivision name into words, drop every word occurring in more than
+        one name. On the current fleet of seven that keeps «Сервис»,
+        «Гарден», «Когон», «Пешку», «Шофиркон», «Ғиждувон» — and nothing at
+        all for «Бухоро Агрокластер», because both its words also occur in
+        two other names. A book called «Агрокластер Дрон маълумот МАЙ.xlsx»
+        therefore stays unresolved, which is the right answer: «Агрокластер»
+        genuinely does not identify anybody. If the fleet gains a subdivision
+        tomorrow, the tokens change with it and no code moves.
+        """
+        owners = {}
+        for name in subdivisions:
+            for word in set(Directory._split_words(uz_fold(name))):
+                owners.setdefault(word, set()).add(name)
+        return {word: next(iter(names))
+                for word, names in owners.items() if len(names) == 1}
+
+    def _subdivision_by_token(self, folded_file_name):
+        """Second pass of subdivision_for_file: discriminating words only.
+
+        Tokens of exactly one subdivision present -> that subdivision.
+        Zero, or tokens of two different subdivisions -> None. It never
+        guesses and never falls through to a weaker rule.
+        """
+        tokens = self.discriminating_tokens(self.subdivisions)
+        words = set(self._split_words(folded_file_name))
+        hits = {tokens[w] for w in words if w in tokens}
+        if len(hits) == 1:
+            return next(iter(hits))
+        return None
 
     def resolve_operator(self, operator_raw, subdivision):
         """(operator id or None, reason). Never guesses between two people."""
