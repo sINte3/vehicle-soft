@@ -206,8 +206,12 @@ BOOKS = (FILE_GARDEN_APRIL, FILE_KOGON_MARCH, FILE_PESHKU, FILE_SERVIS_1,
 # Hand-computed from the tables above; the tests assert against these, and
 # the negative controls assert they move.
 # The pre-block row of FILE_NO_BLOCK is the 22nd: since 2026-08-04 it is
-# imported as 'unknown' instead of being rejected, so the corpus is one row
-# and 7.00 ha larger than it was under DRONE-WORKS-001.
+# imported instead of being rejected, so the corpus is one row and 7.00 ha
+# larger than it was under DRONE-WORKS-001.
+# Since 2026-08-11 (DRONE-CASH-DEFAULT-001) that row is CASH, not 'unknown':
+# the owner's rule is that a book row without an explicit «Справка» /
+# перечисление marker is cash. So 'unknown' is 0 here and the pre-block row
+# lives in the cash column -- see payment_when_no_block().
 EXPECTED = {
     'rows': 22,
     'area': 678.09,
@@ -217,9 +221,9 @@ EXPECTED = {
     'wage_rows': 2,
     'files_skipped_no_manifest': 1,
     'distinct_customers': 22,
-    'payments': {'cash': 11, 'transfer': 8, 'internal': 2, 'unknown': 1},
-    'payment_area': {'cash': 383.59, 'transfer': 202.5, 'internal': 85.0,
-                     'unknown': 7.0},
+    'payments': {'cash': 12, 'transfer': 8, 'internal': 2, 'unknown': 0},
+    'payment_area': {'cash': 390.59, 'transfer': 202.5, 'internal': 85.0,
+                     'unknown': 0.0},
     'kinds': {'date': 13, 'span': 5, 'none': 2, 'unparsed': 2},
     'operators_matched': 19,
     'operators_unresolved': 3,

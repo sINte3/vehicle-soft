@@ -567,14 +567,24 @@ def area_in_range(area):
 def payment_when_no_block():
     """What a row with no payment block above it becomes. None = reject it.
 
-    [REASON]: a named decision rather than a literal, because it USED to be
-    rejection and the change is the whole of section 4 of
-    DRONE-WORKS-IMPORT-FIX-001. The negative control in
-    tools/test_import_drone_works.py swaps in the version that returns None
-    and watches the two rows disappear again -- which is what happened to 360
-    real rows on 2026-08-04.
+    [REASON]: a named decision rather than a literal, because it has changed
+    twice and each change was a decision, not a refactor.
+      2026-08-04, DRONE-WORKS-IMPORT-FIX-001 section 4: rejection -> 'unknown'.
+        Rejection had cost 360 real rows.
+      2026-08-11, DRONE-CASH-DEFAULT-001, decision of the owner, quoted:
+        «во всех книгах диспетчеров, если тип оплаты не стоит Справка или
+        перечисление или иное - то это считается наличка».
+        'unknown' -> PAYMENT_CASH.
+
+    This is a BUSINESS RULE, not a guess the tool is entitled to make on its
+    own: the books simply do not mark cash, because cash is what a row is
+    unless it says otherwise. 383 of 913 rows in the September-October books
+    carried no marker and sat under a label nobody could act on.
+
+    The negative control in tools/test_import_drone_works.py swaps in the
+    version that returns None and watches the rows disappear again.
     """
-    return PAYMENT_UNKNOWN
+    return PAYMENT_CASH
 
 
 # ─── Trap (e): dates ─────────────────────────────────────────────────────────
@@ -1518,7 +1528,8 @@ def print_console(result, stats, args, batch):
     print('sheets skipped (not "svod ichi") : %d' % len(result.skipped_sheets))
     print('headers matching no known phrase : %d distinct'
           % len(result.unmatched_headers))
-    print('rows with payment type unknown   : %d' % result.unknown_payment_rows)
+    print('rows with no payment block above : %d (imported as cash)'
+          % result.unknown_payment_rows)
     print('rows with an empty customer      : %d' % result.empty_customer_rows)
     print('operator taken from the row cell : %d' % result.operator_from_row)
     print('operator taken from sheet/file   : %d' % result.operator_from_sheet)
@@ -1693,7 +1704,7 @@ def write_report(path, result, stats, args, batch, include_prediction=True):
         if sheet.wage_rows:
             add('    строк «Иш хаки» пропущено: %d' % sheet.wage_rows)
         if sheet.unknown_payment_rows:
-            add('    строк без блока оплаты (unknown): %d'
+            add('    строк без блока оплаты (взяли умолчание — наличка): %d'
                 % sheet.unknown_payment_rows)
         if sheet.empty_customer_rows:
             add('    строк без имени заказчика: %d'

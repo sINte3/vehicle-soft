@@ -330,43 +330,63 @@ class TrapCPaymentBlockTests(ImportTestBase):
         # cash block first, transfer block second -- the sheet may start with
         # either, so the reader may not assume an order.
         self.assertEqual([b[1] for b in kogon.blocks], ['cash', 'transfer'])
-        self.assertEqual(stats['payments']['cash'], 11)
+        self.assertEqual(stats['payments']['cash'], 12)
         self.assertEqual(stats['payments']['transfer'], 8)
         self.assertEqual(stats['payments']['internal'], 2)
 
     def test_a_parser_that_only_knows_spravka_misfiles_every_cash_row(self):
-        """The rows are no longer lost -- they are silently misfiled instead.
+        """Сломанный читатель разделителей больше не признаётся сам.
 
-        [REASON]: since 2026-08-04 a row with no recognised block is imported
-        as 'unknown' rather than rejected, so the damage of a broken marker
-        reader changed shape: the hectares survive, the money classification
-        does not. The control has to assert the new damage, or it would pass
-        against a reader that recognises nothing at all.
+        [REASON]: форма ущерба менялась дважды вместе с правилом.
+          до 2026-08-04 строка без блока отвергалась -- пропадали гектары;
+          с 2026-08-04 она становилась 'unknown' -- гектары оставались, а
+            куча «неизвестных» кричала о поломке;
+          с 2026-08-11 (DRONE-CASH-DEFAULT-001) она становится НАЛИЧКОЙ, и
+            это ровно то, чем «Нақд»-строка и должна быть. Значит читатель,
+            знающий только «Справка», выдаёт ПРАВДОПОДОБНЫЙ результат:
+            наличные и перечисление почти сходятся, и поломка молчит.
+        Отсюда контроль стал ВАЖНЕЕ, а не слабее, и держится он на том
+        единственном, что ещё различает два случая: внутренняя работа,
+        отличённая по блоку, а не по заказчику, съезжает в наличные.
         """
         with patched(payment_marker=naive_payment_marker):
             result, stats = self.run_import()
-        self.assertEqual(stats['payments']['cash'], 0)
-        self.assertEqual(stats['payments']['internal'], 1)
-        self.assertEqual(stats['payments']['unknown'], 13)
-        # nothing is lost, everything is unclassified
+        self.assertEqual(stats['payments']['internal'], 1,
+                         'внутренняя работа съехала -- это и есть след поломки')
+        self.assertEqual(stats['payments']['cash'], 13,
+                         'и она съехала именно в наличные')
+        self.assertEqual(stats['payments']['transfer'], 8,
+                         'перечисление цело: «Справка» читатель знает')
+        self.assertEqual(stats['payments']['unknown'], 0)
+        # nothing is lost -- the hectares survive, only the classification moves
         self.assertEqual(stats['rows'], EXPECTED['rows'])
         self.assertAlmostEqual(stats['area'], EXPECTED['area'], places=2)
 
-    def test_a_row_before_any_block_is_imported_as_unknown(self):
+    def test_a_row_before_any_block_is_imported_as_cash(self):
+        """Решение владельца 2026-08-11: нет пометки -- значит наличка."""
         result, _stats = self.run_import()
         rows = [r for r in result.rows
                 if r['customer_raw'] == 'Гарден ФХ 1']
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['payment_type'], imp.PAYMENT_UNKNOWN)
+        self.assertEqual(rows[0]['payment_type'], imp.PAYMENT_CASH)
         self.assertFalse(any('no payment block' in r[3]
                              for r in result.rejections))
 
     def test_default_payment_is_an_explicit_owner_override(self):
-        result, stats = self.run_import(default_payment=imp.PAYMENT_CASH)
+        """Ключ владельца сильнее умолчания -- проверяется НЕ наличкой.
+
+        [REASON]: с 2026-08-11 умолчание и так наличка, поэтому
+        --default-payment cash ничего бы не сдвинул и тест прошёл бы при
+        полностью сломанном ключе. Берётся перечисление: строка без блока
+        обязана уехать из наличных в перечисление, и обе стороны видны.
+        """
+        result, stats = self.run_import(default_payment=imp.PAYMENT_TRANSFER)
         self.assertEqual(stats['rows'], EXPECTED['rows'])
         self.assertEqual(stats['payments']['unknown'], 0)
+        self.assertEqual(stats['payments']['transfer'],
+                         EXPECTED['payments']['transfer'] + 1)
         self.assertEqual(stats['payments']['cash'],
-                         EXPECTED['payments']['cash'] + 1)
+                         EXPECTED['payments']['cash'] - 1)
         self.assertNotIn(imp.PAYMENT_UNKNOWN, imp.PAYMENT_OVERRIDE_TYPES)
 
     def test_an_internal_customer_overrides_the_block(self):
@@ -1094,14 +1114,21 @@ class Case2TwoSimilarHeadersTests(FixCorpusTestBase):
 class Case3NoPaymentBlockTests(FixCorpusTestBase):
     """3. A sheet with no block at all -- header, then data."""
 
-    def test_the_rows_are_imported_as_unknown(self):
+    def test_the_rows_are_imported_as_cash(self):
+        """Лист без единого блока: строки — наличка, а не «неизвестно».
+
+        Счётчик unknown_payment_rows остаётся и считает ТЕ ЖЕ строки: он
+        отвечает на вопрос «сколько строк взяли умолчание», а не «сколько
+        осталось неклассифицированными». Это разные вопросы, и второй с
+        2026-08-11 всегда имеет ответ ноль.
+        """
         result, stats = self.run_import()
         rows = self.rows_of(result, 'Шофиркон ФХ А')
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['payment_type'], imp.PAYMENT_UNKNOWN)
-        self.assertEqual(stats['payments']['unknown'], 2)
-        self.assertAlmostEqual(stats['payment_area']['unknown'], 20.0,
-                               places=2)
+        self.assertEqual(rows[0]['payment_type'], imp.PAYMENT_CASH)
+        self.assertEqual(stats['payments']['unknown'], 0)
+        self.assertEqual(result.unknown_payment_rows, 2,
+                         'строки, взявшие умолчание, по-прежнему считаются')
 
     def test_nothing_is_rejected(self):
         result, _stats = self.run_import()
