@@ -330,43 +330,63 @@ class TrapCPaymentBlockTests(ImportTestBase):
         # cash block first, transfer block second -- the sheet may start with
         # either, so the reader may not assume an order.
         self.assertEqual([b[1] for b in kogon.blocks], ['cash', 'transfer'])
-        self.assertEqual(stats['payments']['cash'], 11)
+        self.assertEqual(stats['payments']['cash'], 12)
         self.assertEqual(stats['payments']['transfer'], 8)
         self.assertEqual(stats['payments']['internal'], 2)
 
     def test_a_parser_that_only_knows_spravka_misfiles_every_cash_row(self):
-        """The rows are no longer lost -- they are silently misfiled instead.
+        """Сломанный читатель разделителей больше не признаётся сам.
 
-        [REASON]: since 2026-08-04 a row with no recognised block is imported
-        as 'unknown' rather than rejected, so the damage of a broken marker
-        reader changed shape: the hectares survive, the money classification
-        does not. The control has to assert the new damage, or it would pass
-        against a reader that recognises nothing at all.
+        [REASON]: форма ущерба менялась дважды вместе с правилом.
+          до 2026-08-04 строка без блока отвергалась -- пропадали гектары;
+          с 2026-08-04 она становилась 'unknown' -- гектары оставались, а
+            куча «неизвестных» кричала о поломке;
+          с 2026-08-11 (DRONE-CASH-DEFAULT-001) она становится НАЛИЧКОЙ, и
+            это ровно то, чем «Нақд»-строка и должна быть. Значит читатель,
+            знающий только «Справка», выдаёт ПРАВДОПОДОБНЫЙ результат:
+            наличные и перечисление почти сходятся, и поломка молчит.
+        Отсюда контроль стал ВАЖНЕЕ, а не слабее, и держится он на том
+        единственном, что ещё различает два случая: внутренняя работа,
+        отличённая по блоку, а не по заказчику, съезжает в наличные.
         """
         with patched(payment_marker=naive_payment_marker):
             result, stats = self.run_import()
-        self.assertEqual(stats['payments']['cash'], 0)
-        self.assertEqual(stats['payments']['internal'], 1)
-        self.assertEqual(stats['payments']['unknown'], 13)
-        # nothing is lost, everything is unclassified
+        self.assertEqual(stats['payments']['internal'], 1,
+                         'внутренняя работа съехала -- это и есть след поломки')
+        self.assertEqual(stats['payments']['cash'], 13,
+                         'и она съехала именно в наличные')
+        self.assertEqual(stats['payments']['transfer'], 8,
+                         'перечисление цело: «Справка» читатель знает')
+        self.assertEqual(stats['payments']['unknown'], 0)
+        # nothing is lost -- the hectares survive, only the classification moves
         self.assertEqual(stats['rows'], EXPECTED['rows'])
         self.assertAlmostEqual(stats['area'], EXPECTED['area'], places=2)
 
-    def test_a_row_before_any_block_is_imported_as_unknown(self):
+    def test_a_row_before_any_block_is_imported_as_cash(self):
+        """Решение владельца 2026-08-11: нет пометки -- значит наличка."""
         result, _stats = self.run_import()
         rows = [r for r in result.rows
                 if r['customer_raw'] == 'Гарден ФХ 1']
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['payment_type'], imp.PAYMENT_UNKNOWN)
+        self.assertEqual(rows[0]['payment_type'], imp.PAYMENT_CASH)
         self.assertFalse(any('no payment block' in r[3]
                              for r in result.rejections))
 
     def test_default_payment_is_an_explicit_owner_override(self):
-        result, stats = self.run_import(default_payment=imp.PAYMENT_CASH)
+        """Ключ владельца сильнее умолчания -- проверяется НЕ наличкой.
+
+        [REASON]: с 2026-08-11 умолчание и так наличка, поэтому
+        --default-payment cash ничего бы не сдвинул и тест прошёл бы при
+        полностью сломанном ключе. Берётся перечисление: строка без блока
+        обязана уехать из наличных в перечисление, и обе стороны видны.
+        """
+        result, stats = self.run_import(default_payment=imp.PAYMENT_TRANSFER)
         self.assertEqual(stats['rows'], EXPECTED['rows'])
         self.assertEqual(stats['payments']['unknown'], 0)
+        self.assertEqual(stats['payments']['transfer'],
+                         EXPECTED['payments']['transfer'] + 1)
         self.assertEqual(stats['payments']['cash'],
-                         EXPECTED['payments']['cash'] + 1)
+                         EXPECTED['payments']['cash'] - 1)
         self.assertNotIn(imp.PAYMENT_UNKNOWN, imp.PAYMENT_OVERRIDE_TYPES)
 
     def test_an_internal_customer_overrides_the_block(self):
@@ -573,7 +593,11 @@ class ManifestTests(ImportTestBase):
         path = os.path.join(HERE, 'drone_works_manifest.txt')
         manifest, problems = imp.read_manifest(path)
         self.assertEqual(problems, [])
-        self.assertEqual(len(manifest), 28)
+        # 28 обычных книг + «Дрон_маълумот_Достон_АКА_АГРОКЛАСТЕР.xlsx»
+        # (DRONE-SVODKA-READER-001, решение владельца 2026-08-11).
+        self.assertEqual(len(manifest), 29)
+        self.assertEqual(
+            manifest['Дрон_маълумот_Достон_АКА_АГРОКЛАСТЕР.xlsx'], '2025-09')
         self.assertEqual(manifest['Имомов Бехзод Пешку ПТЗ.xlsx'], '2026-03')
         self.assertEqual(manifest['01.07.2026 Июль.xlsx'], '2026-07')
         self.assertEqual(manifest['Ғиждувон ПТЗ Дрон маълумот Март.xlsx'],
@@ -1094,14 +1118,21 @@ class Case2TwoSimilarHeadersTests(FixCorpusTestBase):
 class Case3NoPaymentBlockTests(FixCorpusTestBase):
     """3. A sheet with no block at all -- header, then data."""
 
-    def test_the_rows_are_imported_as_unknown(self):
+    def test_the_rows_are_imported_as_cash(self):
+        """Лист без единого блока: строки — наличка, а не «неизвестно».
+
+        Счётчик unknown_payment_rows остаётся и считает ТЕ ЖЕ строки: он
+        отвечает на вопрос «сколько строк взяли умолчание», а не «сколько
+        осталось неклассифицированными». Это разные вопросы, и второй с
+        2026-08-11 всегда имеет ответ ноль.
+        """
         result, stats = self.run_import()
         rows = self.rows_of(result, 'Шофиркон ФХ А')
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['payment_type'], imp.PAYMENT_UNKNOWN)
-        self.assertEqual(stats['payments']['unknown'], 2)
-        self.assertAlmostEqual(stats['payment_area']['unknown'], 20.0,
-                               places=2)
+        self.assertEqual(rows[0]['payment_type'], imp.PAYMENT_CASH)
+        self.assertEqual(stats['payments']['unknown'], 0)
+        self.assertEqual(result.unknown_payment_rows, 2,
+                         'строки, взявшие умолчание, по-прежнему считаются')
 
     def test_nothing_is_rejected(self):
         result, _stats = self.run_import()
@@ -1400,3 +1431,157 @@ class HeaderKeyTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+
+# ─── DRONE-SVODKA-READER-001: листы «СВОДКА …» ───────────────────────────────
+
+def _svodka_book(path):
+    """Синтетика по образцу «Дрон_маълумот_Достон_АКА_АГРОКЛАСТЕР.xlsx».
+
+    Каждая ловушка настоящей книги посажена нарочно: верхний свод с личными
+    расходами и «ЖАМИ СУММА:» ВЫШЕ данных, шапка верхнего свода с «№» без
+    «ФХ номи», строка итогов «Жами (нақд)» со счётчиком и площадью в
+    диапазоне, блок «Справка» с собственной шапкой «Корхона номи», дата
+    кассы в «Кирим қилинган сана», «Изох» без звёздочки, ложные носители
+    имени оператора и лист с неузнанным месяцем.
+    """
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'СВОДКА Сентябрь'
+    ws.append(['Дронларнинг нақд пул маблағлари тўғрисида'])
+    ws.append([])
+    ws.append([None, None, None, None, None, None, None,
+               'Дрон Тестов Оператор'])
+    ws.append(['№', 'Дрон бошқарувчи оператор ', 'Ой номи', 'Жами миқдор'])
+    ws.append([1, 'Тестов Оператор', 'Сентябрь', 500])
+    ws.append(['№', 'Изоҳ', 'Чиқим', 'Қолдиқ сумма'])
+    ws.append([1, 'иш хаки аванс', 1000000, None])
+    ws.append([None, 'ЖАМИ СУММА:', 1000000, 2000000])
+    ws.append(['№', 'ФХ номи ', 'Майдон (га)', 'Хизмат кўрсатиш суммаси',
+               'Жами сумма', 'Бошка харажатлар ', 'Кирим қилинган',
+               'Кирим қилинган сана', 'Изох'])
+    ws.append([1, 'Биринчи фх', 10.0, 200000, 2000000, None, 2000000,
+               datetime.datetime(2025, 9, 5), None])
+    ws.append([2, 'Иккинчи фх', 5.0, 200000, 1000000, 70000, 930000,
+               datetime.datetime(2025, 9, 6), 'Дамас 70 минг'])
+    ws.append([2, 'Жами (нақд)', 15.0, None, 3000000, 70000, 2930000])
+    ws.append([])
+    ws.append(['Справка '])
+    ws.append(['№', 'Корхона номи ', 'Майдон  (га)',
+               'Хизмат кўрсатиш санаси ', 'Хизмат кўрсатиш суммаси',
+               'Жами сумма'])
+    ws.append([1, 'Пешку Сервис ери ', 47.1,
+               datetime.datetime(2025, 9, 2), 75040, 3534384])
+    ws.append([1, 'Жами:', 47.1, None, None, 3534384])
+    ws.append([None, 'Сентябрь нақд - 15 га'])
+    ws2 = wb.create_sheet('СВОДКА октябрь')
+    ws2.append([None, None, None, None, None, None, None,
+                'Дрон Тестов Оператор'])
+    ws2.append(['№', 'ФХ номи ', 'Майдон (га)', 'Хизмат кўрсатиш суммаси',
+                'Жами сумма', 'Бошка харажатлар ', 'Кирим қилинган',
+                'Кирим қилинган сана', 'Изох'])
+    ws2.append([1, 'Октябрь фх', 8.0, 200000, 1600000, None, 1600000,
+                datetime.datetime(2025, 10, 3), None])
+    ws3 = wb.create_sheet('СВОДКА Пятница')
+    ws3.append(['№', 'ФХ номи ', 'Майдон (га)'])
+    ws3.append([1, 'Не должен попасть', 1.0])
+    wb.save(path)
+
+
+class SvodkaReaderTests(unittest.TestCase):
+    """Читатель «СВОДКА …» — и то, что он обязан НЕ прочитать."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='svodka_fx_')
+        cls.book = 'Тест СВОДКА.xlsx'
+        _svodka_book(os.path.join(cls.tmp, cls.book))
+        directory = imp.Directory.__new__(imp.Directory)
+        directory.subdivisions = set()
+        cls.result = imp.collect(cls.tmp, {cls.book: '2025-09'},
+                                 [cls.book], directory, None)
+        cls.rows = cls.result.rows
+
+    def test_the_gate_is_the_title_with_a_space(self):
+        self.assertTrue(imp.is_svodka_sheet('СВОДКА Сентябрь'))
+        self.assertTrue(imp.is_svodka_sheet('СВОДКА октябрь'))
+        for title in ('Свод1', 'свод ичи (Фурқат)', 'Сводка', 'ОБШИЙ СВОД '):
+            self.assertFalse(imp.is_svodka_sheet(title), title)
+        self.assertFalse(imp.is_detail_sheet('СВОДКА Сентябрь'))
+
+    def test_month_comes_from_the_sheet_and_year_from_the_file(self):
+        self.assertEqual(imp.svodka_sheet_period('СВОДКА октябрь', '2025-09'),
+                         '2025-10')
+        self.assertEqual(imp.svodka_sheet_period('СВОДКА Сентябрь', '2025-09'),
+                         '2025-09')
+        self.assertIsNone(imp.svodka_sheet_period('СВОДКА Пятница', '2025-09'))
+
+    def test_the_expected_rows_arrived_and_only_they(self):
+        names = sorted(r['customer_raw'] for r in self.rows)
+        self.assertEqual(names, ['Биринчи фх', 'Иккинчи фх', 'Октябрь фх',
+                                 'Пешку Сервис ери'])
+
+    def test_the_numbered_totals_row_is_not_a_job(self):
+        """«2 | Жами (нақд) | 15.0» проходит оба теста формы — счётчик и
+        площадь в диапазоне. Без стопа по заказчику она стала бы работой
+        на 15 га; в настоящей книге — на 826.8 га."""
+        self.assertFalse([r for r in self.rows
+                          if 'жами' in imp.uz_fold(r['customer_raw'] or '')])
+        self.assertFalse([r for r in self.rows
+                          if r['customer_raw'] == 'Сентябрь нақд - 15 га'])
+
+    def test_the_top_block_yields_no_rows(self):
+        """Личные расходы оператора и его свод — не работы."""
+        self.assertFalse([r for r in self.rows
+                          if r['customer_raw'] in ('иш хаки аванс',
+                                                   'Тестов Оператор')])
+
+    def test_the_money_date_maps_to_date_not_received(self):
+        """«Кирим қилинган сана» длиннее «Кирим қилинган» и обязана уйти в
+        дату; обратное съело бы колонку «получено» датой."""
+        row = [r for r in self.rows if r['customer_raw'] == 'Биринчи фх'][0]
+        self.assertEqual(row['work_date_from'], datetime.date(2025, 9, 5))
+        self.assertEqual(row['received_amount'], 2000000)
+        self.assertEqual(row['received_kind'], 'received')
+        self.assertEqual(row['payment_type'], imp.PAYMENT_CASH)
+
+    def test_the_transfer_block_has_its_own_header_and_no_received(self):
+        row = [r for r in self.rows
+               if r['customer_raw'] == 'Пешку Сервис ери'][0]
+        self.assertEqual(row['payment_type'], imp.PAYMENT_TRANSFER)
+        self.assertEqual(row['price_per_ha'], 75040)
+        self.assertEqual(row['amount'], 3534384)
+        self.assertIsNone(row['received_amount'])
+        self.assertIsNone(row['received_kind'])
+        self.assertEqual(row['work_date_from'], datetime.date(2025, 9, 2))
+
+    def test_expenses_and_the_bare_note_are_read(self):
+        row = [r for r in self.rows if r['customer_raw'] == 'Иккинчи фх'][0]
+        self.assertEqual(row['other_costs'], 70000)
+        self.assertEqual(row['note'], 'Дамас 70 минг')
+
+    def test_the_operator_comes_from_the_top_block(self):
+        """«Дрон Тестов Оператор» — да; «Дрон бошқарувчи оператор» (строчные)
+        и «Дронларнинг…» (нет пробела) — нет."""
+        self.assertEqual({r['operator_raw'] for r in self.rows},
+                         {'Тестов Оператор'})
+
+    def test_october_rows_carry_their_own_period(self):
+        row = [r for r in self.rows if r['customer_raw'] == 'Октябрь фх'][0]
+        self.assertEqual(row['period_month'], '2025-10')
+        sept = [r for r in self.rows if r['customer_raw'] == 'Биринчи фх'][0]
+        self.assertEqual(sept['period_month'], '2025-09')
+
+    def test_an_unknown_month_is_skipped_with_its_own_reason(self):
+        skipped = {s.sheet_name: s.skipped_reason
+                   for s in self.result.sheets if s.skipped_reason}
+        self.assertIn('СВОДКА Пятница', skipped)
+        self.assertIn('unrecognised month', skipped['СВОДКА Пятница'])
+        self.assertFalse([r for r in self.rows
+                          if r['customer_raw'] == 'Не должен попасть'])
+
+    def test_svodka_payment_never_needs_the_default(self):
+        """Таблица сама говорит канал: unknown в свод-строках невозможен."""
+        self.assertFalse([r for r in self.rows
+                          if r['payment_type'] == imp.PAYMENT_UNKNOWN])

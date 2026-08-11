@@ -118,6 +118,11 @@
    "url": "/drones/reports/health"
   },
   {
+   "endpoint": "drones.operator_cash",
+   "slug": "drones-reports-operator-cash",
+   "url": "/drones/reports/operator-cash"
+  },
+  {
    "endpoint": "drones.works_flights_reconcile",
    "slug": "drones-reports-reconcile",
    "url": "/drones/reports/reconcile"

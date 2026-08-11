@@ -1,0 +1,136 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Дроны — подотчёт операторов' if is_ru else 'Дронлар — операторлар ҳисоби' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Подотчёт операторов' if is_ru else 'Операторлар ҳисоби' }}</div>
+    <div class="vs-hero-sub">{{ 'Сколько наличности оператор собрал, сколько потратил по отчёту и сколько сдал. Остаток — это долг оператора кассе, а не долг заказчика: затраты уменьшают сдаваемую наличность, но не выручку от фермера. Считаются только работы с наличной оплатой; справка сюда не входит, потому что те деньги оператор в руках не держал. Экран ничего не начисляет и не списывает — он показывает то, что записано в книгах.' if is_ru else 'Оператор қанча нақд йиққан, ҳисобот бўйича қанча харажат қилган ва қанчасини топширган. Қолдиқ — операторнинг кассага қарзи, буюртмачининг қарзи эмас: харажатлар топшириладиган нақдни камайтиради, фермердан тушадиган даромадни эмас. Фақат нақд тўловли ишлар ҳисобланади; справка бу ерга кирмайди, чунки у пулни оператор қўлида ушламаган. Экран ҳеч нарса ҳисобламайди ва ҳисобдан чиқармайди — китобларда ёзилганини кўрсатади.' }}</div>
+  </div>
+</div>
+
+{# Фильтры набраны здесь, а не подключены общим куском: общего куска в
+   модуле нет, а `include ... ignore missing` отрисовал бы пустоту молча —
+   ровно тот класс дефектов, что и класс без правила. #}
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <form method="get" action="{{ url_for('drones.operator_cash') }}" class="vs-form-row">
+      <div class="vs-field" style="min-width:150px;">
+        <label class="vs-label" for="ocPeriod">{{ 'Период' if is_ru else 'Давр' }}</label>
+        <select name="period" id="ocPeriod" class="vs-select">
+          <option value="">{{ '— все периоды —' if is_ru else '— барча даврлар —' }}</option>
+          {% for p in periods %}<option value="{{ p }}" {% if filters.period == p %}selected{% endif %}>{{ p }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:170px;">
+        <label class="vs-label" for="ocSub">{{ 'Подразделение' if is_ru else 'Бўлинма' }}</label>
+        <select name="subdivision" id="ocSub" class="vs-select">
+          <option value="">{{ '— все —' if is_ru else '— барчаси —' }}</option>
+          {% for s in subdivisions %}<option value="{{ s }}" {% if filters.subdivision == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:190px;">
+        <label class="vs-label" for="ocOperator">{{ 'Оператор' if is_ru else 'Оператор' }}</label>
+        <select name="operator_id" id="ocOperator" class="vs-select">
+          <option value="">{{ '— все операторы —' if is_ru else '— барча операторлар —' }}</option>
+          {% for op in operators %}<option value="{{ op.id }}" {% if filters.operator_id == op.id %}selected{% endif %}>{{ op.full_name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+        <a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.operator_cash') }}">{{ 'За всё время' if is_ru else 'Барча вақт' }}</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Собрано наличными' if is_ru else 'Нақд йиғилган' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.0f'|format(data.total.collected)|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Затраты по отчёту' if is_ru else 'Ҳисобот бўйича харажат' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.0f'|format(data.total.costs)|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Сдано в кассу' if is_ru else 'Кассага топширилган' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.0f'|format(data.total.handed)|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Остаток к сдаче' if is_ru else 'Топшириш қолдиғи' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.0f'|format(data.total.balance)|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Заявлено оператором' if is_ru else 'Оператор айтган' }}</div>
+    <div class="vs-stat-value is-num">{{ '%.0f'|format(data.total.declared)|vs_num }}</div>
+  </div>
+</div>
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'По операторам' if is_ru else 'Операторлар бўйича' }}</span>
+    <span class="vs-soft" style="font-size:12px;">{{ 'остаток = собрано − затраты − сдано' if is_ru else 'қолдиқ = йиғилган − харажат − топширилган' }}</span>
+  </div>
+  {% if data.rows %}
+  <div class="vs-table-scroll">
+    <table class="vs-table is-static">
+      <thead>
+        <tr>
+          <th>{{ 'Оператор' if is_ru else 'Оператор' }}</th>
+          <th class="right">{{ 'Работ' if is_ru else 'Ишлар' }}</th>
+          <th class="right">{{ 'Гектары' if is_ru else 'Гектарлар' }}</th>
+          <th class="right">{{ 'Собрано' if is_ru else 'Йиғилган' }}</th>
+          <th class="right">{{ 'Затраты' if is_ru else 'Харажат' }}</th>
+          <th class="right">{{ 'Сдано' if is_ru else 'Топширилган' }}</th>
+          <th class="right">{{ 'Остаток' if is_ru else 'Қолдиқ' }}</th>
+          <th class="right">{{ 'Заявлено' if is_ru else 'Айтган' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in data.rows %}
+        <tr>
+          <td>
+            {{ row.label }}
+            {% if row.is_unresolved %}<span class="vs-badge vs-badge-sm vs-badge-warning">{{ 'не человек, а корзина' if is_ru else 'одам эмас, сават' }}</span>{% endif %}
+          </td>
+          <td class="right">{{ row.jobs|vs_num }}</td>
+          <td class="right">{{ '%.2f'|format(row.area)|vs_num }}</td>
+          <td class="right">{{ '%.0f'|format(row.collected)|vs_num }}</td>
+          <td class="right">{{ '%.0f'|format(row.costs)|vs_num }}</td>
+          <td class="right">{{ '%.0f'|format(row.handed)|vs_num }}</td>
+          <td class="right">{{ '%.0f'|format(row.balance)|vs_num }}</td>
+          <td class="right">{{ '%.0f'|format(row.declared)|vs_num }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <th>{{ 'Итого' if is_ru else 'Жами' }}</th>
+          <th class="right">{{ data.total.jobs|vs_num }}</th>
+          <th class="right">{{ '%.2f'|format(data.total.area)|vs_num }}</th>
+          <th class="right">{{ '%.0f'|format(data.total.collected)|vs_num }}</th>
+          <th class="right">{{ '%.0f'|format(data.total.costs)|vs_num }}</th>
+          <th class="right">{{ '%.0f'|format(data.total.handed)|vs_num }}</th>
+          <th class="right">{{ '%.0f'|format(data.total.balance)|vs_num }}</th>
+          <th class="right">{{ '%.0f'|format(data.total.declared)|vs_num }}</th>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  {% else %}
+  <div class="vs-card-body"><span class="vs-muted">{{ 'Наличных работ за выбранный период нет.' if is_ru else 'Танланган даврда нақд ишлар йўқ.' }}</span></div>
+  {% endif %}
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <div class="vs-muted">
+      {{ 'Колонка «Заявлено» — это «Оператор топшириши керак» из книги: сам оператор написал, сколько ещё должен. Она НЕ входит в «Сдано» и ничего не уменьшает — сложить их значило бы записать долг в приход. Расхождение между «Остатком» и «Заявлено» — повод спросить оператора, а не ошибка расчёта.' if is_ru else '«Айтган» устуни — китобдаги «Оператор топшириши керак»: оператор ўзи қанча қарздорлигини ёзган. У «Топширилган»га КИРМАЙДИ ва ҳеч нарсани камайтирмайди — уларни қўшиш қарзни киримга ёзиш бўларди. «Қолдиқ» билан «Айтган» орасидаги фарқ — ҳисоб хатоси эмас, операторга савол бериш сабаби.' }}
+    </div>
+  </div>
+</div>
+{% endblock %}

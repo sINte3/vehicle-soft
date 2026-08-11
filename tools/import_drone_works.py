@@ -567,14 +567,24 @@ def area_in_range(area):
 def payment_when_no_block():
     """What a row with no payment block above it becomes. None = reject it.
 
-    [REASON]: a named decision rather than a literal, because it USED to be
-    rejection and the change is the whole of section 4 of
-    DRONE-WORKS-IMPORT-FIX-001. The negative control in
-    tools/test_import_drone_works.py swaps in the version that returns None
-    and watches the two rows disappear again -- which is what happened to 360
-    real rows on 2026-08-04.
+    [REASON]: a named decision rather than a literal, because it has changed
+    twice and each change was a decision, not a refactor.
+      2026-08-04, DRONE-WORKS-IMPORT-FIX-001 section 4: rejection -> 'unknown'.
+        Rejection had cost 360 real rows.
+      2026-08-11, DRONE-CASH-DEFAULT-001, decision of the owner, quoted:
+        «во всех книгах диспетчеров, если тип оплаты не стоит Справка или
+        перечисление или иное - то это считается наличка».
+        'unknown' -> PAYMENT_CASH.
+
+    This is a BUSINESS RULE, not a guess the tool is entitled to make on its
+    own: the books simply do not mark cash, because cash is what a row is
+    unless it says otherwise. 383 of 913 rows in the September-October books
+    carried no marker and sat under a label nobody could act on.
+
+    The negative control in tools/test_import_drone_works.py swaps in the
+    version that returns None and watches the rows disappear again.
     """
-    return PAYMENT_UNKNOWN
+    return PAYMENT_CASH
 
 
 # ─── Trap (e): dates ─────────────────────────────────────────────────────────
@@ -935,6 +945,253 @@ def parse_sheet(ws, file_name, sheet_name, period_month, subdivision,
     return rows, report
 
 
+# ─── DRONE-SVODKA-READER-001: листы «СВОДКА …» книги Достон АКА ─────────────
+
+SVODKA_SHEET_PREFIX = uz_fold('СВОДКА') + ' '
+
+# Русские имена месяцев, как их пишут в титулах «СВОДКА Сентябрь».
+SVODKA_MONTHS = {uz_fold(name): number for number, name in enumerate(
+    ('Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль',
+     'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'), 1)}
+
+
+def is_svodka_sheet(title):
+    """True для «СВОДКА <месяц>». Пробел в префиксе — часть правила:
+    голая «Сводка» и «Свод1» под него не подпадают и пропускаются как
+    раньше."""
+    return uz_fold(title).startswith(SVODKA_SHEET_PREFIX)
+
+
+def svodka_sheet_period(title, file_period):
+    """'СВОДКА Сентябрь' + период файла '2025-09' -> '2025-09'; None = отказ.
+
+    [REASON]: месяц берётся из титула ЛИСТА, потому что одна книга несёт два
+    месяца, а манифест — один период на файл. Год — из манифеста: в титуле
+    его нет, а выдуманный год хуже отказа. Лист с неузнанным месяцем
+    пропускается с названной причиной, не гадается.
+    """
+    tail = uz_fold(title)[len(SVODKA_SHEET_PREFIX):].strip()
+    month = SVODKA_MONTHS.get(tail)
+    if month is None:
+        return None
+    return '%s-%02d' % (file_period[:4], month)
+
+
+def _svodka_operator(texts):
+    """«Дрон Рухиллоев Сайфулло» из верхнего свода -> ФИО, или ''.
+
+    [REASON]: титул листа — «СВОДКА Сентябрь», имени в нём нет, а файловая
+    заглушка operator_from_sheet_title дала бы operator_raw
+    «Дрон_маълумот_Достон_АКА_АГРОКЛАСТЕР». Полное имя стоит в ячейке
+    «Дрон <ФИО>» верхнего свода; телефон может быть в той же ячейке или в
+    соседней, поэтому на него полагаться нельзя. Правило: после «Дрон » —
+    два-четыре слова, каждое с заглавной, без цифр. Ложные соседи того же
+    свода им не проходят: «Дрон бошқарувчи оператор» — строчные, «ДРОН
+    РАКАМИ: 64TBL…» — цифры, «Дронларнинг нақд…» — нет пробела после
+    «Дрон». Запасной путь — «Оператор: С.Рухиллоев», имя после двоеточия.
+    """
+    fallback = ''
+    for text in texts:
+        folded = uz_fold(text)
+        if folded.startswith('оператор:') and not fallback:
+            fallback = text.split(':', 1)[1].strip()
+        if not folded.startswith('дрон '):
+            continue
+        tail = text.split('+', 1)[0][4:].strip()
+        words = tail.split()
+        if (2 <= len(words) <= 4
+                and not any(ch.isdigit() for ch in tail)
+                and all(w[:1].isupper() for w in words)):
+            return ' '.join(words)
+    return fallback
+
+
+def _is_svodka_transfer_header(cells):
+    """Шапка блока «Справка»: «№ | Корхона номи | …».
+
+    is_header_row её не узнаёт — там нет «ФХ номи», — и без этой проверки
+    строки справки читались бы КАССОВОЙ раскладкой: «Хизмат кўрсатиш
+    суммаси» (цена 75 040) ложилась в сумму, а «Жами сумма» (настоящая
+    сумма) — в затраты. Ровно так лист и ломался под parse_sheet.
+    """
+    if _text(cells[0] if cells else None) != '№':
+        return False
+    return any(uz_fold(_text(c)) == uz_fold('Корхона номи')
+               for c in cells[:4])
+
+
+def parse_svodka_sheet(ws, file_name, sheet_name, period_month, subdivision,
+                       formula_cells=None):
+    """Лист «СВОДКА <месяц>». Возвращает (rows, SheetReport) как parse_sheet.
+
+    [REASON]: DRONE-SVODKA-READER-001, решение владельца 2026-08-11: «прими
+    в работу данные сентября и октября 2025 года» из книги
+    «Дрон_маълумот_Достон_АКА_АГРОКЛАСТЕР.xlsx». У этой книги — единственной
+    из сорока пяти просмотренных — сводный блок с «ЖАМИ СУММА:» стоит ВЫШЕ
+    детальной таблицы, а блок «Справка» несёт собственную шапку. Отдельный
+    читатель включается только по титулу «СВОДКА …»; 28 обычных книг идут
+    прежним parse_sheet, и их числа не двигаются.
+
+    Устройство листа:
+      — верхний свод (оператор, его личные расходы, «ЖАМИ СУММА:») — не
+        работы; всё до первой узнанной шапки пропускается;
+      — кассовая таблица: стандартная шапка с «ФХ номи», payment=cash.
+        Дата — «Кирим қилинган сана», день СДАЧИ ДЕНЕГ, не полёта; за
+        неимением другой даты пишется как дата работы, это записано в
+        docs/tracks/drones.md;
+      — строка «Жами (нақд)» несёт счётчик и площадь в диапазоне
+        («66 | Жами (нақд) | 826.8») — без явного стопа она импортировалась
+        бы работой на 827 га; блок закрывает заказчик на «жами»;
+      — «Справка»: шапка «№ | Корхона номи | Майдон (га) | Хизмат кўрсатиш
+        санаси | Хизмат кўрсатиш суммаси | Жами сумма», payment=transfer,
+        получено не ведётся — канал ждёт банковский реестр.
+    """
+    report = SheetReport(file_name, sheet_name)
+    report.operator_raw = ''
+    report.operator_from_file_name = False
+
+    rows = []
+    mapping = None
+    current_payment = None
+
+    for excel_row, raw in enumerate(ws.iter_rows(values_only=True), 1):
+        cells = _row_cells(raw)
+        texts = [_text(c) for c in cells]
+        if not any(texts):
+            continue
+
+        if not report.operator_raw:
+            operator = _svodka_operator(texts)
+            if operator:
+                report.operator_raw = operator
+
+        if is_header_row(cells):
+            mapping = map_columns(cells)
+            if 'note' not in mapping:
+                # «Изох» без звёздочки есть только в этой книге; правка
+                # общего FIELD_PHRASES зацепила бы 28 обычных книг.
+                for index, text in enumerate(texts):
+                    if uz_fold(text) == uz_fold('Изох'):
+                        mapping.fields['note'] = index
+                        mapping.chosen['note'] = text
+                        break
+            current_payment = PAYMENT_CASH
+            report.blocks.append((excel_row, PAYMENT_CASH))
+            if report.column_map is None:
+                report.header_row = excel_row
+                report.header_cells = texts
+                report.column_map = mapping
+                report.missing_fields = mapping.missing_fields()
+            continue
+
+        if _is_svodka_transfer_header(cells):
+            mapping = map_columns(cells)
+            for index, text in enumerate(texts):
+                if uz_fold(text) == uz_fold('Корхона номи'):
+                    mapping.fields['customer'] = index
+                    mapping.chosen['customer'] = text
+                    break
+            current_payment = PAYMENT_TRANSFER
+            report.blocks.append((excel_row, PAYMENT_TRANSFER))
+            if report.column_map is not None:
+                report.column_map.unmatched.extend(mapping.unmatched)
+            continue
+
+        if mapping is None:
+            # Весь верхний свод: личные расходы оператора — не работы.
+            continue
+
+        customer_index = mapping.get('customer')
+        customer_raw = (_text(cells[customer_index])
+                        if customer_index is not None
+                        and customer_index < len(cells) else '')
+
+        # Стоп блока: «Жами (нақд)» / «Жами:». Строка проходит оба теста
+        # формы (счётчик 66, площадь 826.8 в диапазоне) — различает её
+        # только заказчик.
+        if customer_raw and uz_fold(customer_raw).startswith('жами'):
+            mapping = None
+            current_payment = None
+            continue
+
+        counter = _int_counter(cells[0] if cells else None)
+        area = (_number(cells[mapping.get('area')])
+                if 'area' in mapping and mapping.get('area') < len(cells)
+                else None)
+        if counter is None or not area_in_range(area):
+            if counter is not None and area is not None:
+                report.rejections.append(
+                    (excel_row, 'area out of range (%.2f)' % area, cells))
+            continue
+
+        def cell(field):
+            index = mapping.get(field)
+            if index is None or index >= len(cells):
+                return None
+            return cells[index]
+
+        def cell_at(index):
+            if index is None or index >= len(cells):
+                return None
+            return cells[index]
+
+        if not customer_raw:
+            report.empty_customer_rows += 1
+
+        amount = _number(cell('amount'))
+        date_cell = cell('date')
+        date_from, date_to, date_kind = parse_date_cell(date_cell)
+
+        other_costs = None
+        for index, _header in mapping.expenses:
+            value = _number(cell_at(index))
+            if value is not None:
+                other_costs = (value if other_costs is None
+                               else other_costs + value)
+
+        report.operator_from_sheet += 1
+
+        formula_no_cache = False
+        if formula_cells:
+            checked = [mapping.get('amount'), mapping.get('price'),
+                       mapping.received_index]
+            checked.extend(index for index, _h in mapping.expenses)
+            for index in checked:
+                if index is None:
+                    continue
+                if ((excel_row, index) in formula_cells
+                        and cell_at(index) is None):
+                    formula_no_cache = True
+
+        rows.append({
+            'source_file': file_name,
+            'source_sheet': sheet_name,
+            'source_row': excel_row,
+            'period_month': period_month,
+            'customer_raw': customer_raw,
+            'area_ha': area,
+            'price_per_ha': resolve_price(cell('price'), amount, area),
+            'amount': amount,
+            'other_costs': other_costs,
+            'received_amount': _number(cell_at(mapping.received_index)),
+            'received_kind': mapping.received_kind,
+            'payment_type': current_payment,
+            'date_raw': _text(date_cell) or None,
+            'work_date_from': date_from,
+            'work_date_to': date_to,
+            'date_kind': date_kind,
+            'operator_raw': report.operator_raw,
+            'operator_source': 'sheet',
+            'subdivision_name': subdivision,
+            'note': _text(cell('note')) or None,
+            'formula_no_cache': formula_no_cache,
+        })
+        report.rows += 1
+        report.area += area
+
+    return rows, report
+
+
 def _formula_cells(path):
     """{(row, col0) : formula} for cells that hold a formula.
 
@@ -1209,20 +1466,38 @@ def collect(directory_path, manifest, dirs_files, dir_obj, default_payment):
                 # [REASON]: gate everything else. «олинмаган пуллар» and
                 # «свод фх» repeat rows that already live in «свод ичи», and
                 # «ОБШИЙ СВОД» is a summary whose «ЖАМИ:» lines are not jobs.
+                # DRONE-SVODKA-READER-001: листы «СВОДКА <месяц>» книги
+                # Достон АКА — вторая узнаваемая форма; месяц берётся из
+                # титула листа, год — из периода файла.
+                svodka_period = None
                 if not is_detail_sheet(ws.title):
-                    skipped = SheetReport(file_name, ws.title)
-                    skipped.skipped_reason = (
-                        'not a detail sheet (title does not start with '
-                        '"свод ичи")')
-                    result.sheets.append(skipped)
-                    result.skipped_sheets.append((file_name, ws.title))
-                    continue
+                    if is_svodka_sheet(ws.title):
+                        svodka_period = svodka_sheet_period(ws.title,
+                                                            period_month)
+                    if svodka_period is None:
+                        skipped = SheetReport(file_name, ws.title)
+                        if is_svodka_sheet(ws.title):
+                            skipped.skipped_reason = (
+                                'svodka sheet with unrecognised month in '
+                                'the title')
+                        else:
+                            skipped.skipped_reason = (
+                                'not a detail sheet (title does not start '
+                                'with "свод ичи")')
+                        result.sheets.append(skipped)
+                        result.skipped_sheets.append((file_name, ws.title))
+                        continue
                 sheet_formulas = {(r, c) for (title, r, c) in formulas
                                   if title == ws.title}
-                rows, report = parse_sheet(
-                    ws, file_name, ws.title, period_month, subdivision,
-                    default_payment=default_payment,
-                    formula_cells=sheet_formulas)
+                if svodka_period is not None:
+                    rows, report = parse_svodka_sheet(
+                        ws, file_name, ws.title, svodka_period, subdivision,
+                        formula_cells=sheet_formulas)
+                else:
+                    rows, report = parse_sheet(
+                        ws, file_name, ws.title, period_month, subdivision,
+                        default_payment=default_payment,
+                        formula_cells=sheet_formulas)
                 result.sheets.append(report)
                 result.wage_rows += report.wage_rows
                 result.unknown_payment_rows += report.unknown_payment_rows
@@ -1518,7 +1793,8 @@ def print_console(result, stats, args, batch):
     print('sheets skipped (not "svod ichi") : %d' % len(result.skipped_sheets))
     print('headers matching no known phrase : %d distinct'
           % len(result.unmatched_headers))
-    print('rows with payment type unknown   : %d' % result.unknown_payment_rows)
+    print('rows with no payment block above : %d (imported as cash)'
+          % result.unknown_payment_rows)
     print('rows with an empty customer      : %d' % result.empty_customer_rows)
     print('operator taken from the row cell : %d' % result.operator_from_row)
     print('operator taken from sheet/file   : %d' % result.operator_from_sheet)
@@ -1693,7 +1969,7 @@ def write_report(path, result, stats, args, batch, include_prediction=True):
         if sheet.wage_rows:
             add('    строк «Иш хаки» пропущено: %d' % sheet.wage_rows)
         if sheet.unknown_payment_rows:
-            add('    строк без блока оплаты (unknown): %d'
+            add('    строк без блока оплаты (взяли умолчание — наличка): %d'
                 % sheet.unknown_payment_rows)
         if sheet.empty_customer_rows:
             add('    строк без имени заказчика: %d'

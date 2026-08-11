@@ -879,7 +879,7 @@ class DroneReportsLauncherTests(unittest.TestCase):
         self.client = app.test_client()
         login(self.client, self.admin)
 
-    def test_the_launcher_opens_with_eleven_tiles_in_order(self):
+    def test_the_launcher_opens_with_twelve_tiles_in_order(self):
         import re
         response = self.client.get('/drones/reports')
         self.assertEqual(response.status_code, 200)
@@ -905,6 +905,11 @@ class DroneReportsLauncherTests(unittest.TestCase):
             # alone. A shared colour means shared data, and a new accent here
             # would claim a new data source that does not exist.
             ('is-info', '/drones/reports/closing'),
+            # DRONE-CASH-SPLIT-001 reuses is-warning, the accent the debts
+            # tile carries, and sits next to it: debts and the operator cash
+            # sheet are two halves of one question, «who owes whom». The
+            # customer owes the holding; the operator owes the till.
+            ('is-warning', '/drones/reports/operator-cash'),
             # MEGA-3 reuses is-danger, the accent `sources` carries, and
             # stands beside it: both scream about the data itself -- a
             # machine gone silent there, a zero that cannot be a zero here.
@@ -1939,7 +1944,7 @@ class DroneNumberPlacementTests(unittest.TestCase):
 
     TEMPLATES = ('_drones_nav.html', '_money_cell.html', 'customers.html',
                  'flight_calendar.html', 'health.html', 'list.html',
-                 'operator_card.html',
+                 'operator_card.html', 'operator_cash.html',
                  'operators.html', 'reattach.html', 'reports.html',
                  'sources.html', 'spray_usage.html', 'summary.html',
                  'unit_card.html', 'units.html', 'works.html',
@@ -1989,10 +1994,12 @@ class DroneNumberPlacementTests(unittest.TestCase):
                                      % (name, match.group(1), option))
         # The scan must have found the selects, or it proved nothing.
         # DRONE-ANALYTICS-001 brought two more: the period picker on the debt
-        # aging page and the month picker on the flight calendar. Both are
-        # covered by the assertions above; the count is raised so the scan
-        # still cannot pass by finding nothing.
-        self.assertEqual(seen, 6, 'expected 6 period selects, saw %d' % seen)
+        # aging page and the month picker on the flight calendar.
+        # DRONE-CASH-SPLIT-001 brought the seventh -- the period picker of
+        # the operator cash sheet. All are covered by the assertions above;
+        # the count is raised so the scan still cannot pass by finding
+        # nothing.
+        self.assertEqual(seen, 7, 'expected 7 period selects, saw %d' % seen)
 
     def test_the_period_scan_would_notice_a_filter(self):
         """Negative control for the scan above: plant one, see it caught."""
@@ -2107,14 +2114,21 @@ class DroneNumberPlacementTests(unittest.TestCase):
         #   carry the filter in all five sections; machine numbers («№ 5»)
         #   and months deliberately do NOT -- a machine number is an
         #   identifier and a month is a period.
+        #
+        #   DRONE-CASH-SPLIT-001 brought operator_cash 19 and raised
+        #   works_debts from 6 to 18. Both are money and counts: collected,
+        #   costs, handed in, balance, declared, and the same six figures per
+        #   payment channel plus their footer. Operator NAMES carry nothing,
+        #   because a name is not a number.
         expected = {
             '_money_cell.html': 1,
             'customers.html': 2, 'flight_calendar.html': 9,
             'health.html': 11, 'list.html': 3,
+            'operator_cash.html': 19,
             'reattach.html': 12, 'sources.html': 7, 'spray_usage.html': 28,
             'summary.html': 42, 'works.html': 9,
             'works_assignment_hints.html': 9, 'works_closing.html': 24,
-            'works_debts.html': 6, 'works_debts_aging.html': 15,
+            'works_debts.html': 18, 'works_debts_aging.html': 15,
             'works_flights_reconcile.html': 14, 'works_import.html': 4,
             'works_import_preview.html': 30, 'works_reports.html': 9,
         }
@@ -2122,7 +2136,7 @@ class DroneNumberPlacementTests(unittest.TestCase):
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 235)
+        self.assertEqual(sum(actual.values()), 266)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):

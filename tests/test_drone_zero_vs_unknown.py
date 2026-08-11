@@ -966,10 +966,18 @@ class TestC3DivBalance(unittest.TestCase):
         # moves with a deliberate change instead of the change being avoided.
         # What is invariant is balance, and that is asserted separately by
         # test_c3_both_templates_are_balanced_now and by
-        # tools/check_templates.py: 40 == 40 still holds.
+        # tools/check_templates.py: balance still holds on both sides.
+        #
+        # [REASON]: DRONE-CASH-SPLIT-001 moved works_debts.html from 40 to 45.
+        # Пять пар — таблица остатка по каналам оплаты: обёртка, прокрутка,
+        # подпись и две строки-пояснения у каналов. Она встала между
+        # пояснительными alert'ами и таблицами долгов, потому что проза
+        # обязана идти до первой таблицы страницы — это проверяет
+        # test_d6_the_page_explains_the_new_row, и первая попытка поставить
+        # таблицу выше её уронила.
         self.assertEqual(
             {REPORTS_TEMPLATE: ((41, 41), (40, 40)),
-             DEBTS_TEMPLATE: ((39, 39), (40, 40))},
+             DEBTS_TEMPLATE: ((39, 39), (45, 45))},
             reported)
 
 
