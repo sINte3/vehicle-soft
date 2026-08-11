@@ -1852,6 +1852,52 @@ table.table.table-sm th, table.table.table-sm td { padding: 8px 12px; font-size:
   font-variant-numeric: tabular-nums;
 }
 
+/* Legacy fuel dashboard: сетка плиток, инфо-плашка «ДТ», пилюля типа топлива.
+   [REASON]: UI-P6-005c снял оба <style>-блока fuel/dashboard.html по маппингу
+   §5.4, но маппинг покрывал только имена fuel002h-*; классы fuel-hero,
+   fuel-note, fuel-dash-* и fuel-pill (ещё в report/receipts/manual_expenses)
+   остались в разметке без единого определения. Без display:block ссылка
+   <a class="stat-card"> — inline, и её белый фон с паддингами красится ПОВЕРХ
+   соседних строк; без display:grid плитки растянулись на всю ширину. Правила
+   восстановлены здесь как есть, на vs-токенах (legacy-алиасы --info/--radius/
+   --shadow указывают на те же значения); точка свежести синхронизации
+   переведена с хардкодов #16a34a/#d97706 на семантические токены.
+   UI-FUEL-BALANCES-REGRESSION-001. Медиа-правило старого .fuel-hero не
+   восстановлено: второй флекс-ребёнок (.fuel-actions) удалён ещё в
+   FUEL-NAV-001, переносить нечего. */
+.fuel-hero { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 16px; }
+.fuel-hero h1 { margin-bottom: 6px; }
+.fuel-note {
+  border-left: 4px solid var(--vs-info);
+  background: var(--vs-info-bg);
+  color: var(--vs-info);
+  padding: 12px 14px;
+  border-radius: var(--vs-r);
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+.fuel-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: var(--vs-r-pill);
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--vs-info-bg);
+  color: var(--vs-info);
+}
+.fuel-dash-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
+a.fuel-dash-tile { text-decoration: none; color: inherit; display: block; }
+a.fuel-dash-tile:hover { text-decoration: none; color: inherit; box-shadow: var(--vs-shadow); }
+div.fuel-dash-tile:hover { box-shadow: var(--vs-shadow); }
+.fuel-dash-tile-link { text-decoration: none; color: inherit; display: block; }
+.fuel-dash-tile-link:hover { text-decoration: none; color: inherit; }
+.fuel-dash-tile-neg { display: block; margin-top: 6px; font-size: 12px; color: var(--vs-danger); text-decoration: none; }
+.fuel-dash-tile-neg:hover { text-decoration: underline; color: var(--vs-danger); }
+.fuel-dash-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+.fuel-dash-dot.green { background: var(--vs-success); }
+.fuel-dash-dot.amber { background: var(--vs-warning); }
+.fuel-dash-dot.red { background: var(--vs-danger); }
+
 /* Positive/active-state pill badge — pairs with .idle-badge above. Used on
    admin_users.html ("Фаол") and audit_logs.html ("OK"). Color taken from the existing
    --vs-success / --vs-success-bg pairing already used by .badge-success elsewhere in
