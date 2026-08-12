@@ -33,7 +33,7 @@ from gps.area import (ALPHA_M, ALPHA_SPACING_FACTOR, DENSIFY_MAX_SEG_M,
                       MOTION_GAP_SECONDS, SPEED_MAX_KMH, alpha_shape,
                       candidate_contours, densify, joint_work_check,
                       pass_spacing, polygon_from_wialon, to_utm, track_quality,
-                      worked_area)
+                      work_sites, worked_area)
 
 FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 
@@ -348,6 +348,19 @@ class QualityMetricTests(unittest.TestCase):
                          "stationary messages 30 min apart are how the tracker "
                          "is configured to behave when parked")
 
+    def test_overnight_park_is_not_a_gap(self):
+        """Stopped, engine off, tracker asleep until morning -- nothing lost.
+
+        The machine's last message before the silence shows speed 0 and the
+        first one after it shows motion. Counting that as lost data claimed
+        708 minutes on unit 1729 (05.08) whose every gap began at a standstill.
+        """
+        ts = [0.0, 30.0, 60.0, 60.0 + 6 * 3600.0, 60.0 + 6 * 3600.0 + 30.0]
+        speeds = [8.0, 4.0, 0.0, 3.0, 7.0]
+        quality = track_quality(ts, speeds)
+        self.assertEqual(quality.motion_gaps, 0)
+        self.assertEqual(quality.lost_seconds, 0.0)
+
     def test_silence_while_moving_is_a_gap(self):
         silence = MOTION_GAP_SECONDS + 60.0        # one gap, this long
         ts = [0.0, 30.0, 30.0 + silence, 60.0 + silence]
@@ -357,13 +370,16 @@ class QualityMetricTests(unittest.TestCase):
         self.assertAlmostEqual(quality.lost_seconds, silence, places=3)
 
     def test_real_tracks_the_naive_metric_got_wrong(self):
-        """Regression on two real tracks, with the naive count as control.
+        """Regression on three real tracks, with the naive count as control.
 
-        Unit 3068 on 2026-07-23: counting every message pair gives 26 gaps --
-        the figure that once made a healthy track look broken. All 26 are
-        parking. Unit 7242 on 2026-07-19 has 3 genuine losses, and they must
-        survive: a metric that simply returned zero would pass the first case
-        and fail here.
+        Units 3068 (23.07) and 7242 (19.07): counting every message pair
+        gives 26 and 5 gaps -- the figures that once made healthy tracks look
+        broken. Every one of them is a machine standing still.
+
+        Unit 1729 on 08.08 is the opposite case and the reason this test can
+        fail: of its 14 naive gaps exactly ONE began while the machine was
+        moving, and that one is real lost data. A metric that simply returned
+        zero would pass the first two lines and fail this one.
         """
         by_unit = {}
         path = os.path.join(FIXTURES, "quality_tracks.csv")
@@ -373,7 +389,7 @@ class QualityMetricTests(unittest.TestCase):
                 by_unit.setdefault(row["unit_id"], []).append(
                     (int(hh) * 3600 + int(mm) * 60 + int(ss), float(row["speed"])))
 
-        expected = {"3068": (26, 0), "7242": (5, 3)}
+        expected = {"3068": (26, 0), "7242": (5, 0), "1729": (14, 1)}
         for unit, (naive_expected, correct_expected) in expected.items():
             rows = by_unit[unit]
             ts = [t for t, _ in rows]
@@ -440,6 +456,58 @@ class RealFixtureTests(unittest.TestCase):
         elsewhere = polygon_from_wialon(moved)
         self.assertEqual(candidate_contours(self.track, {9999: elsewhere}), [])
         self.assertEqual(worked_area(self.track, elsewhere).area_ha, 0.0)
+
+
+class WorkSiteTests(unittest.TestCase):
+    """Measuring without a contour -- the primary path.
+
+    Operators mostly do not register fields as geozones, so the method may not
+    depend on one. These tests pin the behaviour that follows from that.
+    """
+
+    def test_two_fields_far_apart_are_two_sites(self):
+        first = shuttle_track(200.0, 200.0, pass_spacing_m=6.0)
+        second = [(t + 90000, lon + 2000.0 / M_PER_DEG_LON, lat, sp)
+                  for t, lon, lat, sp in shuttle_track(150.0, 150.0,
+                                                       pass_spacing_m=6.0)]
+        sites, quality = work_sites(first + second)
+        self.assertEqual(len(sites), 2)
+        self.assertAlmostEqual(sites[0].area_ha, 4.0, delta=0.25)
+        self.assertAlmostEqual(sites[1].area_ha, 2.25, delta=0.2)
+        self.assertGreater(quality.points_used, 0)
+
+    def test_work_without_any_geozone_is_still_measured(self):
+        """The case that produced a silent zero before this existed."""
+        sites, _ = work_sites(shuttle_track(200.0, 200.0, pass_spacing_m=6.0),
+                              contours={})
+        self.assertEqual(len(sites), 1)
+        self.assertIsNone(sites[0].contour_id)
+        self.assertAlmostEqual(sites[0].area_ha, 4.0, delta=0.25)
+
+    def test_a_geozone_only_names_the_site_it_does_not_clip_it(self):
+        """A contour covering a corner must not shrink the measured area."""
+        track = shuttle_track(200.0, 200.0, pass_spacing_m=6.0)
+        corner = rectangle_contour(60.0, 60.0, margin_m=0.0)
+        sites, _ = work_sites(track, contours={"corner": corner})
+        self.assertEqual(len(sites), 1)
+        self.assertEqual(sites[0].contour_id, "corner")
+        self.assertAlmostEqual(sites[0].area_ha, 4.0, delta=0.25,
+                               msg="naming a site must not clip it")
+
+    def test_small_patches_are_dropped_as_passage(self):
+        track = shuttle_track(200.0, 200.0, pass_spacing_m=6.0)
+        detour = [(t + 90000, lon + 2000.0 / M_PER_DEG_LON, lat, sp)
+                  for t, lon, lat, sp in shuttle_track(30.0, 30.0,
+                                                       pass_spacing_m=6.0)]
+        sites, _ = work_sites(track + detour, min_area_ha=0.3)
+        self.assertEqual(len(sites), 1, "0.09 ha is passage, not work")
+        loose, _ = work_sites(track + detour, min_area_ha=0.05)
+        self.assertEqual(len(loose), 2, "the floor must be the caller's call")
+
+    def test_empty_track_yields_no_sites(self):
+        sites, quality = work_sites([])
+        self.assertEqual(sites, [])
+        self.assertEqual(quality.points_used, 0)
 
 
 class JointWorkTests(unittest.TestCase):

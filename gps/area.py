@@ -7,13 +7,28 @@ hectares it actually worked, together with a quality flag describing how
 trustworthy the underlying track is.
 
     points of the interval
-      -> filter: speed 1..15 km/h AND inside the contour
+      -> filter: speed 1..15 km/h
       -> densify the path every 5 m (segments shorter than 150 m only)
       -> alpha shape: Delaunay triangulation, keep triangles whose
-         circumradius < alpha, alpha = 10 m
+         circumradius < alpha
       -> union of the kept triangles
-      -> clip by the contour polygon
+      -> its separate pieces are the work sites; pieces below the work floor
+         are passage
       -> area in UTM 41N (EPSG:32641)
+
+THE METHOD DOES NOT REQUIRE A GEOZONE -- changed 2026-08-12 on the owner's
+statement of how the work actually runs. Operators in the field mostly do not
+register fields in Wialon; they trace the track by hand and write the number
+down. A method that only counted work inside a registered polygon therefore
+missed whatever nobody registered: on the spraying set that was 31.77 of 159
+hectares, and two of fifteen works came out at exactly zero while the machine
+had spent the day in the field. Measuring without the contour turns those into
++2.4 and +10.1 percent and takes the median deviation over the set from 26.4
+to 6.9 percent.
+
+`work_sites()` is the primary entry point. A geozone, when one exists, only
+NAMES a site for billing; it never filters and never clips. `worked_area()`
+remains for the case where a specific contour is the question asked.
 
 WHY THESE PARAMETERS ARE CONSTANTS, NOT SETTINGS
 The method was fixed in writing on 2026-07-29 and verified on a set the
@@ -108,6 +123,13 @@ PASS_SPACING_MIN_POINTS = 20
 PASS_SPACING_SAMPLES = 400
 PASS_SPACING_NEIGHBOURS = 80
 
+# [REASON]: a default, NOT a business rule. Where work stops being work and
+# becomes passage is the owner's to set (question V-3); until answered, 0.3 ha
+# is what the data suggests -- on the 27.07 set mere touches of a contour came
+# out at 0.02-0.07 ha and real works started at 0.32 ha. The caller may pass
+# anything; the engine only needs some floor to keep road slivers out.
+MIN_WORK_AREA_HA = 0.3
+
 METHOD_VERSION = "adaptive-alpha-2026-08-12"
 
 # [REASON]: the tracker writes at most every 30 s while moving (parameter
@@ -115,17 +137,23 @@ METHOD_VERSION = "adaptive-alpha-2026-08-12"
 # messages, at least one of which shows motion, cannot be normal operation --
 # it is lost data.
 #
-# Both obvious definitions are wrong, and both were tried on real tracks:
-#   - gaps over all messages regardless of speed: a parked machine reports
-#     once per 30 minutes (10000), so every lunch break becomes a "broken
-#     track". This is the mistake the project already made once.
-#   - gaps between successive MOVING messages, skipping what lies between:
-#     the same stop reappears, because the messages bridging it are simply
-#     not looked at. Measured on unit 3464 (2026-07-27) this reported 23 gaps
-#     and 5.9 hours lost on a track whose raw stream has no gap over 5
-#     minutes at all.
-# What is left is the correct one: walk CONSECUTIVE raw messages and require
-# motion at one end.
+# THREE definitions were tried on real tracks and the first two were wrong:
+#   1. gaps over all messages regardless of speed: a parked machine reports
+#      once per 30 minutes (10000), so every lunch break becomes a "broken
+#      track". This is the mistake the project already made once.
+#   2. gaps between successive MOVING messages, skipping what lies between:
+#      the same stop reappears, because the messages bridging it are simply
+#      not looked at. On unit 3464 (2026-07-27) this reported 23 gaps and
+#      5.9 hours lost on a track whose raw stream has no gap at all.
+#   3. motion at EITHER end of the gap: this counts the overnight park. The
+#      machine stops, the engine goes off, the tracker sleeps and reports
+#      nothing until morning -- and the morning message shows motion. On the
+#      spraying set this claimed 708 minutes lost for unit 1729 on 05.08;
+#      every one of its 13 "gaps" began at speed 0.
+# Correct: the tracker went silent WHILE THE MACHINE WAS MOVING, i.e. speed
+# at the LAST message before the gap is above zero. Over all 37 unit-days
+# collected so far that leaves 5 real gaps totalling 126 minutes, against
+# 56 parkings totalling 3777 minutes that the previous definition counted.
 MOTION_GAP_SECONDS = 300.0
 
 _TO_UTM = Transformer.from_crs("EPSG:4326", UTM_41N, always_xy=True)
@@ -311,11 +339,11 @@ def track_quality(timestamps, speeds, points_used=0):
                             points_used=points_used, motion_gaps=0,
                             lost_seconds=0.0, span_seconds=span)
 
-    # Consecutive raw messages, with motion required at one end (see the
-    # MOTION_GAP_SECONDS comment for the two definitions this replaces).
+    # Consecutive raw messages, motion required at the START of the gap (see
+    # the MOTION_GAP_SECONDS comment for the three definitions this replaces).
     motion = _in_motion(speeds)
     deltas = np.diff(ts)
-    is_gap = (deltas > MOTION_GAP_SECONDS) & (motion[:-1] | motion[1:])
+    is_gap = (deltas > MOTION_GAP_SECONDS) & motion[:-1]
     return TrackQuality(points_total=len(ts), points_moving=int(mask.sum()),
                         points_used=points_used, motion_gaps=int(is_gap.sum()),
                         lost_seconds=float(deltas[is_gap].sum()),
@@ -397,6 +425,75 @@ def worked_area(track, contour, contour_id=None, alpha_m=None):
     clipped = shape.intersection(contour)
     return WorkArea(contour_id, clipped.area / 10000.0, clipped, quality,
                     alpha, spacing)
+
+
+def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None):
+    """Every patch of ground worked in this interval -- geozone or not.
+
+    This is the primary entry point, and it deliberately does NOT need a
+    contour. Operators in the field mostly do not create geozones: they trace
+    the track by hand and write the number down, so a method that only counts
+    work inside a registered polygon misses whatever nobody registered. On the
+    spraying set of 12.08 that was 20 percent of the hectares, and two works
+    came out at exactly zero while the machine had spent the day in the field.
+
+    Points are taken in the work speed window, densified, wrapped in one alpha
+    shape, and the shape's separate pieces are the work sites. A piece smaller
+    than min_area_ha is dropped as passage rather than work.
+
+    `contours` is optional and used ONLY to name a site: the geozone covering
+    most of it, if any. It never filters and never clips. A site with
+    contour_id None is real work on unregistered ground, and the caller must
+    show it as such -- never as zero.
+
+    Returns (sites, quality), sites ordered by area, largest first.
+    """
+    quality_full = track_quality([r[0] for r in track], [r[3] for r in track]) \
+        if track else track_quality([0.0], [0.0])
+    if not track:
+        return [], quality_full
+
+    speeds = [r[3] for r in track]
+    xs, ys = to_utm([r[1] for r in track], [r[2] for r in track])
+    mask = _moving_mask(speeds)
+    points = [(float(x), float(y))
+              for x, y in zip(np.asarray(xs)[mask], np.asarray(ys)[mask])]
+    quality = track_quality([r[0] for r in track], speeds, points_used=len(points))
+    if len(points) < 4:
+        return [], quality
+
+    if alpha_m is None:
+        spacing = pass_spacing(points)
+        alpha = (max(ALPHA_M, ALPHA_SPACING_FACTOR * spacing)
+                 if spacing is not None else ALPHA_M)
+    else:
+        spacing, alpha = None, alpha_m
+
+    shape = alpha_shape(densify(points), alpha)
+    if shape is None:
+        return [], quality
+
+    tree = named = None
+    if contours:
+        named = list(contours.keys())
+        tree = shapely.STRtree([contours[i] for i in named])
+
+    sites = []
+    for piece in getattr(shape, "geoms", [shape]):
+        area_ha = piece.area / 10000.0
+        if area_ha < min_area_ha:
+            continue
+        contour_id = None
+        if tree is not None:
+            best = 0.0
+            for position in np.atleast_1d(tree.query(piece)):
+                geom = contours[named[int(position)]]
+                overlap = piece.intersection(geom).area
+                if overlap > best:
+                    best, contour_id = overlap, named[int(position)]
+        sites.append(WorkArea(contour_id, area_ha, piece, quality, alpha, spacing))
+    sites.sort(key=lambda s: -s.area_ha)
+    return sites, quality
 
 
 def candidate_contours(track, contours, min_moving_points=10):
