@@ -145,14 +145,22 @@ def refresh_zones(sid):
     if problem:
         say("  resource search failed: %s" % problem)
         return
-    listed = 0
+    zone_list = {}
     for item in res.get("items") or []:
         if item.get("id") == RESOURCE_ID:
-            listed = len(item.get("zl") or {})
-    say("  zones listed in resource: %s" % listed)
+            zone_list = item.get("zl") or {}
+    say("  zones listed in resource: %s" % len(zone_list))
+    if not zone_list:
+        say("  FAILED: the resource returned no zone list, nothing to download")
+        return
 
+    # [REASON]: get_zone_data needs the explicit list of zone ids in `col`.
+    # The first run of this probe passed an empty list and the server answered
+    # with an empty result and NO error -- 17 812 zones silently became a
+    # 2-byte file. Probe 2 passes all ids at once and that is known to work.
+    ids = [int(z) for z in zone_list.keys()]
     data = call("resource/get_zone_data",
-                {"itemId": RESOURCE_ID, "col": [], "flags": ZONE_DATA_FLAGS}, sid)
+                {"itemId": RESOURCE_ID, "col": ids, "flags": ZONE_DATA_FLAGS}, sid)
     problem = err(data)
     if problem:
         say("  get_zone_data failed: %s" % problem)
@@ -163,9 +171,16 @@ def refresh_zones(sid):
         zid = z.get("id")
         if zid is None:
             continue
+        points = z.get("p") or []
+        if isinstance(points, dict):
+            points = list(points.values())
         out[str(zid)] = {"resource_id": RESOURCE_ID, "name": z.get("n"),
                          "type": z.get("t"), "width": z.get("w"),
-                         "points": z.get("p") or []}
+                         "points": points}
+    if not out:
+        say("  FAILED: %s zones listed but none downloaded -- do NOT treat the"
+            % len(zone_list))
+        say("  written file as a directory, it is empty")
     stamp = datetime.now(TZ).strftime("%Y%m%d")
     path = P("wialon_zones_%s.json" % stamp)
     with open(path, "w", encoding="utf-8") as fh:
