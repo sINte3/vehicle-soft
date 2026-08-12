@@ -1,0 +1,24 @@
+# Dependencies of the GPS area engine ONLY.
+#
+# Deliberately separate from the application's requirements.txt, by the same
+# rule as drone_collector: the Flask service must never grow a numpy/scipy
+# stack because of a module it does not import. Nothing under gps/ imports
+# `app` or `models`, and nothing there opens transport.db.
+#
+# Every pin below was checked on PyPI on 2026-08-12 to publish a ready
+# cp314 win_amd64 wheel, so the server's CPython 3.14 installs them without a
+# compiler:
+#   shapely-2.1.2-cp314-cp314-win_amd64.whl
+#   scipy-1.17.1-cp314-cp314-win_amd64.whl
+#   pyproj-3.7.2-cp314-cp314-win_amd64.whl
+#   numpy-2.4.6-cp314-cp314-win_amd64.whl
+# These are also the exact versions the test suite was run against, so a
+# green suite here means a green suite on the server.
+#
+# Upgrading any of them is a method change until proven otherwise: run
+# `python -m unittest discover -s gps/tests -t .` and confirm the recorded
+# 8.51 ha on zone 3208 still comes out, before accepting a new version.
+shapely==2.1.2
+scipy==1.17.1
+pyproj==3.7.2
+numpy==2.4.6
