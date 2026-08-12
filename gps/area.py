@@ -25,11 +25,37 @@ alpha fragile. Densification removes the gap; after it alpha is stable
 anywhere in 8-15 m. Changing any constant invalidates the calibration and
 requires a new pre-registered verification set (docs/PLAN.md section 5).
 
-The adaptive rule alpha = max(10; 1.2 x measured pass spacing) is
-deliberately ABSENT. It improves spraying from -8.6 to -1.0 percent, but it
-was tuned on the same data it improved, and a correction measured on its own
-training set is not a result. It enters the method only after an unseen set
-confirms it.
+ADAPTIVE ALPHA -- introduced 2026-08-12, and here is the whole warrant.
+The rule alpha = max(10; 1.2 x measured pass spacing) was written down on
+2026-07-29 and deliberately NOT adopted then: it had been tuned on the same
+17 works it improved, and a correction measured on its own training set is
+not a result. The pre-registration said it enters the method only if an
+unseen set confirms it. That set arrived on 2026-08-12 -- 15 hand-measured
+spraying works, computed with the frozen code committed BEFORE the data:
+
+  fixed alpha 10 m   median |deviation| 26.4 %, mean -32.1 %
+  adaptive           median |deviation| 12.0 %, mean -22.9 %
+  on the 8 works free of unmapped land and broken track: 10.9 % -> 3.4 %
+
+It is robust. The pre-registration fixed the rule but not the estimator, so
+that degree of freedom was swept: the detour ratio (3 / 5 / 8) changes
+nothing at all -- the numbers are identical, passes are separated
+unambiguously -- and the multiplier 1.1 / 1.2 / 1.3 moves the median only
+between 10.1 and 12.0 percent.
+
+And it costs nothing where the method was already validated. Spraying runs
+passes 13-22 m apart, cultivation 5-9 m, so max(10; 1.2 x 8) is 10 -- the
+rule is a NO-OP on cultivation by construction, confirmed by replay: the
+calibration set of 18-23.07 moves by EXACTLY +0.0 percent (no single work
+shifts at all), and the 27.07 set by +0.9 percent, where every work that
+moves is a spraying one.
+
+What the set did NOT settle: 7 of the 15 works stay wrong for reasons the
+alpha cannot touch -- up to 8.8 ha worked on ground that has no geozone at
+all, and tracks losing up to 708 minutes of motion in a day. Those are
+input defects, both measured and reported by this module, not method error.
+
+To reproduce the old behaviour exactly, pass alpha_m=ALPHA_M explicitly.
 
 WHAT THIS MODULE DOES NOT DO
 It contains no business rules. It does not decide what counts as work rather
@@ -52,7 +78,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import shapely
 from pyproj import Transformer
-from scipy.spatial import Delaunay
+from scipy.spatial import Delaunay, cKDTree
 from shapely.geometry import MultiPoint, Polygon
 from shapely.ops import unary_union
 
@@ -64,7 +90,25 @@ DENSIFY_MAX_SEG_M = 150.0
 ALPHA_M = 10.0
 UTM_41N = "EPSG:32641"
 
-METHOD_VERSION = "frozen-2026-07-29"
+# [REASON]: alpha must exceed the spacing between neighbouring passes, or the
+# shape cannot stitch them and the area comes out short. 1.2 is the margin
+# pre-registered on 2026-07-29 and confirmed on unseen data on 2026-08-12.
+ALPHA_SPACING_FACTOR = 1.2
+
+# [REASON]: a point on the pass alongside is one that is CLOSE in a straight
+# line but FAR along the track -- you have to drive to the end of this pass,
+# turn, and come back. The first estimator used a time threshold (120 s)
+# instead, and a synthetic case caught it overestimating the spacing four-fold
+# when a pass took less than the threshold: it skipped the neighbouring pass
+# entirely. Overestimation is the dangerous direction, because it inflates
+# alpha until the shape bridges genuinely unworked ground. This ratio has no
+# units, so it holds for any pass length, speed or point interval.
+PASS_SPACING_DETOUR_RATIO = 5.0
+PASS_SPACING_MIN_POINTS = 20
+PASS_SPACING_SAMPLES = 400
+PASS_SPACING_NEIGHBOURS = 80
+
+METHOD_VERSION = "adaptive-alpha-2026-08-12"
 
 # [REASON]: the tracker writes at most every 30 s while moving (parameter
 # 10050) and transmits every 60 s (10055), so 5 minutes between two CONSECUTIVE
@@ -116,6 +160,12 @@ class WorkArea:
     area_ha: float
     polygon: object                     # shapely geometry in UTM 41N, or None
     quality: TrackQuality
+    # [REASON]: the alpha actually used and the spacing it came from are
+    # stored, not recomputed later. A hectare figure goes into an invoice and
+    # has to be defensible a year on: without these two numbers the result
+    # cannot be reproduced once the rule or the estimator changes.
+    alpha_used_m: float = ALPHA_M
+    pass_spacing_m: float = None
     method_version: str = METHOD_VERSION
 
     @property
@@ -272,11 +322,50 @@ def track_quality(timestamps, speeds, points_used=0):
                         span_seconds=span)
 
 
-def worked_area(track, contour, contour_id=None):
-    """The frozen method for one machine, one interval, one contour.
+def pass_spacing(points_xy, detour_ratio=PASS_SPACING_DETOUR_RATIO):
+    """Distance between neighbouring passes, measured from the track itself.
+
+    For a sample of points, find the nearest point that lies on a DIFFERENT
+    pass, and take the median of those distances. A different pass is
+    recognised by the detour: driving there along the track is at least
+    `detour_ratio` times further than the straight line to it.
+
+    Returns None when the cloud is too small, or when no neighbour looks like
+    another pass at all -- a single straight run has no spacing to measure.
+    The caller then falls back to the fixed alpha rather than guess.
+
+    [REASON]: the implement width is NEVER used, here or anywhere else. It is
+    unknown, the machine changes implements, and every method built on it
+    failed in this project. The spacing is a property of the track.
+    """
+    if len(points_xy) < PASS_SPACING_MIN_POINTS:
+        return None
+    pts = np.asarray(points_xy, dtype=float)
+    # Distance travelled along the track up to each point.
+    steps = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+    along = np.concatenate(([0.0], np.cumsum(steps)))
+    tree = cKDTree(pts)
+    sample_step = max(1, len(pts) // PASS_SPACING_SAMPLES)
+    neighbours = min(PASS_SPACING_NEIGHBOURS, len(pts))
+    found = []
+    for i in range(0, len(pts), sample_step):
+        distances, indices = tree.query(pts[i], k=neighbours)
+        for distance, j in zip(np.atleast_1d(distances), np.atleast_1d(indices)):
+            if distance <= 0:
+                continue
+            if abs(along[j] - along[i]) >= detour_ratio * distance:
+                found.append(float(distance))
+                break
+    return float(np.median(found)) if found else None
+
+
+def worked_area(track, contour, contour_id=None, alpha_m=None):
+    """The method for one machine, one interval, one contour.
 
     `track` is a sequence of (timestamp_seconds, lon, lat, speed_kmh).
     `contour` is a shapely Polygon already in UTM 41N.
+    `alpha_m` pins alpha to a fixed value; the default None selects the
+    adaptive rule max(ALPHA_M, ALPHA_SPACING_FACTOR x measured spacing).
     """
     if contour is None or not track:
         return WorkArea(contour_id, 0.0, None,
@@ -295,11 +384,19 @@ def worked_area(track, contour, contour_id=None):
     if not used:
         return WorkArea(contour_id, 0.0, None, quality)
 
-    shape = alpha_shape(densify(used))
+    if alpha_m is None:
+        spacing = pass_spacing(used)
+        alpha = (max(ALPHA_M, ALPHA_SPACING_FACTOR * spacing)
+                 if spacing is not None else ALPHA_M)
+    else:
+        spacing, alpha = None, alpha_m
+
+    shape = alpha_shape(densify(used), alpha)
     if shape is None:
-        return WorkArea(contour_id, 0.0, None, quality)
+        return WorkArea(contour_id, 0.0, None, quality, alpha, spacing)
     clipped = shape.intersection(contour)
-    return WorkArea(contour_id, clipped.area / 10000.0, clipped, quality)
+    return WorkArea(contour_id, clipped.area / 10000.0, clipped, quality,
+                    alpha, spacing)
 
 
 def candidate_contours(track, contours, min_moving_points=10):

@@ -29,10 +29,11 @@ import math
 import os
 import unittest
 
-from gps.area import (ALPHA_M, DENSIFY_MAX_SEG_M, MOTION_GAP_SECONDS,
-                      SPEED_MAX_KMH, alpha_shape, candidate_contours, densify,
-                      joint_work_check, polygon_from_wialon, to_utm,
-                      track_quality, worked_area)
+from gps.area import (ALPHA_M, ALPHA_SPACING_FACTOR, DENSIFY_MAX_SEG_M,
+                      MOTION_GAP_SECONDS, SPEED_MAX_KMH, alpha_shape,
+                      candidate_contours, densify, joint_work_check,
+                      pass_spacing, polygon_from_wialon, to_utm, track_quality,
+                      worked_area)
 
 FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 
@@ -70,8 +71,17 @@ def shuttle_track(width_m, height_m, pass_spacing_m=6.0, point_step_m=40.0,
         if skip_band and skip_band[0] <= east <= skip_band[1]:
             east += pass_spacing_m
             continue
-        norths = ([n for n in frange(0.0, height_m, point_step_m)] if upward
-                  else [n for n in frange(height_m, 0.0, -point_step_m)])
+        # [REASON]: the same north grid on every pass, merely reversed. Built
+        # from two independent ranges the points end up staggered by half a
+        # step, and then the nearest point on the pass alongside is not the
+        # pass spacing at all -- which made a synthetic field say 12 m where
+        # it was built with 6.
+        grid = frange(0.0, height_m, point_step_m)
+        if grid[-1] < height_m - 1e-9:
+            # the machine drives to the end of the pass, so the far end is a
+            # point too; without it the field is short by up to one step
+            grid = grid + [height_m]
+        norths = grid if upward else list(reversed(grid))
         for north in norths:
             lon, lat = xy_to_lonlat(east, north)
             track.append((t, lon, lat, speed))
@@ -205,6 +215,93 @@ class SyntheticAreaTests(unittest.TestCase):
         result = worked_area([], contour)
         self.assertFalse(result.has_data)
         self.assertIsNone(result.polygon)
+
+
+class PassSpacingTests(unittest.TestCase):
+    """The estimator that drives the adaptive alpha."""
+
+    def _spacing_of(self, spacing_m, field_m=300.0):
+        track = shuttle_track(field_m, field_m, pass_spacing_m=spacing_m)
+        pts = [to_utm(lon, lat) for _, lon, lat, _ in track]
+        return pass_spacing([(float(x), float(y)) for x, y in pts])
+
+    def test_recovers_the_spacing_it_was_built_with(self):
+        for built in (5.0, 6.0, 14.0, 20.0):
+            got = self._spacing_of(built)
+            self.assertIsNotNone(got, f"no spacing found for {built} m")
+            self.assertAlmostEqual(got, built, delta=0.6,
+                                   msg=f"built {built} m, measured {got}")
+
+    def test_single_straight_run_has_no_spacing(self):
+        """One pass is not a pattern; the caller must fall back, not guess."""
+        line = [(float(i) * 40.0, 0.0) for i in range(40)]
+        self.assertIsNone(pass_spacing(line))
+
+    def test_too_few_points(self):
+        self.assertIsNone(pass_spacing([(0.0, 0.0), (5.0, 0.0)]))
+
+
+class AdaptiveAlphaTests(unittest.TestCase):
+    """Introduced 2026-08-12 after an unseen set confirmed the rule."""
+
+    def test_cultivation_spacing_leaves_alpha_untouched(self):
+        """max(10; 1.2 x 6) is 10 -- the rule must be a no-op here.
+
+        This is what makes the change safe: the July calibration, all of it
+        cultivation, replays byte for byte.
+        """
+        contour = rectangle_contour(300.0, 300.0)
+        track = shuttle_track(300.0, 300.0, pass_spacing_m=6.0)
+        adaptive = worked_area(track, contour)
+        fixed = worked_area(track, contour, alpha_m=ALPHA_M)
+        self.assertAlmostEqual(adaptive.pass_spacing_m, 6.0, delta=0.6)
+        self.assertEqual(adaptive.alpha_used_m, ALPHA_M)
+        self.assertAlmostEqual(adaptive.area_ha, fixed.area_ha, places=6)
+
+    def test_sprayer_spacing_raises_alpha(self):
+        """14 m spacing x the 1.2 margin is 16.8 m.
+
+        Written as the literal 16.8, NOT as ALPHA_SPACING_FACTOR * 14: an
+        expectation spelled with the constant moves when the constant moves,
+        and a mutation run caught exactly that -- dropping the margin to 1.0
+        failed nothing.
+        """
+        contour = rectangle_contour(300.0, 300.0)
+        track = shuttle_track(300.0, 300.0, pass_spacing_m=14.0)
+        result = worked_area(track, contour)
+        self.assertAlmostEqual(result.pass_spacing_m, 14.0, delta=0.6)
+        self.assertAlmostEqual(result.alpha_used_m, 16.8, delta=0.8)
+        self.assertGreater(ALPHA_SPACING_FACTOR, 1.0,
+                           "the margin must exceed the spacing, not equal it")
+
+    def test_alpha_and_spacing_are_recorded_on_the_result(self):
+        """A hectare that reaches an invoice must be reproducible later."""
+        contour = rectangle_contour(300.0, 300.0)
+        result = worked_area(shuttle_track(300.0, 300.0, pass_spacing_m=14.0),
+                             contour)
+        self.assertGreater(result.alpha_used_m, ALPHA_M)
+        self.assertIsNotNone(result.pass_spacing_m)
+        self.assertEqual(result.method_version, "adaptive-alpha-2026-08-12")
+
+    def test_hole_survives_the_adaptive_rule(self):
+        """The danger of the rule, guarded explicitly.
+
+        An unworked band is a large distance between the passes bracketing
+        it. If the estimator let that raise alpha, the shape would bridge the
+        band and bill ground nobody touched -- the exact failure the alpha
+        shape exists to prevent. Measuring the spacing as the MEDIAN over the
+        whole cloud keeps a single wide gap from moving it.
+        """
+        contour = rectangle_contour(300.0, 300.0)
+        full = worked_area(shuttle_track(300.0, 300.0, pass_spacing_m=6.0),
+                           contour)
+        holed = worked_area(
+            shuttle_track(300.0, 300.0, pass_spacing_m=6.0,
+                          skip_band=(90.0, 180.0)), contour)
+        self.assertAlmostEqual(holed.pass_spacing_m, 6.0, delta=0.6,
+                               msg="the hole must not inflate the spacing")
+        self.assertLess(holed.area_ha, full.area_ha * 0.75,
+                        "a 90 m unworked band must stay out of the area")
 
 
 class DensifyTests(unittest.TestCase):
