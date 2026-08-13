@@ -162,6 +162,11 @@ PANEL_DUMP_CHARS = 12000
 # Пауза после применения фильтра, прежде чем ждать ответ.
 FILTER_SETTLE_MS = 1200
 
+# Имена полей с общим числом записей -- в порядке предпочтения. Прочитаны из
+# живого ответа 2026-08-13: meta_data = {count, current_page, total_count,
+# total_pages}. `count` в список НЕ входит: это строки текущей страницы.
+TOTAL_KEYS_PREFERRED = ('total_count', 'total_records', 'total_num', 'total')
+
 # [REASON]: живой прогон 2026-08-13 показал, что сайт посреди обхода отвечает
 # `code-408` (по его же словарю -- «плохая отметка времени»), после чего
 # страница не листается и контрол «следующая» пропадает из DOM. Один раз это
@@ -170,6 +175,16 @@ FILTER_SETTLE_MS = 1200
 # он встал: paginate() продолжает с текущей страницы, а не начинает заново.
 PAGINATION_ATTEMPTS = 3
 PAGINATION_RETRY_PAUSE_MS = 25000
+
+# [REASON]: тот же `code-408` прилетает и на ПЕРВЫЙ запрос борта, и тогда
+# ждать капчур бесполезно -- страница уже в ошибочном состоянии. Живой прогон
+# 2026-08-13 встал так на третьем борте и уронил весь обход, потеряв два уже
+# снятых. Лечение -- перезагрузить страницу, заново поставить период и размер
+# страницы и повторить борт; а если и это не помогло, ПРОПУСТИТЬ борт и идти
+# дальше: четырнадцать снятых бортов лучше нуля, а недостающий добирается
+# отдельным коротким прогоном через --device.
+DEVICE_ATTEMPTS = 3
+DEVICE_RETRY_PAUSE_MS = 30000
 
 
 class DeviceListUnavailable(BrowserError):
@@ -353,6 +368,48 @@ class DeviceSweepCollector(FlightCollector):
             self._page.wait_for_timeout(PAGINATION_RETRY_PAUSE_MS)
         return complete, total_pages, clicks_total
 
+    def recover(self, date_from, date_to):
+        """Перезагрузить страницу и вернуть её в рабочее состояние.
+
+        Возвращает (from_ms, to_ms) заново подтверждённого периода. Нужна
+        после срыва подписи: сайт остаётся в состоянии, из которого он не
+        листается и не отвечает на фильтр, и никакие клики его не оживляют.
+        """
+        self.log.warning('Recovering: reloading the records page, then '
+                         'setting the period and page size again')
+        self._captured = []
+        self.open_records()
+        expected_from, expected_to = self.set_period(date_from, date_to)
+        self.maximise_page_size(expected_from, expected_to)
+        return expected_from, expected_to
+
+    def collect_one_device_resilient(self, name, expected, date_from, date_to):
+        """collect_one_device(), переживающий срыв подписи.
+
+        Возвращает (результат, период). Период возвращается потому, что
+        восстановление перезагружает страницу и заново подтверждает окно --
+        вызывающий обязан пользоваться свежими границами, иначе следующий борт
+        будет проверяться против устаревших.
+        """
+        expected_from, expected_to = expected
+        for attempt in range(1, DEVICE_ATTEMPTS + 1):
+            try:
+                item = self.collect_one_device(name, expected_from,
+                                               expected_to)
+                if attempt > 1:
+                    self.log.info('Device %r succeeded on attempt %d', name,
+                                  attempt)
+                return item, (expected_from, expected_to)
+            except BrowserError as exc:
+                if attempt == DEVICE_ATTEMPTS:
+                    raise
+                self.log.warning('Device %r failed on attempt %d (%s). '
+                                 'Waiting %d ms, then recovering.', name,
+                                 attempt, exc, DEVICE_RETRY_PAUSE_MS)
+                self._page.wait_for_timeout(DEVICE_RETRY_PAUSE_MS)
+                expected_from, expected_to = self.recover(date_from, date_to)
+        raise BrowserError('unreachable')
+
     # -- один борт ------------------------------------------------------------
 
     def collect_one_device(self, name, expected_from_ms, expected_to_ms):
@@ -491,29 +548,38 @@ def control_bounds(captured, log):
         return result
     meta = captured[0].meta or {}
     result['meta_keys'] = sorted(meta)
-    # [REASON]: имя поля с общим числом записей неизвестно -- в разобранном
-    # ответе есть current_page и total_pages, но полного списка ключей никто
-    # не фиксировал. Берётся первый целочисленный ключ, в имени которого есть
-    # `total` или `count` и НЕТ `page`: `total_pages` под это не подходит и
-    # не может быть принят за число вылетов.
-    for key in sorted(meta):
-        lowered = key.lower()
-        if 'page' in lowered:
-            continue
-        if 'total' not in lowered and 'count' not in lowered:
-            continue
-        try:
-            result['exact'] = int(meta[key])
-            log.info('The site reports the window total in meta_data[%r] = %d',
-                     key, result['exact'])
-            break
-        except (TypeError, ValueError):
-            continue
     total_pages = captured[0].total_pages
     page_size = browser_module.parse_page_size_from_url(captured[0].url)
     if total_pages and page_size:
         result['low'] = (total_pages - 1) * page_size + 1
         result['high'] = total_pages * page_size
+
+    # [REASON]: ключи берутся ПО ИМЕНИ И В ПОРЯДКЕ ПРЕДПОЧТЕНИЯ, а не первым
+    # подошедшим. Живой прогон 2026-08-13 показал цену «первого подошедшего»:
+    # meta_data несёт и `count`, и `total_count`, и по алфавиту первым идёт
+    # `count` -- а это число строк ТЕКУЩЕЙ страницы (50), не окна. Контроль
+    # тогда объявил окно из 50 вылетов и сравнивал бы с ним 5661.
+    for key in TOTAL_KEYS_PREFERRED:
+        if key not in meta:
+            continue
+        try:
+            candidate = int(meta[key])
+        except (TypeError, ValueError):
+            continue
+        # [REASON]: и этого мало. Кандидат обязан не противоречить числу
+        # страниц: окно из 114 страниц по 50 не может держать 50 вылетов.
+        # Проверка ловит и опечатку в имени ключа, и смену смысла поля.
+        if result['low'] is not None and not (result['low'] <= candidate
+                                              <= result['high']):
+            log.warning('meta_data[%r] = %d contradicts the page count '
+                        '(%d pages of %d => %d..%d flights); ignoring it',
+                        key, candidate, total_pages, page_size, result['low'],
+                        result['high'])
+            continue
+        result['exact'] = candidate
+        log.info('The site reports the window total in meta_data[%r] = %d',
+                 key, candidate)
+        break
     if result['exact'] is None:
         log.info('No explicit total in meta_data (keys: %s); the window holds '
                  'between %s and %s flight(s) by page count',
@@ -578,11 +644,35 @@ def run(args, cfg, log):
 
         per_device = []
         incomplete = []
+        failed = []
+        expected = (expected_from, expected_to)
         for name in wanted:
             if name not in devices:
                 continue
-            item = collector.collect_one_device(name, expected_from,
-                                                expected_to)
+            try:
+                item, expected = collector.collect_one_device_resilient(
+                    name, expected, date_from, date_to)
+            except BrowserError as exc:
+                # [REASON]: один сорвавшийся борт не отменяет остальные
+                # четырнадцать. Живой прогон 2026-08-13 упал на третьем борте
+                # и потерял два уже снятых -- при том что данные по ним были
+                # верны. Борт записывается в неудавшиеся, обход идёт дальше, а
+                # список печатается в конце готовой командой на добор.
+                log.error('Device %r gave up after %d attempt(s): %s', name,
+                          DEVICE_ATTEMPTS, exc)
+                failed.append(name)
+                try:
+                    expected = collector.recover(date_from, date_to)
+                except BrowserError as exc2:
+                    log.error('Recovery after %r failed too (%s); stopping '
+                              'the sweep and writing what is already read.',
+                              name, exc2)
+                    failed.extend(n for n in wanted
+                                  if n in devices and n != name
+                                  and n not in [i['device'] for i in per_device]
+                                  and n not in failed)
+                    break
+                continue
             per_device.append(item)
             if not item['complete']:
                 incomplete.append(name)
@@ -592,6 +682,14 @@ def run(args, cfg, log):
     swept = summary['flights_total']
     log.info('Swept %d flight(s) over %d device(s); window control: %s',
              swept, len(per_device), control)
+    if failed:
+        log.error('Device(s) not read at all: %s', ', '.join(failed))
+        log.error('Pick them up one at a time, each is a short walk:')
+        for name in failed:
+            log.error('  --from %s --to %s --out %s --device "%s"',
+                      args.date_from, args.date_to,
+                      args.out + '_' + name.split()[0], name)
+        return EXIT_PAGINATION
     if incomplete:
         log.error('Page walk incomplete for: %s. Re-run those devices with '
                   '--device, the walk is cheap per machine.',

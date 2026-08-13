@@ -278,3 +278,54 @@ class LiveRunFixes(unittest.TestCase):
     def test_panel_dump_is_long_enough_to_reach_the_buttons(self):
         # 4000 символов обрывались на Team/Member: ни галочки, ни OK/Clear.
         self.assertGreaterEqual(devices.PANEL_DUMP_CHARS, 12000)
+
+
+class ControlKeyChoice(unittest.TestCase):
+    """Живой прогон 2026-08-13: meta несёт и `count`, и `total_count`."""
+
+    URL = ('https://www.djiag.com/api/web/v1/flight_records?'
+           'page_size=50&page=1')
+    # Ровно то, что прислал сайт: count -- строки страницы, total_count -- окно.
+    LIVE_META = {'count': 50, 'current_page': 1, 'total_count': 5661,
+                 'total_pages': 114}
+
+    def test_page_count_is_not_mistaken_for_the_window(self):
+        """Отрицательный контроль: по алфавиту `count` первый, но он не окно."""
+        control = devices.control_bounds(
+            [FakePage(self.LIVE_META, self.URL)], FakeLog())
+        self.assertEqual(control['exact'], 5661)
+        self.assertNotEqual(control['exact'], 50)
+
+    def test_a_total_contradicting_the_page_count_is_refused(self):
+        """Кандидат обязан согласоваться с числом страниц."""
+        log = FakeLog()
+        control = devices.control_bounds(
+            [FakePage({'total_count': 50, 'total_pages': 114}, self.URL)], log)
+        self.assertIsNone(control['exact'])
+        self.assertIn('contradicts the page count', log.text('warning'))
+        # Границы остаются -- проверка по ним всё ещё возможна.
+        self.assertEqual(control['low'], 5651)
+
+    def test_count_alone_is_never_used(self):
+        control = devices.control_bounds(
+            [FakePage({'count': 50, 'total_pages': 114}, self.URL)], FakeLog())
+        self.assertIsNone(control['exact'])
+        self.assertEqual(control['low'], 5651)
+
+    def test_preferred_keys_exclude_count(self):
+        self.assertNotIn('count', devices.TOTAL_KEYS_PREFERRED)
+        self.assertEqual(devices.TOTAL_KEYS_PREFERRED[0], 'total_count')
+
+
+class Resilience(unittest.TestCase):
+    """Один сорвавшийся борт не отменяет остальные четырнадцать."""
+
+    def test_device_retry_is_configured(self):
+        self.assertGreater(devices.DEVICE_ATTEMPTS, 1)
+        self.assertGreaterEqual(devices.DEVICE_RETRY_PAUSE_MS, 10000)
+
+    def test_collector_exposes_recovery(self):
+        for name in ('recover', 'collect_one_device_resilient',
+                     'paginate_with_retry', 'filter_is_open'):
+            self.assertTrue(hasattr(devices.DeviceSweepCollector, name),
+                            'нет метода %s' % name)

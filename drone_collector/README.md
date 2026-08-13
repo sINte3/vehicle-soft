@@ -271,6 +271,26 @@ now fixed in `devices.py` and covered by tests:
   otherwise the bounds implied by the page count. The old control walk was
   114 pages *before* any useful work, and it was where the run kept dying.
 
+**What the second live run (2026-08-13) corrected.** The filter itself proved
+to work — `2 Klaster` returned 5 flights and `6 Shofirko` 160, both matching
+the cabinet exactly, and the request showed how the site filters:
+`filters[product_sn_in][]`, the flight-controller serial. Three more things
+came out of it:
+
+* `meta_data` carries **both** `count` (rows on this page, 50) and
+  `total_count` (the window, 5661). Taking the first key that merely looked
+  like a total picked `count` and declared a 50-flight September. Total keys
+  are now tried by name in order of preference, and a candidate that
+  contradicts the page count is refused outright.
+* the `code-408` also hits a device's **first** request, and waiting for a
+  capture then achieves nothing — the page is already in the state where it
+  answers nothing. The device is retried after a pause, and the retry
+  **reloads** the page and re-applies period and page size, because no amount
+  of clicking revives that state.
+* a device that still fails no longer takes the run with it. It is recorded,
+  the sweep continues, and the log ends with a ready-made command line for
+  each machine that has to be picked up separately.
+
 **If a device still will not finish**, sweep it alone —
 `--device "3 Gijduvon"` — and repeat for the rest. Each machine is a short
 walk of its own, and the files from separate runs can be concatenated: the
