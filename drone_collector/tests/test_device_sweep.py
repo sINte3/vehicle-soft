@@ -66,6 +66,13 @@ def flight(fid, nickname, area_m2=12345.0, started=1757000000):
             'start_timestamp': started, 'serial_number': 'R%09d' % fid}
 
 
+def save_all(out_dir, per_device, log):
+    """Как это делает сам режим: борт за бортом, сразу на диск."""
+    for item in per_device:
+        devices.save_device(out_dir, item, log)
+    return devices.build_summary(out_dir, log)
+
+
 def device_item(name, flights, complete=True, raw=None):
     return {'device': name, 'flights': flights,
             'raw_bodies': raw if raw is not None else [{'code': 0,
@@ -111,7 +118,7 @@ class Outputs(unittest.TestCase):
         ]
         log = FakeLog()
         with tempfile.TemporaryDirectory() as out:
-            csv_path, summary = devices.write_outputs(out, per_device, log)
+            csv_path, summary = save_all(out, per_device, log)
             self.assertTrue(os.path.exists(csv_path))
             with open(csv_path, encoding='utf-8-sig') as handle:
                 body = handle.read()
@@ -134,10 +141,12 @@ class Outputs(unittest.TestCase):
         ]
         log = FakeLog()
         with tempfile.TemporaryDirectory() as out:
-            _path, summary = devices.write_outputs(out, per_device, log)
+            _path, summary = save_all(out, per_device, log)
         self.assertEqual(len(summary['cross_device_duplicates']), 1)
         entry = summary['cross_device_duplicates'][0]
-        self.assertEqual(entry['dji_flight_id'], 1)
+        # Сводка строится по тому, что ЛЕЖИТ НА ДИСКЕ, поэтому id -- строка:
+        # так его прочитает и тот, кто откроет CSV следующим.
+        self.assertEqual(str(entry['dji_flight_id']), '1')
         self.assertEqual({entry['first'], entry['second']},
                          {'12 Servis', '13 Peshku'})
         self.assertIn('more than one device', log.text('error'))
@@ -146,7 +155,7 @@ class Outputs(unittest.TestCase):
         per_device = [device_item('4 Ғиждувон / test', [flight(9, 'n')])]
         log = FakeLog()
         with tempfile.TemporaryDirectory() as out:
-            devices.write_outputs(out, per_device, log)
+            save_all(out, per_device, log)
             names = os.listdir(os.path.join(out, 'raw'))
         self.assertEqual(len(names), 1)
         self.assertTrue(names[0].endswith('.json'))
@@ -329,3 +338,75 @@ class Resilience(unittest.TestCase):
                      'paginate_with_retry', 'filter_is_open'):
             self.assertTrue(hasattr(devices.DeviceSweepCollector, name),
                             'нет метода %s' % name)
+
+
+class Resume(unittest.TestCase):
+    """6. Прогон продолжаемый: снятое остаётся на диске и не переснимается."""
+
+    def test_each_device_lands_on_disk_immediately(self):
+        log = FakeLog()
+        with tempfile.TemporaryDirectory() as out:
+            devices.save_device(out, device_item('2 Klaster',
+                                                 [flight(1, 'Klaster№1')]), log)
+            # Второй борт ещё не снят, но первый уже на диске.
+            self.assertTrue(os.path.exists(devices.device_csv_path(out)))
+            progress = devices.load_progress(out)
+            self.assertEqual(list(progress), ['2 Klaster'])
+            devices.save_device(out, device_item('6 Shofirko',
+                                                 [flight(2, 'Shofirko№4'),
+                                                  flight(3, 'Shofirko№4')]), log)
+            _path, summary = devices.build_summary(out, log)
+        self.assertEqual(summary['flights_total'], 3)
+        self.assertEqual(len(summary['devices']), 2)
+
+    def test_resweeping_a_device_replaces_it_instead_of_doubling(self):
+        """Отрицательный контроль: повтор борта не удваивает его вылеты."""
+        log = FakeLog()
+        with tempfile.TemporaryDirectory() as out:
+            devices.save_device(out, device_item('2 Klaster',
+                                                 [flight(1, 'n')]), log)
+            devices.save_device(out, device_item('2 Klaster',
+                                                 [flight(1, 'n'),
+                                                  flight(2, 'n')]), log)
+            _path, summary = devices.build_summary(out, log)
+        self.assertEqual(summary['flights_total'], 2)
+        self.assertNotEqual(summary['flights_total'], 3)
+
+    def test_progress_survives_a_crash_between_devices(self):
+        """Снятое прошлым прогоном читается следующим -- это и есть resume."""
+        log = FakeLog()
+        with tempfile.TemporaryDirectory() as out:
+            devices.save_device(out, device_item('2 Klaster',
+                                                 [flight(1, 'n')]), log)
+            # «Новый процесс»: ничего в памяти нет, читаем с диска.
+            done = devices.load_progress(out)
+            self.assertIn('2 Klaster', done)
+            self.assertEqual(done['2 Klaster']['flights'], 1)
+
+    def test_missing_progress_file_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as out:
+            self.assertEqual(devices.load_progress(out), {})
+
+    def test_summary_counts_previous_runs_too(self):
+        log = FakeLog()
+        with tempfile.TemporaryDirectory() as out:
+            devices.save_device(out, device_item('a', [flight(1, 'n')]), log)
+            _p, first = devices.build_summary(out, log)
+            devices.save_device(out, device_item('b', [flight(2, 'n')]), log)
+            _p, second = devices.build_summary(out, log)
+        self.assertEqual(first['flights_total'], 1)
+        self.assertEqual(second['flights_total'], 2)
+
+    def test_start_retry_is_configured(self):
+        self.assertGreater(devices.START_ATTEMPTS, 1)
+        self.assertGreaterEqual(devices.START_RETRY_PAUSE_MS, 30000)
+        self.assertGreater(devices.DEVICE_GAP_MS, 0)
+
+    def test_restart_flag_exists(self):
+        parser = devices.build_parser()
+        args = parser.parse_args(['--from', '2025-09-01', '--to', '2025-09-30',
+                                  '--out', 'x'])
+        self.assertFalse(args.restart)
+        args = parser.parse_args(['--from', '2025-09-01', '--to', '2025-09-30',
+                                  '--out', 'x', '--restart'])
+        self.assertTrue(args.restart)

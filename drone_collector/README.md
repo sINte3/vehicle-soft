@@ -291,6 +291,20 @@ came out of it:
   the sweep continues, and the log ends with a ready-made command line for
   each machine that has to be picked up separately.
 
+**The sweep is resumable, and that is the point.** Every device is written to
+disk the moment it is read — its rows into the CSV, its bodies into `raw/`,
+its line into `progress.json`. Re-run the same command and it skips whatever
+is already there and carries on; `--restart` sweeps everything again. This
+exists because the cabinet gets less willing the more it is asked: four runs
+inside half an hour on 2026-08-13 returned 29 pages, then 3 pages, then two
+devices, then a `code-408` on the very first request of the page — before any
+of this module's code ran. Losing a whole run to that is not acceptable, so
+nothing is held in memory to the end any more.
+
+**When the cabinet refuses everything, wait.** A `code-408` on the first
+request is DJI throttling the account, not a broken selector. Give it half an
+hour and re-run; the sweep resumes where it stopped.
+
 **If a device still will not finish**, sweep it alone —
 `--device "3 Gijduvon"` — and repeat for the rest. Each machine is a short
 walk of its own, and the files from separate runs can be concatenated: the

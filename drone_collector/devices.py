@@ -186,6 +186,19 @@ PAGINATION_RETRY_PAUSE_MS = 25000
 DEVICE_ATTEMPTS = 3
 DEVICE_RETRY_PAUSE_MS = 30000
 
+# [REASON]: 2026-08-13 кабинет отказал `code-408` на САМОМ ПЕРВОМ запросе
+# страницы -- до того, как этот модуль что-либо сделал. Четыре прогона за
+# полчаса, и с каждым сайт отвечал всё хуже: 29 страниц, 3 страницы, два
+# борта, ноль. Похоже на предел частоты со стороны DJI, а не на состояние
+# браузера. Открытие страницы поэтому тоже повторяется, и пауза здесь длиннее:
+# ждать надо не перерисовку, а чужое терпение.
+START_ATTEMPTS = 3
+START_RETRY_PAUSE_MS = 60000
+
+# Пауза между бортами. Не оптимизация, а вежливость к чужому серверу: без неё
+# пятнадцать бортов подряд выглядят для DJI одним длинным всплеском.
+DEVICE_GAP_MS = 5000
+
 
 class DeviceListUnavailable(BrowserError):
     """Панель фильтра открылась, но список устройств не прочитан."""
@@ -368,6 +381,25 @@ class DeviceSweepCollector(FlightCollector):
             self._page.wait_for_timeout(PAGINATION_RETRY_PAUSE_MS)
         return complete, total_pages, clicks_total
 
+    def open_records_with_retry(self):
+        """open_records(), переживающий отказ кабинета на первом запросе."""
+        last = None
+        for attempt in range(1, START_ATTEMPTS + 1):
+            try:
+                return self.open_records()
+            except BrowserError as exc:
+                last = exc
+                if attempt == START_ATTEMPTS:
+                    break
+                self.log.warning('The cabinet refused the first request '
+                                 '(attempt %d/%d): %s. Waiting %d ms.',
+                                 attempt, START_ATTEMPTS, exc,
+                                 START_RETRY_PAUSE_MS)
+                self._captured = []
+                self._rejected = {}
+                self._page.wait_for_timeout(START_RETRY_PAUSE_MS)
+        raise last
+
     def recover(self, date_from, date_to):
         """Перезагрузить страницу и вернуть её в рабочее состояние.
 
@@ -378,7 +410,7 @@ class DeviceSweepCollector(FlightCollector):
         self.log.warning('Recovering: reloading the records page, then '
                          'setting the period and page size again')
         self._captured = []
-        self.open_records()
+        self.open_records_with_retry()
         expected_from, expected_to = self.set_period(date_from, date_to)
         self.maximise_page_size(expected_from, expected_to)
         return expected_from, expected_to
@@ -471,46 +503,105 @@ def flight_row(flight, device):
     }
 
 
-def write_outputs(out_dir, per_device, log):
-    """CSV, summary.json и сырые тела. Возвращает путь к CSV."""
-    raw_dir = os.path.join(out_dir, 'raw')
-    os.makedirs(raw_dir, exist_ok=True)
+def device_csv_path(out_dir):
+    return os.path.join(out_dir, 'flights_by_device.csv')
 
-    csv_path = os.path.join(out_dir, 'flights_by_device.csv')
+
+def progress_path(out_dir):
+    return os.path.join(out_dir, 'progress.json')
+
+
+CSV_FIELDS = ['dji_flight_id', 'device', 'nickname', 'started_utc', 'area_ha']
+
+
+def load_progress(out_dir):
+    """Что уже снято прошлыми прогонами: имя борта -> его сводка."""
+    path = progress_path(out_dir)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding='utf-8') as handle:
+            saved = json.load(handle)
+    except (ValueError, OSError):
+        return {}
+    return {item['device']: item for item in saved
+            if isinstance(item, dict) and item.get('device')}
+
+
+def save_device(out_dir, item, log):
+    """Записать ОДИН борт немедленно: строки, сырое тело и отметку в прогрессе.
+
+    [REASON]: раньше всё писалось одним куском в самом конце, и любой срыв
+    посреди обхода терял уже снятое. Живой прогон 2026-08-13 потерял так два
+    борта, данные по которым были верны, а следующий -- вообще всё. Теперь
+    каждый борт ложится на диск сразу, а прогон становится продолжаемым:
+    повторный запуск пропускает то, что уже снято.
+    """
+    os.makedirs(os.path.join(out_dir, 'raw'), exist_ok=True)
+    path = device_csv_path(out_dir)
+    device = item['device']
+
+    # Строки этого борта, если он уже снимался, выбрасываются: повторное
+    # снятие должно ЗАМЕНИТЬ прежнюю попытку, а не удвоить её.
+    kept = []
+    if os.path.exists(path):
+        with open(path, encoding='utf-8-sig', newline='') as handle:
+            for row in csv.DictReader(handle, delimiter=';'):
+                if row.get('device') != device:
+                    kept.append(row)
+    with open(path, 'w', encoding='utf-8-sig', newline='') as handle:
+        writer = csv.DictWriter(handle, delimiter=';', fieldnames=CSV_FIELDS)
+        writer.writeheader()
+        for row in kept:
+            writer.writerow({key: row.get(key, '') for key in CSV_FIELDS})
+        for flight in item['flights']:
+            writer.writerow(flight_row(flight, device))
+
+    safe = ''.join(ch if ch.isalnum() or ch in '-_' else '_'
+                   for ch in device) or 'device'
+    with open(os.path.join(out_dir, 'raw', safe + '.json'), 'w',
+              encoding='utf-8') as handle:
+        json.dump(item['raw_bodies'], handle, ensure_ascii=False)
+
+    progress = load_progress(out_dir)
+    progress[device] = {
+        'device': device,
+        'flights': len(item['flights']),
+        'pages': item['pages'],
+        'total_pages': item['total_pages'],
+        'complete': item['complete'],
+        'self_duplicates': item['self_duplicates'],
+    }
+    with open(progress_path(out_dir), 'w', encoding='utf-8') as handle:
+        json.dump(sorted(progress.values(), key=lambda row: row['device']),
+                  handle, ensure_ascii=False, indent=1)
+    log.info('Saved %r: %d flight(s). Progress now holds %d device(s).',
+             device, len(item['flights']), len(progress))
+
+
+def build_summary(out_dir, log):
+    """Сводка по ТОМУ, ЧТО ЛЕЖИТ НА ДИСКЕ -- включая прошлые прогоны."""
+    path = device_csv_path(out_dir)
     seen_ids = {}
     duplicates = []
-    with open(csv_path, 'w', encoding='utf-8-sig', newline='') as handle:
-        writer = csv.DictWriter(
-            handle, delimiter=';',
-            fieldnames=['dji_flight_id', 'device', 'nickname', 'started_utc',
-                        'area_ha'])
-        writer.writeheader()
-        for item in per_device:
-            for flight in item['flights']:
-                row = flight_row(flight, item['device'])
-                fid = row['dji_flight_id']
-                if fid in seen_ids and seen_ids[fid] != item['device']:
+    total = 0
+    if os.path.exists(path):
+        with open(path, encoding='utf-8-sig', newline='') as handle:
+            for row in csv.DictReader(handle, delimiter=';'):
+                total += 1
+                fid = row.get('dji_flight_id')
+                device = row.get('device')
+                if fid in seen_ids and seen_ids[fid] != device:
                     # [REASON]: один вылет не может принадлежать двум бортам.
-                    # Такое означало бы, что фильтр не применился, и молча
-                    # проглотить это нельзя -- иначе привязка будет уверенной
-                    # и неверной.
-                    duplicates.append((fid, seen_ids[fid], item['device']))
-                seen_ids[fid] = item['device']
-                writer.writerow(row)
-
+                    # Такое означает, что фильтр не применился, и молча
+                    # проглотить это нельзя -- привязка вышла бы уверенной и
+                    # неверной.
+                    duplicates.append((fid, seen_ids[fid], device))
+                seen_ids[fid] = device
+    progress = load_progress(out_dir)
     summary = {
-        'devices': [
-            {
-                'device': item['device'],
-                'flights': len(item['flights']),
-                'pages': item['pages'],
-                'total_pages': item['total_pages'],
-                'complete': item['complete'],
-                'self_duplicates': item['self_duplicates'],
-            }
-            for item in per_device
-        ],
-        'flights_total': sum(len(item['flights']) for item in per_device),
+        'devices': sorted(progress.values(), key=lambda row: row['device']),
+        'flights_total': total,
         'cross_device_duplicates': [
             {'dji_flight_id': fid, 'first': a, 'second': b}
             for fid, a, b in duplicates
@@ -519,21 +610,13 @@ def write_outputs(out_dir, per_device, log):
     with open(os.path.join(out_dir, 'summary.json'), 'w',
               encoding='utf-8') as handle:
         json.dump(summary, handle, ensure_ascii=False, indent=1)
-
-    for item in per_device:
-        safe = ''.join(ch if ch.isalnum() or ch in '-_' else '_'
-                       for ch in item['device']) or 'device'
-        with open(os.path.join(raw_dir, safe + '.json'), 'w',
-                  encoding='utf-8') as handle:
-            json.dump(item['raw_bodies'], handle, ensure_ascii=False)
-
     if duplicates:
         log.error('%d flight(s) came back under more than one device -- the '
                   'filter did not apply on at least one pass. See '
                   'summary.json.', len(duplicates))
-    log.info('Wrote %s (%d flights) and raw bodies for %d device(s)',
-             csv_path, summary['flights_total'], len(per_device))
-    return csv_path, summary
+    log.info('%s holds %d flight(s) over %d device(s)', path, total,
+             len(summary['devices']))
+    return path, summary
 
 
 def control_bounds(captured, log):
@@ -605,6 +688,9 @@ def build_parser():
                              'every device the filter offers')
     parser.add_argument('--list-devices', action='store_true',
                         help='print the device list and exit without sweeping')
+    parser.add_argument('--restart', action='store_true',
+                        help='ignore what is already in --out and sweep every '
+                             'device again (default is to resume)')
     return parser
 
 
@@ -613,8 +699,14 @@ def run(args, cfg, log):
     date_to = parse_date(args.date_to)
     os.makedirs(args.out, exist_ok=True)
 
+    done = {} if args.restart else load_progress(args.out)
+    if done:
+        log.info('Resuming: %d device(s) already on disk (%s). Use --restart '
+                 'to sweep them again.', len(done),
+                 ', '.join(sorted(done)))
+
     with DeviceSweepCollector(cfg, logger=log) as collector:
-        collector.open_records()
+        collector.open_records_with_retry()
         expected_from, expected_to = collector.set_period(date_from, date_to)
         collector.maximise_page_size(expected_from, expected_to)
 
@@ -637,6 +729,14 @@ def run(args, cfg, log):
             return EXIT_OK
 
         wanted = args.device or devices
+        # [REASON]: борт, уже лежащий на диске, не переснимается. Кабинет
+        # отвечает всё хуже с каждым запросом, поэтому каждый пропущенный борт
+        # -- это шанс дойти до конца для остальных.
+        skipped = [name for name in wanted if name in done]
+        wanted = [name for name in wanted if name not in done]
+        if skipped:
+            log.info('Skipping %d device(s) already read: %s', len(skipped),
+                     ', '.join(skipped))
         missing = [name for name in wanted if name not in devices]
         if missing:
             log.warning('Requested device(s) not offered by the filter: %s',
@@ -674,10 +774,13 @@ def run(args, cfg, log):
                     break
                 continue
             per_device.append(item)
+            save_device(args.out, item, log)
             if not item['complete']:
                 incomplete.append(name)
+            if name != wanted[-1]:
+                collector._page.wait_for_timeout(DEVICE_GAP_MS)
 
-    _csv_path, summary = write_outputs(args.out, per_device, log)
+    _csv_path, summary = build_summary(args.out, log)
 
     swept = summary['flights_total']
     log.info('Swept %d flight(s) over %d device(s); window control: %s',
