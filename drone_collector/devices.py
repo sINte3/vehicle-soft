@@ -38,16 +38,23 @@ raw_json.
   * `Other Regions` в меню -- переключатель страны, случайный клик молча даёт
     ноль.
 
-СЕЛЕКТОРЫ ФИЛЬТРА НАПИСАНЫ ВСЛЕПУЮ. Сайт из среды разработки недоступен, и
-сохранённого DOM панели фильтра нет -- в дампе 2026-07-31 её никто не
-открывал. Поэтому:
-  * каждый селектор -- константа ниже, с запасными вариантами;
-  * при первом открытии панель ЛОГИРУЕТСЯ целиком (обрезанная), чтобы по
-    журналу первого прогона селекторы можно было поправить в одном месте, а
-    не подбирать наугад;
-  * режим проверяет себя: сумма вылетов по всем устройствам сравнивается с
-    числом вылетов без фильтра за тот же период, и расхождение печатается как
-    ОШИБКА, а не прячется.
+ЧТО ИСПРАВЛЕНО ПО ЖУРНАЛУ ПЕРВОГО ЖИВОГО ПРОГОНА (2026-08-13):
+  * кнопка `Filter` -- ПЕРЕКЛЮЧАТЕЛЬ. Панель уже была открыта для чтения
+    списка бортов, повторное нажатие её закрыло, и дальше отваливались и
+    галочка, и выбор устройства. Теперь состояние проверяется ПЕРЕД нажатием;
+  * селектор устройства написан по настоящей разметке: подпись и контрол
+    лежат в одном `.ant-form-item`, а соседнее поле Team/Member -- тоже
+    ant-select, поэтому привязка к подписи обязательна;
+  * сайт посреди обхода отвечает `code-408`, после чего контрол «следующая»
+    исчезает из DOM. Обход повторяется с текущей страницы, а не считается
+    законченным;
+  * контрольное число вылетов берётся из МЕТАДАННЫХ первой страницы. Раньше
+    ради него делался полный обход окна без фильтра -- 114 страниц ДО начала
+    полезной работы, и именно на нём сайт и срывался.
+
+Селекторы по-прежнему живут константами в шапке и правятся только здесь; при
+первом открытии панель логируется целиком, чтобы следующая правка делалась по
+журналу, а не подбором.
 
 Запуск (браузер откроется от имени пользователя, у которого сохранена сессия):
 
@@ -59,7 +66,7 @@ raw_json.
 и запуск оттуда падает на импорте playwright.
 
 Коды возврата:
-  0  снято, сумма по устройствам сошлась с прогоном без фильтра
+  0  снято, сумма по устройствам сошлась с размером окна
   1  ошибка настройки или каталога
   2  сессия отсутствует или истекла
   3  период не подтвердился
@@ -108,8 +115,25 @@ SELECTOR_FILTER_PANEL = (".ant-popover:not(.ant-popover-hidden) "
                          ".ant-dropdown:not(.ant-dropdown-hidden), "
                          ".ant-modal-content")
 
-# Выпадающий список устройства: ближайший ant-select ПОСЛЕ подписи `Device`.
-# Ось following в XPath -- то немногое, что не зависит от классов сборки.
+# Выпадающий список устройства. Разметка прочитана из журнала первого прогона
+# (2026-08-13), а не угадана:
+#
+#   <div class="ant-row ant-form-item ag-form-item">
+#     <div class="ant-col ant-form-item-label">
+#       <label><div class="form-item-label"><span class="label">Device</span></div>
+#     <div class="ant-col ant-form-item-control">
+#       ... <div class="ant-select ... ant-select-multiple ant-select-allow-clear">
+#
+# Подпись и контрол лежат в ОДНОМ .ant-form-item, поэтому :has() по подписи --
+# самый устойчивый способ: он не зависит ни от порядка полей, ни от классов
+# сборки (_record-filter-form_99k1c_1 меняется на каждом деплое).
+#
+# [REASON]: соседнее поле Team/Member -- тоже ant-select (ant-cascader), и
+# селектор без привязки к подписи брал бы то из них, которое окажется первым.
+SELECTOR_DEVICE_SELECT = ('.ant-form-item:has(span.label:text-is("Device")) '
+                          '.ant-select')
+# Запасной вариант, если разметку подписи переделают: ближайший ant-select
+# ПОСЛЕ текста `Device` по оси following.
 XPATH_DEVICE_SELECT = ("xpath=//*[normalize-space(text())='Device']"
                        "/following::*[contains(@class,'ant-select')][1]")
 
@@ -133,10 +157,19 @@ SELECTOR_ZERO_AREA_CHECKBOX = ("label:has-text('Display 0 Field Area Records') "
 TEXT_ZERO_AREA = 'Display 0 Field Area Records'
 
 # Сколько символов панели писать в журнал при первом открытии.
-PANEL_DUMP_CHARS = 4000
+PANEL_DUMP_CHARS = 12000
 
 # Пауза после применения фильтра, прежде чем ждать ответ.
 FILTER_SETTLE_MS = 1200
+
+# [REASON]: живой прогон 2026-08-13 показал, что сайт посреди обхода отвечает
+# `code-408` (по его же словарю -- «плохая отметка времени»), после чего
+# страница не листается и контрол «следующая» пропадает из DOM. Один раз это
+# случилось на 30-й странице, другой -- на 4-й, то есть это не предел частоты,
+# а срыв подписи запроса. Лечится паузой и повтором обхода с того места, где
+# он встал: paginate() продолжает с текущей страницы, а не начинает заново.
+PAGINATION_ATTEMPTS = 3
+PAGINATION_RETRY_PAUSE_MS = 25000
 
 
 class DeviceListUnavailable(BrowserError):
@@ -157,12 +190,33 @@ class DeviceSweepCollector(FlightCollector):
 
     # -- панель фильтра -------------------------------------------------------
 
+    def _panel(self):
+        return self._page.locator(SELECTOR_FILTER_PANEL).first
+
+    def filter_is_open(self):
+        """Видна ли панель фильтра прямо сейчас."""
+        try:
+            return self._panel().is_visible(timeout=1500)
+        except Exception:
+            return False
+
     def open_filter(self):
-        """Открыть панель фильтра и вернуть её локатор."""
-        button = self._page.locator(SELECTOR_FILTER_BUTTON).first
-        button.click(timeout=self.cfg.page_timeout_ms)
-        self._page.wait_for_timeout(self.cfg.settle_ms)
-        panel = self._page.locator(SELECTOR_FILTER_PANEL).first
+        """Открыть панель фильтра, если она закрыта, и вернуть её локатор.
+
+        [REASON]: кнопка `Filter` -- ПЕРЕКЛЮЧАТЕЛЬ. Живой прогон 2026-08-13:
+        панель уже была открыта для чтения списка бортов, повторное нажатие
+        её закрыло, и дальше по цепочке отвалились и галочка нулевой площади,
+        и выбор устройства -- с таймаутом на 45 секунд каждый. Проверка
+        состояния ПЕРЕД нажатием стоит полторы секунды и снимает весь класс.
+        """
+        if self.filter_is_open():
+            self.log.info('Filter panel is already open; not toggling it')
+            panel = self._panel()
+        else:
+            button = self._page.locator(SELECTOR_FILTER_BUTTON).first
+            button.click(timeout=self.cfg.page_timeout_ms)
+            self._page.wait_for_timeout(self.cfg.settle_ms)
+            panel = self._panel()
         if not self._panel_dumped:
             self._panel_dumped = True
             try:
@@ -190,6 +244,15 @@ class DeviceSweepCollector(FlightCollector):
                              'zero-area flights', TEXT_ZERO_AREA, exc)
 
     def _device_select(self, panel):
+        """Контрол выбора устройства: сначала селектор по подписи, потом ось."""
+        primary = panel.locator(SELECTOR_DEVICE_SELECT).first
+        try:
+            if primary.count() and primary.is_visible(timeout=2000):
+                return primary
+        except Exception:
+            pass
+        self.log.info('Device select not found by label; falling back to the '
+                      'following-axis XPath')
         return panel.locator(XPATH_DEVICE_SELECT).first
 
     def read_device_options(self, panel):
@@ -252,6 +315,44 @@ class DeviceSweepCollector(FlightCollector):
             timeout=self.cfg.page_timeout_ms)
         self._page.wait_for_timeout(FILTER_SETTLE_MS)
 
+    def paginate_with_retry(self, expected_from_ms, expected_to_ms, label):
+        """paginate(), но срыв подписи не считается концом обхода.
+
+        [REASON]: сайт посреди обхода отвечает `code-408`, и следом контрол
+        «следующая страница» исчезает из DOM -- paginate() честно
+        останавливается. Живой прогон 2026-08-13 встал так на 30-й странице из
+        114 и на 4-й из 114. Обход продолжается с ТЕКУЩЕЙ страницы: paginate()
+        считает уже захваченные страницы своими, поэтому повтор не начинает
+        всё заново и не задваивает вылеты -- дедупликация по `id` всё равно
+        стоит следом.
+        """
+        complete = False
+        total_pages = 0
+        clicks_total = 0
+        for attempt in range(1, PAGINATION_ATTEMPTS + 1):
+            complete, total_pages, clicks = self.paginate(expected_from_ms,
+                                                          expected_to_ms)
+            clicks_total += clicks
+            if complete:
+                if attempt > 1:
+                    self.log.info('%s: the walk completed on attempt %d',
+                                  label, attempt)
+                break
+            if attempt == PAGINATION_ATTEMPTS:
+                self.log.error('%s: the walk is still incomplete after %d '
+                               'attempt(s); %d of %d page(s) captured',
+                               label, attempt, len(pages_seen(self._captured)),
+                               total_pages)
+                break
+            self.log.warning('%s: the walk stopped early (%d of %d pages). '
+                             'Rejected so far: %s. Waiting %d ms and '
+                             'continuing from the current page.',
+                             label, len(pages_seen(self._captured)),
+                             total_pages, self.rejected or 'none',
+                             PAGINATION_RETRY_PAUSE_MS)
+            self._page.wait_for_timeout(PAGINATION_RETRY_PAUSE_MS)
+        return complete, total_pages, clicks_total
+
     # -- один борт ------------------------------------------------------------
 
     def collect_one_device(self, name, expected_from_ms, expected_to_ms):
@@ -275,8 +376,8 @@ class DeviceSweepCollector(FlightCollector):
                 % (name, browser_module.FIRST_CAPTURE_TIMEOUT_MS,
                    self.rejected or 'none'))
 
-        complete, total_pages, clicks = self.paginate(expected_from_ms,
-                                                      expected_to_ms)
+        complete, total_pages, clicks = self.paginate_with_retry(
+            expected_from_ms, expected_to_ms, name)
         raw_bodies = [page.body for page in self._captured]
         flights = []
         for page in self._captured:
@@ -378,6 +479,49 @@ def write_outputs(out_dir, per_device, log):
     return csv_path, summary
 
 
+def control_bounds(captured, log):
+    """Сколько вылетов должно быть в окне -- по метаданным первой страницы.
+
+    Возвращает словарь: точное число, если сайт его сообщает, иначе границы,
+    выведенные из числа страниц и их размера. Ничего не выдумывает: когда
+    метаданных нет, границы пустые и проверка просто не выполняется.
+    """
+    result = {'exact': None, 'low': None, 'high': None, 'meta_keys': []}
+    if not captured:
+        return result
+    meta = captured[0].meta or {}
+    result['meta_keys'] = sorted(meta)
+    # [REASON]: имя поля с общим числом записей неизвестно -- в разобранном
+    # ответе есть current_page и total_pages, но полного списка ключей никто
+    # не фиксировал. Берётся первый целочисленный ключ, в имени которого есть
+    # `total` или `count` и НЕТ `page`: `total_pages` под это не подходит и
+    # не может быть принят за число вылетов.
+    for key in sorted(meta):
+        lowered = key.lower()
+        if 'page' in lowered:
+            continue
+        if 'total' not in lowered and 'count' not in lowered:
+            continue
+        try:
+            result['exact'] = int(meta[key])
+            log.info('The site reports the window total in meta_data[%r] = %d',
+                     key, result['exact'])
+            break
+        except (TypeError, ValueError):
+            continue
+    total_pages = captured[0].total_pages
+    page_size = browser_module.parse_page_size_from_url(captured[0].url)
+    if total_pages and page_size:
+        result['low'] = (total_pages - 1) * page_size + 1
+        result['high'] = total_pages * page_size
+    if result['exact'] is None:
+        log.info('No explicit total in meta_data (keys: %s); the window holds '
+                 'between %s and %s flight(s) by page count',
+                 ', '.join(result['meta_keys']) or 'none', result['low'],
+                 result['high'])
+    return result
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog='python -m drone_collector.devices',
@@ -408,17 +552,13 @@ def run(args, cfg, log):
         expected_from, expected_to = collector.set_period(date_from, date_to)
         collector.maximise_page_size(expected_from, expected_to)
 
-        # Прогон без фильтра -- контрольное число, с которым потом
-        # сравнивается сумма по устройствам.
-        control_complete, control_total_pages, _clicks = collector.paginate(
-            expected_from, expected_to)
-        control_raw = []
-        for page in collector.captured:
-            control_raw.extend(page.flights)
-        control_unique, _dupes = dedupe_flights(control_raw)
-        log.info('Unfiltered control: %d flight(s) over %d page(s), '
-                 'complete=%s', len(control_unique), control_total_pages,
-                 control_complete)
+        # [REASON]: контрольное число берётся из МЕТАДАННЫХ первой страницы,
+        # а не из полного обхода окна без фильтра. Живой прогон 2026-08-13
+        # показал цену такого обхода: 114 страниц ДО начала полезной работы,
+        # и именно на нём сайт сорвался в `code-408`. Метаданные дают то же
+        # знание бесплатно -- сайт сам сообщает, сколько всего страниц.
+        control = control_bounds(collector.captured, log)
+        log.info('Control from the first page metadata: %s', control)
 
         panel = collector.open_filter()
         collector.ensure_zero_area_records(panel)
@@ -450,23 +590,40 @@ def run(args, cfg, log):
     _csv_path, summary = write_outputs(args.out, per_device, log)
 
     swept = summary['flights_total']
-    control = len(control_unique)
-    log.info('Control %d flight(s) unfiltered vs %d summed over %d device(s)',
-             control, swept, len(per_device))
+    log.info('Swept %d flight(s) over %d device(s); window control: %s',
+             swept, len(per_device), control)
     if incomplete:
-        log.error('Page walk incomplete for: %s', ', '.join(incomplete))
+        log.error('Page walk incomplete for: %s. Re-run those devices with '
+                  '--device, the walk is cheap per machine.',
+                  ', '.join(incomplete))
         return EXIT_PAGINATION
     if summary['cross_device_duplicates']:
         return EXIT_MISMATCH
     if args.device:
-        log.info('Only %d of %d devices were requested, so the control total '
-                 'is not expected to match.', len(per_device), len(devices))
+        log.info('Only %d of %d device(s) were requested, so the window '
+                 'control is not expected to match.', len(per_device),
+                 len(devices))
         return EXIT_OK
-    if swept != control:
-        log.error('MISMATCH: the devices add up to %d flights, the unfiltered '
-                  'window has %d. The data is written, but do not trust the '
-                  'attribution until this is explained.', swept, control)
-        return EXIT_MISMATCH
+    if control.get('exact') is not None:
+        if swept != control['exact']:
+            log.error('MISMATCH: the devices add up to %d flight(s), the '
+                      'window holds %d. The data is written, but do not trust '
+                      'the attribution until this is explained.',
+                      swept, control['exact'])
+            return EXIT_MISMATCH
+    elif control.get('low') is not None:
+        if not (control['low'] <= swept <= control['high']):
+            log.error('MISMATCH: the devices add up to %d flight(s), the '
+                      'window holds between %d and %d by page count. The data '
+                      'is written, but do not trust the attribution until '
+                      'this is explained.', swept, control['low'],
+                      control['high'])
+            return EXIT_MISMATCH
+    else:
+        log.warning('No window control was available, so the sweep could not '
+                    'check itself. Compare the totals by hand before using '
+                    'the data.')
+        return EXIT_OK
     log.info('OK: every flight of the window is accounted for by exactly one '
              'device.')
     return EXIT_OK

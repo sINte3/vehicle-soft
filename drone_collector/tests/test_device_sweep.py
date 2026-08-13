@@ -15,8 +15,13 @@
      фильтр. Он попадает в summary.json и меняет код возврата. Отрицательный
      контроль: на честных данных список пуст.
   3. Сырые тела сохраняются всегда, по файлу на устройство.
-  4. Сумма по устройствам сравнивается с прогоном без фильтра; расхождение
-     возвращает код 9, а не ноль.
+  4. Контроль окна берётся из метаданных первой страницы: точное число, если
+     сайт его сообщает, иначе границы по числу страниц. Отрицательный
+     контроль: `total_pages` содержит слово total, но числом вылетов не
+     является и им не становится.
+  5. То, что сломалось на живом прогоне 2026-08-13, закреплено тестом:
+     привязка селектора устройства к подписи, повтор обхода, длина дампа
+     панели.
 
 Run:
   python -m unittest drone_collector.tests.test_device_sweep -v
@@ -200,3 +205,76 @@ class Selectors(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class FakePage(object):
+    """Минимальная страница: помнит, что у неё есть meta и url."""
+
+    def __init__(self, meta, url):
+        self._meta = meta
+        self.url = url
+
+    @property
+    def meta(self):
+        return self._meta
+
+    @property
+    def total_pages(self):
+        return self._meta.get('total_pages')
+
+
+class ControlBounds(unittest.TestCase):
+    """Контроль окна берётся из метаданных, а не из полного обхода."""
+
+    URL = ('https://www.djiag.com/api/web/v1/flight_records?'
+           'filters%5Btimestamp_gteq%5D=1756666800000&'
+           'filters%5Btimestamp_lteq%5D=1759258799999&page_size=50&page=1')
+
+    def test_bounds_from_page_count(self):
+        log = FakeLog()
+        control = devices.control_bounds(
+            [FakePage({'current_page': 1, 'total_pages': 114}, self.URL)], log)
+        self.assertIsNone(control['exact'])
+        self.assertEqual(control['low'], 5651)
+        self.assertEqual(control['high'], 5700)
+        # Сентябрь-2025 -- 5661 вылет: попадает в границы.
+        self.assertTrue(control['low'] <= 5661 <= control['high'])
+
+    def test_total_pages_is_never_mistaken_for_a_record_count(self):
+        """Отрицательный контроль: total_pages содержит 'total', но это страницы."""
+        log = FakeLog()
+        control = devices.control_bounds(
+            [FakePage({'total_pages': 114}, self.URL)], log)
+        self.assertIsNone(control['exact'])
+        self.assertNotEqual(control['exact'], 114)
+
+    def test_explicit_total_is_used_when_the_site_sends_one(self):
+        log = FakeLog()
+        control = devices.control_bounds(
+            [FakePage({'total_pages': 114, 'total_count': 5661}, self.URL)],
+            log)
+        self.assertEqual(control['exact'], 5661)
+
+    def test_no_captures_gives_no_control(self):
+        control = devices.control_bounds([], FakeLog())
+        self.assertIsNone(control['exact'])
+        self.assertIsNone(control['low'])
+
+
+class LiveRunFixes(unittest.TestCase):
+    """То, что сломалось на живом прогоне 2026-08-13, закреплено тестом."""
+
+    def test_device_selector_is_pinned_to_its_label(self):
+        # Team/Member -- тоже ant-select; без привязки к подписи селектор
+        # взял бы то поле, которое окажется первым в DOM.
+        self.assertIn('Device', devices.SELECTOR_DEVICE_SELECT)
+        self.assertIn(':has(', devices.SELECTOR_DEVICE_SELECT)
+        self.assertIn('ant-form-item', devices.SELECTOR_DEVICE_SELECT)
+
+    def test_pagination_is_retried_more_than_once(self):
+        self.assertGreater(devices.PAGINATION_ATTEMPTS, 1)
+        self.assertGreaterEqual(devices.PAGINATION_RETRY_PAUSE_MS, 10000)
+
+    def test_panel_dump_is_long_enough_to_reach_the_buttons(self):
+        # 4000 символов обрывались на Team/Member: ни галочки, ни OK/Clear.
+        self.assertGreaterEqual(devices.PANEL_DUMP_CHARS, 12000)

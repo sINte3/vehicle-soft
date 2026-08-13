@@ -249,9 +249,32 @@ Output in `--out`:
 
 Extra exit codes: **8** — the Device dropdown produced no options, so the
 filter selectors need correcting (the panel markup is in the log); **9** — the
-sweep finished but the devices do not add up to the unfiltered control, or one
+sweep finished but the devices do not add up to the size of the window, or one
 flight came back under two devices. In both cases the files are written and
 the data must not be trusted until the log explains the difference.
+
+**What the first live run (2026-08-13) corrected.** Four things, all of them
+now fixed in `devices.py` and covered by tests:
+
+* the `Filter` button is a **toggle**. The panel was already open from reading
+  the device list, a second click closed it, and the device select then timed
+  out for 45 s. The panel's state is checked before it is clicked.
+* the Device control had to be pinned to its label. Its markup is
+  `.ant-form-item` holding both `<span class="label">Device</span>` and the
+  `ant-select`; the neighbouring Team/Member field is an `ant-select` too, so
+  a selector that is not anchored to the label picks whichever comes first.
+* the site answers `code-408` in the middle of a walk and the next-page control
+  then disappears from the DOM — once on page 30 of 114, once on page 4. The
+  walk now pauses and continues from the page it reached, three attempts.
+* the window control no longer costs a full unfiltered walk. It is read from
+  the first page's `meta_data`: an explicit total when the site sends one,
+  otherwise the bounds implied by the page count. The old control walk was
+  114 pages *before* any useful work, and it was where the run kept dying.
+
+**If a device still will not finish**, sweep it alone —
+`--device "3 Gijduvon"` — and repeat for the rest. Each machine is a short
+walk of its own, and the files from separate runs can be concatenated: the
+CSV carries the device name on every row.
 
 `--list-devices` prints the device names and exits. `--device "1 Klaster"`
 (repeatable) sweeps only those; the control check is then skipped, because a
