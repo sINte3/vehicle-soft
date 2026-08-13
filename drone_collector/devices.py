@@ -51,8 +51,12 @@ raw_json.
 
 Запуск (браузер откроется от имени пользователя, у которого сохранена сессия):
 
-  cd C:\\transport-report\\drone_collector
-  & "C:\\Program Files\\Python314\\python.exe" -m drone_collector.devices --from 2025-09-01 --to 2025-09-30 --out C:\\qa\\dji_sept
+  cd C:\\transport-report
+  drone_collector\\.venv\\Scripts\\python.exe -m drone_collector.devices --from 2025-09-01 --to 2025-09-30 --out C:\\qa\\dji_sept
+
+[REASON]: запускается ПИТОНОМ СБОРЩИКА, не приложения. Playwright и Chromium
+стоят только в drone_collector\\.venv; в "C:\\Program Files\\Python314" их нет,
+и запуск оттуда падает на импорте playwright.
 
 Коды возврата:
   0  снято, сумма по устройствам сошлась с прогоном без фильтра

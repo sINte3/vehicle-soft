@@ -214,10 +214,15 @@ nothing downstream can tell that the window was not the one that was asked for.
 A second entry point, `drone_collector.devices`. It **sends nothing** — it
 reads the site and writes files.
 
-```powershell
+```cmd
 cd C:\transport-report
-& "C:\Program Files\Python314\python.exe" -m drone_collector.devices --from 2025-09-01 --to 2025-09-30 --out C:\qa\dji_sept
+drone_collector\.venv\Scripts\python.exe -m drone_collector.devices --from 2025-09-01 --to 2025-09-30 --out C:\qa\dji_sept
 ```
+
+Run it with the **collector's** Python, like every other command in this
+file: Playwright and Chromium live in `drone_collector\.venv` and nowhere
+else. The application's interpreter has no `playwright` module and the run
+would stop on the import.
 
 Why it exists. A flight is attributed to a machine by its DJI **nickname**,
 and nicknames migrated between airframes: the aircraft called `14 Servis`
