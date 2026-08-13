@@ -209,6 +209,56 @@ nothing downstream can tell that the window was not the one that was asked for.
 
 ---
 
+## Capture flights per device (DRONE-BODYCODE-001)
+
+A second entry point, `drone_collector.devices`. It **sends nothing** — it
+reads the site and writes files.
+
+```powershell
+cd C:\transport-report
+& "C:\Program Files\Python314\python.exe" -m drone_collector.devices --from 2025-09-01 --to 2025-09-30 --out C:\qa\dji_sept
+```
+
+Why it exists. A flight is attributed to a machine by its DJI **nickname**,
+and nicknames migrated between airframes: the aircraft called `14 Servis`
+today was `PeshkShodi` on 27.09.2025 and `15 Servis` two days later. For
+October 2025 and March 2026 the mapping was recovered by matching monthly
+totals, and that is already fixed. September 2025 has no such solution — one
+spelling was carried by two different airframes inside the month — so the link
+has to be **read** rather than derived. The site's own **Device** filter reads
+it: a device is identified by its serial, which renaming does not touch.
+
+The sweep sets the period once, walks the window unfiltered to get a control
+count, then for every device the filter offers: applies the filter, walks its
+pages, and records each flight's `id` next to the device name. That `id` is
+`drone_flights.dji_flight_id`, so the attribution becomes a fact that was
+read, not a number that was matched.
+
+Output in `--out`:
+
+| File | What is in it |
+|---|---|
+| `flights_by_device.csv` | `dji_flight_id;device;nickname;started_utc;area_ha` |
+| `summary.json` | per device: flights, pages, whether the walk completed; plus any flight seen under two devices |
+| `raw/<device>.json` | the response bodies verbatim, so the run can be re-parsed without visiting the site again |
+
+Extra exit codes: **8** — the Device dropdown produced no options, so the
+filter selectors need correcting (the panel markup is in the log); **9** — the
+sweep finished but the devices do not add up to the unfiltered control, or one
+flight came back under two devices. In both cases the files are written and
+the data must not be trusted until the log explains the difference.
+
+`--list-devices` prints the device names and exits. `--device "1 Klaster"`
+(repeatable) sweeps only those; the control check is then skipped, because a
+subset is not expected to add up to the whole window.
+
+**The filter selectors were written without the live page.** The saved DOM of
+2026-07-31 never had the filter panel open, so the constants at the top of
+`devices.py` are candidates, not confirmed readings. The first run logs the
+panel's markup — correct the constants there, in one place, and nowhere else.
+
+---
+
 ## Logs
 
 Rotating file log in `drone_collector/logs/collector.log` (5 MB per file, 10
