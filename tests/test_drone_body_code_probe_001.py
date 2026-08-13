@@ -223,6 +223,89 @@ class JoinAgainstPark(unittest.TestCase):
         self.assertEqual({m['month'] for m in stats['moves']}, {'2026-02'})
 
 
+class Breakdown(unittest.TestCase):
+    """5. Разбор по дням и написаниям: суммы сходятся, ночь не теряется."""
+
+    def test_totals_equal_the_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'db.sqlite')
+            build_db(path, CORRECT_PARK)
+            conn = probe.open_readonly(path)
+            rows = probe.breakdown_rows(conn)
+            conn.close()
+            check = sqlite3.connect(path)
+            db_flights, db_ha = check.execute(
+                'SELECT COUNT(*), ROUND(SUM(area_ha), 4) '
+                'FROM drone_flights').fetchone()
+            check.close()
+        self.assertEqual(sum(r[3] for r in rows), db_flights)
+        self.assertAlmostEqual(sum(r[4] for r in rows), db_ha, places=3)
+
+    def test_night_flight_belongs_to_the_next_local_day(self):
+        """Эти дроны летают ночью: 20:30 UTC 31.03 — это 01:30 1 апреля.
+
+        Отрицательный контроль: группа по UTC оставила бы вылет в марте, и
+        мартовский итог разошёлся бы с DJI ровно на него.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'db.sqlite')
+            build_db(path, CORRECT_PARK)
+            extra = sqlite3.connect(path)
+            extra.execute(
+                'INSERT INTO drone_flights (drone_unit_id, nickname_raw, '
+                'serial_number, started_at, area_ha, raw_json) '
+                "VALUES (3, 'ночной', 'RNIGHT0001', "
+                "'2026-03-31 20:30:00', 1.0, '{}')")
+            extra.commit()
+            extra.close()
+            conn = probe.open_readonly(path)
+            rows = probe.breakdown_rows(conn)
+            conn.close()
+        night = [r for r in rows if r[1] == 'ночной']
+        self.assertEqual(len(night), 1)
+        self.assertEqual(night[0][0], '2026-04-01')
+        self.assertNotEqual(night[0][0], '2026-03-31')
+
+    def test_flight_without_a_machine_is_kept_not_dropped(self):
+        """Вылет с пустой машиной попадает в разбор — иначе он исчезнет."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'db.sqlite')
+            build_db(path, CORRECT_PARK)
+            extra = sqlite3.connect(path)
+            extra.execute(
+                'INSERT INTO drone_flights (drone_unit_id, nickname_raw, '
+                'serial_number, started_at, area_ha, raw_json) '
+                "VALUES (NULL, 'Klaster№1', 'RUNRESOLVED', "
+                "'2025-09-10 06:00:00', 12.5, '{}')")
+            extra.commit()
+            extra.close()
+            conn = probe.open_readonly(path)
+            rows = probe.breakdown_rows(conn)
+            conn.close()
+        orphan = [r for r in rows if r[1] == 'Klaster№1']
+        self.assertEqual(len(orphan), 1)
+        self.assertIsNone(orphan[0][2])
+        self.assertAlmostEqual(orphan[0][4], 12.5, places=3)
+
+    def test_csv_round_trips(self):
+        import csv as csv_module
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'db.sqlite')
+            build_db(path, CORRECT_PARK)
+            conn = probe.open_readonly(path)
+            rows = probe.breakdown_rows(conn)
+            conn.close()
+            out = os.path.join(tmp, 'bd.csv')
+            written = probe.write_breakdown_csv(out, rows)
+            with open(out, encoding='utf-8-sig', newline='') as handle:
+                back = list(csv_module.DictReader(handle, delimiter=';'))
+        self.assertEqual(written, len(rows))
+        self.assertEqual(len(back), len(rows))
+        self.assertAlmostEqual(sum(float(r['area_ha']) for r in back),
+                               sum(r[4] for r in rows), places=3)
+        self.assertEqual(back[0]['month'], back[0]['day'][:7])
+
+
 class WritesNothing(unittest.TestCase):
     """4. Инструмент — читатель."""
 

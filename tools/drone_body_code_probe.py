@@ -171,6 +171,51 @@ def probe_serial_shape(conn):
     return total, filled, distinct
 
 
+def breakdown_rows(conn):
+    """Наши вылеты по дням и написаниям ника. Только чтение.
+
+    Зачем. Body Code в payload нет (раздел A на проде, 32 179 вылетов), а
+    выгрузка djiag.com отдаёт только видимую страницу. Но `nickname` в
+    payload -- это ИСТОРИЧЕСКОЕ имя борта на момент вылета, и оно у нас уже
+    сохранено в nickname_raw. Значит недостающее знание -- только
+    «какое написание какому планеру принадлежало в какие дни», и его можно
+    добрать сверкой сумм с помесячными итогами DJI по бортам, без выгрузок.
+
+    [REASON]: день и месяц считаются в UTC+5, ровно как
+    _drone_flight_day_expr() в drones.py. ЭТИ ДРОНЫ ЛЕТАЮТ НОЧЬЮ: вылет,
+    записанный 30.04 в 20:30 UTC, для людей случился 1 мая в 01:30, и группа
+    по UTC увела бы его в другой день, другой месяц и другой итог. Смещение
+    берётся из DISPLAY_TZ_HOURS, а не пишется числом.
+    """
+    offset_minutes = int(DISPLAY_TZ_HOURS * 60)
+    sql = (
+        "SELECT strftime('%%Y-%%m-%%d', datetime(f.started_at, '%+d minutes'))"
+        " AS day,"
+        "       COALESCE(f.nickname_raw, '') AS nick,"
+        "       u.number AS unit_number,"
+        "       COUNT(*) AS flights,"
+        "       ROUND(SUM(COALESCE(f.area_ha, 0)), 4) AS area_ha"
+        "  FROM drone_flights f"
+        "  LEFT JOIN drone_units u ON u.id = f.drone_unit_id"
+        " GROUP BY day, nick, unit_number"
+        " ORDER BY day, nick" % offset_minutes)
+    return conn.execute(sql).fetchall()
+
+
+def write_breakdown_csv(path, rows):
+    """CSV с BOM: файл открывают и Excel, и я. Возвращает число строк."""
+    import csv
+    with open(path, 'w', encoding='utf-8-sig', newline='') as handle:
+        writer = csv.writer(handle, delimiter=';')
+        writer.writerow(['day', 'month', 'nickname_raw', 'unit_number',
+                         'flights', 'area_ha'])
+        for day, nick, number, flights, area in rows:
+            writer.writerow([day, (day or '')[:7], nick,
+                             number if number is not None else '',
+                             flights, ('%.4f' % (area or 0.0))])
+    return len(rows)
+
+
 def read_export(path):
     """Строки выгрузки djiag.com. Возвращает список словарей.
 
@@ -308,7 +353,7 @@ def format_report(db_path, units, keys, candidates, parsed, shape,
     """Полный отчёт (UTF-8, кириллица разрешена)."""
     lines = []
     add = lines.append
-    now = (datetime.datetime.utcnow()
+    now = (datetime.datetime.now(datetime.timezone.utc)
            + datetime.timedelta(hours=DISPLAY_TZ_HOURS))
     add('DRONE-BODYCODE-001 — разведка привязки по серийнику планера')
     add('База: %s' % db_path)
@@ -456,6 +501,10 @@ def main():
                         help='djiag.com export .xlsx (repeatable)')
     parser.add_argument('--report', default=None,
                         help='write the full UTF-8 report to this file')
+    parser.add_argument('--breakdown-csv', default=None,
+                        help='write our flights per day and per nickname '
+                             'spelling to this CSV (read-only; the input for '
+                             'matching against the DJI per-device totals)')
     args = parser.parse_args()
 
     conn = open_readonly(args.db)
@@ -475,10 +524,14 @@ def main():
         for path in args.export:
             rows.extend(read_export(path))
         joined = join_export(conn, rows, units) if rows else None
+        breakdown = breakdown_rows(conn) if args.breakdown_csv else None
     finally:
         conn.close()
 
     print_ascii(units, candidates, parsed, shape, args.export, joined)
+    if args.breakdown_csv:
+        written = write_breakdown_csv(args.breakdown_csv, breakdown)
+        print('breakdown written: %s (%d rows)' % (args.breakdown_csv, written))
     if args.report:
         text = format_report(args.db, units, keys, candidates, parsed, shape,
                              args.export, joined)
