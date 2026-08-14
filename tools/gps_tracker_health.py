@@ -162,8 +162,6 @@ def verdict(row):
     reasons = []
     if 0 <= row["sats_median"] < WARN_SATS:
         reasons.append("few satellites")
-    if row["interval_s"] and row["interval_s"] < WARN_INTERVAL_S:
-        reasons.append("logging too dense")
     if row["jumps"] >= WARN_JUMPS:
         reasons.append("position jumps")
     if row["motion_gaps"]:
