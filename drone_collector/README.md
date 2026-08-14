@@ -209,6 +209,152 @@ nothing downstream can tell that the window was not the one that was asked for.
 
 ---
 
+## Capture flights per device (DRONE-BODYCODE-001)
+
+A second entry point, `drone_collector.devices`. It **sends nothing** — it
+reads the site and writes files.
+
+```cmd
+cd C:\transport-report
+drone_collector\.venv\Scripts\python.exe -m drone_collector.devices --from 2025-09-01 --to 2025-09-30 --out C:\qa\dji_sept
+```
+
+Run it with the **collector's** Python, like every other command in this
+file: Playwright and Chromium live in `drone_collector\.venv` and nowhere
+else. The application's interpreter has no `playwright` module and the run
+would stop on the import.
+
+Why it exists. A flight is attributed to a machine by its DJI **nickname**,
+and nicknames migrated between airframes: the aircraft called `14 Servis`
+today was `PeshkShodi` on 27.09.2025 and `15 Servis` two days later. For
+October 2025 and March 2026 the mapping was recovered by matching monthly
+totals, and that is already fixed. September 2025 has no such solution — one
+spelling was carried by two different airframes inside the month — so the link
+has to be **read** rather than derived. The site's own **Device** filter reads
+it: a device is identified by its serial, which renaming does not touch.
+
+The sweep sets the period once, walks the window unfiltered to get a control
+count, then for every device the filter offers: applies the filter, walks its
+pages, and records each flight's `id` next to the device name. That `id` is
+`drone_flights.dji_flight_id`, so the attribution becomes a fact that was
+read, not a number that was matched.
+
+Output in `--out`:
+
+| File | What is in it |
+|---|---|
+| `flights_by_device.csv` | `dji_flight_id;device;nickname;started_utc;area_ha` |
+| `summary.json` | per device: flights, pages, whether the walk completed; plus any flight seen under two devices |
+| `raw/<device>.json` | the response bodies verbatim, so the run can be re-parsed without visiting the site again |
+
+Extra exit codes: **8** — the Device dropdown produced no options, so the
+filter selectors need correcting (the panel markup is in the log); **9** — the
+sweep finished but the devices do not add up to the size of the window, or one
+flight came back under two devices. In both cases the files are written and
+the data must not be trusted until the log explains the difference.
+
+**What the first live run (2026-08-13) corrected.** Four things, all of them
+now fixed in `devices.py` and covered by tests:
+
+* the `Filter` button is a **toggle**. The panel was already open from reading
+  the device list, a second click closed it, and the device select then timed
+  out for 45 s. The panel's state is checked before it is clicked.
+* the Device control had to be pinned to its label. Its markup is
+  `.ant-form-item` holding both `<span class="label">Device</span>` and the
+  `ant-select`; the neighbouring Team/Member field is an `ant-select` too, so
+  a selector that is not anchored to the label picks whichever comes first.
+* the site answers `code-408` in the middle of a walk and the next-page control
+  then disappears from the DOM — once on page 30 of 114, once on page 4. The
+  walk now pauses and continues from the page it reached, three attempts.
+* the window control no longer costs a full unfiltered walk. It is read from
+  the first page's `meta_data`: an explicit total when the site sends one,
+  otherwise the bounds implied by the page count. The old control walk was
+  114 pages *before* any useful work, and it was where the run kept dying.
+
+**What the second live run (2026-08-13) corrected.** The filter itself proved
+to work — `2 Klaster` returned 5 flights and `6 Shofirko` 160, both matching
+the cabinet exactly, and the request showed how the site filters:
+`filters[product_sn_in][]`, the flight-controller serial. Three more things
+came out of it:
+
+* `meta_data` carries **both** `count` (rows on this page, 50) and
+  `total_count` (the window, 5661). Taking the first key that merely looked
+  like a total picked `count` and declared a 50-flight September. Total keys
+  are now tried by name in order of preference, and a candidate that
+  contradicts the page count is refused outright.
+* the `code-408` also hits a device's **first** request, and waiting for a
+  capture then achieves nothing — the page is already in the state where it
+  answers nothing. The device is retried after a pause, and the retry
+  **reloads** the page and re-applies period and page size, because no amount
+  of clicking revives that state.
+* a device that still fails no longer takes the run with it. It is recorded,
+  the sweep continues, and the log ends with a ready-made command line for
+  each machine that has to be picked up separately.
+
+**The sweep is resumable, and that is the point.** Every device is written to
+disk the moment it is read — its rows into the CSV, its bodies into `raw/`,
+its line into `progress.json`. Re-run the same command and it skips whatever
+is already there and carries on; `--restart` sweeps everything again. This
+exists because the cabinet gets less willing the more it is asked: four runs
+inside half an hour on 2026-08-13 returned 29 pages, then 3 pages, then two
+devices, then a `code-408` on the very first request of the page — before any
+of this module's code ran. Losing a whole run to that is not acceptable, so
+nothing is held in memory to the end any more.
+
+**What the run on a different machine (2026-08-14) settled.** Twelve of the
+fifteen devices came back, 4 849 flights, and every one of the twelve matched
+the cabinet's own per-device count exactly. Two things came out of it:
+
+* the device name must never be **interpolated into a selector**. The first
+  version built `:has-text(...)` with `json.dumps(name)`, which escapes
+  Cyrillic to `\uXXXX` — so for `4 Ғиждувон` the selector hunted for a literal
+  backslash-u string and timed out after twelve devices had been read.
+  Options are now compared as plain strings, exactly, which also rules out
+  `8 Garden` selecting `8 GardenU`.
+* a clock **202 seconds** off swept twelve devices without a single 408. The
+  skew warning threshold was raised accordingly: warning on a working clock is
+  a false alarm, and false alarms teach people not to read the log. The skew is
+  printed either way.
+
+**When the cabinet refuses everything, check the clock first.** `code-408` is
+DJI's own word for **bad timestamp** — the request is signed with the
+machine's clock, so a clock that has drifted far enough gets every request
+rejected, no matter the selectors, the session or how long you wait. The sweep
+now measures it: on the first response it compares DJI's `Date` header against
+the local clock and prints either `Clock agrees with DJI within N s` or a
+`CLOCK SKEW` error naming the offset. Fix it with `w32tm /resync /force` and
+re-run.
+
+Same check by hand, without running anything:
+
+```powershell
+(Get-Date).ToUniversalTime().ToString('r')
+(Invoke-WebRequest -Uri https://www.djiag.com/ -UseBasicParsing -Method Head).Headers['Date']
+```
+
+**`ToUniversalTime()` is not optional.** `Get-Date -Format r` prints LOCAL time
+and appends the literal word GMT, so on a UTC+5 machine it reads five hours
+off and invents a skew that is not there.
+
+If those two differ by minutes, suspect the clock. If they agree and 408 still comes back, then it is throttling or the
+session — wait half an hour, or re-run `--save-session`.
+
+**If a device still will not finish**, sweep it alone —
+`--device "3 Gijduvon"` — and repeat for the rest. Each machine is a short
+walk of its own, and the files from separate runs can be concatenated: the
+CSV carries the device name on every row.
+
+`--list-devices` prints the device names and exits. `--device "1 Klaster"`
+(repeatable) sweeps only those; the control check is then skipped, because a
+subset is not expected to add up to the whole window.
+
+**The filter selectors were written without the live page.** The saved DOM of
+2026-07-31 never had the filter panel open, so the constants at the top of
+`devices.py` are candidates, not confirmed readings. The first run logs the
+panel's markup — correct the constants there, in one place, and nowhere else.
+
+---
+
 ## Logs
 
 Rotating file log in `drone_collector/logs/collector.log` (5 MB per file, 10
