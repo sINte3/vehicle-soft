@@ -201,13 +201,17 @@ START_RETRY_PAUSE_MS = 60000
 # пятнадцать бортов подряд выглядят для DJI одним длинным всплеском.
 DEVICE_GAP_MS = 5000
 
-# [REASON]: `code-408` по словарю самого DJI -- ЭТО «ПЛОХАЯ ОТМЕТКА ВРЕМЕНИ»
-# (browser.py, проверено на HAR живого кабинета). Запрос подписывается временем
-# машины, и ушедшие часы отвергают КАЖДЫЙ запрос -- независимо от селекторов,
-# сессии и частоты. Отличить это от предела частоты можно измерением: в любом
-# ответе есть заголовок Date с временем сервера DJI. Расхождение считается один
-# раз за прогон и печатается; догадка становится числом.
-CLOCK_SKEW_WARN_SECONDS = 30
+# [REASON]: `code-408` по словарю самого DJI -- это «плохая отметка времени»
+# (browser.py, проверено на HAR живого кабинета), поэтому часы стоит измерять:
+# в любом ответе есть заголовок Date с временем сервера DJI.
+#
+# Но порог поставлен по НАБЛЮДЕНИЮ, а не по догадке: 2026-08-14 машина с
+# расхождением 202 секунды сняла двенадцать бортов подряд без единого 408.
+# Значит трёх минут кабинету мало, чтобы отказать, и предупреждение на 30
+# секундах было бы ложной тревогой -- а ложная тревога учит не читать журнал.
+# Порог оставлен заведомо большим: он ловит часы, ушедшие на часы, а не на
+# минуты. Расхождение печатается всегда, даже когда оно в пределах нормы.
+CLOCK_SKEW_WARN_SECONDS = 900
 
 
 class DeviceListUnavailable(BrowserError):
@@ -257,14 +261,16 @@ class DeviceSweepCollector(FlightCollector):
         if skew is None:
             return None
         if abs(skew) > CLOCK_SKEW_WARN_SECONDS:
-            self.log.error('CLOCK SKEW: this machine is %.0f s %s than DJI '
-                           '(their Date header: %s). DJI answers `code-408` -- '
-                           '"bad timestamp" -- to every request signed with a '
-                           'clock this far off. Fix the clock first: '
-                           'w32tm /resync /force', abs(skew),
-                           'ahead' if skew > 0 else 'behind', served_date_header)
+            self.log.error('CLOCK SKEW: this machine is %.0f s %s DJI (their '
+                           'Date header: %s). DJI signs requests with the '
+                           'clock and answers `code-408` -- "bad timestamp" -- '
+                           'when it is far enough off. Try: w32tm /resync '
+                           '/force', abs(skew),
+                           'ahead of' if skew > 0 else 'behind',
+                           served_date_header)
         else:
-            self.log.info('Clock agrees with DJI within %.0f s', abs(skew))
+            self.log.info('Clock is %.0f s %s DJI -- within tolerance',
+                          abs(skew), 'ahead of' if skew > 0 else 'behind')
         return skew
 
     def _panel(self):
@@ -360,16 +366,39 @@ class DeviceSweepCollector(FlightCollector):
         return names
 
     def select_device(self, panel, name):
-        """Выбрать устройство по точному имени."""
+        """Выбрать устройство по ТОЧНОМУ имени, сравнивая тексты опций.
+
+        [REASON]: имя борта НЕ подставляется в строку селектора. Первая
+        версия делала `:has-text(%s)` через json.dumps -- а json.dumps по
+        умолчанию экранирует кириллицу в escape-последовательности, так что
+        для «4 Гиждувон» селектор искал буквальный текст с обратными слэшами
+        и ждал его 45 секунд. Живой прогон 2026-08-14 упал на этом борте, сняв до него
+        двенадцать. Сравнение готовых строк такой ошибки не допускает вовсе:
+        подставлять нечего.
+
+        [REASON]: сравнение ТОЧНОЕ, а не по вхождению. `has-text` ищет
+        подстроку, и «8 Garden» нашёл бы «8 GardenU» -- то есть выбрал бы
+        соседний борт и молча приписал ему чужие вылеты.
+        """
         select = self._device_select(panel)
         select.click(timeout=self.cfg.page_timeout_ms)
         self._page.wait_for_timeout(400)
-        option = self._page.locator(
-            "%s:has-text(%s)" % (SELECTOR_DEVICE_OPTIONS, json.dumps(name))
-        ).first
-        option.click(timeout=self.cfg.page_timeout_ms)
+        options = self._page.locator(SELECTOR_DEVICE_OPTIONS)
+        count = options.count()
+        if not count:
+            options = self._page.locator(SELECTOR_DEVICE_OPTIONS_FALLBACK)
+            count = options.count()
+        for index in range(count):
+            option = options.nth(index)
+            if (option.inner_text() or '').strip() == name:
+                option.click(timeout=self.cfg.page_timeout_ms)
+                self._page.keyboard.press('Escape')
+                self._page.wait_for_timeout(300)
+                return
         self._page.keyboard.press('Escape')
-        self._page.wait_for_timeout(300)
+        raise DeviceListUnavailable(
+            'the Device dropdown has no option whose text is exactly %r '
+            '(it offers %d option(s))' % (name, count))
 
     def clear_device(self, panel):
         """Снять выбранное устройство, оставив период и прочее как есть."""

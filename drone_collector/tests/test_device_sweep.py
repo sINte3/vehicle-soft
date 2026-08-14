@@ -428,7 +428,6 @@ class ClockSkew(unittest.TestCase):
         skew = devices.clock_skew_seconds('Fri, 14 Aug 2026 05:58:00 GMT',
                                           self.NOW)
         self.assertEqual(skew, 120.0)
-        self.assertGreater(abs(skew), devices.CLOCK_SKEW_WARN_SECONDS)
 
     def test_machine_behind_is_negative(self):
         skew = devices.clock_skew_seconds('Fri, 14 Aug 2026 06:05:00 GMT',
@@ -449,5 +448,15 @@ class ClockSkew(unittest.TestCase):
         skew = devices.clock_skew_seconds('14 Aug 2026 06:00:00', self.NOW)
         self.assertEqual(skew, 0.0)
 
-    def test_threshold_is_tight_enough_to_matter(self):
-        self.assertLessEqual(devices.CLOCK_SKEW_WARN_SECONDS, 60)
+    def test_threshold_does_not_cry_wolf_over_a_working_clock(self):
+        """Порог откалиброван НАБЛЮДЕНИЕМ, а не догадкой.
+
+        2026-08-14 машина с расхождением 202 с сняла двенадцать бортов подряд
+        без единого 408. Значит порог обязан быть выше 202: предупреждение на
+        рабочих часах -- ложная тревога, а она учит не читать журнал. И всё же
+        конечным, иначе проверка не поймает ничего.
+        """
+        observed_working_skew = 202
+        self.assertGreater(devices.CLOCK_SKEW_WARN_SECONDS,
+                           observed_working_skew)
+        self.assertLess(devices.CLOCK_SKEW_WARN_SECONDS, 24 * 3600)

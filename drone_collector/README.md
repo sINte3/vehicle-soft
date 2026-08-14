@@ -301,6 +301,21 @@ devices, then a `code-408` on the very first request of the page — before any
 of this module's code ran. Losing a whole run to that is not acceptable, so
 nothing is held in memory to the end any more.
 
+**What the run on a different machine (2026-08-14) settled.** Twelve of the
+fifteen devices came back, 4 849 flights, and every one of the twelve matched
+the cabinet's own per-device count exactly. Two things came out of it:
+
+* the device name must never be **interpolated into a selector**. The first
+  version built `:has-text(...)` with `json.dumps(name)`, which escapes
+  Cyrillic to `\uXXXX` — so for `4 Ғиждувон` the selector hunted for a literal
+  backslash-u string and timed out after twelve devices had been read.
+  Options are now compared as plain strings, exactly, which also rules out
+  `8 Garden` selecting `8 GardenU`.
+* a clock **202 seconds** off swept twelve devices without a single 408. The
+  skew warning threshold was raised accordingly: warning on a working clock is
+  a false alarm, and false alarms teach people not to read the log. The skew is
+  printed either way.
+
 **When the cabinet refuses everything, check the clock first.** `code-408` is
 DJI's own word for **bad timestamp** — the request is signed with the
 machine's clock, so a clock that has drifted far enough gets every request
@@ -313,12 +328,15 @@ re-run.
 Same check by hand, without running anything:
 
 ```powershell
-Get-Date -Format r
+(Get-Date).ToUniversalTime().ToString('r')
 (Invoke-WebRequest -Uri https://www.djiag.com/ -UseBasicParsing -Method Head).Headers['Date']
 ```
 
-If those two differ by more than about half a minute, that is the whole
-problem. If they agree and 408 still comes back, then it is throttling or the
+**`ToUniversalTime()` is not optional.** `Get-Date -Format r` prints LOCAL time
+and appends the literal word GMT, so on a UTC+5 machine it reads five hours
+off and invents a skew that is not there.
+
+If those two differ by minutes, suspect the clock. If they agree and 408 still comes back, then it is throttling or the
 session — wait half an hour, or re-run `--save-session`.
 
 **If a device still will not finish**, sweep it alone —
