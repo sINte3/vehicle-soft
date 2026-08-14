@@ -32,8 +32,8 @@ import unittest
 from gps.area import (ALPHA_M, ALPHA_SPACING_FACTOR, DENSIFY_MAX_SEG_M,
                       MOTION_GAP_SECONDS, SPEED_MAX_KMH, alpha_shape,
                       candidate_contours, densify, joint_work_check,
-                      pass_spacing, polygon_from_wialon, to_utm, track_quality,
-                      work_sites, worked_area)
+                      pass_spacing, polygon_from_wialon, return_share, to_utm,
+                      track_quality, work_sites, worked_area)
 
 FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 
@@ -239,6 +239,44 @@ class PassSpacingTests(unittest.TestCase):
 
     def test_too_few_points(self):
         self.assertIsNone(pass_spacing([(0.0, 0.0), (5.0, 0.0)]))
+
+
+class ReturnShareTests(unittest.TestCase):
+    """The measurement itself, on shapes whose answer is known by construction.
+
+    These tests exist because the feature FAILED as a work/transit classifier
+    on the labelled corpus (roadmap section 2.8), and a failed hypothesis is
+    only worth recording if the instrument was working. The last test is the
+    interesting one: it shows the confusion that killed the idea.
+    """
+
+    def test_single_straight_run_never_returns(self):
+        line = [(float(i) * 10.0, 0.0) for i in range(100)]
+        self.assertEqual(return_share(line), 0.0)
+
+    def test_parallel_passes_return_almost_everywhere(self):
+        track = shuttle_track(200.0, 200.0, pass_spacing_m=10.0)
+        pts = [to_utm(lon, lat) for _, lon, lat, _ in track]
+        share = return_share([(float(x), float(y)) for x, y in pts])
+        self.assertGreater(share, 0.9, "worked ground must be covered twice over")
+
+    def test_too_few_points(self):
+        self.assertIsNone(return_share([(0.0, 0.0), (5.0, 0.0)]))
+
+    def test_the_same_road_there_and_back_looks_like_work(self):
+        """Why the feature does not separate: a transit driven twice scores 1.
+
+        A machine that goes out along a road and comes back along the same road
+        has, for every point, a neighbour it reached only after a long detour --
+        exactly the signature of a second pass. On the labelled corpus this is
+        not a corner case: the transits scored HIGHER than the works
+        (median 0.98 against 0.96).
+        """
+        out = [(float(i) * 10.0, 0.0) for i in range(60)]
+        back = [(x, 6.0) for x, _ in reversed(out)]
+        # 0.88 in fact: only the points either side of the turnaround miss out,
+        # because there the return is nearer than 150 m along the track.
+        self.assertGreater(return_share(out + back), 0.85)
 
 
 class AdaptiveAlphaTests(unittest.TestCase):

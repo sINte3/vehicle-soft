@@ -123,6 +123,24 @@ PASS_SPACING_MIN_POINTS = 20
 PASS_SPACING_SAMPLES = 400
 PASS_SPACING_NEIGHBOURS = 80
 
+# [REASON]: work covers ground REPEATEDLY -- the machine comes back alongside
+# where it has already been, pass after pass. Transit crosses ground once. So
+# for every point ask: is there another point of the same site within an
+# implement's width of me, which the machine reached only after driving a long
+# way round? In work almost every point answers yes; along a road corridor
+# almost none do. The radius is deliberately wider than the widest measured
+# pass spacing (22 m on spraying) would need at its median, and the along-track
+# distance is far longer than any turn at the headland, so a point cannot be
+# its own neighbour by going round a bend.
+# This is a MEASUREMENT, not a verdict: nothing in the engine classifies a site
+# by it. The threshold and the acceptance criteria are pre-registered in
+# docs/GPS_PLAN_FAKT_VISION_ROADMAP.md section 2.8 and will be judged on labels
+# the rule has never seen -- the same protocol the adaptive alpha went through.
+RETURN_RADIUS_M = 25.0
+RETURN_ALONG_M = 150.0
+RETURN_MIN_POINTS = 20
+RETURN_SAMPLES = 400
+
 # [REASON]: a default, NOT a business rule. Where work stops being work and
 # becomes passage is the owner's to set (question V-3); until answered, 0.3 ha
 # is what the data suggests -- on the 27.07 set mere touches of a contour came
@@ -418,6 +436,35 @@ def pass_spacing(points_xy, detour_ratio=PASS_SPACING_DETOUR_RATIO):
                 found.append(float(distance))
                 break
     return float(np.median(found)) if found else None
+
+
+def return_share(points_xy, radius_m=RETURN_RADIUS_M, along_track_m=RETURN_ALONG_M):
+    """Share of points that have a neighbour the machine reached the long way.
+
+    A point counts when another point lies within `radius_m` of it in a
+    straight line while standing at least `along_track_m` away ALONG the
+    track. That is the signature of a second pass beside the first, and it is
+    what physically distinguishes worked ground from ground merely driven
+    over.
+
+    Returns None when the cloud is too small to say anything. The caller
+    decides what to do with the number -- the engine attaches no meaning to it.
+    """
+    if len(points_xy) < RETURN_MIN_POINTS:
+        return None
+    pts = np.asarray(points_xy, dtype=float)
+    steps = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+    along = np.concatenate(([0.0], np.cumsum(steps)))
+    tree = cKDTree(pts)
+    sample_step = max(1, len(pts) // RETURN_SAMPLES)
+    looked = returned = 0
+    for i in range(0, len(pts), sample_step):
+        looked += 1
+        for j in tree.query_ball_point(pts[i], radius_m):
+            if abs(along[j] - along[i]) >= along_track_m:
+                returned += 1
+                break
+    return returned / looked if looked else None
 
 
 def worked_area(track, contour, contour_id=None, alpha_m=None):
