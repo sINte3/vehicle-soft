@@ -34,9 +34,14 @@ Run (PowerShell, one command per line):
   cd C:\\diag\\wialon
   & "C:\\Program Files\\Python314\\python.exe" C:\\transport-report\\tools\\wialon_probe6_fleet_health.py --from 2026-06-01 --to 2026-08-14
 
-That samples 11 days over the summer for every object: roughly an hour, and
-the console counts the days off as it goes. Add --every 14 to halve the time
-at the cost of half the days.
+That samples 11 days over the summer for every object. At the default pace
+(one request per two seconds, decision G9) a full summer sweep takes about six
+hours, so it is a night job. Add --every 14 to halve it at the cost of half
+the days, or --pause 1 to halve it at twice the load on the server.
+
+The run may be interrupted at any point -- every finished object is written to
+gps_fleet_health.partial.jsonl straight away. Start it again with the SAME
+--from/--to/--every plus --resume and it carries on from the break.
 
 Send back gps_fleet_health.csv -- the sick machines are at the top, and the
 console prints them too.
@@ -79,10 +84,37 @@ MIN_POINTS_TO_JUDGE = 200
 MAX_MESSAGES_PER_DAY = 20000
 EARTH = 6378137.0
 
+# Codes as published by Gurtam (help.wialon.com/en/api/user-guide/error-codes).
+# 1004 used to be labelled "concurrent request limit" here -- that is wrong,
+# it is the MESSAGE limit, and it is the one a fleet sweep can realistically
+# reach.
 ERRORS = {1: "invalid session", 2: "invalid service", 4: "invalid input",
           5: "request failed", 7: "access denied",
-          1001: "no messages for the interval", 1003: "one request at a time",
-          1004: "concurrent request limit"}
+          8: "invalid user name or password",
+          1001: "no messages for the interval",
+          1003: "only one request is allowed at the moment",
+          1004: "the limit of messages has been exceeded",
+          1005: "the execution time has exceeded the limit",
+          1011: "your IP has changed, or the session has expired"}
+# [REASON]: these three mean the server is asking us to slow down, not that the
+# object is unreadable. Retrying them at once turns one refusal into a storm.
+LIMIT_ERRORS = (1003, 1004, 1005)
+LIMIT_BACKOFF_S = 30.0
+
+# [REASON]: Wialon publishes NO cap on the rate of ordinary read requests. The
+# documented caps are on logins (120/min from one IP), on SIMULTANEOUS requests
+# (3 heavy, 10 total in a session) and on message VOLUME -- 15 mln messages per
+# user within two minutes. This probe is single-threaded and logs in once, so
+# the only limit it can approach is volume. At the default pace it asks for at
+# most 20 000 messages every two seconds -- 1.2 mln per two minutes, 8% of the
+# documented ceiling. The pause itself is decision G9 after access from the
+# cluster's address was lost during the run of 14.08; the cause of that outage
+# is not proven, and until the integrator confirms their own limits the pace
+# stays deliberately slower than anything the documentation requires.
+PACE = {"pause": 2.0}
+MESSAGE_WINDOW_S = 120.0
+MESSAGE_WINDOW_LIMIT = 7000000
+LEDGER = "gps_fleet_health.partial.jsonl"
 
 log = []
 say = lambda s="": log.append(str(s))
@@ -113,12 +145,48 @@ RETRIES = 3
 RETRY_PAUSE_S = (3, 8, 20)
 
 
+_last_call_at = [0.0]
+_messages_window = []
+
+
+def pace():
+    """Hold the agreed request rate, whatever the server answers."""
+    waiting = PACE["pause"] - (time.monotonic() - _last_call_at[0])
+    if waiting > 0:
+        time.sleep(waiting)
+    _last_call_at[0] = time.monotonic()
+
+
+def message_budget(about_to_load):
+    """Wait until the rolling two-minute window has room for another load.
+
+    Documented ceiling is 15 mln messages per user in two minutes; half of it
+    is used here, so a second tool running against the same account at the same
+    time still cannot push the pair of us over.
+    """
+    while True:
+        edge = time.monotonic() - MESSAGE_WINDOW_S
+        while _messages_window and _messages_window[0][0] < edge:
+            _messages_window.pop(0)
+        loaded = sum(count for _, count in _messages_window)
+        if loaded + about_to_load <= MESSAGE_WINDOW_LIMIT:
+            return
+        print("    limit soobshcheniy blizko (%d za 2 min), pauza 5 s"
+              % loaded, flush=True)
+        time.sleep(5.0)
+
+
+def note_messages(count):
+    _messages_window.append((time.monotonic(), count))
+
+
 def call(svc, params, sid=None):
     query = {"svc": svc, "params": json.dumps(params, ensure_ascii=False)}
     if sid:
         query["sid"] = sid
     last = None
     for attempt in range(RETRIES):
+        pace()
         try:
             request = urllib.request.Request(
                 AJAX, data=urllib.parse.urlencode(query).encode("utf-8"),
@@ -143,6 +211,39 @@ def err(result):
         code = result["error"]
         return "error %s (%s)" % (code, ERRORS.get(code, "unknown"))
     return None
+
+
+def err_code(result):
+    if isinstance(result, dict) and "error" in result:
+        return result["error"]
+    return None
+
+
+# [REASON]: a summer sweep is hours long and the run of 14.08 died halfway
+# through when the address lost access to the server -- forty minutes of
+# requests bought nothing, because the report was written only at the end.
+# Every finished object now lands in the ledger at once, and --resume skips
+# what is already there instead of paying for the whole fleet again.
+def read_ledger(path, period):
+    """unit_id -> row, but only rows measured over the SAME period."""
+    done, alien = {}, 0
+    if not os.path.isfile(path):
+        return done, alien
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if row.get("period") != period:
+                alien += 1
+                continue
+            if row.get("unit_id") is not None:
+                done[row["unit_id"]] = row
+    return done, alien
 
 
 def metres(lon1, lat1, lon2, lat2):
@@ -217,8 +318,13 @@ def main():
                         help="last day of the period, YYYY-MM-DD")
     parser.add_argument("--every", type=int, default=7,
                         help="sample every Nth day (default 7)")
+    parser.add_argument("--pause", type=float, default=PACE["pause"],
+                        help="seconds between requests (default 2.0, G9)")
+    parser.add_argument("--resume", action="store_true",
+                        help="continue an interrupted run over the same period")
     parser.add_argument("--out", default="gps_fleet_health.csv")
     args = parser.parse_args()
+    PACE["pause"] = max(0.0, args.pause)
 
     token = read_token()
     first = datetime.strptime(args.date_from, "%Y-%m-%d").replace(tzinfo=TZ)
@@ -232,10 +338,22 @@ def main():
         sample_days.append(cursor)
         cursor += timedelta(days=max(1, args.every))
 
+    period = "%s..%s/%d" % (args.date_from, args.date_to, args.every)
+    ledger_path = os.path.join(OUT, LEDGER)
+    done, alien = ({}, 0)
+    if args.resume:
+        done, alien = read_ledger(ledger_path, period)
+
     say("Wialon probe 6 -- read-only -- fleet tracker health")
     say("period: %s .. %s, every %d-th day -- %d days sampled"
         % (args.date_from, args.date_to, args.every, len(sample_days)))
+    say("pace: one request per %.1f s" % PACE["pause"])
     say("run at: %s" % datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %z"))
+    if args.resume:
+        say("resume: %d objects taken from the ledger" % len(done))
+        if alien:
+            say("resume: %d ledger rows ignored -- measured over another period"
+                % alien)
 
     try:
         login = call("token/login", {"token": token})
@@ -271,8 +389,12 @@ def main():
     say("units visible: %d" % len(units))
     say("")
 
-    rows = []
+    rows = list(done.values())
+    ledger = open(ledger_path, "a" if args.resume else "w", encoding="utf-8")
+    limit_hits = 0
     for number, (unit_id, name) in enumerate(units, 1):
+        if unit_id in done:
+            continue
         # [REASON]: aggregates only. Points of one machine-day are examined and
         # dropped before the next day is fetched, so a fleet-wide run over a
         # whole summer never holds more than one day of one machine in memory.
@@ -283,11 +405,25 @@ def main():
             start = int(day.timestamp())
             finish = int((day + timedelta(days=1)).timestamp())
             try:
+                message_budget(MAX_MESSAGES_PER_DAY)
                 answer = call("messages/load_interval",
                               {"itemId": unit_id, "timeFrom": start,
                                "timeTo": finish, "flags": 0, "flagsMask": 0,
                                "loadCount": MAX_MESSAGES_PER_DAY}, sid)
+                if err_code(answer) in LIMIT_ERRORS:
+                    # the server is asking for room, not refusing the object
+                    limit_hits += 1
+                    failed_days += 1
+                    print("    server prosit podozhdat: %s -- pauza %d s"
+                          % (err(answer), int(LIMIT_BACKOFF_S)), flush=True)
+                    try:
+                        call("messages/unload", {}, sid)
+                    except Exception:                          # noqa: BLE001
+                        pass
+                    time.sleep(LIMIT_BACKOFF_S)
+                    continue
                 if err(answer) is None:
+                    note_messages(len(answer.get("messages") or []))
                     points = []
                     for message in (answer.get("messages") or []):
                         position = message.get("pos") or {}
@@ -309,7 +445,6 @@ def main():
                         gaps += day_row["motion_gaps"]
                     del points
                 call("messages/unload", {}, sid)
-                time.sleep(0.1)
             except Exception:                                  # noqa: BLE001
                 # a timeout on one day must not cost the object or the run
                 failed_days += 1
@@ -321,7 +456,7 @@ def main():
         row = {"unit_id": unit_id, "name": name, "worked_days": worked_days,
                "sampled_days": len(sample_days), "points": total_points,
                "interval_s": median(intervals), "sats_median": median(sats),
-               "jumps": jumps, "motion_gaps": gaps}
+               "jumps": jumps, "motion_gaps": gaps, "period": period}
         # [REASON]: judged on the days it worked, not on the calendar. A machine
         # that never worked in the period is reported as such, not as faulty.
         row["reasons"] = ("ne rabotal v period" if worked_days == 0
@@ -330,6 +465,11 @@ def main():
             row["reasons"] = ((row["reasons"] + "; ") if row["reasons"] else "") \
                 + "dney ne zagruzilos: %d" % failed_days
         rows.append(row)
+        # written before the next object is touched: an interrupted run keeps
+        # everything it has already paid for
+        ledger.write(json.dumps(row, ensure_ascii=False) + "\n")
+        ledger.flush()
+    ledger.close()
 
     # sick first, then by satellites: the worst antenna at the top; machines
     # that never worked go last -- they are a question, not a fault
@@ -354,6 +494,9 @@ def main():
     say("objects: %d | worked at least one sampled day: %d | never: %d"
         % (len(rows), len(worked), len(idle)))
     say("of those that worked, flagged: %d" % len(flagged))
+    # the honest record of what the server itself asked us to slow down for --
+    # if access is lost again, this line says whether Wialon complained first
+    say("server limit refusals during the run: %d" % limit_hits)
     say("")
     say("worst first:")
     for r in flagged[:60]:
