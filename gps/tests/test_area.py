@@ -369,6 +369,37 @@ class QualityMetricTests(unittest.TestCase):
         self.assertEqual(quality.motion_gaps, 1)
         self.assertAlmostEqual(quality.lost_seconds, silence, places=3)
 
+    def test_impossible_positions_are_counted(self):
+        """A tracker that briefly loses the sky reports a place it never was.
+
+        Operators call it "shooting stars", and one such day (MTZ 572 HA,
+        19.06) was described as hell to measure by hand. The signature is a
+        step the machine could not have taken: 2 km in 30 s while the tracker
+        itself reports 8 km/h. Compared against the REPORTED speed, not a
+        fixed limit, so the test stays valid for a lorry as well as a tractor.
+        """
+        timestamps = [0.0, 30.0, 60.0, 90.0]
+        speeds = [8.0, 8.0, 8.0, 8.0]
+        clean = [(0.0, 0.0), (60.0, 0.0), (120.0, 0.0), (180.0, 0.0)]
+        starred = [(0.0, 0.0), (60.0, 0.0), (2000.0, 0.0), (2060.0, 0.0)]
+        self.assertEqual(track_quality(timestamps, speeds,
+                                       points_xy=clean).gps_jumps, 0)
+        noisy = track_quality(timestamps, speeds, points_xy=starred)
+        self.assertEqual(noisy.gps_jumps, 1)
+        self.assertAlmostEqual(noisy.jump_share, 1 / 3, places=3)
+
+    def test_a_lorry_at_speed_is_not_a_jump(self):
+        """90 km/h is impossible for a tractor and normal for a lorry.
+
+        The check must not fire on a machine that honestly reports being fast,
+        or every delivery run would be flagged as a broken tracker.
+        """
+        timestamps = [0.0, 30.0, 60.0]
+        speeds = [90.0, 90.0, 90.0]
+        points = [(0.0, 0.0), (750.0, 0.0), (1500.0, 0.0)]
+        self.assertEqual(track_quality(timestamps, speeds,
+                                       points_xy=points).gps_jumps, 0)
+
     def test_real_tracks_the_naive_metric_got_wrong(self):
         """Regression on three real tracks, with the naive count as control.
 

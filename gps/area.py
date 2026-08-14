@@ -156,6 +156,16 @@ METHOD_VERSION = "adaptive-alpha-2026-08-12"
 # 56 parkings totalling 3777 minutes that the previous definition counted.
 MOTION_GAP_SECONDS = 300.0
 
+# [REASON]: a tracker that briefly loses the sky reports a position it never
+# occupied -- operators call it "shooting stars". The signature is a step the
+# machine could not have taken: the distance implies a speed far above what
+# the tracker itself reports at both ends. Comparing against the REPORTED
+# speed rather than a fixed limit keeps the test valid for a lorry as well as
+# a tractor. Measured on 2026-08-14: the day the owner called "hell to measure
+# by hand" (MTZ 572 HA, 19.06) shows 2.34 percent of transitions impossible
+# against a median of 0.14 percent over 15 clean machine-days.
+GPS_JUMP_MARGIN_KMH = 40.0
+
 _TO_UTM = Transformer.from_crs("EPSG:4326", UTM_41N, always_xy=True)
 
 
@@ -171,6 +181,14 @@ class TrackQuality:
     motion_gaps: int          # gaps longer than MOTION_GAP_SECONDS
     lost_seconds: float       # total duration of those gaps
     span_seconds: float       # first to last message of the interval
+    gps_jumps: int = 0        # positions the machine could not have reached
+
+    @property
+    def jump_share(self):
+        """Share of transitions that are physically impossible, 0.0..1.0."""
+        if self.points_total < 2:
+            return 0.0
+        return self.gps_jumps / (self.points_total - 1)
 
     @property
     def lost_share(self):
@@ -326,18 +344,28 @@ def _in_motion(speeds):
     return np.asarray(speeds, dtype=float) >= SPEED_MIN_KMH
 
 
-def track_quality(timestamps, speeds, points_used=0):
-    """Measure the track: how many points, how much time was lost.
+def track_quality(timestamps, speeds, points_used=0, points_xy=None):
+    """Measure the track: points, time lost, positions that cannot be real.
 
     `timestamps` are seconds (any epoch, only differences are used).
+    `points_xy` in metres enables the GPS-jump count; without it that stays 0.
     """
     ts = np.asarray(timestamps, dtype=float)
     mask = _moving_mask(speeds)
     span = float(ts[-1] - ts[0]) if len(ts) >= 2 else 0.0
+    jumps = 0
+    if points_xy is not None and len(points_xy) == len(ts) >= 2:
+        pts = np.asarray(points_xy, dtype=float)
+        step = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        seconds = np.maximum(np.diff(ts), 1.0)
+        implied = step / seconds * 3.6
+        reported = np.maximum(np.asarray(speeds, dtype=float)[:-1],
+                              np.asarray(speeds, dtype=float)[1:])
+        jumps = int(np.count_nonzero(implied > reported + GPS_JUMP_MARGIN_KMH))
     if len(ts) < 2:
         return TrackQuality(points_total=len(ts), points_moving=int(mask.sum()),
                             points_used=points_used, motion_gaps=0,
-                            lost_seconds=0.0, span_seconds=span)
+                            lost_seconds=0.0, span_seconds=span, gps_jumps=0)
 
     # Consecutive raw messages, motion required at the START of the gap (see
     # the MOTION_GAP_SECONDS comment for the three definitions this replaces).
@@ -347,7 +375,7 @@ def track_quality(timestamps, speeds, points_used=0):
     return TrackQuality(points_total=len(ts), points_moving=int(mask.sum()),
                         points_used=points_used, motion_gaps=int(is_gap.sum()),
                         lost_seconds=float(deltas[is_gap].sum()),
-                        span_seconds=span)
+                        span_seconds=span, gps_jumps=jumps)
 
 
 def pass_spacing(points_xy, detour_ratio=PASS_SPACING_DETOUR_RATIO):
@@ -408,7 +436,8 @@ def worked_area(track, contour, contour_id=None, alpha_m=None):
 
     mask = _moving_mask(speeds) & shapely.contains_xy(contour, xs, ys)
     used = [(float(x), float(y)) for x, y in zip(xs[mask], ys[mask])]
-    quality = track_quality(timestamps, speeds, points_used=len(used))
+    quality = track_quality(timestamps, speeds, points_used=len(used),
+                            points_xy=list(zip(xs, ys)))
     if not used:
         return WorkArea(contour_id, 0.0, None, quality)
 
@@ -458,7 +487,9 @@ def work_sites(track, min_area_ha=MIN_WORK_AREA_HA, alpha_m=None, contours=None)
     mask = _moving_mask(speeds)
     points = [(float(x), float(y))
               for x, y in zip(np.asarray(xs)[mask], np.asarray(ys)[mask])]
-    quality = track_quality([r[0] for r in track], speeds, points_used=len(points))
+    quality = track_quality([r[0] for r in track], speeds,
+                            points_used=len(points),
+                            points_xy=list(zip(xs, ys)))
     if len(points) < 4:
         return [], quality
 
