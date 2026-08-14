@@ -410,3 +410,44 @@ class Resume(unittest.TestCase):
         args = parser.parse_args(['--from', '2025-09-01', '--to', '2025-09-30',
                                   '--out', 'x', '--restart'])
         self.assertTrue(args.restart)
+
+
+class ClockSkew(unittest.TestCase):
+    """7. `code-408` -- «плохая отметка времени», и её можно ИЗМЕРИТЬ."""
+
+    import datetime as _dt
+
+    NOW = _dt.datetime(2026, 8, 14, 6, 0, 0, tzinfo=_dt.timezone.utc)
+
+    def test_clock_in_agreement(self):
+        skew = devices.clock_skew_seconds('Fri, 14 Aug 2026 06:00:00 GMT',
+                                          self.NOW)
+        self.assertEqual(skew, 0.0)
+
+    def test_machine_ahead_is_positive(self):
+        skew = devices.clock_skew_seconds('Fri, 14 Aug 2026 05:58:00 GMT',
+                                          self.NOW)
+        self.assertEqual(skew, 120.0)
+        self.assertGreater(abs(skew), devices.CLOCK_SKEW_WARN_SECONDS)
+
+    def test_machine_behind_is_negative(self):
+        skew = devices.clock_skew_seconds('Fri, 14 Aug 2026 06:05:00 GMT',
+                                          self.NOW)
+        self.assertEqual(skew, -300.0)
+
+    def test_unparsable_header_is_not_a_zero_skew(self):
+        """Отрицательный контроль: «не разобрано» и «совпало» -- разные вещи.
+
+        Вернуть 0 на мусорный заголовок значило бы доложить, что часы в
+        порядке, ровно тогда, когда о них ничего не известно.
+        """
+        for bad in (None, '', 'не дата', 'Fri, 32 Aug 2026 06:00:00 GMT'):
+            self.assertIsNone(devices.clock_skew_seconds(bad, self.NOW),
+                              'на %r ожидался None' % (bad,))
+
+    def test_header_without_timezone_is_treated_as_utc(self):
+        skew = devices.clock_skew_seconds('14 Aug 2026 06:00:00', self.NOW)
+        self.assertEqual(skew, 0.0)
+
+    def test_threshold_is_tight_enough_to_matter(self):
+        self.assertLessEqual(devices.CLOCK_SKEW_WARN_SECONDS, 60)

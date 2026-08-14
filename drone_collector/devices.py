@@ -78,6 +78,8 @@ raw_json.
 
 import argparse
 import csv
+import datetime
+import email.utils
 import json
 import os
 import sys
@@ -199,6 +201,14 @@ START_RETRY_PAUSE_MS = 60000
 # пятнадцать бортов подряд выглядят для DJI одним длинным всплеском.
 DEVICE_GAP_MS = 5000
 
+# [REASON]: `code-408` по словарю самого DJI -- ЭТО «ПЛОХАЯ ОТМЕТКА ВРЕМЕНИ»
+# (browser.py, проверено на HAR живого кабинета). Запрос подписывается временем
+# машины, и ушедшие часы отвергают КАЖДЫЙ запрос -- независимо от селекторов,
+# сессии и частоты. Отличить это от предела частоты можно измерением: в любом
+# ответе есть заголовок Date с временем сервера DJI. Расхождение считается один
+# раз за прогон и печатается; догадка становится числом.
+CLOCK_SKEW_WARN_SECONDS = 30
+
 
 class DeviceListUnavailable(BrowserError):
     """Панель фильтра открылась, но список устройств не прочитан."""
@@ -215,8 +225,47 @@ class DeviceSweepCollector(FlightCollector):
     def __init__(self, cfg, logger=None):
         FlightCollector.__init__(self, cfg, logger=logger)
         self._panel_dumped = False
+        self._clock_checked = False
 
     # -- панель фильтра -------------------------------------------------------
+
+    def _on_response(self, response):
+        """Тот же слушатель, плюс однократный замер расхождения часов.
+
+        [REASON]: обёрнуто в try/except целиком и ДО вызова родителя не делает
+        ничего, что могло бы бросить: исключение в слушателе Playwright
+        всплывает в его цикле событий и обрывает навигацию -- об этом
+        предупреждает докстринг родителя.
+        """
+        if not self._clock_checked:
+            self._clock_checked = True
+            try:
+                served = response.headers.get('date')
+            except Exception:
+                served = None
+            if served:
+                try:
+                    self.report_clock_skew(served)
+                except Exception as exc:  # pragma: no cover -- диагностика
+                    self.log.info('Could not read the server clock (%s)', exc)
+        FlightCollector._on_response(self, response)
+
+    def report_clock_skew(self, served_date_header):
+        """Насколько часы этой машины расходятся с часами DJI."""
+        skew = clock_skew_seconds(served_date_header,
+                                  datetime.datetime.now(datetime.timezone.utc))
+        if skew is None:
+            return None
+        if abs(skew) > CLOCK_SKEW_WARN_SECONDS:
+            self.log.error('CLOCK SKEW: this machine is %.0f s %s than DJI '
+                           '(their Date header: %s). DJI answers `code-408` -- '
+                           '"bad timestamp" -- to every request signed with a '
+                           'clock this far off. Fix the clock first: '
+                           'w32tm /resync /force', abs(skew),
+                           'ahead' if skew > 0 else 'behind', served_date_header)
+        else:
+            self.log.info('Clock agrees with DJI within %.0f s', abs(skew))
+        return skew
 
     def _panel(self):
         return self._page.locator(SELECTOR_FILTER_PANEL).first
@@ -617,6 +666,25 @@ def build_summary(out_dir, log):
     log.info('%s holds %d flight(s) over %d device(s)', path, total,
              len(summary['devices']))
     return path, summary
+
+
+def clock_skew_seconds(date_header, now_utc):
+    """Секунды, на которые наши часы впереди часов сервера. None -- не разобрано.
+
+    Заголовок Date -- обычный HTTP-формат ("Thu, 14 Aug 2026 06:00:00 GMT").
+    Положительный результат значит: наша машина ВПЕРЕДИ.
+    """
+    if not date_header:
+        return None
+    try:
+        served = email.utils.parsedate_to_datetime(date_header)
+    except (TypeError, ValueError):
+        return None
+    if served is None:
+        return None
+    if served.tzinfo is None:
+        served = served.replace(tzinfo=datetime.timezone.utc)
+    return (now_utc - served).total_seconds()
 
 
 def control_bounds(captured, log):

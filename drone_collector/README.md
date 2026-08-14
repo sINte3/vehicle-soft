@@ -301,9 +301,25 @@ devices, then a `code-408` on the very first request of the page — before any
 of this module's code ran. Losing a whole run to that is not acceptable, so
 nothing is held in memory to the end any more.
 
-**When the cabinet refuses everything, wait.** A `code-408` on the first
-request is DJI throttling the account, not a broken selector. Give it half an
-hour and re-run; the sweep resumes where it stopped.
+**When the cabinet refuses everything, check the clock first.** `code-408` is
+DJI's own word for **bad timestamp** — the request is signed with the
+machine's clock, so a clock that has drifted far enough gets every request
+rejected, no matter the selectors, the session or how long you wait. The sweep
+now measures it: on the first response it compares DJI's `Date` header against
+the local clock and prints either `Clock agrees with DJI within N s` or a
+`CLOCK SKEW` error naming the offset. Fix it with `w32tm /resync /force` and
+re-run.
+
+Same check by hand, without running anything:
+
+```powershell
+Get-Date -Format r
+(Invoke-WebRequest -Uri https://www.djiag.com/ -UseBasicParsing -Method Head).Headers['Date']
+```
+
+If those two differ by more than about half a minute, that is the whole
+problem. If they agree and 408 still comes back, then it is throttling or the
+session — wait half an hour, or re-run `--save-session`.
 
 **If a device still will not finish**, sweep it alone —
 `--device "3 Gijduvon"` — and repeat for the rest. Each machine is a short
