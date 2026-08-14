@@ -66,8 +66,11 @@ JUMP_MARGIN_KMH = 40.0
 
 # Reporting defaults, not business rules.
 WARN_SATS = 12.0
-WARN_INTERVAL_S = 4.0
-WARN_JUMPS = 5
+WARN_JUMPS = 3
+# [REASON]: a machine that barely moved says nothing about its tracker. On the
+# fleet run of 13.08 only 193 of 481 objects produced 200 points or more; the
+# rest were parked, and flagging them buried the real list.
+MIN_POINTS_TO_JUDGE = 200
 
 EARTH = 6378137.0
 
@@ -152,6 +155,10 @@ def examine(points):
 
 
 def verdict(row):
+    # See reasons_for() in wialon_probe6_fleet_health.py for why dense logging
+    # is not a fault on its own.
+    if row["points"] < MIN_POINTS_TO_JUDGE:
+        return "too little data to judge"
     reasons = []
     if 0 <= row["sats_median"] < WARN_SATS:
         reasons.append("few satellites")

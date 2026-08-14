@@ -55,8 +55,11 @@ OUT = os.getcwd()
 MIN_JUMP_SECONDS = 5.0
 JUMP_MARGIN_KMH = 40.0
 WARN_SATS = 12.0
-WARN_INTERVAL_S = 4.0
-WARN_JUMPS = 5
+WARN_JUMPS = 3
+# [REASON]: a machine that barely moved says nothing about its tracker. On the
+# fleet run of 13.08 only 193 of 481 objects produced 200 points or more; the
+# rest were parked, and flagging them buried the real list.
+MIN_POINTS_TO_JUDGE = 200
 EARTH = 6378137.0
 
 ERRORS = {1: "invalid session", 2: "invalid service", 4: "invalid input",
@@ -142,11 +145,15 @@ def examine(points):
 
 
 def reasons_for(row):
+    # [REASON]: dense logging alone is NOT a fault. On the fleet run 46 objects
+    # wrote a point every 1-3 s with 13-20 satellites -- those are the cars,
+    # configured differently on purpose. It only matters when the points are
+    # also imprecise, and then "few satellites" already says so.
+    if row["points"] < MIN_POINTS_TO_JUDGE:
+        return "malo dannyh za den"
     reasons = []
     if 0 <= row["sats_median"] < WARN_SATS:
         reasons.append("malo sputnikov")
-    if 0 < row["interval_s"] < WARN_INTERVAL_S:
-        reasons.append("slishkom chastaya zapis")
     if row["jumps"] >= WARN_JUMPS:
         reasons.append("pryzhki koordinat")
     if row["motion_gaps"]:
