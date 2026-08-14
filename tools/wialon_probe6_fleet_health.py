@@ -55,7 +55,11 @@ from datetime import datetime, timedelta, timezone
 
 BASE_URL = "https://web.gpstrack.uz"
 AJAX = BASE_URL.rstrip("/") + "/wialon/ajax.html"
-TIMEOUT = 300
+# [REASON]: 60 s, not 300. A heavy object -- a car logging every second --
+# can make load_interval hang, and at a five-minute timeout three such objects
+# freeze the run for a quarter of an hour with nothing on screen. Better to
+# lose one object than the run.
+TIMEOUT = 60
 TZ = timezone(timedelta(hours=5))
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.getcwd()
@@ -68,6 +72,11 @@ WARN_JUMPS = 3
 # fleet run of 13.08 only 193 of 481 objects produced 200 points or more; the
 # rest were parked, and flagging them buried the real list.
 MIN_POINTS_TO_JUDGE = 200
+# [REASON]: the indicators are medians and counts -- they do not need every
+# message of the day. Cars logging every second produce tens of thousands of
+# points per day, and asking for all of them is what made the first fleet run
+# crawl. Twenty thousand is far more than any tractor writes in a day.
+MAX_MESSAGES_PER_DAY = 20000
 EARTH = 6378137.0
 
 ERRORS = {1: "invalid session", 2: "invalid service", 4: "invalid input",
@@ -238,8 +247,9 @@ def main():
         # [REASON]: aggregates only. Points of one machine-day are examined and
         # dropped before the next day is fetched, so a fleet-wide run over a
         # whole summer never holds more than one day of one machine in memory.
-        worked_days, total_points = 0, 0
+        worked_days, total_points, failed_days = 0, 0, 0
         intervals, sats, jumps, gaps = [], [], 0, 0
+        print("  [%d/%d] %s" % (number, len(units), name[:40]), flush=True)
         for day in sample_days:
             start = int(day.timestamp())
             finish = int((day + timedelta(days=1)).timestamp())
@@ -247,7 +257,7 @@ def main():
                 answer = call("messages/load_interval",
                               {"itemId": unit_id, "timeFrom": start,
                                "timeTo": finish, "flags": 0, "flagsMask": 0,
-                               "loadCount": 0xFFFFFFFF}, sid)
+                               "loadCount": MAX_MESSAGES_PER_DAY}, sid)
                 if err(answer) is None:
                     points = []
                     for message in (answer.get("messages") or []):
@@ -270,8 +280,14 @@ def main():
                         gaps += day_row["motion_gaps"]
                     del points
                 call("messages/unload", {}, sid)
-                time.sleep(0.15)
+                time.sleep(0.1)
             except Exception:                                  # noqa: BLE001
+                # a timeout on one day must not cost the object or the run
+                failed_days += 1
+                try:
+                    call("messages/unload", {}, sid)
+                except Exception:                              # noqa: BLE001
+                    pass
                 continue
         row = {"unit_id": unit_id, "name": name, "worked_days": worked_days,
                "sampled_days": len(sample_days), "points": total_points,
@@ -281,9 +297,10 @@ def main():
         # that never worked in the period is reported as such, not as faulty.
         row["reasons"] = ("ne rabotal v period" if worked_days == 0
                           else reasons_for_period(row))
+        if failed_days:
+            row["reasons"] = ((row["reasons"] + "; ") if row["reasons"] else "") \
+                + "dney ne zagruzilos: %d" % failed_days
         rows.append(row)
-        if number % 20 == 0:
-            print("...%d of %d objects" % (number, len(units)))
 
     # sick first, then by satellites: the worst antenna at the top; machines
     # that never worked go last -- they are a question, not a fault
