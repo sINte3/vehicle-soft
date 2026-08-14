@@ -177,13 +177,26 @@ class WhatIsWritten(LoaderCase):
         by_number = {r[1]: (r[3], r[4]) for r in self.written}
         # Машина 10 летала 07..22 сентября -- ни днём раньше, ни позже.
         self.assertEqual(by_number[10], ('2025-09-07', '2025-09-22'))
-        # Ни одна строка не начинается 01.09 и не кончается 30.09 «по месяцу»:
-        # 30.09 встречается только там, где машина в этот день летала.
+        # Ни одна строка не начинается 01.09 «по месяцу»: 30.09 встречается
+        # только там, где машина в этот день летала.
         self.assertNotIn('2025-09-01', [f for f, _t in by_number.values()])
         for number, (date_from, date_to) in by_number.items():
-            self.assertLessEqual(date_from, date_to, 'машина %d' % number)
+            self.assertLess(date_from, date_to, 'машина %d' % number)
             self.assertTrue('2025-09-01' <= date_from <= '2025-09-30')
-            self.assertTrue('2025-09-01' <= date_to <= '2025-09-30')
+
+    def test_only_the_one_owner_stated_end_date_leaves_september(self):
+        """31.10.2025 у машины 14 -- слова владельца, и они помечены.
+
+        Отрицательный контроль: у всех остальных дата ухода лежит внутри
+        сентября, то есть хвост не растянут «заодно».
+        """
+        by_number = {r[1]: (r[3], r[4], r[5]) for r in self.written}
+        self.assertEqual(by_number[14][1], '2025-10-31')
+        self.assertIn('со слов владельца', by_number[14][2])
+        for number, (_f, date_to, _note) in by_number.items():
+            if number == 14:
+                continue
+            self.assertLessEqual(date_to, '2025-09-30', 'машина %d' % number)
 
 
 class Guards(LoaderCase):
@@ -206,11 +219,73 @@ class Guards(LoaderCase):
         self.assertEqual(names[5], 'Қобилов Фаррух')
         self.assertEqual(names[13], 'Имомов Беҳзод')
 
-    def test_unknown_operator_refuses_and_writes_nothing(self):
-        build_db(self.db, drop_operator='Жумаев Фуркат')
+    def test_absent_operator_postpones_one_row_and_loads_the_rest(self):
+        """Живой прогон 2026-08-14: одно имя не нашлось, и встало ВСЁ.
+
+        Отрицательный контроль: без пропавшего имени грузятся все 14 строк,
+        значит 13 -- это именно «одна отложена», а не общий отказ.
+        """
+        build_db(self.db, drop_operator='Файзиев Шоди')
+        result = run(self.db, '--report', self.report, '--apply')
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        written = rows(self.db)
+        self.assertEqual(len(written), len(loader.ASSIGNMENTS) - 1)
+        self.assertEqual(len(written), 13)
+        self.assertNotIn(14, [r[1] for r in written])
+
+        with open(self.report, encoding='utf-8') as fh:
+            report = fh.read()
+        self.assertIn('ОПЕРАТОР НЕ НАЙДЕН', report)
+        self.assertIn('Файзиев Шоди', report)
+        # Отчёт обязан показать справочник -- иначе владельцу нечем ответить.
+        self.assertIn('СПРАВОЧНИК ОПЕРАТОРОВ ЦЕЛИКОМ', report)
+        self.assertIn('Қодиров Нурали', report)
+
+    def test_after_the_person_is_added_the_second_run_finishes_september(self):
+        build_db(self.db, drop_operator='Файзиев Шоди')
+        run(self.db, '--report', self.report, '--apply')
+        conn = sqlite3.connect(self.db)
+        conn.execute('INSERT INTO drone_operators (full_name) VALUES (?)',
+                     ('Файзиев Шоди',))
+        conn.commit()
+        conn.close()
+
+        result = run(self.db, '--report', self.report, '--apply')
+        self.assertEqual(result.returncode, 0)
+        written = rows(self.db)
+        self.assertEqual(len(written), len(loader.ASSIGNMENTS))
+        # Ранее загруженные не задвоились.
+        self.assertEqual(len(set(r[1] for r in written)), len(written))
+
+    def test_two_people_under_one_name_refuse_everything(self):
+        """Двусмысленность -- другой случай: это сомнение в самой базе."""
+        build_db(self.db)
+        conn = sqlite3.connect(self.db)
+        conn.execute('INSERT INTO drone_operators (full_name) VALUES (?)',
+                     ('Файзиев  Шоди',))
+        conn.commit()
+        conn.close()
         result = run(self.db, '--report', self.report, '--apply')
         self.assertEqual(result.returncode, 1)
         self.assertEqual(rows(self.db), [], 'откат неполный')
+
+    def test_suggestions_name_the_neighbours_not_the_whole_book(self):
+        build_db(self.db)
+        by_norm = {}
+        conn = sqlite3.connect(self.db)
+        for oid, name in conn.execute(
+                'SELECT id, full_name FROM drone_operators'):
+            by_norm.setdefault(loader.normalize(name), []).append((oid, name))
+        conn.close()
+        hints = loader.suggest(by_norm, 'Файзиев Шоди')
+        # Однофамильцев нет, но тёзка по имени есть только один -- сам Шоди.
+        self.assertIn('Файзиев Шоди', hints)
+        # Отрицательный контроль: подсказка не вываливает весь справочник.
+        self.assertLess(len(hints), len(STORED_NAMES))
+        # И находит по одному совпавшему слову: Шохрух -- двое разных.
+        self.assertEqual(
+            sorted(loader.suggest(by_norm, 'Неизвестнов Шохрух')),
+            ['Файзуллаев Шохрух', 'Хамроев Шохрух'])
 
     def test_missing_database_exits_two_and_creates_nothing(self):
         missing = os.path.join(self.tmp.name, 'no', 'transport.db')

@@ -36,6 +36,16 @@ note: «[TELEMETRY] ...» / «[OWNER] ...». Префикс машинно от�
 не пишется ничего. --apply пишет ОДНОЙ транзакцией и откатывает всё при любой
 ошибке. Повторный --apply обязан напечатать «0 rows to insert».
 
+КОДЫ ВОЗВРАТА:
+  0 -- загружено всё, что было к загрузке;
+  1 -- предусловие не выполнено, не записано НИЧЕГО (нет машины в парке;
+       имя, под которым в справочнике ДВОЕ);
+  2 -- файла базы нет, база не создавалась;
+  3 -- загружено, но не всё: чьё-то имя отсутствует в справочнике
+       операторов. Отчёт называет кого, показывает похожие имена и печатает
+       справочник целиком. Заведите человека и запустите ещё раз -- уже
+       загруженные строки скрипт не тронет.
+
 Запуск (сервер, из каталога установки, служба может работать -- read-only):
   & "C:\\Program Files\\Python314\\python.exe" load_drone_assignments_sept2025.py --db instance\\transport.db
 Запись (служба ОСТАНОВЛЕНА):
@@ -96,8 +106,11 @@ ASSIGNMENTS = (
     (13, 'Имомов Бехзод', '2025-09-17', '2025-09-30', TELEMETRY,
      'ник "PeshBekzod"; книга Сервис 406.63 га против 273.20 га машины -- '
      'ник называет человека прямо, расхождение гектаров остаётся вопросом'),
-    (14, 'Файзиев Шоди', '2025-09-17', '2025-09-30', TELEMETRY,
-     'ник "PeshkShodi"; книга Сервис 174.50 га против 168.80 га машины, 3.4 %'),
+    (14, 'Файзиев Шоди', '2025-09-17', '2025-10-31', TELEMETRY,
+     'ник "PeshkShodi"; книга Сервис 174.50 га против 168.80 га машины, 3.4 %. '
+     'Дата ухода 31.10.2025 -- со слов владельца (2026-08-14, исправление '
+     'его же опечатки "31.10.2026"); машина после 30.09 не летала, поэтому '
+     'на гектары растянутый хвост не влияет'),
     (15, 'Жумаев Фуркат', '2025-09-06', '2025-09-30', TELEMETRY,
      'книга Сервис 423.70 га против 451.85 га машины, 6.2 %'),
 )
@@ -151,6 +164,21 @@ def resolve_units(conn):
     return {number: uid for uid, number in rows}
 
 
+def suggest(by_norm, wanted):
+    """Кого из справочника стоит показать рядом с ненайденным именем.
+
+    [REASON]: «оператора нет» -- бесполезный ответ, когда в справочнике он
+    записан иначе. Показываем всех, у кого совпало хотя бы одно слово, и
+    решение принимает человек, а не подстрочное сравнение.
+    """
+    parts = set(normalize(wanted).split())
+    out = []
+    for norm, rows in by_norm.items():
+        if parts & set(norm.split()):
+            out.extend(name for _oid, name in rows)
+    return sorted(set(out))
+
+
 def existing_overlaps(conn, unit_id):
     """Назначения этой машины, пересекающие сентябрь 2025."""
     return conn.execute(
@@ -162,20 +190,33 @@ def existing_overlaps(conn, unit_id):
 
 
 def plan(conn):
-    """Что вставить, что пропустить и почему. Ничего не пишет."""
+    """Что вставить, что пропустить и почему. Ничего не пишет.
+
+    [REASON]: НЕНАЙДЕННЫЙ ОПЕРАТОР -- НЕ ПОВОД ОТКАЗАТЬ ВСЕМ ОСТАЛЬНЫМ.
+    Первый живой прогон 2026-08-14 упёрся в одно имя, которого нет в
+    справочнике, и не записал ни одной из тринадцати верных строк. Каждое
+    назначение -- самостоятельный факт: соседнее ни подтверждает его, ни
+    отменяет. Поэтому такая строка откладывается ИМЕНОВАННО, остальные
+    грузятся, а код возврата 3 говорит, что загружено не всё. Отказом (код 1)
+    остаётся только то, что ставит под сомнение саму базу: отсутствующая
+    машина или имя, под которым в справочнике ДВОЕ.
+    """
     by_norm = resolve_operators(conn)
     units = resolve_units(conn)
-    to_insert, skipped, problems = [], [], []
+    to_insert, skipped, unresolved, problems = [], [], [], []
 
     for number, operator, date_from, date_to, source, why in ASSIGNMENTS:
         if number not in units:
             problems.append('unit %d is absent from drone_units' % number)
             continue
         found = by_norm.get(normalize(operator), [])
-        if len(found) != 1:
+        if len(found) > 1:
             problems.append(
-                'operator %r resolves to %d rows in drone_operators'
-                % (operator, len(found)))
+                'operator %r resolves to %d rows in drone_operators - '
+                'ambiguous, refusing' % (operator, len(found)))
+            continue
+        if not found:
+            unresolved.append((number, operator, suggest(by_norm, operator)))
             continue
         operator_id, stored_name = found[0]
         overlaps = existing_overlaps(conn, units[number])
@@ -184,10 +225,11 @@ def plan(conn):
             continue
         to_insert.append((units[number], operator_id, number, stored_name,
                           date_from, date_to, source, why))
-    return to_insert, skipped, problems
+    return to_insert, skipped, unresolved, problems
 
 
-def write_report(path, to_insert, skipped, problems, inserted_ids):
+def write_report(path, to_insert, skipped, unresolved, problems, inserted_ids,
+                 directory=None):
     with open(path, 'w', encoding='utf-8') as fh:
         fh.write('DRONE-FLEET-ASSIGN-001, сентябрь 2025\n')
         fh.write('=' * 72 + '\n\n')
@@ -195,6 +237,25 @@ def write_report(path, to_insert, skipped, problems, inserted_ids):
             fh.write('ПРОБЛЕМЫ (ничего не записано):\n')
             for p in problems:
                 fh.write('  - %s\n' % p)
+            fh.write('\n')
+        if unresolved:
+            fh.write('ОПЕРАТОР НЕ НАЙДЕН В СПРАВОЧНИКЕ -- строка отложена, '
+                     'остальные загружены:\n')
+            for number, operator, hints in unresolved:
+                fh.write('  машина %-3d ищем «%s»\n' % (number, operator))
+                if hints:
+                    fh.write('      похожие в справочнике: %s\n'
+                             % '; '.join(hints))
+                else:
+                    fh.write('      похожих в справочнике нет вовсе\n')
+            fh.write('  Что делать: завести человека в справочнике операторов '
+                     'под тем именем, под которым он там нужен, и запустить '
+                     'скрипт ещё раз -- уже загруженные строки он не тронет.\n')
+            if directory:
+                fh.write('\n  СПРАВОЧНИК ОПЕРАТОРОВ ЦЕЛИКОМ (%d):\n'
+                         % len(directory))
+                for name in directory:
+                    fh.write('      %s\n' % name)
             fh.write('\n')
         fh.write('К ВСТАВКЕ: %d\n' % len(to_insert))
         for i, item in enumerate(to_insert):
@@ -229,7 +290,7 @@ def main():
 
     conn = connect(args.db, writable=args.apply)
     try:
-        to_insert, skipped, problems = plan(conn)
+        to_insert, skipped, unresolved, problems = plan(conn)
         if problems:
             for p in problems:
                 print('  problem: %s' % p)
@@ -239,6 +300,13 @@ def main():
         print('Skipped (assignment already covers September): %d' % len(skipped))
         for number, _operator, _overlaps in skipped:
             print('  unit %d already has an overlapping assignment' % number)
+        if unresolved:
+            print('Operators absent from drone_operators: %d '
+                  '(these rows are POSTPONED, the rest still load)'
+                  % len(unresolved))
+            for number, _operator, hints in unresolved:
+                print('  unit %d: not found; %d similar name(s) in the '
+                      'directory - see the report' % (number, len(hints)))
 
         inserted_ids = []
         if args.apply and to_insert:
@@ -268,10 +336,16 @@ def main():
                 conn.rollback()
                 die('insert failed and was rolled back: %s' % exc, 1)
 
+        directory = None
+        if unresolved:
+            directory = sorted(
+                name for (name,) in conn.execute(
+                    'SELECT full_name FROM drone_operators'))
         report = args.report or os.path.join(
             os.path.dirname(os.path.abspath(args.db)) or '.',
             'drone_assignments_sept2025_report.txt')
-        write_report(report, to_insert, skipped, problems, inserted_ids)
+        write_report(report, to_insert, skipped, unresolved, problems,
+                     inserted_ids, directory)
         print('Report written to %s' % report)
         if not args.apply:
             print('DRY RUN - nothing was written. Re-run with --apply.')
@@ -279,6 +353,12 @@ def main():
             print('Done. %d assignment(s) inserted.' % len(inserted_ids))
     finally:
         conn.close()
+
+    # [REASON]: код 3 -- «загружено, но не всё». Ноль сказал бы, что сентябрь
+    # закрыт, а он закрыт не полностью, и это должно быть видно без чтения
+    # отчёта.
+    if unresolved:
+        sys.exit(3)
 
 
 if __name__ == '__main__':
