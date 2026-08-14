@@ -388,6 +388,19 @@ class QualityMetricTests(unittest.TestCase):
         self.assertEqual(noisy.gps_jumps, 1)
         self.assertAlmostEqual(noisy.jump_share, 1 / 3, places=3)
 
+    def test_two_messages_one_second_apart_are_not_a_jump(self):
+        """A timestamp artefact is not a teleport, and this is what the first
+        version of the check got wrong: on MTZ 572 HA it reported 295
+        impossible transitions where only 2 were real. At 9 km/h a machine
+        covers 2.5 m per second, so a 30 m step recorded "in 1 s" says the
+        timestamps collided, not that the machine flew.
+        """
+        timestamps = [0.0, 1.0, 2.0]
+        speeds = [9.0, 9.0, 9.0]
+        points = [(0.0, 0.0), (30.0, 0.0), (60.0, 0.0)]
+        self.assertEqual(track_quality(timestamps, speeds,
+                                       points_xy=points).gps_jumps, 0)
+
     def test_a_lorry_at_speed_is_not_a_jump(self):
         """90 km/h is impossible for a tractor and normal for a lorry.
 

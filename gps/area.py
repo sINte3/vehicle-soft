@@ -161,10 +161,14 @@ MOTION_GAP_SECONDS = 300.0
 # machine could not have taken: the distance implies a speed far above what
 # the tracker itself reports at both ends. Comparing against the REPORTED
 # speed rather than a fixed limit keeps the test valid for a lorry as well as
-# a tractor. Measured on 2026-08-14: the day the owner called "hell to measure
-# by hand" (MTZ 572 HA, 19.06) shows 2.34 percent of transitions impossible
-# against a median of 0.14 percent over 15 clean machine-days.
+# a tractor.
 GPS_JUMP_MARGIN_KMH = 40.0
+# [REASON]: and the two messages must be far enough apart in time for the
+# distance to be impossible at all. Without this the check counted timestamp
+# artefacts: on MTZ 572 HA (19.06) 295 transitions looked impossible and only
+# 2 were real -- the other 293 were message pairs one second apart, where
+# 30 m is simply the normal step compressed into a bad timestamp.
+GPS_JUMP_MIN_SECONDS = 5.0
 
 _TO_UTM = Transformer.from_crs("EPSG:4326", UTM_41N, always_xy=True)
 
@@ -361,7 +365,8 @@ def track_quality(timestamps, speeds, points_used=0, points_xy=None):
         implied = step / seconds * 3.6
         reported = np.maximum(np.asarray(speeds, dtype=float)[:-1],
                               np.asarray(speeds, dtype=float)[1:])
-        jumps = int(np.count_nonzero(implied > reported + GPS_JUMP_MARGIN_KMH))
+        jumps = int(np.count_nonzero((implied > reported + GPS_JUMP_MARGIN_KMH)
+                                     & (seconds >= GPS_JUMP_MIN_SECONDS)))
     if len(ts) < 2:
         return TrackQuality(points_total=len(ts), points_moving=int(mask.sum()),
                             points_used=points_used, motion_gaps=0,
