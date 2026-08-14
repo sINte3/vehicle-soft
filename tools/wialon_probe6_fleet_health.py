@@ -23,13 +23,21 @@ messages/unload, core/logout. No create / update / delete anywhere.
 
 Token: wialon_token.txt next to the script, or WIALON_TOKEN. Never printed.
 
-Run (PowerShell, one command per line). The date is the day to examine --
-pick an ordinary working day:
+A SINGLE DAY IS NOT ENOUGH, and the first fleet run proved it: on 13.08 some
+241 of 481 objects produced no message at all, because the season was ending
+and the tractors simply stood. A parked machine says nothing about its
+tracker. So the run samples a PERIOD -- by default every 7th day -- and judges
+each machine on the days it actually worked.
+
+Run (PowerShell, one command per line):
 
   cd C:\\diag\\wialon
-  & "C:\\Program Files\\Python314\\python.exe" C:\\transport-report\\tools\\wialon_probe6_fleet_health.py --date 2026-08-13
+  & "C:\\Program Files\\Python314\\python.exe" C:\\transport-report\\tools\\wialon_probe6_fleet_health.py --from 2026-06-01 --to 2026-08-14
 
-Takes roughly a minute per 30 machines: about 15 minutes for the whole fleet.
+That samples 11 days over the summer for every object: roughly an hour, and
+the console counts the days off as it goes. Add --every 14 to halve the time
+at the cost of half the days.
+
 Send back gps_fleet_health.csv -- the sick machines are at the top, and the
 console prints them too.
 """
@@ -144,6 +152,18 @@ def examine(points):
             "sats_median": median(sats), "jumps": jumps, "motion_gaps": gaps}
 
 
+def reasons_for_period(row):
+    """Verdict over the whole period, judged on the days the machine worked."""
+    reasons = []
+    if 0 <= row["sats_median"] < WARN_SATS:
+        reasons.append("malo sputnikov")
+    if row["jumps"] >= WARN_JUMPS * row["worked_days"]:
+        reasons.append("pryzhki koordinat")
+    if row["motion_gaps"] >= 2 * row["worked_days"]:
+        reasons.append("chasto molchit na hodu")
+    return "; ".join(reasons)
+
+
 def reasons_for(row):
     # [REASON]: dense logging alone is NOT a fault. On the fleet run 46 objects
     # wrote a point every 1-3 s with 13-20 satellites -- those are the cars,
@@ -163,16 +183,30 @@ def reasons_for(row):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
-    parser.add_argument("--date", required=True, help="day to examine, YYYY-MM-DD")
+    parser.add_argument("--from", dest="date_from", required=True,
+                        help="first day of the period, YYYY-MM-DD")
+    parser.add_argument("--to", dest="date_to", required=True,
+                        help="last day of the period, YYYY-MM-DD")
+    parser.add_argument("--every", type=int, default=7,
+                        help="sample every Nth day (default 7)")
     parser.add_argument("--out", default="gps_fleet_health.csv")
     args = parser.parse_args()
 
     token = read_token()
-    day = datetime.strptime(args.date, "%Y-%m-%d").replace(tzinfo=TZ)
-    start, finish = int(day.timestamp()), int((day + timedelta(days=1)).timestamp())
+    first = datetime.strptime(args.date_from, "%Y-%m-%d").replace(tzinfo=TZ)
+    last = datetime.strptime(args.date_to, "%Y-%m-%d").replace(tzinfo=TZ)
+    if last < first:
+        sys.stderr.write("ERROR: --to is earlier than --from\n")
+        return 2
+    sample_days = []
+    cursor = first
+    while cursor <= last:
+        sample_days.append(cursor)
+        cursor += timedelta(days=max(1, args.every))
 
     say("Wialon probe 6 -- read-only -- fleet tracker health")
-    say("date examined: %s (local day, UTC+5)" % args.date)
+    say("period: %s .. %s, every %d-th day -- %d days sampled"
+        % (args.date_from, args.date_to, args.every, len(sample_days)))
     say("run at: %s" % datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %z"))
 
     login = call("token/login", {"token": token})
@@ -201,78 +235,93 @@ def main():
 
     rows = []
     for number, (unit_id, name) in enumerate(units, 1):
-        try:
-            answer = call("messages/load_interval",
-                          {"itemId": unit_id, "timeFrom": start,
-                           "timeTo": finish, "flags": 0, "flagsMask": 0,
-                           "loadCount": 0xFFFFFFFF}, sid)
-            problem = err(answer)
-            if problem:
-                rows.append({"unit_id": unit_id, "name": name, "points": 0,
-                             "interval_s": -1.0, "sats_median": -1.0,
-                             "jumps": 0, "motion_gaps": 0,
-                             "reasons": "net dannyh: %s" % problem})
+        # [REASON]: aggregates only. Points of one machine-day are examined and
+        # dropped before the next day is fetched, so a fleet-wide run over a
+        # whole summer never holds more than one day of one machine in memory.
+        worked_days, total_points = 0, 0
+        intervals, sats, jumps, gaps = [], [], 0, 0
+        for day in sample_days:
+            start = int(day.timestamp())
+            finish = int((day + timedelta(days=1)).timestamp())
+            try:
+                answer = call("messages/load_interval",
+                              {"itemId": unit_id, "timeFrom": start,
+                               "timeTo": finish, "flags": 0, "flagsMask": 0,
+                               "loadCount": 0xFFFFFFFF}, sid)
+                if err(answer) is None:
+                    points = []
+                    for message in (answer.get("messages") or []):
+                        position = message.get("pos") or {}
+                        if position.get("x") is None or position.get("y") is None:
+                            continue
+                        points.append((message.get("t"), position.get("x"),
+                                       position.get("y"), position.get("s") or 0,
+                                       position.get("sc")
+                                       if position.get("sc") is not None else -1))
+                    points.sort()
+                    if len(points) >= MIN_POINTS_TO_JUDGE:
+                        worked_days += 1
+                        total_points += len(points)
+                        day_row = examine(points)
+                        intervals.append(day_row["interval_s"])
+                        if day_row["sats_median"] >= 0:
+                            sats.append(day_row["sats_median"])
+                        jumps += day_row["jumps"]
+                        gaps += day_row["motion_gaps"]
+                    del points
                 call("messages/unload", {}, sid)
-                time.sleep(0.3)
+                time.sleep(0.15)
+            except Exception:                                  # noqa: BLE001
                 continue
-            points = []
-            for message in (answer.get("messages") or []):
-                position = message.get("pos") or {}
-                if position.get("x") is None or position.get("y") is None:
-                    continue
-                points.append((message.get("t"), position.get("x"),
-                               position.get("y"), position.get("s") or 0,
-                               position.get("sc")
-                               if position.get("sc") is not None else -1))
-            call("messages/unload", {}, sid)
-            points.sort()
-            if len(points) < 2:
-                rows.append({"unit_id": unit_id, "name": name,
-                             "points": len(points), "interval_s": -1.0,
-                             "sats_median": -1.0, "jumps": 0, "motion_gaps": 0,
-                             "reasons": "net dannyh za den"})
-            else:
-                row = examine(points)
-                row.update(unit_id=unit_id, name=name)
-                row["reasons"] = reasons_for(row)
-                rows.append(row)
-            del points
-            if number % 25 == 0:
-                print("...%d of %d" % (number, len(units)))
-            time.sleep(0.3)
-        except Exception as exc:                               # noqa: BLE001
-            rows.append({"unit_id": unit_id, "name": name, "points": 0,
-                         "interval_s": -1.0, "sats_median": -1.0, "jumps": 0,
-                         "motion_gaps": 0,
-                         "reasons": "sboy: %s" % type(exc).__name__})
+        row = {"unit_id": unit_id, "name": name, "worked_days": worked_days,
+               "sampled_days": len(sample_days), "points": total_points,
+               "interval_s": median(intervals), "sats_median": median(sats),
+               "jumps": jumps, "motion_gaps": gaps}
+        # [REASON]: judged on the days it worked, not on the calendar. A machine
+        # that never worked in the period is reported as such, not as faulty.
+        row["reasons"] = ("ne rabotal v period" if worked_days == 0
+                          else reasons_for_period(row))
+        rows.append(row)
+        if number % 20 == 0:
+            print("...%d of %d objects" % (number, len(units)))
 
-    # sick first, then by satellites: the worst antenna at the top
-    rows.sort(key=lambda r: (not r["reasons"], r["sats_median"]))
+    # sick first, then by satellites: the worst antenna at the top; machines
+    # that never worked go last -- they are a question, not a fault
+    rows.sort(key=lambda r: (r["worked_days"] == 0,
+                             not r["reasons"], r["sats_median"]))
     path = os.path.join(OUT, args.out)
     with open(path, "w", encoding="utf-8-sig", newline="") as fh:
         writer = csv.writer(fh, delimiter=";")
-        writer.writerow(["wialon_id", "mashina", "tochek", "interval_sek",
+        writer.writerow(["wialon_id", "mashina", "rabochih_dney",
+                         "dney_v_vyborke", "tochek", "interval_sek",
                          "sputnikov", "pryzhkov", "molchaniy_na_hodu",
                          "chto_ne_tak"])
         for r in rows:
-            writer.writerow([r["unit_id"], r["name"], r["points"],
+            writer.writerow([r["unit_id"], r["name"], r["worked_days"],
+                             r["sampled_days"], r["points"],
                              "%.1f" % r["interval_s"], "%.1f" % r["sats_median"],
                              r["jumps"], r["motion_gaps"], r["reasons"]])
 
-    flagged = [r for r in rows if r["reasons"] and "net dannyh" not in r["reasons"]]
-    say("machines examined: %d, flagged: %d" % (len(rows), len(flagged)))
+    worked = [r for r in rows if r["worked_days"] > 0]
+    idle = [r for r in rows if r["worked_days"] == 0]
+    flagged = [r for r in worked if r["reasons"]]
+    say("objects: %d | worked at least one sampled day: %d | never: %d"
+        % (len(rows), len(worked), len(idle)))
+    say("of those that worked, flagged: %d" % len(flagged))
     say("")
     say("worst first:")
-    for r in flagged[:40]:
-        say("  id=%-6s sats=%4.1f interval=%5.1fs jumps=%3d gaps=%2d  %s"
-            % (r["unit_id"], r["sats_median"], r["interval_s"], r["jumps"],
+    for r in flagged[:60]:
+        say("  id=%-6s days=%2d/%2d sats=%4.1f interval=%5.1fs jumps=%3d "
+            "gaps=%3d  %s"
+            % (r["unit_id"], r["worked_days"], r["sampled_days"],
+               r["sats_median"], r["interval_s"], r["jumps"],
                r["motion_gaps"], r["reasons"]))
     call("core/logout", {}, sid)
     say("")
     say("logout done")
     write_log()
-    print("done. flagged %d of %d machines. see %s"
-          % (len(flagged), len(rows), args.out))
+    print("done. %d objects worked, %d of them flagged, %d never moved. see %s"
+          % (len(worked), len(flagged), len(idle), args.out))
     return 0
 
 
