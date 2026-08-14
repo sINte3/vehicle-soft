@@ -104,19 +104,38 @@ def read_token():
     sys.exit(2)
 
 
+# [REASON]: a run over the whole fleet makes thousands of requests over an
+# hour, and a single dropped connection used to kill it -- the owner lost a
+# forty-minute run to one WinError 10060 on the very first call. The network
+# to an integrator's server across the public internet is not reliable enough
+# to assume; every call now survives three failures before giving up.
+RETRIES = 3
+RETRY_PAUSE_S = (3, 8, 20)
+
+
 def call(svc, params, sid=None):
     query = {"svc": svc, "params": json.dumps(params, ensure_ascii=False)}
     if sid:
         query["sid"] = sid
-    request = urllib.request.Request(
-        AJAX, data=urllib.parse.urlencode(query).encode("utf-8"),
-        headers={"Content-Type": "application/x-www-form-urlencoded"})
-    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-        raw = response.read().decode("utf-8", "replace")
-    try:
-        return json.loads(raw)
-    except ValueError:
-        return {"_unparsed": raw[:500]}
+    last = None
+    for attempt in range(RETRIES):
+        try:
+            request = urllib.request.Request(
+                AJAX, data=urllib.parse.urlencode(query).encode("utf-8"),
+                headers={"Content-Type": "application/x-www-form-urlencoded"})
+            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+                raw = response.read().decode("utf-8", "replace")
+            try:
+                return json.loads(raw)
+            except ValueError:
+                return {"_unparsed": raw[:500]}
+        except Exception as exc:                               # noqa: BLE001
+            last = exc
+            if attempt + 1 < RETRIES:
+                print("    svyaz propala (%s), povtor cherez %d s"
+                      % (type(exc).__name__, RETRY_PAUSE_S[attempt]), flush=True)
+                time.sleep(RETRY_PAUSE_S[attempt])
+    raise last
 
 
 def err(result):
@@ -218,7 +237,17 @@ def main():
         % (args.date_from, args.date_to, args.every, len(sample_days)))
     say("run at: %s" % datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %z"))
 
-    login = call("token/login", {"token": token})
+    try:
+        login = call("token/login", {"token": token})
+    except Exception as exc:                                   # noqa: BLE001
+        sys.stderr.write(
+            "\nERROR: ne udalos soedinitsya s %s (%s).\n"
+            "Proverte: otkryvaetsya li sayt v brauzere, i vypolnite v "
+            "PowerShell odnu stroku:\n"
+            "  Test-NetConnection web.gpstrack.uz -Port 443\n"
+            "Esli TcpTestSucceeded: False -- eto set, ne skript. "
+            "Podozhdite 10-15 minut i povtorite.\n" % (BASE_URL, type(exc).__name__))
+        return 3
     problem = err(login)
     if problem:
         say("login failed: %s" % problem)
