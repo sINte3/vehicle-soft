@@ -49,7 +49,7 @@ note: «[TELEMETRY] ...» / «[OWNER] ...». Префикс машинно от�
 Запуск (сервер, из каталога установки, служба может работать -- read-only):
   & "C:\\Program Files\\Python314\\python.exe" load_drone_assignments_sept2025.py --db instance\\transport.db
 Запись (служба ОСТАНОВЛЕНА):
-  & "C:\\Program Files\\Python314\\python.exe" load_drone_assignments_sept2025.py --db instance\\transport.db --apply
+  & "C:\\Program Files\\Python314\\python.exe" load_drone_assignments_sept2025.py --db instance\\transport.db --apply --create-missing-operators
 
 ОТКАТ ДАННЫХ. Отчёт (UTF-8, --report, по умолчанию рядом с базой) печатает id
 каждой вставленной строки. Вставка -- единственное изменение, поэтому откат
@@ -106,7 +106,7 @@ ASSIGNMENTS = (
     (13, 'Имомов Бехзод', '2025-09-17', '2025-09-30', TELEMETRY,
      'ник "PeshBekzod"; книга Сервис 406.63 га против 273.20 га машины -- '
      'ник называет человека прямо, расхождение гектаров остаётся вопросом'),
-    (14, 'Файзиев Шоди', '2025-09-17', '2025-10-31', TELEMETRY,
+    (14, 'Файзуллаев Шоди', '2025-09-17', '2025-10-31', TELEMETRY,
      'ник "PeshkShodi"; книга Сервис 174.50 га против 168.80 га машины, 3.4 %. '
      'Дата ухода 31.10.2025 -- со слов владельца (2026-08-14, исправление '
      'его же опечатки "31.10.2026"); машина после 30.09 не летала, поэтому '
@@ -117,6 +117,34 @@ ASSIGNMENTS = (
 
 # Машина 2 сознательно отсутствует: 5 вылетов, 1.76 га -- простой.
 IDLE_UNITS = (2,)
+
+# Люди, которых можно ЗАВЕСТИ в справочнике, если их там нет: имя -> телефон.
+# Только те, чьи данные пришли документом, а не устно.
+#
+# [REASON]: заводится ТОЛЬКО по флагу --create-missing-operators и ТОЛЬКО
+# когда в справочнике нет никого с тем же личным именем. Живой прогон
+# 2026-08-14 искал «Файзиев Шоди», а по карточке парка человек называется
+# Файзуллаев Шоди -- и в справочнике уже есть Файзуллаев ШОХРУХ, машина 7.
+# Однофамильцы. Заводить вслепую нельзя ни в ту сторону (двойник Шоди с
+# другим написанием фамилии -- Файзуллоев, как пишут книги), ни в другую
+# (перепутать Шоди с Шохрухом). Отсюда правило: фамилия совпадать МОЖЕТ,
+# личное имя -- не должно.
+OPERATOR_DETAILS = {
+    # Карточка парка: Дрон 14 Id 64TBL91002004L, оператор Файзуллаев Шоди,
+    # телефон 91-923-37-67 (документ владельца, 2026-08-14).
+    'Файзуллаев Шоди': '91-923-37-67',
+}
+
+# Серийники планеров из той же карточки парка -- ТОЛЬКО ДЛЯ СВЕРКИ.
+#
+# [REASON]: скрипт их не пишет и не чинит, а только сообщает о расхождении.
+# Карточки парка уже один раз врали: серийники машин 2 и 9 стояли наоборот и
+# были исправлены отдельной миграцией. Молча подменить hardware_id значит
+# повторить ту же ошибку с другой стороны -- привязка по борту опирается
+# именно на него.
+PARK_CARD_HARDWARE = {
+    14: '64TBL91002004L',
+}
 
 MONTH_FROM = '2025-09-01'
 MONTH_TO = '2025-09-30'
@@ -164,6 +192,30 @@ def resolve_units(conn):
     return {number: uid for uid, number in rows}
 
 
+def creation_conflicts(by_norm, wanted):
+    """Кто в справочнике мешает завести `wanted` как нового человека.
+
+    Личное имя в этих карточках стоит вторым словом («Фамилия Имя»), и
+    именно оно различает людей: Файзуллаев Шоди и Файзуллаев Шохрух -- двое
+    разных, а Файзуллаев Шоди и Файзуллоев Шоди -- один и тот же под двумя
+    написаниями фамилии. Поэтому конфликтом считается совпадение ЛИЧНОГО
+    ИМЕНИ в любой позиции, а не совпадение фамилии.
+
+    Имя не из двух слов -- случай неразобранный, и тогда конфликтом считается
+    любое пересечение: лучше остановиться, чем завести двойника.
+    """
+    parts = normalize(wanted).split()
+    if len(parts) == 2:
+        keys = {parts[1]}
+    else:
+        keys = set(parts)
+    out = []
+    for norm, rows in by_norm.items():
+        if keys & set(norm.split()):
+            out.extend(name for _oid, name in rows)
+    return sorted(set(out))
+
+
 def suggest(by_norm, wanted):
     """Кого из справочника стоит показать рядом с ненайденным именем.
 
@@ -177,6 +229,19 @@ def suggest(by_norm, wanted):
         if parts & set(norm.split()):
             out.extend(name for _oid, name in rows)
     return sorted(set(out))
+
+
+def hardware_mismatches(conn):
+    """Расхождения между карточкой парка и колонкой hardware_id. Не чинит."""
+    out = []
+    for number, card in sorted(PARK_CARD_HARDWARE.items()):
+        row = conn.execute(
+            'SELECT hardware_id FROM drone_units WHERE number = ?',
+            (number,)).fetchone()
+        stored = row[0] if row else None
+        if (stored or '').strip() != card:
+            out.append((number, stored, card))
+    return out
 
 
 def existing_overlaps(conn, unit_id):
@@ -229,10 +294,36 @@ def plan(conn):
 
 
 def write_report(path, to_insert, skipped, unresolved, problems, inserted_ids,
-                 directory=None):
+                 directory=None, created_ids=(), blocked=(), mismatches=()):
     with open(path, 'w', encoding='utf-8') as fh:
         fh.write('DRONE-FLEET-ASSIGN-001, сентябрь 2025\n')
         fh.write('=' * 72 + '\n\n')
+        if mismatches:
+            fh.write('СЕРИЙНИК ПЛАНЕРА: карточка парка и база расходятся '
+                     '(НИЧЕГО НЕ ИЗМЕНЕНО):\n')
+            for number, stored, card in mismatches:
+                fh.write('  машина %-3d в базе: %s\n' % (number, stored))
+                fh.write('             карточка: %s\n' % card)
+            fh.write('  Привязка вылетов к бортам опирается на hardware_id, '
+                     'поэтому чинить его можно только миграцией и только '
+                     'убедившись, чья запись верна. Серийники машин 2 и 9 '
+                     'уже один раз стояли наоборот.\n\n')
+        if created_ids:
+            fh.write('ЗАВЕДЕНО В СПРАВОЧНИКЕ ОПЕРАТОРОВ:\n')
+            for name, oid in created_ids:
+                fh.write('  id=%d  %s  тел. %s\n'
+                         % (oid, name, OPERATOR_DETAILS.get(name, '')))
+            fh.write('  Откат: DELETE FROM drone_operators WHERE id IN (%s);\n'
+                     '  (сначала снять назначения этого человека -- см. ниже)\n\n'
+                     % ', '.join(str(oid) for _n, oid in created_ids))
+        if blocked:
+            fh.write('ЗАВЕСТИ НЕЛЬЗЯ -- в справочнике уже есть человек с тем '
+                     'же личным именем:\n')
+            for name, conflicts in blocked:
+                fh.write('  «%s» -- в справочнике: %s\n'
+                         % (name, '; '.join(conflicts)))
+            fh.write('  Это защита от двойника: фамилия у однофамильцев '
+                     'совпадать может, личное имя -- нет. Решает человек.\n\n')
         if problems:
             fh.write('ПРОБЛЕМЫ (ничего не записано):\n')
             for p in problems:
@@ -285,6 +376,10 @@ def main():
     parser.add_argument('--db', default=os.path.join('instance',
                                                      'transport.db'))
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--create-missing-operators', action='store_true',
+                        help='завести в справочнике тех, чьи данные пришли '
+                             'карточкой парка, если однофамильца с тем же '
+                             'личным именем там нет')
     parser.add_argument('--report', default=None)
     args = parser.parse_args()
 
@@ -308,11 +403,57 @@ def main():
                 print('  unit %d: not found; %d similar name(s) in the '
                       'directory - see the report' % (number, len(hints)))
 
+        # Кого из ненайденных МОЖНО завести, а кого нельзя и почему.
+        by_norm = resolve_operators(conn)
+        creatable, blocked = [], []
+        for number, operator, _hints in unresolved:
+            if operator not in OPERATOR_DETAILS:
+                continue
+            conflicts = creation_conflicts(by_norm, operator)
+            if conflicts:
+                blocked.append((operator, conflicts))
+            else:
+                creatable.append(operator)
+        for operator, conflicts in blocked:
+            print('  cannot create %r: directory already has someone with the '
+                  'same given name (%d) - see the report'
+                  % (operator, len(conflicts)))
+        if creatable and not args.create_missing_operators:
+            print('Can create %d operator(s) from the park card - '
+                  'pass --create-missing-operators' % len(creatable))
+
+        # Сверка серийников -- только сообщение, ничего не меняется.
+        try:
+            mismatches = hardware_mismatches(conn)
+        except sqlite3.OperationalError:
+            mismatches = []          # колонки нет -- нечего и сверять
+        for number, stored, card in mismatches:
+            print('  NOTE unit %d: hardware_id in DB %r, park card says %r - '
+                  'NOT changed, look at it yourself'
+                  % (number, stored, card))
+
         inserted_ids = []
-        if args.apply and to_insert:
+        created_ids = []
+        if args.apply and (to_insert or (creatable
+                                         and args.create_missing_operators)):
             now = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
             try:
                 cur = conn.cursor()
+                if args.create_missing_operators:
+                    for operator in creatable:
+                        cur.execute(
+                            'INSERT INTO drone_operators '
+                            '(full_name, phone_primary, is_active, note, '
+                            ' created_at, updated_at) VALUES (?, ?, 1, ?, ?, ?)',
+                            (operator, OPERATOR_DETAILS[operator],
+                             '[OWNER] заведён из карточки парка 2026-08-14',
+                             now, now))
+                        created_ids.append((operator, cur.lastrowid))
+                    if created_ids:
+                        # Пере-планируем: заведённые люди теперь резолвятся.
+                        to_insert, skipped, unresolved, problems = plan(conn)
+                        if problems:
+                            raise RuntimeError('; '.join(problems))
                 for (unit_id, operator_id, _n, _s, date_from, date_to,
                      source, why) in to_insert:
                     cur.execute(
@@ -345,8 +486,11 @@ def main():
             os.path.dirname(os.path.abspath(args.db)) or '.',
             'drone_assignments_sept2025_report.txt')
         write_report(report, to_insert, skipped, unresolved, problems,
-                     inserted_ids, directory)
+                     inserted_ids, directory, created_ids, blocked,
+                     mismatches)
         print('Report written to %s' % report)
+        if created_ids:
+            print('Operators created: %d' % len(created_ids))
         if not args.apply:
             print('DRY RUN - nothing was written. Re-run with --apply.')
         else:

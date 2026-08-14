@@ -46,19 +46,27 @@ STORED_NAMES = {
     'Ибодуллаев Хасанбой': 'Ибодуллаев Хасанбой',
     'Кудратов Мухриддин': 'Қудратов Мухриддин',
     'Имомов Бехзод': 'Имомов Беҳзод',
-    'Файзиев Шоди': 'Файзиев Шоди',
+    'Файзуллаев Шоди': 'Файзуллаев Шоди',
     'Жумаев Фуркат': 'Жумаев Фуркат',
 }
 
 
-def build_db(path, drop_operator=None):
+def build_db(path, drop_operator=None, hardware=None):
     conn = sqlite3.connect(path)
     conn.execute('CREATE TABLE drone_units (id INTEGER PRIMARY KEY, '
-                 'number INTEGER UNIQUE)')
+                 'number INTEGER UNIQUE, hardware_id TEXT)')
     for number in range(1, 16):
-        conn.execute('INSERT INTO drone_units (number) VALUES (?)', (number,))
-    conn.execute('CREATE TABLE drone_operators (id INTEGER PRIMARY KEY, '
-                 'full_name TEXT NOT NULL)')
+        conn.execute('INSERT INTO drone_units (number, hardware_id) '
+                     'VALUES (?, ?)',
+                     (number, (hardware or {}).get(number)))
+    # Колонки те же, что создаёт migrate_drones_fleet_001: фикстура с урезанной
+    # таблицей не поймала бы вставку человека с телефоном.
+    conn.execute('CREATE TABLE drone_operators ('
+                 ' id INTEGER PRIMARY KEY AUTOINCREMENT,'
+                 ' full_name TEXT NOT NULL, phone_primary TEXT,'
+                 ' phone_secondary TEXT, subdivision_name TEXT,'
+                 ' is_active BOOLEAN DEFAULT 1, note TEXT,'
+                 ' created_at DATETIME, updated_at DATETIME)')
     for key, stored in STORED_NAMES.items():
         if key == drop_operator:
             continue
@@ -225,7 +233,7 @@ class Guards(LoaderCase):
         Отрицательный контроль: без пропавшего имени грузятся все 14 строк,
         значит 13 -- это именно «одна отложена», а не общий отказ.
         """
-        build_db(self.db, drop_operator='Файзиев Шоди')
+        build_db(self.db, drop_operator='Файзуллаев Шоди')
         result = run(self.db, '--report', self.report, '--apply')
         self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
         written = rows(self.db)
@@ -236,17 +244,17 @@ class Guards(LoaderCase):
         with open(self.report, encoding='utf-8') as fh:
             report = fh.read()
         self.assertIn('ОПЕРАТОР НЕ НАЙДЕН', report)
-        self.assertIn('Файзиев Шоди', report)
+        self.assertIn('Файзуллаев Шоди', report)
         # Отчёт обязан показать справочник -- иначе владельцу нечем ответить.
         self.assertIn('СПРАВОЧНИК ОПЕРАТОРОВ ЦЕЛИКОМ', report)
         self.assertIn('Қодиров Нурали', report)
 
     def test_after_the_person_is_added_the_second_run_finishes_september(self):
-        build_db(self.db, drop_operator='Файзиев Шоди')
+        build_db(self.db, drop_operator='Файзуллаев Шоди')
         run(self.db, '--report', self.report, '--apply')
         conn = sqlite3.connect(self.db)
         conn.execute('INSERT INTO drone_operators (full_name) VALUES (?)',
-                     ('Файзиев Шоди',))
+                     ('Файзуллаев Шоди',))
         conn.commit()
         conn.close()
 
@@ -262,7 +270,7 @@ class Guards(LoaderCase):
         build_db(self.db)
         conn = sqlite3.connect(self.db)
         conn.execute('INSERT INTO drone_operators (full_name) VALUES (?)',
-                     ('Файзиев  Шоди',))
+                     ('Файзуллаев  Шоди',))
         conn.commit()
         conn.close()
         result = run(self.db, '--report', self.report, '--apply')
@@ -277,9 +285,10 @@ class Guards(LoaderCase):
                 'SELECT id, full_name FROM drone_operators'):
             by_norm.setdefault(loader.normalize(name), []).append((oid, name))
         conn.close()
-        hints = loader.suggest(by_norm, 'Файзиев Шоди')
-        # Однофамильцев нет, но тёзка по имени есть только один -- сам Шоди.
-        self.assertIn('Файзиев Шоди', hints)
+        hints = loader.suggest(by_norm, 'Файзуллаев Шоди')
+        # Подсказка ловит и самого человека, и его однофамильца.
+        self.assertIn('Файзуллаев Шоди', hints)
+        self.assertIn('Файзуллаев Шохрух', hints)
         # Отрицательный контроль: подсказка не вываливает весь справочник.
         self.assertLess(len(hints), len(STORED_NAMES))
         # И находит по одному совпавшему слову: Шохрух -- двое разных.
@@ -287,11 +296,135 @@ class Guards(LoaderCase):
             sorted(loader.suggest(by_norm, 'Неизвестнов Шохрух')),
             ['Файзуллаев Шохрух', 'Хамроев Шохрух'])
 
-    def test_missing_database_exits_two_and_creates_nothing(self):
+    def test_missing_database_exits_two_and_creates_nothing_(self):
         missing = os.path.join(self.tmp.name, 'no', 'transport.db')
         result = run(missing, '--apply')
         self.assertEqual(result.returncode, 2)
         self.assertFalse(os.path.exists(missing))
+
+
+class CreatingTheMissingPerson(LoaderCase):
+    """Заведение человека: только по флагу и только без риска двойника."""
+
+    def test_flag_creates_him_and_september_closes(self):
+        build_db(self.db, drop_operator='Файзуллаев Шоди')
+        result = run(self.db, '--report', self.report, '--apply',
+                     '--create-missing-operators')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        written = rows(self.db)
+        self.assertEqual(len(written), len(loader.ASSIGNMENTS))
+        self.assertIn(14, [r[1] for r in written])
+
+        conn = sqlite3.connect(self.db)
+        row = conn.execute(
+            'SELECT full_name, phone_primary, is_active, note '
+            'FROM drone_operators WHERE full_name = ?',
+            ('Файзуллаев Шоди',)).fetchone()
+        conn.close()
+        self.assertIsNotNone(row, 'человек не заведён')
+        self.assertEqual(row[1], '91-923-37-67')
+        self.assertEqual(row[2], 1)
+        self.assertIn('[OWNER]', row[3])
+
+    def test_without_the_flag_nobody_is_created(self):
+        """Отрицательный контроль к предыдущему: без флага -- не заводит."""
+        build_db(self.db, drop_operator='Файзуллаев Шоди')
+        result = run(self.db, '--report', self.report, '--apply')
+        self.assertEqual(result.returncode, 3)
+        conn = sqlite3.connect(self.db)
+        found = conn.execute(
+            'SELECT COUNT(*) FROM drone_operators '
+            'WHERE full_name = ?', ('Файзуллаев Шоди',)).fetchone()[0]
+        conn.close()
+        self.assertEqual(found, 0)
+        self.assertEqual(len(rows(self.db)), 13)
+
+    def test_a_namesake_by_given_name_blocks_creation(self):
+        """Файзуллоев Шоди (через О) -- тот же человек, двойника не заводим."""
+        build_db(self.db, drop_operator='Файзуллаев Шоди')
+        conn = sqlite3.connect(self.db)
+        conn.execute('INSERT INTO drone_operators (full_name) VALUES (?)',
+                     ('Файзуллоев Шоди',))
+        conn.commit()
+        conn.close()
+
+        result = run(self.db, '--report', self.report, '--apply',
+                     '--create-missing-operators')
+        self.assertEqual(result.returncode, 3)
+        conn = sqlite3.connect(self.db)
+        found = conn.execute(
+            "SELECT COUNT(*) FROM drone_operators "
+            "WHERE full_name LIKE 'Файзулл%' AND full_name LIKE '%Шоди'"
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(found, 1, 'заведён двойник')
+        with open(self.report, encoding='utf-8') as fh:
+            report = fh.read()
+        self.assertIn('ЗАВЕСТИ НЕЛЬЗЯ', report)
+        self.assertIn('Файзуллоев Шоди', report)
+
+    def test_a_namesake_by_surname_does_not_block(self):
+        """Отрицательный контроль: Файзуллаев ШОХРУХ -- другой человек.
+
+        Он лежит в справочнике всегда (машина 7). Если бы защита смотрела на
+        фамилию, Шоди не завёлся бы никогда.
+        """
+        build_db(self.db, drop_operator='Файзуллаев Шоди')
+        by_norm = {}
+        conn = sqlite3.connect(self.db)
+        for oid, name in conn.execute(
+                'SELECT id, full_name FROM drone_operators'):
+            by_norm.setdefault(loader.normalize(name), []).append((oid, name))
+        conn.close()
+        self.assertIn('Файзуллаев Шохрух',
+                      [n for rows_ in by_norm.values() for _i, n in rows_])
+        self.assertEqual(
+            loader.creation_conflicts(by_norm, 'Файзуллаев Шоди'), [])
+        # А тёзка по личному имени -- блокирует.
+        by_norm.setdefault(loader.normalize('Файзуллоев Шоди'), []).append(
+            (999, 'Файзуллоев Шоди'))
+        self.assertEqual(
+            loader.creation_conflicts(by_norm, 'Файзуллаев Шоди'),
+            ['Файзуллоев Шоди'])
+
+    def test_park_card_serial_is_reported_never_written(self):
+        """Карточка дала серийник планера №14 -- сверяем, но не чиним.
+
+        Отрицательный контроль: когда серийник в базе совпадает с карточкой,
+        строки о расхождении в отчёте нет.
+        """
+        build_db(self.db, hardware={14: 'НЕ ТОТ СЕРИЙНИК'})
+        run(self.db, '--report', self.report, '--apply')
+        conn = sqlite3.connect(self.db)
+        stored = conn.execute(
+            'SELECT hardware_id FROM drone_units WHERE number = 14'
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(stored, 'НЕ ТОТ СЕРИЙНИК', 'серийник переписан')
+        with open(self.report, encoding='utf-8') as fh:
+            report = fh.read()
+        self.assertIn('СЕРИЙНИК ПЛАНЕРА', report)
+        self.assertIn(loader.PARK_CARD_HARDWARE[14], report)
+
+        os.remove(self.db)
+        build_db(self.db, hardware=loader.PARK_CARD_HARDWARE)
+        run(self.db, '--report', self.report)
+        with open(self.report, encoding='utf-8') as fh:
+            report = fh.read()
+        self.assertNotIn('СЕРИЙНИК ПЛАНЕРА', report)
+
+    def test_dry_run_with_the_flag_still_writes_nothing(self):
+        build_db(self.db, drop_operator='Файзуллаев Шоди')
+        result = run(self.db, '--report', self.report,
+                     '--create-missing-operators')
+        self.assertEqual(result.returncode, 3)
+        conn = sqlite3.connect(self.db)
+        found = conn.execute('SELECT COUNT(*) FROM drone_operators '
+                             'WHERE full_name = ?',
+                             ('Файзуллаев Шоди',)).fetchone()[0]
+        conn.close()
+        self.assertEqual(found, 0)
+        self.assertEqual(rows(self.db), [])
 
 
 class Constants(unittest.TestCase):
