@@ -66,6 +66,15 @@ SEPT_ROWS = (
     (15, 'Жумаев Фуркат', '2025-09-06', '2025-09-30'),
 )
 
+# Две рукотворные строки, лежащие на проде ДО загрузчиков: граница 13/14
+# апреля из сверки 2026-08-03 (докстринг DroneOperatorAssignment). Сухой
+# прогон 2026-08-15 нашёл их как id=1 и id=2; фикстура без них проверяла бы
+# не прод, а выдуманную чистую базу.
+HAND_ROWS = (
+    (4, 'Анваров Усмон', '2026-04-01', '2026-04-13'),
+    (8, 'Анваров Усмон', '2026-04-14', None),
+)
+
 # Немного вылетов: одно окно из UNCOVERED (№10, июнь-июль 2026) и один
 # рабочий день №2 -- чтобы отчёт мог назвать цену, а тест -- проверить её.
 FLIGHTS = (
@@ -75,7 +84,8 @@ FLIGHTS = (
 )
 
 
-def build_db(path, drop_operator=None, with_september=True):
+def build_db(path, drop_operator=None, with_september=True,
+             with_hand_rows=True):
     conn = sqlite3.connect(path)
     conn.execute('CREATE TABLE drone_units (id INTEGER PRIMARY KEY, '
                  'number INTEGER UNIQUE, hardware_id TEXT)')
@@ -97,6 +107,16 @@ def build_db(path, drop_operator=None, with_september=True):
                  ' drone_unit_id INTEGER NOT NULL, date_from TEXT NOT NULL, '
                  ' date_to TEXT, note TEXT, created_at TEXT, '
                  ' created_by INTEGER)')
+    if with_hand_rows:
+        # Как на проде: ручные строки легли ПЕРВЫМИ и несут младшие id.
+        for number, operator, date_from, date_to in HAND_ROWS:
+            conn.execute(
+                'INSERT INTO drone_operator_assignments (operator_id, '
+                ' drone_unit_id, date_from, date_to, note) '
+                'SELECT o.id, u.id, ?, ?, ? FROM drone_operators o, '
+                ' drone_units u WHERE o.full_name = ? AND u.number = ?',
+                (date_from, date_to, '[HAND] граница сверки 2026-08-03',
+                 operator, number))
     if with_september:
         for number, operator, date_from, date_to in SEPT_ROWS:
             conn.execute(
@@ -132,9 +152,10 @@ def rows(path, note_prefix=None):
 
 
 def new_rows(path):
-    """Строки, добавленные вторым загрузчиком (не сентябрьской фикстурой)."""
+    """Строки, добавленные вторым загрузчиком (не фикстурой)."""
     return [r for r in rows(path)
-            if not (r[5] or '').startswith('[TELEMETRY] сентябрь')]
+            if not (r[5] or '').startswith('[TELEMETRY] сентябрь')
+            and not (r[5] or '').startswith('[HAND]')]
 
 
 def run(db, *extra):
@@ -192,6 +213,18 @@ class Constants(unittest.TestCase):
                if r[0] == 10 and r[1] == 'Хамроев Шохрух']
         self.assertEqual(n10[0][2], '2026-03-23')
 
+    def test_the_number4_cut_hugs_the_hand_row_day_to_day(self):
+        """Разрез №4 -- 31.03 к 01.04, тем же оператором, без дыры."""
+        n4 = sorted((r for r in loader.ASSIGNMENTS if r[0] == 4),
+                    key=lambda r: r[2])
+        self.assertEqual(len(n4), 2)
+        first, second = n4
+        self.assertEqual(first[3], '2026-03-31')
+        self.assertEqual(second[2], '2026-04-01')
+        self.assertEqual(first[1], second[1])
+        # И дубль ручной строки повторяет её границы буквально.
+        self.assertEqual((second[2], second[3]), ('2026-04-01', '2026-04-13'))
+
     def test_every_source_is_declared_and_every_row_explains_itself(self):
         for row in loader.ASSIGNMENTS:
             self.assertIn(row[4], (loader.SHEET, loader.TELEMETRY,
@@ -234,11 +267,21 @@ class DryRunAndApply(LoaderCase):
         result = run(self.db, '--report', self.report)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(rows(self.db), before, 'сухой прогон записал строки')
+        # Прод-фикстура: два дубля рукотворных строк пропускаются.
+        self.assertIn('Rows to insert: 23', result.stdout)
 
         result = run(self.db, '--report', self.report, '--apply')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(new_rows(self.db)), len(loader.ASSIGNMENTS) - 2)
+        self.assertEqual(len(new_rows(self.db)), 23)
+
+    def test_on_a_clean_base_all_25_rows_load(self):
+        """Отрицательный контроль к пропускам: без ручных строк дублей нет."""
+        build_db(self.db, with_hand_rows=False)
+        result = run(self.db, '--report', self.report, '--apply')
+        self.assertEqual(result.returncode, 0)
         self.assertEqual(len(new_rows(self.db)), len(loader.ASSIGNMENTS))
-        self.assertEqual(len(new_rows(self.db)), 24)
+        self.assertEqual(len(new_rows(self.db)), 25)
 
     def test_september_rows_survive_untouched(self):
         build_db(self.db)
@@ -261,7 +304,8 @@ class DryRunAndApply(LoaderCase):
         build_db(self.db)
         run(self.db, '--report', self.report, '--apply')
         open_ended = [r for r in new_rows(self.db) if r[4] is None]
-        expected = sum(1 for r in loader.ASSIGNMENTS if r[3] is None)
+        # Минус одна: открытая строка №8-Усмон уже лежит ручной (id=2).
+        expected = sum(1 for r in loader.ASSIGNMENTS if r[3] is None) - 1
         self.assertEqual(len(open_ended), expected)
         self.assertGreater(expected, 0)
 
@@ -280,6 +324,23 @@ class WhatStaysOpen(LoaderCase):
         # проверка не отличала бы пустую базу от загруженной.
         self.assertEqual(covered_on(self.db, 2, '2026-05-01'), 1)
         self.assertEqual(covered_on(self.db, 2, '2025-12-15'), 1)
+
+    def test_machine4_is_seamless_across_the_hand_row_boundary(self):
+        """Живой прогон 2026-08-15: целая строка №4 пересекалась с ручной
+        id=1 и пропускалась ЦЕЛИКОМ, теряя октябрь-март (~230 га).
+
+        После разреза 31.03/01.04: дополнение легло, ручная строка цела,
+        покрытие непрерывно. Отрицательный контроль: после ухода Усмона на
+        №8 (14.04) машина 4 не покрыта никем -- шов не расползся в нахлёст.
+        """
+        build_db(self.db)
+        run(self.db, '--report', self.report, '--apply')
+        for day in ('2025-10-01', '2025-12-15', '2026-03-31',  # дополнение
+                    '2026-04-01', '2026-04-13'):               # ручная id=1
+            self.assertEqual(covered_on(self.db, 4, day), 1, day)
+        self.assertEqual(covered_on(self.db, 4, '2026-04-20'), 0)
+        hand = rows(self.db, note_prefix='[HAND]')
+        self.assertEqual(len(hand), 2, 'ручные строки задеты загрузчиком')
 
     def test_the_report_prices_open_windows_from_live_flights(self):
         build_db(self.db)
@@ -300,7 +361,7 @@ class Guards(LoaderCase):
         result = run(self.db, '--report', self.report, '--apply')
         self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
         written = new_rows(self.db)
-        self.assertEqual(len(written), 23)
+        self.assertEqual(len(written), 22)
         self.assertNotIn('Болтаев Шахзод', [r[2] for r in written])
         report = self.read_report()
         self.assertIn('ОПЕРАТОР НЕ НАЙДЕН', report)
@@ -316,7 +377,7 @@ class Guards(LoaderCase):
         conn.close()
         result = run(self.db, '--report', self.report, '--apply')
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(len(new_rows(self.db)), 24)
+        self.assertEqual(len(new_rows(self.db)), 23)
 
     def test_a_hand_made_overlap_skips_that_row_only(self):
         build_db(self.db)
@@ -334,7 +395,7 @@ class Guards(LoaderCase):
         numbers = [r[1] for r in new_rows(self.db)
                    if not (r[5] or '').startswith('ручная')]
         self.assertNotIn(3, numbers, 'строка №3 легла поверх ручной')
-        self.assertEqual(len([n for n in numbers]), 23)
+        self.assertEqual(len([n for n in numbers]), 22)
 
     def test_missing_database_exits_two_and_creates_nothing(self):
         missing = os.path.join(self.tmp.name, 'no', 'transport.db')
