@@ -24,10 +24,13 @@ PACE. One request per two seconds by default (decision G9), the same as the
 fleet probe, and for the same reason: access from the cluster's address was
 lost on 14.08 during an unpaced run and the cause is still not proven.
 
+NO GEO STACK NEEDED. Standard library only -- the plain Python install runs it,
+the C:\\gps_venv environment is for tools that import gps/ and this is not one.
+
 Run (PowerShell, one command per line):
 
   cd C:\\diag\\wialon
-  & C:\\gps_venv\\Scripts\\python.exe C:\\transport-report\\tools\\wialon_pull_tracks.py --unit "261 EA" --unit "kombayn" --from 2026-08-01 --to 2026-08-10
+  & "C:\\Program Files\\Python314\\python.exe" C:\\diag\\wialon\\wialon_pull_tracks.py --unit "261 EA" --unit "kombayn" --from 2026-08-01 --to 2026-08-10
 
 Every match is printed BEFORE anything is fetched, so a mask that caught forty
 objects can be stopped with Ctrl+C. Interrupted runs continue with --resume:

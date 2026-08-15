@@ -44,9 +44,28 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import numpy as np                                             # noqa: E402
-import shapely                                                 # noqa: E402
-from gps.area import return_share, to_utm, work_sites          # noqa: E402
+try:
+    import numpy as np                                         # noqa: E402
+    import shapely                                             # noqa: E402
+    from gps.area import return_share, to_utm, work_sites      # noqa: E402
+except ImportError as problem:
+    # [REASON]: unlike the Wialon probes, this one computes geometry, so it
+    # needs both the geo venv AND its place inside the repository -- gps/ is
+    # found relative to the script. Copied into C:\diag\wialon it fails with a
+    # bare ImportError that says nothing about either condition.
+    sys.stderr.write(
+        "\nERROR: %s\n\n"
+        "Etot skript, v otlichie ot zondov Wialon, schitaet geometriyu.\n"
+        "Emu nuzhny DVE veshchi:\n"
+        "  1) zapusk IZ rabochey kopii repozitoriya, ne iz C:\\diag\\wialon:\n"
+        "     C:\\transport-report\\tools\\gps_label_sites.py\n"
+        "  2) otdelnoe okruzhenie s geostekom. Esli ego net, dve stroki:\n"
+        '     & "C:\\Program Files\\Python314\\python.exe" -m venv C:\\gps_venv\n'
+        "     & C:\\gps_venv\\Scripts\\python.exe -m pip install -r "
+        "C:\\transport-report\\gps\\requirements.txt\n\n"
+        "Rabochie fayly (csv, html) pri etom mogut lezhat v C:\\diag\\wialon --\n"
+        "skript pishet v tekushchuyu papku, a ne ryadom s soboy.\n" % problem)
+    sys.exit(2)
 
 TZ = timezone(timedelta(hours=5))
 # [REASON]: lower than the engine's 0.3 ha default on purpose. The corpus is
