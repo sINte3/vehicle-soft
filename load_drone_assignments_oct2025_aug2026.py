@@ -354,7 +354,8 @@ def main():
 
         inserted_ids = []
         if args.apply and to_insert:
-            now = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+            now = datetime.datetime.now(
+                    datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
             try:
                 cur = conn.cursor()
                 for (unit_id, operator_id, _n, _s, date_from, date_to,

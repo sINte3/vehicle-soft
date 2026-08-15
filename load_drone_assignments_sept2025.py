@@ -436,7 +436,8 @@ def main():
         created_ids = []
         if args.apply and (to_insert or (creatable
                                          and args.create_missing_operators)):
-            now = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+            now = datetime.datetime.now(
+                    datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
             try:
                 cur = conn.cursor()
                 if args.create_missing_operators:
