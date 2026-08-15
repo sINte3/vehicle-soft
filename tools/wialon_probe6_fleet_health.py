@@ -322,6 +322,11 @@ def main():
                         help="seconds between requests (default 2.0, G9)")
     parser.add_argument("--resume", action="store_true",
                         help="continue an interrupted run over the same period")
+    # [REASON]: a full sweep is six hours. Starting it blind after an outage is
+    # how the run of 14.08 was lost. --limit 5 exercises the whole path --
+    # login, unit list, message loading, unloading, logout -- in under a minute.
+    parser.add_argument("--limit", type=int, default=0,
+                        help="check only the first N objects (0 = all)")
     parser.add_argument("--out", default="gps_fleet_health.csv")
     args = parser.parse_args()
     PACE["pause"] = max(0.0, args.pause)
@@ -339,7 +344,15 @@ def main():
         cursor += timedelta(days=max(1, args.every))
 
     period = "%s..%s/%d" % (args.date_from, args.date_to, args.every)
-    ledger_path = os.path.join(OUT, LEDGER)
+    # [REASON]: a connection check must not poison the real run's ledger. Its
+    # five objects carry the same period, so a later --resume would count them
+    # as done and the fleet report would silently be short by five machines.
+    if args.limit > 0:
+        ledger_path = os.path.join(OUT, "gps_fleet_health.limit.jsonl")
+        if args.out == "gps_fleet_health.csv":
+            args.out = "gps_fleet_health.limit.csv"
+    else:
+        ledger_path = os.path.join(OUT, LEDGER)
     done, alien = ({}, 0)
     if args.resume:
         done, alien = read_ledger(ledger_path, period)
@@ -387,6 +400,10 @@ def main():
     units = [(item.get("id"), item.get("nm") or "")
              for item in (listing.get("items") or []) if item.get("id")]
     say("units visible: %d" % len(units))
+    if args.limit > 0:
+        units = units[:args.limit]
+        say("LIMIT: only the first %d objects -- this is a connection check, "
+            "not a fleet report" % len(units))
     say("")
 
     rows = list(done.values())
