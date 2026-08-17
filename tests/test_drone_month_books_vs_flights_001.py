@@ -38,6 +38,20 @@
      записи нет: без этого он выставлял бы записанную работу незаписанной
      (у Нурали в сентябре 324.30 га справки без даты против 322.54 га таких
      дней). Дат инструмент при этом не проставляет.
+ 12. Читаются ТОЛЬКО расшифровки по операторам. Сводные листы, годовой журнал
+     оператора и список неполученных денег пересказывают те же работы: на
+     полном архиве сентября-2025 чтение всех листов давало 8 336.03 га против
+     настоящих 5 617.03. Пропущенные листы ПЕЧАТАЮТСЯ, чтобы лист не исчез
+     молча.
+ 13. Одно короткое имя листа -- разные люди в разных книгах: «свод ичи
+     (Шохрух)» в книге Когона это Хамроев, в книге Гардена -- Файзуллаев.
+     Общий алиас по короткому имени увёл бы 412.60 га не тому человеку
+     (поймано контролем по своду). Привязка листа к человеку -- явная,
+     файлом и листом.
+ 14. Свод самих диспетчеров читается как КОНТРОЛЬ и сверяется с ПОЛНЫМ
+     разбором книги, включая строки с датой другого месяца: иначе контроль
+     показывает ложное расхождение ровно на них. Отрицательный контроль:
+     подменённое число в своде даёт видимую разницу.
   9. Мост к отчёту приложения сходится в ноль и называет каждое расхождение
      поимённо: строку, которой в отчёте нет; строку, где числа разошлись;
      строку, которой нет в книгах. Отрицательный контроль: если отчёт
@@ -390,6 +404,100 @@ class MonthReconTest(unittest.TestCase):
         # Намеренная формула той же формы проходит.
         tool._put(sheet, 2, 1, '=SUM(B1:B9)')
         self.assertEqual('=SUM(B1:B9)', sheet.cell(row=2, column=1).value)
+
+    # 12. Не-расшифровки пропускаются и называются.
+    def test_only_breakdown_sheets_are_read(self):
+        path = os.path.join(self.books, 'Когон ПТЗ Дрон маълумот.xlsx')
+        book = openpyxl.load_workbook(path)
+        # Годовой журнал того же человека: те же работы, другой лист.
+        extra = book.create_sheet('Расул ака Дрон маълумот обём')
+        for col, name in enumerate(CASH_HEADER, 1):
+            extra.cell(row=1, column=col, value=name)
+        extra.cell(row=2, column=1, value=1)
+        extra.cell(row=2, column=2, value='Ферма А')
+        extra.cell(row=2, column=3, value=999.0)
+        extra.cell(row=2, column=8, value=datetime.datetime(2025, 9, 20))
+        book.save(path)
+        book.close()
+        result = self.run_tool(self.spec())
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        # 999 га не попали в итог, а лист назван в выводе.
+        self.assertAlmostEqual(
+            84.0, self.operators(self.out)['Ибодуллаев Хасанбой']['book'],
+            places=2)
+        # Пропущенный лист назван в выводе; кириллица в консоли проекта
+        # заменяется на «?», поэтому проверяется ASCII-часть строки.
+        self.assertIn('skipped 1 sheet(s)', result.stdout)
+
+    # 13. Одно короткое имя -- разные люди в разных книгах.
+    def test_same_short_sheet_name_means_different_people(self):
+        for name, area in (('Гарден Агрокластер Дрон маълумот.xlsx', 11.0),
+                           ('Шофиркон ПТЗ Дрон маълумот.xlsx', 22.0)):
+            write_book(os.path.join(self.books, name), {
+                'свод ичи (Шохрух)': {
+                    'cash': [('Ферма Ш', area,
+                              datetime.datetime(2025, 9, 20), None)]},
+            })
+        spec = self.spec(sheet_operators=[
+            {'file': 'Гарден Агрокластер Дрон маълумот.xlsx',
+             'sheet': 'свод ичи (Шохрух)', 'operator': 'Файзуллаев Шохрух'},
+            {'file': 'Шофиркон ПТЗ Дрон маълумот.xlsx',
+             'sheet': 'свод ичи (Шохрух)', 'operator': 'Хамроев Шохрух'},
+            {'file': 'Когон ПТЗ Дрон маълумот.xlsx',
+             'sheet': 'свод ичи Ибодуллаев Хасан',
+             'operator': 'Ибодуллаев Хасанбой'},
+        ], assignments=[
+            {'machine': 11, 'from': '2025-09-01', 'to': '2025-09-30',
+             'operator': 'Ибодуллаев Хасанбой', 'why': 'тест'},
+            {'machine': 21, 'from': '2025-09-01', 'to': '2025-09-30',
+             'operator': 'Файзуллаев Шохрух', 'why': 'тест'},
+            {'machine': 22, 'from': '2025-09-01', 'to': '2025-09-30',
+             'operator': 'Хамроев Шохрух', 'why': 'тест'},
+        ])
+        result = self.run_tool(spec)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        rows = self.operators(self.out)
+        self.assertAlmostEqual(11.0, rows['Файзуллаев Шохрух']['book'], places=2)
+        self.assertAlmostEqual(22.0, rows['Хамроев Шохрух']['book'], places=2)
+
+    # 14. Свод диспетчеров как контроль; отрицательный контроль на него же.
+    def test_control_sheet_compares_against_the_whole_book(self):
+        import drone_month_books_vs_flights as tool
+        path = os.path.join(self.books, 'Свод.xlsx')
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.title = 'ОБШИЙ СВОД '
+        sheet.cell(row=1, column=3, value='Дрон бошқарувчи оператор')
+        sheet.cell(row=2, column=3, value='Ибодуллаев Хасан')
+        sheet.cell(row=2, column=4, value=110.0)   # справка
+        sheet.cell(row=2, column=5, value=74.0)    # наличные
+        sheet.cell(row=3, column=3, value='Жами:')
+        book.save(path)
+        book.close()
+        control = tool.read_control(
+            path, 'ОБШИЙ СВОД ',
+            {'ибодуллаев хасан': 'Ибодуллаев Хасанбой'})
+        transfer, cash, spellings = control['Ибодуллаев Хасанбой']
+        # 184.00 -- ВСЕ строки книги, включая октябрьскую справку 100 га.
+        self.assertAlmostEqual(184.0, transfer + cash, places=2)
+        self.assertEqual(['Ибодуллаев Хасан'], spellings)
+        # Отрицательный контроль: подменённое число даёт другую сумму.
+        book = openpyxl.load_workbook(path)
+        book['ОБШИЙ СВОД '].cell(row=2, column=4, value=10.0)
+        book.save(path)
+        book.close()
+        transfer2, cash2, _ = tool.read_control(
+            path, 'ОБШИЙ СВОД ',
+            {'ибодуллаев хасан': 'Ибодуллаев Хасанбой'})['Ибодуллаев Хасанбой']
+        self.assertAlmostEqual(84.0, transfer2 + cash2, places=2)
+
+    # 14, отрицательный контроль: объявленный свод, которого нет -> код 2.
+    def test_declared_control_sheet_missing_is_refused(self):
+        spec = self.spec(control_sheet={'file': 'нет-такого.xlsx',
+                                        'sheet': 'ОБШИЙ СВОД '})
+        result = self.run_tool(spec)
+        self.assertEqual(2, result.returncode, result.stdout)
+        self.assertIn('control sheet file not found', result.stdout)
 
     # Самоконтроль --expect-books-ha различает верное и неверное число.
     def test_expect_books_ha_discriminates(self):

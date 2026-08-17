@@ -234,22 +234,87 @@ def resolve_operator(path, sheet_title, aliases, sheet_map):
     return aliases.get(_fold(derived), derived)
 
 
+def is_detail_sheet(path, sheet_title, sheet_map):
+    """Лист расшифровки по оператору -- единственный источник строк работ.
+
+    [REASON]: полная книга месяца содержит ещё и сводные листы («ОБШИЙ
+    СВОД»), годовой журнал оператора («Расул ака ... обём», март-октябрь),
+    список неполученных денег («олинмаган пуллар») и лист соседнего месяца.
+    Все они пересказывают ТЕ ЖЕ работы другими словами. Прочитать их наравне
+    с расшифровками -- значит задвоить и затроить месяц: на сентябре-2025
+    архив целиком даёт 8 336.03 га против настоящих 5 617.03. Поэтому читаются
+    только расшифровки, а всё пропущенное ПЕЧАТАЕТСЯ, чтобы лист не исчез
+    молча.
+    """
+    if (os.path.basename(path), _norm(sheet_title)) in sheet_map:
+        return True
+    return 'свод ичи' in _fold(sheet_title)
+
+
 def read_books(books_dir, month, aliases=None, sheet_map=None):
-    """Разбирает все листы всех книг каталога. Возвращает список строк."""
+    """Разбирает расшифровки по операторам. -> (строки, пропущенные листы)."""
     year, mon = int(month[:4]), int(month[5:7])
     aliases = aliases or {}
     sheet_map = sheet_map or {}
     paths = sorted(glob.glob(os.path.join(books_dir, '*.xlsx')))
-    rows = []
+    rows, skipped = [], []
     for path in paths:
         book = openpyxl.load_workbook(path, read_only=True, data_only=True)
         try:
             for sheet in book.worksheets:
-                rows.extend(_read_sheet(path, sheet, year, mon,
-                                        aliases, sheet_map))
+                if is_detail_sheet(path, sheet.title, sheet_map):
+                    rows.extend(_read_sheet(path, sheet, year, mon,
+                                            aliases, sheet_map))
+                else:
+                    skipped.append((os.path.basename(path), sheet.title))
         finally:
             book.close()
-    return rows
+    return rows, skipped
+
+
+def read_control(path, sheet_title, aliases):
+    """Читает сводный лист диспетчеров как КОНТРОЛЬ, а не как данные.
+
+    [REASON]: у диспетчеров есть собственный подписанный итог месяца по
+    операторам. Он не источник строк -- строки в расшифровках, -- но он
+    независимая проверка разбора: если мой итог по человеку разошёлся с их
+    сводом, ошибся либо я, либо книга, и знать об этом надо до отчёта
+    руководству. На сентябре-2025 свод подтвердил 12 операторов из 13 в ноль
+    и вскрыл расхождение внутри самой книги по тринадцатому.
+    """
+    book = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    try:
+        sheet = book[sheet_title]
+        rows = list(sheet.iter_rows(values_only=True))
+    finally:
+        book.close()
+
+    col = None
+    out = {}
+    for cells in rows:
+        values = [_norm(c) for c in cells]
+        if col is None:
+            for idx, value in enumerate(values):
+                if 'дрон бошкарувчи оператор' in _fold(value):
+                    col = idx
+                    break
+            continue
+        if col + 2 >= len(cells):
+            continue
+        name = values[col] if col < len(values) else ''
+        if not name or _fold(name).startswith('жами'):
+            continue
+        transfer, cash = cells[col + 1], cells[col + 2]
+        if not isinstance(transfer, (int, float)) \
+                or not isinstance(cash, (int, float)):
+            continue
+        resolved = aliases.get(_fold(name), name)
+        if resolved is None:      # объявлен как строка другого месяца
+            continue
+        prev = out.get(resolved, (0.0, 0.0, []))
+        out[resolved] = (prev[0] + float(transfer), prev[1] + float(cash),
+                         prev[2] + [name])
+    return out
 
 
 def _read_sheet(path, sheet, year, mon, aliases, sheet_map):
@@ -458,6 +523,7 @@ def load_assignments(path):
         rule['machine'] = int(rule['machine'])
         rule.setdefault('operator', None)
         rule.setdefault('why', '')
+    # Значение null означает «эту строку свода не считать» (другой месяц).
     aliases = {_fold(k): v for k, v in data.get('operator_aliases', {}).items()}
     sheet_map = {(item['file'], _norm(item['sheet'])): item['operator']
                  for item in data.get('sheet_operators', [])}
@@ -466,6 +532,7 @@ def load_assignments(path):
         'aliases': aliases,
         'sheet_map': sheet_map,
         'redated_rows': data.get('redated_rows', []),
+        'control': data.get('control_sheet'),
     }
 
 
@@ -638,7 +705,7 @@ PCT = '0.0"%"'
 # Формулы, которые инструмент пишет намеренно. Всё прочее со «=» -- описка.
 _FORMULA = re.compile(r'=(SUM\([A-Z]+\d+:[A-Z]+\d+\)'
                       r'|IF\([A-Z]+\d+=0,"",[A-Z]+\d+/[A-Z]+\d+\*100\)'
-                      r'|[A-Z]+\d+-[A-Z]+\d+)')
+                      r'|[A-Z]+\d+[-+][A-Z]+\d+)')
 
 
 def _sheet_bridge(sheet, bridge, model, operators):
@@ -728,6 +795,8 @@ def build_workbook(model, books, dropped, rules, month, sources, bridge=None):
                       operators)
     _sheet_assignments(book.create_sheet('Назначения'), model, rules)
     _sheet_operators(book.create_sheet('По операторам'), model, operators)
+    if model.get('control'):
+        _sheet_control(book.create_sheet('Контроль по своду'), model, operators)
     _sheet_daily(book.create_sheet('По дням'), model, operators)
     _sheet_machines(book.create_sheet('Машины по дням'), model, rules)
     _sheet_gaps(book.create_sheet('Летал-записи нет'), model, operators, True)
@@ -876,6 +945,49 @@ def _sheet_operators(sheet, model, operators):
     _put(sheet, row, 6, '=IF(E%d=0,"",C%d/E%d*100)' % (row, row, row),
          bold=True, fmt=PCT)
     _put(sheet, row, 7, '=C%d-E%d' % (row, row), bold=True, fmt=NUM)
+
+
+def _sheet_control(sheet, model, operators):
+    _put(sheet, 1, 1, 'Свод самих диспетчеров против моего разбора книг',
+         bold=True).font = Font(name='Arial', size=12, bold=True)
+    _head(sheet, 2, ['Оператор', 'Свод: справка', 'Свод: наличные',
+                     'Свод: итого', 'Мой разбор книги (все строки)',
+                     'Разница', 'Телеметрия', 'Как записан в своде'],
+          [24, 14, 15, 13, 20, 11, 13, 34])
+    row = 3
+    names = sorted(set(model['control']) | set(operators),
+                   key=lambda n: -model['control'].get(n, (0, 0, []))[0]
+                   - model['control'].get(n, (0, 0, []))[1])
+    for name in names:
+        transfer, cash, spellings = model['control'].get(name, (None, None, []))
+        mine = model['book_all_by_op'].get(name)
+        if transfer is None and mine is None:
+            continue
+        _put(sheet, row, 1, name)
+        _put(sheet, row, 2, round(transfer, 2) if transfer is not None else None,
+             fmt=NUM)
+        _put(sheet, row, 3, round(cash, 2) if cash is not None else None,
+             fmt=NUM)
+        if transfer is None:
+            _put(sheet, row, 4, None, fmt=NUM)
+        else:
+            _put(sheet, row, 4, '=B%d+C%d' % (row, row), fmt=NUM)
+        _put(sheet, row, 5, round(mine, 2) if mine is not None else None,
+             fmt=NUM)
+        gap = None if (transfer is None or mine is None) \
+            else mine - (transfer + cash)
+        _put(sheet, row, 6, '=E%d-D%d' % (row, row) if gap is not None else None,
+             fmt=NUM, fill=WARN_FILL if gap and abs(gap) > 0.05 else None)
+        _put(sheet, row, 7, round(model['tele_by_op'].get(name, 0.0), 2),
+             fmt=NUM)
+        _put(sheet, row, 8, ', '.join(sorted(set(spellings))))
+        row += 1
+    _put(sheet, row, 1, 'ИТОГО', bold=True)
+    for col in (2, 3, 4, 5, 7):
+        letter = openpyxl.utils.get_column_letter(col)
+        _put(sheet, row, col, '=SUM(%s3:%s%d)' % (letter, letter, row - 1),
+             bold=True, fmt=NUM)
+    _put(sheet, row, 6, '=E%d-D%d' % (row, row), bold=True, fmt=NUM)
 
 
 def _sheet_daily(sheet, model, operators):
@@ -1058,13 +1170,14 @@ def main():
         print('ERROR: --month must be YYYY-MM')
         return 1
 
-    spec = {'rules': [], 'aliases': {}, 'sheet_map': {}, 'redated_rows': []}
+    spec = {'rules': [], 'aliases': {}, 'sheet_map': {}, 'redated_rows': [],
+            'control': None}
     if args.assignments:
         spec = load_assignments(args.assignments)
     rules = spec['rules']
 
-    books = read_books(args.books_dir, args.month, spec['aliases'],
-                       spec['sheet_map'])
+    books, skipped = read_books(args.books_dir, args.month, spec['aliases'],
+                                spec['sheet_map'])
     flights = read_flights(args.flights)
     if not books:
         print('ERROR: no book rows parsed from %s' % _ascii(args.books_dir))
@@ -1098,7 +1211,27 @@ def main():
               % (parsed_ha, args.expect_books_ha))
         return 1
 
+    control = {}
+    if spec['control']:
+        control_path = os.path.join(args.books_dir, spec['control']['file'])
+        if not os.path.isfile(control_path):
+            print('ERROR: control sheet file not found: %s'
+                  % _ascii(spec['control']['file']))
+            return 2
+        control = read_control(control_path, spec['control']['sheet'],
+                               spec['aliases'])
+
     model = compute(books, flights, rules, args.month)
+    model['control'] = control
+    # [REASON]: свод диспетчеров подписан на ВСЕ строки книги, включая
+    # датированные соседним месяцем. Сравнивать его с итогом месяца значит
+    # получить ложное расхождение ровно на эти строки (в сентябре -- 76.00 га
+    # Холмуродова). Контроль сверяется с полным разбором книги.
+    parsed_all_by_op = {}
+    for row in list(books) + list(dropped):
+        parsed_all_by_op[row['operator']] = \
+            parsed_all_by_op.get(row['operator'], 0.0) + row['ha']
+    model['book_all_by_op'] = parsed_all_by_op
 
     bridge = None
     if args.works_report:
@@ -1122,6 +1255,11 @@ def main():
     print('month %s (read-only)' % args.month)
     print('  books   : %8.2f ha in %d rows (%d rows for other months)'
           % (book_total, len(books), len(dropped)))
+    if skipped:
+        print('  skipped %d sheet(s) that are not per-operator breakdowns:'
+              % len(skipped))
+        for name, title in skipped:
+            print('    %s | %s' % (_ascii(name), _ascii(title)))
     print('  flights : %8.2f ha in %d flights' % (tele_total, len(flights)))
     if rules:
         print('  coverage: %d flights not covered by the map'
@@ -1134,6 +1272,15 @@ def main():
             flag = '' if abs(share - 100.0) <= TRUST_BAND else '  <-- out of band'
             print('    %-24s book %8.2f  tele %8.2f  %6.1f%%%s'
                   % (_ascii(operator), book, tele, share, flag))
+    if control:
+        worst = 0.0
+        for name, (transfer, cash, _) in sorted(control.items()):
+            theirs = transfer + cash
+            mine = model['book_all_by_op'].get(name, 0.0)
+            worst = max(worst, abs(mine - theirs))
+            print('    control %-24s book-summary %8.2f  parsed %8.2f  %+7.2f'
+                  % (_ascii(name), theirs, mine, mine - theirs))
+        print('  control : worst gap %.2f ha' % worst)
     if bridge:
         computed = bridge['parsed_all'] \
             - sum(a for _, a in bridge['only_books']) \
