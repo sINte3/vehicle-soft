@@ -953,9 +953,43 @@ def _sheet_gaps(sheet, model, operators, flights_side):
             row += 1
     if row == 2:
         _put(sheet, 2, 1, 'нет строк')
+        row = 3
+    else:
+        _put(sheet, row, 1, 'ИТОГО', bold=True)
+        _put(sheet, row, 3, '=SUM(C2:C%d)' % (row - 1), bold=True, fmt=NUM)
+    if not flights_side:
         return
-    _put(sheet, row, 1, 'ИТОГО', bold=True)
-    _put(sheet, row, 3, '=SUM(C2:C%d)' % (row - 1), bold=True, fmt=NUM)
+
+    # [REASON]: без этого блока лист врёт по смыслу. У оператора со строками
+    # без даты дни «летал -- записи нет» и есть те самые строки: у Нурали
+    # 324.30 га справки без даты против 322.54 га таких дней. Показывать
+    # только левую половину -- значит выставлять записанную работу
+    # незаписанной. Дат при этом инструмент не проставляет: он ставит два
+    # числа рядом, решение остаётся за владельцем.
+    row += 2
+    _put(sheet, row, 1, 'Сопоставление строк книг без даты', bold=True)
+    row += 1
+    _head(sheet, row, ['Оператор', 'Книг без даты, га',
+                       'Телеметрия в днях без записи, га', 'Совпадение',
+                       'Дни'], [24, 18, 30, 13, 60])
+    row += 1
+    for operator in operators:
+        undated = model['book_undated'].get(operator, 0.0)
+        if undated < 0.01:
+            continue
+        free = [(day, model['tele_by_op_day'][operator][day])
+                for day in model['days']
+                if model['tele_by_op_day'].get(operator, {}).get(day, 0.0) >= 0.3
+                and model['book_by_op_day'].get(operator, {}).get(day, 0.0) < 0.01]
+        total = sum(value for _, value in free)
+        _put(sheet, row, 1, operator)
+        _put(sheet, row, 2, round(undated, 2), fmt=NUM)
+        _put(sheet, row, 3, round(total, 2), fmt=NUM)
+        _put(sheet, row, 4, '=IF(C%d=0,"",B%d/C%d*100)' % (row, row, row),
+             fmt=PCT)
+        _put(sheet, row, 5, ', '.join('%s (%.1f)' % (day[8:], value)
+                                      for day, value in free))
+        row += 1
 
 
 def _sheet_rows(sheet, books, dropped):

@@ -29,6 +29,10 @@
   7. Гектары оператора считаются по окну машины, а не по машине целиком:
      одна машина, разделённая датой между двумя людьми, даёт им разные суммы.
   8. Каталога книг или выгрузки нет -> код 2, отчёт НЕ создан.
+ 10. Лист «Летал-записи нет» ставит рядом строки книг БЕЗ ДАТЫ и дни, где
+     записи нет: без этого он выставлял бы записанную работу незаписанной
+     (у Нурали в сентябре 324.30 га справки без даты против 322.54 га таких
+     дней). Дат инструмент при этом не проставляет.
   9. Мост к отчёту приложения сходится в ноль и называет каждое расхождение
      поимённо: строку, которой в отчёте нет; строку, где числа разошлись;
      строку, которой нет в книгах. Отрицательный контроль: если отчёт
@@ -334,6 +338,23 @@ class MonthReconTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertNotIn('residual +0.00', result.stdout)
         self.assertIn('residual', result.stdout)
+
+    # 10. Строки без даты сопоставлены с днями без записи, а не забыты.
+    def test_undated_rows_are_matched_against_days_without_a_record(self):
+        result = self.run_tool(self.spec())
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        book = openpyxl.load_workbook(self.out)
+        rows = list(book['Летал-записи нет'].iter_rows(values_only=True))
+        book.close()
+        head = next(i for i, r in enumerate(rows)
+                    if r and r[0] == 'Сопоставление строк книг без даты')
+        body = rows[head + 2]
+        self.assertEqual('Ибодуллаев Хасанбой', body[0])
+        # 7 без даты + 3 нечитаемых = 10 га книг; свободных дней телеметрии
+        # 06 (9.0) и 07 (9.0) записаны, значит свободен только 22/25 -- нет:
+        # 22 и 25 записаны строкой «22,25.09.2025». Свободных дней нет.
+        self.assertAlmostEqual(10.0, body[1], places=2)
+        self.assertAlmostEqual(0.0, body[2], places=2)
 
     # Самоконтроль --expect-books-ha различает верное и неверное число.
     def test_expect_books_ha_discriminates(self):
