@@ -44,6 +44,7 @@ import csv
 import json
 import os
 import sys
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -59,6 +60,12 @@ OUT = os.getcwd()
 PACE = {"pause": 2.0}
 RETRIES = 3
 RETRY_PAUSE_S = (3, 8, 20)
+# [REASON]: urlopen's timeout is per socket operation, not per request, so a
+# peer that dribbles bytes holds a read for ever. The fleet run of 16.08 stood
+# at one object for a day without printing a line. This is the ceiling on one
+# whole request; a stuck one is abandoned and the run goes on.
+HARD_DEADLINE_S = 150.0
+ABANDONED = []
 # [REASON]: a labelling track needs every point, unlike the health probe which
 # only needs medians. A tractor writes 1500-13000 messages a day; 50 000 is
 # well above that and still far under the 2 GB per-response limit.
@@ -93,6 +100,17 @@ def read_token():
     sys.exit(2)
 
 
+def _fetch(query, box):
+    try:
+        request = urllib.request.Request(
+            AJAX, data=urllib.parse.urlencode(query).encode("utf-8"),
+            headers={"Content-Type": "application/x-www-form-urlencoded"})
+        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+            box["raw"] = response.read().decode("utf-8", "replace")
+    except Exception as exc:                                       # noqa: BLE001
+        box["error"] = exc
+
+
 def call(svc, params, sid=None):
     query = {"svc": svc, "params": json.dumps(params, ensure_ascii=False)}
     if sid:
@@ -103,22 +121,29 @@ def call(svc, params, sid=None):
         if waiting > 0:
             time.sleep(waiting)
         _last_call_at[0] = time.monotonic()
-        try:
-            request = urllib.request.Request(
-                AJAX, data=urllib.parse.urlencode(query).encode("utf-8"),
-                headers={"Content-Type": "application/x-www-form-urlencoded"})
-            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-                raw = response.read().decode("utf-8", "replace")
+        box = {}
+        worker = threading.Thread(target=_fetch, args=(query, box), daemon=True)
+        worker.start()
+        worker.join(HARD_DEADLINE_S)
+        if worker.is_alive():
+            ABANDONED.append(svc)
+            print("    otvet ne prishel za %d s, brosayu zapros (%s)"
+                  % (int(HARD_DEADLINE_S), svc), flush=True)
+            last = TimeoutError("no answer in %d s" % int(HARD_DEADLINE_S))
+            if attempt + 1 < RETRIES:
+                time.sleep(RETRY_PAUSE_S[attempt])
+            continue
+        if "error" not in box:
+            raw = box.get("raw", "")
             try:
                 return json.loads(raw)
             except ValueError:
                 return {"_unparsed": raw[:500]}
-        except Exception as exc:                                   # noqa: BLE001
-            last = exc
-            if attempt + 1 < RETRIES:
-                print("    svyaz propala (%s), povtor cherez %d s"
-                      % (type(exc).__name__, RETRY_PAUSE_S[attempt]), flush=True)
-                time.sleep(RETRY_PAUSE_S[attempt])
+        last = box["error"]
+        if attempt + 1 < RETRIES:
+            print("    svyaz propala (%s), povtor cherez %d s"
+                  % (type(last).__name__, RETRY_PAUSE_S[attempt]), flush=True)
+            time.sleep(RETRY_PAUSE_S[attempt])
     raise last
 
 
@@ -230,8 +255,9 @@ def main():
             stamp = day.strftime("%Y-%m-%d")
             if (str(unit_id), stamp) in done:
                 continue
-            print("  [%d/%d] %s %s" % (number, len(units), name[:32], stamp),
-                  flush=True)
+            print("  [%d/%d] %s %s %s"
+                  % (number, len(units), datetime.now(TZ).strftime("%H:%M:%S"),
+                     name[:32], stamp), flush=True)
             start = int(day.timestamp())
             finish = int((day + timedelta(days=1)).timestamp())
             try:
@@ -281,6 +307,8 @@ def main():
     call("core/logout", {}, sid)
     print("\npoints written: %d | machine-days with no messages: %d | failed: %d"
           % (written, empty, failed))
+    if ABANDONED:
+        print("requests abandoned on the hard deadline: %d" % len(ABANDONED))
     print("file: %s" % args.out)
     print("next: gps_label_sites.py --csv %s --names gps_fleet_health.csv"
           % args.out)

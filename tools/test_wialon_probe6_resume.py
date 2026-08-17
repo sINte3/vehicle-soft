@@ -20,6 +20,8 @@ ledger and the CSV.
   run 3: --resume over a DIFFERENT period must ignore the old ledger rows and
          measure everything again -- the negative control, without which the
          test would pass on a resume that mixes periods
+  run 4: one object stops answering for ever. The run must abandon it and
+         finish, reporting that object's days as unloaded rather than healthy
 
 Run (PowerShell):
   & "C:\\Program Files\\Python314\\python.exe" C:\\transport-report\\tools\\test_wialon_probe6_resume.py
@@ -34,6 +36,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -147,6 +150,59 @@ def check(condition, message):
     return bool(condition)
 
 
+class StallingServer(Server):
+    """Answers, then goes quiet for ever on one object -- the case of 16.08.
+
+    The run stopped at object 63 and stood for over a day without printing a
+    single line: not a retry notice, not a limit notice. Every reporting path
+    was therefore ruled out, which leaves a read that never returns. urlopen's
+    timeout is per socket operation, so a peer that keeps the connection warm
+    holds the whole run for ever.
+    """
+
+    def __init__(self, stall_on_unit):
+        super().__init__()
+        self.stall_on = stall_on_unit
+        self.stalled = 0
+
+    def urlopen(self, request, timeout=None):
+        query = urllib.parse.parse_qs(request.data.decode("utf-8"))
+        if query["svc"][0] == "messages/load_interval":
+            params = json.loads(query["params"][0])
+            if params["itemId"] == self.stall_on:
+                self.stalled += 1
+                time.sleep(30.0)        # far past the hard deadline in the test
+        return super().urlopen(request, timeout)
+
+
+def stall_test(probe):
+    """The run must survive an object whose answers never come."""
+    passed = True
+    probe.HARD_DEADLINE_S = 0.5
+    probe.RETRY_PAUSE_S = (0.0, 0.0, 0.0)
+    probe.ABANDONED.clear()
+    with tempfile.TemporaryDirectory() as workdir:
+        server = StallingServer(stall_on_unit=UNITS[1])
+        started = time.monotonic()
+        code = run(probe, workdir, server, list(PERIOD_ONE))
+        spent = time.monotonic() - started
+        passed &= check(code == 0, "stalling object did not stop the run")
+        passed &= check(spent < 25.0,
+                        "run finished in %.1f s, not held by the dead object"
+                        % spent)
+        passed &= check(len(probe.ABANDONED) > 0,
+                        "abandoned requests counted: %d" % len(probe.ABANDONED))
+        rows = csv_rows(workdir)
+        passed &= check(len(rows) == len(UNITS),
+                        "all %d objects still in the report (%d)"
+                        % (len(UNITS), len(rows)))
+        sick = [r for r in rows if str(UNITS[1]) == r["wialon_id"]]
+        passed &= check(bool(sick) and "dney ne zagruzilos" in sick[0]["chto_ne_tak"],
+                        "the dead object is reported as unloaded, not as healthy: %s"
+                        % (sick[0]["chto_ne_tak"] if sick else "missing"))
+    return passed
+
+
 def child_gets_killed(workdir):
     """Runs the probe until the fake server kills the process outright."""
     run(load_probe(), workdir, Server(kill_after_objects=3), list(PERIOD_ONE))
@@ -203,6 +259,9 @@ def main():
         passed &= check(other.objects_asked() == UNITS,
                         "run 3: a different period re-measured all %d objects"
                         % len(UNITS))
+
+    # run 4 -- an object that answers nothing at all must not hold the run
+    passed &= stall_test(probe)
 
     print("RESULT: %s" % ("OK" if passed else "FAIL"))
     return 0 if passed else 1

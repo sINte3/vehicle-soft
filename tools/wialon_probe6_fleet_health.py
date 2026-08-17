@@ -53,6 +53,7 @@ import json
 import math
 import os
 import sys
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -143,6 +144,12 @@ def read_token():
 # to assume; every call now survives three failures before giving up.
 RETRIES = 3
 RETRY_PAUSE_S = (3, 8, 20)
+# [REASON]: the ceiling on ONE request, whatever the socket is doing.
+# TIMEOUT above is per socket operation and a trickling peer never
+# trips it; this does. Generous enough that a slow but honest answer
+# still arrives -- the heaviest real object took about 40 s.
+HARD_DEADLINE_S = 150.0
+ABANDONED = []
 
 
 _last_call_at = [0.0]
@@ -180,6 +187,17 @@ def note_messages(count):
     _messages_window.append((time.monotonic(), count))
 
 
+def _fetch(query, box):
+    try:
+        request = urllib.request.Request(
+            AJAX, data=urllib.parse.urlencode(query).encode("utf-8"),
+            headers={"Content-Type": "application/x-www-form-urlencoded"})
+        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+            box["raw"] = response.read().decode("utf-8", "replace")
+    except Exception as exc:                                   # noqa: BLE001
+        box["error"] = exc
+
+
 def call(svc, params, sid=None):
     query = {"svc": svc, "params": json.dumps(params, ensure_ascii=False)}
     if sid:
@@ -187,21 +205,37 @@ def call(svc, params, sid=None):
     last = None
     for attempt in range(RETRIES):
         pace()
-        try:
-            request = urllib.request.Request(
-                AJAX, data=urllib.parse.urlencode(query).encode("utf-8"),
-                headers={"Content-Type": "application/x-www-form-urlencoded"})
-            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-                raw = response.read().decode("utf-8", "replace")
+        # [REASON]: urlopen's timeout is per socket operation, not per request.
+        # A peer that dribbles a byte every half minute keeps the read alive
+        # for ever, and that is what a run of 16.08 looked like: object 63,
+        # no progress for a day, and not one line of output -- neither a retry
+        # notice nor a limit notice, which rules out every path that reports.
+        # The request therefore runs in a thread with a hard deadline; a stuck
+        # one is abandoned (it is a daemon and dies with the process) and the
+        # run goes on instead of standing still.
+        box = {}
+        worker = threading.Thread(target=_fetch, args=(query, box), daemon=True)
+        worker.start()
+        worker.join(HARD_DEADLINE_S)
+        if worker.is_alive():
+            ABANDONED.append(svc)
+            print("    otvet ne prishel za %d s, brosayu zapros (%s)"
+                  % (int(HARD_DEADLINE_S), svc), flush=True)
+            last = TimeoutError("no answer in %d s" % int(HARD_DEADLINE_S))
+            if attempt + 1 < RETRIES:
+                time.sleep(RETRY_PAUSE_S[attempt])
+            continue
+        if "error" not in box:
+            raw = box.get("raw", "")
             try:
                 return json.loads(raw)
             except ValueError:
                 return {"_unparsed": raw[:500]}
-        except Exception as exc:                               # noqa: BLE001
-            last = exc
+        else:
+            last = box["error"]
             if attempt + 1 < RETRIES:
                 print("    svyaz propala (%s), povtor cherez %d s"
-                      % (type(exc).__name__, RETRY_PAUSE_S[attempt]), flush=True)
+                      % (type(last).__name__, RETRY_PAUSE_S[attempt]), flush=True)
                 time.sleep(RETRY_PAUSE_S[attempt])
     raise last
 
@@ -417,7 +451,10 @@ def main():
         # whole summer never holds more than one day of one machine in memory.
         worked_days, total_points, failed_days = 0, 0, 0
         intervals, sats, jumps, gaps = [], [], 0, 0
-        print("  [%d/%d] %s" % (number, len(units), name[:40]), flush=True)
+        # the clock is printed so a stall can be dated from the console
+        print("  [%d/%d] %s %s" % (number, len(units),
+                                   datetime.now(TZ).strftime("%H:%M:%S"),
+                                   name[:40]), flush=True)
         for day in sample_days:
             start = int(day.timestamp())
             finish = int((day + timedelta(days=1)).timestamp())
@@ -514,6 +551,7 @@ def main():
     # the honest record of what the server itself asked us to slow down for --
     # if access is lost again, this line says whether Wialon complained first
     say("server limit refusals during the run: %d" % limit_hits)
+    say("requests abandoned on the hard deadline: %d" % len(ABANDONED))
     say("")
     say("worst first:")
     for r in flagged[:60]:
