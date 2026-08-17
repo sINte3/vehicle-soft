@@ -17,6 +17,7 @@ Run:
 
 import csv
 import importlib.util
+import io
 import json
 import os
 import sys
@@ -27,7 +28,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # a lonely point near Bukhara: longitude 64.4, latitude 39.7
 LON, LAT = 64.4123, 39.7456
-UNITS = [(101, "МТЗ 261 EA"), (102, "Комбайн 741 KA"), (103, "МТЗ 873 GA")]
+# [REASON]: one name carries U+04B2, the Uzbek letter that killed the fleet
+# run of 18.08 when it reached the console. Half this fleet is named so.
+UNITS = [(101, "МТЗ 261 EA"), (102, "Комбайн 741 KA (Ҳокимият)"),
+         (103, "МТЗ 873 GA")]
 
 
 def load_tool():
@@ -102,8 +106,20 @@ def main():
     with tempfile.TemporaryDirectory() as workdir:
         out = os.path.join(workdir, "label_tracks.csv")
         server = Server()
-        code = run(tool, workdir, server,
-                   ["--unit", "261 EA", "--unit", "комбайн"] + period)
+        # a console that cannot encode the fleet's own names, as on Windows
+        narrow = io.TextIOWrapper(io.BytesIO(), encoding="cp1251", errors="strict")
+        real_stdout = sys.stdout
+        sys.stdout = narrow
+        try:
+            code = run(tool, workdir, server,
+                       ["--unit", "261 EA", "--unit", "комбайн"] + period)
+            crashed = None
+        except UnicodeEncodeError as problem:
+            code, crashed = None, problem
+        finally:
+            sys.stdout = real_stdout
+        passed &= check(crashed is None,
+                        "a name outside cp1251 did not stop the pull (%s)" % crashed)
         passed &= check(code == 0, "run finished with code 0")
         passed &= check(sorted(set(server.loaded)) == [101, 102],
                         "mask picked exactly the two machines meant, got %s"

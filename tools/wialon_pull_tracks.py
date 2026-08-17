@@ -81,6 +81,40 @@ ERRORS = {1: "invalid session", 2: "invalid service", 4: "invalid input",
           1005: "the execution time has exceeded the limit",
           1011: "your IP has changed, or the session has expired"}
 
+# [REASON]: the charter says console output is ASCII, and this is the run that
+# proved why: on 18.08 the fleet probe died on "Niva 80 350 SBA (Hokimiyat)"
+# because U+04B2 has no place in cp1251. Half this fleet is named in Uzbek
+# Cyrillic. Files keep the real name; the console gets a transliteration.
+TRANSLIT = {
+    "\u0430": "a", "\u0431": "b", "\u0432": "v", "\u0433": "g", "\u0434": "d",
+    "\u0435": "e", "\u0451": "e", "\u0436": "zh", "\u0437": "z", "\u0438": "i",
+    "\u0439": "y", "\u043a": "k", "\u043b": "l", "\u043c": "m", "\u043d": "n",
+    "\u043e": "o", "\u043f": "p", "\u0440": "r", "\u0441": "s", "\u0442": "t",
+    "\u0443": "u", "\u0444": "f", "\u0445": "h", "\u0446": "ts", "\u0447": "ch",
+    "\u0448": "sh", "\u0449": "sch", "\u044a": "", "\u044b": "y", "\u044c": "",
+    "\u044d": "e", "\u044e": "yu", "\u044f": "ya", "\u045e": "o", "\u049b": "q",
+    "\u0493": "g", "\u04b3": "h", "\u0456": "i", "\u0457": "yi", "\u0454": "e",
+}
+
+
+def ascii_only(text):
+    """Anything printable, whatever the console code page is."""
+    out = []
+    for char in str(text):
+        if char.isascii():
+            out.append(char)
+            continue
+        replacement = TRANSLIT.get(char.lower())
+        if replacement is None:
+            out.append("?")
+        elif char.isupper():
+            out.append(replacement.upper() if len(replacement) == 1
+                       else replacement.capitalize())
+        else:
+            out.append(replacement)
+    return "".join(out)
+
+
 _last_call_at = [0.0]
 
 
@@ -229,7 +263,7 @@ def main():
     # matches most of the fleet, and finding that out an hour in is expensive.
     print("matched %d objects for %d day(s):" % (len(units), len(days)))
     for unit_id, name in units:
-        print("   %-8s %s" % (unit_id, name))
+        print("   %-8s %s" % (unit_id, ascii_only(name)))
     if not units:
         print("nothing matched -- check the masks against gps_fleet_health.csv")
         call("core/logout", {}, sid)
@@ -257,7 +291,7 @@ def main():
                 continue
             print("  [%d/%d] %s %s %s"
                   % (number, len(units), datetime.now(TZ).strftime("%H:%M:%S"),
-                     name[:32], stamp), flush=True)
+                     ascii_only(name)[:32], stamp), flush=True)
             start = int(day.timestamp())
             finish = int((day + timedelta(days=1)).timestamp())
             try:

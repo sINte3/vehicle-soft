@@ -141,6 +141,40 @@ LEDGER = "gps_fleet_health.partial.jsonl"
 log = []
 say = lambda s="": log.append(str(s))
 
+# [REASON]: the charter says console output is ASCII and the report file is
+# UTF-8, and this is why. The run of 18.08 died on object 96, "Niva 80 350 SBA
+# (Hokimiyat)", whose name holds U+04B2 -- the Uzbek Cyrillic letter with a
+# descender. It is absent from cp1251, so print() raised UnicodeEncodeError and
+# the whole sweep stopped after 95 objects. Names go to the csv and the report
+# in full; the console gets a transliteration that cannot fail.
+TRANSLIT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "h", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+    "ў": "o", "қ": "q", "ғ": "g", "ҳ": "h", "і": "i", "ї": "yi", "є": "e",
+}
+
+
+def ascii_only(text):
+    """Anything printable, whatever the console code page is."""
+    out = []
+    for char in str(text):
+        if char.isascii():
+            out.append(char)
+            continue
+        lower = char.lower()
+        replacement = TRANSLIT.get(lower)
+        if replacement is None:
+            out.append("?")
+        elif char.isupper():
+            out.append(replacement.upper() if len(replacement) == 1
+                       else replacement.capitalize())
+        else:
+            out.append(replacement)
+    return "".join(out)
+
 
 def read_token():
     for folder in (OUT, HERE):
@@ -279,8 +313,15 @@ def err_code(result):
 # requests bought nothing, because the report was written only at the end.
 # Every finished object now lands in the ledger at once, and --resume skips
 # what is already there instead of paying for the whole fleet again.
-def read_ledger(path, period):
-    """unit_id -> row, but only rows measured over the SAME period."""
+def read_ledger(path, periods):
+    """unit_id -> row, but only rows measured over the SAME period.
+
+    `periods` is a set: the current key, plus the shorter key this probe wrote
+    before the window and the message cap joined it. Without that, the change
+    of 18.08 quietly invalidated 258 finished objects and the run measured them
+    all again -- an hour of work thrown away by a change of format, not of
+    meaning.
+    """
     done, alien = {}, 0
     if not os.path.isfile(path):
         return done, alien
@@ -293,7 +334,7 @@ def read_ledger(path, period):
                 row = json.loads(line)
             except ValueError:
                 continue
-            if row.get("period") != period:
+            if row.get("period") not in periods:
                 alien += 1
                 continue
             if row.get("unit_id") is not None:
@@ -431,6 +472,10 @@ def main():
     # same measurement, and --resume must not mix them into one report.
     period = "%s..%s/%d/%s/%d" % (args.date_from, args.date_to, args.every,
                                   args.hours or "sutki", args.max_messages)
+    accepted = {period}
+    if window is None and args.max_messages == MAX_MESSAGES_PER_DAY:
+        # the same measurement under the key this probe used before 18.08
+        accepted.add("%s..%s/%d" % (args.date_from, args.date_to, args.every))
     # [REASON]: a connection check must not poison the real run's ledger. Its
     # five objects carry the same period, so a later --resume would count them
     # as done and the fleet report would silently be short by five machines.
@@ -442,7 +487,7 @@ def main():
         ledger_path = os.path.join(OUT, LEDGER)
     done, alien = ({}, 0)
     if args.resume:
-        done, alien = read_ledger(ledger_path, period)
+        done, alien = read_ledger(ledger_path, accepted)
 
     say("Wialon probe 6 -- read-only -- fleet tracker health")
     say("period: %s .. %s, every %d-th day -- %d days sampled"
@@ -451,9 +496,15 @@ def main():
     say("run at: %s" % datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %z"))
     if args.resume:
         say("resume: %d objects taken from the ledger" % len(done))
+        print("resume: %d objects taken from the ledger" % len(done), flush=True)
         if alien:
             say("resume: %d ledger rows ignored -- measured over another period"
                 % alien)
+            # [REASON]: this line used to exist only in the report file, which
+            # is written when the run ENDS. A resume that silently ignored the
+            # whole ledger therefore looked exactly like a resume that worked.
+            print("resume: %d ledger rows IGNORED -- another period, they will "
+                  "be measured again" % alien, flush=True)
 
     try:
         login = call("token/login", {"token": token})
@@ -525,7 +576,7 @@ def main():
             left = "  (%.0f s/obekt, ostalos ~%.1f ch)" % (per_object, hours)
         print("  [%d/%d] %s %s%s" % (number, len(units),
                                      datetime.now(TZ).strftime("%H:%M:%S"),
-                                     name[:40], left), flush=True)
+                                     ascii_only(name)[:40], left), flush=True)
         for day in sample_days:
             if window is None:
                 start = int(day.timestamp())

@@ -32,8 +32,10 @@ Run (PowerShell):
 Output is ASCII.
 """
 
+import codecs
 import csv
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -180,6 +182,71 @@ class StallingServer(Server):
         return super().urlopen(request, timeout)
 
 
+class UzbekServer(Server):
+    """One object is named the way half this fleet is named."""
+
+    def urlopen(self, request, timeout=None):
+        query = urllib.parse.parse_qs(request.data.decode("utf-8"))
+        if query["svc"][0] == "core/search_items":
+            return FakeResponse({"items": [
+                # [REASON]: NOT on UNITS[0]. That object sits in the legacy
+                # ledger and is skipped before anything is printed, so putting
+                # the name there made the test pass with the fix removed --
+                # which the mutation run caught.
+                {"id": uid, "nm": ("Niva 80 350 SBA (\u0492\u04b2\u043e\u043a\u0438\u043c\u0438\u044f\u0442)"
+                                   if uid == UNITS[1] else "MASHINA %d" % uid)}
+                for uid in UNITS]})
+        return super().urlopen(request, timeout)
+
+
+def console_and_ledger_test(probe):
+    """Two defects that cost a whole sweep on 18.08, in one place.
+
+    The first killed it outright: object 96 was "Niva 80 350 SBA (Hokimiyat)",
+    and U+04B2 does not exist in cp1251, so print() raised and the process
+    died after 95 objects. Here stdout is a real cp1251 stream, so the test
+    fails exactly as the run did if the fix is removed.
+
+    The second was quieter and cost more: the period key grew two fields, so
+    the 258 objects already in the ledger no longer matched and were measured
+    again from scratch. A ledger row written under the older key must still be
+    accepted when the measurement behind it is the same.
+    """
+    passed = True
+    with tempfile.TemporaryDirectory() as workdir:
+        # a ledger from the previous version: short period key, one object done
+        legacy = {"unit_id": UNITS[0], "name": "Niva", "worked_days": 3,
+                  "sampled_days": 3, "points": 750, "interval_s": 10.0,
+                  "sats_median": 17.0, "jumps": 0, "motion_gaps": 0,
+                  "reasons": "", "period": "2026-06-01..2026-06-03/1"}
+        with open(os.path.join(workdir, probe_ledger), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(legacy, ensure_ascii=False) + "\n")
+
+        server = UzbekServer()
+        narrow = io.TextIOWrapper(io.BytesIO(), encoding="cp1251", errors="strict")
+        real_stdout = sys.stdout
+        sys.stdout = narrow
+        try:
+            code = run(probe, workdir, server, PERIOD_ONE + ["--resume"])
+            crashed = None
+        except UnicodeEncodeError as problem:
+            code, crashed = None, problem
+        finally:
+            sys.stdout = real_stdout
+        passed &= check(crashed is None,
+                        "a name outside cp1251 did not stop the run (%s)" % crashed)
+        passed &= check(code == 0, "run finished with code 0")
+        passed &= check(UNITS[0] not in server.objects_asked(),
+                        "the object from the old ledger was NOT measured again "
+                        "(asked: %s)" % server.objects_asked())
+        rows = csv_rows(workdir)
+        passed &= check(len(rows) == len(UNITS),
+                        "report holds all %d objects (%d)" % (len(UNITS), len(rows)))
+        cyrillic = [r for r in rows if r["wialon_id"] == str(UNITS[1])]
+        passed &= check(bool(cyrillic), "the report itself is written in UTF-8")
+    return passed
+
+
 def stall_test(probe):
     """The run must survive an object whose answers never come."""
     passed = True
@@ -286,6 +353,10 @@ def main():
         passed &= check(after.objects_asked() == [101, 102, 104, 105],
                         "another window is measured again, not resumed: %s"
                         % after.objects_asked())
+
+    # run 6 -- a name the console cannot encode must not kill the sweep, and a
+    # ledger written under the older, shorter period key must still be honoured
+    passed &= console_and_ledger_test(probe)
 
     # run 4 -- an object that answers nothing at all must not hold the run
     passed &= stall_test(probe)
