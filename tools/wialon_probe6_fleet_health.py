@@ -36,13 +36,19 @@ Run (PowerShell, one command per line):
 
 That samples 11 days over the summer for every object.
 
-HOW LONG IT REALLY TAKES -- measured, and it is not what was planned. The first
-estimate said six hours: eleven days, two requests each, two seconds of pacing.
-That counted the pauses only. The run of 16-18.08 did 183 objects in 48 hours --
-sixteen minutes an object, twenty times over, because the server itself spends
-tens of seconds on a message request. The run now prints seconds-per-object and
-the estimated remainder from its own measured speed, so nobody has to find this
-out on the third day.
+HOW LONG IT REALLY TAKES. The estimate is six hours: eleven days, two requests
+each, two seconds of pacing. The run of 16-18.08 did 183 objects in 48 hours and
+that was blamed on the server -- WRONGLY. Measured on 18.08 with
+tools/wialon_measure_cost.py, a whole day of a car answers in 0.4 s and a
+six-hour window in 0.1 s. The server is not the cost; our own pause is, and it
+is deliberate (decision G9).
+
+What actually stopped the run was almost certainly the console: Windows puts a
+console into selection mode on a stray click and the process blocks on its next
+write. Run with output redirected to a file (PowerShell: *> run.log) and no
+click can hold it. The run also prints seconds-per-object and the estimated
+remainder from its own measured speed, so a stall is visible within minutes
+rather than days.
 
 Three levers, in the order they pay off:
   --only / --skip   run the machines the report is about. 114 of 481 objects are
