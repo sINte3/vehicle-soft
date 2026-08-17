@@ -613,6 +613,15 @@ def _head(sheet, row, titles, widths=None):
 
 
 def _put(sheet, row, col, value, bold=False, fmt=None, fill=None):
+    # [REASON]: openpyxl решает тип клетки по первому символу: строка,
+    # начинающаяся с «=», записывается ФОРМУЛОЙ и открывается ошибкой. Подписи
+    # инструмента пишутся человеком, формулы -- только явными шаблонами ниже,
+    # поэтому подпись со «=» в начале это всегда описка, а не намерение.
+    if isinstance(value, str) and value.startswith('=') \
+            and not _FORMULA.fullmatch(value):
+        raise ValueError('подпись начинается со знака равенства и уйдёт в файл '
+                         'формулой: %r (лист %s, %d:%d)'
+                         % (value, sheet.title, row, col))
     cell = sheet.cell(row=row, column=col, value=value)
     cell.font = Font(name='Arial', size=10, bold=bold)
     cell.border = BORDER
@@ -625,6 +634,11 @@ def _put(sheet, row, col, value, bold=False, fmt=None, fill=None):
 
 NUM = '#,##0.00'
 PCT = '0.0"%"'
+
+# Формулы, которые инструмент пишет намеренно. Всё прочее со «=» -- описка.
+_FORMULA = re.compile(r'=(SUM\([A-Z]+\d+:[A-Z]+\d+\)'
+                      r'|IF\([A-Z]+\d+=0,"",[A-Z]+\d+/[A-Z]+\d+\*100\)'
+                      r'|[A-Z]+\d+-[A-Z]+\d+)')
 
 
 def _sheet_bridge(sheet, bridge, model, operators):
@@ -658,7 +672,7 @@ def _sheet_bridge(sheet, bridge, model, operators):
         _put(sheet, row, 2, round(area, 2), fmt=NUM)
         _put(sheet, row, 3, 'в присланных книгах такой строки нет')
         row += 1
-    _put(sheet, row, 1, '= Отчёт по работам (расчёт)', bold=True)
+    _put(sheet, row, 1, 'ИТОГО: отчёт по работам (расчёт)', bold=True)
     _put(sheet, row, 2, '=SUM(B%d:B%d)' % (start, row - 1), bold=True, fmt=NUM)
     _put(sheet, row, 3, 'должно совпасть со строкой ниже')
     calc_row = row
@@ -694,6 +708,11 @@ def _sheet_bridge(sheet, bridge, model, operators):
 
 def build_workbook(model, books, dropped, rules, month, sources, bridge=None):
     book = openpyxl.Workbook()
+    # [REASON]: openpyxl пишет формулы БЕЗ кэша значения, поэтому до первого
+    # пересчёта итоги и проценты читаются как пустые -- и Excel, и любой
+    # просмотрщик. Этот флаг заставляет пересчитать при открытии, иначе
+    # владелец увидит пустые клетки там, где стоят суммы.
+    book.calculation.fullCalcOnLoad = True
 
     operators = sorted(
         set(model['book_by_op']) | set(model['tele_by_op']) - {'(не определён)'},

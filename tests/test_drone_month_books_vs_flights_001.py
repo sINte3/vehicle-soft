@@ -29,6 +29,11 @@
   7. Гектары оператора считаются по окну машины, а не по машине целиком:
      одна машина, разделённая датой между двумя людьми, даёт им разные суммы.
   8. Каталога книг или выгрузки нет -> код 2, отчёт НЕ создан.
+ 11. Ни одна ПОДПИСЬ не уходит в файл формулой. openpyxl решает тип клетки по
+     первому символу, поэтому подпись «= Отчёт по работам (расчёт)» попадала в
+     файл формулой и открывалась ошибкой -- дефект, найденный проверкой формул
+     после того, как LibreOffice в контейнере пересчитать отказался. Плюс книга
+     несёт fullCalcOnLoad: без него итоги читаются пустыми до первого открытия.
  10. Лист «Летал-записи нет» ставит рядом строки книг БЕЗ ДАТЫ и дни, где
      записи нет: без этого он выставлял бы записанную работу незаписанной
      (у Нурали в сентябре 324.30 га справки без даты против 322.54 га таких
@@ -355,6 +360,36 @@ class MonthReconTest(unittest.TestCase):
         # 22 и 25 записаны строкой «22,25.09.2025». Свободных дней нет.
         self.assertAlmostEqual(10.0, body[1], places=2)
         self.assertAlmostEqual(0.0, body[2], places=2)
+
+    # 11. Подписи не уходят формулами, книга пересчитывается при открытии.
+    def test_no_label_is_written_as_a_formula(self):
+        import drone_month_books_vs_flights as tool
+        result = self.run_tool(self.spec(),
+                               extra=['--works-report', self.report])
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        book = openpyxl.load_workbook(self.out)
+        self.assertTrue(book.calculation.fullCalcOnLoad)
+        bad = []
+        for sheet in book.worksheets:
+            for row in sheet.iter_rows():
+                for cell in row:
+                    if cell.data_type != 'f':
+                        continue
+                    if not tool._FORMULA.fullmatch(str(cell.value)):
+                        bad.append('%s!%s = %r'
+                                   % (sheet.title, cell.coordinate, cell.value))
+        book.close()
+        self.assertEqual([], bad, 'подписи ушли формулами: %s' % bad)
+
+    # 11, отрицательный контроль: гвардия ловит подпись со знака равенства.
+    def test_label_starting_with_equals_is_refused(self):
+        import drone_month_books_vs_flights as tool
+        sheet = openpyxl.Workbook().active
+        with self.assertRaises(ValueError):
+            tool._put(sheet, 1, 1, '= Отчёт по работам (расчёт)')
+        # Намеренная формула той же формы проходит.
+        tool._put(sheet, 2, 1, '=SUM(B1:B9)')
+        self.assertEqual('=SUM(B1:B9)', sheet.cell(row=2, column=1).value)
 
     # Самоконтроль --expect-books-ha различает верное и неверное число.
     def test_expect_books_ha_discriminates(self):
