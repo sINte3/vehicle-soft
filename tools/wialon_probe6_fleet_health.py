@@ -34,10 +34,25 @@ Run (PowerShell, one command per line):
   cd C:\\diag\\wialon
   & "C:\\Program Files\\Python314\\python.exe" C:\\transport-report\\tools\\wialon_probe6_fleet_health.py --from 2026-06-01 --to 2026-08-14
 
-That samples 11 days over the summer for every object. At the default pace
-(one request per two seconds, decision G9) a full summer sweep takes about six
-hours, so it is a night job. Add --every 14 to halve it at the cost of half
-the days, or --pause 1 to halve it at twice the load on the server.
+That samples 11 days over the summer for every object.
+
+HOW LONG IT REALLY TAKES -- measured, and it is not what was planned. The first
+estimate said six hours: eleven days, two requests each, two seconds of pacing.
+That counted the pauses only. The run of 16-18.08 did 183 objects in 48 hours --
+sixteen minutes an object, twenty times over, because the server itself spends
+tens of seconds on a message request. The run now prints seconds-per-object and
+the estimated remainder from its own measured speed, so nobody has to find this
+out on the third day.
+
+Three levers, in the order they pay off:
+  --only / --skip   run the machines the report is about. 114 of 481 objects are
+                    cars, and cars log every second, so they are both the least
+                    relevant and the most expensive.
+  --hours 8-14      a working window instead of a whole day.
+  --max-messages N  a smaller cap per request.
+Which of them actually helps is a question about this server, not a guess: run
+tools/wialon_measure_cost.py first, it times all four combinations on real
+objects in about five minutes and prints the flags to use.
 
 The run may be interrupted at any point -- every finished object is written to
 gps_fleet_health.partial.jsonl straight away. Start it again with the SAME
@@ -361,6 +376,23 @@ def main():
     # login, unit list, message loading, unloading, logout -- in under a minute.
     parser.add_argument("--limit", type=int, default=0,
                         help="check only the first N objects (0 = all)")
+    # [REASON]: the report exists to send a mechanic to machines whose tracker
+    # makes WORK unmeasurable, and work is measured on field machinery. Of the
+    # 481 objects 114 are cars -- and they are the slow ones, logging every
+    # second. Excluding them is not a shortcut, it is the question restated.
+    parser.add_argument("--only", action="append", default=[],
+                        help="only objects whose name contains this; may repeat")
+    parser.add_argument("--skip", action="append", default=[],
+                        help="skip objects whose name contains this; may repeat")
+    # [REASON]: a whole day of a car is 86 400 messages for the server to scan
+    # and ship. Six working hours answer the same four indicators for a tractor
+    # and cost a quarter of that -- but only if the interval is what costs.
+    # Measure with tools/wialon_measure_cost.py before choosing.
+    parser.add_argument("--hours", default=None,
+                        help="working window inside each day, e.g. 8-14")
+    parser.add_argument("--max-messages", type=int, default=MAX_MESSAGES_PER_DAY,
+                        help="cap on messages per request (default %d)"
+                             % MAX_MESSAGES_PER_DAY)
     parser.add_argument("--out", default="gps_fleet_health.csv")
     args = parser.parse_args()
     PACE["pause"] = max(0.0, args.pause)
@@ -377,7 +409,22 @@ def main():
         sample_days.append(cursor)
         cursor += timedelta(days=max(1, args.every))
 
-    period = "%s..%s/%d" % (args.date_from, args.date_to, args.every)
+    window = None
+    if args.hours:
+        try:
+            first_hour, last_hour = (int(part) for part in args.hours.split("-"))
+        except ValueError:
+            sys.stderr.write("ERROR: --hours looks like 8-14\n")
+            return 2
+        if not 0 <= first_hour < last_hour <= 24:
+            sys.stderr.write("ERROR: --hours must be 0-24 and rising\n")
+            return 2
+        window = (first_hour, last_hour)
+    # [REASON]: the window and the message cap go into the period key. Rows
+    # measured over six hours and rows measured over a whole day are not the
+    # same measurement, and --resume must not mix them into one report.
+    period = "%s..%s/%d/%s/%d" % (args.date_from, args.date_to, args.every,
+                                  args.hours or "sutki", args.max_messages)
     # [REASON]: a connection check must not poison the real run's ledger. Its
     # five objects carry the same period, so a later --resume would count them
     # as done and the fleet report would silently be short by five machines.
@@ -434,6 +481,15 @@ def main():
     units = [(item.get("id"), item.get("nm") or "")
              for item in (listing.get("items") or []) if item.get("id")]
     say("units visible: %d" % len(units))
+    only = [m.strip().lower() for m in args.only if m.strip()]
+    skip = [m.strip().lower() for m in args.skip if m.strip()]
+    if only:
+        units = [u for u in units if any(m in u[1].lower() for m in only)]
+        say("--only left %d objects" % len(units))
+    if skip:
+        before = len(units)
+        units = [u for u in units if not any(m in u[1].lower() for m in skip)]
+        say("--skip removed %d objects" % (before - len(units)))
     if args.limit > 0:
         units = units[:args.limit]
         say("LIMIT: only the first %d objects -- this is a connection check, "
@@ -443,6 +499,7 @@ def main():
     rows = list(done.values())
     ledger = open(ledger_path, "a" if args.resume else "w", encoding="utf-8")
     limit_hits = 0
+    run_started, done_now = time.monotonic(), 0
     for number, (unit_id, name) in enumerate(units, 1):
         if unit_id in done:
             continue
@@ -451,19 +508,31 @@ def main():
         # whole summer never holds more than one day of one machine in memory.
         worked_days, total_points, failed_days = 0, 0, 0
         intervals, sats, jumps, gaps = [], [], 0, 0
-        # the clock is printed so a stall can be dated from the console
-        print("  [%d/%d] %s %s" % (number, len(units),
-                                   datetime.now(TZ).strftime("%H:%M:%S"),
-                                   name[:40]), flush=True)
+        # [REASON]: the estimate is MEASURED, not arithmetic. The sweep was
+        # planned at 44 s per object by counting pauses alone; the server takes
+        # tens of seconds per request and the real figure was sixteen minutes.
+        # Nothing in the run said so, and two days went by before anyone knew.
+        left = ""
+        if done_now:
+            per_object = (time.monotonic() - run_started) / done_now
+            hours = per_object * (len(units) - number + 1) / 3600.0
+            left = "  (%.0f s/obekt, ostalos ~%.1f ch)" % (per_object, hours)
+        print("  [%d/%d] %s %s%s" % (number, len(units),
+                                     datetime.now(TZ).strftime("%H:%M:%S"),
+                                     name[:40], left), flush=True)
         for day in sample_days:
-            start = int(day.timestamp())
-            finish = int((day + timedelta(days=1)).timestamp())
+            if window is None:
+                start = int(day.timestamp())
+                finish = int((day + timedelta(days=1)).timestamp())
+            else:
+                start = int((day + timedelta(hours=window[0])).timestamp())
+                finish = int((day + timedelta(hours=window[1])).timestamp())
             try:
-                message_budget(MAX_MESSAGES_PER_DAY)
+                message_budget(args.max_messages)
                 answer = call("messages/load_interval",
                               {"itemId": unit_id, "timeFrom": start,
                                "timeTo": finish, "flags": 0, "flagsMask": 0,
-                               "loadCount": MAX_MESSAGES_PER_DAY}, sid)
+                               "loadCount": args.max_messages}, sid)
                 if err_code(answer) in LIMIT_ERRORS:
                     # the server is asking for room, not refusing the object
                     limit_hits += 1
@@ -523,6 +592,7 @@ def main():
         # everything it has already paid for
         ledger.write(json.dumps(row, ensure_ascii=False) + "\n")
         ledger.flush()
+        done_now += 1
     ledger.close()
 
     # sick first, then by satellites: the worst antenna at the top; machines

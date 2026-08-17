@@ -22,6 +22,9 @@ ledger and the CSV.
          test would pass on a resume that mixes periods
   run 4: one object stops answering for ever. The run must abandon it and
          finish, reporting that object's days as unloaded rather than healthy
+  run 5: the levers that make a sweep affordable -- --only/--skip narrow the
+         fleet, --hours narrows the day -- and a ledger written over one window
+         is not reused for another, or the report would mix measurements
 
 Run (PowerShell):
   & "C:\\Program Files\\Python314\\python.exe" C:\\transport-report\\tools\\test_wialon_probe6_resume.py
@@ -89,6 +92,7 @@ class Server:
     def __init__(self, kill_after_objects=None):
         self.kill_after = kill_after_objects
         self.loaded_for = []
+        self.intervals = []
 
     def urlopen(self, request, timeout=None):
         query = urllib.parse.parse_qs(request.data.decode("utf-8"))
@@ -110,6 +114,7 @@ class Server:
                 sys.stdout.flush()
                 os._exit(KILL_CODE)
             self.loaded_for.append(unit)
+            self.intervals.append((params["timeFrom"], params["timeTo"]))
             return FakeResponse({"messages": day_of_messages()})
         return FakeResponse({})
 
@@ -259,6 +264,28 @@ def main():
         passed &= check(other.objects_asked() == UNITS,
                         "run 3: a different period re-measured all %d objects"
                         % len(UNITS))
+
+    # run 5 -- the levers that make a sweep affordable must actually pull:
+    # --only narrows the fleet, --hours narrows the day, and a ledger written
+    # over one window must not be reused for another
+    with tempfile.TemporaryDirectory() as workdir:
+        narrow = Server()
+        run(probe, workdir, narrow,
+            ["--only", "MASHINA 10", "--skip", "103", "--hours", "8-14"]
+            + PERIOD_ONE)
+        passed &= check(narrow.objects_asked() == [101, 102, 104, 105],
+                        "--only/--skip left %s" % narrow.objects_asked())
+        spans = {finish - start for start, finish in narrow.intervals}
+        passed &= check(spans == {6 * 3600},
+                        "--hours asked for 6-hour windows, got %s"
+                        % [int(v) for v in spans])
+        after = Server()
+        run(probe, workdir, after,
+            ["--only", "MASHINA 10", "--skip", "103", "--hours", "9-15",
+             "--resume"] + PERIOD_ONE)
+        passed &= check(after.objects_asked() == [101, 102, 104, 105],
+                        "another window is measured again, not resumed: %s"
+                        % after.objects_asked())
 
     # run 4 -- an object that answers nothing at all must not hold the run
     passed &= stall_test(probe)
