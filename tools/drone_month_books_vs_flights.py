@@ -47,7 +47,9 @@
     +-9 %, всё сверх него отчёт помечает как вопрос, а не как вину.
 
 ЛИСТЫ ОТЧЁТА
-  «Сводка»            -- три итога месяца и мост между ними;
+  «Сводка»            -- итоги месяца по обеим сторонам;
+  «Мост к отчёту»     -- почему отчёт приложения даёт другое число: каждая
+                         строка расхождения поимённо (нужен --works-report);
   «Назначения»        -- оператор x машина x даты: вылеты, гектары, довод;
   «По операторам»     -- книга против телеметрии, доля, признак выхода за +-9 %;
   «По дням»           -- оператор x день: книга / телеметрия / разница;
@@ -61,9 +63,9 @@
 Запуск (рабочая машина владельца, Windows):
   & "C:\\Program Files\\Python314\\python.exe" tools\\drone_month_books_vs_flights.py --books-dir C:\\drones\\sept --flights C:\\drones\\sept\\flights.xlsx --month 2025-09 --assignments tools\\drone_assignments_2025_09.json --out C:\\drones\\sept\\recon.xlsx
 
-Коды возврата: 0 -- разобрано; 1 -- не пройдено предусловие (нет файлов,
-пустая выгрузка); 2 -- не найден каталог книг или файл вылетов; 3 -- карта
-назначений не покрывает часть вылетов.
+Коды возврата: 0 -- разобрано; 1 -- не пройдено предусловие (пустая выгрузка,
+имя оператора вне карты, не сошёлся --expect-books-ha); 2 -- не найден каталог
+книг, файл вылетов или отчёт; 3 -- карта назначений не покрывает часть вылетов.
 
 Откат: инструмент ничего не пишет, кроме своего xlsx; откат кода git revert,
 откат данных не требуется.
@@ -367,6 +369,84 @@ def read_flights(path):
         book.close()
 
 
+def read_works_report(path):
+    """Читает отчёт по работам приложения: итог, операторы, заказчики.
+
+    [REASON]: главный вопрос владельца -- почему числа разнятся МЕЖДУ
+    отчётами. Ответить на него, не прочитав сам отчёт, нельзя: расхождение
+    складывается из строк, которые в него не попали, и строк, которых нет в
+    книгах. Поэтому мост строится на данных обеих сторон, а не на рассуждении.
+    """
+    book = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    try:
+        out = {'total': None, 'operators': {}, 'customers': {}}
+        if 'Сводка' in book.sheetnames:
+            for cells in book['Сводка'].iter_rows(values_only=True):
+                if cells and _fold(cells[0]).startswith('гектар'):
+                    out['total'] = float(cells[1] or 0)
+        for title, key, col in (('По операторам', 'operators', 2),
+                                ('По заказчикам', 'customers', 2)):
+            if title not in book.sheetnames:
+                continue
+            rows = book[title].iter_rows(values_only=True)
+            next(rows, None)
+            for cells in rows:
+                name = _norm(cells[0]) if cells else ''
+                if not name or _fold(name).startswith('итого'):
+                    continue
+                out[key][name] = out[key].get(name, 0.0) \
+                    + float(cells[col] or 0)
+        return out
+    finally:
+        book.close()
+
+
+def customer_key(name):
+    """Свод написания контрагента: без «фх», «мчж», знаков и регистра."""
+    folded = _fold(name)
+    folded = re.sub(r'\b(фх|фз|мчж|аж|фермер хужалиги)\b', ' ', folded)
+    return re.sub(r'[^а-яa-z0-9]+', ' ', folded).strip()
+
+
+def build_bridge(books, dropped, report):
+    """Мост «книги -> отчёт программы» по контрагентам."""
+    parsed_all = sum(r['ha'] for r in books) + sum(r['ha'] for r in dropped)
+    # [REASON]: свод написаний нужен для сопоставления, но в отчёт идёт
+    # ИСХОДНОЕ имя: владелец ищет строку в книге глазами, а свёрнутый ключ
+    # («бухоро агрокластер заминлари») в книге не написан нигде.
+    shown = {}
+    ours = {}
+    for row in list(books) + list(dropped):
+        key = customer_key(row['farm'])
+        ours[key] = ours.get(key, 0.0) + row['ha']
+        shown.setdefault(key, _norm(row['farm']))
+    theirs = {}
+    for name, area in report['customers'].items():
+        key = customer_key(name)
+        theirs[key] = theirs.get(key, 0.0) + area
+        shown.setdefault(key, _norm(name))
+
+    only_books, only_report, differ = [], [], []
+    for key in sorted(set(ours) | set(theirs)):
+        a, b = ours.get(key), theirs.get(key)
+        name = shown.get(key, key)
+        if a is not None and b is not None:
+            if abs(a - b) > 0.05:
+                differ.append((name, a, b))
+        elif a is not None:
+            only_books.append((name, a))
+        else:
+            only_report.append((name, b))
+    return {
+        'parsed_all': parsed_all,
+        'report_total': report['total'],
+        'only_books': only_books,
+        'only_report': only_report,
+        'differ': differ,
+        'report_operators': report['operators'],
+    }
+
+
 def load_assignments(path):
     """Читает карту: назначения, алиасы операторов, правки книг."""
     with open(path, encoding='utf-8') as handle:
@@ -547,7 +627,72 @@ NUM = '#,##0.00'
 PCT = '0.0"%"'
 
 
-def build_workbook(model, books, dropped, rules, month, sources):
+def _sheet_bridge(sheet, bridge, model, operators):
+    _put(sheet, 1, 1, 'Почему отчёт по работам и книги дают разные числа',
+         bold=True).font = Font(name='Arial', size=12, bold=True)
+    sheet.column_dimensions['A'].width = 56
+    sheet.column_dimensions['B'].width = 14
+    sheet.column_dimensions['C'].width = 66
+
+    row = 3
+    _head(sheet, row, ['Шаг', 'Гектары', 'Что это'], [56, 14, 66])
+    row += 1
+    start = row
+    _put(sheet, row, 1, 'Книги диспетчеров, все разобранные строки')
+    _put(sheet, row, 2, round(bridge['parsed_all'], 2), fmt=NUM)
+    _put(sheet, row, 3, 'сумма листов «свод ичи» всех книг каталога')
+    row += 1
+    for key, area in sorted(bridge['only_books'], key=lambda kv: -kv[1]):
+        _put(sheet, row, 1, '  − нет в отчёте: %s' % key)
+        _put(sheet, row, 2, round(-area, 2), fmt=NUM)
+        _put(sheet, row, 3, 'строка книги в отчёт не попала')
+        row += 1
+    for key, ours, theirs in sorted(bridge['differ'],
+                                    key=lambda kv: -abs(kv[1] - kv[2])):
+        _put(sheet, row, 1, '  − расходится: %s' % key)
+        _put(sheet, row, 2, round(theirs - ours, 2), fmt=NUM)
+        _put(sheet, row, 3, 'в книгах %.2f, в отчёте %.2f' % (ours, theirs))
+        row += 1
+    for key, area in sorted(bridge['only_report'], key=lambda kv: -kv[1]):
+        _put(sheet, row, 1, '  + есть только в отчёте: %s' % key)
+        _put(sheet, row, 2, round(area, 2), fmt=NUM)
+        _put(sheet, row, 3, 'в присланных книгах такой строки нет')
+        row += 1
+    _put(sheet, row, 1, '= Отчёт по работам (расчёт)', bold=True)
+    _put(sheet, row, 2, '=SUM(B%d:B%d)' % (start, row - 1), bold=True, fmt=NUM)
+    _put(sheet, row, 3, 'должно совпасть со строкой ниже')
+    calc_row = row
+    row += 1
+    _put(sheet, row, 1, 'Отчёт по работам (как в файле)', bold=True)
+    _put(sheet, row, 2, bridge['report_total'], bold=True, fmt=NUM)
+    _put(sheet, row, 3, 'лист «Сводка», строка «Гектаров»')
+    row += 1
+    _put(sheet, row, 1, 'Невязка моста', bold=True)
+    _put(sheet, row, 2, '=B%d-B%d' % (calc_row, row - 1), bold=True, fmt=NUM)
+    _put(sheet, row, 3, 'должна быть 0.00')
+
+    row += 2
+    _put(sheet, row, 1, 'Гектары по операторам: отчёт против раскладки',
+         bold=True)
+    row += 1
+    _head(sheet, row, ['Оператор', 'В отчёте', 'Телеметрия по раскладке'],
+          [56, 14, 66])
+    row += 1
+    names = sorted(set(bridge['report_operators']) | set(operators))
+    for name in names:
+        their = bridge['report_operators'].get(name)
+        ours = model['tele_by_op'].get(name)
+        if their is None and ours is None:
+            continue
+        _put(sheet, row, 1, name)
+        _put(sheet, row, 2, round(their, 2) if their is not None else None,
+             fmt=NUM)
+        _put(sheet, row, 3, round(ours, 2) if ours is not None else None,
+             fmt=NUM)
+        row += 1
+
+
+def build_workbook(model, books, dropped, rules, month, sources, bridge=None):
     book = openpyxl.Workbook()
 
     operators = sorted(
@@ -559,6 +704,9 @@ def build_workbook(model, books, dropped, rules, month, sources):
 
     _sheet_summary(book.active, model, books, dropped, month, sources,
                    operators)
+    if bridge:
+        _sheet_bridge(book.create_sheet('Мост к отчёту'), bridge, model,
+                      operators)
     _sheet_assignments(book.create_sheet('Назначения'), model, rules)
     _sheet_operators(book.create_sheet('По операторам'), model, operators)
     _sheet_daily(book.create_sheet('По дням'), model, operators)
@@ -589,19 +737,22 @@ def _sheet_summary(sheet, model, books, dropped, month, sources, operators):
     undated = sum(model['book_undated'].values())
 
     facts = [
-        ('Книги диспетчеров, всего', book_total,
-         'сумма листов «свод ичи» всех книг каталога'),
+        ('Книги диспетчеров: разобрано строк всего',
+         book_total + sum(r['ha'] for r in dropped),
+         'все строки листов «свод ичи», без отбора по месяцу'),
+        ('  минус строки с датой работы в другом месяце',
+         -sum(r['ha'] for r in dropped),
+         'дата читается и лежит вне месяца -- лист «Строки книг»'),
+        ('КНИГИ ЗА МЕСЯЦ', book_total,
+         'то, что сравнивается с телеметрией'),
         ('  из них строки с читаемой датой', dated,
-         'дата разобрана из колонки «Кирим қилинган сана»'),
+         'участвуют в посуточной сверке'),
         ('  из них строки без даты', undated,
-         'дата пуста либо записана так, что не читается'),
-        ('Телеметрия DJI, всего', tele_total,
+         'в итог месяца входят, в посуточную сверку -- нет'),
+        ('ТЕЛЕМЕТРИЯ DJI ЗА МЕСЯЦ', tele_total,
          'выгрузка вылетов, колонка «Гектары»'),
         ('Разница «книги - телеметрия»', book_total - tele_total,
          'книга пишет предъявленную площадь, DJI -- опрысканную'),
-        ('Строки книг с датой вне месяца (исключены)',
-         sum(r['ha'] for r in dropped),
-         'дата работы читается и лежит в другом месяце -- лист «Строки книг»'),
     ]
     first_num = row
     for name, value, why in facts:
@@ -838,6 +989,8 @@ def main():
     parser.add_argument('--assignments', default=None,
                         help='JSON map operator x machine x dates')
     parser.add_argument('--out', required=True)
+    parser.add_argument('--works-report', default=None,
+                        help='xlsx report of the application, to bridge to')
     parser.add_argument('--expect-books-ha', type=float, default=None,
                         help='self-check: fail if parsed books differ by >0.05')
     args = parser.parse_args()
@@ -894,9 +1047,21 @@ def main():
 
     model = compute(books, flights, rules, args.month)
 
+    bridge = None
+    if args.works_report:
+        if not os.path.isfile(args.works_report):
+            print('ERROR: works report not found: %s'
+                  % _ascii(args.works_report))
+            return 2
+        bridge = build_bridge(books, dropped,
+                              read_works_report(args.works_report))
+
     sources = [os.path.basename(args.flights)]
+    if args.works_report:
+        sources.append(os.path.basename(args.works_report))
     sources += sorted({r['file'] for r in books})
-    workbook = build_workbook(model, books, dropped, rules, args.month, sources)
+    workbook = build_workbook(model, books, dropped, rules, args.month,
+                              sources, bridge)
     workbook.save(args.out)
 
     tele_total = sum(model['tele_by_op'].values())
@@ -916,6 +1081,16 @@ def main():
             flag = '' if abs(share - 100.0) <= TRUST_BAND else '  <-- out of band'
             print('    %-24s book %8.2f  tele %8.2f  %6.1f%%%s'
                   % (_ascii(operator), book, tele, share, flag))
+    if bridge:
+        computed = bridge['parsed_all'] \
+            - sum(a for _, a in bridge['only_books']) \
+            + sum(t - o for _, o, t in bridge['differ']) \
+            + sum(a for _, a in bridge['only_report'])
+        print('  bridge  : books %.2f -> report %.2f (file says %.2f, '
+              'residual %+.2f)'
+              % (bridge['parsed_all'], computed,
+                 bridge['report_total'] or 0.0,
+                 computed - (bridge['report_total'] or 0.0)))
     print('report: %s' % _ascii(os.path.abspath(args.out)))
     if rules and model['uncovered']:
         return 3

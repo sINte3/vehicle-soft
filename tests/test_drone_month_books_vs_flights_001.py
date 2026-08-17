@@ -29,6 +29,11 @@
   7. Гектары оператора считаются по окну машины, а не по машине целиком:
      одна машина, разделённая датой между двумя людьми, даёт им разные суммы.
   8. Каталога книг или выгрузки нет -> код 2, отчёт НЕ создан.
+  9. Мост к отчёту приложения сходится в ноль и называет каждое расхождение
+     поимённо: строку, которой в отчёте нет; строку, где числа разошлись;
+     строку, которой нет в книгах. Отрицательный контроль: если отчёт
+     подменить, невязка перестаёт быть нулевой -- то есть мост считает, а
+     не подтверждает сам себя.
 
 Run:
   python -m unittest tests.test_drone_month_books_vs_flights_001 -v
@@ -95,6 +100,27 @@ def write_book(path, sheets):
     book.save(path)
 
 
+def write_report(path, total, customers, operators=()):
+    """Отчёт по работам приложения: «Сводка», «По заказчикам», «По операторам»."""
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = 'Сводка'
+    sheet.cell(row=1, column=1, value='Показатель')
+    sheet.cell(row=1, column=2, value='Значение')
+    sheet.cell(row=2, column=1, value='Гектаров')
+    sheet.cell(row=2, column=2, value=total)
+    for title, data in (('По заказчикам', customers),
+                        ('По операторам', operators)):
+        sheet2 = book.create_sheet(title)
+        for col, name in enumerate(['Имя', 'Работ', 'Гектары'], 1):
+            sheet2.cell(row=1, column=col, value=name)
+        for idx, (name, area) in enumerate(data, 2):
+            sheet2.cell(row=idx, column=1, value=name)
+            sheet2.cell(row=idx, column=2, value=1)
+            sheet2.cell(row=idx, column=3, value=area)
+    book.save(path)
+
+
 def write_flights(path, rows):
     """rows: [(дата-время, машина, ник, адрес, га)]"""
     book = openpyxl.Workbook()
@@ -144,6 +170,16 @@ class MonthReconTest(unittest.TestCase):
             ('2025-08-31 10:00:00', 11, 'Kogon№8', 'Kogon District', 500.0),
         ])
         self.out = os.path.join(self.dir, 'out.xlsx')
+        # Отчёт приложения: «Ферма Г» в него не попала, «Ферма А» урезана
+        # до 30, зато есть «Чужая ферма» 5.0, которой нет в книгах.
+        # 84 (месяц) + 100 (октябрьская строка) - 4 - 10 + 5 = 175.
+        self.report = os.path.join(self.dir, 'report.xlsx')
+        write_report(self.report, 175.0,
+                     [('Ферма А', 30.0), ('Ферма Б', 20.0),
+                      ('Ферма В', 10.0), ('Справка октября', 100.0),
+                      ('Справка без даты', 7.0), ('Справка зимой', 3.0),
+                      ('Чужая ферма', 5.0)],
+                     [('Ибодуллаев Хасанбой', 175.0)])
 
     def spec(self, **over):
         base = {
@@ -271,6 +307,33 @@ class MonthReconTest(unittest.TestCase):
         result = subprocess.run(args, capture_output=True, text=True)
         self.assertEqual(2, result.returncode, result.stdout)
         self.assertFalse(os.path.exists(self.out))
+
+    # 9. Мост сходится в ноль и называет расхождения поимённо.
+    def test_bridge_to_the_application_report_closes(self):
+        result = self.run_tool(self.spec(),
+                               extra=['--works-report', self.report])
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn('residual +0.00', result.stdout)
+        book = openpyxl.load_workbook(self.out)
+        rows = [r for r in book['Мост к отчёту'].iter_rows(values_only=True)]
+        book.close()
+        text = ' | '.join(str(c) for r in rows for c in r if c is not None)
+        # Имя показывается КАК В КНИГЕ, а не свёрнутым ключом.
+        self.assertIn('Ферма Г', text)        # нет в отчёте
+        self.assertIn('Ферма А', text)        # числа разошлись
+        self.assertIn('Чужая ферма', text)    # нет в книгах
+        self.assertNotIn('ферма г', text)
+        # Все строки книг, включая октябрьскую: 84 + 100 = 184.
+        self.assertAlmostEqual(184.0, rows[3][1], places=2)
+
+    # 9, отрицательный контроль: подменённый отчёт ломает невязку.
+    def test_bridge_residual_is_not_self_fulfilling(self):
+        bad = os.path.join(self.dir, 'bad_report.xlsx')
+        write_report(bad, 999.0, [('Ферма А', 30.0)])
+        result = self.run_tool(self.spec(), extra=['--works-report', bad])
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertNotIn('residual +0.00', result.stdout)
+        self.assertIn('residual', result.stdout)
 
     # Самоконтроль --expect-books-ha различает верное и неверное число.
     def test_expect_books_ha_discriminates(self):
