@@ -342,6 +342,12 @@ Five consecutive scrolls with no new page end the walk (an infinite list
 re-renders while it fetches and can swallow one). Five, not two: ending a
 275-page walk early is expensive.
 
+**A stall is ordinary, and re-running is the fix.** On the first production
+run, 2026-08-18, the dry run stopped at **3 040 of 5 489** after five idle
+scrolls and exited 4; the very next run walked all **275 pages** and finished
+`complete=true`. Nothing was wrong with either — the guard exists precisely so
+a stalled walk cannot pass for a finished one. Re-run and read the summary.
+
 ### Take the snapshot whole, and soon
 
 Contour records are **re-used and re-dated**: searching `Sarvari ptz` in the
@@ -599,6 +605,17 @@ name their constant.
   expected region against the string "Other Regions" and block every run. So
   the region check reports `not-found` and warns until someone identifies the
   real element. Exit 6 is what protects the run meanwhile.
+
+### Proved on production, 2026-08-18
+
+The first live snapshot: **275 pages, 5 489 of 5 489 contours, 0 self
+duplicates, 0 rejected responses**, `complete=true`; the ingest took all six
+batches with `seen=5489 new=5489 updated=0 unchanged=0 errors=0`. The scroll
+probe picked `<DIV class='ag-infinite-scroll'>` — the list panel — on the
+first try, which is the part that could only be confirmed against the live
+page.
+
+---
 
 **The collector has run against the live cabinet and has POSTed for real.**
 On 2026-07-31:

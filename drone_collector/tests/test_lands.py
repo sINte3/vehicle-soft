@@ -295,6 +295,41 @@ class Cli(unittest.TestCase):
         self.assertFalse(args.lands)
 
 
+class IncompleteMessage(unittest.TestCase):
+    """Check 10: a short walk must not claim data was sent on a dry run.
+
+    Found on the first real production run 2026-08-18: the dry run stalled at
+    3 040 of 5 489 and printed "What was collected has been sent" -- while
+    --dry-run sends nothing at all. The message decided what the operator
+    would do next, and it was false.
+    """
+
+    def test_10_a_real_run_says_what_was_collected_was_sent(self):
+        from drone_collector.main import incomplete_walk_message
+        text = incomplete_walk_message(3040, 5489, dry_run=False)
+        self.assertIn('3040 contour(s) collected of 5489', text)
+        self.assertIn('has been sent', text)
+        self.assertIn('re-run --lands to finish it', text)
+
+    def test_10a_a_dry_run_says_nothing_was_sent(self):
+        from drone_collector.main import incomplete_walk_message
+        text = incomplete_walk_message(3040, 5489, dry_run=True)
+        self.assertIn('Nothing was sent', text)
+        self.assertNotIn('has been sent', text)
+
+    def test_10b_negative_the_two_messages_differ(self):
+        """Without this the pair above would pass on one shared sentence."""
+        from drone_collector.main import incomplete_walk_message
+        self.assertNotEqual(incomplete_walk_message(3040, 5489, True),
+                            incomplete_walk_message(3040, 5489, False))
+
+    def test_10c_an_unknown_total_reads_as_unknown_not_as_None(self):
+        from drone_collector.main import incomplete_walk_message
+        text = incomplete_walk_message(3040, None, dry_run=False)
+        self.assertIn('an unknown number', text)
+        self.assertNotIn('None', text)
+
+
 class Sender(unittest.TestCase):
     """Check 9: the snapshot body, its batching and its counters."""
 
