@@ -276,11 +276,18 @@ def read_control(path, sheet_title, aliases):
     """Читает сводный лист диспетчеров как КОНТРОЛЬ, а не как данные.
 
     [REASON]: у диспетчеров есть собственный подписанный итог месяца по
-    операторам. Он не источник строк -- строки в расшифровках, -- но он
-    независимая проверка разбора: если мой итог по человеку разошёлся с их
-    сводом, ошибся либо я, либо книга, и знать об этом надо до отчёта
-    руководству. На сентябре-2025 свод подтвердил 12 операторов из 13 в ноль
-    и вскрыл расхождение внутри самой книги по тринадцатому.
+    операторам -- и гектарами, и деньгами. Он не источник строк (строки в
+    расшифровках), но он независимая проверка разбора: если мой итог по
+    человеку разошёлся с их сводом, ошибся либо я, либо книга, и знать об
+    этом надо до отчёта руководству. На сентябре-2025 свод подтвердил 12
+    операторов из 13 в ноль -- и по гектарам, и по разбивке «справка/наличные»,
+    и по расходам, -- а по тринадцатому вскрыл расхождение внутри книги.
+
+    Колонки свода идут подряд от колонки оператора и подписаны шапкой из трёх
+    строк, которую построчно не разобрать. Поэтому они берутся смещением, а
+    правильность смещения проверяется строкой «Жами (хаммаси)»: если сумма
+    прочитанных строк с ней не сходится, смещение неверно и контроль об этом
+    говорит, а не считает молча.
     """
     book = openpyxl.load_workbook(path, read_only=True, data_only=True)
     try:
@@ -289,8 +296,12 @@ def read_control(path, sheet_title, aliases):
     finally:
         book.close()
 
+    fields = ('area_transfer', 'area_cash', 'amount', 'received',
+              'not_received', 'expenses', 'wage', 'income')
     col = None
     out = {}
+    excluded = {}
+    grand = None
     for cells in rows:
         values = [_norm(c) for c in cells]
         if col is None:
@@ -299,42 +310,74 @@ def read_control(path, sheet_title, aliases):
                     col = idx
                     break
             continue
-        if col + 2 >= len(cells):
-            continue
+
+        def number(offset):
+            idx = col + offset
+            if idx >= len(cells):
+                return 0.0
+            value = cells[idx]
+            return float(value) if isinstance(value, (int, float)) else 0.0
+
         name = values[col] if col < len(values) else ''
+        joined = _fold(' '.join(v for v in values if v))
+        if 'жами (хаммаси)' in joined:
+            grand = {key: number(i + 1) for i, key in enumerate(fields)}
+            continue
         if not name or _fold(name).startswith('жами'):
             continue
-        transfer, cash = cells[col + 1], cells[col + 2]
-        if not isinstance(transfer, (int, float)) \
-                or not isinstance(cash, (int, float)):
+        if not isinstance(cells[col + 1] if col + 1 < len(cells) else None,
+                          (int, float)):
             continue
         resolved = aliases.get(_fold(name), name)
-        if resolved is None:      # объявлен как строка другого месяца
+        if resolved is None:
+            # [REASON]: строка объявлена как чужой месяц и в контроль не идёт,
+            # но итоговая строка свода её ВКЛЮЧАЕТ. Чтобы самопроверка на
+            # смещение колонок осталась настоящей, исключённое считается
+            # отдельно и возвращается в сверку с итогом.
+            for offset, key in enumerate(fields, start=1):
+                excluded[key] = excluded.get(key, 0.0) + number(offset)
             continue
-        prev = out.get(resolved, (0.0, 0.0, []))
-        out[resolved] = (prev[0] + float(transfer), prev[1] + float(cash),
-                         prev[2] + [name])
+        row = out.setdefault(resolved,
+                             dict({key: 0.0 for key in fields},
+                                  spellings=[]))
+        for offset, key in enumerate(fields, start=1):
+            row[key] += number(offset)
+        row['spellings'].append(name)
+
+    if grand:
+        for key in ('area_transfer', 'area_cash', 'amount'):
+            got = sum(row[key] for row in out.values()) + excluded.get(key, 0.0)
+            if abs(got - grand[key]) > 0.05:
+                raise ValueError(
+                    'control sheet: column %s does not add up to the grand '
+                    'total row (%.2f vs %.2f) -- the column offset is wrong'
+                    % (key, got, grand[key]))
     return out
 
 
 def _read_sheet(path, sheet, year, mon, aliases, sheet_map):
     operator = resolve_operator(path, sheet.title, aliases, sheet_map)
     out = []
-    section = None
+    section = SECTION_CASH
+    marker = None
     cols = None
     for cells in sheet.iter_rows(values_only=True):
         values = [_norm(c) for c in cells]
         head = next((v for v in values if v), '')
         folded = _fold(head)
 
-        if folded.startswith(SECTION_CASH):
-            section, cols = SECTION_CASH, None
-            continue
-        if folded.startswith(SECTION_TRANSFER):
-            section, cols = SECTION_TRANSFER, None
-            continue
+        # [REASON]: метка «Накд»/«Справка» над таблицей НЕНАДЁЖНА. В книге
+        # Агрокластера слово «Справка» стоит подзаголовком денежного блока
+        # выше, а метки «Накд» над наличной таблицей нет вовсе -- и все
+        # 826.80 га наличных Сайфулло уходили в справку молча. Тип таблицы
+        # определяется её СТРУКТУРОЙ (ниже): наличная несёт колонки расхода и
+        # прихода, справка -- нет. Метка оставлена только для «Топшириқ»:
+        # его структура совпадает со справкой, и отличить их можно лишь так.
         if folded.startswith(SECTION_TASK):
-            section, cols = SECTION_TASK, None
+            marker, cols = SECTION_TASK, None
+            continue
+        if folded.startswith(SECTION_CASH) or folded.startswith(SECTION_TRANSFER):
+            marker, cols = None, None
             continue
 
         if any(h in _fold(v) for v in values for h in FARM_HEADERS):
@@ -346,14 +389,32 @@ def _read_sheet(path, sheet, year, mon, aliases, sheet_map):
             cols = {}
             for idx, value in enumerate(values):
                 low = _fold(value)
+                # [REASON]: порядок веток значим. «Кирим қилинган сана» -- это
+                # ДАТА, а «Кирим қилинган» -- ПОЛУЧЕННЫЕ ДЕНЬГИ, и отличаются
+                # они только словом «сана». Проверять дату надо раньше денег,
+                # иначе дата попадёт в сумму и баланс оператора станет ложным.
                 if any(h in low for h in FARM_HEADERS):
                     cols.setdefault('farm', idx)
                 elif any(low.startswith(h) for h in AREA_HEADERS):
                     cols.setdefault('area', idx)
                 elif DATE_HEADER_HINT in low:
                     cols.setdefault('date', idx)
+                elif 'бошка харажат' in low:
+                    cols.setdefault('expenses', idx)
+                elif low.startswith('кирим'):
+                    cols.setdefault('received', idx)
+                elif 'жами сумма' in low:
+                    cols.setdefault('amount', idx)
             if 'farm' not in cols or 'area' not in cols:
                 cols = None
+                continue
+            if marker == SECTION_TASK:
+                section = SECTION_TASK
+            elif 'expenses' in cols and 'received' in cols:
+                section = SECTION_CASH
+            else:
+                section = SECTION_TRANSFER
+            marker = None
             continue
 
         if cols is None:
@@ -371,13 +432,24 @@ def _read_sheet(path, sheet, year, mon, aliases, sheet_map):
         raw, days = ('', [])
         if 'date' in cols and cols['date'] < len(cells):
             raw, days = parse_date_cell(cells[cols['date']], year, mon)
+
+        def money(key):
+            idx = cols.get(key)
+            if idx is None or idx >= len(cells):
+                return 0.0
+            value = cells[idx]
+            return float(value) if isinstance(value, (int, float)) else 0.0
+
         out.append({
             'file': os.path.basename(path),
             'sheet': sheet.title,
             'operator': operator,
-            'section': section or SECTION_CASH,
+            'section': section,
             'farm': farm or '(без имени)',
             'ha': round(float(area), 4),
+            'amount': round(money('amount'), 2),
+            'expenses': round(money('expenses'), 2),
+            'received': round(money('received'), 2),
             'date_raw': raw,
             'days': days,
         })
@@ -632,9 +704,21 @@ def compute(books, flights, rules, month):
     book_by_op = {}
     book_by_op_day = {}
     book_undated = {}
+    money = {}
     for row in books:
         operator = row['operator']
         book_by_op[operator] = book_by_op.get(operator, 0.0) + row['ha']
+        purse = money.setdefault(operator, {
+            'ha_cash': 0.0, 'ha_transfer': 0.0, 'amount_cash': 0.0,
+            'amount_transfer': 0.0, 'expenses': 0.0, 'received': 0.0})
+        if row['section'] == SECTION_TRANSFER:
+            purse['ha_transfer'] += row['ha']
+            purse['amount_transfer'] += row['amount']
+        else:
+            purse['ha_cash'] += row['ha']
+            purse['amount_cash'] += row['amount']
+        purse['expenses'] += row['expenses']
+        purse['received'] += row['received']
         days_in = [d for d in row['days'] if d in day_set]
         if not days_in:
             book_undated[operator] = book_undated.get(operator, 0.0) + row['ha']
@@ -655,6 +739,7 @@ def compute(books, flights, rules, month):
         'book_by_op': book_by_op,
         'book_by_op_day': book_by_op_day,
         'book_undated': book_undated,
+        'money': money,
     }
 
 
@@ -705,7 +790,7 @@ PCT = '0.0"%"'
 # Формулы, которые инструмент пишет намеренно. Всё прочее со «=» -- описка.
 _FORMULA = re.compile(r'=(SUM\([A-Z]+\d+:[A-Z]+\d+\)'
                       r'|IF\([A-Z]+\d+=0,"",[A-Z]+\d+/[A-Z]+\d+\*100\)'
-                      r'|[A-Z]+\d+[-+][A-Z]+\d+)')
+                      r'|[A-Z]+\d+(?:[-+][A-Z]+\d+)+)')
 
 
 def _sheet_bridge(sheet, bridge, model, operators):
@@ -795,6 +880,7 @@ def build_workbook(model, books, dropped, rules, month, sources, bridge=None):
                       operators)
     _sheet_assignments(book.create_sheet('Назначения'), model, rules)
     _sheet_operators(book.create_sheet('По операторам'), model, operators)
+    _sheet_balance(book.create_sheet('Баланс по операторам'), model, operators)
     if model.get('control'):
         _sheet_control(book.create_sheet('Контроль по своду'), model, operators)
     _sheet_daily(book.create_sheet('По дням'), model, operators)
@@ -947,6 +1033,72 @@ def _sheet_operators(sheet, model, operators):
     _put(sheet, row, 7, '=C%d-E%d' % (row, row), bold=True, fmt=NUM)
 
 
+def _sheet_balance(sheet, model, operators):
+    """Деньги оператора: сколько выставлено, потрачено, сдано и что осталось.
+
+    [REASON]: «не сдано» считается как СУММА НАЛИЧНЫХ минус расходы минус
+    сданное -- по строкам самой книги, а не берётся из её итога. Итог книги
+    пишет человек, а невязка ищется как раз в человеческой записи; взять итог
+    значило бы проверять запись ею же. Справка в «не сдано» не входит: она
+    приходит перечислением на счёт, а не наличными оператору.
+    """
+    _put(sheet, 1, 1, 'Баланс наличных по операторам (из строк книг)',
+         bold=True).font = Font(name='Arial', size=12, bold=True)
+    _head(sheet, 2, ['Оператор', 'Га наличные', 'Га справка', 'Га всего',
+                     'Сумма наличные', 'Сумма справка', 'Расходы (харажат)',
+                     'Сдано наличными', 'НЕ СДАНО',
+                     'Свод: не получено', 'Расхождение со сводом'],
+          [24, 12, 12, 11, 16, 16, 17, 16, 15, 16, 20])
+    row = 3
+    first = row
+    for name in operators:
+        purse = model['money'].get(name)
+        if not purse:
+            continue
+        entry = (model.get('control') or {}).get(name)
+        _put(sheet, row, 1, name)
+        _put(sheet, row, 2, round(purse['ha_cash'], 2), fmt=NUM)
+        _put(sheet, row, 3, round(purse['ha_transfer'], 2), fmt=NUM)
+        _put(sheet, row, 4, '=B%d+C%d' % (row, row), fmt=NUM)
+        _put(sheet, row, 5, round(purse['amount_cash'], 2), fmt=NUM)
+        _put(sheet, row, 6, round(purse['amount_transfer'], 2), fmt=NUM)
+        _put(sheet, row, 7, round(purse['expenses'], 2), fmt=NUM)
+        _put(sheet, row, 8, round(purse['received'], 2), fmt=NUM)
+        unpaid = purse['amount_cash'] - purse['expenses'] - purse['received']
+        _put(sheet, row, 9, '=E%d-G%d-H%d' % (row, row, row), fmt=NUM,
+             fill=WARN_FILL if abs(unpaid) > 0.5 else None)
+        if entry:
+            _put(sheet, row, 10, round(entry['not_received'], 2), fmt=NUM)
+            _put(sheet, row, 11, '=I%d-J%d' % (row, row), fmt=NUM,
+                 fill=NOTE_FILL
+                 if abs(unpaid - entry['not_received']) > 0.5 else None)
+        else:
+            _put(sheet, row, 10, None, fmt=NUM)
+            _put(sheet, row, 11, None, fmt=NUM)
+        row += 1
+    _put(sheet, row, 1, 'ИТОГО', bold=True)
+    for col in range(2, 12):
+        letter = openpyxl.utils.get_column_letter(col)
+        _put(sheet, row, col,
+             '=SUM(%s%d:%s%d)' % (letter, first, letter, row - 1),
+             bold=True, fmt=NUM)
+    row += 2
+    for line in (
+            '«НЕ СДАНО» = сумма наличными − расходы − сдано, посчитано по '
+            'строкам книги. Ноль означает, что деньги за наличную работу '
+            'сошлись.',
+            '«Свод: не получено» — колонка «Олинмаган сумма» сводного листа '
+            'самих диспетчеров: сколько они САМИ признают несобранным.',
+            'Расхождение между этими двумя колонками — то, о чём стоит '
+            'спрашивать: книга и свод расходятся в деньгах.',
+            'Справка в «не сдано» не входит: она приходит перечислением, '
+            'а не наличными на руки оператору.'):
+        _put(sheet, row, 1, line).alignment = Alignment(wrap_text=True)
+        sheet.merge_cells(start_row=row, start_column=1,
+                          end_row=row, end_column=11)
+        row += 1
+
+
 def _sheet_control(sheet, model, operators):
     _put(sheet, 1, 1, 'Свод самих диспетчеров против моего разбора книг',
          bold=True).font = Font(name='Arial', size=12, bold=True)
@@ -955,32 +1107,34 @@ def _sheet_control(sheet, model, operators):
                      'Разница', 'Телеметрия', 'Как записан в своде'],
           [24, 14, 15, 13, 20, 11, 13, 34])
     row = 3
+    def control_area(name):
+        entry = model['control'].get(name)
+        return (entry['area_transfer'] + entry['area_cash']) if entry else 0.0
+
     names = sorted(set(model['control']) | set(operators),
-                   key=lambda n: -model['control'].get(n, (0, 0, []))[0]
-                   - model['control'].get(n, (0, 0, []))[1])
+                   key=lambda n: -control_area(n))
     for name in names:
-        transfer, cash, spellings = model['control'].get(name, (None, None, []))
+        entry = model['control'].get(name)
         mine = model['book_all_by_op'].get(name)
-        if transfer is None and mine is None:
+        if entry is None and mine is None:
             continue
+        transfer = entry['area_transfer'] if entry else None
+        cash = entry['area_cash'] if entry else None
         _put(sheet, row, 1, name)
-        _put(sheet, row, 2, round(transfer, 2) if transfer is not None else None,
+        _put(sheet, row, 2, round(transfer, 2) if entry else None, fmt=NUM)
+        _put(sheet, row, 3, round(cash, 2) if entry else None, fmt=NUM)
+        _put(sheet, row, 4, '=B%d+C%d' % (row, row) if entry else None,
              fmt=NUM)
-        _put(sheet, row, 3, round(cash, 2) if cash is not None else None,
-             fmt=NUM)
-        if transfer is None:
-            _put(sheet, row, 4, None, fmt=NUM)
-        else:
-            _put(sheet, row, 4, '=B%d+C%d' % (row, row), fmt=NUM)
         _put(sheet, row, 5, round(mine, 2) if mine is not None else None,
              fmt=NUM)
-        gap = None if (transfer is None or mine is None) \
+        gap = None if (entry is None or mine is None) \
             else mine - (transfer + cash)
         _put(sheet, row, 6, '=E%d-D%d' % (row, row) if gap is not None else None,
              fmt=NUM, fill=WARN_FILL if gap and abs(gap) > 0.05 else None)
         _put(sheet, row, 7, round(model['tele_by_op'].get(name, 0.0), 2),
              fmt=NUM)
-        _put(sheet, row, 8, ', '.join(sorted(set(spellings))))
+        _put(sheet, row, 8, ', '.join(sorted(set(entry['spellings'])))
+             if entry else '')
         row += 1
     _put(sheet, row, 1, 'ИТОГО', bold=True)
     for col in (2, 3, 4, 5, 7):
@@ -1274,8 +1428,8 @@ def main():
                   % (_ascii(operator), book, tele, share, flag))
     if control:
         worst = 0.0
-        for name, (transfer, cash, _) in sorted(control.items()):
-            theirs = transfer + cash
+        for name, entry in sorted(control.items()):
+            theirs = entry['area_transfer'] + entry['area_cash']
             mine = model['book_all_by_op'].get(name, 0.0)
             worst = max(worst, abs(mine - theirs))
             print('    control %-24s book-summary %8.2f  parsed %8.2f  %+7.2f'

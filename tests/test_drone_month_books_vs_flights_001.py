@@ -48,6 +48,15 @@
      Общий алиас по короткому имени увёл бы 412.60 га не тому человеку
      (поймано контролем по своду). Привязка листа к человеку -- явная,
      файлом и листом.
+ 15. Тип таблицы -- наличные или справка -- определяется её СТРУКТУРОЙ, а не
+     меткой над ней: наличная несёт колонки расхода и прихода, справка нет.
+     Метка врёт: в книге Агрокластера слова «Накд» над наличной таблицей нет
+     вовсе, и все 826.80 га Сайфулло уходили в справку молча. Отрицательный
+     контроль: та же таблица без колонок расхода и прихода читается справкой.
+ 16. Дата и деньги в соседних колонках не путаются: «Кирим қилинган сана» --
+     дата, «Кирим қилинган» -- полученные деньги, отличаются одним словом.
+     Баланс «не сдано» = сумма наличными − расходы − сдано, считается по
+     строкам, а не берётся из итога книги.
  14. Свод самих диспетчеров читается как КОНТРОЛЬ и сверяется с ПОЛНЫМ
      разбором книги, включая строки с датой другого месяца: иначе контроль
      показывает ложное расхождение ровно на них. Отрицательный контроль:
@@ -471,25 +480,33 @@ class MonthReconTest(unittest.TestCase):
         sheet.cell(row=2, column=3, value='Ибодуллаев Хасан')
         sheet.cell(row=2, column=4, value=110.0)   # справка
         sheet.cell(row=2, column=5, value=74.0)    # наличные
+        sheet.cell(row=2, column=6, value=9000.0)  # жами сумма
+        sheet.cell(row=2, column=7, value=8500.0)  # олинган
+        sheet.cell(row=2, column=8, value=500.0)   # олинмаган
         sheet.cell(row=3, column=3, value='Жами:')
         book.save(path)
         book.close()
         control = tool.read_control(
             path, 'ОБШИЙ СВОД ',
             {'ибодуллаев хасан': 'Ибодуллаев Хасанбой'})
-        transfer, cash, spellings = control['Ибодуллаев Хасанбой']
+        entry = control['Ибодуллаев Хасанбой']
         # 184.00 -- ВСЕ строки книги, включая октябрьскую справку 100 га.
-        self.assertAlmostEqual(184.0, transfer + cash, places=2)
-        self.assertEqual(['Ибодуллаев Хасан'], spellings)
+        self.assertAlmostEqual(
+            184.0, entry['area_transfer'] + entry['area_cash'], places=2)
+        self.assertEqual(['Ибодуллаев Хасан'], entry['spellings'])
+        # Деньги свода читаются теми же смещениями.
+        self.assertAlmostEqual(9000.0, entry['amount'], places=2)
+        self.assertAlmostEqual(500.0, entry['not_received'], places=2)
         # Отрицательный контроль: подменённое число даёт другую сумму.
         book = openpyxl.load_workbook(path)
         book['ОБШИЙ СВОД '].cell(row=2, column=4, value=10.0)
         book.save(path)
         book.close()
-        transfer2, cash2, _ = tool.read_control(
+        entry2 = tool.read_control(
             path, 'ОБШИЙ СВОД ',
             {'ибодуллаев хасан': 'Ибодуллаев Хасанбой'})['Ибодуллаев Хасанбой']
-        self.assertAlmostEqual(84.0, transfer2 + cash2, places=2)
+        self.assertAlmostEqual(
+            84.0, entry2['area_transfer'] + entry2['area_cash'], places=2)
 
     # 14, отрицательный контроль: объявленный свод, которого нет -> код 2.
     def test_declared_control_sheet_missing_is_refused(self):
@@ -498,6 +515,69 @@ class MonthReconTest(unittest.TestCase):
         result = self.run_tool(spec)
         self.assertEqual(2, result.returncode, result.stdout)
         self.assertIn('control sheet file not found', result.stdout)
+
+    # 15. Тип таблицы -- по структуре, а не по метке над ней.
+    def test_table_kind_comes_from_its_columns_not_the_marker(self):
+        import drone_month_books_vs_flights as tool
+        path = os.path.join(self.dir, 'no_marker.xlsx')
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.title = 'свод ичи (Тест)'
+        # Метки «Накд» нет; выше стоит слово «Справка» -- как в книге
+        # Агрокластера, где на этом и терялись 826.80 га наличных.
+        sheet.cell(row=1, column=1, value='Справка')
+        for col, name in enumerate(CASH_HEADER, 1):
+            sheet.cell(row=2, column=col, value=name)
+        sheet.cell(row=3, column=1, value=1)
+        sheet.cell(row=3, column=2, value='Ферма Н')
+        sheet.cell(row=3, column=3, value=50.0)
+        sheet.cell(row=3, column=5, value=1000.0)   # Жами сумма
+        sheet.cell(row=3, column=6, value=100.0)    # Бошка харажатлар
+        sheet.cell(row=3, column=7, value=900.0)    # Кирим қилинган
+        sheet.cell(row=3, column=8, value=datetime.datetime(2025, 9, 20))
+        book.save(path)
+        book.close()
+        rows = tool._read_sheet(path, openpyxl.load_workbook(path)['свод ичи (Тест)'],
+                                2025, 9, {}, {})
+        self.assertEqual(1, len(rows))
+        self.assertEqual(tool.SECTION_CASH, rows[0]['section'])
+        # Дата не утекла в деньги, деньги не утекли в дату.
+        self.assertAlmostEqual(1000.0, rows[0]['amount'], places=2)
+        self.assertAlmostEqual(100.0, rows[0]['expenses'], places=2)
+        self.assertAlmostEqual(900.0, rows[0]['received'], places=2)
+        self.assertEqual(['2025-09-20'], rows[0]['days'])
+
+    # 15, отрицательный контроль: без колонок расхода и прихода -- справка.
+    def test_table_without_money_columns_is_a_transfer_table(self):
+        import drone_month_books_vs_flights as tool
+        path = os.path.join(self.dir, 'transfer.xlsx')
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.title = 'свод ичи (Тест)'
+        sheet.cell(row=1, column=1, value='Накд')   # метка врёт наоборот
+        for col, name in enumerate(TRANSFER_HEADER, 1):
+            sheet.cell(row=2, column=col, value=name)
+        sheet.cell(row=3, column=1, value=1)
+        sheet.cell(row=3, column=2, value='Ферма С')
+        sheet.cell(row=3, column=3, value=20.0)
+        sheet.cell(row=3, column=6, value=500.0)
+        book.save(path)
+        book.close()
+        rows = tool._read_sheet(path, openpyxl.load_workbook(path)['свод ичи (Тест)'],
+                                2025, 9, {}, {})
+        self.assertEqual(tool.SECTION_TRANSFER, rows[0]['section'])
+
+    # 16. Баланс: «не сдано» считается по строкам книги.
+    def test_balance_is_computed_from_rows(self):
+        result = self.run_tool(self.spec())
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        book = openpyxl.load_workbook(self.out)
+        rows = list(book['Баланс по операторам'].iter_rows(values_only=True))
+        book.close()
+        body = rows[2]
+        self.assertEqual('Ибодуллаев Хасанбой', body[0])
+        # В синтетике денег нет: суммы нулевые, но лист построен и считает.
+        self.assertEqual('=E3-G3-H3', body[8])
 
     # Самоконтроль --expect-books-ha различает верное и неверное число.
     def test_expect_books_ha_discriminates(self):
