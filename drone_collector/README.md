@@ -186,9 +186,9 @@ command line.
 | 1 | Configuration error, a bad command line, or an unexpected failure. | The log names the variable or the flag; a crash carries its traceback. Nothing was sent. |
 | 2 | Session missing or expired. | Re-run `--save-session`. Nothing was sent. |
 | 3 | Period verification failed. | The log shows the intended and the observed period. Nothing was sent — on purpose. |
-| 4 | The page walk did not complete. | Flights that were captured *were* sent; re-run the same period to finish it. |
+| 4 | The page walk did not complete. | Flights that were captured *were* sent; re-run the same period to finish it. With `--lands`: fewer contours than DJI's own `totalCount`; what was collected was sent, re-run `--lands`. |
 | 5 | The ingest endpoint rejected a batch. | The log carries the HTTP status and the endpoint's message. 401 means the token, 413 means the batch size, 400 means the body. |
-| 6 | A window captured **zero flights**. | Nothing was sent. Usually the session is in the wrong region. If the period really is empty, set `DJI_ALLOW_EMPTY_WINDOW=true`. |
+| 6 | A window captured **zero flights**, or `--lands` captured **zero contours**. | Nothing was sent. Usually the session is in the wrong region. If the period really is empty, set `DJI_ALLOW_EMPTY_WINDOW=true`; that variable does not apply to `--lands`. |
 | 7 | The session is in the **wrong region**. | The log shows the expected and the observed value. Re-run `--save-session` and check the region selector. |
 
 Exits 6 and 7 both exist for one failure: a session switched to another region
@@ -206,6 +206,148 @@ hour of slack on each edge. On a mismatch it logs both values, fails, and sends
 nothing. A collector that silently harvests the wrong period is worse than one
 that fails: the flights it brings back are real, they land in the database, and
 nothing downstream can tell that the window was not the one that was asked for.
+
+---
+
+## Snapshot the field directory (DRONE-LANDS-001)
+
+```
+python -m drone_collector.main --lands --dry-run   # writes out/lands_snapshot.json
+python -m drone_collector.main --lands             # collects and sends
+```
+
+### Why
+
+Every flight DJI reports carries `plot_name` **empty** — on all 10 385 rows in
+the database. The reverse-geocoded address is not a substitute: on 19 and 20
+September 2025 two *different* farms both came back as
+`Bukhara Region, 500200`, and that is how a day's work was attributed to the
+wrong customer. The one place the customer's name exists is **Field
+Management**, where the operator typed it on the controller. 5 489 contours as
+of 2026-08-18. The cabinet offers no export.
+
+### What it reads
+
+```
+POST https://kr-ag2-api.dji.com/ag-plot/api/graphql?name=lands
+```
+
+The page signs every request: `content-md5` of the body goes into the string
+covered by the `signature` header. Change one character of the GraphQL query —
+the `after:` cursor, or `first: 20` — and the signature no longer matches, so
+**replaying the request from outside the browser does not work**, and
+reproducing DJI's signing would break on their next deploy. So `--lands` does
+what the flight walk does: it runs a real browser with the saved session, lets
+the page sign its own requests, and listens. Pagination is driven by scrolling
+the list, because that is what makes the page ask for the next twenty.
+
+`first: 20, after: "0" → "20" → "40" …` — about **275 requests** for 5 489
+contours, roughly **seven minutes**, once.
+
+### The trap this walk has
+
+The same page also fires `graphql?name=**landsCluster**` — the map's circle
+counts. Same host, same path, same envelope, HTTP 200 either way. Nothing about
+the transport tells them apart. The operation name is therefore matched
+**exactly**, on the parsed query string, never as a substring: `'name=lands'`
+is a substring of `'name=landsCluster'`. There is a test asserting the cluster
+URL is *rejected*, not only that the list URL is accepted.
+
+### Units — the number to get right
+
+Areas arrive in **MU**, not hectares. DJI's own query asks for
+`totalArea(unit:MU)`, and **1 hectare = 15 mu exactly**. `44.54096254454096`
+is the field the cabinet displays as `2.97 ha`. The conversion happens in
+`drones.py`, once, and is asserted against six card values read off the live
+cabinet — not against a constant the test made up. Get it wrong and 5 489
+contours are all off by a factor of fifteen while looking plausible.
+
+The flight payload uses different units again (m² for `new_work_area`). They
+are not the same number and must never become one constant.
+
+### Timestamps
+
+`createdAt` / `updatedAt` arrive in **UTC+08:00** — three hours ahead of the
++05:00 the business reads. A contour drawn at 22:00 Tashkent is stamped 01:00
+the *next* day at the source. They are converted to UTC on ingest, like every
+other datetime in the database; left alone they would match the wrong day's
+flights.
+
+### What is deliberately not fetched
+
+The **polygon** of each field. It sits behind `geometry.storage.signedURL`, a
+pre-authenticated link that expires **six hours** after it is issued — 5 489 of
+them would be thousands of expiring bearer credentials with a six-hour shelf
+life, and they change on every request, so storing them would make a re-run of
+unchanged data report 5 489 updates.
+
+They are stripped before anything is stored. What is kept is the stable
+`contentMd5` of the geometry (which says whether the polygon changed) and the
+**bounding box**, which arrives in the list payload itself. A point-in-box test
+on a flight's `lat`/`lng` is what the reconciliation actually needs; the box of
+a 2.97 ha field measures about 214 × 197 m, so a flight's coordinate lands in
+the right box except where two fields touch.
+
+### Where it lands
+
+`field_contours` with `source = 'dji'`, upserted on `external_id` (the DJI
+`uuid`). The endpoint is `POST /drones/api/land_sync`, same token-in-the-body
+convention as the flight sync.
+
+Counters partition what was sent:
+
+```
+seen = new + updated + unchanged + errors
+```
+
+`unchanged` is what makes a re-run readable: the second snapshot of an
+untouched directory reports **all unchanged and nothing else**, and any other
+number is a real change in the cabinet.
+
+The snapshot **never deactivates** a contour, never touches `customer_id` or
+`name_uz`, and never writes to `drone_sync_logs` — that table carries the
+flight ingest's invariant and nothing foreign belongs in it. The audit trail of
+a snapshot is `field_contours.synced_at`.
+
+### Completeness
+
+Every response states `totalCount`, so the walk **checks** rather than assumes.
+Collecting fewer contours than DJI reports is exit code 4: what was collected
+has been sent (the ingest upserts, so re-running costs only time), but a
+partial directory must not look authoritative — a contour missing from it is
+invisible afterwards, it simply never matches anything.
+
+### Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DJI_FIELDS_URL` | `https://www.djiag.com/mission` | The Field Management page. |
+| `DJI_MAX_LAND_PAGES` | `1000` | Runaway guard. 5 489 contours at 20 per page is 275. |
+
+`DJI_STORAGE_STATE`, `DJI_HEADLESS`, `DJI_SETTLE_MS`, `DJI_PAGE_TIMEOUT_MS`,
+`VEHICLE_SOFT_BASE_URL`, `DRONE_API_TOKEN` and `DRONE_BATCH_SIZE` are shared
+with the flight walk.
+
+### Scrolling, and how it fails
+
+The list panel is found by **geometry and overflow**, not by a CSS selector:
+every class name on this page is a build-hashed CSS-module name, and the flight
+collector already lost its region indicator to exactly that. The collector logs
+which element it chose, once, on the first scroll — so a wrong pick reads as a
+wrong pick in the log instead of looking like an empty directory. If no
+scrollable panel is found it falls back to a mouse wheel over the left of the
+page, and says so.
+
+Five consecutive scrolls with no new page end the walk (an infinite list
+re-renders while it fetches and can swallow one). Five, not two: ending a
+275-page walk early is expensive.
+
+### Take the snapshot whole, and soon
+
+Contour records are **re-used and re-dated**: searching `Sarvari ptz` in the
+cabinet returns rows stamped 2026-07-03, while `avaz ismatov` still carries
+2025-09-20. Whatever is not captured now is not recoverable later. Run
+`--lands` once for the whole directory rather than in slices.
 
 ---
 

@@ -47,6 +47,10 @@ except ImportError:  # pragma: no cover -- depends on the virtualenv, not on log
 # blueprint prefix /drones + route /api/flight_sync.
 FLIGHT_SYNC_PATH = '/drones/api/flight_sync'
 
+# Endpoint path for the field-contour snapshot (DRONE-LANDS-001). Fixed by
+# drones.py: blueprint prefix /drones + route /api/land_sync.
+LAND_SYNC_PATH = '/drones/api/land_sync'
+
 # [REASON]: drones.py answers 413 above 1000 flights per request
 # (DRONE_SYNC_MAX_BATCH). The operator may set DRONE_BATCH_SIZE to anything;
 # the clamp here is what keeps a mistyped 5000 from turning into a rejected
@@ -54,6 +58,8 @@ FLIGHT_SYNC_PATH = '/drones/api/flight_sync'
 MAX_BATCH_SIZE = 1000
 
 DEFAULT_RECORDS_URL = 'https://www.djiag.com/records/list'
+# Field Management. Read by --lands only; the flight walk never opens it.
+DEFAULT_FIELDS_URL = 'https://www.djiag.com/mission'
 DEFAULT_STORAGE_STATE = 'data/storage_state.json'
 DEFAULT_WINDOW_DAYS = 30
 DEFAULT_TZ_OFFSET_HOURS = 5
@@ -71,6 +77,12 @@ DEFAULT_MAX_PAGES = 2000
 # halves that. It is also the endpoint's hard limit -- above it, 413 -- so the
 # clamp stays.
 DEFAULT_BATCH_SIZE = 1000
+
+# [REASON]: the directory is served twenty rows at a time and holds 5 489
+# contours -- 275 pages. A thousand is far above any real directory and still
+# stops a runaway; it is separate from DJI_MAX_PAGES because the two walks
+# have nothing in common but the word "page".
+DEFAULT_MAX_LAND_PAGES = 1000
 
 
 class ConfigError(Exception):
@@ -148,8 +160,11 @@ class CollectorConfig(object):
     def __init__(self, records_url, storage_state, headless, window_days,
                  tz_offset_hours, page_timeout_ms, settle_ms, max_pages,
                  base_url, api_token, batch_size, expected_region=None,
-                 allow_empty_window=False):
+                 allow_empty_window=False, fields_url=DEFAULT_FIELDS_URL,
+                 max_land_pages=DEFAULT_MAX_LAND_PAGES):
         self.records_url = records_url
+        self.fields_url = fields_url
+        self.max_land_pages = max_land_pages
         self.storage_state = storage_state
         self.headless = headless
         self.window_days = window_days
@@ -170,6 +185,12 @@ class CollectorConfig(object):
         return self.base_url.rstrip('/') + FLIGHT_SYNC_PATH
 
     @property
+    def land_sync_url(self):
+        if not self.base_url:
+            return None
+        return self.base_url.rstrip('/') + LAND_SYNC_PATH
+
+    @property
     def log_dir(self):
         return PACKAGE_ROOT / 'logs'
 
@@ -186,6 +207,7 @@ class CollectorConfig(object):
         """
         return {
             'records_url': self.records_url,
+            'fields_url': self.fields_url,
             'storage_state': str(self.storage_state),
             'headless': self.headless,
             'window_days': self.window_days,
@@ -194,6 +216,8 @@ class CollectorConfig(object):
             'settle_ms': self.settle_ms,
             'max_pages': self.max_pages,
             'flight_sync_url': self.flight_sync_url,
+            'land_sync_url': self.land_sync_url,
+            'max_land_pages': self.max_land_pages,
             'api_token': 'set' if self.api_token else 'missing',
             'batch_size': self.batch_size,
             'expected_region': self.expected_region or 'not set',
@@ -217,6 +241,11 @@ def load_config(require_ingest=True, load_dotenv=True):
     if not records_url.startswith(('http://', 'https://')):
         raise ConfigError('DJI_RECORDS_URL must start with http:// or https://,'
                           ' got %r' % records_url)
+
+    fields_url = _raw('DJI_FIELDS_URL') or DEFAULT_FIELDS_URL
+    if not fields_url.startswith(('http://', 'https://')):
+        raise ConfigError('DJI_FIELDS_URL must start with http:// or https://,'
+                          ' got %r' % fields_url)
 
     storage_state = resolve_path(_raw('DJI_STORAGE_STATE') or DEFAULT_STORAGE_STATE)
 
@@ -252,4 +281,7 @@ def load_config(require_ingest=True, load_dotenv=True):
         batch_size=batch_size,
         expected_region=_raw('DJI_EXPECTED_REGION'),
         allow_empty_window=_as_bool('DJI_ALLOW_EMPTY_WINDOW', False),
+        fields_url=fields_url,
+        max_land_pages=_as_int('DJI_MAX_LAND_PAGES', DEFAULT_MAX_LAND_PAGES,
+                               minimum=1),
     )

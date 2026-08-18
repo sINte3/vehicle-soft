@@ -1,0 +1,109 @@
+{
+  "data": {
+    "lands": {
+      "totalCount": 5489,
+      "pageInfo": {"hasNextPage": true, "endCursor": "3"},
+      "edges": [
+        {
+          "cursor": "1",
+          "node": {
+            "uuid": "5648f5b3-d69c-42e7-8067-ccd33049f0c1",
+            "externalId": "ACCOUNT-flyer-04f66629-5fef-4c2a-856f-680baeb9f2ed",
+            "name": "Azamat 3",
+            "address": "Yuqor Mirish, Vobkent Tumani, Buxoro Viloyati, 201000, Oʻzbekiston",
+            "updatedAt": "2026-08-17T18:41:18.419798+08:00",
+            "createdAt": "2026-08-17T18:41:18.419798+08:00",
+            "totalArea": 44.54096254454096,
+            "workArea": 39.51461103951461,
+            "totalObstacleArea": 0,
+            "sourceType": "UNKNOWN_SOURCE",
+            "landType": "PLANT_LAND",
+            "precision": null,
+            "precisionType": null,
+            "maxGeometryParameterOffset": 5,
+            "position": {"lng": 64.36347493190029, "lat": 39.976673750063},
+            "geometry": {"storage": {
+              "signedURL": "https://example.invalid/PLACEHOLDER-NOT-A-REAL-URL",
+              "uuid": "8e814fd7-2374-4549-b506-c0745ede40ef",
+              "contentMd5": "8dba720db0325fb1ae4e6603a24a402b"}},
+            "waypoint": null,
+            "parameter": {"storage": {
+              "signedURL": "https://example.invalid/PLACEHOLDER-NOT-A-REAL-URL"}},
+            "serialNumber": "P11782004",
+            "bbox": {
+              "upperRight": {"lat": 39.97763402790713, "lng": 64.3646283679237},
+              "downLeft": {"lat": 39.97571347221887, "lng": 64.36232149587687}},
+            "tags": null
+          }
+        },
+        {
+          "cursor": "2",
+          "node": {
+            "uuid": "68355568-bde9-436a-82b2-38d008fdad95",
+            "externalId": "ACCOUNT-flyer-e08ecdf1-125e-4f85-89e4-89c41a8df2e2",
+            "name": "Azamat 1,5",
+            "address": "Yuqor Mirish, Vobkent Tumani, Buxoro Viloyati, 201000, Oʻzbekiston",
+            "updatedAt": "2026-08-17T18:41:11.913309+08:00",
+            "createdAt": "2026-08-17T18:41:11.913309+08:00",
+            "totalArea": 22.20915902220916,
+            "workArea": 19.48077001948077,
+            "totalObstacleArea": 0,
+            "sourceType": "UNKNOWN_SOURCE",
+            "landType": "PLANT_LAND",
+            "precision": null,
+            "precisionType": null,
+            "maxGeometryParameterOffset": 3,
+            "position": {"lng": 64.3607412083538, "lat": 39.97813814629971},
+            "geometry": {"storage": {
+              "signedURL": "https://example.invalid/PLACEHOLDER-NOT-A-REAL-URL",
+              "uuid": "b77f54a2-c04a-4449-8504-93b8710705a8",
+              "contentMd5": "ca813e250715ed2a78b134e1dfac9a1a"}},
+            "waypoint": null,
+            "parameter": {"storage": {
+              "signedURL": "https://example.invalid/PLACEHOLDER-NOT-A-REAL-URL"}},
+            "serialNumber": "P02419298",
+            "bbox": {
+              "upperRight": {"lat": 39.978505047151344, "lng": 64.36220820712012},
+              "downLeft": {"lat": 39.97777124544808, "lng": 64.35927420958748}},
+            "tags": null
+          }
+        },
+        {
+          "cursor": "3",
+          "node": {
+            "uuid": "4f639bae-44e3-4e89-9cd9-a4bbc71345ae",
+            "externalId": "ACCOUNT-flyer-9c034d9a-c7a0-4449-9929-5c089a1851be",
+            "name": "Alisher 2",
+            "address": "Buxoro Tumani, Buxoro Viloyati, 201000, Oʻzbekiston",
+            "updatedAt": "2026-08-17T18:41:05.099539+08:00",
+            "createdAt": "2026-08-17T18:41:05.099539+08:00",
+            "totalArea": 30.601653030601653,
+            "workArea": 26.495988026495986,
+            "totalObstacleArea": 0,
+            "sourceType": "UNKNOWN_SOURCE",
+            "landType": "PLANT_LAND",
+            "precision": null,
+            "precisionType": null,
+            "maxGeometryParameterOffset": 5,
+            "position": {"lng": 64.44229176524205, "lat": 39.924917353140415},
+            "geometry": {"storage": {
+              "signedURL": "https://example.invalid/PLACEHOLDER-NOT-A-REAL-URL",
+              "uuid": "123e712a-e796-4e25-8687-32fbf0b4048b",
+              "contentMd5": "63d4c7be6c1a8e119459addb47dd006f"}},
+            "waypoint": null,
+            "parameter": {"storage": {
+              "signedURL": "https://example.invalid/PLACEHOLDER-NOT-A-REAL-URL"}},
+            "serialNumber": "P17753400",
+            "bbox": {
+              "upperRight": {"lat": 39.92589611406896, "lng": 64.44305455774676},
+              "downLeft": {"lat": 39.92393859221187, "lng": 64.44152897273733}},
+            "tags": null
+          }
+        }
+      ]
+    }
+  },
+  "code": 0,
+  "message": "OK",
+  "request_id": "00000000-0000-0000-0000-000000000000"
+}

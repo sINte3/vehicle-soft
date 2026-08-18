@@ -1668,6 +1668,42 @@ class FieldContour(db.Model):
     updated_at  = db.Column(db.DateTime, default=datetime.utcnow,
                             onupdate=datetime.utcnow)
 
+    # ── DRONE-LANDS-001, added by migrate_field_contours_dji_001.py ─────────
+    #
+    # [REASON]: the DJI serial number of the contour ("P11782004"). The
+    # dispatchers' books carry a column «Ишлаган контур рақами» that
+    # tools/import_drone_works.py skips for want of anything to match it
+    # against; this is the candidate counterpart. Stored, never interpreted
+    # until that match is demonstrated on real rows.
+    serial_number = db.Column(db.String(50), nullable=True)
+    land_type   = db.Column(db.String(40), nullable=True)
+    # [REASON]: DJI reports both. totalArea is what its own card shows and is
+    # what area_ha holds; workArea is the sprayable part, smaller by the
+    # headland. Keeping both means a later rule change needs no re-collection.
+    work_area_ha = db.Column(db.Float, nullable=True)
+    # [REASON]: the bounding box arrives in the LIST payload while the polygon
+    # sits behind a signed URL that expires six hours after it is issued. A
+    # point-in-box test on a flight's lat/lng is therefore the only join that
+    # works from a snapshot alone, and it needs these four numbers present.
+    bbox_min_lat = db.Column(db.Float, nullable=True)
+    bbox_min_lng = db.Column(db.Float, nullable=True)
+    bbox_max_lat = db.Column(db.Float, nullable=True)
+    bbox_max_lng = db.Column(db.Float, nullable=True)
+    center_lat  = db.Column(db.Float, nullable=True)
+    center_lng  = db.Column(db.Float, nullable=True)
+    # [REASON]: DJI timestamps arrive in UTC+08:00 and are converted to UTC on
+    # ingest, like every other datetime here. Stored separately from
+    # created_at/updated_at, which are OUR row's lifecycle: a contour drawn in
+    # September 2025 and collected in August 2026 has to say both.
+    source_created_at = db.Column(db.DateTime, nullable=True)
+    source_updated_at = db.Column(db.DateTime, nullable=True)
+    synced_at   = db.Column(db.DateTime, nullable=True)
+    # [REASON]: the complete payload, so every derived column above can be
+    # recomputed if a rule changes -- the same discipline drone_flights
+    # follows, and the reason the mu-to-hectare divisor can be revisited
+    # without re-collecting 5 489 fields.
+    raw_json    = db.Column(db.Text, nullable=True)
+
     customer = db.relationship(
         'Customer', backref=db.backref('field_contours', lazy='dynamic'))
 
@@ -1675,6 +1711,7 @@ class FieldContour(db.Model):
         db.UniqueConstraint('source', 'external_id',
                             name='uq_field_contours_source_external'),
         db.Index('ix_field_contours_source_active', 'source', 'is_active'),
+        db.Index('ix_field_contours_bbox', 'bbox_min_lat', 'bbox_max_lat'),
     )
 
 
