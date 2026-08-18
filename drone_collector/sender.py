@@ -265,3 +265,107 @@ def write_dry_run(flights, kind, period_from, period_to, out_dir):
     with target.open('w', encoding='utf-8') as handle:
         json.dump(document, handle, ensure_ascii=False, indent=2)
     return target
+
+
+# ─── Field-contour snapshot (DRONE-LANDS-001) ────────────────────────────────
+#
+# Contract, read out of drones.py:
+#
+#     POST {VEHICLE_SOFT_BASE_URL}/drones/api/land_sync
+#     {"token": "...", "lands": [ ...raw GraphQL `node` objects, verbatim... ]}
+#
+#   * the token travels in the BODY, like the flight sync;
+#   * there is no `kind` and no period: a directory snapshot has neither;
+#   * at most 1000 lands per request, above which the endpoint answers 413;
+#   * the answer carries four counters: seen, new, updated, unchanged, plus
+#     errors. They partition what was sent -- seen = new + updated +
+#     unchanged + errors.
+#
+# Areas are NOT converted here. They arrive in MU and drones.py divides by 15;
+# a second conversion on this side would divide twice.
+
+
+class LandSendResult(object):
+    """The counters summed over every batch of one snapshot."""
+
+    __slots__ = ('batches', 'seen', 'new', 'updated', 'unchanged', 'errors')
+
+    def __init__(self):
+        self.batches = 0
+        self.seen = 0
+        self.new = 0
+        self.updated = 0
+        self.unchanged = 0
+        self.errors = 0
+
+    def add(self, body):
+        self.batches += 1
+        self.seen += _int(body.get('seen'))
+        self.new += _int(body.get('new'))
+        self.updated += _int(body.get('updated'))
+        self.unchanged += _int(body.get('unchanged'))
+        self.errors += _int(body.get('errors'))
+        return self
+
+    def as_dict(self):
+        return {'batches': self.batches, 'seen': self.seen, 'new': self.new,
+                'updated': self.updated, 'unchanged': self.unchanged,
+                'errors': self.errors}
+
+    def __repr__(self):
+        return 'LandSendResult(%s)' % self.as_dict()
+
+
+def build_land_payload(token, lands):
+    """The request body. Never log the result -- it carries the token."""
+    return {'token': token, 'lands': lands}
+
+
+def send_lands(lands, cfg, logger=None, post_fn=None, sleep_fn=None):
+    """Chunk and POST the directory. Returns a LandSendResult."""
+    out = logger or log
+    post = post_fn or _requests_post
+    sleep = sleep_fn or time.sleep
+
+    result = LandSendResult()
+    if not lands:
+        out.info('Nothing to send: 0 contours')
+        return result
+
+    batches = chunk(lands, cfg.batch_size)
+    out.info('Sending %d contour(s) in %d batch(es) of at most %d to %s',
+             len(lands), len(batches), min(cfg.batch_size, MAX_BATCH_SIZE),
+             cfg.land_sync_url)
+
+    for index, batch in enumerate(batches, start=1):
+        payload = build_land_payload(cfg.api_token, batch)
+        body = _post_with_retries(post, sleep, cfg.land_sync_url, payload,
+                                  index, len(batches), out)
+        result.add(body)
+        out.info('Batch %d/%d accepted: seen=%s new=%s updated=%s '
+                 'unchanged=%s errors=%s', index, len(batches),
+                 body.get('seen'), body.get('new'), body.get('updated'),
+                 body.get('unchanged'), body.get('errors'))
+
+    out.info('Snapshot totals: batches=%d seen=%d new=%d updated=%d '
+             'unchanged=%d errors=%d', result.batches, result.seen,
+             result.new, result.updated, result.unchanged, result.errors)
+    return result
+
+
+def land_dry_run_path(out_dir):
+    return Path(out_dir) / 'lands_snapshot.json'
+
+
+def write_lands_dry_run(lands, out_dir, total_count=None):
+    """Write what would have been sent, minus the token, and return the path."""
+    target = land_dry_run_path(out_dir)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    document = {
+        'count': len(lands),
+        'total_count_reported_by_dji': total_count,
+        'lands': lands,
+    }
+    with target.open('w', encoding='utf-8') as handle:
+        json.dump(document, handle, ensure_ascii=False, indent=2)
+    return target

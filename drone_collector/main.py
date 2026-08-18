@@ -5,6 +5,8 @@
     python -m drone_collector.main --dry-run
     python -m drone_collector.main --from 2026-07-01 --to 2026-07-31
     python -m drone_collector.main                      (rolling window)
+    python -m drone_collector.main --lands              (field directory)
+    python -m drone_collector.main --lands --dry-run
 
 Without --from/--to the collector uses the rolling window from DJI_WINDOW_DAYS
 and sends it as kind=incremental; with them it sends kind=backfill, unless
@@ -15,9 +17,10 @@ Exit codes (see drone_collector/README.md):
     1  configuration error
     2  session missing or expired
     3  period verification failed
-    4  the page walk did not complete
+    4  the page walk did not complete (flights, or --lands)
     5  the ingest endpoint rejected a batch
-    6  a window captured zero flights (usually the wrong region)
+    6  a window captured zero flights, or --lands captured zero
+       contours (usually the wrong region)
     7  the session is in the wrong region
 """
 
@@ -27,7 +30,8 @@ import sys
 from drone_collector import config as config_module
 from drone_collector.config import ConfigError, load_config
 from drone_collector.logging_setup import format_run_summary, setup_logging
-from drone_collector.sender import IngestRejected, send, write_dry_run
+from drone_collector.sender import (IngestRejected, send, send_lands,
+                                    write_dry_run, write_lands_dry_run)
 from drone_collector.session import SessionMissing, require_session
 from drone_collector.window import (compute_window, format_date, parse_date,
                                     split_by_calendar_year)
@@ -44,6 +48,23 @@ EXIT_REGION = 7
 KIND_INCREMENTAL = 'incremental'
 KIND_BACKFILL = 'backfill'
 KINDS = ('backfill', 'incremental', 'replay')
+
+MODE_FLIGHTS = 'flights'
+MODE_LANDS = 'lands'
+
+FLIGHT_SUMMARY_KEYS = (
+    'mode', 'kind', 'dry_run', 'period_from', 'period_to',
+    'windows', 'windows_completed', 'region', 'page_size',
+    'pages', 'pages_expected', 'flights_captured', 'flights_deduped',
+    'self_duplicates', 'rejected_responses',
+    'batches', 'seen', 'new', 'duplicates', 'unresolved', 'errors', 'exit',
+)
+
+LAND_SUMMARY_KEYS = (
+    'mode', 'dry_run', 'pages', 'total_count', 'lands_captured',
+    'lands_deduped', 'self_duplicates', 'rejected_responses', 'complete',
+    'batches', 'seen', 'new', 'updated', 'unchanged', 'errors', 'exit',
+)
 
 
 class UsageError(Exception):
@@ -78,6 +99,10 @@ def build_parser():
                         help='sync kind recorded by the ingest endpoint; '
                              'defaults to incremental for the rolling window '
                              'and to backfill when --from/--to are given')
+    parser.add_argument('--lands', action='store_true',
+                        help='collect the Field Management directory (the '
+                             'contour names operators type on the controller) '
+                             'instead of flights; takes no period')
     return parser
 
 
@@ -107,19 +132,7 @@ def main(argv=None):
     # happened to run it by hand.
     log = setup_logging(config_module.PACKAGE_ROOT / 'logs')
 
-    summary = [
-        ('kind', None), ('dry_run', False),
-        ('period_from', None), ('period_to', None),
-        ('windows', None), ('windows_completed', None),
-        ('region', None), ('page_size', None),
-        ('pages', None), ('pages_expected', None),
-        ('flights_captured', None), ('flights_deduped', None),
-        ('self_duplicates', None), ('rejected_responses', None),
-        ('batches', None), ('seen', None), ('new', None),
-        ('duplicates', None), ('unresolved', None), ('errors', None),
-        ('exit', None),
-    ]
-    state = dict(summary)
+    state = {'mode': MODE_FLIGHTS, 'dry_run': False}
 
     code = EXIT_CONFIG
     summarize = True
@@ -141,8 +154,14 @@ def main(argv=None):
     finally:
         if summarize:
             state['exit'] = code
+            # [REASON]: one line per run with always the same keys in the same
+            # order -- but the two walks have almost no counters in common, and
+            # printing twenty '-' for a lands run would make the flight keys
+            # look like failures. Two templates, chosen by what actually ran.
+            keys = (LAND_SUMMARY_KEYS if state.get('mode') == MODE_LANDS
+                    else FLIGHT_SUMMARY_KEYS)
             log.info(format_run_summary([(key, state.get(key))
-                                         for key, _ in summary]))
+                                         for key in keys]))
     return code
 
 
@@ -151,6 +170,15 @@ def _run(argv, log, state):
         args = build_parser().parse_args(argv)
     except UsageError as exc:
         log.error('Usage error: %s', exc)
+        return EXIT_CONFIG
+
+    # [REASON]: checked before the environment is read. A malformed command
+    # line reported as "VEHICLE_SOFT_BASE_URL is not set" sends the operator
+    # to the wrong file entirely.
+    if args.lands and (args.date_from or args.date_to or args.kind):
+        log.error('Usage error: --lands takes no period and no --kind. The '
+                  'Field Management directory is a snapshot of the current '
+                  'state; it has no date filter.')
         return EXIT_CONFIG
 
     # --save-session and --dry-run never send anything, so they do not need
@@ -168,6 +196,9 @@ def _run(argv, log, state):
 
     if args.save_session:
         return _save_session(cfg, log)
+
+    if args.lands:
+        return _run_lands(args, cfg, log, state)
 
     try:
         date_from, date_to, kind = resolve_period(args, cfg)
@@ -262,6 +293,95 @@ def _run(argv, log, state):
                                 for a, b in remaining))
 
     return code
+
+
+def _run_lands(args, cfg, log, state):
+    """Snapshot the Field Management directory. Returns an exit code."""
+    state['mode'] = MODE_LANDS
+
+    # Checked before the browser is launched, same as the flight walk.
+    try:
+        require_session(cfg.storage_state)
+    except SessionMissing as exc:
+        log.error('%s', exc)
+        return EXIT_SESSION
+
+    try:
+        from drone_collector.lands import LandCollector, LandsError
+    except ImportError as exc:
+        log.error('Playwright is not available in this environment (%s). '
+                  'Install the collector dependencies: pip install -r '
+                  'drone_collector/requirements.txt && python -m playwright '
+                  'install chromium', exc)
+        return EXIT_CONFIG
+
+    try:
+        with LandCollector(cfg, log) as collector:
+            result = collector.collect()
+    except ImportError as exc:
+        # playwright is imported lazily, inside start().
+        log.error('Playwright is not available in this environment (%s). '
+                  'Install the collector dependencies: pip install -r '
+                  'drone_collector/requirements.txt && python -m playwright '
+                  'install chromium', exc)
+        return EXIT_CONFIG
+    except SessionMissing as exc:
+        log.error('%s', exc)
+        return EXIT_SESSION
+    except LandsError as exc:
+        log.error('Directory walk failed: %s', exc)
+        return EXIT_PAGINATION
+
+    state['pages'] = result.pages_captured
+    state['total_count'] = result.total_count
+    state['lands_captured'] = result.nodes_captured
+    state['lands_deduped'] = len(result.lands)
+    state['self_duplicates'] = result.self_duplicates
+    state['rejected_responses'] = sum(result.rejected.values())
+    state['complete'] = result.complete
+    if result.rejected:
+        log.warning('Rejected responses by reason: %s', result.rejected)
+
+    # [REASON]: the same guard the flight walk has, for the same reason -- a
+    # session switched to another region returns an empty directory with no
+    # error at all, and a snapshot of nothing would overwrite nothing and
+    # report success.
+    if not result.lands:
+        log.error('EMPTY DIRECTORY: zero contours captured. Nothing is sent. '
+                  'The usual cause is a session switched to another region, '
+                  'which returns an empty list with no error.')
+        return EXIT_EMPTY
+
+    if args.dry_run:
+        target = write_lands_dry_run(result.lands, cfg.out_dir,
+                                     total_count=result.total_count)
+        log.info('Dry run: %d contour(s) written to %s', len(result.lands),
+                 target)
+        print('%d contour(s) written to %s' % (len(result.lands), target))
+    else:
+        try:
+            sent = send_lands(result.lands, cfg, logger=log)
+        except IngestRejected as exc:
+            log.error('Ingest rejected the batch: %s', exc)
+            return EXIT_INGEST
+        for key in ('batches', 'seen', 'new', 'updated', 'unchanged',
+                    'errors'):
+            state[key] = getattr(sent, key)
+
+    if not result.complete:
+        # [REASON]: what WAS collected is real and has already been sent --
+        # the ingest upserts by DJI uuid, so re-running is the normal repair
+        # and costs nothing but time. The non-zero exit is what says the
+        # snapshot is partial; reporting success would leave a half-collected
+        # directory looking authoritative, and a contour that is missing from
+        # it is invisible afterwards -- it simply never matches anything.
+        log.error('Directory walk incomplete: %d contour(s) collected of %s '
+                  'reported by DJI. What was collected has been sent; re-run '
+                  '--lands to finish it.', len(result.lands),
+                  result.total_count if result.total_count is not None
+                  else 'an unknown number')
+        return EXIT_PAGINATION
+    return EXIT_OK
 
 
 def _exit_code_for(exc, log):

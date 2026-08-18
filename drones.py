@@ -26,7 +26,7 @@ import json
 import os
 import re
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
                    render_template, request, send_file, url_for, g)
@@ -70,6 +70,7 @@ from models import (
     DroneSyncLog,
     DroneWork,
     DroneWorkImport,
+    FieldContour,
     module_required,
 )
 
@@ -698,6 +699,300 @@ def api_flight_sync():
     return jsonify(status='ok', log_id=log.id, seen=len(flights), new=new,
                    duplicates=duplicates, unresolved=unresolved,
                    errors=errors)
+
+
+# ─── Field-contour ingest (DRONE-LANDS-001) ───────────────────────────────────
+#
+# The DJI cabinet keeps a Field Management directory: every contour an
+# operator drew on the controller, with the NAME the operator typed. That name
+# is the only place in the whole integration where a flight can be tied to a
+# customer -- the flight payload's own plot_name is empty on all 10 385 rows,
+# and the reverse-geocoded address is not discriminating (two different farms
+# came back as «Bukhara Region, 500200» on consecutive days).
+#
+# The endpoint is a SNAPSHOT, not a stream: it inserts and updates, and it
+# NEVER deactivates. A contour that stops appearing in the cabinet keeps
+# is_active as it was, because a walk that stopped half-way would otherwise
+# retire half the directory and look successful doing it.
+
+DRONE_LAND_SYNC_MAX_BATCH = 1000
+
+DRONE_LAND_SOURCE = 'dji'
+
+# [REASON]: DJI reports areas in MU, not hectares -- `totalArea(unit:MU)` in
+# its own GraphQL query. 1 hectare = 15 mu exactly, and the cabinet's card
+# shows totalArea/15: 44.5410 mu is displayed as 2.97 ha. Verified against six
+# cards read off the live cabinet on 2026-08-18. The flight endpoint uses
+# different units again (m2), which is why this constant lives here and not in
+# a shared one: they are not the same number and must never become one.
+DRONE_LAND_MU_PER_HECTARE = 15.0
+
+# Error text kept per request, same cap as the flight ingest.
+DRONE_LAND_MAX_ERRORS_LOGGED = 50
+
+# [REASON]: the geometry and parameter blocks carry `signedURL` -- a
+# pre-authenticated link into DJI's object storage that expires six hours
+# after it is issued. Storing 5 489 of them would put thousands of expiring
+# bearer credentials in the database to no purpose, and would make raw_json
+# differ on every single run, so that a re-snapshot of unchanged data would
+# report 5 489 updates. Stripped on the way in; the storage `uuid` and
+# `contentMd5` beside it are stable and ARE kept -- contentMd5 is what says
+# whether the polygon itself changed.
+DRONE_LAND_VOLATILE_KEYS = ('signedURL',)
+
+
+def _drone_land_utc(value):
+    """ISO-8601 with an offset -> naive UTC datetime. None when unusable.
+
+    [REASON]: DJI stamps these in UTC+08:00 ("2026-08-17T18:41:18.4+08:00"),
+    three hours ahead of the +05:00 the business reads. Left unconverted, a
+    contour drawn at 22:00 Tashkent would carry the next calendar day and
+    would be matched against the wrong day's flights.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith(('Z', 'z')):
+        text = text[:-1] + '+00:00'
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        return moment
+    return moment.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _drone_land_ha(value):
+    """DJI area in MU -> hectares, or None."""
+    mu = _drone_num(value)
+    if mu is None:
+        return None
+    return mu / DRONE_LAND_MU_PER_HECTARE
+
+
+def _drone_land_strip_volatile(value):
+    """Deep copy of the payload with every expiring signed URL removed."""
+    if isinstance(value, dict):
+        return {key: _drone_land_strip_volatile(item)
+                for key, item in value.items()
+                if key not in DRONE_LAND_VOLATILE_KEYS}
+    if isinstance(value, list):
+        return [_drone_land_strip_volatile(item) for item in value]
+    return value
+
+
+def _drone_land_corner(node, key):
+    """(lat, lng) of one bbox corner, or (None, None)."""
+    box = node.get('bbox')
+    if not isinstance(box, dict):
+        return None, None
+    corner = box.get(key)
+    if not isinstance(corner, dict):
+        return None, None
+    return _drone_num(corner.get('lat')), _drone_num(corner.get('lng'))
+
+
+def _drone_land_bbox(node):
+    """(min_lat, min_lng, max_lat, max_lng); Nones when the box is unusable.
+
+    [REASON]: min/max are taken from the two corners rather than trusting the
+    names `upperRight` and `downLeft`. The point-in-box test is a pair of
+    inequalities, and a box stored with its corners the wrong way round
+    matches nothing at all while looking perfectly populated.
+    """
+    lat_a, lng_a = _drone_land_corner(node, 'upperRight')
+    lat_b, lng_b = _drone_land_corner(node, 'downLeft')
+    if None in (lat_a, lng_a, lat_b, lng_b):
+        return None, None, None, None
+    return (min(lat_a, lat_b), min(lng_a, lng_b),
+            max(lat_a, lat_b), max(lng_a, lng_b))
+
+
+def _drone_land_name(node, uuid_text):
+    """The contour's name. Never empty, never invented.
+
+    [REASON]: field_contours.name is NOT NULL, and a nameless contour is still
+    a real field with a real box -- rejecting it would lose a match the way a
+    hardcoded nickname list once lost 2 036 flights. The fallbacks are facts
+    from the same payload (the DJI serial, then the id), not a made-up label.
+    """
+    for candidate in (node.get('name'), node.get('serialNumber'), uuid_text):
+        text = _drone_text(candidate, 300)
+        if text and text.strip():
+            return text.strip()
+    return None
+
+
+def _drone_land_fields(node, uuid_text):
+    """Every column this ingest derives, as a dict. Raises on unusable input."""
+    name = _drone_land_name(node, uuid_text)
+    if name is None:
+        raise ValueError('land %r has neither name, serialNumber nor uuid'
+                         % uuid_text)
+    min_lat, min_lng, max_lat, max_lng = _drone_land_bbox(node)
+    position = node.get('position')
+    position = position if isinstance(position, dict) else {}
+    return {
+        'name': name,
+        'serial_number': _drone_text(node.get('serialNumber'), 50),
+        'land_type': _drone_text(node.get('landType'), 40),
+        'area_ha': _drone_land_ha(node.get('totalArea')),
+        'work_area_ha': _drone_land_ha(node.get('workArea')),
+        'bbox_min_lat': min_lat,
+        'bbox_min_lng': min_lng,
+        'bbox_max_lat': max_lat,
+        'bbox_max_lng': max_lng,
+        'center_lat': _drone_num(position.get('lat')),
+        'center_lng': _drone_num(position.get('lng')),
+        'source_created_at': _drone_land_utc(node.get('createdAt')),
+        'source_updated_at': _drone_land_utc(node.get('updatedAt')),
+        'raw_json': json.dumps(_drone_land_strip_volatile(node),
+                               ensure_ascii=False, sort_keys=True),
+    }
+
+
+def _drone_land_existing(uuids):
+    """{external_id: FieldContour} for the DJI contours already stored.
+
+    Read in chunks: SQLite caps the number of bound parameters in one
+    statement, and a full batch is 1000 ids.
+    """
+    found = {}
+    ids = [value for value in uuids if value]
+    for start in range(0, len(ids), 500):
+        rows = (FieldContour.query
+                .filter(FieldContour.source == DRONE_LAND_SOURCE,
+                        FieldContour.external_id.in_(ids[start:start + 500]))
+                .all())
+        for row in rows:
+            found[row.external_id] = row
+    return found
+
+
+@drones_bp.route('/api/land_sync', methods=['POST'])
+def api_land_sync():
+    """Ingest a batch of raw DJI Field Management records.
+
+    Body, same convention as the flight ingest (token in the BODY, not a
+    header):
+
+        {"token": "...", "lands": [ ...raw GraphQL `node` objects... ]}
+
+    Counter semantics -- every seen record lands in exactly one bucket:
+
+        seen = new + updated + unchanged + errors
+
+    `unchanged` is what makes a re-run readable: the second snapshot of the
+    same directory reports 5 489 unchanged and nothing else, and any other
+    number is a real change in the cabinet. That only works because the
+    expiring signed URLs are stripped before the payload is compared.
+
+    What this endpoint never does: it never deactivates a contour, never
+    touches customer_id or name_uz, and never writes to drone_sync_logs --
+    that table carries the flight ingest's invariant and nothing foreign
+    belongs in it. The audit trail of a snapshot is field_contours.synced_at.
+    """
+    payload = request.get_json(force=True, silent=True)
+    token = extract_token(payload)
+    # [REASON]: a missing DRONE_API_TOKEN must DENY, never accept --
+    # verify_api_token already implements that contract; no fallback here.
+    if not verify_api_token(token, current_app.config.get('DRONE_API_TOKEN')):
+        return jsonify(error='unauthorized'), 401
+
+    lands = payload.get('lands')
+    if not isinstance(lands, list):
+        return jsonify(error='lands must be a list'), 400
+    if len(lands) > DRONE_LAND_SYNC_MAX_BATCH:
+        return jsonify(error='batch too large: %d lands, the cap is %d per '
+                             'request -- send chunks'
+                             % (len(lands), DRONE_LAND_SYNC_MAX_BATCH)), 413
+
+    new = updated = unchanged = errors = 0
+    error_lines = []
+    now = datetime.utcnow()
+
+    try:
+        uuids = [land.get('uuid') for land in lands if isinstance(land, dict)]
+        existing = _drone_land_existing(uuids)
+
+        for position, land in enumerate(lands):
+            try:
+                if not isinstance(land, dict):
+                    raise ValueError('land #%d is not an object' % position)
+                uuid_text = _drone_text(land.get('uuid'), 100)
+                if not uuid_text:
+                    raise ValueError('land #%d has no uuid' % position)
+
+                fields = _drone_land_fields(land, uuid_text)
+                row = existing.get(uuid_text)
+
+                if row is None:
+                    row = FieldContour(source=DRONE_LAND_SOURCE,
+                                       external_id=uuid_text,
+                                       is_active=True)
+                    for key, value in fields.items():
+                        setattr(row, key, value)
+                    row.synced_at = now
+                    try:
+                        # [REASON]: flushed inside a savepoint so that a uuid
+                        # inserted by an OVERLAPPING run surfaces here as one
+                        # rejected row instead of an IntegrityError at commit
+                        # that rolls the whole batch back. Running --lands
+                        # twice by accident is an ordinary operator mistake.
+                        with db.session.begin_nested():
+                            db.session.add(row)
+                    except IntegrityError:
+                        db.session.expunge(row)
+                        errors += 1
+                        if len(error_lines) < DRONE_LAND_MAX_ERRORS_LOGGED:
+                            error_lines.append(
+                                'land %s was inserted by a concurrent run'
+                                % uuid_text)
+                        continue
+                    # [REASON]: the row must be visible to the next iteration's
+                    # lookup -- one batch can legitimately carry the same uuid
+                    # twice when a page boundary shifts mid-walk, and without
+                    # this the second copy would hit the unique constraint and
+                    # roll the whole batch back.
+                    existing[uuid_text] = row
+                    new += 1
+                    continue
+
+                if row.raw_json == fields['raw_json']:
+                    # Nothing to write, but the snapshot did see it.
+                    row.synced_at = now
+                    unchanged += 1
+                    continue
+
+                for key, value in fields.items():
+                    setattr(row, key, value)
+                row.synced_at = now
+                updated += 1
+            except Exception as exc:
+                # [REASON]: one unusable record increments errors and is
+                # recorded; the rest of the chunk must still land. Same rule
+                # as the flight ingest.
+                errors += 1
+                if len(error_lines) < DRONE_LAND_MAX_ERRORS_LOGGED:
+                    error_lines.append(str(exc))
+
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception('DRONE LAND INGEST: batch rolled back')
+        return jsonify(status='error', seen=len(lands), new=0, updated=0,
+                       unchanged=0, errors=len(lands), error=str(exc)), 500
+
+    if error_lines:
+        current_app.logger.warning(
+            'DRONE LAND INGEST: %d record(s) of %d rejected. First reasons: %s',
+            errors, len(lands), ' | '.join(error_lines[:5]))
+
+    return jsonify(status='ok', seen=len(lands), new=new, updated=updated,
+                   unchanged=unchanged, errors=errors)
 
 
 @drones_bp.route('/units')
