@@ -1,0 +1,11 @@
+# The collector has NO third-party dependencies, and that is a property worth
+# stating rather than leaving to be inferred from an empty file.
+#
+# [REASON]: GPS-2 (gps/daily.py) needs shapely, scipy, pyproj and numpy. The
+# collector must not, because it is a service: a service that carries a geo
+# stack it never calls pays for it on every install and every upgrade, and one
+# broken wheel then stops the collection of points as well as the arithmetic.
+# The same split already exists between drone_collector and the application.
+#
+# Python 3.14 standard library only. If a line ever appears below this one,
+# the split above has been broken -- check the import first.
