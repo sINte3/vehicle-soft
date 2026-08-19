@@ -295,6 +295,32 @@ def _run(argv, log, state):
     return code
 
 
+def incomplete_walk_message(collected, total_count, dry_run):
+    """What a short directory walk ends on.
+
+    [REASON]: the sentence about sending is CHOSEN by dry_run, not written
+    once for both. The first version said "what was collected has been sent"
+    unconditionally, and the very first real dry run on production printed it
+    -- while a dry run sends nothing by definition. An operator message that
+    states something untrue about what reached the database is worse than no
+    message at all: the next decision gets made on it, and here that decision
+    is whether the database now holds a partial directory.
+
+    [REASON]: what WAS collected is real, and on a real run it has already
+    been sent -- the ingest upserts by DJI uuid, so re-running is the normal
+    repair and costs nothing but time. That is why the advice is "re-run",
+    not "clean up first".
+    """
+    tail = ('Nothing was sent -- this is a dry run; re-run --lands --dry-run '
+            'to finish it.' if dry_run else
+            'What was collected has been sent; re-run --lands to finish it.')
+    return ('Directory walk incomplete: %d contour(s) collected of %s '
+            'reported by DJI. %s'
+            % (collected,
+               total_count if total_count is not None
+               else 'an unknown number', tail))
+
+
 def _run_lands(args, cfg, log, state):
     """Snapshot the Field Management directory. Returns an exit code."""
     state['mode'] = MODE_LANDS
@@ -369,17 +395,12 @@ def _run_lands(args, cfg, log, state):
             state[key] = getattr(sent, key)
 
     if not result.complete:
-        # [REASON]: what WAS collected is real and has already been sent --
-        # the ingest upserts by DJI uuid, so re-running is the normal repair
-        # and costs nothing but time. The non-zero exit is what says the
-        # snapshot is partial; reporting success would leave a half-collected
-        # directory looking authoritative, and a contour that is missing from
-        # it is invisible afterwards -- it simply never matches anything.
-        log.error('Directory walk incomplete: %d contour(s) collected of %s '
-                  'reported by DJI. What was collected has been sent; re-run '
-                  '--lands to finish it.', len(result.lands),
-                  result.total_count if result.total_count is not None
-                  else 'an unknown number')
+        # [REASON]: the non-zero exit is what says the snapshot is partial;
+        # reporting success would leave a half-collected directory looking
+        # authoritative, and a contour missing from it is invisible
+        # afterwards -- it simply never matches anything.
+        log.error('%s', incomplete_walk_message(
+            len(result.lands), result.total_count, args.dry_run))
         return EXIT_PAGINATION
     return EXIT_OK
 
