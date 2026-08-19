@@ -30,6 +30,7 @@ Run (needs the geo venv, see gps/README.md):
 """
 
 import csv
+import io
 import json
 import os
 import sqlite3
@@ -379,6 +380,39 @@ class Recomputation(unittest.TestCase):
         self.assertEqual(len(aggregates), 1)
         self.assertEqual(aggregates[0]["reason"], "net_tochek")
         self.assertEqual(self.rows("gps_work_polygons"), [])
+
+
+class CommandLine(unittest.TestCase):
+    """День по умолчанию считает сам расчёт, а не обёртка расписания.
+
+    [REASON]: этот вход появился, когда ранбук выката потребовал посчитать
+    «вчера» в .bat-файле Windows -- `for /f` вокруг PowerShell со вложенными
+    кавычками. Там кавычка съедает половину команды, задача молча не
+    запускается по расписанию, и узнаётся это через неделю по пустым суткам.
+    День у ночного расчёта всегда один и тот же, и знать его должен он сам.
+    """
+
+    def test_without_a_date_it_takes_yesterday_local(self):
+        out, saved = io.StringIO(), sys.stdout
+        sys.stdout = out
+        try:
+            code = daily.main(["--dir", tempfile.mkdtemp(),
+                               "--db", os.path.join(REPO_ROOT, "models.py")])
+        finally:
+            sys.stdout = saved
+        self.assertEqual(code, 0)
+        yesterday = (datetime.now(TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+        self.assertIn(yesterday, out.getvalue())
+
+    def test_a_date_that_is_not_a_date_is_refused(self):
+        err, saved = io.StringIO(), sys.stderr
+        sys.stderr = err
+        try:
+            code = daily.main(["--date", "vchera"])
+        finally:
+            sys.stderr = saved
+        self.assertEqual(code, 2)
+        self.assertIn("YYYY-MM-DD", err.getvalue())
 
 
 if __name__ == "__main__":

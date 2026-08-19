@@ -33,7 +33,7 @@ import json
 import os
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import numpy as np
 import shapely
@@ -411,7 +411,9 @@ def run_day(day, unit_id, folder=None, db_path=None, contours=None, log=print):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--date", required=True, help="local day, YYYY-MM-DD")
+    parser.add_argument("--date", default=None,
+                        help="local day, YYYY-MM-DD. По умолчанию -- вчерашние "
+                             "сутки по местному времени")
     parser.add_argument("--unit", action="append", default=[], type=int,
                         help="wialon id; may repeat. Default: every object "
                              "with points that day")
@@ -420,15 +422,27 @@ def main(argv=None):
     parser.add_argument("--db", default=None, help="path to transport.db")
     args = parser.parse_args(argv)
 
+    # [REASON]: «вчера» считается здесь, а не в .bat-обёртке. В командном
+    # файле Windows это `for /f` вокруг PowerShell со вложенными кавычками --
+    # ровно та конструкция, где кавычка съедает половину команды и задача
+    # молча не запускается по расписанию. День у ночного расчёта всегда один
+    # и тот же: вчерашние сутки по местному времени.
+    day = args.date or (datetime.now(TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
+    try:
+        datetime.strptime(day, "%Y-%m-%d")
+    except ValueError:
+        sys.stderr.write("ERROR: --date must be YYYY-MM-DD, got %r\n" % day)
+        return 2
+
     folder = args.dir or points_dir()
     db_path = args.db or DB_PATH
     if not os.path.exists(db_path):
         sys.stderr.write("ERROR: database not found at %s\n" % db_path)
         return 2
 
-    units = args.unit or storage.units_with_points(folder, args.date)
+    units = args.unit or storage.units_with_points(folder, day)
     if not units:
-        print("no points for %s in %s" % (args.date, folder))
+        print("no points for %s in %s" % (day, folder))
         return 0
 
     con = sqlite3.connect(db_path, timeout=30)
@@ -437,11 +451,11 @@ def main(argv=None):
     finally:
         con.close()
     print("%s: %d object(s), %d contour(s) in the directory"
-          % (args.date, len(units), len(contours)))
+          % (day, len(units), len(contours)))
 
     published = refused = sites_total = 0
     for unit_id in units:
-        result = run_day(args.date, unit_id, folder=folder, db_path=db_path,
+        result = run_day(day, unit_id, folder=folder, db_path=db_path,
                          contours=contours)
         if result.reason:
             refused += 1
