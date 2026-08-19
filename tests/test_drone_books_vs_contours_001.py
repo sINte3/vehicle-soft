@@ -321,6 +321,91 @@ class Report(unittest.TestCase):
                          + stats['book_only'])
 
 
+class AreaAgreement(unittest.TestCase):
+    """Проверка 7: площадь -- вторая, более сильная проверка после имени.
+
+    [REASON]: имя может совпасть у однофамильцев, площадь -- вряд ли. На
+    сентябре-2025 площадь сошлась в полосе 80..125 % на 156 строках из 262, а
+    на 143 из них -- в пределах 10 %. Это и есть доказательство, что мост
+    связывает ту же самую работу, а не просто похожие буквы.
+    """
+
+    def setUp(self):
+        self.fx = Fixture()
+
+    def tearDown(self):
+        self.fx.close()
+
+    def test_7_bands_are_where_the_boundaries_say(self):
+        self.assertEqual(report.area_band(1.00), report.BAND_MATCH)
+        self.assertEqual(report.area_band(0.80), report.BAND_MATCH)
+        self.assertEqual(report.area_band(1.25), report.BAND_MATCH)
+        self.assertEqual(report.area_band(0.79), report.BAND_LESS)
+        self.assertEqual(report.area_band(0.49), report.BAND_MUCH_LESS)
+        self.assertEqual(report.area_band(1.26), report.BAND_MORE)
+        self.assertEqual(report.area_band(3.01), report.BAND_MUCH_MORE)
+
+    def test_7a_a_row_whose_areas_agree_is_reported_as_agreeing(self):
+        self.fx.contour('Xasan Xamro (13.6 ga)', 13.6, '2025-09-09T05:00:00')
+        self.fx.contour('Xasan Xamro (11.2 ga)', 11.2, '2025-09-09T05:00:00',
+                        serial='P2')
+        self.fx.work('Хасан Хамро фх', 25.0)
+        stats, _m, _c, _b, _co = self.fx.run()
+        self.assertEqual(stats['bands'][report.BAND_MATCH], 1)
+
+    def test_7b_negative_a_name_on_many_contours_is_flagged_by_area(self):
+        """«behruz feruz» стоит на десятках контуров, и одна строка книги
+        собирает их все. Имя совпало, работа -- нет, и это обязано быть видно
+        по площади, потому что по имени не видно ничем."""
+        for index in range(8):
+            self.fx.contour('behruz feruz', 30.0, '2025-09-20T05:00:00',
+                            serial='P%d' % index)
+        self.fx.work('Бехруз Феруз замини фх', 39.0)
+        stats, _m, _c, _b, _co = self.fx.run()
+        self.assertEqual(stats['matched'], 1)
+        self.assertEqual(stats['bands'][report.BAND_MATCH], 0)
+        self.assertEqual(stats['bands'][report.BAND_MUCH_MORE], 1)
+
+    def test_7b2_a_generic_name_may_not_even_reach_matched(self):
+        """[REASON]: обратный конец той же задачи. «Бухоро Агрокластер
+        Заминлари» против «zaminlari» -- обратное вложение, 0.65: строка не
+        попадает в совпадения вообще и уходит к кандидатам. Полоса площадей
+        по ней не считается, и это правильно -- считать нечего."""
+        for index in range(8):
+            self.fx.contour('zaminlari', 30.0, '2025-09-20T05:00:00',
+                            serial='P%d' % index)
+        self.fx.work('Бухоро Агрокластер Заминлари', 39.0)
+        stats, _m, candidates, _b, _co = self.fx.run()
+        self.assertEqual(stats['matched'], 0)
+        self.assertEqual(len(candidates), 1)
+
+    def test_7c_the_claimed_area_is_counted_once_per_contour(self):
+        """[REASON]: один контур законно достаётся нескольким строкам книги.
+        Суммирование по строкам дало на сентябре 4 836.89 га при 3 885.71 га
+        всех контуров месяца -- больше, чем существует."""
+        self.fx.contour('avaz ismatov 1', 10.0, '2025-09-10T05:00:00')
+        self.fx.work('Аваз Исматов фх', 5.0, wid=1)
+        self.fx.work('Аваз Исматов фх', 6.0, wid=2, date_from='2025-09-20')
+        stats, matched, _c, _b, _co = self.fx.run()
+        self.assertEqual(stats['matched'], 2)
+        self.assertEqual(stats['contours_claimed'], 1)
+        self.assertAlmostEqual(stats['matched_contour_area'], 10.0)
+        # Сумма по строкам удвоила бы -- она сохранена отдельно и НЕ
+        # используется как площадь.
+        self.assertAlmostEqual(stats['matched_contour_rows_sum'], 20.0)
+
+    def test_7d_claimed_area_never_exceeds_the_month(self):
+        """Обратный контроль к предыдущей на настоящей форме данных."""
+        for index in range(4):
+            self.fx.contour('behruz feruz', 5.0, '2025-09-10T05:00:00',
+                            serial='P%d' % index)
+        for wid in range(1, 7):
+            self.fx.work('Бехруз Феруз замини фх', 3.0, wid=wid)
+        stats, _m, _c, _b, _co = self.fx.run()
+        self.assertLessEqual(stats['matched_contour_area'],
+                             stats['contours_area'] + 1e-9)
+
+
 class ReadOnly(unittest.TestCase):
     """Проверка 6: инструмент не может изменить базу."""
 
