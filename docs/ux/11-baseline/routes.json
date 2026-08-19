@@ -361,6 +361,11 @@
    "url": "/fuel/warnings"
   },
   {
+   "endpoint": "gps.fact",
+   "slug": "gps-fact",
+   "url": "/gps/fact"
+  },
+  {
    "endpoint": "login",
    "slug": "login",
    "url": "/login"

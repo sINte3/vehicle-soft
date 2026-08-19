@@ -45,6 +45,7 @@ from translations import TRANS
 from spare_parts import spare_parts_bp
 from work_orders import work_orders_bp
 from drones import drones_bp
+from gps_routes import gps_bp
 # BOT001: Telegram foundation blueprint
 from bot_api import bot_api_bp
 from bot_security import generate_link_code, hash_secret, utcnow
@@ -2948,6 +2949,13 @@ def create_app():
     # @module_required('drones'), so the admin permission toggles are enforced
     # at the route, not just at the sidebar link.
     app.register_blueprint(drones_bp)
+
+    # ─── GPS-3: факт по технике (GPS план-факт) ───────────────────────────────
+    # [REASON]: read-only over the two tables gps/daily.py fills, plus ONE
+    # write: the operator's «работа/проезд» answer. Guarded by
+    # @module_required('wialon') -- same data, same permission as /wialon, so
+    # no new module code and no permission migration.
+    app.register_blueprint(gps_bp)
 
     # ─── BOT001: Telegram Bot API ─────────────────────────────────────────────
     # [REASON]: bot_api_bp provides /api/bot/* endpoints. Registered after spare_parts_bp.

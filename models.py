@@ -2460,6 +2460,102 @@ class DroneWorkImport(db.Model):
     )
 
 
+# ─── GPS-2/GPS-3: результат суточного расчёта по треку ───────────────────────
+
+GPS_LABEL_WORK = 'работа'
+GPS_LABEL_PASSAGE = 'проезд'
+GPS_OPERATOR_LABELS = (GPS_LABEL_WORK, GPS_LABEL_PASSAGE)
+
+
+class GpsDailyAggregate(db.Model):
+    """Одна строка на объект-сутки. Пишет gps/daily.py, приложение только читает.
+
+    [REASON]: строка есть ВСЕГДА, в том числе когда работы нет. «Мы посмотрели,
+    и работы нет» и «мы не смотрели» — разные факты, и отсутствующая строка их
+    не различает. Причина отказа лежит в `reason`; NULL означает, что площадь
+    посчитана и опубликована.
+
+    [REASON]: таблицу создаёт миграция GPS_DAILY_001, а не эта модель.
+    Определение здесь нужно экрану GPS-3 и db.create_all() на свежей установке;
+    столбцы обязаны совпадать с миграцией — расхождение db.create_all() не
+    поймает, оно молча создаст таблицу без недостающей колонки.
+
+    Расчёт идёт вне приложения: gps/daily.py импортирует геостек и пишет через
+    stdlib sqlite3, потому что `app = create_app()` вызывает db.create_all() на
+    импорте и превратил бы расчётный скрипт в писателя схемы.
+    """
+    __tablename__ = 'gps_daily_aggregates'
+    id                = db.Column(db.Integer, primary_key=True)
+    work_date         = db.Column(db.Date, nullable=False)
+    wialon_id         = db.Column(db.Integer, nullable=False)
+    points_total      = db.Column(db.Integer, nullable=False, default=0)
+    points_work       = db.Column(db.Integer, nullable=False, default=0)
+    track_km          = db.Column(db.Float, nullable=False, default=0)
+    interval_median_s = db.Column(db.Float, nullable=True)
+    sats_median       = db.Column(db.Float, nullable=True)
+    motion_gaps       = db.Column(db.Integer, nullable=False, default=0)
+    lost_seconds      = db.Column(db.Float, nullable=False, default=0)
+    gps_jumps         = db.Column(db.Integer, nullable=False, default=0)
+    reason            = db.Column(db.String(40), nullable=True)
+    method_version    = db.Column(db.String(60), nullable=False)
+    computed_at       = db.Column(db.DateTime, nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint('work_date', 'wialon_id',
+                            name='uq_gps_daily_aggregates_day_unit'),
+        db.Index('ix_gps_daily_aggregates_unit_day', 'wialon_id', 'work_date'),
+    )
+
+    @property
+    def published(self):
+        """Площадь посчитана и опубликована — то есть отказа не было."""
+        return self.reason is None
+
+
+class GpsWorkPolygon(db.Model):
+    """Один найденный участок работы за сутки.
+
+    Приложение читает всё, кроме двух колонок: `operator_label` и `decided_at`
+    заполняет экран GPS-3 ответом человека. Всё остальное — результат расчёта,
+    и переписывать его из приложения нельзя: пересчёт всё равно заменит.
+
+    [REASON]: ответ оператора лежит здесь, а не в отдельной таблице. Это
+    обучающий набор для правила «работа/проезд» — единственного, что пока не
+    даётся ни одному измеренному признаку, — а ответ, оторванный от геометрии,
+    о которой он дан, не стоит ничего. Пересчёт суток переносит ответ на новый
+    участок по площади пересечения (gps/daily.py), а не по номеру.
+    """
+    __tablename__ = 'gps_work_polygons'
+    id              = db.Column(db.Integer, primary_key=True)
+    work_date       = db.Column(db.Date, nullable=False)
+    wialon_id       = db.Column(db.Integer, nullable=False)
+    site_number     = db.Column(db.Integer, nullable=False)
+    area_ha         = db.Column(db.Float, nullable=False)
+    minutes         = db.Column(db.Float, nullable=False)
+    polygon_geojson = db.Column(db.Text, nullable=False)
+    # [REASON]: NULLABLE, и это норма, а не дефект. Операторы геозоны обычно
+    # не заводят; требование контура теряло 31,77 га из 159 на наборе по
+    # опрыскиванию и давало два ровных нуля при машине, простоявшей в поле
+    # весь день.
+    contour_id      = db.Column(db.Integer, db.ForeignKey('field_contours.id'),
+                                nullable=True)
+    alpha_used_m    = db.Column(db.Float, nullable=True)
+    pass_spacing_m  = db.Column(db.Float, nullable=True)
+    quality_flag    = db.Column(db.String(120), nullable=True)
+    suggested_label = db.Column(db.String(20), nullable=True)
+    operator_label  = db.Column(db.String(20), nullable=True)
+    decided_at      = db.Column(db.DateTime, nullable=True)
+
+    contour = db.relationship('FieldContour')
+
+    __table_args__ = (
+        db.UniqueConstraint('work_date', 'wialon_id', 'site_number',
+                            name='uq_gps_work_polygons_day_unit_site'),
+        db.Index('ix_gps_work_polygons_unit_day', 'wialon_id', 'work_date'),
+        db.Index('ix_gps_work_polygons_contour', 'contour_id'),
+    )
+
+
 # ─── Migration Registry ───────────────────────────────────────────────────────
 
 class SchemaMigration(db.Model):
