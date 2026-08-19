@@ -81,7 +81,10 @@ def load_works(conn, month):
         "SELECT w.id, COALESCE(o.full_name, ''), w.customer_raw, w.area_ha, "
         "       w.price_per_ha, w.amount, w.other_costs, w.received_amount, "
         "       w.received_kind, w.payment_type, w.date_raw, "
-        "       COALESCE(w.source_sheet, ''), COALESCE(w.source_row, 0) "
+        "       COALESCE(w.source_sheet, ''), COALESCE(w.source_row, 0), "
+        "       COALESCE(w.operator_raw, ''), "
+        "       COALESCE(w.subdivision_name, ''), "
+        "       COALESCE(w.source_file, '') "
         "FROM drone_works w "
         "LEFT JOIN drone_operators o ON o.id = w.drone_operator_id "
         "WHERE COALESCE(strftime('%Y-%m', w.work_date_from), "
@@ -131,7 +134,8 @@ def audit(works):
     rows_total = defaultdict(float)
 
     for (work_id, operator, customer, area, price, amount, costs, received,
-         kind, payment, date_raw, sheet, source_row) in works:
+         kind, payment, date_raw, sheet, source_row, _operator_raw,
+         _subdivision, _source_file) in works:
         area = float(area or 0)
         costs = float(costs or 0)
         agg = per_operator[operator]
@@ -283,8 +287,13 @@ def orphan_groups(works):
         operator = row[1]
         if operator:
             continue
-        sheet, source_row = row[11], row[12]
-        key = (sheet,)
+        source_row = row[12]
+        # [REASON]: ключ -- ВСЁ происхождение сразу: имя листа «свод ичи
+        # (Шохрух)» есть и в книге Гардена (Файзуллаев), и в книге Когона
+        # (Хамроев). По одному имени их не различить, а по файлу и
+        # подразделению -- различить можно. operator_raw держит написание из
+        # шапки листа: именно оно не совпало со справочником.
+        key = (row[15], row[11], row[13], row[14])
         agg = groups.setdefault(key, {'rows': 0, 'ha': 0.0, 'amount': 0.0,
                                       'first': source_row, 'last': source_row})
         agg['rows'] += 1
@@ -446,16 +455,19 @@ def write_xlsx(path, month, result, telemetry):
         ws.append(list(row))
 
     ws = wb.create_sheet('Без оператора')
-    ws.append(['Лист-источник', 'Строк', 'Га', 'Сумма', 'Строки книги с',
+    ws.append(['Файл-источник', 'Лист-источник', 'Написание оператора',
+               'Подразделение', 'Строк', 'Га', 'Сумма', 'Строки книги с',
                'по'])
     for cell in ws[1]:
         cell.font = bold
-    for (sheet,), agg in sorted(result['orphans'].items(),
-                                key=lambda kv: -kv[1]['ha']):
-        ws.append([sheet, agg['rows'], round(agg['ha'], 2),
-                   round(agg['amount'], 2), agg['first'], agg['last']])
-    for column, width in (('A', 40), ('B', 8), ('C', 11), ('D', 15),
-                          ('E', 15), ('F', 8)):
+    for (source_file, sheet, raw, subdivision), agg in sorted(
+            result['orphans'].items(), key=lambda kv: -kv[1]['ha']):
+        ws.append([source_file, sheet, raw, subdivision, agg['rows'],
+                   round(agg['ha'], 2), round(agg['amount'], 2),
+                   agg['first'], agg['last']])
+    for column, width in (('A', 42), ('B', 26), ('C', 22), ('D', 22),
+                          ('E', 8), ('F', 11), ('G', 15), ('H', 15),
+                          ('I', 8)):
         ws.column_dimensions[column].width = width
 
     ws = wb.create_sheet('Строки без оператора')
@@ -502,13 +514,15 @@ def main():
     if result['orphans']:
         print('')
         print('ROWS WITH NO OPERATOR, by the sheet they came from:')
-        print('  %-40s %6s %10s %16s %s'
-              % ('source sheet', 'rows', 'ha', 'amount', 'book rows'))
-        for (sheet,), agg in sorted(result['orphans'].items(),
-                                    key=lambda kv: -kv[1]['ha']):
-            print('  %-40s %6d %10.2f %16.0f %d..%d'
-                  % (_ascii(sheet)[:40], agg['rows'], agg['ha'],
-                     agg['amount'], agg['first'], agg['last']))
+        print('  %-34s %-20s %-18s %5s %9s %s'
+              % ('source file', 'sheet', 'operator_raw', 'rows', 'ha',
+                 'book rows'))
+        for (source_file, sheet, raw, _sub), agg in sorted(
+                result['orphans'].items(), key=lambda kv: -kv[1]['ha']):
+            print('  %-34s %-20s %-18s %5d %9.2f %d..%d'
+                  % (_ascii(source_file)[-34:], _ascii(sheet)[:20],
+                     _ascii(raw)[:18], agg['rows'], agg['ha'],
+                     agg['first'], agg['last']))
         print('  The sheet IS one person book: send this block to link them.')
     print('')
     print('Written: %s' % _ascii(out))
