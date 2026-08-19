@@ -54,6 +54,9 @@ WORKS = (
     (1, 'Гарден Агрокластер', 309.0, 75040, 23187360, 0, None, None),
     (2, 'Шамси Зиё фх', 9.0, 200000, 1800000, 0, 1800000, 'received'),
     (2, 'Достонбек фх', 2.0, 200000, 400000, 0, 400000, 'operator_due'),
+    # «Пул олинмаган»: работа сделана, деньги не собраны. Это НЕ сломанное
+    # тождество -- диспетчер ведёт такие строки колонкой «Олинмаган сумма».
+    (2, 'Учон фх', 21.4, 200000, 4280000, 0, 0, 'received'),
 )
 
 
@@ -107,7 +110,7 @@ class MoneyAuditTest(unittest.TestCase):
     def test_clean_books_pass_and_report_how_many_were_checked(self):
         result, _telemetry = run(self.db)
         self.assertEqual([], result['bad_amount'])
-        self.assertEqual(5, result['checked_amount'])
+        self.assertEqual(6, result['checked_amount'])
 
     # Тождество 1 нарушено ровно в одной строке.
     def test_a_wrong_amount_is_found(self):
@@ -119,13 +122,14 @@ class MoneyAuditTest(unittest.TestCase):
         self.assertEqual(1, len(result['bad_amount']))
         self.assertEqual(1, result['bad_amount'][0][0])
         self.assertAlmostEqual(6900000.0, result['bad_amount'][0][-1], 2)
-        self.assertEqual(5, result['checked_amount'])
+        self.assertEqual(6, result['checked_amount'])
 
     # Тождество 2 выполнено, и считается только по «кирим».
     def test_received_identity_holds_and_skips_operator_due(self):
         result, _telemetry = run(self.db)
         self.assertEqual([], result['bad_received'])
-        # Проверены три строки с kind='received'; долг и пустой приход -- нет.
+        # Проверены три строки с kind='received'; долг, пустой приход и
+        # «олинмаган» -- нет.
         self.assertEqual(3, result['checked_received'])
 
     # Тождество 2 нарушено.
@@ -140,6 +144,37 @@ class MoneyAuditTest(unittest.TestCase):
         self.assertAlmostEqual(6650000.0, result['bad_received'][0][-1], 2)
 
     # Долг оператора не складывается с приходом.
+    def test_uncollected_money_is_its_own_bucket_not_a_discrepancy(self):
+        """«Пул олинмаган» -- не ошибка, а неполученные деньги.
+
+        [REASON]: боевой прогон 2026-08-19 дал четыре «расхождения», и все
+        четыре оказались неполученными деньгами -- они сходятся с колонкой
+        «Олинмаган сумма» подписанного свода до сума. Считать их
+        расхождением значит прятать настоящие ошибки за ложными.
+        """
+        result, _telemetry = run(self.db)
+        self.assertEqual([], result['bad_received'])
+        self.assertEqual(1, len(result['unpaid']))
+        self.assertEqual('Учон фх', result['unpaid'][0][2])
+        self.assertAlmostEqual(4280000.0, result['unpaid'][0][-1], 2)
+        self.assertAlmostEqual(
+            4280000.0, result['per_operator']['Анваров Усмон']['unpaid'], 2)
+
+    def test_a_partial_payment_is_still_a_discrepancy(self):
+        """Отрицательный контроль: ноль -- «олинмаган», а недоплата -- ошибка.
+
+        [REASON]: если бы корзина ловила ЛЮБОЙ приход меньше должного, она
+        бы проглотила настоящие расхождения вместе с неполученными деньгами.
+        """
+        conn = sqlite3.connect(self.db)
+        conn.execute('UPDATE drone_works SET received_amount = 1000000 '
+                     'WHERE customer_raw = ?', ('Учон фх',))
+        conn.commit()
+        conn.close()
+        result, _telemetry = run(self.db)
+        self.assertEqual([], result['unpaid'])
+        self.assertEqual(1, len(result['bad_received']))
+
     def test_operator_due_is_not_counted_as_received(self):
         result, _telemetry = run(self.db)
         anvarov = result['per_operator']['Анваров Усмон']
@@ -153,7 +188,7 @@ class MoneyAuditTest(unittest.TestCase):
         conn.commit()
         conn.close()
         result, _telemetry = run(self.db)
-        self.assertEqual(4, result['checked_amount'])
+        self.assertEqual(5, result['checked_amount'])
         self.assertEqual([], result['bad_amount'])
         reasons = [row[-1] for row in result['uncheckable'] if row[0] == 2]
         self.assertIn('нет ставки', reasons)
@@ -172,15 +207,15 @@ class MoneyAuditTest(unittest.TestCase):
         self.assertEqual(0, summary['  Т1: из них сошлось'])
         # Каждая из пяти строк попала в «проверить нечем» по обоим тождествам
         # (нет ставки) либо по одному -- ни одна не пропала молча.
-        self.assertGreaterEqual(summary['Проверить нечем, случаев'], 5)
+        self.assertGreaterEqual(summary['Проверить нечем, случаев'], 6)
 
     # Тождество 3: ничего не потеряно.
     def test_nothing_is_lost_while_grouping(self):
         result, _telemetry = run(self.db)
         self.assertEqual([], tool.conservation(result))
-        self.assertAlmostEqual(369.5, result['rows_total']['ha'], 2)
+        self.assertAlmostEqual(390.9, result['rows_total']['ha'], 2)
         self.assertAlmostEqual(
-            369.5, sum(a['ha'] for a in result['per_operator'].values()), 2)
+            390.9, sum(a['ha'] for a in result['per_operator'].values()), 2)
 
     # И отрицательный контроль на само тождество 3.
     def test_conservation_can_actually_fail(self):
@@ -192,10 +227,14 @@ class MoneyAuditTest(unittest.TestCase):
     # Разница в гектарах переводится в деньги по СВОЕЙ ставке оператора.
     def test_the_gap_is_priced_at_the_operators_own_average_rate(self):
         result, telemetry = run(self.db)
+        col = {name: i for i, (name, _w) in
+               enumerate(tool.OPERATOR_COLUMNS)}
         rows = {r[0]: r for r in tool.operator_rows(result, telemetry)}
         kholm = rows['Холмуродов Шахзод']
-        book_ha, tel_ha = kholm[2], kholm[3]
-        rate, gap_money = kholm[11], kholm[12]
+        book_ha = kholm[col['Га книги']]
+        tel_ha = kholm[col['Га телеметрии']]
+        rate = kholm[col['Своя средняя ставка, сум/га']]
+        gap_money = kholm[col['Разница в сумах']]
         self.assertAlmostEqual(358.5, book_ha, 2)
         self.assertAlmostEqual(40.0, tel_ha, 2)
         # 33 087 360 / 358.5 -- своя средняя, а не 200 000.
@@ -249,6 +288,20 @@ class MoneyAuditTest(unittest.TestCase):
                         'пишущее слово %r в литерале: %r' % (word,
                                                              node.value[:60]))
 
+    def test_the_operator_sheet_header_matches_the_rows(self):
+        """Заголовок и строки берутся из одной константы, а не из двух мест."""
+        result, telemetry = run(self.db)
+        for row in tool.operator_rows(result, telemetry):
+            self.assertEqual(len(tool.OPERATOR_COLUMNS), len(row))
+        out = os.path.join(self.dir, 'cols.xlsx')
+        tool.write_xlsx(out, '2025-09', result, telemetry)
+        import openpyxl
+        wb = openpyxl.load_workbook(out)
+        header = next(wb['По операторам'].iter_rows(min_row=1, max_row=1,
+                                                    values_only=True))
+        self.assertEqual([n for n, _w in tool.OPERATOR_COLUMNS], list(header))
+        wb.close()
+
     def test_xlsx_is_written_and_readable(self):
         result, telemetry = run(self.db)
         out = os.path.join(self.dir, 'money.xlsx')
@@ -256,13 +309,125 @@ class MoneyAuditTest(unittest.TestCase):
         import openpyxl
         wb = openpyxl.load_workbook(out)
         self.assertEqual(['Сводка', 'По операторам', 'Сумма не сходится',
-                          'Приход не сходится', 'Проверить нечем'],
+                          'Приход не сходится', 'Проверить нечем',
+                          'Не собрано (олинмаган)', 'Без оператора',
+                          'Строки без оператора'],
                          wb.sheetnames)
         summary = {r[0]: r[1] for r in
                    wb['Сводка'].iter_rows(min_row=2, values_only=True)}
-        self.assertEqual(5, summary['Работ в книгах, строк'])
+        self.assertEqual(6, summary['Работ в книгах, строк'])
         self.assertEqual('ДА', summary['Тождество 3: ничего не потеряно'])
         wb.close()
+
+
+    # Консоль обязана быть ЧИТАЕМОЙ, а не «?????».
+    def test_every_console_label_is_ascii(self):
+        """[REASON]: прогон на production 2026-08-19 напечатал «?????»
+
+        вместо каждой строки сводки -- русские подписи шли через
+        errors='replace'. Отчёт, который нельзя прочитать, отчётом не
+        является. Проверяется КАЖДАЯ подпись, которую сводка может выдать,
+        а не выборка.
+        """
+        result, telemetry = run(self.db)
+        for label, _value in tool.summary_rows('2025-09', result, telemetry):
+            if not label:
+                continue
+            line = tool.console(label)
+            self.assertFalse(line.startswith('?? '),
+                             'подпись без ASCII-перевода: %r' % label)
+            line.encode('ascii')
+
+    def test_the_printed_report_is_ascii_end_to_end(self):
+        """Проверять надо НАПЕЧАТАННОЕ, а не функцию перевода подписи.
+
+        [REASON]: на production 2026-08-19 функция была правильной, а main()
+        печатал русские подписи мимо неё, и владелец получил «?????» на
+        каждой строке. Тест, который зовёт console() сам, этого не видит --
+        поэтому здесь запускается весь main() и разбирается его вывод.
+        """
+        import contextlib
+        import io as _io
+        buffer = _io.StringIO()
+        out = os.path.join(self.dir, 'money.xlsx')
+        argv = sys.argv
+        sys.argv = ['drone_money_audit.py', '--db', self.db,
+                    '--month', '2025-09', '--out', out]
+        try:
+            with contextlib.redirect_stdout(buffer):
+                code = tool.main()
+        finally:
+            sys.argv = argv
+        self.assertEqual(0, code)
+        printed = buffer.getvalue()
+        printed.encode('ascii')          # весь вывод обязан быть ASCII
+        self.assertNotIn('??', printed)  # и ничего непереведённого в нём нет
+        self.assertIn('Identity 1: amount = hectares x rate', printed)
+        self.assertIn('Book hectares', printed)
+        self.assertIn('Identity 3: nothing was lost               YES',
+                      printed)
+
+    def test_an_unknown_label_is_visible_not_silently_mangled(self):
+        """Отрицательный контроль: неизвестная подпись обязана быть заметна."""
+        self.assertTrue(tool.console('Небывалая строка').startswith('?? '))
+
+    # Строки без оператора группируются по листу-источнику.
+    def test_orphan_rows_are_grouped_by_the_sheet_they_came_from(self):
+        conn = sqlite3.connect(self.db)
+        conn.execute('UPDATE drone_works SET drone_operator_id = NULL '
+                     'WHERE id IN (1, 2)')
+        conn.execute("UPDATE drone_works SET source_sheet = 'свод ичи (Усмон)'"
+                     ' WHERE id = 4')
+        conn.execute('UPDATE drone_works SET drone_operator_id = NULL '
+                     'WHERE id = 4')
+        conn.commit()
+        conn.close()
+        result, _telemetry = run(self.db)
+        self.assertEqual(3, result['orphan_rows'])
+        self.assertAlmostEqual(58.5, result['orphan_ha'], 2)
+        groups = result['orphans']
+        self.assertEqual({('свод ичи',), ('свод ичи (Усмон)',)}, set(groups))
+        self.assertEqual(2, groups[('свод ичи',)]['rows'])
+        self.assertAlmostEqual(49.5, groups[('свод ичи',)]['ha'], 2)
+        self.assertEqual((1, 2), (groups[('свод ичи',)]['first'],
+                                  groups[('свод ичи',)]['last']))
+        self.assertEqual(3, len(result['orphan_detail']))
+
+    def test_the_orphan_block_reaches_the_console(self):
+        """Блок происхождения печатается -- иначе владелец его не увидит.
+
+        [REASON]: 1130.60 га сентября не привязаны ни к кому, и починить это
+        может только человек по своей книге. Если блок не напечатан, отчёт
+        назвал проблему, но не дал по ней работать.
+        """
+        import contextlib
+        import io as _io
+        conn = sqlite3.connect(self.db)
+        conn.execute('UPDATE drone_works SET drone_operator_id = NULL '
+                     'WHERE id IN (1, 2)')
+        conn.commit()
+        conn.close()
+        buffer = _io.StringIO()
+        argv = sys.argv
+        sys.argv = ['drone_money_audit.py', '--db', self.db, '--month',
+                    '2025-09', '--out', os.path.join(self.dir, 'm.xlsx')]
+        try:
+            with contextlib.redirect_stdout(buffer):
+                tool.main()
+        finally:
+            sys.argv = argv
+        printed = buffer.getvalue()
+        printed.encode('ascii')
+        self.assertIn('ROWS WITH NO OPERATOR', printed)
+        self.assertIn('49.50', printed)          # га двух осиротевших строк
+        self.assertIn('Rows with no operator                      2', printed)
+
+    def test_no_orphans_means_no_group(self):
+        """Отрицательный контроль: на чистой базе группа пуста, а не выдумана."""
+        result, _telemetry = run(self.db)
+        self.assertEqual(0, result['orphan_rows'])
+        self.assertEqual({}, result['orphans'])
+        self.assertEqual([], result['orphan_detail'])
 
 
 if __name__ == '__main__':
