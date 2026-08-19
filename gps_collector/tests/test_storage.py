@@ -43,19 +43,33 @@ class WritePoints(unittest.TestCase):
 
     def test_repeat_write_of_the_same_points_inserts_nothing(self):
         rows = [row(101, epoch("2026-07-27 06:00") + 30 * i, i) for i in range(50)]
-        self.assertEqual(storage.write_points(self.folder, rows), 50)
-        self.assertEqual(storage.write_points(self.folder, rows), 0)
+        self.assertEqual(storage.write_points(self.folder, rows),
+                         (50, 0))
+        # [REASON]: повтор обязан отчитаться ДУБЛЯМИ, а не тишиной. Журнал
+        # приёма держит тождество seen = written + duplicate + no_position,
+        # и вывести число дублей задним числом неоткуда -- их проглатывает
+        # сам ключ.
+        self.assertEqual(storage.write_points(self.folder, rows), (0, 50))
+
+    def test_two_messages_of_one_object_in_one_second_collapse_to_one(self):
+        # Реальный случай: в фикстуре 3464 за 27.07 такая пара есть, копия
+        # побайтово совпадает с оригиналом. Ключ схлопывает её, и вторая
+        # обязана оказаться в корзине дублей, а не пропасть из счёта.
+        stamp = epoch("2026-07-27 06:00")
+        self.assertEqual(
+            storage.write_points(self.folder, [row(101, stamp), row(101, stamp)]),
+            (1, 1))
 
     def test_a_second_object_at_the_same_second_is_a_different_row(self):
         stamp = epoch("2026-07-27 06:00")
         self.assertEqual(
             storage.write_points(self.folder, [row(101, stamp), row(102, stamp)]),
-            2)
+            (2, 0))
 
     def test_an_interval_crossing_the_first_of_the_month_is_split(self):
         rows = ([row(101, epoch("2026-07-31 23:00") + 60 * i, i) for i in range(60)]
                 + [row(101, epoch("2026-08-01 00:00") + 60 * i, i) for i in range(60)])
-        self.assertEqual(storage.write_points(self.folder, rows), 120)
+        self.assertEqual(storage.write_points(self.folder, rows), (120, 0))
         july = storage.points_path(self.folder, "202607")
         august = storage.points_path(self.folder, "202608")
         self.assertTrue(os.path.exists(july) and os.path.exists(august))

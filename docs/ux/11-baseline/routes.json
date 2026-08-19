@@ -371,6 +371,11 @@
    "url": "/gps/orders"
   },
   {
+   "endpoint": "gps.sync",
+   "slug": "gps-sync",
+   "url": "/gps/sync"
+  },
+  {
    "endpoint": "login",
    "slug": "login",
    "url": "/login"
