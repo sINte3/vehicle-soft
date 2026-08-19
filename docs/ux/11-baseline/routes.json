@@ -366,6 +366,11 @@
    "url": "/gps/fact"
   },
   {
+   "endpoint": "gps.orders",
+   "slug": "gps-orders",
+   "url": "/gps/orders"
+  },
+  {
    "endpoint": "login",
    "slug": "login",
    "url": "/login"
