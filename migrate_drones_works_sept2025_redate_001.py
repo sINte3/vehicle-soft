@@ -1,5 +1,23 @@
 # -*- coding: utf-8 -*-
-"""Migration DRONES_WORKS_SEPT2025_REDATE_001 -- четыре строки книги Холмуродова.
+"""ОТМЕНЕНА 2026-08-19. Запускать нельзя -- см. migrate_drones_works_sept2025_redate_002.py.
+
+Кроме дат эта миграция передавала три строки (76.00 га) Анварову.
+Вывод был мой, а не владельца, и владелец его отменил:
+
+    «Гектары писали на операторов. У Холмуродова по книге 879,5.»
+
+Оператор в книге -- тот, за кем числится работа и через кого прошли
+деньги, а не обязательно тот, кто держал пульт. Даты правит REDATE_002,
+оператора он не трогает; если ЭТА миграция всё же была применена, он
+вернёт оператора обратно.
+
+Файл оставлен в репозитории, а не удалён, потому что на него ссылается
+история: PR #88, docs/RELEASE_GATE.md и docs/tracks/drones.md. Тело
+сохранено ниже без изменений; выполнение перекрыто в main().
+
+--- ИСХОДНОЕ ОПИСАНИЕ ---
+
+Migration DRONES_WORKS_SEPT2025_REDATE_001 -- четыре строки книги Холмуродова.
 
 ЧТО ПОЧИНЕНО. В книге «Ғиждувон, свод ичи Холмуродов Шахзод» четыре строки
 на 587.50 га проставлены ОКТЯБРЬСКИМИ датами, хотя работа сентябрьская.
@@ -276,7 +294,26 @@ def run(apply_changes):
     print("  DELETE FROM schema_migrations WHERE name = '%s';" % MIGRATION_ID)
 
 
+SUPERSEDED_BY = 'migrate_drones_works_sept2025_redate_002.py'
+
+
 def main(argv=None):
+    # [REASON]: миграция отменена владельцем 2026-08-19 -- она, кроме
+    # дат, передавала 76.00 га Анварову. Файл оставлен ради истории
+    # (PR #88, гейт, трековый файл), но выполняться не должен: на
+    # production он не применялся ни разу, и применяться не будет.
+    print('REFUSING TO RUN: %s was withdrawn on 2026-08-19.'
+          % MIGRATION_ID)
+    print('It moved 76.00 ha from Kholmurodov to Anvarov; the owner'
+          ' overruled that -- hectares are booked against the'
+          ' operator named in the book.')
+    print('Run %s instead. It fixes the dates only, and restores the'
+          ' operator if this one was already applied.'
+          % SUPERSEDED_BY)
+    return 3
+
+
+def _withdrawn_main(argv=None):
     parser = argparse.ArgumentParser(
         description='Redate four September rows filed with October dates.')
     parser.add_argument('--apply', action='store_true',
