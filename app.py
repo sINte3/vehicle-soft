@@ -146,6 +146,10 @@ def create_app():
         # and must not require a browser-session CSRF token.
         if request.path == '/drones/api/flight_sync':
             return True
+        # DRONE-LANDS-001: the field-contour snapshot endpoint, same
+        # DRONE_API_TOKEN in the request body, same deny-by-default.
+        if request.path == '/drones/api/land_sync':
+            return True
         # BOT001: Bot API endpoints use Bearer token auth, not browser sessions.
         if request.path.startswith('/api/bot/'):
             return True

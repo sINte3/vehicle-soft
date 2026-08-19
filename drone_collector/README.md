@@ -186,9 +186,9 @@ command line.
 | 1 | Configuration error, a bad command line, or an unexpected failure. | The log names the variable or the flag; a crash carries its traceback. Nothing was sent. |
 | 2 | Session missing or expired. | Re-run `--save-session`. Nothing was sent. |
 | 3 | Period verification failed. | The log shows the intended and the observed period. Nothing was sent — on purpose. |
-| 4 | The page walk did not complete. | Flights that were captured *were* sent; re-run the same period to finish it. |
+| 4 | The page walk did not complete. | Flights that were captured *were* sent; re-run the same period to finish it. With `--lands`: fewer contours than DJI's own `totalCount`; what was collected was sent, re-run `--lands`. |
 | 5 | The ingest endpoint rejected a batch. | The log carries the HTTP status and the endpoint's message. 401 means the token, 413 means the batch size, 400 means the body. |
-| 6 | A window captured **zero flights**. | Nothing was sent. Usually the session is in the wrong region. If the period really is empty, set `DJI_ALLOW_EMPTY_WINDOW=true`. |
+| 6 | A window captured **zero flights**, or `--lands` captured **zero contours**. | Nothing was sent. Usually the session is in the wrong region. If the period really is empty, set `DJI_ALLOW_EMPTY_WINDOW=true`; that variable does not apply to `--lands`. |
 | 7 | The session is in the **wrong region**. | The log shows the expected and the observed value. Re-run `--save-session` and check the region selector. |
 
 Exits 6 and 7 both exist for one failure: a session switched to another region
@@ -206,6 +206,300 @@ hour of slack on each edge. On a mismatch it logs both values, fails, and sends
 nothing. A collector that silently harvests the wrong period is worse than one
 that fails: the flights it brings back are real, they land in the database, and
 nothing downstream can tell that the window was not the one that was asked for.
+
+---
+
+## Snapshot the field directory (DRONE-LANDS-001)
+
+```
+python -m drone_collector.main --lands --dry-run   # writes out/lands_snapshot.json
+python -m drone_collector.main --lands             # collects and sends
+```
+
+### Why
+
+Every flight DJI reports carries `plot_name` **empty** — on all 10 385 rows in
+the database. The reverse-geocoded address is not a substitute: on 19 and 20
+September 2025 two *different* farms both came back as
+`Bukhara Region, 500200`, and that is how a day's work was attributed to the
+wrong customer. The one place the customer's name exists is **Field
+Management**, where the operator typed it on the controller. 5 489 contours as
+of 2026-08-18. The cabinet offers no export.
+
+### What it reads
+
+```
+POST https://kr-ag2-api.dji.com/ag-plot/api/graphql?name=lands
+```
+
+The page signs every request: `content-md5` of the body goes into the string
+covered by the `signature` header. Change one character of the GraphQL query —
+the `after:` cursor, or `first: 20` — and the signature no longer matches, so
+**replaying the request from outside the browser does not work**, and
+reproducing DJI's signing would break on their next deploy. So `--lands` does
+what the flight walk does: it runs a real browser with the saved session, lets
+the page sign its own requests, and listens. Pagination is driven by scrolling
+the list, because that is what makes the page ask for the next twenty.
+
+`first: 20, after: "0" → "20" → "40" …` — about **275 requests** for 5 489
+contours, roughly **seven minutes**, once.
+
+### The trap this walk has
+
+The same page also fires `graphql?name=**landsCluster**` — the map's circle
+counts. Same host, same path, same envelope, HTTP 200 either way. Nothing about
+the transport tells them apart. The operation name is therefore matched
+**exactly**, on the parsed query string, never as a substring: `'name=lands'`
+is a substring of `'name=landsCluster'`. There is a test asserting the cluster
+URL is *rejected*, not only that the list URL is accepted.
+
+### Units — the number to get right
+
+Areas arrive in **MU**, not hectares. DJI's own query asks for
+`totalArea(unit:MU)`, and **1 hectare = 15 mu exactly**. `44.54096254454096`
+is the field the cabinet displays as `2.97 ha`. The conversion happens in
+`drones.py`, once, and is asserted against six card values read off the live
+cabinet — not against a constant the test made up. Get it wrong and 5 489
+contours are all off by a factor of fifteen while looking plausible.
+
+The flight payload uses different units again (m² for `new_work_area`). They
+are not the same number and must never become one constant.
+
+### Timestamps
+
+`createdAt` / `updatedAt` arrive in **UTC+08:00** — three hours ahead of the
++05:00 the business reads. A contour drawn at 22:00 Tashkent is stamped 01:00
+the *next* day at the source. They are converted to UTC on ingest, like every
+other datetime in the database; left alone they would match the wrong day's
+flights.
+
+### What is deliberately not fetched
+
+The **polygon** of each field. It sits behind `geometry.storage.signedURL`, a
+pre-authenticated link that expires **six hours** after it is issued — 5 489 of
+them would be thousands of expiring bearer credentials with a six-hour shelf
+life, and they change on every request, so storing them would make a re-run of
+unchanged data report 5 489 updates.
+
+They are stripped before anything is stored. What is kept is the stable
+`contentMd5` of the geometry (which says whether the polygon changed) and the
+**bounding box**, which arrives in the list payload itself. A point-in-box test
+on a flight's `lat`/`lng` is what the reconciliation actually needs; the box of
+a 2.97 ha field measures about 214 × 197 m, so a flight's coordinate lands in
+the right box except where two fields touch.
+
+### Where it lands
+
+`field_contours` with `source = 'dji'`, upserted on `external_id` (the DJI
+`uuid`). The endpoint is `POST /drones/api/land_sync`, same token-in-the-body
+convention as the flight sync.
+
+Counters partition what was sent:
+
+```
+seen = new + updated + unchanged + errors
+```
+
+`unchanged` is what makes a re-run readable: the second snapshot of an
+untouched directory reports **all unchanged and nothing else**, and any other
+number is a real change in the cabinet.
+
+The snapshot **never deactivates** a contour, never touches `customer_id` or
+`name_uz`, and never writes to `drone_sync_logs` — that table carries the
+flight ingest's invariant and nothing foreign belongs in it. The audit trail of
+a snapshot is `field_contours.synced_at`.
+
+### Completeness
+
+Every response states `totalCount`, so the walk **checks** rather than assumes.
+Collecting fewer contours than DJI reports is exit code 4: what was collected
+has been sent (the ingest upserts, so re-running costs only time), but a
+partial directory must not look authoritative — a contour missing from it is
+invisible afterwards, it simply never matches anything.
+
+### Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DJI_FIELDS_URL` | `https://www.djiag.com/mission` | The Field Management page. |
+| `DJI_MAX_LAND_PAGES` | `1000` | Runaway guard. 5 489 contours at 20 per page is 275. |
+
+`DJI_STORAGE_STATE`, `DJI_HEADLESS`, `DJI_SETTLE_MS`, `DJI_PAGE_TIMEOUT_MS`,
+`VEHICLE_SOFT_BASE_URL`, `DRONE_API_TOKEN` and `DRONE_BATCH_SIZE` are shared
+with the flight walk.
+
+### Scrolling, and how it fails
+
+The list panel is found by **geometry and overflow**, not by a CSS selector:
+every class name on this page is a build-hashed CSS-module name, and the flight
+collector already lost its region indicator to exactly that. The collector logs
+which element it chose, once, on the first scroll — so a wrong pick reads as a
+wrong pick in the log instead of looking like an empty directory. If no
+scrollable panel is found it falls back to a mouse wheel over the left of the
+page, and says so.
+
+Five consecutive scrolls with no new page end the walk (an infinite list
+re-renders while it fetches and can swallow one). Five, not two: ending a
+275-page walk early is expensive.
+
+**A stall is ordinary, and re-running is the fix.** On the first production
+run, 2026-08-18, the dry run stopped at **3 040 of 5 489** after five idle
+scrolls and exited 4; the very next run walked all **275 pages** and finished
+`complete=true`. Nothing was wrong with either — the guard exists precisely so
+a stalled walk cannot pass for a finished one. Re-run and read the summary.
+
+### Take the snapshot whole, and soon
+
+Contour records are **re-used and re-dated**: searching `Sarvari ptz` in the
+cabinet returns rows stamped 2026-07-03, while `avaz ismatov` still carries
+2025-09-20. Whatever is not captured now is not recoverable later. Run
+`--lands` once for the whole directory rather than in slices.
+
+---
+
+## Capture flights per device (DRONE-BODYCODE-001)
+
+A second entry point, `drone_collector.devices`. It **sends nothing** — it
+reads the site and writes files.
+
+```cmd
+cd C:\transport-report
+drone_collector\.venv\Scripts\python.exe -m drone_collector.devices --from 2025-09-01 --to 2025-09-30 --out C:\qa\dji_sept
+```
+
+Run it with the **collector's** Python, like every other command in this
+file: Playwright and Chromium live in `drone_collector\.venv` and nowhere
+else. The application's interpreter has no `playwright` module and the run
+would stop on the import.
+
+Why it exists. A flight is attributed to a machine by its DJI **nickname**,
+and nicknames migrated between airframes: the aircraft called `14 Servis`
+today was `PeshkShodi` on 27.09.2025 and `15 Servis` two days later. For
+October 2025 and March 2026 the mapping was recovered by matching monthly
+totals, and that is already fixed. September 2025 has no such solution — one
+spelling was carried by two different airframes inside the month — so the link
+has to be **read** rather than derived. The site's own **Device** filter reads
+it: a device is identified by its serial, which renaming does not touch.
+
+The sweep sets the period once, walks the window unfiltered to get a control
+count, then for every device the filter offers: applies the filter, walks its
+pages, and records each flight's `id` next to the device name. That `id` is
+`drone_flights.dji_flight_id`, so the attribution becomes a fact that was
+read, not a number that was matched.
+
+Output in `--out`:
+
+| File | What is in it |
+|---|---|
+| `flights_by_device.csv` | `dji_flight_id;device;nickname;started_utc;area_ha` |
+| `summary.json` | per device: flights, pages, whether the walk completed; plus any flight seen under two devices |
+| `raw/<device>.json` | the response bodies verbatim, so the run can be re-parsed without visiting the site again |
+
+Extra exit codes: **8** — the Device dropdown produced no options, so the
+filter selectors need correcting (the panel markup is in the log); **9** — the
+sweep finished but the devices do not add up to the size of the window, or one
+flight came back under two devices. In both cases the files are written and
+the data must not be trusted until the log explains the difference.
+
+**What the first live run (2026-08-13) corrected.** Four things, all of them
+now fixed in `devices.py` and covered by tests:
+
+* the `Filter` button is a **toggle**. The panel was already open from reading
+  the device list, a second click closed it, and the device select then timed
+  out for 45 s. The panel's state is checked before it is clicked.
+* the Device control had to be pinned to its label. Its markup is
+  `.ant-form-item` holding both `<span class="label">Device</span>` and the
+  `ant-select`; the neighbouring Team/Member field is an `ant-select` too, so
+  a selector that is not anchored to the label picks whichever comes first.
+* the site answers `code-408` in the middle of a walk and the next-page control
+  then disappears from the DOM — once on page 30 of 114, once on page 4. The
+  walk now pauses and continues from the page it reached, three attempts.
+* the window control no longer costs a full unfiltered walk. It is read from
+  the first page's `meta_data`: an explicit total when the site sends one,
+  otherwise the bounds implied by the page count. The old control walk was
+  114 pages *before* any useful work, and it was where the run kept dying.
+
+**What the second live run (2026-08-13) corrected.** The filter itself proved
+to work — `2 Klaster` returned 5 flights and `6 Shofirko` 160, both matching
+the cabinet exactly, and the request showed how the site filters:
+`filters[product_sn_in][]`, the flight-controller serial. Three more things
+came out of it:
+
+* `meta_data` carries **both** `count` (rows on this page, 50) and
+  `total_count` (the window, 5661). Taking the first key that merely looked
+  like a total picked `count` and declared a 50-flight September. Total keys
+  are now tried by name in order of preference, and a candidate that
+  contradicts the page count is refused outright.
+* the `code-408` also hits a device's **first** request, and waiting for a
+  capture then achieves nothing — the page is already in the state where it
+  answers nothing. The device is retried after a pause, and the retry
+  **reloads** the page and re-applies period and page size, because no amount
+  of clicking revives that state.
+* a device that still fails no longer takes the run with it. It is recorded,
+  the sweep continues, and the log ends with a ready-made command line for
+  each machine that has to be picked up separately.
+
+**The sweep is resumable, and that is the point.** Every device is written to
+disk the moment it is read — its rows into the CSV, its bodies into `raw/`,
+its line into `progress.json`. Re-run the same command and it skips whatever
+is already there and carries on; `--restart` sweeps everything again. This
+exists because the cabinet gets less willing the more it is asked: four runs
+inside half an hour on 2026-08-13 returned 29 pages, then 3 pages, then two
+devices, then a `code-408` on the very first request of the page — before any
+of this module's code ran. Losing a whole run to that is not acceptable, so
+nothing is held in memory to the end any more.
+
+**What the run on a different machine (2026-08-14) settled.** Twelve of the
+fifteen devices came back, 4 849 flights, and every one of the twelve matched
+the cabinet's own per-device count exactly. Two things came out of it:
+
+* the device name must never be **interpolated into a selector**. The first
+  version built `:has-text(...)` with `json.dumps(name)`, which escapes
+  Cyrillic to `\uXXXX` — so for `4 Ғиждувон` the selector hunted for a literal
+  backslash-u string and timed out after twelve devices had been read.
+  Options are now compared as plain strings, exactly, which also rules out
+  `8 Garden` selecting `8 GardenU`.
+* a clock **202 seconds** off swept twelve devices without a single 408. The
+  skew warning threshold was raised accordingly: warning on a working clock is
+  a false alarm, and false alarms teach people not to read the log. The skew is
+  printed either way.
+
+**When the cabinet refuses everything, check the clock first.** `code-408` is
+DJI's own word for **bad timestamp** — the request is signed with the
+machine's clock, so a clock that has drifted far enough gets every request
+rejected, no matter the selectors, the session or how long you wait. The sweep
+now measures it: on the first response it compares DJI's `Date` header against
+the local clock and prints either `Clock agrees with DJI within N s` or a
+`CLOCK SKEW` error naming the offset. Fix it with `w32tm /resync /force` and
+re-run.
+
+Same check by hand, without running anything:
+
+```powershell
+(Get-Date).ToUniversalTime().ToString('r')
+(Invoke-WebRequest -Uri https://www.djiag.com/ -UseBasicParsing -Method Head).Headers['Date']
+```
+
+**`ToUniversalTime()` is not optional.** `Get-Date -Format r` prints LOCAL time
+and appends the literal word GMT, so on a UTC+5 machine it reads five hours
+off and invents a skew that is not there.
+
+If those two differ by minutes, suspect the clock. If they agree and 408 still comes back, then it is throttling or the
+session — wait half an hour, or re-run `--save-session`.
+
+**If a device still will not finish**, sweep it alone —
+`--device "3 Gijduvon"` — and repeat for the rest. Each machine is a short
+walk of its own, and the files from separate runs can be concatenated: the
+CSV carries the device name on every row.
+
+`--list-devices` prints the device names and exits. `--device "1 Klaster"`
+(repeatable) sweeps only those; the control check is then skipped, because a
+subset is not expected to add up to the whole window.
+
+**The filter selectors were written without the live page.** The saved DOM of
+2026-07-31 never had the filter panel open, so the constants at the top of
+`devices.py` are candidates, not confirmed readings. The first run logs the
+panel's markup — correct the constants there, in one place, and nowhere else.
 
 ---
 
@@ -311,6 +605,17 @@ name their constant.
   expected region against the string "Other Regions" and block every run. So
   the region check reports `not-found` and warns until someone identifies the
   real element. Exit 6 is what protects the run meanwhile.
+
+### Proved on production, 2026-08-18
+
+The first live snapshot: **275 pages, 5 489 of 5 489 contours, 0 self
+duplicates, 0 rejected responses**, `complete=true`; the ingest took all six
+batches with `seen=5489 new=5489 updated=0 unchanged=0 errors=0`. The scroll
+probe picked `<DIV class='ag-infinite-scroll'>` — the list panel — on the
+first try, which is the part that could only be confirmed against the live
+page.
+
+---
 
 **The collector has run against the live cabinet and has POSTed for real.**
 On 2026-07-31:
