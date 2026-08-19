@@ -104,6 +104,10 @@
      'active': ['drones.reports', 'drones.sources', 'drones.works_reports',
                 'drones.works_debts', 'drones.works_assignment_hints']},
   ],
+  'gps': [
+    {'ep': 'gps.fact',   'ru': 'Факт по технике', 'uz': 'Техника бўйича факт', 'show': True},
+    {'ep': 'gps.orders', 'ru': 'Сверка нарядов',  'uz': 'Нарядлар солиштируви', 'show': True},
+  ],
 } %}
 {#- Заметки к набору выше. Стоят ПОСЛЕ закрытия {% set %}, а не внутри
     словаря: Jinja не разбирает комментарии внутри выражения, и комментарий в

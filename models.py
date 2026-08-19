@@ -2593,6 +2593,60 @@ class GpsWorkPolygon(db.Model):
     )
 
 
+# ─── GPS-6: журнал разбора вердиктов ─────────────────────────────────────────
+
+GPS_DECISION_CONFIRMED = 'подтверждён'
+GPS_DECISION_DISPUTED = 'оспорен'
+GPS_DECISIONS = (GPS_DECISION_CONFIRMED, GPS_DECISION_DISPUTED)
+
+
+class GpsVerdict(db.Model):
+    """Одна запись разбора: человек посмотрел на расхождение и что-то сказал.
+
+    **Только добавление.** Строка никогда не правится и не удаляется; текущее
+    состояние наряда — его ПОСЛЕДНЯЯ строка. Вердикт, пересчитанный завтра, не
+    имеет права переписать то, что человек сказал сегодня — тем же правилом,
+    по которому ответ оператора «работа/проезд» переживает пересчёт суток.
+
+    [REASON]: числа лежат СНИМКОМ в самой строке, а не берутся потом из
+    `gps_daily_aggregates`. Сутки пересчитываются: точки приходят с
+    опозданием, дефект чинится, версия метода двигается. Журнал, где написано
+    «подтверждено», а число рядом молча изменилось, хуже отсутствия журнала —
+    и пересмотр допусков, ради которого он ведётся, шёл бы по числам, которых
+    никто не видел.
+
+    [REASON]: разбор НЕ МЕНЯЕТ ни одного числа. Он фиксирует, что человек
+    посмотрел. Дать разбору править факт значило бы превратить измерение в
+    мнение, а весь смысл трека — цифра, которую можно защитить через год.
+    """
+    __tablename__ = 'gps_verdicts'
+    id             = db.Column(db.Integer, primary_key=True)
+    work_order_id  = db.Column(db.Integer, db.ForeignKey('work_orders.id'),
+                               nullable=False)
+    work_date      = db.Column(db.Date, nullable=False)
+    wialon_id      = db.Column(db.Integer, nullable=True)
+    unit           = db.Column(db.String(30), nullable=False)
+    base_quantity  = db.Column(db.Float, nullable=True)
+    fact_ha        = db.Column(db.Float, nullable=True)
+    deviation      = db.Column(db.Float, nullable=True)
+    verdict        = db.Column(db.String(20), nullable=False)
+    no_data_reason = db.Column(db.String(40), nullable=True)
+    decision       = db.Column(db.String(20), nullable=False)
+    comment        = db.Column(db.Text, nullable=False, default='')
+    reviewed_by    = db.Column(db.Integer, db.ForeignKey('users.id'),
+                               nullable=True)
+    reviewed_at    = db.Column(db.DateTime, nullable=False,
+                               default=datetime.utcnow)
+
+    work_order = db.relationship('WorkOrder')
+    reviewer   = db.relationship('User', foreign_keys=[reviewed_by])
+
+    __table_args__ = (
+        db.Index('ix_gps_verdicts_order', 'work_order_id', 'reviewed_at'),
+        db.Index('ix_gps_verdicts_date', 'work_date'),
+    )
+
+
 # ─── Migration Registry ───────────────────────────────────────────────────────
 
 class SchemaMigration(db.Model):

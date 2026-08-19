@@ -1,0 +1,145 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Сверка нарядов — GPS' if is_ru else 'Нарядлар солиштируви — GPS' }}{% endblock %}
+{% block content %}
+{% include 'gps/_gps_nav.html' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Сверка нарядов' if is_ru else 'Нарядлар солиштируви' }}</div>
+    <div class="vs-hero-sub">{{ 'Объём, который закрыл человек, против площади, посчитанной по треку той же машины за те же сутки. Светофор — допуски, утверждённые владельцем: зелёный при расхождении не больше 10% или 0,3 га, жёлтый до 20% или 0,5 га, дальше красный. Абсолютная добавка здесь не украшение: ручной ввод округляется сеткой 0,5 га, и на поле 2 га одно округление даёт ±12%.' if is_ru else 'Одам ёпган ҳажм ўша машинанинг ўша кундаги трекидан ҳисобланган майдонга қарши. Светофор — эгаси тасдиқлаган йўл қўйилишлар: фарқ 10% ёки 0,3 га дан ошмаса яшил, 20% ёки 0,5 га гача сариқ, ундан кейин қизил. Мутлақ қўшимча бу ерда безак эмас: қўлда киритиш 0,5 га тўрига яхлитланади, 2 га майдонда яхлитлашнинг ўзи ±12% беради.' }}</div>
+  </div>
+</div>
+
+<form method="get" class="vs-toolbar vs-mb">
+  <label class="vs-field">
+    <span class="vs-label">{{ 'С' if is_ru else 'Дан' }}</span>
+    <input type="date" name="from" value="{{ date_from.isoformat() }}" class="vs-input">
+  </label>
+  <label class="vs-field">
+    <span class="vs-label">{{ 'По' if is_ru else 'Гача' }}</span>
+    <input type="date" name="to" value="{{ date_to.isoformat() }}" class="vs-input">
+  </label>
+  <label class="vs-check">
+    <input type="checkbox" name="problems" value="1" {% if only_problems %}checked{% endif %}>
+    <span>{{ 'Только то, что требует внимания' if is_ru else 'Фақат эътибор талаб қиладиганлар' }}</span>
+  </label>
+  <label class="vs-check">
+    <input type="checkbox" name="unreviewed" value="1" {% if only_unreviewed %}checked{% endif %}>
+    <span>{{ 'Только неразобранные' if is_ru else 'Фақат кўрилмаганлар' }}</span>
+  </label>
+  <button type="submit" class="vs-btn vs-btn-primary">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+</form>
+
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Нарядов в окне' if is_ru else 'Ойнадаги нарядлар' }}</div>
+    <div class="vs-stat-value">{{ total }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'В допуске' if is_ru else 'Йўл қўйилишда' }}</div>
+    <div class="vs-stat-value">{{ counters.get('ok', 0) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'На грани' if is_ru else 'Чегарада' }}</div>
+    <div class="vs-stat-value">{{ counters.get('warn', 0) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Вне допуска' if is_ru else 'Йўл қўйилишдан ташқари' }}</div>
+    <div class="vs-stat-value">{{ counters.get('fail', 0) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Сверить нельзя' if is_ru else 'Солиштириб бўлмайди' }}</div>
+    <div class="vs-stat-value">{{ counters.get('no_data', 0) }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Ждут разбора' if is_ru else 'Кўрилишини кутмоқда' }}</div>
+    <div class="vs-stat-value">{{ unreviewed }}</div>
+  </div>
+</div>
+
+{% if not rows %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Нарядов за это окно нет' if is_ru else 'Бу ойна учун нарядлар йўқ' }}</div>
+    <div class="vs-empty-sub">{{ 'Либо в окне нет нарядов вовсе, либо все они в допуске, а показ сужен галочкой.' if is_ru else 'Ёки ойнада наряд умуман йўқ, ёки барчаси йўл қўйилишда, кўрсатиш эса белги билан тораытирилган.' }}</div>
+  </div>
+{% else %}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Наряд против трека' if is_ru else 'Наряд трекка қарши' }}</span>
+    <span class="vs-soft">{{ 'только гектары; прочие единицы GPS не меряет' if is_ru else 'фақат гектарлар; бошқа бирликларни GPS ўлчамайди' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table">
+      <thead>
+        <tr>
+          <th>{{ 'Наряд' if is_ru else 'Наряд' }}</th>
+          <th>{{ 'Дата' if is_ru else 'Сана' }}</th>
+          <th>{{ 'Техника' if is_ru else 'Техника' }}</th>
+          <th class="right">{{ 'Закрыто' if is_ru else 'Ёпилган' }}</th>
+          <th class="right">{{ 'Факт GPS' if is_ru else 'GPS факти' }}</th>
+          <th class="right">{{ 'Расхождение' if is_ru else 'Фарқ' }}</th>
+          <th>{{ 'Вердикт' if is_ru else 'Ҳукм' }}</th>
+          <th>{{ 'Разбор' if is_ru else 'Кўриб чиқиш' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.order.number }}</td>
+          <td>{{ row.day.strftime('%d.%m.%Y') if row.day else '—' }}</td>
+          <td>{{ row.order.equipment.name if row.order.equipment else '—' }}</td>
+          <td class="right">{% if row.base is none %}—{% else %}{{ row.base }}{% endif %}</td>
+          <td class="right">
+            {% if row.fact is none %}—{% else %}{{ row.fact }}
+              {% if row.unanswered %}<div class="vs-soft">{{ 'без ответа: ' if is_ru else 'жавобсиз: ' }}{{ row.unanswered }} ({{ row.unanswered_ha }} {{ 'га' if is_ru else 'га' }})</div>{% endif %}
+            {% endif %}
+          </td>
+          <td class="right">{% if row.deviation is none %}—{% else %}{{ row.deviation }}{% if row.share is not none %} <span class="vs-soft">({{ (row.share * 100)|round(1) }}%)</span>{% endif %}{% endif %}</td>
+          <td>
+            {% if row.verdict == 'ok' %}<span class="vs-badge vs-badge-success">{{ 'В допуске' if is_ru else 'Йўл қўйилишда' }}</span>
+            {% elif row.verdict == 'warn' %}<span class="vs-badge vs-badge-warning">{{ 'На грани' if is_ru else 'Чегарада' }}</span>
+            {% elif row.verdict == 'fail' %}<span class="vs-badge vs-badge-danger">{{ 'Вне допуска' if is_ru else 'Йўл қўйилишдан ташқари' }}</span>
+            {% else %}
+              <span class="vs-badge">{{ 'Сверить нельзя' if is_ru else 'Солиштириб бўлмайди' }}</span>
+              {% if row.reason %}<div class="vs-soft">{{ no_data_reasons[row.reason][0] if is_ru else no_data_reasons[row.reason][1] }}{% if row.aggregate_reason %}: {{ (reason_labels.get(row.aggregate_reason)[0] if is_ru else reason_labels.get(row.aggregate_reason)[1]) if reason_labels.get(row.aggregate_reason) else row.aggregate_reason }}{% endif %}</div>{% endif %}
+            {% endif %}
+            {% if row.wialon_id and row.day %}
+            <div><a href="{{ url_for('gps.fact', date=row.day.isoformat(), unit=row.wialon_id) }}">{{ 'посмотреть участки' if is_ru else 'участкаларни кўриш' }}</a></div>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.review %}
+              <div><b>{{ row.review.decision }}</b></div>
+              <div class="vs-soft">{{ row.review.reviewer.full_name or row.review.reviewer.username if row.review.reviewer else '—' }} · {{ row.review.reviewed_at.strftime('%d.%m.%Y %H:%M') }}</div>
+              {% if row.review.comment %}<div class="vs-soft">{{ row.review.comment }}</div>{% endif %}
+              {% if row.review.fact_ha is not none and row.fact is not none and (row.review.fact_ha - row.fact)|abs > 0.001 %}
+              <div class="vs-soft">{{ 'на момент разбора факт был ' if is_ru else 'кўрилган пайтда факт эди ' }}{{ row.review.fact_ha }}</div>
+              {% endif %}
+            {% endif %}
+            {% if row.verdict != 'ok' %}
+            <form method="post" action="{{ url_for('gps.orders_review') }}" class="vs-chip-row">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="order_id" value="{{ row.order.id }}">
+              <input type="text" name="comment" class="vs-input"
+                     placeholder="{{ 'причина — обязательна для возражения' if is_ru else 'сабаб — эътироз учун мажбурий' }}"
+                     aria-label="{{ 'Комментарий к разбору' if is_ru else 'Кўриб чиқиш изоҳи' }}">
+              <button type="submit" name="decision" value="подтверждён"
+                      class="vs-btn vs-btn-sm vs-btn-ghost">{{ 'Подтвердить' if is_ru else 'Тасдиқлаш' }}</button>
+              <button type="submit" name="decision" value="оспорен"
+                      class="vs-btn vs-btn-sm vs-btn-ghost">{{ 'Оспорить' if is_ru else 'Эътироз' }}</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="vs-help vs-mb">
+  {{ 'Разбор ничего не меняет в числах: он записывает, что человек посмотрел, что решил и почему. Записи только добавляются — вердикт, пересчитанный завтра, не переписывает то, что сказано сегодня, и числа лежат снимком на момент разбора. По этим записям раз в сезон пересматриваются допуски. ' if is_ru else 'Кўриб чиқиш рақамларда ҳеч нарсани ўзгартирмайди: у одам қараганини, нима қарор қилганини ва нима учун эканини ёзиб қўяди. Ёзувлар фақат қўшилади — эртага қайта ҳисобланган ҳукм бугун айтилганни қайта ёзмайди, рақамлар эса кўрилган пайтдаги ҳолида сақланади. Шу ёзувлар бўйича мавсумда бир марта йўл қўйилишлар қайта кўриб чиқилади. ' }}{{ 'Участок, названный человеком проездом, из факта вычтен — ответ человека это факт. Участок без ответа в факт входит: он уже прошёл подтверждённый порог 0,3 га. Предрегистрированное правило «≥ 1,3 га ИЛИ ≥ 25 мин» в счёт не берётся: оно ещё не принято, и считать по нему деньги значило бы ввести его в обход собственного протокола приёмки.' if is_ru else 'Одам ўтиш деб атаган участка фактдан чиқарилди — одамнинг жавоби бу факт. Жавобсиз участка фактга киради: у тасдиқланган 0,3 га остонасидан ўтган. Олдиндан рўйхатга олинган «≥ 1,3 га ЁКИ ≥ 25 дақиқа» қоидаси ҳисобга олинмайди: у ҳали қабул қилинмаган, унинг бўйича пул ҳисоблаш уни ўз қабул протоколидан четлаб ўтказиш бўлар эди.' }}
+</div>
+{% endblock %}
