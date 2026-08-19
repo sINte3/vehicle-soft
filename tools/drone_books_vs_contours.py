@@ -58,6 +58,38 @@ SHEET_CANDIDATES = 'Кандидаты'
 SHEET_BOOK_ONLY = 'Книга без контура'
 SHEET_CONTOUR_ONLY = 'Контуры без книги'
 
+# Полосы согласия по площади. Совпадение имени говорит «тот же заказчик»;
+# совпадение площади говорит «та же работа». Второе сильнее первого и на
+# сентябре-2025 подтвердилось на 143 строках из 262.
+BAND_MATCH = 'площадь сошлась (80-125 %)'
+BAND_LESS = 'контуров меньше (50-80 %)'
+BAND_MUCH_LESS = 'контуров сильно меньше (<50 %)'
+BAND_MORE = 'контуров больше (125-300 %)'
+BAND_MUCH_MORE = 'контуров сильно больше (>300 %)'
+BAND_NO_AREA = 'в книге нет гектаров'
+
+BAND_ORDER = (BAND_MATCH, BAND_LESS, BAND_MUCH_LESS, BAND_MORE,
+              BAND_MUCH_MORE, BAND_NO_AREA)
+
+
+def area_band(ratio):
+    """Полоса согласия площадей.
+
+    [REASON]: широкая полоса «сошлось» -- 80..125 %, а не 90..110. Контур --
+    это нарисованная граница поля, книга -- договорённость с хозяйством, и
+    расходиться на пятую часть они имеют полное право. Узкая полоса объявила
+    бы расхождением обычную разницу обмера.
+    """
+    if ratio < 0.5:
+        return BAND_MUCH_LESS
+    if ratio < 0.8:
+        return BAND_LESS
+    if ratio <= 1.25:
+        return BAND_MATCH
+    if ratio <= 3.0:
+        return BAND_MORE
+    return BAND_MUCH_MORE
+
 
 def open_readonly(path):
     if not os.path.exists(path):
@@ -166,6 +198,26 @@ def build(conn, month):
 
     contour_only = [c for c in contours if c['id'] not in used_contour_ids]
 
+    # [REASON]: площадь ОТДАННЫХ контуров считается по РАЗЛИЧНЫМ контурам, а не
+    # суммированием по строкам книг. Один контур законно достаётся нескольким
+    # строкам -- «behruz feruz» достался 69 из них, -- и сумма по строкам дала
+    # 4 836.89 га там, где всех сентябрьских контуров 3 885.71. Число выглядело
+    # осмысленным и было больше, чем существует на свете.
+    claimed_area = sum(c['area_ha'] for c in contours
+                       if c['id'] in used_contour_ids)
+
+    # Сходится ли ПЛОЩАДЬ там, где сошлось имя. Это и есть проверка: имя может
+    # совпасть у однофамильцев, площадь -- вряд ли.
+    bands = collections.Counter()
+    band_area = collections.Counter()
+    for bk, _found, area in matched:
+        if bk['area_ha'] <= 0:
+            bands[BAND_NO_AREA] += 1
+            continue
+        band = area_band(area / bk['area_ha'])
+        bands[band] += 1
+        band_area[band] += bk['area_ha']
+
     stats = {
         'contours_all': contours_total,
         'contours_month': len(contours),
@@ -174,7 +226,11 @@ def build(conn, month):
         'books_area': sum(b['area_ha'] for b in books),
         'matched': len(matched),
         'matched_book_area': sum(m[0]['area_ha'] for m in matched),
-        'matched_contour_area': sum(m[2] for m in matched),
+        'matched_contour_area': claimed_area,
+        'matched_contour_rows_sum': sum(m[2] for m in matched),
+        'bands': bands,
+        'band_area': band_area,
+        'contours_claimed': len(used_contour_ids),
         'candidates': len(candidates),
         'candidates_area': sum(c[0]['area_ha'] for c in candidates),
         'book_only': len(book_only),
@@ -212,7 +268,12 @@ def write_xlsx(path, month, stats, matched, candidates, book_only,
         ('', ''),
         ('Строк книг с уверенным совпадением', stats['matched']),
         ('  гектары этих строк по книге', round(stats['matched_book_area'], 2)),
-        ('  площадь найденных контуров', round(stats['matched_contour_area'], 2)),
+        ('  контуров им отдано (различных)', stats['contours_claimed']),
+        ('  их площадь, га (без двойного счёта)',
+         round(stats['matched_contour_area'], 2)),
+        ('  контуры / книга, %',
+         round(stats['matched_contour_area'] / stats['matched_book_area'] * 100, 1)
+         if stats['matched_book_area'] else 0),
         ('Строк книг с кандидатом (нужен глаз)', stats['candidates']),
         ('  их гектары', round(stats['candidates_area'], 2)),
         ('Строк книг без контура', stats['book_only']),
@@ -225,6 +286,12 @@ def write_xlsx(path, month, stats, matched, candidates, book_only,
          round(pct(stats['matched'], stats['books']), 1)),
         ('Доля гектаров книг, нашедших контур, %',
          round(pct(stats['matched_book_area'], stats['books_area']), 1)),
+        ('', ''),
+        ('СОГЛАСИЕ ПО ПЛОЩАДИ среди совпавших строк', ''),
+    ] + [
+        ('  ' + band, '%d строк, %.2f га'
+         % (stats['bands'][band], stats['band_area'][band]))
+        for band in BAND_ORDER if stats['bands'][band]
     ]:
         sheet.append(list(row))
     sheet.column_dimensions['A'].width = 44
@@ -232,20 +299,24 @@ def write_xlsx(path, month, stats, matched, candidates, book_only,
 
     sheet = book.create_sheet(SHEET_MATCHED)
     sheet.append(['Заказчик (книга)', 'Оператор', 'Га по книге', 'Даты книги',
-                  'Контуров', 'Площадь контуров, га', 'Имена контуров',
+                  'Контуров', 'Площадь контуров, га', 'Контуры / книга, %',
+                  'Согласие по площади', 'Имена контуров',
                   'Номера DJI', 'Дни контуров', 'Оценка', 'Почему совпало',
                   'Книга: файл / лист'])
     for bk, found, area in sorted(matched, key=lambda m: -m[0]['area_ha']):
+        ratio = (area / bk['area_ha']) if bk['area_ha'] > 0 else None
         sheet.append([
             bk['customer_raw'], bk['operator'], round(bk['area_ha'], 2),
             _dates(bk), len(found), round(area, 2),
+            round(ratio * 100, 1) if ratio is not None else None,
+            area_band(ratio) if ratio is not None else BAND_NO_AREA,
             ' | '.join(item[2]['name'] for item in found),
             ' | '.join(str(item[2]['serial'] or '') for item in found),
             ', '.join(sorted({str(item[2]['day']) for item in found})),
             round(found[0][0], 2), found[0][1], bk['source'],
         ])
-    for column, width in (('A', 30), ('B', 22), ('G', 46), ('I', 24),
-                          ('K', 34), ('L', 34)):
+    for column, width in (('A', 30), ('B', 22), ('H', 30), ('I', 46),
+                          ('K', 24), ('M', 34), ('N', 34)):
         sheet.column_dimensions[column].width = width
 
     sheet = book.create_sheet(SHEET_CANDIDATES)
@@ -296,8 +367,15 @@ def print_summary(stats):
           % (stats['candidates'], stats['candidates_area']))
     print('  no contour at all         : %d (%.2f ha)'
           % (stats['book_only'], stats['book_only_area']))
+    print('    contours given out        : %d (%.2f ha, no double count)'
+          % (stats['contours_claimed'], stats['matched_contour_area']))
     print('contours with no book row   : %d (%.2f ha)'
           % (stats['contour_only'], stats['contour_only_area']))
+    print('area agreement among matched rows:')
+    for band in BAND_ORDER:
+        if stats['bands'][band]:
+            print('  %-34s %3d rows, %8.2f ha'
+                  % (band, stats['bands'][band], stats['band_area'][band]))
 
 
 def main(argv=None):
