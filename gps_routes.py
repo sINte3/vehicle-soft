@@ -37,9 +37,12 @@ from flask_login import current_user, login_required
 from models import (
     db,
     Equipment,
+    GPS_DECISION_DISPUTED,
+    GPS_DECISIONS,
     GPS_LABEL_PASSAGE,
     GPS_OPERATOR_LABELS,
     GpsDailyAggregate,
+    GpsVerdict,
     GpsWorkPolygon,
     VialonMapping,
     WO_STATUS_CANCELLED,
@@ -306,6 +309,70 @@ def _wialon_by_equipment(equipment_ids):
     return out
 
 
+def _latest_reviews(order_ids):
+    """work_order_id -> последняя запись разбора.
+
+    [REASON]: журнал только пополняется, поэтому «текущее состояние» — это
+    последняя строка, а не отдельное поле, которое пришлось бы держать в
+    согласии с историей. Одним запросом, а не одним на наряд.
+    """
+    if not order_ids:
+        return {}
+    latest = {}
+    for row in (GpsVerdict.query
+                .filter(GpsVerdict.work_order_id.in_(list(order_ids)))
+                .order_by(GpsVerdict.reviewed_at, GpsVerdict.id)):
+        latest[row.work_order_id] = row
+    return latest
+
+
+@gps_bp.route('/orders/review', methods=['POST'])
+@module_required('wialon')
+@login_required
+def orders_review():
+    """Записать разбор. Ни одно число при этом не меняется."""
+    order = WorkOrder.query.get_or_404(request.form.get('order_id', type=int))
+    if not current_user.is_admin and not current_user.can_access_org(
+            order.organization_id):
+        abort(403)
+    decision = (request.form.get('decision') or '').strip()
+    if decision not in GPS_DECISIONS:
+        abort(400)
+    comment = (request.form.get('comment') or '').strip()
+    if decision == GPS_DECISION_DISPUTED and not comment:
+        # [REASON]: «оспорен» без объяснения не годится ни для чего. Ради
+        # объяснений журнал и ведётся: по ним раз в сезон пересматриваются
+        # допуски, и «не согласен» без причины в такой разбор не входит.
+        flash(_gps_t('Изоҳсиз эътироз қабул қилинмайди.',
+                     'Возражение без объяснения не принимается.'), 'error')
+        return redirect(request.referrer or url_for('gps.orders'))
+
+    # Числа берутся снимком на момент разбора, а не ссылкой на пересчитываемое.
+    day = order.actual_date or order.planned_date
+    wialon_by_equipment = _wialon_by_equipment({order.equipment_id})
+    aggregates, sites_by_key = {}, defaultdict(list)
+    for wialon_id in wialon_by_equipment.get(order.equipment_id) or []:
+        aggregate = GpsDailyAggregate.query.filter_by(
+            wialon_id=wialon_id, work_date=day).first()
+        if aggregate is not None:
+            aggregates[(wialon_id, day)] = aggregate
+        for site in GpsWorkPolygon.query.filter_by(wialon_id=wialon_id,
+                                                   work_date=day):
+            sites_by_key[(wialon_id, day)].append(site)
+    row = reconcile_orders([order], wialon_by_equipment, aggregates,
+                           sites_by_key)[0]
+
+    db.session.add(GpsVerdict(
+        work_order_id=order.id, work_date=day, wialon_id=row['wialon_id'],
+        unit=order.unit or '', base_quantity=row['base'], fact_ha=row['fact'],
+        deviation=row['deviation'], verdict=row['verdict'],
+        no_data_reason=row['reason'], decision=decision, comment=comment,
+        reviewed_by=current_user.id, reviewed_at=datetime.utcnow()))
+    db.session.commit()
+    flash(_gps_t('Разбор ёзиб олинди.', 'Разбор записан.'), 'success')
+    return redirect(request.referrer or url_for('gps.orders'))
+
+
 @gps_bp.route('/orders')
 @module_required('wialon')
 @login_required
@@ -315,6 +382,7 @@ def orders():
     date_to = _parse_date(request.args.get('to')) or today
     date_from = _parse_date(request.args.get('from')) or (date_to - timedelta(days=13))
     only_problems = request.args.get('problems') == '1'
+    only_unreviewed = request.args.get('unreviewed') == '1'
 
     query = (WorkOrder.query
              .filter(WorkOrder.status != WO_STATUS_CANCELLED)
@@ -357,13 +425,25 @@ def orders():
 
     rows = reconcile_orders(orders_list, wialon_by_equipment, aggregates,
                             sites_by_key)
+    reviews = _latest_reviews([o.id for o in orders_list])
+    for row in rows:
+        row['review'] = reviews.get(row['order'].id)
     counters = Counter(row['verdict'] for row in rows)
+    # [REASON]: считается ДО сужения показа. «Сколько всего требует внимания»
+    # и «сколько сейчас на экране» -- разные числа, и первое не должно
+    # меняться от того, какие галочки нажаты.
+    needs_attention = [row for row in rows if row['verdict'] != VERDICT_OK]
+    unreviewed = sum(1 for row in needs_attention if row['review'] is None)
     if only_problems:
-        rows = [row for row in rows if row['verdict'] != VERDICT_OK]
+        rows = needs_attention
+    if only_unreviewed:
+        rows = [row for row in rows
+                if row['verdict'] != VERDICT_OK and row['review'] is None]
 
     return render_template(
         'gps/orders.html', rows=rows, counters=counters,
         date_from=date_from, date_to=date_to, only_problems=only_problems,
+        only_unreviewed=only_unreviewed, unreviewed=unreviewed,
         no_data_reasons=NO_DATA_REASONS, reason_labels=REASON_LABELS,
         total=len(orders_list))
 
