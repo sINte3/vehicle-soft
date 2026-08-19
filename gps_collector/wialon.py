@@ -190,6 +190,44 @@ class Client:
                           "last_t": position.get("t")})
         return units
 
+    def zone_ids(self, resource_id):
+        """Ids of every geozone of one resource. One request, no geometry.
+
+        [REASON]: the ids have to be asked for explicitly in the next call --
+        resource/get_zone_data with an empty `col` answers with an empty result
+        and NO error, and 17 812 zones once became a 2-byte file that looked
+        like a successful download.
+        """
+        answer = self.call("core/search_items", {
+            "spec": {"itemsType": "avl_resource", "propName": "sys_name",
+                     "propValueMask": "*", "sortType": "sys_name"},
+            "force": 1, "flags": config.ZONE_LIST_FLAGS, "from": 0, "to": 0})
+        code = err_code(answer)
+        if code is not None:
+            raise WialonError(code)
+        for item in (answer.get("items") or []):
+            if item.get("id") == int(resource_id):
+                return sorted(int(z) for z in (item.get("zl") or {}))
+        return []
+
+    def zone_data(self, resource_id, ids):
+        """Geometry and names for the given zone ids.
+
+        Returns the raw list the server sends: each zone carries `id`, `n`
+        (name), `t` (type) and `p` (points, a list or a dict of them).
+        """
+        if not ids:
+            return []
+        answer = self.call("resource/get_zone_data",
+                           {"itemId": int(resource_id), "col": [int(i) for i in ids],
+                            "flags": config.ZONE_DATA_FLAGS})
+        code = err_code(answer)
+        if code is not None:
+            raise WialonError(code)
+        if isinstance(answer, list):
+            return answer
+        return answer.get("items") or []
+
     def load_interval(self, unit_id, t_from, t_to,
                       limit=config.MAX_MESSAGES_PER_INTERVAL):
         """Messages of one object over [t_from, t_to). Returns the raw list.

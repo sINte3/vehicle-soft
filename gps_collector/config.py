@@ -73,6 +73,16 @@ HARD_DEADLINE_S = 150.0
 # last message received instead of jumping past the rest (see main.py).
 MAX_MESSAGES_PER_INTERVAL = 50000
 
+# [REASON]: ресурс 285 -- «Бухоро агрокластер», 17 812 геозон; у дилера 170 их
+# ноль. Контуры наши, зависимости от дилера в них нет. Флаг списка 0x1001
+# подтверждён зондом 2, флаг данных берётся полным: имя, тип и точки нужны все.
+ZONE_RESOURCE_ID = 285
+ZONE_LIST_FLAGS = 0x1001
+ZONE_DATA_FLAGS = 0xFFFFFFFF
+
+# Тип геозоны в Wialon: 1 -- линия, 2 -- полигон, 3 -- окружность.
+ZONE_TYPE_POLYGON = 2
+
 LIMIT_ERRORS = (1003, 1004, 1005)
 LIMIT_BACKOFF_S = 30.0
 
