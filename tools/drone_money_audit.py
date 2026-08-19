@@ -125,7 +125,7 @@ def load_telemetry(conn, month):
 
 def audit(works):
     """Три тождества построчно. Возвращает корзины и итоги по операторам."""
-    bad_amount, bad_received, uncheckable = [], [], []
+    bad_amount, bad_received, uncheckable, unpaid = [], [], [], []
     checked_amount = checked_received = 0
     per_operator = defaultdict(lambda: defaultdict(float))
     rows_total = defaultdict(float)
@@ -161,12 +161,29 @@ def audit(works):
             reason = ('приход не «кирим»' if kind != RECEIVED_KIND_RECEIVED
                       else 'нет прихода')
             uncheckable.append(row + (reason,))
+        elif (float(received) == 0.0
+              and float(amount) - costs > TOLERANCE_SUM):
+            # [REASON]: приход 0 при ненулевом долге -- это НЕ сломанное
+            # тождество, а «Пул олинмаган»: работа сделана, деньги не
+            # собраны. Диспетчер ведёт их отдельной колонкой «Олинмаган
+            # сумма» в подписанном своде, и сверка 2026-08-19 сошлась с ней
+            # до сума: Жураев 4 280 000, Кобилов 6 700 000 + 1 820 000 =
+            # 8 520 000. Считать это расхождением значит прятать настоящие
+            # ошибки за четырьмя ложными.
+            unpaid.append(row + (float(amount) - costs,))
+            agg['unpaid'] += float(amount) - costs
         else:
             checked_received += 1
             if abs(float(amount) - costs - float(received)) > TOLERANCE_SUM:
                 bad_received.append(row + (float(amount) - costs,))
 
-    return dict(bad_amount=bad_amount, bad_received=bad_received,
+    orphan = per_operator.get('', {})
+    orphan_detail = [row[:13] for row in works if not row[1]]
+    return dict(orphan_rows=int(orphan.get('rows', 0)),
+                orphan_ha=orphan.get('ha', 0.0),
+                orphans=orphan_groups(works), orphan_detail=orphan_detail,
+                unpaid=unpaid,
+                bad_amount=bad_amount, bad_received=bad_received,
                 uncheckable=uncheckable, checked_amount=checked_amount,
                 checked_received=checked_received, per_operator=per_operator,
                 rows_total=rows_total, works=len(works))
@@ -188,6 +205,94 @@ def conservation(result):
         problems.append('rows lost while grouping: read %d, grouped %d'
                         % (result['works'], counted))
     return problems
+
+
+# [REASON]: устав требует ASCII в консоли, и подписи в неё идут ОТДЕЛЬНЫЕ,
+# а не переведённые из русских через errors='replace'. Прогон на production
+# 2026-08-19 напечатал ровно «?????» вместо каждой строки сводки: отчёт,
+# который нельзя прочитать, отчётом не является. В xlsx подписи русские.
+CONSOLE_LABEL = {
+    'Месяц': 'Month',
+    'Работ в книгах, строк': 'Book rows',
+    'Гектары книг': 'Book hectares',
+    'Гектары телеметрии, всего': 'Telemetry hectares, total',
+    '  из них на операторах': '  of them on operators',
+    '  спорное покрытие (день у двоих)': '  ambiguous (a day covered twice)',
+    '  без назначения': '  no assignment',
+    'Книга минус телеметрия на операторах': 'Book minus telemetry',
+    'Сумма по книгам': 'Amount, books',
+    'Прочие расходы': 'Other costs',
+    'Получено («кирим қилинган»)': 'Received (kirim qilingan)',
+    'Оператор должен сдать («топшириши керак»)':
+        'Operator still owes (topshirishi kerak)',
+    'Не собрано («олинмаган»), строк': 'Uncollected (olinmagan), rows',
+    'Не собрано («олинмаган»), сум': 'Uncollected (olinmagan), sum',
+    'Остаток (сумма - расходы - получено - долг)':
+        'Residual (amount - costs - received - owed)',
+    'Тождество 1: сумма = гектары x ставка':
+        'Identity 1: amount = hectares x rate',
+    '  Т1: строк, где было чем проверить': '  I1: rows it could check',
+    '  Т1: из них сошлось': '  I1: of them agreed',
+    '  Т1: расходится': '  I1: disagree',
+    'Тождество 2: получено = сумма - расходы':
+        'Identity 2: received = amount - costs',
+    '  Т2: строк, где было чем проверить': '  I2: rows it could check',
+    '  Т2: из них сошлось': '  I2: of them agreed',
+    '  Т2: расходится': '  I2: disagree',
+    'Проверить нечем, случаев': 'Nothing to check against, cases',
+    'Строк без оператора': 'Rows with no operator',
+    'Гектаров без оператора': 'Hectares with no operator',
+    'Тождество 3: ничего не потеряно': 'Identity 3: nothing was lost',
+    'ДА': 'YES',
+    'НЕТ': 'NO',
+}
+
+
+def console(text):
+    """ASCII для консоли -- и для подписи, и для ЗНАЧЕНИЯ.
+
+    [REASON]: значение мангалось ровно так же, как подпись: «ДА» уходило в
+    консоль через errors='replace' и печаталось как «??». Числа проходят
+    насквозь, русский текст -- через таблицу, а всё, чего в таблице нет,
+    помечается '?? ' и видно сразу, а не растворяется в вопросительных
+    знаках.
+    """
+    if not isinstance(text, str):
+        return text
+    if text in CONSOLE_LABEL:
+        return CONSOLE_LABEL[text]
+    try:
+        text.encode('ascii')
+        return text
+    except UnicodeEncodeError:
+        return '?? ' + _ascii(text)
+
+
+def orphan_groups(works):
+    """Строки без оператора, сгруппированные по происхождению.
+
+    [REASON]: 1 130.60 га сентября не привязаны ни к кому не потому, что их
+    нет в книгах, а потому что в колонке оператора стоит сокращение
+    («Холмуродов.Ш», «Анваров.У», «Файзуллоев.Ш») или её нет вовсе. Кто это
+    -- однозначно говорит ЛИСТ, из которого строка пришла: лист и есть книга
+    одного человека. Отчёт показывает происхождение, чтобы привязку делал
+    человек по своей книге, а не догадка по похожести букв.
+    """
+    groups = {}
+    for row in works:
+        operator = row[1]
+        if operator:
+            continue
+        sheet, source_row = row[11], row[12]
+        key = (sheet,)
+        agg = groups.setdefault(key, {'rows': 0, 'ha': 0.0, 'amount': 0.0,
+                                      'first': source_row, 'last': source_row})
+        agg['rows'] += 1
+        agg['ha'] += float(row[3] or 0)
+        agg['amount'] += float(row[5] or 0)
+        agg['first'] = min(agg['first'], source_row)
+        agg['last'] = max(agg['last'], source_row)
+    return groups
 
 
 def summary_rows(month, result, telemetry):
@@ -216,7 +321,10 @@ def summary_rows(month, result, telemetry):
         ('Прочие расходы', round(costs, 2)),
         ('Получено («кирим қилинган»)', round(received, 2)),
         ('Оператор должен сдать («топшириши керак»)', round(due, 2)),
-        ('Не получено (сумма - расходы - получено - долг)',
+        ('Не собрано («олинмаган»), строк', len(result['unpaid'])),
+        ('Не собрано («олинмаган»), сум',
+         round(sum(a['unpaid'] for a in money.values()), 2)),
+        ('Остаток (сумма - расходы - получено - долг)',
          round(amount - costs - received - due, 2)),
         ('', ''),
         ('Тождество 1: сумма = гектары x ставка', ''),
@@ -230,9 +338,24 @@ def summary_rows(month, result, telemetry):
         ('  Т2: расходится', len(result['bad_received'])),
         ('Проверить нечем, случаев', len(result['uncheckable'])),
         ('', ''),
+        ('Строк без оператора', result['orphan_rows']),
+        ('Гектаров без оператора', round(result['orphan_ha'], 2)),
+        ('', ''),
         ('Тождество 3: ничего не потеряно',
          'ДА' if not conservation(result) else 'НЕТ'),
     ]
+
+
+# [REASON]: ОДИН источник правды для порядка столбцов. Пока заголовок жил в
+# write_xlsx, а тесты обращались к строке по номеру, добавление столбца молча
+# сдвигало их и ломало проверку в другом месте.
+OPERATOR_COLUMNS = (
+    ('Оператор', 26), ('Строк', 7), ('Га книги', 11), ('Га телеметрии', 14),
+    ('Разница, га', 12), ('% телеметрии к книге', 20), ('Сумма', 15),
+    ('Расходы', 13), ('Получено', 15), ('Долг оператора', 15),
+    ('Не собрано', 14), ('Остаток', 14),
+    ('Своя средняя ставка, сум/га', 26), ('Разница в сумах', 17),
+)
 
 
 def operator_rows(result, telemetry):
@@ -258,6 +381,7 @@ def operator_rows(result, telemetry):
             round(tel_ha / book_ha * 100, 1) if book_ha else '',
             round(agg['amount'], 2), round(agg['costs'], 2),
             round(agg['received'], 2), round(agg['operator_due'], 2),
+            round(agg['unpaid'], 2),
             round(agg['amount'] - agg['costs'] - agg['received']
                   - agg['operator_due'], 2),
             rate,
@@ -282,17 +406,12 @@ def write_xlsx(path, month, result, telemetry):
     ws.column_dimensions['B'].width = 20
 
     ws = wb.create_sheet('По операторам')
-    header = ['Оператор', 'Строк', 'Га книги', 'Га телеметрии', 'Разница, га',
-              '% телеметрии к книге', 'Сумма', 'Расходы', 'Получено',
-              'Долг оператора', 'Не получено', 'Своя средняя ставка, сум/га',
-              'Разница в сумах']
-    ws.append(header)
+    ws.append([name for name, _width in OPERATOR_COLUMNS])
     for cell in ws[1]:
         cell.font = bold
     for row in operator_rows(result, telemetry):
         ws.append(list(row))
-    for idx, width in enumerate([26, 7, 11, 14, 12, 20, 15, 13, 15, 15, 14,
-                                 26, 17], start=1):
+    for idx, (_name, width) in enumerate(OPERATOR_COLUMNS, start=1):
         ws.column_dimensions[chr(64 + idx)].width = width
 
     detail = ['id', 'Оператор', 'Заказчик', 'Га', 'Ставка', 'Сумма',
@@ -317,6 +436,33 @@ def write_xlsx(path, month, result, telemetry):
     for cell in ws[1]:
         cell.font = bold
     for row in result['uncheckable']:
+        ws.append(list(row))
+
+    ws = wb.create_sheet('Не собрано (олинмаган)')
+    ws.append(detail + ['Не собрано'])
+    for cell in ws[1]:
+        cell.font = bold
+    for row in result['unpaid']:
+        ws.append(list(row))
+
+    ws = wb.create_sheet('Без оператора')
+    ws.append(['Лист-источник', 'Строк', 'Га', 'Сумма', 'Строки книги с',
+               'по'])
+    for cell in ws[1]:
+        cell.font = bold
+    for (sheet,), agg in sorted(result['orphans'].items(),
+                                key=lambda kv: -kv[1]['ha']):
+        ws.append([sheet, agg['rows'], round(agg['ha'], 2),
+                   round(agg['amount'], 2), agg['first'], agg['last']])
+    for column, width in (('A', 40), ('B', 8), ('C', 11), ('D', 15),
+                          ('E', 15), ('F', 8)):
+        ws.column_dimensions[column].width = width
+
+    ws = wb.create_sheet('Строки без оператора')
+    ws.append(detail)
+    for cell in ws[1]:
+        cell.font = bold
+    for row in result['orphan_detail']:
         ws.append(list(row))
 
     wb.save(path)
@@ -352,7 +498,18 @@ def main():
 
     for label, value in summary_rows(args.month, result, telemetry):
         if label:
-            print('%-46s %s' % (_ascii(label), _ascii(value)))
+            print('%-42s %s' % (console(label), console(value)))
+    if result['orphans']:
+        print('')
+        print('ROWS WITH NO OPERATOR, by the sheet they came from:')
+        print('  %-40s %6s %10s %16s %s'
+              % ('source sheet', 'rows', 'ha', 'amount', 'book rows'))
+        for (sheet,), agg in sorted(result['orphans'].items(),
+                                    key=lambda kv: -kv[1]['ha']):
+            print('  %-40s %6d %10.2f %16.0f %d..%d'
+                  % (_ascii(sheet)[:40], agg['rows'], agg['ha'],
+                     agg['amount'], agg['first'], agg['last']))
+        print('  The sheet IS one person book: send this block to link them.')
     print('')
     print('Written: %s' % _ascii(out))
     if lost:
