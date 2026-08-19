@@ -18,6 +18,7 @@ collector it had never collected anything, and the next run would re-fetch from
 the beginning for every object.
 """
 
+import collections
 import os
 import sqlite3
 from datetime import datetime
@@ -89,8 +90,18 @@ def open_state(folder):
     return _connect(state_path(folder), CREATE_STATE)
 
 
+# [REASON]: обе цифры возвращаются, а не одна. Журнал приёма (GPS-7) держит
+# тождество seen = written + duplicate + no_position по образцу инварианта
+# drone_sync_logs, и вывести `duplicate` задним числом неоткуда: повторы
+# проглатывает сам ключ, молча и без следа.
+WriteResult = collections.namedtuple("WriteResult", "inserted duplicate")
+
+
 def write_points(folder, rows):
-    """Store (unit_id, t, lon, lat, speed, course, sats) rows. Returns inserted.
+    """Store (unit_id, t, lon, lat, speed, course, sats) rows.
+
+    Returns WriteResult(inserted, duplicate): сколько строк легло и сколько
+    ключ отбросил как уже известные.
 
     Rows are split by the month of their own timestamp, so an interval that
     crosses midnight of the first lands partly in each file and loses nothing.
@@ -121,7 +132,7 @@ def write_points(folder, rows):
             inserted += con.execute("SELECT COUNT(*) FROM points").fetchone()[0] - before
         finally:
             con.close()
-    return inserted
+    return WriteResult(inserted=inserted, duplicate=len(rows) - inserted)
 
 
 def read_watermark(folder, unit_id):

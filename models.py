@@ -2647,6 +2647,67 @@ class GpsVerdict(db.Model):
     )
 
 
+# ─── GPS-7: журнал приёма точек ──────────────────────────────────────────────
+
+class GpsSyncLog(db.Model):
+    """Один прогон коллектора точек. Пишет `gps_collector`, приложение читает.
+
+    Тождество, по образцу инварианта `drone_sync_logs`:
+
+        messages_seen = points_written + points_duplicate + points_no_position
+
+    Каждое сообщение попало ровно в одну корзину: легло точкой, отброшено
+    ключом `(unit_id, t)` как уже известное, или не имело координат вовсе.
+
+    [REASON]: корзины раздельные и схлопывать их нельзя. Прежний сборщик
+    дронов всегда писал `records_written == records_seen` — по такому журналу
+    нельзя было ответить, приехало ли что-нибудь новое, и это выяснилось
+    только на 520 строках его `sync_runs`.
+
+    [REASON]: это НЕ `drone_sync_logs` и класть сюда нечего постороннего.
+    Та модель документирует другой инвариант, на который опираются проверочные
+    скрипты проекта; прогон GPS не хранит ни одного вылета и ни в одну из тех
+    корзин не попадает.
+
+    `status`: `ok` — все объекты прочитаны; `partial` — часть не прочитана (их
+    интервалы остались за watermark и приедут следующей ночью); `error` —
+    прогон прерван.
+    """
+    __tablename__ = 'gps_sync_log'
+    id                 = db.Column(db.Integer, primary_key=True)
+    started_at         = db.Column(db.DateTime, nullable=False)
+    finished_at        = db.Column(db.DateTime, nullable=False)
+    status             = db.Column(db.String(20), nullable=False)
+    units_total        = db.Column(db.Integer, nullable=False, default=0)
+    units_asked        = db.Column(db.Integer, nullable=False, default=0)
+    units_silent       = db.Column(db.Integer, nullable=False, default=0)
+    units_uptodate     = db.Column(db.Integer, nullable=False, default=0)
+    units_empty        = db.Column(db.Integer, nullable=False, default=0)
+    units_failed       = db.Column(db.Integer, nullable=False, default=0)
+    messages_seen      = db.Column(db.Integer, nullable=False, default=0)
+    points_written     = db.Column(db.Integer, nullable=False, default=0)
+    points_duplicate   = db.Column(db.Integer, nullable=False, default=0)
+    points_no_position = db.Column(db.Integer, nullable=False, default=0)
+    requests           = db.Column(db.Integer, nullable=False, default=0)
+    logins             = db.Column(db.Integer, nullable=False, default=0)
+    abandoned          = db.Column(db.Integer, nullable=False, default=0)
+    truncated          = db.Column(db.Integer, nullable=False, default=0)
+    interval_from      = db.Column(db.DateTime, nullable=True)
+    interval_to        = db.Column(db.DateTime, nullable=True)
+    error              = db.Column(db.Text, nullable=True)
+
+    __table_args__ = (
+        db.Index('ix_gps_sync_log_started', 'started_at'),
+    )
+
+    @property
+    def balances(self):
+        """Сходится ли тождество. Несходящееся значит, что счётчики врут."""
+        return self.messages_seen == (self.points_written
+                                      + self.points_duplicate
+                                      + self.points_no_position)
+
+
 # ─── Migration Registry ───────────────────────────────────────────────────────
 
 class SchemaMigration(db.Model):

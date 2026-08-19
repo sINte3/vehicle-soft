@@ -36,7 +36,7 @@ import sys
 import time
 from datetime import datetime
 
-from . import config, storage
+from . import config, storage, sync_log
 from .wialon import Client, WialonError, positions
 
 
@@ -51,15 +51,32 @@ class Summary:
         self.units_failed = 0
         self.units_uptodate = 0
         self.points_written = 0
+        self.points_duplicate = 0
+        self.points_no_position = 0
         self.points_seen = 0
         self.truncated = 0
+        self.watermark_from = None
+        self.watermark_to = None
 
     def line(self):
         return ("objects: %d | asked: %d | silent, skipped: %d | up to date: %d "
-                "| no messages: %d | failed: %d | points written: %d of %d seen"
+                "| no messages: %d | failed: %d | points written: %d of %d seen "
+                "(duplicate %d, no position %d)"
                 % (self.units_total, self.units_asked, self.units_silent,
                    self.units_uptodate, self.units_empty, self.units_failed,
-                   self.points_written, self.points_seen))
+                   self.points_written, self.points_seen,
+                   self.points_duplicate, self.points_no_position))
+
+    def balances(self):
+        """Тождество журнала приёма, по образцу инварианта drone_sync_logs.
+
+        seen = written + duplicate + no_position. Каждое сообщение попало ровно
+        в одну корзину: легло точкой, отброшено ключом как уже известное, или
+        не имело координат вовсе. Сходящееся тождество -- единственный способ
+        заметить, что счётчики начали врать.
+        """
+        return self.points_seen == (self.points_written + self.points_duplicate
+                                    + self.points_no_position)
 
 
 def collect(client, folder, now=None, backfill_days=config.BACKFILL_DAYS,
@@ -111,8 +128,19 @@ def collect(client, folder, now=None, backfill_days=config.BACKFILL_DAYS,
 
         rows = [(unit_id, t, lon, lat, speed, course, sats)
                 for t, lon, lat, speed, course, sats in positions(messages)]
+        # [REASON]: сообщение без координат -- это не потеря и не дубль, это
+        # третья корзина. Без неё тождество журнала приёма не сходится, а
+        # сходящееся тождество -- единственный способ заметить, что счётчики
+        # начали врать.
+        summary.points_no_position += len(messages) - len(rows)
         # Points first, committed, and only then the watermark.
-        summary.points_written += storage.write_points(folder, rows)
+        written = storage.write_points(folder, rows)
+        summary.points_written += written.inserted
+        summary.points_duplicate += written.duplicate
+        summary.watermark_from = (t_from if summary.watermark_from is None
+                                  else min(summary.watermark_from, t_from))
+        summary.watermark_to = (t_to if summary.watermark_to is None
+                                else max(summary.watermark_to, t_to))
 
         truncated = len(messages) >= config.MAX_MESSAGES_PER_INTERVAL
         if truncated:
@@ -177,6 +205,8 @@ def main(argv=None):
                         help="stop this far short of now, for late deliveries")
     parser.add_argument("--only", action="append", default=[],
                         help="wialon id to collect; may repeat")
+    parser.add_argument("--db", default=None,
+                        help="path to transport.db for the ingestion journal")
     args = parser.parse_args(argv)
 
     folder = args.dir or config.points_dir()
@@ -193,10 +223,17 @@ def main(argv=None):
         return 3
     print("login OK | tochki: %s" % folder)
 
+    started_at = datetime.now(config.TZ)
+    summary, failure = Summary(), None
     try:
         summary = collect(client, folder, backfill_days=args.backfill_days,
                           silent_days=args.silent_days,
                           lag_minutes=args.lag_minutes, only=args.only)
+    except Exception as problem:                                   # noqa: BLE001
+        # [REASON]: прогон, умерший на середине, обязан оставить о себе запись
+        # -- иначе утром он неотличим от прогона, которого не было. Точки,
+        # успевшие лечь, уже зафиксированы: watermark их не потеряет.
+        failure = problem
     finally:
         client.logout()
 
@@ -206,6 +243,18 @@ def main(argv=None):
     if summary.truncated:
         print("intervals truncated by the message limit: %d (they continue "
               "next run)" % summary.truncated)
+    if not summary.balances():
+        # [REASON]: тождество не сходится -- значит счётчики врут, и всё, что
+        # по ним потом решат, будет решено по вранью. Говорим об этом громко.
+        print("VNIMANIE: schetchiki ne shodyatsya: %d seen != %d + %d + %d"
+              % (summary.points_seen, summary.points_written,
+                 summary.points_duplicate, summary.points_no_position))
+    sync_log.record(summary, started_at, datetime.now(config.TZ),
+                    client=client, error=failure, db_path=args.db)
+    if failure is not None:
+        sys.stderr.write("\nERROR: progon prervan: %s\n"
+                         % type(failure).__name__)
+        return 1
     return 0 if summary.units_failed == 0 else 1
 
 

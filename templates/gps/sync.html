@@ -1,0 +1,87 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Приём данных — GPS' if is_ru else 'Маълумот қабули — GPS' }}{% endblock %}
+{% block content %}
+{% include 'gps/_gps_nav.html' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Приём данных' if is_ru else 'Маълумот қабули' }}</div>
+    <div class="vs-hero-sub">{{ 'Что сделал каждый ночной прогон коллектора. Без этой страницы «отработал и ничего нового не нашёл» неотличимо от «не запускался», а точки лежат вне основной базы и посмотреть на них отсюда нельзя. Каждое сообщение попадает ровно в одну корзину: легло точкой, отброшено ключом как уже известное, или не имело координат вовсе — и сумма корзин обязана сойтись с числом увиденных.' if is_ru else 'Ҳар бир кечаги коллектор прогони нима қилгани. Бу саҳифасиз «ишлади ва янги ҳеч нарса топмади» «ишга тушмади» дан фарқ қилмайди, нуқталар эса асосий базадан ташқарида ётади ва бу ердан уларга қараб бўлмайди. Ҳар бир хабар аниқ бир саватга тушади: нуқта бўлиб ётди, калит томонидан аллақачон маълум деб рад этилди, ёки умуман координатасиз эди — саватлар йиғиндиси кўрилганлар сони билан мос келиши шарт.' }}</div>
+  </div>
+</div>
+
+{% if broken %}
+<div class="vs-alert is-danger vs-mb">
+  <div>
+    <b>{{ 'Счётчики не сходятся' if is_ru else 'Ҳисоблагичлар мос келмаяпти' }}</b>
+    <div>{{ 'Прогонов с несходящимся тождеством: ' if is_ru else 'Тождестви мос келмайдиган прогонлар: ' }}{{ broken|length }}. {{ 'Это значит, что счётчики врут, и всё, что по ним решат, будет решено по вранью. Разбирать до того, как по этим числам примут решение.' if is_ru else 'Бу ҳисоблагичлар ёлғон гапираётганини англатади, ва улар бўйича қабул қилинган ҳар қандай қарор ёлғонга асосланади. Бу рақамлар бўйича қарор қабул қилинишидан олдин кўриб чиқиш керак.' }}</div>
+  </div>
+</div>
+{% endif %}
+
+{% if not runs %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Прогонов ещё не было' if is_ru else 'Ҳали прогонлар бўлмаган' }}</div>
+    <div class="vs-empty-sub">{{ 'Строка появляется после первого запуска коллектора на сервере. Пустая страница означает именно это, а не отсутствие точек.' if is_ru else 'Қатор серверда коллектор биринчи марта ишга туширилгандан кейин пайдо бўлади. Бўш саҳифа айнан шуни билдиради, нуқталар йўқлигини эмас.' }}</div>
+  </div>
+{% else %}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Последние прогоны' if is_ru else 'Сўнгги прогонлар' }}</span>
+    <span class="vs-soft">{{ 'новые сверху' if is_ru else 'янгилари юқорида' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table">
+      <thead>
+        <tr>
+          <th>{{ 'Начат' if is_ru else 'Бошланди' }}</th>
+          <th>{{ 'Состояние' if is_ru else 'Ҳолат' }}</th>
+          <th class="right">{{ 'Объектов' if is_ru else 'Объектлар' }}</th>
+          <th class="right">{{ 'Спрошено' if is_ru else 'Сўралди' }}</th>
+          <th class="right">{{ 'Не прочитано' if is_ru else 'Ўқилмади' }}</th>
+          <th class="right">{{ 'Увидено' if is_ru else 'Кўрилди' }}</th>
+          <th class="right">{{ 'Записано' if is_ru else 'Ёзилди' }}</th>
+          <th class="right">{{ 'Дубли' if is_ru else 'Дубллар' }}</th>
+          <th class="right">{{ 'Без координат' if is_ru else 'Координатасиз' }}</th>
+          <th class="right">{{ 'Запросов' if is_ru else 'Сўровлар' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+        <tr>
+          <td>{{ run.started_at.strftime('%d.%m.%Y %H:%M') }}
+            <div class="vs-soft">{{ ((run.finished_at - run.started_at).total_seconds() / 60)|round(1) }} {{ 'мин' if is_ru else 'дақ' }}</div>
+          </td>
+          <td>
+            {% if run.status == 'ok' %}<span class="vs-badge vs-badge-success">{{ 'Полный' if is_ru else 'Тўлиқ' }}</span>
+            {% elif run.status == 'partial' %}<span class="vs-badge vs-badge-warning">{{ 'Частичный' if is_ru else 'Қисман' }}</span>
+            {% else %}<span class="vs-badge vs-badge-danger">{{ 'Прерван' if is_ru else 'Узилди' }}</span>{% endif %}
+            {% if not run.balances %}<div><span class="vs-badge vs-badge-danger">{{ 'счётчики не сходятся' if is_ru else 'ҳисоблагичлар мос эмас' }}</span></div>{% endif %}
+            {% if run.error %}<div class="vs-soft">{{ run.error }}</div>{% endif %}
+          </td>
+          <td class="right">{{ run.units_total }}</td>
+          <td class="right">{{ run.units_asked }}
+            <div class="vs-soft">{{ 'молчат: ' if is_ru else 'жим: ' }}{{ run.units_silent }}</div>
+          </td>
+          <td class="right">{{ run.units_failed }}</td>
+          <td class="right">{{ run.messages_seen }}</td>
+          <td class="right">{{ run.points_written }}</td>
+          <td class="right">{{ run.points_duplicate }}</td>
+          <td class="right">{{ run.points_no_position }}</td>
+          <td class="right">{{ run.requests }}
+            {% if run.abandoned %}<div class="vs-soft">{{ 'брошено: ' if is_ru else 'ташланди: ' }}{{ run.abandoned }}</div>{% endif %}
+            {% if run.logins != 1 %}<div class="vs-soft">{{ 'входов: ' if is_ru else 'кириш: ' }}{{ run.logins }}</div>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="vs-help vs-mb">
+  {{ '«Частичный» — не отказ: интервалы непрочитанных объектов остались за отметкой и приедут следующей ночью. Но если объект не читается неделю, видно это только здесь. «Входов» показывается, только когда их не один: повторный вход за ночь означает, что сессия рвалась.' if is_ru else '«Қисман» — рад этиш эмас: ўқилмаган объектларнинг оралиқлари белгидан кейин қолди ва кейинги кечада келади. Аммо объект бир ҳафта ўқилмаса, буни фақат шу ерда кўриш мумкин. «Кириш» фақат биттадан кўп бўлганда кўрсатилади: кечада такрорий кириш сессия узилганини англатади.' }}
+</div>
+{% endif %}
+{% endblock %}

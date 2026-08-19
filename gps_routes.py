@@ -42,6 +42,7 @@ from models import (
     GPS_LABEL_PASSAGE,
     GPS_OPERATOR_LABELS,
     GpsDailyAggregate,
+    GpsSyncLog,
     GpsVerdict,
     GpsWorkPolygon,
     VialonMapping,
@@ -324,6 +325,22 @@ def _latest_reviews(order_ids):
                 .order_by(GpsVerdict.reviewed_at, GpsVerdict.id)):
         latest[row.work_order_id] = row
     return latest
+
+
+@gps_bp.route('/sync')
+@module_required('wialon')
+@login_required
+def sync():
+    """Приём точек: что сделал каждый ночной прогон коллектора.
+
+    [REASON]: без этого экрана «коллектор отработал и ничего нового не нашёл»
+    неотличимо от «коллектор не запускался», а точки лежат вне transport.db и
+    посмотреть на них из приложения нельзя вовсе.
+    """
+    runs = (GpsSyncLog.query.order_by(GpsSyncLog.started_at.desc())
+            .limit(60).all())
+    return render_template('gps/sync.html', runs=runs,
+                           broken=[r for r in runs if not r.balances])
 
 
 @gps_bp.route('/orders/review', methods=['POST'])
