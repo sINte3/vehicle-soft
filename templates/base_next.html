@@ -159,6 +159,18 @@
         <span class="vs-side-label">{{ 'Виалон' if g.lang == 'ru' else 'Виалон' }}</span>
       </a>
 
+      {# GPS-3. Пункт показывается только тому, кто его откроет: маршрут закрыт
+         @module_required('wialon'), и ссылка в 403 — это ровно тот случай,
+         против которого написано правило показа в _module_nav.html. #}
+      {% if current_user.has_module_access('wialon') %}
+      <a href="{{ url_for('gps.fact') }}" class="vs-side-link{% if current and current.startswith('gps.') %} is-active{% endif %}">
+        <span class="vs-side-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-6.3 7-11a7 7 0 1 0-14 0c0 4.7 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
+        </span>
+        <span class="vs-side-label">{{ 'Факт по технике' if g.lang == 'ru' else 'Техника бўйича факт' }}</span>
+      </a>
+      {% endif %}
+
       <div class="vs-side-section">{{ 'Справочники' if g.lang == 'ru' else 'Маълумотномалар' }}</div>
 
       <a href="{{ url_for('ref_organizations') }}" class="vs-side-link{% if current == 'ref_organizations' %} is-active{% endif %}">

@@ -1,0 +1,176 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Факт по технике — GPS' if is_ru else 'Техника бўйича факт — GPS' }}{% endblock %}
+{% block content %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Факт по технике' if is_ru else 'Техника бўйича факт' }}</div>
+    <div class="vs-hero-sub">{{ 'Сколько машина обработала за сутки — посчитано по её собственному треку, а не по обводу рукой. Участок, у которого нет геозоны, показывается как есть: работа по незаведённой земле это норма, а не ноль. Экран не решает, работа перед вами или проезд, — он спрашивает.' if is_ru else 'Машина бир кунда қанча ишлаганини ўз трекидан ҳисоблаб чиқарилган, қўлда чизилганидан эмас. Геозонаси йўқ участка борича кўрсатилади: рўйхатга олинмаган ерда ишлаш — бу норма, ноль эмас. Экран иш ёки ўтиш эканини ҳал қилмайди — сўрайди.' }}</div>
+  </div>
+</div>
+
+{# ── Выбор суток и машины ────────────────────────────────────────────────── #}
+<form method="get" class="vs-toolbar vs-mb">
+  <label class="vs-field">
+    <span class="vs-label">{{ 'Сутки' if is_ru else 'Кун' }}</span>
+    <select name="date" class="vs-input">
+      {% for d in days %}
+      <option value="{{ d.isoformat() }}" {% if d == day %}selected{% endif %}>{{ d.strftime('%d.%m.%Y') }}</option>
+      {% endfor %}
+      {% if not days %}<option value="{{ day.isoformat() }}" selected>{{ day.strftime('%d.%m.%Y') }}</option>{% endif %}
+    </select>
+  </label>
+  <label class="vs-field">
+    <span class="vs-label">{{ 'Машина' if is_ru else 'Машина' }}</span>
+    <select name="unit" class="vs-input">
+      {% for a in aggregates %}
+      <option value="{{ a.wialon_id }}" {% if a.wialon_id == unit_id %}selected{% endif %}>{{ names.get(a.wialon_id) or a.wialon_id }}{% if a.reason %} · {{ 'нет площади' if is_ru else 'майдон йўқ' }}{% endif %}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit" class="vs-btn vs-btn-primary">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+</form>
+
+{% if not aggregates %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'За эти сутки расчёта нет' if is_ru else 'Бу кун учун ҳисоб йўқ' }}</div>
+    <div class="vs-empty-sub">{{ 'Строка появляется после суточного расчёта. «Расчёта нет» и «работы нет» — разные вещи: во втором случае строка есть, а участков в ней ноль.' if is_ru else 'Қатор кунлик ҳисобдан кейин пайдо бўлади. «Ҳисоб йўқ» ва «иш йўқ» — бошқа-бошқа нарса: иккинчи ҳолда қатор бор, участкалар эса ноль.' }}</div>
+  </div>
+{% else %}
+
+{# ── Измеренные показатели суток ─────────────────────────────────────────── #}
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Обработано, га' if is_ru else 'Ишланган, га' }}</div>
+    <div class="vs-stat-value">{% if aggregate.reason %}—{% else %}{{ total_ha }}{% endif %}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Участков' if is_ru else 'Участкалар' }}</div>
+    <div class="vs-stat-value">{{ sites|length }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Отвечено' if is_ru else 'Жавоб берилган' }}</div>
+    <div class="vs-stat-value">{{ answered }} / {{ sites|length }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Точек, из них в работе' if is_ru else 'Нуқталар, шундан ишда' }}</div>
+    <div class="vs-stat-value">{{ aggregate.points_total }} / {{ aggregate.points_work }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Запись, с' if is_ru else 'Ёзув, с' }}</div>
+    <div class="vs-stat-value">{% if aggregate.interval_median_s is none %}—{% else %}{{ aggregate.interval_median_s }}{% endif %}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Спутников' if is_ru else 'Йўлдошлар' }}</div>
+    <div class="vs-stat-value">{% if aggregate.sats_median is none %}—{% else %}{{ aggregate.sats_median }}{% endif %}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Молчание на ходу' if is_ru else 'Ҳаракатда сукунат' }}</div>
+    <div class="vs-stat-value">{{ aggregate.motion_gaps }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Прыжков координат' if is_ru else 'Координата сакрашлари' }}</div>
+    <div class="vs-stat-value">{{ aggregate.gps_jumps }}</div>
+  </div>
+</div>
+
+{% if aggregate.reason %}
+  <div class="vs-alert is-warning vs-mb">
+    <div>
+      <b>{{ (reason_labels.get(aggregate.reason)[0] if is_ru else reason_labels.get(aggregate.reason)[1]) if reason_labels.get(aggregate.reason) else aggregate.reason }}</b>
+      {% if aggregate.reason == 'redkaya_zapis' %}
+      <div>{{ 'Трекер писал реже, чем раз в 30 секунд. Редкая запись всегда занижает площадь и никогда не завышает: при удвоении интервала работа теряет 5,5% в медиане и до 45% на мелких участках. Заниженный гектар в счёте хуже невыданного, поэтому площадь не публикуется. Показатели трека выше измерены и верны.' if is_ru else 'Трекер 30 сониядан сийракроқ ёзган. Сийрак ёзув майдонни ҳамиша камайтиради ва ҳеч қачон оширмайди: интервал икки баравар бўлганда иш медианада 5,5%, майда участкаларда 45% гача йўқолади. Ҳисоб-китобда камайтирилган гектар берилмаган гектардан ёмонроқ, шунинг учун майдон эълон қилинмайди. Юқоридаги трек кўрсаткичлари ўлчанган ва тўғри.' }}</div>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}
+
+{# ── Картинка участков ───────────────────────────────────────────────────── #}
+{% if shapes %}
+<div class="vs-card vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Что обработано' if is_ru else 'Нима ишланган' }}</span>
+    <span class="vs-soft">{{ 'номера совпадают с таблицей' if is_ru else 'рақамлар жадвал билан бир хил' }}</span>
+  </div>
+  <div class="vs-card-body">
+    <svg viewBox="0 0 {{ svg_width }} {{ svg_height }}" role="img"
+         aria-label="{{ 'Полигоны обработанных участков' if is_ru else 'Ишланган участкалар полигонлари' }}"
+         style="width:100%;max-width:640px;height:auto">
+      {% for shape in shapes %}
+      <polygon points="{{ shape.points }}"
+               style="fill:var(--vs-primary-soft);stroke:var(--vs-primary);stroke-width:2;stroke-linejoin:round"></polygon>
+      {% endfor %}
+    </svg>
+  </div>
+</div>
+{% endif %}
+
+{# ── Участки и ответ оператора ───────────────────────────────────────────── #}
+{% if sites %}
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Участки за сутки' if is_ru else 'Кун участкалари' }}</span>
+    <span class="vs-soft">{{ 'подсказка машины — не ответ; отвечает человек' if is_ru else 'машина таклифи жавоб эмас; одам жавоб беради' }}</span>
+  </div>
+  <div class="vs-table-scroll">
+    <table class="vs-table">
+      <thead>
+        <tr>
+          <th>{{ '№' if is_ru else '№' }}</th>
+          <th class="right">{{ 'Гектары' if is_ru else 'Гектарлар' }}</th>
+          <th class="right">{{ 'Минут' if is_ru else 'Дақиқа' }}</th>
+          <th>{{ 'Контур' if is_ru else 'Контур' }}</th>
+          <th>{{ 'Качество' if is_ru else 'Сифат' }}</th>
+          <th>{{ 'Подсказка' if is_ru else 'Таклиф' }}</th>
+          <th>{{ 'Ответ оператора' if is_ru else 'Оператор жавоби' }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for site in sites %}
+        <tr>
+          <td>{{ site.site_number }}</td>
+          <td class="right">{{ site.area_ha }}</td>
+          <td class="right">{{ site.minutes }}</td>
+          <td>
+            {% if site.contour %}{{ site.contour.name }}
+            {% else %}<span class="vs-soft">{{ 'без геозоны' if is_ru else 'геозонасиз' }}</span>{% endif %}
+          </td>
+          <td>
+            {% if site.quality_flag %}<span class="vs-badge vs-badge-warning">{{ site.quality_flag }}</span>
+            {% else %}<span class="vs-soft">{{ 'чисто' if is_ru else 'тоза' }}</span>{% endif %}
+          </td>
+          <td><span class="vs-badge">{{ site.suggested_label or '—' }}</span></td>
+          <td>
+            <form method="post" action="{{ url_for('gps.fact_answer') }}" class="vs-chip-row">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="site_id" value="{{ site.id }}">
+              <button type="submit" name="label" value="работа"
+                      class="vs-btn vs-btn-sm {% if site.operator_label == 'работа' %}vs-btn-success{% else %}vs-btn-ghost{% endif %}">{{ 'Работа' if is_ru else 'Иш' }}</button>
+              <button type="submit" name="label" value="проезд"
+                      class="vs-btn vs-btn-sm {% if site.operator_label == 'проезд' %}vs-btn-warning{% else %}vs-btn-ghost{% endif %}">{{ 'Проезд' if is_ru else 'Ўтиш' }}</button>
+              {% if site.operator_label %}
+              <button type="submit" name="label" value=""
+                      class="vs-btn vs-btn-sm vs-btn-ghost">{{ 'Снять' if is_ru else 'Олиб ташлаш' }}</button>
+              {% endif %}
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% elif not aggregate.reason %}
+  <div class="vs-empty">
+    <div class="vs-empty-title">{{ 'Работы за эти сутки не найдено' if is_ru else 'Бу кунда иш топилмади' }}</div>
+    <div class="vs-empty-sub">{{ 'Трек посчитан, участков крупнее порога в нём нет. Это измеренный факт, а не отсутствие данных: показатели трека выше говорят, сколько точек было и как они легли.' if is_ru else 'Трек ҳисобланди, ундаги участкалар остонадан катта эмас. Бу — ўлчанган факт, маълумот йўқлиги эмас: юқоридаги кўрсаткичлар неча нуқта бўлганини ва улар қандай ётганини айтади.' }}</div>
+  </div>
+{% endif %}
+
+<div class="vs-help vs-mb">
+  {{ 'Метод: точки в окне 1–15 км/ч, сгущение пути каждые 5 м, альфа-форма, площадь в UTM 41N. Ширина захвата агрегата не используется нигде — шаг между проходами измеряется из самого трека. Версия метода: ' if is_ru else 'Усул: 1–15 км/соат оралиғидаги нуқталар, йўлни ҳар 5 м да қуюқлаштириш, альфа-шакл, майдон UTM 41N да. Агрегат қамров кенглиги ҳеч қаерда ишлатилмайди — ўтишлар орасидаги қадам трекнинг ўзидан ўлчанади. Усул версияси: ' }}{{ aggregate.method_version }}.
+</div>
+
+{% endif %}
+{% endblock %}
