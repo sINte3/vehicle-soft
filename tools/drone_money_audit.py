@@ -186,6 +186,7 @@ def audit(works):
     return dict(orphan_rows=int(orphan.get('rows', 0)),
                 orphan_ha=orphan.get('ha', 0.0),
                 orphans=orphan_groups(works), orphan_detail=orphan_detail,
+                sources=book_sources(works),
                 unpaid=unpaid,
                 bad_amount=bad_amount, bad_received=bad_received,
                 uncheckable=uncheckable, checked_amount=checked_amount,
@@ -301,6 +302,24 @@ def orphan_groups(works):
         agg['amount'] += float(row[5] or 0)
         agg['first'] = min(agg['first'], source_row)
         agg['last'] = max(agg['last'], source_row)
+    return groups
+
+
+def book_sources(works):
+    """Все строки месяца по происхождению: файл, лист, оператор.
+
+    [REASON]: у Кудратова в книгах 298.60 га против 205.00 его подписанного
+    свода, и вопрос «откуда лишние 93.60» неразрешим, пока не видно, из
+    какого файла и листа эти строки пришли. Группировка по происхождению
+    отвечает на него одним прогоном, вместо переписки с догадками.
+    """
+    groups = {}
+    for row in works:
+        key = (row[15], row[11], row[1] or '(без оператора)', row[14])
+        agg = groups.setdefault(key, {'rows': 0, 'ha': 0.0, 'amount': 0.0})
+        agg['rows'] += 1
+        agg['ha'] += float(row[3] or 0)
+        agg['amount'] += float(row[5] or 0)
     return groups
 
 
@@ -468,6 +487,19 @@ def write_xlsx(path, month, result, telemetry):
     for column, width in (('A', 42), ('B', 26), ('C', 22), ('D', 22),
                           ('E', 8), ('F', 11), ('G', 15), ('H', 15),
                           ('I', 8)):
+        ws.column_dimensions[column].width = width
+
+    ws = wb.create_sheet('Источники книг')
+    ws.append(['Файл-источник', 'Лист-источник', 'Оператор',
+               'Подразделение', 'Строк', 'Га', 'Сумма'])
+    for cell in ws[1]:
+        cell.font = bold
+    for (source_file, sheet, operator, subdivision), agg in sorted(
+            result['sources'].items(), key=lambda kv: (kv[0][2], -kv[1]['ha'])):
+        ws.append([source_file, sheet, operator, subdivision, agg['rows'],
+                   round(agg['ha'], 2), round(agg['amount'], 2)])
+    for column, width in (('A', 42), ('B', 26), ('C', 24), ('D', 22),
+                          ('E', 8), ('F', 11), ('G', 15)):
         ws.column_dimensions[column].width = width
 
     ws = wb.create_sheet('Строки без оператора')
