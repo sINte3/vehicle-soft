@@ -315,7 +315,7 @@ class MoneyAuditTest(unittest.TestCase):
         self.assertEqual(['Сводка', 'По операторам', 'Сумма не сходится',
                           'Приход не сходится', 'Проверить нечем',
                           'Не собрано (олинмаган)', 'Без оператора',
-                          'Строки без оператора'],
+                          'Источники книг', 'Строки без оператора'],
                          wb.sheetnames)
         summary = {r[0]: r[1] for r in
                    wb['Сводка'].iter_rows(min_row=2, values_only=True)}
@@ -438,6 +438,45 @@ class MoneyAuditTest(unittest.TestCase):
         self.assertIn('.xlsx', printed)
         self.assertIn('49.50', printed)          # га двух осиротевших строк
         self.assertIn('Rows with no operator                      2', printed)
+
+    def test_every_row_lands_in_exactly_one_source_group(self):
+        """Карта происхождения обязана покрывать ВСЕ строки месяца.
+
+        [REASON]: лист нужен, чтобы ответить «откуда у Кудратова лишние
+        93.60 га». Если хоть одна строка в него не попадёт, ответ будет
+        неполным и незаметно неверным.
+        """
+        result, _telemetry = run(self.db)
+        groups = result['sources']
+        self.assertEqual(result['works'],
+                         sum(a['rows'] for a in groups.values()))
+        self.assertAlmostEqual(result['rows_total']['ha'],
+                               sum(a['ha'] for a in groups.values()), 2)
+        self.assertAlmostEqual(result['rows_total']['amount'],
+                               sum(a['amount'] for a in groups.values()), 2)
+
+    def test_the_source_map_separates_operators_inside_one_sheet(self):
+        """Один лист, два оператора -- две строки карты, а не одна."""
+        conn = sqlite3.connect(self.db)
+        conn.execute('UPDATE drone_works SET drone_operator_id = 2 '
+                     'WHERE id = 1')
+        conn.commit()
+        conn.close()
+        result, _telemetry = run(self.db)
+        sheets = [key for key in result['sources'] if key[1] == 'свод ичи']
+        self.assertEqual(2, len(sheets))
+        self.assertEqual({'Холмуродов Шахзод', 'Анваров Усмон'},
+                         {key[2] for key in sheets})
+
+    def test_a_row_without_an_operator_is_named_in_the_source_map(self):
+        conn = sqlite3.connect(self.db)
+        conn.execute('UPDATE drone_works SET drone_operator_id = NULL '
+                     'WHERE id = 1')
+        conn.commit()
+        conn.close()
+        result, _telemetry = run(self.db)
+        self.assertIn('(без оператора)',
+                      {key[2] for key in result['sources']})
 
     def test_no_orphans_means_no_group(self):
         """Отрицательный контроль: на чистой базе группа пуста, а не выдумана."""
