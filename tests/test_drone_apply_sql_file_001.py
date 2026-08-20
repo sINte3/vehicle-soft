@@ -248,6 +248,26 @@ class ApplySqlFileTest(unittest.TestCase):
         self.assertIn('ROLLED BACK', printed)
         self.assertEqual(before, self.rows())
 
+    def test_the_newest_backup_is_named_not_the_last_alphabetically(self):
+        """[REASON]: имя копии произвольно, время изменения -- нет.
+
+        На production рядом лежали transport.db.backup_20260820 и
+        transport.db.backup_subdiv; по алфавиту последней шла вторая, и
+        скрипт назвал «путём назад» копию неизвестной давности.
+        """
+        import time
+        self.backup()                                   # backup_20260820
+        stale = self.db + '.backup_subdiv'
+        with open(self.db, 'rb') as src, open(stale, 'wb') as dst:
+            dst.write(src.read())
+        old_time = time.time() - 86400 * 30
+        os.utime(stale, (old_time, old_time))
+        self.assertEqual(os.path.basename(self.db + '.backup_20260820'),
+                         os.path.basename(tool.backups_beside(self.db)[-1]))
+        _code, printed = self.run_main('--apply')
+        self.assertIn('backup_20260820', printed)
+        self.assertNotIn('backup_subdiv', printed)
+
     def test_missing_database_or_file_gives_code_two(self):
         argv = sys.argv
         sys.argv = ['drone_apply_sql_file.py', '--db',
