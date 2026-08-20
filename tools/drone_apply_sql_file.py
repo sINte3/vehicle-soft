@@ -107,7 +107,15 @@ def classify(items):
 
 
 def backups_beside(db_path):
-    return sorted(glob.glob(os.path.abspath(db_path) + '.backup_*'))
+    """Копии рядом с базой, СВЕЖАЯ ПОСЛЕДНЕЙ.
+
+    [REASON]: сортировка по имени врёт. На production 2026-08-20 рядом лежали
+    transport.db.backup_20260820 и transport.db.backup_subdiv, и по алфавиту
+    последней оказалась вторая -- скрипт назвал «путём назад» копию, снятую
+    неизвестно когда. Имя копии произвольно, время изменения -- нет.
+    """
+    found = glob.glob(os.path.abspath(db_path) + '.backup_*')
+    return sorted(found, key=os.path.getmtime)
 
 
 def totals(conn):
