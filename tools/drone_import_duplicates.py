@@ -78,6 +78,7 @@ def load(conn, month=None):
 
 NAMESAKE = 'namesake'
 CANDIDATE = 'candidate'
+UNKNOWN = 'unknown'
 
 
 def find_duplicates(rows):
@@ -112,20 +113,34 @@ def find_duplicates(rows):
         # предложила удалить 154.70 га настоящих работ. Отличает их
         # оператор: у двойной загрузки он один и тот же по обе стороны.
         operators = [tuple(sorted(agg['operators'])) for agg in files.values()]
-        same = len({op for op in operators if op}) <= 1
+        # [REASON]: сторона БЕЗ ОПЕРАТОРА не свидетельствует ни за, ни против.
+        # В апреле и мае 2026 «свод ичи (Шахзод)» приходит из книги Ғиждувона
+        # (Холмуродов) и из книги Сервиса, где оператор не привязан вовсе.
+        # Первая редакция считала «нет оператора» за «оператор тот же» и
+        # предлагала удалить 492.15 га как дубль. Молчание -- не согласие:
+        # такие группы идут в UNKNOWN, и DELETE по ним не печатается.
+        if any(not op for op in operators):
+            kind = UNKNOWN
+        elif len(set(operators)) <= 1:
+            kind = CANDIDATE
+        else:
+            kind = NAMESAKE
         out[key] = {'files': sorted(
             (name, agg['rows'], agg['ha'], agg['amount'],
              ', '.join(sorted(agg['operators'])) or '(без оператора)')
             for name, agg in files.items()),
-            'kind': CANDIDATE if same else NAMESAKE}
+            'kind': kind}
     return out
 
 
 def report_lines(duplicates):
     lines = []
     for (month, sheet), group in sorted(duplicates.items()):
-        tag = ('CANDIDATE double upload' if group['kind'] == CANDIDATE
-               else 'NAMESAKE sheets -- DIFFERENT PEOPLE, not a duplicate')
+        tag = {CANDIDATE: 'CANDIDATE double upload',
+               NAMESAKE: 'NAMESAKE sheets -- DIFFERENT PEOPLE, not a '
+                         'duplicate',
+               UNKNOWN: 'UNKNOWN -- one side has no operator, cannot tell; '
+                        'no SQL offered'}[group['kind']]
         lines.append('%s  %s   [%s]' % (month, _ascii(sheet), tag))
         for source_file, count, hectares, amount, operator in group['files']:
             lines.append('    %-40s %4d rows %9.2f ha %14.0f  %s'
@@ -155,11 +170,21 @@ def candidates(duplicates):
     return out
 
 
-def namesakes(duplicates):
-    """Группы, где за одинаковым именем листа стоят РАЗНЫЕ люди."""
+def of_kind(duplicates, kind):
+    """Группы одного вида: тёзки или неопознанные."""
     return [(month, sheet, duplicates[(month, sheet)]['files'])
             for (month, sheet) in sorted(duplicates)
-            if duplicates[(month, sheet)]['kind'] == NAMESAKE]
+            if duplicates[(month, sheet)]['kind'] == kind]
+
+
+def namesakes(duplicates):
+    """Группы, где за одинаковым именем листа стоят РАЗНЫЕ люди."""
+    return of_kind(duplicates, NAMESAKE)
+
+
+def unknowns(duplicates):
+    """Группы, где хотя бы у одной стороны оператор не привязан."""
+    return of_kind(duplicates, UNKNOWN)
 
 
 def sql_lines(items):
@@ -243,10 +268,13 @@ def main():
 
     items = candidates(duplicates)
     twins = namesakes(duplicates)
+    murky = unknowns(duplicates)
     print('Candidate duplicates: %d sheet(s), %d file(s)'
           % (len({(i[0], i[1]) for i in items}), len(items)))
     print('Namesake sheets     : %d  (different people -- NOT duplicates)'
           % len(twins))
+    print('Undecidable         : %d  (one side has no operator -- no SQL)'
+          % len(murky))
     print('')
     for line in report_lines(duplicates):
         print(line)
@@ -288,6 +316,16 @@ def main():
             handle.write('\n\n-- ================================\n')
             handle.write('-- %s  %s -- ТЁЗКИ, НЕ ДУБЛЬ. Ничего не удалять.\n'
                          % (month, sheet))
+            for source_file, count, hectares, _amount, operator in files:
+                handle.write('--   %s : %d строк, %.2f га, %s\n'
+                             % (source_file, count, hectares, operator))
+        for month, sheet, files in murky:
+            handle.write('\n\n-- ================================\n')
+            handle.write('-- %s  %s -- НЕ ОПОЗНАНО. У одной стороны оператор '
+                         'не привязан,\n-- и отличить двойную загрузку от '
+                         'листа-тёзки нечем. SQL не предлагается:\n'
+                         '-- сначала привязать оператора, потом запустить '
+                         'отчёт заново.\n' % (month, sheet))
             for source_file, count, hectares, _amount, operator in files:
                 handle.write('--   %s : %d строк, %.2f га, %s\n'
                              % (source_file, count, hectares, operator))

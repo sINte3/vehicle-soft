@@ -61,6 +61,15 @@ ROWS = (
      '2025-09', 'Файзуллаев Шохрух'),
     ('Когон ПТЗ Дрон маълумот (2).xlsx', 'свод ичи (Шохрух)', 36, 412.60,
      '2025-09', 'Хамроев Шохрух'),
+    # [REASON]: ВТОРАЯ ловушка, с боевого прогона 2026-08-20. Апрель 2026:
+    # «свод ичи (Шахзод)» приходит из книги Ғиждувона (Холмуродов) и из книги
+    # Сервиса, где оператор не привязан вовсе. Молчание -- не согласие:
+    # признак «оператор тот же» тут не работает, и предлагать удаление
+    # 492.15 га нельзя.
+    ('Дрон Ғиждувон ПТЗ Апрель.xlsx', 'свод ичи (Шахзод)', 21, 361.30,
+     '2026-04', 'Холмуродов Шахзод'),
+    ('Сервис Дрон маълумот АПРЕЛЬ.xlsx', 'свод ичи (Шахзод)', 28, 492.15,
+     '2026-04', None),
 )
 
 
@@ -148,6 +157,22 @@ class ImportDuplicatesTest(unittest.TestCase):
                                tool.candidates(duplicates)})
         self.assertEqual([key[0]], [t[0] for t in tool.namesakes(duplicates)])
 
+    # ВТОРАЯ ловушка: сторона без оператора -- не согласие.
+    def test_a_side_without_an_operator_is_undecidable(self):
+        """[REASON]: молчание не есть согласие.
+
+        Первая редакция считала «нет оператора» за «оператор тот же» и на
+        апреле 2026 предложила удалить 492.15 га как дубль. Такие группы
+        обязаны уходить в UNKNOWN, и SQL по ним не печатается.
+        """
+        _rows, duplicates = scan(self.db)
+        key = ('2026-04', 'свод ичи (Шахзод)')
+        self.assertEqual(tool.UNKNOWN, duplicates[key]['kind'])
+        self.assertNotIn(key, {(i[0], i[1]) for i in
+                               tool.candidates(duplicates)})
+        self.assertEqual([key], [(m, sh) for m, sh, _f
+                                 in tool.unknowns(duplicates)])
+
     def test_a_real_double_upload_is_a_candidate(self):
         _rows, duplicates = scan(self.db)
         for sheet in ('свод ичи (Мухриддин)', 'свод ичи (Фурқат)'):
@@ -155,6 +180,20 @@ class ImportDuplicatesTest(unittest.TestCase):
             self.assertEqual(tool.CANDIDATE, duplicates[key]['kind'], sheet)
             self.assertEqual(1, len({f[4] for f in duplicates[key]['files']}),
                              sheet)
+
+    def test_the_undecidable_group_gets_no_sql_at_all(self):
+        self._run_main()
+        sql_path = os.path.join(self.dir, 'drone_import_duplicates.sql')
+        with open(sql_path, encoding='utf-8') as handle:
+            sql = handle.read()
+        self.assertIn('НЕ ОПОЗНАНО', sql)
+        self.assertIn('свод ичи (Шахзод)', sql)
+        for line in sql.splitlines():
+            if 'Шахзод' in line:
+                self.assertTrue(line.strip().startswith('--'), line)
+        self.assertNotIn('2026-04', ''.join(
+            line for line in sql.splitlines()
+            if line.startswith('SELECT') or line.startswith('-- DELETE')))
 
     def test_both_files_are_offered_never_one_verdict(self):
         """Отчёт НЕ решает, какая загрузка лишняя -- это говорит свод.
@@ -173,7 +212,8 @@ class ImportDuplicatesTest(unittest.TestCase):
         """Отрицательный контроль: отчёт, кричащий всегда, бесполезен."""
         os.remove(self.db)
         build_db(self.db, rows=tuple(r for r in ROWS if r[0] != STALE
-                                     and r[1] != 'свод ичи (Шохрух)'))
+                                     and r[1] not in ('свод ичи (Шохрух)',
+                                                      'свод ичи (Шахзод)')))
         _rows, duplicates = scan(self.db)
         self.assertEqual({}, duplicates)
         self.assertEqual([], tool.candidates(duplicates))
@@ -187,7 +227,8 @@ class ImportDuplicatesTest(unittest.TestCase):
         """
         os.remove(self.db)
         build_db(self.db, rows=tuple(r for r in ROWS if r[0] != STALE
-                                     and r[1] != 'свод ичи (Шохрух)'),
+                                     and r[1] not in ('свод ичи (Шохрух)',
+                                                      'свод ичи (Шахзод)')),
                  manual=5)
         _rows, duplicates = scan(self.db)
         self.assertEqual({}, duplicates)
@@ -204,11 +245,11 @@ class ImportDuplicatesTest(unittest.TestCase):
 
     def test_month_filter_narrows_the_scan(self):
         _rows, all_months = scan(self.db)
-        self.assertEqual(3, len(all_months))
+        self.assertEqual(4, len(all_months))
         _rows, september = scan(self.db, '2025-09')
         self.assertEqual(3, len(september))
-        _rows, october = scan(self.db, '2025-10')
-        self.assertEqual({}, october)
+        _rows, april = scan(self.db, '2026-04')
+        self.assertEqual(1, len(april))
 
     def test_the_printed_sql_targets_one_file_one_sheet_one_month(self):
         _rows, duplicates = scan(self.db)
@@ -299,6 +340,7 @@ class ImportDuplicatesTest(unittest.TestCase):
         self.assertIn('NOTHING WAS DELETED', printed)
         self.assertIn('DOES NOT DECIDE', printed)
         self.assertIn('Namesake sheets     : 1', printed)
+        self.assertIn('Undecidable         : 1', printed)
 
     def test_the_sql_file_marks_the_namesake_and_comments_every_delete(self):
         """Файл обязан и предупредить про тёзку, и не дать удалить сгоряча.
@@ -330,6 +372,10 @@ class ImportDuplicatesTest(unittest.TestCase):
         os.remove(self.db)
         build_db(self.db, rows=tuple(r for r in ROWS if r[0] != STALE
                                      and r[1] != 'свод ичи (Шохрух)'))
+        os.remove(self.db)
+        build_db(self.db, rows=tuple(r for r in ROWS if r[0] != STALE
+                                     and r[1] not in ('свод ичи (Шохрух)',
+                                                      'свод ичи (Шахзод)')))
         code, printed = self._run_main()
         self.assertEqual(0, code)
         self.assertIn('No book looks imported twice', printed)
