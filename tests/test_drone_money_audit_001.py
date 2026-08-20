@@ -44,7 +44,8 @@ CREATE TABLE drone_works (id INTEGER PRIMARY KEY, period_month TEXT,
   drone_operator_id INTEGER, customer_raw TEXT, area_ha NUMERIC,
   price_per_ha NUMERIC, amount NUMERIC, other_costs NUMERIC,
   received_amount NUMERIC, received_kind TEXT, payment_type TEXT,
-  source_sheet TEXT, source_row INTEGER);
+  operator_raw TEXT, subdivision_name TEXT,
+  source_file TEXT, source_sheet TEXT, source_row INTEGER);
 """
 
 # (оператор, заказчик, га, ставка, сумма, расходы, приход, вид)
@@ -81,10 +82,13 @@ def build_db(path, works=WORKS, flights=((1, '2025-09-15', 40.0),
             'INSERT INTO drone_works (id, period_month, work_date_from, '
             'work_date_to, date_raw, drone_operator_id, customer_raw, '
             'area_ha, price_per_ha, amount, other_costs, received_amount, '
-            'received_kind, payment_type, source_sheet, source_row) '
+            'received_kind, payment_type, operator_raw, subdivision_name, '
+            'source_file, source_sheet, source_row) '
             "VALUES (?, '2025-09', '2025-09-10', '2025-09-10', '10.09.2025', "
-            "?, ?, ?, ?, ?, ?, ?, ?, 'cash', 'свод ичи', ?)",
-            (idx, op, customer, ha, rate, amount, costs, recv, kind, idx))
+            "?, ?, ?, ?, ?, ?, ?, ?, 'cash', ?, 'Ғиждувон ПТЗ', "
+            "'Ғиждувон ПТЗ Дрон маълумот.xlsx', 'свод ичи', ?)",
+            (idx, op, customer, ha, rate, amount, costs, recv, kind,
+             'Шахзод' if op == 1 else 'Усмон', idx))
     conn.commit()
     conn.close()
 
@@ -386,11 +390,18 @@ class MoneyAuditTest(unittest.TestCase):
         self.assertEqual(3, result['orphan_rows'])
         self.assertAlmostEqual(58.5, result['orphan_ha'], 2)
         groups = result['orphans']
-        self.assertEqual({('свод ичи',), ('свод ичи (Усмон)',)}, set(groups))
-        self.assertEqual(2, groups[('свод ичи',)]['rows'])
-        self.assertAlmostEqual(49.5, groups[('свод ичи',)]['ha'], 2)
-        self.assertEqual((1, 2), (groups[('свод ичи',)]['first'],
-                                  groups[('свод ичи',)]['last']))
+        self.assertEqual(2, len(groups))
+        sheets = {key[1] for key in groups}
+        self.assertEqual({'свод ичи', 'свод ичи (Усмон)'}, sheets)
+        # Ключ несёт всё происхождение: файл, лист, написание, подразделение.
+        first = [key for key in groups if key[1] == 'свод ичи'][0]
+        self.assertEqual('Ғиждувон ПТЗ Дрон маълумот.xlsx', first[0])
+        self.assertEqual('Шахзод', first[2])
+        self.assertEqual('Ғиждувон ПТЗ', first[3])
+        self.assertEqual(2, groups[first]['rows'])
+        self.assertAlmostEqual(49.5, groups[first]['ha'], 2)
+        self.assertEqual((1, 2), (groups[first]['first'],
+                                  groups[first]['last']))
         self.assertEqual(3, len(result['orphan_detail']))
 
     def test_the_orphan_block_reaches_the_console(self):
@@ -419,6 +430,12 @@ class MoneyAuditTest(unittest.TestCase):
         printed = buffer.getvalue()
         printed.encode('ascii')
         self.assertIn('ROWS WITH NO OPERATOR', printed)
+        # Блок обязан показать ВСЁ происхождение: без файла и написания
+        # оператора «свод ичи (Шохрух)» Гардена и Когона не различить.
+        self.assertIn('source file', printed)
+        self.assertIn('operator_raw', printed)
+        # Имя файла-источника доходит до блока (в ASCII-виде).
+        self.assertIn('.xlsx', printed)
         self.assertIn('49.50', printed)          # га двух осиротевших строк
         self.assertIn('Rows with no operator                      2', printed)
 
