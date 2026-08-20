@@ -70,61 +70,101 @@ def load(conn, month=None):
         "                w.period_month) AS m, "
         "       COALESCE(w.source_sheet, ''), COALESCE(w.source_file, ''), "
         '       COUNT(*), COALESCE(SUM(w.area_ha), 0), '
-        '       COALESCE(SUM(w.amount), 0) '
-        'FROM drone_works w ' + where +
-        'GROUP BY 1, 2, 3 ORDER BY 1, 2, 3', params).fetchall()
+        "       COALESCE(SUM(w.amount), 0), COALESCE(o.full_name, '') "
+        'FROM drone_works w '
+        'LEFT JOIN drone_operators o ON o.id = w.drone_operator_id ' + where +
+        'GROUP BY 1, 2, 3, 7 ORDER BY 1, 2, 3', params).fetchall()
+
+
+NAMESAKE = 'namesake'
+CANDIDATE = 'candidate'
 
 
 def find_duplicates(rows):
-    """Листы с одним именем, пришедшие из разных файлов, внутри месяца."""
-    by_sheet = defaultdict(list)
-    for month, sheet, source_file, count, hectares, amount in rows:
+    """Листы с одним именем из разных файлов -- и КТО за ними стоит.
+
+    Возвращает {(месяц, лист): {'files': [...], 'kind': NAMESAKE|CANDIDATE}}.
+    """
+    by_sheet = defaultdict(lambda: defaultdict(
+        lambda: {'rows': 0, 'ha': 0.0, 'amount': 0.0, 'operators': set()}))
+    for (month, sheet, source_file, count, hectares, amount,
+         operator) in rows:
         # [REASON]: строка, набранная руками, не имеет ни файла, ни листа.
         # Она законно «ниоткуда», и складывать такие в одну группу значит
         # объявить двойной загрузкой всю ручную правку месяца.
         if not sheet or not source_file:
             continue
-        by_sheet[(month, sheet)].append(
-            (source_file, count, float(hectares), float(amount)))
-    return {key: sorted(files) for key, files in by_sheet.items()
-            if len(files) > 1}
+        agg = by_sheet[(month, sheet)][source_file]
+        agg['rows'] += count
+        agg['ha'] += float(hectares)
+        agg['amount'] += float(amount)
+        if operator:
+            agg['operators'].add(operator)
+
+    out = {}
+    for key, files in by_sheet.items():
+        if len(files) < 2:
+            continue
+        # [REASON]: ЛИСТ-ТЁЗКА, А НЕ ДУБЛЬ. «свод ичи (Шохрух)» есть и в
+        # книге Гардена (Файзуллаев Шохрух), и в книге Когона (Хамроев
+        # Шохрух) -- это книги ДВУХ РАЗНЫХ ЛЮДЕЙ с одинаковым именем листа.
+        # Первая редакция отчёта объявила гарденскую книгу лишней и
+        # предложила удалить 154.70 га настоящих работ. Отличает их
+        # оператор: у двойной загрузки он один и тот же по обе стороны.
+        operators = [tuple(sorted(agg['operators'])) for agg in files.values()]
+        same = len({op for op in operators if op}) <= 1
+        out[key] = {'files': sorted(
+            (name, agg['rows'], agg['ha'], agg['amount'],
+             ', '.join(sorted(agg['operators'])) or '(без оператора)')
+            for name, agg in files.items()),
+            'kind': CANDIDATE if same else NAMESAKE}
+    return out
 
 
 def report_lines(duplicates):
     lines = []
-    for (month, sheet), files in sorted(duplicates.items()):
-        biggest = max(files, key=lambda f: f[1])
-        lines.append('%s  %s' % (month, _ascii(sheet)))
-        for source_file, count, hectares, amount in files:
-            mark = '  KEEP (most rows)' if source_file == biggest[0] \
-                else '  <-- SURPLUS'
-            lines.append('    %-44s %4d rows %9.2f ha %14.0f%s'
-                         % (_ascii(source_file)[-44:], count, hectares,
-                            amount, mark))
+    for (month, sheet), group in sorted(duplicates.items()):
+        tag = ('CANDIDATE double upload' if group['kind'] == CANDIDATE
+               else 'NAMESAKE sheets -- DIFFERENT PEOPLE, not a duplicate')
+        lines.append('%s  %s   [%s]' % (month, _ascii(sheet), tag))
+        for source_file, count, hectares, amount, operator in group['files']:
+            lines.append('    %-40s %4d rows %9.2f ha %14.0f  %s'
+                         % (_ascii(source_file)[-40:], count, hectares,
+                            amount, _ascii(operator)[:26]))
     return lines
 
 
-def surplus(duplicates):
-    """Строки лишней загрузки: всё, кроме файла с наибольшим числом строк.
+def candidates(duplicates):
+    """Только группы, где по обе стороны ОДИН И ТОТ ЖЕ оператор.
 
-    [REASON]: «лишний» здесь -- ТЕХНИЧЕСКАЯ подсказка, а не вердикт. Полной
-    считается загрузка с наибольшим числом строк, потому что вторая попытка
-    делается ради недостающих строк. Решает человек, сверив с подписанным
-    сводом: отчёт печатает SELECT, чтобы он посмотрел строки глазами.
+    [REASON]: отчёт НЕ выбирает, какой из двух файлов лишний, и не пытается.
+    Первая редакция считала полной загрузку с наибольшим числом строк -- на
+    апреле 2026 это назвало бы лишним файл с 361.30 га в пользу файла с
+    492.15, а на мае -- файл с 548.10 га в пользу файла с 226.51. Число
+    строк не говорит, какая загрузка верна; говорит подписанный ОБЩИЙ СВОД,
+    и смотрит в него человек. Поэтому печатаются ОБА варианта как
+    альтернативы, и выбрать надо ровно один.
     """
     out = []
-    for (month, sheet), files in sorted(duplicates.items()):
-        biggest = max(files, key=lambda f: f[1])
-        for source_file, count, hectares, amount in files:
-            if source_file != biggest[0]:
-                out.append((month, sheet, source_file, count, hectares,
-                            amount))
+    for (month, sheet), group in sorted(duplicates.items()):
+        if group['kind'] != CANDIDATE:
+            continue
+        for source_file, count, hectares, amount, operator in group['files']:
+            out.append((month, sheet, source_file, count, hectares, amount,
+                        operator))
     return out
+
+
+def namesakes(duplicates):
+    """Группы, где за одинаковым именем листа стоят РАЗНЫЕ люди."""
+    return [(month, sheet, duplicates[(month, sheet)]['files'])
+            for (month, sheet) in sorted(duplicates)
+            if duplicates[(month, sheet)]['kind'] == NAMESAKE]
 
 
 def sql_lines(items):
     lines = []
-    for month, sheet, source_file, _count, _ha, _amount in items:
+    for month, sheet, source_file, _count, _ha, _amount, _op in items:
         where = ("WHERE source_file = '%s' AND source_sheet = '%s' "
                  "AND COALESCE(strftime('%%Y-%%m', work_date_from), "
                  "period_month) = '%s'"
@@ -143,27 +183,28 @@ def write_xlsx(path, rows, duplicates):
     bold = Font(bold=True)
     ws = wb.active
     ws.title = 'Двойные загрузки'
-    ws.append(['Месяц', 'Лист-источник', 'Файл-источник', 'Строк', 'Га',
-               'Сумма', 'Вердикт'])
+    ws.append(['Месяц', 'Лист-источник', 'Файл-источник', 'Оператор',
+               'Строк', 'Га', 'Сумма', 'Вердикт'])
     for cell in ws[1]:
         cell.font = bold
-    for (month, sheet), files in sorted(duplicates.items()):
-        biggest = max(files, key=lambda f: f[1])
-        for source_file, count, hectares, amount in files:
-            ws.append([month, sheet, source_file, count, round(hectares, 2),
-                       round(amount, 2),
-                       'полная' if source_file == biggest[0] else 'лишняя'])
+    for (month, sheet), group in sorted(duplicates.items()):
+        verdict = ('двойная загрузка?' if group['kind'] == CANDIDATE
+                   else 'ТЁЗКИ, РАЗНЫЕ ЛЮДИ -- не дубль')
+        for source_file, count, hectares, amount, operator in group['files']:
+            ws.append([month, sheet, source_file, operator, count,
+                       round(hectares, 2), round(amount, 2), verdict])
     ws = wb.create_sheet('Все источники')
-    ws.append(['Месяц', 'Лист-источник', 'Файл-источник', 'Строк', 'Га',
-               'Сумма'])
+    ws.append(['Месяц', 'Лист-источник', 'Файл-источник', 'Оператор', 'Строк',
+               'Га', 'Сумма'])
     for cell in ws[1]:
         cell.font = bold
-    for month, sheet, source_file, count, hectares, amount in rows:
-        ws.append([month, sheet, source_file, count, round(float(hectares), 2),
-                   round(float(amount), 2)])
+    for (month, sheet, source_file, count, hectares, amount,
+         operator) in rows:
+        ws.append([month, sheet, source_file, operator, count,
+                   round(float(hectares), 2), round(float(amount), 2)])
     for sheet_obj in wb.worksheets:
-        for column, width in (('A', 10), ('B', 26), ('C', 46), ('D', 8),
-                              ('E', 11), ('F', 15), ('G', 10)):
+        for column, width in (('A', 10), ('B', 26), ('C', 46), ('D', 24),
+                              ('E', 8), ('F', 11), ('G', 15), ('H', 30)):
             sheet_obj.column_dimensions[column].width = width
     wb.save(path)
 
@@ -200,10 +241,12 @@ def main():
             print('Written: %s' % _ascii(args.out))
         return 0
 
-    items = surplus(duplicates)
-    print('Surplus rows        : %d' % sum(i[3] for i in items))
-    print('Surplus hectares    : %.2f' % sum(i[4] for i in items))
-    print('Surplus amount      : %.0f' % sum(i[5] for i in items))
+    items = candidates(duplicates)
+    twins = namesakes(duplicates)
+    print('Candidate duplicates: %d sheet(s), %d file(s)'
+          % (len({(i[0], i[1]) for i in items}), len(items)))
+    print('Namesake sheets     : %d  (different people -- NOT duplicates)'
+          % len(twins))
     print('')
     for line in report_lines(duplicates):
         print(line)
@@ -216,23 +259,50 @@ def main():
                             'drone_import_duplicates.sql')
     with open(sql_path, 'w', encoding='utf-8') as handle:
         handle.write('-- Сформировано tools/drone_import_duplicates.py\n')
-        handle.write('-- СНАЧАЛА посмотреть строки глазами, ПОТОМ удалять,\n')
-        handle.write('-- и только после копии instance\\transport.db.\n\n')
-        handle.write('-- 1. ПОСМОТРЕТЬ\n')
-        for select, _delete in sql_lines(items):
-            handle.write(select + '\n')
-        handle.write('\n-- 2. УДАЛИТЬ, если это действительно лишняя '
-                     'загрузка\n')
-        for _select, delete in sql_lines(items):
-            handle.write(delete + '\n')
+        handle.write('-- ОТЧЁТ НЕ ЗНАЕТ, какая из двух загрузок верна: это\n')
+        handle.write('-- говорит подписанный ОБЩИЙ СВОД. По каждому листу\n')
+        handle.write('-- ниже ДВА варианта -- выполнить надо РОВНО ОДИН,\n')
+        handle.write('-- и только после копии instance\\transport.db.\n')
+        for month, sheet, group in [(m, sh, duplicates[(m, sh)])
+                                    for (m, sh) in sorted(duplicates)
+                                    if duplicates[(m, sh)]['kind']
+                                    == CANDIDATE]:
+            handle.write('\n\n-- ================================\n')
+            handle.write('-- %s  %s\n' % (month, sheet))
+            for source_file, count, hectares, amount, operator in \
+                    group['files']:
+                handle.write('--   %s : %d строк, %.2f га, %.0f сум, %s\n'
+                             % (source_file, count, hectares, amount,
+                                operator))
+            pairs = sql_lines([(month, sheet, f[0], f[1], f[2], f[3], f[4])
+                               for f in group['files']])
+            for (source_file, count, hectares, _a, _o), (select, delete) in \
+                    zip(group['files'], pairs):
+                handle.write('\n-- ВАРИАНТ: убрать %s (%d строк, %.2f га)\n'
+                             % (source_file, count, hectares))
+                handle.write('-- сначала посмотреть:\n')
+                handle.write(select + '\n')
+                handle.write('-- и только потом, если это лишняя загрузка:\n')
+                handle.write('-- ' + delete + '\n')
+        for month, sheet, files in twins:
+            handle.write('\n\n-- ================================\n')
+            handle.write('-- %s  %s -- ТЁЗКИ, НЕ ДУБЛЬ. Ничего не удалять.\n'
+                         % (month, sheet))
+            for source_file, count, hectares, _amount, operator in files:
+                handle.write('--   %s : %d строк, %.2f га, %s\n'
+                             % (source_file, count, hectares, operator))
 
     print('')
     print('NOTHING WAS DELETED -- this report cannot write to the database.')
+    print('IT ALSO DOES NOT DECIDE which upload is the surplus one: the row '
+          'count does not say that, the signed summary does.')
     print('The SQL is in a UTF-8 file (sheet names are Cyrillic and the '
           'console would mangle them):')
     print('  %s' % _ascii(sql_path))
-    print('Look at the SELECT rows first, copy instance\\transport.db aside, '
-          'then run the DELETE by hand.')
+    print('For each candidate it offers TWO alternatives -- run exactly one, '
+          'after copying instance\\transport.db aside.')
+    print('Every DELETE is written out COMMENTED. Uncomment the one you '
+          'chose.')
     if args.out:
         write_xlsx(args.out, rows, duplicates)
         print('')

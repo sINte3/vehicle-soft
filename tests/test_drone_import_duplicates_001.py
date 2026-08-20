@@ -1,6 +1,12 @@
 # -*- coding: utf-8 -*-
 """DRONE-IMPORT-DUP-001: поиск книг, загруженных дважды.
 
+САМОЕ ВАЖНОЕ В ЭТОМ ФАЙЛЕ -- проверка на ЛИСТ-ТЁЗКУ. «свод ичи (Шохрух)»
+есть и в книге Гардена (Файзуллаев Шохрух), и в книге Когона (Хамроев
+Шохрух). Первая редакция отчёта объявила гарденскую книгу лишней и
+предложила удалить 154.70 га живых работ; поймано боевым прогоном
+2026-08-20, а не тестом. Теперь дубль от тёзки отличает ОПЕРАТОР.
+
 Одна и та же книга, загруженная вторым файлом с суффиксом « (2)», удваивает
 гектары и деньги: уникальность строки -- тройка (файл, лист, номер строки), и
 второе имя файла делает её другой. В сентябре 2025 это дало +118.40 га.
@@ -27,39 +33,60 @@ sys.path.insert(0, os.path.join(REPO_ROOT, 'tools'))
 import drone_import_duplicates as tool  # noqa: E402
 
 SCHEMA = """
+CREATE TABLE drone_operators (id INTEGER PRIMARY KEY, full_name TEXT);
 CREATE TABLE drone_works (id INTEGER PRIMARY KEY AUTOINCREMENT,
   period_month TEXT NOT NULL, work_date_from TEXT, customer_raw TEXT,
-  area_ha NUMERIC, amount NUMERIC, source_file TEXT, source_sheet TEXT,
-  source_row INTEGER);
+  area_ha NUMERIC, amount NUMERIC, drone_operator_id INTEGER,
+  source_file TEXT, source_sheet TEXT, source_row INTEGER);
 """
+
+OPERATORS = ('Қудратов Мухриддин', 'Жумаев Фуркат', 'Имомов Беҳзод',
+             'Қодиров Нурали', 'Файзуллаев Шохрух', 'Хамроев Шохрух')
 
 # Настоящая картина сентября: книга Сервиса загружена дважды.
 GOOD = 'Сервис Дрон Маълумот (2).xlsx'
 STALE = 'Сервис Дрон Маълумот.xlsx'
 ROWS = (
-    (GOOD, 'свод ичи (Мухриддин)', 11, 205.00, '2025-09'),
-    (STALE, 'свод ичи (Мухриддин)', 6, 93.60, '2025-09'),
-    (GOOD, 'свод ичи (Фурқат)', 37, 398.90, '2025-09'),
-    (STALE, 'свод ичи (Фурқат)', 9, 24.80, '2025-09'),
-    (GOOD, 'свод ичи (Беҳзод)', 38, 406.63, '2025-09'),
-    ('Гарден Агрокластер.xlsx', 'свод ичи (Нурали)', 57, 884.50, '2025-09'),
+    (GOOD, 'свод ичи (Мухриддин)', 11, 205.00, '2025-09', 'Қудратов Мухриддин'),
+    (STALE, 'свод ичи (Мухриддин)', 6, 93.60, '2025-09', 'Қудратов Мухриддин'),
+    (GOOD, 'свод ичи (Фурқат)', 37, 398.90, '2025-09', 'Жумаев Фуркат'),
+    (STALE, 'свод ичи (Фурқат)', 9, 24.80, '2025-09', 'Жумаев Фуркат'),
+    (GOOD, 'свод ичи (Беҳзод)', 38, 406.63, '2025-09', 'Имомов Беҳзод'),
+    ('Гарден Агрокластер.xlsx', 'свод ичи (Нурали)', 57, 884.50, '2025-09',
+     'Қодиров Нурали'),
+    # [REASON]: НАСТОЯЩАЯ ЛОВУШКА, на которой первая редакция отчёта
+    # предложила удалить 154.70 га живых работ. «свод ичи (Шохрух)» есть и в
+    # книге Гардена, и в книге Когона -- это книги ДВУХ РАЗНЫХ ЛЮДЕЙ.
+    ('Гарден_Агрокластер_Дрон_маълумот.xlsx', 'свод ичи (Шохрух)', 14, 154.70,
+     '2025-09', 'Файзуллаев Шохрух'),
+    ('Когон ПТЗ Дрон маълумот (2).xlsx', 'свод ичи (Шохрух)', 36, 412.60,
+     '2025-09', 'Хамроев Шохрух'),
 )
 
 
 def build_db(path, rows=ROWS, manual=0):
     conn = sqlite3.connect(path)
     conn.executescript(SCHEMA)
+    ids = {}
+    for idx, name in enumerate(OPERATORS, 1):
+        conn.execute('INSERT INTO drone_operators (id, full_name) '
+                     'VALUES (?, ?)', (idx, name))
+        ids[name] = idx
     row_id = 0
-    for source_file, sheet, count, hectares, month in rows:
+    for row in rows:
+        source_file, sheet, count, hectares, month = row[:5]
+        operator = row[5] if len(row) > 5 else None
         per = hectares / count
         for number in range(count):
             row_id += 1
             conn.execute(
                 'INSERT INTO drone_works (id, period_month, work_date_from, '
-                'customer_raw, area_ha, amount, source_file, source_sheet, '
-                'source_row) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'customer_raw, area_ha, amount, drone_operator_id, '
+                'source_file, source_sheet, source_row) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 (row_id, month, month + '-10', 'ФХ %d' % row_id, per,
-                 per * 200000, source_file, sheet, number + 4))
+                 per * 200000, ids.get(operator), source_file, sheet,
+                 number + 4))
     # [REASON]: строка, набранная руками, не имеет ни файла, ни листа.
     # Она законно «ниоткуда»; если такие складывать в одну группу, отчёт
     # объявит двойной загрузкой всю ручную правку месяца.
@@ -101,27 +128,55 @@ class ImportDuplicatesTest(unittest.TestCase):
         self.db = os.path.join(self.dir, 'transport.db')
         build_db(self.db)
 
-    def test_the_double_upload_is_found(self):
-        _rows, duplicates = scan(self.db)
-        self.assertEqual({('2025-09', 'свод ичи (Мухриддин)'),
-                          ('2025-09', 'свод ичи (Фурқат)')}, set(duplicates))
+    # ГЛАВНОЕ: лист-тёзка -- НЕ дубль, и удалять по нему нечего.
+    def test_a_namesake_sheet_is_not_a_duplicate(self):
+        """Два разных человека под одним именем листа.
 
-    def test_the_surplus_is_the_smaller_upload(self):
-        """Полной считается загрузка с наибольшим числом строк."""
+        [REASON]: без различения по оператору отчёт предложил бы удалить
+        154.70 га книги Файзуллаева Шохруха как «лишнюю загрузку» книги
+        Хамроева Шохруха. Это и случилось на production 2026-08-20.
+        """
         _rows, duplicates = scan(self.db)
-        items = tool.surplus(duplicates)
-        self.assertEqual(2, len(items))
-        self.assertEqual({STALE}, {i[2] for i in items})
-        self.assertEqual(15, sum(i[3] for i in items))
-        self.assertAlmostEqual(118.40, sum(i[4] for i in items), 2)
+        key = ('2025-09', 'свод ичи (Шохрух)')
+        self.assertIn(key, duplicates)
+        self.assertEqual(tool.NAMESAKE, duplicates[key]['kind'])
+        self.assertEqual(
+            {'Файзуллаев Шохрух', 'Хамроев Шохрух'},
+            {f[4] for f in duplicates[key]['files']})
+        # Ни в кандидатах, ни в SQL его быть не должно.
+        self.assertNotIn(key, {(i[0], i[1]) for i in
+                               tool.candidates(duplicates)})
+        self.assertEqual([key[0]], [t[0] for t in tool.namesakes(duplicates)])
+
+    def test_a_real_double_upload_is_a_candidate(self):
+        _rows, duplicates = scan(self.db)
+        for sheet in ('свод ичи (Мухриддин)', 'свод ичи (Фурқат)'):
+            key = ('2025-09', sheet)
+            self.assertEqual(tool.CANDIDATE, duplicates[key]['kind'], sheet)
+            self.assertEqual(1, len({f[4] for f in duplicates[key]['files']}),
+                             sheet)
+
+    def test_both_files_are_offered_never_one_verdict(self):
+        """Отчёт НЕ решает, какая загрузка лишняя -- это говорит свод.
+
+        [REASON]: первая редакция считала полной загрузку с наибольшим
+        числом строк. На апреле 2026 это назвало бы лишним файл с 361.30 га
+        в пользу файла с 492.15, а на мае -- файл с 548.10 га в пользу файла
+        с 226.51. Число строк такого не решает.
+        """
+        _rows, duplicates = scan(self.db)
+        items = tool.candidates(duplicates)
+        self.assertEqual(4, len(items))          # два листа x два файла
+        self.assertEqual({STALE, GOOD}, {i[2] for i in items})
 
     def test_a_clean_month_is_silent(self):
         """Отрицательный контроль: отчёт, кричащий всегда, бесполезен."""
         os.remove(self.db)
-        build_db(self.db, rows=tuple(r for r in ROWS if r[0] != STALE))
+        build_db(self.db, rows=tuple(r for r in ROWS if r[0] != STALE
+                                     and r[1] != 'свод ичи (Шохрух)'))
         _rows, duplicates = scan(self.db)
         self.assertEqual({}, duplicates)
-        self.assertEqual([], tool.surplus(duplicates))
+        self.assertEqual([], tool.candidates(duplicates))
 
     def test_hand_typed_rows_are_not_a_double_upload(self):
         """[REASON]: у ручной строки нет ни файла, ни листа -- их много, и
@@ -131,50 +186,47 @@ class ImportDuplicatesTest(unittest.TestCase):
         руками, и на него перестали бы смотреть.
         """
         os.remove(self.db)
-        build_db(self.db, rows=tuple(r for r in ROWS if r[0] != STALE),
+        build_db(self.db, rows=tuple(r for r in ROWS if r[0] != STALE
+                                     and r[1] != 'свод ичи (Шохрух)'),
                  manual=5)
         _rows, duplicates = scan(self.db)
         self.assertEqual({}, duplicates)
 
     def test_the_same_sheet_in_another_month_is_not_a_duplicate(self):
-        """Один лист в разных месяцах -- это разные книги, а не дубль."""
         os.remove(self.db)
         build_db(self.db, rows=(
-            (GOOD, 'свод ичи (Мухриддин)', 11, 205.00, '2025-09'),
+            (GOOD, 'свод ичи (Мухриддин)', 11, 205.00, '2025-09',
+             'Қудратов Мухриддин'),
             ('Сервис Октябрь.xlsx', 'свод ичи (Мухриддин)', 9, 180.0,
-             '2025-10')))
+             '2025-10', 'Қудратов Мухриддин')))
         _rows, duplicates = scan(self.db)
         self.assertEqual({}, duplicates)
 
     def test_month_filter_narrows_the_scan(self):
-        os.remove(self.db)
-        build_db(self.db, rows=ROWS + (
-            ('Сервис Октябрь.xlsx', 'свод ичи (Мухриддин)', 9, 180.0,
-             '2025-10'),
-            ('Сервис Октябрь (2).xlsx', 'свод ичи (Мухриддин)', 4, 40.0,
-             '2025-10')))
         _rows, all_months = scan(self.db)
         self.assertEqual(3, len(all_months))
+        _rows, september = scan(self.db, '2025-09')
+        self.assertEqual(3, len(september))
         _rows, october = scan(self.db, '2025-10')
-        self.assertEqual({('2025-10', 'свод ичи (Мухриддин)')}, set(october))
+        self.assertEqual({}, october)
 
-    def test_the_printed_sql_targets_only_the_surplus(self):
-        """SQL обязан бить точно: файл, лист И месяц."""
+    def test_the_printed_sql_targets_one_file_one_sheet_one_month(self):
         _rows, duplicates = scan(self.db)
-        pairs = tool.sql_lines(tool.surplus(duplicates))
-        self.assertEqual(2, len(pairs))
+        pairs = tool.sql_lines(tool.candidates(duplicates))
+        self.assertEqual(4, len(pairs))
         for select, delete in pairs:
             self.assertTrue(select.startswith('SELECT'))
             self.assertTrue(delete.startswith('DELETE'))
-            self.assertIn(STALE, delete)
-            self.assertNotIn(GOOD, delete)
             self.assertIn("period_month) = '2025-09'", delete)
             self.assertIn('source_sheet', delete)
+            self.assertIn('source_file', delete)
+            self.assertNotIn('Шохрух', delete)
 
-    def test_the_printed_sql_actually_removes_exactly_the_surplus(self):
+    def test_the_chosen_delete_removes_exactly_that_upload(self):
         """Печатаемый SQL проверяется ИСПОЛНЕНИЕМ, а не чтением глазами."""
         _rows, duplicates = scan(self.db)
-        pairs = tool.sql_lines(tool.surplus(duplicates))
+        stale = [i for i in tool.candidates(duplicates) if i[2] == STALE]
+        pairs = tool.sql_lines(stale)
         conn = sqlite3.connect(self.db)
         try:
             before = conn.execute('SELECT COUNT(*), ROUND(SUM(area_ha), 2) '
@@ -192,6 +244,8 @@ class ImportDuplicatesTest(unittest.TestCase):
         self.assertAlmostEqual(before[1] - 118.40, after[1], 2)
         self.assertNotIn(STALE, left)
         self.assertIn(GOOD, left)
+        # Книга Файзуллаева Шохруха не тронута.
+        self.assertIn('Гарден_Агрокластер_Дрон_маълумот.xlsx', left)
 
     def test_the_database_is_opened_read_only(self):
         conn = tool.connect_ro(self.db)
@@ -205,8 +259,7 @@ class ImportDuplicatesTest(unittest.TestCase):
         """[REASON]: read-only соединение защищает от ошибки, а не от замысла.
 
         Печатаемый DELETE -- это ТЕКСТ для владельца, он собирается в
-        sql_lines и никогда не исполняется. Проверяется, что ни один
-        литерал вне sql_lines не содержит пишущего слова.
+        sql_lines и никогда не исполняется.
         """
         path = os.path.join(REPO_ROOT, 'tools', 'drone_import_duplicates.py')
         with open(path, encoding='utf-8') as handle:
@@ -226,7 +279,7 @@ class ImportDuplicatesTest(unittest.TestCase):
                             'пишущее слово %r в %s: %r'
                             % (word, node.name, child.value[:60]))
 
-    def test_exit_code_is_one_when_a_duplicate_is_found(self):
+    def _run_main(self):
         import contextlib
         import io as _io
         buffer = _io.StringIO()
@@ -237,58 +290,49 @@ class ImportDuplicatesTest(unittest.TestCase):
                 code = tool.main()
         finally:
             sys.argv = argv
-        printed = buffer.getvalue()
+        return code, buffer.getvalue()
+
+    def test_exit_code_is_one_when_a_duplicate_is_found(self):
+        code, printed = self._run_main()
         printed.encode('ascii')          # консоль -- только ASCII
         self.assertEqual(1, code)
         self.assertIn('NOTHING WAS DELETED', printed)
-        self.assertIn('Surplus hectares    : 118.40', printed)
+        self.assertIn('DOES NOT DECIDE', printed)
+        self.assertIn('Namesake sheets     : 1', printed)
 
-    def test_the_sql_goes_to_a_utf8_file_not_the_console(self):
-        """[REASON]: консоль Windows калечит кириллицу в «?????».
+    def test_the_sql_file_marks_the_namesake_and_comments_every_delete(self):
+        """Файл обязан и предупредить про тёзку, и не дать удалить сгоряча.
 
-        Скопированный оттуда SQL не нашёл бы НИ ОДНОЙ строки и выглядел бы
-        при этом безобидно -- «удалено 0 строк». Поэтому имена листов
-        обязаны дойти до владельца файлом, а не через консоль.
+        [REASON]: DELETE выписывается ЗАКОММЕНТИРОВАННЫМ. Файл, который
+        можно выполнить целиком одним махом, снёс бы обе стороны каждого
+        кандидата -- то есть и верную загрузку тоже.
         """
-        import contextlib
-        import io as _io
-        buffer = _io.StringIO()
-        argv = sys.argv
-        sys.argv = ['drone_import_duplicates.py', '--db', self.db]
-        try:
-            with contextlib.redirect_stdout(buffer):
-                tool.main()
-        finally:
-            sys.argv = argv
-        printed = buffer.getvalue()
-        printed.encode('ascii')
-        self.assertNotIn('Мухриддин', printed)
-        self.assertNotIn('DELETE FROM', printed)
+        self._run_main()
         sql_path = os.path.join(self.dir, 'drone_import_duplicates.sql')
-        self.assertTrue(os.path.isfile(sql_path))
         with open(sql_path, encoding='utf-8') as handle:
             sql = handle.read()
-        self.assertIn('свод ичи (Мухриддин)', sql)
-        self.assertIn(STALE, sql)
-        self.assertNotIn(GOOD, sql)
-        self.assertEqual(2, sql.count('SELECT id,'))
-        self.assertEqual(2, sql.count('DELETE FROM'))
+        self.assertIn('ТЁЗКИ, НЕ ДУБЛЬ. Ничего не удалять.', sql)
+        self.assertIn('свод ичи (Шохрух)', sql)
+        # Ни одного DELETE по листу-тёзке.
+        for line in sql.splitlines():
+            if 'DELETE' in line:
+                self.assertTrue(line.strip().startswith('--'), line)
+                self.assertNotIn('Шохрух', line)
+        self.assertEqual(4, sql.count('SELECT id,'))
+        self.assertEqual(4, sql.count('-- DELETE FROM'))
+
+    def test_the_console_never_leaks_cyrillic(self):
+        _code, printed = self._run_main()
+        printed.encode('ascii')
+        self.assertNotIn('DELETE FROM', printed)
 
     def test_exit_code_is_zero_on_a_clean_base(self):
         os.remove(self.db)
-        build_db(self.db, rows=tuple(r for r in ROWS if r[0] != STALE))
-        import contextlib
-        import io as _io
-        buffer = _io.StringIO()
-        argv = sys.argv
-        sys.argv = ['drone_import_duplicates.py', '--db', self.db]
-        try:
-            with contextlib.redirect_stdout(buffer):
-                code = tool.main()
-        finally:
-            sys.argv = argv
+        build_db(self.db, rows=tuple(r for r in ROWS if r[0] != STALE
+                                     and r[1] != 'свод ичи (Шохрух)'))
+        code, printed = self._run_main()
         self.assertEqual(0, code)
-        self.assertIn('No book looks imported twice', buffer.getvalue())
+        self.assertIn('No book looks imported twice', printed)
 
     def test_missing_database_gives_code_two(self):
         argv = sys.argv
