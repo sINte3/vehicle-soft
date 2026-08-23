@@ -82,6 +82,10 @@ import openpyxl
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOL = os.path.join(REPO_ROOT, 'tools', 'drone_month_books_vs_flights.py')
+
+# Строка целиком, вместе с шириной поля %8.2f: 9+9+40+5+5+6 = 74.00 га
+# внутри сентября. Августовский вылет на 500 га сюда попасть не может.
+FLIGHTS_LINE = '  flights :    74.00 ha in 6 flights (inside 2025-09)'
 sys.path.insert(0, os.path.join(REPO_ROOT, 'tools'))
 
 CASH_HEADER = ['№', 'ФХ номи', 'Майдон (га)', 'Хизмат кўрсатиш суммаси',
@@ -313,6 +317,64 @@ class MonthReconTest(unittest.TestCase):
         result = self.run_tool(spec)
         self.assertEqual(3, result.returncode, result.stdout)
         self.assertIn('not covered', result.stdout)
+
+    # 6a. БЕЗ КАРТЫ отчёт не смеет печатать телеметрию нулём.
+    def test_a_run_without_a_map_never_reports_zero_telemetry(self):
+        """[REASON]: первый прогон месяца ВСЕГДА идёт без карты -- карты ещё
+
+        нет, её и предстоит вывести. Прежняя редакция печатала при этом
+        «flights: 0.00 ha in 6 flights» и выходила кодом 0: число,
+        неотличимое от пустой выгрузки, и ровно тот класс дефекта, что
+        «records_written всегда равнялся records_seen». Теперь строка
+        «flights» говорит, сколько телеметрии УВИДЕНО в месяце, а отсутствие
+        привязки названо словами.
+        """
+        result = self.run_tool(None)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn(FLIGHTS_LINE, result.stdout)
+        self.assertNotIn('    0.00 ha in 6 flights', result.stdout)
+        # [REASON]: сверять ПОДСТРОКОЙ мало -- «574.00 ha in 6
+        # flights» содержит «74.00 ha in 6 flights», и мутация,
+        # считающая вылеты ЧУЖИХ месяцев, прошла бы незамеченной.
+        # Поэтому сверяется вся строка целиком, с шириной поля.
+        self.assertIn('NO ASSIGNMENT MAP', result.stdout)
+        self.assertIn('not a single flight is attributed', result.stdout)
+        # Августовский вылет на 500 га в месяц не входит и попасть не может.
+        self.assertNotIn('500', result.stdout)
+
+    # 6b. Без карты печатается раскладка ПО МАШИНАМ -- сырьё для карты.
+    def test_without_a_map_the_by_machine_breakdown_is_printed(self):
+        result = self.run_tool(None)
+        self.assertIn('Telemetry by machine', result.stdout)
+        self.assertIn('machine #11', result.stdout)
+        self.assertIn('74.00 ha', result.stdout)
+        self.assertIn('2025-09-06..2025-09-26', result.stdout)
+
+    # 6c. Отрицательный контроль: С картой обе строки на месте и совпадают.
+    def test_with_a_full_map_seen_and_attributed_agree(self):
+        """[REASON]: проверка, что «увидено» печатается всегда, обязана
+
+        показать и обратный случай -- иначе она не отличает исправленный код
+        от кода, который просто печатает одно и то же число дважды.
+        """
+        result = self.run_tool(self.spec())
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn(FLIGHTS_LINE, result.stdout)
+        self.assertIn('attributed to operators:    74.00 ha', result.stdout)
+        self.assertNotIn('NO ASSIGNMENT MAP', result.stdout)
+
+    # 6d. И контроль на РАЗЛИЧИЕ: карта короче месяца -- увидено больше,
+    #     чем отнесено, и обе цифры печатаются разными.
+    def test_a_partial_map_shows_seen_above_attributed(self):
+        spec = self.spec(assignments=[{'machine': 11, 'from': '2025-09-01',
+                                       'to': '2025-09-19',
+                                       'operator': 'Ибодуллаев Хасанбой',
+                                       'why': 'окно короче месяца'}])
+        result = self.run_tool(spec)
+        # Непокрытые вылеты -- код 3, но числа обязаны быть напечатаны до него.
+        self.assertEqual(3, result.returncode, result.stdout)
+        self.assertIn(FLIGHTS_LINE, result.stdout)
+        self.assertIn('attributed to operators:    18.00 ha', result.stdout)
 
     # 7. Одна машина, разделённая датой, даёт двум людям разные суммы.
     def test_one_machine_split_by_date_splits_hectares(self):

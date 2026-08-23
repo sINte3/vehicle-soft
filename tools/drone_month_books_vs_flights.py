@@ -673,9 +673,31 @@ def compute(books, flights, rules, month):
     tele_by_machine_day = {}
     seg = {}
     uncovered = []
+    # [REASON]: ТЕЛЕМЕТРИЯ, УВИДЕННАЯ В МЕСЯЦЕ, считается ДО проверки покрытия
+    # и независимо от неё. Без карты назначений ни один вылет не покрыт, и
+    # раньше отчёт печатал «flights: 0.00 ha in 186 flights» с кодом 0 --
+    # число, неотличимое от пустой выгрузки. А первый прогон месяца всегда
+    # идёт БЕЗ карты: карты ещё нет, её и предстоит вывести. Это тот же класс
+    # дефекта, что «records_written всегда равнялся records_seen»: признак,
+    # одинаковый в двух разных случаях, признаком не является.
+    seen_ha = 0.0
+    seen_flights = 0
+    seen_by_machine = {}
     for flight in flights:
         if flight['day'] not in day_set:
             continue
+        seen_ha += flight['ha']
+        seen_flights += 1
+        cell = seen_by_machine.setdefault(
+            flight['machine'], {'flights': 0, 'ha': 0.0, 'first': None,
+                                'last': None, 'nicks': set()})
+        cell['flights'] += 1
+        cell['ha'] += flight['ha']
+        cell['nicks'].add(flight['nick'])
+        if cell['first'] is None or flight['day'] < cell['first']:
+            cell['first'] = flight['day']
+        if cell['last'] is None or flight['day'] > cell['last']:
+            cell['last'] = flight['day']
         operator, covered = operator_for(rules, flight['machine'],
                                          flight['day'])
         if not covered:
@@ -736,6 +758,9 @@ def compute(books, flights, rules, month):
         'tele_by_machine_day': tele_by_machine_day,
         'segments': seg,
         'uncovered': uncovered,
+        'seen_ha': seen_ha,
+        'seen_flights': seen_flights,
+        'seen_by_machine': seen_by_machine,
         'book_by_op': book_by_op,
         'book_by_op_day': book_by_op_day,
         'book_undated': book_undated,
@@ -1414,8 +1439,10 @@ def main():
               % len(skipped))
         for name, title in skipped:
             print('    %s | %s' % (_ascii(name), _ascii(title)))
-    print('  flights : %8.2f ha in %d flights' % (tele_total, len(flights)))
+    print('  flights : %8.2f ha in %d flights (inside %s)'
+          % (model['seen_ha'], model['seen_flights'], args.month))
     if rules:
+        print('  attributed to operators: %8.2f ha' % tele_total)
         print('  coverage: %d flights not covered by the map'
               % len(model['uncovered']))
         for operator in sorted(model['tele_by_op'],
@@ -1426,6 +1453,26 @@ def main():
             flag = '' if abs(share - 100.0) <= TRUST_BAND else '  <-- out of band'
             print('    %-24s book %8.2f  tele %8.2f  %6.1f%%%s'
                   % (_ascii(operator), book, tele, share, flag))
+    else:
+        # [REASON]: карты нет -- значит НИ ОДИН вылет не отнесён к оператору, и
+        # листы отчёта по операторам пусты. Сказать это словами обязательно:
+        # молча напечатанный ноль читается как «телеметрии за месяц нет», а
+        # это разные вещи. Заодно печатается раскладка ПО МАШИНАМ -- ровно то
+        # сырьё, из которого карту и выводят.
+        print('  NO ASSIGNMENT MAP (--assignments not given): not a single '
+              'flight is attributed')
+        print('  to an operator, and every per-operator sheet of the report '
+              'is empty by construction.')
+        print('  Telemetry by machine -- this is the raw material for the '
+              'map:')
+        for machine in sorted(model['seen_by_machine'],
+                              key=lambda m: (m is None, m)):
+            cell = model['seen_by_machine'][machine]
+            nicks = ', '.join(sorted(n for n in cell['nicks'] if n))
+            print('    machine %-6s %5d flights %9.2f ha  %s..%s  %s'
+                  % ('-' if machine is None else '#%d' % machine,
+                     cell['flights'], cell['ha'], cell['first'], cell['last'],
+                     _ascii(nicks)[:48]))
     if control:
         worst = 0.0
         for name, entry in sorted(control.items()):
