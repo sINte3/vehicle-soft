@@ -2343,12 +2343,21 @@ def _drone_summary_data(conds):
     looping over loaded rows: the table holds ~29 000 flights after the
     historical backfill and keeps growing.
     """
+    # [REASON]: count() ПО КОЛОНКЕ считает только не-NULL. Без него
+    # coalesce(sum(spray_liters), 0.0) схлопывает «литров не записано ни у
+    # одного вылета» и «залито ровно ноль литров» в одно и то же число 0, а
+    # это разные факты: первый значит «данных нет», второй -- «дрон летал
+    # сухим». Июнь-2026 машины №8 -- 588 вылетов, все помечены DJI как
+    # опрыскивание, и «Литров раствора: 0»; по этому нулю нельзя было понять,
+    # сломан ли расходомер или работа шла без раствора. Тот же класс, что
+    # «признак успеха, определённый пробой, неразличающей два поля».
     totals_row = (db.session.query(
         func.count(DroneFlight.id),
         func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
         func.coalesce(func.sum(DroneFlight.work_seconds), 0),
         func.coalesce(func.sum(DroneFlight.spray_liters), 0.0),
         func.coalesce(func.sum(DroneFlight.sow_kg), 0.0),
+        func.count(DroneFlight.spray_liters),
     ).filter(*conds).one())
     zero_area = (db.session.query(func.count(DroneFlight.id))
                  .filter(*conds).filter(DroneFlight.area_ha == 0).scalar())
@@ -2357,7 +2366,11 @@ def _drone_summary_data(conds):
         'flights': totals_row[0] or 0,
         'area_ha': float(totals_row[1] or 0.0),
         'hours': (totals_row[2] or 0) / 3600.0,
-        'spray_liters': float(totals_row[3] or 0.0),
+        # None -- «литры не записаны ни у одного вылета», а не «ноль литров».
+        # Шаблон и выгрузка рисуют None прочерком, ровно как «Л/га» и «Га/час».
+        'spray_liters': (float(totals_row[3] or 0.0)
+                         if (totals_row[5] or 0) else None),
+        'spray_rows': totals_row[5] or 0,
         'sow_kg': float(totals_row[4] or 0.0),
         'zero_area': zero_area or 0,
     }
@@ -2376,28 +2389,35 @@ def _drone_summary_data(conds):
         # fields already stored -- no new column, no new table.
         func.coalesce(func.sum(DroneFlight.work_seconds), 0),
         func.coalesce(func.sum(DroneFlight.spray_liters), 0.0),
+        func.count(DroneFlight.spray_liters),
     ).filter(*conds).group_by(DroneFlight.drone_unit_id).all())
     unit_numbers = {u.id: u.number for u in DroneUnit.query.all()}
     machine_rows = []
     machine_unattributed = None
     m_seconds = 0
     m_liters = 0.0
-    for unit_id, flights, area, seconds, liters in machine_groups:
+    m_spray_rows = 0
+    for unit_id, flights, area, seconds, liters, spray_rows in machine_groups:
         area = float(area or 0.0)
         seconds = int(seconds or 0)
         liters = float(liters or 0.0)
         m_seconds += seconds
         m_liters += liters
+        m_spray_rows += spray_rows or 0
         cell = {
             'flights': flights,
             'area': area,
             'share': _drone_share(area, total_area),
             'hours': seconds / 3600.0,
-            'spray_liters': liters,
+            'spray_liters': liters if spray_rows else None,
             # Guarded: a machine with no recorded flight time and a machine
             # with no sprayed area both render as an em dash, never as zero.
             'ha_per_hour': _drone_rate(area, seconds / 3600.0),
-            'liters_per_ha': _drone_rate(liters, area),
+            # [REASON]: и третий случай -- НИ У ОДНОГО вылета машины литры не
+            # записаны. Ноль в этой колонке читается как «машина не льёт
+            # ничего», а это обвинение; здесь верный ответ «неизвестно».
+            'liters_per_ha': (_drone_rate(liters, area)
+                              if spray_rows else None),
         }
         if unit_id is None:
             machine_unattributed = cell
@@ -2419,9 +2439,10 @@ def _drone_summary_data(conds):
             'flights': m_flights,
             'area': m_area,
             'hours': m_seconds / 3600.0,
-            'spray_liters': m_liters,
+            'spray_liters': m_liters if m_spray_rows else None,
             'ha_per_hour': _drone_rate(m_area, m_seconds / 3600.0),
-            'liters_per_ha': _drone_rate(m_liters, m_area),
+            'liters_per_ha': (_drone_rate(m_liters, m_area)
+                              if m_spray_rows else None),
         },
         'reconciled': reconciled(m_flights, m_area),
     }
@@ -2475,10 +2496,11 @@ def _drone_summary_data(conds):
         func.coalesce(func.sum(DroneFlight.area_ha), 0.0),
         func.coalesce(func.sum(DroneFlight.spray_liters), 0.0),
         func.coalesce(func.sum(DroneFlight.sow_kg), 0.0),
+        func.count(DroneFlight.spray_liters),
     ).filter(*conds).group_by(DroneFlight.usage_type).all())
     usage_labels = _drone_usage_labels()
     usage_rows = []
-    for usage_type, flights, area, liters, kg in usage_groups:
+    for usage_type, flights, area, liters, kg, spray_rows in usage_groups:
         area = float(area or 0.0)
         label = usage_labels.get(usage_type)
         if label is None:
@@ -2490,7 +2512,8 @@ def _drone_summary_data(conds):
             'flights': flights,
             'area': area,
             'share': _drone_share(area, total_area),
-            'spray_liters': float(liters or 0.0) if usage_type == 0 else None,
+            'spray_liters': (float(liters or 0.0)
+                             if usage_type == 0 and spray_rows else None),
             'sow_kg': float(kg or 0.0) if usage_type == 1 else None,
         })
     usage_rows.sort(key=lambda r: (r['usage_type'] is None,

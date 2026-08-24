@@ -76,7 +76,10 @@
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Литров раствора' if is_ru else 'Литр эритма' }}</div>
-    <div class="vs-stat-value is-num">{{ '%.2f'|format(data.totals.spray_liters)|vs_num }}</div>
+    {# [REASON]: None значит «литры не записаны НИ У ОДНОГО вылета», а не
+       «залито ноль». Ноль тут читался бы как «дрон летал сухим» -- это
+       другое и, возможно, ложное утверждение. Прочерк -- как у «Л/га». #}
+    <div class="vs-stat-value is-num">{% if data.totals.spray_liters is not none %}{{ '%.2f'|format(data.totals.spray_liters)|vs_num }}{% else %}—{% endif %}</div>
   </div>
   <div class="vs-stat">
     <div class="vs-stat-label">{{ 'Кг посева' if is_ru else 'Кг уруғ' }}</div>
