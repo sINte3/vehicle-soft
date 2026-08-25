@@ -346,9 +346,19 @@ def main():
     print('Changes:')
     for line in report:
         print(line)
-    print('Postconditions: Zhumaev gets 47.92 ha of October; 13.24 ha are '
-          'left without an operator (machines No 7, No 8 tail, No 10); the '
-          'month total 1478.12 ha is unchanged; no flight has two operators.')
+    # [REASON]: числа берутся из констант модуля, а не переписаны заново
+    # текстом. Прежняя строка была буквально скопирована из
+    # migrate_drones_assign_oct2025_servis15_001.py (тот же Zhumaev,
+    # 47.92 га) и напечатала чужую сводку под каждым прогоном этой
+    # миграции -- проверка постусловий это не ловит, потому что она
+    # сверяет данные в базе, а не текст сообщения. Имя -- ручная
+    # транслитерация, как и строкой ниже: _ascii(OPERATOR) даёт только
+    # '?????????? ??????', это замена не-ASCII на '?', а не транслитератор.
+    print('Postconditions: Fayzullaev Shohruh gets %.2f ha of October; '
+          '%.4f ha are left without an operator (machines No 8 tail, '
+          'No 10); the month total %.2f ha is unchanged; no flight has '
+          'two operators.'
+          % (EXPECTED_UNIT_HA, EXPECTED_ORPHAN_HA_AFTER, EXPECTED_MONTH_HA))
     print('')
     print('After this the October books read (book -> telemetry):')
     print('  Fayzullaev Shohruh      0.00 ha vs  11.97   -- he has NO October '
