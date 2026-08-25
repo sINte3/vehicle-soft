@@ -267,8 +267,14 @@ class TestGeometry(unittest.TestCase):
 
     def test_area_needing_more_path_than_flown_is_flagged(self):
         """A 100 m route that DJI credits with 5 940 m2 at a 5.91 m swath
-        would need 1 005 m of path. That is the shape of the anomaly found on
-        flight 622715275 of 2026-06-05."""
+        would need 1 005 m of path, so the check fires.
+
+        Synthetic on purpose. The real flight 622715275 of 2026-06-05 looks
+        like this -- 108 m of route, 5 940 m2 from DJI -- but it carries NO
+        recorded swath, so this check answers None for it, not True. What the
+        real record supports is the inverse statement, which needs no swath at
+        all: 5 940 m2 over 108 m would require a 55 m swath. Giving it 5.91 m
+        here would be the substitution the owner forbade."""
         short = [(FAKE_LAT, FAKE_LNG), (FAKE_LAT, FAKE_LNG + 0.00117)]
         record = decode_route_record(route_record(points=short, area_m2=5940.0,
                                                   width=5.91))

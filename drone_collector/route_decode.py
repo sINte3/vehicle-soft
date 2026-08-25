@@ -457,13 +457,26 @@ def implied_work_length_m(record):
     """DJI's own area divided by its own width: how much path DJI's number
     needs, in metres. None when either input is missing.
 
-    Why this is worth computing. The model established on liquid consumption
-    in docs/DRONES_AREA_DISPUTE.md is that `new_work_area` is the path flown
-    with the pump running, multiplied by the set swath. If that holds, this
-    length can never exceed the length of the flight's own route -- the pump
-    cannot be on for longer than the drone flew. So the comparison is a
-    one-sided consistency test that the data can actually fail, and in the
-    sample it does fail, twice. See `route_exceeds_path`.
+    Why this is worth computing. There is a WORKING HYPOTHESIS, derived from
+    analysing liquid consumption in docs/DRONES_AREA_DISPUTE.md, that
+    `new_work_area` is the path flown with the pump running multiplied by the
+    set swath. It is a hypothesis and not an established fact: it rests on
+    litres-per-hectare staying constant across flights of very different size,
+    and nothing in this payload -- or in any DJI payload we have seen --
+    reports the pump at all.
+
+    IF the hypothesis holds, this length cannot exceed the length of the
+    flight's own route: the pump cannot run longer than the drone flew. That
+    makes the comparison a one-sided CONSISTENCY CHECK which the data is able
+    to fail. On the nine flights of 2026-06-05 nothing failed it -- seven came
+    out between 0.336 and 0.930, and the remaining two could not be checked at
+    all because DJI recorded no swath for them (see `route_exceeds_path`,
+    which answers None there and never False).
+
+    What a pass does NOT mean. The check is one-sided, so any hypothesis
+    yielding an area no larger than length x swath passes it too. Agreement is
+    a point in the hypothesis' favour; it is not proof of it, and no number
+    derived through the hypothesis may be reported as an observation.
     """
     if record.work_area_m2 is None or not record.spray_width_known:
         return None
@@ -472,6 +485,11 @@ def implied_work_length_m(record):
 
 def route_exceeds_path(record, tolerance=1.0):
     """True when DJI's area needs more path than the route contains.
+
+    Conditional by construction: what it tests is consistency with the working
+    hypothesis described on `implied_work_length_m`, not with a measured fact.
+    True therefore means "DJI's area cannot be reconciled with this route under
+    that hypothesis" -- a reason to look, never a verdict on its own.
 
     `tolerance` is a plain ratio, not a percentage: 1.0 means "flag only a
     real excess". Returns None when the test cannot be run at all (no width,
