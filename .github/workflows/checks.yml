@@ -66,3 +66,14 @@ jobs:
 
       - name: Dictionary integrity (no key redefined, both languages present)
         run: python -m unittest tests.test_translations_integrity
+
+      # DRONE-COVERAGE-001. Both are stdlib-only and build their fixtures in
+      # memory: no network, no browser, no database, nothing to install. The
+      # decoder tests carry the negative result of the whole discovery -- that
+      # a DJI route point is two coordinates and nothing more -- so they have
+      # to fail loudly the day DJI changes that, not the day someone notices.
+      - name: DJI route decoder (drone_collector/route_decode.py)
+        run: python -m unittest drone_collector.tests.test_route_decode
+
+      - name: Route probe self-test, including the secret-leak warning
+        run: python tools/test_drone_route_probe.py
