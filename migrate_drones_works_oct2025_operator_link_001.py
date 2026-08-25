@@ -298,6 +298,16 @@ def main():
                 for line in problems:
                     print(line)
                 return 1
+            # [REASON]: считается ЗДЕСЬ, внутри открытой транзакции, а не
+            # после commit/rollback. Соединение видит свои же незафиксиро-
+            # ванные записи (read-your-own-writes), поэтому число верно и в
+            # сухом прогоне, и в боевом. Смещение этой строки после rollback
+            # заставляло сухой прогон откатывать привязку и тут же считать
+            # эти же шесть строк «чужими из другой книги» -- ложная тревога
+            # на каждом dry run, воспроизведена на чистой фикстуре без
+            # единой посторонней сироты.
+            left_rows, left_ha = orphan_stats(conn)
+            leftovers = (left_rows, left_ha) if left_rows else None
             if not args.apply:
                 conn.rollback()
                 print('%s: DRY RUN, nothing written.' % MIGRATION_ID)
@@ -311,13 +321,6 @@ def main():
         except Exception:
             conn.rollback()
             raise
-
-        # [REASON]: печатается ПОСЛЕ всего и НЕ валит прогон. Строка октября,
-        # оставшаяся без оператора помимо этих шести, -- повод посмотреть, а
-        # не повод откатить верную привязку: она пришла бы из другой книги и
-        # к этим двум группам отношения не имеет.
-        left_rows, left_ha = orphan_stats(conn)
-        leftovers = (left_rows, left_ha) if left_rows else None
     finally:
         conn.close()
 

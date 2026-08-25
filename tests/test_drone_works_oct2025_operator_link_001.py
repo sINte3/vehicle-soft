@@ -173,6 +173,53 @@ class OctoberOperatorLinkTest(unittest.TestCase):
         self.assertEqual(before, snapshot(self.db))
         self.assertEqual([], registry(self.db))
 
+    # 1а. ОТРИЦАТЕЛЬНЫЙ КОНТРОЛЬ: сухой прогон -- НЕ повод для ложной NOTE.
+    def test_dry_run_reports_no_leftover_when_none_exist(self):
+        """[REASON]: orphan_stats считался ПОСЛЕ conn.rollback(), и в сухом
+
+        прогоне откат отменял саму привязку -- инструмент откатывал шесть
+        строк и тут же объявлял их «чужими из другой книги». На этой же
+        фикстуре, без единой посторонней сироты, старый код печатал NOTE
+        всегда: и здесь, и в --apply. Без этого теста регрессия невидима --
+        assertIn('DRY RUN', ...) выше зелёный в обоих случаях.
+        """
+        result = run(self.db)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertNotIn('NOTE', result.stdout, result.stdout)
+
+    # 1б. ПОЛОЖИТЕЛЬНЫЙ КОНТРОЛЬ: настоящая сирота из другой книги видна.
+    def test_apply_changes_reports_a_genuine_leftover_from_another_book(self):
+        """[REASON]: без этого теста правка 1а могла бы просто убрать NOTE
+
+        насовсем, и отличить «починили» от «спрятали» было бы нечем.
+
+        Через CLI этот случай не собрать: check_precondition требует РОВНО
+        EXPECTED_ORPHAN_ROWS сирот по всему месяцу, и лишняя сирота обрывает
+        прогон раньше, чем дело дойдёт до NOTE -- это отдельная, отдельно
+        работающая защита от дрейфа данных, не имеющая отношения к дефекту
+        расчёта остатка. Проверяется поэтому на уровень ниже: сам механизм
+        main() -- apply_changes(), затем orphan_stats() ДО commit/rollback,
+        -- вызван напрямую на соединении с посторонней сиротой.
+        """
+        conn = sqlite3.connect(self.db)
+        conn.execute(
+            'INSERT INTO drone_works (id, period_month, work_date_from, '
+            'work_date_to, drone_operator_id, customer_raw, area_ha, '
+            'amount, source_file, source_sheet, source_row) '
+            "VALUES (999, '2025-10', '2025-10-05', '2025-10-05', NULL, "
+            "'Чужой ФХ', 9.50, 1900000, 'Когон ПТЗ Дрон маълумот.xlsx', "
+            "'свод ичи (Чужой)', 1)")
+        conn.commit()
+        try:
+            conn.execute('BEGIN')
+            migration.apply_changes(conn)
+            left_rows, left_ha = migration.orphan_stats(conn)
+            conn.rollback()
+        finally:
+            conn.close()
+        self.assertEqual(1, left_rows)
+        self.assertAlmostEqual(9.50, left_ha, 2)
+
     # 1. Боевой прогон даёт ровно обещанные числа.
     def test_apply_gives_the_promised_totals(self):
         result = run(self.db, '--apply')

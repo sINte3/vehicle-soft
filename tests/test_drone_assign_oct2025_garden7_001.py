@@ -453,6 +453,25 @@ class Garden7Test(unittest.TestCase):
         self.assertEqual(1, left[0], 'сентябрьское окно №7 снесено откатом')
 
     # 8. Консоль -- только ASCII, и след источника стоит в note.
+    # ОТРИЦАТЕЛЬНЫЙ КОНТРОЛЬ: печатается СВОЯ сводка, не servis15_001-я.
+    def test_the_postconditions_line_names_this_migrations_own_numbers(self):
+        """[REASON]: 'Postconditions: Zhumaev gets 47.92 ha...' была строкой,
+
+        буквально скопированной из migrate_drones_assign_oct2025_servis15_001
+        -- та же реализация main(), тот же образец, тот же принт. Проверка
+        постусловий в базе (test_apply_binds_the_machine_and_the_hectares_
+        land) её не ловит: она сверяет данные, а не текст на экране. Не будь
+        этого теста, копипаст-дефект остался бы невидимым и в третьей
+        миграции того же семейства.
+        """
+        result = run(self.db, '--apply')
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn('Fayzullaev', result.stdout)
+        self.assertIn('11.97 ha', result.stdout)
+        self.assertIn('1.2672 ha', result.stdout)
+        self.assertNotIn('Zhumaev', result.stdout)
+        self.assertNotIn('47.92', result.stdout)
+
     def test_the_console_is_ascii_and_the_note_names_the_evidence(self):
         result = run(self.db, '--apply')
         result.stdout.encode('ascii')
