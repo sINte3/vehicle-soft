@@ -33,8 +33,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools.drone_area_anomaly_probe import (  # noqa: E402
     DEFAULT_LOOKBACK, KNOWN_CASE_FLIGHT_ID, QUALITY_CODES, ProbeError,
-    analyse, check_known_case, classify_number, connect_read_only, main,
-    sha256_of)
+    analyse, check_known_case, classify_column, classify_number,
+    connect_read_only, main, sha256_of, validate_width_range)
 
 # Точная копия DDL из migrate_drones_foundation_001.py.
 DDL_FLIGHTS = """
@@ -241,7 +241,7 @@ class TestReadOnlyGuarantee(ProbeCase):
             con.close()
         self.assertEqual(first['repeats']['count'], second['repeats']['count'])
         self.assertEqual(first['widths']['states'], second['widths']['states'])
-        self.assertAlmostEqual(first['total_area_ha'], second['total_area_ha'])
+        self.assertAlmostEqual(first['known_valid_area_ha'], second['known_valid_area_ha'])
 
 
 class TestSourceHasNoWrites(unittest.TestCase):
@@ -456,7 +456,7 @@ class TestWidthStates(ProbeCase):
             min_width=1.0, max_width=20.0)
         self.assertAlmostEqual(result['width_usable_area_ha'], 1.0)
         self.assertAlmostEqual(
-            result['total_area_ha'] - result['width_usable_area_ha'], 2.0)
+            result['known_valid_area_ha'] - result['width_usable_area_ha'], 2.0)
 
     def test_an_infinite_column_width_does_not_leak_in(self):
         """SQLite хранит inf настоящим REAL, поэтому колонку тоже проверяем."""
@@ -509,14 +509,14 @@ class TestAreaValues(ProbeCase):
         self.assertEqual(
             result['quality']['issues'].get('new_work_area: значение не число'),
             1)
-        self.assertAlmostEqual(result['total_area_ha'], 1.0)
+        self.assertAlmostEqual(result['known_valid_area_ha'], 1.0)
 
     def test_a_nan_area_never_enters_the_total(self):
         _p, result, _b, _a = self.run_probe([
             flight(1, 0, 10000.0),
             flight(2, 10, float('nan'), area_ha_override=0.0)])
-        self.assertTrue(math.isfinite(result['total_area_ha']))
-        self.assertAlmostEqual(result['total_area_ha'], 1.0)
+        self.assertTrue(math.isfinite(result['known_valid_area_ha']))
+        self.assertAlmostEqual(result['known_valid_area_ha'], 1.0)
         self.assertEqual(
             result['quality']['issues'].get(
                 'new_work_area: значение NaN или бесконечность'), 1)
@@ -525,8 +525,8 @@ class TestAreaValues(ProbeCase):
         _p, result, _b, _a = self.run_probe([
             flight(1, 0, 10000.0),
             flight(2, 10, ABSENT, area_ha_override=float('inf'))])
-        self.assertTrue(math.isfinite(result['total_area_ha']))
-        self.assertAlmostEqual(result['total_area_ha'], 1.0)
+        self.assertTrue(math.isfinite(result['known_valid_area_ha']))
+        self.assertAlmostEqual(result['known_valid_area_ha'], 1.0)
         self.assertEqual(result['rows_without_usable_area'], 1)
 
     def test_a_non_finite_area_cannot_create_a_repeat(self):
@@ -565,7 +565,7 @@ class TestBrokenRowSurvives(ProbeCase):
         """Молча подставить колонку нельзя -- это скрыло бы расхождение."""
         _p, result, _b, _a = self.run_probe([
             flight(1, 0, 14520.0, broken_json=True)])
-        self.assertAlmostEqual(result['total_area_ha'], 1.452, places=3)
+        self.assertAlmostEqual(result['known_valid_area_ha'], 1.452, places=3)
         self.assertEqual(
             result['quality']['issues'].get(
                 'площадь взята из колонки: raw_json непригоден'), 1)
@@ -575,7 +575,7 @@ class TestBrokenRowSurvives(ProbeCase):
         _p, result, _b, _a = self.run_probe([
             flight(1, 0, 'nonsense', area_ha_override=9.99)])
         self.assertEqual(result['rows_without_usable_area'], 1)
-        self.assertAlmostEqual(result['total_area_ha'], 0.0)
+        self.assertAlmostEqual(result['known_valid_area_ha'], 0.0)
         self.assertIsNone(result['quality']['issues'].get(
             'площадь взята из колонки: raw_json непригоден'))
 
@@ -697,6 +697,251 @@ class TestQualityCodesAreComplete(ProbeCase):
         for kind in result['quality']['issues']:
             self.assertIn(kind, QUALITY_CODES,
                           'issue kind without an ASCII code: %s' % kind)
+
+
+# ─── Диапазон ширины: атомарность и строгость ────────────────────────────────
+
+class TestWidthRangeValidation(ProbeCase):
+    """Пункт 1 финального ревью: диапазон либо задан целиком, либо не задан."""
+
+    def assert_rejected(self, minimum, maximum, needle=None):
+        reasons = validate_width_range(minimum, maximum)
+        self.assertTrue(reasons, 'expected a rejection for %r..%r'
+                        % (minimum, maximum))
+        if needle:
+            self.assertTrue(any(needle in reason for reason in reasons),
+                            'reasons were: %s' % reasons)
+
+    def test_only_the_minimum_is_rejected(self):
+        self.assert_rejected(1.0, None, 'наполовину')
+
+    def test_only_the_maximum_is_rejected(self):
+        self.assert_rejected(None, 20.0, 'наполовину')
+
+    def test_nan_is_rejected(self):
+        self.assert_rejected(float('nan'), 20.0, 'конечным числом')
+
+    def test_positive_infinity_is_rejected(self):
+        self.assert_rejected(1.0, float('inf'), 'конечным числом')
+
+    def test_negative_infinity_is_rejected(self):
+        self.assert_rejected(float('-inf'), 20.0, 'конечным числом')
+
+    def test_zero_is_rejected(self):
+        self.assert_rejected(0.0, 20.0, 'больше нуля')
+
+    def test_a_negative_bound_is_rejected(self):
+        self.assert_rejected(-5.0, 20.0, 'больше нуля')
+
+    def test_swapped_bounds_are_rejected(self):
+        self.assert_rejected(20.0, 1.0, 'больше')
+
+    def test_a_correct_range_is_accepted(self):
+        """Отрицательный контроль ко всем восьми выше."""
+        self.assertEqual(validate_width_range(1.0, 20.0), [])
+
+    def test_no_range_at_all_is_accepted(self):
+        self.assertEqual(validate_width_range(None, None), [])
+
+    def test_equal_bounds_are_accepted(self):
+        self.assertEqual(validate_width_range(5.95, 5.95), [])
+
+    def test_a_half_range_can_never_produce_usable(self):
+        """Даже в обход CLI: классификатор сам отказывается градуировать.
+
+        [REASON]: с одним только максимумом нижняя проверка не выполнялась бы,
+        и ширина 0.001 м получила бы USABLE -- заведомо непригодное значение
+        было бы объявлено проверенным.
+        """
+        for minimum, maximum in ((None, 20.0), (1.0, None)):
+            states = self.states([flight(1, 0, 10000.0, width=0.001)],
+                                 min_width=minimum, max_width=maximum)
+            self.assertEqual(states.get('POSITIVE_UNVALIDATED'), 1,
+                             'half range %r..%r graded a width'
+                             % (minimum, maximum))
+            self.assertIsNone(states.get('USABLE'))
+
+
+class TestWidthRangeIsCheckedBeforeReadingTheDatabase(ProbeCase):
+
+    def run_main_with_range(self, extra):
+        path = self.make_db(known_case_rows())
+        out = os.path.join(os.path.dirname(path), 'A2.xlsx')
+        with contextlib.redirect_stdout(io.StringIO()) as buffer:
+            code = main(['--db', path, '--out', out] + list(extra))
+        return code, buffer.getvalue(), out
+
+    def test_a_bad_range_exits_with_precondition_and_writes_nothing(self):
+        for extra in (('--min-width-m', '1'),
+                      ('--max-width-m', '20'),
+                      ('--min-width-m', 'nan', '--max-width-m', '20'),
+                      ('--min-width-m', '1', '--max-width-m', 'inf'),
+                      # Форма с «=» обязательна: argparse принимает «-inf»
+                      # за имя опции, а не за значение.
+                      ('--min-width-m=-inf', '--max-width-m', '20'),
+                      ('--min-width-m', '0', '--max-width-m', '20'),
+                      ('--min-width-m=-5', '--max-width-m', '20'),
+                      ('--min-width-m', '20', '--max-width-m', '1')):
+            code, text, out = self.run_main_with_range(extra)
+            self.assertEqual(code, 1, 'range %s was accepted' % (extra,))
+            self.assertIn('swath range is not usable', text)
+            self.assertFalse(os.path.exists(out),
+                             'xlsx written for a bad range %s' % (extra,))
+
+    def test_a_good_range_runs(self):
+        """Отрицательный контроль к предыдущему."""
+        code, _text, out = self.run_main_with_range(
+            ('--min-width-m', '1', '--max-width-m', '20'))
+        self.assertEqual(code, 0)
+        self.assertTrue(os.path.exists(out))
+
+
+# ─── Состояния колонки ───────────────────────────────────────────────────────
+
+class TestColumnStates(ProbeCase):
+    """Пункт 2: пустая колонка и испорченная -- разные вещи."""
+
+    def test_classify_column_tells_the_three_apart(self):
+        self.assertEqual(classify_column(None), (None, 'COLUMN_NULL'))
+        self.assertEqual(classify_column('5.95'), (None, 'COLUMN_INVALID_TYPE'))
+        self.assertEqual(classify_column(True), (None, 'COLUMN_INVALID_TYPE'))
+        self.assertEqual(classify_column(float('inf')),
+                         (None, 'COLUMN_NON_FINITE'))
+        self.assertEqual(classify_column(5.95), (5.95, None))
+
+    def test_an_empty_column_with_broken_json_is_column_null(self):
+        states = self.states([flight(1, 0, 14520.0, width=ABSENT,
+                                     broken_json=True,
+                                     width_col_override=None)])
+        self.assertEqual(states.get('COLUMN_NULL'), 1)
+
+    def test_a_string_in_the_column_is_not_column_null(self):
+        states = self.states([flight(1, 0, 14520.0, broken_json=True,
+                                     width_col_override='wide')])
+        self.assertEqual(states.get('COLUMN_INVALID_TYPE'), 1)
+        self.assertIsNone(states.get('COLUMN_NULL'))
+
+    def test_a_python_boolean_is_invalid_type_at_the_function_level(self):
+        """Защита от boolean нужна, но SQLite до неё не доводит.
+
+        SQLite не имеет типа boolean: True записывается целым 1 и читается
+        целым 1, неотличимо от честной единицы. Поэтому проверка в
+        classify_column -- защита в глубину на случай, если значение придёт
+        из другого источника, а не детектор порчи в базе. Тест фиксирует оба
+        факта, чтобы следующий читатель не принял одно за другое.
+        """
+        self.assertEqual(classify_column(True), (None, 'COLUMN_INVALID_TYPE'))
+        states = self.states([flight(1, 0, 14520.0, broken_json=True,
+                                     width_col_override=True)])
+        self.assertEqual(states.get('POSITIVE_UNVALIDATED'), 1,
+                         'SQLite stores True as the integer 1')
+
+    def test_an_infinite_column_is_non_finite_not_null(self):
+        states = self.states([flight(1, 0, 14520.0, broken_json=True,
+                                     width_col_override=float('inf'))])
+        self.assertEqual(states.get('COLUMN_NON_FINITE'), 1)
+        self.assertIsNone(states.get('COLUMN_NULL'))
+
+    def test_a_bad_column_is_not_reported_as_taken_from_the_column(self):
+        """Негодная колонка не была использована -- значит и записи нет."""
+        _p, result, _b, _a = self.run_probe([
+            flight(1, 0, 14520.0, broken_json=True,
+                   width_col_override='wide', area_ha_override='big')])
+        issues = result['quality']['issues']
+        self.assertIsNone(issues.get(
+            'ширина взята из колонки: raw_json непригоден'))
+        self.assertIsNone(issues.get(
+            'площадь взята из колонки: raw_json непригоден'))
+        self.assertEqual(issues.get('spray_width в колонке: значение не число'),
+                         1)
+        self.assertEqual(issues.get('area_ha в колонке: значение не число'), 1)
+
+    def test_a_good_column_IS_reported_as_taken_from_the_column(self):
+        """Отрицательный контроль к предыдущему."""
+        _p, result, _b, _a = self.run_probe([
+            flight(1, 0, 14520.0, broken_json=True)])
+        issues = result['quality']['issues']
+        self.assertEqual(issues.get(
+            'ширина взята из колонки: raw_json непригоден'), 1)
+        self.assertEqual(issues.get(
+            'площадь взята из колонки: raw_json непригоден'), 1)
+
+    def test_a_bad_area_column_never_enters_a_sum(self):
+        # True здесь не проверяется: SQLite превращает его в целое 1, и
+        # отличить от честной единицы нечем -- см. тест выше.
+        for bad in ('big', float('inf')):
+            _p, result, _b, _a = self.run_probe([
+                flight(1, 0, 10000.0),
+                flight(2, 10, 14520.0, broken_json=True,
+                       area_ha_override=bad)])
+            self.assertTrue(math.isfinite(result['known_valid_area_ha']))
+            self.assertAlmostEqual(result['known_valid_area_ha'], 1.0,
+                                   msg='bad column value %r leaked' % (bad,))
+            self.assertEqual(result['rows_without_usable_area'], 1)
+
+
+# ─── Знаменатели ─────────────────────────────────────────────────────────────
+
+class TestAreaDenominators(ProbeCase):
+    """Пункт 3: процент от «всех гектаров» нельзя считать по неполной сумме."""
+
+    def rows_with_one_unusable(self):
+        # Минуты выбраны ПОСЛЕ контрольного случая (0, 10, 20), иначе строки
+        # вклинятся между его вылетами и разорвут ожидаемое расстояние.
+        return [
+            flight(1, 60, 10000.0, width=5.95),
+            flight(2, 70, 10000.0, width=5.95),
+            flight(3, 80, 'nonsense', width=5.95),
+        ]
+
+    def test_the_denominator_excludes_rows_without_usable_area(self):
+        _p, result, _b, _a = self.run_probe(self.rows_with_one_unusable(),
+                                            min_width=1.0, max_width=20.0)
+        self.assertEqual(result['flights_total'], 3)
+        self.assertEqual(result['rows_with_usable_area'], 2)
+        self.assertEqual(result['rows_without_usable_area'], 1)
+        self.assertAlmostEqual(result['known_valid_area_ha'], 2.0)
+        self.assertFalse(result['area_is_complete'])
+        # Три вылета имеют ширину, но гектаров сосчитано только у двух.
+        self.assertEqual(result['width_usable_flights'], 3)
+        self.assertAlmostEqual(result['width_usable_area_ha'], 2.0)
+        self.assertAlmostEqual(result['width_usable_area_share_of_known'], 1.0)
+
+    def test_a_complete_dataset_is_marked_complete(self):
+        """Отрицательный контроль: без исключённых строк оговорки нет."""
+        _p, result, _b, _a = self.run_probe([
+            flight(1, 0, 10000.0), flight(2, 10, 10000.0)])
+        self.assertTrue(result['area_is_complete'])
+        self.assertEqual(result['rows_without_usable_area'], 0)
+
+    def test_the_console_says_the_fleet_total_is_unknown(self):
+        path = self.make_db(known_case_rows() + self.rows_with_one_unusable())
+        with contextlib.redirect_stdout(io.StringIO()) as buffer:
+            main(['--db', path])
+        text = buffer.getvalue()
+        self.assertIn('KNOWN VALID area total', text)
+        self.assertIn('NOT the total area of the fleet', text)
+        self.assertIn('of KNOWN VALID area', text)
+
+    def test_the_console_omits_the_warning_when_nothing_is_excluded(self):
+        """Отрицательный контроль: предупреждение не кричит на чистых данных."""
+        path = self.make_db(known_case_rows())
+        with contextlib.redirect_stdout(io.StringIO()) as buffer:
+            main(['--db', path])
+        self.assertNotIn('NOT the total area of the fleet', buffer.getvalue())
+
+    def test_the_summary_sheet_states_the_exclusion(self):
+        path = self.make_db(known_case_rows() + self.rows_with_one_unusable())
+        out = os.path.join(os.path.dirname(path), 'A2.xlsx')
+        with contextlib.redirect_stdout(io.StringIO()):
+            main(['--db', path, '--out', out])
+        rows = {row[0]: (row[1], row[2]) for row
+                in open_workbook(out)['Сводка'].iter_rows(values_only=True)
+                if row and row[0]}
+        self.assertIn('Вылетов БЕЗ пригодной площади', rows)
+        self.assertEqual(rows['Вылетов БЕЗ пригодной площади'][0], 1)
+        note = rows['Гектаров по строкам с пригодной площадью'][1]
+        self.assertIn('НЕ ВСЕ ГЕКТАРЫ ПАРКА', note)
 
 
 if __name__ == '__main__':

@@ -153,6 +153,13 @@ DEFAULT_LOOKBACK = 3
 # [REASON]: консоль Windows кириллицу в этом проекте не печатает (правило
 # устава), а «issue #1: 1 rows» не говорит ничего. Код даёт понятную строку
 # в консоли, полное название остаётся в xlsx.
+# Русские названия проблем колонки. Ключи -- коды из classify_column.
+COLUMN_PROBLEM_LABELS = {
+    'COLUMN_NULL': 'пусто',
+    'COLUMN_INVALID_TYPE': 'значение не число',
+    'COLUMN_NON_FINITE': 'значение NaN или бесконечность',
+}
+
 QUALITY_CODES = {
     'raw_json не разобрался': 'RAW_JSON_UNPARSABLE',
     'нет dji_flight_id': 'NO_FLIGHT_ID',
@@ -173,8 +180,11 @@ QUALITY_CODES = {
     'new_work_area: значение NaN или бесконечность': 'AREA_NON_FINITE',
     'spray_width: значение не число': 'WIDTH_INVALID_TYPE',
     'spray_width: значение NaN или бесконечность': 'WIDTH_NON_FINITE',
-    'area_ha в колонке не конечное число': 'AREA_COLUMN_NON_FINITE',
-    'spray_width в колонке не конечное число': 'WIDTH_COLUMN_NON_FINITE',
+    'area_ha в колонке: значение не число': 'AREA_COLUMN_INVALID_TYPE',
+    'area_ha в колонке: значение NaN или бесконечность': 'AREA_COLUMN_NON_FINITE',
+    'spray_width в колонке: значение не число': 'WIDTH_COLUMN_INVALID_TYPE',
+    'spray_width в колонке: значение NaN или бесконечность':
+        'WIDTH_COLUMN_NON_FINITE',
     'площадь взята из колонки: raw_json непригоден': 'AREA_FALLBACK_TO_COLUMN',
     'ширина взята из колонки: raw_json непригоден': 'WIDTH_FALLBACK_TO_COLUMN',
     'new_work_area: ключа нет в payload': 'AREA_MISSING_KEY',
@@ -189,6 +199,46 @@ EXIT_OK = 0
 EXIT_PRECONDITION = 1
 EXIT_NO_DB = 2
 EXIT_KNOWN_CASE_FAILED = 4
+
+
+def validate_width_range(min_width, max_width):
+    """Проверка диапазона ширины. Возвращает список причин отказа.
+
+    Диапазон АТОМАРЕН: либо не задан вовсе, либо задан обеими границами.
+    Одна граница -- отказ.
+
+    [REASON]: частичный диапазон опаснее отсутствующего. С одним только
+    `--max-width-m` нижняя проверка не выполнялась бы, и ширина 0.001 м
+    получила бы статус USABLE -- то есть значение, заведомо непригодное как
+    радиус буфера, было бы объявлено проверенным. Отказ до чтения базы, а не
+    после: незачем читать 30 тысяч строк, чтобы отвергнуть аргумент.
+
+    argparse с `type=float` принимает строки `nan` и `inf` и молча отдаёт
+    соответствующие числа, поэтому проверка на конечность нужна здесь, а не
+    в разборе аргументов.
+    """
+    reasons = []
+    given = [(name, value) for name, value in
+             (('--min-width-m', min_width), ('--max-width-m', max_width))
+             if value is not None]
+    if not given:
+        return reasons
+    if len(given) == 1:
+        reasons.append(
+            'диапазон ширины задан наполовину: передан только %s. Нужны обе '
+            'границы или ни одной -- иначе одна проверка молча не выполняется'
+            % given[0][0])
+        return reasons
+    for name, value in given:
+        if not _finite_number(value):
+            reasons.append('%s не является конечным числом: %r' % (name, value))
+        elif value <= 0:
+            reasons.append('%s должен быть строго больше нуля, получено %s'
+                           % (name, value))
+    if not reasons and min_width > max_width:
+        reasons.append('--min-width-m (%s) больше --max-width-m (%s)'
+                       % (min_width, max_width))
+    return reasons
 
 
 class ProbeError(Exception):
@@ -316,7 +366,8 @@ class FlightRow(object):
                  'area_key_present', 'raw_ok', 'raw_error',
                  'raw_has_hardware_id', 'local_month', 'local_date',
                  'area_problem', 'width_problem', 'area_from_column',
-                 'width_from_column')
+                 'width_from_column', 'area_col_value', 'width_col_value',
+                 'area_col_problem', 'width_col_problem')
 
     def __init__(self, **kwargs):
         for name in self.__slots__:
@@ -337,9 +388,8 @@ class FlightRow(object):
         """
         if self.raw_area_m2 is not None:
             return self.raw_area_m2
-        if (self.area_from_column and self.area_ha_col is not None
-                and _finite_number(self.area_ha_col)):
-            return float(self.area_ha_col) * 10000.0
+        if self.area_from_column and self.area_col_value is not None:
+            return self.area_col_value * 10000.0
         return None
 
     @property
@@ -363,9 +413,8 @@ class FlightRow(object):
         """
         if self.raw_width is not None:
             return self.raw_width
-        if (self.width_from_column and self.width_col is not None
-                and _finite_number(self.width_col)):
-            return float(self.width_col)
+        if self.width_from_column and self.width_col_value is not None:
+            return self.width_col_value
         return None
 
     def width_state(self, min_width=None, max_width=None):
@@ -376,7 +425,10 @@ class FlightRow(object):
         `INVALID_TYPE`           -- ключ есть, значение не число (строка,
                                     массив, объект, boolean);
         `NON_FINITE`             -- число, но NaN или бесконечность;
-        `COLUMN_NULL`            -- raw_json непригоден И колонка пуста;
+        `COLUMN_NULL`            -- raw_json непригоден, колонка пуста;
+        `COLUMN_INVALID_TYPE`    -- raw_json непригоден, в колонке не число;
+        `COLUMN_NON_FINITE`      -- raw_json непригоден, в колонке NaN или
+                                    бесконечность;
         `MINUS_ONE`              -- ровно -1, наблюдаемый маркер «не записано»;
         `ZERO`                   -- ровно 0, как радиус буфера непригоден;
         `NEGATIVE`               -- иное отрицательное;
@@ -401,7 +453,9 @@ class FlightRow(object):
         value = self.width_value
         if value is None:
             if not self.raw_ok:
-                return 'COLUMN_NULL'
+                # raw_json читать нечем -- отвечает состояние колонки, и оно
+                # различает «пусто» и «испорчено».
+                return self.width_col_problem or 'COLUMN_NULL'
             return 'JSON_NULL'
         if value == -1:
             return 'MINUS_ONE'
@@ -409,11 +463,14 @@ class FlightRow(object):
             return 'ZERO'
         if value < 0:
             return 'NEGATIVE'
-        if min_width is None and max_width is None:
+        # [REASON]: градуировка только при ОБЕИХ границах. Это дублирует
+        # проверку в main() намеренно: классификатор вызывается и из тестов, и
+        # из будущего кода, и полагаться на то, что кто-то другой уже
+        # проверил аргументы, здесь нельзя -- ценой ошибки будет USABLE на
+        # непроверенном значении.
+        if min_width is None or max_width is None:
             return 'POSITIVE_UNVALIDATED'
-        if min_width is not None and value < min_width:
-            return 'OUT_OF_CONFIGURED_RANGE'
-        if max_width is not None and value > max_width:
+        if value < min_width or value > max_width:
             return 'OUT_OF_CONFIGURED_RANGE'
         return 'USABLE'
 
@@ -442,6 +499,29 @@ def _finite_number(value):
     if not isinstance(value, (int, float)):
         return False
     return math.isfinite(value)
+
+
+def classify_column(value):
+    """(значение, проблема) для значения, прочитанного ИЗ КОЛОНКИ SQLite.
+
+    Проблема -- одно из None / 'COLUMN_NULL' / 'COLUMN_INVALID_TYPE' /
+    'COLUMN_NON_FINITE'.
+
+    [REASON]: SQLite типизирован динамически. Колонка объявлена FLOAT, но
+    хранить в ней можно строку и целое, и на живой базе такое встречается
+    после ручных правок. Кроме того SQLite принимает и хранит обе
+    бесконечности настоящим REAL (а NaN превращает в NULL). Поэтому «колонка
+    не пуста» и «колонкой можно пользоваться» -- разные утверждения, и
+    смешивать их в одном состоянии COLUMN_NULL нельзя: пустая колонка это
+    отсутствие данных, а строка в ней -- порча.
+    """
+    if value is None:
+        return None, 'COLUMN_NULL'
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None, 'COLUMN_INVALID_TYPE'
+    if not math.isfinite(value):
+        return None, 'COLUMN_NON_FINITE'
+    return float(value), None
 
 
 def classify_number(payload, key):
@@ -525,15 +605,23 @@ def load_rows(con):
             raw_ok = False
             raw_error = '%s: %s' % (type(exc).__name__, exc)
 
+        # Колонки классифицируются всегда: их состояние нужно и для отчёта о
+        # качестве, и для того, чтобы не объявить запасной источник
+        # применённым там, где он оказался негодным.
+        area_col_value, area_col_problem = classify_column(record['area_ha'])
+        width_col_value, width_col_problem = classify_column(
+            record['spray_width'])
+
         # Запасной источник разрешён ТОЛЬКО когда raw_json целиком непригоден.
         #
         # [REASON]: если raw_json разобрался, а значение в нём оказалось
         # строкой или NaN, подставлять колонку нельзя молча -- это скрыло бы
         # расхождение между источниками. Такая строка остаётся без значения, а
         # причина попадает в отчёт о качестве. Колонка выручает только там,
-        # где читать было нечего вовсе.
-        area_from_column = (not raw_ok)
-        width_from_column = (not raw_ok)
+        # где читать было нечего вовсе, И САМА ГОДНА: «взято из колонки»
+        # пишется только когда оттуда действительно взяли значение.
+        area_from_column = (not raw_ok) and area_col_value is not None
+        width_from_column = (not raw_ok) and width_col_value is not None
 
         started = parse_datetime(record['started_at'])
         finished = parse_datetime(record['finished_at'])
@@ -549,6 +637,10 @@ def load_rows(con):
             work_seconds=record['work_seconds'],
             area_ha_col=record['area_ha'],
             width_col=record['spray_width'],
+            area_col_value=area_col_value,
+            width_col_value=width_col_value,
+            area_col_problem=area_col_problem,
+            width_col_problem=width_col_problem,
             raw_area_m2=raw_area,
             raw_width=raw_width,
             area_key_present=area_key_present,
@@ -835,24 +927,38 @@ def quality_report(rows, con):
     for row in rows:
         if not row.raw_ok:
             note('raw_json не разобрался', row, row.raw_error or '')
-            if row.area_from_column and row.area_ha_col is not None:
+            # «Взято из колонки» пишется ТОЛЬКО когда оттуда взяли значение.
+            if row.area_from_column:
                 note('площадь взята из колонки: raw_json непригоден', row,
-                     'колонка %s' % row.area_ha_col)
-            if row.width_from_column and row.width_col is not None:
+                     'колонка %s' % row.area_col_value)
+            elif row.area_col_problem in COLUMN_PROBLEM_LABELS:
+                note('area_ha в колонке: %s'
+                     % COLUMN_PROBLEM_LABELS[row.area_col_problem], row,
+                     repr(row.area_ha_col))
+            if row.width_from_column:
                 note('ширина взята из колонки: raw_json непригоден', row,
-                     'колонка %s' % row.width_col)
+                     'колонка %s' % row.width_col_value)
+            elif row.width_col_problem in COLUMN_PROBLEM_LABELS:
+                note('spray_width в колонке: %s'
+                     % COLUMN_PROBLEM_LABELS[row.width_col_problem], row,
+                     repr(row.width_col))
         if row.area_problem in problem_labels:
             note('new_work_area: %s' % problem_labels[row.area_problem], row)
         if row.width_problem in ('INVALID_TYPE', 'NON_FINITE'):
             note('spray_width: %s' % problem_labels[row.width_problem], row)
-        if (row.area_ha_col is not None
-                and not _finite_number(row.area_ha_col)):
-            note('area_ha в колонке не конечное число', row,
-                 repr(row.area_ha_col))
-        if (row.width_col is not None
-                and not _finite_number(row.width_col)):
-            note('spray_width в колонке не конечное число', row,
-                 repr(row.width_col))
+        if row.raw_ok:
+            # raw_json читаем: колонка не запасной источник, но её порча --
+            # всё равно дефект данных, и о нём надо сказать.
+            if row.area_col_problem in ('COLUMN_INVALID_TYPE',
+                                        'COLUMN_NON_FINITE'):
+                note('area_ha в колонке: %s'
+                     % COLUMN_PROBLEM_LABELS[row.area_col_problem], row,
+                     repr(row.area_ha_col))
+            if row.width_col_problem in ('COLUMN_INVALID_TYPE',
+                                         'COLUMN_NON_FINITE'):
+                note('spray_width в колонке: %s'
+                     % COLUMN_PROBLEM_LABELS[row.width_col_problem], row,
+                     repr(row.width_col))
         if row.dji_flight_id is None:
             note('нет dji_flight_id', row)
         if row.started_at is None:
@@ -877,22 +983,22 @@ def quality_report(rows, con):
             note('вылет не привязан к машине', row, row.nickname or '')
         # Расхождение колонки и JSON. Колонка -- это m2/10000, поэтому
         # сравнение ведётся в гектарах с допуском на двоичное представление.
-        if (row.raw_area_m2 is not None and row.area_ha_col is not None
-                and _finite_number(row.area_ha_col)):
+        if row.raw_area_m2 is not None and row.area_col_value is not None:
             expected = row.raw_area_m2 / 10000.0
-            if abs(expected - row.area_ha_col) > 1e-9:
+            if abs(expected - row.area_col_value) > 1e-9:
                 note('площадь в колонке и в raw_json расходятся', row,
-                     'колонка %.10f, json %.10f' % (row.area_ha_col, expected))
+                     'колонка %.10f, json %.10f'
+                     % (row.area_col_value, expected))
         # Ширина в колонке против ширины в JSON.
-        if (row.raw_ok and row.width_key_present
-                and row.raw_width is not None
-                and (row.width_col is None or _finite_number(row.width_col))):
-            if row.width_col is None:
+        if row.raw_ok and row.width_key_present and row.raw_width is not None:
+            if row.width_col_problem == 'COLUMN_NULL':
                 note('ширина есть в raw_json, но колонка пуста', row,
                      str(row.raw_width))
-            elif abs(row.width_col - row.raw_width) > 1e-9:
+            elif (row.width_col_value is not None
+                  and abs(row.width_col_value - row.raw_width) > 1e-9):
                 note('ширина в колонке и в raw_json расходятся', row,
-                     'колонка %s, json %s' % (row.width_col, row.raw_width))
+                     'колонка %s, json %s'
+                     % (row.width_col_value, row.raw_width))
 
     duplicates = con.execute(
         'SELECT count(*) FROM (SELECT dji_flight_id FROM drone_flights '
@@ -934,9 +1040,17 @@ def analyse(con, lookback=DEFAULT_LOOKBACK, min_width=None, max_width=None):
         1 for row in rows if row.raw_has_hardware_id)
 
     # Строки без пригодной площади в сумму не идут вовсе -- ни нулём, ни NaN.
+    #
+    # [REASON]: отсюда следует, что итог -- это НЕ «все гектары парка», а
+    # «гектары строк с пригодной площадью». Пока исключена хоть одна строка,
+    # полная сумма неизвестна, и любой процент от этого знаменателя нельзя
+    # переносить на парк без оговорки. Поэтому знаменатель назван в имени
+    # поля, а число исключённых строк идёт рядом и попадает в сводку.
     areas = [row.area_m2 for row in rows if row.area_m2 is not None]
-    total_area_ha = sum(areas) / 10000.0
-    rows_without_area = len(rows) - len(areas)
+    known_valid_area_ha = sum(areas) / 10000.0
+    rows_with_area = len(areas)
+    rows_without_area = len(rows) - rows_with_area
+    area_is_complete = (rows_without_area == 0)
     candidate_area_ha = sum(item['area_ha'] for item in candidates)
 
     by_month = collections.defaultdict(
@@ -977,8 +1091,14 @@ def analyse(con, lookback=DEFAULT_LOOKBACK, min_width=None, max_width=None):
         'schema_columns': present,
         'identity': identity,
         'flights_total': len(rows),
-        'total_area_ha': total_area_ha,
+        'known_valid_area_ha': known_valid_area_ha,
+        'rows_with_usable_area': rows_with_area,
         'rows_without_usable_area': rows_without_area,
+        'rows_with_usable_area_share': (rows_with_area / len(rows))
+                                       if rows else 0.0,
+        'rows_without_usable_area_share': (rows_without_area / len(rows))
+                                          if rows else 0.0,
+        'area_is_complete': area_is_complete,
         'known_case_id': KNOWN_CASE_FLIGHT_ID,
         'flight_ids': {row.dji_flight_id for row in rows},
         'repeats': {
@@ -986,8 +1106,9 @@ def analyse(con, lookback=DEFAULT_LOOKBACK, min_width=None, max_width=None):
             'count': len(candidates),
             'area_ha': candidate_area_ha,
             'share_of_flights': (len(candidates) / len(rows)) if rows else 0.0,
-            'share_of_area': (candidate_area_ha / total_area_ha)
-                             if total_area_ha else 0.0,
+            'share_of_known_valid_area': (candidate_area_ha
+                                          / known_valid_area_ha)
+                                         if known_valid_area_ha else 0.0,
             'short_flight_count': sum(1 for item in candidates
                                       if item['short_flight']),
             'short_gap_count': sum(1 for item in candidates
@@ -1006,13 +1127,15 @@ def analyse(con, lookback=DEFAULT_LOOKBACK, min_width=None, max_width=None):
         'width_usable_flights': usable,
         'width_usable_share': (usable / len(rows)) if rows else 0.0,
         'width_usable_area_ha': usable_area_ha,
-        'width_usable_area_share': (usable_area_ha / total_area_ha)
-                                   if total_area_ha else 0.0,
+        'width_usable_area_share_of_known': (usable_area_ha
+                                            / known_valid_area_ha)
+                                           if known_valid_area_ha else 0.0,
         'width_positive_flights': positive,
         'width_positive_share': (positive / len(rows)) if rows else 0.0,
         'width_positive_area_ha': positive_area_ha,
-        'width_positive_area_share': (positive_area_ha / total_area_ha)
-                                     if total_area_ha else 0.0,
+        'width_positive_area_share_of_known': (positive_area_ha
+                                              / known_valid_area_ha)
+                                             if known_valid_area_ha else 0.0,
         'quality': quality,
         'by_month': dict(by_month),
         'by_machine': dict(by_machine),
@@ -1077,11 +1200,21 @@ def print_console_summary(result, known, db_path, digest_before):
     print('database : %s' % db_path)
     print('sha256   : %s' % digest_before)
     print('=' * 72)
-    print('flights total          : %d' % result['flights_total'])
-    print('area total, ha         : %.2f' % result['total_area_ha'])
-    if result['rows_without_usable_area']:
-        print('rows with NO usable area (excluded from every sum): %d'
+    print('flights total                 : %d' % result['flights_total'])
+    print('flights WITH usable area      : %d (%.2f%%)'
+          % (result['rows_with_usable_area'],
+             100.0 * result['rows_with_usable_area_share']))
+    print('flights WITHOUT usable area   : %d (%.2f%%)'
+          % (result['rows_without_usable_area'],
+             100.0 * result['rows_without_usable_area_share']))
+    print('KNOWN VALID area total, ha    : %.2f' % result['known_valid_area_ha'])
+    if not result['area_is_complete']:
+        print('  !! this is NOT the total area of the fleet. %d row(s) have'
               % result['rows_without_usable_area'])
+        print('     no usable area and are excluded from every sum below.')
+        print('     The true fleet total is UNKNOWN, and no hectare')
+        print('     percentage here may be carried over to the fleet')
+        print('     without saying so.')
     print('')
     print('-- width of swath ------------------------------------------------')
     bounds = (widths['min_width_m'], widths['max_width_m'])
@@ -1099,16 +1232,18 @@ def print_console_summary(result, known, db_path, digest_before):
         if count:
             area = widths['area_ha_by_state'].get(state, 0.0)
             print('  %-24s %8d flights  %12.2f ha' % (state, count, area))
-    print('  positive value at all : %d flights (%.1f%%), %.2f ha (%.1f%%)'
+    print('  positive value at all : %d flights (%.1f%% of all flights), '
+          '%.2f ha (%.1f%% of KNOWN VALID area)'
           % (result['width_positive_flights'],
              100.0 * result['width_positive_share'],
              result['width_positive_area_ha'],
-             100.0 * result['width_positive_area_share']))
-    print('  USABLE (validated)    : %d flights (%.1f%%), %.2f ha (%.1f%%)'
+             100.0 * result['width_positive_area_share_of_known']))
+    print('  USABLE (validated)    : %d flights (%.1f%% of all flights), '
+          '%.2f ha (%.1f%% of KNOWN VALID area)'
           % (result['width_usable_flights'],
              100.0 * result['width_usable_share'],
              result['width_usable_area_ha'],
-             100.0 * result['width_usable_area_share']))
+             100.0 * result['width_usable_area_share_of_known']))
     distribution = widths['distribution']
     if distribution['count']:
         print('  positive width distribution, m:')
@@ -1125,8 +1260,9 @@ def print_console_summary(result, known, db_path, digest_before):
     repeats = result['repeats']
     print('  candidates           : %d (%.2f%% of flights)'
           % (repeats['count'], 100.0 * repeats['share_of_flights']))
-    print('  area of candidates   : %.2f ha (%.2f%% of all hectares)'
-          % (repeats['area_ha'], 100.0 * repeats['share_of_area']))
+    print('  area of candidates   : %.2f ha (%.2f%% of KNOWN VALID area)'
+          % (repeats['area_ha'],
+             100.0 * repeats['share_of_known_valid_area']))
     print('  of them shorter than %ds : %d'
           % (SHORT_FLIGHT_SECONDS, repeats['short_flight_count']))
     threshold = repeats['gap_stats']['short_gap_threshold_seconds']
@@ -1235,10 +1371,23 @@ def write_xlsx(result, known, path, db_path, digest_before, digest_after):
          'совпадение доказывает, что файл не изменён'),
         ('', '', ''),
         ('Вылетов всего', result['flights_total'], ''),
-        ('Гектаров всего (по данным DJI)', round(result['total_area_ha'], 2),
-         'сумма new_work_area / 10000'),
-        ('Строк без пригодной площади', result['rows_without_usable_area'],
-         'не число, NaN или бесконечность в обоих источниках; в суммы не идут'),
+        ('Вылетов с пригодной площадью', result['rows_with_usable_area'],
+         'только они входят в суммы гектаров ниже'),
+        ('Доля вылетов с пригодной площадью',
+         round(100.0 * result['rows_with_usable_area_share'], 2), 'процентов'),
+        ('Вылетов БЕЗ пригодной площади', result['rows_without_usable_area'],
+         'не число, NaN или бесконечность в обоих источниках'),
+        ('Доля вылетов без пригодной площади',
+         round(100.0 * result['rows_without_usable_area_share'], 2),
+         'процентов'),
+        ('Гектаров по строкам с пригодной площадью',
+         round(result['known_valid_area_ha'], 2),
+         ('ЭТО НЕ ВСЕ ГЕКТАРЫ ПАРКА. Полная сумма НЕИЗВЕСТНА: %d строк(и) '
+          'исключены. Проценты по гектарам ниже считаются от этого '
+          'знаменателя и не переносятся на парк без оговорки.'
+          % result['rows_without_usable_area'])
+         if not result['area_is_complete']
+         else 'строк без пригодной площади нет, знаменатель полон'),
         ('', '', ''),
         ('ШИРИНА ЗАХВАТА', '', ''),
         ('Заданный диапазон, м',
@@ -1251,20 +1400,25 @@ def write_xlsx(result, known, path, db_path, digest_before, digest_after):
         ('Вылетов с положительной шириной', result['width_positive_flights'],
          'значение похоже на ширину; пригодность НЕ проверена'),
         ('Доля вылетов с положительной шириной',
-         round(100.0 * result['width_positive_share'], 2), 'процентов'),
+         round(100.0 * result['width_positive_share'], 2),
+         'процентов от ВСЕХ вылетов'),
         ('Гектаров с положительной шириной',
          round(result['width_positive_area_ha'], 2), ''),
         ('Вылетов USABLE (в заданном диапазоне)',
          result['width_usable_flights'],
          'только для них возможен геометрический расчёт'),
         ('Доля вылетов USABLE',
-         round(100.0 * result['width_usable_share'], 2), 'процентов'),
+         round(100.0 * result['width_usable_share'], 2),
+         'процентов от ВСЕХ вылетов'),
         ('Гектаров USABLE', round(result['width_usable_area_ha'], 2), ''),
         ('Доля гектаров USABLE',
-         round(100.0 * result['width_usable_area_share'], 2), 'процентов'),
+         round(100.0 * result['width_usable_area_share_of_known'], 2),
+         'процентов от гектаров среди строк с пригодной площадью'),
         ('Гектаров DATA_UNAVAILABLE',
-         round(result['total_area_ha'] - result['width_usable_area_ha'], 2),
-         'подстановка ширины запрещена решением владельца 2026-08-25'),
+         round(result['known_valid_area_ha']
+               - result['width_usable_area_ha'], 2),
+         'среди строк с пригодной площадью; подстановка ширины запрещена '
+         'решением владельца 2026-08-25'),
         ('', '', ''),
         ('ПОВТОРЫ ПЛОЩАДИ (ANOMALY_CANDIDATE)', '',
          'совпадение само по себе не ошибка DJI'),
@@ -1272,8 +1426,8 @@ def write_xlsx(result, known, path, db_path, digest_before, digest_after):
         ('Доля от вылетов', round(100.0 * repeats['share_of_flights'], 3),
          'процентов'),
         ('Гектаров у кандидатов', round(repeats['area_ha'], 2), ''),
-        ('Доля от гектаров', round(100.0 * repeats['share_of_area'], 3),
-         'процентов'),
+        ('Доля от гектаров', round(100.0 * repeats['share_of_known_valid_area'], 3),
+         'процентов от гектаров среди строк с пригодной площадью'),
         ('Из них короче %d с' % SHORT_FLIGHT_SECONDS,
          repeats['short_flight_count'], ''),
         ('Из них после короткого интервала', repeats['short_gap_count'],
@@ -1537,6 +1691,24 @@ def write_xlsx(result, known, path, db_path, digest_before, digest_after):
         'Строка без пригодной площади не заменяется нулём — она исключается '
         'из сумм и считается отдельно.',
         '',
+        'ЗНАМЕНАТЕЛЬ ГЕКТАРОВ. Все суммы гектаров считаются ТОЛЬКО по '
+        'строкам с пригодной площадью. Если хоть одна строка исключена, '
+        'полная сумма гектаров парка НЕИЗВЕСТНА, и проценты по гектарам '
+        'относятся к знаменателю «гектары среди строк с пригодной площадью», '
+        'а не к парку. Число и доля исключённых строк стоят на листе '
+        '«Сводка» первыми, чтобы читатель видел размер оговорки раньше, чем '
+        'проценты. Переносить такой процент на парк без этой оговорки '
+        'нельзя, и решение DECISION_PENDING нельзя снимать, не оценив долю '
+        'исключённых строк.',
+        '',
+        'СОСТОЯНИЯ КОЛОНКИ. Пустая колонка (COLUMN_NULL) и испорченная '
+        '(COLUMN_INVALID_TYPE, COLUMN_NON_FINITE) -- разные вещи: первое '
+        'отсутствие данных, второе порча. SQLite типизирован динамически, '
+        'поэтому в колонке FLOAT может лежать строка, а обе бесконечности '
+        'хранятся настоящим REAL (NaN превращается в NULL). Запись «взято из '
+        'колонки» появляется ТОЛЬКО когда оттуда действительно взяли '
+        'значение; негодная колонка такой записи не даёт.',
+        '',
         'ЗАПАСНОЙ ИСТОЧНИК. Колонка используется вместо raw_json ТОЛЬКО '
         'когда raw_json непригоден целиком. Если raw_json разобрался, а '
         'значение в нём оказалось строкой или NaN, колонка НЕ подставляется: '
@@ -1599,9 +1771,13 @@ def main(argv=None):
                              'static backup copy, never for a live database')
     args = parser.parse_args(argv)
 
-    if (args.min_width_m is not None and args.max_width_m is not None
-            and args.min_width_m > args.max_width_m):
-        print('ERROR: --min-width-m is greater than --max-width-m')
+    # Аргументы проверяются ДО открытия базы и до любой записи.
+    range_problems = validate_width_range(args.min_width_m, args.max_width_m)
+    if range_problems:
+        print('ERROR: the swath range is not usable:')
+        for reason in range_problems:
+            print('  - %s' % _ascii(reason))
+        print('Pass BOTH --min-width-m and --max-width-m, or neither.')
         return EXIT_PRECONDITION
 
     try:

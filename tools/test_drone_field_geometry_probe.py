@@ -22,7 +22,8 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools.drone_field_geometry_probe import (  # noqa: E402
-    DEFAULT_AREA_TOLERANCE_PERCENT, analyse_file, coordinate_problems,
+    DEFAULT_AREA_TOLERANCE_PERCENT, KML_UNPARSEABLE, analyse_file,
+    coordinate_problems, validate_expectations,
     describe_shapes, detect_format, distinct_vertex_count, looks_like_wgs84,
     main, md5_of, ring_area_m2, ring_self_intersects, rings_from_geojson,
     rings_from_kml, validate_shapes)
@@ -374,6 +375,148 @@ class TestStrictValidation(unittest.TestCase):
         code, _text, out, _path = self.run_main(blob)
         self.assertEqual(code, 3)
         self.assertFalse(os.path.exists(out))
+
+
+# ─── KML: испорченная координата не исчезает ─────────────────────────────────
+
+def kml_with(coordinates_text):
+    return ("""<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark><Polygon>
+<outerBoundaryIs><LinearRing><coordinates>%s</coordinates></LinearRing>
+</outerBoundaryIs></Polygon></Placemark></Document></kml>""" % coordinates_text)
+
+
+class TestKmlBadCoordinates(unittest.TestCase):
+    """Пункт 4: испорченный KML не должен превращаться в другой полигон."""
+
+    def test_an_unparseable_token_is_kept_as_a_marker(self):
+        ring = rings_from_kml(kml_with('64.6,40.0,0 NOTANUMBER,40.0,0 '
+                                       '64.7,40.1,0 64.6,40.0,0'))[0][1]
+        self.assertEqual(len(ring), 4, 'the point must not disappear')
+        self.assertIn(KML_UNPARSEABLE, ring)
+
+    def test_a_token_without_a_comma_is_kept_as_a_marker(self):
+        ring = rings_from_kml(kml_with('64.6,40.0,0 lonely '
+                                       '64.7,40.1,0 64.6,40.0,0'))[0][1]
+        self.assertEqual(len(ring), 4)
+        self.assertIn(KML_UNPARSEABLE, ring)
+
+    def test_the_marker_is_reported_as_a_coordinate_problem(self):
+        ring = rings_from_kml(kml_with('64.6,40.0,0 NOTANUMBER,40.0,0 '
+                                       '64.7,40.1,0 64.6,40.0,0'))[0][1]
+        problems = coordinate_problems(ring)
+        self.assertTrue(problems)
+        self.assertIn('НЕ удалена', problems[0])
+
+    def test_a_broken_kml_fails_validation_and_writes_no_geojson(self):
+        import contextlib, io
+        with tempfile.TemporaryDirectory() as directory:
+            path = write(directory, 'field.kml',
+                         kml_with('64.6,40.0,0 NOTANUMBER,40.0,0 '
+                                  '64.7,40.1,0 64.6,40.0,0'))
+            out = os.path.join(directory, 'out.geojson')
+            with contextlib.redirect_stdout(io.StringIO()) as buffer:
+                code = main(['--file', path, '--geojson', out])
+            self.assertEqual(code, 4)
+            self.assertIn('VALIDATION FAILED', buffer.getvalue())
+            self.assertFalse(os.path.exists(out))
+
+    def test_a_clean_kml_still_passes(self):
+        """Отрицательный контроль ко всем четырём выше."""
+        import contextlib, io
+        with tempfile.TemporaryDirectory() as directory:
+            path = write(directory, 'field.kml', KML)
+            out = os.path.join(directory, 'out.geojson')
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = main(['--file', path, '--geojson', out])
+            self.assertEqual(code, 0)
+            self.assertTrue(os.path.exists(out))
+
+
+class TestInnerRings(unittest.TestCase):
+    """Внутренние кольца проверяются так же строго, как внешние."""
+
+    def shape(self, inner):
+        outer = rectangle(200.0, 200.0)
+        return [('Polygon', outer, [inner])]
+
+    def assert_rejected(self, inner, needle):
+        shapes = self.shape(inner)
+        reasons = validate_shapes(shapes, describe_shapes(shapes))
+        self.assertTrue(any(needle in reason for reason in reasons),
+                        'reasons were: %s' % reasons)
+
+    def test_an_unclosed_inner_ring_is_rejected(self):
+        self.assert_rejected(rectangle(20.0, 20.0)[:-1], 'не замкнуто')
+
+    def test_a_degenerate_inner_ring_is_rejected(self):
+        self.assert_rejected([[64.63, 40.083], [64.631, 40.083],
+                              [64.63, 40.083]], 'меньше трёх')
+
+    def test_a_self_intersecting_inner_ring_is_rejected(self):
+        bowtie = [[64.630, 40.0830], [64.631, 40.0831], [64.631, 40.0830],
+                  [64.630, 40.0831], [64.630, 40.0830]]
+        self.assert_rejected(bowtie, 'внутреннее кольцо самопересекается')
+
+    def test_an_out_of_range_inner_coordinate_is_rejected(self):
+        self.assert_rejected([[64.63, 400.0], [64.631, 400.0],
+                              [64.631, 400.1], [64.63, 400.0]], 'вне')
+
+    def test_a_non_finite_inner_coordinate_is_rejected(self):
+        self.assert_rejected([[64.63, float('nan')], [64.631, 40.083],
+                              [64.631, 40.084], [64.63, float('nan')]],
+                             'не конечна')
+
+    def test_a_good_inner_ring_is_accepted(self):
+        """Отрицательный контроль ко всем пяти выше."""
+        shapes = self.shape(rectangle(20.0, 20.0))
+        self.assertEqual(validate_shapes(shapes, describe_shapes(shapes)), [])
+
+
+class TestExpectationArguments(unittest.TestCase):
+    """Пункт 4: допуск и ожидаемая площадь тоже проверяются."""
+
+    def test_a_non_finite_tolerance_is_rejected(self):
+        for value in (float('nan'), float('inf'), float('-inf')):
+            self.assertTrue(validate_expectations(value, None),
+                            'tolerance %r accepted' % value)
+
+    def test_a_negative_tolerance_is_rejected(self):
+        self.assertTrue(validate_expectations(-1.0, None))
+
+    def test_a_zero_tolerance_is_accepted(self):
+        """Ноль законен: он требует точного совпадения."""
+        self.assertEqual(validate_expectations(0.0, None), [])
+
+    def test_a_non_finite_expected_area_is_rejected(self):
+        for value in (float('nan'), float('inf'), float('-inf')):
+            self.assertTrue(validate_expectations(1.0, value),
+                            'expected area %r accepted' % value)
+
+    def test_a_zero_or_negative_expected_area_is_rejected(self):
+        self.assertTrue(validate_expectations(1.0, 0.0))
+        self.assertTrue(validate_expectations(1.0, -30.0))
+
+    def test_a_good_pair_is_accepted(self):
+        self.assertEqual(validate_expectations(1.0, 30.0), [])
+
+    def test_main_refuses_bad_expectations_before_reading_the_file(self):
+        import contextlib, io
+        with tempfile.TemporaryDirectory() as directory:
+            path = write(directory, 'field.json', GEOJSON)
+            out = os.path.join(directory, 'out.geojson')
+            for extra in (('--area-tolerance-percent', 'nan'),
+                          ('--area-tolerance-percent', 'inf'),
+                          ('--area-tolerance-percent=-1'),
+                          ('--expect-area-mu', 'nan'),
+                          ('--expect-area-mu', '0'),
+                          ('--expect-area-mu=-30')):
+                arguments = list(extra) if isinstance(extra, tuple) else [extra]
+                with contextlib.redirect_stdout(io.StringIO()) as buffer:
+                    code = main(['--file', path, '--geojson', out] + arguments)
+                self.assertEqual(code, 5, 'accepted %s' % (extra,))
+                self.assertIn('expectations are not usable', buffer.getvalue())
+                self.assertFalse(os.path.exists(out))
 
 
 if __name__ == '__main__':

@@ -55,11 +55,38 @@ MU_PER_HECTARE = 15.0
 # расхождение приемлемо в учёте гектаров, это число отношения не имеет.
 DEFAULT_AREA_TOLERANCE_PERCENT = 1.0
 
+def validate_expectations(area_tolerance_percent, expect_area_mu):
+    """Проверка числовых аргументов. Список причин отказа; пустой -- годны.
+
+    [REASON]: argparse с `type=float` принимает строки `nan` и `inf` молча.
+    Допуск NaN сделал бы сравнение площади всегда ложным, то есть проверка
+    проходила бы ВСЕГДА и перестала бы что-либо значить; отрицательный допуск
+    сделал бы её невыполнимой никогда. Ожидаемая площадь, равная нулю, делит
+    на ноль в проценте расхождения.
+    """
+    reasons = []
+    if not _finite(area_tolerance_percent):
+        reasons.append('--area-tolerance-percent не является конечным числом: '
+                       '%r' % (area_tolerance_percent,))
+    elif area_tolerance_percent < 0:
+        reasons.append('--area-tolerance-percent не может быть отрицательным: '
+                       '%s' % area_tolerance_percent)
+    if expect_area_mu is not None:
+        if not _finite(expect_area_mu):
+            reasons.append('--expect-area-mu не является конечным числом: %r'
+                           % (expect_area_mu,))
+        elif expect_area_mu <= 0:
+            reasons.append('--expect-area-mu должен быть строго больше нуля, '
+                           'получено %s' % expect_area_mu)
+    return reasons
+
+
 EXIT_OK = 0
 EXIT_UNKNOWN_FORMAT = 1
 EXIT_NO_FILE = 2
 EXIT_SECRET_FOUND = 3
 EXIT_VALIDATION_FAILED = 4
+EXIT_PRECONDITION = 5
 
 
 def sha256_of(path):
@@ -237,16 +264,30 @@ def rings_from_kml(text):
     return shapes
 
 
+# Метка неразобранной координаты KML.
+#
+# [REASON]: прежняя версия при ValueError ПРОПУСКАЛА токен и продолжала
+# строить кольцо. Испорченный KML превращался в формально годный, но ДРУГОЙ
+# полигон -- меньше на одну вершину, с другой площадью, и ни одна проверка об
+# этом не сообщала. Теперь на месте нечитаемого токена остаётся метка: она не
+# является парой координат, поэтому `coordinate_problems` её отвергает, весь
+# файл проваливает валидацию, GeoJSON не пишется, а исходная точка не
+# исчезает молча.
+KML_UNPARSEABLE = 'UNPARSEABLE_COORDINATE'
+
+
 def _kml_ring(text):
+    """Кольцо из блока <coordinates>. Нечитаемый токен -> метка, не пропуск."""
     ring = []
     for token in text.split():
         parts = token.split(',')
         if len(parts) < 2:
+            ring.append(KML_UNPARSEABLE)
             continue
         try:
             ring.append([float(parts[0]), float(parts[1])])
         except ValueError:
-            continue
+            ring.append(KML_UNPARSEABLE)
     return ring
 
 
@@ -282,6 +323,10 @@ def coordinate_problems(ring):
     """
     problems = []
     for index, point in enumerate(ring):
+        if point == KML_UNPARSEABLE:
+            problems.append('вершина %d: координата не разобрана и НЕ '
+                            'удалена из контура' % index)
+            continue
         if not isinstance(point, (list, tuple)) or len(point) < 2:
             problems.append('вершина %d не пара координат' % index)
             continue
@@ -355,8 +400,10 @@ def describe_shapes(shapes):
     for kind, outer, inners in shapes:
         closed = (len(outer) > 2 and outer[0] == outer[-1])
         problems = coordinate_problems(outer)
+        inner_problems = []
         for inner in inners:
-            problems.extend(coordinate_problems(inner))
+            inner_problems.extend(coordinate_problems(inner))
+        problems = problems + inner_problems
         area = abs(ring_area_m2(outer)) if not problems else 0.0
         holes = [abs(ring_area_m2(inner)) for inner in inners] \
             if not problems else []
@@ -368,6 +415,9 @@ def describe_shapes(shapes):
             'closed': closed,
             'inner_rings_closed': all(
                 len(inner) > 2 and inner[0] == inner[-1] for inner in inners),
+            'inner_rings_have_three_vertices': all(
+                distinct_vertex_count(inner) >= 3 for inner in inners),
+            'inner_coordinate_problems': inner_problems,
             'distinct_vertices': distinct_vertex_count(outer),
             'clockwise': (ring_area_m2(outer) < 0) if not problems else None,
             'self_intersects': ring_self_intersects(outer),
@@ -421,6 +471,9 @@ def validate_shapes(shapes, described):
             reasons.append(prefix + 'внешнее кольцо не замкнуто')
         if not shape['inner_rings_closed']:
             reasons.append(prefix + 'внутреннее кольцо не замкнуто')
+        if not shape['inner_rings_have_three_vertices']:
+            reasons.append(prefix + 'внутреннее кольцо имеет меньше трёх '
+                                    'различных вершин')
         if shape['distinct_vertices'] < 3:
             reasons.append(prefix + 'меньше трёх различных вершин (%d)'
                            % shape['distinct_vertices'])
@@ -482,6 +535,15 @@ def main(argv=None):
                         help='write the parsed rings as GeoJSON. Written ONLY '
                              'when every validation passed.')
     args = parser.parse_args(argv)
+
+    # Аргументы проверяются ДО чтения файла и до любой записи.
+    expectation_problems = validate_expectations(args.area_tolerance_percent,
+                                                 args.expect_area_mu)
+    if expectation_problems:
+        print('ERROR: the expectations are not usable:')
+        for reason in expectation_problems:
+            print('  - %s' % _ascii(reason))
+        return EXIT_PRECONDITION
 
     if not os.path.exists(args.file):
         print('ERROR: file not found: %s' % args.file)
