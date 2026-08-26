@@ -17,7 +17,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.drone_route_probe import dedupe, read_capture  # noqa: E402
+from tools.drone_route_probe import (  # noqa: E402
+    dedupe, describe_request_body, read_capture)
 
 
 def varint(value):
@@ -136,6 +137,100 @@ class TestDedupe(unittest.TestCase):
         unique = dedupe([('a', tiny_response()),
                          ('b', tiny_response() + b'\x00')])
         self.assertEqual(len(unique), 2)
+
+
+class TestRequestBodyDescription(unittest.TestCase):
+    """Вопрос В1: описать структуру тела POST, не раскрывая НИ ОДНОГО значения."""
+
+    def describe(self, payload, name='body.json'):
+        import contextlib, io
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, name)
+            mode = 'wb' if isinstance(payload, bytes) else 'w'
+            kwargs = {} if isinstance(payload, bytes) else {'encoding': 'utf-8'}
+            with open(path, mode, **kwargs) as handle:
+                if isinstance(payload, (str, bytes)):
+                    handle.write(payload)
+                else:
+                    json.dump(payload, handle, ensure_ascii=False)
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                code = describe_request_body(path)
+            return code, buffer.getvalue()
+
+    def test_known_keys_are_named(self):
+        code, text = self.describe(
+            {'ids': [622715273, 622715275], 'start': 1780670376,
+             'end': 1780675486, 'page_size': 50})
+        self.assertEqual(code, 0)
+        self.assertIn('flight ids', text)
+        self.assertIn('result count limit', text)
+
+    def test_keys_are_found_by_walking_not_by_substring(self):
+        """Ключ, лежащий глубоко, обязан найтись; строка-обманка -- нет.
+
+        [REASON]: прежняя версия искала имена подстрокой по сериализованному
+        документу. Тогда СТРОКОВОЕ ЗНАЧЕНИЕ "ids" считалось бы ключом, а
+        настоящий ключ внутри вложенного объекта не отличался бы от него
+        ничем. Здесь оба случая проверяются сразу.
+        """
+        code, text = self.describe(
+            {'query': {'filters': {'ids': [1, 2, 3]}},
+             'label': 'this string mentions page_size but is a value'})
+        self.assertEqual(code, 0)
+        self.assertIn('query.filters.ids', text)
+        line = [row for row in text.splitlines()
+                if row.strip().startswith('result count limit')][0]
+        self.assertIn('not found', line,
+                      'a key name mentioned inside a string value must not '
+                      'count as a key')
+
+    def test_no_string_value_is_ever_printed(self):
+        secret = 'QQQ-do-not-print-me-QQQ'
+        code, text = self.describe({'ids': [1], 'opaque': secret})
+        self.assertEqual(code, 0)
+        self.assertNotIn(secret, text)
+        self.assertIn('string(len=', text)
+
+    def test_no_numeric_value_is_ever_printed(self):
+        """Числа тоже значения: идентификатор вылета -- это число."""
+        code, text = self.describe({'ids': [622715275], 'page_size': 4242,
+                                    'start': 1780670376})
+        self.assertEqual(code, 0)
+        for value in ('622715275', '4242', '1780670376'):
+            self.assertNotIn(value, text,
+                             'numeric value %s leaked into the output' % value)
+        self.assertIn('number', text)
+
+    def test_collection_sizes_are_printed_because_they_are_structure(self):
+        """Отрицательный контроль: размер массива -- не значение, он нужен."""
+        _code, text = self.describe({'ids': [1, 2, 3, 4, 5, 6, 7]})
+        self.assertIn('array(7)', text)
+
+    def test_a_body_with_a_signature_is_refused(self):
+        code, text = self.describe({'Signature=': 'x', 'ids': [1]})
+        self.assertEqual(code, 3)
+        self.assertIn('REFUSING', text)
+
+    def test_a_non_json_body_prints_no_content_at_all(self):
+        marker = b'SECRET-BINARY-CONTENT'
+        code, text = self.describe(b'\x00\x01' + marker, name='body.bin')
+        self.assertEqual(code, 1)
+        self.assertIn('not JSON', text)
+        self.assertIn('sha256', text)
+        self.assertNotIn(marker.decode('ascii'), text)
+        self.assertNotIn('0001', text.replace(' ', ''),
+                         'raw bytes must not be printed even as hex')
+
+    def test_missing_keys_are_reported_as_not_found(self):
+        _code, text = self.describe({'something_else': 1})
+        self.assertIn('not found', text)
+
+    def test_nested_arrays_of_objects_are_walked_once(self):
+        _code, text = self.describe(
+            {'items': [{'device_id': 1}, {'device_id': 2}]})
+        self.assertIn('items[0].device_id', text)
+        self.assertIn('device', text)
 
 
 if __name__ == '__main__':

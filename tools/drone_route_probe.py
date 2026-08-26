@@ -3,6 +3,7 @@
 
     python tools/drone_route_probe.py --capture DJI_2026-06-05_safe.json
     python tools/drone_route_probe.py --capture snapshot.json --geojson routes.json
+    python tools/drone_route_probe.py --request-body body.json
 
 Зачем. Кабинет SmartFarm в режиме карты забирает маршруты вылетов запросом
 
@@ -28,6 +29,7 @@
 import argparse
 import base64
 import binascii
+import hashlib
 import json
 import os
 import sys
@@ -50,6 +52,25 @@ ROUTE_URL_MARKER = 'flight_datas/flight_records'
 # которая всегда говорит "секрет найден", секретов не находит.
 SECRET_MARKERS = ('signedURL', 'OSSAccessKeyId', 'Signature=', 'set-cookie',
                   '"cookies"', 'x-auth-token', 'storage_state', 'bearer ')
+
+# Ключи тела POST-запроса маршрутов, о которых спрашивает вопрос В1
+# (`docs/DRONE_COVERAGE_001_DISCOVERY.md` §9). Список -- это то, ЧТО МЫ ИЩЕМ,
+# а не то, что мы утверждаем: назначение любого найденного ключа
+# подтверждается только сверкой с тем, что вернул ответ.
+# Подписи английские: они уходят в консоль Windows, где кириллица по правилу
+# устава не печатается, а «?????» вместо вопроса делает вывод бесполезным.
+REQUEST_BODY_QUESTIONS = (
+    ('flight ids', ('ids', 'flight_ids', 'record_ids',
+                    'flight_record_ids', 'id_list')),
+    ('period', ('start', 'end', 'from', 'to', 'begin_time', 'end_time',
+                'timestamp_gteq', 'timestamp_lteq', 'date')),
+    ('device', ('device', 'device_id', 'drone', 'drone_id', 'product_sn',
+                'sn')),
+    ('map parameters', ('bbox', 'bounds', 'zoom', 'viewport', 'level',
+                        'north', 'south', 'east', 'west')),
+    ('result count limit', ('limit', 'page_size', 'size', 'count',
+                            'per_page', 'page')),
+)
 
 
 def read_capture(path):
@@ -106,7 +127,6 @@ def dedupe(bodies):
     дедупликации, и он же доказывает, что повторы БАЙТ В БАЙТ одинаковы, а не
     просто похожи.
     """
-    import hashlib
     order = []
     seen = {}
     for label, raw in bodies:
@@ -202,17 +222,150 @@ def write_geojson(decoded_list, path):
     print('GeoJSON written: %s (%d features)' % (path, len(features)))
 
 
+def _collect_keys(node, prefix, seen, lines, depth=0):
+    """Обход структуры: имена ключей, типы, размеры коллекций. Без значений.
+
+    [REASON]: значения тела запроса не печатаются ВООБЩЕ -- ни строковые, ни
+    числовые. Нам нужна форма запроса, а не идентификаторы вылетов; печатать
+    «на всякий случай» -- ровно тот способ, которым утекают подписи и внутренние
+    номера. Размер коллекции печатается: это структура, а не значение.
+    """
+    if depth > 12:
+        lines.append('  %-44s ... deeper levels not walked' % prefix)
+        return
+    if isinstance(node, dict):
+        for key in sorted(node, key=str):
+            value = node[key]
+            name = '%s.%s' % (prefix, key) if prefix else str(key)
+            seen.add(str(key))
+            if isinstance(value, dict):
+                lines.append('  %-44s object(%d keys)' % (name, len(value)))
+                _collect_keys(value, name, seen, lines, depth + 1)
+            elif isinstance(value, list):
+                kinds = sorted({type(item).__name__ for item in value})
+                lines.append('  %-44s array(%d) of %s'
+                             % (name, len(value),
+                                ', '.join(kinds) if kinds else 'empty'))
+                for item in value[:1]:
+                    if isinstance(item, (dict, list)):
+                        _collect_keys(item, name + '[0]', seen, lines,
+                                      depth + 1)
+            elif value is None:
+                lines.append('  %-44s null' % name)
+            elif isinstance(value, bool):
+                lines.append('  %-44s boolean' % name)
+            elif isinstance(value, (int, float)):
+                lines.append('  %-44s number' % name)
+            else:
+                lines.append('  %-44s string(len=%d)' % (name, len(str(value))))
+    elif isinstance(node, list):
+        kinds = sorted({type(item).__name__ for item in node})
+        lines.append('  %-44s array(%d) of %s'
+                     % (prefix or '(root)', len(node),
+                        ', '.join(kinds) if kinds else 'empty'))
+        for item in node[:1]:
+            if isinstance(item, (dict, list)):
+                _collect_keys(item, (prefix or '') + '[0]', seen, lines,
+                              depth + 1)
+
+
+def describe_request_body(path):
+    """Что лежит в сохранённом теле POST-запроса маршрутов (вопрос В1).
+
+    Печатает ТОЛЬКО структуру: имена ключей, типы, размеры коллекций. Ни одно
+    значение -- ни строка, ни число -- в вывод не попадает. Тело запроса
+    никуда не сохраняется: ни в отчёт, ни в фикстуры, ни в лог.
+    """
+    with open(path, 'rb') as handle:
+        blob = handle.read()
+    text = blob.decode('utf-8-sig', errors='replace')
+    found = sorted({marker for marker in SECRET_MARKERS
+                    if marker.lower() in text.lower()})
+    if found:
+        print('REFUSING: the file contains %s.' % ', '.join(found))
+        print('Save the request PAYLOAD only, never the headers.')
+        return 3
+
+    digest = hashlib.sha256(blob).hexdigest()
+
+    try:
+        document = json.loads(text)
+    except ValueError:
+        # [REASON]: первые байты не печатаются. У не-JSON тела содержимое
+        # неизвестно по определению, и «показать начало» -- это показать
+        # неизвестно что. Размера, хеша и предположения о типе достаточно,
+        # чтобы назвать формат и запросить следующий шаг.
+        print('The body is not JSON.')
+        print('  bytes  : %d' % len(blob))
+        print('  sha256 : %s' % digest)
+        print('  guess  : %s' % _guess_binary_kind(blob))
+        print('Report the format; do not guess a schema. Nothing was printed')
+        print('from the content itself.')
+        return 1
+
+    print('Request body parsed as JSON.')
+    print('  bytes  : %d' % len(blob))
+    print('  sha256 : %s' % digest)
+    print('')
+    print('Structure (names, types and sizes only -- no values):')
+
+    seen = set()
+    lines = []
+    _collect_keys(document, '', seen, lines)
+    for line in lines:
+        print(line)
+
+    print('')
+    print('What the body appears to carry (question B1):')
+    lowered = {key.lower() for key in seen}
+    for question, keys in REQUEST_BODY_QUESTIONS:
+        hits = sorted({key for key in keys if key.lower() in lowered})
+        print('  %-28s %s' % (question,
+                              ', '.join(hits) if hits else 'not found'))
+    print('')
+    print('A key being present names a CANDIDATE, not a proven meaning.')
+    print('Confirm each one by changing it in the cabinet and watching the')
+    print('response change -- never by the name alone.')
+    return 0
+
+
+def _guess_binary_kind(blob):
+    """Предположение о типе двоичного тела по сигнатуре. Без вывода содержимого."""
+    if blob[:4] == b'PK\x03\x04':
+        return 'ZIP container'
+    if blob[:2] == b'\x1f\x8b':
+        return 'gzip stream'
+    if blob[:1] in (b'<',):
+        return 'XML or HTML'
+    try:
+        blob.decode('utf-8')
+    except UnicodeDecodeError:
+        return 'binary, not valid UTF-8'
+    return 'text, but not JSON'
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description='Decode DJI flight-route responses from a saved capture. '
                     'Read only: no network, no browser, no database.')
-    parser.add_argument('--capture', required=True,
+    parser.add_argument('--capture', default=None,
                         help='sanitised network capture (JSON with entries) '
                              'or a raw response body')
+    parser.add_argument('--request-body', default=None,
+                        help='a saved POST request body (payload only, never '
+                             'headers) -- describes its structure for '
+                             'question B1')
     parser.add_argument('--geojson', default=None,
                         help='optional output file for the decoded routes')
     args = parser.parse_args(argv)
 
+    if args.request_body:
+        if not os.path.exists(args.request_body):
+            raise SystemExit('ERROR: file not found: %s' % args.request_body)
+        return describe_request_body(args.request_body)
+
+    if not args.capture:
+        raise SystemExit('ERROR: pass --capture or --request-body')
     if not os.path.exists(args.capture):
         raise SystemExit('ERROR: file not found: %s' % args.capture)
 
