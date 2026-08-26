@@ -22,8 +22,10 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools.drone_field_geometry_probe import (  # noqa: E402
-    analyse_file, detect_format, looks_like_wgs84, main, describe_shapes,
-    rings_from_geojson, rings_from_kml, ring_area_m2)
+    DEFAULT_AREA_TOLERANCE_PERCENT, analyse_file, coordinate_problems,
+    describe_shapes, detect_format, distinct_vertex_count, looks_like_wgs84,
+    main, md5_of, ring_area_m2, ring_self_intersects, rings_from_geojson,
+    rings_from_kml, validate_shapes)
 
 LAT = 40.0827
 LON = 64.6329
@@ -174,17 +176,55 @@ class TestGeometry(unittest.TestCase):
         described = describe_shapes([('Polygon', rectangle(), [])])
         self.assertFalse(described[0]['self_intersects'])
 
-    def test_swapped_coordinates_are_suspected(self):
-        """lat/lon вместо lon/lat: широта 40 сойдёт за долготу, а долгота 64
-        за широту НЕ сойдёт только если выйдет за 90. Здесь берётся точка,
-        на которой перестановка видна."""
-        swapped = [[100.0, 64.6], [100.1, 64.6], [100.1, 64.7], [100.0, 64.6]]
-        ok, _note = looks_like_wgs84(describe_shapes([('Polygon', swapped, [])]))
-        self.assertTrue(ok)   # 100 -- законная долгота, 64 -- законная широта
+    def test_coordinates_outside_wgs84_are_rejected(self):
         bad = [[64.6, 100.0], [64.7, 100.0], [64.7, 100.1], [64.6, 100.0]]
-        ok, note = looks_like_wgs84(describe_shapes([('Polygon', bad, [])]))
+        described = describe_shapes([('Polygon', bad, [])])
+        ok, note = looks_like_wgs84(described)
         self.assertFalse(ok)
-        self.assertIn('порядок', note)
+        self.assertIn('широта', note)
+        self.assertTrue(validate_shapes([('Polygon', bad, [])], described))
+
+    def test_valid_coordinates_are_accepted(self):
+        """Отрицательный контроль к предыдущему."""
+        described = describe_shapes([('Polygon', rectangle(), [])])
+        ok, _note = looks_like_wgs84(described)
+        self.assertTrue(ok)
+        self.assertEqual(validate_shapes([('Polygon', rectangle(), [])],
+                                         described), [])
+
+    def test_non_numeric_and_non_finite_coordinates_are_caught(self):
+        for bad_point in (['x', 40.0], [None, 40.0], [float('nan'), 40.0],
+                          [float('inf'), 40.0], [True, 40.0]):
+            ring = [bad_point, [64.7, 40.0], [64.7, 40.1], bad_point]
+            self.assertTrue(coordinate_problems(ring),
+                            'not caught: %r' % (bad_point,))
+
+    def test_a_clean_ring_has_no_coordinate_problems(self):
+        """Отрицательный контроль к предыдущему."""
+        self.assertEqual(coordinate_problems(rectangle()), [])
+
+    def test_fewer_than_three_distinct_vertices_is_rejected(self):
+        degenerate = [[64.6, 40.0], [64.7, 40.0], [64.6, 40.0]]
+        described = describe_shapes([('Polygon', degenerate, [])])
+        reasons = validate_shapes([('Polygon', degenerate, [])], described)
+        self.assertTrue(any('различных вершин' in reason for reason in reasons))
+        self.assertEqual(distinct_vertex_count(degenerate), 2)
+
+    def test_an_unclosed_ring_is_rejected(self):
+        ring = rectangle()[:-1]
+        described = describe_shapes([('Polygon', ring, [])])
+        reasons = validate_shapes([('Polygon', ring, [])], described)
+        self.assertTrue(any('не замкнуто' in reason for reason in reasons))
+
+    def test_a_self_intersection_on_the_closing_segment_is_caught(self):
+        """Незамкнутое кольцо, чьё замыкающее ребро пересекает другое.
+
+        Валидатор отвергает такое кольцо и как незамкнутое, и как
+        самопересекающееся -- вторая проверка не должна молчать только
+        потому, что последняя вершина не повторяет первую.
+        """
+        bowtie_open = [[0.0, 0.0], [1.0, 1.0], [1.0, 0.0], [0.0, 1.0]]
+        self.assertTrue(ring_self_intersects(bowtie_open))
 
 
 class TestEndToEnd(unittest.TestCase):
@@ -216,6 +256,124 @@ class TestEndToEnd(unittest.TestCase):
         import contextlib, io
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(main(['--file', '/nonexistent/x.bin']), 2)
+
+
+class TestStrictValidation(unittest.TestCase):
+    """Пункт 5 ревью: провал валидации -> ненулевой код и НЕТ GeoJSON."""
+
+    def run_main(self, blob, name='field.json', extra=()):
+        import contextlib, io
+        directory = tempfile.mkdtemp()
+        path = write(directory, name, blob)
+        out = os.path.join(directory, 'out.geojson')
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = main(['--file', path, '--geojson', out] + list(extra))
+        return code, buffer.getvalue(), out, path
+
+    def test_a_good_polygon_passes_and_writes_geojson(self):
+        code, text, out, _path = self.run_main(GEOJSON)
+        self.assertEqual(code, 0)
+        self.assertIn('VALIDATION PASSED', text)
+        self.assertTrue(os.path.exists(out))
+
+    def test_md5_mismatch_fails_and_writes_nothing(self):
+        code, text, out, _path = self.run_main(
+            GEOJSON, extra=('--expect-md5', '0' * 32))
+        self.assertEqual(code, 4)
+        self.assertIn('MISMATCH', text)
+        self.assertFalse(os.path.exists(out))
+
+    def test_md5_match_passes(self):
+        """Отрицательный контроль к предыдущему."""
+        directory = tempfile.mkdtemp()
+        path = write(directory, 'field.json', GEOJSON)
+        out = os.path.join(directory, 'out.geojson')
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()) as buffer:
+            code = main(['--file', path, '--geojson', out,
+                         '--expect-md5', md5_of(path)])
+        self.assertEqual(code, 0)
+        self.assertIn('MATCH', buffer.getvalue())
+        self.assertTrue(os.path.exists(out))
+
+    def test_an_unclosed_ring_fails_and_writes_nothing(self):
+        blob = json.dumps({'type': 'Polygon',
+                           'coordinates': [rectangle()[:-1]]})
+        code, text, out, _path = self.run_main(blob)
+        self.assertEqual(code, 4)
+        self.assertIn('VALIDATION FAILED', text)
+        self.assertFalse(os.path.exists(out))
+
+    def test_a_self_intersecting_ring_fails(self):
+        bowtie = [[0.0, 0.0], [1.0, 1.0], [1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]
+        blob = json.dumps({'type': 'Polygon', 'coordinates': [bowtie]})
+        code, text, out, _path = self.run_main(blob)
+        self.assertEqual(code, 4)
+        self.assertFalse(os.path.exists(out))
+
+    def test_coordinates_outside_wgs84_fail(self):
+        bad = [[64.6, 100.0], [64.7, 100.0], [64.7, 100.1], [64.6, 100.0]]
+        blob = json.dumps({'type': 'Polygon', 'coordinates': [bad]})
+        code, _text, out, _path = self.run_main(blob)
+        self.assertEqual(code, 4)
+        self.assertFalse(os.path.exists(out))
+
+    def test_a_non_finite_coordinate_fails(self):
+        blob = '{"type": "Polygon", "coordinates": [[[64.6, 40.0], ' \
+               '[NaN, 40.0], [64.7, 40.1], [64.6, 40.0]]]}'
+        code, _text, out, _path = self.run_main(blob)
+        self.assertEqual(code, 4)
+        self.assertFalse(os.path.exists(out))
+
+    def test_a_degenerate_ring_fails(self):
+        blob = json.dumps({'type': 'Polygon', 'coordinates': [
+            [[64.6, 40.0], [64.7, 40.0], [64.6, 40.0]]]})
+        code, _text, out, _path = self.run_main(blob)
+        self.assertEqual(code, 4)
+        self.assertFalse(os.path.exists(out))
+
+    def test_an_area_beyond_the_tolerance_fails(self):
+        """Прямоугольник 100x200 м = 2 га = 30 му. Заявим 60 му."""
+        code, text, out, _path = self.run_main(
+            GEOJSON, extra=('--expect-area-mu', '60.0'))
+        self.assertEqual(code, 4)
+        self.assertIn('tolerance', text)
+        self.assertFalse(os.path.exists(out))
+
+    def test_an_area_within_the_tolerance_passes(self):
+        """Отрицательный контроль к предыдущему."""
+        code, _text, out, _path = self.run_main(
+            GEOJSON, extra=('--expect-area-mu', '30.0'))
+        self.assertEqual(code, 0)
+        self.assertTrue(os.path.exists(out))
+
+    def test_the_tolerance_is_configurable_and_defaults_to_one_percent(self):
+        self.assertEqual(DEFAULT_AREA_TOLERANCE_PERCENT, 1.0)
+        # 30 му против прямоугольника 2 га -- расхождение около 0.03 %.
+        # Сузим допуск до нуля: тот же файл обязан провалиться.
+        code, _text, out, _path = self.run_main(
+            GEOJSON, extra=('--expect-area-mu', '30.5',
+                            '--area-tolerance-percent', '0.001'))
+        self.assertEqual(code, 4)
+        self.assertFalse(os.path.exists(out))
+
+    def test_an_unreadable_format_is_recon_not_validation(self):
+        code, text, out, _path = self.run_main(b'\xff\xfe\xfd nonsense',
+                                               name='blob.bin')
+        self.assertEqual(code, 1)
+        self.assertIn('RECONNAISSANCE RESULT', text)
+        self.assertIn('B2 stays OPEN', text)
+        self.assertFalse(os.path.exists(out))
+
+    def test_a_secret_bearing_file_writes_nothing(self):
+        blob = json.dumps({'signedURL': 'https://example.invalid/x'
+                                        '?OSSAccessKeyId=A&Signature=B',
+                           'type': 'Polygon',
+                           'coordinates': [rectangle()]})
+        code, _text, out, _path = self.run_main(blob)
+        self.assertEqual(code, 3)
+        self.assertFalse(os.path.exists(out))
 
 
 if __name__ == '__main__':

@@ -28,6 +28,7 @@ GeoJSON, KML, ZIP/KMZ, protobuf-подобный бинарный объект �
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -45,10 +46,20 @@ GZIP_MAGIC = b'\x1f\x8b'
 # docs/tracks/drones.md §3. Нужно, чтобы сверить площадь полигона с totalArea.
 MU_PER_HECTARE = 15.0
 
+# Допуск сверки площади с `totalArea` DJI, проценты.
+#
+# [REASON]: это ТЕХНИЧЕСКИЙ допуск проверки формата, а НЕ допуск коммерческого
+# расчёта. Он отвечает на вопрос «мы прочитали файл правильно?», и один процент
+# для этого с запасом: разбор в другой системе координат или с перепутанным
+# порядком координат промахивается в разы, а не на проценты. К тому, какое
+# расхождение приемлемо в учёте гектаров, это число отношения не имеет.
+DEFAULT_AREA_TOLERANCE_PERCENT = 1.0
+
 EXIT_OK = 0
 EXIT_UNKNOWN_FORMAT = 1
 EXIT_NO_FILE = 2
 EXIT_SECRET_FOUND = 3
+EXIT_VALIDATION_FAILED = 4
 
 
 def sha256_of(path):
@@ -242,11 +253,12 @@ def _kml_ring(text):
 def ring_area_m2(ring):
     """Площадь кольца на сфере, м2. Знак говорит о направлении обхода.
 
-    Формула сферического многоугольника (L'Huilier в форме суммы по рёбрам).
-    Для поля в несколько гектаров совпадает с плоским расчётом до долей
-    процента, а зависимости от проекции не имеет вовсе.
+    Формула сферического многоугольника (сумма по рёбрам). Для поля в
+    несколько гектаров совпадает с плоским расчётом до долей процента, а
+    зависимости от проекции не имеет вовсе. Проверено на рамке контура
+    `Karvon`: 13.5011 га против 13.5011 га у независимого расчёта через
+    равнопромежуточную проекцию.
     """
-    import math
     if len(ring) < 3:
         return 0.0
     radius = 6378137.0
@@ -260,6 +272,49 @@ def ring_area_m2(ring):
     return total * radius * radius / 2.0
 
 
+def coordinate_problems(ring):
+    """Список претензий к координатам кольца. Пустой список -- всё в порядке.
+
+    [REASON]: проверяется КАЖДАЯ вершина, а не первая и последняя. Одна
+    нечисловая или бесконечная координата посреди контура даёт NaN в площади,
+    и дальше все сравнения с `totalArea` становятся ложными молча -- NaN не
+    равен ничему, включая себя.
+    """
+    problems = []
+    for index, point in enumerate(ring):
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            problems.append('вершина %d не пара координат' % index)
+            continue
+        lon, lat = point[0], point[1]
+        for name, value in (('долгота', lon), ('широта', lat)):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                problems.append('вершина %d: %s не число' % (index, name))
+            elif not math.isfinite(value):
+                problems.append('вершина %d: %s не конечна' % (index, name))
+        if _finite(lon) and not -180.0 <= lon <= 180.0:
+            problems.append('вершина %d: долгота %s вне [-180, 180]'
+                            % (index, lon))
+        if _finite(lat) and not -90.0 <= lat <= 90.0:
+            problems.append('вершина %d: широта %s вне [-90, 90]'
+                            % (index, lat))
+        if len(problems) > 20:
+            problems.append('... и другие')
+            return problems
+    return problems
+
+
+def _finite(value):
+    return (not isinstance(value, bool) and isinstance(value, (int, float))
+            and math.isfinite(value))
+
+
+def distinct_vertex_count(ring):
+    """Число различных вершин. Замыкающая повторная вершина не считается."""
+    return len({(point[0], point[1]) for point in ring
+                if isinstance(point, (list, tuple)) and len(point) >= 2
+                and _finite(point[0]) and _finite(point[1])})
+
+
 def segments_intersect(a, b, c, d):
     def cross(o, p, q):
         return ((p[0] - o[0]) * (q[1] - o[1])
@@ -270,15 +325,27 @@ def segments_intersect(a, b, c, d):
 
 
 def ring_self_intersects(ring):
-    """Грубая проверка самопересечения. O(n^2), для контура поля достаточно."""
-    count = len(ring)
-    if count < 4:
+    """Грубая проверка самопересечения. O(n^2), для контура поля достаточно.
+
+    Работает по ЗАМКНУТОМУ кольцу: если последняя вершина не повторяет первую,
+    замыкающее ребро добавляется здесь. Иначе самопересечение с участием этого
+    ребра осталось бы незамеченным -- а незамкнутое кольцо валидатор всё равно
+    отвергает раньше, так что это страховка, а не основной путь.
+    """
+    points = [point for point in ring
+              if isinstance(point, (list, tuple)) and len(point) >= 2
+              and _finite(point[0]) and _finite(point[1])]
+    if len(points) < 3:
         return False
+    if points[0] != points[-1]:
+        points.append(points[0])
+    count = len(points)
     for i in range(count - 1):
         for j in range(i + 2, count - 1):
             if i == 0 and j == count - 2:
                 continue          # смежные через замыкание
-            if segments_intersect(ring[i], ring[i + 1], ring[j], ring[j + 1]):
+            if segments_intersect(points[i], points[i + 1],
+                                  points[j], points[j + 1]):
                 return True
     return False
 
@@ -287,24 +354,32 @@ def describe_shapes(shapes):
     report = []
     for kind, outer, inners in shapes:
         closed = (len(outer) > 2 and outer[0] == outer[-1])
-        area = abs(ring_area_m2(outer))
-        holes = []
+        problems = coordinate_problems(outer)
         for inner in inners:
-            holes.append(abs(ring_area_m2(inner)))
+            problems.extend(coordinate_problems(inner))
+        area = abs(ring_area_m2(outer)) if not problems else 0.0
+        holes = [abs(ring_area_m2(inner)) for inner in inners] \
+            if not problems else []
+        lons = [point[0] for point in outer if _finite(point[0])]
+        lats = [point[1] for point in outer if _finite(point[1])]
         report.append({
             'type': kind,
             'points': len(outer),
             'closed': closed,
-            'clockwise': ring_area_m2(outer) < 0,
+            'inner_rings_closed': all(
+                len(inner) > 2 and inner[0] == inner[-1] for inner in inners),
+            'distinct_vertices': distinct_vertex_count(outer),
+            'clockwise': (ring_area_m2(outer) < 0) if not problems else None,
             'self_intersects': ring_self_intersects(outer),
+            'inner_self_intersects': any(ring_self_intersects(inner)
+                                         for inner in inners),
+            'coordinate_problems': problems,
             'area_m2': area,
             'area_ha': area / 10000.0,
             'holes': len(inners),
             'holes_area_ha': sum(holes) / 10000.0,
-            'lon_range': (min(p[0] for p in outer), max(p[0] for p in outer))
-                         if outer else (None, None),
-            'lat_range': (min(p[1] for p in outer), max(p[1] for p in outer))
-                         if outer else (None, None),
+            'lon_range': (min(lons), max(lons)) if lons else (None, None),
+            'lat_range': (min(lats), max(lats)) if lats else (None, None),
         })
     return report
 
@@ -315,21 +390,52 @@ def looks_like_wgs84(shapes):
     [REASON]: перепутанный порядок -- самая частая и самая тихая ошибка в
     геоданных. Для Бухарской области долгота около 64.6, широта около 40.1;
     обе в диапазоне градусов, поэтому перестановка не выйдет за границы и
-    молча даст поле в другом полушарии. Здесь проверяется только то, что
-    можно проверить без внешнего знания: обе величины в градусах, и
-    сообщается, какая из них больше.
+    молча даст поле в другом полушарии. Здесь проверяется только то, что можно
+    проверить без внешнего знания: обе величины в градусах своих диапазонов.
+    Совпадение диапазонов НЕ доказывает правильный порядок -- оно лишь
+    исключает грубый случай.
     """
     for shape in shapes:
-        lon_lo, lon_hi = shape['lon_range']
-        lat_lo, lat_hi = shape['lat_range']
-        if lon_lo is None:
-            continue
-        if not (-180 <= lon_lo <= 180 and -180 <= lon_hi <= 180):
-            return False, 'первая координата вне диапазона долготы'
-        if not (-90 <= lat_lo <= 90 and -90 <= lat_hi <= 90):
-            return False, ('вторая координата вне диапазона широты -- '
-                           'вероятно, порядок перепутан')
+        if shape['coordinate_problems']:
+            return False, shape['coordinate_problems'][0]
     return True, 'обе координаты в допустимых диапазонах градусов'
+
+
+def validate_shapes(shapes, described):
+    """Список причин, по которым геометрию нельзя принимать. Пустой -- годна.
+
+    Все проверки здесь ВНУТРЕННИЕ: они не зависят от того, передал ли
+    пользователь ожидаемые значения. Сверка с contentMd5 и totalArea живёт
+    отдельно -- её нельзя выполнить, не получив ожидание.
+    """
+    reasons = []
+    if not shapes:
+        reasons.append('полигон не разобран')
+        return reasons
+    for index, shape in enumerate(described):
+        prefix = 'кольцо %d: ' % index
+        if shape['coordinate_problems']:
+            reasons.append(prefix + '; '.join(shape['coordinate_problems'][:5]))
+            continue
+        if not shape['closed']:
+            reasons.append(prefix + 'внешнее кольцо не замкнуто')
+        if not shape['inner_rings_closed']:
+            reasons.append(prefix + 'внутреннее кольцо не замкнуто')
+        if shape['distinct_vertices'] < 3:
+            reasons.append(prefix + 'меньше трёх различных вершин (%d)'
+                           % shape['distinct_vertices'])
+        if shape['self_intersects']:
+            reasons.append(prefix + 'внешнее кольцо самопересекается')
+        if shape['inner_self_intersects']:
+            reasons.append(prefix + 'внутреннее кольцо самопересекается')
+    total = sum(shape['area_ha'] - shape['holes_area_ha']
+                for shape in described)
+    if not math.isfinite(total):
+        reasons.append('итоговая площадь не конечна')
+    elif total <= 0:
+        reasons.append('итоговая площадь нулевая или отрицательная (%.6f га)'
+                       % total)
+    return reasons
 
 
 # ─── Главное ─────────────────────────────────────────────────────────────────
@@ -356,8 +462,8 @@ def analyse_file(path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description='DRONE-COVERAGE-001 stage A3: identify what the DJI field '
-                    'geometry file actually is. No network, no guessing.')
+        description='DRONE-COVERAGE-001 stage A3: identify and VALIDATE the '
+                    'DJI field geometry file. No network, no guessing.')
     parser.add_argument('--file', required=True,
                         help='the downloaded geometry body, WITHOUT the URL')
     parser.add_argument('--expect-md5', default=None,
@@ -365,8 +471,16 @@ def main(argv=None):
                              'response, to prove the right object was saved')
     parser.add_argument('--expect-area-mu', type=float, default=None,
                         help='totalArea from the lands response, in mu')
+    parser.add_argument('--area-tolerance-percent', type=float,
+                        default=DEFAULT_AREA_TOLERANCE_PERCENT,
+                        help='how far the parsed area may differ from '
+                             '--expect-area-mu before the run FAILS. Default '
+                             '%.1f%%. This is a technical tolerance of the '
+                             'format check, NOT a tolerance of the commercial '
+                             'calculation.' % DEFAULT_AREA_TOLERANCE_PERCENT)
     parser.add_argument('--geojson', default=None,
-                        help='write the parsed rings as GeoJSON for viewing')
+                        help='write the parsed rings as GeoJSON. Written ONLY '
+                             'when every validation passed.')
     args = parser.parse_args(argv)
 
     if not os.path.exists(args.file):
@@ -393,49 +507,70 @@ def main(argv=None):
 
     print('format : %s  (%s)' % (result['format'], result['format_note']))
 
+    failures = []
+
     if args.expect_md5:
         actual = md5_of(args.file)
-        ok = actual.lower() == args.expect_md5.lower().strip()
-        print('contentMd5 from DJI : %s' % ('MATCH' if ok else 'MISMATCH'))
-        if not ok:
-            print('  expected %s' % args.expect_md5)
-            print('  actual   %s' % actual)
+        if actual.lower() != args.expect_md5.lower().strip():
+            failures.append('contentMd5 не совпал: ожидалось %s, получено %s'
+                            % (args.expect_md5, actual))
+            print('contentMd5 from DJI : MISMATCH')
             print('  a mismatch means this is not the object the directory')
             print('  pointed at, or it was transformed on the way.')
+        else:
+            print('contentMd5 from DJI : MATCH')
 
     if not result['shapes']:
         print('')
         print('No polygon rings were parsed.')
-        if result['format'] in ('PROTOBUF_LIKE', 'UNKNOWN', 'KMZ', 'GZIP',
-                                'JSON_OTHER'):
-            print('That is a RESULT, not a failure: the format is named above')
-            print('and the geometry is not readable without more work. Do not')
-            print('guess a schema -- report the format and stop.')
+        print('That is a RECONNAISSANCE RESULT, not a validated polygon: the')
+        print('format is named above and question B2 stays OPEN.')
+        if failures:
+            print('Additionally: %s' % _ascii(failures[0]))
+        print('No GeoJSON was written.')
         return EXIT_UNKNOWN_FORMAT
 
-    wgs_ok, wgs_note = looks_like_wgs84(result['shapes'])
+    described = result['shapes']
+    failures.extend(validate_shapes(result['raw_shapes'], described))
+
+    wgs_ok, wgs_note = looks_like_wgs84(described)
     print('')
-    print('rings parsed : %d' % len(result['shapes']))
-    print('coordinates  : %s (%s)' % ('degrees, lon/lat' if wgs_ok else 'SUSPECT',
-                                      wgs_note))
+    print('rings parsed : %d' % len(described))
+    print('coordinates  : %s (%s)'
+          % ('degrees, lon/lat' if wgs_ok else 'REJECTED', _ascii(wgs_note)))
     total_ha = 0.0
-    for index, shape in enumerate(result['shapes']):
+    for index, shape in enumerate(described):
         total_ha += shape['area_ha'] - shape['holes_area_ha']
-        print('  ring %d: type=%s points=%d closed=%s holes=%d '
+        print('  ring %d: type=%s points=%d distinct=%d closed=%s holes=%d '
               'self_intersects=%s area=%.4f ha'
-              % (index, shape['type'], shape['points'], shape['closed'],
-                 shape['holes'], shape['self_intersects'], shape['area_ha']))
+              % (index, shape['type'], shape['points'],
+                 shape['distinct_vertices'], shape['closed'], shape['holes'],
+                 shape['self_intersects'], shape['area_ha']))
     print('total area (rings minus holes) : %.4f ha' % total_ha)
 
     if args.expect_area_mu is not None:
         expected_ha = args.expect_area_mu / MU_PER_HECTARE
         delta = total_ha - expected_ha
-        share = (100.0 * delta / expected_ha) if expected_ha else 0.0
+        share = (100.0 * delta / expected_ha) if expected_ha else float('inf')
         print('DJI totalArea  : %.4f mu = %.4f ha' % (args.expect_area_mu,
                                                       expected_ha))
-        print('difference     : %+.4f ha (%+.2f%%)' % (delta, share))
-        print('a difference under about one percent means the file was read')
-        print('correctly; a large one means the parse or the units are wrong.')
+        print('difference     : %+.4f ha (%+.2f%%), tolerance %.2f%%'
+              % (delta, share, args.area_tolerance_percent))
+        if not math.isfinite(share) or abs(share) > args.area_tolerance_percent:
+            failures.append(
+                'площадь разошлась с totalArea на %.2f%% при допуске %.2f%%'
+                % (share, args.area_tolerance_percent))
+
+    if failures:
+        print('')
+        print('VALIDATION FAILED (%d):' % len(failures))
+        for reason in failures:
+            print('  - %s' % _ascii(reason))
+        print('No GeoJSON was written. Question B2 stays OPEN.')
+        return EXIT_VALIDATION_FAILED
+
+    print('')
+    print('VALIDATION PASSED: the polygon is readable and consistent.')
 
     if args.geojson:
         features = []
@@ -451,6 +586,13 @@ def main(argv=None):
                       handle, ensure_ascii=False)
         print('geojson written: %s' % args.geojson)
     return EXIT_OK
+
+
+def _ascii(text):
+    """Кириллица в консоль Windows не идёт -- заменяем, не роняя прогон."""
+    if text is None:
+        return ''
+    return str(text).encode('ascii', 'replace').decode('ascii')
 
 
 if __name__ == '__main__':
