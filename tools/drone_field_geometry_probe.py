@@ -524,13 +524,19 @@ def main(argv=None):
                              'response, to prove the right object was saved')
     parser.add_argument('--expect-area-mu', type=float, default=None,
                         help='totalArea from the lands response, in mu')
+    # [REASON]: argparse ФОРМАТИРУЕТ строку help ещё раз, подставляя в неё
+    # %(default)s и подобное. Готовая строка, где уже стоит литеральный «%»,
+    # ломает этот второй проход: `--help` падал с
+    # `ValueError: unsupported format character`. Проценты в тексте help
+    # обязаны быть удвоены, а число подставляется через %(default)s -- тогда
+    # форматирование делает argparse, и делает его один раз.
     parser.add_argument('--area-tolerance-percent', type=float,
                         default=DEFAULT_AREA_TOLERANCE_PERCENT,
                         help='how far the parsed area may differ from '
                              '--expect-area-mu before the run FAILS. Default '
-                             '%.1f%%. This is a technical tolerance of the '
-                             'format check, NOT a tolerance of the commercial '
-                             'calculation.' % DEFAULT_AREA_TOLERANCE_PERCENT)
+                             '%(default)s%%. This is a technical tolerance of '
+                             'the format check, NOT a tolerance of the '
+                             'commercial calculation.')
     parser.add_argument('--geojson', default=None,
                         help='write the parsed rings as GeoJSON. Written ONLY '
                              'when every validation passed.')

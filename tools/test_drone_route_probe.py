@@ -233,5 +233,142 @@ class TestRequestBodyDescription(unittest.TestCase):
         self.assertIn('device', text)
 
 
+# ─── Дефекты PR №106 ─────────────────────────────────────────────────────────
+
+class TestHelpDoesNotCrash(unittest.TestCase):
+    """Дефект 7.1: `--help` падал на литерале % в тексте argparse.
+
+    [REASON]: argparse форматирует строку help ещё раз, подставляя
+    %(default)s. Готовая строка с литеральным «%» ломает этот второй проход.
+    Проверяются все три инструмента разом: ошибка класса «сломался --help»
+    ловится одним тестом на весь набор и не требует помнить о ней при
+    добавлении следующего аргумента.
+    """
+
+    def test_every_tool_prints_help_and_exits_zero(self):
+        import subprocess
+        here = os.path.dirname(os.path.abspath(__file__))
+        for name in ('drone_route_probe.py', 'drone_field_geometry_probe.py',
+                     'drone_area_anomaly_probe.py'):
+            result = subprocess.run(
+                [sys.executable, os.path.join(here, name), '--help'],
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0,
+                             '%s --help failed: %s' % (name, result.stderr))
+            self.assertIn('usage', result.stdout.lower())
+
+
+class TestRequestBodyModeIsStandalone(unittest.TestCase):
+    """Дефект 7.2: режим --request-body тянул за собой декодер маршрутов."""
+
+    def test_the_module_imports_without_drone_collector(self):
+        """Загрузка модуля не должна импортировать drone_collector.
+
+        Проверяется в отдельном процессе, где `drone_collector` заблокирован
+        подложным импортёром: если модуль тянет декодер на загрузке, импорт
+        упадёт.
+        """
+        import subprocess
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        script = (
+            'import sys\n'
+            'class Block:\n'
+            '    def find_module(self, name, path=None):\n'
+            '        return self if name.startswith("drone_collector") else None\n'
+            '    def load_module(self, name):\n'
+            '        raise ImportError("drone_collector is not installed")\n'
+            'sys.meta_path.insert(0, Block())\n'
+            'sys.path.insert(0, %r)\n'
+            'from tools.drone_route_probe import describe_request_body\n'
+            'print("OK")\n' % root)
+        result = subprocess.run([sys.executable, '-c', script],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0,
+                         'module-level import of the decoder: %s'
+                         % result.stderr)
+        self.assertIn('OK', result.stdout)
+
+
+class TestSafeEnvelope(unittest.TestCase):
+    """Дефект 7.3: конверт с bodyText не разбирался."""
+
+    def run_on(self, payload, name='body.json'):
+        import contextlib, io
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, name)
+            mode = 'wb' if isinstance(payload, bytes) else 'w'
+            kwargs = {} if isinstance(payload, bytes) else {'encoding': 'utf-8'}
+            with open(path, mode, **kwargs) as handle:
+                handle.write(payload if isinstance(payload, (str, bytes))
+                             else json.dumps(payload))
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                code = describe_request_body(path)
+            return code, buffer.getvalue()
+
+    def envelope(self, body_text):
+        return json.dumps({'method': 'POST',
+                           'urlPath': '/api/web/v2/flight_datas/flight_records',
+                           'mimeType': 'application/json',
+                           'bodyText': body_text})
+
+    def test_a_correct_envelope_is_parsed_and_the_inner_keys_are_named(self):
+        code, text = self.run_on(self.envelope(
+            '{"flight_record_ids":[900000001,900000002],'
+            '"data_type":"simplified"}'))
+        self.assertEqual(code, 0)
+        self.assertIn('Safe envelope recognised', text)
+        self.assertIn('flight_record_ids', text)
+        self.assertIn('array(2) of int', text)
+        self.assertIn('response detail level', text)
+
+    def test_no_id_value_from_inside_bodyText_is_printed(self):
+        code, text = self.run_on(self.envelope(
+            '{"flight_record_ids":[900000001],"data_type":"simplified"}'))
+        self.assertEqual(code, 0)
+        self.assertNotIn('900000001', text)
+        self.assertNotIn('simplified', text)
+
+    def test_an_envelope_with_a_bom_is_accepted(self):
+        """PowerShell пишет UTF-8 с BOM -- настоящий файл владельца такой."""
+        code, text = self.run_on(
+            ('\ufeff' + self.envelope('{"flight_record_ids":[1]}')))
+        self.assertEqual(code, 0)
+        self.assertIn('Safe envelope recognised', text)
+
+    def test_a_corrupted_bodyText_is_refused(self):
+        code, text = self.run_on(self.envelope('{"flight_record_ids":[1,'))
+        self.assertEqual(code, 1)
+        self.assertIn('not valid JSON', text)
+
+    def test_a_bodyText_that_is_not_an_object_is_refused(self):
+        code, text = self.run_on(self.envelope('"just a string"'))
+        self.assertEqual(code, 1)
+        self.assertIn('not to an object', text)
+
+    def test_a_plain_body_without_an_envelope_still_works(self):
+        """Отрицательный контроль: старый формат не сломан."""
+        code, text = self.run_on({'flight_record_ids': [1, 2]})
+        self.assertEqual(code, 0)
+        self.assertNotIn('Safe envelope recognised', text)
+        self.assertIn('flight_record_ids', text)
+
+    def test_an_oversized_file_is_refused_without_being_read(self):
+        from tools.drone_route_probe import MAX_REQUEST_BODY_BYTES
+        payload = '{"pad":"' + ('x' * (MAX_REQUEST_BODY_BYTES + 10)) + '"}'
+        code, text = self.run_on(payload)
+        self.assertEqual(code, 1)
+        self.assertIn('the cap is', text)
+
+    def test_deep_nesting_is_not_walked_without_bound(self):
+        from tools.drone_route_probe import MAX_STRUCTURE_DEPTH
+        node = {'leaf': 1}
+        for _ in range(MAX_STRUCTURE_DEPTH + 5):
+            node = {'nest': node}
+        code, text = self.run_on(self.envelope(json.dumps(node)))
+        self.assertEqual(code, 0)
+        self.assertIn('deeper levels not walked', text)
+
+
 if __name__ == '__main__':
     unittest.main()

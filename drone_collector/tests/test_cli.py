@@ -15,7 +15,7 @@ import logging
 import os
 import unittest
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from drone_collector import config as config_module
@@ -40,7 +40,11 @@ COLLECTOR_VARS = ('DJI_RECORDS_URL', 'DJI_STORAGE_STATE', 'DJI_HEADLESS',
                   'DJI_WINDOW_DAYS', 'DJI_TZ_OFFSET_HOURS',
                   'DJI_PAGE_TIMEOUT_MS', 'DJI_SETTLE_MS', 'DJI_MAX_PAGES',
                   'VEHICLE_SOFT_BASE_URL', 'DRONE_API_TOKEN',
-                  'DRONE_BATCH_SIZE')
+                  'DRONE_BATCH_SIZE', 'DJI_ROUTE_API_ORIGIN',
+                  'DRONE_OUTBOX_DIR', 'DJI_ROUTE_BATCH_SIZE',
+                  'DJI_ROUTE_PAUSE_MS', 'DJI_GEOMETRY_PAUSE_MS',
+                  'DJI_FIELDS_URL', 'DJI_MAX_LAND_PAGES',
+                  'DJI_EXPECTED_REGION', 'DJI_ALLOW_EMPTY_WINDOW')
 
 
 class CliTestCase(unittest.TestCase):
@@ -87,7 +91,11 @@ class ResolvePeriodTests(CliTestCase):
         self.assertEqual(kind, 'incremental')
         self.assertEqual((date_to - date_from).days + 1, cfg.window_days)
         # The window ends today in local time.
-        expected_today = (datetime.utcnow()
+        # [REASON]: `datetime.utcnow()` объявлен устаревшим и на Python 3.14
+        # печатает предупреждение. Тест проверяет ту самую функцию, из которой
+        # он убран, и звать здесь устаревший вызов -- значит держать дефект в
+        # проверке дефекта.
+        expected_today = (datetime.now(timezone.utc).replace(tzinfo=None)
                           + timedelta(hours=cfg.tz_offset_hours)).date()
         self.assertEqual(date_to, expected_today)
 
@@ -233,8 +241,116 @@ class ExitCodeConstantsTests(unittest.TestCase):
             (main_module.EXIT_OK, main_module.EXIT_CONFIG,
              main_module.EXIT_SESSION, main_module.EXIT_PERIOD,
              main_module.EXIT_PAGINATION, main_module.EXIT_INGEST,
-             main_module.EXIT_EMPTY, main_module.EXIT_REGION),
-            (0, 1, 2, 3, 4, 5, 6, 7))
+             main_module.EXIT_EMPTY, main_module.EXIT_REGION,
+             main_module.EXIT_ROUTE_REFUSED),
+            (0, 1, 2, 3, 4, 5, 6, 7, 10))
+
+    def test_the_route_code_does_not_collide_with_the_device_sweep(self):
+        """8 и 9 заняты вторым входом пакета -- `drone_collector.devices`.
+
+        [REASON]: одно число с двумя смыслами внутри одного пакета -- это
+        код выхода, который оператор однажды прочтёт неверно, глядя в журнал
+        планировщика, а не в исходник.
+        """
+        from drone_collector import devices as devices_module
+        taken = {devices_module.EXIT_NO_DEVICES,
+                 devices_module.EXIT_MISMATCH}
+        self.assertNotIn(main_module.EXIT_ROUTE_REFUSED, taken)
+
+
+class StageBUsageTests(CliTestCase):
+    """Что командная строка этапа B обязана отвергнуть до чтения среды."""
+
+    def parse(self, argv):
+        return build_parser().parse_args(argv)
+
+    def refuses(self, argv):
+        with self.assertRaises(UsageError):
+            main_module.check_usage(self.parse(argv))
+
+    def accepts(self, argv):
+        main_module.check_usage(self.parse(argv))
+
+    def test_lands_and_routes_together_are_refused(self):
+        self.refuses(['--lands', '--routes', '--ids-file', 'x.txt'])
+
+    def test_with_geometry_without_lands_is_refused(self):
+        self.refuses(['--with-geometry'])
+
+    def test_ids_file_without_routes_is_refused(self):
+        self.refuses(['--ids-file', 'x.txt'])
+
+    def test_routes_without_a_period_or_an_ids_file_is_refused(self):
+        """--routes должен знать, ЧЬИ маршруты просить."""
+        self.refuses(['--routes'])
+
+    def test_routes_with_a_kind_is_refused(self):
+        self.refuses(['--routes', '--ids-file', 'x.txt', '--kind', 'backfill'])
+
+    def test_lands_with_a_period_is_still_refused(self):
+        """Прежняя проверка не потерялась при переносе в check_usage."""
+        self.refuses(['--lands', '--from', '2026-07-01', '--to', '2026-07-31'])
+
+    def test_the_valid_combinations_pass(self):
+        """Отрицательный контроль: проверка не отвергает всё подряд."""
+        for argv in (['--routes', '--from', '2026-06-01', '--to', '2026-06-30'],
+                     ['--routes', '--ids-file', 'x.txt'],
+                     ['--routes', '--ids-file', 'x.txt', '--dry-run'],
+                     ['--lands'],
+                     ['--lands', '--with-geometry'],
+                     ['--lands', '--with-geometry', '--dry-run'],
+                     ['--from', '2026-07-01', '--to', '2026-07-31'],
+                     []):
+            with self.subTest(' '.join(argv) or '(no flags)'):
+                self.accepts(argv)
+
+
+class StageBNeedsNoIngestTokenTests(CliTestCase):
+    """--routes ничего не отправляет, значит токен ему не нужен.
+
+    [REASON]: этап B кладёт собранное в очередь на диске; приёмники -- этап C.
+    Требовать DRONE_API_TOKEN у прогона, который не сделает ни одного запроса
+    к Vehicle Soft, значило бы отказать по причине, которая к нему не
+    относится.
+    """
+
+    def test_a_route_run_without_a_token_fails_on_the_session_not_the_token(self):
+        os.environ['DJI_STORAGE_STATE'] = MISSING_STATE
+        code = main(['--routes', '--ids-file', MISSING_STATE])
+        self.assertEqual(code, EXIT_SESSION,
+                         'прогон маршрутов потребовал токен приёмника')
+
+    def test_a_sending_run_without_a_token_still_fails_on_the_token(self):
+        """Отрицательный контроль: у отправляющих прогонов правило прежнее."""
+        os.environ['DJI_STORAGE_STATE'] = MISSING_STATE
+        self.assertEqual(main(['--from', '2026-07-01', '--to', '2026-07-31']),
+                         EXIT_CONFIG)
+
+
+class StageBSummaryKeysTests(unittest.TestCase):
+
+    def test_each_mode_has_its_own_summary_template(self):
+        """Три набора счётчиков, а не один на всех.
+
+        [REASON]: у прогонов почти нет общих счётчиков, и печатать двадцать
+        прочерков от чужого шаблона -- значит показывать оператору «ошибки» там,
+        где их нет. Это уже было решено для --lands; --routes добавляет третий.
+        """
+        self.assertNotEqual(main_module.ROUTE_SUMMARY_KEYS,
+                            main_module.FLIGHT_SUMMARY_KEYS)
+        self.assertNotEqual(main_module.ROUTE_SUMMARY_KEYS,
+                            main_module.LAND_SUMMARY_KEYS)
+        for keys in (main_module.ROUTE_SUMMARY_KEYS,
+                     main_module.LAND_SUMMARY_KEYS,
+                     main_module.FLIGHT_SUMMARY_KEYS):
+            self.assertEqual(keys[0], 'mode')
+            self.assertEqual(keys[-1], 'exit')
+
+    def test_the_route_summary_reports_every_bucket_of_the_invariant(self):
+        for key in ('ids_requested', 'routes_new', 'routes_duplicates',
+                    'routes_missing', 'routes_errors'):
+            self.assertIn(key, main_module.ROUTE_SUMMARY_KEYS)
+
 
 
 def collect_result(flights, complete=True):

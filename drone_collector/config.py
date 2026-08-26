@@ -84,6 +84,27 @@ DEFAULT_BATCH_SIZE = 1000
 # have nothing in common but the word "page".
 DEFAULT_MAX_LAND_PAGES = 1000
 
+# ─── DRONE-COVERAGE-001, этап B ──────────────────────────────────────────────
+
+# Где кабинет держит API маршрутов. Отдельно от DJI_RECORDS_URL: страница
+# живёт на www.djiag.com, а API -- на другом хосте, и это два разных адреса.
+DEFAULT_ROUTE_API_ORIGIN = 'https://kr-ag2-api.dji.com'
+
+# Каталог очереди этапа B. Относительный путь резолвится от каталога пакета,
+# как и всё остальное здесь.
+DEFAULT_OUTBOX_DIR = 'data/outbox'
+
+# [REASON]: пакет маршрутов держится маленьким намеренно. В подтверждённом
+# теле запроса кабинета их девять; при отказе теряется весь пакет целиком, а
+# при слишком большом -- ещё и утяжеляется один ответ. Потолок в routes.py
+# зажимает всё, что задано выше него.
+DEFAULT_ROUTE_BATCH_SIZE = 25
+
+# Пауза между пакетами маршрутов и между скачиваниями геометрии, миллисекунды.
+# Темп обращений к чужому сервису задаём мы.
+DEFAULT_ROUTE_PAUSE_MS = 1000
+DEFAULT_GEOMETRY_PAUSE_MS = 350
+
 
 class ConfigError(Exception):
     """Unusable environment. Always names the offending variable."""
@@ -161,7 +182,11 @@ class CollectorConfig(object):
                  tz_offset_hours, page_timeout_ms, settle_ms, max_pages,
                  base_url, api_token, batch_size, expected_region=None,
                  allow_empty_window=False, fields_url=DEFAULT_FIELDS_URL,
-                 max_land_pages=DEFAULT_MAX_LAND_PAGES):
+                 max_land_pages=DEFAULT_MAX_LAND_PAGES,
+                 route_api_origin=DEFAULT_ROUTE_API_ORIGIN,
+                 outbox_dir=None, route_batch_size=DEFAULT_ROUTE_BATCH_SIZE,
+                 route_pause_ms=DEFAULT_ROUTE_PAUSE_MS,
+                 geometry_pause_ms=DEFAULT_GEOMETRY_PAUSE_MS):
         self.records_url = records_url
         self.fields_url = fields_url
         self.max_land_pages = max_land_pages
@@ -177,6 +202,11 @@ class CollectorConfig(object):
         self.batch_size = batch_size
         self.expected_region = expected_region
         self.allow_empty_window = allow_empty_window
+        self.route_api_origin = route_api_origin
+        self.outbox_dir = outbox_dir or resolve_path(DEFAULT_OUTBOX_DIR)
+        self.route_batch_size = route_batch_size
+        self.route_pause_ms = route_pause_ms
+        self.geometry_pause_ms = geometry_pause_ms
 
     @property
     def flight_sync_url(self):
@@ -222,6 +252,11 @@ class CollectorConfig(object):
             'batch_size': self.batch_size,
             'expected_region': self.expected_region or 'not set',
             'allow_empty_window': self.allow_empty_window,
+            'route_api_origin': self.route_api_origin,
+            'outbox_dir': str(self.outbox_dir),
+            'route_batch_size': self.route_batch_size,
+            'route_pause_ms': self.route_pause_ms,
+            'geometry_pause_ms': self.geometry_pause_ms,
         }
 
 
@@ -246,6 +281,11 @@ def load_config(require_ingest=True, load_dotenv=True):
     if not fields_url.startswith(('http://', 'https://')):
         raise ConfigError('DJI_FIELDS_URL must start with http:// or https://,'
                           ' got %r' % fields_url)
+
+    route_api_origin = _raw('DJI_ROUTE_API_ORIGIN') or DEFAULT_ROUTE_API_ORIGIN
+    if not route_api_origin.startswith(('http://', 'https://')):
+        raise ConfigError('DJI_ROUTE_API_ORIGIN must start with http:// or '
+                          'https://, got %r' % route_api_origin)
 
     storage_state = resolve_path(_raw('DJI_STORAGE_STATE') or DEFAULT_STORAGE_STATE)
 
@@ -284,4 +324,13 @@ def load_config(require_ingest=True, load_dotenv=True):
         fields_url=fields_url,
         max_land_pages=_as_int('DJI_MAX_LAND_PAGES', DEFAULT_MAX_LAND_PAGES,
                                minimum=1),
+        route_api_origin=route_api_origin,
+        outbox_dir=resolve_path(_raw('DRONE_OUTBOX_DIR')
+                                or DEFAULT_OUTBOX_DIR),
+        route_batch_size=_as_int('DJI_ROUTE_BATCH_SIZE',
+                                 DEFAULT_ROUTE_BATCH_SIZE, minimum=1),
+        route_pause_ms=_as_int('DJI_ROUTE_PAUSE_MS', DEFAULT_ROUTE_PAUSE_MS,
+                               minimum=0),
+        geometry_pause_ms=_as_int('DJI_GEOMETRY_PAUSE_MS',
+                                  DEFAULT_GEOMETRY_PAUSE_MS, minimum=0),
     )

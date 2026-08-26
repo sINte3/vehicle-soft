@@ -36,9 +36,21 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from drone_collector.route_decode import (  # noqa: E402
-    RouteDecodeError, decode_route_response, implied_work_length_m,
-    path_length_m)
+# [REASON]: декодер маршрутов НЕ импортируется на загрузке модуля.
+# Режим --request-body разбирает только тело POST-запроса и в декодере не
+# нуждается вовсе; из-за верхнеуровневого импорта он не работал там, где
+# `drone_collector` не установлен -- например на машине владельца, куда
+# приехал один текстовый файл и ничего больше. Импорт перенесён внутрь
+# функции разбора capture, которой декодер действительно нужен.
+
+
+def _load_route_decoder():
+    """Ленивая загрузка декодера. Нужна только режиму --capture."""
+    from drone_collector.route_decode import (
+        RouteDecodeError, decode_route_response, implied_work_length_m,
+        path_length_m)
+    return (RouteDecodeError, decode_route_response, implied_work_length_m,
+            path_length_m)
 
 # Маркер эндпоинта маршрутов. Совпадение по имени, а не по версии API: смена
 # v2 на v3 не должна превращать прогон в молчаливый "маршрутов не найдено".
@@ -70,6 +82,9 @@ REQUEST_BODY_QUESTIONS = (
                         'north', 'south', 'east', 'west')),
     ('result count limit', ('limit', 'page_size', 'size', 'count',
                             'per_page', 'page')),
+    # data_type подтверждён на настоящем теле запроса 2026-08-26. Значение
+    # НЕ печатается -- только сам факт наличия ключа.
+    ('response detail level', ('data_type', 'dataType', 'detail_type')),
 )
 
 
@@ -140,6 +155,8 @@ def dedupe(bodies):
 
 
 def report(raw, label, digest, repeats):
+    (RouteDecodeError, decode_route_response, implied_work_length_m,
+     path_length_m) = _load_route_decoder()
     try:
         decoded = decode_route_response(raw)
     except RouteDecodeError as exc:
@@ -186,7 +203,7 @@ def report(raw, label, digest, repeats):
     return decoded
 
 
-def write_geojson(decoded_list, path):
+def write_geojson(decoded_list, path):  # noqa: D401
     """LineString на вылет плюс точка взлёта. Для просмотра, не для расчёта."""
     features = []
     for decoded in decoded_list:
@@ -222,7 +239,7 @@ def write_geojson(decoded_list, path):
     print('GeoJSON written: %s (%d features)' % (path, len(features)))
 
 
-def _collect_keys(node, prefix, seen, lines, depth=0):
+def _collect_keys(node, prefix, seen, lines, depth=0):  # noqa: C901
     """Обход структуры: имена ключей, типы, размеры коллекций. Без значений.
 
     [REASON]: значения тела запроса не печатаются ВООБЩЕ -- ни строковые, ни
@@ -230,7 +247,7 @@ def _collect_keys(node, prefix, seen, lines, depth=0):
     «на всякий случай» -- ровно тот способ, которым утекают подписи и внутренние
     номера. Размер коллекции печатается: это структура, а не значение.
     """
-    if depth > 12:
+    if depth > MAX_STRUCTURE_DEPTH:
         lines.append('  %-44s ... deeper levels not walked' % prefix)
         return
     if isinstance(node, dict):
@@ -269,6 +286,32 @@ def _collect_keys(node, prefix, seen, lines, depth=0):
                               depth + 1)
 
 
+# Предел размера файла тела запроса.
+#
+# [REASON]: тело POST-запроса маршрутов -- это список идентификаторов и пара
+# полей; настоящее тело из снимка занимает 296 байт. Мегабайт с запасом
+# покрывает пакет в десятки тысяч ID и при этом не даёт разобрать
+# произвольный большой файл, поданный по ошибке или намеренно.
+MAX_REQUEST_BODY_BYTES = 1024 * 1024
+
+# Максимальная глубина вложенности, которую разрешено обходить.
+#
+# [REASON]: `bodyText` -- это JSON внутри JSON. Ограничение глубины отсекает
+# как случайную рекурсию, так и намеренно глубокий документ: разбор такого
+# съедает стек и время, а структуры запроса всё равно не показывает.
+MAX_STRUCTURE_DEPTH = 12
+
+# Ключи внешнего безопасного конверта, который формирует владелец из DevTools.
+ENVELOPE_REQUIRED_KEYS = ('method', 'urlPath', 'mimeType', 'bodyText')
+
+
+def _is_safe_envelope(document):
+    """True, когда документ похож на безопасный конверт с bodyText."""
+    return (isinstance(document, dict)
+            and all(key in document for key in ENVELOPE_REQUIRED_KEYS)
+            and isinstance(document.get('bodyText'), str))
+
+
 def describe_request_body(path):
     """Что лежит в сохранённом теле POST-запроса маршрутов (вопрос В1).
 
@@ -276,6 +319,14 @@ def describe_request_body(path):
     значение -- ни строка, ни число -- в вывод не попадает. Тело запроса
     никуда не сохраняется: ни в отчёт, ни в фикстуры, ни в лог.
     """
+    size = os.path.getsize(path)
+    if size > MAX_REQUEST_BODY_BYTES:
+        print('REFUSING: the file is %d bytes, the cap is %d.'
+              % (size, MAX_REQUEST_BODY_BYTES))
+        print('A route request body is a list of ids and two fields; a file')
+        print('this large is not one, and nothing was read.')
+        return 1
+
     with open(path, 'rb') as handle:
         blob = handle.read()
     text = blob.decode('utf-8-sig', errors='replace')
@@ -303,8 +354,39 @@ def describe_request_body(path):
         print('from the content itself.')
         return 1
 
-    print('Request body parsed as JSON.')
-    print('  bytes  : %d' % len(blob))
+    envelope = None
+    if _is_safe_envelope(document):
+        # Безопасный конверт из DevTools: снаружи метод, путь и MIME, а само
+        # тело лежит СТРОКОЙ в bodyText. Прежняя версия разбирала только
+        # внешние ключи и о содержимом запроса не говорила ничего.
+        envelope = document
+        print('Safe envelope recognised.')
+        print('  method    : %s' % envelope.get('method'))
+        print('  urlPath   : %s' % envelope.get('urlPath'))
+        print('  mimeType  : %s' % envelope.get('mimeType'))
+        print('  bodyText  : string(len=%d)' % len(envelope['bodyText']))
+        if len(envelope['bodyText']) > MAX_REQUEST_BODY_BYTES:
+            print('REFUSING: bodyText is larger than the cap.')
+            return 1
+        try:
+            document = json.loads(envelope['bodyText'])
+        except ValueError as exc:
+            print('REFUSING: bodyText is not valid JSON (%s).'
+                  % type(exc).__name__)
+            print('  bodyText sha256 : %s'
+                  % hashlib.sha256(
+                      envelope['bodyText'].encode('utf-8')).hexdigest())
+            print('Nothing from the content itself was printed.')
+            return 1
+        if not isinstance(document, (dict, list)):
+            print('REFUSING: bodyText decodes to %s, not to an object or an '
+                  'array.' % type(document).__name__)
+            return 1
+        print('  bodyText parsed as JSON.')
+
+    print('' if envelope else 'Request body parsed as JSON.')
+    if not envelope:
+        print('  bytes  : %d' % len(blob))
     print('  sha256 : %s' % digest)
     print('')
     print('Structure (names, types and sizes only -- no values):')

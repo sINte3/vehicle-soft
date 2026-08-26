@@ -914,7 +914,14 @@ def quality_report(rows, con):
                 'detail': detail,
             })
 
-    now_limit = datetime.datetime.utcnow() + datetime.timedelta(days=2)
+    # [REASON]: `datetime.utcnow()` объявлен устаревшим и снимается в будущих
+    # версиях Python; на 3.14 он печатает DeprecationWarning прямо в консоль
+    # прогона -- владелец видел его в выводе аудита. Заменено на
+    # timezone-aware время в UTC, приведённое обратно к наивному виду:
+    # `started_at` в базе хранится наивным UTC, и сравнивать его с
+    # timezone-aware значением Python отказывается.
+    now_limit = (datetime.datetime.now(datetime.timezone.utc)
+                 .replace(tzinfo=None) + datetime.timedelta(days=2))
     earliest = datetime.datetime(2024, 1, 1)
 
     problem_labels = {

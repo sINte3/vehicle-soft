@@ -399,6 +399,17 @@ class LandCollector(object):
         return list(self._captured)
 
     @property
+    def context(self):
+        """The live Playwright browser context, read-only.
+
+        [REASON]: added for DRONE-COVERAGE-001 stage B. The full contour
+        polygons are downloaded through THIS context, so the request carries
+        the same session the directory walk used and the signed link never
+        leaves the process. Nothing in the directory walk itself changed.
+        """
+        return self._context
+
+    @property
     def rejected(self):
         return dict(self._rejected)
 

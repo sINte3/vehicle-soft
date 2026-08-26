@@ -617,6 +617,18 @@ class FlightCollector(object):
         return list(self._captured)
 
     @property
+    def page(self):
+        """The live Playwright page, read-only.
+
+        [REASON]: added for DRONE-COVERAGE-001 stage B, which asks the SAME
+        page to fetch the routes so that the site signs its own request. It is
+        an accessor and nothing more -- no part of the flight walk changed --
+        but reaching into `_page` from another module would have been worse:
+        the next refactor of this class would break it silently.
+        """
+        return self._page
+
+    @property
     def rejected(self):
         return dict(self._rejected)
 
