@@ -3,6 +3,7 @@
 
     python tools/drone_route_probe.py --capture DJI_2026-06-05_safe.json
     python tools/drone_route_probe.py --capture snapshot.json --geojson routes.json
+    python tools/drone_route_probe.py --request-body body.json
 
 Зачем. Кабинет SmartFarm в режиме карты забирает маршруты вылетов запросом
 
@@ -50,6 +51,23 @@ ROUTE_URL_MARKER = 'flight_datas/flight_records'
 # которая всегда говорит "секрет найден", секретов не находит.
 SECRET_MARKERS = ('signedURL', 'OSSAccessKeyId', 'Signature=', 'set-cookie',
                   '"cookies"', 'x-auth-token', 'storage_state', 'bearer ')
+
+# Ключи тела POST-запроса маршрутов, о которых спрашивает вопрос В1
+# (`docs/DRONE_COVERAGE_001_DISCOVERY.md` §9). Список -- это то, ЧТО МЫ ИЩЕМ,
+# а не то, что мы утверждаем: назначение любого найденного ключа
+# подтверждается только сверкой с тем, что вернул ответ.
+REQUEST_BODY_QUESTIONS = (
+    ('идентификаторы вылетов', ('ids', 'flight_ids', 'record_ids',
+                                'flight_record_ids', 'id_list')),
+    ('период', ('start', 'end', 'from', 'to', 'begin_time', 'end_time',
+                'timestamp_gteq', 'timestamp_lteq', 'date')),
+    ('устройство', ('device', 'device_id', 'drone', 'drone_id', 'product_sn',
+                    'sn')),
+    ('параметры карты', ('bbox', 'bounds', 'zoom', 'viewport', 'level',
+                         'north', 'south', 'east', 'west')),
+    ('ограничение количества', ('limit', 'page_size', 'size', 'count',
+                                'per_page', 'page')),
+)
 
 
 def read_capture(path):
@@ -202,17 +220,96 @@ def write_geojson(decoded_list, path):
     print('GeoJSON written: %s (%d features)' % (path, len(features)))
 
 
+def describe_request_body(path):
+    """Что лежит в сохранённом теле POST-запроса маршрутов (вопрос В1).
+
+    Печатает ТОЛЬКО структуру: имена ключей, типы, размеры списков и -- для
+    чисел -- их значения. Строковые значения не печатаются вовсе: в теле
+    запроса может оказаться то, чего мы не ждём, и «показать на всякий
+    случай» -- ровно тот способ, которым утекают подписи.
+    """
+    with open(path, 'rb') as handle:
+        blob = handle.read()
+    text = blob.decode('utf-8-sig', errors='replace')
+    found = sorted({marker for marker in SECRET_MARKERS
+                    if marker.lower() in text.lower()})
+    if found:
+        print('REFUSING: the file contains %s.' % ', '.join(found))
+        print('Save the request PAYLOAD only, never the headers.')
+        return 3
+
+    try:
+        document = json.loads(text)
+    except ValueError:
+        print('The body is not JSON. First 40 bytes as hex:')
+        print('  %s' % blob[:40].hex())
+        print('Report the format; do not guess a schema.')
+        return 1
+
+    print('Request body parsed as JSON.')
+    print('')
+
+    def walk(node, prefix=''):
+        if isinstance(node, dict):
+            for key in sorted(node):
+                value = node[key]
+                name = '%s.%s' % (prefix, key) if prefix else key
+                if isinstance(value, (dict, list)):
+                    print('  %-40s %s(%d)' % (name, type(value).__name__,
+                                              len(value)))
+                    walk(value, name)
+                elif isinstance(value, bool) or value is None:
+                    print('  %-40s %s' % (name, value))
+                elif isinstance(value, (int, float)):
+                    print('  %-40s %s' % (name, value))
+                else:
+                    print('  %-40s str(len=%d)  [value not printed]'
+                          % (name, len(str(value))))
+        elif isinstance(node, list) and node:
+            kinds = sorted({type(item).__name__ for item in node})
+            print('  %-40s items: %s' % (prefix + '[]', ', '.join(kinds)))
+            if isinstance(node[0], (dict, list)):
+                walk(node[0], prefix + '[0]')
+
+    walk(document)
+
+    flat = json.dumps(document, ensure_ascii=False).lower()
+    print('')
+    print('What the body appears to carry (question B1):')
+    for question, keys in REQUEST_BODY_QUESTIONS:
+        hits = sorted({key for key in keys if ('"%s"' % key) in flat})
+        print('  %-28s %s' % (
+            question.encode('ascii', 'replace').decode('ascii'),
+            ', '.join(hits) if hits else 'not found'))
+    print('')
+    print('A key being present names a CANDIDATE, not a proven meaning.')
+    print('Confirm each one by changing it in the cabinet and watching the')
+    print('response change -- never by the name alone.')
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description='Decode DJI flight-route responses from a saved capture. '
                     'Read only: no network, no browser, no database.')
-    parser.add_argument('--capture', required=True,
+    parser.add_argument('--capture', default=None,
                         help='sanitised network capture (JSON with entries) '
                              'or a raw response body')
+    parser.add_argument('--request-body', default=None,
+                        help='a saved POST request body (payload only, never '
+                             'headers) -- describes its structure for '
+                             'question B1')
     parser.add_argument('--geojson', default=None,
                         help='optional output file for the decoded routes')
     args = parser.parse_args(argv)
 
+    if args.request_body:
+        if not os.path.exists(args.request_body):
+            raise SystemExit('ERROR: file not found: %s' % args.request_body)
+        return describe_request_body(args.request_body)
+
+    if not args.capture:
+        raise SystemExit('ERROR: pass --capture or --request-body')
     if not os.path.exists(args.capture):
         raise SystemExit('ERROR: file not found: %s' % args.capture)
 

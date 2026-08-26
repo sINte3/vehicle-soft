@@ -77,3 +77,17 @@ jobs:
 
       - name: Route probe self-test, including the secret-leak warning
         run: python tools/test_drone_route_probe.py
+
+      # A2/A3. Both are stdlib-only apart from openpyxl, which the fleet audit
+      # needs to write its report; they build their own SQLite fixtures in a
+      # temporary directory and never touch a real database. The fleet audit
+      # carries the proof that it cannot write: sha256 before and after, and a
+      # DELETE that SQLite itself must refuse.
+      - name: Install openpyxl (the fleet audit writes an xlsx)
+        run: pip install openpyxl
+
+      - name: Fleet audit self-test (read-only proof, positive and negative controls)
+        run: python tools/test_drone_area_anomaly_probe.py
+
+      - name: Field geometry probe self-test (format detection, no guessing)
+        run: python tools/test_drone_field_geometry_probe.py

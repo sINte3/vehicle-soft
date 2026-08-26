@@ -17,7 +17,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.drone_route_probe import dedupe, read_capture  # noqa: E402
+from tools.drone_route_probe import (  # noqa: E402
+    dedupe, describe_request_body, read_capture)
 
 
 def varint(value):
@@ -136,6 +137,64 @@ class TestDedupe(unittest.TestCase):
         unique = dedupe([('a', tiny_response()),
                          ('b', tiny_response() + b'\x00')])
         self.assertEqual(len(unique), 2)
+
+
+class TestRequestBodyDescription(unittest.TestCase):
+    """Вопрос В1: описать структуру тела POST, ничего не раскрывая."""
+
+    def describe(self, payload, name='body.json'):
+        import contextlib, io
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, name)
+            with open(path, 'w', encoding='utf-8') as handle:
+                if isinstance(payload, str):
+                    handle.write(payload)
+                else:
+                    json.dump(payload, handle, ensure_ascii=False)
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                code = describe_request_body(path)
+            return code, buffer.getvalue()
+
+    def test_known_keys_are_named(self):
+        code, text = self.describe(
+            {'ids': [622715273, 622715275], 'start': 1780670376,
+             'end': 1780675486, 'page_size': 50})
+        self.assertEqual(code, 0)
+        self.assertIn('ids', text)
+        self.assertIn('page_size', text)
+
+    def test_string_values_are_never_printed(self):
+        """Главное свойство: значения строк не выводятся ни при каких данных.
+
+        Отрицательный контроль встроен: строка-«секрет» кладётся в тело, и
+        тест падает, если она окажется в выводе.
+        """
+        secret = 'QQQ-do-not-print-me-QQQ'
+        code, text = self.describe({'ids': [1], 'opaque': secret})
+        self.assertEqual(code, 0)
+        self.assertNotIn(secret, text)
+        self.assertIn('value not printed', text)
+
+    def test_numbers_are_printed_because_they_are_the_answer(self):
+        """Отрицательный контроль к предыдущему: числа скрывать не нужно."""
+        _code, text = self.describe({'page_size': 50})
+        self.assertIn('50', text)
+
+    def test_a_body_with_a_signature_is_refused(self):
+        code, text = self.describe(
+            {'Signature=': 'x', 'ids': [1]})
+        self.assertEqual(code, 3)
+        self.assertIn('REFUSING', text)
+
+    def test_a_non_json_body_reports_the_format_and_stops(self):
+        code, text = self.describe('\x00\x01 not json at all')
+        self.assertEqual(code, 1)
+        self.assertIn('not JSON', text)
+
+    def test_missing_keys_are_reported_as_not_found(self):
+        _code, text = self.describe({'something_else': 1})
+        self.assertIn('not found', text)
 
 
 if __name__ == '__main__':
