@@ -230,13 +230,34 @@ def landed_where_expected(current_url, records_url):
     if not current_url:
         return False, 'the browser reported no URL'
     parts = urlsplit(current_url)
-    if parts.netloc != expected_host(records_url):
+    wanted = urlsplit(records_url)
+
+    # [REASON]: the scheme is checked, and checked against the configured one.
+    # `http://` on the right host is a different security posture entirely --
+    # cookies of a session saved off a plaintext page are cookies that
+    # travelled in the clear -- and the old check looked only at the host.
+    if parts.scheme != wanted.scheme:
+        return False, ('the browser is on %s://, the records page is %s://'
+                       % (parts.scheme or '(no scheme)',
+                          wanted.scheme or '(no scheme)'))
+    if parts.scheme != 'https':
+        return False, 'the page is not served over https'
+    if parts.netloc != wanted.netloc:
         # The host is printed; it is a public address, not a credential.
         return False, ('the browser is on %s, not on %s'
                        % (parts.netloc or '(no host)',
-                          expected_host(records_url)))
-    if parts.path.startswith(LOGIN_PATH):
-        return False, 'the browser is still on the sign-in page'
+                          wanted.netloc or '(no host)'))
+
+    # [REASON]: the PATH is checked too, not just "it is not /login". The
+    # cabinet has other pages -- `/mission`, the root -- and each of them sets
+    # its own cookies, so "populated context on some page of the right host"
+    # was never enough. A trailing slash and a query string are allowed: the
+    # records page carries filters in the query by design.
+    landed = (parts.path or '/').rstrip('/') or '/'
+    expected = (wanted.path or '/').rstrip('/') or '/'
+    if landed != expected:
+        return False, ('the browser is on %s, not on the records page %s'
+                       % (landed, expected))
     return True, ''
 
 

@@ -337,6 +337,14 @@ class TestAtomicSave(SessionFileTestCase):
 # ─── Где оказался браузер ────────────────────────────────────────────────────
 
 class TestLandedWhereExpected(unittest.TestCase):
+    """Схема, host И путь -- все три, и все до сохранения.
+
+    [REASON]: проверялся только host и «путь не начинается с /login».
+    У кабинета есть и другие страницы, и каждая ставит свои cookie: `/mission`,
+    корень, что угодно. «Наполненный контекст на какой-то странице нужного
+    хоста» подтверждением входа никогда не было. Схема не проверялась вовсе,
+    и `http://` на верном хосте проходил.
+    """
 
     RECORDS = 'https://www.example.invalid/records/list'
 
@@ -344,11 +352,40 @@ class TestLandedWhereExpected(unittest.TestCase):
         ok, why = landed_where_expected(self.RECORDS, self.RECORDS)
         self.assertTrue(ok, why)
 
+    def test_a_trailing_slash_is_accepted(self):
+        ok, why = landed_where_expected(self.RECORDS + '/', self.RECORDS)
+        self.assertTrue(ok, why)
+
+    def test_a_query_string_is_accepted(self):
+        """Страница вылетов носит фильтры в query по построению."""
+        ok, why = landed_where_expected(
+            self.RECORDS + '?beginTime=1&endTime=2', self.RECORDS)
+        self.assertTrue(ok, why)
+
     def test_the_login_page_is_refused(self):
         ok, why = landed_where_expected(
             'https://www.example.invalid/login', self.RECORDS)
         self.assertFalse(ok)
-        self.assertIn('sign-in page', why)
+        self.assertIn('/login', why)
+
+    def test_the_mission_page_is_refused(self):
+        """Другая страница того же кабинета -- тоже не страница вылетов."""
+        ok, why = landed_where_expected(
+            'https://www.example.invalid/mission', self.RECORDS)
+        self.assertFalse(ok)
+        self.assertIn('/mission', why)
+
+    def test_the_site_root_is_refused(self):
+        ok, why = landed_where_expected(
+            'https://www.example.invalid/', self.RECORDS)
+        self.assertFalse(ok)
+        self.assertIn('records page', why)
+
+    def test_plain_http_on_the_right_host_is_refused(self):
+        ok, why = landed_where_expected(
+            'http://www.example.invalid/records/list', self.RECORDS)
+        self.assertFalse(ok)
+        self.assertIn('http', why)
 
     def test_another_host_is_refused(self):
         ok, why = landed_where_expected(
@@ -360,6 +397,14 @@ class TestLandedWhereExpected(unittest.TestCase):
         ok, why = landed_where_expected('', self.RECORDS)
         self.assertFalse(ok)
         self.assertIn('no URL', why)
+
+    def test_no_reason_ever_quotes_a_value(self):
+        for url in ('https://www.example.invalid/mission',
+                    'http://www.example.invalid/records/list',
+                    'https://elsewhere.invalid/records/list'):
+            _ok, why = landed_where_expected(url, self.RECORDS)
+            self.assertNotIn(COOKIE_VALUE, why)
+            self.assertNotIn(STORAGE_VALUE, why)
 
     def test_the_login_url_is_on_the_records_host(self):
         self.assertEqual(login_url(self.RECORDS),
