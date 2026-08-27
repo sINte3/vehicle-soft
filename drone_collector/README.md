@@ -472,30 +472,65 @@ ids the request asked for (never which), the actual `data_type`, header
 whether a signature-like header was present, whether a credential-like header
 was present (they are separate questions — a cookie is not a signature),
 whether a timestamp-like header was present, the HTTP status, whether the body
-was JSON or binary, its size and SHA-256, how many routes decoded, and whether
-the requested and returned id **sets** are equal, with counts of missing,
-extra and duplicate. No header value, no cookie, no signature, no `request_id`,
-no flight id and no response body reach any file.
+was JSON or binary, its size and SHA-256, the **internal status** of the DJI
+envelope, how many routes decoded, and whether the requested and returned id
+**sets** are equal, with counts of missing, extra and duplicate. No header
+value, no cookie, no signature, no `request_id`, no flight id and no response
+body reach any file.
+
+`data_type` is the one field of the request body that leaves as a **value**
+rather than a number, so it is checked at the point it is read — before the
+first log line, not when the report is scanned. A safe unknown value is kept
+verbatim and is not interpreted: what the cabinet asks for is one of the two
+questions this mode exists to answer. A value carrying a credential marker,
+the shape of a signed URL, or a control character is replaced by `<withheld>`
+and never reaches the log or the JSON; a separate boolean says it happened.
+The placeholder deliberately does not name the marker it found — naming it
+would put `authorization` into the report and trip the report's own check.
 
 **Exit 0 means every observation was a confirmed route POST**, and nothing
 less. A confirmed observation needs all of: the expected https origin, the
 exact endpoint, POST, a 2xx status, a binary payload that decoded, a requested
 id list that is non-empty, all-integer and duplicate-free, id sets that are
 exactly equal, no duplicate in the returned ids, every decoded route carrying
-a flight id, and the decoded route count equal to the returned id count.
+a flight id, the decoded route count equal to the returned id count, and the
+**internal status of the DJI envelope equal to the success status**. HTTP 200
+says nothing about success in this API: a `status=101` "no signature" envelope
+arrives with routes inside and a 200 on the wire, and the decoder hands that
+status to the caller precisely so the caller can refuse it. An unfamiliar
+status is not interpreted — it is simply not the one confirmation needs.
 
 Exit 0 also requires that **nothing was dropped** by the observation cap: about
 a dropped observation nothing is known, and "not known" is not "confirmed". One
 confirmed POST beside one unconfirmed answer is **not** a success either — that
 run exits 13. Seeing nothing at all exits 6.
 
+Exit 0 further requires that the listener stumbled on **no** response. It
+catches every exception so that the Playwright loop cannot be brought down by
+an observer, and each such failure is counted: a response that arrived and
+could not be read is not "nothing observed", and a run carrying one is not a
+clean run whatever else it saw. The count appears in the report and in the
+RUN SUMMARY line as `probe_errors`; only the exception type is printed.
+
+Two observations collapse into one repeat only when they are the **same
+exchange** — origin and path, method, HTTP status, request fingerprint, body
+(or the fact that no body was read), payload kind, internal DJI status and the
+id-comparison verdict must all match. Anything that could change the verdict
+makes a new observation: a confirmed `200 POST` followed by the same body with
+a `500`, or the same body as a `GET`, is two answers, not one repeated answer.
+
 The response size limit is a limit on **processing**, not on reading:
 Playwright hands over a body whole, so an oversized body has already been in
 memory by the time it is measured. What the limit does is refuse to hash,
-decode, classify or store it; the observation keeps its real size. When the
-response declares a `Content-Length` above the limit, the body is not requested
-at all — but that header is the sender's claim and is never treated as the
-actual size.
+decode, classify or store it; the observation keeps its real measured size.
+
+When the response declares a `Content-Length` above the limit, the body is not
+requested at all — and then the real size is simply **unknown**. The declared
+number is kept in its own field, `declared_response_bytes`; `response_bytes`
+stays empty, and `response_body_was_read` says the body was never held. That
+header is the sender's claim: it is absent under chunked transfer, it describes
+the compressed body under compression, and with no body in hand there is
+nothing to check it against. It is never reported as the measured size.
 
 ### The outbox
 
