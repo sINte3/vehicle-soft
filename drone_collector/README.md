@@ -130,6 +130,24 @@ The session file is a live login: it is ignored by git and must never be
 committed, copied into a ticket, or pasted into a chat. Repeat this step when a
 run exits with code 2.
 
+**A saved session is judged by what it carries, not by its size.** The live
+pilot of 2026-08-27 ran this command, was told the session had been saved, got
+exit 0 — and the file was thirty bytes: `{"cookies": [], "origins": []}`. That
+is what Playwright writes for a context that was never signed in, and the old
+check was "the file exists and is not empty". Now the state must carry at least
+one cookie or at least one localStorage item, and:
+
+* the new state is written to a `.partial` **beside** the target, judged there,
+  and only a usable one replaces the file with an atomic `os.replace`;
+* a useless or broken state is deleted and **the previous working session
+  survives untouched** — before this, every save was destructive;
+* the exit code is non-zero when nothing usable was produced;
+* counts are logged, values never: no cookie, no localStorage entry and no
+  origin appears in any message or exception.
+
+For reference, the real session of this cabinet measured ~83 KB with 14
+cookies, 2 origins and 13 localStorage items.
+
 ---
 
 ## Run a dry run
@@ -192,6 +210,7 @@ command line.
 | 7 | The session is in the **wrong region**. | The log shows the expected and the observed value. Re-run `--save-session` and check the region selector. |
 | 10 | `--routes` only: the cabinet **refused to serve the routes**. | Nothing was collected. Re-run after signing in again; if it repeats with a fresh session, the request made from the page is not being signed the way the cabinet expects — that is a finding, not a breakage. |
 | 11 | `--geometry-id` named a contour the **directory does not hold**. | The uuids that matched nothing are listed. Nothing was queued for them. If the directory walk was also incomplete, the contour may simply be on a page that was never fetched. |
+| 12 | `--routes`: route collection is **disabled**. | The native fetch transport was disproved on the live cabinet on 2026-08-27. Nothing was attempted: the run stops before the browser. Observe the cabinet's own request with `--route-ui-probe` instead. |
 
 Codes **8** and **9** are deliberately absent from this table: they belong to
 the other entry point of this package, `python -m drone_collector.devices`
@@ -368,15 +387,13 @@ cabinet returns rows stamped 2026-07-03, while `avaz ismatov` still carries
 ## Collect routes and full field polygons (DRONE-COVERAGE-001, stage B)
 
 ```
-python -m drone_collector.main --routes --from 2026-06-05 --to 2026-06-05 --dry-run
-python -m drone_collector.main --routes --from 2026-06-05 --to 2026-06-05
-python -m drone_collector.main --routes --ids-file ids.txt
+python -m drone_collector.main --route-ui-probe                    (watch, never ask)
 python -m drone_collector.main --lands --with-geometry --geometry-id UUID --dry-run
 python -m drone_collector.main --lands --with-geometry --geometry-id UUID
 python -m drone_collector.main --lands --with-geometry            (every contour)
 ```
 
-**Neither of these sends anything to Vehicle Soft.** Both collect into the
+**None of these sends anything to Vehicle Soft.** Both collect into the
 on-disk outbox at `DRONE_OUTBOX_DIR` (default `drone_collector/data/outbox`);
 the receiving endpoints are stage C. Neither writes a `drone_sync_logs` row,
 because neither calls the sender at all — and neither requires
@@ -400,19 +417,56 @@ for every DJI source. So the collected object is a route, a route segment, a
 coverage candidate. It is never «work», «treated area» or «confirmed
 spraying», and nothing in this package says otherwise.
 
-### How the request is made
+### Route collection is closed, and here is what closed it
 
-The route endpoint takes **flight ids**, not a period — confirmed on live
-traffic. `--routes --from/--to` therefore walks the flight list of the period
-first (the walk that has been in production since 2026-08-08, read-only here),
-learns the ids, and then asks for those routes. `--ids-file` skips the walk.
+The live pilot of **2026-08-27** disproved the transport this collector used.
 
-The request itself is issued **by the page**, in its own JavaScript context,
-so that the site signs it if the site signs anything. DJI's signature is not
-reproduced — the same rule the flight list and the directory already follow.
-Whether the page's own `fetch` carries that signature is **not verified**: the
-cabinet is unreachable from the development container. If it does not, DJI
-answers with its own code and the run exits **10**, naming the outcome.
+In one browser session, in one minute:
+
+* the page's **own** requests worked — period verified exactly, 4 pages,
+  168 flights, zero self-duplicates;
+* **our** native `fetch` got the same answer to all 19 batches: 135 bytes of
+  JSON, `status 408`, `code 408`, `请求时间无效` — "invalid request time".
+
+That is not the machine's clock: both requests shared it, and the page's own
+requests went through. What differed is the path. The agreed timestamp and the
+`Signature` are put on the request by DJI's own client interceptor, and a
+native `fetch` goes around it — exactly what the previous collector's notes
+warned about (the signature is computed in WebAssembly). `browser.py` already
+recorded the rule from twelve real responses of 2026-07-31: the cabinet
+answers `code 0` on success, and `408` is filed there as "bad timestamp" next
+to `101` "missing signature" — both are about the signing envelope.
+
+Reproducing that signature, replaying a captured one, or guessing headers and
+timestamps is forbidden. So `--routes` now **stops before the browser** with
+exit **12** and names the reason, and the honest next step is to watch the
+request the cabinet makes for itself.
+
+`RouteRun` itself is intact and stays: it parses what a transport brings, and
+95 tests hold it. What is missing is a way to ASK.
+
+Status: `ROUTE_NATIVE_FETCH_DISABLED`, `ROUTE_UI_PROBE_IMPLEMENTED`,
+`ROUTE_COLLECTION_BLOCKED_PENDING_VALID_UI_TRANSPORT`.
+
+### `--route-ui-probe`: watch, never ask
+
+```
+python -m drone_collector.main --route-ui-probe
+```
+
+Opens a browser on the cabinet, subscribes to request and response **before**
+anything is done, and asks the operator to open Task History, pick one day,
+switch to the map view and press Enter. While that happens the probe watches
+the request the cabinet issues for itself.
+
+It makes **no request of its own** to DJI, queues nothing and sends nothing to
+Vehicle Soft. The report carries shapes and lengths only: host and path,
+method, how many ids the request asked for (never which), the actual
+`data_type`, header **names**, the **lengths** of signature-like values,
+whether a timestamp-like header was present at all, the HTTP status, whether
+the body was JSON or binary, its size and SHA-256, how many routes decoded,
+and whether the returned count matches the requested one. No header value, no
+cookie, no signature, no `request_id` and no response body reach any file.
 
 ### The outbox
 

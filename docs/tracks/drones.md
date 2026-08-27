@@ -139,6 +139,8 @@ SmartFarm, публичного API нет. Задача модуля: полу�
 
 | `DRONE-COVERAGE-001-B-SAFETY` (правка после мержа) | **эксплуатационный блокер: `--lands --with-geometry` ОТПРАВЛЯЛ данные в Vehicle Soft.** Найден владельцем после мержа PR #107, живого прогона не было. Механизм: `sends = not (save_session or dry_run or routes)` не называл режим геометрии, поэтому настоящий прогон считался отправляющим — требовал `DRONE_API_TOKEN` и доходил до `send_lands`, то есть постил ВЕСЬ справочник в `/drones/api/land_sync` и писал `field_contours` и строку `drone_sync_logs` на боевой системе. Ни один тест не ловил: проверка «токен не нужен» покрывала только `--routes`, а CLI-теста на `--lands --with-geometry` не было вовсе. Правка: правило вынесено в `needs_no_ingest()` и названо тестом; `_run_lands` ветвится на `--with-geometry` ДО отправки и не пишет даже дамп справочника — он несёт `signedURL` дословно. Обычный `--lands` не тронут и по-прежнему отправляет снимок, на это стоит отдельный контроль. Плюс `--geometry-id` — точный отбор по `node.uuid` до построения объекта со ссылкой, чтобы первый пилот брал ОДИН контур, а не качал 5 489 подписанных ссылок; неизвестный uuid даёт код 11. Плюс ранбук переведён на venv сборщика (`drone_collector\.venv\Scripts\python.exe`): системный Python не видит Playwright, и живой прогон упал бы на импорте. `tools/test_drone_stage_b_runbook.py` держит ранбук в CI — дважды подряд он называл то, чего на сервере нет, и оба раза это замечал человек, а не проверка. 5 отрицательных контролей | PR #108 | — |
 
+| `DRONE-COVERAGE-001-B-LIVE-TRANSPORT-FIX` | **живой прогон 2026-08-27 опроверг транспорт маршрутов; сбор маршрутов ЗАКРЫТ.** Прогон выполнен владельцем на изолированной машине, не на production. Два дефекта. (1) `--save-session` отчитался успехом при тридцати байтах `{"cookies": [], "origins": []}`: проверка была «файл есть и больше нуля». Теперь состояние судится по содержимому (нужен хотя бы один cookie или элемент localStorage), сохранение атомарно через `.partial` + `os.replace`, и неудачное сохранение НЕ затирает прежнюю рабочую сессию. (2) Нативный `fetch` получил на все 19 пакетов один служебный отказ — 135 байт JSON, `code 408`, «请求时间无效», — а декодер protobuf записал их как 19 «повреждённых тел» в двоичный карантин. **Это не часы машины:** в ту же сессию и минуту штатные запросы страницы принесли 168 вылетов за 4 страницы с точно сверенным периодом; различался путь запроса, а не компьютер. Подпись ставит внутренний перехватчик клиента DJI, воспроизводить её запрещено. Сделано: `route_payload.py` опознаёт вид тела ДО декодера (`request_id` не читается вовсе, JSON на диск не ложится), нативный транспорт отключён с названной причиной, `--routes` останавливается кодом 12 до браузера, добавлено наблюдение `--route-ui-probe` — оно не делает своего запроса, ничего не ставит в очередь и пишет только формы и длины. Ранбук переведён на чекаут пилота и на единые блоки `& { ... }`: первый прогон печатал `PASS` после `throw`, потому что был вставлен отдельными операторами. Статус: `ROUTE_NATIVE_FETCH_DISABLED`, `ROUTE_UI_PROBE_IMPLEMENTED`, `ROUTE_COLLECTION_BLOCKED_PENDING_VALID_UI_TRANSPORT`, `STAGE_C=BLOCKED`. Геометрия не затронута. 8 отрицательных контролей | PR #109 | — |
+
 | `DRONE-BODYCODE-001` (разведка) | сверка гектаров с djiag.com за 11 месяцев вскрыла: итог месяца сходится всегда (≤0.21 га), а РАСПРЕДЕЛЕНИЕ по бортам уезжает там, где ярлык DJI переехал на другой планер — октябрь-2025 перестановка по кругу (205.98 га: DJI №13→наш №12, №15→№13, №12→№14), март-2026 42.16 га чужих на №12 (18.69 от №13, 23.49 от №15), сентябрь-2025 5229.67 га из 5572.36 не распознаны; апрель–август 2026 чисты борт в борт. Идентификатор борта существует — `Body Code` выгрузки (он же `hardware_id`), не путать с `Serial Number` (это вылет). `tools/drone_body_code_probe.py` — только чтение: есть ли борт в payload, сходятся ли карточки, какие вылеты переехали бы. `migrate_drones_hardware_id_fix_001.py` — серийники №2 и №9 стояли наоборот; это ПРЕДУСЛОВИЕ привязки по борту, иначе она разложит вылеты уверенно и неправильно | #71 | мерж-коммит подставить при мерже |
 
 | `DRONE-BODYCODE-001` (починка) | сверка наших написаний ника с помесячными итогами DJI по бортам решила три месяца БЕЗ выгрузок: `nickname` в payload — это историческое имя борта, и исчерпывающий перебор всех раскладок написаний по бортам даёт РОВНО ОДНУ, где сходятся и вылеты, и гектары каждого борта. Октябрь-2025 и март-2026: 392 вылета / 403.52 га переезжают (`12 Peshku`→№13, `14 Servis`→№12, `13 Servis`→№15); апрель–июль 2026 единственная раскладка — уже стоящая в базе, трогать нечего. `migrate_drones_reattach_bodycode_001.py`, постусловие сверяется с числами djiag.com. Сентябрь-2025 не решается суммами: раскладки целых написаний по бортам не существует — значит написание переезжало внутри месяца (переименование 27–29.09); нужны подневные итоги DJI по бортам | #71 | мерж-коммит подставить при мерже |
@@ -475,77 +477,140 @@ SmartFarm, публичного API нет. Задача модуля: полу�
    `parameter.storage.signedURL` остаются неизвестными.
    **Команды первого безопасного живого прогона — в §6 пункт 9а ниже.**
 
-9а. **Первый живой прогон этапа B — порядок для владельца.** Строго по
-   очереди, каждый шаг проверяется до следующего. Все команды PowerShell,
-   по одной на строку.
+9а. **Следующий безопасный шаг этапа B — порядок для владельца.** Строго по
+   очереди, каждый шаг проверяется до следующего.
 
-   **Интерпретатор — только venv сборщика.** Playwright и Chromium стоят
-   именно в нём; системный `C:\Program Files\Python314\python.exe` их не
-   видит, и прогон упадёт на импорте, а не на данных.
+   **Что изменилось после живого прогона 2026-08-27.** Сбор маршрутов
+   ЗАКРЫТ: нативный `fetch` опровергнут (см. пункт 9в). Команд настоящего
+   сбора маршрутов здесь больше нет и не будет, пока транспорт не доказан.
+   Сбор геометрии не тронут и работает.
 
-   Предполётная проверка. Если хоть одна строка не отвечает как надо —
-   остановиться и не идти дальше; чинится это отдельно, установкой
-   зависимостей сборщика, а не по ходу живого прогона:
+   **Интерпретатор — только venv сборщика.** Playwright и Chromium стоят в
+   `drone_collector\.venv`; системный `C:\Program Files\Python314\python.exe`
+   их не видит, и прогон упадёт на импорте, а не на данных.
 
-   ```
-   Set-Location "C:\transport-report"
-   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" --version
-   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -c "import playwright; print('PLAYWRIGHT_IMPORT=PASS')"
-   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --help
-   ```
+   **Каждая проверка выполняется ОДНИМ блоком.** Первый живой прогон был
+   вставлен в консоль отдельными операторами: после `throw` вставленные ниже
+   команды всё равно выполнились и напечатали `PASS` при фактическом коде 4.
+   `& { ... }` этого не допускает: `throw` внутри блока прекращает блок целиком.
 
-   Ни `pip install`, ни `playwright install` в живом прогоне не запускаются.
-
-   Сессия DJI:
+   Предполётная проверка. Ни `pip install`, ни `playwright install` в живом
+   прогоне не запускаются; если импорт не проходит, среда чинится отдельно:
 
    ```
-   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --save-session
+   Set-Location "C:\VehicleSoft_DJI_StageB_Pilot"
+   & {
+     & "C:\VehicleSoft_DJI_StageB_Pilot\drone_collector\.venv\Scripts\python.exe" --version
+     if ($LASTEXITCODE -ne 0) { throw "PREFLIGHT FAILED: venv python did not run" }
+     & "C:\VehicleSoft_DJI_StageB_Pilot\drone_collector\.venv\Scripts\python.exe" -c "import playwright; print('PLAYWRIGHT_IMPORT=PASS')"
+     if ($LASTEXITCODE -ne 0) { throw "PREFLIGHT FAILED: playwright is not importable" }
+     & "C:\VehicleSoft_DJI_StageB_Pilot\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --help | Out-Null
+     if ($LASTEXITCODE -ne 0) { throw "PREFLIGHT FAILED: the collector CLI did not start" }
+     Write-Output "PREFLIGHT=PASS"
+   }
    ```
 
-   Затем сухой прогон маршрутов на ОДНОМ дне. Идентификаторы вылетов этого
-   дня прогон узнаёт сам, обходом списка вылетов за период; отдельный файл
-   идентификаторов (`--ids-file`, по одному числу в строке) нужен только
-   тогда, когда обход надо пропустить.
+   Сессия DJI. Пустое состояние теперь отвергается и НЕ затирает прежнюю
+   рабочую сессию: код выхода ненулевой, файл на месте.
 
    ```
-   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --routes --from 2026-06-05 --to 2026-06-05 --dry-run
+   Set-Location "C:\VehicleSoft_DJI_StageB_Pilot"
+   & {
+     & "C:\VehicleSoft_DJI_StageB_Pilot\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --save-session
+     if ($LASTEXITCODE -ne 0) { throw "SESSION FAILED: exit $LASTEXITCODE -- nothing was overwritten" }
+     Write-Output "SESSION=PASS"
+   }
    ```
 
-   Смотреть в `drone_collector/out/routes_dry_run.json`: `nothing_was_queued`
-   должно быть `true`, а число маршрутов — совпасть с числом вылетов этого дня.
-   **Код выхода 10** означает, что кабинет не отдал маршруты: это находка, а не
-   поломка, — записать её и остановиться.
-
-   Настоящий сбор того же дня, затем повтор (обязан дать ноль новых):
+   Наблюдение за штатным запросом маршрутов. Своего запроса к DJI этот режим
+   не делает, в очередь не кладёт ничего и в Vehicle Soft не ходит; в отчёт
+   попадают только формы и длины — ни одного значения заголовка, ни одной
+   cookie, ни подписи, ни `request_id`, ни тела ответа.
 
    ```
-   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --routes --from 2026-06-05 --to 2026-06-05
-   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --routes --from 2026-06-05 --to 2026-06-05
-   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" tools\drone_route_semantics_probe.py --outbox drone_collector\data\outbox --report drone_collector\out\route_semantics.txt
+   Set-Location "C:\VehicleSoft_DJI_StageB_Pilot"
+   & {
+     & "C:\VehicleSoft_DJI_StageB_Pilot\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --route-ui-probe
+     if ($LASTEXITCODE -ne 0) { throw "ROUTE UI PROBE: exit $LASTEXITCODE -- nothing was observed" }
+     Write-Output "ROUTE_UI_PROBE=PASS"
+   }
    ```
 
-   **Геометрия — РОВНО ОДИН контур, названный по uuid.** Без `--geometry-id`
+   Геометрия — РОВНО ОДИН контур, названный по uuid. Без `--geometry-id`
    прогон качает все 5 489 контуров, то есть предъявляет пять с половиной
    тысяч подписанных ссылок ради одной проверки формата; первый прогон так
-   делать не должен. Берётся тот самый контур, на котором закрыт вопрос В2 —
+   делать не должен. Берётся тот контур, на котором закрыт вопрос В2 —
    `P03335975`:
 
    ```
-   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --lands --with-geometry --geometry-id baf71584-64e2-49c5-8a41-25fca4ad5f6e --dry-run
-   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --lands --with-geometry --geometry-id baf71584-64e2-49c5-8a41-25fca4ad5f6e
-   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --lands --with-geometry --geometry-id baf71584-64e2-49c5-8a41-25fca4ad5f6e
+   Set-Location "C:\VehicleSoft_DJI_StageB_Pilot"
+   & {
+     & "C:\VehicleSoft_DJI_StageB_Pilot\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --lands --with-geometry --geometry-id baf71584-64e2-49c5-8a41-25fca4ad5f6e --dry-run
+     if ($LASTEXITCODE -ne 0) { throw "GEOMETRY DRY RUN: exit $LASTEXITCODE" }
+     & "C:\VehicleSoft_DJI_StageB_Pilot\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --lands --with-geometry --geometry-id baf71584-64e2-49c5-8a41-25fca4ad5f6e
+     if ($LASTEXITCODE -ne 0) { throw "GEOMETRY RUN: exit $LASTEXITCODE" }
+     & "C:\VehicleSoft_DJI_StageB_Pilot\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --lands --with-geometry --geometry-id baf71584-64e2-49c5-8a41-25fca4ad5f6e
+     if ($LASTEXITCODE -ne 0) { throw "GEOMETRY REPEAT: exit $LASTEXITCODE" }
+     Write-Output "GEOMETRY=PASS"
+   }
    ```
 
-   Третья строка — повтор ради идемпотентности: обязан дать `SKIPPED_UNCHANGED`
-   и ноль новых файлов в очереди. **Код выхода 11** означает, что справочник
-   такого uuid не содержит: тоже находка, а не поломка.
+   Третий запуск — повтор ради идемпотентности: обязан дать
+   `SKIPPED_UNCHANGED` и ноль новых файлов в очереди. **Код выхода 11**
+   означает, что справочник такого uuid не содержит: находка, а не поломка.
 
    **Отправки в Vehicle Soft на этом этапе нет вовсе** — ни маршрутами, ни
-   геометрией. `--lands --with-geometry` не обращается ни к одному эндпоинту
-   Vehicle Soft, включая снимок справочника: снимок — дело обычного `--lands`,
-   и его первый пилот не запускает. Всё собранное лежит в
+   геометрией, ни наблюдением. `--lands --with-geometry` не обращается ни к
+   одному эндпоинту Vehicle Soft, включая снимок справочника: снимок — дело
+   обычного `--lands`, и его первый пилот не запускает. Всё собранное лежит в
    `drone_collector/data/outbox`. Откат — удалить этот каталог; базы прогон не
    касается ни одной строкой.
+
+9в. **Живой прогон 2026-08-27 — что он доказал.** Выполнен владельцем на
+   изолированной рабочей машине, не на production; Vehicle Soft не
+   запускался, продовая база не открывалась, деплоя не было.
+   `VEHICLE_SOFT_BASE_URL` и `DRONE_API_TOKEN` из процесса удалены, в журнале
+   подтверждено `flight_sync_url=None`, `land_sync_url=None`,
+   `api_token=missing`.
+
+   `SESSION_EMPTY_STATE_DEFECT_CONFIRMED`: `--save-session` завершился кодом 0
+   и сообщил успех, записав тридцать байт `{"cookies": [], "origins": []}`.
+   Проверка была «файл есть и больше нуля». Исправлено: состояние теперь
+   судится по содержимому, сохранение атомарно, прежняя рабочая сессия при
+   неудаче не затирается.
+   `SESSION_VALID_STATE_CONFIRMED`: после ручного входа получено настоящее
+   состояние — 14 cookie, 2 origin, 13 элементов localStorage. Сам файл
+   владельцем не передавался и передаваться не будет.
+
+   `ROUTE_PERIOD_LIVE_CONFIRMED` и `ROUTE_FLIGHT_IDS_LIVE_CONFIRMED=168`:
+   период сверен точно, 4 страницы, 168 вылетов, ноль самодублей. Значит
+   сессия, часы машины, кабинет и штатные запросы страницы были исправны.
+
+   `ROUTE_NATIVE_FETCH_TRANSPORT=DISPROVED`: в ту же сессию и в ту же минуту
+   наш нативный `fetch` получил на все 19 пакетов один и тот же служебный
+   ответ — 135 байт JSON, `ROUTE_VENDOR_ERROR_CODE=408`,
+   `ROUTE_VENDOR_ERROR_MESSAGE=请求时间无效` («недействительное время
+   запроса»). Уникальными были только `request_id`; он не печатался и не
+   передавался. **Это не про часы машины:** часы у обоих запросов одни, и
+   штатные запросы прошли. Согласованный timestamp и `Signature` ставит
+   внутренний перехватчик клиента DJI, мимо которого нативный `fetch`
+   проходит — ровно то, о чём предупреждала документация прежнего сборщика
+   (подпись считается в WebAssembly). `browser.py` знал это правило и раньше:
+   на двенадцати настоящих ответах 2026-07-31 конверт кабинета отвечает
+   `code 0` на успех, а `408` подписан там как «bad timestamp» рядом с `101`
+   «подписи нет» — обе строки про конверт подписи, а не про часы.
+
+   `ROUTE_BINARY_PAYLOAD_LIVE=NOT_RECEIVED`: двоичного тела маршрутов живьём
+   не получено ни разу. `ROUTE_LIVE_COLLECTION=BLOCKED`, `STAGE_C=BLOCKED`.
+
+   **Пакет 9 не подтверждён как рабочий размер.** Транспорт принял его на
+   уровне HTTP, но маршрутов не принёс: все девятнадцать пакетов получили
+   один и тот же отказ. Размер успешного пакета остаётся неизвестным.
+
+   Итог: `ROUTE_NATIVE_FETCH_DISABLED`, `ROUTE_UI_PROBE_IMPLEMENTED`,
+   `ROUTE_COLLECTION_BLOCKED_PENDING_VALID_UI_TRANSPORT`. Реализовано
+   наблюдение, а не сбор; называть этап B работоспособным до следующего
+   живого подтверждения нельзя.
 
 9б. **Прежняя редакция пункта 9 (до этой сессии):**
    Бинарный ответ карты (`POST /api/web/v2/flight_datas/flight_records`)

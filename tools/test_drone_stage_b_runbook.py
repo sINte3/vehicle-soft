@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Проверка ранбука первого живого прогона этапа B.
+"""Проверка ранбука следующего безопасного шага этапа B.
 
     python tools/test_drone_stage_b_runbook.py
 
@@ -12,14 +12,20 @@
   `drone_collector\\.venv`; системный Python их не видит, и живой прогон упал
   бы на импорте. Один раз ранбук уже звал системный Python, и заметил это
   владелец, а не проверка;
-* **репозиторий — `C:\\transport-report`.** Один раз в ранбуке стоял
-  несуществующий `C:\\vehicle-soft`;
+* **репозиторий — чекаут пилота `C:\\VehicleSoft_DJI_StageB_Pilot`.** Один
+  раз в ранбуке стоял несуществующий `C:\\vehicle-soft`;
 * **геометрия — только по `--geometry-id`.** Полный сбор качает 5 489
   контуров, то есть предъявляет пять с половиной тысяч подписанных ссылок
   ради одной проверки формата. Первый пилот так делать не должен, и это
   свойство ранбука, а не кода: код полный сбор по-прежнему умеет;
 * **никаких установок.** `pip install` и `playwright install` внутри живого
-  прогона — это правка среды в момент, когда меряют среду.
+  прогона — это правка среды в момент, когда меряют среду;
+* **PASS не печатается после отказа.** Первый живой прогон был вставлен
+  отдельными операторами: после `throw` следующие команды всё равно
+  выполнились и напечатали `PASS` при коде выхода 4;
+* **настоящего сбора маршрутов в ранбуке нет.** Нативный `fetch` опровергнут
+  живым прогоном; предлагать его снова значит приглашать повторить
+  девятнадцать отказов 408.
 
 Вывод только ASCII: файл гоняется и на консоли Windows.
 """
@@ -34,13 +40,14 @@ sys.path.insert(0, REPO_ROOT)
 
 TRACK = os.path.join(REPO_ROOT, 'docs', 'tracks', 'drones.md')
 
-VENV_PYTHON = r'C:\transport-report\drone_collector\.venv\Scripts\python.exe'
+VENV_PYTHON = (r'C:\VehicleSoft_DJI_StageB_Pilot\drone_collector'
+               r'\.venv\Scripts\python.exe')
 SYSTEM_PYTHON = r'C:\Program Files\Python314\python.exe'
 PILOT_UUID = 'baf71584-64e2-49c5-8a41-25fca4ad5f6e'
 
 # Начало пункта 9а и начало следующего пункта: ранбук лежит между ними.
-SECTION_START = '9\u0430. **\u041f\u0435\u0440\u0432\u044b\u0439 \u0436\u0438\u0432\u043e\u0439 \u043f\u0440\u043e\u0433\u043e\u043d \u044d\u0442\u0430\u043f\u0430 B'
-SECTION_END = '9\u0431.'
+SECTION_START = '9\u0430. **'
+SECTION_END = '9\u0432.'
 
 
 def runbook_text():
@@ -49,6 +56,24 @@ def runbook_text():
     start = text.index(SECTION_START)
     end = text.index(SECTION_END, start)
     return text[start:end]
+
+
+def fenced_blocks(text):
+    """Содержимое ``` ``` блоков ранбука."""
+    blocks = []
+    current = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('```'):
+            if current is None:
+                current = []
+            else:
+                blocks.append('\n'.join(current))
+                current = None
+            continue
+        if current is not None:
+            current.append(line)
+    return blocks
 
 
 def command_lines(text):
@@ -92,8 +117,9 @@ class RunbookInterpreterTests(unittest.TestCase):
                              'the system python is back in a runbook command: '
                              '%s' % line)
 
-    def test_the_repository_path_is_the_real_one(self):
-        self.assertIn(r'Set-Location "C:\transport-report"', self.text)
+    def test_the_repository_path_is_the_pilot_checkout(self):
+        self.assertIn(r'Set-Location "C:\VehicleSoft_DJI_StageB_Pilot"',
+                      self.text)
         self.assertNotIn(r'C:\vehicle-soft', self.text)
 
     def test_the_preflight_checks_playwright(self):
@@ -105,6 +131,109 @@ class RunbookInterpreterTests(unittest.TestCase):
         for line in self.commands:
             self.assertNotIn('pip install', line)
             self.assertNotIn('playwright install', line)
+
+
+class RunbookSingleBlockTests(unittest.TestCase):
+    """PASS не может напечататься после отказа.
+
+    [REASON]: первый живой прогон был вставлен в консоль ОТДЕЛЬНЫМИ
+    операторами. После `throw "Route dry run stopped..."` вставленные следом
+    команды всё равно выполнились, и оператор увидел
+    `ROUTE_DRY_RUN_VALIDATION=PASS` при фактическом коде выхода 4. Проверка
+    держит две вещи: каждый блок цельный, и PASS в нём стоит последним.
+    """
+
+    def setUp(self):
+        self.text = runbook_text()
+        self.blocks = fenced_blocks(self.text)
+
+    def test_there_are_blocks_to_check(self):
+        """Отрицательный контроль самой проверки."""
+        self.assertGreaterEqual(len(self.blocks), 4)
+
+    def test_every_block_that_can_fail_is_a_single_powershell_block(self):
+        for block in self.blocks:
+            if 'throw' not in block:
+                continue
+            self.assertIn('& {', block,
+                          'a block that can throw is not wrapped in & { ... }:'
+                          '\n%s' % block)
+
+    def test_every_pass_line_is_the_last_statement_of_its_block(self):
+        """Вердикт блока -- это `Write-Output "...=PASS"`.
+
+        [REASON]: `PLAYWRIGHT_IMPORT=PASS` печатает питон внутри `-c`, и это
+        не вердикт блока, а одна из его проверок. Вердиктом считается только
+        то, что печатает сам PowerShell.
+        """
+        for block in self.blocks:
+            lines = [line.strip() for line in block.splitlines()
+                     if line.strip()]
+            pass_lines = [i for i, line in enumerate(lines)
+                          if line.startswith('Write-Output')
+                          and '=PASS' in line]
+            for index in pass_lines:
+                after = [line for line in lines[index + 1:]
+                         if line not in ('}', ')', '```')]
+                self.assertEqual(after, [],
+                                 'something can run after PASS is printed:'
+                                 '\n%s' % block)
+
+    def test_every_throw_is_preceded_by_an_exit_code_check(self):
+        for block in self.blocks:
+            if 'throw' not in block:
+                continue
+            self.assertIn('$LASTEXITCODE', block,
+                          'a block throws without looking at an exit code:'
+                          '\n%s' % block)
+
+    def test_no_block_prints_pass_without_checking_anything(self):
+        for block in self.blocks:
+            if '=PASS' not in block:
+                continue
+            self.assertIn('$LASTEXITCODE', block,
+                          'a block prints PASS without checking an exit code:'
+                          '\n%s' % block)
+
+
+class RunbookRouteCollectionIsClosedTests(unittest.TestCase):
+    """Сбор маршрутов закрыт, и ранбук не должен его предлагать.
+
+    [REASON]: нативный `fetch` опровергнут живым прогоном. Команда настоящего
+    сбора, оставленная в ранбуке, была бы приглашением повторить девятнадцать
+    отказов 408 и записать их в карантин.
+    """
+
+    def setUp(self):
+        self.text = runbook_text()
+        self.commands = command_lines(self.text)
+
+    def test_the_runbook_offers_no_real_route_collection(self):
+        for line in self.commands:
+            self.assertNotIn('--routes', line,
+                             'the runbook still offers a route collection '
+                             'run: %s' % line)
+
+    def test_the_runbook_offers_the_observation_instead(self):
+        self.assertTrue(any('--route-ui-probe' in line
+                            for line in self.commands),
+                        'the runbook names no safe next step for routes')
+
+    def test_the_runbook_states_what_the_live_run_disproved(self):
+        """Статусы живого прогона записаны в трековом файле рядом с ранбуком."""
+        with open(TRACK, encoding='utf-8') as handle:
+            whole = handle.read()
+        self.assertIn('ROUTE_NATIVE_FETCH_TRANSPORT=DISPROVED', whole)
+        self.assertIn('ROUTE_LIVE_COLLECTION=BLOCKED', whole)
+        self.assertIn('408', whole)
+
+    def test_the_runbook_does_not_blame_the_machine_clock(self):
+        """Часы у обоих запросов одни, и штатные запросы прошли."""
+        with open(TRACK, encoding='utf-8') as handle:
+            lowered = handle.read().lower()
+        for wrong in ('синхронизиров', 'w32tm', 'sync the clock',
+                      'переведите часы'):
+            self.assertNotIn(wrong, lowered)
 
 
 class RunbookGeometryScopeTests(unittest.TestCase):
@@ -145,35 +274,6 @@ class RunbookGeometryScopeTests(unittest.TestCase):
 
     def test_the_runbook_states_that_nothing_is_sent(self):
         self.assertIn('\u041e\u0442\u043f\u0440\u0430\u0432\u043a\u0438 \u0432 Vehicle Soft', self.text)
-
-
-class RunbookRouteScopeTests(unittest.TestCase):
-
-    def setUp(self):
-        self.commands = command_lines(runbook_text())
-
-    def route_commands(self):
-        return [line for line in self.commands if '--routes' in line]
-
-    def test_the_route_step_is_run_dry_first(self):
-        routes = self.route_commands()
-        self.assertGreaterEqual(len(routes), 3)
-        self.assertIn('--dry-run', routes[0])
-
-    def test_the_route_step_is_repeated_for_idempotence(self):
-        real = [line for line in self.route_commands()
-                if '--dry-run' not in line]
-        self.assertGreaterEqual(len(real), 2)
-        self.assertEqual(real[0], real[1],
-                         'the repeat run is not the identical command')
-
-    def test_the_route_step_covers_one_day(self):
-        for line in self.route_commands():
-            match = re.search(r'--from (\S+) --to (\S+)', line)
-            self.assertIsNotNone(match, line)
-            self.assertEqual(match.group(1), match.group(2),
-                             'the pilot route run is not limited to one day: '
-                             '%s' % line)
 
 
 if __name__ == '__main__':
