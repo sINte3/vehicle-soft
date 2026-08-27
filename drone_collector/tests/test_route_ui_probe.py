@@ -18,6 +18,7 @@ import unittest
 from pathlib import Path
 
 from drone_collector.route_ui_probe import (
+    DJI_ENVELOPE_STATUS_OK,
     MAX_OBSERVATIONS,
     MAX_PROCESSED_RESPONSE_BYTES,
     MAX_RESPONSE_BYTES,
@@ -28,8 +29,11 @@ from drone_collector.route_ui_probe import (
     probe_exit_code,
     is_ids_url,
     is_route_url,
+    NOT_READ,
+    observation_id,
     read_request_ids,
     summarise_request_body,
+    WITHHELD_DATA_TYPE,
     write_report,
 )
 from drone_collector.tests.test_route_decode import (FAKE_FLIGHT_ID, response,
@@ -115,14 +119,28 @@ def route_record_without_id():
     return record.replace(marker, b'')
 
 
-def route_response(body=None, headers=None, post_data=None, status=200):
+def route_response(body=None, headers=None, post_data=None, status=200,
+                   method='POST'):
     return _FakeResponse(
         ROUTE_URL,
         body if body is not None else response([route_record()]),
         status=status,
-        request=_FakeRequest(headers=headers or HEADERS,
+        request=_FakeRequest(method=method, headers=headers or HEADERS,
                              post_data=post_data if post_data is not None
                              else request_body(count=1)))
+
+
+def confirmable(flight_id=900000001, status=200, method='POST',
+                envelope_status=200):
+    """Обмен, который проходит ВСЕ условия подтверждения.
+
+    Меняя один аргумент, получаем ровно один отличающийся признак -- на этом
+    строятся и отрицательные проверки, и положительные контроли.
+    """
+    return route_response(
+        body=response([route_record(flight_id=flight_id)],
+                      status=envelope_status),
+        post_data=ids_body([flight_id]), status=status, method=method)
 
 
 # ─── Отбор запросов ──────────────────────────────────────────────────────────
@@ -765,10 +783,83 @@ class TestOversizedResponse(ProbeTestCase):
         seen = self.probe.observations[0]
         self.assertEqual(asked, [])
         self.assertEqual(seen.payload_kind, 'TOO_LARGE')
-        self.assertEqual(seen.response_bytes,
-                         MAX_PROCESSED_RESPONSE_BYTES + 1)
         self.assertIsNone(seen.response_sha256)
         self.assertFalse(seen.confirmed)
+
+        # Заявленное -- в своё поле; фактического НЕТ, и поле пустое.
+        self.assertEqual(seen.declared_response_bytes,
+                         MAX_PROCESSED_RESPONSE_BYTES + 1)
+        self.assertIsNone(seen.response_bytes)
+        self.assertFalse(seen.body_was_read)
+
+        document = seen.as_dict()
+        self.assertIsNone(document['response_bytes'])
+        self.assertEqual(document['declared_response_bytes'],
+                         MAX_PROCESSED_RESPONSE_BYTES + 1)
+        self.assertFalse(document['response_body_was_read'])
+        # Деталь говорит о ЗАЯВЛЕННОМ размере и о том, что настоящий неизвестен.
+        self.assertIn('declared', seen.payload_detail)
+        self.assertIn('unknown', seen.payload_detail)
+
+    def test_the_declared_size_never_becomes_the_measured_size(self):
+        """Отличающая проверка вместо прежней, закреплявшей дефект.
+
+        [REASON]: прежний тест требовал `response_bytes == Content-Length`, то
+        есть утверждал ровно то, чего код знать не мог: тела в руках не было.
+        `Content-Length` ставит отправитель.
+        """
+        declared = MAX_PROCESSED_RESPONSE_BYTES + 7
+
+        class _Declaring(object):
+            url = ROUTE_URL
+            status = 200
+            request = _FakeRequest(headers=HEADERS,
+                                   post_data=ids_body([900000001]))
+
+            def all_headers(self):
+                return {'Content-Length': str(declared)}
+
+            def body(self):
+                raise AssertionError('the body was requested anyway')
+
+        self.probe.note_response(_Declaring())
+        seen = self.probe.observations[0]
+        self.assertNotEqual(seen.response_bytes, declared)
+        self.assertIsNone(seen.response_bytes)
+        self.assertEqual(seen.declared_response_bytes, declared)
+
+    def test_a_read_body_still_records_its_measured_size(self):
+        """Положительный контроль: прочитанное тело меряется как раньше."""
+        body = response([route_record(flight_id=900000001)])
+        self.probe.note_response(route_response(
+            body=body, post_data=ids_body([900000001])))
+        seen = self.probe.observations[0]
+        self.assertEqual(seen.response_bytes, len(body))
+        self.assertTrue(seen.body_was_read)
+        self.assertIsNone(seen.declared_response_bytes)
+
+    def test_the_log_line_survives_a_missing_size(self):
+        """`%d` на None уронил бы слушателя ровно там, где он обязан устоять."""
+        from drone_collector.route_ui_probe import _safe_line
+
+        class _Declaring(object):
+            url = ROUTE_URL
+            status = 200
+            request = _FakeRequest(headers=HEADERS,
+                                   post_data=ids_body([900000001]))
+
+            def all_headers(self):
+                return {'Content-Length':
+                        str(MAX_PROCESSED_RESPONSE_BYTES + 1)}
+
+            def body(self):
+                raise AssertionError('the body was requested anyway')
+
+        self.probe.note_response(_Declaring())
+        self.assertEqual(self.probe.observation_errors, 0)
+        line = _safe_line(self.probe.observations[0])
+        self.assertIn('bytes=None', line)
+        self.assertIn('body_read=False', line)
 
     def test_an_ordinary_declared_size_does_not_block_the_body(self):
         """Отрицательный контроль: обычный Content-Length ничего не ломает."""
@@ -850,6 +941,382 @@ class TestOversizedResponse(ProbeTestCase):
         self.probe.note_response(route_response())
         seen = self.probe.observations[0]
         self.assertEqual(len(seen.response_sha256), 64)
+
+
+class TestDedupeKeepsDifferentAnswersApart(ProbeTestCase):
+    """Повтор -- только семантически ОДИНАКОВЫЙ обмен.
+
+    [REASON]: ключ дедупликации не знал ни метода, ни HTTP-статуса.
+    Подтверждённый `200 POST`, а следом тот же запрос с тем же телом, но `500`
+    или `GET`, схлопывались в повтор первого. Прогон, в котором кабинет
+    ответил по-разному, выходил полностью подтверждённым с кодом 0.
+    """
+
+    def outcome(self):
+        return probe_exit_code(
+            observations=len(self.probe.observations),
+            confirmed=len(self.probe.confirmed_observations),
+            skipped_over_cap=self.probe.skipped_over_cap,
+            observation_errors=self.probe.observation_errors)
+
+    def test_the_same_body_with_http_500_is_not_a_repeat(self):
+        self.probe.note_response(confirmable())
+        self.probe.note_response(confirmable(status=500))
+        self.assertEqual(len(self.probe.observations), 2)
+        self.assertEqual(len(self.probe.confirmed_observations), 1)
+        self.assertEqual(self.outcome(), 13)
+
+    def test_the_same_body_as_a_get_is_not_a_repeat(self):
+        self.probe.note_response(confirmable())
+        self.probe.note_response(confirmable(method='GET'))
+        self.assertEqual(len(self.probe.observations), 2)
+        self.assertEqual(len(self.probe.confirmed_observations), 1)
+        self.assertEqual(self.outcome(), 13)
+
+    def test_two_identical_confirmed_exchanges_still_collapse(self):
+        """Положительный контроль: настоящий повтор остаётся повтором."""
+        for _ in range(3):
+            self.probe.note_response(confirmable())
+        self.assertEqual(len(self.probe.observations), 1)
+        self.assertEqual(self.probe.observations[0].repeats, 3)
+        self.assertTrue(self.probe.observations[0].confirmed)
+        self.assertEqual(self.outcome(), 0)
+
+    def test_a_different_internal_status_is_not_a_repeat(self):
+        """Тот же HTTP-обмен, другой конверт DJI -- другое наблюдение."""
+        self.probe.note_response(confirmable())
+        self.probe.note_response(confirmable(envelope_status=101))
+        self.assertEqual(len(self.probe.observations), 2)
+        self.assertEqual(self.outcome(), 13)
+
+    def test_a_different_payload_kind_is_not_a_repeat(self):
+        """Двоичный ответ и JSON-отказ на тот же запрос -- два наблюдения."""
+        self.probe.note_response(confirmable())
+        self.probe.note_response(route_response(
+            body=b'{"status": 408, "code": 408, "msg": "no"}',
+            post_data=ids_body([900000001])))
+        self.assertEqual(len(self.probe.observations), 2)
+        self.assertEqual(self.outcome(), 13)
+
+
+class TestObservationIdCoversEveryConfirmationInput(unittest.TestCase):
+    """Ключ различает КАЖДЫЙ признак, от которого зависит подтверждение.
+
+    [REASON]: проверка на уровне самого ключа, а не через наблюдение. Через
+    наблюдение различимы только те признаки, которые меняют ещё и тело ответа
+    (внутренний статус DJI лежит в теле, и его хеш меняется вместе с ним) --
+    а метод, HTTP-статус и вердикт сверки тела не меняют вовсе, и прежний ключ
+    их терял молча.
+    """
+
+    BASE = dict(host='kr-ag2-api.example.invalid',
+                path='/api/web/v2/flight_datas/flight_records',
+                method='POST', http_status=200,
+                request_fingerprint='abc123', response_sha256='d' * 64,
+                payload_kind='BINARY', dji_response_status=200,
+                ids_match=True, body_was_read=True)
+
+    def key(self, **changes):
+        fields = dict(self.BASE)
+        fields.update(changes)
+        return observation_id(**fields)
+
+    def test_the_same_exchange_gives_the_same_key(self):
+        """Положительный контроль: ключ устойчив."""
+        self.assertEqual(self.key(), self.key())
+
+    def test_the_http_status_changes_the_key(self):
+        self.assertNotEqual(self.key(), self.key(http_status=500))
+
+    def test_the_method_changes_the_key(self):
+        self.assertNotEqual(self.key(), self.key(method='GET'))
+
+    def test_the_host_changes_the_key(self):
+        self.assertNotEqual(self.key(), self.key(host='elsewhere.invalid'))
+
+    def test_the_path_changes_the_key(self):
+        self.assertNotEqual(self.key(), self.key(path='/api/web/v2/other'))
+
+    def test_the_request_fingerprint_changes_the_key(self):
+        self.assertNotEqual(self.key(),
+                            self.key(request_fingerprint='zzz999'))
+
+    def test_the_response_hash_changes_the_key(self):
+        self.assertNotEqual(self.key(), self.key(response_sha256='e' * 64))
+
+    def test_the_payload_kind_changes_the_key(self):
+        self.assertNotEqual(self.key(), self.key(payload_kind='TOO_LARGE'))
+
+    def test_the_internal_dji_status_changes_the_key(self):
+        self.assertNotEqual(self.key(), self.key(dji_response_status=101))
+
+    def test_the_id_comparison_result_changes_the_key(self):
+        self.assertNotEqual(self.key(), self.key(ids_match=False))
+
+    def test_an_unread_body_never_shares_a_key_with_a_read_one(self):
+        """Непрочитанное тело хеша не имеет; двух таких не путать между собой.
+
+        Иначе два разных ответа, тела которых не запрашивались, слились бы в
+        одно наблюдение по одному только пути.
+        """
+        unread = self.key(body_was_read=False, response_sha256=None)
+        self.assertNotEqual(unread, self.key())
+        self.assertIn(NOT_READ, unread)
+        other = self.key(body_was_read=False, response_sha256=None,
+                         http_status=500)
+        self.assertNotEqual(unread, other)
+
+class TestOnlyAllIdsNeighbourhoodIsConsumed(ProbeTestCase):
+    """Соседство с `only_all_ids` тратится КАЖДЫМ ответом маршрутов.
+
+    [REASON]: флаг сбрасывался только на пути нового наблюдения. Ответ,
+    выпавший по лимиту или схлопнувшийся в повтор, оставлял его поднятым, и
+    следующее наблюдение получало чужое соседство -- отчёт утверждал, что
+    перед ним шёл запрос идентификаторов, которого перед ним не было.
+    """
+
+    def test_the_flag_is_set_on_the_response_that_followed_the_ids(self):
+        self.probe.note_request(IDS_URL)
+        self.probe.note_response(confirmable(flight_id=900000001))
+        self.assertTrue(self.probe.observations[0].preceded_by_only_all_ids)
+
+    def test_the_next_response_does_not_inherit_it(self):
+        self.probe.note_request(IDS_URL)
+        self.probe.note_response(confirmable(flight_id=900000001))
+        self.probe.note_response(confirmable(flight_id=900000002))
+        self.assertTrue(self.probe.observations[0].preceded_by_only_all_ids)
+        self.assertFalse(self.probe.observations[1].preceded_by_only_all_ids)
+
+    def test_a_repeat_consumes_the_flag_too(self):
+        """Повтор -- тоже ответ маршрутов, и соседство тратит он."""
+        first = confirmable(flight_id=900000001)
+        self.probe.note_response(first)
+        self.assertFalse(self.probe.observations[0].preceded_by_only_all_ids)
+
+        self.probe.note_request(IDS_URL)
+        self.probe.note_response(confirmable(flight_id=900000001))
+        self.assertEqual(len(self.probe.observations), 1)
+        self.assertEqual(self.probe.observations[0].repeats, 2)
+
+        self.probe.note_response(confirmable(flight_id=900000002))
+        self.assertEqual(len(self.probe.observations), 2)
+        self.assertFalse(self.probe.observations[1].preceded_by_only_all_ids)
+
+    def test_an_observation_dropped_by_the_cap_consumes_it_too(self):
+        for index in range(MAX_OBSERVATIONS):
+            self.probe.note_response(confirmable(flight_id=900000001 + index))
+        self.assertEqual(len(self.probe.observations), MAX_OBSERVATIONS)
+
+        self.probe.note_request(IDS_URL)
+        self.probe.note_response(confirmable(flight_id=900000900))
+        self.assertEqual(self.probe.skipped_over_cap, 1)
+        self.assertFalse(self.probe._ids_seen_recently)
+
+
+class TestTheDjiEnvelopeStatusIsChecked(ProbeTestCase):
+    """HTTP 200 в этом API не значит «успех».
+
+    [REASON]: `decode_route_response` не поднимает не-OK статус намеренно --
+    он ОТДАЁТ его вызывающему, и его докстринг прямо этого требует.
+    `_decode_ids` состояние выбрасывал, и конверт `status=101` «подписи нет»,
+    приехавший с маршрутами внутри и совпавшими идентификаторами, объявлялся
+    подтверждением.
+    """
+
+    def outcome(self):
+        return probe_exit_code(
+            observations=len(self.probe.observations),
+            confirmed=len(self.probe.confirmed_observations),
+            skipped_over_cap=self.probe.skipped_over_cap,
+            observation_errors=self.probe.observation_errors)
+
+    def test_an_internal_101_with_routes_is_not_confirmed(self):
+        self.probe.note_response(confirmable(envelope_status=101))
+        seen = self.probe.observations[0]
+        # Всё внешнее в порядке: 200, двоичное тело, маршруты, совпавшие ID.
+        self.assertEqual(seen.http_status, 200)
+        self.assertEqual(seen.payload_kind, 'BINARY')
+        self.assertEqual(seen.decoded_routes, 1)
+        self.assertTrue(seen.comparison['requested_and_returned_match'])
+        # И всё-таки не подтверждено -- из-за внутреннего статуса.
+        self.assertEqual(seen.dji_response_status, 101)
+        self.assertFalse(seen.confirmed)
+        self.assertIn('the DJI envelope status is not the success status',
+                      seen.not_confirmed_because)
+        self.assertEqual(self.outcome(), 13)
+
+    def test_an_internal_200_is_the_positive_control(self):
+        self.probe.note_response(confirmable(envelope_status=200))
+        seen = self.probe.observations[0]
+        self.assertEqual(seen.dji_response_status, 200)
+        self.assertTrue(seen.confirmed)
+        self.assertEqual(seen.not_confirmed_because, [])
+        self.assertEqual(self.outcome(), 0)
+
+    def test_an_unknown_internal_status_is_not_interpreted(self):
+        """Незнакомый статус не толкуется: он просто не тот, что нужен."""
+        self.probe.note_response(confirmable(envelope_status=4242))
+        seen = self.probe.observations[0]
+        self.assertEqual(seen.dji_response_status, 4242)
+        self.assertFalse(seen.confirmed)
+
+    def test_the_status_reaches_the_report_as_a_number(self):
+        self.probe.note_response(confirmable(envelope_status=101))
+        document = self.probe.observations[0].as_dict()
+        self.assertEqual(document['dji_response_status'], 101)
+
+    def test_the_ok_constant_matches_the_decoder(self):
+        """Две константы не могут разойтись молча."""
+        from drone_collector.route_decode import STATUS_OK
+        self.assertEqual(DJI_ENVELOPE_STATUS_OK, STATUS_OK)
+
+    def test_a_body_that_did_not_decode_is_not_blamed_on_the_envelope(self):
+        """Отрицательный контроль: про конверт, которого не было, не врём."""
+        self.probe.note_response(route_response(
+            body=b'{"status": 408, "code": 408, "msg": "no"}',
+            post_data=ids_body([900000001])))
+        seen = self.probe.observations[0]
+        self.assertIsNone(seen.dji_response_status)
+        self.assertNotIn('the DJI envelope status is not the success status',
+                         seen.not_confirmed_because)
+
+
+class TestListenerErrorsAreCounted(ProbeTestCase):
+    """Ответ, на котором слушатель споткнулся, -- не «ничего».
+
+    [REASON]: `note_response` ловит любое исключение, чтобы не уронить цикл
+    Playwright, и на этом всё заканчивалось: предупреждение уходило в лог, а
+    решение о результате об ошибке не знало.
+    """
+
+    def broken(self):
+        class _Broken(object):
+            url = ROUTE_URL
+            request = _FakeRequest(headers=HEADERS,
+                                   post_data=ids_body([900000001]))
+
+            def all_headers(self):
+                return {}
+
+            def body(self):
+                return response([route_record(flight_id=900000001)])
+
+            @property
+            def status(self):
+                raise RuntimeError('SYNTHETIC-LISTENER-FAILURE')
+
+        return _Broken()
+
+    def outcome(self):
+        return probe_exit_code(
+            observations=len(self.probe.observations),
+            confirmed=len(self.probe.confirmed_observations),
+            skipped_over_cap=self.probe.skipped_over_cap,
+            observation_errors=self.probe.observation_errors)
+
+    def test_the_error_is_counted_and_does_not_escape(self):
+        self.probe.note_response(self.broken())
+        self.assertEqual(self.probe.observation_errors, 1)
+        self.assertEqual(self.probe.observations, [])
+
+    def test_one_error_beside_a_confirmed_exchange_is_still_thirteen(self):
+        self.probe.note_response(self.broken())
+        self.probe.note_response(confirmable())
+        self.assertEqual(len(self.probe.confirmed_observations), 1)
+        self.assertEqual(self.probe.observation_errors, 1)
+        self.assertEqual(self.outcome(), 13)
+
+    def test_an_ordinary_confirmed_exchange_is_the_positive_control(self):
+        self.probe.note_response(confirmable())
+        self.assertEqual(self.probe.observation_errors, 0)
+        self.assertEqual(self.outcome(), 0)
+
+    def test_the_count_reaches_the_report(self):
+        self.probe.note_response(self.broken())
+        self.assertEqual(self.probe.report()['observation_errors'], 1)
+
+    def test_only_the_exception_type_reaches_the_log(self):
+        self.probe.note_response(self.broken())
+        text = self.log.text()
+        self.assertIn('RuntimeError', text)
+        self.assertNotIn('SYNTHETIC-LISTENER-FAILURE', text)
+
+    def test_the_pure_function_refuses_zero_on_an_error(self):
+        self.assertEqual(probe_exit_code(2, 2, 0, observation_errors=1), 13)
+        self.assertEqual(probe_exit_code(2, 2, 0, observation_errors=0), 0)
+
+    def test_an_error_with_nothing_observed_is_not_called_empty(self):
+        """Пришло что-то, прочитать не смогли -- это не «ничего не было»."""
+        self.assertEqual(probe_exit_code(0, 0, 0, observation_errors=1), 13)
+        self.assertEqual(probe_exit_code(0, 0, 0, observation_errors=0), 6)
+
+
+class TestDataTypeNeverLeaks(ProbeTestCase):
+    """`data_type` -- единственное поле тела, уходящее наружу значением.
+
+    [REASON]: оно приходит из браузера, попадает в журнал сразу и в отчёт --
+    до того, как отчёт проверят на секреты. Значение с маркером удостоверения
+    или формой подписанной ссылки прошло бы в лог, откуда его уже не убрать.
+    """
+
+    LEAKY_BEARER = 'Bearer NOT-REAL-SECRET-0123456789'
+    LEAKY_SIGNED = 'https://example.invalid/x?signature=NOT-REAL-0123456789'
+
+    def observe(self, data_type):
+        self.probe.note_response(route_response(
+            post_data=ids_body([900000001], data_type=data_type)))
+        write_report(self.probe, self.root)
+        return self.probe.observations[0]
+
+    def test_a_bearer_data_type_is_withheld(self):
+        seen = self.observe(self.LEAKY_BEARER)
+        self.assertEqual(seen.request['data_type'], WITHHELD_DATA_TYPE)
+        self.assertTrue(seen.request['data_type_withheld'])
+        self.assertNotIn(self.LEAKY_BEARER, self.everything_written())
+        self.assertNotIn('NOT-REAL-SECRET', self.everything_written())
+
+    def test_a_signed_url_data_type_is_withheld(self):
+        seen = self.observe(self.LEAKY_SIGNED)
+        self.assertEqual(seen.request['data_type'], WITHHELD_DATA_TYPE)
+        self.assertTrue(seen.request['data_type_withheld'])
+        self.assertNotIn(self.LEAKY_SIGNED, self.everything_written())
+        self.assertNotIn('signature=', self.everything_written())
+
+    def test_the_withheld_marker_names_no_marker(self):
+        """Метка не должна ронять проверку отчёта о самой себе."""
+        from drone_collector.outbox import find_secret_markers
+        self.assertEqual(find_secret_markers(WITHHELD_DATA_TYPE), [])
+
+    def test_an_ordinary_data_type_survives(self):
+        """Положительный контроль: `simplified` доходит как есть."""
+        seen = self.observe('simplified')
+        self.assertEqual(seen.request['data_type'], 'simplified')
+        self.assertFalse(seen.request['data_type_withheld'])
+        self.assertIn('simplified', self.everything_written())
+
+    def test_an_unknown_but_safe_data_type_survives_uninterpreted(self):
+        """Незнакомое безобидное значение -- наблюдение, а не повод судить."""
+        seen = self.observe('whatever-dji-asks-for-next')
+        self.assertEqual(seen.request['data_type'],
+                         'whatever-dji-asks-for-next')
+        self.assertFalse(seen.request['data_type_withheld'])
+
+    def test_a_leaky_value_never_reaches_the_log_line(self):
+        from drone_collector.route_ui_probe import _safe_line
+        seen = self.observe(self.LEAKY_BEARER)
+        line = _safe_line(seen)
+        self.assertNotIn('NOT-REAL-SECRET', line)
+        self.assertIn('data_type_withheld=True', line)
+
+    def test_the_check_looks_at_the_whole_value_before_truncating(self):
+        """Маркер за 64-м символом не должен уезжать из проверки."""
+        from drone_collector.route_ui_probe import safe_data_type
+        value = 'x' * 80 + 'Bearer NOT-REAL'
+        self.assertEqual(safe_data_type(value), (WITHHELD_DATA_TYPE, True))
+
+    def test_a_control_character_is_still_dropped_whole(self):
+        from drone_collector.route_ui_probe import safe_data_type
+        self.assertEqual(safe_data_type('simpli\x00fied'), (None, True))
 
 
 class TestNothingLeaks(ProbeTestCase):

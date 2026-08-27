@@ -32,8 +32,12 @@ Playwright отдаёт тело только целиком, и наблюда�
 превысившее тело не хешируется, не декодируется, не классифицируется и не
 сохраняется, а в наблюдении остаются его фактический размер и имя исхода.
 Если ответ назвал `Content-Length` больше предела, тело не запрашивается
-вовсе -- но само это число фактическим размером не считается: его ставит
-отправитель, при chunked его нет, при сжатии оно про сжатое тело.
+вовсе -- и тогда фактический размер остаётся НЕИЗВЕСТНЫМ. Заявленное число
+кладётся в собственное поле `declared_response_bytes`, а `response_bytes`
+остаётся пустым: `Content-Length` ставит отправитель, при chunked его нет, при
+сжатии он про сжатое тело, и выдавать обещание отправителя за измерение
+нельзя. Отдельный признак `response_body_was_read` говорит, держали ли тело в
+руках вообще.
 
 ЧТО ОСТАЁТСЯ НА ДИСКЕ
 
@@ -199,7 +203,46 @@ def describe_headers(headers):
     }
 
 
-def summarise_request_body(text):
+# Чем заменяется `data_type`, который нельзя ни напечатать, ни сохранить.
+#
+# [REASON]: метка НЕ называет найденный маркер. Назвать его -- значит положить
+# в отчёт слово `authorization` или `signature=`, и проверка самого отчёта на
+# секреты после этого падает на собственной метке. Что именно нашлось, видно
+# по флагу `data_type_withheld`; что это было за значение -- не видно нигде, и
+# в этом весь смысл.
+WITHHELD_DATA_TYPE = '<withheld>'
+
+
+def safe_data_type(value, find_secret_markers=None):
+    """(значение, отозвано ли) -- `data_type`, годный для лога и для отчёта.
+
+    Неизвестное, но безобидное значение сохраняется КАК ЕСТЬ и не
+    интерпретируется: какой `data_type` просит кабинет -- один из двух
+    вопросов, ради которых режим существует.
+
+    [REASON]: `data_type` -- единственное поле тела запроса, которое уходит
+    наружу ЗНАЧЕНИЕМ, а не числом. Оно приходит из браузера, попадает в журнал
+    сразу (`_safe_line`) и в отчёт -- до того, как отчёт проверят на секреты.
+    Значение с маркером удостоверения или формой подписанной ссылки прошло бы
+    в лог, откуда его уже ничем не убрать. Поэтому проверка стоит ЗДЕСЬ, на
+    входе, до первой печати.
+    """
+    if not isinstance(value, str) or not value:
+        return None, False
+    if _CONTROL.search(value):
+        # Управляющие символы не вычищаются: строка с ними отвергается целиком.
+        return None, True
+    if find_secret_markers is None:
+        from drone_collector.outbox import find_secret_markers as _finder
+        find_secret_markers = _finder
+    # Проверяется ПОЛНОЕ значение, а обрезается уже проверенное: маркер за
+    # 64-м символом иначе уехал бы из проверки вместе с хвостом.
+    if find_secret_markers(value):
+        return WITHHELD_DATA_TYPE, True
+    return value[:64], False
+
+
+def summarise_request_body(text, find_secret_markers=None):
     """Что лежало в теле запроса -- числом, а не значением.
 
     Из тела берутся ровно две вещи: СКОЛЬКО идентификаторов вылетов оно
@@ -208,7 +251,8 @@ def summarise_request_body(text):
     так известны, а вопрос стоит о форме запроса.
     """
     summary = {'parsed': False, 'flight_id_count': None, 'data_type': None,
-               'body_keys': [], 'bytes': 0, 'detail': ''}
+               'data_type_withheld': False, 'body_keys': [], 'bytes': 0,
+               'detail': ''}
     if text is None:
         summary['detail'] = 'the request carried no body'
         return summary
@@ -233,9 +277,10 @@ def summarise_request_body(text):
     ids = document.get('flight_record_ids')
     if isinstance(ids, list):
         summary['flight_id_count'] = len(ids)
-    data_type = document.get('data_type')
-    if isinstance(data_type, str) and not _CONTROL.search(data_type):
-        summary['data_type'] = data_type[:64]
+    value, withheld = safe_data_type(document.get('data_type'),
+                                     find_secret_markers)
+    summary['data_type'] = value
+    summary['data_type_withheld'] = withheld
     return summary
 
 
@@ -369,17 +414,53 @@ def request_body_fingerprint(text):
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
-def observation_id(url, sha256, request_fingerprint=''):
-    """Ключ дедупликации: путь, хеш ответа и отпечаток сырого тела запроса."""
-    return '%s|%s|%s' % (url.split('?', 1)[0], sha256, request_fingerprint)
+# Признак ответа, тела которого не было: хеша у него нет и быть не может.
+NOT_READ = 'body-not-read'
+
+
+def observation_id(host, path, method, http_status, request_fingerprint,
+                   response_sha256, payload_kind, dji_response_status,
+                   ids_match, body_was_read=True):
+    """Ключ дедупликации: ВСЁ, от чего зависит подтверждение.
+
+    Повтором считается только семантически одинаковый обмен. Любое различие,
+    способное изменить вердикт, делает наблюдение новым.
+
+    [REASON]: ключ был «путь + хеш ответа + отпечаток запроса», и ни метода,
+    ни HTTP-статуса в нём не было. Подтверждённый `200 POST`, а следом тот же
+    запрос с тем же телом, но `500` -- или тот же запрос как `GET`, -- давали
+    ОДИН и тот же ключ, второе наблюдение схлопывалось в повтор первого, и
+    прогон, в котором кабинет ответил по-разному, объявлялся полностью
+    подтверждённым с кодом 0. Это ровно тот класс ложного успеха, ради
+    которого весь режим и переписан: «увидели одинаковое тело» не значит
+    «увидели одинаковый ответ».
+
+    Хеш тела здесь не заменяет `payload_kind` и внутренний статус DJI:
+    непрочитанное тело хеша не имеет вовсе, и без остальных признаков два
+    разных непрочитанных ответа слились бы в один.
+    """
+    return '|'.join((
+        (host or ''),
+        (path or ''),
+        (method or 'UNKNOWN').upper(),
+        'http=%s' % (http_status,),
+        'req=%s' % (request_fingerprint or ''),
+        'body=%s' % (response_sha256 if body_was_read and response_sha256
+                     else NOT_READ),
+        'kind=%s' % (payload_kind or ''),
+        'dji=%s' % (dji_response_status,),
+        'ids=%s' % (bool(ids_match),),
+    ))
 
 
 class RouteUiObservation(object):
     """Один штатный запрос кабинета, увиденный со стороны."""
 
     __slots__ = ('host', 'path', 'method', 'http_status', 'request',
-                 'response_bytes', 'response_sha256', 'payload_kind',
+                 'response_bytes', 'declared_response_bytes', 'body_was_read',
+                 'response_sha256', 'payload_kind',
                  'payload_detail', 'decoded_routes', 'returned_id_count',
+                 'dji_response_status',
                  'comparison', 'preceded_by_only_all_ids', 'repeats',
                  'confirmed', 'not_confirmed_because')
 
@@ -388,18 +469,22 @@ class RouteUiObservation(object):
                  payload_detail='', decoded_routes=None,
                  returned_id_count=None, comparison=None,
                  preceded_by_only_all_ids=False, confirmed=False,
-                 not_confirmed_because=()):
+                 not_confirmed_because=(), declared_response_bytes=None,
+                 body_was_read=True, dji_response_status=None):
         self.host = host
         self.path = path
         self.method = method
         self.http_status = http_status
         self.request = request
         self.response_bytes = response_bytes
+        self.declared_response_bytes = declared_response_bytes
+        self.body_was_read = body_was_read
         self.response_sha256 = response_sha256
         self.payload_kind = payload_kind
         self.payload_detail = payload_detail
         self.decoded_routes = decoded_routes
         self.returned_id_count = returned_id_count
+        self.dji_response_status = dji_response_status
         self.comparison = comparison or {}
         self.preceded_by_only_all_ids = preceded_by_only_all_ids
         self.repeats = 1
@@ -414,12 +499,23 @@ class RouteUiObservation(object):
             'http_status': self.http_status,
             'preceded_by_only_all_ids': self.preceded_by_only_all_ids,
             'request': dict(self.request),
+            # [REASON]: три РАЗНЫХ поля, а не одно. `response_bytes` --
+            # фактический размер прочитанного тела и только он;
+            # `declared_response_bytes` -- то, что сказал `Content-Length`,
+            # число отправителя, которое при chunked отсутствует, а при сжатии
+            # описывает сжатое тело; `response_body_was_read` говорит, было ли
+            # тело вообще получено. Прежняя редакция при раннем отказе клала
+            # заявленное число в `response_bytes` -- то есть выдавала обещание
+            # отправителя за измерение.
             'response_bytes': self.response_bytes,
+            'declared_response_bytes': self.declared_response_bytes,
+            'response_body_was_read': self.body_was_read,
             'response_sha256': self.response_sha256,
             'payload_kind': self.payload_kind,
             'payload_detail': self.payload_detail,
             'decoded_routes': self.decoded_routes,
             'returned_id_count': self.returned_id_count,
+            'dji_response_status': self.dji_response_status,
             'repeats': self.repeats,
             'confirmed_route_post': self.confirmed,
             'not_confirmed_because': list(self.not_confirmed_because),
@@ -429,8 +525,18 @@ class RouteUiObservation(object):
         return document
 
 
+# Статус УСПЕХА во внутреннем конверте DJI.
+#
+# [REASON]: зеркалит `drone_collector.route_decode.STATUS_OK` и намеренно
+# продублирован числом, чтобы `confirmation_failures` осталась чистой
+# stdlib-функцией без импорта декодера. Совпадение двух констант держит
+# отдельный тест: разойтись молча они не могут.
+DJI_ENVELOPE_STATUS_OK = 200
+
+
 def confirmation_failures(host, path, method, http_status, payload_kind,
-                          decoded_routes, comparison, expected_origin):
+                          decoded_routes, comparison, expected_origin,
+                          dji_response_status=None):
     """Почему это наблюдение НЕ является подтверждённым штатным запросом.
 
     Пустой список -- подтверждено. Проверяется всё сразу, а не до первого
@@ -466,6 +572,16 @@ def confirmation_failures(host, path, method, http_status, payload_kind,
         problems.append('the payload is not a binary route payload')
     if decoded_routes is None:
         problems.append('the payload did not decode')
+    elif dji_response_status != DJI_ENVELOPE_STATUS_OK:
+        # [REASON]: HTTP 200 в этом API не значит «успех» -- тракт вылетов
+        # выучил это ещё в июле, а `decode_route_response` прямо пишет в
+        # докстринге, что не-OK статус он не поднимает, а ОТДАЁТ вызывающему,
+        # и разобраться обязан вызывающий. `_decode_ids` это состояние
+        # выбрасывал: конверт `status=101` «подписи нет», приехавший с
+        # маршрутами внутри и совпавшими ID, объявлялся подтверждением.
+        # Незнакомый статус не толкуется -- подтверждением считается ровно
+        # один, известный.
+        problems.append('the DJI envelope status is not the success status')
     if not (comparison or {}).get('requested_and_returned_match'):
         problems.append('the requested and returned id sets do not match')
     return problems
@@ -478,11 +594,13 @@ PROBE_EXIT_NOTHING_OBSERVED = 6
 PROBE_EXIT_UNCONFIRMED = 13
 
 
-def probe_exit_code(observations, confirmed, skipped_over_cap):
+def probe_exit_code(observations, confirmed, skipped_over_cap,
+                    observation_errors=0):
     """Каким кодом заканчивается прогон наблюдения.
 
-    Ноль разрешён ровно при трёх условиях сразу: наблюдение было, КАЖДОЕ
-    учтённое наблюдение подтверждено, и ни одно не выпало по лимиту.
+    Ноль разрешён ровно при четырёх условиях сразу: наблюдение было, КАЖДОЕ
+    учтённое наблюдение подтверждено, ни одно не выпало по лимиту и ни на
+    одном ответе слушатель не споткнулся.
 
     [REASON]: смешанный результат давал ложный ноль. Один подтверждённый POST
     рядом с неподтверждённым ответом означает, что кабинет отвечал по-разному,
@@ -490,7 +608,19 @@ def probe_exit_code(observations, confirmed, skipped_over_cap):
     ради которого весь этот разбор и ведётся. Пропущенное по лимиту
     наблюдение -- то же самое: про него не известно ничего, а «не известно» не
     равно «подтверждено».
+
+    Ошибка слушателя проверяется ПЕРВОЙ, до «ничего не наблюдалось»: если
+    ответ пришёл, а прочитать его не удалось, сказать «ничего не было» --
+    неправда, и код 6 увёл бы оператора не туда.
+
+    [REASON]: `note_response` ловит любое исключение, чтобы не уронить цикл
+    Playwright, -- и раньше на этом всё заканчивалось: предупреждение уходило
+    в лог, а решение о результате об ошибке не знало. Прогон, в котором
+    слушатель споткнулся на одном ответе и разобрал другой, объявлялся
+    полностью подтверждённым.
     """
+    if int(observation_errors or 0) > 0:
+        return PROBE_EXIT_UNCONFIRMED
     if int(observations or 0) <= 0:
         return PROBE_EXIT_NOTHING_OBSERVED
     if int(skipped_over_cap or 0) > 0:
@@ -517,6 +647,10 @@ class RouteUiProbe(object):
         self._ids_seen_recently = False
         self.route_responses = 0
         self.skipped_over_cap = 0
+        # [REASON]: ответ, на котором слушатель споткнулся, -- не «ничего».
+        # Счётчик существует, чтобы это состояние доходило до кода выхода, а
+        # не оставалось строчкой в логе.
+        self.observation_errors = 0
 
     @property
     def confirmed_observations(self):
@@ -540,9 +674,14 @@ class RouteUiProbe(object):
         """Ответ пришёл. Никогда не поднимает: мы внутри цикла Playwright."""
         try:
             self._note_response(response)
-        except Exception as exc:  # pragma: no cover -- слушатель не падает
-            self.log.warning('The probe could not read a response (%s)',
-                             type(exc).__name__)
+        except Exception as exc:
+            # Наружу идёт ТИП исключения и счётчик. Ни текста исключения, ни
+            # значений: сообщение приходит из браузера и может нести что
+            # угодно.
+            self.observation_errors += 1
+            self.log.warning('The probe could not read a response (%s); '
+                             '%d such failure(s) so far',
+                             type(exc).__name__, self.observation_errors)
 
     def _note_response(self, response):
         url = getattr(response, 'url', '') or ''
@@ -554,6 +693,14 @@ class RouteUiProbe(object):
             return
 
         self.route_responses += 1
+        # [REASON]: соседство с `only_all_ids` ПОТРЕБЛЯЕТСЯ здесь, на каждом
+        # ответе маршрутов, а не только на том, который стал новым
+        # наблюдением. Раньше флаг сбрасывался в самом конце, и обмен,
+        # выпавший по лимиту или схлопнувшийся в повтор, оставлял его
+        # поднятым -- следующее наблюдение получало чужое соседство.
+        preceded = self._ids_seen_recently
+        self._ids_seen_recently = False
+
         if len(self.observations) >= MAX_OBSERVATIONS:
             self.skipped_over_cap += 1
             return
@@ -584,17 +731,27 @@ class RouteUiProbe(object):
             declared = None
 
         oversize = False
+        declared_over_limit = (declared is not None
+                               and declared > MAX_PROCESSED_RESPONSE_BYTES)
         raw = b''
         actual_bytes = None
-        if declared is not None and declared > MAX_PROCESSED_RESPONSE_BYTES:
+        body_was_read = True
+        if declared_over_limit:
             # Тело не запрашивается вовсе: заголовок уже говорит, что
             # обрабатывать его мы не станем.
+            #
+            # [REASON]: фактический размер остаётся НЕИЗВЕСТНЫМ, и поле для
+            # него остаётся пустым. Заявленное число ложится в собственное
+            # поле и фактическим не притворяется: `Content-Length` ставит
+            # отправитель, при chunked его нет, при сжатии он про сжатое тело,
+            # а здесь тела не было в руках вовсе -- проверить нечем.
             self.log.warning('The route response declares %d bytes, over the '
                              'processing limit of %d; the body was not '
-                             'requested.', declared,
-                             MAX_PROCESSED_RESPONSE_BYTES)
+                             'requested and its real size stays unknown.',
+                             declared, MAX_PROCESSED_RESPONSE_BYTES)
             oversize = True
-            actual_bytes = declared
+            body_was_read = False
+            actual_bytes = None
         else:
             try:
                 raw = bytes(response.body() or b'')
@@ -628,16 +785,21 @@ class RouteUiProbe(object):
         if oversize:
             digest = None
             payload_kind = 'TOO_LARGE'
-            payload_detail = (
-                '%d bytes%s, over the processing limit of %d; not hashed, not '
-                'decoded, not stored'
-                % (actual_bytes,
-                   ' (declared, body not requested)' if declared is not None
-                   and declared > MAX_PROCESSED_RESPONSE_BYTES else '',
-                   MAX_PROCESSED_RESPONSE_BYTES))
+            if declared_over_limit:
+                payload_detail = (
+                    'Content-Length declared %d bytes, over the processing '
+                    'limit of %d; the body was never requested, so its real '
+                    'size is unknown -- not hashed, not decoded, not stored'
+                    % (declared, MAX_PROCESSED_RESPONSE_BYTES))
+            else:
+                payload_detail = (
+                    '%d bytes measured, over the processing limit of %d; not '
+                    'hashed, not decoded, not stored'
+                    % (actual_bytes, MAX_PROCESSED_RESPONSE_BYTES))
             decoded_routes = returned = None
             returned_ids = []
             routes_without_id = 0
+            dji_status = None
         else:
             digest = hashlib.sha256(raw).hexdigest()
             from drone_collector.route_payload import (PAYLOAD_BINARY,
@@ -648,16 +810,12 @@ class RouteUiProbe(object):
             decoded_routes = returned = None
             returned_ids = []
             routes_without_id = 0
+            dji_status = None
             if verdict.kind == PAYLOAD_BINARY:
-                decoded_routes, returned_ids, routes_without_id = \
+                decoded_routes, returned_ids, routes_without_id, dji_status = \
                     self._decode_ids(raw)
                 returned = (len(set(returned_ids))
                             if decoded_routes is not None else None)
-
-        key = observation_id(url, digest or 'not-read', fingerprint)
-        if key in self._seen:
-            self._seen[key].repeats += 1
-            return
 
         comparison = compare_id_sets(requested, returned_ids,
                                      routes_without_id=routes_without_id,
@@ -670,43 +828,70 @@ class RouteUiProbe(object):
         status = getattr(response, 'status', None)
         problems = confirmation_failures(
             host, path, method, status, payload_kind, decoded_routes,
-            comparison, self.expected_origin)
+            comparison, self.expected_origin, dji_status)
+
+        # [REASON]: ключ считается ПОСЛЕ сверки и вердикта, а не до них.
+        # Иначе в него нечего было бы положить, кроме тела, -- а именно это и
+        # схлопывало `200 POST` с `500` и с `GET` в одно наблюдение.
+        key = observation_id(
+            host=host, path=path, method=method, http_status=status,
+            request_fingerprint=fingerprint, response_sha256=digest,
+            payload_kind=payload_kind, dji_response_status=dji_status,
+            ids_match=comparison.get('requested_and_returned_match'),
+            body_was_read=body_was_read)
+        if key in self._seen:
+            self._seen[key].repeats += 1
+            return
 
         observation = RouteUiObservation(
             host=host, path=path, method=method, http_status=status,
             request=description, response_bytes=actual_bytes,
+            declared_response_bytes=declared, body_was_read=body_was_read,
             response_sha256=digest, payload_kind=payload_kind,
             payload_detail=payload_detail, decoded_routes=decoded_routes,
-            returned_id_count=returned, comparison=comparison,
-            preceded_by_only_all_ids=self._ids_seen_recently,
+            returned_id_count=returned, dji_response_status=dji_status,
+            comparison=comparison,
+            preceded_by_only_all_ids=preceded,
             confirmed=not problems, not_confirmed_because=problems)
-        self._ids_seen_recently = False
         self._seen[key] = observation
         self.observations.append(observation)
         self.log.info('Observed a route response: %s',
                       _safe_line(observation))
 
     def _decode_ids(self, raw):
-        """(маршрутов, список вернувшихся id, маршрутов без id).
+        """(маршрутов, список вернувшихся id, маршрутов без id, статус DJI).
 
         [REASON]: третье число раньше не считалось вовсе. Маршрут без
         `dji_flight_id` ни с каким вылетом не связывается, и ответ, где такой
         есть, подтверждением быть не может -- а по одному только списку id он
         выглядел бы безупречно.
+
+        [REASON]: четвёртое -- внутренний статус конверта. Он и раньше был у
+        `RouteResponse`, и его докстринг прямо требует, чтобы вызывающий его
+        посмотрел: не-OK статус декодер не поднимает, а ОТДАЁТ. Этот метод его
+        выбрасывал, и отказ `status=101` «подписи нет» с маршрутами внутри
+        доходил до вердикта как безупречный ответ. Статус отдаётся числом и
+        здесь не толкуется.
         """
         try:
             from drone_collector.route_decode import (RouteDecodeError,
                                                       decode_route_response)
         except ImportError:  # pragma: no cover
-            return None, [], 0
+            return None, [], 0, None
         try:
             decoded = decode_route_response(raw)
         except RouteDecodeError as exc:
             self.log.warning('The observed body did not decode (%s)', exc)
-            return None, [], 0
+            return None, [], 0, None
         ids = [value for value in decoded.flight_ids if value is not None]
         without_id = len(decoded.routes) - len(ids)
-        return len(decoded.routes), ids, without_id
+        status = decoded.status if isinstance(decoded.status, int) else None
+        if not decoded.is_ok:
+            # Число, а не текст: `message` приходит от поставщика.
+            self.log.warning('The observed body decoded, but the DJI envelope '
+                             'status is %s, not %s', status,
+                             DJI_ENVELOPE_STATUS_OK)
+        return len(decoded.routes), ids, without_id, status
 
     # -- отчёт ----------------------------------------------------------------
 
@@ -717,6 +902,7 @@ class RouteUiProbe(object):
             'route_observations': len(self.observations),
             'confirmed_route_posts': len(self.confirmed_observations),
             'skipped_over_cap': self.skipped_over_cap,
+            'observation_errors': self.observation_errors,
             'only_all_ids_seen': self.saw_only_all_ids,
             'observations': [item.as_dict() for item in self.observations],
             'nothing_was_queued': True,
@@ -742,14 +928,31 @@ def _path_of(url):
 
 
 def _safe_line(observation):
+    """Одна строка журнала. Ни значения заголовка, ни тела, ни ID.
+
+    [REASON]: `bytes` печатается через `%s`, а не `%d`. Фактического размера
+    у ответа, тело которого не запрашивалось, НЕТ, и поле остаётся пустым;
+    `%d` на `None` уронил бы слушателя ровно в тот момент, когда он обязан
+    устоять. Заявленный размер печатается отдельным полем и фактическим не
+    притворяется.
+
+    `data_type` сюда приходит уже отозванным, если в нём нашёлся маркер:
+    санитайз стоит в `safe_data_type`, на входе, а не здесь -- журнал пишется
+    раньше, чем отчёт проверяется на секреты.
+    """
     request = observation.request
-    return ('%s %s status=%s bytes=%d kind=%s confirmed=%s ids_in_request=%s '
-            'data_type=%s signature_header=%s credential_header=%s '
+    return ('%s %s status=%s bytes=%s declared=%s body_read=%s kind=%s '
+            'dji_status=%s confirmed=%s ids_in_request=%s '
+            'data_type=%s data_type_withheld=%s '
+            'signature_header=%s credential_header=%s '
             'timestamp_header=%s ids_match=%s missing=%s extra=%s'
             % (observation.method, observation.path, observation.http_status,
-               observation.response_bytes, observation.payload_kind,
+               observation.response_bytes,
+               observation.declared_response_bytes, observation.body_was_read,
+               observation.payload_kind, observation.dji_response_status,
                observation.confirmed,
                request.get('flight_id_count'), request.get('data_type'),
+               request.get('data_type_withheld'),
                request.get('carries_signature_like_header'),
                request.get('carries_credential_like_header'),
                request.get('carries_timestamp_like_header'),
