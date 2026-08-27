@@ -35,7 +35,7 @@ from drone_collector.geometry import (
     STATUS_NO_GEOMETRY, STATUS_OK, STATUS_SECRET_IN_PAYLOAD, STATUS_TOO_LARGE,
     STATUS_UNCHANGED, STATUS_UNPARSEABLE, URL_PLACEHOLDER, contour_from_node,
     describe_geometry, extract_shapes, ring_self_intersects, scrub,
-    write_dry_run)
+    select_nodes, write_dry_run)
 from drone_collector.tests.support import FIXTURES_DIR, load_fixture
 
 
@@ -117,12 +117,12 @@ class GeometryTestCase(unittest.TestCase):
             return answer
         return download
 
-    def run_on(self, nodes, download=None, **kwargs):
+    def run_on(self, nodes, download=None, only_uuids=None, **kwargs):
         kwargs.setdefault('pause_s', 0)
         run = GeometryRun(self.outbox, download or self.downloader(),
                           logger=self.log, sleep_fn=self.slept.append,
                           **kwargs)
-        return run, run.collect(nodes)
+        return run, run.collect(nodes, only_uuids=only_uuids)
 
     def everything_written(self):
         """Весь текст, который прогон оставил на диске и в логе."""
@@ -669,6 +669,158 @@ class TestDryRun(GeometryTestCase):
         write_dry_run(result, run.prepared_bodies, self.root / 'out')
         self.assertNotIn(FAKE_SIGNED_URL, self.everything_written())
         self.assertNotIn('OSSAccessKeyId', self.everything_written())
+
+
+# ─── Точный отбор контуров по uuid ───────────────────────────────────────────
+
+class TestGeometrySelection(GeometryTestCase):
+    """`--geometry-id` берёт РОВНО названное и ничего больше.
+
+    [REASON]: без отбора первый живой прогон качает все 5 489 контуров, то
+    есть предъявляет пять с половиной тысяч подписанных ссылок ради одной
+    проверки формата. Отбор идёт по сырому узлу справочника, поэтому ссылки
+    невыбранных контуров не попадают даже в память процесса.
+    """
+
+    def three_nodes(self, blob):
+        return [node_for(blob, uuid='u1'), node_for(blob, uuid='u2'),
+                node_for(blob, uuid='u3')]
+
+    def test_only_the_named_contour_is_downloaded(self):
+        blob = blob_of(polygon_document())
+        run, result = self.run_on(self.three_nodes(blob),
+                                  download=self.downloader(blob),
+                                  only_uuids=['u2'])
+        self.assertEqual(len(self.downloads), 1)
+        self.assertEqual(result.seen, 1)
+        self.assertEqual(result.by_status[STATUS_OK], 1)
+        self.assertEqual(len(self.outbox.pending()), 1)
+        envelope = self.outbox.read(self.outbox.pending()[0])
+        self.assertEqual(envelope['identity'], 'u2')
+
+    def test_without_the_filter_every_contour_is_downloaded(self):
+        """Отрицательный контроль: убери фильтр -- качается лишнее."""
+        blob = blob_of(polygon_document())
+        _, result = self.run_on(self.three_nodes(blob),
+                                download=self.downloader(blob, blob, blob))
+        self.assertEqual(len(self.downloads), 3)
+        self.assertEqual(result.seen, 3)
+
+    def test_two_ids_take_exactly_two(self):
+        blob = blob_of(polygon_document())
+        _, result = self.run_on(self.three_nodes(blob),
+                                download=self.downloader(blob, blob),
+                                only_uuids=['u1', 'u3'])
+        self.assertEqual(len(self.downloads), 2)
+        self.assertEqual(result.seen, 2)
+        names = sorted(self.outbox.read(path)['identity']
+                       for path in self.outbox.pending())
+        self.assertEqual(names, ['u1', 'u3'])
+
+    def test_a_repeated_id_does_not_download_twice(self):
+        blob = blob_of(polygon_document())
+        _, result = self.run_on(self.three_nodes(blob),
+                                download=self.downloader(blob),
+                                only_uuids=['u2', 'u2', 'u2'])
+        self.assertEqual(len(self.downloads), 1)
+        self.assertEqual(result.seen, 1)
+        self.assertEqual(result.requested_uuids, ['u2'])
+
+    def test_an_unknown_id_is_reported_and_nothing_is_downloaded(self):
+        blob = blob_of(polygon_document())
+        _, result = self.run_on(self.three_nodes(blob),
+                                download=self.downloader(),
+                                only_uuids=['not-in-the-directory'])
+        self.assertEqual(self.downloads, [])
+        self.assertEqual(result.seen, 0)
+        self.assertEqual(result.missing_uuids, ['not-in-the-directory'])
+
+    def test_a_known_id_beside_an_unknown_one_still_reports_the_unknown(self):
+        blob = blob_of(polygon_document())
+        _, result = self.run_on(self.three_nodes(blob),
+                                download=self.downloader(blob),
+                                only_uuids=['u1', 'ghost'])
+        self.assertEqual(len(self.downloads), 1)
+        self.assertEqual(result.missing_uuids, ['ghost'])
+
+    def test_the_dry_run_selects_the_same_set(self):
+        blob = blob_of(polygon_document())
+        _, dry = self.run_on(self.three_nodes(blob),
+                             download=self.downloader(blob),
+                             only_uuids=['u2'], dry_run=True)
+        self.assertEqual(self.outbox.pending(), [])
+        self.assertEqual(dry.seen, 1)
+        self.downloads = []
+        _, real = self.run_on(self.three_nodes(blob),
+                              download=self.downloader(blob),
+                              only_uuids=['u2'])
+        self.assertEqual(real.seen, dry.seen)
+        self.assertEqual(len(self.outbox.pending()), 1)
+
+    def test_the_link_of_an_unselected_contour_is_never_used(self):
+        blob = blob_of(polygon_document())
+        nodes = self.three_nodes(blob)
+        nodes[0]['geometry']['storage']['signedURL'] = (
+            'https://oss.aliyuncs.com/u1?OSSAccessKeyId=LTAI&Signature=NOPE')
+        nodes[2]['geometry']['storage']['signedURL'] = (
+            'https://oss.aliyuncs.com/u3?OSSAccessKeyId=LTAI&Signature=NOPE')
+        self.run_on(nodes, download=self.downloader(blob), only_uuids=['u2'])
+        for url in self.downloads:
+            self.assertNotIn('NOPE', url)
+        self.assertNotIn('NOPE', self.everything_written())
+        self.assertNotIn('OSSAccessKeyId', self.everything_written())
+
+    def test_the_report_carries_uuids_and_statuses_only(self):
+        blob = blob_of(polygon_document())
+        _, result = self.run_on(self.three_nodes(blob),
+                                download=self.downloader(blob),
+                                only_uuids=['u2', 'ghost'])
+        report = result.as_dict()
+        self.assertEqual(report['requested_uuids'], ['u2', 'ghost'])
+        self.assertEqual(report['missing_uuids'], ['ghost'])
+        self.assertNotIn('signedURL', str(report))
+        self.assertNotIn('Signature', str(report))
+
+
+class TestSelectNodes(unittest.TestCase):
+    """Отбор сам по себе, без прогона."""
+
+    NODES = [{'uuid': 'a'}, {'uuid': 'b'}, {'uuid': 'a'}, 'not a dict',
+             {'no_uuid': True}]
+
+    def test_none_means_the_whole_directory(self):
+        chosen, requested, missing = select_nodes(self.NODES, None)
+        self.assertEqual(len(chosen), 4)
+        self.assertIsNone(requested)
+        self.assertEqual(missing, [])
+
+    def test_the_match_is_exact(self):
+        """Отрицательный контроль: не префикс, не подстрока, не регистр."""
+        for probe in ('A', 'aa', 'b/a', 'a-'):
+            chosen, _requested, missing = select_nodes(self.NODES, [probe])
+            self.assertEqual(chosen, [], probe)
+            self.assertEqual(missing, [probe], probe)
+
+    def test_surrounding_whitespace_is_tolerated(self):
+        """Uuid, вставленный из документа, часто приходит с пробелом.
+
+        Обрезаются только края; после обрезки сравнение по-прежнему точное.
+        """
+        chosen, requested, missing = select_nodes(self.NODES, ['  a\n'])
+        self.assertEqual(len(chosen), 1)
+        self.assertEqual(requested, ['a'])
+        self.assertEqual(missing, [])
+
+    def test_a_duplicate_node_is_taken_once(self):
+        chosen, _requested, missing = select_nodes(self.NODES, ['a'])
+        self.assertEqual(len(chosen), 1)
+        self.assertEqual(missing, [])
+
+    def test_the_requested_order_is_kept_in_missing(self):
+        _chosen, requested, missing = select_nodes(self.NODES,
+                                                   ['z', 'a', 'y'])
+        self.assertEqual(requested, ['z', 'a', 'y'])
+        self.assertEqual(missing, ['z', 'y'])
 
 
 # ─── Узел справочника ────────────────────────────────────────────────────────

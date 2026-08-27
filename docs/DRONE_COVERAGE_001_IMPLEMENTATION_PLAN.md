@@ -206,8 +206,12 @@ SHA-256 и предположение о типе — содержимое не 
 
 ```
 python -m drone_collector.main --routes --from 2026-06-01 --to 2026-06-30
+python -m drone_collector.main --lands --with-geometry --geometry-id UUID
 python -m drone_collector.main --lands --with-geometry
 ```
+
+Вторая форма берёт РОВНО названный контур; третья — весь справочник, и первый
+живой прогон её не запускает. Ни одна из трёх не обращается к Vehicle Soft.
 
 и говорит числами: сколько ответов поймано, сколько разобрано, сколько
 маршрутов связано, сколько `UNLINKED`, сколько дублей, сколько ошибок.

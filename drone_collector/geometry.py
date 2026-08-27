@@ -3,6 +3,24 @@
 
     python -m drone_collector.main --lands --with-geometry
     python -m drone_collector.main --lands --with-geometry --dry-run
+    python -m drone_collector.main --lands --with-geometry --geometry-id UUID
+
+КУДА ЭТО НЕ ХОДИТ
+
+Прогон с `--with-geometry` не обращается НИ К ОДНОМУ эндпоинту Vehicle Soft --
+включая снимок справочника. Отправка снимка это дело обычного `--lands`, и оно
+за ним и осталось. До правки безопасности это было не так: настоящий прогон
+геометрии считался отправляющим, требовал `DRONE_API_TOKEN` и постил весь
+справочник в `/drones/api/land_sync`, то есть писал в production, которого
+этап B касаться не имеет права.
+
+ОТБОР КОНТУРОВ
+
+`--geometry-id` берёт РОВНО названные контуры, сравнивая точно с `node.uuid`.
+Отбор делает `select_nodes` -- до построения `ContourSource`, поэтому
+подписанная ссылка невыбранного контура не попадает даже в память. Без
+`--geometry-id` качается весь справочник; первый живой прогон так делать не
+должен.
 
 ЧТО ЭТО ДОБАВЛЯЕТ К `--lands`
 
@@ -456,6 +474,45 @@ def contour_from_node(node):
     )
 
 
+def select_nodes(nodes, only_uuids=None):
+    """(отобранные узлы, запрошенные uuid, ненайденные uuid).
+
+    `only_uuids=None` -- берётся весь справочник, как и раньше.
+
+    [REASON]: отбор идёт по СЫРОМУ узлу справочника, ДО того как из него
+    построен `ContourSource`. Значит подписанная ссылка невыбранного контура
+    не попадает даже в объект в памяти: её просто неоткуда взять, не то что
+    отдать скачивателю. Фильтровать после построения означало бы держать в
+    процессе пять с половиной тысяч живых учётных свидетельств ради одного
+    нужного.
+
+    Сравнение точное, по `node.uuid`. Повтор одного и того же uuid в
+    аргументах схлопывается, и повтор узла в самом справочнике тоже: скачать
+    один контур дважды нельзя ни тем, ни другим способом.
+    """
+    ordered = [node for node in (nodes or ()) if isinstance(node, dict)]
+    if only_uuids is None:
+        return ordered, None, []
+
+    wanted = []
+    wanted_set = set()
+    for value in only_uuids:
+        text = str(value).strip()
+        if text and text not in wanted_set:
+            wanted_set.add(text)
+            wanted.append(text)
+
+    selected = []
+    taken = set()
+    for node in ordered:
+        uuid = node.get('uuid')
+        if uuid in wanted_set and uuid not in taken:
+            taken.add(uuid)
+            selected.append(node)
+    missing = [value for value in wanted if value not in taken]
+    return selected, wanted, missing
+
+
 class ContourOutcome(object):
     """Результат обработки одного контура."""
 
@@ -489,7 +546,7 @@ class GeometryRunResult(object):
     """
 
     __slots__ = ('seen', 'downloaded', 'queued', 'duplicates', 'bytes',
-                 'by_status')
+                 'by_status', 'requested_uuids', 'missing_uuids')
 
     def __init__(self):
         self.seen = 0
@@ -498,6 +555,9 @@ class GeometryRunResult(object):
         self.duplicates = 0
         self.bytes = 0
         self.by_status = {}
+        # None -- отбора не было, взят весь справочник.
+        self.requested_uuids = None
+        self.missing_uuids = []
 
     def note(self, outcome):
         self.seen += 1
@@ -511,9 +571,15 @@ class GeometryRunResult(object):
         return self.seen == sum(self.by_status.values())
 
     def as_dict(self):
+        # [REASON]: uuid печатается, подписанная ссылка -- никогда. Это два
+        # разных свойства узла: идентификатор и учётное свидетельство.
         return {'seen': self.seen, 'downloaded': self.downloaded,
                 'queued': self.queued, 'duplicates': self.duplicates,
-                'bytes': self.bytes, 'by_status': dict(self.by_status)}
+                'bytes': self.bytes, 'by_status': dict(self.by_status),
+                'requested_uuids': (list(self.requested_uuids)
+                                    if self.requested_uuids is not None
+                                    else None),
+                'missing_uuids': list(self.missing_uuids)}
 
     def __repr__(self):
         return 'GeometryRunResult(%s)' % self.as_dict()
@@ -568,10 +634,23 @@ class GeometryRun(object):
 
     # -- прогон ---------------------------------------------------------------
 
-    def collect(self, nodes):
-        """Обойти узлы справочника. Возвращает GeometryRunResult."""
+    def collect(self, nodes, only_uuids=None):
+        """Обойти узлы справочника. Возвращает GeometryRunResult.
+
+        `only_uuids` -- точный список `node.uuid`; None означает весь
+        справочник. Отбор делает `select_nodes`, и делает его до построения
+        объектов, чтобы ссылки невыбранных контуров не попали даже в память.
+        """
         result = GeometryRunResult()
-        sources = [contour_from_node(node) for node in nodes or ()]
+        chosen, requested, missing = select_nodes(nodes, only_uuids)
+        result.requested_uuids = requested
+        result.missing_uuids = missing
+        if requested is not None:
+            self.log.info('Field geometry: %d uuid(s) named, %d matched in a '
+                          'directory of %d; nothing else is downloaded.',
+                          len(requested), len(chosen),
+                          len([n for n in (nodes or ()) if isinstance(n, dict)]))
+        sources = [contour_from_node(node) for node in chosen]
         sources = [source for source in sources if source is not None]
         self.log.info('Field geometry: %d contour(s) to consider%s',
                       len(sources), ' (DRY RUN)' if self.dry_run else '')
