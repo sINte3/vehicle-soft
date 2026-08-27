@@ -19,9 +19,9 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools.drone_route_semantics_probe import (  # noqa: E402
-    EXIT_NO_DIRECTORY, EXIT_NOTHING, EXIT_OK, area_consistency,
-    coverage_census, format_report, load_routes, main, mission_grouping,
-    path_length_m, unknown_field_census)
+    EXIT_NO_DIRECTORY, EXIT_NOTHING, EXIT_OK, KNOWN_ENVELOPE_VERSION,
+    area_consistency, coverage_census, format_report, load_routes, main,
+    mission_grouping, path_length_m, unknown_field_census)
 
 
 def route(flight_id=900000001, points=None, area=None, width=None,
@@ -51,19 +51,20 @@ class ProbeTestCase(unittest.TestCase):
         (self.outbox / 'pending').mkdir(parents=True)
         (self.outbox / 'sent').mkdir(parents=True)
 
-    def put(self, body, bucket='pending', name=None, kind='route'):
+    def put(self, body, bucket='pending', name=None, kind='route',
+            envelope_version=1):
         name = name or ('route_%s_%016x.json'
                         % (body.get('dji_flight_id'),
                            abs(hash(json.dumps(body, sort_keys=True)))))
-        envelope = {'envelope_version': 1, 'kind': kind,
+        envelope = {'envelope_version': envelope_version, 'kind': kind,
                     'identity': str(body.get('dji_flight_id')),
                     'body': body}
         (self.outbox / bucket / name).write_text(
             json.dumps(envelope, ensure_ascii=False), encoding='utf-8')
 
     def report_text(self):
-        routes, unreadable = load_routes(self.outbox)
-        return '\n'.join(format_report(routes, unreadable))
+        routes, unreadable, wrong_version = load_routes(self.outbox)
+        return '\n'.join(format_report(routes, unreadable, wrong_version))
 
 
 class TestLoading(ProbeTestCase):
@@ -71,7 +72,7 @@ class TestLoading(ProbeTestCase):
     def test_both_buckets_are_read(self):
         self.put(route(1), bucket='pending')
         self.put(route(2), bucket='sent')
-        routes, unreadable = load_routes(self.outbox)
+        routes, unreadable, _wrong = load_routes(self.outbox)
         self.assertEqual(len(routes), 2)
         self.assertEqual(unreadable, 0)
 
@@ -80,20 +81,52 @@ class TestLoading(ProbeTestCase):
         self.put(route(1))
         self.put({'external_id': 'u1'}, kind='field_geometry',
                  name='field_geometry_u1_0000000000000001.json')
-        routes, _ = load_routes(self.outbox)
+        routes, _unreadable, _wrong = load_routes(self.outbox)
         self.assertEqual(len(routes), 1)
 
     def test_a_broken_file_is_counted_not_fatal(self):
         self.put(route(1))
         (self.outbox / 'pending' / 'route_broken_1.json').write_text(
             '{', encoding='utf-8')
-        routes, unreadable = load_routes(self.outbox)
+        routes, unreadable, _wrong = load_routes(self.outbox)
         self.assertEqual(len(routes), 1)
         self.assertEqual(unreadable, 1)
 
     def test_an_empty_outbox_reads_as_empty(self):
-        routes, unreadable = load_routes(self.outbox)
+        routes, unreadable, _wrong = load_routes(self.outbox)
         self.assertEqual((routes, unreadable), ([], 0))
+
+    def test_an_envelope_of_another_version_is_refused_not_parsed(self):
+        """Читатель, не знающий версии, обязан отказаться.
+
+        [REASON]: до этой проверки инструмент разбирал ЛЮБОЙ конверт правилами
+        версии 1. Конверт версии 2, у которого поля значат другое, дал бы
+        правдоподобные числа и ничем бы себя не выдал -- а по этим числам
+        принимают решение о применимости источника.
+        """
+        self.put(route(1), envelope_version=2,
+                 name='route_1_ffffffffffffffff.json')
+        routes, unreadable, wrong_version = load_routes(self.outbox)
+        self.assertEqual(routes, [])
+        self.assertEqual(unreadable, 0)
+        self.assertEqual(wrong_version, 1)
+
+    def test_the_known_version_is_still_read(self):
+        """Отрицательный контроль: проверка версии не глушит свою же версию."""
+        self.put(route(1), envelope_version=KNOWN_ENVELOPE_VERSION)
+        routes, _unreadable, wrong_version = load_routes(self.outbox)
+        self.assertEqual(len(routes), 1)
+        self.assertEqual(wrong_version, 0)
+
+    def test_the_expected_version_matches_the_queue_itself(self):
+        """Число списано с очереди, а не выдумано здесь."""
+        from drone_collector.outbox import ENVELOPE_VERSION
+        self.assertEqual(KNOWN_ENVELOPE_VERSION, ENVELOPE_VERSION)
+
+    def test_the_report_names_the_refused_envelopes(self):
+        self.put(route(1), envelope_version=2,
+                 name='route_1_ffffffffffffffff.json')
+        self.assertIn('another envelope version', self.report_text())
 
 
 class TestMissionGrouping(ProbeTestCase):
@@ -225,7 +258,7 @@ class TestCoverageCensus(unittest.TestCase):
         self.assertEqual(census['without_recorded_width'], 1)
         self.assertEqual(census['with_hardware_id'], 1)
 
-    def test_the_observed_data_type_is_reported(self):
+    def test_the_requested_data_type_is_reported(self):
         census = coverage_census([route(1), route(2)])
         self.assertEqual(census['data_types'], {'simplified': 2})
 

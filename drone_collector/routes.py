@@ -59,7 +59,8 @@ import logging
 import time
 
 from drone_collector.outbox import (KIND_ROUTE, Outbox, OutboxError,
-                                    find_secret_markers, utc_now_iso)
+                                    SecretInEnvelope, find_secret_markers,
+                                    utc_now_iso)
 
 log = logging.getLogger(__name__)
 
@@ -529,11 +530,17 @@ class RouteRun(object):
                              'missing.', index, total,
                              len(reconciliation.missing))
 
-        observed = fetch.data_type or self.data_type
-        result.data_types[observed] = result.data_types.get(observed, 0) + 1
+        # [REASON]: имя `requested`, а не `observed`. Ответ маршрутов НЕ несёт
+        # своего `data_type` -- в конверте только `status`, `message` и сами
+        # маршруты, -- поэтому единственное, что здесь известно, это чем мы
+        # спросили. Назвать это наблюдением значило бы записать в улику, будто
+        # DJI подтвердил тип, и следующий читатель прочёл бы подтверждение там,
+        # где его нет.
+        requested = fetch.data_type or self.data_type
+        result.data_types[requested] = result.data_types.get(requested, 0) + 1
 
         for record in decoded.routes:
-            self._store(record, fetch, observed, result)
+            self._store(record, fetch, requested, result)
 
     def _fetch_with_retries(self, batch, index, total):
         """Один пакет, до RETRY_ATTEMPTS попыток. Возвращает RouteFetch."""
@@ -600,11 +607,11 @@ class RouteRun(object):
                 % (decoded.status, decoded.message))
         return decoded
 
-    def _store(self, record, fetch, observed_data_type, result):
+    def _store(self, record, fetch, requested_data_type, result):
         """Положить один маршрут в очередь (или пересчитать для dry-run)."""
         from drone_collector.route_decode import DECODER_VERSION
 
-        body = route_body(record, observed_data_type,
+        body = route_body(record, requested_data_type,
                           decoder_version=DECODER_VERSION)
         result.points += body['point_count']
         if body['spray_width_m'] is None:
@@ -623,7 +630,7 @@ class RouteRun(object):
             'endpoint': fetch.endpoint,
             'response_sha256': fetch.response_sha256,
             'requested_count': len(fetch.requested_ids),
-            'observed_data_type': observed_data_type,
+            'requested_data_type': requested_data_type,
             'collected_at': utc_now_iso(),
         }
         if self.dry_run:
@@ -632,9 +639,21 @@ class RouteRun(object):
             result.new += 1
             return
 
-        _, duplicate = self.outbox.enqueue(
-            KIND_ROUTE, str(record.flight_id), body, content_sha256(body),
-            diagnostics=diagnostics)
+        try:
+            _, duplicate = self.outbox.enqueue(
+                KIND_ROUTE, str(record.flight_id), body, content_sha256(body),
+                diagnostics=diagnostics)
+        except OutboxError as exc:
+            # [REASON]: очередь отказывает по своим правилам -- маркер секрета
+            # в теле, запись сверх потолка. Это отказ ОДНОГО маршрута, и он
+            # обязан остаться одним: без этого он уходил наружу мимо всех
+            # `except` прогона, обрывал оставшиеся пакеты и приходил к
+            # оператору голым трейсбеком с кодом 1. Текст исключения очереди
+            # называет маркеры, но не значения, поэтому его можно печатать.
+            self.log.error('Flight %s was not queued: %s',
+                           record.flight_id, exc)
+            result.errors += 1
+            return
         if duplicate:
             result.duplicates += 1
         else:
@@ -772,16 +791,29 @@ def read_ids_file(path):
 
 
 def write_dry_run(result, prepared, out_dir):
-    """Что было бы поставлено в очередь. Ни одной записи не создаётся."""
+    """Что было бы поставлено в очередь. Ни одной записи не создаётся.
+
+    [REASON]: текст проверяется на маркеры секретов ПЕРЕД записью -- ровно
+    так же, как это делает `Outbox._serialize`. Без этого сухой прогон был
+    единственным путём, которым тело попадало на диск, минуя проверку: очередь
+    отказалась бы, а этот файл ложился молча. Он же и открывается первым --
+    порядок первого живого прогона велит смотреть в него до настоящего сбора.
+    """
     from pathlib import Path
     target = Path(out_dir) / 'routes_dry_run.json'
-    target.parent.mkdir(parents=True, exist_ok=True)
     document = {
         'dry_run': True,
         'nothing_was_queued': True,
         'counters': result.as_dict(),
         'routes': prepared,
     }
+    text = json.dumps(document, ensure_ascii=False, indent=2)
+    found = find_secret_markers(text)
+    if found:
+        raise SecretInEnvelope(
+            'the dry-run report would carry %s; nothing was written'
+            % ', '.join(found))
+    target.parent.mkdir(parents=True, exist_ok=True)
     with target.open('w', encoding='utf-8') as handle:
-        json.dump(document, handle, ensure_ascii=False, indent=2)
+        handle.write(text)
     return target

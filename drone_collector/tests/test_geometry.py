@@ -9,7 +9,15 @@
 Фикстура `field_geometry_polygon.json` повторяет ФОРМУ подтверждённого файла
 контура `P03335975` -- 22 различные вершины, замкнутое кольцо,
 `funcType=PlantZone`, `parameters.offset` из 22 значений, пустой `MultiPoint`
-с `funcType=ReferencePoint`. Координаты в ней вымышленные.
+с `funcType=ReferencePoint`.
+
+**Про координаты.** Долгота сдвинута на ровные -64 градуса, и контур лежит в
+открытом море, а не на поле. Сдвиг по долготе выбран не случайно: сферическая
+формула площади зависит от РАЗНОСТИ долгот соседних вершин и от синуса широты,
+поэтому такой сдвиг не меняет площадь вовсе -- 7.0596 га против 105.661703 му
+DJI (те же +0.22 %), на которых стоят проверки формата. Прежняя редакция
+фикстуры называла свои координаты вымышленными, будучи при этом в реальном
+районе работ; committed-фикстура настоящих координат нести не должна.
 """
 
 import hashlib
@@ -26,7 +34,8 @@ from drone_collector.geometry import (
     STATUS_DOWNLOAD_FAILED, STATUS_INVALID_GEOMETRY, STATUS_MD5_MISMATCH,
     STATUS_NO_GEOMETRY, STATUS_OK, STATUS_SECRET_IN_PAYLOAD, STATUS_TOO_LARGE,
     STATUS_UNCHANGED, STATUS_UNPARSEABLE, URL_PLACEHOLDER, contour_from_node,
-    describe_geometry, extract_shapes, scrub, write_dry_run)
+    describe_geometry, extract_shapes, ring_self_intersects, scrub,
+    write_dry_run)
 from drone_collector.tests.support import FIXTURES_DIR, load_fixture
 
 
@@ -419,6 +428,45 @@ class TestGeometryParsing(unittest.TestCase):
         self.assertAlmostEqual(described['area_ha'], 7.0596, places=3)
 
 
+    def test_a_self_intersecting_ring_is_refused(self):
+        """Восьмёрка -- не контур поля, и площадь у неё неверная.
+
+        [REASON]: доли самопересечения входят в формулу со знаком и гасят друг
+        друга. У НЕСИММЕТРИЧНОЙ восьмёрки они гасятся не в ноль, а в
+        положительное, но неверное число -- проверка «площадь не положительна»
+        такую не ловит. Сверка с `totalArea` тоже не страхует: DJI считает по
+        тем же вершинам. До этой проверки кольцо ниже принималось с площадью
+        0.9520 га.
+        """
+        bowtie = [[64.4000, 39.8000], [64.4030, 39.8010], [64.4000, 39.8010],
+                  [64.4010, 39.8000], [64.4000, 39.8000]]
+        _described, reasons = describe_geometry(
+            {'type': 'Polygon', 'coordinates': [bowtie]})
+        self.assertTrue(any('intersects itself' in reason
+                            for reason in reasons), reasons)
+
+    def test_a_self_intersecting_hole_is_refused_too(self):
+        outer = [[64.40, 39.80], [64.41, 39.80], [64.41, 39.81],
+                 [64.40, 39.81], [64.40, 39.80]]
+        bowtie = [[64.402, 39.802], [64.406, 39.804], [64.402, 39.804],
+                  [64.404, 39.802], [64.402, 39.802]]
+        _described, reasons = describe_geometry(
+            {'type': 'Polygon', 'coordinates': [outer, bowtie]})
+        self.assertTrue(any('intersects itself' in reason
+                            for reason in reasons), reasons)
+
+    def test_an_ordinary_ring_is_not_called_self_intersecting(self):
+        """Отрицательный контроль: проверка обязана различать два случая."""
+        _described, reasons = describe_geometry(load_fixture(
+            'field_geometry_polygon.json'))
+        self.assertEqual(reasons, [])
+
+    def test_the_confirmed_contour_passes_the_same_check(self):
+        """И на настоящей форме контура проверка молчит."""
+        shapes = extract_shapes(load_fixture('field_geometry_polygon.json'))
+        self.assertFalse(ring_self_intersects(shapes[0][1]))
+
+
 # ─── Сверка площади как контроль формата ─────────────────────────────────────
 
 class TestAreaCrossCheck(GeometryTestCase):
@@ -514,6 +562,40 @@ class TestErrorStatuses(GeometryTestCase):
         self.assertEqual(result.by_status[STATUS_UNPARSEABLE], 1)
         self.assertEqual(result.by_status[STATUS_OK], 1)
         self.assertEqual(len(self.outbox.pending()), 1)
+
+
+    def test_a_document_nested_too_deep_is_named_not_fatal(self):
+        """Один патологический файл не имеет права унести весь проход.
+
+        [REASON]: разбор глубоко вложенного JSON поднимает `RecursionError`, а
+        это `RuntimeError`, не `ValueError`. До правки он уходил из `_one`
+        наружу, и прогон терял ВСЕ оставшиеся контуры, отчитавшись голым
+        трейсбеком с кодом 1 -- при том, что модуль обещает каждому контуру
+        именованный статус.
+        """
+        deep = ('[' * 100000 + ']' * 100000).encode('utf-8')
+        good = blob_of(polygon_document())
+        nodes = [node_for(deep, uuid='u1'), node_for(good, uuid='u2')]
+        _, result = self.run_on(nodes, download=self.downloader(deep, good))
+        self.assertEqual(result.by_status[STATUS_UNPARSEABLE], 1)
+        self.assertEqual(result.by_status[STATUS_OK], 1)
+        self.assertTrue(result.invariant_holds, result.as_dict())
+
+    def test_a_contour_the_queue_refuses_is_named_not_fatal(self):
+        """Отказ очереди -- статус ОДНОГО контура, а не конец прогона.
+
+        Имя контура приходит из справочника и в теле никем не проверялось;
+        маркер ловит только очередь, последней.
+        """
+        good = blob_of(polygon_document())
+        poisoned = node_for(good, uuid='u1')
+        poisoned['name'] = 'Karvon?Signature=abc'
+        nodes = [poisoned, node_for(good, uuid='u2')]
+        _, result = self.run_on(nodes, download=self.downloader(good, good))
+        self.assertEqual(result.by_status[STATUS_SECRET_IN_PAYLOAD], 1)
+        self.assertEqual(result.by_status[STATUS_OK], 1)
+        self.assertEqual(len(self.outbox.pending()), 1)
+        self.assertNotIn('Signature=abc', self.everything_written())
 
 
 # ─── Повторы, темп, сухой прогон ─────────────────────────────────────────────
@@ -614,6 +696,25 @@ class TestContourFromNode(unittest.TestCase):
 
 
 class TestFixtureItself(unittest.TestCase):
+
+    def test_the_fixture_is_not_in_the_real_operating_area(self):
+        """Committed-фикстура не несёт настоящих координат.
+
+        [REASON]: парк работает в Бухарской области -- примерно 63..66 в.д.
+        при 39..41 с.ш. Прежняя редакция этой фикстуры лежала ровно там и при
+        этом объявляла свои координаты вымышленными: её площадь совпадала с
+        настоящим контуром `P03335975` до 0.0001 га, а `totalArea` -- до
+        шестого знака. Проверяется долгота: сдвиг по ней площадь не меняет,
+        поэтому анонимизация ничего не стоила проверкам формата.
+        """
+        shapes = extract_shapes(load_fixture('field_geometry_polygon.json'))
+        self.assertTrue(shapes)
+        for _kind, outer, _holes, _properties in shapes:
+            for position in outer:
+                self.assertFalse(
+                    63.0 <= position[0] <= 66.0,
+                    'долгота %r лежит в реальном районе работ' % position[0])
+
 
     def test_the_geometry_fixture_carries_no_secret(self):
         """Фикстура уходит в git -- в ней не должно быть ничего подписанного."""

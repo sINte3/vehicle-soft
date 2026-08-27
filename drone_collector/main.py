@@ -562,6 +562,7 @@ def _run_routes(args, cfg, log, state):
                                             RouteRequestRefused, RouteRunError,
                                             read_ids_file)
         from drone_collector.routes import write_dry_run as write_routes_dry_run
+        from drone_collector.outbox import OutboxError
     except ImportError as exc:  # pragma: no cover -- import of our own module
         log.error('The route collector could not be imported (%s)', exc)
         return EXIT_CONFIG
@@ -639,7 +640,17 @@ def _run_routes(args, cfg, log, state):
     _account_for_routes(result, outbox, state)
 
     if args.dry_run:
-        target = write_routes_dry_run(result, run.prepared_bodies, cfg.out_dir)
+        try:
+            target = write_routes_dry_run(result, run.prepared_bodies,
+                                          cfg.out_dir)
+        except OutboxError as exc:
+            # [REASON]: the dry-run report is checked for secret markers before
+            # it is written, exactly as the queue checks an envelope. A refusal
+            # is a finding about the payload, not a crash, and it deserves the
+            # same named exit as any other failed route run -- not the bare
+            # traceback of the catch-all in main().
+            log.error('The dry-run report was NOT written: %s', exc)
+            return EXIT_PAGINATION
         log.info('Dry run: nothing was queued; %d route(s) written to %s',
                  len(run.prepared_bodies), target)
         print('%d route(s) written to %s (nothing was queued)'

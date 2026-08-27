@@ -54,6 +54,14 @@ EXIT_NO_DIRECTORY = 2
 
 EARTH_RADIUS_M = 6378137.0
 
+# Версия конверта очереди, которую этот инструмент умеет читать.
+#
+# [REASON]: число повторяет `drone_collector.outbox.ENVELOPE_VERSION`
+# намеренно, а не импортируется: инструмент живёт в Python приложения,
+# очередь -- в venv сборщика, и устав запрещает тащить один в другой. Тест
+# держит оба числа равными, поэтому расхождение упадёт, а не проедет молча.
+KNOWN_ENVELOPE_VERSION = 1
+
 # Границы гистограммы отношения «нужная длина / фактическая длина».
 RATIO_BUCKETS = (0.25, 0.5, 0.75, 0.9, 1.0, 1.1, 1.5, 2.0)
 
@@ -77,9 +85,13 @@ def path_length_m(points):
 
 
 def load_routes(outbox_dir):
-    """Тела маршрутов из очереди -- и из `pending/`, и из `sent/`."""
+    """Тела маршрутов из очереди -- и из `pending/`, и из `sent/`.
+
+    Возвращает (маршруты, нечитаемые, чужой_версии).
+    """
     routes = []
     unreadable = 0
+    wrong_version = 0
     for bucket in ('pending', 'sent'):
         directory = os.path.join(outbox_dir, bucket)
         if not os.path.isdir(directory):
@@ -95,10 +107,18 @@ def load_routes(outbox_dir):
                 continue
             if not isinstance(envelope, dict) or envelope.get('kind') != 'route':
                 continue
+            if envelope.get('envelope_version') != KNOWN_ENVELOPE_VERSION:
+                # [REASON]: правило очереди -- читатель, не знающий версии,
+                # обязан отказаться, а не разбирать «как получится». Инструмент
+                # тоже читатель: разобрав конверт версии 2 правилами версии 1,
+                # он напечатал бы правдоподобные числа, по которым принимают
+                # решение, и ничем бы себя не выдал.
+                wrong_version += 1
+                continue
             body = envelope.get('body')
             if isinstance(body, dict):
                 routes.append(body)
-    return routes, unreadable
+    return routes, unreadable, wrong_version
 
 
 def mission_grouping(routes):
@@ -252,7 +272,7 @@ def coverage_census(routes):
 
 # ─── Вывод ───────────────────────────────────────────────────────────────────
 
-def format_report(routes, unreadable):
+def format_report(routes, unreadable, wrong_version=0):
     lines = []
     add = lines.append
 
@@ -260,6 +280,8 @@ def format_report(routes, unreadable):
     add('WHAT WAS COLLECTED')
     add('  routes in the outbox        : %d' % census['routes'])
     add('  unreadable queue files      : %d' % unreadable)
+    add('  queue files of another envelope version : %d  '
+        '(not parsed)' % wrong_version)
     add('  with a recorded width       : %d' % census['with_recorded_width'])
     add('  without a recorded width    : %d  (never substituted)'
         % census['without_recorded_width'])
@@ -348,8 +370,8 @@ def main(argv=None):
         print('  python -m drone_collector.main --routes --ids-file ids.txt')
         return EXIT_NO_DIRECTORY
 
-    routes, unreadable = load_routes(args.outbox)
-    lines = format_report(routes, unreadable)
+    routes, unreadable, wrong_version = load_routes(args.outbox)
+    lines = format_report(routes, unreadable, wrong_version)
     for line in lines:
         print(_ascii(line))
 

@@ -47,7 +47,8 @@ import math
 import re
 import time
 
-from drone_collector.outbox import (KIND_FIELD_GEOMETRY, find_secret_markers,
+from drone_collector.outbox import (KIND_FIELD_GEOMETRY, EnvelopeTooLarge,
+                                    SecretInEnvelope, find_secret_markers,
                                     utc_now_iso)
 
 log = logging.getLogger(__name__)
@@ -174,7 +175,47 @@ def _valid_ring(ring):
         return False, 'ring is not closed'
     if len({(p[0], p[1]) for p in ring}) < 3:
         return False, 'ring has fewer than 3 distinct vertices'
+    if ring_self_intersects(ring):
+        return False, 'ring intersects itself'
     return True, ''
+
+
+def _segments_intersect(a, b, c, d):
+    def cross(o, p, q):
+        return ((p[0] - o[0]) * (q[1] - o[1])
+                - (p[1] - o[1]) * (q[0] - o[0]))
+    d1, d2 = cross(c, d, a), cross(c, d, b)
+    d3, d4 = cross(a, b, c), cross(a, b, d)
+    return ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0))
+
+
+def ring_self_intersects(ring):
+    """Грубая проверка самопересечения. O(n^2), для контура поля достаточно.
+
+    [REASON]: без неё восьмёрка проходит как годный контур. Формула площади
+    складывает знаковые площади долей, поэтому у самопересечения они частично
+    гасят друг друга: у симметричной восьмёрки в ноль (это ловит проверка
+    «площадь не положительна»), у несимметричной -- в положительное, но
+    НЕВЕРНОЕ число, и его уже не ловит ничто. Сверка с `totalArea` тут не
+    страхует: DJI считает площадь по тем же вершинам и промахнётся так же.
+    Алгоритм повторяет `tools/drone_field_geometry_probe.ring_self_intersects`
+    намеренно -- устав запрещает тащить в collector зависимости приложения, а
+    два валидатора одного формата обязаны отвергать одно и то же.
+    """
+    points = [(p[0], p[1]) for p in ring]
+    if len(points) < 3:
+        return False
+    if points[0] != points[-1]:
+        points.append(points[0])
+    count = len(points)
+    for i in range(count - 1):
+        for j in range(i + 2, count - 1):
+            if i == 0 and j == count - 2:
+                continue          # смежные через замыкание
+            if _segments_intersect(points[i], points[i + 1],
+                                   points[j], points[j + 1]):
+                return True
+    return False
 
 
 def extract_shapes(document):
@@ -607,13 +648,26 @@ class GeometryRun(object):
 
         try:
             document = json.loads(blob.decode('utf-8'))
-        except (UnicodeDecodeError, ValueError) as exc:
+        except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+            # [REASON]: `RecursionError` стоит рядом с `ValueError` не для
+            # красоты. Разбор глубоко вложенного JSON упирается в предел
+            # рекурсии, а `RecursionError` -- это `RuntimeError`, не
+            # `ValueError`; без него ОДИН такой файл уводил прогон из `_one`
+            # наружу и терял все оставшиеся контуры прохода, при том что
+            # модуль обещает каждому контуру именованный статус.
             return ContourOutcome(source.uuid, STATUS_UNPARSEABLE,
                                   'not readable GeoJSON (%s)'
                                   % type(exc).__name__,
                                   content_md5=source.content_md5, sha256=digest)
 
-        described, reasons = describe_geometry(document)
+        try:
+            described, reasons = describe_geometry(document)
+        except RecursionError:
+            # Тот же класс, но на обходе: вложенные `GeometryCollection`.
+            return ContourOutcome(source.uuid, STATUS_UNPARSEABLE,
+                                  'the document nests deeper than this reader '
+                                  'walks', content_md5=source.content_md5,
+                                  sha256=digest)
         if reasons:
             return ContourOutcome(source.uuid, STATUS_INVALID_GEOMETRY,
                                   '; '.join(reasons[:3]),
@@ -669,9 +723,23 @@ class GeometryRun(object):
                                   area_ha_computed=area_ha,
                                   area_ha_dji=area_dji, queued=True)
 
-        _path, duplicate = self.outbox.enqueue(
-            KIND_FIELD_GEOMETRY, source.uuid, body, digest,
-            diagnostics=diagnostics)
+        try:
+            _path, duplicate = self.outbox.enqueue(
+                KIND_FIELD_GEOMETRY, source.uuid, body, digest,
+                diagnostics=diagnostics)
+        except SecretInEnvelope as exc:
+            # [REASON]: тело проверено на маркеры ДО разбора, но в конверт
+            # добавляются `name` и `field_serial` из справочника, а их не
+            # проверял никто. Очередь ловит это последней -- и её отказ обязан
+            # стать статусом ОДНОГО контура, а не исключением, уносящим весь
+            # проход по пяти с половиной тысячам.
+            return ContourOutcome(source.uuid, STATUS_SECRET_IN_PAYLOAD,
+                                  scrub(exc), content_md5=source.content_md5,
+                                  sha256=digest)
+        except EnvelopeTooLarge as exc:
+            return ContourOutcome(source.uuid, STATUS_TOO_LARGE, str(exc),
+                                  content_md5=source.content_md5,
+                                  sha256=digest)
         if duplicate:
             result.duplicates += 1
             return ContourOutcome(source.uuid, STATUS_UNCHANGED,

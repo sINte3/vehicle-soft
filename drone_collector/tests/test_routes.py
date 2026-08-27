@@ -335,9 +335,22 @@ class TestRouteBody(unittest.TestCase):
         self.assertNotIn('hex', entry)
         self.assertEqual(entry['bytes'], 2000)
 
-    def test_the_observed_data_type_is_stored_verbatim(self):
+    def test_the_requested_data_type_is_stored_verbatim(self):
         body = route_body(self.decode_one(), 'simplified')
         self.assertEqual(body['data_type'], 'simplified')
+
+    def test_the_response_carries_no_data_type_of_its_own(self):
+        """Почему поле называется `requested`, а не `observed`.
+
+        [REASON]: конверт ответа несёт `status`, `message` и маршруты -- и
+        ничего больше. Значит подтвердить тип ответом нечем, и запись обязана
+        называть его запрошенным. Тест держит это утверждение на самой
+        структуре декодера: появится у ответа свой `data_type` -- он упадёт, и
+        имя поля можно будет пересмотреть по факту, а не по памяти.
+        """
+        from drone_collector.route_decode import RouteResponse
+        self.assertEqual(RouteResponse.__slots__,
+                         ('status', 'message', 'routes'))
 
 
 class TestContentHash(unittest.TestCase):
@@ -383,7 +396,7 @@ class TestHappyPath(RoutesTestCase):
         _, _result = self.run_for([900000008])
         envelope = self.outbox.read(self.outbox.pending()[0])
         self.assertEqual(len(envelope['diagnostics']['response_sha256']), 64)
-        self.assertEqual(envelope['diagnostics']['observed_data_type'],
+        self.assertEqual(envelope['diagnostics']['requested_data_type'],
                          'simplified')
 
     def test_batching_splits_the_requests(self):
@@ -613,6 +626,9 @@ class TestQuarantine(RoutesTestCase):
 
 class TestSecretsNeverReachTheQueue(RoutesTestCase):
 
+    POISONED_LOCATION = ('https://oss.aliyuncs.com/x?OSSAccessKeyId=LTAI'
+                         '&Signature=zz')
+
     def test_a_signed_url_inside_the_payload_stops_the_record(self):
         """Полный цикл: подпись в поле маршрута -- отказ, а не запись.
 
@@ -624,11 +640,38 @@ class TestSecretsNeverReachTheQueue(RoutesTestCase):
         # строки на строку другой длины дала бы просто нечитаемое тело --
         # тест прошёл бы, ничего не проверив.
         transport = FakeTransport(response([_record_with_location(
-            900000001,
-            'https://oss.aliyuncs.com/x?OSSAccessKeyId=LTAI&Signature=zz')]))
-        with self.assertRaises(SecretInEnvelope):
-            self.run_for([900000001], transport=transport)
+            900000001, self.POISONED_LOCATION)]))
+        _, result = self.run_for([900000001], transport=transport)
         self.assertEqual(self.outbox.pending(), [])
+        self.assertEqual(result.new, 0)
+        self.assertEqual(result.errors, 1)
+
+    def test_the_refusal_costs_one_route_and_not_the_rest(self):
+        """Отказ очереди -- отказ ОДНОГО маршрута.
+
+        [REASON]: раньше `SecretInEnvelope` уходил из прогона наружу мимо всех
+        `except`, обрывал оставшиеся пакеты и приходил к оператору голым
+        трейсбеком с кодом 1. Собранное до этого оставалось на диске, но всё
+        последующее терялось, а сводка прогона не выходила вовсе.
+        """
+        transport = FakeTransport(response([
+            _record_with_location(900000001, self.POISONED_LOCATION),
+            route_record(flight_id=900000002)]))
+        _, result = self.run_for([900000001, 900000002], transport=transport)
+        self.assertEqual(result.errors, 1)
+        self.assertEqual(result.new, 1)
+        self.assertEqual(len(self.outbox.pending()), 1)
+        self.assertTrue(result.invariant_holds, result.as_dict())
+
+    def test_the_refusal_names_the_marker_and_not_the_value(self):
+        transport = FakeTransport(response([_record_with_location(
+            900000001, self.POISONED_LOCATION)]))
+        log = _QuietLog()
+        run = RouteRun(self.outbox, transport, logger=log,
+                       sleep_fn=self.slept.append, batch_pause_s=0)
+        run.collect([900000001])
+        self.assertIn('ossaccesskeyid', log.text().lower())
+        self.assertNotIn('LTAI', log.text())
 
     def test_an_ordinary_route_is_not_refused(self):
         """Отрицательный контроль: проверка секретов пропускает нормальное."""
@@ -707,6 +750,30 @@ class TestDryRun(RoutesTestCase):
         for marker in ('signedurl', 'ossaccesskeyid', 'authorization',
                        'storage_state', 'bearer '):
             self.assertNotIn(marker, text)
+
+    def test_a_poisoned_body_is_refused_by_the_dry_run_too(self):
+        """Сухой прогон обязан отказать там же, где отказывает очередь.
+
+        [REASON]: раньше это был ЕДИНСТВЕННЫЙ путь, которым тело ложилось на
+        диск мимо проверки на секреты: настоящий прогон отказывал, а
+        `routes_dry_run.json` писался молча -- и именно его порядок первого
+        живого прогона велит открыть ПЕРВЫМ, до настоящего сбора.
+        """
+        transport = FakeTransport(response([_record_with_location(
+            900000001,
+            'https://oss.aliyuncs.com/x?OSSAccessKeyId=LTAI&Signature=zz')]))
+        run, result = self.run_for([900000001], transport=transport,
+                                   dry_run=True)
+        out = self.root / 'out'
+        with self.assertRaises(SecretInEnvelope):
+            write_dry_run(result, run.prepared_bodies, out)
+        self.assertEqual(list(out.glob('*.json')) if out.exists() else [], [])
+
+    def test_an_ordinary_dry_run_still_writes(self):
+        """Отрицательный контроль: проверка не глушит нормальный сухой прогон."""
+        run, result = self.run_for([900000001], dry_run=True)
+        target = write_dry_run(result, run.prepared_bodies, self.root / 'out')
+        self.assertTrue(target.exists())
 
 
 class TestIdsFile(RoutesTestCase):
