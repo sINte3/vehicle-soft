@@ -24,6 +24,17 @@ DJI; нативный `fetch` проходит мимо него.
 модуль не станет: он открывает окно, просит человека сделать несколько шагов
 руками и слушает то, что при этом полетит.
 
+ПРО ПРЕДЕЛ РАЗМЕРА ОТВЕТА
+
+`MAX_PROCESSED_RESPONSE_BYTES` -- это предел ОБРАБОТКИ, а не чтения.
+Playwright отдаёт тело только целиком, и наблюдатель, который именно
+наблюдает, остановить его до этого не может. Что предел действительно даёт:
+превысившее тело не хешируется, не декодируется, не классифицируется и не
+сохраняется, а в наблюдении остаются его фактический размер и имя исхода.
+Если ответ назвал `Content-Length` больше предела, тело не запрашивается
+вовсе -- но само это число фактическим размером не считается: его ставит
+отправитель, при chunked его нет, при сжатии оно про сжатое тело.
+
 ЧТО ОСТАЁТСЯ НА ДИСКЕ
 
 Только безопасное описание. Ни одного заголовка со значением, ни одной cookie,
@@ -84,8 +95,43 @@ TIMESTAMP_HEADER_PARTS = ('timestamp', 'date', 'time', 'nonce', 'ts')
 # Потолок тела запроса, которое разбирается.
 MAX_REQUEST_BODY_BYTES = 1024 * 1024
 
-# Потолок тела ответа, который читается в память.
-MAX_RESPONSE_BYTES = 32 * 1024 * 1024
+# Предел ОБРАБОТКИ тела ответа после его получения.
+#
+# [REASON]: имя честное, и это важно. Playwright отдаёт тело только целиком --
+# `response.body()` возвращает уже полученные байты, и остановить их до этого
+# наблюдатель не может: он именно наблюдает, а не выполняет запрос. Значит
+# тело УЖЕ побывало в памяти процесса к моменту проверки. Что даёт этот
+# предел: превысившее его тело не хешируется, не декодируется, не
+# классифицируется и не сохраняется -- в наблюдении остаются только его
+# фактический размер и имя исхода. Называть это «потолком тела, читаемого в
+# память» было бы неправдой.
+MAX_PROCESSED_RESPONSE_BYTES = 32 * 1024 * 1024
+
+# Прежнее имя. Оставлено, чтобы не ломать вызывающих одним переименованием.
+MAX_RESPONSE_BYTES = MAX_PROCESSED_RESPONSE_BYTES
+
+# Заголовок, по которому размер иногда виден ДО чтения тела.
+#
+# [REASON]: если кабинет прислал `Content-Length`, наблюдатель откажется от
+# обработки заранее и не станет трогать тело. Но доверять этому числу как
+# ФАКТИЧЕСКОМУ размеру нельзя: заголовок ставит отправитель, при chunked его
+# нет вовсе, а при сжатии он описывает сжатое тело. Поэтому он используется
+# только как основание для РАННЕГО ОТКАЗА, и фактический размер, когда тело
+# всё же прочитано, берётся из самого тела.
+CONTENT_LENGTH_HEADER = 'content-length'
+
+
+def declared_response_size(headers):
+    """Размер, ЗАЯВЛЕННЫЙ ответом, или None. Фактическим не считается."""
+    for name, value in (headers or {}).items():
+        if (name or '').lower() != CONTENT_LENGTH_HEADER:
+            continue
+        try:
+            declared = int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+        return declared if declared >= 0 else None
+    return None
 
 # Сколько наблюдений принимается за один прогон.
 #
@@ -193,70 +239,139 @@ def summarise_request_body(text):
     return summary
 
 
+class RequestedIds(object):
+    """Что лежало в списке `flight_record_ids`. Значения -- только в памяти."""
+
+    __slots__ = ('ids', 'total', 'invalid', 'duplicates', 'parsed')
+
+    def __init__(self, ids=(), total=0, invalid=0, duplicates=0, parsed=False):
+        self.ids = set(ids)
+        self.total = total
+        self.invalid = invalid
+        self.duplicates = duplicates
+        self.parsed = parsed
+
+    @property
+    def is_clean(self):
+        """Разобран, непуст, без мусора и без повторов."""
+        return (self.parsed and bool(self.ids) and self.invalid == 0
+                and self.duplicates == 0)
+
+
 def read_request_ids(text):
-    """Множество запрошенных идентификаторов -- ТОЛЬКО в оперативной памяти.
+    """Разбор списка запрошенных ID -- ТОЛЬКО в оперативной памяти.
 
-    Возвращает (множество, сколько было в списке всего). Ни один вызывающий не
-    кладёт результат в отчёт: сверка делается здесь, наружу уходят булево и
-    счётчики.
+    Возвращает `RequestedIds`: множество, сколько элементов было всего,
+    сколько из них НЕ целые и сколько повторов. Ни один вызывающий не кладёт
+    значения в отчёт: сверка делается здесь, наружу уходят булево и счётчики.
 
-    [REASON]: отдельная функция, а не поле в `summarise_request_body`. Тот
-    словарь целиком уезжает в отчёт, и идентификатор, положенный в него
-    «на время сверки», уехал бы вместе с ним.
+    [REASON]: раньше отсюда возвращалось только множество, а негодные элементы
+    молча отбрасывались. Запрос `[900000001, "900000001", null]` выглядел бы
+    как чистый запрос ОДНОГО идентификатора -- при том, что это запрос, формы
+    которого мы не понимаем, и подтверждать по нему нечего.
     """
     if text is None:
-        return set(), 0
+        return RequestedIds()
     raw = text.encode('utf-8') if isinstance(text, str) else bytes(text)
     if len(raw) > MAX_REQUEST_BODY_BYTES:
-        return set(), 0
+        return RequestedIds()
     try:
         document = json.loads(raw.decode('utf-8-sig'))
     except (ValueError, UnicodeDecodeError):
-        return set(), 0
+        return RequestedIds()
     if not isinstance(document, dict):
-        return set(), 0
+        return RequestedIds()
     ids = document.get('flight_record_ids')
     if not isinstance(ids, list):
-        return set(), 0
-    numbers = [value for value in ids
-               if isinstance(value, int) and not isinstance(value, bool)]
-    return set(numbers), len(numbers)
+        return RequestedIds()
+
+    numbers = []
+    invalid = 0
+    for value in ids:
+        # `True` не идентификатор: `isinstance(True, int)` -- ловушка Python.
+        if isinstance(value, int) and not isinstance(value, bool):
+            numbers.append(value)
+        else:
+            invalid += 1
+    unique = set(numbers)
+    return RequestedIds(ids=unique, total=len(ids), invalid=invalid,
+                        duplicates=len(numbers) - len(unique), parsed=True)
 
 
-def compare_id_sets(requested, returned):
-    """Сверка множеств. Наружу -- только булево и счётчики.
+def compare_id_sets(requested, returned, routes_without_id=0,
+                    decoded_routes=None):
+    """Сверка запрошенного с вернувшимся. Наружу -- булево и счётчики.
 
-    [REASON]: раньше сверка сравнивала ДЛИНЫ, и «9 запросили, 9 вернулось»
-    объявлялось совпадением, даже если это девять ЧУЖИХ маршрутов. Совпадение
-    количеств -- не совпадение множеств, а именно множества и решают, чьи
-    маршруты приехали.
+    `requested` -- `RequestedIds`; допускается и голое множество, тогда список
+    считается чистым (так удобно проверять саму сверку).
+
+    Подтверждением считается только полностью чистая картина. Равенства
+    множеств мало; нужны ВСЕ условия сразу:
+
+    * список запрошенного разобран, непуст, без мусора и без повторов;
+    * множества равны точно;
+    * в вернувшемся нет повторов;
+    * у каждого раскодированного маршрута есть `dji_flight_id`;
+    * число раскодированных маршрутов равно числу вернувшихся ID.
+
+    [REASON]: прежняя редакция считала совпадением `({1, 2}, [1, 2, 2])`.
+    Дубль в ответе означает, что один маршрут приехал дважды, и что именно
+    приехало вторым -- неизвестно; маршрут без идентификатора вообще не
+    связывается с вылетом. Ни то, ни другое не может входить в
+    «подтверждено».
     """
-    requested = set(requested or ())
+    if isinstance(requested, RequestedIds):
+        request = requested
+    else:
+        values = set(requested or ())
+        request = RequestedIds(ids=values, total=len(values), parsed=True)
+
     returned_list = list(returned or ())
     returned_set = set(returned_list)
+    returned_duplicates = len(returned_list) - len(returned_set)
+    without_id = int(routes_without_id or 0)
+    if decoded_routes is None:
+        decoded_routes = len(returned_list) + without_id
+
+    match = (request.is_clean
+             and bool(request.ids)
+             and request.ids == returned_set
+             and returned_duplicates == 0
+             and without_id == 0
+             and decoded_routes == len(returned_list)
+             and decoded_routes == len(returned_set))
+
     return {
-        'requested_and_returned_match': (bool(requested)
-                                         and requested == returned_set),
-        'missing_count': len(requested - returned_set),
-        'extra_count': len(returned_set - requested),
-        'duplicate_count': len(returned_list) - len(returned_set),
+        'requested_and_returned_match': match,
+        'invalid_requested_id_count': request.invalid,
+        'requested_duplicate_count': request.duplicates,
+        'returned_duplicate_count': returned_duplicates,
+        'route_without_id_count': without_id,
+        'missing_count': len(request.ids - returned_set),
+        'extra_count': len(returned_set - request.ids),
     }
 
 
-def _id_set_digest(ids):
-    """Отпечаток множества идентификаторов. Значений не несёт.
+def request_body_fingerprint(text):
+    """Отпечаток СЫРОГО тела запроса. Внутренний, в отчёт не попадает.
 
-    [REASON]: входит в ключ дедупликации. Без него два РАЗНЫХ запроса,
-    случайно получившие одинаковое тело ответа, схлопывались бы в одно
-    наблюдение -- и вопрос «на что именно ответил кабинет» терял бы ответ.
+    [REASON]: ключ дедупликации строился на множестве идентификаторов, а
+    множество не различает `[1, 2]`, `[1, 2, 2]` и `[1, 2, "2"]`. Три разных
+    запроса схлопывались бы в одно наблюдение, и вопрос «на что именно ответил
+    кабинет» снова терял бы ответ. Хеш сырого тела различает их все и наружу
+    не выходит: он не публикуется вовсе.
     """
-    joined = ','.join(str(value) for value in sorted(ids or ()))
-    return hashlib.sha256(joined.encode('utf-8')).hexdigest()[:16]
+    if text is None:
+        return 'no-body'
+    raw = text.encode('utf-8') if isinstance(text, str) else bytes(text)
+    if len(raw) > MAX_REQUEST_BODY_BYTES:
+        raw = raw[:MAX_REQUEST_BODY_BYTES]
+    return hashlib.sha256(raw).hexdigest()[:16]
 
 
-def observation_id(url, sha256, request_ids_digest=''):
-    """Ключ дедупликации: путь, хеш тела и отпечаток набора запрошенных ID."""
-    return '%s|%s|%s' % (url.split('?', 1)[0], sha256, request_ids_digest)
+def observation_id(url, sha256, request_fingerprint=''):
+    """Ключ дедупликации: путь, хеш ответа и отпечаток сырого тела запроса."""
+    return '%s|%s|%s' % (url.split('?', 1)[0], sha256, request_fingerprint)
 
 
 class RouteUiObservation(object):
@@ -356,6 +471,35 @@ def confirmation_failures(host, path, method, http_status, payload_kind,
     return problems
 
 
+# Коды выхода режима наблюдения. Совпадают с `drone_collector.main`; здесь они
+# нужны, чтобы решение принималось чистой функцией, которую видно тестам.
+PROBE_EXIT_OK = 0
+PROBE_EXIT_NOTHING_OBSERVED = 6
+PROBE_EXIT_UNCONFIRMED = 13
+
+
+def probe_exit_code(observations, confirmed, skipped_over_cap):
+    """Каким кодом заканчивается прогон наблюдения.
+
+    Ноль разрешён ровно при трёх условиях сразу: наблюдение было, КАЖДОЕ
+    учтённое наблюдение подтверждено, и ни одно не выпало по лимиту.
+
+    [REASON]: смешанный результат давал ложный ноль. Один подтверждённый POST
+    рядом с неподтверждённым ответом означает, что кабинет отвечал по-разному,
+    и объявлять такой прогон успешным -- это ровно тот класс ложного успеха,
+    ради которого весь этот разбор и ведётся. Пропущенное по лимиту
+    наблюдение -- то же самое: про него не известно ничего, а «не известно» не
+    равно «подтверждено».
+    """
+    if int(observations or 0) <= 0:
+        return PROBE_EXIT_NOTHING_OBSERVED
+    if int(skipped_over_cap or 0) > 0:
+        return PROBE_EXIT_UNCONFIRMED
+    if int(confirmed or 0) != int(observations or 0):
+        return PROBE_EXIT_UNCONFIRMED
+    return PROBE_EXIT_OK
+
+
 class RouteUiProbe(object):
     """Слушатель штатного запроса маршрутов.
 
@@ -429,26 +573,51 @@ class RouteUiProbe(object):
             except Exception:
                 body_text = None
 
-        requested_ids, _requested_total = read_request_ids(body_text)
+        requested = read_request_ids(body_text)
+        fingerprint = request_body_fingerprint(body_text)
+
+        # Ранний отказ по заявленному размеру, если кабинет его назвал.
+        declared = None
+        try:
+            declared = declared_response_size(response.all_headers())
+        except Exception:
+            declared = None
 
         oversize = False
-        try:
-            raw = bytes(response.body() or b'')
-        except Exception as exc:
-            self.log.warning('The route response body could not be read (%s)',
-                             type(exc).__name__)
-            raw = b''
-        actual_bytes = len(raw)
-        if actual_bytes > MAX_RESPONSE_BYTES:
-            # [REASON]: РАЗМЕР сохраняется настоящий, а хеш и разбор не
-            # делаются вовсе. Прежняя редакция подменяла тело пустым и затем
-            # честно считала его sha256 и записывала `response_bytes=0` --
-            # отчёт утверждал, что ответ был пуст, хотя он был огромен.
-            self.log.warning('The route response is %d bytes, over the cap of '
-                             '%d; its size is recorded, its body is not read.',
-                             actual_bytes, MAX_RESPONSE_BYTES)
+        raw = b''
+        actual_bytes = None
+        if declared is not None and declared > MAX_PROCESSED_RESPONSE_BYTES:
+            # Тело не запрашивается вовсе: заголовок уже говорит, что
+            # обрабатывать его мы не станем.
+            self.log.warning('The route response declares %d bytes, over the '
+                             'processing limit of %d; the body was not '
+                             'requested.', declared,
+                             MAX_PROCESSED_RESPONSE_BYTES)
             oversize = True
-            raw = b''
+            actual_bytes = declared
+        else:
+            try:
+                raw = bytes(response.body() or b'')
+            except Exception as exc:
+                self.log.warning('The route response body could not be read '
+                                 '(%s)', type(exc).__name__)
+                raw = b''
+            actual_bytes = len(raw)
+            if actual_bytes > MAX_PROCESSED_RESPONSE_BYTES:
+                # [REASON]: тело УЖЕ в памяти -- Playwright отдаёт его только
+                # целиком. Предел означает, что дальше оно не обрабатывается:
+                # не хешируется, не декодируется, не классифицируется и не
+                # сохраняется. Фактический размер при этом записывается
+                # настоящий: прежняя редакция подменяла тело пустым и писала
+                # `response_bytes=0`, то есть утверждала, что огромный ответ
+                # был пуст.
+                self.log.warning('The route response is %d bytes, over the '
+                                 'processing limit of %d; its size is '
+                                 'recorded, and it is neither hashed, decoded '
+                                 'nor stored.', actual_bytes,
+                                 MAX_PROCESSED_RESPONSE_BYTES)
+                oversize = True
+                raw = b''
 
         description = describe_headers(headers)
         description.update(summarise_request_body(body_text))
@@ -459,10 +628,16 @@ class RouteUiProbe(object):
         if oversize:
             digest = None
             payload_kind = 'TOO_LARGE'
-            payload_detail = ('%d bytes, the cap is %d; the body was not read'
-                              % (actual_bytes, MAX_RESPONSE_BYTES))
+            payload_detail = (
+                '%d bytes%s, over the processing limit of %d; not hashed, not '
+                'decoded, not stored'
+                % (actual_bytes,
+                   ' (declared, body not requested)' if declared is not None
+                   and declared > MAX_PROCESSED_RESPONSE_BYTES else '',
+                   MAX_PROCESSED_RESPONSE_BYTES))
             decoded_routes = returned = None
             returned_ids = []
+            routes_without_id = 0
         else:
             digest = hashlib.sha256(raw).hexdigest()
             from drone_collector.route_payload import (PAYLOAD_BINARY,
@@ -472,20 +647,23 @@ class RouteUiProbe(object):
             payload_detail = verdict.detail
             decoded_routes = returned = None
             returned_ids = []
+            routes_without_id = 0
             if verdict.kind == PAYLOAD_BINARY:
-                decoded_routes, returned_ids = self._decode_ids(raw)
+                decoded_routes, returned_ids, routes_without_id = \
+                    self._decode_ids(raw)
                 returned = (len(set(returned_ids))
                             if decoded_routes is not None else None)
 
-        key = observation_id(url, digest or 'not-read',
-                             _id_set_digest(requested_ids))
+        key = observation_id(url, digest or 'not-read', fingerprint)
         if key in self._seen:
             self._seen[key].repeats += 1
             return
 
-        comparison = compare_id_sets(requested_ids, returned_ids)
+        comparison = compare_id_sets(requested, returned_ids,
+                                     routes_without_id=routes_without_id,
+                                     decoded_routes=decoded_routes)
         # Множества дальше не живут: сверка сделана, наружу идут счётчики.
-        requested_ids = returned_ids = None
+        requested = returned_ids = None
 
         host = _host_of(url)
         path = _path_of(url)
@@ -509,19 +687,26 @@ class RouteUiProbe(object):
                       _safe_line(observation))
 
     def _decode_ids(self, raw):
-        """(сколько маршрутов, список вернувшихся id) -- или (None, [])."""
+        """(маршрутов, список вернувшихся id, маршрутов без id).
+
+        [REASON]: третье число раньше не считалось вовсе. Маршрут без
+        `dji_flight_id` ни с каким вылетом не связывается, и ответ, где такой
+        есть, подтверждением быть не может -- а по одному только списку id он
+        выглядел бы безупречно.
+        """
         try:
             from drone_collector.route_decode import (RouteDecodeError,
                                                       decode_route_response)
         except ImportError:  # pragma: no cover
-            return None, []
+            return None, [], 0
         try:
             decoded = decode_route_response(raw)
         except RouteDecodeError as exc:
             self.log.warning('The observed body did not decode (%s)', exc)
-            return None, []
+            return None, [], 0
         ids = [value for value in decoded.flight_ids if value is not None]
-        return len(decoded.routes), ids
+        without_id = len(decoded.routes) - len(ids)
+        return len(decoded.routes), ids, without_id
 
     # -- отчёт ----------------------------------------------------------------
 

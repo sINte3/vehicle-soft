@@ -19,11 +19,13 @@ from pathlib import Path
 
 from drone_collector.route_ui_probe import (
     MAX_OBSERVATIONS,
+    MAX_PROCESSED_RESPONSE_BYTES,
     MAX_RESPONSE_BYTES,
     PROMPT_LINES,
     RouteUiProbe,
     compare_id_sets,
     describe_headers,
+    probe_exit_code,
     is_ids_url,
     is_route_url,
     read_request_ids,
@@ -102,6 +104,15 @@ def request_body(count=9, data_type='simplified'):
 def ids_body(ids, data_type='simplified'):
     return json.dumps({'flight_record_ids': list(ids),
                        'data_type': data_type})
+
+
+def route_record_without_id():
+    """Маршрут без поля 2 -- он ни с каким вылетом не связывается."""
+    from drone_collector.tests.test_routes import _varint
+    record = route_record(flight_id=900000777)
+    marker = b'\x10' + _varint(900000777)
+    assert marker in record
+    return record.replace(marker, b'')
 
 
 def route_response(body=None, headers=None, post_data=None, status=200):
@@ -211,11 +222,11 @@ class TestRequestBodySummary(unittest.TestCase):
 
     def test_the_identifiers_themselves_are_not_taken(self):
         summary = summarise_request_body(
-            json.dumps({'flight_record_ids': [622715275, 622715274],
+            json.dumps({'flight_record_ids': [900000011, 900000012],
                         'data_type': 'simplified'}))
         text = json.dumps(summary)
-        self.assertNotIn('622715275', text)
-        self.assertNotIn('622715274', text)
+        self.assertNotIn('900000011', text)
+        self.assertNotIn('900000012', text)
         self.assertEqual(summary['flight_id_count'], 2)
 
     def test_the_key_names_are_kept_as_the_shape_of_the_request(self):
@@ -411,15 +422,28 @@ class TestIdSetsNotCounts(ProbeTestCase):
         self.probe.note_response(route_response(
             body=body, post_data=ids_body([900000003])))
         document = self.probe.observations[0].as_dict()
-        for key in ('requested_and_returned_match', 'missing_count',
-                    'extra_count', 'duplicate_count'):
+        for key in ('requested_and_returned_match',
+                    'invalid_requested_id_count', 'requested_duplicate_count',
+                    'returned_duplicate_count', 'route_without_id_count',
+                    'missing_count', 'extra_count'):
             self.assertIn(key, document)
         self.assertIsInstance(document['requested_and_returned_match'], bool)
 
-    def test_compare_id_sets_counts_duplicates_in_the_response(self):
+    def test_a_duplicate_in_the_response_is_never_a_match(self):
+        """Дубль в ответе -- не совпадение.
+
+        [REASON]: прежний тест прямо УТВЕРЖДАЛ обратное. Один маршрут,
+        приехавший дважды, означает, что второе неизвестно чем является, и
+        подтверждением такая картина быть не может.
+        """
         comparison = compare_id_sets({1, 2}, [1, 2, 2])
+        self.assertFalse(comparison['requested_and_returned_match'])
+        self.assertEqual(comparison['returned_duplicate_count'], 1)
+
+    def test_a_clean_unique_pair_is_the_positive_control(self):
+        comparison = compare_id_sets({1, 2}, [1, 2])
         self.assertTrue(comparison['requested_and_returned_match'])
-        self.assertEqual(comparison['duplicate_count'], 1)
+        self.assertEqual(comparison['returned_duplicate_count'], 0)
 
     def test_an_empty_request_never_counts_as_a_match(self):
         """Ничего не просили -- значит и сверять нечего."""
@@ -427,11 +451,131 @@ class TestIdSetsNotCounts(ProbeTestCase):
             compare_id_sets(set(), [])['requested_and_returned_match'])
 
     def test_read_request_ids_keeps_the_values_out_of_the_summary(self):
-        ids, total = read_request_ids(ids_body([900000001, 900000002]))
-        self.assertEqual(ids, {900000001, 900000002})
-        self.assertEqual(total, 2)
+        requested = read_request_ids(ids_body([900000001, 900000002]))
+        self.assertEqual(requested.ids, {900000001, 900000002})
+        self.assertEqual(requested.total, 2)
+        self.assertTrue(requested.is_clean)
         summary = summarise_request_body(ids_body([900000001, 900000002]))
         self.assertNotIn('900000001', json.dumps(summary))
+
+
+class TestCleanUniqueSetRequired(ProbeTestCase):
+    """Подтверждение требует чистой картины, а не только равенства множеств.
+
+    [REASON]: повторы и непривязанные маршруты не запрещали подтверждение.
+    Прежний тест прямо считал совпадением `({1, 2}, [1, 2, 2])`.
+    """
+
+    ID_A = 900000001
+    ID_B = 900000002
+
+    def confirmed(self):
+        return self.probe.observations[0].confirmed
+
+    def comparison(self):
+        return self.probe.observations[0].comparison
+
+    def test_a_duplicate_in_the_request_is_not_confirmed(self):
+        """request [ID, ID], response [ID]."""
+        body = response([route_record(flight_id=self.ID_A)])
+        self.probe.note_response(route_response(
+            body=body, post_data=ids_body([self.ID_A, self.ID_A])))
+        self.assertFalse(self.confirmed())
+        self.assertEqual(self.comparison()['requested_duplicate_count'], 1)
+
+    def test_a_duplicate_in_the_response_is_not_confirmed(self):
+        """request [ID], response -- два маршрута с тем же ID."""
+        body = response([route_record(flight_id=self.ID_A),
+                         route_record(flight_id=self.ID_A)])
+        self.probe.note_response(route_response(
+            body=body, post_data=ids_body([self.ID_A])))
+        self.assertFalse(self.confirmed())
+        self.assertEqual(self.comparison()['returned_duplicate_count'], 1)
+
+    def test_a_route_without_an_id_is_not_confirmed(self):
+        """request [ID], response -- один правильный и один без ID."""
+        body = response([route_record(flight_id=self.ID_A),
+                         route_record_without_id()])
+        self.probe.note_response(route_response(
+            body=body, post_data=ids_body([self.ID_A])))
+        self.assertFalse(self.confirmed())
+        self.assertEqual(self.comparison()['route_without_id_count'], 1)
+
+    def test_an_invalid_value_beside_a_good_id_is_not_confirmed(self):
+        """float, bool, строка и null рядом с правильным ID."""
+        for junk in (1.5, True, '900000001', None):
+            with self.subTest(repr(junk)):
+                probe = RouteUiProbe(logger=_QuietLog(),
+                                     expected_origin=ROUTE_ORIGIN)
+                body = response([route_record(flight_id=self.ID_A)])
+                probe.note_response(route_response(
+                    body=body,
+                    post_data=json.dumps(
+                        {'flight_record_ids': [self.ID_A, junk],
+                         'data_type': 'simplified'})))
+                seen = probe.observations[0]
+                self.assertFalse(seen.confirmed, repr(junk))
+                self.assertEqual(seen.comparison['invalid_requested_id_count'],
+                                 1, repr(junk))
+
+    def test_two_different_sets_of_the_same_size_are_not_confirmed(self):
+        body = response([route_record(flight_id=self.ID_A),
+                         route_record(flight_id=self.ID_B)])
+        self.probe.note_response(route_response(
+            body=body, post_data=ids_body([900000003, 900000004])))
+        self.assertFalse(self.confirmed())
+
+    def test_a_clean_unique_set_is_the_positive_control(self):
+        """Отрицательный контроль: строгость не гасит нормальный случай."""
+        body = response([route_record(flight_id=self.ID_A),
+                         route_record(flight_id=self.ID_B)])
+        self.probe.note_response(route_response(
+            body=body, post_data=ids_body([self.ID_B, self.ID_A])))
+        seen = self.probe.observations[0]
+        self.assertTrue(seen.confirmed, seen.not_confirmed_because)
+        for key in ('invalid_requested_id_count', 'requested_duplicate_count',
+                    'returned_duplicate_count', 'route_without_id_count',
+                    'missing_count', 'extra_count'):
+            self.assertEqual(seen.comparison[key], 0, key)
+
+    def test_none_of_these_cases_prints_an_identifier(self):
+        body = response([route_record(flight_id=self.ID_A),
+                         route_record(flight_id=self.ID_A)])
+        self.probe.note_response(route_response(
+            body=body, post_data=ids_body([self.ID_A, self.ID_A])))
+        write_report(self.probe, self.root)
+        haystack = self.everything_written()
+        self.assertNotIn(str(self.ID_A), haystack)
+
+
+class TestExitCodeDecision(unittest.TestCase):
+    """Решение о коде выхода -- чистая функция, и её видно."""
+
+    def test_only_confirmed_is_success(self):
+        self.assertEqual(probe_exit_code(observations=2, confirmed=2,
+                                         skipped_over_cap=0), 0)
+
+    def test_only_unconfirmed_is_thirteen(self):
+        self.assertEqual(probe_exit_code(observations=2, confirmed=0,
+                                         skipped_over_cap=0), 13)
+
+    def test_a_mixed_result_is_thirteen(self):
+        """[REASON]: смешанный результат давал ложный код 0.
+
+        Один подтверждённый POST рядом с неподтверждённым ответом означает,
+        что кабинет отвечал по-разному, и объявлять такой прогон успешным --
+        это ровно тот класс ложного успеха, который здесь и разбирают.
+        """
+        self.assertEqual(probe_exit_code(observations=2, confirmed=1,
+                                         skipped_over_cap=0), 13)
+
+    def test_no_observations_is_six(self):
+        self.assertEqual(probe_exit_code(observations=0, confirmed=0,
+                                         skipped_over_cap=0), 6)
+
+    def test_a_skipped_observation_is_thirteen_even_if_all_seen_are_confirmed(self):
+        self.assertEqual(probe_exit_code(observations=2, confirmed=2,
+                                         skipped_over_cap=1), 13)
 
 
 class TestDeduplication(ProbeTestCase):
@@ -592,7 +736,89 @@ class TestOversizedResponse(ProbeTestCase):
     """Слишком большой ответ: настоящий размер, никакого хеша пустоты."""
 
     def oversize(self):
-        return b'\x08' * (MAX_RESPONSE_BYTES + 16)
+        return b'\x08' * (MAX_PROCESSED_RESPONSE_BYTES + 16)
+
+    def test_the_declared_size_refuses_before_the_body_is_requested(self):
+        """Если ответ назвал Content-Length больше предела -- тело не берём.
+
+        [REASON]: это единственный случай, когда наблюдатель может отказаться
+        ДО чтения. Всё остальное Playwright отдаёт только целиком, и предел
+        честно назван пределом обработки, а не чтения.
+        """
+        asked = []
+
+        class _Declaring(object):
+            url = ROUTE_URL
+            status = 200
+            request = _FakeRequest(headers=HEADERS,
+                                   post_data=ids_body([900000001]))
+
+            def all_headers(self):
+                return {'Content-Length':
+                        str(MAX_PROCESSED_RESPONSE_BYTES + 1)}
+
+            def body(self):
+                asked.append(True)
+                raise AssertionError('the body was requested anyway')
+
+        self.probe.note_response(_Declaring())
+        seen = self.probe.observations[0]
+        self.assertEqual(asked, [])
+        self.assertEqual(seen.payload_kind, 'TOO_LARGE')
+        self.assertEqual(seen.response_bytes,
+                         MAX_PROCESSED_RESPONSE_BYTES + 1)
+        self.assertIsNone(seen.response_sha256)
+        self.assertFalse(seen.confirmed)
+
+    def test_an_ordinary_declared_size_does_not_block_the_body(self):
+        """Отрицательный контроль: обычный Content-Length ничего не ломает."""
+        body = response([route_record(flight_id=900000001)])
+
+        class _Declaring(object):
+            url = ROUTE_URL
+            status = 200
+            request = _FakeRequest(headers=HEADERS,
+                                   post_data=ids_body([900000001]))
+
+            def all_headers(self):
+                return {'Content-Length': str(len(body))}
+
+            def body(self):
+                return body
+
+        self.probe.note_response(_Declaring())
+        seen = self.probe.observations[0]
+        self.assertEqual(seen.payload_kind, 'BINARY')
+        self.assertEqual(seen.response_bytes, len(body))
+
+    def test_a_nonsense_content_length_is_ignored(self):
+        """Заголовок ставит отправитель; мусору в нём верить нечего."""
+        body = response([route_record(flight_id=900000001)])
+
+        class _Declaring(object):
+            url = ROUTE_URL
+            status = 200
+            request = _FakeRequest(headers=HEADERS,
+                                   post_data=ids_body([900000001]))
+
+            def all_headers(self):
+                return {'Content-Length': 'not-a-number'}
+
+            def body(self):
+                return body
+
+        self.probe.note_response(_Declaring())
+        self.assertEqual(self.probe.observations[0].response_bytes, len(body))
+
+    def test_the_limit_is_named_a_processing_limit(self):
+        """Имя предела и его описание не обещают того, чего код не делает."""
+        import inspect
+
+        import drone_collector.route_ui_probe as module
+        source = inspect.getsource(module)
+        self.assertIn('MAX_PROCESSED_RESPONSE_BYTES', source)
+        self.assertNotIn('the body is not read', source)
+        self.assertNotIn('the body was not read', source)
 
     def test_the_real_size_is_recorded(self):
         """[REASON]: тело подменялось пустым, и отчёт писал `response_bytes=0`
