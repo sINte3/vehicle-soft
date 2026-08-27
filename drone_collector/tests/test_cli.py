@@ -11,6 +11,7 @@ check rather than a note in a runbook:
 No browser is launched in either case, because both fail before that point.
 """
 
+import io
 import logging
 import os
 import unittest
@@ -34,7 +35,9 @@ from drone_collector.tests.support import make_flight
 from drone_collector.sender import SendResult
 from drone_collector.tests.test_sender import config
 
+import sys
 import tempfile
+import types
 
 from drone_collector import lands as lands_module
 from drone_collector.lands import LandResult
@@ -329,11 +332,25 @@ class StageBNeedsNoIngestTokenTests(CliTestCase):
     относится.
     """
 
-    def test_a_route_run_without_a_token_fails_on_the_session_not_the_token(self):
+    def test_a_route_run_without_a_token_stops_on_the_transport_not_the_token(self):
+        """Сбор маршрутов закрыт -- но НЕ из-за отсутствия токена приёмника.
+
+        [REASON]: до правки этот тест ждал кода 2 (нет сессии) и этим
+        доказывал, что токен не требуется. Теперь `--routes` останавливается
+        РАНЬШЕ -- на опровергнутом транспорте, код 12, -- и утверждение о
+        токене доказывается тем же способом: до конфигурации приёмника дело не
+        доходит вовсе.
+        """
         os.environ['DJI_STORAGE_STATE'] = MISSING_STATE
         code = main(['--routes', '--ids-file', MISSING_STATE])
-        self.assertEqual(code, EXIT_SESSION,
-                         'прогон маршрутов потребовал токен приёмника')
+        self.assertEqual(code, main_module.EXIT_ROUTE_TRANSPORT_DISABLED,
+                         'сбор маршрутов не назвал причину остановки')
+
+    def test_the_probe_without_a_token_fails_on_the_session_not_the_token(self):
+        """Наблюдение токена приёмника тоже не требует."""
+        os.environ['DJI_STORAGE_STATE'] = MISSING_STATE
+        self.assertEqual(main(['--route-ui-probe']), EXIT_SESSION,
+                         'наблюдение потребовало токен приёмника')
 
     def test_a_sending_run_without_a_token_still_fails_on_the_token(self):
         """Отрицательный контроль: у отправляющих прогонов правило прежнее."""
@@ -382,8 +399,14 @@ class GeometryRunReachesNoIngestTests(CliTestCase):
         self.addCleanup(self._directory.cleanup)
         self.root = Path(self._directory.name)
         state_file = self.root / 'storage_state.json'
-        state_file.write_text('{"cookies": [], "origins": []}',
-                              encoding='utf-8')
+        # [REASON]: состояние с cookie, а не `{"cookies": [], "origins": []}`.
+        # Пустое состояние -- это ровно то, что теперь отвергает
+        # `inspect_session`, и фикстура, притворяющаяся сессией, должна
+        # притворяться убедительно. Значение выдуманное.
+        state_file.write_text(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-NOT-REAL", '
+            '"domain": ".example.invalid", "path": "/"}], "origins": []}',
+            encoding='utf-8')
         os.environ['DJI_STORAGE_STATE'] = str(state_file)
         os.environ['DRONE_OUTBOX_DIR'] = str(self.root / 'outbox')
 
@@ -500,6 +523,434 @@ class GeometryRunReachesNoIngestTests(CliTestCase):
         self.assertFalse(main_module.needs_no_ingest(parse(['--lands'])),
                          'обычный --lands объявлен неотправляющим')
         self.assertFalse(main_module.needs_no_ingest(parse([])))
+
+
+class _FakePlaywrightModule(object):
+    """Ровно та часть playwright, которой пользуется save_session_interactive."""
+
+    def __init__(self, state_text, landed_url):
+        self.state_text = state_text
+        self.landed_url = landed_url
+        outer = self
+
+        class _Page(object):
+            url = landed_url
+
+            def set_default_timeout(self, ms):
+                pass
+
+            def goto(self, url, **kwargs):
+                pass
+
+        class _Context(object):
+            def storage_state(self, path):
+                Path(path).write_text(outer.state_text, encoding='utf-8')
+
+            def close(self):
+                pass
+
+        class _Browser(object):
+            def new_context(self, **kwargs):
+                return _Context()
+
+            def close(self):
+                pass
+
+        class _Chromium(object):
+            def launch(self, **kwargs):
+                return _Browser()
+
+        class _Playwright(object):
+            chromium = _Chromium()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        _Browser.new_page = lambda self, **kw: _Page()
+        _Context.new_page = lambda self, **kw: _Page()
+        self._playwright = _Playwright()
+
+    def sync_playwright(self):
+        return self._playwright
+
+
+class SaveSessionExitCodeTests(CliTestCase):
+    """`--save-session` обязан отличать сохранённую сессию от тридцати байт.
+
+    [REASON]: первый живой пилот получил код 0 и слова «Session saved» при
+    файле `{"cookies": [], "origins": []}`. Проверялся размер, а размер у него
+    ненулевой.
+    """
+
+    def setUp(self):
+        CliTestCase.setUp(self)
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        self.root = Path(self._directory.name)
+        self.target = self.root / 'storage_state.json'
+        os.environ['DJI_STORAGE_STATE'] = str(self.target)
+        self._saved_module = sys.modules.get('playwright.sync_api')
+        self._saved_pkg = sys.modules.get('playwright')
+
+    def tearDown(self):
+        for name, value in (('playwright.sync_api', self._saved_module),
+                            ('playwright', self._saved_pkg)):
+            if value is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = value
+        CliTestCase.tearDown(self)
+
+    def install_playwright(self, state_text,
+                           landed='https://www.djiag.com/records/list'):
+        fake = _FakePlaywrightModule(state_text, landed)
+        sys.modules['playwright'] = types.ModuleType('playwright')
+        sys.modules['playwright.sync_api'] = fake
+        # save_session_interactive делает `from playwright.sync_api import
+        # sync_playwright`, поэтому имя должно лежать атрибутом модуля.
+        fake.sync_playwright = fake.sync_playwright
+
+    def run_save(self):
+        import builtins
+        real_input = builtins.input
+        builtins.input = lambda prompt='': ''
+        try:
+            return main(['--save-session'])
+        finally:
+            builtins.input = real_input
+
+    def test_an_empty_state_exits_non_zero_and_writes_no_session(self):
+        self.install_playwright('{"cookies": [], "origins": []}')
+        code = self.run_save()
+        self.assertNotEqual(code, 0)
+        self.assertEqual(code, EXIT_SESSION)
+        self.assertFalse(self.target.exists(),
+                         'пустое состояние всё-таки легло на место сессии')
+
+    def test_a_usable_state_exits_zero_and_writes_the_session(self):
+        """Отрицательный контроль: строгость не гасит нормальное сохранение."""
+        self.install_playwright(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-NOT-REAL"}], '
+            '"origins": []}')
+        self.assertEqual(self.run_save(), EXIT_OK)
+        self.assertTrue(self.target.is_file())
+
+    def test_an_empty_state_leaves_a_previous_session_alone(self):
+        self.target.write_text(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-OLD"}], '
+            '"origins": []}', encoding='utf-8')
+        before = self.target.read_text(encoding='utf-8')
+        self.install_playwright('{"cookies": [], "origins": []}')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertEqual(self.target.read_text(encoding='utf-8'), before)
+
+    def test_no_partial_file_survives_a_refusal(self):
+        self.install_playwright('{"cookies": [], "origins": []}')
+        self.run_save()
+        self.assertEqual(list(self.root.glob('*.partial')), [])
+
+    # --- где оказался браузер ---------------------------------------------
+
+    POPULATED_STATE = ('{"cookies": [{"name": "sid", "value": '
+                       '"SYNTHETIC-FROM-THE-LOGIN-PAGE"}], "origins": []}')
+
+    def test_the_login_page_is_refused_even_with_a_populated_state(self):
+        """Страница входа ставит свои cookie -- и прошла бы структурную проверку.
+
+        [REASON]: до правки несовпадение посадки только ПРЕДУПРЕЖДАЛО, и
+        сохранение шло дальше. `/login` не пустая: у неё есть и cookie, и
+        localStorage, поэтому состояние формы входа затёрло бы рабочую сессию,
+        пройдя обе проверки содержимого.
+        """
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='https://www.djiag.com/login')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertFalse(self.target.exists(),
+                         'состояние страницы входа легло на место сессии')
+
+    def test_another_host_is_refused_even_with_a_populated_state(self):
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='https://elsewhere.invalid/records/list')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertFalse(self.target.exists())
+
+    def test_no_url_at_all_is_refused(self):
+        self.install_playwright(self.POPULATED_STATE, landed='')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertFalse(self.target.exists())
+
+    def test_the_login_page_leaves_a_working_session_byte_for_byte(self):
+        self.target.write_text(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-OLD"}], '
+            '"origins": []}', encoding='utf-8')
+        before = self.target.read_bytes()
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='https://www.djiag.com/login')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertEqual(self.target.read_bytes(), before)
+        self.assertEqual(list(self.root.glob('*.partial')), [])
+
+    def test_another_host_leaves_a_working_session_byte_for_byte(self):
+        self.target.write_text(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-OLD"}], '
+            '"origins": []}', encoding='utf-8')
+        before = self.target.read_bytes()
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='https://elsewhere.invalid/records/list')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertEqual(self.target.read_bytes(), before)
+        self.assertEqual(list(self.root.glob('*.partial')), [])
+
+    def test_the_mission_page_is_refused_even_with_a_populated_state(self):
+        """Другая страница того же кабинета тоже ставит свои cookie."""
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='https://www.djiag.com/mission')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertFalse(self.target.exists())
+
+    def test_plain_http_on_the_right_host_is_refused(self):
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='http://www.djiag.com/records/list')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertFalse(self.target.exists())
+
+    def test_the_mission_page_leaves_a_working_session_byte_for_byte(self):
+        self.target.write_text(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-OLD"}], '
+            '"origins": []}', encoding='utf-8')
+        before = self.target.read_bytes()
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='https://www.djiag.com/mission')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertEqual(self.target.read_bytes(), before)
+        self.assertEqual(list(self.root.glob('*.partial')), [])
+
+    def test_plain_http_leaves_a_working_session_byte_for_byte(self):
+        self.target.write_text(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-OLD"}], '
+            '"origins": []}', encoding='utf-8')
+        before = self.target.read_bytes()
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='http://www.djiag.com/records/list')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertEqual(self.target.read_bytes(), before)
+        self.assertEqual(list(self.root.glob('*.partial')), [])
+
+    def test_the_records_page_remains_the_successful_control(self):
+        """Отрицательный контроль: правильная посадка по-прежнему сохраняет."""
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='https://www.djiag.com/records/list')
+        self.assertEqual(self.run_save(), EXIT_OK)
+        self.assertTrue(self.target.is_file())
+
+
+class RouteProbeExitCodeTests(CliTestCase):
+    """Фактические коды выхода `--route-ui-probe`, а не только чистая функция.
+
+    [REASON]: подтверждение проверялось на `confirmation_failures()`, а сам
+    процесс мог вернуть что угодно. Здесь `main()` вызывается целиком, с
+    подставными браузером и наблюдателем.
+    """
+
+    def setUp(self):
+        CliTestCase.setUp(self)
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        self.root = Path(self._directory.name)
+        state_file = self.root / 'storage_state.json'
+        state_file.write_text(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-NOT-REAL"}], '
+            '"origins": []}', encoding='utf-8')
+        os.environ['DJI_STORAGE_STATE'] = str(state_file)
+        self._real_collector = None
+        self._real_probe = None
+
+    def tearDown(self):
+        from drone_collector import browser as browser_module
+        from drone_collector import route_ui_probe as probe_module
+        if self._real_collector is not None:
+            browser_module.FlightCollector = self._real_collector
+        if self._real_probe is not None:
+            probe_module.RouteUiProbe = self._real_probe
+        CliTestCase.tearDown(self)
+
+    def install(self, observations, confirmed, skipped=0, errors=0):
+        """Подставные браузер и наблюдатель с заданным исходом."""
+        from drone_collector import browser as browser_module
+        from drone_collector import route_ui_probe as probe_module
+
+        self._real_collector = browser_module.FlightCollector
+        self._real_probe = probe_module.RouteUiProbe
+
+        class _Page(object):
+            def on(self, _event, _handler):
+                pass
+
+        class _Collector(object):
+            def __init__(self, cfg, log):
+                self.page = _Page()
+                self.context = object()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def open_records(self):
+                pass
+
+            def check_region(self, _expected):
+                return 'Uzbekistan'
+
+        class _Seen(object):
+            def __init__(self, confirmed):
+                self.confirmed = confirmed
+                self.not_confirmed_because = ([] if confirmed
+                                              else ['the payload did not '
+                                                    'decode'])
+
+            def as_dict(self):
+                return {'confirmed_route_post': self.confirmed,
+                        'not_confirmed_because':
+                            list(self.not_confirmed_because)}
+
+        class _Probe(object):
+            def __init__(self, logger=None, expected_origin=None):
+                self.observations = [_Seen(index < confirmed)
+                                     for index in range(observations)]
+                self.route_responses = observations
+                self.saw_only_all_ids = 0
+                self.skipped_over_cap = skipped
+                self.observation_errors = errors
+
+            @property
+            def confirmed_observations(self):
+                return [item for item in self.observations if item.confirmed]
+
+            def note_request(self, _url):
+                pass
+
+            def note_response(self, _response):
+                pass
+
+            def report(self):
+                return {'probe': 'route-ui',
+                        'route_observations': len(self.observations),
+                        'confirmed_route_posts':
+                            len(self.confirmed_observations),
+                        'skipped_over_cap': self.skipped_over_cap,
+                        'observation_errors': self.observation_errors,
+                        'observations': [item.as_dict()
+                                         for item in self.observations],
+                        'nothing_was_queued': True,
+                        'nothing_was_sent_to_vehicle_soft': True,
+                        'no_route_post_was_initiated_by_probe': True}
+
+        browser_module.FlightCollector = _Collector
+        probe_module.RouteUiProbe = _Probe
+
+    def run_probe(self):
+        """Прогон целиком, с перехваченным stdout.
+
+        [REASON]: `setup_logging` вешает StreamHandler на `sys.stdout` в
+        момент вызова, поэтому перенаправление ДО `main()` ловит и строку
+        RUN SUMMARY -- ту самую, по которой оператор судит о прогоне.
+        """
+        import builtins
+        import contextlib
+        real_input = builtins.input
+        builtins.input = lambda prompt='': ''
+        buffer = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buffer):
+                return main(['--route-ui-probe'])
+        finally:
+            builtins.input = real_input
+            self._stdout = buffer.getvalue()
+
+    def log_text(self):
+        return getattr(self, '_stdout', '')
+
+    def test_every_observation_confirmed_exits_zero(self):
+        self.install(observations=2, confirmed=2)
+        self.assertEqual(self.run_probe(), EXIT_OK)
+
+    def test_nothing_observed_exits_six(self):
+        self.install(observations=0, confirmed=0)
+        self.assertEqual(self.run_probe(), main_module.EXIT_EMPTY)
+
+    def test_nothing_confirmed_exits_thirteen(self):
+        self.install(observations=2, confirmed=0)
+        self.assertEqual(self.run_probe(),
+                         main_module.EXIT_ROUTE_PROBE_UNCONFIRMED)
+
+    def test_a_mixed_result_exits_thirteen(self):
+        """Один подтверждённый рядом с неподтверждённым -- не успех."""
+        self.install(observations=2, confirmed=1)
+        self.assertEqual(self.run_probe(),
+                         main_module.EXIT_ROUTE_PROBE_UNCONFIRMED)
+
+    def test_a_dropped_observation_exits_thirteen(self):
+        """Про пропущенное по лимиту не известно ничего."""
+        self.install(observations=2, confirmed=2, skipped=1)
+        self.assertEqual(self.run_probe(),
+                         main_module.EXIT_ROUTE_PROBE_UNCONFIRMED)
+
+    def test_a_listener_error_exits_thirteen(self):
+        """Ответ, который не удалось прочитать, не даёт зелёного прогона.
+
+        [REASON]: `note_response` глушит исключение, чтобы не уронить цикл
+        Playwright. Пока счётчика не было, прогон с двумя подтверждёнными
+        наблюдениями и одним нечитаемым ответом выходил кодом 0.
+        """
+        self.install(observations=2, confirmed=2, errors=1)
+        self.assertEqual(self.run_probe(),
+                         main_module.EXIT_ROUTE_PROBE_UNCONFIRMED)
+
+    def test_without_the_error_the_same_run_exits_zero(self):
+        """Положительный контроль к предыдущему: различается один счётчик."""
+        self.install(observations=2, confirmed=2, errors=0)
+        self.assertEqual(self.run_probe(), EXIT_OK)
+
+    def test_the_error_count_reaches_the_run_summary(self):
+        """Сводка прогона обязана показывать, почему он не зелёный."""
+        self.install(observations=2, confirmed=2, errors=1)
+        self.run_probe()
+        self.assertIn('probe_errors=1', self.log_text())
+
+    def test_a_clean_run_reports_no_errors_in_the_summary(self):
+        self.install(observations=1, confirmed=1)
+        self.run_probe()
+        self.assertIn('probe_errors=0', self.log_text())
+
+
+class RouteProbeHelpTextTests(unittest.TestCase):
+    """`--help` не должен обещать того, чего код не доказывает."""
+
+    def help_text(self):
+        import io
+        import contextlib
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            try:
+                build_parser().parse_args(['--help'])
+            except SystemExit:
+                pass
+        return buffer.getvalue()
+
+    def test_the_broad_claim_is_gone(self):
+        text = self.help_text()
+        self.assertNotIn('Makes no request of its own', text)
+        self.assertNotIn('makes no request of its own', text.lower())
+
+    def test_the_proved_claim_is_there(self):
+        text = self.help_text()
+        self.assertIn('does not initiate the', text)
+        self.assertIn('route POST', text)
 
 
 class StageBSummaryKeysTests(unittest.TestCase):

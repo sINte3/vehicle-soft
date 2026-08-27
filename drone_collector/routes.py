@@ -25,17 +25,21 @@
 идентификаторы вылетов, поштучно. Отсюда и устройство этого модуля: ему на
 вход даётся список уже известных `dji_flight_id`, а не окно дат.
 
-**Запрос выполняет САМА СТРАНИЦА.** Транспорт (`PageRouteTransport`) просит
-страницу выполнить `fetch` в её собственном контексте, поэтому подпись, если
-сайт её ставит, ставит сайт. Подпись DJI здесь не воспроизводится и не
-разбирается -- то же правило, по которому работает сбор вылетов и справочника.
+**ТРАНСПОРТА ЗДЕСЬ БОЛЬШЕ НЕТ.** Прежняя редакция просила страницу выполнить
+нативный `fetch` в её собственном контексте, полагая, что подпись поставит
+сайт. Живой прогон 2026-08-27 это ОПРОВЕРГ: в одной сессии и в одну минуту
+штатные запросы страницы принесли 168 вылетов, а наш `fetch` получил на все 19
+пакетов `code 408` «недействительное время запроса». Согласованный timestamp и
+`Signature` ставит внутренний перехватчик клиента DJI, мимо которого нативный
+`fetch` проходит.
 
-**НЕПРОВЕРЕННОЕ ДОПУЩЕНИЕ, названное прямо:** ставит ли сайт подпись на
-`fetch`, выполненный из его контекста, из контейнера разработки проверить
-нельзя -- кабинет DJI оттуда недостижим. Если не ставит, DJI ответит своим
-внутренним кодом, прогон завершится ненулевым кодом и НАЗОВЁТ этот исход
-(`ROUTE_REQUEST_REFUSED`). Молчаливого «маршрутов не найдено» этот путь не
-даёт: статус ответа проверяется до всего остального.
+Прогон (`RouteRun`) исправен и остаётся: он принимает `fetch_fn` и разбирает
+то, что тот принёс. Недостаёт именно способа ЗАДАТЬ вопрос кабинету так, как
+его задаёт сам кабинет. Пока такого способа не доказано, `fetch_fn` по
+умолчанию -- `disabled_route_transport()`, который отказывается и называет
+причину, а наблюдать штатный запрос предлагается через `--route-ui-probe`.
+
+Статус: `ROUTE_COLLECTION_BLOCKED_PENDING_VALID_UI_TRANSPORT`.
 
 ПРО `data_type`
 
@@ -139,6 +143,10 @@ class RouteRunError(Exception):
 
 class RouteRequestRefused(RouteRunError):
     """DJI отказал в запросе маршрутов. Код исхода -- `ROUTE_REQUEST_REFUSED`."""
+
+
+class NativeFetchDisabled(RouteRunError):
+    """Нативный `fetch` из страницы отключён: он опровергнут живым прогоном."""
 
 
 # ─── Чистые функции: их проверяют тесты без браузера и без сети ──────────────
@@ -413,6 +421,12 @@ class RouteRun(object):
         self.quarantine_dir = quarantine_dir
         self.dry_run = dry_run
         self.prepared_bodies = []
+        # [REASON]: счётчики прерванного прогона обязаны пережить исключение.
+        # `collect()` при отказе кабинета поднимает `RouteRequestRefused`, и
+        # без этой ссылки вызывающий не получал НИЧЕГО -- сводка прогона
+        # печаталась прочерками, хотя в ней и лежит ответ на вопрос «сколько
+        # идентификаторов осталось неспрошенными».
+        self.last_result = None
 
     # -- возобновление --------------------------------------------------------
 
@@ -446,6 +460,7 @@ class RouteRun(object):
     def collect(self, flight_ids, resume=True):
         """Собрать маршруты. Возвращает RouteRunResult."""
         result = RouteRunResult()
+        self.last_result = result
         wanted = normalise_ids(flight_ids)
         if not wanted:
             self.log.info('Nothing to collect: zero flight ids given.')
@@ -495,6 +510,10 @@ class RouteRun(object):
         result.batches += 1
         try:
             fetch = self._fetch_with_retries(batch, index, total)
+        except NativeFetchDisabled:
+            # Нечем спрашивать -- значит нечего и считать ошибками пакета:
+            # прогон не состоялся, а не провалился.
+            raise
         except RouteRequestRefused:
             result.refusals += 1
             result.errors += len(batch)
@@ -548,10 +567,12 @@ class RouteRun(object):
         for attempt in range(1, RETRY_ATTEMPTS + 1):
             try:
                 fetch = self.fetch_fn(list(batch), self.data_type)
-            except RouteRequestRefused:
+            except (RouteRequestRefused, NativeFetchDisabled):
                 # Отказ в доступе повторять бессмысленно: он не пройдёт и на
                 # третий раз, а прогон должен назвать причину, а не утонуть в
-                # трёх одинаковых неудачах.
+                # трёх одинаковых неудачах. То же и с отключённым транспортом:
+                # три попытки выстрелить из незаряженного ружья -- это шесть
+                # секунд ожидания и ни одного нового факта.
                 raise
             except Exception as exc:
                 last_error = '%s: %s' % (type(exc).__name__, exc)
@@ -581,16 +602,58 @@ class RouteRun(object):
                             % (index, total, RETRY_ATTEMPTS, last_error))
 
     def _decode(self, fetch, index, total, result, batch):
-        """Разобрать ответ. None -- ответ ушёл в карантин, пакет пропущен."""
+        """Разобрать ответ. None -- ответ ушёл в карантин, пакет пропущен.
+
+        Сначала выясняется, ЧТО это за тело, и только двоичное уходит в
+        protobuf-декодер.
+
+        [REASON]: первый живой прогон получил на все девятнадцать пакетов
+        135 байт JSON -- внятный служебный отказ кабинета, -- отдал их
+        декодеру и записал девятнадцать «повреждённых тел» в двоичный
+        карантин. Ни одно повреждённым не было. Отказ поставщика и
+        нечитаемый protobuf требуют разных действий: первый -- остановиться и
+        назвать причину, второй -- сохранить байты и разбираться.
+        """
         from drone_collector.route_decode import (RouteDecodeError,
                                                   decode_route_response)
+        from drone_collector.route_payload import classify_payload
+
+        verdict = classify_payload(fetch.raw)
+
+        if verdict.is_vendor_refusal:
+            # Печатается текст самого DJI, его числа и хеш ответа. Ни
+            # `request_id`, ни заголовков, ни тела: `PayloadVerdict` их не
+            # несёт по построению.
+            self.log.error('Batch %d/%d refused by the cabinet: %s',
+                           index, total, verdict.describe())
+            result.errors += len(batch)
+            result.refusals += 1
+            raise RouteRequestRefused(
+                'the cabinet answered code %s (status %s, %r) instead of a '
+                'route payload. Nothing was collected for this batch, and the '
+                'run stops here: the next batch has no reason to fare better.'
+                % (verdict.code, verdict.status, verdict.message))
+
+        if not verdict.is_binary:
+            # [REASON]: тело не двоичное, значит protobuf-декодеру его давать
+            # нечего, а карантин получает только ОПИСАНИЕ. JSON и разметка
+            # умеют носить идентификаторы, и сохранённые «на всякий случай»
+            # они переживут прогон.
+            self.log.error('Batch %d/%d answered something that is not a route '
+                           'payload: %s', index, total, verdict.describe())
+            self._quarantine(fetch, verdict.detail or verdict.kind,
+                             verdict=verdict)
+            result.quarantined += 1
+            result.errors += len(batch)
+            return None
+
         try:
             decoded = decode_route_response(fetch.raw)
         except RouteDecodeError as exc:
             self.log.error('Batch %d/%d did not decode (%s); the body is '
                            'quarantined by hash and the run continues.',
                            index, total, exc)
-            self._quarantine(fetch, str(exc))
+            self._quarantine(fetch, str(exc), verdict=verdict)
             result.quarantined += 1
             result.errors += len(batch)
             return None
@@ -659,7 +722,7 @@ class RouteRun(object):
         else:
             result.new += 1
 
-    def _quarantine(self, fetch, reason):
+    def _quarantine(self, fetch, reason, verdict=None):
         """Сохранить неразобранный ответ по хешу -- или только его описание.
 
         [REASON]: тело, которое мы НЕ разобрали, мы и не понимаем. Прежде чем
@@ -667,6 +730,11 @@ class RouteRun(object):
         сохраняется только описание -- размер, хеш, имена маркеров. Записать
         непонятое тело целиком «на всякий случай» -- ровно тот способ, которым
         подписи и токены переживают прогон.
+
+        [REASON]: второе условие -- ВИД тела. На диск ложится только двоичное:
+        JSON и разметку мы понимаем достаточно, чтобы знать, что там бывает
+        `request_id`, и достаточно плохо, чтобы не знать, что там появится
+        завтра. Их описание сохраняется, тело -- нет.
         """
         if not self.quarantine_dir:
             return None
@@ -676,6 +744,8 @@ class RouteRun(object):
         raw = bytes(fetch.raw or b'')
         digest = fetch.response_sha256
         markers = find_secret_markers(raw.decode('latin-1'))
+        kind_allows_body = True if verdict is None else verdict.body_may_be_written
+        write_body = kind_allows_body and not markers
         note = {
             'response_sha256': digest,
             'bytes': len(raw),
@@ -684,17 +754,23 @@ class RouteRun(object):
             'reason': reason,
             'quarantined_at': utc_now_iso(),
             'secret_markers': markers,
-            'body_written': not markers,
+            'body_written': write_body,
         }
+        if verdict is not None:
+            note['payload'] = verdict.as_dict()
         with (directory / ('%s.json' % digest)).open('w',
                                                      encoding='utf-8') as handle:
             json.dump(note, handle, ensure_ascii=False, indent=1)
-        if not markers:
+        if write_body:
             (directory / ('%s.bin' % digest)).write_bytes(raw)
-        else:
+        elif markers:
             self.log.error('The undecodable body carries %s; only its '
                            'description was written, not the body itself.',
                            ', '.join(markers))
+        else:
+            self.log.warning('The body is %s, not a binary route payload; only '
+                             'its description was written.',
+                             verdict.kind if verdict is not None else 'unknown')
         return digest
 
     def _finish(self, result):
@@ -713,59 +789,55 @@ class RouteRun(object):
 
 # ─── Транспорт через страницу ────────────────────────────────────────────────
 
-# Скрипт выполняется В КОНТЕКСТЕ СТРАНИЦЫ, поэтому запрос отправляет сайт со
-# своими перехватчиками и своей подписью. Ответ возвращается массивом байтов:
-# тело `octet-stream`, и любая попытка получить его строкой испортит данные.
-PAGE_FETCH_JS = """
-async ([path, body]) => {
-  const response = await fetch(path, {
-    method: 'POST',
-    credentials: 'include',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body)
-  });
-  const buffer = await response.arrayBuffer();
-  return {status: response.status, bytes: Array.from(new Uint8Array(buffer))};
-}
-"""
+# ─── Транспорт: почему здесь его нет ─────────────────────────────────────────
+
+# Что именно было опровергнуто, и чем.
+#
+# [REASON]: до 2026-08-27 здесь жил `PAGE_FETCH_JS` -- скрипт, просивший
+# страницу выполнить `window.fetch` к эндпоинту маршрутов. Допущение было
+# записано прямо и честно: «подпись, если сайт её ставит, ставит сайт». Живой
+# прогон это допущение ОПРОВЕРГ.
+#
+# В одной и той же браузерной сессии, в одну и ту же минуту:
+#   * штатные запросы самой страницы прошли -- период сверен точно, 4 страницы,
+#     168 вылетов, ноль самодублей;
+#   * наш нативный `fetch` получил на ВСЕ 19 пакетов один и тот же служебный
+#     отказ -- 135 байт JSON, `status 408`, `code 408`, «请求时间无效»
+#     (недействительное время запроса).
+#
+# Значит дело не в часах машины: часы у обоих запросов одни. Дело в том, что
+# согласованный timestamp и `Signature` ставит внутренний перехватчик клиента
+# DJI, и нативный `fetch` мимо него проходит. Это ровно то, о чём предупреждала
+# документация прежнего сборщика: подпись считается в WebAssembly и вне
+# браузерного клиента не воспроизводится.
+#
+# Подобрать заголовки, повторить перехваченную подпись или подогнать timestamp
+# запрещено уставом трека и здесь не делается. Поэтому транспорта нет, а есть
+# отказ, называющий причину: собирать маршруты сейчас нечем, и следующий шаг --
+# наблюдение за ШТАТНЫМ запросом кабинета (`--route-ui-probe`), а не ещё одна
+# попытка выстрелить своим.
+NATIVE_FETCH_DISABLED_REASON = (
+    'the native fetch transport is disabled: on 2026-08-27 it was disproved on '
+    'the live cabinet. The page\'s own requests succeeded in the same session '
+    '(168 flights over 4 pages, period verified), while every one of the 19 '
+    'route batches issued by our own fetch came back as a 135-byte JSON '
+    'refusal with code 408 "invalid request time". The signed timestamp is put '
+    'on the request by DJI\'s own client interceptor, which a native fetch '
+    'bypasses. Reproducing that signature is forbidden. Observe the cabinet\'s '
+    'own request instead: `python -m drone_collector.main --route-ui-probe`.')
 
 
-class PageRouteTransport(object):
-    """Запрос маршрутов руками самой страницы.
+def disabled_route_transport(*_args, **_kwargs):
+    """Транспорт, который отказывается, вместо того чтобы делать вид.
 
-    Тонкая обёртка вокруг Playwright: из контейнера разработки кабинет DJI
-    недостижим, поэтому здесь нет ничего, кроме вызова и проверки формы
-    ответа. Всё, что можно проверить фикстурой, живёт выше по файлу.
+    Возвращает вызываемое, которое поднимает `NativeFetchDisabled`. Оставлено
+    вызываемым намеренно: `RouteRun` устроен вокруг `fetch_fn`, и подмена его
+    на отказ показывает, что сам прогон исправен, а недостаёт именно способа
+    задать вопрос кабинету.
     """
-
-    def __init__(self, page, api_origin, logger=None):
-        self.page = page
-        self.api_origin = (api_origin or '').rstrip('/')
-        self.log = logger or log
-
-    @property
-    def endpoint(self):
-        return self.api_origin + ROUTE_ENDPOINT_PATH
-
-    def __call__(self, flight_ids, data_type):
-        body = build_request_body(flight_ids, data_type)
-        result = self.page.evaluate(PAGE_FETCH_JS, [self.endpoint, body])
-        if not isinstance(result, dict):
-            raise RouteRunError('the page returned %s, not a response object'
-                                % type(result).__name__)
-        status = result.get('status')
-        payload = result.get('bytes')
-        if status in (401, 403):
-            raise RouteRequestRefused(
-                'the cabinet answered HTTP %s to the route request. Either the '
-                'session has expired, or the request made from the page is not '
-                'signed the way the cabinet expects. Nothing was collected.'
-                % status)
-        if not isinstance(payload, list):
-            raise RouteRunError('the page returned no body for the route '
-                                'request (HTTP %s)' % status)
-        return RouteFetch(flight_ids, data_type, bytes(bytearray(payload)),
-                          endpoint=ROUTE_ENDPOINT_PATH)
+    def _refuse(_flight_ids, _data_type):
+        raise NativeFetchDisabled(NATIVE_FETCH_DISABLED_REASON)
+    return _refuse
 
 
 def read_ids_file(path):

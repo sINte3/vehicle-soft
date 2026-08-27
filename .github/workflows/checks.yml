@@ -111,6 +111,19 @@ jobs:
       - name: Stage B CLI wiring (usage rules and the exit-code namespace)
         run: python -m unittest drone_collector.tests.test_cli
 
+      # The live pilot of 2026-08-27 lost its first run to a thirty-byte
+      # storage state that passed a "the file is not empty" check, and its
+      # route run to a JSON refusal that was filed as a corrupt protobuf.
+      # Both are held here now.
+      - name: Saved session (structural check, atomic save, no value leaks)
+        run: python -m unittest drone_collector.tests.test_session
+
+      - name: Route payload (vendor refusal is not a broken protobuf)
+        run: python -m unittest drone_collector.tests.test_route_payload
+
+      - name: Route UI probe (observes, never asks, never queues)
+        run: python -m unittest drone_collector.tests.test_route_ui_probe
+
       - name: Route semantics probe self-test (observations, never verdicts)
         run: python tools/test_drone_route_semantics_probe.py
 
