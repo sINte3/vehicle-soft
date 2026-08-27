@@ -19,9 +19,11 @@ from pathlib import Path
 from drone_collector.outbox import (KIND_ROUTE, Outbox, SecretInEnvelope)
 from drone_collector.routes import (
     DEFAULT_DATA_TYPE, MAX_RESPONSE_BYTES, MAX_ROUTE_BATCH_SIZE,
-    OBSERVED_DATA_TYPES, PAGE_FETCH_JS, Reconciliation, RouteFetch,
+    NATIVE_FETCH_DISABLED_REASON, NativeFetchDisabled,
+    OBSERVED_DATA_TYPES, Reconciliation, RouteFetch,
     RouteRequestRefused, RouteRun, RouteRunError, assert_data_type,
-    build_request_body, chunk_ids, content_sha256, is_route_url,
+    build_request_body, chunk_ids, content_sha256,
+    disabled_route_transport, is_route_url,
     normalise_ids, parse_request_body, read_ids_file, route_body,
     write_dry_run)
 from drone_collector.route_decode import decode_route_response
@@ -624,6 +626,141 @@ class TestQuarantine(RoutesTestCase):
         self.assertFalse(self.quarantine_dir().exists())
 
 
+class TestVendorRefusalStopsTheRun(RoutesTestCase):
+    """Живой отказ кабинета 2026-08-27, воспроизведённый синтетикой.
+
+    Прогон получил на все девятнадцать пакетов один и тот же JSON и записал
+    девятнадцать «повреждённых тел» в двоичный карантин. Здесь проверяется,
+    что этого больше не происходит: один запрос, названная причина, код 10 и
+    ноль файлов `.bin`.
+    """
+
+    SYNTHETIC_REQUEST_ID = '00000000-0000-4000-8000-000000000000'
+
+    REFUSAL = {
+        'status': 408,
+        'code': 408,
+        'msg': '请求时间无效',
+        'message': '请求时间无效',
+        'request_id': SYNTHETIC_REQUEST_ID,
+    }
+
+    def refusal_bytes(self):
+        return json.dumps(self.REFUSAL, ensure_ascii=False).encode('utf-8')
+
+    def quarantine_dir(self):
+        return self.root / 'quarantine'
+
+    def run_with_refusal(self, ids, batch_size=1, **kwargs):
+        transport = FakeTransport(*[self.refusal_bytes()
+                                    for _ in range(len(ids) + 4)])
+        log = _QuietLog()
+        run = RouteRun(self.outbox, transport, logger=log,
+                       sleep_fn=self.slept.append, batch_pause_s=0,
+                       batch_size=batch_size, **kwargs)
+        with self.assertRaises(RouteRequestRefused) as caught:
+            run.collect(ids)
+        return transport, log, caught.exception
+
+    def test_the_refusal_is_raised_and_the_run_stops_at_the_first_batch(self):
+        ids = list(range(900000001, 900000020))     # девятнадцать пакетов по одному
+        self.assertEqual(len(ids), 19)
+        transport, _log, _exc = self.run_with_refusal(ids)
+        self.assertEqual(len(transport.calls), 1,
+                         'прогон продолжил спрашивать после отказа кабинета')
+
+    def test_no_binary_quarantine_file_is_written(self):
+        self.run_with_refusal([900000001],
+                              quarantine_dir=self.quarantine_dir())
+        self.assertEqual(list(self.quarantine_dir().glob('*.bin')), [],
+                         'понятный JSON-отказ записан как повреждённый protobuf')
+
+    def test_nothing_at_all_is_quarantined_for_a_vendor_refusal(self):
+        """Отказ поставщика -- не карантин: причина уже названа."""
+        self.run_with_refusal([900000001],
+                              quarantine_dir=self.quarantine_dir())
+        self.assertFalse(self.quarantine_dir().exists())
+
+    def test_the_request_id_reaches_no_log_no_exception_and_no_file(self):
+        _transport, log, exc = self.run_with_refusal(
+            [900000001], quarantine_dir=self.quarantine_dir())
+        written = [log.text(), str(exc)]
+        for path in self.root.rglob('*'):
+            if path.is_file():
+                written.append(path.read_text(encoding='utf-8',
+                                              errors='replace'))
+        haystack = '\n'.join(written)
+        self.assertNotIn(self.SYNTHETIC_REQUEST_ID, haystack)
+        self.assertNotIn('request_id', haystack)
+
+    def test_the_message_and_the_numbers_do_reach_the_log(self):
+        """Отрицательный контроль: причина обязана быть названа."""
+        _transport, log, exc = self.run_with_refusal([900000001])
+        self.assertIn('408', log.text())
+        self.assertIn('请求时间无效', str(exc))
+
+    def test_every_unasked_id_is_accounted_as_an_error(self):
+        ids = list(range(900000001, 900000020))
+        transport = FakeTransport(self.refusal_bytes())
+        run = RouteRun(self.outbox, transport, logger=_QuietLog(),
+                       sleep_fn=self.slept.append, batch_pause_s=0,
+                       batch_size=1)
+        try:
+            run.collect(ids)
+        except RouteRequestRefused:
+            pass
+        result = run.last_result
+        self.assertEqual(result.requested, 19)
+        self.assertEqual(result.errors, 19)
+        self.assertTrue(result.invariant_holds, result.as_dict())
+
+    def test_routes_collected_before_the_refusal_are_kept(self):
+        """Отказ после успешного пакета не отменяет уже собранное."""
+        transport = FakeTransport(build_response([900000001]),
+                                  self.refusal_bytes())
+        run = RouteRun(self.outbox, transport, logger=_QuietLog(),
+                       sleep_fn=self.slept.append, batch_pause_s=0,
+                       batch_size=1)
+        with self.assertRaises(RouteRequestRefused):
+            run.collect([900000001, 900000002])
+        self.assertEqual(len(self.outbox.pending()), 1)
+        result = run.last_result
+        self.assertEqual(result.new, 1)
+        self.assertEqual(result.errors, 1)
+        self.assertTrue(result.invariant_holds, result.as_dict())
+
+    def test_a_json_success_envelope_is_not_accepted_as_protobuf(self):
+        """`code 0` в JSON -- изменившаяся форма, а не маршруты."""
+        body = json.dumps({'status': 200, 'code': 0, 'message': 'OK',
+                           'data': []}).encode('utf-8')
+        _, result = self.run_for([900000001],
+                                 transport=FakeTransport(body),
+                                 quarantine_dir=self.quarantine_dir())
+        self.assertEqual(result.new, 0)
+        self.assertEqual(result.errors, 1)
+        self.assertEqual(result.quarantined, 1)
+        self.assertEqual(list(self.quarantine_dir().glob('*.bin')), [])
+
+    def test_html_is_named_and_its_body_is_not_written(self):
+        _, result = self.run_for(
+            [900000001],
+            transport=FakeTransport(b'<!doctype html><html>502</html>'),
+            quarantine_dir=self.quarantine_dir())
+        self.assertEqual(result.quarantined, 1)
+        self.assertEqual(list(self.quarantine_dir().glob('*.bin')), [])
+        note = json.loads(
+            sorted(self.quarantine_dir().glob('*.json'))[0]
+            .read_text(encoding='utf-8'))
+        self.assertEqual(note['payload']['kind'], 'TEXT_UNKNOWN')
+        self.assertFalse(note['body_written'])
+
+    def test_a_broken_protobuf_still_keeps_its_body(self):
+        """Отрицательный контроль: двоичный карантин не отменён вообще."""
+        self.run_for([900000001], transport=FakeTransport(b'\xff\xff\xff\xff'),
+                     quarantine_dir=self.quarantine_dir())
+        self.assertEqual(len(list(self.quarantine_dir().glob('*.bin'))), 1)
+
+
 class TestSecretsNeverReachTheQueue(RoutesTestCase):
 
     POISONED_LOCATION = ('https://oss.aliyuncs.com/x?OSSAccessKeyId=LTAI'
@@ -798,23 +935,47 @@ class TestIdsFile(RoutesTestCase):
         self.assertIn('line 2', str(caught.exception))
 
 
-class TestPageTransportScript(unittest.TestCase):
+class TestNativeFetchIsDisabled(unittest.TestCase):
+    """Опровергнутый транспорт обязан отказываться, а не притворяться.
 
-    def test_the_page_script_carries_no_credential_of_ours(self):
-        lowered = PAGE_FETCH_JS.lower()
-        for marker in ('token', 'signature', 'cookie', 'authorization',
-                       'bearer', 'secret'):
-            self.assertNotIn(marker, lowered)
+    [REASON]: прежние тесты этого места проверяли ГИГИЕНУ скрипта -- что в нём
+    нет наших токенов, что тело читается байтами. Всё это было верно, и ни
+    один из них не мог заметить, что запрос не проходит вовсе: они проверяли
+    текст скрипта, а не то, отвечает ли на него кабинет. Живой прогон ответил.
+    """
 
-    def test_the_page_script_lets_the_site_send_its_own_credentials(self):
-        """Подпись, если она есть, ставит сайт. Мы её не формируем."""
-        self.assertIn("credentials: 'include'", PAGE_FETCH_JS)
-        self.assertIn('arrayBuffer', PAGE_FETCH_JS)
+    def test_the_module_no_longer_carries_a_fetch_script(self):
+        import drone_collector.routes as routes_module
+        self.assertFalse(hasattr(routes_module, 'PAGE_FETCH_JS'),
+                         'скрипт нативного fetch вернулся в модуль')
+        self.assertFalse(hasattr(routes_module, 'PageRouteTransport'),
+                         'транспорт нативного fetch вернулся в модуль')
 
-    def test_the_body_is_read_as_bytes_not_as_text(self):
-        """Ответ -- octet-stream; чтение строкой испортило бы данные."""
-        self.assertIn('Uint8Array', PAGE_FETCH_JS)
-        self.assertNotIn('response.text()', PAGE_FETCH_JS)
+    def test_the_disabled_transport_refuses_and_names_the_reason(self):
+        transport = disabled_route_transport()
+        with self.assertRaises(NativeFetchDisabled) as caught:
+            transport([900000001], 'simplified')
+        message = str(caught.exception)
+        self.assertIn('408', message)
+        self.assertIn('--route-ui-probe', message)
+
+    def test_the_reason_states_what_was_measured_not_what_was_guessed(self):
+        self.assertIn('168 flights', NATIVE_FETCH_DISABLED_REASON)
+        self.assertIn('19 route batches', NATIVE_FETCH_DISABLED_REASON)
+
+    def test_the_reason_proposes_no_signature_work(self):
+        """Ни подписи, ни заголовков, ни подбора времени в предложении нет."""
+        lowered = NATIVE_FETCH_DISABLED_REASON.lower()
+        for forbidden in ('sign the request', 'compute the signature',
+                          'replay', 'copy the header', 'adjust the clock'):
+            self.assertNotIn(forbidden, lowered)
+
+    def test_a_run_built_on_the_disabled_transport_fails_loudly(self):
+        """Прогон исправен; отсутствует именно способ спросить."""
+        run = RouteRun(None, disabled_route_transport(), logger=_QuietLog(),
+                       sleep_fn=lambda _s: None, batch_pause_s=0)
+        with self.assertRaises(RouteRunError):
+            run.collect([900000001])
 
 
 if __name__ == '__main__':

@@ -34,7 +34,9 @@ from drone_collector.tests.support import make_flight
 from drone_collector.sender import SendResult
 from drone_collector.tests.test_sender import config
 
+import sys
 import tempfile
+import types
 
 from drone_collector import lands as lands_module
 from drone_collector.lands import LandResult
@@ -329,11 +331,25 @@ class StageBNeedsNoIngestTokenTests(CliTestCase):
     относится.
     """
 
-    def test_a_route_run_without_a_token_fails_on_the_session_not_the_token(self):
+    def test_a_route_run_without_a_token_stops_on_the_transport_not_the_token(self):
+        """Сбор маршрутов закрыт -- но НЕ из-за отсутствия токена приёмника.
+
+        [REASON]: до правки этот тест ждал кода 2 (нет сессии) и этим
+        доказывал, что токен не требуется. Теперь `--routes` останавливается
+        РАНЬШЕ -- на опровергнутом транспорте, код 12, -- и утверждение о
+        токене доказывается тем же способом: до конфигурации приёмника дело не
+        доходит вовсе.
+        """
         os.environ['DJI_STORAGE_STATE'] = MISSING_STATE
         code = main(['--routes', '--ids-file', MISSING_STATE])
-        self.assertEqual(code, EXIT_SESSION,
-                         'прогон маршрутов потребовал токен приёмника')
+        self.assertEqual(code, main_module.EXIT_ROUTE_TRANSPORT_DISABLED,
+                         'сбор маршрутов не назвал причину остановки')
+
+    def test_the_probe_without_a_token_fails_on_the_session_not_the_token(self):
+        """Наблюдение токена приёмника тоже не требует."""
+        os.environ['DJI_STORAGE_STATE'] = MISSING_STATE
+        self.assertEqual(main(['--route-ui-probe']), EXIT_SESSION,
+                         'наблюдение потребовало токен приёмника')
 
     def test_a_sending_run_without_a_token_still_fails_on_the_token(self):
         """Отрицательный контроль: у отправляющих прогонов правило прежнее."""
@@ -382,8 +398,14 @@ class GeometryRunReachesNoIngestTests(CliTestCase):
         self.addCleanup(self._directory.cleanup)
         self.root = Path(self._directory.name)
         state_file = self.root / 'storage_state.json'
-        state_file.write_text('{"cookies": [], "origins": []}',
-                              encoding='utf-8')
+        # [REASON]: состояние с cookie, а не `{"cookies": [], "origins": []}`.
+        # Пустое состояние -- это ровно то, что теперь отвергает
+        # `inspect_session`, и фикстура, притворяющаяся сессией, должна
+        # притворяться убедительно. Значение выдуманное.
+        state_file.write_text(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-NOT-REAL", '
+            '"domain": ".example.invalid", "path": "/"}], "origins": []}',
+            encoding='utf-8')
         os.environ['DJI_STORAGE_STATE'] = str(state_file)
         os.environ['DRONE_OUTBOX_DIR'] = str(self.root / 'outbox')
 
@@ -500,6 +522,134 @@ class GeometryRunReachesNoIngestTests(CliTestCase):
         self.assertFalse(main_module.needs_no_ingest(parse(['--lands'])),
                          'обычный --lands объявлен неотправляющим')
         self.assertFalse(main_module.needs_no_ingest(parse([])))
+
+
+class _FakePlaywrightModule(object):
+    """Ровно та часть playwright, которой пользуется save_session_interactive."""
+
+    def __init__(self, state_text, landed_url):
+        self.state_text = state_text
+        self.landed_url = landed_url
+        outer = self
+
+        class _Page(object):
+            url = landed_url
+
+            def set_default_timeout(self, ms):
+                pass
+
+            def goto(self, url, **kwargs):
+                pass
+
+        class _Context(object):
+            def storage_state(self, path):
+                Path(path).write_text(outer.state_text, encoding='utf-8')
+
+            def close(self):
+                pass
+
+        class _Browser(object):
+            def new_context(self, **kwargs):
+                return _Context()
+
+            def close(self):
+                pass
+
+        class _Chromium(object):
+            def launch(self, **kwargs):
+                return _Browser()
+
+        class _Playwright(object):
+            chromium = _Chromium()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        _Browser.new_page = lambda self, **kw: _Page()
+        _Context.new_page = lambda self, **kw: _Page()
+        self._playwright = _Playwright()
+
+    def sync_playwright(self):
+        return self._playwright
+
+
+class SaveSessionExitCodeTests(CliTestCase):
+    """`--save-session` обязан отличать сохранённую сессию от тридцати байт.
+
+    [REASON]: первый живой пилот получил код 0 и слова «Session saved» при
+    файле `{"cookies": [], "origins": []}`. Проверялся размер, а размер у него
+    ненулевой.
+    """
+
+    def setUp(self):
+        CliTestCase.setUp(self)
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        self.root = Path(self._directory.name)
+        self.target = self.root / 'storage_state.json'
+        os.environ['DJI_STORAGE_STATE'] = str(self.target)
+        self._saved_module = sys.modules.get('playwright.sync_api')
+        self._saved_pkg = sys.modules.get('playwright')
+
+    def tearDown(self):
+        for name, value in (('playwright.sync_api', self._saved_module),
+                            ('playwright', self._saved_pkg)):
+            if value is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = value
+        CliTestCase.tearDown(self)
+
+    def install_playwright(self, state_text,
+                           landed='https://www.djiag.com/records/list'):
+        fake = _FakePlaywrightModule(state_text, landed)
+        sys.modules['playwright'] = types.ModuleType('playwright')
+        sys.modules['playwright.sync_api'] = fake
+        # save_session_interactive делает `from playwright.sync_api import
+        # sync_playwright`, поэтому имя должно лежать атрибутом модуля.
+        fake.sync_playwright = fake.sync_playwright
+
+    def run_save(self):
+        import builtins
+        real_input = builtins.input
+        builtins.input = lambda prompt='': ''
+        try:
+            return main(['--save-session'])
+        finally:
+            builtins.input = real_input
+
+    def test_an_empty_state_exits_non_zero_and_writes_no_session(self):
+        self.install_playwright('{"cookies": [], "origins": []}')
+        code = self.run_save()
+        self.assertNotEqual(code, 0)
+        self.assertEqual(code, EXIT_SESSION)
+        self.assertFalse(self.target.exists(),
+                         'пустое состояние всё-таки легло на место сессии')
+
+    def test_a_usable_state_exits_zero_and_writes_the_session(self):
+        """Отрицательный контроль: строгость не гасит нормальное сохранение."""
+        self.install_playwright(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-NOT-REAL"}], '
+            '"origins": []}')
+        self.assertEqual(self.run_save(), EXIT_OK)
+        self.assertTrue(self.target.is_file())
+
+    def test_an_empty_state_leaves_a_previous_session_alone(self):
+        self.target.write_text(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-OLD"}], '
+            '"origins": []}', encoding='utf-8')
+        before = self.target.read_text(encoding='utf-8')
+        self.install_playwright('{"cookies": [], "origins": []}')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertEqual(self.target.read_text(encoding='utf-8'), before)
+
+    def test_no_partial_file_survives_a_refusal(self):
+        self.install_playwright('{"cookies": [], "origins": []}')
+        self.run_save()
+        self.assertEqual(list(self.root.glob('*.partial')), [])
 
 
 class StageBSummaryKeysTests(unittest.TestCase):

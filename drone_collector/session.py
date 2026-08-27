@@ -16,9 +16,35 @@ reads them from the environment.
 
 The saved file is a live session. It is ignored by drone_collector/.gitignore
 and must never be committed, copied into a ticket, or logged.
+
+WHY THE CHECK IS STRUCTURAL AND NOT "THE FILE IS NOT EMPTY"
+----------------------------------------------------------
+
+The first live pilot of stage B (2026-08-27) ran `--save-session`, was told the
+session had been saved, got exit code 0 -- and the file was thirty bytes:
+
+    {"cookies": [], "origins": []}
+
+That is what Playwright writes when the context holds nothing: a syntactically
+perfect storage state with no session in it. The old check was `is_file() and
+st_size > 0`, so thirty bytes of emptiness passed as a working login, and the
+failure surfaced much later as a puzzling redirect to /login.
+
+So the file is now judged by what it CARRIES: at least one cookie, or at least
+one localStorage item. A real session of this cabinet, measured on that same
+machine, was ~83 KB with 14 cookies, 2 origins and 13 localStorage items.
+
+NOTHING IN THIS MODULE PRINTS A VALUE
+-------------------------------------
+
+Counts, sizes and names of the failure -- never a cookie value, never a
+localStorage value, never an origin. The whole file is one long credential.
 """
 
+import json
 import logging
+import os
+import tempfile
 
 from pathlib import Path
 
@@ -33,39 +59,235 @@ LOGIN_PATH = '/login'
 # Playwright's own wording for the two states we care about after navigation.
 NAVIGATION_WAIT_UNTIL = 'domcontentloaded'
 
+# Ceiling on the storage state we are willing to read.
+#
+# [REASON]: the real session of this cabinet measured 82 919 bytes. Eight
+# megabytes is two orders of magnitude above that and still small enough that
+# a wrong --DJI_STORAGE_STATE pointing at, say, a database file is refused
+# instead of being parsed as JSON for a minute.
+MAX_SESSION_BYTES = 8 * 1024 * 1024
+
+# Suffix of the half-written state. Not `.json`, so nothing mistakes it for a
+# session, and it lives beside the target so os.replace stays atomic.
+TEMP_SUFFIX = '.partial'
+
 
 class SessionMissing(Exception):
     """No usable storage_state.json. main() turns this into exit code 2."""
 
 
-def session_exists(path):
-    """True when the session file is present and non-empty.
+class SessionState(object):
+    """What a storage-state file carries. Values are never held here."""
 
-    An empty file is treated as missing: a crashed or interrupted save leaves
-    a zero-byte file behind, and Playwright fails on it with a JSON error that
-    says nothing about what to do next.
+    __slots__ = ('usable', 'reason', 'bytes', 'cookies', 'origins',
+                 'local_storage_items')
+
+    def __init__(self, usable, reason='', size=0, cookies=0, origins=0,
+                 local_storage_items=0):
+        self.usable = usable
+        self.reason = reason
+        self.bytes = size
+        self.cookies = cookies
+        self.origins = origins
+        self.local_storage_items = local_storage_items
+
+    def describe(self):
+        """Safe one-liner for a log. Counts only."""
+        return ('bytes=%d cookies=%d origins=%d local_storage_items=%d'
+                % (self.bytes, self.cookies, self.origins,
+                   self.local_storage_items))
+
+    def __repr__(self):
+        return '<SessionState usable=%s %s>' % (self.usable, self.describe())
+
+
+def _count_local_storage(origins):
+    """How many localStorage entries the origins carry, in total."""
+    total = 0
+    for origin in origins:
+        if not isinstance(origin, dict):
+            continue
+        items = origin.get('localStorage')
+        if isinstance(items, list):
+            total += len(items)
+    return total
+
+
+def inspect_session(path):
+    """Structural verdict on a Playwright storage state. Never raises.
+
+    Returns a SessionState. `reason` names the defect and never quotes the
+    content: a message that echoed a cookie to explain why it was malformed
+    would put the credential in the log it was trying to protect.
     """
     target = Path(path)
     try:
-        return target.is_file() and target.stat().st_size > 0
-    except OSError:
-        return False
+        if not target.is_file():
+            return SessionState(False, 'no such file')
+        size = target.stat().st_size
+    except OSError as exc:
+        return SessionState(False, 'could not be read (%s)'
+                            % type(exc).__name__)
+
+    if size == 0:
+        return SessionState(False, 'the file is empty', size=size)
+    if size > MAX_SESSION_BYTES:
+        return SessionState(False,
+                            'the file is %d bytes, the cap is %d'
+                            % (size, MAX_SESSION_BYTES), size=size)
+
+    try:
+        with open(str(target), encoding='utf-8') as handle:
+            document = json.load(handle)
+    except (ValueError, UnicodeDecodeError) as exc:
+        return SessionState(False, 'not readable JSON (%s)'
+                            % type(exc).__name__, size=size)
+    except OSError as exc:
+        return SessionState(False, 'could not be read (%s)'
+                            % type(exc).__name__, size=size)
+    except RecursionError:
+        # [REASON]: deeply nested JSON raises RecursionError, which is a
+        # RuntimeError and not a ValueError. Without this the check would
+        # crash instead of refusing.
+        return SessionState(False, 'nests deeper than this reader walks',
+                            size=size)
+
+    if not isinstance(document, dict):
+        return SessionState(False, 'decodes to %s, not to an object'
+                            % type(document).__name__, size=size)
+
+    cookies = document.get('cookies')
+    if cookies is None:
+        cookies = []
+    if not isinstance(cookies, list):
+        return SessionState(False, '"cookies" is %s, not a list'
+                            % type(cookies).__name__, size=size)
+
+    origins = document.get('origins')
+    if origins is None:
+        origins = []
+    if not isinstance(origins, list):
+        return SessionState(False, '"origins" is %s, not a list'
+                            % type(origins).__name__, size=size)
+
+    items = _count_local_storage(origins)
+    state = SessionState(False, '', size=size, cookies=len(cookies),
+                         origins=len(origins), local_storage_items=items)
+
+    # [REASON]: a storage state with neither a cookie nor a localStorage item
+    # is the exact shape Playwright writes for a context that was never signed
+    # in. It is well-formed and useless, and treating it as a session is what
+    # cost the first pilot its run.
+    if not cookies and not items:
+        state.reason = ('the state carries no cookie and no localStorage item '
+                        '-- the browser was never signed in')
+        return state
+
+    state.usable = True
+    return state
+
+
+def session_exists(path):
+    """True when the file carries an actual session.
+
+    Kept under its old name because every caller in the package asks this
+    question; what changed is the answer's basis -- content, not size.
+    """
+    return inspect_session(path).usable
 
 
 def require_session(path):
-    """Return the session path or raise SessionMissing naming the file."""
-    if not session_exists(path):
-        raise SessionMissing(
-            'no saved DJI session at %s -- run '
-            '`python -m drone_collector.main --save-session` and sign in once '
-            'by hand' % Path(path))
-    return Path(path)
+    """Return the session path or raise SessionMissing naming the defect."""
+    state = inspect_session(path)
+    if state.usable:
+        return Path(path)
+    raise SessionMissing(
+        'no usable DJI session at %s: %s (%s) -- run '
+        '`python -m drone_collector.main --save-session` and sign in once by '
+        'hand' % (Path(path), state.reason, state.describe()))
 
 
 def login_url(records_url):
     """The sign-in URL on the same host as the records page."""
     parts = urlsplit(records_url)
     return urlunsplit((parts.scheme, parts.netloc, LOGIN_PATH, '', ''))
+
+
+def expected_host(records_url):
+    """Host the browser must be on when the operator presses Enter."""
+    return urlsplit(records_url).netloc
+
+
+def landed_where_expected(current_url, records_url):
+    """(ok, reason). The browser must be on the cabinet, not on /login.
+
+    A weaker check than `inspect_session` and NOT a replacement for it: a page
+    can sit on the right host with an empty context. It catches the other
+    half -- the operator who pressed Enter while the sign-in form was still
+    open -- and it names that case plainly instead of saving thirty bytes.
+    """
+    if not current_url:
+        return False, 'the browser reported no URL'
+    parts = urlsplit(current_url)
+    if parts.netloc != expected_host(records_url):
+        # The host is printed; it is a public address, not a credential.
+        return False, ('the browser is on %s, not on %s'
+                       % (parts.netloc or '(no host)',
+                          expected_host(records_url)))
+    if parts.path.startswith(LOGIN_PATH):
+        return False, 'the browser is still on the sign-in page'
+    return True, ''
+
+
+def _remove_quietly(path):
+    try:
+        os.remove(str(path))
+        return True
+    except OSError:
+        return False
+
+
+def save_state_atomically(context, target, writer=None):
+    """Write the context's state beside `target`, check it, then replace.
+
+    Returns the SessionState of what was installed.
+
+    [REASON]: Playwright used to be pointed straight at `storage_state.json`.
+    That makes every save destructive: an empty context overwrites a working
+    session with thirty bytes, and the operator finds out on the next run. Now
+    the new state is written to a `.partial` beside the target, judged there,
+    and only a usable state replaces the file. A useless one is deleted and
+    the previous session survives untouched.
+    """
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    handle = tempfile.NamedTemporaryFile(
+        prefix=target.name + '.', suffix=TEMP_SUFFIX, dir=str(target.parent),
+        delete=False)
+    temp_name = handle.name
+    handle.close()
+
+    write = writer or (lambda path: context.storage_state(path=path))
+    try:
+        write(temp_name)
+    except BaseException:
+        _remove_quietly(temp_name)
+        raise
+
+    state = inspect_session(temp_name)
+    if not state.usable:
+        _remove_quietly(temp_name)
+        previous = inspect_session(target)
+        note = ('the previous session at %s was left untouched (%s)'
+                % (target, previous.describe()) if previous.usable
+                else 'there is no previous usable session to fall back on')
+        raise SessionMissing(
+            'the browser produced no usable session: %s (%s). Nothing was '
+            'overwritten; %s' % (state.reason, state.describe(), note))
+
+    os.replace(temp_name, str(target))
+    return state
 
 
 def save_session_interactive(cfg, input_fn=None, print_fn=None):
@@ -112,17 +334,26 @@ def save_session_interactive(cfg, input_fn=None, print_fn=None):
 
         ask('Press Enter once you are signed in and the records page is open: ')
 
+        landed = None
+        try:
+            landed = page.url
+        except Exception:  # pragma: no cover -- a closed page has no url
+            landed = None
+        ok, why = landed_where_expected(landed, cfg.records_url)
+        if not ok:
+            log.warning('Before saving: %s', why)
+            say('WARNING: %s' % why)
+
         # Saved from the context, not the page: cookies set on the SSO host
         # during the redirect dance belong to the context too.
-        context.storage_state(path=str(target))
-        browser.close()
+        try:
+            state = save_state_atomically(context, target)
+        finally:
+            browser.close()
 
-    if not session_exists(target):
-        raise SessionMissing('the session file %s was not written -- was the '
-                             'browser closed before pressing Enter?' % target)
-
-    log.info('Session saved to %s (%d bytes)', target, target.stat().st_size)
+    log.info('Session saved to %s (%s)', target, state.describe())
     say('')
     say('Session saved to %s' % target)
+    say('  %s' % state.describe())
     say('Keep it out of the repository and out of tickets: it is a live login.')
     return target

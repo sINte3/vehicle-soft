@@ -28,6 +28,8 @@ Exit codes (see drone_collector/README.md):
     7  the session is in the wrong region
    10  the cabinet refused to serve the routes (--routes only)
    11  --geometry-id named a contour the directory does not hold
+   12  route collection is disabled: the native fetch transport was
+       disproved on the live cabinet and no valid UI transport exists yet
 
     8 and 9 are deliberately skipped: they belong to the other entry point of
     this package, `python -m drone_collector.devices`.
@@ -77,6 +79,11 @@ EXIT_ROUTE_REFUSED = 10
 # answers from whoever reads the scheduler log, and a shared code makes them
 # the same answer.
 EXIT_GEOMETRY_NOT_FOUND = 11
+# [REASON]: "the cabinet refused this batch" (10) and "we have no way to ask
+# at all" (12) are different facts and call for different next steps. The
+# first is worth re-running with a fresh session; the second is not worth
+# re-running until a transport exists.
+EXIT_ROUTE_TRANSPORT_DISABLED = 12
 
 KIND_INCREMENTAL = 'incremental'
 KIND_BACKFILL = 'backfill'
@@ -85,6 +92,7 @@ KINDS = ('backfill', 'incremental', 'replay')
 MODE_FLIGHTS = 'flights'
 MODE_LANDS = 'lands'
 MODE_ROUTES = 'routes'
+MODE_ROUTE_PROBE = 'route-ui-probe'
 
 FLIGHT_SUMMARY_KEYS = (
     'mode', 'kind', 'dry_run', 'period_from', 'period_to',
@@ -100,6 +108,11 @@ ROUTE_SUMMARY_KEYS = (
     'routes_new', 'routes_duplicates', 'routes_missing', 'routes_errors',
     'routes_unlinked', 'routes_without_width', 'route_points',
     'quarantined', 'outbox_pending', 'exit',
+)
+
+ROUTE_PROBE_SUMMARY_KEYS = (
+    'mode', 'region', 'probe_route_responses', 'probe_observations',
+    'probe_only_all_ids', 'probe_report', 'exit',
 )
 
 LAND_SUMMARY_KEYS = (
@@ -166,6 +179,14 @@ def build_parser():
                         help='with --routes: read the flight ids to request '
                              'from this file, one per line, # comments '
                              'allowed. Skips the flight-list walk entirely.')
+    parser.add_argument('--route-ui-probe', dest='route_ui_probe',
+                        action='store_true',
+                        help='open a browser, ask the operator to drive Task '
+                             'History into the map view by hand, and WATCH the '
+                             'request the cabinet makes for itself. Makes no '
+                             'request of its own, queues nothing, sends '
+                             'nothing. Records shapes and lengths, never a '
+                             'header value.')
     parser.add_argument('--geometry-id', dest='geometry_ids', metavar='UUID',
                         action='append',
                         help='with --lands --with-geometry: download the '
@@ -190,6 +211,7 @@ def needs_no_ingest(args):
     so a test can hold it.
     """
     return bool(args.save_session or args.dry_run or args.routes
+                or args.route_ui_probe
                 or (args.lands and args.with_geometry))
 
 
@@ -215,6 +237,11 @@ def check_usage(args):
     if args.ids_file and not args.routes:
         raise UsageError('--ids-file names the flights whose routes to '
                          'collect and only makes sense together with --routes')
+    if args.route_ui_probe and (args.lands or args.routes or args.date_from
+                                or args.date_to or args.kind
+                                or args.ids_file):
+        raise UsageError('--route-ui-probe watches one request made by hand; '
+                         'it takes no period, no ids file and no other walk')
     if args.geometry_ids and not (args.lands and args.with_geometry):
         raise UsageError('--geometry-id names which polygon to download and '
                          'only makes sense together with --lands '
@@ -281,7 +308,8 @@ def main(argv=None):
             # printing twenty '-' for a lands run would make the flight keys
             # look like failures. Two templates, chosen by what actually ran.
             keys = {MODE_LANDS: LAND_SUMMARY_KEYS,
-                    MODE_ROUTES: ROUTE_SUMMARY_KEYS}.get(
+                    MODE_ROUTES: ROUTE_SUMMARY_KEYS,
+                    MODE_ROUTE_PROBE: ROUTE_PROBE_SUMMARY_KEYS}.get(
                         state.get('mode'), FLIGHT_SUMMARY_KEYS)
             log.info(format_run_summary([(key, state.get(key))
                                          for key in keys]))
@@ -321,6 +349,9 @@ def _run(argv, log, state):
 
     if args.lands:
         return _run_lands(args, cfg, log, state)
+
+    if args.route_ui_probe:
+        return _run_route_ui_probe(args, cfg, log, state)
 
     if args.routes:
         return _run_routes(args, cfg, log, state)
@@ -611,6 +642,30 @@ def _run_routes(args, cfg, log, state):
     """DRONE-COVERAGE-001 stage B: collect geometric routes. Returns an exit code."""
     state['mode'] = MODE_ROUTES
 
+    # [REASON]: the run stops HERE, before the browser, the session and the
+    # flight-list walk. The transport it would use was disproved on the live
+    # cabinet on 2026-08-27: the page's own requests brought 168 flights while
+    # every one of our 19 route batches came back "invalid request time".
+    # Walking the flight list first and failing afterwards would cost the
+    # operator four pages of pagination to learn what is already known.
+    from drone_collector.routes import NATIVE_FETCH_DISABLED_REASON
+    log.error('%s', NATIVE_FETCH_DISABLED_REASON)
+    log.error('Route collection is BLOCKED pending a valid UI transport. '
+              'Nothing was collected, nothing was queued, nothing was sent.')
+    return EXIT_ROUTE_TRANSPORT_DISABLED
+
+
+def _run_route_ui_probe(args, cfg, log, state):
+    """--route-ui-probe: посмотреть на ШТАТНЫЙ запрос кабинета.
+
+    [REASON]: собственный `fetch` опровергнут живым прогоном, а подпись
+    воспроизводить запрещено. Остаётся единственный честный путь -- дать
+    кабинету спросить самому и посмотреть на форму его вопроса. Никакого
+    своего запроса к DJI этот режим не делает, в очередь ничего не кладёт и в
+    Vehicle Soft не ходит.
+    """
+    state['mode'] = MODE_ROUTE_PROBE
+
     try:
         require_session(cfg.storage_state)
     except SessionMissing as exc:
@@ -618,8 +673,91 @@ def _run_routes(args, cfg, log, state):
         return EXIT_SESSION
 
     try:
-        from drone_collector.routes import (PageRouteTransport, RouteRun,
-                                            RouteRequestRefused, RouteRunError,
+        from drone_collector.route_ui_probe import (PROMPT_LINES, RouteUiProbe,
+                                                    write_report)
+    except ImportError as exc:  # pragma: no cover -- our own module
+        log.error('The route probe could not be imported (%s)', exc)
+        return EXIT_CONFIG
+
+    try:
+        from drone_collector.browser import (BrowserError, FlightCollector,
+                                             PeriodVerificationFailed,
+                                             RegionMismatch, SessionExpired)
+    except ImportError as exc:
+        log.error('Playwright is not available in this environment (%s). '
+                  'Install the collector dependencies: pip install -r '
+                  'drone_collector/requirements.txt && python -m playwright '
+                  'install chromium', exc)
+        return EXIT_CONFIG
+
+    probe = RouteUiProbe(logger=log)
+    errors = (BrowserError, PeriodVerificationFailed, RegionMismatch,
+              SessionExpired, SessionMissing)
+    try:
+        with FlightCollector(cfg, log) as collector:
+            page = collector.page
+            # [REASON]: подписка ставится ДО того, как человек что-либо
+            # сделает. Запрос, случившийся до подписки, увидеть уже нельзя, а
+            # второго живого прогона может и не быть.
+            page.on('request', lambda request: probe.note_request(
+                getattr(request, 'url', '')))
+            page.on('response', probe.note_response)
+
+            collector.open_records()
+            state['region'] = collector.check_region(cfg.expected_region)
+
+            for line in PROMPT_LINES:
+                print(line)
+            input('Press Enter once the routes are drawn on the map: ')
+    except errors as exc:
+        return _exit_code_for(exc, log)
+
+    state['probe_route_responses'] = probe.route_responses
+    state['probe_observations'] = len(probe.observations)
+    state['probe_only_all_ids'] = probe.saw_only_all_ids
+
+    try:
+        target = write_report(probe, cfg.out_dir)
+    except ValueError as exc:
+        log.error('%s', exc)
+        return EXIT_PAGINATION
+    state['probe_report'] = str(target)
+
+    if not probe.observations:
+        log.error('No route request was observed. The cabinet may not have '
+                  'been driven into the map view, or the day chosen has no '
+                  'flights. Nothing was collected and nothing was sent.')
+        print('No route request was observed; see %s' % target)
+        return EXIT_EMPTY
+
+    log.info('Observed %d route response(s), %d distinct; report: %s',
+             probe.route_responses, len(probe.observations), target)
+    print('%d route response(s) observed, %d distinct. Report: %s'
+          % (probe.route_responses, len(probe.observations), target))
+    print('The report carries shapes and lengths only -- no header value, no '
+          'cookie, no signature, no request id and no response body.')
+    return EXIT_OK
+
+
+def _run_routes_engine(args, cfg, log, state):
+    """Прежний прогон сбора. Не вызывается, пока транспорт не доказан.
+
+    [REASON]: не удалён вместе с транспортом. `RouteRun` исправен -- это
+    показывают 95 тестов, -- и недостаёт ему ровно одного: способа задать
+    вопрос кабинету так, как его задаёт сам кабинет. Выбросить работающий
+    разбор вместе с опровергнутым транспортом значило бы писать его заново,
+    когда способ найдётся.
+    """
+    try:
+        require_session(cfg.storage_state)
+    except SessionMissing as exc:
+        log.error('%s', exc)
+        return EXIT_SESSION
+
+    try:
+        from drone_collector.routes import (RouteRun, RouteRequestRefused,
+                                            RouteRunError,
+                                            disabled_route_transport,
                                             read_ids_file)
         from drone_collector.routes import write_dry_run as write_routes_dry_run
         from drone_collector.outbox import OutboxError
@@ -672,7 +810,7 @@ def _run_routes(args, cfg, log, state):
 
             run = RouteRun(
                 outbox,
-                PageRouteTransport(collector.page, cfg.route_api_origin, log),
+                disabled_route_transport(),
                 logger=log, batch_size=cfg.route_batch_size,
                 batch_pause_s=cfg.route_pause_ms / 1000.0,
                 quarantine_dir=cfg.outbox_dir / 'quarantine',
@@ -685,6 +823,10 @@ def _run_routes(args, cfg, log, state):
         # [REASON]: its own exit code. "The cabinet would not serve the routes"
         # and "the page walk was short" need different answers from whoever is
         # looking, and one shared non-zero code makes them the same answer.
+        if run is not None and run.last_result is not None:
+            # The counters of the aborted run are the answer to "how many ids
+            # were never asked for", and they must not die with the exception.
+            _account_for_routes(run.last_result, outbox, state)
         log.error('%s', exc)
         log.error('Nothing further was collected. Re-run after signing in '
                   'again; if it repeats with a fresh session, the request made '
