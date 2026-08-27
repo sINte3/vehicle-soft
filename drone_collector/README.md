@@ -477,10 +477,25 @@ the requested and returned id **sets** are equal, with counts of missing,
 extra and duplicate. No header value, no cookie, no signature, no `request_id`,
 no flight id and no response body reach any file.
 
-**Exit 0 means a confirmed route POST**, and nothing less: the expected https
-origin, the exact endpoint, POST, a 2xx status, a binary payload that decoded,
-and matching id sets. Route traffic that falls short of that is written up in
-the report and exits 13; seeing nothing at all exits 6.
+**Exit 0 means every observation was a confirmed route POST**, and nothing
+less. A confirmed observation needs all of: the expected https origin, the
+exact endpoint, POST, a 2xx status, a binary payload that decoded, a requested
+id list that is non-empty, all-integer and duplicate-free, id sets that are
+exactly equal, no duplicate in the returned ids, every decoded route carrying
+a flight id, and the decoded route count equal to the returned id count.
+
+Exit 0 also requires that **nothing was dropped** by the observation cap: about
+a dropped observation nothing is known, and "not known" is not "confirmed". One
+confirmed POST beside one unconfirmed answer is **not** a success either — that
+run exits 13. Seeing nothing at all exits 6.
+
+The response size limit is a limit on **processing**, not on reading:
+Playwright hands over a body whole, so an oversized body has already been in
+memory by the time it is measured. What the limit does is refuse to hash,
+decode, classify or store it; the observation keeps its real size. When the
+response declares a `Content-Length` above the limit, the body is not requested
+at all — but that header is the sender's claim and is never treated as the
+actual size.
 
 ### The outbox
 
