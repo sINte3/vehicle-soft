@@ -238,11 +238,11 @@ A2/A3. Всё ниже проверено фикстурами и мутация
 
 | Что | Где | Тестов |
 |---|---|---|
-| Очередь на диске | `drone_collector/outbox.py` | 49 |
-| Сбор маршрутов | `drone_collector/routes.py` | 78 |
-| Полные контуры полей | `drone_collector/geometry.py` | 58 |
+| Очередь на диске | `drone_collector/outbox.py` | 53 |
+| Сбор маршрутов | `drone_collector/routes.py` | 83 |
+| Полные контуры полей | `drone_collector/geometry.py` | 65 |
 | Командная строка этапа B | `drone_collector/main.py` | 12 |
-| Диагностика собранного | `tools/drone_route_semantics_probe.py` | 33 |
+| Диагностика собранного | `tools/drone_route_semantics_probe.py` | 37 |
 
 **Как запрашиваются маршруты.** Тело запроса подтверждено
 (`V1_REQUEST_BODY_CONFIRMED`) и несёт **список идентификаторов вылетов**, а

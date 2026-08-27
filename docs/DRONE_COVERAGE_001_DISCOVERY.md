@@ -716,10 +716,10 @@ python tools/drone_route_probe.py --request-body <тело запроса>.json
 Этап B (сбор), всё без сети и без браузера:
 
 ```
-python -m unittest drone_collector.tests.test_outbox       # 49 тестов
-python -m unittest drone_collector.tests.test_routes       # 78 тестов
-python -m unittest drone_collector.tests.test_geometry     # 58 тестов
-python -m unittest tools.test_drone_route_semantics_probe  # 33 теста
+python -m unittest drone_collector.tests.test_outbox       # 53 теста
+python -m unittest drone_collector.tests.test_routes       # 83 теста
+python -m unittest drone_collector.tests.test_geometry     # 65 тестов
+python -m unittest tools.test_drone_route_semantics_probe  # 37 тестов
 ```
 
 Файл `routes.json` открывается любым просмотрщиком GeoJSON и содержит девять
