@@ -11,6 +11,7 @@ check rather than a note in a runbook:
 No browser is launched in either case, because both fail before that point.
 """
 
+import io
 import logging
 import os
 import unittest
@@ -776,7 +777,7 @@ class RouteProbeExitCodeTests(CliTestCase):
             probe_module.RouteUiProbe = self._real_probe
         CliTestCase.tearDown(self)
 
-    def install(self, observations, confirmed, skipped=0):
+    def install(self, observations, confirmed, skipped=0, errors=0):
         """Подставные браузер и наблюдатель с заданным исходом."""
         from drone_collector import browser as browser_module
         from drone_collector import route_ui_probe as probe_module
@@ -824,6 +825,7 @@ class RouteProbeExitCodeTests(CliTestCase):
                 self.route_responses = observations
                 self.saw_only_all_ids = 0
                 self.skipped_over_cap = skipped
+                self.observation_errors = errors
 
             @property
             def confirmed_observations(self):
@@ -841,6 +843,7 @@ class RouteProbeExitCodeTests(CliTestCase):
                         'confirmed_route_posts':
                             len(self.confirmed_observations),
                         'skipped_over_cap': self.skipped_over_cap,
+                        'observation_errors': self.observation_errors,
                         'observations': [item.as_dict()
                                          for item in self.observations],
                         'nothing_was_queued': True,
@@ -851,13 +854,26 @@ class RouteProbeExitCodeTests(CliTestCase):
         probe_module.RouteUiProbe = _Probe
 
     def run_probe(self):
+        """Прогон целиком, с перехваченным stdout.
+
+        [REASON]: `setup_logging` вешает StreamHandler на `sys.stdout` в
+        момент вызова, поэтому перенаправление ДО `main()` ловит и строку
+        RUN SUMMARY -- ту самую, по которой оператор судит о прогоне.
+        """
         import builtins
+        import contextlib
         real_input = builtins.input
         builtins.input = lambda prompt='': ''
+        buffer = io.StringIO()
         try:
-            return main(['--route-ui-probe'])
+            with contextlib.redirect_stdout(buffer):
+                return main(['--route-ui-probe'])
         finally:
             builtins.input = real_input
+            self._stdout = buffer.getvalue()
+
+    def log_text(self):
+        return getattr(self, '_stdout', '')
 
     def test_every_observation_confirmed_exits_zero(self):
         self.install(observations=2, confirmed=2)
@@ -883,6 +899,33 @@ class RouteProbeExitCodeTests(CliTestCase):
         self.install(observations=2, confirmed=2, skipped=1)
         self.assertEqual(self.run_probe(),
                          main_module.EXIT_ROUTE_PROBE_UNCONFIRMED)
+
+    def test_a_listener_error_exits_thirteen(self):
+        """Ответ, который не удалось прочитать, не даёт зелёного прогона.
+
+        [REASON]: `note_response` глушит исключение, чтобы не уронить цикл
+        Playwright. Пока счётчика не было, прогон с двумя подтверждёнными
+        наблюдениями и одним нечитаемым ответом выходил кодом 0.
+        """
+        self.install(observations=2, confirmed=2, errors=1)
+        self.assertEqual(self.run_probe(),
+                         main_module.EXIT_ROUTE_PROBE_UNCONFIRMED)
+
+    def test_without_the_error_the_same_run_exits_zero(self):
+        """Положительный контроль к предыдущему: различается один счётчик."""
+        self.install(observations=2, confirmed=2, errors=0)
+        self.assertEqual(self.run_probe(), EXIT_OK)
+
+    def test_the_error_count_reaches_the_run_summary(self):
+        """Сводка прогона обязана показывать, почему он не зелёный."""
+        self.install(observations=2, confirmed=2, errors=1)
+        self.run_probe()
+        self.assertIn('probe_errors=1', self.log_text())
+
+    def test_a_clean_run_reports_no_errors_in_the_summary(self):
+        self.install(observations=1, confirmed=1)
+        self.run_probe()
+        self.assertIn('probe_errors=0', self.log_text())
 
 
 class RouteProbeHelpTextTests(unittest.TestCase):

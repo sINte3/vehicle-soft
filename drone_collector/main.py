@@ -118,7 +118,8 @@ ROUTE_SUMMARY_KEYS = (
 
 ROUTE_PROBE_SUMMARY_KEYS = (
     'mode', 'region', 'probe_route_responses', 'probe_observations',
-    'probe_confirmed', 'probe_only_all_ids', 'probe_report', 'exit',
+    'probe_confirmed', 'probe_skipped_over_cap', 'probe_errors',
+    'probe_only_all_ids', 'probe_report', 'exit',
 )
 
 LAND_SUMMARY_KEYS = (
@@ -728,6 +729,11 @@ def _run_route_ui_probe(args, cfg, log, state):
     state['probe_route_responses'] = probe.route_responses
     state['probe_observations'] = len(probe.observations)
     state['probe_confirmed'] = len(confirmed)
+    state['probe_skipped_over_cap'] = probe.skipped_over_cap
+    # [REASON]: в сводке прогона, а не только в отчёте. Ответ, который
+    # слушатель не смог прочитать, меняет код выхода, и строка сводки обязана
+    # показывать, почему прогон не зелёный.
+    state['probe_errors'] = probe.observation_errors
     state['probe_only_all_ids'] = probe.saw_only_all_ids
 
     try:
@@ -746,10 +752,13 @@ def _run_route_ui_probe(args, cfg, log, state):
     # result used to exit 0 on the strength of one confirmed POST beside an
     # unconfirmed answer -- exactly the class of false success this whole
     # review is about. A dropped observation is not "confirmed" either: about
-    # it nothing at all is known.
+    # it nothing at all is known. A response the listener could not read at
+    # all is not "nothing observed" either: something arrived and we failed to
+    # look at it, and calling that a clean run would be a lie.
     code = probe_exit_code(observations=len(probe.observations),
                            confirmed=len(confirmed),
-                           skipped_over_cap=probe.skipped_over_cap)
+                           skipped_over_cap=probe.skipped_over_cap,
+                           observation_errors=probe.observation_errors)
 
     if code == EXIT_EMPTY:
         log.error('No route request was observed. The cabinet may not have '
@@ -764,10 +773,13 @@ def _run_route_ui_probe(args, cfg, log, state):
         if probe.skipped_over_cap:
             reasons.append('%d observation(s) were dropped by the cap of %d'
                            % (probe.skipped_over_cap, MAX_OBSERVATIONS))
+        if probe.observation_errors:
+            reasons.append('%d response(s) could not be read by the listener'
+                           % probe.observation_errors)
         log.error('%d route response(s) observed, %d confirmed, %d dropped by '
-                  'the cap -- NOT a confirmed run: %s',
+                  'the cap, %d unreadable -- NOT a confirmed run: %s',
                   len(probe.observations), len(confirmed),
-                  probe.skipped_over_cap,
+                  probe.skipped_over_cap, probe.observation_errors,
                   '; '.join(reasons) or 'no reason recorded')
         print('%d route response(s) observed, %d confirmed. Report: %s'
               % (len(probe.observations), len(confirmed), target))
