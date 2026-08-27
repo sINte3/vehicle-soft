@@ -113,3 +113,10 @@ jobs:
 
       - name: Route semantics probe self-test (observations, never verdicts)
         run: python tools/test_drone_route_semantics_probe.py
+
+      # The first-live-run runbook is a set of ready-to-paste PowerShell
+      # commands, and pasted they will be. Twice already it named something
+      # that does not exist on the server -- a repository path, then a python
+      # without Playwright -- and both times a person caught it, not a check.
+      - name: Stage B runbook (venv python, real path, one named contour)
+        run: python tools/test_drone_stage_b_runbook.py

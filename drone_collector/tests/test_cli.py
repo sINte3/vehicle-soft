@@ -34,6 +34,12 @@ from drone_collector.tests.support import make_flight
 from drone_collector.sender import SendResult
 from drone_collector.tests.test_sender import config
 
+import tempfile
+
+from drone_collector import lands as lands_module
+from drone_collector.lands import LandResult
+from drone_collector.main import EXIT_GEOMETRY_NOT_FOUND, EXIT_OK
+
 MISSING_STATE = '/nonexistent/drone_collector/storage_state.json'
 
 COLLECTOR_VARS = ('DJI_RECORDS_URL', 'DJI_STORAGE_STATE', 'DJI_HEADLESS',
@@ -280,6 +286,12 @@ class StageBUsageTests(CliTestCase):
     def test_ids_file_without_routes_is_refused(self):
         self.refuses(['--ids-file', 'x.txt'])
 
+    def test_geometry_id_without_lands_and_geometry_is_refused(self):
+        self.refuses(['--geometry-id', 'u1'])
+        self.refuses(['--lands', '--geometry-id', 'u1'])
+        self.refuses(['--routes', '--ids-file', 'x.txt',
+                      '--geometry-id', 'u1'])
+
     def test_routes_without_a_period_or_an_ids_file_is_refused(self):
         """--routes должен знать, ЧЬИ маршруты просить."""
         self.refuses(['--routes'])
@@ -299,6 +311,9 @@ class StageBUsageTests(CliTestCase):
                      ['--lands'],
                      ['--lands', '--with-geometry'],
                      ['--lands', '--with-geometry', '--dry-run'],
+                     ['--lands', '--with-geometry', '--geometry-id', 'u1'],
+                     ['--lands', '--with-geometry', '--geometry-id', 'u1',
+                      '--geometry-id', 'u2', '--dry-run'],
                      ['--from', '2026-07-01', '--to', '2026-07-31'],
                      []):
             with self.subTest(' '.join(argv) or '(no flags)'):
@@ -325,6 +340,166 @@ class StageBNeedsNoIngestTokenTests(CliTestCase):
         os.environ['DJI_STORAGE_STATE'] = MISSING_STATE
         self.assertEqual(main(['--from', '2026-07-01', '--to', '2026-07-31']),
                          EXIT_CONFIG)
+
+
+class _FakeLandCollector(object):
+    """Подставной обход справочника: браузера нет, узлы заданы тестом."""
+
+    nodes = []
+
+    def __init__(self, cfg, log):
+        self.cfg = cfg
+        self.log = log
+        self.context = object()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def collect(self):
+        return LandResult(lands=list(self.nodes), pages_captured=1,
+                          total_count=len(self.nodes),
+                          nodes_captured=len(self.nodes), self_duplicates=0,
+                          rejected={}, complete=True)
+
+
+class GeometryRunReachesNoIngestTests(CliTestCase):
+    """Этап B не имеет права писать в Vehicle Soft -- ни одним путём.
+
+    [REASON]: это был живой дефект, а не гипотеза. `--lands --with-geometry`
+    без `--dry-run` считался ОТПРАВЛЯЮЩИМ прогоном: он требовал
+    DRONE_API_TOKEN и доходил до `send_lands`, то есть постил весь справочник
+    в `/drones/api/land_sync` и писал `field_contours` и строку
+    `drone_sync_logs` на боевой системе. Ни один тест этого не ловил, потому
+    что проверка «токен не нужен» покрывала только `--routes`.
+    """
+
+    def setUp(self):
+        CliTestCase.setUp(self)
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        self.root = Path(self._directory.name)
+        state_file = self.root / 'storage_state.json'
+        state_file.write_text('{"cookies": [], "origins": []}',
+                              encoding='utf-8')
+        os.environ['DJI_STORAGE_STATE'] = str(state_file)
+        os.environ['DRONE_OUTBOX_DIR'] = str(self.root / 'outbox')
+
+        self.sent = []
+        self.dumped = []
+        self._real_send_lands = main_module.send_lands
+        self._real_dump = main_module.write_lands_dry_run
+        self._real_collector = lands_module.LandCollector
+        self._real_geometry = main_module._run_geometry
+
+        def fake_send_lands(lands, cfg, **kwargs):
+            self.sent.append(list(lands))
+            from drone_collector.sender import LandSendResult
+            return LandSendResult()
+
+        self.geometry_calls = []
+
+        def fake_geometry(collector, result, args, cfg, log, state):
+            self.geometry_calls.append(list(args.geometry_ids or []))
+            return EXIT_OK
+
+        def fake_dump(lands, out_dir, total_count=None):
+            self.dumped.append(list(lands))
+            return self.root / 'lands_dry_run.json'
+
+        main_module.send_lands = fake_send_lands
+        main_module.write_lands_dry_run = fake_dump
+        main_module._run_geometry = fake_geometry
+        lands_module.LandCollector = _FakeLandCollector
+        _FakeLandCollector.nodes = [{'uuid': 'u1'}, {'uuid': 'u2'}]
+
+    def tearDown(self):
+        main_module.send_lands = self._real_send_lands
+        main_module.write_lands_dry_run = self._real_dump
+        main_module._run_geometry = self._real_geometry
+        lands_module.LandCollector = self._real_collector
+        CliTestCase.tearDown(self)
+
+    def test_a_real_geometry_run_never_calls_send_lands(self):
+        code = main(['--lands', '--with-geometry'])
+        self.assertEqual(code, EXIT_OK)
+        self.assertEqual(self.sent, [],
+                         'прогон геометрии отправил справочник в Vehicle Soft')
+        self.assertEqual(self.geometry_calls, [[]])
+
+    def test_a_real_geometry_run_needs_no_base_url_and_no_token(self):
+        """Ни VEHICLE_SOFT_BASE_URL, ни DRONE_API_TOKEN в среде нет."""
+        self.assertIsNone(os.environ.get('VEHICLE_SOFT_BASE_URL'))
+        self.assertIsNone(os.environ.get('DRONE_API_TOKEN'))
+        self.assertEqual(main(['--lands', '--with-geometry']), EXIT_OK)
+
+    def test_a_filtered_geometry_run_also_sends_nothing(self):
+        code = main(['--lands', '--with-geometry', '--geometry-id', 'u1'])
+        self.assertEqual(code, EXIT_OK)
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.geometry_calls, [['u1']])
+
+    def test_a_dry_geometry_run_also_sends_nothing(self):
+        self.assertEqual(main(['--lands', '--with-geometry', '--dry-run']),
+                         EXIT_OK)
+        self.assertEqual(self.sent, [])
+
+    def test_a_geometry_run_writes_no_lands_dry_run_dump(self):
+        """Дамп справочника несёт `geometry.storage.signedURL` дословно.
+
+        [REASON]: `write_lands_dry_run` кладёт узлы КАК ЕСТЬ, вместе с
+        подписанными ссылками. Писать его в режиме геометрии значило бы
+        положить на диск ровно те ссылки, которые этот модуль из файлов и
+        держит.
+        """
+        self.assertEqual(main(['--lands', '--with-geometry', '--dry-run']),
+                         EXIT_OK)
+        self.assertEqual(self.dumped, [])
+
+    def test_a_plain_dry_lands_run_still_writes_its_dump(self):
+        """Отрицательный контроль: у обычного `--lands --dry-run` дамп остался."""
+        self.assertEqual(main(['--lands', '--dry-run']), EXIT_OK)
+        self.assertEqual(len(self.dumped), 1)
+
+    def test_the_geometry_exit_code_reaches_the_caller(self):
+        """Ненайденный uuid доезжает до кода выхода процесса, а не тонет."""
+        main_module._run_geometry = (
+            lambda *a, **k: EXIT_GEOMETRY_NOT_FOUND)
+        self.assertEqual(
+            main(['--lands', '--with-geometry', '--geometry-id', 'nope']),
+            EXIT_GEOMETRY_NOT_FOUND)
+        self.assertEqual(self.sent, [])
+
+    def test_plain_lands_still_sends_the_snapshot(self):
+        """Отрицательный контроль: обычный `--lands` не ослаблен."""
+        os.environ['VEHICLE_SOFT_BASE_URL'] = 'https://vehicle.invalid'
+        os.environ['DRONE_API_TOKEN'] = 'token-for-the-test'
+        code = main(['--lands'])
+        self.assertEqual(code, EXIT_OK)
+        self.assertEqual(len(self.sent), 1,
+                         'обычный --lands перестал отправлять справочник')
+        self.assertEqual(len(self.sent[0]), 2)
+
+    def test_plain_lands_without_a_token_still_fails_on_the_token(self):
+        """Второй отрицательный контроль: требование токена там, где оно есть."""
+        self.assertEqual(main(['--lands']), EXIT_CONFIG)
+        self.assertEqual(self.sent, [])
+
+    def test_the_rule_itself_names_the_geometry_run(self):
+        """Правило живёт в одном месте, и оно проверяемо напрямую."""
+        parse = build_parser().parse_args
+        self.assertTrue(main_module.needs_no_ingest(
+            parse(['--lands', '--with-geometry'])))
+        self.assertTrue(main_module.needs_no_ingest(
+            parse(['--lands', '--with-geometry', '--dry-run'])))
+        self.assertTrue(main_module.needs_no_ingest(parse(['--routes',
+                                                           '--ids-file',
+                                                           'x.txt'])))
+        self.assertFalse(main_module.needs_no_ingest(parse(['--lands'])),
+                         'обычный --lands объявлен неотправляющим')
+        self.assertFalse(main_module.needs_no_ingest(parse([])))
 
 
 class StageBSummaryKeysTests(unittest.TestCase):

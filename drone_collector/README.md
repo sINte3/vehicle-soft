@@ -191,6 +191,7 @@ command line.
 | 6 | A window captured **zero flights**, or `--lands` captured **zero contours**. | Nothing was sent. Usually the session is in the wrong region. If the period really is empty, set `DJI_ALLOW_EMPTY_WINDOW=true`; that variable does not apply to `--lands`. |
 | 7 | The session is in the **wrong region**. | The log shows the expected and the observed value. Re-run `--save-session` and check the region selector. |
 | 10 | `--routes` only: the cabinet **refused to serve the routes**. | Nothing was collected. Re-run after signing in again; if it repeats with a fresh session, the request made from the page is not being signed the way the cabinet expects — that is a finding, not a breakage. |
+| 11 | `--geometry-id` named a contour the **directory does not hold**. | The uuids that matched nothing are listed. Nothing was queued for them. If the directory walk was also incomplete, the contour may simply be on a page that was never fetched. |
 
 Codes **8** and **9** are deliberately absent from this table: they belong to
 the other entry point of this package, `python -m drone_collector.devices`
@@ -370,15 +371,25 @@ cabinet returns rows stamped 2026-07-03, while `avaz ismatov` still carries
 python -m drone_collector.main --routes --from 2026-06-05 --to 2026-06-05 --dry-run
 python -m drone_collector.main --routes --from 2026-06-05 --to 2026-06-05
 python -m drone_collector.main --routes --ids-file ids.txt
-python -m drone_collector.main --lands --with-geometry --dry-run
-python -m drone_collector.main --lands --with-geometry
+python -m drone_collector.main --lands --with-geometry --geometry-id UUID --dry-run
+python -m drone_collector.main --lands --with-geometry --geometry-id UUID
+python -m drone_collector.main --lands --with-geometry            (every contour)
 ```
 
 **Neither of these sends anything to Vehicle Soft.** Both collect into the
 on-disk outbox at `DRONE_OUTBOX_DIR` (default `drone_collector/data/outbox`);
 the receiving endpoints are stage C. Neither writes a `drone_sync_logs` row,
-because neither calls the sender at all — `--routes` does not even require
-`DRONE_API_TOKEN`.
+because neither calls the sender at all — and neither requires
+`VEHICLE_SOFT_BASE_URL` or `DRONE_API_TOKEN`.
+
+`--lands --with-geometry` reaches **no** Vehicle Soft endpoint, and that
+includes the directory snapshot: sending the snapshot is what plain `--lands`
+is for, and it still does it. This was a live defect and not a hypothetical —
+until it was fixed, a real geometry run counted as a sending run, demanded the
+ingest token, and posted the whole directory to `/drones/api/land_sync`,
+writing `field_contours` and a `drone_sync_logs` row. Two tests hold it now:
+one asserts `send_lands` is never called on a geometry run, the other asserts
+plain `--lands` still calls it.
 
 ### What `--routes` collects, and what it must never be called
 
@@ -419,8 +430,21 @@ echoing the value into the exception.
 
 ### `--with-geometry`
 
-Downloads the full polygon of every contour through the signed link in the
-directory response. The link is taken from the object already in memory, used
+Downloads contour polygons through the signed link in the directory response.
+
+**Which contours: `--geometry-id`.** The flag may be repeated and is matched
+against the directory node `uuid` **exactly**; only the named contours are
+downloaded, and the signed links of the rest are never read out of the
+directory response at all — the selection happens on the raw node, before any
+object holding a link is built. A uuid that matches nothing is named on exit
+11 rather than passing quietly. Without the flag every contour of the
+directory is downloaded, which is what a later, separately authorised bulk
+pass will do; a first pilot must name one contour.
+
+```
+python -m drone_collector.main --lands --with-geometry --geometry-id UUID --dry-run
+python -m drone_collector.main --lands --with-geometry --geometry-id UUID
+``` The link is taken from the object already in memory, used
 once, and cleared immediately; it reaches no file, no log and no exception —
 messages from other libraries are scrubbed of any URL before they are logged.
 The download is verified against DJI's own `contentMd5`, hashed again with

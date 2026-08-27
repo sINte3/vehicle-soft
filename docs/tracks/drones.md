@@ -137,6 +137,8 @@ SmartFarm, публичного API нет. Задача модуля: полу�
 | `DRONE-COVERAGE-001-A2A3` (инструменты) | **инструменты A2/A3, этапы НЕ завершены.** Все только на чтение: `tools/drone_area_anomaly_probe.py` (аудит парка — повторы площади с окном, ОДИННАДЦАТЬ состояний ширины, проверка типов и `isfinite`, качество данных, xlsx на семь листов; контрольный вылет — предусловие: без него отчёт не пишется и код ненулевой), `tools/drone_field_geometry_probe.py` (строгий валидатор полигона: md5, замкнутость, самопересечения, WGS84, допуск площади; при провале GeoJSON не пишется), `tools/drone_route_probe.py --request-body` (структура тела POST обходом дерева, без единого значения — ни строк, ни чисел); 153 теста. `docs/DRONE_COVERAGE_001_A2_A3_REPORT.md` — статус: `A2_TOOLING_READY` / `A2_DATA_RUN_PENDING` / `A3_VALIDATORS_READY` / `V1_REQUEST_BODY_PENDING` / `V2_FIELD_GEOMETRY_PENDING`, итог **`DECISION_PENDING`**. **Ни один инструмент не запущен на данных: production из среды разработки недостижим по уставу.** Найдено при написании: правило поиска аномалии из задания известный случай НЕ ловит — 622715275 повторяет площадь вылета через один | PR #106 | — |
 | `DRONE-COVERAGE-001-B` (сбор) | **этап B реализован, на живых данных НЕ запускался.** A2/A3 закрыты данными владельца: `A2_DATA_RUN_COMPLETE`, `V1_REQUEST_BODY_CONFIRMED`, `V2_FIELD_GEOMETRY_CONFIRMED`, решение владельца **`REDESIGN_REQUIRED`** — цель сужена до карты доказательств. Новое: `drone_collector/outbox.py` (очередь на диске: атомарная запись через `.tmp`+`os.replace`, дедупликация по ключу из вида, идентификатора и хеша, `pending`/`sent`/`corrupt`, потолок записи 8 МБ, отказ при маркере секрета ДО записи, совместимость с Windows), `drone_collector/routes.py` (запрос маршрутов по списку известных `dji_flight_id` — тело подтверждено, периода в нём нет; запрос выполняет САМА страница, подпись DJI не воспроизводится; сверка запрошенных и вернувшихся ID с отказом от всего пакета при лишнем; пакеты, три попытки с отступом 2 с и 4 с, темп, возобновление по содержимому очереди, `--dry-run`, запрошенный `data_type` сохраняется под своим именем — ответ своего не несёт, отсутствующая ширина остаётся `NULL`), `drone_collector/geometry.py` (полные контуры: подписанная ссылка живёт только в памяти и затирается после первого взятия, сверка `contentMd5`, свой sha256, версии по `contentMd5`, `Polygon` и `MultiPolygon`, дословный `FeatureCollection` с `funcType`, `parameters.offset`, `ReferencePoint` и неизвестными properties, десять именованных статусов), `tools/drone_route_semantics_probe.py` (диагностика `mission_uuid`, кандидатов в идентификаторы задания и односторонней согласованности `new_work_area`). Правлено: `main.py` (`--routes`, `--ids-file`, `--lands --with-geometry`, `check_usage()`, код выхода 10), `config.py` (пять настроек), `browser.py` и `lands.py` — по одному свойству только на чтение. **230 новых тестов; 20 мутаций исходников, каждая поймана.** Найдено при написании: `int(1.5)` молча усекал идентификатор вылета — дробное значение теперь отвергается. **Независимое ревью перед мержем нашло и закрыло семь дефектов** (каждый — отрицательным контролем на коде до правки): committed-фикстура контура лежала в реальном районе работ и совпадала с настоящим `P03335975` по площади до 0.0001 га, объявляя при этом свои координаты вымышленными — долгота сдвинута, площадь сдвигом по долготе не меняется; сухой прогон маршрутов писал тело на диск МИМО проверки на секреты, которой очередь отказывала; `geometry.py` не проверял самопересечение кольца, хотя валидатор A3 проверяет, и несимметричная восьмёрка ложилась в очередь с неверной площадью 0.9520 га; `RecursionError` от вложенного JSON уносил весь проход по 5 489 контурам; отказ очереди по одной записи обрывал оставшиеся пакеты голым трейсбеком; `observed_data_type` называл наблюдением запрошенное значение, хотя ответ своего `data_type` не несёт; диагностика читала конверт ЛЮБОЙ версии правилами версии 1. Итог: 452 теста сборщика и 373 инструментов, 7 отрицательных контролей | PR #107 | — |
 
+| `DRONE-COVERAGE-001-B-SAFETY` (правка после мержа) | **эксплуатационный блокер: `--lands --with-geometry` ОТПРАВЛЯЛ данные в Vehicle Soft.** Найден владельцем после мержа PR #107, живого прогона не было. Механизм: `sends = not (save_session or dry_run or routes)` не называл режим геометрии, поэтому настоящий прогон считался отправляющим — требовал `DRONE_API_TOKEN` и доходил до `send_lands`, то есть постил ВЕСЬ справочник в `/drones/api/land_sync` и писал `field_contours` и строку `drone_sync_logs` на боевой системе. Ни один тест не ловил: проверка «токен не нужен» покрывала только `--routes`, а CLI-теста на `--lands --with-geometry` не было вовсе. Правка: правило вынесено в `needs_no_ingest()` и названо тестом; `_run_lands` ветвится на `--with-geometry` ДО отправки и не пишет даже дамп справочника — он несёт `signedURL` дословно. Обычный `--lands` не тронут и по-прежнему отправляет снимок, на это стоит отдельный контроль. Плюс `--geometry-id` — точный отбор по `node.uuid` до построения объекта со ссылкой, чтобы первый пилот брал ОДИН контур, а не качал 5 489 подписанных ссылок; неизвестный uuid даёт код 11. Плюс ранбук переведён на venv сборщика (`drone_collector\.venv\Scripts\python.exe`): системный Python не видит Playwright, и живой прогон упал бы на импорте. `tools/test_drone_stage_b_runbook.py` держит ранбук в CI — дважды подряд он называл то, чего на сервере нет, и оба раза это замечал человек, а не проверка. 5 отрицательных контролей | PR #108 | — |
+
 | `DRONE-BODYCODE-001` (разведка) | сверка гектаров с djiag.com за 11 месяцев вскрыла: итог месяца сходится всегда (≤0.21 га), а РАСПРЕДЕЛЕНИЕ по бортам уезжает там, где ярлык DJI переехал на другой планер — октябрь-2025 перестановка по кругу (205.98 га: DJI №13→наш №12, №15→№13, №12→№14), март-2026 42.16 га чужих на №12 (18.69 от №13, 23.49 от №15), сентябрь-2025 5229.67 га из 5572.36 не распознаны; апрель–август 2026 чисты борт в борт. Идентификатор борта существует — `Body Code` выгрузки (он же `hardware_id`), не путать с `Serial Number` (это вылет). `tools/drone_body_code_probe.py` — только чтение: есть ли борт в payload, сходятся ли карточки, какие вылеты переехали бы. `migrate_drones_hardware_id_fix_001.py` — серийники №2 и №9 стояли наоборот; это ПРЕДУСЛОВИЕ привязки по борту, иначе она разложит вылеты уверенно и неправильно | #71 | мерж-коммит подставить при мерже |
 
 | `DRONE-BODYCODE-001` (починка) | сверка наших написаний ника с помесячными итогами DJI по бортам решила три месяца БЕЗ выгрузок: `nickname` в payload — это историческое имя борта, и исчерпывающий перебор всех раскладок написаний по бортам даёт РОВНО ОДНУ, где сходятся и вылеты, и гектары каждого борта. Октябрь-2025 и март-2026: 392 вылета / 403.52 га переезжают (`12 Peshku`→№13, `14 Servis`→№12, `13 Servis`→№15); апрель–июль 2026 единственная раскладка — уже стоящая в базе, трогать нечего. `migrate_drones_reattach_bodycode_001.py`, постусловие сверяется с числами djiag.com. Сентябрь-2025 не решается суммами: раскладки целых написаний по бортам не существует — значит написание переезжало внутри месяца (переименование 27–29.09); нужны подневные итоги DJI по бортам | #71 | мерж-коммит подставить при мерже |
@@ -477,9 +479,27 @@ SmartFarm, публичного API нет. Задача модуля: полу�
    очереди, каждый шаг проверяется до следующего. Все команды PowerShell,
    по одной на строку.
 
+   **Интерпретатор — только venv сборщика.** Playwright и Chromium стоят
+   именно в нём; системный `C:\Program Files\Python314\python.exe` их не
+   видит, и прогон упадёт на импорте, а не на данных.
+
+   Предполётная проверка. Если хоть одна строка не отвечает как надо —
+   остановиться и не идти дальше; чинится это отдельно, установкой
+   зависимостей сборщика, а не по ходу живого прогона:
+
    ```
-   cd C:\transport-report
-   & "C:\Program Files\Python314\python.exe" -m drone_collector.main --save-session
+   Set-Location "C:\transport-report"
+   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" --version
+   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -c "import playwright; print('PLAYWRIGHT_IMPORT=PASS')"
+   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --help
+   ```
+
+   Ни `pip install`, ни `playwright install` в живом прогоне не запускаются.
+
+   Сессия DJI:
+
+   ```
+   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --save-session
    ```
 
    Затем сухой прогон маршрутов на ОДНОМ дне. Идентификаторы вылетов этого
@@ -488,7 +508,7 @@ SmartFarm, публичного API нет. Задача модуля: полу�
    тогда, когда обход надо пропустить.
 
    ```
-   & "C:\Program Files\Python314\python.exe" -m drone_collector.main --routes --from 2026-06-05 --to 2026-06-05 --dry-run
+   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --routes --from 2026-06-05 --to 2026-06-05 --dry-run
    ```
 
    Смотреть в `drone_collector/out/routes_dry_run.json`: `nothing_was_queued`
@@ -499,22 +519,33 @@ SmartFarm, публичного API нет. Задача модуля: полу�
    Настоящий сбор того же дня, затем повтор (обязан дать ноль новых):
 
    ```
-   & "C:\Program Files\Python314\python.exe" -m drone_collector.main --routes --from 2026-06-05 --to 2026-06-05
-   & "C:\Program Files\Python314\python.exe" -m drone_collector.main --routes --from 2026-06-05 --to 2026-06-05
-   & "C:\Program Files\Python314\python.exe" tools\drone_route_semantics_probe.py --outbox drone_collector\data\outbox --report drone_collector\out\route_semantics.txt
+   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --routes --from 2026-06-05 --to 2026-06-05
+   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --routes --from 2026-06-05 --to 2026-06-05
+   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" tools\drone_route_semantics_probe.py --outbox drone_collector\data\outbox --report drone_collector\out\route_semantics.txt
    ```
 
-   Геометрия — тоже сначала всухую, и на первом проходе она качает 5 489
-   контуров, то есть идёт долго:
+   **Геометрия — РОВНО ОДИН контур, названный по uuid.** Без `--geometry-id`
+   прогон качает все 5 489 контуров, то есть предъявляет пять с половиной
+   тысяч подписанных ссылок ради одной проверки формата; первый прогон так
+   делать не должен. Берётся тот самый контур, на котором закрыт вопрос В2 —
+   `P03335975`:
 
    ```
-   & "C:\Program Files\Python314\python.exe" -m drone_collector.main --lands --with-geometry --dry-run
-   & "C:\Program Files\Python314\python.exe" -m drone_collector.main --lands --with-geometry
+   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --lands --with-geometry --geometry-id baf71584-64e2-49c5-8a41-25fca4ad5f6e --dry-run
+   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --lands --with-geometry --geometry-id baf71584-64e2-49c5-8a41-25fca4ad5f6e
+   & "C:\transport-report\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --lands --with-geometry --geometry-id baf71584-64e2-49c5-8a41-25fca4ad5f6e
    ```
 
-   **Отправки в Vehicle Soft на этом этапе нет вовсе** — приёмники это этап C.
-   Всё собранное лежит в `drone_collector/data/outbox`. Откат — удалить этот
-   каталог; базы прогон не касается ни одной строкой.
+   Третья строка — повтор ради идемпотентности: обязан дать `SKIPPED_UNCHANGED`
+   и ноль новых файлов в очереди. **Код выхода 11** означает, что справочник
+   такого uuid не содержит: тоже находка, а не поломка.
+
+   **Отправки в Vehicle Soft на этом этапе нет вовсе** — ни маршрутами, ни
+   геометрией. `--lands --with-geometry` не обращается ни к одному эндпоинту
+   Vehicle Soft, включая снимок справочника: снимок — дело обычного `--lands`,
+   и его первый пилот не запускает. Всё собранное лежит в
+   `drone_collector/data/outbox`. Откат — удалить этот каталог; базы прогон не
+   касается ни одной строкой.
 
 9б. **Прежняя редакция пункта 9 (до этой сессии):**
    Бинарный ответ карты (`POST /api/web/v2/flight_datas/flight_records`)

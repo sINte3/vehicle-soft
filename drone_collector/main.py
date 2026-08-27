@@ -7,7 +7,8 @@
     python -m drone_collector.main                      (rolling window)
     python -m drone_collector.main --lands              (field directory)
     python -m drone_collector.main --lands --dry-run
-    python -m drone_collector.main --lands --with-geometry   (full polygons)
+    python -m drone_collector.main --lands --with-geometry   (all polygons)
+    python -m drone_collector.main --lands --with-geometry --geometry-id UUID
     python -m drone_collector.main --routes --from 2026-06-01 --to 2026-06-30
     python -m drone_collector.main --routes --ids-file ids.txt --dry-run
 
@@ -26,6 +27,7 @@ Exit codes (see drone_collector/README.md):
        contours (usually the wrong region)
     7  the session is in the wrong region
    10  the cabinet refused to serve the routes (--routes only)
+   11  --geometry-id named a contour the directory does not hold
 
     8 and 9 are deliberately skipped: they belong to the other entry point of
     this package, `python -m drone_collector.devices`.
@@ -35,6 +37,13 @@ They collect into the on-disk outbox (drone_collector/outbox.py) and send
 NOTHING to Vehicle Soft: the receiving endpoints are stage C. Neither run
 touches the flight-collection counters, and neither writes a drone_sync_logs
 row -- by construction, because neither calls the sender at all.
+
+That last sentence was false for `--lands --with-geometry` until this fix: the
+run counted as a sending one, demanded the ingest token, and posted the whole
+directory to /drones/api/land_sync. Two things now hold it true and are held by
+tests: needs_no_ingest() names the geometry run, and _run_lands() branches on
+--with-geometry BEFORE the send. Plain `--lands` still sends the snapshot --
+that is what it is for, and nothing about it changed.
 """
 
 import argparse
@@ -63,6 +72,11 @@ EXIT_REGION = 7
 # означает, что оператор, читающий код выхода из журнала планировщика,
 # однажды прочтёт его неверно.
 EXIT_ROUTE_REFUSED = 10
+# [REASON]: its own code, not EXIT_EMPTY. "The directory holds no contour at
+# all" and "the directory does not hold the ONE you named" call for different
+# answers from whoever reads the scheduler log, and a shared code makes them
+# the same answer.
+EXIT_GEOMETRY_NOT_FOUND = 11
 
 KIND_INCREMENTAL = 'incremental'
 KIND_BACKFILL = 'backfill'
@@ -92,8 +106,9 @@ LAND_SUMMARY_KEYS = (
     'mode', 'dry_run', 'pages', 'total_count', 'lands_captured',
     'lands_deduped', 'self_duplicates', 'rejected_responses', 'complete',
     'batches', 'seen', 'new', 'updated', 'unchanged', 'errors',
-    'geometry_seen', 'geometry_downloaded', 'geometry_queued',
-    'geometry_unchanged', 'geometry_failed', 'geometry_bytes', 'exit',
+    'geometry_selected', 'geometry_seen', 'geometry_downloaded',
+    'geometry_queued', 'geometry_unchanged', 'geometry_failed',
+    'geometry_not_found', 'geometry_bytes', 'exit',
 )
 
 
@@ -135,10 +150,13 @@ def build_parser():
                              'instead of flights; takes no period')
     parser.add_argument('--with-geometry', dest='with_geometry',
                         action='store_true',
-                        help='with --lands: also download the full contour '
-                             'polygon of every field into the on-disk outbox. '
-                             'The signed link is used in memory and stored '
-                             'nowhere. Sends nothing to Vehicle Soft.')
+                        help='with --lands: also download the contour '
+                             'polygons into the on-disk outbox. The signed '
+                             'link is used in memory and stored nowhere. '
+                             'Reaches NO Vehicle Soft endpoint at all -- not '
+                             'even the directory snapshot, which is what plain '
+                             '--lands is for. Without --geometry-id it '
+                             'downloads EVERY contour of the directory.')
     parser.add_argument('--routes', action='store_true',
                         help='collect the geometric route of each flight into '
                              'the on-disk outbox. Needs either --from/--to '
@@ -148,7 +166,31 @@ def build_parser():
                         help='with --routes: read the flight ids to request '
                              'from this file, one per line, # comments '
                              'allowed. Skips the flight-list walk entirely.')
+    parser.add_argument('--geometry-id', dest='geometry_ids', metavar='UUID',
+                        action='append',
+                        help='with --lands --with-geometry: download the '
+                             'polygon of THIS contour only, matched against '
+                             'the directory node uuid exactly. May be given '
+                             'more than once. Without it every contour of the '
+                             'directory is downloaded, which is the run a '
+                             'first pilot must not make.')
     return parser
+
+
+def needs_no_ingest(args):
+    """True for the runs that reach no Vehicle Soft endpoint at all.
+
+    [REASON]: `--lands --with-geometry` belongs here, and its absence was a
+    live defect. The old expression asked only about --save-session, --dry-run
+    and --routes, so a real geometry run counted as a SENDING run: it demanded
+    VEHICLE_SOFT_BASE_URL and DRONE_API_TOKEN, and then `_run_lands` posted the
+    whole directory to /drones/api/land_sync -- writing `field_contours` and a
+    `drone_sync_logs` row on a production system that stage B is not allowed to
+    touch. The rule now lives in one named place instead of inline in `_run()`,
+    so a test can hold it.
+    """
+    return bool(args.save_session or args.dry_run or args.routes
+                or (args.lands and args.with_geometry))
 
 
 def check_usage(args):
@@ -173,6 +215,10 @@ def check_usage(args):
     if args.ids_file and not args.routes:
         raise UsageError('--ids-file names the flights whose routes to '
                          'collect and only makes sense together with --routes')
+    if args.geometry_ids and not (args.lands and args.with_geometry):
+        raise UsageError('--geometry-id names which polygon to download and '
+                         'only makes sense together with --lands '
+                         '--with-geometry')
     if args.routes and args.kind:
         raise UsageError('--routes sends nothing to Vehicle Soft, so --kind '
                          'has nothing to label')
@@ -255,11 +301,12 @@ def _run(argv, log, state):
         log.error('Usage error: %s', exc)
         return EXIT_CONFIG
 
-    # --save-session, --dry-run and --routes never send anything, so they do
-    # not need VEHICLE_SOFT_BASE_URL or DRONE_API_TOKEN. Every path that does
-    # send requires both, and fails before the first request when one is
-    # missing.
-    sends = not (args.save_session or args.dry_run or args.routes)
+    # --save-session, --dry-run, --routes and --lands --with-geometry never
+    # send anything, so they do not need VEHICLE_SOFT_BASE_URL or
+    # DRONE_API_TOKEN. Every path that does send requires both, and fails
+    # before the first request when one is missing. The rule itself lives in
+    # needs_no_ingest(), where a test can hold it.
+    sends = not needs_no_ingest(args)
     try:
         cfg = load_config(require_ingest=sends)
     except ConfigError as exc:
@@ -419,7 +466,7 @@ def _run_lands(args, cfg, log, state):
                   'install chromium', exc)
         return EXIT_CONFIG
 
-    geometry_clean = True
+    geometry_exit = EXIT_OK
     try:
         with LandCollector(cfg, log) as collector:
             result = collector.collect()
@@ -429,8 +476,8 @@ def _run_lands(args, cfg, log, state):
             # expire six hours after DJI issued them -- there is no later
             # moment at which this could be done from saved data.
             if args.with_geometry and result.lands:
-                geometry_clean = _run_geometry(collector, result, args, cfg,
-                                               log, state)
+                geometry_exit = _run_geometry(collector, result, args, cfg,
+                                              log, state)
     except ImportError as exc:
         # playwright is imported lazily, inside start().
         log.error('Playwright is not available in this environment (%s). '
@@ -465,7 +512,23 @@ def _run_lands(args, cfg, log, state):
                   'which returns an empty list with no error.')
         return EXIT_EMPTY
 
-    if args.dry_run:
+    if args.with_geometry:
+        # [REASON]: a geometry run reaches NO Vehicle Soft endpoint -- not the
+        # snapshot, not anything else -- and this branch is what makes that
+        # true rather than merely documented. Until this fix a real
+        # `--lands --with-geometry` fell through to send_lands() below and
+        # posted the whole directory to /drones/api/land_sync, writing
+        # `field_contours` and a `drone_sync_logs` row. It also skips
+        # write_lands_dry_run(): that file dumps the directory nodes verbatim,
+        # and the nodes carry `geometry.storage.signedURL` -- writing it here
+        # would put the very links this module keeps out of files onto disk.
+        # Sending the snapshot is what plain `--lands` is for, and it still
+        # does it.
+        log.info('--with-geometry is a collect-only run: the polygons go to '
+                 'the outbox, the directory snapshot is NOT sent to Vehicle '
+                 'Soft and no dry-run dump of it is written. Run plain '
+                 '--lands for the snapshot.')
+    elif args.dry_run:
         target = write_lands_dry_run(result.lands, cfg.out_dir,
                                      total_count=result.total_count)
         log.info('Dry run: %d contour(s) written to %s', len(result.lands),
@@ -489,11 +552,8 @@ def _run_lands(args, cfg, log, state):
         log.error('%s', incomplete_walk_message(
             len(result.lands), result.total_count, args.dry_run))
         return EXIT_PAGINATION
-    if not geometry_clean:
-        log.error('The directory itself is complete, but at least one polygon '
-                  'is missing. Re-run --lands --with-geometry: what already '
-                  'arrived is in the queue and is not fetched again.')
-        return EXIT_PAGINATION
+    if geometry_exit != EXIT_OK:
+        return geometry_exit
     return EXIT_OK
 
 
@@ -689,8 +749,12 @@ def _account_for_routes(result, outbox, state):
 
 
 def _run_geometry(collector, result, args, cfg, log, state):
-    """--lands --with-geometry: download the full polygons. Returns True on
-    a clean pass, False when at least one contour failed."""
+    """--lands --with-geometry: download the full polygons.
+
+    Returns an exit code: EXIT_OK on a clean pass, EXIT_GEOMETRY_NOT_FOUND
+    when --geometry-id named a contour the directory does not hold, and
+    EXIT_PAGINATION when at least one selected contour failed.
+    """
     from drone_collector.geometry import (ContextGeometryDownloader,
                                           GeometryRun, STATUS_OK,
                                           STATUS_UNCHANGED)
@@ -700,7 +764,7 @@ def _run_geometry(collector, result, args, cfg, log, state):
     run = GeometryRun(outbox, ContextGeometryDownloader(collector.context, log),
                       logger=log, pause_s=cfg.geometry_pause_ms / 1000.0,
                       dry_run=bool(args.dry_run))
-    geometry = run.collect(result.lands)
+    geometry = run.collect(result.lands, only_uuids=args.geometry_ids)
 
     failed = sum(count for status, count in geometry.by_status.items()
                  if status not in (STATUS_OK, STATUS_UNCHANGED))
@@ -710,12 +774,31 @@ def _run_geometry(collector, result, args, cfg, log, state):
     state['geometry_unchanged'] = geometry.by_status.get(STATUS_UNCHANGED, 0)
     state['geometry_failed'] = failed
     state['geometry_bytes'] = geometry.bytes
+    state['geometry_selected'] = (len(geometry.requested_uuids)
+                                  if geometry.requested_uuids is not None
+                                  else None)
+    state['geometry_not_found'] = len(geometry.missing_uuids)
 
     if args.dry_run:
         target = write_geometry_dry_run(geometry, run.prepared_bodies,
                                         cfg.out_dir)
         log.info('Dry run: nothing was queued; %d contour(s) written to %s',
                  len(run.prepared_bodies), target)
+
+    if geometry.missing_uuids:
+        # [REASON]: a named contour that is not in the directory is an input
+        # error with its own outcome, not a quiet zero. The uuids are printed
+        # because a uuid is an identifier, not a credential -- unlike the
+        # signed link of the same node, which is never printed anywhere.
+        log.error('--geometry-id named %d contour(s) the directory does not '
+                  'hold: %s', len(geometry.missing_uuids),
+                  ', '.join(geometry.missing_uuids))
+        if not result.complete:
+            log.error('The directory walk was INCOMPLETE, so a named contour '
+                      'may simply be on a page that was never fetched. Re-run '
+                      'and let the walk finish before treating this as proof '
+                      'that the contour is gone.')
+        return EXIT_GEOMETRY_NOT_FOUND
 
     if failed:
         # [REASON]: a contour whose polygon did not arrive is not a silent
@@ -726,7 +809,10 @@ def _run_geometry(collector, result, args, cfg, log, state):
                   failed, {status: count
                            for status, count in geometry.by_status.items()
                            if status not in (STATUS_OK, STATUS_UNCHANGED)})
-    return not failed
+        log.error('Re-run the same command: what already arrived is in the '
+                  'queue and is not fetched again.')
+        return EXIT_PAGINATION
+    return EXIT_OK
 
 
 def _exit_code_for(exc, log):
