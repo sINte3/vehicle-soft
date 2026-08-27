@@ -189,10 +189,11 @@ def build_parser():
                         action='store_true',
                         help='open a browser, ask the operator to drive Task '
                              'History into the map view by hand, and WATCH the '
-                             'request the cabinet makes for itself. Makes no '
-                             'request of its own, queues nothing, sends '
-                             'nothing. Records shapes and lengths, never a '
-                             'header value.')
+                             'request the cabinet makes for itself. The probe '
+                             'opens the cabinet but does not initiate the '
+                             'route POST. Queues nothing, sends nothing to '
+                             'Vehicle Soft. Records shapes and lengths, never '
+                             'a header value.')
     parser.add_argument('--geometry-id', dest='geometry_ids', metavar='UUID',
                         action='append',
                         help='with --lands --with-geometry: download the '
@@ -666,9 +667,12 @@ def _run_route_ui_probe(args, cfg, log, state):
 
     [REASON]: собственный `fetch` опровергнут живым прогоном, а подпись
     воспроизводить запрещено. Остаётся единственный честный путь -- дать
-    кабинету спросить самому и посмотреть на форму его вопроса. Никакого
-    своего запроса к DJI этот режим не делает, в очередь ничего не кладёт и в
-    Vehicle Soft не ходит.
+    кабинету спросить самому и посмотреть на форму его вопроса.
+
+    Доказанная гарантия: **probe открывает кабинет, но POST к эндпоинту
+    маршрутов не инициирует**. Сказать «не делает своего запроса к DJI» было
+    бы неправдой -- открытие кабинета это навигация. В очередь ничего не
+    кладёт и в Vehicle Soft не ходит.
     """
     state['mode'] = MODE_ROUTE_PROBE
 
@@ -679,7 +683,9 @@ def _run_route_ui_probe(args, cfg, log, state):
         return EXIT_SESSION
 
     try:
-        from drone_collector.route_ui_probe import (PROMPT_LINES, RouteUiProbe,
+        from drone_collector.route_ui_probe import (MAX_OBSERVATIONS,
+                                                    PROMPT_LINES, RouteUiProbe,
+                                                    probe_exit_code,
                                                     write_report)
     except ImportError as exc:  # pragma: no cover -- our own module
         log.error('The route probe could not be imported (%s)', exc)
@@ -734,36 +740,46 @@ def _run_route_ui_probe(args, cfg, log, state):
     print('The report carries shapes and lengths only -- no header value, no '
           'cookie, no signature, no request id and no response body.')
 
-    if not probe.observations:
+    # [REASON]: the decision is one pure function, so it can be read and
+    # tested on its own. Exit 0 needs all three at once: something was seen,
+    # EVERY observation is confirmed, and none was dropped by the cap. A mixed
+    # result used to exit 0 on the strength of one confirmed POST beside an
+    # unconfirmed answer -- exactly the class of false success this whole
+    # review is about. A dropped observation is not "confirmed" either: about
+    # it nothing at all is known.
+    code = probe_exit_code(observations=len(probe.observations),
+                           confirmed=len(confirmed),
+                           skipped_over_cap=probe.skipped_over_cap)
+
+    if code == EXIT_EMPTY:
         log.error('No route request was observed. The cabinet may not have '
                   'been driven into the map view, or the day chosen has no '
                   'flights. Nothing was collected and nothing was sent.')
         print('No route request was observed; see %s' % target)
-        return EXIT_EMPTY
+        return code
 
-    if not confirmed:
-        # [REASON]: exit 0 used to mean "a matching URL went past". That is
-        # not the question this run exists to answer. A confirmed observation
-        # is the full success -- the expected https origin, the exact
-        # endpoint, POST, 2xx, a binary payload that decoded, and the
-        # requested and returned id SETS equal. Anything short of that is an
-        # observation worth reading and a run that did not succeed.
+    if code != EXIT_OK:
         reasons = sorted({reason for item in probe.observations
                           for reason in item.not_confirmed_because})
-        log.error('%d route response(s) were observed but NONE is a confirmed '
-                  'route POST: %s', len(probe.observations),
+        if probe.skipped_over_cap:
+            reasons.append('%d observation(s) were dropped by the cap of %d'
+                           % (probe.skipped_over_cap, MAX_OBSERVATIONS))
+        log.error('%d route response(s) observed, %d confirmed, %d dropped by '
+                  'the cap -- NOT a confirmed run: %s',
+                  len(probe.observations), len(confirmed),
+                  probe.skipped_over_cap,
                   '; '.join(reasons) or 'no reason recorded')
-        print('%d route response(s) observed, none confirmed. Report: %s'
-              % (len(probe.observations), target))
-        return EXIT_ROUTE_PROBE_UNCONFIRMED
+        print('%d route response(s) observed, %d confirmed. Report: %s'
+              % (len(probe.observations), len(confirmed), target))
+        return code
 
-    log.info('Observed %d route response(s), %d distinct, %d confirmed; '
+    log.info('Observed %d route response(s), %d distinct, all %d confirmed; '
              'report: %s', probe.route_responses, len(probe.observations),
              len(confirmed), target)
-    print('%d route response(s) observed, %d distinct, %d CONFIRMED. '
+    print('%d route response(s) observed, %d distinct, all %d CONFIRMED. '
           'Report: %s' % (probe.route_responses, len(probe.observations),
                           len(confirmed), target))
-    return EXIT_OK
+    return code
 
 
 def _run_routes_engine(args, cfg, log, state):

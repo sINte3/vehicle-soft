@@ -703,12 +703,211 @@ class SaveSessionExitCodeTests(CliTestCase):
         self.assertEqual(self.target.read_bytes(), before)
         self.assertEqual(list(self.root.glob('*.partial')), [])
 
+    def test_the_mission_page_is_refused_even_with_a_populated_state(self):
+        """Другая страница того же кабинета тоже ставит свои cookie."""
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='https://www.djiag.com/mission')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertFalse(self.target.exists())
+
+    def test_plain_http_on_the_right_host_is_refused(self):
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='http://www.djiag.com/records/list')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertFalse(self.target.exists())
+
+    def test_the_mission_page_leaves_a_working_session_byte_for_byte(self):
+        self.target.write_text(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-OLD"}], '
+            '"origins": []}', encoding='utf-8')
+        before = self.target.read_bytes()
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='https://www.djiag.com/mission')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertEqual(self.target.read_bytes(), before)
+        self.assertEqual(list(self.root.glob('*.partial')), [])
+
+    def test_plain_http_leaves_a_working_session_byte_for_byte(self):
+        self.target.write_text(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-OLD"}], '
+            '"origins": []}', encoding='utf-8')
+        before = self.target.read_bytes()
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='http://www.djiag.com/records/list')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertEqual(self.target.read_bytes(), before)
+        self.assertEqual(list(self.root.glob('*.partial')), [])
+
     def test_the_records_page_remains_the_successful_control(self):
         """Отрицательный контроль: правильная посадка по-прежнему сохраняет."""
         self.install_playwright(self.POPULATED_STATE,
                                 landed='https://www.djiag.com/records/list')
         self.assertEqual(self.run_save(), EXIT_OK)
         self.assertTrue(self.target.is_file())
+
+
+class RouteProbeExitCodeTests(CliTestCase):
+    """Фактические коды выхода `--route-ui-probe`, а не только чистая функция.
+
+    [REASON]: подтверждение проверялось на `confirmation_failures()`, а сам
+    процесс мог вернуть что угодно. Здесь `main()` вызывается целиком, с
+    подставными браузером и наблюдателем.
+    """
+
+    def setUp(self):
+        CliTestCase.setUp(self)
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        self.root = Path(self._directory.name)
+        state_file = self.root / 'storage_state.json'
+        state_file.write_text(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-NOT-REAL"}], '
+            '"origins": []}', encoding='utf-8')
+        os.environ['DJI_STORAGE_STATE'] = str(state_file)
+        self._real_collector = None
+        self._real_probe = None
+
+    def tearDown(self):
+        from drone_collector import browser as browser_module
+        from drone_collector import route_ui_probe as probe_module
+        if self._real_collector is not None:
+            browser_module.FlightCollector = self._real_collector
+        if self._real_probe is not None:
+            probe_module.RouteUiProbe = self._real_probe
+        CliTestCase.tearDown(self)
+
+    def install(self, observations, confirmed, skipped=0):
+        """Подставные браузер и наблюдатель с заданным исходом."""
+        from drone_collector import browser as browser_module
+        from drone_collector import route_ui_probe as probe_module
+
+        self._real_collector = browser_module.FlightCollector
+        self._real_probe = probe_module.RouteUiProbe
+
+        class _Page(object):
+            def on(self, _event, _handler):
+                pass
+
+        class _Collector(object):
+            def __init__(self, cfg, log):
+                self.page = _Page()
+                self.context = object()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def open_records(self):
+                pass
+
+            def check_region(self, _expected):
+                return 'Uzbekistan'
+
+        class _Seen(object):
+            def __init__(self, confirmed):
+                self.confirmed = confirmed
+                self.not_confirmed_because = ([] if confirmed
+                                              else ['the payload did not '
+                                                    'decode'])
+
+            def as_dict(self):
+                return {'confirmed_route_post': self.confirmed,
+                        'not_confirmed_because':
+                            list(self.not_confirmed_because)}
+
+        class _Probe(object):
+            def __init__(self, logger=None, expected_origin=None):
+                self.observations = [_Seen(index < confirmed)
+                                     for index in range(observations)]
+                self.route_responses = observations
+                self.saw_only_all_ids = 0
+                self.skipped_over_cap = skipped
+
+            @property
+            def confirmed_observations(self):
+                return [item for item in self.observations if item.confirmed]
+
+            def note_request(self, _url):
+                pass
+
+            def note_response(self, _response):
+                pass
+
+            def report(self):
+                return {'probe': 'route-ui',
+                        'route_observations': len(self.observations),
+                        'confirmed_route_posts':
+                            len(self.confirmed_observations),
+                        'skipped_over_cap': self.skipped_over_cap,
+                        'observations': [item.as_dict()
+                                         for item in self.observations],
+                        'nothing_was_queued': True,
+                        'nothing_was_sent_to_vehicle_soft': True,
+                        'no_route_post_was_initiated_by_probe': True}
+
+        browser_module.FlightCollector = _Collector
+        probe_module.RouteUiProbe = _Probe
+
+    def run_probe(self):
+        import builtins
+        real_input = builtins.input
+        builtins.input = lambda prompt='': ''
+        try:
+            return main(['--route-ui-probe'])
+        finally:
+            builtins.input = real_input
+
+    def test_every_observation_confirmed_exits_zero(self):
+        self.install(observations=2, confirmed=2)
+        self.assertEqual(self.run_probe(), EXIT_OK)
+
+    def test_nothing_observed_exits_six(self):
+        self.install(observations=0, confirmed=0)
+        self.assertEqual(self.run_probe(), main_module.EXIT_EMPTY)
+
+    def test_nothing_confirmed_exits_thirteen(self):
+        self.install(observations=2, confirmed=0)
+        self.assertEqual(self.run_probe(),
+                         main_module.EXIT_ROUTE_PROBE_UNCONFIRMED)
+
+    def test_a_mixed_result_exits_thirteen(self):
+        """Один подтверждённый рядом с неподтверждённым -- не успех."""
+        self.install(observations=2, confirmed=1)
+        self.assertEqual(self.run_probe(),
+                         main_module.EXIT_ROUTE_PROBE_UNCONFIRMED)
+
+    def test_a_dropped_observation_exits_thirteen(self):
+        """Про пропущенное по лимиту не известно ничего."""
+        self.install(observations=2, confirmed=2, skipped=1)
+        self.assertEqual(self.run_probe(),
+                         main_module.EXIT_ROUTE_PROBE_UNCONFIRMED)
+
+
+class RouteProbeHelpTextTests(unittest.TestCase):
+    """`--help` не должен обещать того, чего код не доказывает."""
+
+    def help_text(self):
+        import io
+        import contextlib
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            try:
+                build_parser().parse_args(['--help'])
+            except SystemExit:
+                pass
+        return buffer.getvalue()
+
+    def test_the_broad_claim_is_gone(self):
+        text = self.help_text()
+        self.assertNotIn('Makes no request of its own', text)
+        self.assertNotIn('makes no request of its own', text.lower())
+
+    def test_the_proved_claim_is_there(self):
+        text = self.help_text()
+        self.assertIn('does not initiate the', text)
+        self.assertIn('route POST', text)
 
 
 class StageBSummaryKeysTests(unittest.TestCase):
