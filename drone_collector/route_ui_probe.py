@@ -33,8 +33,13 @@ DJI; нативный `fetch` проходит мимо него.
 
 ЧЕГО ЭТОТ МОДУЛЬ НЕ ДЕЛАЕТ НИКОГДА
 
-Не выполняет собственный POST к DJI. Не ставит ничего в очередь. Не обращается
-к Vehicle Soft. Не пишет HAR.
+Не инициирует POST к эндпоинту маршрутов -- в этом весь смысл режима: запрос
+должен сделать сам кабинет. Не ставит ничего в очередь. Не обращается к
+Vehicle Soft. Не пишет HAR.
+
+Сказать «не делает ни одного запроса» было бы неправдой: чтобы человек мог
+открыть Task History, кабинет надо открыть, а это навигация. Гарантия ровно
+та, что записана выше, и не шире.
 """
 
 import hashlib
@@ -42,22 +47,36 @@ import json
 import logging
 import re
 
+from urllib.parse import urlsplit
+
 log = logging.getLogger(__name__)
 
 # Эндпоинты, которые слушаются. Совпадение по имени, а не по версии API.
 ROUTE_ENDPOINT_MARKER = '/flight_datas/flight_records'
+ROUTE_ENDPOINT_PATH = '/api/web/v2/flight_datas/flight_records'
 IDS_ENDPOINT_MARKER = 'only_all_ids'
 
-# Заголовки, чьи ЗНАЧЕНИЯ не выводятся ни при каких условиях.
+# Заголовки, похожие на ПОДПИСЬ запроса.
 #
-# [REASON]: список по существу, а не по именам конкретного кабинета: всё, что
-# похоже на удостоверение, идёт сюда. Про такой заголовок сохраняется факт
-# наличия и длина значения -- этого хватает, чтобы сказать «подпись есть и она
-# длиной 64», и не хватает, чтобы её повторить.
-SENSITIVE_HEADER_PARTS = (
-    'authorization', 'cookie', 'token', 'signature', 'sign', 'secret',
-    'key', 'session', 'auth', 'credential', 'x-amz', 'x-oss',
+# [REASON]: разделено с удостоверениями намеренно. Раньше один список отвечал
+# на оба вопроса, и `Cookie` — обычное удостоверение сессии, которое есть у
+# любого запроса, — поднимал флаг «запрос подписан». Вопрос, ради которого
+# этот probe существует, звучит иначе: несёт ли ШТАТНЫЙ запрос ту подпись,
+# которой не было у нашего `fetch`. Ответ «да, потому что есть cookie» на него
+# не отвечает.
+SIGNATURE_HEADER_PARTS = ('signature', 'sign', 'x-amz-signature')
+
+# Заголовки, похожие на УДОСТОВЕРЕНИЕ сессии.
+CREDENTIAL_HEADER_PARTS = (
+    'authorization', 'cookie', 'token', 'secret', 'key', 'session',
+    'auth', 'credential', 'x-amz', 'x-oss',
 )
+
+# Заголовки, чьи ЗНАЧЕНИЯ не выводятся ни при каких условиях: объединение
+# обоих списков. Про такой заголовок сохраняется факт наличия и длина
+# значения -- этого хватает, чтобы сказать «подпись есть и она длиной 64», и
+# не хватает, чтобы её повторить.
+SENSITIVE_HEADER_PARTS = SIGNATURE_HEADER_PARTS + CREDENTIAL_HEADER_PARTS
 
 # Заголовки, по которым видно, что запрос несёт метку времени.
 TIMESTAMP_HEADER_PARTS = ('timestamp', 'date', 'time', 'nonce', 'ts')
@@ -93,6 +112,16 @@ def _is_sensitive(name):
     return any(part in lowered for part in SENSITIVE_HEADER_PARTS)
 
 
+def _is_signature_like(name):
+    lowered = (name or '').lower()
+    return any(part in lowered for part in SIGNATURE_HEADER_PARTS)
+
+
+def _is_credential_like(name):
+    lowered = (name or '').lower()
+    return any(part in lowered for part in CREDENTIAL_HEADER_PARTS)
+
+
 def _is_timestamp_like(name):
     lowered = (name or '').lower()
     return any(part in lowered for part in TIMESTAMP_HEADER_PARTS)
@@ -115,7 +144,10 @@ def describe_headers(headers):
     return {
         'header_names': names,
         'sensitive_headers': sensitive,
-        'carries_signature_like_header': bool(sensitive),
+        'carries_signature_like_header': any(_is_signature_like(n)
+                                             for n in names),
+        'carries_credential_like_header': any(_is_credential_like(n)
+                                              for n in names),
         'carries_timestamp_like_header': any(_is_timestamp_like(n)
                                              for n in names),
     }
@@ -161,9 +193,70 @@ def summarise_request_body(text):
     return summary
 
 
-def observation_id(url, sha256):
-    """Ключ дедупликации: путь плюс хеш тела."""
-    return '%s|%s' % (url.split('?', 1)[0], sha256)
+def read_request_ids(text):
+    """Множество запрошенных идентификаторов -- ТОЛЬКО в оперативной памяти.
+
+    Возвращает (множество, сколько было в списке всего). Ни один вызывающий не
+    кладёт результат в отчёт: сверка делается здесь, наружу уходят булево и
+    счётчики.
+
+    [REASON]: отдельная функция, а не поле в `summarise_request_body`. Тот
+    словарь целиком уезжает в отчёт, и идентификатор, положенный в него
+    «на время сверки», уехал бы вместе с ним.
+    """
+    if text is None:
+        return set(), 0
+    raw = text.encode('utf-8') if isinstance(text, str) else bytes(text)
+    if len(raw) > MAX_REQUEST_BODY_BYTES:
+        return set(), 0
+    try:
+        document = json.loads(raw.decode('utf-8-sig'))
+    except (ValueError, UnicodeDecodeError):
+        return set(), 0
+    if not isinstance(document, dict):
+        return set(), 0
+    ids = document.get('flight_record_ids')
+    if not isinstance(ids, list):
+        return set(), 0
+    numbers = [value for value in ids
+               if isinstance(value, int) and not isinstance(value, bool)]
+    return set(numbers), len(numbers)
+
+
+def compare_id_sets(requested, returned):
+    """Сверка множеств. Наружу -- только булево и счётчики.
+
+    [REASON]: раньше сверка сравнивала ДЛИНЫ, и «9 запросили, 9 вернулось»
+    объявлялось совпадением, даже если это девять ЧУЖИХ маршрутов. Совпадение
+    количеств -- не совпадение множеств, а именно множества и решают, чьи
+    маршруты приехали.
+    """
+    requested = set(requested or ())
+    returned_list = list(returned or ())
+    returned_set = set(returned_list)
+    return {
+        'requested_and_returned_match': (bool(requested)
+                                         and requested == returned_set),
+        'missing_count': len(requested - returned_set),
+        'extra_count': len(returned_set - requested),
+        'duplicate_count': len(returned_list) - len(returned_set),
+    }
+
+
+def _id_set_digest(ids):
+    """Отпечаток множества идентификаторов. Значений не несёт.
+
+    [REASON]: входит в ключ дедупликации. Без него два РАЗНЫХ запроса,
+    случайно получившие одинаковое тело ответа, схлопывались бы в одно
+    наблюдение -- и вопрос «на что именно ответил кабинет» терял бы ответ.
+    """
+    joined = ','.join(str(value) for value in sorted(ids or ()))
+    return hashlib.sha256(joined.encode('utf-8')).hexdigest()[:16]
+
+
+def observation_id(url, sha256, request_ids_digest=''):
+    """Ключ дедупликации: путь, хеш тела и отпечаток набора запрошенных ID."""
+    return '%s|%s|%s' % (url.split('?', 1)[0], sha256, request_ids_digest)
 
 
 class RouteUiObservation(object):
@@ -172,13 +265,15 @@ class RouteUiObservation(object):
     __slots__ = ('host', 'path', 'method', 'http_status', 'request',
                  'response_bytes', 'response_sha256', 'payload_kind',
                  'payload_detail', 'decoded_routes', 'returned_id_count',
-                 'ids_match', 'preceded_by_only_all_ids', 'repeats')
+                 'comparison', 'preceded_by_only_all_ids', 'repeats',
+                 'confirmed', 'not_confirmed_because')
 
     def __init__(self, host, path, method, http_status, request,
                  response_bytes, response_sha256, payload_kind,
                  payload_detail='', decoded_routes=None,
-                 returned_id_count=None, ids_match=None,
-                 preceded_by_only_all_ids=False):
+                 returned_id_count=None, comparison=None,
+                 preceded_by_only_all_ids=False, confirmed=False,
+                 not_confirmed_because=()):
         self.host = host
         self.path = path
         self.method = method
@@ -190,12 +285,14 @@ class RouteUiObservation(object):
         self.payload_detail = payload_detail
         self.decoded_routes = decoded_routes
         self.returned_id_count = returned_id_count
-        self.ids_match = ids_match
+        self.comparison = comparison or {}
         self.preceded_by_only_all_ids = preceded_by_only_all_ids
         self.repeats = 1
+        self.confirmed = confirmed
+        self.not_confirmed_because = list(not_confirmed_because)
 
     def as_dict(self):
-        return {
+        document = {
             'host': self.host,
             'path': self.path,
             'method': self.method,
@@ -208,9 +305,55 @@ class RouteUiObservation(object):
             'payload_detail': self.payload_detail,
             'decoded_routes': self.decoded_routes,
             'returned_id_count': self.returned_id_count,
-            'requested_and_returned_match': self.ids_match,
             'repeats': self.repeats,
+            'confirmed_route_post': self.confirmed,
+            'not_confirmed_because': list(self.not_confirmed_because),
         }
+        # Булево и счётчики -- ни одного идентификатора.
+        document.update(self.comparison)
+        return document
+
+
+def confirmation_failures(host, path, method, http_status, payload_kind,
+                          decoded_routes, comparison, expected_origin):
+    """Почему это наблюдение НЕ является подтверждённым штатным запросом.
+
+    Пустой список -- подтверждено. Проверяется всё сразу, а не до первого
+    отказа: оператору полезнее увидеть все причины разом.
+
+    [REASON]: раньше код 0 означал «увидели подходящий URL». Этого мало.
+    Подтверждением считается только полный успех: тот самый origin по HTTPS,
+    точный путь, POST, 2xx, двоичное тело, успешный разбор и совпадение
+    МНОЖЕСТВ идентификаторов. Всё остальное -- наблюдение, но не
+    подтверждение, и код выхода обязан это различать.
+    """
+    problems = []
+    expected = (expected_origin or '').rstrip('/')
+    parts = urlsplit(expected) if expected else None
+    if parts is None or not parts.netloc:
+        problems.append('no expected route origin was given to the probe')
+    else:
+        if parts.scheme != 'https':
+            problems.append('the expected origin is not https')
+        if host != parts.netloc:
+            problems.append('the host is not the expected route API host')
+    if path != ROUTE_ENDPOINT_PATH:
+        problems.append('the path is not the exact route endpoint')
+    if (method or '').upper() != 'POST':
+        problems.append('the method is not POST')
+    try:
+        status = int(http_status)
+    except (TypeError, ValueError):
+        status = None
+    if status is None or not 200 <= status < 300:
+        problems.append('the HTTP status is not 2xx')
+    if payload_kind != 'BINARY':
+        problems.append('the payload is not a binary route payload')
+    if decoded_routes is None:
+        problems.append('the payload did not decode')
+    if not (comparison or {}).get('requested_and_returned_match'):
+        problems.append('the requested and returned id sets do not match')
+    return problems
 
 
 class RouteUiProbe(object):
@@ -221,8 +364,9 @@ class RouteUiProbe(object):
     живом кабинете может не быть.
     """
 
-    def __init__(self, logger=None):
+    def __init__(self, logger=None, expected_origin=None):
         self.log = logger or log
+        self.expected_origin = expected_origin
         self.observations = []
         self._seen = {}
         self.saw_only_all_ids = 0
@@ -230,10 +374,20 @@ class RouteUiProbe(object):
         self.route_responses = 0
         self.skipped_over_cap = 0
 
+    @property
+    def confirmed_observations(self):
+        return [item for item in self.observations if item.confirmed]
+
     # -- слушатели ------------------------------------------------------------
 
     def note_request(self, url):
-        """Запрос ушёл. Тела и заголовков здесь не читаем."""
+        """Запрос ушёл. Тела и заголовков здесь не читаем.
+
+        [REASON]: `only_all_ids` считается ИМЕННО здесь и только здесь. Раньше
+        счётчик рос и на запросе, и на ответе, то есть один сетевой обмен
+        считался дважды -- и «два только_все_id перед маршрутом» в отчёте
+        означало один.
+        """
         if is_ids_url(url):
             self.saw_only_all_ids += 1
             self._ids_seen_recently = True
@@ -249,7 +403,7 @@ class RouteUiProbe(object):
     def _note_response(self, response):
         url = getattr(response, 'url', '') or ''
         if is_ids_url(url):
-            self.saw_only_all_ids += 1
+            # Обмен уже посчитан на запросе; здесь только отметка соседства.
             self._ids_seen_recently = True
             return
         if not is_route_url(url):
@@ -275,22 +429,26 @@ class RouteUiProbe(object):
             except Exception:
                 body_text = None
 
+        requested_ids, _requested_total = read_request_ids(body_text)
+
+        oversize = False
         try:
             raw = bytes(response.body() or b'')
         except Exception as exc:
             self.log.warning('The route response body could not be read (%s)',
                              type(exc).__name__)
             raw = b''
-        if len(raw) > MAX_RESPONSE_BYTES:
-            self.log.warning('The route response is %d bytes, over the cap; '
-                             'only its size is recorded.', len(raw))
+        actual_bytes = len(raw)
+        if actual_bytes > MAX_RESPONSE_BYTES:
+            # [REASON]: РАЗМЕР сохраняется настоящий, а хеш и разбор не
+            # делаются вовсе. Прежняя редакция подменяла тело пустым и затем
+            # честно считала его sha256 и записывала `response_bytes=0` --
+            # отчёт утверждал, что ответ был пуст, хотя он был огромен.
+            self.log.warning('The route response is %d bytes, over the cap of '
+                             '%d; its size is recorded, its body is not read.',
+                             actual_bytes, MAX_RESPONSE_BYTES)
+            oversize = True
             raw = b''
-
-        digest = hashlib.sha256(raw).hexdigest()
-        key = observation_id(url, digest)
-        if key in self._seen:
-            self._seen[key].repeats += 1
-            return
 
         description = describe_headers(headers)
         description.update(summarise_request_body(body_text))
@@ -298,47 +456,72 @@ class RouteUiProbe(object):
         headers = None
         body_text = None
 
-        from drone_collector.route_payload import (PAYLOAD_BINARY,
-                                                   classify_payload)
-        verdict = classify_payload(raw)
-        decoded_routes = None
-        returned = None
-        ids_match = None
-        if verdict.kind == PAYLOAD_BINARY:
-            decoded_routes, returned = self._decode_count(raw)
-            asked = description.get('flight_id_count')
-            if decoded_routes is not None and asked is not None:
-                ids_match = (returned == asked)
+        if oversize:
+            digest = None
+            payload_kind = 'TOO_LARGE'
+            payload_detail = ('%d bytes, the cap is %d; the body was not read'
+                              % (actual_bytes, MAX_RESPONSE_BYTES))
+            decoded_routes = returned = None
+            returned_ids = []
+        else:
+            digest = hashlib.sha256(raw).hexdigest()
+            from drone_collector.route_payload import (PAYLOAD_BINARY,
+                                                       classify_payload)
+            verdict = classify_payload(raw)
+            payload_kind = verdict.kind
+            payload_detail = verdict.detail
+            decoded_routes = returned = None
+            returned_ids = []
+            if verdict.kind == PAYLOAD_BINARY:
+                decoded_routes, returned_ids = self._decode_ids(raw)
+                returned = (len(set(returned_ids))
+                            if decoded_routes is not None else None)
+
+        key = observation_id(url, digest or 'not-read',
+                             _id_set_digest(requested_ids))
+        if key in self._seen:
+            self._seen[key].repeats += 1
+            return
+
+        comparison = compare_id_sets(requested_ids, returned_ids)
+        # Множества дальше не живут: сверка сделана, наружу идут счётчики.
+        requested_ids = returned_ids = None
+
+        host = _host_of(url)
+        path = _path_of(url)
+        status = getattr(response, 'status', None)
+        problems = confirmation_failures(
+            host, path, method, status, payload_kind, decoded_routes,
+            comparison, self.expected_origin)
 
         observation = RouteUiObservation(
-            host=_host_of(url), path=_path_of(url), method=method,
-            http_status=getattr(response, 'status', None),
-            request=description, response_bytes=len(raw),
-            response_sha256=digest, payload_kind=verdict.kind,
-            payload_detail=verdict.detail,
-            decoded_routes=decoded_routes, returned_id_count=returned,
-            ids_match=ids_match,
-            preceded_by_only_all_ids=self._ids_seen_recently)
+            host=host, path=path, method=method, http_status=status,
+            request=description, response_bytes=actual_bytes,
+            response_sha256=digest, payload_kind=payload_kind,
+            payload_detail=payload_detail, decoded_routes=decoded_routes,
+            returned_id_count=returned, comparison=comparison,
+            preceded_by_only_all_ids=self._ids_seen_recently,
+            confirmed=not problems, not_confirmed_because=problems)
         self._ids_seen_recently = False
         self._seen[key] = observation
         self.observations.append(observation)
         self.log.info('Observed a route response: %s',
                       _safe_line(observation))
 
-    def _decode_count(self, raw):
-        """(сколько маршрутов, сколько различных id) -- или (None, None)."""
+    def _decode_ids(self, raw):
+        """(сколько маршрутов, список вернувшихся id) -- или (None, [])."""
         try:
             from drone_collector.route_decode import (RouteDecodeError,
                                                       decode_route_response)
         except ImportError:  # pragma: no cover
-            return None, None
+            return None, []
         try:
             decoded = decode_route_response(raw)
         except RouteDecodeError as exc:
             self.log.warning('The observed body did not decode (%s)', exc)
-            return None, None
+            return None, []
         ids = [value for value in decoded.flight_ids if value is not None]
-        return len(decoded.routes), len(set(ids))
+        return len(decoded.routes), ids
 
     # -- отчёт ----------------------------------------------------------------
 
@@ -347,12 +530,19 @@ class RouteUiProbe(object):
             'probe': 'route-ui',
             'route_responses_seen': self.route_responses,
             'route_observations': len(self.observations),
+            'confirmed_route_posts': len(self.confirmed_observations),
             'skipped_over_cap': self.skipped_over_cap,
             'only_all_ids_seen': self.saw_only_all_ids,
             'observations': [item.as_dict() for item in self.observations],
             'nothing_was_queued': True,
-            'nothing_was_sent': True,
-            'no_request_was_made_by_this_tool': True,
+            'nothing_was_sent_to_vehicle_soft': True,
+            # [REASON]: НЕ «этот инструмент не сделал ни одного запроса» --
+            # это было неправдой. Probe открывает кабинет через `open_records()`
+            # и тем самым выполняет навигацию. Гарантия, которую он
+            # действительно даёт, уже: POST к эндпоинту маршрутов он не
+            # инициирует, и весь смысл режима в том, чтобы этот POST сделал
+            # сам кабинет.
+            'no_route_post_was_initiated_by_probe': True,
         }
 
 
@@ -368,13 +558,19 @@ def _path_of(url):
 
 def _safe_line(observation):
     request = observation.request
-    return ('%s %s status=%s bytes=%d kind=%s ids_in_request=%s data_type=%s '
-            'signature_header=%s timestamp_header=%s'
+    return ('%s %s status=%s bytes=%d kind=%s confirmed=%s ids_in_request=%s '
+            'data_type=%s signature_header=%s credential_header=%s '
+            'timestamp_header=%s ids_match=%s missing=%s extra=%s'
             % (observation.method, observation.path, observation.http_status,
                observation.response_bytes, observation.payload_kind,
+               observation.confirmed,
                request.get('flight_id_count'), request.get('data_type'),
                request.get('carries_signature_like_header'),
-               request.get('carries_timestamp_like_header')))
+               request.get('carries_credential_like_header'),
+               request.get('carries_timestamp_like_header'),
+               observation.comparison.get('requested_and_returned_match'),
+               observation.comparison.get('missing_count'),
+               observation.comparison.get('extra_count')))
 
 
 def _without_header_names(document):
@@ -430,8 +626,9 @@ def write_report(probe, out_dir):
 
 PROMPT_LINES = (
     '',
-    'This is an OBSERVATION run. It makes no request of its own to DJI, it',
-    'queues nothing and it sends nothing to Vehicle Soft.',
+    'This is an OBSERVATION run. It opens the cabinet (that navigation is',
+    'its own request) but it never issues the route POST itself, it queues',
+    'nothing and it sends nothing to Vehicle Soft.',
     '',
     'A browser window is open on the cabinet. Please, by hand:',
     '',

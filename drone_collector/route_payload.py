@@ -55,15 +55,16 @@ PAYLOAD_TOO_LARGE = 'TOO_LARGE'
 # В теле нашёлся маркер секрета.
 PAYLOAD_SECRET = 'SECRET_IN_PAYLOAD'
 
-# Виды, у которых тело НИКОГДА не ложится на диск.
+# Единственный вид, тело которого разрешено класть на диск.
 #
-# [REASON]: карантин заведён для двоичного тела, которого мы не поняли. JSON и
-# текст мы понимаем достаточно, чтобы знать: в них бывает `request_id`, а
-# завтра может появиться и что-то похуже. Сохранять их «на всякий случай» --
-# ровно тот способ, которым идентификаторы переживают прогон.
-NEVER_WRITTEN_KINDS = (PAYLOAD_VENDOR_ERROR, PAYLOAD_VENDOR_OK,
-                       PAYLOAD_JSON_UNKNOWN, PAYLOAD_JSON_UNREADABLE,
-                       PAYLOAD_TEXT_UNKNOWN, PAYLOAD_SECRET)
+# [REASON]: список РАЗРЕШАЮЩИЙ, а не запрещающий, и в нём одна строка.
+# Запрещающий список был ошибкой ровно того класса, ради которого карантин и
+# заведён: `EMPTY` и `TOO_LARGE` в него не попали и молча получили право на
+# запись -- нулевое тело и тело сверх потолка ложились бы на диск как
+# «непонятый protobuf». Новый вид, добавленный сюда завтра, по умолчанию
+# получит отказ, а не разрешение; чтобы разрешить запись, придётся написать
+# это явно и объяснить.
+WRITABLE_KINDS = (PAYLOAD_BINARY,)
 
 # ─── Пределы ─────────────────────────────────────────────────────────────────
 
@@ -122,7 +123,7 @@ class PayloadVerdict(object):
 
     @property
     def body_may_be_written(self):
-        return self.kind not in NEVER_WRITTEN_KINDS
+        return self.kind in WRITABLE_KINDS
 
     def as_dict(self):
         """Безопасная диагностика. `request_id` тут отсутствует по построению."""
@@ -223,7 +224,13 @@ def classify_payload(raw, find_secret_markers=None,
         # нечитаемым JSON и потерял бы свой код.
         text = raw.decode('utf-8-sig')
     except UnicodeDecodeError:
-        return PayloadVerdict(PAYLOAD_BINARY, size, digest)
+        # [REASON]: тело, начавшееся с `{` или `[`, -- это заявка на JSON, и
+        # неудача декодирования делает его НЕЧИТАЕМЫМ JSON, а не двоичным
+        # protobuf. Прежняя редакция возвращала здесь `BINARY`, то есть
+        # выдавала испорченному тексту право лечь на диск и отправляла его
+        # в декодер, который всё равно откажется.
+        return PayloadVerdict(PAYLOAD_JSON_UNREADABLE, size, digest,
+                              detail='JSON-shaped but not decodable as UTF-8')
 
     markers = find_secret_markers(text)
     if markers:

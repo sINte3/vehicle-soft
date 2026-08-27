@@ -211,6 +211,7 @@ command line.
 | 10 | `--routes` only: the cabinet **refused to serve the routes**. | Nothing was collected. Re-run after signing in again; if it repeats with a fresh session, the request made from the page is not being signed the way the cabinet expects — that is a finding, not a breakage. |
 | 11 | `--geometry-id` named a contour the **directory does not hold**. | The uuids that matched nothing are listed. Nothing was queued for them. If the directory walk was also incomplete, the contour may simply be on a page that was never fetched. |
 | 12 | `--routes`: route collection is **disabled**. | The native fetch transport was disproved on the live cabinet on 2026-08-27. Nothing was attempted: the run stops before the browser. Observe the cabinet's own request with `--route-ui-probe` instead. |
+| 13 | `--route-ui-probe` saw route traffic, but **none of it was a confirmed route POST**. | The report names why for each observation — wrong host, method, status, payload kind, a body that did not decode, or id sets that do not match. A finding, not a breakage. |
 
 Codes **8** and **9** are deliberately absent from this table: they belong to
 the other entry point of this package, `python -m drone_collector.devices`
@@ -459,14 +460,27 @@ anything is done, and asks the operator to open Task History, pick one day,
 switch to the map view and press Enter. While that happens the probe watches
 the request the cabinet issues for itself.
 
-It makes **no request of its own** to DJI, queues nothing and sends nothing to
-Vehicle Soft. The report carries shapes and lengths only: host and path,
-method, how many ids the request asked for (never which), the actual
-`data_type`, header **names**, the **lengths** of signature-like values,
-whether a timestamp-like header was present at all, the HTTP status, whether
-the body was JSON or binary, its size and SHA-256, how many routes decoded,
-and whether the returned count matches the requested one. No header value, no
-cookie, no signature, no `request_id` and no response body reach any file.
+It never issues the route POST itself, queues nothing and sends nothing to
+Vehicle Soft. It does open the cabinet, and that navigation is a request of
+its own — the guarantee is the narrower and true one: **no route POST is
+initiated by the probe**, because the whole point is that the cabinet must
+issue it.
+
+The report carries shapes and lengths only: host and path, method, how many
+ids the request asked for (never which), the actual `data_type`, header
+**names**, the **lengths** of signature-like and credential-like values,
+whether a signature-like header was present, whether a credential-like header
+was present (they are separate questions — a cookie is not a signature),
+whether a timestamp-like header was present, the HTTP status, whether the body
+was JSON or binary, its size and SHA-256, how many routes decoded, and whether
+the requested and returned id **sets** are equal, with counts of missing,
+extra and duplicate. No header value, no cookie, no signature, no `request_id`,
+no flight id and no response body reach any file.
+
+**Exit 0 means a confirmed route POST**, and nothing less: the expected https
+origin, the exact endpoint, POST, a 2xx status, a binary payload that decoded,
+and matching id sets. Route traffic that falls short of that is written up in
+the report and exits 13; seeing nothing at all exits 6.
 
 ### The outbox
 

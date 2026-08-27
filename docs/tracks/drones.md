@@ -522,16 +522,24 @@ SmartFarm, публичного API нет. Задача модуля: полу�
    }
    ```
 
-   Наблюдение за штатным запросом маршрутов. Своего запроса к DJI этот режим
-   не делает, в очередь не кладёт ничего и в Vehicle Soft не ходит; в отчёт
-   попадают только формы и длины — ни одного значения заголовка, ни одной
-   cookie, ни подписи, ни `request_id`, ни тела ответа.
+   Наблюдение за штатным запросом маршрутов. POST к эндпоинту маршрутов этот
+   режим не инициирует — его должен сделать сам кабинет; кабинет он при этом
+   открывает, и это навигация. В очередь не кладёт ничего и в Vehicle Soft не
+   ходит; в отчёт попадают только формы, длины и счётчики — ни одного значения
+   заголовка, ни одной cookie, ни подписи, ни `request_id`, ни идентификатора
+   вылета, ни тела ответа.
+
+   **Код 0 означает ПОДТВЕРЖДЁННЫЙ штатный POST:** ожидаемый HTTPS-origin,
+   точный endpoint, метод POST, статус 2xx, двоичное тело, успешный разбор и
+   совпадение МНОЖЕСТВ идентификаторов. Код 13 — трафик виден, но подтверждения
+   нет (отчёт называет причину по каждому наблюдению); код 6 — не увидено
+   ничего. `PASS` печатается только после полного успеха.
 
    ```
    Set-Location "C:\VehicleSoft_DJI_StageB_Pilot"
    & {
      & "C:\VehicleSoft_DJI_StageB_Pilot\drone_collector\.venv\Scripts\python.exe" -m drone_collector.main --route-ui-probe
-     if ($LASTEXITCODE -ne 0) { throw "ROUTE UI PROBE: exit $LASTEXITCODE -- nothing was observed" }
+     if ($LASTEXITCODE -ne 0) { throw "ROUTE UI PROBE: exit $LASTEXITCODE -- no confirmed route POST" }
      Write-Output "ROUTE_UI_PROBE=PASS"
    }
    ```

@@ -30,6 +30,8 @@ Exit codes (see drone_collector/README.md):
    11  --geometry-id named a contour the directory does not hold
    12  route collection is disabled: the native fetch transport was
        disproved on the live cabinet and no valid UI transport exists yet
+   13  --route-ui-probe saw route traffic, but none of it was a confirmed
+       route POST (wrong host, method, status, payload or id sets)
 
     8 and 9 are deliberately skipped: they belong to the other entry point of
     this package, `python -m drone_collector.devices`.
@@ -84,6 +86,10 @@ EXIT_GEOMETRY_NOT_FOUND = 11
 # first is worth re-running with a fresh session; the second is not worth
 # re-running until a transport exists.
 EXIT_ROUTE_TRANSPORT_DISABLED = 12
+# [REASON]: "we saw route traffic but none of it was a confirmed route POST"
+# is a finding, not a success and not an absence. It needs its own code so the
+# operator can tell it from exit 6, which means nothing was observed at all.
+EXIT_ROUTE_PROBE_UNCONFIRMED = 13
 
 KIND_INCREMENTAL = 'incremental'
 KIND_BACKFILL = 'backfill'
@@ -112,7 +118,7 @@ ROUTE_SUMMARY_KEYS = (
 
 ROUTE_PROBE_SUMMARY_KEYS = (
     'mode', 'region', 'probe_route_responses', 'probe_observations',
-    'probe_only_all_ids', 'probe_report', 'exit',
+    'probe_confirmed', 'probe_only_all_ids', 'probe_report', 'exit',
 )
 
 LAND_SUMMARY_KEYS = (
@@ -690,7 +696,7 @@ def _run_route_ui_probe(args, cfg, log, state):
                   'install chromium', exc)
         return EXIT_CONFIG
 
-    probe = RouteUiProbe(logger=log)
+    probe = RouteUiProbe(logger=log, expected_origin=cfg.route_api_origin)
     errors = (BrowserError, PeriodVerificationFailed, RegionMismatch,
               SessionExpired, SessionMissing)
     try:
@@ -712,8 +718,10 @@ def _run_route_ui_probe(args, cfg, log, state):
     except errors as exc:
         return _exit_code_for(exc, log)
 
+    confirmed = probe.confirmed_observations
     state['probe_route_responses'] = probe.route_responses
     state['probe_observations'] = len(probe.observations)
+    state['probe_confirmed'] = len(confirmed)
     state['probe_only_all_ids'] = probe.saw_only_all_ids
 
     try:
@@ -723,6 +731,9 @@ def _run_route_ui_probe(args, cfg, log, state):
         return EXIT_PAGINATION
     state['probe_report'] = str(target)
 
+    print('The report carries shapes and lengths only -- no header value, no '
+          'cookie, no signature, no request id and no response body.')
+
     if not probe.observations:
         log.error('No route request was observed. The cabinet may not have '
                   'been driven into the map view, or the day chosen has no '
@@ -730,12 +741,28 @@ def _run_route_ui_probe(args, cfg, log, state):
         print('No route request was observed; see %s' % target)
         return EXIT_EMPTY
 
-    log.info('Observed %d route response(s), %d distinct; report: %s',
-             probe.route_responses, len(probe.observations), target)
-    print('%d route response(s) observed, %d distinct. Report: %s'
-          % (probe.route_responses, len(probe.observations), target))
-    print('The report carries shapes and lengths only -- no header value, no '
-          'cookie, no signature, no request id and no response body.')
+    if not confirmed:
+        # [REASON]: exit 0 used to mean "a matching URL went past". That is
+        # not the question this run exists to answer. A confirmed observation
+        # is the full success -- the expected https origin, the exact
+        # endpoint, POST, 2xx, a binary payload that decoded, and the
+        # requested and returned id SETS equal. Anything short of that is an
+        # observation worth reading and a run that did not succeed.
+        reasons = sorted({reason for item in probe.observations
+                          for reason in item.not_confirmed_because})
+        log.error('%d route response(s) were observed but NONE is a confirmed '
+                  'route POST: %s', len(probe.observations),
+                  '; '.join(reasons) or 'no reason recorded')
+        print('%d route response(s) observed, none confirmed. Report: %s'
+              % (len(probe.observations), target))
+        return EXIT_ROUTE_PROBE_UNCONFIRMED
+
+    log.info('Observed %d route response(s), %d distinct, %d confirmed; '
+             'report: %s', probe.route_responses, len(probe.observations),
+             len(confirmed), target)
+    print('%d route response(s) observed, %d distinct, %d CONFIRMED. '
+          'Report: %s' % (probe.route_responses, len(probe.observations),
+                          len(confirmed), target))
     return EXIT_OK
 
 

@@ -19,18 +19,22 @@ from pathlib import Path
 
 from drone_collector.route_ui_probe import (
     MAX_OBSERVATIONS,
+    MAX_RESPONSE_BYTES,
     PROMPT_LINES,
     RouteUiProbe,
+    compare_id_sets,
     describe_headers,
     is_ids_url,
     is_route_url,
+    read_request_ids,
     summarise_request_body,
     write_report,
 )
 from drone_collector.tests.test_route_decode import (FAKE_FLIGHT_ID, response,
                                                      route_record)
 
-ROUTE_URL = 'https://kr-ag2-api.example.invalid/api/web/v2/flight_datas/flight_records'
+ROUTE_ORIGIN = 'https://kr-ag2-api.example.invalid'
+ROUTE_URL = ROUTE_ORIGIN + '/api/web/v2/flight_datas/flight_records'
 IDS_URL = 'https://kr-ag2-api.example.invalid/api/web/v1/flight_records/only_all_ids'
 
 # Значения выдуманные и приметные: их ищут в отчёте и в логе.
@@ -95,6 +99,11 @@ def request_body(count=9, data_type='simplified'):
                        'data_type': data_type})
 
 
+def ids_body(ids, data_type='simplified'):
+    return json.dumps({'flight_record_ids': list(ids),
+                       'data_type': data_type})
+
+
 def route_response(body=None, headers=None, post_data=None, status=200):
     return _FakeResponse(
         ROUTE_URL,
@@ -147,6 +156,36 @@ class TestHeaderDescription(unittest.TestCase):
     def test_the_presence_of_a_signature_is_reported(self):
         self.assertTrue(self.described['carries_signature_like_header'])
 
+    def test_the_presence_of_a_credential_is_reported_separately(self):
+        self.assertTrue(self.described['carries_credential_like_header'])
+
+    def test_a_cookie_alone_does_not_mean_the_request_is_signed(self):
+        """Отрицательный контроль разделения признаков.
+
+        [REASON]: один список отвечал на оба вопроса, и `Cookie` -- обычное
+        удостоверение сессии, которое есть у любого запроса, -- поднимал флаг
+        «запрос подписан». Вопрос, ради которого probe существует, звучит
+        иначе: несёт ли ШТАТНЫЙ запрос ту подпись, которой не было у нашего
+        `fetch`.
+        """
+        cookie_only = describe_headers({'Cookie': FAKE_COOKIE,
+                                        'Accept': '*/*'})
+        self.assertFalse(cookie_only['carries_signature_like_header'])
+        self.assertTrue(cookie_only['carries_credential_like_header'])
+        self.assertEqual(cookie_only['sensitive_headers'],
+                         [{'name': 'cookie',
+                           'value_length': len(FAKE_COOKIE)}])
+
+    def test_an_authorization_alone_does_not_mean_signed_either(self):
+        described = describe_headers({'Authorization': 'Bearer NOT-REAL'})
+        self.assertFalse(described['carries_signature_like_header'])
+        self.assertTrue(described['carries_credential_like_header'])
+
+    def test_a_signature_alone_does_not_mean_a_credential(self):
+        described = describe_headers({'Signature': FAKE_SIGNATURE})
+        self.assertTrue(described['carries_signature_like_header'])
+        self.assertFalse(described['carries_credential_like_header'])
+
     def test_the_presence_of_a_timestamp_is_reported(self):
         self.assertTrue(self.described['carries_timestamp_like_header'])
 
@@ -155,6 +194,7 @@ class TestHeaderDescription(unittest.TestCase):
         plain = describe_headers({'Accept': '*/*',
                                   'Content-Type': 'application/json'})
         self.assertFalse(plain['carries_signature_like_header'])
+        self.assertFalse(plain['carries_credential_like_header'])
         self.assertFalse(plain['carries_timestamp_like_header'])
         self.assertEqual(plain['sensitive_headers'], [])
 
@@ -213,7 +253,8 @@ class ProbeTestCase(unittest.TestCase):
         self.addCleanup(self._directory.cleanup)
         self.root = Path(self._directory.name)
         self.log = _QuietLog()
-        self.probe = RouteUiProbe(logger=self.log)
+        self.probe = RouteUiProbe(logger=self.log,
+                                  expected_origin=ROUTE_ORIGIN)
 
     def everything_written(self):
         parts = [self.log.text(), json.dumps(self.probe.report(),
@@ -257,19 +298,19 @@ class TestObservation(ProbeTestCase):
     def test_a_binary_payload_is_decoded_and_counted(self):
         body = response([route_record(flight_id=FAKE_FLIGHT_ID)])
         self.probe.note_response(route_response(
-            body=body, post_data=request_body(count=1)))
+            body=body, post_data=ids_body([FAKE_FLIGHT_ID])))
         seen = self.probe.observations[0]
         self.assertEqual(seen.payload_kind, 'BINARY')
         self.assertEqual(seen.decoded_routes, 1)
         self.assertEqual(seen.returned_id_count, 1)
-        self.assertTrue(seen.ids_match)
+        self.assertTrue(seen.comparison['requested_and_returned_match'])
 
     def test_a_count_mismatch_is_reported_without_the_identifiers(self):
         body = response([route_record(flight_id=FAKE_FLIGHT_ID)])
         self.probe.note_response(route_response(
             body=body, post_data=request_body(count=9)))
         seen = self.probe.observations[0]
-        self.assertFalse(seen.ids_match)
+        self.assertFalse(seen.comparison['requested_and_returned_match'])
         self.assertEqual(seen.request['flight_id_count'], 9)
         self.assertEqual(seen.returned_id_count, 1)
         self.assertNotIn(str(FAKE_FLIGHT_ID),
@@ -313,6 +354,278 @@ class TestObservation(ProbeTestCase):
         self.assertEqual(self.probe.route_responses, 1)
 
 
+class TestIdSetsNotCounts(ProbeTestCase):
+    """Совпадение количеств -- не совпадение множеств.
+
+    [REASON]: `requested_and_returned_match` означал равенство ДЛИН. «Девять
+    запросили, девять вернулось» объявлялось совпадением, даже если это девять
+    ЧУЖИХ маршрутов -- а именно множества и решают, чьи маршруты приехали.
+    """
+
+    def test_two_different_sets_of_the_same_size_do_not_match(self):
+        body = response([route_record(flight_id=900000001),
+                         route_record(flight_id=900000002)])
+        self.probe.note_response(route_response(
+            body=body, post_data=ids_body([900000003, 900000004])))
+        seen = self.probe.observations[0]
+        self.assertEqual(seen.request['flight_id_count'], 2)
+        self.assertEqual(seen.returned_id_count, 2)
+        self.assertFalse(seen.comparison['requested_and_returned_match'],
+                         'два РАЗНЫХ набора одного размера сочтены совпавшими')
+        self.assertEqual(seen.comparison['missing_count'], 2)
+        self.assertEqual(seen.comparison['extra_count'], 2)
+
+    def test_the_same_set_matches(self):
+        """Отрицательный контроль: сверка не отвергает совпавшее."""
+        body = response([route_record(flight_id=900000001),
+                         route_record(flight_id=900000002)])
+        self.probe.note_response(route_response(
+            body=body, post_data=ids_body([900000002, 900000001])))
+        seen = self.probe.observations[0]
+        self.assertTrue(seen.comparison['requested_and_returned_match'])
+        self.assertEqual(seen.comparison['missing_count'], 0)
+        self.assertEqual(seen.comparison['extra_count'], 0)
+
+    def test_a_partial_overlap_is_counted_on_both_sides(self):
+        body = response([route_record(flight_id=900000001),
+                         route_record(flight_id=900000009)])
+        self.probe.note_response(route_response(
+            body=body, post_data=ids_body([900000001, 900000002])))
+        comparison = self.probe.observations[0].comparison
+        self.assertFalse(comparison['requested_and_returned_match'])
+        self.assertEqual(comparison['missing_count'], 1)
+        self.assertEqual(comparison['extra_count'], 1)
+
+    def test_no_identifier_reaches_the_report_or_the_log(self):
+        body = response([route_record(flight_id=900000001),
+                         route_record(flight_id=900000002)])
+        self.probe.note_response(route_response(
+            body=body, post_data=ids_body([900000003, 900000004])))
+        write_report(self.probe, self.root)
+        haystack = self.everything_written()
+        for value in ('900000001', '900000002', '900000003', '900000004'):
+            self.assertNotIn(value, haystack)
+
+    def test_the_report_carries_only_booleans_and_counts(self):
+        body = response([route_record(flight_id=900000001)])
+        self.probe.note_response(route_response(
+            body=body, post_data=ids_body([900000003])))
+        document = self.probe.observations[0].as_dict()
+        for key in ('requested_and_returned_match', 'missing_count',
+                    'extra_count', 'duplicate_count'):
+            self.assertIn(key, document)
+        self.assertIsInstance(document['requested_and_returned_match'], bool)
+
+    def test_compare_id_sets_counts_duplicates_in_the_response(self):
+        comparison = compare_id_sets({1, 2}, [1, 2, 2])
+        self.assertTrue(comparison['requested_and_returned_match'])
+        self.assertEqual(comparison['duplicate_count'], 1)
+
+    def test_an_empty_request_never_counts_as_a_match(self):
+        """Ничего не просили -- значит и сверять нечего."""
+        self.assertFalse(
+            compare_id_sets(set(), [])['requested_and_returned_match'])
+
+    def test_read_request_ids_keeps_the_values_out_of_the_summary(self):
+        ids, total = read_request_ids(ids_body([900000001, 900000002]))
+        self.assertEqual(ids, {900000001, 900000002})
+        self.assertEqual(total, 2)
+        summary = summarise_request_body(ids_body([900000001, 900000002]))
+        self.assertNotIn('900000001', json.dumps(summary))
+
+
+class TestDeduplication(ProbeTestCase):
+
+    def test_the_same_body_for_different_requests_is_not_merged(self):
+        """Одинаковое тело при РАЗНЫХ наборах ID -- два наблюдения.
+
+        [REASON]: ключ дедупликации был «путь + хеш тела». Два разных запроса,
+        случайно получившие одинаковый ответ, схлопывались в одно наблюдение,
+        и вопрос «на что именно ответил кабинет» терял ответ.
+        """
+        body = response([route_record(flight_id=FAKE_FLIGHT_ID)])
+        self.probe.note_response(route_response(
+            body=body, post_data=ids_body([900000001])))
+        self.probe.note_response(route_response(
+            body=body, post_data=ids_body([900000002])))
+        self.assertEqual(len(self.probe.observations), 2)
+
+    def test_the_same_body_for_the_same_request_is_merged(self):
+        """Отрицательный контроль: настоящий повтор по-прежнему один."""
+        body = response([route_record(flight_id=FAKE_FLIGHT_ID)])
+        for _ in range(3):
+            self.probe.note_response(route_response(
+                body=body, post_data=ids_body([900000001])))
+        self.assertEqual(len(self.probe.observations), 1)
+        self.assertEqual(self.probe.observations[0].repeats, 3)
+
+
+class TestOnlyAllIdsCountedOncePerExchange(ProbeTestCase):
+
+    def test_a_request_and_its_response_count_once(self):
+        """[REASON]: счётчик рос и на запросе, и на ответе -- один обмен
+        считался дважды, и «два only_all_ids перед маршрутом» означало один.
+        """
+        self.probe.note_request(IDS_URL)
+        self.probe.note_response(_FakeResponse(IDS_URL, b'{"code": 0}'))
+        self.assertEqual(self.probe.saw_only_all_ids, 1)
+
+    def test_two_exchanges_count_twice(self):
+        """Отрицательный контроль: счётчик всё-таки считает."""
+        for _ in range(2):
+            self.probe.note_request(IDS_URL)
+            self.probe.note_response(_FakeResponse(IDS_URL, b'{"code": 0}'))
+        self.assertEqual(self.probe.saw_only_all_ids, 2)
+
+    def test_the_neighbourhood_flag_still_works(self):
+        self.probe.note_request(IDS_URL)
+        self.probe.note_response(_FakeResponse(IDS_URL, b'{"code": 0}'))
+        self.probe.note_response(route_response())
+        self.assertTrue(
+            self.probe.observations[0].preceded_by_only_all_ids)
+
+
+class TestConfirmation(ProbeTestCase):
+    """Код 0 разрешён только при полном успехе."""
+
+    def confirmed_response(self):
+        body = response([route_record(flight_id=FAKE_FLIGHT_ID)])
+        return route_response(body=body,
+                              post_data=ids_body([FAKE_FLIGHT_ID]))
+
+    def test_a_full_success_is_confirmed(self):
+        self.probe.note_response(self.confirmed_response())
+        seen = self.probe.observations[0]
+        self.assertTrue(seen.confirmed, seen.not_confirmed_because)
+        self.assertEqual(seen.not_confirmed_because, [])
+        self.assertEqual(len(self.probe.confirmed_observations), 1)
+
+    def test_a_vendor_refusal_is_not_confirmed(self):
+        refusal = json.dumps({'status': 408, 'code': 408}).encode('utf-8')
+        self.probe.note_response(route_response(body=refusal))
+        seen = self.probe.observations[0]
+        self.assertFalse(seen.confirmed)
+        self.assertIn('the payload is not a binary route payload',
+                      seen.not_confirmed_because)
+
+    def test_html_is_not_confirmed(self):
+        self.probe.note_response(route_response(b'<html>502</html>'))
+        self.assertFalse(self.probe.observations[0].confirmed)
+
+    def test_an_undecodable_binary_is_not_confirmed(self):
+        self.probe.note_response(route_response(b'\xff\xff\xff\xff'))
+        seen = self.probe.observations[0]
+        self.assertFalse(seen.confirmed)
+        self.assertIn('the payload did not decode',
+                      seen.not_confirmed_because)
+
+    def test_a_non_2xx_status_is_not_confirmed(self):
+        body = response([route_record(flight_id=FAKE_FLIGHT_ID)])
+        self.probe.note_response(route_response(
+            body=body, post_data=ids_body([FAKE_FLIGHT_ID]), status=500))
+        seen = self.probe.observations[0]
+        self.assertFalse(seen.confirmed)
+        self.assertIn('the HTTP status is not 2xx',
+                      seen.not_confirmed_because)
+
+    def test_a_get_is_not_confirmed(self):
+        body = response([route_record(flight_id=FAKE_FLIGHT_ID)])
+        answer = route_response(body=body,
+                                post_data=ids_body([FAKE_FLIGHT_ID]))
+        answer.request.method = 'GET'
+        self.probe.note_response(answer)
+        seen = self.probe.observations[0]
+        self.assertFalse(seen.confirmed)
+        self.assertIn('the method is not POST', seen.not_confirmed_because)
+
+    def test_another_host_is_not_confirmed(self):
+        body = response([route_record(flight_id=FAKE_FLIGHT_ID)])
+        answer = _FakeResponse(
+            'https://elsewhere.invalid/api/web/v2/flight_datas/flight_records',
+            body, request=_FakeRequest(
+                headers=HEADERS, post_data=ids_body([FAKE_FLIGHT_ID])))
+        self.probe.note_response(answer)
+        seen = self.probe.observations[0]
+        self.assertFalse(seen.confirmed)
+        self.assertIn('the host is not the expected route API host',
+                      seen.not_confirmed_because)
+
+    def test_a_plain_http_origin_is_not_confirmed(self):
+        probe = RouteUiProbe(logger=self.log,
+                             expected_origin='http://kr-ag2-api.example.invalid')
+        probe.note_response(self.confirmed_response())
+        seen = probe.observations[0]
+        self.assertFalse(seen.confirmed)
+        self.assertIn('the expected origin is not https',
+                      seen.not_confirmed_because)
+
+    def test_a_different_path_on_the_right_host_is_not_confirmed(self):
+        body = response([route_record(flight_id=FAKE_FLIGHT_ID)])
+        answer = _FakeResponse(
+            ROUTE_ORIGIN + '/api/web/v9/flight_datas/flight_records',
+            body, request=_FakeRequest(
+                headers=HEADERS, post_data=ids_body([FAKE_FLIGHT_ID])))
+        self.probe.note_response(answer)
+        seen = self.probe.observations[0]
+        self.assertFalse(seen.confirmed)
+        self.assertIn('the path is not the exact route endpoint',
+                      seen.not_confirmed_because)
+
+    def test_mismatched_id_sets_are_not_confirmed(self):
+        body = response([route_record(flight_id=900000001)])
+        self.probe.note_response(route_response(
+            body=body, post_data=ids_body([900000002])))
+        seen = self.probe.observations[0]
+        self.assertFalse(seen.confirmed)
+        self.assertIn('the requested and returned id sets do not match',
+                      seen.not_confirmed_because)
+
+    def test_the_report_counts_confirmed_observations(self):
+        self.probe.note_response(self.confirmed_response())
+        self.probe.note_response(route_response(b'<html>502</html>'))
+        document = self.probe.report()
+        self.assertEqual(document['route_observations'], 2)
+        self.assertEqual(document['confirmed_route_posts'], 1)
+
+
+class TestOversizedResponse(ProbeTestCase):
+    """Слишком большой ответ: настоящий размер, никакого хеша пустоты."""
+
+    def oversize(self):
+        return b'\x08' * (MAX_RESPONSE_BYTES + 16)
+
+    def test_the_real_size_is_recorded(self):
+        """[REASON]: тело подменялось пустым, и отчёт писал `response_bytes=0`
+        -- то есть утверждал, что ответ был пуст, хотя он был огромен.
+        """
+        raw = self.oversize()
+        self.probe.note_response(route_response(body=raw))
+        seen = self.probe.observations[0]
+        self.assertEqual(seen.response_bytes, len(raw))
+        self.assertGreater(seen.response_bytes, MAX_RESPONSE_BYTES)
+
+    def test_no_hash_of_an_empty_body_is_recorded(self):
+        import hashlib
+        empty_digest = hashlib.sha256(b'').hexdigest()
+        self.probe.note_response(route_response(body=self.oversize()))
+        seen = self.probe.observations[0]
+        self.assertIsNone(seen.response_sha256)
+        self.assertNotEqual(seen.response_sha256, empty_digest)
+
+    def test_it_is_named_too_large_and_not_decoded(self):
+        self.probe.note_response(route_response(body=self.oversize()))
+        seen = self.probe.observations[0]
+        self.assertEqual(seen.payload_kind, 'TOO_LARGE')
+        self.assertIsNone(seen.decoded_routes)
+        self.assertFalse(seen.confirmed)
+
+    def test_an_ordinary_response_still_gets_its_hash(self):
+        """Отрицательный контроль: обычный ответ хешируется как раньше."""
+        self.probe.note_response(route_response())
+        seen = self.probe.observations[0]
+        self.assertEqual(len(seen.response_sha256), 64)
+
+
 class TestNothingLeaks(ProbeTestCase):
 
     def test_no_header_value_reaches_the_log_or_the_report(self):
@@ -340,12 +653,20 @@ class TestNothingLeaks(ProbeTestCase):
         self.assertIn('response_sha256', written)
 
     def test_the_report_says_plainly_what_it_did_not_do(self):
+        """И не утверждает того, чего код не доказывает.
+
+        [REASON]: `no_request_was_made_by_this_tool` было НЕПРАВДОЙ -- probe
+        открывает кабинет через `open_records()`, и это навигация, то есть
+        запрос. Гарантия, которую он действительно даёт, уже: POST к эндпоинту
+        маршрутов он не инициирует.
+        """
         self.probe.note_response(route_response())
         document = json.loads(
             write_report(self.probe, self.root).read_text(encoding='utf-8'))
         self.assertTrue(document['nothing_was_queued'])
-        self.assertTrue(document['nothing_was_sent'])
-        self.assertTrue(document['no_request_was_made_by_this_tool'])
+        self.assertTrue(document['nothing_was_sent_to_vehicle_soft'])
+        self.assertTrue(document['no_route_post_was_initiated_by_probe'])
+        self.assertNotIn('no_request_was_made_by_this_tool', document)
 
     def test_a_request_body_value_never_reaches_the_report_at_all(self):
         """Из тела берутся ЧИСЛА и имена ключей, значения остаются снаружи."""
@@ -424,8 +745,10 @@ class TestTheProbeAsksNothing(ProbeTestCase):
 
     def test_the_prompt_tells_the_operator_what_it_will_not_do(self):
         text = '\n'.join(PROMPT_LINES)
-        self.assertIn('makes no request of its own', text)
-        self.assertIn('queues nothing', text)
+        self.assertIn('never issues the route POST itself', text)
+        self.assertIn('queues', text)
+        self.assertNotIn('makes no request of its own', text,
+                         'вернулось утверждение, которого код не доказывает')
 
 
 if __name__ == '__main__':

@@ -290,6 +290,42 @@ class TestAtomicSave(SessionFileTestCase):
             save_state_atomically(context, self.target)
         self.assertNotIn(COOKIE_VALUE, str(caught.exception))
 
+    def test_a_failed_replace_leaves_no_partial_and_keeps_the_target(self):
+        """Замена может не пройти -- временный файл всё равно не остаётся.
+
+        [REASON]: на Windows `os.replace` отклоняет и антивирус, и файл,
+        открытый чужим процессом. Без уборки в обработчике каталог сессии
+        зарастал `.partial`-ами после каждого такого отказа, при том что
+        прежняя сессия цела и работает.
+        """
+        self.write_json(cookie_state())
+        before = self.target.read_text(encoding='utf-8')
+        context = _FakeContext(json.dumps(local_storage_state()))
+        real_replace = os.replace
+
+        def refuse(src, dst):
+            if str(dst) == str(self.target):
+                raise OSError('the file is in use by another process')
+            return real_replace(src, dst)
+
+        os.replace = refuse
+        try:
+            with self.assertRaises(OSError):
+                save_state_atomically(context, self.target)
+        finally:
+            os.replace = real_replace
+        self.assertEqual(self.temps(), [],
+                         'отказ замены оставил .partial в каталоге сессии')
+        self.assertEqual(self.target.read_text(encoding='utf-8'), before)
+
+    def test_a_successful_replace_still_installs_the_state(self):
+        """Отрицательный контроль: уборка не мешает нормальной замене."""
+        context = _FakeContext(json.dumps(local_storage_state()))
+        state = save_state_atomically(context, self.target)
+        self.assertTrue(state.usable)
+        self.assertEqual(inspect_session(self.target).local_storage_items, 1)
+        self.assertEqual(self.temps(), [])
+
     def test_saving_without_a_previous_session_says_so(self):
         context = _FakeContext(EMPTY_STATE_TEXT)
         with self.assertRaises(SessionMissing) as caught:

@@ -27,6 +27,7 @@ from drone_collector.route_payload import (
     PAYLOAD_VENDOR_ERROR,
     PAYLOAD_VENDOR_OK,
     READ_KEYS,
+    WRITABLE_KINDS,
     classify_payload,
     safe_message,
 )
@@ -172,6 +173,66 @@ class TestOtherShapes(unittest.TestCase):
     def test_leading_whitespace_does_not_hide_the_json(self):
         verdict = classify_payload(b'\n\n  ' + blob(VENDOR_REFUSAL))
         self.assertEqual(verdict.kind, PAYLOAD_VENDOR_ERROR)
+
+
+class TestOnlyBinaryMayBeWritten(unittest.TestCase):
+    """Разрешение на запись -- положительный список из одной строки.
+
+    [REASON]: прежний список был ЗАПРЕЩАЮЩИМ, и в него не попали `EMPTY` и
+    `TOO_LARGE`. Пустое тело и тело сверх потолка молча получали право лечь на
+    диск как «непонятый protobuf». Ошибка ровно того класса, ради которого
+    карантин и заведён.
+    """
+
+    def test_the_allowlist_holds_exactly_one_kind(self):
+        self.assertEqual(WRITABLE_KINDS, (PAYLOAD_BINARY,))
+
+    def test_an_empty_body_may_not_be_written(self):
+        self.assertFalse(classify_payload(b'').body_may_be_written)
+
+    def test_a_body_over_the_cap_may_not_be_written(self):
+        verdict = classify_payload(b'x' * 64, max_bytes=32)
+        self.assertEqual(verdict.kind, PAYLOAD_TOO_LARGE)
+        self.assertFalse(verdict.body_may_be_written)
+
+    def test_json_shaped_but_not_utf8_is_unreadable_json_not_binary(self):
+        """Заявка на JSON, которая не декодируется, -- нечитаемый JSON.
+
+        [REASON]: прежняя редакция возвращала здесь `BINARY`, то есть выдавала
+        испорченному тексту право лечь на диск и отправляла его в декодер,
+        который всё равно откажется.
+        """
+        raw = b'{"msg": "' + b'\xff\xfe\xfd' + b'"}'
+        verdict = classify_payload(raw)
+        self.assertEqual(verdict.kind, PAYLOAD_JSON_UNREADABLE)
+        self.assertFalse(verdict.body_may_be_written)
+        self.assertIn('UTF-8', verdict.detail)
+
+    def test_a_json_array_shaped_but_not_utf8_is_also_unreadable(self):
+        verdict = classify_payload(b'[\xff\xfe]')
+        self.assertEqual(verdict.kind, PAYLOAD_JSON_UNREADABLE)
+        self.assertFalse(verdict.body_may_be_written)
+
+    def test_no_non_binary_kind_may_be_written(self):
+        """Сплошной проход по всем видам, которые умеет выдавать классификатор."""
+        cases = {
+            PAYLOAD_EMPTY: b'',
+            PAYLOAD_VENDOR_ERROR: blob(VENDOR_REFUSAL),
+            PAYLOAD_VENDOR_OK: blob({'status': 200, 'code': 0}),
+            PAYLOAD_JSON_UNKNOWN: b'[1, 2, 3]',
+            PAYLOAD_JSON_UNREADABLE: b'{"a":',
+            PAYLOAD_TEXT_UNKNOWN: b'<html>502</html>',
+        }
+        for kind, raw in cases.items():
+            verdict = classify_payload(raw)
+            self.assertEqual(verdict.kind, kind, repr(raw))
+            self.assertFalse(verdict.body_may_be_written, kind)
+
+    def test_binary_is_the_positive_control(self):
+        """Отрицательный контроль: карантин двоичного тела не отменён."""
+        verdict = classify_payload(b'\x08\x01\x12\x07Success')
+        self.assertEqual(verdict.kind, PAYLOAD_BINARY)
+        self.assertTrue(verdict.body_may_be_written)
 
 
 class TestSecretsBlockTheBody(unittest.TestCase):

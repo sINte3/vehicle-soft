@@ -221,10 +221,11 @@ def expected_host(records_url):
 def landed_where_expected(current_url, records_url):
     """(ok, reason). The browser must be on the cabinet, not on /login.
 
-    A weaker check than `inspect_session` and NOT a replacement for it: a page
-    can sit on the right host with an empty context. It catches the other
-    half -- the operator who pressed Enter while the sign-in form was still
-    open -- and it names that case plainly instead of saving thirty bytes.
+    Neither check replaces the other, and BOTH must hold before a save.
+    `inspect_session` catches the empty context on the right page;
+    this catches the populated context on the WRONG page -- `/login` sets its
+    own cookies and localStorage, so a sign-in form left open would sail
+    through the structural check and overwrite a working session.
     """
     if not current_url:
         return False, 'the browser reported no URL'
@@ -286,7 +287,16 @@ def save_state_atomically(context, target, writer=None):
             'the browser produced no usable session: %s (%s). Nothing was '
             'overwritten; %s' % (state.reason, state.describe(), note))
 
-    os.replace(temp_name, str(target))
+    try:
+        os.replace(temp_name, str(target))
+    except OSError:
+        # [REASON]: без этого `.partial` оставался лежать рядом с сессией
+        # после каждого отказа замены -- на Windows её умеет отклонить и
+        # антивирус, и открытый чужим процессом файл. Каталог зарастал
+        # полусохранёнными состояниями, которые никто не читает и никто не
+        # убирает, а прежняя сессия при этом цела и работает.
+        _remove_quietly(temp_name)
+        raise
     return state
 
 
@@ -341,8 +351,17 @@ def save_session_interactive(cfg, input_fn=None, print_fn=None):
             landed = None
         ok, why = landed_where_expected(landed, cfg.records_url)
         if not ok:
-            log.warning('Before saving: %s', why)
-            say('WARNING: %s' % why)
+            # [REASON]: this REFUSES, it no longer warns. A warning let the
+            # save go ahead, and /login is not an empty page: it sets its own
+            # cookies and localStorage, so the structural check would pass it
+            # and a sign-in form would overwrite a working session. Two
+            # guards, and both must hold before anything is written.
+            browser.close()
+            raise SessionMissing(
+                'the browser is not where a signed-in session would be: %s. '
+                'Nothing was saved and nothing was overwritten -- sign in, '
+                'wait for the records page, and run --save-session again.'
+                % why)
 
         # Saved from the context, not the page: cookies set on the SSO host
         # during the redirect dance belong to the context too.

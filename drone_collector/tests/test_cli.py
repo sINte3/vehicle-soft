@@ -651,6 +651,65 @@ class SaveSessionExitCodeTests(CliTestCase):
         self.run_save()
         self.assertEqual(list(self.root.glob('*.partial')), [])
 
+    # --- где оказался браузер ---------------------------------------------
+
+    POPULATED_STATE = ('{"cookies": [{"name": "sid", "value": '
+                       '"SYNTHETIC-FROM-THE-LOGIN-PAGE"}], "origins": []}')
+
+    def test_the_login_page_is_refused_even_with_a_populated_state(self):
+        """Страница входа ставит свои cookie -- и прошла бы структурную проверку.
+
+        [REASON]: до правки несовпадение посадки только ПРЕДУПРЕЖДАЛО, и
+        сохранение шло дальше. `/login` не пустая: у неё есть и cookie, и
+        localStorage, поэтому состояние формы входа затёрло бы рабочую сессию,
+        пройдя обе проверки содержимого.
+        """
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='https://www.djiag.com/login')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertFalse(self.target.exists(),
+                         'состояние страницы входа легло на место сессии')
+
+    def test_another_host_is_refused_even_with_a_populated_state(self):
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='https://elsewhere.invalid/records/list')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertFalse(self.target.exists())
+
+    def test_no_url_at_all_is_refused(self):
+        self.install_playwright(self.POPULATED_STATE, landed='')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertFalse(self.target.exists())
+
+    def test_the_login_page_leaves_a_working_session_byte_for_byte(self):
+        self.target.write_text(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-OLD"}], '
+            '"origins": []}', encoding='utf-8')
+        before = self.target.read_bytes()
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='https://www.djiag.com/login')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertEqual(self.target.read_bytes(), before)
+        self.assertEqual(list(self.root.glob('*.partial')), [])
+
+    def test_another_host_leaves_a_working_session_byte_for_byte(self):
+        self.target.write_text(
+            '{"cookies": [{"name": "sid", "value": "SYNTHETIC-OLD"}], '
+            '"origins": []}', encoding='utf-8')
+        before = self.target.read_bytes()
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='https://elsewhere.invalid/records/list')
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertEqual(self.target.read_bytes(), before)
+        self.assertEqual(list(self.root.glob('*.partial')), [])
+
+    def test_the_records_page_remains_the_successful_control(self):
+        """Отрицательный контроль: правильная посадка по-прежнему сохраняет."""
+        self.install_playwright(self.POPULATED_STATE,
+                                landed='https://www.djiag.com/records/list')
+        self.assertEqual(self.run_save(), EXIT_OK)
+        self.assertTrue(self.target.is_file())
+
 
 class StageBSummaryKeysTests(unittest.TestCase):
 

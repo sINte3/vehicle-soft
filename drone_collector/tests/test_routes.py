@@ -760,6 +760,47 @@ class TestVendorRefusalStopsTheRun(RoutesTestCase):
                      quarantine_dir=self.quarantine_dir())
         self.assertEqual(len(list(self.quarantine_dir().glob('*.bin'))), 1)
 
+    def test_no_non_binary_body_ever_reaches_the_binary_quarantine(self):
+        """Сплошной проход: право на запись -- только у двоичного тела.
+
+        [REASON]: разрешение было ЗАПРЕЩАЮЩИМ списком, и `EMPTY` с
+        `TOO_LARGE` в него не попали -- то есть молча получили право лечь на
+        диск как «непонятый protobuf».
+        """
+        oversize = b'{' + b'x' * (32 * 1024 * 1024 + 16)
+        cases = {
+            'vendor refusal': self.refusal_bytes(),
+            'json success envelope': json.dumps(
+                {'status': 200, 'code': 0}).encode('utf-8'),
+            'json array': b'[1, 2, 3]',
+            'broken json': b'{"status": 408, "code":',
+            'json-shaped invalid utf-8': b'{"msg": "\xff\xfe\xfd"}',
+            'html': b'<!doctype html><html>502</html>',
+            'over the response cap': oversize,
+        }
+        for label, body in cases.items():
+            with self.subTest(label):
+                directory = self.root / ('q_%s' % abs(hash(label)))
+                try:
+                    self.run_for([900000001],
+                                 transport=FakeTransport(body),
+                                 quarantine_dir=directory)
+                except RouteRequestRefused:
+                    pass
+                bins = list(directory.glob('*.bin')) if directory.exists() else []
+                self.assertEqual(bins, [], '%s was written as a binary body'
+                                 % label)
+
+    def test_an_empty_body_never_reaches_the_binary_quarantine(self):
+        """Пустое тело: три попытки, затем ошибка -- и ни одного файла."""
+        directory = self.root / 'q_empty'
+        _, result = self.run_for([900000001],
+                                 transport=FakeTransport(b'', b'', b''),
+                                 quarantine_dir=directory)
+        self.assertEqual(result.errors, 1)
+        bins = list(directory.glob('*.bin')) if directory.exists() else []
+        self.assertEqual(bins, [])
+
 
 class TestSecretsNeverReachTheQueue(RoutesTestCase):
 
