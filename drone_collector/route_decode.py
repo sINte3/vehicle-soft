@@ -47,6 +47,12 @@ that is the one outcome the whole task exists to prevent.
 
 import struct
 
+# Version of the field mapping below. Bumped when the MEANING of a decoded
+# field changes -- a new name proved, a name withdrawn -- not when a comment
+# is edited. It travels with every route the collector stores, so a figure
+# computed later can be traced back to the rules it was decoded by.
+DECODER_VERSION = 'route-decode-1'
+
 # ─── The envelope ────────────────────────────────────────────────────────────
 
 # Top level: 1 = status, 2 = message, 3 = payload.

@@ -91,3 +91,25 @@ jobs:
 
       - name: Field geometry probe self-test (format detection, no guessing)
         run: python tools/test_drone_field_geometry_probe.py
+
+      # DRONE-COVERAGE-001 stage B. Stdlib only: no network, no browser, no
+      # database, nothing to install. Three of these carry properties that
+      # are cheap to break and expensive to notice -- that a torn write
+      # leaves nothing behind, that a repeat run queues nothing twice, and
+      # that a signed link reaches no file, no log and no exception. They
+      # have to fail on the commit that breaks them, not on the day someone
+      # reads the queue directory.
+      - name: Stage B outbox (atomicity, idempotence, secrets, Windows names)
+        run: python -m unittest drone_collector.tests.test_outbox
+
+      - name: Stage B route collection (pairing, retries, resume, dry run)
+        run: python -m unittest drone_collector.tests.test_routes
+
+      - name: Stage B field geometry (the signed link escapes nowhere)
+        run: python -m unittest drone_collector.tests.test_geometry
+
+      - name: Stage B CLI wiring (usage rules and the exit-code namespace)
+        run: python -m unittest drone_collector.tests.test_cli
+
+      - name: Route semantics probe self-test (observations, never verdicts)
+        run: python tools/test_drone_route_semantics_probe.py

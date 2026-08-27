@@ -186,10 +186,17 @@ command line.
 | 1 | Configuration error, a bad command line, or an unexpected failure. | The log names the variable or the flag; a crash carries its traceback. Nothing was sent. |
 | 2 | Session missing or expired. | Re-run `--save-session`. Nothing was sent. |
 | 3 | Period verification failed. | The log shows the intended and the observed period. Nothing was sent — on purpose. |
-| 4 | The page walk did not complete. | Flights that were captured *were* sent; re-run the same period to finish it. With `--lands`: fewer contours than DJI's own `totalCount`; what was collected was sent, re-run `--lands`. |
+| 4 | The walk did not complete. | Flights that were captured *were* sent; re-run the same period to finish it. With `--lands`: fewer contours than DJI's own `totalCount`; what was collected was sent, re-run `--lands`. With `--routes` or `--lands --with-geometry`: at least one batch or one polygon failed; what did succeed is in the outbox, and re-running asks only for what is still missing. |
 | 5 | The ingest endpoint rejected a batch. | The log carries the HTTP status and the endpoint's message. 401 means the token, 413 means the batch size, 400 means the body. |
 | 6 | A window captured **zero flights**, or `--lands` captured **zero contours**. | Nothing was sent. Usually the session is in the wrong region. If the period really is empty, set `DJI_ALLOW_EMPTY_WINDOW=true`; that variable does not apply to `--lands`. |
 | 7 | The session is in the **wrong region**. | The log shows the expected and the observed value. Re-run `--save-session` and check the region selector. |
+| 10 | `--routes` only: the cabinet **refused to serve the routes**. | Nothing was collected. Re-run after signing in again; if it repeats with a fresh session, the request made from the page is not being signed the way the cabinet expects — that is a finding, not a breakage. |
+
+Codes **8** and **9** are deliberately absent from this table: they belong to
+the other entry point of this package, `python -m drone_collector.devices`
+(see «Capture flights per device»). One number with two meanings inside one
+package is a code an operator eventually reads wrong, looking at a scheduler
+log rather than at the source.
 
 Exits 6 and 7 both exist for one failure: a session switched to another region
 returns **zero rows with no error at all**, so the run looks perfectly
@@ -354,6 +361,103 @@ Contour records are **re-used and re-dated**: searching `Sarvari ptz` in the
 cabinet returns rows stamped 2026-07-03, while `avaz ismatov` still carries
 2025-09-20. Whatever is not captured now is not recoverable later. Run
 `--lands` once for the whole directory rather than in slices.
+
+---
+
+## Collect routes and full field polygons (DRONE-COVERAGE-001, stage B)
+
+```
+python -m drone_collector.main --routes --from 2026-06-05 --to 2026-06-05 --dry-run
+python -m drone_collector.main --routes --from 2026-06-05 --to 2026-06-05
+python -m drone_collector.main --routes --ids-file ids.txt
+python -m drone_collector.main --lands --with-geometry --dry-run
+python -m drone_collector.main --lands --with-geometry
+```
+
+**Neither of these sends anything to Vehicle Soft.** Both collect into the
+on-disk outbox at `DRONE_OUTBOX_DIR` (default `drone_collector/data/outbox`);
+the receiving endpoints are stage C. Neither writes a `drone_sync_logs` row,
+because neither calls the sender at all — `--routes` does not even require
+`DRONE_API_TOKEN`.
+
+### What `--routes` collects, and what it must never be called
+
+The response carries a **geometric route**: a sequence of coordinates. There
+is no per-point time, no pump state and no spray state in it — proved on 961
+points of the sample, and proved for `data_type=simplified` specifically, not
+for every DJI source. So the collected object is a route, a route segment, a
+coverage candidate. It is never «work», «treated area» or «confirmed
+spraying», and nothing in this package says otherwise.
+
+### How the request is made
+
+The route endpoint takes **flight ids**, not a period — confirmed on live
+traffic. `--routes --from/--to` therefore walks the flight list of the period
+first (the walk that has been in production since 2026-08-08, read-only here),
+learns the ids, and then asks for those routes. `--ids-file` skips the walk.
+
+The request itself is issued **by the page**, in its own JavaScript context,
+so that the site signs it if the site signs anything. DJI's signature is not
+reproduced — the same rule the flight list and the directory already follow.
+Whether the page's own `fetch` carries that signature is **not verified**: the
+cabinet is unreachable from the development container. If it does not, DJI
+answers with its own code and the run exits **10**, naming the outcome.
+
+### The outbox
+
+One record per JSON file. Written to a `.tmp` in the same directory and moved
+into place with `os.replace`, so a reader sees the whole record or nothing.
+The file name is the deduplication key — kind, identity and content hash — so
+re-running the same period creates no second record. Sent records move to
+`sent/`, unreadable ones to `corrupt/`; a torn write leaves a `.tmp` that the
+next run sweeps and counts.
+
+No signed link, cookie, token or authorization header can enter it: every
+record is checked against a list of markers **and** against the shape of a
+signed URL before a byte is written, and a match refuses the record without
+echoing the value into the exception.
+
+### `--with-geometry`
+
+Downloads the full polygon of every contour through the signed link in the
+directory response. The link is taken from the object already in memory, used
+once, and cleared immediately; it reaches no file, no log and no exception —
+messages from other libraries are scrubbed of any URL before they are logged.
+The download is verified against DJI's own `contentMd5`, hashed again with
+sha256, versioned by `contentMd5` (an unchanged contour is not downloaded
+twice), and stored as the **whole original `FeatureCollection`** — `funcType`,
+`parameters.offset`, `ReferencePoint` and any properties we do not recognise
+included.
+
+Every contour ends with exactly one named status: `OK`, `SKIPPED_UNCHANGED`,
+`NO_GEOMETRY`, `DOWNLOAD_FAILED`, `TOO_LARGE`, `MD5_MISMATCH`, `UNPARSEABLE`,
+`INVALID_GEOMETRY`, `SECRET_IN_PAYLOAD`, `AREA_MISMATCH`. There is no
+«processed quietly».
+
+The first pass walks 5 489 contours and takes a while. The signed links live
+six hours, so the polygons are fetched **inside** the same directory walk —
+there is no later moment at which it could be done from saved data.
+
+### Configuration
+
+| Variable | Default | What it does |
+|---|---|---|
+| `DRONE_OUTBOX_DIR` | `data/outbox` | where the queue lives |
+| `DJI_ROUTE_API_ORIGIN` | `https://kr-ag2-api.dji.com` | host of the route API |
+| `DJI_ROUTE_BATCH_SIZE` | `25` | flight ids per route request (capped at 100) |
+| `DJI_ROUTE_PAUSE_MS` | `1000` | pause between route batches |
+| `DJI_GEOMETRY_PAUSE_MS` | `350` | pause between polygon downloads |
+
+### Reading what was collected
+
+```
+python tools/drone_route_semantics_probe.py --outbox drone_collector/data/outbox
+```
+
+Reports what the routes say about `mission_uuid`, about candidate task
+identifiers among the unrecognised protobuf fields, and about the one-sided
+consistency of `new_work_area` with the route. Observations only: it names no
+verdict, and it prints identifier values nowhere.
 
 ---
 

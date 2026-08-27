@@ -17,7 +17,7 @@ flights of the first day.
 
 import calendar
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 # One hour of tolerance is allowed when the site's own request URL is compared
 # against these values; see browser.verify_period_in_url.
@@ -27,8 +27,16 @@ ISO_DATE_FORMAT = '%Y-%m-%d'
 
 
 def local_today(tz_offset_hours, now_utc=None):
-    """Today's date in local time. now_utc is injectable for tests."""
-    now = now_utc if now_utc is not None else datetime.utcnow()
+    """Today's date in local time. now_utc is injectable for tests.
+
+    [REASON]: `datetime.utcnow()` объявлен устаревшим и снимается в будущих
+    версиях Python. Заменён на timezone-aware время в UTC, приведённое
+    обратно к наивному виду: `now_utc`, который передают тесты и остальной
+    collector, наивный, и складывать наивное с timezone-aware Python не даёт.
+    Поведение при этом прежнее -- то же мгновение в UTC.
+    """
+    now = (now_utc if now_utc is not None
+           else datetime.now(timezone.utc).replace(tzinfo=None))
     return (now + timedelta(hours=tz_offset_hours)).date()
 
 
