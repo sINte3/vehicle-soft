@@ -13,6 +13,7 @@
 
 import json
 import tempfile
+import threading
 import unittest
 
 from pathlib import Path
@@ -31,7 +32,11 @@ from drone_collector.route_ui_probe import (
     is_route_url,
     NOT_READ,
     observation_id,
+    PAYLOAD_KIND_UNREADABLE,
+    pump_until,
     read_request_ids,
+    start_operator_prompt,
+    UNNAMED_EXCEPTION,
     summarise_request_body,
     WITHHELD_DATA_TYPE,
     write_report,
@@ -1317,6 +1322,366 @@ class TestDataTypeNeverLeaks(ProbeTestCase):
     def test_a_control_character_is_still_dropped_whole(self):
         from drone_collector.route_ui_probe import safe_data_type
         self.assertEqual(safe_data_type('simpli\x00fied'), (None, True))
+
+
+class _TargetClosedError(Exception):
+    """Синтетический двойник playwright TargetClosedError."""
+
+
+def unreadable_response(post_data=None, status=200, exc=None,
+                        headers=None):
+    """Ответ маршрутов, тело которого прочитать не удастся."""
+    failure = exc or _TargetClosedError('SYNTHETIC-BROWSER-DETAIL')
+
+    class _Unreadable(object):
+        url = ROUTE_URL
+
+        def __init__(self):
+            self.status = status
+            self.request = _FakeRequest(
+                headers=headers or HEADERS,
+                post_data=(post_data if post_data is not None
+                           else ids_body([900000001])))
+
+        def all_headers(self):
+            return {}
+
+        def body(self):
+            raise failure
+
+    return _Unreadable()
+
+
+class TestUnreadableIsNotEmpty(ProbeTestCase):
+    """Ответ, тела которого не прочитали, -- не пустой ответ.
+
+    [REASON]: живой прогон 2026-08-27 получил `TargetClosedError` на всех пяти
+    `response.body()`, а код подставлял `b''`. Отчёт написал
+    `payload_kind=EMPTY`, `response_bytes=0`, sha256 ПУСТОГО тела,
+    `response_body_was_read=true`, `observation_errors=0` и «запрошенные ID
+    отсутствуют». Ни одно из этих утверждений не было правдой.
+    """
+
+    def outcome(self):
+        return probe_exit_code(
+            observations=len(self.probe.observations),
+            confirmed=len(self.probe.confirmed_observations),
+            skipped_over_cap=self.probe.skipped_over_cap,
+            observation_errors=self.probe.observation_errors)
+
+    def test_the_kind_is_unreadable_and_not_empty(self):
+        self.probe.note_response(unreadable_response())
+        seen = self.probe.observations[0]
+        self.assertEqual(seen.payload_kind, PAYLOAD_KIND_UNREADABLE)
+        self.assertNotEqual(seen.payload_kind, 'EMPTY')
+
+    def test_no_size_and_no_hash_are_invented(self):
+        self.probe.note_response(unreadable_response())
+        seen = self.probe.observations[0]
+        self.assertFalse(seen.body_was_read)
+        self.assertIsNone(seen.response_bytes)
+        self.assertIsNone(seen.response_sha256)
+
+    def test_the_hash_is_not_the_hash_of_emptiness(self):
+        """Отдельно: sha256(b'') -- самое убедительное из ложных чисел."""
+        import hashlib
+        self.probe.note_response(unreadable_response())
+        self.assertNotEqual(self.probe.observations[0].response_sha256,
+                            hashlib.sha256(b'').hexdigest())
+
+    def test_nothing_is_claimed_about_the_routes(self):
+        self.probe.note_response(unreadable_response())
+        seen = self.probe.observations[0]
+        self.assertIsNone(seen.decoded_routes)
+        self.assertIsNone(seen.returned_id_count)
+        self.assertIsNone(seen.dji_response_status)
+
+    def test_the_comparison_is_marked_as_never_performed(self):
+        self.probe.note_response(unreadable_response())
+        comparison = self.probe.observations[0].comparison
+        self.assertIs(comparison['id_comparison_performed'], False)
+        self.assertIs(comparison['requested_and_returned_match'], False)
+
+    def test_missing_and_extra_are_not_invented(self):
+        """[REASON]: отчёт живого прогона написал «39 запрошенных отсутствуют».
+        Кабинет их, возможно, вернул -- это МЫ не прочитали ответ.
+        """
+        self.probe.note_response(unreadable_response(
+            post_data=ids_body([900000001, 900000002, 900000003])))
+        comparison = self.probe.observations[0].comparison
+        self.assertIsNone(comparison['missing_count'])
+        self.assertIsNone(comparison['extra_count'])
+        self.assertIsNone(comparison['returned_duplicate_count'])
+        self.assertIsNone(comparison['route_without_id_count'])
+
+    def test_the_request_side_counters_stay_real(self):
+        """Тело ЗАПРОСА мы прочитали -- про него врать не нужно и незачем."""
+        self.probe.note_response(unreadable_response(
+            post_data=json.dumps({'flight_record_ids': [900000001, 'oops'],
+                                  'data_type': 'simplified'})))
+        comparison = self.probe.observations[0].comparison
+        self.assertEqual(comparison['invalid_requested_id_count'], 1)
+        self.assertEqual(comparison['requested_duplicate_count'], 0)
+
+    def test_the_error_is_counted(self):
+        self.probe.note_response(unreadable_response())
+        self.assertEqual(self.probe.observation_errors, 1)
+
+    def test_the_run_is_never_confirmed(self):
+        self.probe.note_response(unreadable_response())
+        seen = self.probe.observations[0]
+        self.assertFalse(seen.confirmed)
+        self.assertIn('the response body could not be read',
+                      seen.not_confirmed_because)
+        self.assertEqual(self.outcome(), 13)
+
+    def test_no_misleading_reason_is_given(self):
+        """Про тело, которого не было в руках, три прежних причины -- ложь."""
+        self.probe.note_response(unreadable_response())
+        reasons = self.probe.observations[0].not_confirmed_because
+        self.assertNotIn('the payload did not decode', reasons)
+        self.assertNotIn('the requested and returned id sets do not match',
+                         reasons)
+        self.assertNotIn('the payload is not a binary route payload', reasons)
+
+    def test_the_detail_carries_only_the_exception_type_name(self):
+        self.probe.note_response(unreadable_response())
+        detail = self.probe.observations[0].payload_detail
+        self.assertIn('_TargetClosedError', detail)
+        self.assertNotIn('SYNTHETIC-BROWSER-DETAIL', detail)
+
+    def test_a_hostile_type_name_is_not_echoed(self):
+        """Класс можно объявить с любым `__name__`, в том числе из данных."""
+        hostile = type('bad name; Authorization: NOT-REAL', (Exception,), {})
+        self.probe.note_response(unreadable_response(exc=hostile('x')))
+        detail = self.probe.observations[0].payload_detail
+        self.assertIn(UNNAMED_EXCEPTION, detail)
+        self.assertNotIn('Authorization', detail)
+        self.assertNotIn('NOT-REAL', detail)
+
+    def test_nothing_of_the_exception_reaches_the_log(self):
+        self.probe.note_response(unreadable_response())
+        self.assertNotIn('SYNTHETIC-BROWSER-DETAIL', self.log.text())
+
+    def test_five_failures_are_counted_five_times(self):
+        """Живой прогон: пять ответов, пять TargetClosedError."""
+        for index in range(5):
+            self.probe.note_response(unreadable_response(
+                post_data=ids_body([900000001 + index])))
+        self.assertEqual(self.probe.observation_errors, 5)
+        self.assertEqual(self.probe.route_responses, 5)
+
+    def test_a_repeated_unreadable_exchange_still_counts_every_failure(self):
+        """Наблюдение может схлопнуться, ошибка чтения -- никогда.
+
+        Живой прогон видел пять ответов и четыре наблюдения: один обмен
+        повторился. Ошибок при этом было пять.
+        """
+        for _ in range(2):
+            self.probe.note_response(unreadable_response(
+                post_data=ids_body([900000001])))
+        self.probe.note_response(unreadable_response(
+            post_data=ids_body([900000002])))
+        self.assertEqual(self.probe.route_responses, 3)
+        self.assertEqual(len(self.probe.observations), 2)
+        self.assertEqual(self.probe.observations[0].repeats, 2)
+        self.assertEqual(self.probe.observation_errors, 3)
+
+    def test_an_unreadable_response_never_shares_a_key_with_a_real_empty(self):
+        """Ключ дедупликации различает UNREADABLE и настоящий пустой ответ."""
+        self.probe.note_response(unreadable_response(
+            post_data=ids_body([900000001])))
+        self.probe.note_response(route_response(
+            body=b'', post_data=ids_body([900000001])))
+        self.assertEqual(len(self.probe.observations), 2)
+        kinds = {item.payload_kind for item in self.probe.observations}
+        self.assertEqual(kinds, {PAYLOAD_KIND_UNREADABLE, 'EMPTY'})
+
+    def test_a_read_failure_does_not_carry_the_neighbourhood_forward(self):
+        self.probe.note_request(IDS_URL)
+        self.probe.note_response(unreadable_response(
+            post_data=ids_body([900000001])))
+        self.assertTrue(self.probe.observations[0].preceded_by_only_all_ids)
+        self.probe.note_response(unreadable_response(
+            post_data=ids_body([900000002])))
+        self.assertFalse(self.probe.observations[1].preceded_by_only_all_ids)
+
+    def test_an_error_before_the_url_is_read_clears_the_neighbourhood(self):
+        """Соседство гасится и когда мы не поняли даже, что за ответ пришёл."""
+        class _Hostile(object):
+            @property
+            def url(self):
+                raise RuntimeError('SYNTHETIC')
+
+        self.probe.note_request(IDS_URL)
+        self.probe.note_response(_Hostile())
+        self.assertEqual(self.probe.observation_errors, 1)
+        self.probe.note_response(confirmable())
+        self.assertFalse(self.probe.observations[0].preceded_by_only_all_ids)
+
+    def test_nothing_of_the_request_leaks_into_the_report(self):
+        self.probe.note_response(unreadable_response(
+            post_data=ids_body([900000001])))
+        write_report(self.probe, self.root)
+        haystack = self.everything_written()
+        for value in (FAKE_SIGNATURE, FAKE_COOKIE, FAKE_TOKEN,
+                      FAKE_REQUEST_ID, '900000001'):
+            self.assertNotIn(value, haystack)
+
+
+class TestARealEmptyBodyStaysEmpty(ProbeTestCase):
+    """Отрицательный контроль ко всему предыдущему классу.
+
+    Настоящий пустой ответ ПРОЧИТАН, и врать про него в другую сторону тоже
+    нельзя: он остаётся `EMPTY`, с нулём байт, хешем пустоты и без ошибки.
+    """
+
+    def test_a_real_empty_body_is_empty_and_was_read(self):
+        import hashlib
+        self.probe.note_response(route_response(
+            body=b'', post_data=ids_body([900000001])))
+        seen = self.probe.observations[0]
+        self.assertEqual(seen.payload_kind, 'EMPTY')
+        self.assertTrue(seen.body_was_read)
+        self.assertEqual(seen.response_bytes, 0)
+        self.assertEqual(seen.response_sha256, hashlib.sha256(b'').hexdigest())
+        self.assertEqual(self.probe.observation_errors, 0)
+
+    def test_a_real_empty_body_still_gets_a_real_comparison(self):
+        self.probe.note_response(route_response(
+            body=b'', post_data=ids_body([900000001])))
+        comparison = self.probe.observations[0].comparison
+        self.assertIs(comparison['id_comparison_performed'], True)
+        self.assertEqual(comparison['missing_count'], 1)
+        self.assertEqual(comparison['extra_count'], 0)
+
+    def test_a_real_binary_body_still_decodes(self):
+        self.probe.note_response(confirmable(flight_id=900000001))
+        seen = self.probe.observations[0]
+        self.assertEqual(seen.payload_kind, 'BINARY')
+        self.assertTrue(seen.body_was_read)
+        self.assertEqual(seen.decoded_routes, 1)
+        self.assertEqual(seen.dji_response_status, 200)
+        self.assertTrue(seen.confirmed)
+        self.assertEqual(self.probe.observation_errors, 0)
+        self.assertIs(seen.comparison['id_comparison_performed'], True)
+
+
+class TestOperatorWaitDoesNotBlockTheEventLoop(unittest.TestCase):
+    """`pump_until` и опрос оператора -- без Playwright и без сна.
+
+    [REASON]: корневая причина живого дефекта. Проверяется само свойство:
+    ожидание отдаёт управление на каждом обороте и кончается по сроку, а не
+    висит.
+    """
+
+    def test_it_returns_true_the_moment_the_condition_holds(self):
+        pumps = []
+        self.assertTrue(pump_until(pumps.append, lambda: True,
+                                   lambda: 0, 1000, 10))
+        self.assertEqual(pumps, [])
+
+    def test_it_pumps_until_the_condition_holds(self):
+        pumps = []
+        state = {'left': 3}
+
+        def done():
+            if state['left'] <= 0:
+                return True
+            state['left'] -= 1
+            return False
+
+        self.assertTrue(pump_until(pumps.append, done, lambda: 0, 1000, 7))
+        self.assertEqual(pumps, [7, 7, 7])
+
+    def test_it_gives_up_on_the_deadline_instead_of_hanging(self):
+        pumps = []
+        ticks = iter(range(0, 10000, 100))
+
+        self.assertFalse(pump_until(pumps.append, lambda: False,
+                                    lambda: next(ticks), 500, 5))
+        # Пять оборотов по 100 мс -- и выход. Не бесконечность.
+        self.assertLessEqual(len(pumps), 6)
+
+    def test_a_zero_deadline_still_checks_the_condition_first(self):
+        self.assertTrue(pump_until(lambda _ms: None, lambda: True,
+                                   lambda: 0, 0, 10))
+        self.assertFalse(pump_until(lambda _ms: None, lambda: False,
+                                    lambda: 0, 0, 10))
+
+    def test_the_operator_prompt_does_not_block_the_caller(self):
+        released = threading.Event()
+        answered = start_operator_prompt('x: ',
+                                         reader=lambda _p: released.wait(5))
+        # Управление вернулось немедленно, ответа ещё нет.
+        self.assertFalse(answered.is_set())
+        released.set()
+        self.assertTrue(answered.wait(timeout=5))
+
+    def test_a_reader_that_raises_still_releases_the_wait(self):
+        def broken(_prompt):
+            raise EOFError('SYNTHETIC')
+
+        answered = start_operator_prompt('x: ', reader=broken)
+        self.assertTrue(answered.wait(timeout=5))
+
+    def test_the_prompt_thread_is_a_daemon(self):
+        """Молчащий человек не должен задерживать выход процесса."""
+        before = {t.name for t in threading.enumerate()}
+        never = threading.Event()
+        start_operator_prompt('x: ', reader=lambda _p: never.wait(30))
+        try:
+            new = [t for t in threading.enumerate()
+                   if t.name not in before
+                   and t.name == 'route-ui-probe-operator']
+            self.assertTrue(new)
+            self.assertTrue(all(t.daemon for t in new))
+        finally:
+            never.set()
+
+
+class TestQuietDetection(ProbeTestCase):
+    """Признак «ответы кончились», по которому решается drain."""
+
+    def setUp(self):
+        ProbeTestCase.setUp(self)
+        self.now = {'ms': 1000}
+        self.probe = RouteUiProbe(logger=self.log,
+                                  expected_origin=ROUTE_ORIGIN,
+                                  clock=lambda: self.now['ms'])
+
+    def test_a_probe_that_saw_nothing_is_quiet(self):
+        self.assertTrue(self.probe.is_quiet(self.now['ms'], 2000))
+
+    def test_it_is_not_quiet_right_after_a_response(self):
+        self.probe.note_response(confirmable())
+        self.assertFalse(self.probe.is_quiet(self.now['ms'], 2000))
+
+    def test_it_becomes_quiet_once_the_window_passes(self):
+        self.probe.note_response(confirmable())
+        self.assertTrue(self.probe.is_quiet(self.now['ms'] + 2000, 2000))
+
+    def test_it_is_never_quiet_while_a_handler_is_running(self):
+        """Закрывать браузер под работающим обработчиком -- и есть дефект."""
+        seen = []
+
+        class _Slow(object):
+            url = ROUTE_URL
+            status = 200
+            request = _FakeRequest(post_data=ids_body([900000001]),
+                                   headers=HEADERS)
+
+            def all_headers(self):
+                return {}
+
+            def body(inner):
+                seen.append(self.probe.is_quiet(self.now['ms'] + 10 ** 6,
+                                                2000))
+                return response([route_record(flight_id=900000001)])
+
+        self.probe.note_response(_Slow())
+        self.assertEqual(seen, [False])
+        self.assertEqual(self.probe.responses_in_flight, 0)
 
 
 class TestNothingLeaks(ProbeTestCase):
