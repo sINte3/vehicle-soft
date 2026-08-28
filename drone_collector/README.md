@@ -460,6 +460,25 @@ anything is done, and asks the operator to open Task History, pick one day,
 switch to the map view and press Enter. While that happens the probe watches
 the request the cabinet issues for itself.
 
+**How the wait works, and why it is not `input()`.** The operator is asked on a
+separate daemon thread; the Playwright thread meanwhile turns a short
+`page.wait_for_timeout()` loop and hands control back to the library on every
+turn. That is not a stylistic choice — it is the fix for a live defect. The
+first live probe run (2026-08-27) blocked the Playwright thread in a bare
+`input()`, so no event handler ran while the operator looked at the map. They
+ran only after Enter, which is to say on the way out of `with FlightCollector`,
+while the target was closing: all five `response.body()` calls came back with
+`TargetClosedError`, and not one response body was captured.
+
+After the operator signals, the probe stops waiting for the person but gives
+the responses that already started a bounded window to finish, and only then
+lets the browser go. Neither wait is unbounded: both end on a deadline, and a
+deadline that runs out gives **exit 13**, never success. Four settings tune it
+(`DJI_ROUTE_PROBE_POLL_MS`, `DJI_ROUTE_PROBE_WAIT_MS`,
+`DJI_ROUTE_PROBE_DRAIN_MS`, `DJI_ROUTE_PROBE_QUIET_MS`); the report and the
+RUN SUMMARY both say how the wait ended (`operator_answered`,
+`response_drain_completed`, `probe_drained`).
+
 It never issues the route POST itself, queues nothing and sends nothing to
 Vehicle Soft. It does open the cabinet, and that navigation is a request of
 its own — the guarantee is the narrower and true one: **no route POST is
@@ -505,7 +524,9 @@ a dropped observation nothing is known, and "not known" is not "confirmed". One
 confirmed POST beside one unconfirmed answer is **not** a success either — that
 run exits 13. Seeing nothing at all exits 6.
 
-Exit 0 further requires that the listener stumbled on **no** response. It
+Exit 0 further requires that the operator actually signalled, that the drain
+window closed on quiet rather than on its deadline, and that the listener
+stumbled on **no** response. It
 catches every exception so that the Playwright loop cannot be brought down by
 an observer, and each such failure is counted: a response that arrived and
 could not be read is not "nothing observed", and a run carrying one is not a
@@ -523,6 +544,27 @@ The response size limit is a limit on **processing**, not on reading:
 Playwright hands over a body whole, so an oversized body has already been in
 memory by the time it is measured. What the limit does is refuse to hash,
 decode, classify or store it; the observation keeps its real measured size.
+
+### A body that could not be read is not an empty body
+
+If `response.body()` raises, the probe records the observation as
+`payload_kind=UNREADABLE` and invents nothing: `response_bytes` and
+`response_sha256` are empty, `response_body_was_read` is false,
+`decoded_routes`, `returned_id_count` and `dji_response_status` are empty, and
+the id comparison is marked `id_comparison_performed=false` with `missing_count`
+and `extra_count` empty as well. The error counter goes up and the run exits 13.
+Only the **name** of the exception type is kept, and only if it looks like a
+type name; no exception text and nothing else from the browser reaches the log
+or the report.
+
+This exists because the opposite was done once and lied convincingly. The live
+run of 2026-08-27 substituted `b''` for the unread body, and the report claimed
+`response_body_was_read=true`, `response_bytes=0`, the SHA-256 of the **empty**
+body, `payload_kind=EMPTY`, `observation_errors=0` and that thirty-nine
+requested ids were missing. The cabinet may well have returned them: it was the
+probe that never read the answer. A genuinely empty body that **was** read is a
+different thing and stays `EMPTY`, with zero bytes, the hash of emptiness, a
+real comparison and no error.
 
 When the response declares a `Content-Length` above the limit, the body is not
 requested at all — and then the real size is simply **unknown**. The declared
