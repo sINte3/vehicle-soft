@@ -105,6 +105,23 @@ DEFAULT_ROUTE_BATCH_SIZE = 25
 DEFAULT_ROUTE_PAUSE_MS = 1000
 DEFAULT_GEOMETRY_PAUSE_MS = 350
 
+# Тайминги наблюдения за штатным запросом маршрутов (`--route-ui-probe`).
+#
+# [REASON]: ожидание оператора раньше стояло в голом `input()`, который держит
+# ПОТОК Playwright. Пока человек смотрел на карту, ни один обработчик события
+# не выполнялся; они пошли в работу уже после Enter -- то есть на выходе из
+# `with FlightCollector`, когда target закрывался. Все пять ответов живого
+# прогона 2026-08-27 получили `TargetClosedError` на `response.body()`.
+# Отсюда три числа: как часто прокачивать цикл, сколько всего ждать человека
+# и сколько времени дать уже начавшимся ответам после его сигнала.
+DEFAULT_ROUTE_PROBE_POLL_MS = 200
+# Потолок ожидания человека. Не бесконечность: прогон обязан кончаться.
+DEFAULT_ROUTE_PROBE_WAIT_MS = 30 * 60 * 1000
+# Сколько всего ждать после Enter, прежде чем закрывать браузер.
+DEFAULT_ROUTE_PROBE_DRAIN_MS = 15000
+# Сколько тишины считать признаком того, что ответов больше нет.
+DEFAULT_ROUTE_PROBE_QUIET_MS = 2000
+
 
 class ConfigError(Exception):
     """Unusable environment. Always names the offending variable."""
@@ -186,7 +203,11 @@ class CollectorConfig(object):
                  route_api_origin=DEFAULT_ROUTE_API_ORIGIN,
                  outbox_dir=None, route_batch_size=DEFAULT_ROUTE_BATCH_SIZE,
                  route_pause_ms=DEFAULT_ROUTE_PAUSE_MS,
-                 geometry_pause_ms=DEFAULT_GEOMETRY_PAUSE_MS):
+                 geometry_pause_ms=DEFAULT_GEOMETRY_PAUSE_MS,
+                 route_probe_poll_ms=DEFAULT_ROUTE_PROBE_POLL_MS,
+                 route_probe_wait_ms=DEFAULT_ROUTE_PROBE_WAIT_MS,
+                 route_probe_drain_ms=DEFAULT_ROUTE_PROBE_DRAIN_MS,
+                 route_probe_quiet_ms=DEFAULT_ROUTE_PROBE_QUIET_MS):
         self.records_url = records_url
         self.fields_url = fields_url
         self.max_land_pages = max_land_pages
@@ -207,6 +228,10 @@ class CollectorConfig(object):
         self.route_batch_size = route_batch_size
         self.route_pause_ms = route_pause_ms
         self.geometry_pause_ms = geometry_pause_ms
+        self.route_probe_poll_ms = route_probe_poll_ms
+        self.route_probe_wait_ms = route_probe_wait_ms
+        self.route_probe_drain_ms = route_probe_drain_ms
+        self.route_probe_quiet_ms = route_probe_quiet_ms
 
     @property
     def flight_sync_url(self):
@@ -257,6 +282,10 @@ class CollectorConfig(object):
             'route_batch_size': self.route_batch_size,
             'route_pause_ms': self.route_pause_ms,
             'geometry_pause_ms': self.geometry_pause_ms,
+            'route_probe_poll_ms': self.route_probe_poll_ms,
+            'route_probe_wait_ms': self.route_probe_wait_ms,
+            'route_probe_drain_ms': self.route_probe_drain_ms,
+            'route_probe_quiet_ms': self.route_probe_quiet_ms,
         }
 
 
@@ -333,4 +362,13 @@ def load_config(require_ingest=True, load_dotenv=True):
                                minimum=0),
         geometry_pause_ms=_as_int('DJI_GEOMETRY_PAUSE_MS',
                                   DEFAULT_GEOMETRY_PAUSE_MS, minimum=0),
+        # `minimum=1` у опроса: ноль превратил бы прокачку в busy-loop.
+        route_probe_poll_ms=_as_int('DJI_ROUTE_PROBE_POLL_MS',
+                                    DEFAULT_ROUTE_PROBE_POLL_MS, minimum=1),
+        route_probe_wait_ms=_as_int('DJI_ROUTE_PROBE_WAIT_MS',
+                                    DEFAULT_ROUTE_PROBE_WAIT_MS, minimum=1),
+        route_probe_drain_ms=_as_int('DJI_ROUTE_PROBE_DRAIN_MS',
+                                     DEFAULT_ROUTE_PROBE_DRAIN_MS, minimum=0),
+        route_probe_quiet_ms=_as_int('DJI_ROUTE_PROBE_QUIET_MS',
+                                     DEFAULT_ROUTE_PROBE_QUIET_MS, minimum=0),
     )

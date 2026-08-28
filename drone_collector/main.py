@@ -119,7 +119,8 @@ ROUTE_SUMMARY_KEYS = (
 ROUTE_PROBE_SUMMARY_KEYS = (
     'mode', 'region', 'probe_route_responses', 'probe_observations',
     'probe_confirmed', 'probe_skipped_over_cap', 'probe_errors',
-    'probe_only_all_ids', 'probe_report', 'exit',
+    'probe_only_all_ids', 'probe_operator_answered', 'probe_drained',
+    'probe_report', 'exit',
 )
 
 LAND_SUMMARY_KEYS = (
@@ -686,7 +687,10 @@ def _run_route_ui_probe(args, cfg, log, state):
     try:
         from drone_collector.route_ui_probe import (MAX_OBSERVATIONS,
                                                     PROMPT_LINES, RouteUiProbe,
+                                                    monotonic_ms,
                                                     probe_exit_code,
+                                                    pump_until,
+                                                    start_operator_prompt,
                                                     write_report)
     except ImportError as exc:  # pragma: no cover -- our own module
         log.error('The route probe could not be imported (%s)', exc)
@@ -721,7 +725,43 @@ def _run_route_ui_probe(args, cfg, log, state):
 
             for line in PROMPT_LINES:
                 print(line)
-            input('Press Enter once the routes are drawn on the map: ')
+
+            # [REASON]: КОРНЕВОЕ ИСПРАВЛЕНИЕ. Раньше здесь стоял голый
+            # `input()`, и он держал ПОТОК Playwright: пока человек смотрел на
+            # карту, ни один обработчик события не выполнялся. Они пошли в
+            # работу только после Enter -- то есть уже на выходе из
+            # `with FlightCollector`, когда target закрывался, -- и все пять
+            # `response.body()` живого прогона 2026-08-27 получили
+            # `TargetClosedError`. Теперь человека спрашивает отдельный
+            # демонический поток, а поток Playwright крутит короткий цикл и
+            # отдаёт управление библиотеке на каждом обороте.
+            answered_event = start_operator_prompt(
+                'Press Enter once the routes are drawn on the map: ')
+            pump = page.wait_for_timeout
+            operator_answered = pump_until(
+                pump, answered_event.is_set, monotonic_ms,
+                cfg.route_probe_wait_ms, cfg.route_probe_poll_ms)
+            if not operator_answered:
+                log.error('The operator did not answer within %d ms; the '
+                          'probe stops waiting and drains what it already '
+                          'saw.', cfg.route_probe_wait_ms)
+
+            # Сигнал получен -- новых действий оператора больше не ждём, но
+            # УЖЕ НАЧАВШИМСЯ ответам даём ограниченное время закончиться, и
+            # только потом отпускаем браузер.
+            drain_completed = pump_until(
+                pump,
+                lambda: probe.is_quiet(monotonic_ms(),
+                                       cfg.route_probe_quiet_ms),
+                monotonic_ms, cfg.route_probe_drain_ms,
+                cfg.route_probe_poll_ms)
+            if not drain_completed:
+                log.error('Route responses were still arriving %d ms after '
+                          'the operator signalled; the browser is closed now '
+                          'and the run is NOT confirmed.',
+                          cfg.route_probe_drain_ms)
+            print('Drained pending route responses: %s'
+                  % ('yes' if drain_completed else 'TIMED OUT'))
     except errors as exc:
         return _exit_code_for(exc, log)
 
@@ -735,9 +775,13 @@ def _run_route_ui_probe(args, cfg, log, state):
     # показывать, почему прогон не зелёный.
     state['probe_errors'] = probe.observation_errors
     state['probe_only_all_ids'] = probe.saw_only_all_ids
+    state['probe_operator_answered'] = operator_answered
+    state['probe_drained'] = drain_completed
 
     try:
-        target = write_report(probe, cfg.out_dir)
+        target = write_report(probe, cfg.out_dir,
+                              operator_answered=operator_answered,
+                              drain_completed=drain_completed)
     except ValueError as exc:
         log.error('%s', exc)
         return EXIT_PAGINATION
@@ -758,7 +802,9 @@ def _run_route_ui_probe(args, cfg, log, state):
     code = probe_exit_code(observations=len(probe.observations),
                            confirmed=len(confirmed),
                            skipped_over_cap=probe.skipped_over_cap,
-                           observation_errors=probe.observation_errors)
+                           observation_errors=probe.observation_errors,
+                           drain_timed_out=not drain_completed,
+                           operator_answered=operator_answered)
 
     if code == EXIT_EMPTY:
         log.error('No route request was observed. The cabinet may not have '
@@ -776,6 +822,12 @@ def _run_route_ui_probe(args, cfg, log, state):
         if probe.observation_errors:
             reasons.append('%d response(s) could not be read by the listener'
                            % probe.observation_errors)
+        if not drain_completed:
+            reasons.append('route responses were still arriving when the '
+                           'drain window of %d ms ran out'
+                           % cfg.route_probe_drain_ms)
+        if not operator_answered:
+            reasons.append('the operator never signalled')
         log.error('%d route response(s) observed, %d confirmed, %d dropped by '
                   'the cap, %d unreadable -- NOT a confirmed run: %s',
                   len(probe.observations), len(confirmed),
