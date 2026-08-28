@@ -784,7 +784,7 @@ class RouteProbeExitCodeTests(CliTestCase):
         CliTestCase.tearDown(self)
 
     def install(self, observations, confirmed, skipped=0, errors=0,
-                quiet=True, journal=None, on_pump=None):
+                quiet=True, journal=None, on_pump=None, failed=0):
         """Подставные браузер и наблюдатель с заданным исходом.
 
         `quiet=False` изображает ответы, которые всё ещё идут: drain выходит
@@ -853,9 +853,21 @@ class RouteProbeExitCodeTests(CliTestCase):
                 self.observation_errors = errors
                 self.responses_in_flight = 0
                 self.last_route_activity = None
+                self.pending_route_requests = 0
+                self.route_requests_failed = failed
+                self.drain_started = None
+
+            def begin_drain(self, now_ms):
+                self.drain_started = now_ms
 
             def is_quiet(self, _now_ms, _quiet_ms):
                 return quiet
+
+            def note_request_finished(self, _request):
+                pass
+
+            def note_request_failed(self, _request):
+                pass
 
             @property
             def confirmed_observations(self):
@@ -876,6 +888,9 @@ class RouteProbeExitCodeTests(CliTestCase):
                             len(self.confirmed_observations),
                         'skipped_over_cap': self.skipped_over_cap,
                         'observation_errors': self.observation_errors,
+                        'route_requests_failed': self.route_requests_failed,
+                        'route_requests_still_pending':
+                            self.pending_route_requests,
                         'observations': [item.as_dict()
                                          for item in self.observations],
                         'nothing_was_queued': True,
@@ -1085,6 +1100,110 @@ class RouteProbeLifecycleTests(RouteProbeExitCodeTests):
         never.set()
         self.assertEqual(code, main_module.EXIT_ROUTE_PROBE_UNCONFIRMED)
         self.assertIn('probe_operator_answered=false', self.log_text().lower())
+
+    def test_an_input_error_is_not_an_answer(self):
+        """Отказ ввода -- не ответ оператора, и ждать потолка не нужно.
+
+        [REASON]: событие ставилось в `finally`, и `EOFError` на закрытом
+        stdin объявлялся нажатым Enter. Прогон при этом мог выйти нулём.
+        """
+        def broken(_prompt=''):
+            raise EOFError('SYNTHETIC-STDIN-DETAIL')
+
+        # Потолок ожидания заведомо огромен: если бы отказ его не сокращал,
+        # тест висел бы, а не падал.
+        self.short_windows(wait_ms=3600000)
+        self.install(observations=1, confirmed=1)
+        started = time.monotonic()
+        code = self.run_probe(reader=broken)
+        self.assertLess(time.monotonic() - started, 20)
+        self.assertEqual(code, main_module.EXIT_ROUTE_PROBE_UNCONFIRMED)
+        self.assertIn('probe_operator_answered=false', self.log_text().lower())
+
+    def test_no_text_of_the_input_failure_is_printed(self):
+        def broken(_prompt=''):
+            raise EOFError('SYNTHETIC-STDIN-DETAIL')
+
+        self.short_windows()
+        self.install(observations=1, confirmed=1)
+        self.run_probe(reader=broken)
+        self.assertNotIn('SYNTHETIC-STDIN-DETAIL', self.log_text())
+        self.assertIn('EOFError', self.log_text())
+
+    def test_a_real_answer_is_the_positive_control(self):
+        """Различается ровно одно: читатель возвращает, а не бросает."""
+        self.short_windows()
+        self.install(observations=1, confirmed=1)
+        self.assertEqual(self.run_probe(reader=lambda _p='': ''), EXIT_OK)
+        self.assertIn('probe_operator_answered=true', self.log_text().lower())
+
+    def test_the_full_request_lifecycle_is_subscribed(self):
+        """Слушаются все четыре события, а не два."""
+        events = []
+
+        class _Page(object):
+            def on(self, event, _handler):
+                events.append(event)
+
+            def wait_for_timeout(self, _ms):
+                pass
+
+        self.short_windows()
+        self.install(observations=1, confirmed=1)
+        from drone_collector import browser as browser_module
+        real = browser_module.FlightCollector
+
+        class _Collector(real):
+            def __init__(self, cfg, log):
+                self.page = _Page()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def open_records(self):
+                pass
+
+            def check_region(self, _expected):
+                return 'Uzbekistan'
+
+        browser_module.FlightCollector = _Collector
+        try:
+            self.run_probe()
+        finally:
+            browser_module.FlightCollector = real
+        self.assertEqual(set(events),
+                         {'request', 'response', 'requestfinished',
+                          'requestfailed'})
+
+    def test_a_failed_route_request_exits_thirteen(self):
+        self.short_windows()
+        self.install(observations=1, confirmed=1, errors=1, failed=1)
+        self.assertEqual(self.run_probe(),
+                         main_module.EXIT_ROUTE_PROBE_UNCONFIRMED)
+        self.assertIn('probe_request_failures=1', self.log_text().lower())
+
+    def test_a_run_without_failures_says_zero(self):
+        self.short_windows()
+        self.install(observations=1, confirmed=1)
+        self.run_probe()
+        self.assertIn('probe_request_failures=0', self.log_text().lower())
+        self.assertIn('probe_pending_requests=0', self.log_text().lower())
+
+    def test_the_drain_is_begun_before_it_is_waited_on(self):
+        """`begin_drain` вызван -- иначе тишина наступала бы мгновенно."""
+        self.short_windows()
+        self.install(observations=1, confirmed=1)
+        self.run_probe()
+        from drone_collector import route_ui_probe as probe_module
+        self.assertIsNotNone(getattr(probe_module.RouteUiProbe,
+                                     'begin_drain', None))
+        import inspect
+        source = inspect.getsource(main_module._run_route_ui_probe)
+        self.assertIn('probe.begin_drain(', source)
+        self.assertIn('min_pumps=1', source)
 
 
 class RouteProbeHelpTextTests(unittest.TestCase):
