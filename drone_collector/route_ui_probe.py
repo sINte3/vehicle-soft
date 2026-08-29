@@ -671,7 +671,7 @@ class RouteUiObservation(object):
                  'response_bytes', 'declared_response_bytes', 'body_was_read',
                  'response_sha256', 'payload_kind',
                  'payload_detail', 'decoded_routes', 'returned_id_count',
-                 'dji_response_status',
+                 'dji_response_status', 'point_census',
                  'comparison', 'preceded_by_only_all_ids', 'repeats',
                  'confirmed', 'not_confirmed_because')
 
@@ -681,7 +681,8 @@ class RouteUiObservation(object):
                  returned_id_count=None, comparison=None,
                  preceded_by_only_all_ids=False, confirmed=False,
                  not_confirmed_because=(), declared_response_bytes=None,
-                 body_was_read=True, dji_response_status=None):
+                 body_was_read=True, dji_response_status=None,
+                 point_census=None):
         self.host = host
         self.path = path
         self.method = method
@@ -696,6 +697,8 @@ class RouteUiObservation(object):
         self.decoded_routes = decoded_routes
         self.returned_id_count = returned_id_count
         self.dji_response_status = dji_response_status
+        # Перепись СТРУКТУРНЫХ вариантов точек. Ни координат, ни значений.
+        self.point_census = point_census or {}
         self.comparison = comparison or {}
         self.preceded_by_only_all_ids = preceded_by_only_all_ids
         self.repeats = 1
@@ -727,6 +730,7 @@ class RouteUiObservation(object):
             'decoded_routes': self.decoded_routes,
             'returned_id_count': self.returned_id_count,
             'dji_response_status': self.dji_response_status,
+            'point_shape_census': dict(self.point_census),
             'repeats': self.repeats,
             'confirmed_route_post': self.confirmed,
             'not_confirmed_because': list(self.not_confirmed_because),
@@ -1248,6 +1252,7 @@ class RouteUiProbe(object):
             returned_ids = []
             routes_without_id = 0
             dji_status = None
+            point_census = {}
         elif oversize:
             digest = None
             payload_kind = 'TOO_LARGE'
@@ -1266,6 +1271,7 @@ class RouteUiProbe(object):
             returned_ids = []
             routes_without_id = 0
             dji_status = None
+            point_census = {}
         else:
             digest = hashlib.sha256(raw).hexdigest()
             from drone_collector.route_payload import (PAYLOAD_BINARY,
@@ -1277,9 +1283,10 @@ class RouteUiProbe(object):
             returned_ids = []
             routes_without_id = 0
             dji_status = None
+            point_census = {}
             if verdict.kind == PAYLOAD_BINARY:
-                decoded_routes, returned_ids, routes_without_id, dji_status = \
-                    self._decode_ids(raw)
+                (decoded_routes, returned_ids, routes_without_id, dji_status,
+                 point_census) = self._decode_ids(raw)
                 returned = (len(set(returned_ids))
                             if decoded_routes is not None else None)
 
@@ -1325,7 +1332,7 @@ class RouteUiProbe(object):
             response_sha256=digest, payload_kind=payload_kind,
             payload_detail=payload_detail, decoded_routes=decoded_routes,
             returned_id_count=returned, dji_response_status=dji_status,
-            comparison=comparison,
+            point_census=point_census, comparison=comparison,
             preceded_by_only_all_ids=preceded,
             confirmed=not problems, not_confirmed_because=problems)
         self._seen[key] = observation
@@ -1334,7 +1341,7 @@ class RouteUiProbe(object):
                       _safe_line(observation))
 
     def _decode_ids(self, raw):
-        """(маршрутов, список вернувшихся id, маршрутов без id, статус DJI).
+        """(маршрутов, id, маршрутов без id, статус DJI, перепись форм точек).
 
         [REASON]: третье число раньше не считалось вовсе. Маршрут без
         `dji_flight_id` ни с каким вылетом не связывается, и ответ, где такой
@@ -1350,14 +1357,15 @@ class RouteUiProbe(object):
         """
         try:
             from drone_collector.route_decode import (RouteDecodeError,
-                                                      decode_route_response)
+                                                      decode_route_response,
+                                                      point_shape_census)
         except ImportError:  # pragma: no cover
-            return None, [], 0, None
+            return None, [], 0, None, {}
         try:
             decoded = decode_route_response(raw)
         except RouteDecodeError as exc:
             self.log.warning('The observed body did not decode (%s)', exc)
-            return None, [], 0, None
+            return None, [], 0, None, {}
         ids = [value for value in decoded.flight_ids if value is not None]
         without_id = len(decoded.routes) - len(ids)
         status = decoded.status if isinstance(decoded.status, int) else None
@@ -1366,7 +1374,8 @@ class RouteUiProbe(object):
             self.log.warning('The observed body decoded, but the DJI envelope '
                              'status is %s, not %s', status,
                              DJI_ENVELOPE_STATUS_OK)
-        return len(decoded.routes), ids, without_id, status
+        return (len(decoded.routes), ids, without_id, status,
+                point_shape_census(decoded.routes))
 
     # -- отчёт ----------------------------------------------------------------
 

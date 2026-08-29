@@ -2315,6 +2315,221 @@ class TestProbeTimingValidation(unittest.TestCase):
         self.assertRegex(message, r'^[\x20-\x7e]+$')
 
 
+def _rich_point(lat, lng, extra=b''):
+    """Точка с координатами и, при желании, лишними полями."""
+    from drone_collector.tests.test_route_decode import f_bytes, f_double
+    return f_bytes(1, f_double(1, lat) + f_double(2, lng) + extra)
+
+
+def route_record_with_third_field(flight_id=900000001, points=2):
+    """Запись маршрута, точки которой несут третье неизвестное поле.
+
+    Синтетика: живой прогон 2026-08-29 упёрся ровно в такую форму, но само
+    тело ответа не сохранялось и в фикстуры не попадает.
+    """
+    from drone_collector.tests.test_route_decode import (
+        FAKE_LAT, FAKE_LNG, f_varint)
+    body = b''
+    for index in range(points):
+        body += _rich_point(FAKE_LAT + index * 0.001, FAKE_LNG,
+                            f_varint(3, 1780670376 + index))
+    return body + f_varint(2, flight_id)
+
+
+class TestPointShapeCensus(ProbeTestCase):
+    """Безопасная диагностика вариантов точек.
+
+    [REASON]: живой прогон 2026-08-29 показал, что форма точки у DJI не одна.
+    Чтобы следующий разговор шёл о фактах, probe считает варианты -- номера
+    полей, wire types и количества, -- и НЕ выпускает ни координат, ни
+    значений неизвестных полей, ни идентификаторов вылетов.
+    """
+
+    def census(self, body):
+        deliver(self.probe, route_response(
+            body=body, post_data=ids_body([900000001])))
+        return self.probe.observations[0].as_dict()['point_shape_census']
+
+    def test_the_old_two_field_point_is_one_clean_variant(self):
+        census = self.census(response([route_record(flight_id=900000001)]))
+        self.assertEqual(len(census['route_point_variants']), 1)
+        variant = census['route_point_variants'][0]
+        self.assertEqual(variant['fields'],
+                         [{'number': 1, 'wire': 1, 'count': 1},
+                          {'number': 2, 'wire': 1, 'count': 1}])
+        self.assertEqual(census['route_points_with_unknown_fields'], 0)
+        self.assertEqual(census['unknown_fields'], [])
+
+    def test_a_third_field_is_counted_and_named_unknown(self):
+        census = self.census(response([route_record_with_third_field()]))
+        self.assertEqual(census['route_points_total'], 2)
+        self.assertEqual(census['route_points_with_unknown_fields'], 2)
+        self.assertEqual(len(census['unknown_fields']), 1)
+        unknown = census['unknown_fields'][0]
+        self.assertEqual(unknown['number'], 3)
+        self.assertEqual(unknown['wire'], 0)
+        self.assertEqual(unknown['points'], 2)
+        self.assertEqual(unknown['occurrences'], 2)
+        self.assertEqual(unknown['semantics'], 'UNKNOWN_SEMANTICS')
+        self.assertEqual(unknown['site'], 'route_point')
+
+    def test_two_shapes_in_one_body_are_two_variants(self):
+        from drone_collector.tests.test_route_decode import (
+            FAKE_LAT, FAKE_LNG, f_varint)
+        body = (_rich_point(FAKE_LAT, FAKE_LNG)
+                + _rich_point(FAKE_LAT, FAKE_LNG, f_varint(3, 1))
+                + f_varint(2, 900000001))
+        census = self.census(response([body]))
+        self.assertEqual(len(census['route_point_variants']), 2)
+        self.assertEqual(census['route_points_total'], 2)
+        self.assertEqual(census['route_points_with_unknown_fields'], 1)
+
+    def test_the_takeoff_is_counted_apart_from_the_route_points(self):
+        from drone_collector.tests.test_route_decode import (
+            FAKE_LAT, FAKE_LNG, f_bytes, f_double, f_varint)
+        body = (_rich_point(FAKE_LAT, FAKE_LNG)
+                + f_varint(2, 900000001)
+                + f_bytes(7, f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG)
+                          + f_varint(4, 9)))
+        census = self.census(response([body]))
+        self.assertEqual(census['route_points_with_unknown_fields'], 0)
+        self.assertEqual(census['takeoffs_total'], 1)
+        self.assertEqual(census['takeoffs_with_unknown_fields'], 1)
+        sites = {item['site'] for item in census['unknown_fields']}
+        self.assertEqual(sites, {'takeoff'})
+
+    def test_no_coordinate_reaches_the_census(self):
+        from drone_collector.tests.test_route_decode import FAKE_LAT, FAKE_LNG
+        census = self.census(response([route_record_with_third_field()]))
+        text = json.dumps(census)
+        for value in (FAKE_LAT, FAKE_LNG):
+            self.assertNotIn(str(value), text)
+            self.assertNotIn(str(value)[:7], text)
+
+    def test_no_unknown_value_and_no_flight_id_reach_the_report(self):
+        deliver(self.probe, route_response(
+            body=response([route_record_with_third_field()]),
+            post_data=ids_body([900000001])))
+        write_report(self.probe, self.root)
+        haystack = self.everything_written()
+        # Значение третьего поля -- 1780670376 и 1780670377.
+        self.assertNotIn('1780670376', haystack)
+        self.assertNotIn('1780670377', haystack)
+        self.assertNotIn('900000001', haystack)
+        for value in (FAKE_SIGNATURE, FAKE_COOKIE, FAKE_TOKEN,
+                      FAKE_REQUEST_ID):
+            self.assertNotIn(value, haystack)
+
+    def test_no_raw_body_reaches_the_report(self):
+        body = response([route_record_with_third_field()])
+        deliver(self.probe, route_response(
+            body=body, post_data=ids_body([900000001])))
+        write_report(self.probe, self.root)
+        haystack = self.everything_written()
+        self.assertNotIn(body.hex(), haystack)
+        self.assertNotIn(repr(body)[2:40], haystack)
+
+    def test_an_unreadable_body_carries_an_empty_census(self):
+        deliver(self.probe, route_response(
+            body=b'{"status": 408, "code": 408, "msg": "no"}',
+            post_data=ids_body([900000001])))
+        document = self.probe.observations[0].as_dict()
+        self.assertEqual(document['point_shape_census'], {})
+
+
+class TestTheProbeConfirmsAfterRouteDecodeTwo(ProbeTestCase):
+    """Сверка ID делается ПОСЛЕ успешного route-decode-2.
+
+    [REASON]: тело с третьим полем раньше не декодировалось вовсе, поэтому до
+    сверки идентификаторов дело не доходило и код был 13 по причине «не
+    разобралось». Теперь оно разбирается -- и все прежние условия
+    подтверждения обязаны отработать в полном объёме.
+    """
+
+    def outcome(self):
+        return probe_exit_code(
+            observations=len(self.probe.observations),
+            confirmed=len(self.probe.confirmed_observations),
+            skipped_over_cap=self.probe.skipped_over_cap,
+            observation_errors=self.probe.observation_errors)
+
+    def test_a_body_with_third_fields_is_confirmed_when_the_ids_match(self):
+        deliver(self.probe, route_response(
+            body=response([route_record_with_third_field(900000001)]),
+            post_data=ids_body([900000001])))
+        seen = self.probe.observations[0]
+        self.assertEqual(seen.payload_kind, 'BINARY')
+        self.assertEqual(seen.decoded_routes, 1)
+        self.assertEqual(seen.dji_response_status, 200)
+        self.assertIs(seen.comparison['id_comparison_performed'], True)
+        self.assertTrue(seen.confirmed, seen.not_confirmed_because)
+        self.assertEqual(self.outcome(), 0)
+
+    def test_a_missing_id_is_still_counted(self):
+        deliver(self.probe, route_response(
+            body=response([route_record_with_third_field(900000001)]),
+            post_data=ids_body([900000001, 900000002])))
+        comparison = self.probe.observations[0].comparison
+        self.assertEqual(comparison['missing_count'], 1)
+        self.assertEqual(comparison['extra_count'], 0)
+        self.assertFalse(self.probe.observations[0].confirmed)
+        self.assertEqual(self.outcome(), 13)
+
+    def test_an_extra_id_is_still_counted(self):
+        deliver(self.probe, route_response(
+            body=response([route_record_with_third_field(900000001),
+                           route_record_with_third_field(900000002)]),
+            post_data=ids_body([900000001])))
+        comparison = self.probe.observations[0].comparison
+        self.assertEqual(comparison['extra_count'], 1)
+        self.assertEqual(self.outcome(), 13)
+
+    def test_a_duplicate_returned_id_is_still_refused(self):
+        deliver(self.probe, route_response(
+            body=response([route_record_with_third_field(900000001),
+                           route_record_with_third_field(900000001)]),
+            post_data=ids_body([900000001])))
+        comparison = self.probe.observations[0].comparison
+        self.assertEqual(comparison['returned_duplicate_count'], 1)
+        self.assertFalse(self.probe.observations[0].confirmed)
+        self.assertEqual(self.outcome(), 13)
+
+    def test_a_route_without_an_id_is_still_refused(self):
+        from drone_collector.tests.test_route_decode import (
+            FAKE_LAT, FAKE_LNG, f_varint)
+        body = _rich_point(FAKE_LAT, FAKE_LNG, f_varint(3, 1))
+        deliver(self.probe, route_response(
+            body=response([body]), post_data=ids_body([900000001])))
+        comparison = self.probe.observations[0].comparison
+        self.assertEqual(comparison['route_without_id_count'], 1)
+        self.assertFalse(self.probe.observations[0].confirmed)
+
+    def test_a_bad_internal_status_is_still_refused(self):
+        deliver(self.probe, route_response(
+            body=response([route_record_with_third_field(900000001)],
+                          status=101),
+            post_data=ids_body([900000001])))
+        seen = self.probe.observations[0]
+        self.assertEqual(seen.dji_response_status, 101)
+        self.assertFalse(seen.confirmed)
+        self.assertIn('the DJI envelope status is not the success status',
+                      seen.not_confirmed_because)
+        self.assertEqual(self.outcome(), 13)
+
+    def test_a_corrupt_point_still_refuses_to_decode(self):
+        """Отрицательный контроль: снисхождения к координатам не появилось."""
+        from drone_collector.tests.test_route_decode import (
+            FAKE_LNG, f_bytes, f_double, f_varint)
+        broken = f_bytes(1, f_double(2, FAKE_LNG)) + f_varint(2, 900000001)
+        deliver(self.probe, route_response(
+            body=response([broken]), post_data=ids_body([900000001])))
+        seen = self.probe.observations[0]
+        self.assertIsNone(seen.decoded_routes)
+        self.assertFalse(seen.confirmed)
+        self.assertEqual(seen.point_census, {})
+        self.assertEqual(self.outcome(), 13)
+
+
 class TestNothingLeaks(ProbeTestCase):
 
     def test_no_header_value_reaches_the_log_or_the_report(self):
