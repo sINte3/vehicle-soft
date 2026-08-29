@@ -481,9 +481,18 @@ would hang the observer instead of honestly staying unfinished.
 After the operator signals, the probe stops waiting for the person and waits
 for the network to settle. Settled means three things at once: **no route
 request is unfinished**, no handler is running, and a quiet interval has passed
-with no network activity. The interval is counted from the moment the operator
-signalled, so "no response has been seen yet" does **not** count as quiet —
-responses may still be in flight. A request that fails (`requestfailed`) is
+with no **route** network activity. The interval is counted from the moment the
+operator signalled, so "no response has been seen yet" does **not** count as
+quiet — responses may still be in flight.
+
+**Only route traffic counts.** Images, fonts, analytics and every other
+unrelated URL are ignored whole: they touch no timer, no pending count, no
+error counter and no `only_all_ids` adjacency. That is not a detail — the
+release and the timestamp used to sit in a shared `finally` that also ran after
+the early return for an unrelated URL, so any background request the page made
+refreshed the route quiet timer and the drain could fail to finish while route
+traffic had long stopped. A URL that cannot be read at all is counted as a
+listener error but is still **not** treated as route activity. A request that fails (`requestfailed`) is
 released from the count, raises the error counter and gives exit 13; the
 browser's reason text is never read.
 
@@ -495,9 +504,20 @@ not ours to command. A request that never finishes stays counted as pending,
 reaches the report, and makes the run unconfirmed. None of this has been
 watched live yet.
 
-Four settings tune it (`DJI_ROUTE_PROBE_POLL_MS`, `DJI_ROUTE_PROBE_WAIT_MS`,
-`DJI_ROUTE_PROBE_DRAIN_MS`, `DJI_ROUTE_PROBE_QUIET_MS`; the drain window must
-exceed the quiet window for the drain to be able to succeed). The report and
+Four settings tune it: `DJI_ROUTE_PROBE_POLL_MS`, `DJI_ROUTE_PROBE_WAIT_MS`,
+`DJI_ROUTE_PROBE_DRAIN_MS`, `DJI_ROUTE_PROBE_QUIET_MS`. A **contradictory
+combination is refused before the browser opens**, with a configuration error
+that names only settings and numbers: the poll and the wait must be above zero,
+the drain window must be at least one poll long, and it must exceed the quiet
+window. Otherwise the drain could never succeed, and a run that cannot possibly
+wait for an answer has no business opening the cabinet and asking a person to
+work.
+
+That refusal exists because two properties cannot both be promised: a hard
+deadline and a guaranteed first pump. `pump_until` resolves it in favour of the
+**deadline** — at a zero deadline it returns false having pumped nothing, even
+with `min_pumps=1` — and the impossible configuration is rejected up front
+rather than papered over inside the loop. The report and
 the RUN SUMMARY both say how the wait ended (`operator_answered`,
 `response_drain_completed`, `probe_drained`) and what was still outstanding
 (`route_requests_failed`, `route_requests_still_pending`,
