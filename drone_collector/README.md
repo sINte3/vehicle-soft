@@ -414,8 +414,10 @@ plain `--lands` still calls it.
 The response carries a **geometric route**: a sequence of coordinates. The
 2026-06-05 sample carried nothing else — no per-point time, no pump state, no
 spray state, proved on all 961 of its points. The live observation of
-2026-08-29 found a **third field** on the point, so that claim no longer holds
-as a universal one: what is proved is the two coordinates, and the third
+2026-08-29 found that the point carries **three fields**, so that claim no
+longer holds as a universal one: what is proved is the two coordinates. Which
+number the third field has and which wire type it uses were **not** recorded
+live — the old decoder's message carried only the field count — and the
 field's meaning is `UNKNOWN_SEMANTICS`. Decoding a field is not understanding
 it, and nothing may be read into it — not altitude, not a timestamp, not a
 pump or spray state. So the collected object is a route, a route segment, a
@@ -644,6 +646,14 @@ The live observation of 2026-08-29 captured two real route bodies (87287 and
 exactly 2`. The strict check of `route-decode-1` did its job — it stopped
 rather than guessing, and the finding was re-opened deliberately.
 
+**What that message does and does not say.** It says the point had three
+fields. It does not say which number the third field carries or which wire
+type it uses: `LIVE_THIRD_FIELD_NUMBER=PENDING`,
+`LIVE_THIRD_FIELD_WIRE_TYPE=PENDING`. `route-decode-2` is built to establish
+the number, the wire type and how often the field appears **safely, on the
+next live run** — on the material in hand, only the field's existence is
+proved.
+
 `route-decode-2` accepts the point and keeps the strictness where it matters:
 
 * fields 1 and 2 must each appear **exactly once** and be `fixed64`; missing,
@@ -663,8 +673,9 @@ rather than guessing, and the finding was re-opened deliberately.
 Its meaning is `UNKNOWN_SEMANTICS` and stays that way. It is **not** altitude,
 **not** a timestamp, **not** pump state, **not** spray state — not because
 those are ruled out, but because nothing rules them in. Decoding a field is
-not understanding it: we know the number, the wire type and the count, and we
-know neither unit, range nor referent. This pipeline ends in a figure compared
+not understanding it: after the next live run we will know the number, the
+wire type and the count, and we will still know neither unit, range nor
+referent. This pipeline ends in a figure compared
 against money, so a plausible guess here is worse than an honest gap.
 
 `--route-ui-probe` reports a **census of point shapes**: which field numbers
