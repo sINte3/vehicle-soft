@@ -690,8 +690,10 @@ def _run_route_ui_probe(args, cfg, log, state):
                                                     PROMPT_LINES, RouteUiProbe,
                                                     monotonic_ms,
                                                     probe_exit_code,
+                                                    ProbeTimingError,
                                                     pump_until,
                                                     start_operator_prompt,
+                                                    validate_probe_timings,
                                                     write_report)
     except ImportError as exc:  # pragma: no cover -- our own module
         log.error('The route probe could not be imported (%s)', exc)
@@ -706,6 +708,18 @@ def _run_route_ui_probe(args, cfg, log, state):
                   'Install the collector dependencies: pip install -r '
                   'drone_collector/requirements.txt && python -m playwright '
                   'install chromium', exc)
+        return EXIT_CONFIG
+
+    # [REASON]: ДО браузера. Прогон, который всё равно не смог бы дождаться
+    # ответа, не должен открывать кабинет и просить человека о работе. В
+    # сообщении только имена настроек и числа.
+    try:
+        validate_probe_timings(poll_ms=cfg.route_probe_poll_ms,
+                               wait_ms=cfg.route_probe_wait_ms,
+                               drain_ms=cfg.route_probe_drain_ms,
+                               quiet_ms=cfg.route_probe_quiet_ms)
+    except ProbeTimingError as exc:
+        log.error('The probe timings are contradictory: %s', exc)
         return EXIT_CONFIG
 
     probe = RouteUiProbe(logger=log, expected_origin=cfg.route_api_origin)

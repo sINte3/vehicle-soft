@@ -815,6 +815,7 @@ class RouteProbeExitCodeTests(CliTestCase):
 
         class _Collector(object):
             def __init__(self, cfg, log):
+                events.append('collector-built')
                 self.page = _Page()
                 self.context = object()
 
@@ -1136,6 +1137,57 @@ class RouteProbeLifecycleTests(RouteProbeExitCodeTests):
         self.install(observations=1, confirmed=1)
         self.assertEqual(self.run_probe(reader=lambda _p='': ''), EXIT_OK)
         self.assertIn('probe_operator_answered=true', self.log_text().lower())
+
+    def test_a_zero_drain_window_is_refused_before_the_browser(self):
+        """Прогон, который не смог бы дождаться ответа, кабинет не открывает.
+
+        [REASON]: `pump_until` при нулевом сроке возвращает False, не прокачав
+        событий ни разу, даже с `min_pumps=1`. Свойства несовместимы, поэтому
+        запрещена сама конфигурация -- и запрещена ДО браузера, чтобы не
+        звать человека к работе, которая заведомо ничего не даст.
+        """
+        journal = []
+        self.install(observations=1, confirmed=1, journal=journal)
+        os.environ['DJI_ROUTE_PROBE_DRAIN_MS'] = '0'
+        self.assertEqual(self.run_probe(), main_module.EXIT_CONFIG)
+        self.assertNotIn('collector-built', journal)
+        self.assertNotIn('pump', journal)
+
+    def test_a_drain_shorter_than_one_poll_is_refused_before_the_browser(self):
+        journal = []
+        self.install(observations=1, confirmed=1, journal=journal)
+        os.environ['DJI_ROUTE_PROBE_POLL_MS'] = '200'
+        os.environ['DJI_ROUTE_PROBE_DRAIN_MS'] = '100'
+        os.environ['DJI_ROUTE_PROBE_QUIET_MS'] = '0'
+        self.assertEqual(self.run_probe(), main_module.EXIT_CONFIG)
+        self.assertNotIn('collector-built', journal)
+
+    def test_a_drain_not_longer_than_the_quiet_window_is_refused(self):
+        journal = []
+        self.install(observations=1, confirmed=1, journal=journal)
+        os.environ['DJI_ROUTE_PROBE_DRAIN_MS'] = '2000'
+        os.environ['DJI_ROUTE_PROBE_QUIET_MS'] = '2000'
+        self.assertEqual(self.run_probe(), main_module.EXIT_CONFIG)
+        self.assertNotIn('collector-built', journal)
+
+    def test_the_defaults_reach_the_browser(self):
+        """Положительный контроль: настройки по умолчанию не отвергаются."""
+        journal = []
+        self.install(observations=1, confirmed=1, journal=journal)
+        self.assertEqual(self.run_probe(), EXIT_OK)
+        self.assertIn('collector-built', journal)
+
+    def test_the_refusal_names_only_settings_and_numbers(self):
+        from drone_collector.outbox import find_secret_markers
+        self.install(observations=1, confirmed=1)
+        os.environ['DJI_ROUTE_PROBE_DRAIN_MS'] = '0'
+        self.run_probe()
+        text = self.log_text()
+        self.assertIn('DJI_ROUTE_PROBE_DRAIN_MS', text)
+        line = [row for row in text.splitlines()
+                if 'timings are contradictory' in row]
+        self.assertTrue(line)
+        self.assertEqual(find_secret_markers(line[0]), [])
 
     def test_the_full_request_lifecycle_is_subscribed(self):
         """Слушаются все четыре события, а не два."""
