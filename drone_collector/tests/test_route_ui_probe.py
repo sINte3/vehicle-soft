@@ -33,10 +33,12 @@ from drone_collector.route_ui_probe import (
     NOT_READ,
     observation_id,
     PAYLOAD_KIND_UNREADABLE,
+    ProbeTimingError,
     pump_until,
     read_request_ids,
     start_operator_prompt,
     UNNAMED_EXCEPTION,
+    validate_probe_timings,
     summarise_request_body,
     WITHHELD_DATA_TYPE,
     write_report,
@@ -2077,6 +2079,240 @@ class TestComparisonOnlyAfterDecoding(ProbeTestCase):
         self.assertIs(comparison['id_comparison_performed'], True)
         self.assertEqual(comparison['missing_count'], 1)
         self.assertEqual(comparison['extra_count'], 0)
+
+
+UNRELATED_URL = 'https://cdn.example.invalid/assets/logo.png'
+
+
+def unrelated_request(url=UNRELATED_URL):
+    """Картинка, шрифт, аналитика -- что угодно, кроме маршрутов."""
+    return _FakeRequest(method='GET', post_data=None, url=url)
+
+
+class TestIrrelevantTrafficIsIgnored(ProbeTestCase):
+    """Фоновый трафик страницы не трогает таймер тишины МАРШРУТОВ.
+
+    [REASON]: `_release()` и `_touch()` стояли в общем `finally`, то есть
+    выполнялись и после раннего выхода по нерелевантному URL. Любая картинка,
+    шрифт или запрос аналитики обновляли `last_route_activity`, и drain мог не
+    закончиться никогда при том, что маршрутный трафик давно кончился.
+    """
+
+    def setUp(self):
+        ProbeTestCase.setUp(self)
+        self.now = {'ms': 1000}
+        self.probe = RouteUiProbe(logger=self.log,
+                                  expected_origin=ROUTE_ORIGIN,
+                                  clock=lambda: self.now['ms'])
+
+    def snapshot(self):
+        return (self.probe.last_route_activity,
+                self.probe.pending_route_requests,
+                self.probe.route_requests_failed,
+                self.probe.observation_errors,
+                self.probe.route_responses,
+                self.probe.saw_only_all_ids,
+                self.probe._ids_seen_recently)
+
+    def test_an_unrelated_request_finished_changes_nothing(self):
+        before = self.snapshot()
+        self.now['ms'] += 10 ** 6
+        self.probe.note_request_finished(unrelated_request())
+        self.assertEqual(self.snapshot(), before)
+        self.assertIsNone(self.probe.last_route_activity)
+
+    def test_an_unrelated_request_failed_changes_nothing(self):
+        before = self.snapshot()
+        self.now['ms'] += 10 ** 6
+        self.probe.note_request_failed(unrelated_request())
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.probe.route_requests_failed, 0)
+        self.assertEqual(self.probe.observation_errors, 0)
+        self.assertEqual(self.probe.pending_route_requests, 0)
+        self.assertIsNone(self.probe.last_route_activity)
+
+    def test_an_unrelated_request_does_not_move_a_real_activity_mark(self):
+        """Настоящая отметка маршрутов не сдвигается посторонним трафиком."""
+        deliver(self.probe, confirmable(flight_id=900000001))
+        marked = self.probe.last_route_activity
+        self.now['ms'] += 10 ** 6
+        self.probe.note_request_finished(unrelated_request())
+        self.probe.note_request_failed(unrelated_request(
+            'https://analytics.example.invalid/collect'))
+        self.assertEqual(self.probe.last_route_activity, marked)
+
+    def test_unrelated_traffic_does_not_hold_the_drain_open(self):
+        """Картинки, сыплющиеся во время drain, не продлевают окно тишины."""
+        deliver(self.probe, confirmable(flight_id=900000001))
+        self.probe.begin_drain(self.now['ms'])
+        pumps = []
+
+        def pump(ms):
+            pumps.append(ms)
+            self.now['ms'] += ms
+            # На каждой прокачке страница догружает постороннее.
+            self.probe.note_request_finished(unrelated_request())
+            self.probe.note_request_failed(unrelated_request(
+                'https://fonts.example.invalid/x.woff2'))
+
+        completed = pump_until(
+            pump, lambda: self.probe.is_quiet(self.now['ms'], 100),
+            lambda: self.now['ms'], 5000, 10, min_pumps=1)
+        self.assertTrue(completed)
+        self.assertLessEqual(len(pumps), 12)
+        self.assertEqual(self.probe.route_requests_failed, 0)
+        self.assertEqual(self.probe.observation_errors, 0)
+
+    def test_a_real_route_request_finished_does_hold_it_open(self):
+        """Отрицательный контроль: настоящий маршрутный обмен окно продлевает."""
+        self.probe.begin_drain(self.now['ms'])
+        delivered = []
+        pumps = []
+
+        def pump(ms):
+            pumps.append(ms)
+            self.now['ms'] += ms
+            if len(pumps) in (2, 5, 8) and len(delivered) < 3:
+                delivered.append(deliver(
+                    self.probe,
+                    confirmable(flight_id=900000001 + len(delivered))))
+
+        completed = pump_until(
+            pump, lambda: self.probe.is_quiet(self.now['ms'], 100),
+            lambda: self.now['ms'], 5000, 10, min_pumps=1)
+        self.assertTrue(completed)
+        self.assertEqual(len(delivered), 3)
+        # Последняя доставка на восьмом обороте, дальше десять оборотов тишины.
+        self.assertGreaterEqual(len(pumps), 18)
+
+    def test_a_real_route_request_failed_releases_pending_and_marks_activity(self):
+        request = _FakeRequest(headers=HEADERS,
+                               post_data=ids_body([900000001]))
+        self.probe.note_request(request)
+        self.assertEqual(self.probe.pending_route_requests, 1)
+        marked = self.probe.last_route_activity
+        self.now['ms'] += 500
+        self.probe.note_request_failed(request)
+        self.assertEqual(self.probe.pending_route_requests, 0)
+        self.assertEqual(self.probe.route_requests_failed, 1)
+        self.assertEqual(self.probe.observation_errors, 1)
+        self.assertGreater(self.probe.last_route_activity, marked)
+        self.assertEqual(
+            probe_exit_code(observations=0, confirmed=0, skipped_over_cap=0,
+                            observation_errors=self.probe.observation_errors),
+            13)
+
+    def test_an_unreadable_url_is_not_turned_into_route_activity(self):
+        """Адрес не прочитался -- ошибку считаем, активностью не называем."""
+        class _Hostile(object):
+            @property
+            def url(self):
+                raise RuntimeError('SYNTHETIC')
+
+        self.probe.note_request_finished(_Hostile())
+        self.assertEqual(self.probe.observation_errors, 1)
+        self.assertIsNone(self.probe.last_route_activity)
+        self.assertEqual(self.probe.pending_route_requests, 0)
+        self.assertEqual(self.probe.route_requests_failed, 0)
+
+    def test_the_only_all_ids_counter_grows_in_one_place_only(self):
+        """Счётчик растёт в `note_request`; терминальные события его не трогают."""
+        ids_request = _FakeRequest(method='GET', url=IDS_URL, post_data=None)
+        self.probe.note_request(ids_request)
+        self.assertEqual(self.probe.saw_only_all_ids, 1)
+        self.probe.note_request_finished(ids_request)
+        self.probe.note_request_failed(ids_request)
+        self.assertEqual(self.probe.saw_only_all_ids, 1)
+        # И времени маршрутов они не отмечают.
+        self.assertIsNone(self.probe.last_route_activity)
+
+
+class TestPumpUntilAtAZeroDeadline(unittest.TestCase):
+    """Поведение при нулевом сроке оговорено однозначно.
+
+    [REASON]: `min_pumps` и жёсткий срок -- свойства несовместимые. Обещать
+    оба сразу нельзя, поэтому здесь ЯВНО зафиксировано, какое выигрывает:
+    срок. Противоречивая конфигурация отвергается заранее, а не чинится тихой
+    подменой смысла внутри цикла.
+    """
+
+    def test_a_zero_deadline_beats_min_pumps(self):
+        pumps = []
+        self.assertFalse(pump_until(pumps.append, lambda: False,
+                                    lambda: 0, 0, 10, min_pumps=1))
+        self.assertEqual(pumps, [])
+
+    def test_a_zero_deadline_beats_min_pumps_even_when_already_quiet(self):
+        pumps = []
+        self.assertFalse(pump_until(pumps.append, lambda: True,
+                                    lambda: 0, 0, 10, min_pumps=1))
+        self.assertEqual(pumps, [])
+
+    def test_without_min_pumps_a_zero_deadline_still_checks_the_condition(self):
+        self.assertTrue(pump_until(lambda _ms: None, lambda: True,
+                                   lambda: 0, 0, 10))
+
+    def test_a_deadline_of_one_poll_allows_exactly_one_pump(self):
+        pumps = []
+        ticks = iter([0, 0, 10, 10, 10])
+        self.assertFalse(pump_until(pumps.append, lambda: False,
+                                    lambda: next(ticks), 10, 10, min_pumps=1))
+        self.assertEqual(pumps, [10])
+
+
+class TestProbeTimingValidation(unittest.TestCase):
+    """Противоречивая настройка ожидания отвергается ДО браузера."""
+
+    OK = dict(poll_ms=200, wait_ms=1800000, drain_ms=15000, quiet_ms=2000)
+
+    def test_the_defaults_are_accepted(self):
+        from drone_collector.config import (DEFAULT_ROUTE_PROBE_DRAIN_MS,
+                                            DEFAULT_ROUTE_PROBE_POLL_MS,
+                                            DEFAULT_ROUTE_PROBE_QUIET_MS,
+                                            DEFAULT_ROUTE_PROBE_WAIT_MS)
+        self.assertIsNone(validate_probe_timings(
+            poll_ms=DEFAULT_ROUTE_PROBE_POLL_MS,
+            wait_ms=DEFAULT_ROUTE_PROBE_WAIT_MS,
+            drain_ms=DEFAULT_ROUTE_PROBE_DRAIN_MS,
+            quiet_ms=DEFAULT_ROUTE_PROBE_QUIET_MS))
+
+    def refuses(self, **changes):
+        fields = dict(self.OK)
+        fields.update(changes)
+        with self.assertRaises(ProbeTimingError) as caught:
+            validate_probe_timings(**fields)
+        return str(caught.exception)
+
+    def test_a_zero_drain_is_refused(self):
+        message = self.refuses(drain_ms=0)
+        self.assertIn('DJI_ROUTE_PROBE_DRAIN_MS', message)
+
+    def test_a_drain_shorter_than_one_poll_is_refused(self):
+        message = self.refuses(poll_ms=200, drain_ms=100, quiet_ms=0)
+        self.assertIn('DJI_ROUTE_PROBE_POLL_MS', message)
+
+    def test_a_drain_not_longer_than_the_quiet_window_is_refused(self):
+        message = self.refuses(drain_ms=2000, quiet_ms=2000)
+        self.assertIn('DJI_ROUTE_PROBE_QUIET_MS', message)
+
+    def test_a_zero_poll_is_refused(self):
+        self.assertIn('DJI_ROUTE_PROBE_POLL_MS', self.refuses(poll_ms=0))
+
+    def test_a_zero_wait_is_refused(self):
+        self.assertIn('DJI_ROUTE_PROBE_WAIT_MS', self.refuses(wait_ms=0))
+
+    def test_a_drain_exactly_one_poll_long_is_accepted(self):
+        """Граница включена: одной прокачки хватает."""
+        self.assertIsNone(validate_probe_timings(
+            poll_ms=200, wait_ms=1000, drain_ms=200, quiet_ms=0))
+
+    def test_the_message_carries_only_names_and_numbers(self):
+        from drone_collector.outbox import find_secret_markers
+        message = self.refuses(poll_ms=0, drain_ms=0, quiet_ms=99999)
+        self.assertEqual(find_secret_markers(message), [])
+        for forbidden in ('http://', 'https://', '/home/', 'C:\\\\'):
+            self.assertNotIn(forbidden, message)
+        self.assertRegex(message, r'^[\x20-\x7e]+$')
 
 
 class TestNothingLeaks(ProbeTestCase):

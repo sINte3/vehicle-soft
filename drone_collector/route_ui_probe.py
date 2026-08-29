@@ -199,6 +199,13 @@ def pump_until(pump, done, now, deadline_ms, poll_ms, min_pumps=0):
     условие проверяется первым, и «тихо» на нулевом обороте закрывало браузер
     немедленно. Событие, поставленное в очередь одновременно с Enter, при этом
     терялось.
+
+    ПОВЕДЕНИЕ ПРИ НУЛЕВОМ СРОКЕ ОГОВОРЕНО ЯВНО. `min_pumps` и жёсткий срок --
+    свойства НЕСОВМЕСТИМЫЕ, и обещать оба сразу нельзя. Здесь выигрывает срок:
+    при `deadline_ms=0` функция возвращает False, не сделав ни одной прокачки,
+    даже если `min_pumps` больше нуля. Именно поэтому противоречивая
+    конфигурация отвергается заранее -- см. `validate_probe_timings`, -- а не
+    чинится здесь тихой подменой смысла.
     """
     started = now()
     pumps = 0
@@ -235,6 +242,48 @@ class OperatorPrompt(object):
     @property
     def failed(self):
         return bool(self.error_type)
+
+
+class ProbeTimingError(ValueError):
+    """Противоречивая настройка ожидания. Поднимается ДО запуска браузера."""
+
+
+def validate_probe_timings(poll_ms, wait_ms, drain_ms, quiet_ms):
+    """Отвергнуть комбинацию, при которой ожидание не может сработать.
+
+    Возвращает None, если всё согласовано; иначе поднимает
+    `ProbeTimingError` с сообщением, в котором есть только ИМЕНА настроек и
+    ЧИСЛА -- ни путей, ни адресов, ни значений заголовков.
+
+    [REASON]: `pump_until` при нулевом сроке возвращает False, не прокачав
+    событий ни разу, -- даже с `min_pumps=1`. Обещать одновременно жёсткий
+    нулевой потолок и обязательную прокачку нельзя: свойства несовместимы.
+    Вместо тихой подмены смысла внутри цикла запрещается сама конфигурация, в
+    которой они сталкиваются, и запрещается ДО браузера: прогон, который всё
+    равно не смог бы дождаться ответа, не должен открывать кабинет и просить
+    человека о работе.
+    """
+    problems = []
+    if poll_ms <= 0:
+        problems.append('DJI_ROUTE_PROBE_POLL_MS must be above zero, got %d'
+                        % poll_ms)
+    if wait_ms <= 0:
+        problems.append('DJI_ROUTE_PROBE_WAIT_MS must be above zero, got %d'
+                        % wait_ms)
+    if drain_ms < poll_ms:
+        # Иначе срок выйдет раньше первой же прокачки.
+        problems.append('DJI_ROUTE_PROBE_DRAIN_MS (%d) must be at least '
+                        'DJI_ROUTE_PROBE_POLL_MS (%d): a drain shorter than '
+                        'one poll can never pump the event loop'
+                        % (drain_ms, poll_ms))
+    if drain_ms <= quiet_ms:
+        # Иначе тишину невозможно выждать: срок наступит первым.
+        problems.append('DJI_ROUTE_PROBE_DRAIN_MS (%d) must exceed '
+                        'DJI_ROUTE_PROBE_QUIET_MS (%d): the quiet window has '
+                        'to fit inside the drain window'
+                        % (drain_ms, quiet_ms))
+    if problems:
+        raise ProbeTimingError('; '.join(problems))
 
 
 def start_operator_prompt(prompt, reader=None):
@@ -983,16 +1032,37 @@ class RouteUiProbe(object):
         except Exception as exc:
             self._stumbled(exc)
 
+    def _terminal_url(self, request):
+        """URL терминального события -- или `None`, если прочитать не вышло.
+
+        [REASON]: неудача чтения URL считается ошибкой слушателя, но НЕ
+        считается сетевой активностью маршрутов. Иначе посторонний запрос,
+        у которого не читается адрес, продлевал бы окно тишины маршрутов --
+        ровно тем способом, каким это делал общий `finally`.
+        """
+        try:
+            return _url_of(request)
+        except Exception as exc:
+            self._stumbled(exc)
+            return None
+
     def note_request_failed(self, request):
         """Запрос оборвался, не дойдя до тела.
 
         Текст причины из браузера (`failure.error_text`) НЕ печатается и не
         сохраняется: он приходит извне и может нести что угодно.
+
+        [REASON]: посторонний запрос -- картинка, шрифт, аналитика -- здесь
+        игнорируется ЦЕЛИКОМ: ни счётчиков, ни соседства, ни отметки времени.
+        Прежняя редакция звала `_release` и `_touch` в общем `finally`, то
+        есть и после раннего выхода, и любой фоновый трафик страницы обновлял
+        `last_route_activity`. Drain мог не закончиться никогда при том, что
+        маршрутный трафик давно кончился.
         """
+        url = self._terminal_url(request)
+        if url is None or not is_route_url(url):
+            return
         try:
-            url = _url_of(request)
-            if not is_route_url(url):
-                return
             self.route_requests_failed += 1
             self.observation_errors += 1
             self._ids_seen_recently = False
@@ -1006,23 +1076,32 @@ class RouteUiProbe(object):
             self._touch()
 
     def note_request_finished(self, request):
-        """Тело загружено целиком -- вот теперь его можно читать."""
+        """Тело загружено целиком -- вот теперь его можно читать.
+
+        Посторонние URL игнорируются целиком, `only_all_ids` разбирается
+        отдельно: он не маршрутный трафик, и окна тишины маршрутов не
+        продлевает.
+        """
+        url = self._terminal_url(request)
+        if url is None:
+            return
+        if is_ids_url(url):
+            # Только отметка соседства -- в пределах доказанной семантики.
+            # Счётчик `only_all_ids` растёт ровно в одном месте, в
+            # `note_request`, и здесь не трогается; отметки времени тоже нет.
+            self._ids_seen_recently = True
+            return
+        if not is_route_url(url):
+            return
         try:
-            self._note_request_finished(request)
+            self._note_request_finished(request, url)
         except Exception as exc:
             self._stumbled(exc)
         finally:
             self._release(request)
             self._touch()
 
-    def _note_request_finished(self, request):
-        url = _url_of(request)
-        if is_ids_url(url):
-            self._ids_seen_recently = True
-            return
-        if not is_route_url(url):
-            return
-
+    def _note_request_finished(self, request, url):
         self.route_responses += 1
         self._touch()
         response = self._responses.get(id(request))
