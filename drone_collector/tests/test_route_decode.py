@@ -12,6 +12,7 @@ Every positive assertion has a negative control next to it: a test that a good
 body decodes proves nothing on its own if a bad body would decode too.
 """
 
+import json
 import os
 import struct
 import sys
@@ -21,7 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
 from drone_collector.route_decode import (  # noqa: E402
-    RouteDecodeError, decode_route_record, decode_route_response,
+    DECODER_VERSION, POINT_SITE_ROUTE, POINT_SITE_TAKEOFF, RouteDecodeError,
+    UNKNOWN_SEMANTICS, decode_route_record, decode_route_response,
     implied_work_length_m, path_length_m, route_exceeds_path, walk)
 
 
@@ -166,23 +168,198 @@ class TestPointShape(unittest.TestCase):
             points=[(FAKE_LAT, FAKE_LNG)]))
         self.assertEqual(record.points, [(FAKE_LAT, FAKE_LNG)])
 
-    def test_a_point_with_a_third_field_is_refused(self):
-        """If DJI ever adds a timestamp or a pump flag to a point, this fails.
+    def test_a_two_field_point_reports_no_unknown_fields(self):
+        """Обратная совместимость: у доказанного варианта лишнего нет."""
+        record = decode_route_record(route_record(
+            points=[(FAKE_LAT, FAKE_LNG)]))
+        shape = record.point_shapes[0]
+        self.assertEqual(shape.site, POINT_SITE_ROUTE)
+        self.assertEqual(shape.fields, ((1, 1, 1), (2, 1, 1)))
+        self.assertFalse(shape.has_unknown_fields)
+        self.assertEqual(shape.extras, ())
+        self.assertEqual(record.points_with_unknown_fields, 0)
 
-        [REASON]: the finding "the route carries position and nothing else"
-        is the reason the whole design cannot promise confirmed spraying. It
-        must not be allowed to go quietly stale when the payload changes --
-        the decoder has to stop and make someone look.
+    def test_a_point_with_a_third_field_decodes_and_keeps_it_unknown(self):
+        """Живой прогон 2026-08-29 упёрся здесь в route-decode-1.
+
+        [REASON]: строгая проверка сработала как задумана -- находка «только
+        позиция» была пересмотрена осознанно, а не протухла. route-decode-2
+        точку принимает, координаты берёт как раньше, а третье поле сохраняет
+        СТРУКТУРНО и не толкует: ни высоты, ни времени, ни насоса.
         """
         third = f_bytes(1, f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG)
                         + f_varint(3, 1780670376))
-        with self.assertRaises(RouteDecodeError):
-            decode_route_record(third + f_varint(2, FAKE_FLIGHT_ID))
+        record = decode_route_record(third + f_varint(2, FAKE_FLIGHT_ID))
+        self.assertEqual(record.points, [(FAKE_LAT, FAKE_LNG)])
+        shape = record.point_shapes[0]
+        self.assertTrue(shape.has_unknown_fields)
+        self.assertEqual(len(shape.extras), 1)
+        extra = shape.extras[0]
+        self.assertEqual(extra.number, 3)
+        self.assertEqual(extra.wire, 0)
+        self.assertEqual(extra.count, 1)
+        self.assertEqual(extra.semantics, 'UNKNOWN_SEMANTICS')
+        self.assertEqual(record.points_with_unknown_fields, 1)
+
+    def test_the_value_of_an_unknown_varint_is_not_kept(self):
+        """У varint даже длина не сохраняется: она выдаёт порядок величины."""
+        third = f_bytes(1, f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG)
+                        + f_varint(3, 1780670376))
+        record = decode_route_record(third + f_varint(2, FAKE_FLIGHT_ID))
+        extra = record.point_shapes[0].extras[0]
+        self.assertIsNone(extra.value_bytes)
+        self.assertNotIn('1780670376', repr(extra))
+        self.assertNotIn('1780670376', json.dumps(extra.as_dict()))
 
     def test_a_point_missing_the_longitude_is_refused(self):
         one = f_bytes(1, f_double(1, FAKE_LAT))
         with self.assertRaises(RouteDecodeError):
             decode_route_record(one + f_varint(2, FAKE_FLIGHT_ID))
+
+    def test_a_point_missing_the_latitude_is_refused(self):
+        one = f_bytes(1, f_double(2, FAKE_LNG))
+        with self.assertRaises(RouteDecodeError):
+            decode_route_record(one + f_varint(2, FAKE_FLIGHT_ID))
+
+    def test_a_repeated_coordinate_is_refused(self):
+        """Повтор координаты -- отказ, а не «возьмём первую»."""
+        twice = f_bytes(1, f_double(1, FAKE_LAT) + f_double(1, FAKE_LAT)
+                        + f_double(2, FAKE_LNG))
+        with self.assertRaises(RouteDecodeError):
+            decode_route_record(twice + f_varint(2, FAKE_FLIGHT_ID))
+
+    def test_a_coordinate_with_the_wrong_wire_type_is_refused(self):
+        wrong = f_bytes(1, f_varint(1, 40) + f_double(2, FAKE_LNG))
+        with self.assertRaises(RouteDecodeError):
+            decode_route_record(wrong + f_varint(2, FAKE_FLIGHT_ID))
+
+    def test_a_truncated_coordinate_is_refused(self):
+        """Повреждённое значение координаты по-прежнему отказ."""
+        body = f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG)
+        torn = f_bytes(1, body[:-3])
+        with self.assertRaises(RouteDecodeError):
+            decode_route_record(torn + f_varint(2, FAKE_FLIGHT_ID))
+
+    def test_an_illegal_wire_type_inside_a_point_is_refused(self):
+        """Wire type 3 -- устаревшая группа; читать её мы не беремся."""
+        body = f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG) + bytes([(4 << 3) | 3])
+        with self.assertRaises(RouteDecodeError):
+            decode_route_record(f_bytes(1, body) + f_varint(2, FAKE_FLIGHT_ID))
+
+    def test_unknown_fields_of_every_legal_wire_type_are_kept(self):
+        body = (f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG)
+                + f_varint(3, 7) + f_fixed64(4, b'\x01' * 8)
+                + f_bytes(5, b'\x02\x03\x04') + f_fixed32(6, 1.5))
+        record = decode_route_record(
+            f_bytes(1, body) + f_varint(2, FAKE_FLIGHT_ID))
+        extras = {item.number: item for item in record.point_shapes[0].extras}
+        self.assertEqual(sorted(extras), [3, 4, 5, 6])
+        self.assertEqual(extras[3].wire, 0)
+        self.assertIsNone(extras[3].value_bytes)
+        self.assertEqual((extras[4].wire, extras[4].value_bytes), (1, 8))
+        self.assertEqual((extras[5].wire, extras[5].value_bytes), (2, 3))
+        self.assertEqual((extras[6].wire, extras[6].value_bytes), (5, 4))
+
+    def test_a_repeated_unknown_field_is_counted_not_collapsed(self):
+        body = (f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG)
+                + f_varint(3, 7) + f_varint(3, 8) + f_varint(3, 9))
+        record = decode_route_record(
+            f_bytes(1, body) + f_varint(2, FAKE_FLIGHT_ID))
+        shape = record.point_shapes[0]
+        self.assertEqual(shape.fields, ((1, 1, 1), (2, 1, 1), (3, 0, 3)))
+        self.assertEqual(shape.extras[0].count, 3)
+
+    def test_a_repeated_unknown_field_is_a_different_variant(self):
+        """Один раз и три раза -- разные структурные варианты."""
+        once = decode_route_record(
+            f_bytes(1, f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG)
+                    + f_varint(3, 7)) + f_varint(2, FAKE_FLIGHT_ID))
+        thrice = decode_route_record(
+            f_bytes(1, f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG)
+                    + f_varint(3, 7) + f_varint(3, 8) + f_varint(3, 9))
+            + f_varint(2, FAKE_FLIGHT_ID))
+        self.assertNotEqual(once.point_shapes[0].key,
+                            thrice.point_shapes[0].key)
+
+    def test_an_unknown_bytes_field_is_not_parsed_as_a_message(self):
+        """Что лежит внутри неизвестного поля -- не наше дело.
+
+        [REASON]: содержимое может быть сообщением, строкой или упакованным
+        массивом. Разобрать его как сообщение значило бы выдумать структуру, а
+        байты, не похожие на protobuf, дали бы ложный отказ на исправном теле.
+        """
+        garbage = b'\xff\xfe\xfd\xfc'
+        record = decode_route_record(
+            f_bytes(1, f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG)
+                    + f_bytes(9, garbage)) + f_varint(2, FAKE_FLIGHT_ID))
+        extra = record.point_shapes[0].extras[0]
+        self.assertEqual((extra.number, extra.wire, extra.value_bytes),
+                         (9, 2, 4))
+
+    def test_a_truncated_unknown_field_is_still_refused(self):
+        """Отрицательный контроль: усечение ловит `walk`, а не снисхождение."""
+        body = (f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG)
+                + f_bytes(9, b'\x01\x02\x03\x04'))
+        with self.assertRaises(RouteDecodeError):
+            decode_route_record(
+                f_bytes(1, body[:-2]) + f_varint(2, FAKE_FLIGHT_ID))
+
+
+class TestTakeoffIsCountedApart(unittest.TestCase):
+    """Точка взлёта разбирается тем же кодом, но считается отдельно.
+
+    [REASON]: одинаковый разбор не доказывает одинаковую структуру. Вариант,
+    который встречается только у взлёта, в общей статистике маршрутных точек
+    растворился бы, и вопрос «одинаковы ли они» остался бы без ответа.
+    """
+
+    def record(self, point_body, takeoff_body):
+        return decode_route_record(
+            f_bytes(1, point_body) + f_varint(2, FAKE_FLIGHT_ID)
+            + f_bytes(7, takeoff_body))
+
+    def test_the_takeoff_shape_is_kept_separately(self):
+        plain = f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG)
+        record = self.record(plain, plain)
+        self.assertEqual(record.takeoff, (FAKE_LAT, FAKE_LNG))
+        self.assertEqual(record.takeoff_shape.site, POINT_SITE_TAKEOFF)
+        self.assertEqual(record.point_shapes[0].site, POINT_SITE_ROUTE)
+        self.assertNotEqual(record.takeoff_shape.key,
+                            record.point_shapes[0].key)
+
+    def test_a_takeoff_may_differ_from_the_route_points(self):
+        plain = f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG)
+        richer = plain + f_varint(3, 1)
+        record = self.record(plain, richer)
+        self.assertFalse(record.point_shapes[0].has_unknown_fields)
+        self.assertTrue(record.takeoff_shape.has_unknown_fields)
+        self.assertEqual(record.points_with_unknown_fields, 0)
+
+    def test_a_takeoff_missing_a_coordinate_is_refused(self):
+        plain = f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG)
+        with self.assertRaises(RouteDecodeError):
+            self.record(plain, f_double(1, FAKE_LAT))
+
+    def test_a_takeoff_with_a_wrong_wire_type_is_refused(self):
+        plain = f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG)
+        with self.assertRaises(RouteDecodeError):
+            self.record(plain, f_varint(1, 40) + f_double(2, FAKE_LNG))
+
+    def test_a_record_without_a_takeoff_has_no_takeoff_shape(self):
+        record = decode_route_record(
+            f_bytes(1, f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG))
+            + f_varint(2, FAKE_FLIGHT_ID))
+        self.assertIsNone(record.takeoff)
+        self.assertIsNone(record.takeoff_shape)
+
+
+class TestDecoderVersion(unittest.TestCase):
+
+    def test_the_version_is_route_decode_2(self):
+        """[REASON]: версия едет с каждым сохранённым маршрутом. По ней потом
+        видно, какими правилами число было получено.
+        """
+        self.assertEqual(DECODER_VERSION, 'route-decode-2')
 
 
 # ─── Field mapping ───────────────────────────────────────────────────────────
