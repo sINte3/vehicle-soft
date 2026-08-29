@@ -274,7 +274,19 @@ def route_body(record, data_type, decoder_version=None):
     Ширина, которой DJI не записал, остаётся `None`. Подстановка запрещена
     решением владельца 2026-08-25: ни медианой, ни паспортом машины, ни
     соседним значением того же дня.
+
+    [REASON]: `point_shape_census` едет ВМЕСТЕ с записью. Декодер сохраняет
+    структуру неизвестных полей точки, наблюдатель её печатает -- но до этой
+    правки она умирала на сериализации: в очередь уходили только координаты,
+    точка взлёта и старые `unknown_fields` записи маршрута. То есть
+    утверждение «дополнительные поля не отбрасываются» держалось ровно до
+    конца декодирования, а сохранённый маршрут терял его молча. Перепись
+    структурная: номера полей, wire types, повторы и счётчики точек. Ни
+    координат (они и так есть в `points`), ни значений, ни `value_bytes`, ни
+    идентификаторов внутри переписи.
     """
+    from drone_collector.route_decode import point_shape_census
+
     points = [[round(lat, COORDINATE_DECIMALS), round(lng, COORDINATE_DECIMALS)]
               for lat, lng in record.points]
     takeoff = None
@@ -315,6 +327,8 @@ def route_body(record, data_type, decoder_version=None):
         'app_version': record.app_version,
         'unknown_fields': [_unknown_field(number, wire, value)
                            for number, wire, value in record.unknown],
+        # Структурная перепись форм точек ЭТОГО маршрута.
+        'point_shape_census': point_shape_census([record]),
     }
 
 
