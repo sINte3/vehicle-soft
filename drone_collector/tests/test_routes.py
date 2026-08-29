@@ -26,7 +26,9 @@ from drone_collector.routes import (
     disabled_route_transport, is_route_url,
     normalise_ids, parse_request_body, read_ids_file, route_body,
     write_dry_run)
-from drone_collector.route_decode import decode_route_response
+from drone_collector.outbox import find_secret_markers
+from drone_collector.route_decode import (decode_route_record,
+                                          decode_route_response)
 
 from drone_collector.tests.test_route_decode import (
     FAKE_FLIGHT_ID, f_bytes, f_fixed32, response, route_record)
@@ -353,6 +355,201 @@ class TestRouteBody(unittest.TestCase):
         from drone_collector.route_decode import RouteResponse
         self.assertEqual(RouteResponse.__slots__,
                          ('status', 'message', 'routes'))
+
+
+THIRD_FIELD_VALUE = 1780670376
+TAKEOFF_FIELD_VALUE = 4242424242
+
+
+def _point_body(lat, lng, extra=b''):
+    from drone_collector.tests.test_route_decode import f_bytes, f_double
+    return f_bytes(1, f_double(1, lat) + f_double(2, lng) + extra)
+
+
+def record_with_shapes(flight_id=FAKE_FLIGHT_ID, third_field=True,
+                       takeoff_extra=True):
+    """Запись маршрута: одна обычная точка, одна с третьим полем, взлёт.
+
+    Синтетика целиком. Живое тело ответа не сохранялось и в фикстуры не
+    попадало; здесь воспроизводится только ФОРМА, которую живой прогон
+    2026-08-29 показал существующей.
+    """
+    from drone_collector.tests.test_route_decode import (
+        FAKE_LAT, FAKE_LNG, f_bytes, f_double, f_varint)
+    body = _point_body(FAKE_LAT, FAKE_LNG)
+    if third_field:
+        body += _point_body(FAKE_LAT, FAKE_LNG,
+                            f_varint(3, THIRD_FIELD_VALUE))
+    body += f_varint(2, flight_id)
+    takeoff = f_double(1, FAKE_LAT) + f_double(2, FAKE_LNG)
+    if takeoff_extra:
+        takeoff += f_varint(4, TAKEOFF_FIELD_VALUE)
+    body += f_bytes(7, takeoff)
+    return decode_route_record(body)
+
+
+class TestPointShapeCensusReachesTheSavedRoute(unittest.TestCase):
+    """Структура неизвестных полей доживает до записи, а не до декодера.
+
+    [REASON]: декодер её сохранял, наблюдатель печатал -- а `route_body()`
+    писал только координаты, взлёт и старые `unknown_fields` записи маршрута.
+    То есть «дополнительные поля не отбрасываются» держалось ровно до конца
+    декодирования, а сохранённый маршрут терял структуру молча.
+    """
+
+    def body(self, **kwargs):
+        return route_body(record_with_shapes(**kwargs), DEFAULT_DATA_TYPE,
+                          decoder_version='route-decode-2')
+
+    def census(self, **kwargs):
+        return self.body(**kwargs)['point_shape_census']
+
+    def test_the_saved_route_carries_a_census_at_all(self):
+        self.assertIn('point_shape_census', self.body())
+
+    def test_a_two_field_point_keeps_a_clean_structure(self):
+        census = self.census(third_field=False, takeoff_extra=False)
+        self.assertEqual(census['route_point_variants'],
+                         [{'fields': [{'number': 1, 'wire': 1, 'count': 1},
+                                      {'number': 2, 'wire': 1, 'count': 1}],
+                           'points': 1}])
+        self.assertEqual(census['route_points_with_unknown_fields'], 0)
+        self.assertEqual(census['unknown_fields'], [])
+
+    def test_a_three_field_point_keeps_number_wire_count_and_semantics(self):
+        census = self.census()
+        unknown = [item for item in census['unknown_fields']
+                   if item['site'] == 'route_point']
+        self.assertEqual(len(unknown), 1)
+        self.assertEqual(unknown[0]['number'], 3)
+        self.assertEqual(unknown[0]['wire'], 0)
+        self.assertEqual(unknown[0]['occurrences'], 1)
+        self.assertEqual(unknown[0]['points'], 1)
+        self.assertEqual(unknown[0]['semantics'], 'UNKNOWN_SEMANTICS')
+        self.assertEqual(census['route_points_total'], 2)
+        self.assertEqual(census['route_points_with_unknown_fields'], 1)
+
+    def test_the_unknown_field_survives_json_serialisation(self):
+        text = json.dumps(self.body(), ensure_ascii=False)
+        restored = json.loads(text)['point_shape_census']
+        numbers = {item['number'] for item in restored['unknown_fields']}
+        self.assertIn(3, numbers)
+        self.assertIn('UNKNOWN_SEMANTICS', text)
+
+    def test_the_takeoff_is_stored_apart_from_the_route_points(self):
+        census = self.census()
+        sites = {item['site'] for item in census['unknown_fields']}
+        self.assertEqual(sites, {'route_point', 'takeoff'})
+        takeoff = [item for item in census['unknown_fields']
+                   if item['site'] == 'takeoff'][0]
+        self.assertEqual(takeoff['number'], 4)
+        self.assertEqual(census['takeoffs_total'], 1)
+        self.assertEqual(census['takeoffs_with_unknown_fields'], 1)
+        self.assertEqual(len(census['takeoff_variants']), 1)
+
+    def test_a_takeoff_may_be_clean_while_the_points_are_not(self):
+        census = self.census(takeoff_extra=False)
+        self.assertEqual(census['takeoffs_with_unknown_fields'], 0)
+        self.assertEqual(census['route_points_with_unknown_fields'], 1)
+
+    def test_no_unknown_value_reaches_the_serialised_record(self):
+        """Значения неизвестных полей наружу не выходят вовсе."""
+        text = json.dumps(self.body(), ensure_ascii=False)
+        self.assertNotIn(str(THIRD_FIELD_VALUE), text)
+        self.assertNotIn(str(TAKEOFF_FIELD_VALUE), text)
+
+    def test_no_value_bytes_reaches_the_census(self):
+        self.assertNotIn('value_bytes', json.dumps(self.census()))
+
+    def test_coordinates_are_not_duplicated_inside_the_census(self):
+        """Координаты живут только в `points`, и только там."""
+        from drone_collector.tests.test_route_decode import FAKE_LAT, FAKE_LNG
+        document = self.body()
+        census_text = json.dumps(document['point_shape_census'])
+        for value in (FAKE_LAT, FAKE_LNG):
+            self.assertNotIn(str(value), census_text)
+            self.assertNotIn(str(value)[:7], census_text)
+        # Отрицательный контроль: в `points` они, разумеется, есть.
+        self.assertTrue(document['points'])
+        self.assertEqual(len(document['points'][0]), 2)
+
+    def test_no_flight_id_reaches_the_census(self):
+        document = self.body()
+        self.assertEqual(document['dji_flight_id'], FAKE_FLIGHT_ID)
+        self.assertNotIn(str(FAKE_FLIGHT_ID),
+                         json.dumps(document['point_shape_census']))
+
+    def test_the_old_two_field_route_still_serialises_as_before(self):
+        """Существующие потребители старого варианта не ломаются."""
+        decoded = decode_route_response(build_response([FAKE_FLIGHT_ID]))
+        document = route_body(decoded.routes[0], DEFAULT_DATA_TYPE)
+        json.dumps(document, ensure_ascii=False)
+        self.assertEqual(document['dji_flight_id'], FAKE_FLIGHT_ID)
+        self.assertTrue(document['points'])
+        self.assertEqual(document['point_count'], len(document['points']))
+        census = document['point_shape_census']
+        self.assertEqual(census['route_points_with_unknown_fields'], 0)
+        self.assertEqual(census['unknown_fields'], [])
+
+
+class TestTheCensusSurvivesTheQueueAndTheDryRun(RoutesTestCase):
+    """Перепись доживает до очереди и до сухого прогона, а не только до dict."""
+
+    def run_with_shapes(self, dry_run=False):
+        """Прогон одного маршрута, точки которого несут третье поле."""
+        from drone_collector.tests.test_route_decode import (
+            FAKE_LAT, FAKE_LNG, f_bytes, f_double, f_varint)
+        record_body = (_point_body(FAKE_LAT, FAKE_LNG)
+                       + _point_body(FAKE_LAT, FAKE_LNG,
+                                     f_varint(3, THIRD_FIELD_VALUE))
+                       + f_varint(2, FAKE_FLIGHT_ID)
+                       + f_bytes(7, f_double(1, FAKE_LAT)
+                                 + f_double(2, FAKE_LNG)
+                                 + f_varint(4, TAKEOFF_FIELD_VALUE)))
+        answer = (f_varint(1, 200) + f_bytes(2, b'Success.')
+                  + f_bytes(3, f_bytes(1, record_body)))
+        return self.run_for([FAKE_FLIGHT_ID],
+                            transport=FakeTransport(answer),
+                            dry_run=dry_run)
+
+    def test_the_queued_envelope_carries_the_census(self):
+        run, result = self.run_with_shapes()
+        self.assertEqual(result.new, 1)
+        pending = list(self.outbox.pending())
+        self.assertEqual(len(pending), 1)
+        envelope = json.loads(pending[0].read_text(encoding='utf-8'))
+        census = envelope['body']['point_shape_census']
+        self.assertEqual(census['route_points_with_unknown_fields'], 1)
+        self.assertEqual(census['unknown_fields'][0]['number'], 3)
+        self.assertEqual(census['unknown_fields'][0]['semantics'],
+                         'UNKNOWN_SEMANTICS')
+
+    def test_the_queued_envelope_carries_no_unknown_value(self):
+        self.run_with_shapes()
+        text = list(self.outbox.pending())[0].read_text(encoding='utf-8')
+        self.assertNotIn(str(THIRD_FIELD_VALUE), text)
+        self.assertEqual(find_secret_markers(text), [])
+
+    def test_the_dry_run_report_carries_the_census(self):
+        run, result = self.run_with_shapes(dry_run=True)
+        target = write_dry_run(result, run.prepared_bodies, self.root)
+        document = json.loads(target.read_text(encoding='utf-8'))
+        census = document['routes'][0]['body']['point_shape_census']
+        self.assertEqual(census['route_points_total'], 2)
+        self.assertEqual(census['unknown_fields'][0]['number'], 3)
+
+    def test_the_dry_run_report_carries_no_unknown_value_and_no_secret(self):
+        run, result = self.run_with_shapes(dry_run=True)
+        target = write_dry_run(result, run.prepared_bodies, self.root)
+        text = target.read_text(encoding='utf-8')
+        self.assertNotIn(str(THIRD_FIELD_VALUE), text)
+        self.assertNotIn('value_bytes', text)
+        self.assertEqual(find_secret_markers(text), [])
+
+    def test_nothing_is_queued_by_the_dry_run(self):
+        """Отрицательный контроль: сухой прогон по-прежнему ничего не пишет."""
+        self.run_with_shapes(dry_run=True)
+        self.assertEqual(list(self.outbox.pending()), [])
 
 
 class TestContentHash(unittest.TestCase):

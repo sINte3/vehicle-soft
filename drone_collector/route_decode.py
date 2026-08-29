@@ -27,19 +27,31 @@ was compared field by field against the flight's own card
 fields that did NOT match anything are kept, unnamed, in `RouteRecord.unknown`
 -- they are not guessed at, and they are not dropped either.
 
-What the payload does NOT contain, and this is the load-bearing negative
-result: a point is EXACTLY two doubles, latitude and longitude. All 961 points
-of the sample parsed as `{1: fixed64, 2: fixed64}` and nothing else. There is
-no per-point timestamp, no altitude, no speed, no heading, and -- decisively
-for the money question -- no pump or spray state. Any per-point claim beyond
-position is therefore unavailable from this source, not merely unimplemented.
+What the 2026-06-05 sample did NOT contain: all 961 of its points parsed as
+`{1: fixed64, 2: fixed64}` and nothing else -- no per-point timestamp, no
+altitude, no speed, no heading, and no pump or spray state.
+
+That finding has since been RE-OPENED, exactly the way the strict point check
+was built to re-open it. The live observation of 2026-08-29 captured two real
+route bodies (87287 and 103398 bytes), and both refused to decode with
+
+    point has 3 fields, expected exactly 2
+
+So the sample-wide claim is withdrawn: a simplified point is NOT always two
+fields. What survives is narrower and still load-bearing -- the two coordinate
+fields are proved, and NOTHING about the third field is. Its number and wire
+type are recorded; its meaning is `UNKNOWN_SEMANTICS` and stays that way until
+DJI documents it or an experiment proves it. Reading a field is not the same
+as understanding it, and a decoded unknown must never become a route property
+by the back door: a per-point claim beyond position remains unavailable from
+this source.
 
 Strictness
 ----------
 The decoder refuses rather than improvises. A truncated varint, an unknown
 wire type, a group (wire types 3 and 4, deprecated), a length that runs past
-the end of its buffer, a point that is not exactly two fixed64 fields -- each
-raises RouteDecodeError. [REASON]: this feeds a number that is meant to be
+the end of its buffer, a point whose latitude or longitude is missing, repeated
+or not fixed64 -- each raises RouteDecodeError. [REASON]: this feeds a number that is meant to be
 compared with money. A decoder that returns "something" from a body it does
 not understand would put a plausible wrong figure in front of the owner, and
 that is the one outcome the whole task exists to prevent.
@@ -51,7 +63,23 @@ import struct
 # field changes -- a new name proved, a name withdrawn -- not when a comment
 # is edited. It travels with every route the collector stores, so a figure
 # computed later can be traced back to the rules it was decoded by.
-DECODER_VERSION = 'route-decode-1'
+DECODER_VERSION = 'route-decode-2'
+
+# Метка для всего, что декодировано структурно, но не понято по смыслу.
+#
+# [REASON]: у неё ровно одна работа -- не дать неизвестному полю тихо стать
+# свойством маршрута. Живой прогон 2026-08-29 показал у точки ТРЕТЬЕ поле;
+# назвать его высотой, временем, состоянием насоса или опрыскивания было бы
+# догадкой, а догадка в этом тракте превращается в число перед владельцем.
+# Пока назначения нет -- есть номер поля, wire type и счётчик, и только они.
+UNKNOWN_SEMANTICS = 'UNKNOWN_SEMANTICS'
+
+# Где встретилась точка. Маршрутные точки и точка взлёта разбираются одним
+# кодом, но считаются РАЗДЕЛЬНО: одинаковый разбор не доказывает одинаковую
+# структуру, и вариант, встречающийся только у взлёта, иначе растворился бы в
+# общей статистике.
+POINT_SITE_ROUTE = 'route_point'
+POINT_SITE_TAKEOFF = 'takeoff'
 
 # ─── The envelope ────────────────────────────────────────────────────────────
 
@@ -202,29 +230,140 @@ def _one(fields, number):
     return found[0]
 
 
-def _point(raw):
-    """{1: double, 2: double} -> (lat, lng). Anything else is an error.
+class PointFieldShape(object):
+    """Одно поле точки, о котором известна только СТРУКТУРА.
 
-    [REASON]: this is the check that carries the negative result of the whole
-    discovery. If DJI ever adds a third field to a point -- a timestamp, a pump
-    flag -- this raises instead of silently ignoring it, and the finding
-    "position only" gets re-opened deliberately rather than going stale.
+    Номер, wire type, сколько раз встретилось и сколько байт занимает
+    значение. Самого значения здесь нет и не будет: `semantics` навсегда
+    `UNKNOWN_SEMANTICS`, пока назначение поля не доказано.
+
+    [REASON]: `value_bytes` -- это структура, а не содержимое: сколько байт
+    лежит в поле, но не какие. У varint его нет вовсе (`None`): длина
+    кодировки varint зависит от ВЕЛИЧИНЫ числа, то есть выдавала бы порядок
+    значения, а значения мы не выпускаем.
+    """
+
+    __slots__ = ('number', 'wire', 'count', 'value_bytes')
+
+    def __init__(self, number, wire, count, value_bytes=None):
+        self.number = number
+        self.wire = wire
+        self.count = count
+        self.value_bytes = value_bytes
+
+    @property
+    def semantics(self):
+        return UNKNOWN_SEMANTICS
+
+    def as_dict(self):
+        return {'number': self.number, 'wire': self.wire,
+                'count': self.count, 'value_bytes': self.value_bytes,
+                'semantics': UNKNOWN_SEMANTICS}
+
+    def __repr__(self):
+        return ('<PointFieldShape number=%d wire=%d count=%d>'
+                % (self.number, self.wire, self.count))
+
+
+class PointShape(object):
+    """Структурный вариант точки: какие поля в ней были и каких типов."""
+
+    __slots__ = ('site', 'fields', 'extras')
+
+    def __init__(self, site, fields, extras):
+        self.site = site
+        self.fields = tuple(fields)      # ((number, wire, count), ...)
+        self.extras = tuple(extras)      # PointFieldShape, кроме 1 и 2
+
+    @property
+    def key(self):
+        """Канонический ключ варианта. Считать точки можно по нему."""
+        return (self.site, self.fields)
+
+    @property
+    def has_unknown_fields(self):
+        return bool(self.extras)
+
+    def as_dict(self):
+        return {
+            'site': self.site,
+            'fields': [{'number': number, 'wire': wire, 'count': count}
+                       for number, wire, count in self.fields],
+            'unknown_fields': [item.as_dict() for item in self.extras],
+            'has_unknown_fields': self.has_unknown_fields,
+        }
+
+    def __repr__(self):
+        return '<PointShape %s %s>' % (self.site, list(self.fields))
+
+
+def _coordinate(fields, number, name):
+    """Ровно одно вхождение, ровно fixed64. Иначе отказ.
+
+    [REASON]: это и есть та строгость, которую нельзя ослаблять. Координата --
+    единственное, что доказано у точки, и она кормит число, которое сравнивают
+    с деньгами. Отсутствующая, повторённая или пришедшая не тем wire type
+    координата -- отказ, а не «возьмём первую».
+    """
+    found = [(wire, value) for num, wire, value in fields if num == number]
+    if not found:
+        raise RouteDecodeError('point has no %s (field %d)' % (name, number))
+    if len(found) > 1:
+        raise RouteDecodeError(
+            'point has %s (field %d) %d times, expected exactly one'
+            % (name, number, len(found)))
+    wire, value = found[0]
+    if wire != WIRE_FIXED64:
+        raise RouteDecodeError(
+            'point field %d (%s) has wire type %d, expected fixed64'
+            % (number, name, wire))
+    return value
+
+
+def _value_bytes(wire, value):
+    """Сколько байт занимает значение -- или None, если это varint."""
+    if wire == WIRE_FIXED64:
+        return 8
+    if wire == WIRE_FIXED32:
+        return 4
+    if wire == WIRE_BYTES:
+        return len(value)
+    return None
+
+
+def _point(raw, site=POINT_SITE_ROUTE):
+    """Точка -> ((lat, lng), PointShape). Лишние поля НЕ отбрасываются.
+
+    [REASON]: route-decode-1 требовал ровно двух полей и отказывал на всём
+    остальном. Проверка сработала как задумано -- живой прогон 2026-08-29
+    упёрся в неё третьим полем, и находка «только позиция» была пересмотрена
+    осознанно, а не протухла. route-decode-2 снимает требование к ЧИСЛУ полей
+    и сохраняет требование к КООРДИНАТАМ: поля 1 и 2 обязаны быть по одному
+    разу и быть fixed64. Всё сверх них записывается как структура и получает
+    `UNKNOWN_SEMANTICS`.
+
+    Вложенное содержимое неизвестного поля НЕ разбирается: длина байт известна,
+    а что это -- сообщение, строка или упакованный массив -- нет. Гадать здесь
+    значило бы ровно то, что запрещено; из-за этого «повреждённая вложенная
+    структура» у ИЗВЕСТНЫХ вложений (точка, взлёт, `_named`) по-прежнему
+    отказывает, а у неизвестных полей структура не выдумывается вовсе.
     """
     fields = walk(raw)
-    if len(fields) != 2:
-        raise RouteDecodeError('point has %d fields, expected exactly 2'
-                               % len(fields))
-    by_number = {}
+    lat = _coordinate(fields, SUB_LAT, 'latitude')
+    lng = _coordinate(fields, SUB_LNG, 'longitude')
+
+    counts = {}
+    sizes = {}
     for number, wire, value in fields:
-        if wire != WIRE_FIXED64:
-            raise RouteDecodeError(
-                'point field %d has wire type %d, expected fixed64'
-                % (number, wire))
-        by_number[number] = value
-    if set(by_number) != {SUB_LAT, SUB_LNG}:
-        raise RouteDecodeError('point carries fields %s, expected {1, 2}'
-                               % sorted(by_number))
-    return _double(by_number[SUB_LAT]), _double(by_number[SUB_LNG])
+        counts[(number, wire)] = counts.get((number, wire), 0) + 1
+        sizes.setdefault((number, wire), _value_bytes(wire, value))
+    shape_fields = tuple(sorted((number, wire, count)
+                                for (number, wire), count in counts.items()))
+    extras = tuple(
+        PointFieldShape(number, wire, count, sizes[(number, wire)])
+        for (number, wire), count in sorted(counts.items())
+        if number not in (SUB_LAT, SUB_LNG))
+    return (_double(lat), _double(lng)), PointShape(site, shape_fields, extras)
 
 
 def _named(raw):
@@ -253,7 +392,8 @@ class RouteRecord(object):
                  'takeoff', 'flyer_id', 'flyer_name', 'device_id', 'nickname',
                  'hardware_id', 'team_id', 'team_name', 'mode_name',
                  'mission_uuid', 'location', 'start_ms', 'end_ms',
-                 'drone_type', 'app_version', 'spray_width_m', 'unknown')
+                 'drone_type', 'app_version', 'spray_width_m', 'unknown',
+                 'point_shapes', 'takeoff_shape')
 
     def __init__(self, **kwargs):
         for name in self.__slots__:
@@ -262,6 +402,13 @@ class RouteRecord(object):
             self.points = []
         if self.unknown is None:
             self.unknown = []
+        if self.point_shapes is None:
+            self.point_shapes = []
+
+    @property
+    def points_with_unknown_fields(self):
+        return sum(1 for shape in self.point_shapes
+                   if shape.has_unknown_fields)
 
     @property
     def spray_width_known(self):
@@ -323,11 +470,14 @@ class RouteResponse(object):
 def decode_route_record(raw):
     """One route record -> RouteRecord."""
     points = []
+    point_shapes = []
     unknown = []
     named = {}
     for number, wire, value in walk(raw):
         if number == FIELD_POINT and wire == WIRE_BYTES:
-            points.append(_point(value))
+            coordinates, shape = _point(value, POINT_SITE_ROUTE)
+            points.append(coordinates)
+            point_shapes.append(shape)
             continue
         if number in named:
             raise RouteDecodeError('field %d appears more than once in a route'
@@ -366,6 +516,14 @@ def decode_route_record(raw):
     for number, (wire, value) in sorted(named.items()):
         unknown.append((number, wire, value))
 
+    # [REASON]: точка взлёта разбирается тем же кодом, но считается ОТДЕЛЬНО.
+    # Одинаковый разбор не доказывает одинаковую структуру: вариант, который
+    # встречается только у взлёта, в общей статистике маршрутных точек
+    # растворился бы, а вопрос «одинаковы ли они» -- открытый.
+    takeoff = takeoff_shape = None
+    if takeoff_raw:
+        takeoff, takeoff_shape = _point(takeoff_raw, POINT_SITE_TAKEOFF)
+
     flyer_id, flyer_name, _ = _named(flyer_raw) if flyer_raw else (None, None, None)
     device_id, nickname, hardware_id = (_named(device_raw) if device_raw
                                         else (None, None, None))
@@ -374,9 +532,11 @@ def decode_route_record(raw):
     return RouteRecord(
         flight_id=flight_id,
         points=points,
+        point_shapes=point_shapes,
         work_area_m2=_float(area_raw) if area_raw else None,
         duration_ms=duration,
-        takeoff=_point(takeoff_raw) if takeoff_raw else None,
+        takeoff=takeoff,
+        takeoff_shape=takeoff_shape,
         flyer_id=flyer_id, flyer_name=flyer_name,
         device_id=device_id, nickname=nickname, hardware_id=hardware_id,
         team_id=team_id, team_name=team_name,
@@ -389,6 +549,70 @@ def decode_route_record(raw):
         spray_width_m=_float(width_raw) if width_raw else None,
         unknown=unknown,
     )
+
+
+def point_shape_census(routes):
+    """Перепись СТРУКТУРНЫХ вариантов точек по набору маршрутов.
+
+    Наружу идут только номера полей, wire types и счётчики. Ни одной
+    координаты, ни одного значения неизвестного поля, ни одного
+    идентификатора вылета: перепись отвечает на вопрос «какой формы бывают
+    точки», а не «что в них написано».
+
+    [REASON]: длины значений сюда намеренно НЕ попадают. У одного поля они
+    могут отличаться от точки к точке, и распределение длин -- это уже намёк
+    на содержимое. Для разбора руками длина есть у `PointFieldShape`; в
+    безопасный отчёт она не выходит.
+    """
+    variants = {}
+    unknown_fields = {}
+    totals = {POINT_SITE_ROUTE: 0, POINT_SITE_TAKEOFF: 0}
+    with_unknown = {POINT_SITE_ROUTE: 0, POINT_SITE_TAKEOFF: 0}
+
+    def note(shape):
+        if shape is None:
+            return
+        totals[shape.site] = totals.get(shape.site, 0) + 1
+        if shape.has_unknown_fields:
+            with_unknown[shape.site] = with_unknown.get(shape.site, 0) + 1
+        variants[shape.key] = variants.get(shape.key, 0) + 1
+        for extra in shape.extras:
+            slot = unknown_fields.setdefault(
+                (shape.site, extra.number, extra.wire),
+                {'points': 0, 'occurrences': 0})
+            slot['points'] += 1
+            slot['occurrences'] += extra.count
+
+    for route in routes or ():
+        for shape in getattr(route, 'point_shapes', None) or ():
+            note(shape)
+        note(getattr(route, 'takeoff_shape', None))
+
+    def described(site):
+        return [
+            {'fields': [{'number': number, 'wire': wire, 'count': count}
+                        for number, wire, count in fields],
+             'points': points}
+            for (variant_site, fields), points in sorted(variants.items())
+            if variant_site == site
+        ]
+
+    return {
+        'route_point_variants': described(POINT_SITE_ROUTE),
+        'takeoff_variants': described(POINT_SITE_TAKEOFF),
+        'route_points_total': totals.get(POINT_SITE_ROUTE, 0),
+        'route_points_with_unknown_fields':
+            with_unknown.get(POINT_SITE_ROUTE, 0),
+        'takeoffs_total': totals.get(POINT_SITE_TAKEOFF, 0),
+        'takeoffs_with_unknown_fields':
+            with_unknown.get(POINT_SITE_TAKEOFF, 0),
+        'unknown_fields': [
+            {'site': site, 'number': number, 'wire': wire,
+             'points': slot['points'], 'occurrences': slot['occurrences'],
+             'semantics': UNKNOWN_SEMANTICS}
+            for (site, number, wire), slot in sorted(unknown_fields.items())
+        ],
+    }
 
 
 def decode_route_response(raw):
