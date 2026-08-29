@@ -460,6 +460,75 @@ anything is done, and asks the operator to open Task History, pick one day,
 switch to the map view and press Enter. While that happens the probe watches
 the request the cabinet issues for itself.
 
+**How the wait works, and why it is not `input()`.** The operator is asked on a
+separate daemon thread; the Playwright thread meanwhile turns a short
+`page.wait_for_timeout()` loop and hands control back to the library on every
+turn. That is not a stylistic choice — it is the fix for a live defect. The
+first live probe run (2026-08-27) blocked the Playwright thread in a bare
+`input()`, so no event handler ran while the operator looked at the map. They
+ran only after Enter, which is to say on the way out of `with FlightCollector`,
+while the target was closing: all five `response.body()` calls came back with
+`TargetClosedError`, and not one response body was captured.
+
+**The whole request lifecycle is watched**, not just `response`: `request`,
+`response`, `requestfinished` and `requestfailed`. The body is read on
+`requestfinished`, never on `response` — Playwright announces `response` when
+the status and headers have arrived, and the body is still downloading. Reading
+it from the `response` event means reading what may not be there yet, and it
+blocks inside `body()` in the middle of the pump loop, so an unfinished request
+would hang the observer instead of honestly staying unfinished.
+
+After the operator signals, the probe stops waiting for the person and waits
+for the network to settle. Settled means three things at once: **no route
+request is unfinished**, no handler is running, and a quiet interval has passed
+with no **route** network activity. The interval is counted from the moment the
+operator signalled, so "no response has been seen yet" does **not** count as
+quiet — responses may still be in flight.
+
+**Only route traffic counts.** Images, fonts, analytics and every other
+unrelated URL are ignored whole: they touch no timer, no pending count, no
+error counter and no `only_all_ids` adjacency. That is not a detail — the
+release and the timestamp used to sit in a shared `finally` that also ran after
+the early return for an unrelated URL, so any background request the page made
+refreshed the route quiet timer and the drain could fail to finish while route
+traffic had long stopped. A URL that cannot be read at all is counted as a
+listener error but is still **not** treated as route activity. A request that fails (`requestfailed`) is
+released from the count, raises the error counter and gives exit 13; the
+browser's reason text is never read.
+
+**What the drain is, stated exactly.** It is **bounded**: waiting for the
+person and waiting for quiet both end on a deadline, a deadline that runs out
+gives **exit 13** and never success, and the run cannot hang. It is **not** a
+guarantee that every response arrives in time — the network and the cabinet are
+not ours to command. A request that never finishes stays counted as pending,
+reaches the report, and makes the run unconfirmed. None of this has been
+watched live yet.
+
+Four settings tune it: `DJI_ROUTE_PROBE_POLL_MS`, `DJI_ROUTE_PROBE_WAIT_MS`,
+`DJI_ROUTE_PROBE_DRAIN_MS`, `DJI_ROUTE_PROBE_QUIET_MS`. A **contradictory
+combination is refused before the browser opens**, with a configuration error
+that names only settings and numbers: the poll and the wait must be above zero,
+the drain window must be at least one poll long, and it must exceed the quiet
+window. Otherwise the drain could never succeed, and a run that cannot possibly
+wait for an answer has no business opening the cabinet and asking a person to
+work.
+
+That refusal exists because two properties cannot both be promised: a hard
+deadline and a guaranteed first pump. `pump_until` resolves it in favour of the
+**deadline** — at a zero deadline it returns false having pumped nothing, even
+with `min_pumps=1` — and the impossible configuration is rejected up front
+rather than papered over inside the loop. The report and
+the RUN SUMMARY both say how the wait ended (`operator_answered`,
+`response_drain_completed`, `probe_drained`) and what was still outstanding
+(`route_requests_failed`, `route_requests_still_pending`,
+`probe_request_failures`, `probe_pending_requests`).
+
+**Three operator outcomes, not two.** The person pressed Enter; the input
+failed (a closed stdin, an `EOFError`); or the person never answered. A failed
+input is **not** an answer: it ends the wait immediately — no thirty-minute
+ceiling — sets `operator_answered=false` and gives exit 13. Only the exception
+**type name** is logged, never its text.
+
 It never issues the route POST itself, queues nothing and sends nothing to
 Vehicle Soft. It does open the cabinet, and that navigation is a request of
 its own — the guarantee is the narrower and true one: **no route POST is
@@ -505,7 +574,9 @@ a dropped observation nothing is known, and "not known" is not "confirmed". One
 confirmed POST beside one unconfirmed answer is **not** a success either — that
 run exits 13. Seeing nothing at all exits 6.
 
-Exit 0 further requires that the listener stumbled on **no** response. It
+Exit 0 further requires that the operator actually signalled, that the drain
+window closed on quiet rather than on its deadline, and that the listener
+stumbled on **no** response. It
 catches every exception so that the Playwright loop cannot be brought down by
 an observer, and each such failure is counted: a response that arrived and
 could not be read is not "nothing observed", and a run carrying one is not a
@@ -523,6 +594,36 @@ The response size limit is a limit on **processing**, not on reading:
 Playwright hands over a body whole, so an oversized body has already been in
 memory by the time it is measured. What the limit does is refuse to hash,
 decode, classify or store it; the observation keeps its real measured size.
+
+### A body that could not be read is not an empty body
+
+If `response.body()` raises, the probe records the observation as
+`payload_kind=UNREADABLE` and invents nothing: `response_bytes` and
+`response_sha256` are empty, `response_body_was_read` is false,
+`decoded_routes`, `returned_id_count` and `dji_response_status` are empty, and
+the id comparison is marked `id_comparison_performed=false` with `missing_count`
+and `extra_count` empty as well. The error counter goes up and the run exits 13.
+
+**The id comparison runs only after a successful decode.** An unreadable body,
+a body over the processing limit, an empty body, a JSON refusal, a protobuf
+that would not parse — none of them has a returned list at all, so none of them
+is compared, and none of them may claim that the requested ids are missing. The
+cabinet may well have returned every one of them: it is the probe that parsed
+nothing. Only the **request-side** counters stay real, because the request body
+was read.
+Only the **name** of the exception type is kept, and only if it looks like a
+type name; no exception text and nothing else from the browser reaches the log
+or the report.
+
+This exists because the opposite was done once and lied convincingly. The live
+run of 2026-08-27 substituted `b''` for the unread body, and the report claimed
+`response_body_was_read=true`, `response_bytes=0`, the SHA-256 of the **empty**
+body, `payload_kind=EMPTY`, `observation_errors=0` and that thirty-nine
+requested ids were missing. The cabinet may well have returned them: it was the
+probe that never read the answer. A genuinely empty body that **was** read is a
+different thing and stays `EMPTY`, with zero bytes, the hash of emptiness and
+no error — but it decodes to nothing either, so it makes no claim about the
+ids.
 
 When the response declares a `Content-Length` above the limit, the body is not
 requested at all — and then the real size is simply **unknown**. The declared

@@ -13,6 +13,7 @@
 
 import json
 import tempfile
+import threading
 import unittest
 
 from pathlib import Path
@@ -31,7 +32,13 @@ from drone_collector.route_ui_probe import (
     is_route_url,
     NOT_READ,
     observation_id,
+    PAYLOAD_KIND_UNREADABLE,
+    ProbeTimingError,
+    pump_until,
     read_request_ids,
+    start_operator_prompt,
+    UNNAMED_EXCEPTION,
+    validate_probe_timings,
     summarise_request_body,
     WITHHELD_DATA_TYPE,
     write_report,
@@ -60,13 +67,21 @@ HEADERS = {
 
 
 class _FakeRequest(object):
-    def __init__(self, method='POST', headers=None, post_data=None):
+    """Запрос Playwright: у него есть URL и, после ответа, сам ответ."""
+
+    def __init__(self, method='POST', headers=None, post_data=None,
+                 url=ROUTE_URL):
         self.method = method
+        self.url = url
         self._headers = dict(headers or {})
         self.post_data = post_data
+        self.response_object = None
 
     def all_headers(self):
         return dict(self._headers)
+
+    def response(self):
+        return self.response_object
 
 
 class _FakeResponse(object):
@@ -75,9 +90,31 @@ class _FakeResponse(object):
         self.status = status
         self.request = request
         self._body = body
+        if request is not None:
+            request.response_object = self
+            # В Playwright у запроса и ответа один URL. Фикстура держит это
+            # соответствие: иначе тест «чужой хост» проверял бы не то.
+            request.url = url
 
     def body(self):
         return self._body
+
+
+def deliver(probe, response, request=None):
+    """Провести обмен через ВЕСЬ жизненный цикл, как это делает Playwright.
+
+    [REASON]: `response` в Playwright приходит на статусе и заголовках, а тело
+    объявляется отдельным событием `requestfinished`. Тест, дёргающий один
+    `note_response`, проверял бы модель, которой в жизни нет.
+    """
+    if request is None:
+        request = getattr(response, 'request', None)
+    if request is not None:
+        probe.note_request(request)
+    probe.note_response(response)
+    if request is not None:
+        probe.note_request_finished(request)
+    return response
 
 
 class _QuietLog(object):
@@ -297,7 +334,7 @@ class ProbeTestCase(unittest.TestCase):
 class TestObservation(ProbeTestCase):
 
     def test_a_route_response_is_observed(self):
-        self.probe.note_response(route_response())
+        deliver(self.probe, route_response())
         self.assertEqual(len(self.probe.observations), 1)
         seen = self.probe.observations[0].as_dict()
         self.assertEqual(seen['method'], 'POST')
@@ -307,26 +344,26 @@ class TestObservation(ProbeTestCase):
 
     def test_an_unrelated_response_is_ignored(self):
         """Отрицательный контроль: слушают не всё подряд."""
-        self.probe.note_response(_FakeResponse(
+        deliver(self.probe, _FakeResponse(
             'https://example.invalid/api/web/v1/flight_records?page=1',
             b'{"code": 0}'))
         self.assertEqual(self.probe.observations, [])
 
     def test_the_preceding_only_all_ids_is_noticed(self):
         self.probe.note_request(IDS_URL)
-        self.probe.note_response(route_response())
+        deliver(self.probe, route_response())
         self.assertTrue(
             self.probe.observations[0].preceded_by_only_all_ids)
 
     def test_without_it_the_flag_is_false(self):
         """Отрицательный контроль: флаг различает два случая."""
-        self.probe.note_response(route_response())
+        deliver(self.probe, route_response())
         self.assertFalse(
             self.probe.observations[0].preceded_by_only_all_ids)
 
     def test_a_binary_payload_is_decoded_and_counted(self):
         body = response([route_record(flight_id=FAKE_FLIGHT_ID)])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([FAKE_FLIGHT_ID])))
         seen = self.probe.observations[0]
         self.assertEqual(seen.payload_kind, 'BINARY')
@@ -336,7 +373,7 @@ class TestObservation(ProbeTestCase):
 
     def test_a_count_mismatch_is_reported_without_the_identifiers(self):
         body = response([route_record(flight_id=FAKE_FLIGHT_ID)])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=request_body(count=9)))
         seen = self.probe.observations[0]
         self.assertFalse(seen.comparison['requested_and_returned_match'])
@@ -349,7 +386,7 @@ class TestObservation(ProbeTestCase):
         refusal = json.dumps({'status': 408, 'code': 408,
                               'msg': '请求时间无效',
                               'request_id': FAKE_REQUEST_ID}).encode('utf-8')
-        self.probe.note_response(route_response(body=refusal))
+        deliver(self.probe, route_response(body=refusal))
         seen = self.probe.observations[0]
         self.assertEqual(seen.payload_kind, 'JSON_VENDOR_ERROR')
         self.assertIsNone(seen.decoded_routes)
@@ -357,7 +394,7 @@ class TestObservation(ProbeTestCase):
     def test_identical_repeats_are_deduplicated(self):
         """Карта перезапрашивает маршруты при каждом изменении вида."""
         for _ in range(3):
-            self.probe.note_response(route_response())
+            deliver(self.probe, route_response())
         self.assertEqual(len(self.probe.observations), 1)
         self.assertEqual(self.probe.observations[0].repeats, 3)
         self.assertEqual(self.probe.route_responses, 3)
@@ -365,7 +402,7 @@ class TestObservation(ProbeTestCase):
     def test_the_number_of_observations_is_capped(self):
         for index in range(MAX_OBSERVATIONS + 5):
             body = response([route_record(flight_id=900000000 + index)])
-            self.probe.note_response(route_response(body=body))
+            deliver(self.probe, route_response(body=body))
         self.assertEqual(len(self.probe.observations), MAX_OBSERVATIONS)
         self.assertEqual(self.probe.skipped_over_cap, 5)
 
@@ -374,13 +411,17 @@ class TestObservation(ProbeTestCase):
         class Hostile(object):
             url = ROUTE_URL
             status = 200
-            request = None
+            request = _FakeRequest(headers=HEADERS,
+                                   post_data=ids_body([900000001]))
 
             def body(self):
                 raise RuntimeError('gone')
 
-        self.probe.note_response(Hostile())
+        hostile = Hostile()
+        hostile.request.response_object = hostile
+        deliver(self.probe, hostile)
         self.assertEqual(self.probe.route_responses, 1)
+        self.assertEqual(self.probe.pending_route_requests, 0)
 
 
 class TestIdSetsNotCounts(ProbeTestCase):
@@ -394,7 +435,7 @@ class TestIdSetsNotCounts(ProbeTestCase):
     def test_two_different_sets_of_the_same_size_do_not_match(self):
         body = response([route_record(flight_id=900000001),
                          route_record(flight_id=900000002)])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([900000003, 900000004])))
         seen = self.probe.observations[0]
         self.assertEqual(seen.request['flight_id_count'], 2)
@@ -408,7 +449,7 @@ class TestIdSetsNotCounts(ProbeTestCase):
         """Отрицательный контроль: сверка не отвергает совпавшее."""
         body = response([route_record(flight_id=900000001),
                          route_record(flight_id=900000002)])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([900000002, 900000001])))
         seen = self.probe.observations[0]
         self.assertTrue(seen.comparison['requested_and_returned_match'])
@@ -418,7 +459,7 @@ class TestIdSetsNotCounts(ProbeTestCase):
     def test_a_partial_overlap_is_counted_on_both_sides(self):
         body = response([route_record(flight_id=900000001),
                          route_record(flight_id=900000009)])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([900000001, 900000002])))
         comparison = self.probe.observations[0].comparison
         self.assertFalse(comparison['requested_and_returned_match'])
@@ -428,7 +469,7 @@ class TestIdSetsNotCounts(ProbeTestCase):
     def test_no_identifier_reaches_the_report_or_the_log(self):
         body = response([route_record(flight_id=900000001),
                          route_record(flight_id=900000002)])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([900000003, 900000004])))
         write_report(self.probe, self.root)
         haystack = self.everything_written()
@@ -437,7 +478,7 @@ class TestIdSetsNotCounts(ProbeTestCase):
 
     def test_the_report_carries_only_booleans_and_counts(self):
         body = response([route_record(flight_id=900000001)])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([900000003])))
         document = self.probe.observations[0].as_dict()
         for key in ('requested_and_returned_match',
@@ -496,7 +537,7 @@ class TestCleanUniqueSetRequired(ProbeTestCase):
     def test_a_duplicate_in_the_request_is_not_confirmed(self):
         """request [ID, ID], response [ID]."""
         body = response([route_record(flight_id=self.ID_A)])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([self.ID_A, self.ID_A])))
         self.assertFalse(self.confirmed())
         self.assertEqual(self.comparison()['requested_duplicate_count'], 1)
@@ -505,7 +546,7 @@ class TestCleanUniqueSetRequired(ProbeTestCase):
         """request [ID], response -- два маршрута с тем же ID."""
         body = response([route_record(flight_id=self.ID_A),
                          route_record(flight_id=self.ID_A)])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([self.ID_A])))
         self.assertFalse(self.confirmed())
         self.assertEqual(self.comparison()['returned_duplicate_count'], 1)
@@ -514,7 +555,7 @@ class TestCleanUniqueSetRequired(ProbeTestCase):
         """request [ID], response -- один правильный и один без ID."""
         body = response([route_record(flight_id=self.ID_A),
                          route_record_without_id()])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([self.ID_A])))
         self.assertFalse(self.confirmed())
         self.assertEqual(self.comparison()['route_without_id_count'], 1)
@@ -526,7 +567,7 @@ class TestCleanUniqueSetRequired(ProbeTestCase):
                 probe = RouteUiProbe(logger=_QuietLog(),
                                      expected_origin=ROUTE_ORIGIN)
                 body = response([route_record(flight_id=self.ID_A)])
-                probe.note_response(route_response(
+                deliver(probe, route_response(
                     body=body,
                     post_data=json.dumps(
                         {'flight_record_ids': [self.ID_A, junk],
@@ -539,7 +580,7 @@ class TestCleanUniqueSetRequired(ProbeTestCase):
     def test_two_different_sets_of_the_same_size_are_not_confirmed(self):
         body = response([route_record(flight_id=self.ID_A),
                          route_record(flight_id=self.ID_B)])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([900000003, 900000004])))
         self.assertFalse(self.confirmed())
 
@@ -547,7 +588,7 @@ class TestCleanUniqueSetRequired(ProbeTestCase):
         """Отрицательный контроль: строгость не гасит нормальный случай."""
         body = response([route_record(flight_id=self.ID_A),
                          route_record(flight_id=self.ID_B)])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([self.ID_B, self.ID_A])))
         seen = self.probe.observations[0]
         self.assertTrue(seen.confirmed, seen.not_confirmed_because)
@@ -559,7 +600,7 @@ class TestCleanUniqueSetRequired(ProbeTestCase):
     def test_none_of_these_cases_prints_an_identifier(self):
         body = response([route_record(flight_id=self.ID_A),
                          route_record(flight_id=self.ID_A)])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([self.ID_A, self.ID_A])))
         write_report(self.probe, self.root)
         haystack = self.everything_written()
@@ -606,9 +647,9 @@ class TestDeduplication(ProbeTestCase):
         и вопрос «на что именно ответил кабинет» терял ответ.
         """
         body = response([route_record(flight_id=FAKE_FLIGHT_ID)])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([900000001])))
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([900000002])))
         self.assertEqual(len(self.probe.observations), 2)
 
@@ -616,7 +657,7 @@ class TestDeduplication(ProbeTestCase):
         """Отрицательный контроль: настоящий повтор по-прежнему один."""
         body = response([route_record(flight_id=FAKE_FLIGHT_ID)])
         for _ in range(3):
-            self.probe.note_response(route_response(
+            deliver(self.probe, route_response(
                 body=body, post_data=ids_body([900000001])))
         self.assertEqual(len(self.probe.observations), 1)
         self.assertEqual(self.probe.observations[0].repeats, 3)
@@ -629,20 +670,20 @@ class TestOnlyAllIdsCountedOncePerExchange(ProbeTestCase):
         считался дважды, и «два only_all_ids перед маршрутом» означало один.
         """
         self.probe.note_request(IDS_URL)
-        self.probe.note_response(_FakeResponse(IDS_URL, b'{"code": 0}'))
+        deliver(self.probe, _FakeResponse(IDS_URL, b'{"code": 0}'))
         self.assertEqual(self.probe.saw_only_all_ids, 1)
 
     def test_two_exchanges_count_twice(self):
         """Отрицательный контроль: счётчик всё-таки считает."""
         for _ in range(2):
             self.probe.note_request(IDS_URL)
-            self.probe.note_response(_FakeResponse(IDS_URL, b'{"code": 0}'))
+            deliver(self.probe, _FakeResponse(IDS_URL, b'{"code": 0}'))
         self.assertEqual(self.probe.saw_only_all_ids, 2)
 
     def test_the_neighbourhood_flag_still_works(self):
         self.probe.note_request(IDS_URL)
-        self.probe.note_response(_FakeResponse(IDS_URL, b'{"code": 0}'))
-        self.probe.note_response(route_response())
+        deliver(self.probe, _FakeResponse(IDS_URL, b'{"code": 0}'))
+        deliver(self.probe, route_response())
         self.assertTrue(
             self.probe.observations[0].preceded_by_only_all_ids)
 
@@ -656,7 +697,7 @@ class TestConfirmation(ProbeTestCase):
                               post_data=ids_body([FAKE_FLIGHT_ID]))
 
     def test_a_full_success_is_confirmed(self):
-        self.probe.note_response(self.confirmed_response())
+        deliver(self.probe, self.confirmed_response())
         seen = self.probe.observations[0]
         self.assertTrue(seen.confirmed, seen.not_confirmed_because)
         self.assertEqual(seen.not_confirmed_because, [])
@@ -664,18 +705,18 @@ class TestConfirmation(ProbeTestCase):
 
     def test_a_vendor_refusal_is_not_confirmed(self):
         refusal = json.dumps({'status': 408, 'code': 408}).encode('utf-8')
-        self.probe.note_response(route_response(body=refusal))
+        deliver(self.probe, route_response(body=refusal))
         seen = self.probe.observations[0]
         self.assertFalse(seen.confirmed)
         self.assertIn('the payload is not a binary route payload',
                       seen.not_confirmed_because)
 
     def test_html_is_not_confirmed(self):
-        self.probe.note_response(route_response(b'<html>502</html>'))
+        deliver(self.probe, route_response(b'<html>502</html>'))
         self.assertFalse(self.probe.observations[0].confirmed)
 
     def test_an_undecodable_binary_is_not_confirmed(self):
-        self.probe.note_response(route_response(b'\xff\xff\xff\xff'))
+        deliver(self.probe, route_response(b'\xff\xff\xff\xff'))
         seen = self.probe.observations[0]
         self.assertFalse(seen.confirmed)
         self.assertIn('the payload did not decode',
@@ -683,7 +724,7 @@ class TestConfirmation(ProbeTestCase):
 
     def test_a_non_2xx_status_is_not_confirmed(self):
         body = response([route_record(flight_id=FAKE_FLIGHT_ID)])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([FAKE_FLIGHT_ID]), status=500))
         seen = self.probe.observations[0]
         self.assertFalse(seen.confirmed)
@@ -695,7 +736,7 @@ class TestConfirmation(ProbeTestCase):
         answer = route_response(body=body,
                                 post_data=ids_body([FAKE_FLIGHT_ID]))
         answer.request.method = 'GET'
-        self.probe.note_response(answer)
+        deliver(self.probe, answer)
         seen = self.probe.observations[0]
         self.assertFalse(seen.confirmed)
         self.assertIn('the method is not POST', seen.not_confirmed_because)
@@ -706,7 +747,7 @@ class TestConfirmation(ProbeTestCase):
             'https://elsewhere.invalid/api/web/v2/flight_datas/flight_records',
             body, request=_FakeRequest(
                 headers=HEADERS, post_data=ids_body([FAKE_FLIGHT_ID])))
-        self.probe.note_response(answer)
+        deliver(self.probe, answer)
         seen = self.probe.observations[0]
         self.assertFalse(seen.confirmed)
         self.assertIn('the host is not the expected route API host',
@@ -715,7 +756,7 @@ class TestConfirmation(ProbeTestCase):
     def test_a_plain_http_origin_is_not_confirmed(self):
         probe = RouteUiProbe(logger=self.log,
                              expected_origin='http://kr-ag2-api.example.invalid')
-        probe.note_response(self.confirmed_response())
+        deliver(probe, self.confirmed_response())
         seen = probe.observations[0]
         self.assertFalse(seen.confirmed)
         self.assertIn('the expected origin is not https',
@@ -727,7 +768,7 @@ class TestConfirmation(ProbeTestCase):
             ROUTE_ORIGIN + '/api/web/v9/flight_datas/flight_records',
             body, request=_FakeRequest(
                 headers=HEADERS, post_data=ids_body([FAKE_FLIGHT_ID])))
-        self.probe.note_response(answer)
+        deliver(self.probe, answer)
         seen = self.probe.observations[0]
         self.assertFalse(seen.confirmed)
         self.assertIn('the path is not the exact route endpoint',
@@ -735,7 +776,7 @@ class TestConfirmation(ProbeTestCase):
 
     def test_mismatched_id_sets_are_not_confirmed(self):
         body = response([route_record(flight_id=900000001)])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([900000002])))
         seen = self.probe.observations[0]
         self.assertFalse(seen.confirmed)
@@ -743,8 +784,8 @@ class TestConfirmation(ProbeTestCase):
                       seen.not_confirmed_because)
 
     def test_the_report_counts_confirmed_observations(self):
-        self.probe.note_response(self.confirmed_response())
-        self.probe.note_response(route_response(b'<html>502</html>'))
+        deliver(self.probe, self.confirmed_response())
+        deliver(self.probe, route_response(b'<html>502</html>'))
         document = self.probe.report()
         self.assertEqual(document['route_observations'], 2)
         self.assertEqual(document['confirmed_route_posts'], 1)
@@ -779,7 +820,7 @@ class TestOversizedResponse(ProbeTestCase):
                 asked.append(True)
                 raise AssertionError('the body was requested anyway')
 
-        self.probe.note_response(_Declaring())
+        deliver(self.probe, _Declaring())
         seen = self.probe.observations[0]
         self.assertEqual(asked, [])
         self.assertEqual(seen.payload_kind, 'TOO_LARGE')
@@ -822,7 +863,7 @@ class TestOversizedResponse(ProbeTestCase):
             def body(self):
                 raise AssertionError('the body was requested anyway')
 
-        self.probe.note_response(_Declaring())
+        deliver(self.probe, _Declaring())
         seen = self.probe.observations[0]
         self.assertNotEqual(seen.response_bytes, declared)
         self.assertIsNone(seen.response_bytes)
@@ -831,7 +872,7 @@ class TestOversizedResponse(ProbeTestCase):
     def test_a_read_body_still_records_its_measured_size(self):
         """Положительный контроль: прочитанное тело меряется как раньше."""
         body = response([route_record(flight_id=900000001)])
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=body, post_data=ids_body([900000001])))
         seen = self.probe.observations[0]
         self.assertEqual(seen.response_bytes, len(body))
@@ -855,7 +896,7 @@ class TestOversizedResponse(ProbeTestCase):
             def body(self):
                 raise AssertionError('the body was requested anyway')
 
-        self.probe.note_response(_Declaring())
+        deliver(self.probe, _Declaring())
         self.assertEqual(self.probe.observation_errors, 0)
         line = _safe_line(self.probe.observations[0])
         self.assertIn('bytes=None', line)
@@ -877,7 +918,7 @@ class TestOversizedResponse(ProbeTestCase):
             def body(self):
                 return body
 
-        self.probe.note_response(_Declaring())
+        deliver(self.probe, _Declaring())
         seen = self.probe.observations[0]
         self.assertEqual(seen.payload_kind, 'BINARY')
         self.assertEqual(seen.response_bytes, len(body))
@@ -898,7 +939,7 @@ class TestOversizedResponse(ProbeTestCase):
             def body(self):
                 return body
 
-        self.probe.note_response(_Declaring())
+        deliver(self.probe, _Declaring())
         self.assertEqual(self.probe.observations[0].response_bytes, len(body))
 
     def test_the_limit_is_named_a_processing_limit(self):
@@ -916,7 +957,7 @@ class TestOversizedResponse(ProbeTestCase):
         -- то есть утверждал, что ответ был пуст, хотя он был огромен.
         """
         raw = self.oversize()
-        self.probe.note_response(route_response(body=raw))
+        deliver(self.probe, route_response(body=raw))
         seen = self.probe.observations[0]
         self.assertEqual(seen.response_bytes, len(raw))
         self.assertGreater(seen.response_bytes, MAX_RESPONSE_BYTES)
@@ -924,13 +965,13 @@ class TestOversizedResponse(ProbeTestCase):
     def test_no_hash_of_an_empty_body_is_recorded(self):
         import hashlib
         empty_digest = hashlib.sha256(b'').hexdigest()
-        self.probe.note_response(route_response(body=self.oversize()))
+        deliver(self.probe, route_response(body=self.oversize()))
         seen = self.probe.observations[0]
         self.assertIsNone(seen.response_sha256)
         self.assertNotEqual(seen.response_sha256, empty_digest)
 
     def test_it_is_named_too_large_and_not_decoded(self):
-        self.probe.note_response(route_response(body=self.oversize()))
+        deliver(self.probe, route_response(body=self.oversize()))
         seen = self.probe.observations[0]
         self.assertEqual(seen.payload_kind, 'TOO_LARGE')
         self.assertIsNone(seen.decoded_routes)
@@ -938,7 +979,7 @@ class TestOversizedResponse(ProbeTestCase):
 
     def test_an_ordinary_response_still_gets_its_hash(self):
         """Отрицательный контроль: обычный ответ хешируется как раньше."""
-        self.probe.note_response(route_response())
+        deliver(self.probe, route_response())
         seen = self.probe.observations[0]
         self.assertEqual(len(seen.response_sha256), 64)
 
@@ -960,15 +1001,15 @@ class TestDedupeKeepsDifferentAnswersApart(ProbeTestCase):
             observation_errors=self.probe.observation_errors)
 
     def test_the_same_body_with_http_500_is_not_a_repeat(self):
-        self.probe.note_response(confirmable())
-        self.probe.note_response(confirmable(status=500))
+        deliver(self.probe, confirmable())
+        deliver(self.probe, confirmable(status=500))
         self.assertEqual(len(self.probe.observations), 2)
         self.assertEqual(len(self.probe.confirmed_observations), 1)
         self.assertEqual(self.outcome(), 13)
 
     def test_the_same_body_as_a_get_is_not_a_repeat(self):
-        self.probe.note_response(confirmable())
-        self.probe.note_response(confirmable(method='GET'))
+        deliver(self.probe, confirmable())
+        deliver(self.probe, confirmable(method='GET'))
         self.assertEqual(len(self.probe.observations), 2)
         self.assertEqual(len(self.probe.confirmed_observations), 1)
         self.assertEqual(self.outcome(), 13)
@@ -976,7 +1017,7 @@ class TestDedupeKeepsDifferentAnswersApart(ProbeTestCase):
     def test_two_identical_confirmed_exchanges_still_collapse(self):
         """Положительный контроль: настоящий повтор остаётся повтором."""
         for _ in range(3):
-            self.probe.note_response(confirmable())
+            deliver(self.probe, confirmable())
         self.assertEqual(len(self.probe.observations), 1)
         self.assertEqual(self.probe.observations[0].repeats, 3)
         self.assertTrue(self.probe.observations[0].confirmed)
@@ -984,15 +1025,15 @@ class TestDedupeKeepsDifferentAnswersApart(ProbeTestCase):
 
     def test_a_different_internal_status_is_not_a_repeat(self):
         """Тот же HTTP-обмен, другой конверт DJI -- другое наблюдение."""
-        self.probe.note_response(confirmable())
-        self.probe.note_response(confirmable(envelope_status=101))
+        deliver(self.probe, confirmable())
+        deliver(self.probe, confirmable(envelope_status=101))
         self.assertEqual(len(self.probe.observations), 2)
         self.assertEqual(self.outcome(), 13)
 
     def test_a_different_payload_kind_is_not_a_repeat(self):
         """Двоичный ответ и JSON-отказ на тот же запрос -- два наблюдения."""
-        self.probe.note_response(confirmable())
-        self.probe.note_response(route_response(
+        deliver(self.probe, confirmable())
+        deliver(self.probe, route_response(
             body=b'{"status": 408, "code": 408, "msg": "no"}',
             post_data=ids_body([900000001])))
         self.assertEqual(len(self.probe.observations), 2)
@@ -1077,38 +1118,38 @@ class TestOnlyAllIdsNeighbourhoodIsConsumed(ProbeTestCase):
 
     def test_the_flag_is_set_on_the_response_that_followed_the_ids(self):
         self.probe.note_request(IDS_URL)
-        self.probe.note_response(confirmable(flight_id=900000001))
+        deliver(self.probe, confirmable(flight_id=900000001))
         self.assertTrue(self.probe.observations[0].preceded_by_only_all_ids)
 
     def test_the_next_response_does_not_inherit_it(self):
         self.probe.note_request(IDS_URL)
-        self.probe.note_response(confirmable(flight_id=900000001))
-        self.probe.note_response(confirmable(flight_id=900000002))
+        deliver(self.probe, confirmable(flight_id=900000001))
+        deliver(self.probe, confirmable(flight_id=900000002))
         self.assertTrue(self.probe.observations[0].preceded_by_only_all_ids)
         self.assertFalse(self.probe.observations[1].preceded_by_only_all_ids)
 
     def test_a_repeat_consumes_the_flag_too(self):
         """Повтор -- тоже ответ маршрутов, и соседство тратит он."""
         first = confirmable(flight_id=900000001)
-        self.probe.note_response(first)
+        deliver(self.probe, first)
         self.assertFalse(self.probe.observations[0].preceded_by_only_all_ids)
 
         self.probe.note_request(IDS_URL)
-        self.probe.note_response(confirmable(flight_id=900000001))
+        deliver(self.probe, confirmable(flight_id=900000001))
         self.assertEqual(len(self.probe.observations), 1)
         self.assertEqual(self.probe.observations[0].repeats, 2)
 
-        self.probe.note_response(confirmable(flight_id=900000002))
+        deliver(self.probe, confirmable(flight_id=900000002))
         self.assertEqual(len(self.probe.observations), 2)
         self.assertFalse(self.probe.observations[1].preceded_by_only_all_ids)
 
     def test_an_observation_dropped_by_the_cap_consumes_it_too(self):
         for index in range(MAX_OBSERVATIONS):
-            self.probe.note_response(confirmable(flight_id=900000001 + index))
+            deliver(self.probe, confirmable(flight_id=900000001 + index))
         self.assertEqual(len(self.probe.observations), MAX_OBSERVATIONS)
 
         self.probe.note_request(IDS_URL)
-        self.probe.note_response(confirmable(flight_id=900000900))
+        deliver(self.probe, confirmable(flight_id=900000900))
         self.assertEqual(self.probe.skipped_over_cap, 1)
         self.assertFalse(self.probe._ids_seen_recently)
 
@@ -1131,7 +1172,7 @@ class TestTheDjiEnvelopeStatusIsChecked(ProbeTestCase):
             observation_errors=self.probe.observation_errors)
 
     def test_an_internal_101_with_routes_is_not_confirmed(self):
-        self.probe.note_response(confirmable(envelope_status=101))
+        deliver(self.probe, confirmable(envelope_status=101))
         seen = self.probe.observations[0]
         # Всё внешнее в порядке: 200, двоичное тело, маршруты, совпавшие ID.
         self.assertEqual(seen.http_status, 200)
@@ -1146,7 +1187,7 @@ class TestTheDjiEnvelopeStatusIsChecked(ProbeTestCase):
         self.assertEqual(self.outcome(), 13)
 
     def test_an_internal_200_is_the_positive_control(self):
-        self.probe.note_response(confirmable(envelope_status=200))
+        deliver(self.probe, confirmable(envelope_status=200))
         seen = self.probe.observations[0]
         self.assertEqual(seen.dji_response_status, 200)
         self.assertTrue(seen.confirmed)
@@ -1155,13 +1196,13 @@ class TestTheDjiEnvelopeStatusIsChecked(ProbeTestCase):
 
     def test_an_unknown_internal_status_is_not_interpreted(self):
         """Незнакомый статус не толкуется: он просто не тот, что нужен."""
-        self.probe.note_response(confirmable(envelope_status=4242))
+        deliver(self.probe, confirmable(envelope_status=4242))
         seen = self.probe.observations[0]
         self.assertEqual(seen.dji_response_status, 4242)
         self.assertFalse(seen.confirmed)
 
     def test_the_status_reaches_the_report_as_a_number(self):
-        self.probe.note_response(confirmable(envelope_status=101))
+        deliver(self.probe, confirmable(envelope_status=101))
         document = self.probe.observations[0].as_dict()
         self.assertEqual(document['dji_response_status'], 101)
 
@@ -1172,7 +1213,7 @@ class TestTheDjiEnvelopeStatusIsChecked(ProbeTestCase):
 
     def test_a_body_that_did_not_decode_is_not_blamed_on_the_envelope(self):
         """Отрицательный контроль: про конверт, которого не было, не врём."""
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             body=b'{"status": 408, "code": 408, "msg": "no"}',
             post_data=ids_body([900000001])))
         seen = self.probe.observations[0]
@@ -1215,28 +1256,28 @@ class TestListenerErrorsAreCounted(ProbeTestCase):
             observation_errors=self.probe.observation_errors)
 
     def test_the_error_is_counted_and_does_not_escape(self):
-        self.probe.note_response(self.broken())
+        deliver(self.probe, self.broken())
         self.assertEqual(self.probe.observation_errors, 1)
         self.assertEqual(self.probe.observations, [])
 
     def test_one_error_beside_a_confirmed_exchange_is_still_thirteen(self):
-        self.probe.note_response(self.broken())
-        self.probe.note_response(confirmable())
+        deliver(self.probe, self.broken())
+        deliver(self.probe, confirmable())
         self.assertEqual(len(self.probe.confirmed_observations), 1)
         self.assertEqual(self.probe.observation_errors, 1)
         self.assertEqual(self.outcome(), 13)
 
     def test_an_ordinary_confirmed_exchange_is_the_positive_control(self):
-        self.probe.note_response(confirmable())
+        deliver(self.probe, confirmable())
         self.assertEqual(self.probe.observation_errors, 0)
         self.assertEqual(self.outcome(), 0)
 
     def test_the_count_reaches_the_report(self):
-        self.probe.note_response(self.broken())
+        deliver(self.probe, self.broken())
         self.assertEqual(self.probe.report()['observation_errors'], 1)
 
     def test_only_the_exception_type_reaches_the_log(self):
-        self.probe.note_response(self.broken())
+        deliver(self.probe, self.broken())
         text = self.log.text()
         self.assertIn('RuntimeError', text)
         self.assertNotIn('SYNTHETIC-LISTENER-FAILURE', text)
@@ -1263,7 +1304,7 @@ class TestDataTypeNeverLeaks(ProbeTestCase):
     LEAKY_SIGNED = 'https://example.invalid/x?signature=NOT-REAL-0123456789'
 
     def observe(self, data_type):
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             post_data=ids_body([900000001], data_type=data_type)))
         write_report(self.probe, self.root)
         return self.probe.observations[0]
@@ -1319,10 +1360,965 @@ class TestDataTypeNeverLeaks(ProbeTestCase):
         self.assertEqual(safe_data_type('simpli\x00fied'), (None, True))
 
 
+class _TargetClosedError(Exception):
+    """Синтетический двойник playwright TargetClosedError."""
+
+
+def unreadable_response(post_data=None, status=200, exc=None,
+                        headers=None):
+    """Ответ маршрутов, тело которого прочитать не удастся."""
+    failure = exc or _TargetClosedError('SYNTHETIC-BROWSER-DETAIL')
+
+    class _Unreadable(object):
+        url = ROUTE_URL
+
+        def __init__(self):
+            self.status = status
+            self.request = _FakeRequest(
+                headers=headers or HEADERS,
+                post_data=(post_data if post_data is not None
+                           else ids_body([900000001])))
+
+        def all_headers(self):
+            return {}
+
+        def body(self):
+            raise failure
+
+    return _Unreadable()
+
+
+class TestUnreadableIsNotEmpty(ProbeTestCase):
+    """Ответ, тела которого не прочитали, -- не пустой ответ.
+
+    [REASON]: живой прогон 2026-08-27 получил `TargetClosedError` на всех пяти
+    `response.body()`, а код подставлял `b''`. Отчёт написал
+    `payload_kind=EMPTY`, `response_bytes=0`, sha256 ПУСТОГО тела,
+    `response_body_was_read=true`, `observation_errors=0` и «запрошенные ID
+    отсутствуют». Ни одно из этих утверждений не было правдой.
+    """
+
+    def outcome(self):
+        return probe_exit_code(
+            observations=len(self.probe.observations),
+            confirmed=len(self.probe.confirmed_observations),
+            skipped_over_cap=self.probe.skipped_over_cap,
+            observation_errors=self.probe.observation_errors)
+
+    def test_the_kind_is_unreadable_and_not_empty(self):
+        deliver(self.probe, unreadable_response())
+        seen = self.probe.observations[0]
+        self.assertEqual(seen.payload_kind, PAYLOAD_KIND_UNREADABLE)
+        self.assertNotEqual(seen.payload_kind, 'EMPTY')
+
+    def test_no_size_and_no_hash_are_invented(self):
+        deliver(self.probe, unreadable_response())
+        seen = self.probe.observations[0]
+        self.assertFalse(seen.body_was_read)
+        self.assertIsNone(seen.response_bytes)
+        self.assertIsNone(seen.response_sha256)
+
+    def test_the_hash_is_not_the_hash_of_emptiness(self):
+        """Отдельно: sha256(b'') -- самое убедительное из ложных чисел."""
+        import hashlib
+        deliver(self.probe, unreadable_response())
+        self.assertNotEqual(self.probe.observations[0].response_sha256,
+                            hashlib.sha256(b'').hexdigest())
+
+    def test_nothing_is_claimed_about_the_routes(self):
+        deliver(self.probe, unreadable_response())
+        seen = self.probe.observations[0]
+        self.assertIsNone(seen.decoded_routes)
+        self.assertIsNone(seen.returned_id_count)
+        self.assertIsNone(seen.dji_response_status)
+
+    def test_the_comparison_is_marked_as_never_performed(self):
+        deliver(self.probe, unreadable_response())
+        comparison = self.probe.observations[0].comparison
+        self.assertIs(comparison['id_comparison_performed'], False)
+        self.assertIs(comparison['requested_and_returned_match'], False)
+
+    def test_missing_and_extra_are_not_invented(self):
+        """[REASON]: отчёт живого прогона написал «39 запрошенных отсутствуют».
+        Кабинет их, возможно, вернул -- это МЫ не прочитали ответ.
+        """
+        deliver(self.probe, unreadable_response(
+            post_data=ids_body([900000001, 900000002, 900000003])))
+        comparison = self.probe.observations[0].comparison
+        self.assertIsNone(comparison['missing_count'])
+        self.assertIsNone(comparison['extra_count'])
+        self.assertIsNone(comparison['returned_duplicate_count'])
+        self.assertIsNone(comparison['route_without_id_count'])
+
+    def test_the_request_side_counters_stay_real(self):
+        """Тело ЗАПРОСА мы прочитали -- про него врать не нужно и незачем."""
+        deliver(self.probe, unreadable_response(
+            post_data=json.dumps({'flight_record_ids': [900000001, 'oops'],
+                                  'data_type': 'simplified'})))
+        comparison = self.probe.observations[0].comparison
+        self.assertEqual(comparison['invalid_requested_id_count'], 1)
+        self.assertEqual(comparison['requested_duplicate_count'], 0)
+
+    def test_the_error_is_counted(self):
+        deliver(self.probe, unreadable_response())
+        self.assertEqual(self.probe.observation_errors, 1)
+
+    def test_the_run_is_never_confirmed(self):
+        deliver(self.probe, unreadable_response())
+        seen = self.probe.observations[0]
+        self.assertFalse(seen.confirmed)
+        self.assertIn('the response body could not be read',
+                      seen.not_confirmed_because)
+        self.assertEqual(self.outcome(), 13)
+
+    def test_no_misleading_reason_is_given(self):
+        """Про тело, которого не было в руках, три прежних причины -- ложь."""
+        deliver(self.probe, unreadable_response())
+        reasons = self.probe.observations[0].not_confirmed_because
+        self.assertNotIn('the payload did not decode', reasons)
+        self.assertNotIn('the requested and returned id sets do not match',
+                         reasons)
+        self.assertNotIn('the payload is not a binary route payload', reasons)
+
+    def test_the_detail_carries_only_the_exception_type_name(self):
+        deliver(self.probe, unreadable_response())
+        detail = self.probe.observations[0].payload_detail
+        self.assertIn('_TargetClosedError', detail)
+        self.assertNotIn('SYNTHETIC-BROWSER-DETAIL', detail)
+
+    def test_a_hostile_type_name_is_not_echoed(self):
+        """Класс можно объявить с любым `__name__`, в том числе из данных."""
+        hostile = type('bad name; Authorization: NOT-REAL', (Exception,), {})
+        deliver(self.probe, unreadable_response(exc=hostile('x')))
+        detail = self.probe.observations[0].payload_detail
+        self.assertIn(UNNAMED_EXCEPTION, detail)
+        self.assertNotIn('Authorization', detail)
+        self.assertNotIn('NOT-REAL', detail)
+
+    def test_nothing_of_the_exception_reaches_the_log(self):
+        deliver(self.probe, unreadable_response())
+        self.assertNotIn('SYNTHETIC-BROWSER-DETAIL', self.log.text())
+
+    def test_five_failures_are_counted_five_times(self):
+        """Живой прогон: пять ответов, пять TargetClosedError."""
+        for index in range(5):
+            deliver(self.probe, unreadable_response(
+                post_data=ids_body([900000001 + index])))
+        self.assertEqual(self.probe.observation_errors, 5)
+        self.assertEqual(self.probe.route_responses, 5)
+
+    def test_a_repeated_unreadable_exchange_still_counts_every_failure(self):
+        """Наблюдение может схлопнуться, ошибка чтения -- никогда.
+
+        Живой прогон видел пять ответов и четыре наблюдения: один обмен
+        повторился. Ошибок при этом было пять.
+        """
+        for _ in range(2):
+            deliver(self.probe, unreadable_response(
+                post_data=ids_body([900000001])))
+        deliver(self.probe, unreadable_response(
+            post_data=ids_body([900000002])))
+        self.assertEqual(self.probe.route_responses, 3)
+        self.assertEqual(len(self.probe.observations), 2)
+        self.assertEqual(self.probe.observations[0].repeats, 2)
+        self.assertEqual(self.probe.observation_errors, 3)
+
+    def test_an_unreadable_response_never_shares_a_key_with_a_real_empty(self):
+        """Ключ дедупликации различает UNREADABLE и настоящий пустой ответ."""
+        deliver(self.probe, unreadable_response(
+            post_data=ids_body([900000001])))
+        deliver(self.probe, route_response(
+            body=b'', post_data=ids_body([900000001])))
+        self.assertEqual(len(self.probe.observations), 2)
+        kinds = {item.payload_kind for item in self.probe.observations}
+        self.assertEqual(kinds, {PAYLOAD_KIND_UNREADABLE, 'EMPTY'})
+
+    def test_a_read_failure_does_not_carry_the_neighbourhood_forward(self):
+        self.probe.note_request(IDS_URL)
+        deliver(self.probe, unreadable_response(
+            post_data=ids_body([900000001])))
+        self.assertTrue(self.probe.observations[0].preceded_by_only_all_ids)
+        deliver(self.probe, unreadable_response(
+            post_data=ids_body([900000002])))
+        self.assertFalse(self.probe.observations[1].preceded_by_only_all_ids)
+
+    def test_an_error_before_the_url_is_read_clears_the_neighbourhood(self):
+        """Соседство гасится и когда мы не поняли даже, что за ответ пришёл."""
+        class _Hostile(object):
+            @property
+            def url(self):
+                raise RuntimeError('SYNTHETIC')
+
+        self.probe.note_request(IDS_URL)
+        deliver(self.probe, _Hostile())
+        self.assertEqual(self.probe.observation_errors, 1)
+        deliver(self.probe, confirmable())
+        self.assertFalse(self.probe.observations[0].preceded_by_only_all_ids)
+
+    def test_nothing_of_the_request_leaks_into_the_report(self):
+        deliver(self.probe, unreadable_response(
+            post_data=ids_body([900000001])))
+        write_report(self.probe, self.root)
+        haystack = self.everything_written()
+        for value in (FAKE_SIGNATURE, FAKE_COOKIE, FAKE_TOKEN,
+                      FAKE_REQUEST_ID, '900000001'):
+            self.assertNotIn(value, haystack)
+
+
+class TestARealEmptyBodyStaysEmpty(ProbeTestCase):
+    """Отрицательный контроль ко всему предыдущему классу.
+
+    Настоящий пустой ответ ПРОЧИТАН, и врать про него в другую сторону тоже
+    нельзя: он остаётся `EMPTY`, с нулём байт, хешем пустоты и без ошибки.
+    """
+
+    def test_a_real_empty_body_is_empty_and_was_read(self):
+        import hashlib
+        deliver(self.probe, route_response(
+            body=b'', post_data=ids_body([900000001])))
+        seen = self.probe.observations[0]
+        self.assertEqual(seen.payload_kind, 'EMPTY')
+        self.assertTrue(seen.body_was_read)
+        self.assertEqual(seen.response_bytes, 0)
+        self.assertEqual(seen.response_sha256, hashlib.sha256(b'').hexdigest())
+        self.assertEqual(self.probe.observation_errors, 0)
+
+    def test_a_real_empty_body_does_not_claim_the_ids_are_missing(self):
+        """Тело прочитано и пусто -- но разобрать было нечего.
+
+        [REASON]: `compare_id_sets` с пустым списком вернувшихся объявляла все
+        запрошенные идентификаторы отсутствующими. Пустое тело -- это ответ, в
+        котором маршрутов НЕТ; кабинет мог не вернуть их, а мог вернуть в
+        форме, которой мы не поняли. Сверка делается только после успешного
+        декодирования.
+        """
+        deliver(self.probe, route_response(
+            body=b'', post_data=ids_body([900000001])))
+        seen = self.probe.observations[0]
+        self.assertTrue(seen.body_was_read)
+        self.assertEqual(seen.payload_kind, 'EMPTY')
+        self.assertIsNone(seen.decoded_routes)
+        self.assertIsNone(seen.returned_id_count)
+        comparison = seen.comparison
+        self.assertIs(comparison['id_comparison_performed'], False)
+        self.assertIsNone(comparison['missing_count'])
+        self.assertIsNone(comparison['extra_count'])
+
+    def test_a_real_binary_body_still_decodes(self):
+        deliver(self.probe, confirmable(flight_id=900000001))
+        seen = self.probe.observations[0]
+        self.assertEqual(seen.payload_kind, 'BINARY')
+        self.assertTrue(seen.body_was_read)
+        self.assertEqual(seen.decoded_routes, 1)
+        self.assertEqual(seen.dji_response_status, 200)
+        self.assertTrue(seen.confirmed)
+        self.assertEqual(self.probe.observation_errors, 0)
+        self.assertIs(seen.comparison['id_comparison_performed'], True)
+
+
+class TestOperatorWaitDoesNotBlockTheEventLoop(unittest.TestCase):
+    """`pump_until` и опрос оператора -- без Playwright и без сна.
+
+    [REASON]: корневая причина живого дефекта. Проверяется само свойство:
+    ожидание отдаёт управление на каждом обороте и кончается по сроку, а не
+    висит.
+    """
+
+    def test_it_returns_true_the_moment_the_condition_holds(self):
+        pumps = []
+        self.assertTrue(pump_until(pumps.append, lambda: True,
+                                   lambda: 0, 1000, 10))
+        self.assertEqual(pumps, [])
+
+    def test_it_pumps_until_the_condition_holds(self):
+        pumps = []
+        state = {'left': 3}
+
+        def done():
+            if state['left'] <= 0:
+                return True
+            state['left'] -= 1
+            return False
+
+        self.assertTrue(pump_until(pumps.append, done, lambda: 0, 1000, 7))
+        self.assertEqual(pumps, [7, 7, 7])
+
+    def test_it_gives_up_on_the_deadline_instead_of_hanging(self):
+        pumps = []
+        ticks = iter(range(0, 10000, 100))
+
+        self.assertFalse(pump_until(pumps.append, lambda: False,
+                                    lambda: next(ticks), 500, 5))
+        # Пять оборотов по 100 мс -- и выход. Не бесконечность.
+        self.assertLessEqual(len(pumps), 6)
+
+    def test_a_zero_deadline_still_checks_the_condition_first(self):
+        self.assertTrue(pump_until(lambda _ms: None, lambda: True,
+                                   lambda: 0, 0, 10))
+        self.assertFalse(pump_until(lambda _ms: None, lambda: False,
+                                    lambda: 0, 0, 10))
+
+    def test_the_operator_prompt_does_not_block_the_caller(self):
+        released = threading.Event()
+        prompt = start_operator_prompt('x: ',
+                                       reader=lambda _p: released.wait(5))
+        # Управление вернулось немедленно, ответа ещё нет.
+        self.assertFalse(prompt.done.is_set())
+        released.set()
+        self.assertTrue(prompt.done.wait(timeout=5))
+        self.assertTrue(prompt.answered)
+        self.assertFalse(prompt.failed)
+
+    def test_a_reader_that_raises_is_not_an_answer(self):
+        """[REASON]: событие ставилось в `finally`, и отказ ввода был
+        неотличим от нажатого Enter -- прогон объявлял оператора ответившим,
+        хотя тот ничего не нажимал.
+        """
+        def broken(_prompt):
+            raise EOFError('SYNTHETIC-STDIN-DETAIL')
+
+        prompt = start_operator_prompt('x: ', reader=broken)
+        # Ожидание кончается СРАЗУ -- потолка в тридцать минут ждать не надо.
+        self.assertTrue(prompt.done.wait(timeout=5))
+        self.assertFalse(prompt.answered)
+        self.assertTrue(prompt.failed)
+        self.assertEqual(prompt.error_type, 'EOFError')
+
+    def test_the_prompt_keeps_no_text_of_the_input_failure(self):
+        def broken(_prompt):
+            raise EOFError('SYNTHETIC-STDIN-DETAIL')
+
+        prompt = start_operator_prompt('x: ', reader=broken)
+        prompt.done.wait(timeout=5)
+        self.assertNotIn('SYNTHETIC-STDIN-DETAIL', prompt.error_type)
+
+    def test_a_hostile_input_exception_name_is_not_echoed(self):
+        hostile = type('bad name; Authorization: NOT-REAL', (Exception,), {})
+
+        def broken(_prompt):
+            raise hostile('x')
+
+        prompt = start_operator_prompt('x: ', reader=broken)
+        prompt.done.wait(timeout=5)
+        self.assertEqual(prompt.error_type, UNNAMED_EXCEPTION)
+
+    def test_the_prompt_thread_is_a_daemon(self):
+        """Молчащий человек не должен задерживать выход процесса."""
+        before = {t.name for t in threading.enumerate()}
+        never = threading.Event()
+        prompt = start_operator_prompt('x: ', reader=lambda _p: never.wait(30))
+        self.assertFalse(prompt.answered)
+        try:
+            new = [t for t in threading.enumerate()
+                   if t.name not in before
+                   and t.name == 'route-ui-probe-operator']
+            self.assertTrue(new)
+            self.assertTrue(all(t.daemon for t in new))
+        finally:
+            never.set()
+
+
+class TestQuietDetection(ProbeTestCase):
+    """Признак «ответы кончились», по которому решается drain."""
+
+    def setUp(self):
+        ProbeTestCase.setUp(self)
+        self.now = {'ms': 1000}
+        self.probe = RouteUiProbe(logger=self.log,
+                                  expected_origin=ROUTE_ORIGIN,
+                                  clock=lambda: self.now['ms'])
+
+    def test_a_probe_that_saw_nothing_is_quiet(self):
+        self.assertTrue(self.probe.is_quiet(self.now['ms'], 2000))
+
+    def test_it_is_not_quiet_right_after_a_response(self):
+        deliver(self.probe, confirmable())
+        self.assertFalse(self.probe.is_quiet(self.now['ms'], 2000))
+
+    def test_it_becomes_quiet_once_the_window_passes(self):
+        deliver(self.probe, confirmable())
+        self.assertTrue(self.probe.is_quiet(self.now['ms'] + 2000, 2000))
+
+    def test_it_is_never_quiet_while_a_handler_is_running(self):
+        """Закрывать браузер под работающим обработчиком -- и есть дефект."""
+        seen = []
+
+        class _Slow(object):
+            url = ROUTE_URL
+            status = 200
+            request = _FakeRequest(post_data=ids_body([900000001]),
+                                   headers=HEADERS)
+
+            def all_headers(self):
+                return {}
+
+            def body(inner):
+                seen.append(self.probe.is_quiet(self.now['ms'] + 10 ** 6,
+                                                2000))
+                return response([route_record(flight_id=900000001)])
+
+        deliver(self.probe, _Slow())
+        self.assertEqual(seen, [False])
+        self.assertEqual(self.probe.responses_in_flight, 0)
+
+
+class TestDrainWaitsForTheNetwork(ProbeTestCase):
+    """Drain не заканчивается, пока сеть не замолчала ПО-НАСТОЯЩЕМУ.
+
+    [REASON]: `pump_until` спрашивает условие первым, а `is_quiet` при
+    `last_route_activity = None` отвечала «тихо» немедленно. Если Enter замечен
+    раньше очередного обработчика, браузер закрывался, не прокачав событий ни
+    разу, и событие, стоявшее в очереди, терялось. Отсутствие ЗАМЕЧЕННЫХ
+    ответов не означает тишины: ответы могут быть в пути.
+    """
+
+    def setUp(self):
+        ProbeTestCase.setUp(self)
+        self.now = {'ms': 1000}
+        self.probe = RouteUiProbe(logger=self.log,
+                                  expected_origin=ROUTE_ORIGIN,
+                                  clock=lambda: self.now['ms'])
+
+    def clock(self):
+        return self.now['ms']
+
+    def drain(self, quiet_ms=100, drain_ms=1000, poll_ms=10, on_pump=None):
+        """Прокачка, двигающая часы ровно на `poll_ms` за оборот."""
+        pumps = []
+
+        def pump(ms):
+            pumps.append(ms)
+            self.now['ms'] += ms
+            if on_pump is not None:
+                on_pump(len(pumps))
+
+        self.probe.begin_drain(self.clock())
+        completed = pump_until(
+            pump, lambda: self.probe.is_quiet(self.clock(), quiet_ms),
+            self.clock, drain_ms, poll_ms, min_pumps=1)
+        return completed, pumps
+
+    def test_a_probe_that_saw_nothing_still_pumps_the_quiet_window(self):
+        completed, pumps = self.drain(quiet_ms=100, poll_ms=10)
+        self.assertTrue(completed)
+        # Сто миллисекунд тишины по десять за оборот -- десять прокачек.
+        self.assertGreaterEqual(len(pumps), 10)
+
+    def test_it_pumps_at_least_once_even_with_a_zero_quiet_window(self):
+        """`min_pumps=1`: нулевое окно не должно закрывать браузер мгновенно."""
+        completed, pumps = self.drain(quiet_ms=0, poll_ms=10)
+        self.assertTrue(completed)
+        self.assertGreaterEqual(len(pumps), 1)
+
+    def test_an_event_queued_together_with_enter_is_still_handled(self):
+        """Ответ, поставленный в очередь одновременно с Enter, обрабатывается.
+
+        Первая же прокачка доставляет обмен -- он обязан попасть в наблюдения
+        до того, как drain объявит тишину.
+        """
+        pending = [confirmable(flight_id=900000001)]
+
+        def on_pump(count):
+            # Событие доставляется НЕ на первом обороте: одной прокачки мало,
+            # окно тишины должно выжидаться целиком.
+            if count >= 3 and pending:
+                deliver(self.probe, pending.pop())
+
+        completed, pumps = self.drain(quiet_ms=100, poll_ms=10,
+                                      on_pump=on_pump)
+        self.assertTrue(completed)
+        self.assertEqual(len(self.probe.observations), 1)
+        self.assertTrue(self.probe.observations[0].confirmed)
+
+    def test_an_unfinished_request_keeps_the_drain_open(self):
+        """Запрос ушёл до Enter и ещё не завершился -- тишины нет."""
+        request = _FakeRequest(headers=HEADERS,
+                               post_data=ids_body([900000001]))
+        self.probe.note_request(request)
+        self.assertEqual(self.probe.pending_route_requests, 1)
+        self.assertFalse(self.probe.is_quiet(self.clock() + 10 ** 6, 100))
+
+    def test_a_request_that_finishes_after_enter_is_read_before_closing(self):
+        """Тело, догрузившееся после Enter, прочитано до закрытия браузера."""
+        request = _FakeRequest(headers=HEADERS,
+                               post_data=ids_body([900000001]))
+        answer = _FakeResponse(
+            ROUTE_URL, response([route_record(flight_id=900000001)]),
+            request=request)
+        # До Enter: запрос ушёл, статус получен, тела ещё нет.
+        self.probe.note_request(request)
+        self.probe.note_response(answer)
+        self.assertEqual(self.probe.observations, [])
+        self.assertEqual(self.probe.pending_route_requests, 1)
+
+        def on_pump(count):
+            if count == 3:
+                self.probe.note_request_finished(request)
+
+        completed, pumps = self.drain(quiet_ms=100, poll_ms=10,
+                                      on_pump=on_pump)
+        self.assertTrue(completed)
+        self.assertEqual(len(self.probe.observations), 1)
+        self.assertTrue(self.probe.observations[0].confirmed)
+        self.assertEqual(self.probe.pending_route_requests, 0)
+
+    def test_a_request_that_never_finishes_times_the_drain_out(self):
+        """Никогда не завершившийся запрос даёт срок, а не зависание."""
+        request = _FakeRequest(headers=HEADERS,
+                               post_data=ids_body([900000001]))
+        self.probe.note_request(request)
+        completed, pumps = self.drain(quiet_ms=100, drain_ms=500, poll_ms=10)
+        self.assertFalse(completed)
+        self.assertGreaterEqual(len(pumps), 1)
+        self.assertLessEqual(len(pumps), 51)
+        self.assertEqual(
+            probe_exit_code(observations=0, confirmed=0, skipped_over_cap=0,
+                            observation_errors=0, drain_timed_out=True), 13)
+
+    def test_a_failed_request_releases_the_drain_and_is_counted(self):
+        request = _FakeRequest(headers=HEADERS,
+                               post_data=ids_body([900000001]))
+        self.probe.note_request(request)
+        self.probe.note_request_failed(request)
+        self.assertEqual(self.probe.pending_route_requests, 0)
+        self.assertEqual(self.probe.route_requests_failed, 1)
+        self.assertEqual(self.probe.observation_errors, 1)
+        completed, _pumps = self.drain(quiet_ms=100)
+        self.assertTrue(completed)
+        self.assertEqual(
+            probe_exit_code(observations=0, confirmed=0, skipped_over_cap=0,
+                            observation_errors=self.probe.observation_errors),
+            13)
+
+    def test_a_failed_request_prints_no_browser_reason(self):
+        """`failure.error_text` не читается и не печатается."""
+        class _Failed(object):
+            url = ROUTE_URL
+
+            class failure(object):
+                error_text = 'SYNTHETIC-BROWSER-REASON'
+
+        self.probe.note_request_failed(_Failed())
+        self.assertNotIn('SYNTHETIC-BROWSER-REASON', self.log.text())
+        self.assertEqual(self.probe.route_requests_failed, 1)
+
+    def test_a_failed_request_reaches_the_report(self):
+        request = _FakeRequest(post_data=ids_body([900000001]))
+        self.probe.note_request(request)
+        self.probe.note_request_failed(request)
+        document = self.probe.report()
+        self.assertEqual(document['route_requests_failed'], 1)
+        self.assertEqual(document['route_requests_still_pending'], 0)
+
+    def test_a_handler_in_flight_keeps_the_drain_open(self):
+        seen = []
+
+        class _Slow(object):
+            url = ROUTE_URL
+            status = 200
+
+            def __init__(inner):
+                inner.request = _FakeRequest(post_data=ids_body([900000001]),
+                                             headers=HEADERS)
+                inner.request.response_object = inner
+
+            def all_headers(inner):
+                return {}
+
+            def body(inner):
+                seen.append(self.probe.is_quiet(self.clock() + 10 ** 6, 100))
+                return response([route_record(flight_id=900000001)])
+
+        deliver(self.probe, _Slow())
+        self.assertEqual(seen, [False])
+        self.assertEqual(self.probe.responses_in_flight, 0)
+
+
+class TestTheBodyIsReadOnRequestFinished(ProbeTestCase):
+    """`response.body()` не зовётся из события `response`.
+
+    [REASON]: Playwright отдаёт `response`, когда получены статус и заголовки;
+    тело догружается позже и объявляется `requestfinished`. Чтение тела из
+    события `response` -- это чтение того, чего может ещё не быть, и вдобавок
+    блокировка внутри `body()` посреди прокачки событий.
+    """
+
+    def test_note_response_does_not_touch_the_body(self):
+        calls = []
+
+        class _Watched(object):
+            url = ROUTE_URL
+            status = 200
+
+            def __init__(inner):
+                inner.request = _FakeRequest(post_data=ids_body([900000001]),
+                                             headers=HEADERS)
+                inner.request.response_object = inner
+
+            def all_headers(inner):
+                return {}
+
+            def body(inner):
+                calls.append('body')
+                return response([route_record(flight_id=900000001)])
+
+        answer = _Watched()
+        self.probe.note_request(answer.request)
+        self.probe.note_response(answer)
+        self.assertEqual(calls, [])
+        self.assertEqual(self.probe.observations, [])
+
+        self.probe.note_request_finished(answer.request)
+        self.assertEqual(calls, ['body'])
+        self.assertEqual(len(self.probe.observations), 1)
+
+    def test_the_module_calls_body_from_exactly_one_place(self):
+        """Структурная проверка по дереву разбора, а не по тексту.
+
+        Ищутся настоящие вызовы `.body()`, а не упоминания в комментариях и
+        докстрингах, и называется функция, из которой они сделаны.
+        """
+        import ast
+        import inspect
+
+        import drone_collector.route_ui_probe as module
+
+        tree = ast.parse(inspect.getsource(module))
+        callers = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for inner in ast.walk(node):
+                if (isinstance(inner, ast.Call)
+                        and isinstance(inner.func, ast.Attribute)
+                        and inner.func.attr == 'body'):
+                    callers.add(node.name)
+        self.assertEqual(callers, {'_note_route_response'})
+        self.assertNotIn('note_response', callers)
+
+    def test_an_observation_needs_the_finished_event(self):
+        """Один `note_response` наблюдения не создаёт."""
+        answer = confirmable(flight_id=900000001)
+        self.probe.note_request(answer.request)
+        self.probe.note_response(answer)
+        self.assertEqual(self.probe.observations, [])
+        self.assertEqual(self.probe.pending_route_requests, 1)
+
+
+class TestComparisonOnlyAfterDecoding(ProbeTestCase):
+    """Сверка ID -- только после успешного декодирования маршрутов.
+
+    [REASON]: `compare_id_sets` с пустым списком вернувшихся объявляла ВСЕ
+    запрошенные идентификаторы отсутствующими -- при пустом теле, при теле
+    сверх потолка, при JSON-отказе и при неразобранном protobuf. Кабинет,
+    возможно, вернул их все: это МЫ ничего не разобрали.
+    """
+
+    def not_compared(self, seen):
+        comparison = seen.comparison
+        self.assertIs(comparison['id_comparison_performed'], False)
+        self.assertIsNone(comparison['missing_count'])
+        self.assertIsNone(comparison['extra_count'])
+        self.assertIsNone(seen.returned_id_count)
+        self.assertIsNone(seen.decoded_routes)
+        self.assertIn('the requested and returned id sets were never compared',
+                      seen.not_confirmed_because)
+        self.assertNotIn('the requested and returned id sets do not match',
+                         seen.not_confirmed_because)
+
+    def test_a_vendor_refusal_does_not_claim_missing_ids(self):
+        deliver(self.probe, route_response(
+            body=b'{"status": 408, "code": 408, "msg": "no"}',
+            post_data=ids_body([900000001, 900000002])))
+        self.not_compared(self.probe.observations[0])
+
+    def test_an_undecodable_binary_does_not_claim_missing_ids(self):
+        deliver(self.probe, route_response(
+            body=b'\x08\xff\xff', post_data=ids_body([900000001])))
+        self.not_compared(self.probe.observations[0])
+
+    def test_html_does_not_claim_missing_ids(self):
+        deliver(self.probe, route_response(
+            body=b'<html>nope</html>', post_data=ids_body([900000001])))
+        self.not_compared(self.probe.observations[0])
+
+    def test_an_oversized_body_does_not_claim_missing_ids(self):
+        deliver(self.probe, route_response(
+            body=b'\x08' * (MAX_PROCESSED_RESPONSE_BYTES + 16),
+            post_data=ids_body([900000001])))
+        seen = self.probe.observations[0]
+        self.assertEqual(seen.payload_kind, 'TOO_LARGE')
+        self.not_compared(seen)
+
+    def test_a_declared_oversize_does_not_claim_missing_ids(self):
+        class _Declaring(object):
+            url = ROUTE_URL
+            status = 200
+
+            def __init__(inner):
+                inner.request = _FakeRequest(
+                    headers=HEADERS, post_data=ids_body([900000001]))
+                inner.request.response_object = inner
+
+            def all_headers(inner):
+                return {'Content-Length':
+                        str(MAX_PROCESSED_RESPONSE_BYTES + 1)}
+
+            def body(inner):
+                raise AssertionError('the body was requested anyway')
+
+        deliver(self.probe, _Declaring())
+        self.not_compared(self.probe.observations[0])
+
+    def test_a_decoded_body_is_the_positive_control(self):
+        """Разобранный ответ сверяется по-настоящему, как и раньше."""
+        deliver(self.probe, route_response(
+            body=response([route_record(flight_id=900000001)]),
+            post_data=ids_body([900000001, 900000002])))
+        comparison = self.probe.observations[0].comparison
+        self.assertIs(comparison['id_comparison_performed'], True)
+        self.assertEqual(comparison['missing_count'], 1)
+        self.assertEqual(comparison['extra_count'], 0)
+
+
+UNRELATED_URL = 'https://cdn.example.invalid/assets/logo.png'
+
+
+def unrelated_request(url=UNRELATED_URL):
+    """Картинка, шрифт, аналитика -- что угодно, кроме маршрутов."""
+    return _FakeRequest(method='GET', post_data=None, url=url)
+
+
+class TestIrrelevantTrafficIsIgnored(ProbeTestCase):
+    """Фоновый трафик страницы не трогает таймер тишины МАРШРУТОВ.
+
+    [REASON]: `_release()` и `_touch()` стояли в общем `finally`, то есть
+    выполнялись и после раннего выхода по нерелевантному URL. Любая картинка,
+    шрифт или запрос аналитики обновляли `last_route_activity`, и drain мог не
+    закончиться никогда при том, что маршрутный трафик давно кончился.
+    """
+
+    def setUp(self):
+        ProbeTestCase.setUp(self)
+        self.now = {'ms': 1000}
+        self.probe = RouteUiProbe(logger=self.log,
+                                  expected_origin=ROUTE_ORIGIN,
+                                  clock=lambda: self.now['ms'])
+
+    def snapshot(self):
+        return (self.probe.last_route_activity,
+                self.probe.pending_route_requests,
+                self.probe.route_requests_failed,
+                self.probe.observation_errors,
+                self.probe.route_responses,
+                self.probe.saw_only_all_ids,
+                self.probe._ids_seen_recently)
+
+    def test_an_unrelated_request_finished_changes_nothing(self):
+        before = self.snapshot()
+        self.now['ms'] += 10 ** 6
+        self.probe.note_request_finished(unrelated_request())
+        self.assertEqual(self.snapshot(), before)
+        self.assertIsNone(self.probe.last_route_activity)
+
+    def test_an_unrelated_request_failed_changes_nothing(self):
+        before = self.snapshot()
+        self.now['ms'] += 10 ** 6
+        self.probe.note_request_failed(unrelated_request())
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.probe.route_requests_failed, 0)
+        self.assertEqual(self.probe.observation_errors, 0)
+        self.assertEqual(self.probe.pending_route_requests, 0)
+        self.assertIsNone(self.probe.last_route_activity)
+
+    def test_an_unrelated_request_does_not_move_a_real_activity_mark(self):
+        """Настоящая отметка маршрутов не сдвигается посторонним трафиком."""
+        deliver(self.probe, confirmable(flight_id=900000001))
+        marked = self.probe.last_route_activity
+        self.now['ms'] += 10 ** 6
+        self.probe.note_request_finished(unrelated_request())
+        self.probe.note_request_failed(unrelated_request(
+            'https://analytics.example.invalid/collect'))
+        self.assertEqual(self.probe.last_route_activity, marked)
+
+    def test_unrelated_traffic_does_not_hold_the_drain_open(self):
+        """Картинки, сыплющиеся во время drain, не продлевают окно тишины."""
+        deliver(self.probe, confirmable(flight_id=900000001))
+        self.probe.begin_drain(self.now['ms'])
+        pumps = []
+
+        def pump(ms):
+            pumps.append(ms)
+            self.now['ms'] += ms
+            # На каждой прокачке страница догружает постороннее.
+            self.probe.note_request_finished(unrelated_request())
+            self.probe.note_request_failed(unrelated_request(
+                'https://fonts.example.invalid/x.woff2'))
+
+        completed = pump_until(
+            pump, lambda: self.probe.is_quiet(self.now['ms'], 100),
+            lambda: self.now['ms'], 5000, 10, min_pumps=1)
+        self.assertTrue(completed)
+        self.assertLessEqual(len(pumps), 12)
+        self.assertEqual(self.probe.route_requests_failed, 0)
+        self.assertEqual(self.probe.observation_errors, 0)
+
+    def test_a_real_route_request_finished_does_hold_it_open(self):
+        """Отрицательный контроль: настоящий маршрутный обмен окно продлевает."""
+        self.probe.begin_drain(self.now['ms'])
+        delivered = []
+        pumps = []
+
+        def pump(ms):
+            pumps.append(ms)
+            self.now['ms'] += ms
+            if len(pumps) in (2, 5, 8) and len(delivered) < 3:
+                delivered.append(deliver(
+                    self.probe,
+                    confirmable(flight_id=900000001 + len(delivered))))
+
+        completed = pump_until(
+            pump, lambda: self.probe.is_quiet(self.now['ms'], 100),
+            lambda: self.now['ms'], 5000, 10, min_pumps=1)
+        self.assertTrue(completed)
+        self.assertEqual(len(delivered), 3)
+        # Последняя доставка на восьмом обороте, дальше десять оборотов тишины.
+        self.assertGreaterEqual(len(pumps), 18)
+
+    def test_a_real_route_request_failed_releases_pending_and_marks_activity(self):
+        request = _FakeRequest(headers=HEADERS,
+                               post_data=ids_body([900000001]))
+        self.probe.note_request(request)
+        self.assertEqual(self.probe.pending_route_requests, 1)
+        marked = self.probe.last_route_activity
+        self.now['ms'] += 500
+        self.probe.note_request_failed(request)
+        self.assertEqual(self.probe.pending_route_requests, 0)
+        self.assertEqual(self.probe.route_requests_failed, 1)
+        self.assertEqual(self.probe.observation_errors, 1)
+        self.assertGreater(self.probe.last_route_activity, marked)
+        self.assertEqual(
+            probe_exit_code(observations=0, confirmed=0, skipped_over_cap=0,
+                            observation_errors=self.probe.observation_errors),
+            13)
+
+    def test_an_unreadable_url_is_not_turned_into_route_activity(self):
+        """Адрес не прочитался -- ошибку считаем, активностью не называем."""
+        class _Hostile(object):
+            @property
+            def url(self):
+                raise RuntimeError('SYNTHETIC')
+
+        self.probe.note_request_finished(_Hostile())
+        self.assertEqual(self.probe.observation_errors, 1)
+        self.assertIsNone(self.probe.last_route_activity)
+        self.assertEqual(self.probe.pending_route_requests, 0)
+        self.assertEqual(self.probe.route_requests_failed, 0)
+
+    def test_the_only_all_ids_counter_grows_in_one_place_only(self):
+        """Счётчик растёт в `note_request`; терминальные события его не трогают."""
+        ids_request = _FakeRequest(method='GET', url=IDS_URL, post_data=None)
+        self.probe.note_request(ids_request)
+        self.assertEqual(self.probe.saw_only_all_ids, 1)
+        self.probe.note_request_finished(ids_request)
+        self.probe.note_request_failed(ids_request)
+        self.assertEqual(self.probe.saw_only_all_ids, 1)
+        # И времени маршрутов они не отмечают.
+        self.assertIsNone(self.probe.last_route_activity)
+
+
+class TestPumpUntilAtAZeroDeadline(unittest.TestCase):
+    """Поведение при нулевом сроке оговорено однозначно.
+
+    [REASON]: `min_pumps` и жёсткий срок -- свойства несовместимые. Обещать
+    оба сразу нельзя, поэтому здесь ЯВНО зафиксировано, какое выигрывает:
+    срок. Противоречивая конфигурация отвергается заранее, а не чинится тихой
+    подменой смысла внутри цикла.
+    """
+
+    def test_a_zero_deadline_beats_min_pumps(self):
+        pumps = []
+        self.assertFalse(pump_until(pumps.append, lambda: False,
+                                    lambda: 0, 0, 10, min_pumps=1))
+        self.assertEqual(pumps, [])
+
+    def test_a_zero_deadline_beats_min_pumps_even_when_already_quiet(self):
+        pumps = []
+        self.assertFalse(pump_until(pumps.append, lambda: True,
+                                    lambda: 0, 0, 10, min_pumps=1))
+        self.assertEqual(pumps, [])
+
+    def test_without_min_pumps_a_zero_deadline_still_checks_the_condition(self):
+        self.assertTrue(pump_until(lambda _ms: None, lambda: True,
+                                   lambda: 0, 0, 10))
+
+    def test_a_deadline_of_one_poll_allows_exactly_one_pump(self):
+        pumps = []
+        ticks = iter([0, 0, 10, 10, 10])
+        self.assertFalse(pump_until(pumps.append, lambda: False,
+                                    lambda: next(ticks), 10, 10, min_pumps=1))
+        self.assertEqual(pumps, [10])
+
+
+class TestProbeTimingValidation(unittest.TestCase):
+    """Противоречивая настройка ожидания отвергается ДО браузера."""
+
+    OK = dict(poll_ms=200, wait_ms=1800000, drain_ms=15000, quiet_ms=2000)
+
+    def test_the_defaults_are_accepted(self):
+        from drone_collector.config import (DEFAULT_ROUTE_PROBE_DRAIN_MS,
+                                            DEFAULT_ROUTE_PROBE_POLL_MS,
+                                            DEFAULT_ROUTE_PROBE_QUIET_MS,
+                                            DEFAULT_ROUTE_PROBE_WAIT_MS)
+        self.assertIsNone(validate_probe_timings(
+            poll_ms=DEFAULT_ROUTE_PROBE_POLL_MS,
+            wait_ms=DEFAULT_ROUTE_PROBE_WAIT_MS,
+            drain_ms=DEFAULT_ROUTE_PROBE_DRAIN_MS,
+            quiet_ms=DEFAULT_ROUTE_PROBE_QUIET_MS))
+
+    def refuses(self, **changes):
+        fields = dict(self.OK)
+        fields.update(changes)
+        with self.assertRaises(ProbeTimingError) as caught:
+            validate_probe_timings(**fields)
+        return str(caught.exception)
+
+    def test_a_zero_drain_is_refused(self):
+        message = self.refuses(drain_ms=0)
+        self.assertIn('DJI_ROUTE_PROBE_DRAIN_MS', message)
+
+    def test_a_drain_shorter_than_one_poll_is_refused(self):
+        message = self.refuses(poll_ms=200, drain_ms=100, quiet_ms=0)
+        self.assertIn('DJI_ROUTE_PROBE_POLL_MS', message)
+
+    def test_a_drain_not_longer_than_the_quiet_window_is_refused(self):
+        message = self.refuses(drain_ms=2000, quiet_ms=2000)
+        self.assertIn('DJI_ROUTE_PROBE_QUIET_MS', message)
+
+    def test_a_zero_poll_is_refused(self):
+        self.assertIn('DJI_ROUTE_PROBE_POLL_MS', self.refuses(poll_ms=0))
+
+    def test_a_zero_wait_is_refused(self):
+        self.assertIn('DJI_ROUTE_PROBE_WAIT_MS', self.refuses(wait_ms=0))
+
+    def test_a_drain_exactly_one_poll_long_is_accepted(self):
+        """Граница включена: одной прокачки хватает."""
+        self.assertIsNone(validate_probe_timings(
+            poll_ms=200, wait_ms=1000, drain_ms=200, quiet_ms=0))
+
+    def test_the_message_carries_only_names_and_numbers(self):
+        from drone_collector.outbox import find_secret_markers
+        message = self.refuses(poll_ms=0, drain_ms=0, quiet_ms=99999)
+        self.assertEqual(find_secret_markers(message), [])
+        for forbidden in ('http://', 'https://', '/home/', 'C:\\\\'):
+            self.assertNotIn(forbidden, message)
+        self.assertRegex(message, r'^[\x20-\x7e]+$')
+
+
 class TestNothingLeaks(ProbeTestCase):
 
     def test_no_header_value_reaches_the_log_or_the_report(self):
-        self.probe.note_response(route_response())
+        deliver(self.probe, route_response())
         write_report(self.probe, self.root)
         haystack = self.everything_written()
         for value in (FAKE_SIGNATURE, FAKE_COOKIE, FAKE_TOKEN):
@@ -1331,7 +2327,7 @@ class TestNothingLeaks(ProbeTestCase):
     def test_no_request_id_reaches_the_log_or_the_report(self):
         refusal = json.dumps({'status': 408, 'code': 408,
                               'request_id': FAKE_REQUEST_ID}).encode('utf-8')
-        self.probe.note_response(route_response(body=refusal))
+        deliver(self.probe, route_response(body=refusal))
         write_report(self.probe, self.root)
         haystack = self.everything_written()
         self.assertNotIn(FAKE_REQUEST_ID, haystack)
@@ -1339,7 +2335,7 @@ class TestNothingLeaks(ProbeTestCase):
 
     def test_no_response_body_reaches_the_report(self):
         body = response([route_record(flight_id=FAKE_FLIGHT_ID)])
-        self.probe.note_response(route_response(body=body))
+        deliver(self.probe, route_response(body=body))
         target = write_report(self.probe, self.root)
         written = target.read_text(encoding='utf-8')
         self.assertNotIn(body.hex(), written)
@@ -1353,7 +2349,7 @@ class TestNothingLeaks(ProbeTestCase):
         запрос. Гарантия, которую он действительно даёт, уже: POST к эндпоинту
         маршрутов он не инициирует.
         """
-        self.probe.note_response(route_response())
+        deliver(self.probe, route_response())
         document = json.loads(
             write_report(self.probe, self.root).read_text(encoding='utf-8'))
         self.assertTrue(document['nothing_was_queued'])
@@ -1363,7 +2359,7 @@ class TestNothingLeaks(ProbeTestCase):
 
     def test_a_request_body_value_never_reaches_the_report_at_all(self):
         """Из тела берутся ЧИСЛА и имена ключей, значения остаются снаружи."""
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             headers={'X-Note': 'x', 'Accept': '*/*'},
             post_data=json.dumps({'flight_record_ids': [1],
                                   'data_type': 'simplified',
@@ -1377,7 +2373,7 @@ class TestNothingLeaks(ProbeTestCase):
 
     def test_a_marker_in_a_key_name_is_refused(self):
         """Та же дисциплина, что у очереди: проверка стоит на будущее."""
-        self.probe.note_response(route_response(
+        deliver(self.probe, route_response(
             headers={'Accept': '*/*'},
             post_data=json.dumps({
                 'flight_record_ids': [1],
@@ -1394,7 +2390,7 @@ class TestNothingLeaks(ProbeTestCase):
         одновременно то, ради чего отчёт и пишется. Значения при этом не
         выходят наружу вовсе.
         """
-        self.probe.note_response(route_response())
+        deliver(self.probe, route_response())
         written = write_report(self.probe, self.root).read_text(
             encoding='utf-8')
         self.assertIn('x-auth-token', written)
@@ -1402,7 +2398,7 @@ class TestNothingLeaks(ProbeTestCase):
 
     def test_an_ordinary_report_is_written(self):
         """Отрицательный контроль: проверка не глушит нормальный отчёт."""
-        self.probe.note_response(route_response())
+        deliver(self.probe, route_response())
         self.assertTrue(write_report(self.probe, self.root).is_file())
 
 

@@ -61,6 +61,8 @@ import hashlib
 import json
 import logging
 import re
+import threading
+import time
 
 from urllib.parse import urlsplit
 
@@ -147,6 +149,174 @@ MAX_OBSERVATIONS = 50
 PROBE_REPORT_NAME = 'route_ui_probe.json'
 
 _CONTROL = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]')
+
+
+# Имя типа исключения: только буквы, цифры и подчёркивание.
+_SAFE_TYPE_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_]{0,63}$')
+
+# Чем заменяется имя типа, не прошедшее проверку.
+UNNAMED_EXCEPTION = 'UnnamedError'
+
+
+def safe_exception_name(exc):
+    """Имя класса исключения -- и больше НИЧЕГО из него.
+
+    [REASON]: `str(exc)` у Playwright несёт URL, куски страницы и иногда
+    заголовки. В отчёт и в журнал уходит только имя класса, да и то лишь если
+    оно выглядит как имя: класс можно объявить с любым `__name__`, в том числе
+    собранным из данных браузера.
+    """
+    name = type(exc).__name__
+    if isinstance(name, str) and _SAFE_TYPE_NAME.match(name):
+        return name
+    return UNNAMED_EXCEPTION
+
+
+def monotonic_ms():
+    """Монотонное время в миллисекундах. Не зависит от часов машины."""
+    return int(time.monotonic() * 1000)
+
+
+def pump_until(pump, done, now, deadline_ms, poll_ms, min_pumps=0):
+    """Прокачивать цикл событий, пока `done()` не станет истиной.
+
+    Возвращает True, если условие наступило в срок, и False, если вышло
+    время. Бесконечного ожидания здесь нет по построению: срок проверяется
+    на каждом обороте.
+
+    [REASON]: это и есть исправление корневого дефекта. Ожидание оператора
+    стояло в голом `input()`, который держит ПОТОК Playwright, -- пока человек
+    смотрел на карту, ни один обработчик события не выполнялся. Они пошли в
+    работу уже на выходе из `with FlightCollector`, когда target закрывался,
+    и все пять `response.body()` живого прогона 2026-08-27 получили
+    `TargetClosedError`. Ждать надо ТАК: коротким циклом, отдавая управление
+    Playwright на каждом обороте.
+
+    `min_pumps` -- сколько прокачек сделать ПРЕЖДЕ, чем условию вообще
+    позволено закончить ожидание.
+
+    [REASON]: без этого drain мог закончиться, не прокачав событий ни разу:
+    условие проверяется первым, и «тихо» на нулевом обороте закрывало браузер
+    немедленно. Событие, поставленное в очередь одновременно с Enter, при этом
+    терялось.
+
+    ПОВЕДЕНИЕ ПРИ НУЛЕВОМ СРОКЕ ОГОВОРЕНО ЯВНО. `min_pumps` и жёсткий срок --
+    свойства НЕСОВМЕСТИМЫЕ, и обещать оба сразу нельзя. Здесь выигрывает срок:
+    при `deadline_ms=0` функция возвращает False, не сделав ни одной прокачки,
+    даже если `min_pumps` больше нуля. Именно поэтому противоречивая
+    конфигурация отвергается заранее -- см. `validate_probe_timings`, -- а не
+    чинится здесь тихой подменой смысла.
+    """
+    started = now()
+    pumps = 0
+    while True:
+        if pumps >= min_pumps and done():
+            return True
+        if (now() - started) >= deadline_ms:
+            return False
+        pump(poll_ms)
+        pumps += 1
+
+
+class OperatorPrompt(object):
+    """Чем кончился вопрос оператору. ТРИ состояния, а не два.
+
+    [REASON]: раньше событие ставилось в `finally`, и отказ ввода был
+    неотличим от нажатого Enter -- прогон объявлял оператора ответившим,
+    хотя тот ничего не нажимал. Состояния разведены:
+
+    * `done` установлено, `answered` истинно -- человек действительно ответил;
+    * `done` установлено, `answered` ложно, `error_type` непуст -- ввод
+      завершился ошибкой (закрытый stdin, `EOFError`). Ждать больше нечего:
+      ожидание кончается сразу, без потолка в тридцать минут;
+    * `done` не установлено -- человек ещё думает; сработает потолок.
+    """
+
+    __slots__ = ('done', 'answered', 'error_type')
+
+    def __init__(self):
+        self.done = threading.Event()
+        self.answered = False
+        self.error_type = ''
+
+    @property
+    def failed(self):
+        return bool(self.error_type)
+
+
+class ProbeTimingError(ValueError):
+    """Противоречивая настройка ожидания. Поднимается ДО запуска браузера."""
+
+
+def validate_probe_timings(poll_ms, wait_ms, drain_ms, quiet_ms):
+    """Отвергнуть комбинацию, при которой ожидание не может сработать.
+
+    Возвращает None, если всё согласовано; иначе поднимает
+    `ProbeTimingError` с сообщением, в котором есть только ИМЕНА настроек и
+    ЧИСЛА -- ни путей, ни адресов, ни значений заголовков.
+
+    [REASON]: `pump_until` при нулевом сроке возвращает False, не прокачав
+    событий ни разу, -- даже с `min_pumps=1`. Обещать одновременно жёсткий
+    нулевой потолок и обязательную прокачку нельзя: свойства несовместимы.
+    Вместо тихой подмены смысла внутри цикла запрещается сама конфигурация, в
+    которой они сталкиваются, и запрещается ДО браузера: прогон, который всё
+    равно не смог бы дождаться ответа, не должен открывать кабинет и просить
+    человека о работе.
+    """
+    problems = []
+    if poll_ms <= 0:
+        problems.append('DJI_ROUTE_PROBE_POLL_MS must be above zero, got %d'
+                        % poll_ms)
+    if wait_ms <= 0:
+        problems.append('DJI_ROUTE_PROBE_WAIT_MS must be above zero, got %d'
+                        % wait_ms)
+    if drain_ms < poll_ms:
+        # Иначе срок выйдет раньше первой же прокачки.
+        problems.append('DJI_ROUTE_PROBE_DRAIN_MS (%d) must be at least '
+                        'DJI_ROUTE_PROBE_POLL_MS (%d): a drain shorter than '
+                        'one poll can never pump the event loop'
+                        % (drain_ms, poll_ms))
+    if drain_ms <= quiet_ms:
+        # Иначе тишину невозможно выждать: срок наступит первым.
+        problems.append('DJI_ROUTE_PROBE_DRAIN_MS (%d) must exceed '
+                        'DJI_ROUTE_PROBE_QUIET_MS (%d): the quiet window has '
+                        'to fit inside the drain window'
+                        % (drain_ms, quiet_ms))
+    if problems:
+        raise ProbeTimingError('; '.join(problems))
+
+
+def start_operator_prompt(prompt, reader=None):
+    """Спросить оператора в ОТДЕЛЬНОМ потоке. Возвращает `OperatorPrompt`.
+
+    Поток демонический: если человек так и не ответил, он не задержит выход
+    процесса. Читатель внедряется, чтобы тест не трогал настоящий stdin.
+    """
+    reader = reader or input
+    state = OperatorPrompt()
+
+    def ask():
+        try:
+            reader(prompt)
+        except Exception as exc:
+            # Только БЕЗОПАСНОЕ имя типа. Текст исключения не сохраняется.
+            state.error_type = safe_exception_name(exc)
+        else:
+            state.answered = True
+        finally:
+            state.done.set()
+
+    thread = threading.Thread(target=ask, name='route-ui-probe-operator',
+                              daemon=True)
+    thread.start()
+    return state
+
+
+def _url_of(item):
+    """URL события или самой строки. Ничего не поднимает."""
+    if isinstance(item, str):
+        return item
+    return getattr(item, 'url', '') or ''
 
 
 def is_route_url(url):
@@ -387,6 +557,7 @@ def compare_id_sets(requested, returned, routes_without_id=0,
              and decoded_routes == len(returned_set))
 
     return {
+        'id_comparison_performed': True,
         'requested_and_returned_match': match,
         'invalid_requested_id_count': request.invalid,
         'requested_duplicate_count': request.duplicates,
@@ -394,6 +565,36 @@ def compare_id_sets(requested, returned, routes_without_id=0,
         'route_without_id_count': without_id,
         'missing_count': len(request.ids - returned_set),
         'extra_count': len(returned_set - request.ids),
+    }
+
+
+def comparison_not_performed(requested):
+    """Сверка НЕ выполнялась: ответа не было в руках.
+
+    Счётчики СТОРОНЫ ЗАПРОСА остаются настоящими -- тело запроса мы прочитали,
+    и сколько в нём было мусора и повторов, знаем. Счётчики стороны ответа --
+    `None`: вернувшегося списка не существовало.
+
+    [REASON]: прежний код на нечитаемом теле звал `compare_id_sets` с пустым
+    списком вернувшихся, и отчёт писал `missing_count=39` -- то есть уверенно
+    заявлял, что кабинет не вернул тридцать девять запрошенных маршрутов.
+    Кабинет их, возможно, вернул: это МЫ не прочитали ответ. Отсюда явный
+    флаг: сверка не выполнялась, и ни одно её число не выдумывается.
+    """
+    if isinstance(requested, RequestedIds):
+        request = requested
+    else:
+        values = set(requested or ())
+        request = RequestedIds(ids=values, total=len(values), parsed=True)
+    return {
+        'id_comparison_performed': False,
+        'requested_and_returned_match': False,
+        'invalid_requested_id_count': request.invalid,
+        'requested_duplicate_count': request.duplicates,
+        'returned_duplicate_count': None,
+        'route_without_id_count': None,
+        'missing_count': None,
+        'extra_count': None,
     }
 
 
@@ -413,6 +614,16 @@ def request_body_fingerprint(text):
         raw = raw[:MAX_REQUEST_BODY_BYTES]
     return hashlib.sha256(raw).hexdigest()[:16]
 
+
+# Вид тела, которое НЕ УДАЛОСЬ ПРОЧИТАТЬ.
+#
+# [REASON]: отдельный вид, а не `EMPTY`. Живой прогон 2026-08-27 получил
+# `TargetClosedError` на всех пяти `response.body()`, а прежний код подставлял
+# `b''` -- и отчёт написал `payload_kind=EMPTY`, `response_bytes=0`, sha256
+# ПУСТОГО тела и «запрошенные ID отсутствуют». Ни одно из этих утверждений не
+# было правдой: ответ не был пустым, он не был прочитан. Диагностика, которая
+# уверенно говорит неправду, хуже диагностики, которая молчит.
+PAYLOAD_KIND_UNREADABLE = 'UNREADABLE'
 
 # Признак ответа, тела которого не было: хеша у него нет и быть не может.
 NOT_READ = 'body-not-read'
@@ -568,9 +779,15 @@ def confirmation_failures(host, path, method, http_status, payload_kind,
         status = None
     if status is None or not 200 <= status < 300:
         problems.append('the HTTP status is not 2xx')
-    if payload_kind != 'BINARY':
-        problems.append('the payload is not a binary route payload')
-    if decoded_routes is None:
+    if payload_kind == PAYLOAD_KIND_UNREADABLE:
+        # [REASON]: одна причина вместо трёх ложных. Про тело, которого не
+        # было в руках, нельзя сказать ни «не двоичное», ни «не
+        # декодировалось», ни «ID не совпали»: всё это утверждения о
+        # содержимом, а содержимого мы не видели.
+        problems.append('the response body could not be read')
+    elif decoded_routes is None:
+        if payload_kind != 'BINARY':
+            problems.append('the payload is not a binary route payload')
         problems.append('the payload did not decode')
     elif dji_response_status != DJI_ENVELOPE_STATUS_OK:
         # [REASON]: HTTP 200 в этом API не значит «успех» -- тракт вылетов
@@ -582,7 +799,10 @@ def confirmation_failures(host, path, method, http_status, payload_kind,
         # Незнакомый статус не толкуется -- подтверждением считается ровно
         # один, известный.
         problems.append('the DJI envelope status is not the success status')
-    if not (comparison or {}).get('requested_and_returned_match'):
+    if not (comparison or {}).get('id_comparison_performed', True):
+        problems.append('the requested and returned id sets were never '
+                        'compared')
+    elif not (comparison or {}).get('requested_and_returned_match'):
         problems.append('the requested and returned id sets do not match')
     return problems
 
@@ -595,12 +815,14 @@ PROBE_EXIT_UNCONFIRMED = 13
 
 
 def probe_exit_code(observations, confirmed, skipped_over_cap,
-                    observation_errors=0):
+                    observation_errors=0, drain_timed_out=False,
+                    operator_answered=True):
     """Каким кодом заканчивается прогон наблюдения.
 
-    Ноль разрешён ровно при четырёх условиях сразу: наблюдение было, КАЖДОЕ
-    учтённое наблюдение подтверждено, ни одно не выпало по лимиту и ни на
-    одном ответе слушатель не споткнулся.
+    Ноль разрешён ровно при пяти условиях сразу: наблюдение было, КАЖДОЕ
+    учтённое наблюдение подтверждено, ни одно не выпало по лимиту, ни на
+    одном ответе слушатель не споткнулся и ожидание ответов после сигнала
+    оператора закончилось тишиной, а не сроком.
 
     [REASON]: смешанный результат давал ложный ноль. Один подтверждённый POST
     рядом с неподтверждённым ответом означает, что кабинет отвечал по-разному,
@@ -619,6 +841,16 @@ def probe_exit_code(observations, confirmed, skipped_over_cap,
     слушатель споткнулся на одном ответе и разобрал другой, объявлялся
     полностью подтверждённым.
     """
+    if drain_timed_out:
+        # [REASON]: вышедший срок означает, что какой-то ответ мог остаться
+        # необработанным. Про него не известно ничего, и объявлять прогон
+        # успешным нельзя -- ровно как с наблюдением, выпавшим по лимиту.
+        return PROBE_EXIT_UNCONFIRMED
+    if not operator_answered:
+        # [REASON]: человек не сказал, что маршруты нарисованы. Значит никто
+        # не подтвердил, что кабинет вообще довели до нужного состояния, и
+        # объявлять такой прогон успешным нечем.
+        return PROBE_EXIT_UNCONFIRMED
     if int(observation_errors or 0) > 0:
         return PROBE_EXIT_UNCONFIRMED
     if int(observations or 0) <= 0:
@@ -638,9 +870,12 @@ class RouteUiProbe(object):
     живом кабинете может не быть.
     """
 
-    def __init__(self, logger=None, expected_origin=None):
+    def __init__(self, logger=None, expected_origin=None, clock=None):
         self.log = logger or log
         self.expected_origin = expected_origin
+        # Часы в миллисекундах. Внедряются, чтобы «тишину» можно было
+        # проверить без сна в тестах.
+        self.clock = clock or monotonic_ms
         self.observations = []
         self._seen = {}
         self.saw_only_all_ids = 0
@@ -651,6 +886,80 @@ class RouteUiProbe(object):
         # Счётчик существует, чтобы это состояние доходило до кода выхода, а
         # не оставалось строчкой в логе.
         self.observation_errors = 0
+        # Сколько обработчиков ответа выполняется прямо сейчас и когда
+        # последний ответ маршрутов был замечен.
+        #
+        # [REASON]: по этим двум величинам решается, дождался ли прогон
+        # окончания уже начавшихся ответов. Закрывать браузер, пока
+        # обработчик в работе, -- это и есть дефект, из-за которого пять
+        # живых ответов получили `TargetClosedError`.
+        self.responses_in_flight = 0
+        self.last_route_activity = None
+        # Запросы маршрутов, у которых ещё не было ни `requestfinished`, ни
+        # `requestfailed`.
+        #
+        # [REASON]: `response` в Playwright приходит, когда получены СТАТУС и
+        # ЗАГОЛОВКИ, а тело -- позже, на `requestfinished`. Считать только
+        # выполняющиеся обработчики было мало: запрос, ушедший до Enter и не
+        # получивший ответа, для drain был невидим, и браузер закрывался у
+        # него под ногами. Ключ -- `id(request)`, а сам объект держится в
+        # словаре: пока ссылка жива, `id` не переиспользуется.
+        self.pending_route_requests = 0
+        self._pending = {}
+        self._responses = {}
+        # Запросы, оборвавшиеся до тела. Текст ошибки браузера не печатается.
+        self.route_requests_failed = 0
+        # Момент, с которого начали ждать тишины.
+        self.drain_started = None
+
+    def begin_drain(self, now_ms):
+        """Отметить начало ожидания тишины.
+
+        [REASON]: без этой отметки drain мог закончиться, НЕ прокачав событий
+        ни разу. `pump_until` сначала спрашивает `done()`, а `is_quiet` при
+        `last_route_activity = None` отвечала «тихо» немедленно -- то есть
+        если Enter замечен раньше очередного обработчика, браузер закрывался
+        сразу. Отсутствие ЗАМЕЧЕННЫХ ответов не значит, что ответов нет: они
+        могут быть в пути. Отметка делает нулевой момент точкой отсчёта, и
+        тишину приходится ВЫЖДАТЬ.
+        """
+        self.drain_started = now_ms
+
+    def is_quiet(self, now_ms, quiet_ms):
+        """Сеть замолчала: нет незавершённых запросов, нет обработчиков в
+        работе и после последней активности прошёл `quiet_ms`."""
+        if self.pending_route_requests > 0:
+            return False
+        if self.responses_in_flight > 0:
+            return False
+        since = self.last_route_activity
+        if self.drain_started is not None:
+            since = (self.drain_started if since is None
+                     else max(since, self.drain_started))
+        if since is None:
+            return True
+        return (now_ms - since) >= quiet_ms
+
+    def _touch(self):
+        self.last_route_activity = self.clock()
+
+    def _track(self, request):
+        """Взять запрос маршрутов на учёт как незавершённый."""
+        if isinstance(request, str) or request is None:
+            return
+        key = id(request)
+        if key not in self._pending:
+            self._pending[key] = request
+            self.pending_route_requests += 1
+
+    def _release(self, request):
+        """Снять запрос с учёта. Вызывается ровно один раз на запрос."""
+        if isinstance(request, str) or request is None:
+            return
+        key = id(request)
+        if self._pending.pop(key, None) is not None:
+            self.pending_route_requests -= 1
+        self._responses.pop(key, None)
 
     @property
     def confirmed_observations(self):
@@ -658,41 +967,167 @@ class RouteUiProbe(object):
 
     # -- слушатели ------------------------------------------------------------
 
-    def note_request(self, url):
-        """Запрос ушёл. Тела и заголовков здесь не читаем.
+    def _stumbled(self, exc):
+        """Слушатель споткнулся. Наружу -- тип исключения и счётчик."""
+        self.observation_errors += 1
+        # [REASON]: соседство гасится и здесь. Что это был за ответ, мы не
+        # узнали, и переносить `only_all_ids` на СЛЕДУЮЩИЙ обмен нельзя:
+        # отчёт утверждал бы соседство, которого никто не видел.
+        self._ids_seen_recently = False
+        self.log.warning('The probe stumbled on a network event (%s); '
+                         '%d such failure(s) so far',
+                         safe_exception_name(exc), self.observation_errors)
+
+    def note_request(self, request):
+        """Запрос ушёл. Ни тела, ни заголовков здесь не читаем.
 
         [REASON]: `only_all_ids` считается ИМЕННО здесь и только здесь. Раньше
         счётчик рос и на запросе, и на ответе, то есть один сетевой обмен
         считался дважды -- и «два только_все_id перед маршрутом» в отчёте
         означало один.
+
+        [REASON]: запрос маршрутов берётся на учёт как НЕЗАВЕРШЁННЫЙ. Пока он
+        на учёте, drain не считает сеть замолчавшей -- иначе запрос, ушедший
+        до Enter и не успевший получить ответ, был бы для drain невидим.
         """
-        if is_ids_url(url):
-            self.saw_only_all_ids += 1
-            self._ids_seen_recently = True
+        try:
+            url = _url_of(request)
+            if is_ids_url(url):
+                self.saw_only_all_ids += 1
+                self._ids_seen_recently = True
+                return
+            if not is_route_url(url):
+                return
+            self._track(request)
+            self._touch()
+        except Exception as exc:
+            self._stumbled(exc)
 
     def note_response(self, response):
-        """Ответ пришёл. Никогда не поднимает: мы внутри цикла Playwright."""
-        try:
-            self._note_response(response)
-        except Exception as exc:
-            # Наружу идёт ТИП исключения и счётчик. Ни текста исключения, ни
-            # значений: сообщение приходит из браузера и может нести что
-            # угодно.
-            self.observation_errors += 1
-            self.log.warning('The probe could not read a response (%s); '
-                             '%d such failure(s) so far',
-                             type(exc).__name__, self.observation_errors)
+        """Статус и заголовки пришли. Тело -- ЕЩЁ НЕТ.
 
-    def _note_response(self, response):
-        url = getattr(response, 'url', '') or ''
+        [REASON]: `response.body()` здесь НЕ зовётся. Playwright отдаёт
+        `response`, когда получены статус и заголовки; тело догружается позже
+        и объявляется событием `requestfinished`. Чтение тела отсюда -- это,
+        во-первых, чтение того, чего может ещё не быть, а во-вторых блокировка
+        внутри `body()` посреди прокачки событий: незавершённый запрос завис
+        бы в обработчике вместо того, чтобы честно остаться незавершённым и
+        упереться в срок drain.
+        """
+        try:
+            url = _url_of(response)
+            if is_ids_url(url):
+                # Обмен уже посчитан на запросе; здесь только отметка соседства.
+                self._ids_seen_recently = True
+                return
+            if not is_route_url(url):
+                return
+            request = getattr(response, 'request', None)
+            if request is not None:
+                # Подписка могла встать после старта запроса -- тогда `request`
+                # мы видим впервые именно здесь.
+                self._track(request)
+                self._responses[id(request)] = response
+            self._touch()
+        except Exception as exc:
+            self._stumbled(exc)
+
+    def _terminal_url(self, request):
+        """URL терминального события -- или `None`, если прочитать не вышло.
+
+        [REASON]: неудача чтения URL считается ошибкой слушателя, но НЕ
+        считается сетевой активностью маршрутов. Иначе посторонний запрос,
+        у которого не читается адрес, продлевал бы окно тишины маршрутов --
+        ровно тем способом, каким это делал общий `finally`.
+        """
+        try:
+            return _url_of(request)
+        except Exception as exc:
+            self._stumbled(exc)
+            return None
+
+    def note_request_failed(self, request):
+        """Запрос оборвался, не дойдя до тела.
+
+        Текст причины из браузера (`failure.error_text`) НЕ печатается и не
+        сохраняется: он приходит извне и может нести что угодно.
+
+        [REASON]: посторонний запрос -- картинка, шрифт, аналитика -- здесь
+        игнорируется ЦЕЛИКОМ: ни счётчиков, ни соседства, ни отметки времени.
+        Прежняя редакция звала `_release` и `_touch` в общем `finally`, то
+        есть и после раннего выхода, и любой фоновый трафик страницы обновлял
+        `last_route_activity`. Drain мог не закончиться никогда при том, что
+        маршрутный трафик давно кончился.
+        """
+        url = self._terminal_url(request)
+        if url is None or not is_route_url(url):
+            return
+        try:
+            self.route_requests_failed += 1
+            self.observation_errors += 1
+            self._ids_seen_recently = False
+            self.log.warning('A route request failed before its body arrived; '
+                             'the browser reason text is not read. %d such '
+                             'failure(s) so far', self.route_requests_failed)
+        except Exception as exc:
+            self._stumbled(exc)
+        finally:
+            self._release(request)
+            self._touch()
+
+    def note_request_finished(self, request):
+        """Тело загружено целиком -- вот теперь его можно читать.
+
+        Посторонние URL игнорируются целиком, `only_all_ids` разбирается
+        отдельно: он не маршрутный трафик, и окна тишины маршрутов не
+        продлевает.
+        """
+        url = self._terminal_url(request)
+        if url is None:
+            return
         if is_ids_url(url):
-            # Обмен уже посчитан на запросе; здесь только отметка соседства.
+            # Только отметка соседства -- в пределах доказанной семантики.
+            # Счётчик `only_all_ids` растёт ровно в одном месте, в
+            # `note_request`, и здесь не трогается; отметки времени тоже нет.
             self._ids_seen_recently = True
             return
         if not is_route_url(url):
             return
+        try:
+            self._note_request_finished(request, url)
+        except Exception as exc:
+            self._stumbled(exc)
+        finally:
+            self._release(request)
+            self._touch()
 
+    def _note_request_finished(self, request, url):
         self.route_responses += 1
+        self._touch()
+        response = self._responses.get(id(request))
+        if response is None:
+            getter = getattr(request, 'response', None)
+            response = getter() if callable(getter) else None
+        if response is None:
+            # Статуса и заголовков не было -- наблюдать нечего, но и молчать
+            # об этом нельзя.
+            self.observation_errors += 1
+            self._ids_seen_recently = False
+            self.log.warning('A route request finished without a response '
+                             'object; nothing could be observed. %d listener '
+                             'failure(s) so far', self.observation_errors)
+            return
+
+        self.responses_in_flight += 1
+        try:
+            self._note_route_response(response, url, request)
+        finally:
+            self.responses_in_flight -= 1
+            # Отметка ставится и на выходе: обработчик, который шёл секунду,
+            # держит «тишину» ненаступившей ещё `quiet_ms` после себя.
+            self._touch()
+
+    def _note_route_response(self, response, url, request=None):
         # [REASON]: соседство с `only_all_ids` ПОТРЕБЛЯЕТСЯ здесь, на каждом
         # ответе маршрутов, а не только на том, который стал новым
         # наблюдением. Раньше флаг сбрасывался в самом конце, и обмен,
@@ -705,7 +1140,8 @@ class RouteUiProbe(object):
             self.skipped_over_cap += 1
             return
 
-        request = getattr(response, 'request', None)
+        if request is None:
+            request = getattr(response, 'request', None)
         headers = {}
         body_text = None
         method = 'UNKNOWN'
@@ -731,6 +1167,8 @@ class RouteUiProbe(object):
             declared = None
 
         oversize = False
+        unreadable = False
+        body_error_type = ''
         declared_over_limit = (declared is not None
                                and declared > MAX_PROCESSED_RESPONSE_BYTES)
         raw = b''
@@ -756,11 +1194,27 @@ class RouteUiProbe(object):
             try:
                 raw = bytes(response.body() or b'')
             except Exception as exc:
-                self.log.warning('The route response body could not be read '
-                                 '(%s)', type(exc).__name__)
+                # [REASON]: НЕ подставлять `b''`. Живой прогон 2026-08-27
+                # получил `TargetClosedError` на всех пяти ответах, и подмена
+                # пустым телом превратила пять нечитаемых ответов в пять
+                # «пустых»: `payload_kind=EMPTY`, `response_bytes=0`, sha256
+                # пустоты и «тридцать девять запрошенных ID отсутствуют».
+                # Каждое из этих утверждений было неправдой.
+                unreadable = True
+                body_was_read = False
+                body_error_type = safe_exception_name(exc)
+                self.observation_errors += 1
                 raw = b''
-            actual_bytes = len(raw)
-            if actual_bytes > MAX_PROCESSED_RESPONSE_BYTES:
+                self.log.warning('The route response body could not be read '
+                                 '(%s); it is recorded as UNREADABLE, not as '
+                                 'empty; %d such failure(s) so far',
+                                 body_error_type, self.observation_errors)
+            if unreadable:
+                actual_bytes = None
+            else:
+                actual_bytes = len(raw)
+            if actual_bytes is not None \
+                    and actual_bytes > MAX_PROCESSED_RESPONSE_BYTES:
                 # [REASON]: тело УЖЕ в памяти -- Playwright отдаёт его только
                 # целиком. Предел означает, что дальше оно не обрабатывается:
                 # не хешируется, не декодируется, не классифицируется и не
@@ -782,7 +1236,19 @@ class RouteUiProbe(object):
         headers = None
         body_text = None
 
-        if oversize:
+        if unreadable:
+            digest = None
+            payload_kind = PAYLOAD_KIND_UNREADABLE
+            # Только безопасное ИМЯ типа исключения: ни текста, ни данных
+            # браузера. Имя пропущено через `safe_exception_name`.
+            payload_detail = ('the response body could not be read (%s); it '
+                              'was not empty -- it was never read'
+                              % body_error_type)
+            decoded_routes = returned = None
+            returned_ids = []
+            routes_without_id = 0
+            dji_status = None
+        elif oversize:
             digest = None
             payload_kind = 'TOO_LARGE'
             if declared_over_limit:
@@ -817,9 +1283,18 @@ class RouteUiProbe(object):
                 returned = (len(set(returned_ids))
                             if decoded_routes is not None else None)
 
-        comparison = compare_id_sets(requested, returned_ids,
-                                     routes_without_id=routes_without_id,
-                                     decoded_routes=decoded_routes)
+        if decoded_routes is None:
+            # [REASON]: сверка делается ТОЛЬКО после успешного декодирования.
+            # Нечитаемое тело, тело сверх потолка, пустое тело, JSON-отказ,
+            # неразобранный protobuf -- у всех этих случаев вернувшегося
+            # списка не существует, и `compare_id_sets` с пустым списком
+            # объявляла бы все запрошенные идентификаторы отсутствующими.
+            # Кабинет, возможно, вернул их все: это МЫ ничего не разобрали.
+            comparison = comparison_not_performed(requested)
+        else:
+            comparison = compare_id_sets(requested, returned_ids,
+                                         routes_without_id=routes_without_id,
+                                         decoded_routes=decoded_routes)
         # Множества дальше не живут: сверка сделана, наружу идут счётчики.
         requested = returned_ids = None
 
@@ -895,14 +1370,23 @@ class RouteUiProbe(object):
 
     # -- отчёт ----------------------------------------------------------------
 
-    def report(self):
+    def report(self, operator_answered=None, drain_completed=None):
+        """Безопасный отчёт наблюдения.
+
+        `operator_answered` и `drain_completed` приходят снаружи: сам
+        наблюдатель ничего не знает про ожидание -- он только слушает.
+        """
         return {
             'probe': 'route-ui',
+            'operator_answered': operator_answered,
+            'response_drain_completed': drain_completed,
             'route_responses_seen': self.route_responses,
             'route_observations': len(self.observations),
             'confirmed_route_posts': len(self.confirmed_observations),
             'skipped_over_cap': self.skipped_over_cap,
             'observation_errors': self.observation_errors,
+            'route_requests_failed': self.route_requests_failed,
+            'route_requests_still_pending': self.pending_route_requests,
             'only_all_ids_seen': self.saw_only_all_ids,
             'observations': [item.as_dict() for item in self.observations],
             'nothing_was_queued': True,
@@ -989,14 +1473,16 @@ def _without_header_names(document):
     return copy
 
 
-def write_report(probe, out_dir):
+def write_report(probe, out_dir, operator_answered=None,
+                 drain_completed=None):
     """Отчёт наблюдения. Ни одного значения заголовка и ни одного тела."""
     from pathlib import Path
 
     from drone_collector.outbox import find_secret_markers
 
     target = Path(out_dir) / PROBE_REPORT_NAME
-    document = probe.report()
+    document = probe.report(operator_answered=operator_answered,
+                            drain_completed=drain_completed)
     # [REASON]: та же дисциплина, что у очереди и у сухого прогона. Отчёт
     # строится из описаний, а не из значений, поэтому сюда попасть нечему;
     # проверка стоит на случай, если завтра сюда добавят поле, не подумав.

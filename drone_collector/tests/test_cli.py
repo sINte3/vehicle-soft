@@ -12,8 +12,12 @@ No browser is launched in either case, because both fail before that point.
 """
 
 import io
+import json
 import logging
 import os
+import re
+import threading
+import time
 import unittest
 
 from datetime import date, datetime, timedelta, timezone
@@ -53,7 +57,9 @@ COLLECTOR_VARS = ('DJI_RECORDS_URL', 'DJI_STORAGE_STATE', 'DJI_HEADLESS',
                   'DRONE_OUTBOX_DIR', 'DJI_ROUTE_BATCH_SIZE',
                   'DJI_ROUTE_PAUSE_MS', 'DJI_GEOMETRY_PAUSE_MS',
                   'DJI_FIELDS_URL', 'DJI_MAX_LAND_PAGES',
-                  'DJI_EXPECTED_REGION', 'DJI_ALLOW_EMPTY_WINDOW')
+                  'DJI_EXPECTED_REGION', 'DJI_ALLOW_EMPTY_WINDOW',
+                  'DJI_ROUTE_PROBE_POLL_MS', 'DJI_ROUTE_PROBE_WAIT_MS',
+                  'DJI_ROUTE_PROBE_DRAIN_MS', 'DJI_ROUTE_PROBE_QUIET_MS')
 
 
 class CliTestCase(unittest.TestCase):
@@ -777,20 +783,39 @@ class RouteProbeExitCodeTests(CliTestCase):
             probe_module.RouteUiProbe = self._real_probe
         CliTestCase.tearDown(self)
 
-    def install(self, observations, confirmed, skipped=0, errors=0):
-        """Подставные браузер и наблюдатель с заданным исходом."""
+    def install(self, observations, confirmed, skipped=0, errors=0,
+                quiet=True, journal=None, on_pump=None, failed=0):
+        """Подставные браузер и наблюдатель с заданным исходом.
+
+        `quiet=False` изображает ответы, которые всё ещё идут: drain выходит
+        по сроку. `journal` -- один список, в который фикстура пишет и
+        прокачки, и закрытие контекста: по нему видно ПОРЯДОК. `on_pump` --
+        обратный вызов на каждой прокачке.
+        """
         from drone_collector import browser as browser_module
         from drone_collector import route_ui_probe as probe_module
 
         self._real_collector = browser_module.FlightCollector
         self._real_probe = probe_module.RouteUiProbe
+        events = journal if journal is not None else []
 
         class _Page(object):
             def on(self, _event, _handler):
                 pass
 
+            def wait_for_timeout(self, ms):
+                # [REASON]: настоящая `page.wait_for_timeout` -- это и есть
+                # точка, в которой синхронный Playwright разбирает очередь
+                # событий. Фикстура записывает КАЖДУЮ прокачку, чтобы тест мог
+                # доказать, что она случилась до закрытия контекста.
+                events.append('pump')
+                if on_pump is not None:
+                    on_pump(len([e for e in events if e == 'pump']))
+                time.sleep(0.001)
+
         class _Collector(object):
             def __init__(self, cfg, log):
+                events.append('collector-built')
                 self.page = _Page()
                 self.context = object()
 
@@ -798,6 +823,7 @@ class RouteProbeExitCodeTests(CliTestCase):
                 return self
 
             def __exit__(self, *exc):
+                events.append('context-closed')
                 return False
 
             def open_records(self):
@@ -826,6 +852,23 @@ class RouteProbeExitCodeTests(CliTestCase):
                 self.saw_only_all_ids = 0
                 self.skipped_over_cap = skipped
                 self.observation_errors = errors
+                self.responses_in_flight = 0
+                self.last_route_activity = None
+                self.pending_route_requests = 0
+                self.route_requests_failed = failed
+                self.drain_started = None
+
+            def begin_drain(self, now_ms):
+                self.drain_started = now_ms
+
+            def is_quiet(self, _now_ms, _quiet_ms):
+                return quiet
+
+            def note_request_finished(self, _request):
+                pass
+
+            def note_request_failed(self, _request):
+                pass
 
             @property
             def confirmed_observations(self):
@@ -837,13 +880,18 @@ class RouteProbeExitCodeTests(CliTestCase):
             def note_response(self, _response):
                 pass
 
-            def report(self):
+            def report(self, operator_answered=None, drain_completed=None):
                 return {'probe': 'route-ui',
+                        'operator_answered': operator_answered,
+                        'response_drain_completed': drain_completed,
                         'route_observations': len(self.observations),
                         'confirmed_route_posts':
                             len(self.confirmed_observations),
                         'skipped_over_cap': self.skipped_over_cap,
                         'observation_errors': self.observation_errors,
+                        'route_requests_failed': self.route_requests_failed,
+                        'route_requests_still_pending':
+                            self.pending_route_requests,
                         'observations': [item.as_dict()
                                          for item in self.observations],
                         'nothing_was_queued': True,
@@ -853,7 +901,7 @@ class RouteProbeExitCodeTests(CliTestCase):
         browser_module.FlightCollector = _Collector
         probe_module.RouteUiProbe = _Probe
 
-    def run_probe(self):
+    def run_probe(self, reader=None):
         """Прогон целиком, с перехваченным stdout.
 
         [REASON]: `setup_logging` вешает StreamHandler на `sys.stdout` в
@@ -863,7 +911,7 @@ class RouteProbeExitCodeTests(CliTestCase):
         import builtins
         import contextlib
         real_input = builtins.input
-        builtins.input = lambda prompt='': ''
+        builtins.input = reader or (lambda prompt='': '')
         buffer = io.StringIO()
         try:
             with contextlib.redirect_stdout(buffer):
@@ -874,6 +922,14 @@ class RouteProbeExitCodeTests(CliTestCase):
 
     def log_text(self):
         return getattr(self, '_stdout', '')
+
+    def report_path(self):
+        """Путь отчёта берётся из строки сводки, а не угадывается."""
+        found = re.search(r'probe_report=(\S+)', self.log_text())
+        self.assertIsNotNone(found, 'the run summary named no report')
+        path = Path(found.group(1))
+        self.addCleanup(lambda: path.exists() and path.unlink())
+        return path
 
     def test_every_observation_confirmed_exits_zero(self):
         self.install(observations=2, confirmed=2)
@@ -928,29 +984,350 @@ class RouteProbeExitCodeTests(CliTestCase):
         self.assertIn('probe_errors=0', self.log_text())
 
 
-class RouteProbeHelpTextTests(unittest.TestCase):
-    """`--help` не должен обещать того, чего код не доказывает."""
+class RouteProbeLifecycleTests(RouteProbeExitCodeTests):
+    """Ожидание оператора не держит цикл событий Playwright.
 
-    def help_text(self):
+    [REASON]: корневая причина живого дефекта 2026-08-27. `input()` стоял в
+    ПОТОКЕ Playwright: пока человек смотрел на карту, ни один обработчик
+    события не выполнялся. Они пошли в работу уже на выходе из
+    `with FlightCollector`, когда target закрывался, и все пять
+    `response.body()` получили `TargetClosedError`.
+    """
+
+    def short_windows(self, drain_ms=60, quiet_ms=10, poll_ms=5,
+                      wait_ms=5000):
+        """Короткие сроки: тест не должен ждать пятнадцать секунд."""
+        os.environ['DJI_ROUTE_PROBE_DRAIN_MS'] = str(drain_ms)
+        os.environ['DJI_ROUTE_PROBE_QUIET_MS'] = str(quiet_ms)
+        os.environ['DJI_ROUTE_PROBE_POLL_MS'] = str(poll_ms)
+        os.environ['DJI_ROUTE_PROBE_WAIT_MS'] = str(wait_ms)
+
+    def test_the_event_loop_is_pumped_while_the_operator_thinks(self):
+        """Главная проверка: input блокирует СВОЙ поток, а не Playwright."""
+        self.short_windows()
+        released = threading.Event()
+        journal = []
+
+        def reader(_prompt=''):
+            # Отпускаем ввод только после того, как цикл прокачался трижды.
+            released.wait(timeout=5)
+            return ''
+
+        def on_pump(count):
+            if count >= 3:
+                released.set()
+
+        self.install(observations=1, confirmed=1, journal=journal,
+                     on_pump=on_pump)
+        self.assertEqual(self.run_probe(reader=reader), EXIT_OK)
+        # Прокачки были, и они были ДО закрытия контекста.
+        self.assertGreaterEqual(journal.count('pump'), 3)
+        self.assertIn('context-closed', journal)
+        self.assertLess(journal.index('pump'), journal.index('context-closed'))
+
+    def test_the_context_closes_only_after_the_drain(self):
+        """Закрытие контекста -- последнее событие, и прокачка была ДО него.
+
+        [REASON]: одного «закрытие последнее» мало: прогон, который не качал
+        вовсе, тоже кончается закрытием. Проверяется пара: прокачка была, и
+        она была раньше.
+        """
+        self.short_windows()
+        journal = []
+        released = threading.Event()
+
+        def reader(_prompt=''):
+            released.wait(timeout=5)
+            return ''
+
+        # Оператор отпускает ввод только после первой прокачки -- иначе на
+        # быстром пути качать просто нечего и нечего было бы проверять.
+        self.install(observations=1, confirmed=1, journal=journal,
+                     on_pump=lambda _count: released.set())
+        self.run_probe(reader=reader)
+        self.assertEqual(journal[-1], 'context-closed')
+        self.assertEqual(journal.count('context-closed'), 1)
+        self.assertGreaterEqual(journal.count('pump'), 1)
+        self.assertLess(journal.index('pump'), journal.index('context-closed'))
+
+    def test_a_drain_timeout_exits_thirteen(self):
+        """Ответы всё ещё идут, срок вышел -- прогон НЕ подтверждён."""
+        self.short_windows()
+        self.install(observations=1, confirmed=1, quiet=False)
+        self.assertEqual(self.run_probe(),
+                         main_module.EXIT_ROUTE_PROBE_UNCONFIRMED)
+
+    def test_the_same_run_that_drains_exits_zero(self):
+        """Положительный контроль: различается только исход drain."""
+        self.short_windows()
+        self.install(observations=1, confirmed=1, quiet=True)
+        self.assertEqual(self.run_probe(), EXIT_OK)
+
+    def test_the_drain_outcome_reaches_the_run_summary(self):
+        self.short_windows()
+        self.install(observations=1, confirmed=1, quiet=False)
+        self.run_probe()
+        self.assertIn('probe_drained=false', self.log_text().lower())
+
+    def test_a_drained_run_says_so_in_the_summary(self):
+        self.short_windows()
+        self.install(observations=1, confirmed=1, quiet=True)
+        self.run_probe()
+        self.assertIn('probe_drained=true', self.log_text().lower())
+
+    def test_the_drain_outcome_reaches_the_report(self):
+        self.short_windows()
+        self.install(observations=1, confirmed=1, quiet=False)
+        self.run_probe()
+        written = json.loads(self.report_path().read_text(encoding='utf-8'))
+        self.assertIs(written['response_drain_completed'], False)
+        self.assertIs(written['operator_answered'], True)
+
+    def test_a_silent_operator_does_not_hang_the_run(self):
+        """Потолок ожидания есть: прогон обязан кончаться.
+
+        Оператор не отвечает вовсе; ожидание выходит по сроку, прогон идёт
+        дальше и заканчивается кодом, а не зависанием.
+        """
+        self.short_windows(wait_ms=40)
+        never = threading.Event()
+
+        def reader(_prompt=''):
+            never.wait(timeout=10)
+            return ''
+
+        self.install(observations=1, confirmed=1)
+        code = self.run_probe(reader=reader)
+        never.set()
+        self.assertEqual(code, main_module.EXIT_ROUTE_PROBE_UNCONFIRMED)
+        self.assertIn('probe_operator_answered=false', self.log_text().lower())
+
+    def test_an_input_error_is_not_an_answer(self):
+        """Отказ ввода -- не ответ оператора, и ждать потолка не нужно.
+
+        [REASON]: событие ставилось в `finally`, и `EOFError` на закрытом
+        stdin объявлялся нажатым Enter. Прогон при этом мог выйти нулём.
+        """
+        def broken(_prompt=''):
+            raise EOFError('SYNTHETIC-STDIN-DETAIL')
+
+        # Потолок ожидания заведомо огромен: если бы отказ его не сокращал,
+        # тест висел бы, а не падал.
+        self.short_windows(wait_ms=3600000)
+        self.install(observations=1, confirmed=1)
+        started = time.monotonic()
+        code = self.run_probe(reader=broken)
+        self.assertLess(time.monotonic() - started, 20)
+        self.assertEqual(code, main_module.EXIT_ROUTE_PROBE_UNCONFIRMED)
+        self.assertIn('probe_operator_answered=false', self.log_text().lower())
+
+    def test_no_text_of_the_input_failure_is_printed(self):
+        def broken(_prompt=''):
+            raise EOFError('SYNTHETIC-STDIN-DETAIL')
+
+        self.short_windows()
+        self.install(observations=1, confirmed=1)
+        self.run_probe(reader=broken)
+        self.assertNotIn('SYNTHETIC-STDIN-DETAIL', self.log_text())
+        self.assertIn('EOFError', self.log_text())
+
+    def test_a_real_answer_is_the_positive_control(self):
+        """Различается ровно одно: читатель возвращает, а не бросает."""
+        self.short_windows()
+        self.install(observations=1, confirmed=1)
+        self.assertEqual(self.run_probe(reader=lambda _p='': ''), EXIT_OK)
+        self.assertIn('probe_operator_answered=true', self.log_text().lower())
+
+    def test_a_zero_drain_window_is_refused_before_the_browser(self):
+        """Прогон, который не смог бы дождаться ответа, кабинет не открывает.
+
+        [REASON]: `pump_until` при нулевом сроке возвращает False, не прокачав
+        событий ни разу, даже с `min_pumps=1`. Свойства несовместимы, поэтому
+        запрещена сама конфигурация -- и запрещена ДО браузера, чтобы не
+        звать человека к работе, которая заведомо ничего не даст.
+        """
+        journal = []
+        self.install(observations=1, confirmed=1, journal=journal)
+        os.environ['DJI_ROUTE_PROBE_DRAIN_MS'] = '0'
+        self.assertEqual(self.run_probe(), main_module.EXIT_CONFIG)
+        self.assertNotIn('collector-built', journal)
+        self.assertNotIn('pump', journal)
+
+    def test_a_drain_shorter_than_one_poll_is_refused_before_the_browser(self):
+        journal = []
+        self.install(observations=1, confirmed=1, journal=journal)
+        os.environ['DJI_ROUTE_PROBE_POLL_MS'] = '200'
+        os.environ['DJI_ROUTE_PROBE_DRAIN_MS'] = '100'
+        os.environ['DJI_ROUTE_PROBE_QUIET_MS'] = '0'
+        self.assertEqual(self.run_probe(), main_module.EXIT_CONFIG)
+        self.assertNotIn('collector-built', journal)
+
+    def test_a_drain_not_longer_than_the_quiet_window_is_refused(self):
+        journal = []
+        self.install(observations=1, confirmed=1, journal=journal)
+        os.environ['DJI_ROUTE_PROBE_DRAIN_MS'] = '2000'
+        os.environ['DJI_ROUTE_PROBE_QUIET_MS'] = '2000'
+        self.assertEqual(self.run_probe(), main_module.EXIT_CONFIG)
+        self.assertNotIn('collector-built', journal)
+
+    def test_the_defaults_reach_the_browser(self):
+        """Положительный контроль: настройки по умолчанию не отвергаются."""
+        journal = []
+        self.install(observations=1, confirmed=1, journal=journal)
+        self.assertEqual(self.run_probe(), EXIT_OK)
+        self.assertIn('collector-built', journal)
+
+    def test_the_refusal_names_only_settings_and_numbers(self):
+        from drone_collector.outbox import find_secret_markers
+        self.install(observations=1, confirmed=1)
+        os.environ['DJI_ROUTE_PROBE_DRAIN_MS'] = '0'
+        self.run_probe()
+        text = self.log_text()
+        self.assertIn('DJI_ROUTE_PROBE_DRAIN_MS', text)
+        line = [row for row in text.splitlines()
+                if 'timings are contradictory' in row]
+        self.assertTrue(line)
+        self.assertEqual(find_secret_markers(line[0]), [])
+
+    def test_the_full_request_lifecycle_is_subscribed(self):
+        """Слушаются все четыре события, а не два."""
+        events = []
+
+        class _Page(object):
+            def on(self, event, _handler):
+                events.append(event)
+
+            def wait_for_timeout(self, _ms):
+                pass
+
+        self.short_windows()
+        self.install(observations=1, confirmed=1)
+        from drone_collector import browser as browser_module
+        real = browser_module.FlightCollector
+
+        class _Collector(real):
+            def __init__(self, cfg, log):
+                self.page = _Page()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def open_records(self):
+                pass
+
+            def check_region(self, _expected):
+                return 'Uzbekistan'
+
+        browser_module.FlightCollector = _Collector
+        try:
+            self.run_probe()
+        finally:
+            browser_module.FlightCollector = real
+        self.assertEqual(set(events),
+                         {'request', 'response', 'requestfinished',
+                          'requestfailed'})
+
+    def test_a_failed_route_request_exits_thirteen(self):
+        self.short_windows()
+        self.install(observations=1, confirmed=1, errors=1, failed=1)
+        self.assertEqual(self.run_probe(),
+                         main_module.EXIT_ROUTE_PROBE_UNCONFIRMED)
+        self.assertIn('probe_request_failures=1', self.log_text().lower())
+
+    def test_a_run_without_failures_says_zero(self):
+        self.short_windows()
+        self.install(observations=1, confirmed=1)
+        self.run_probe()
+        self.assertIn('probe_request_failures=0', self.log_text().lower())
+        self.assertIn('probe_pending_requests=0', self.log_text().lower())
+
+    def test_the_drain_is_begun_before_it_is_waited_on(self):
+        """`begin_drain` вызван -- иначе тишина наступала бы мгновенно."""
+        self.short_windows()
+        self.install(observations=1, confirmed=1)
+        self.run_probe()
+        from drone_collector import route_ui_probe as probe_module
+        self.assertIsNotNone(getattr(probe_module.RouteUiProbe,
+                                     'begin_drain', None))
+        import inspect
+        source = inspect.getsource(main_module._run_route_ui_probe)
+        self.assertIn('probe.begin_drain(', source)
+        self.assertIn('min_pumps=1', source)
+
+
+class RouteProbeHelpTextTests(unittest.TestCase):
+    """`--help` не должен обещать того, чего код не доказывает.
+
+    [REASON]: проверка НЕ зависит от ширины терминала. На Windows у владельца
+    argparse перенёс строку между `does not initiate` и `the route POST`, и
+    тест упал при том, что требуемая формулировка была на месте. Ширину
+    консоли выбирает не проект; смысл формулировки -- проект. Проверяется
+    смысл: текст самого `action.help` и, отдельно, отрисованная справка со
+    схлопнутыми пробелами.
+    """
+
+    CLAIM = 'does not initiate the route POST'
+    BROAD = 'makes no request of its own'
+
+    def action_help(self):
+        """Текст help КОНКРЕТНОГО action -- до всякой отрисовки."""
+        for action in build_parser()._actions:
+            if action.dest == 'route_ui_probe':
+                return action.help or ''
+        raise AssertionError('--route-ui-probe has no action')
+
+    def help_text(self, columns=None):
         import io
         import contextlib
+        saved = os.environ.get('COLUMNS')
+        if columns is not None:
+            os.environ['COLUMNS'] = str(columns)
         buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
-            try:
-                build_parser().parse_args(['--help'])
-            except SystemExit:
-                pass
+        try:
+            with contextlib.redirect_stdout(buffer):
+                try:
+                    build_parser().parse_args(['--help'])
+                except SystemExit:
+                    pass
+        finally:
+            if saved is None:
+                os.environ.pop('COLUMNS', None)
+            else:
+                os.environ['COLUMNS'] = saved
         return buffer.getvalue()
 
-    def test_the_broad_claim_is_gone(self):
-        text = self.help_text()
-        self.assertNotIn('Makes no request of its own', text)
-        self.assertNotIn('makes no request of its own', text.lower())
+    @staticmethod
+    def flat(text):
+        """Любая последовательность пробелов и переносов -- один пробел."""
+        return re.sub(r'\s+', ' ', text)
 
-    def test_the_proved_claim_is_there(self):
-        text = self.help_text()
-        self.assertIn('does not initiate the', text)
-        self.assertIn('route POST', text)
+    def test_the_proved_claim_is_in_the_action_help(self):
+        self.assertIn(self.CLAIM, self.flat(self.action_help()))
+
+    def test_the_proved_claim_survives_rendering(self):
+        self.assertIn(self.CLAIM, self.flat(self.help_text()))
+
+    def test_the_proved_claim_survives_a_narrow_terminal(self):
+        """Отрицательный контроль к переносу: узкая консоль ничего не ломает.
+
+        Сорок колонок гарантированно рвут фразу -- ровно так, как её порвал
+        Windows-терминал владельца.
+        """
+        rendered = self.help_text(columns=40)
+        self.assertNotIn(self.CLAIM, rendered)      # перенос действительно есть
+        self.assertIn(self.CLAIM, self.flat(rendered))
+
+    def test_the_broad_claim_is_gone(self):
+        self.assertNotIn(self.BROAD, self.flat(self.action_help()).lower())
+        self.assertNotIn(self.BROAD, self.flat(self.help_text()).lower())
+
+    def test_a_narrow_terminal_does_not_smuggle_the_broad_claim_in(self):
+        """Смысл не ослаблен: схлопывание пробелов не делает проверку слепой."""
+        self.assertNotIn(self.BROAD,
+                         self.flat(self.help_text(columns=40)).lower())
 
 
 class StageBSummaryKeysTests(unittest.TestCase):
