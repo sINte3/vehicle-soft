@@ -880,10 +880,24 @@ def agreement_with_work(values, segments):
 
 # ─── Группировка вылетов в одну работу ───────────────────────────────────────
 
-GROUP_BY_MISSION = 'mission_uuid'
-GROUP_BY_PROXIMITY = 'same_machine_day_and_overlapping_routes'
+# Основание группировки. ТОЛЬКО пространственное: один день, одна машина и
+# действительно пересекающиеся (или соседние) маршруты.
+#
+# [REASON]: `mission_uuid` больше не группирует. Он не доказан как
+# идентификатор задания (см. `RouteRecord.mission_uuid`), а группировка по нему
+# делала недоказанное поле САМЫМ СИЛЬНЫМ правилом -- и повтор площади внутри
+# такой группы получал статус PROVEN. Это замыкание на себя: недоказанная
+# посылка выдавала доказанный вывод, и ложная причина расхождения выглядела бы
+# установленной. Два маршрута в разных концах района с одинаковым
+# `mission_uuid` объединялись бы в одну полезную площадь, которой не существует.
+GROUP_SPATIAL = 'same_machine_day_and_overlapping_routes'
 GROUP_SINGLE = 'single_flight'
 
+# Совпадение `mission_uuid` внутри пространственной группы -- ПРИЗНАК, а не
+# основание. Записывается рядом с группой и в отчёте называется своим именем.
+MISSION_SHARED = 'SHARED'
+MISSION_MIXED = 'MIXED'
+MISSION_ABSENT = 'ABSENT'
 
 def _bbox(points):
     lats = [p[0] for p in points]
@@ -898,37 +912,44 @@ def _bbox_overlap(first, second, margin_deg):
                 or second[3] + margin_deg < first[1])
 
 
+def mission_state(flights):
+    """SHARED / MIXED / ABSENT -- что `mission_uuid` говорит о группе.
+
+    Это описание, а не решение: ни одна площадь от этого значения не зависит.
+    """
+    values = {flight.get('mission_uuid') for flight in flights
+              if flight.get('mission_uuid')}
+    if not values:
+        return MISSION_ABSENT
+    if len(values) == 1 and all(flight.get('mission_uuid')
+                                for flight in flights):
+        return MISSION_SHARED
+    return MISSION_MIXED
+
+
 def group_flights(flights, margin_deg=0.0015):
-    """[[flight, ...]] -- вылеты, которые считаются частями одной работы.
+    """[(основание, [вылет, ...])] -- вылеты, которые считаются одной работой.
 
-    Правила по убыванию силы:
+    Правило ровно одно и оно пространственное: одна машина, один день и
+    пересекающиеся (или соседние в пределах `margin_deg`) рамки маршрутов.
+    Вылет, ни с кем не пересёкшийся, остаётся сам по себе.
 
-    1. общий `mission_uuid`. Поле НЕ доказано как идентификатор задания (см.
-       `RouteRecord.mission_uuid`), поэтому основание группировки записывается
-       рядом с результатом и в отчёте называется своим именем;
-    2. одна машина, один день и перекрывающиеся рамки маршрутов;
-    3. иначе вылет остаётся сам по себе.
+    `mission_uuid` в группировке НЕ участвует. Он читается отдельно
+    (`mission_state`) и живёт в отчёте как признак: совпал он у членов группы
+    или нет. Объединять по нему два разнесённых маршрута нельзя -- это выдало
+    бы полезную площадь, которой не существует, на основании поля, семантика
+    которого не доказана.
 
     [REASON]: группировка сделана ДО измерения площади, а не после. Сложить
     площади частей одной работы -- это ровно та ошибка, которую задание просит
     объяснить: перекрытие двух частей посчиталось бы дважды.
     """
-    groups = []
-    by_mission = {}
-    rest = []
-    for flight in flights:
-        mission = flight.get('mission_uuid')
-        if mission:
-            by_mission.setdefault(mission, []).append(flight)
-        else:
-            rest.append(flight)
-    for mission in sorted(by_mission):
-        groups.append((GROUP_BY_MISSION, by_mission[mission]))
-
     buckets = {}
-    for flight in rest:
+    for flight in flights:
         key = (flight.get('nickname'), flight.get('day'))
         buckets.setdefault(key, []).append(flight)
+
+    groups = []
     for key in sorted(buckets, key=lambda item: (str(item[0]), str(item[1]))):
         members = sorted(buckets[key],
                          key=lambda item: (item.get('start_ms') or 0,
@@ -952,7 +973,7 @@ def group_flights(flights, margin_deg=0.0015):
             if not placed:
                 clusters.append({'box': box, 'members': [flight]})
         for cluster in clusters:
-            basis = (GROUP_BY_PROXIMITY if len(cluster['members']) > 1
+            basis = (GROUP_SPATIAL if len(cluster['members']) > 1
                      else GROUP_SINGLE)
             groups.append((basis, cluster['members']))
     return groups
@@ -992,6 +1013,153 @@ def candidate_contours(nodes, points, margin_deg=0.0015, limit=8):
             scored.append((hits / float(len(points)), node.get('uuid')))
     scored.sort(key=lambda item: (-item[0], str(item[1])))
     return [(uuid, round(share, 4)) for share, uuid in scored[:limit]]
+
+
+# ─── Выбор контура по НАСТОЯЩЕМУ полигону ────────────────────────────────────
+
+CONTOUR_MATCHED = 'CONTOUR_MATCHED'
+CONTOUR_AMBIGUOUS = 'CONTOUR_AMBIGUOUS'
+CONTOUR_NOT_MATCHED = 'CONTOUR_NOT_MATCHED'
+CONTOUR_NOT_OFFERED = 'CONTOUR_NOT_OFFERED'
+
+# Какая доля точек маршрута обязана лежать ВНУТРИ полигона, чтобы контур вообще
+# считался подходящим.
+#
+# [REASON]: порог записан числом и попадает в оба отчёта. Без него «лучший из
+# восьми» побеждал бы всегда -- даже когда внутри полигона лежит одна точка из
+# тысячи, то есть когда маршрут просто прошёл над углом чужого поля.
+CONTOUR_MIN_POINT_SHARE = 0.30
+
+# Насколько первый обязан оторваться от второго, чтобы выбор считался
+# однозначным: по доле точек и, вторично, по длине маршрута внутри полигона.
+CONTOUR_TIE_SHARE = 0.05
+CONTOUR_TIE_LENGTH = 0.05
+
+
+def _inside_scores(plane, points, rings):
+    """(доля точек внутри, длина маршрута внутри в метрах)."""
+    projected = plane.project(points)
+    flags = [point_in_rings(x, y, rings) for x, y in projected]
+    share = (sum(1 for flag in flags if flag) / float(len(flags))
+             if flags else 0.0)
+    length = 0.0
+    for index in range(len(projected) - 1):
+        if flags[index] and flags[index + 1]:
+            length += math.hypot(projected[index + 1][0] - projected[index][0],
+                                 projected[index + 1][1] - projected[index][1])
+    return share, length
+
+
+def choose_contour(plane, points, candidates, params=None):
+    """Контур работы -- по НАСТОЯЩЕМУ полигону, а не по прямоугольной рамке.
+
+    Рамки соседних полей пересекаются сплошь и рядом, и «первый кандидат с
+    наибольшей долей точек в рамке» -- это запросто соседнее или объемлющее
+    поле. Обрезка по чужому полигону дала бы уверенную неверную площадь, ничем
+    себя не выдав: число выглядело бы правдоподобным.
+
+    Поэтому рамка отбирает только КОРОТКИЙ СПИСОК, а решает геометрия:
+
+    1. у каждого кандидата с годным полигоном считается доля точек маршрута
+       внутри и длина маршрута внутри;
+    2. победитель обязан взять порог `CONTOUR_MIN_POINT_SHARE`;
+    3. первый обязан оторваться от второго -- по доле, а при равенстве долей
+       по длине внутри;
+    4. если оба признака в пределах допуска, это `CONTOUR_AMBIGUOUS`, и контур
+       НЕ назначается: посчитать площадь по одному из двух одинаково
+       подходящих полей значило бы бросить монету и напечатать результат как
+       измерение.
+
+    Порядок uuid не участвует в решении НИГДЕ. Он используется только как
+    последний ключ сортировки для устойчивого вывода, и до него дело доходит
+    лишь тогда, когда решение уже объявлено неоднозначным.
+
+    Битая геометрия одного кандидата не мешает проверить остальных: причина
+    отказа записывается, и разбор идёт дальше.
+    """
+    params = params or DEFAULT_PARAMS
+    offered = [item for item in (candidates or ()) if item.get('geojson')]
+    scores = []
+    for candidate in offered:
+        rings, area_ha, reasons = rings_from_geojson(candidate['geojson'],
+                                                     plane)
+        if reasons or not rings:
+            scores.append({'uuid': candidate.get('uuid'), 'share': None,
+                           'length_inside_m': None, 'area_ha': None,
+                           'rings': None,
+                           'rejected_because': reasons or ['no ring']})
+            continue
+        share, length = _inside_scores(plane, points, rings)
+        scores.append({'uuid': candidate.get('uuid'), 'share': round(share, 4),
+                       'length_inside_m': round(length, 2),
+                       'area_ha': area_ha, 'rings': rings,
+                       'rejected_because': []})
+
+    usable = [item for item in scores if item['rings'] is not None]
+    ranked = sorted(usable, key=lambda item: (-item['share'],
+                                              -item['length_inside_m'],
+                                              str(item['uuid'])))
+    outcome = {
+        'status': CONTOUR_NOT_OFFERED, 'uuid': None, 'rings': None,
+        'area_ha': None, 'candidates_offered': len(offered),
+        'candidates_usable': len(usable), 'share_inside': None,
+        'runner_up_share_inside': None, 'unambiguous': False,
+        'scores': scores, 'reason': 'no candidate contour was offered',
+    }
+    if not offered:
+        return outcome
+    if not ranked:
+        outcome['status'] = CONTOUR_NOT_MATCHED
+        outcome['reason'] = ('every candidate polygon was rejected as unusable '
+                             'geometry')
+        return outcome
+
+    best = ranked[0]
+    second = ranked[1] if len(ranked) > 1 else None
+    outcome['share_inside'] = best['share']
+    outcome['runner_up_share_inside'] = second['share'] if second else None
+
+    if best['share'] < CONTOUR_MIN_POINT_SHARE:
+        outcome['status'] = CONTOUR_NOT_MATCHED
+        outcome['reason'] = ('the best candidate holds %.1f %% of the route '
+                             'points, below the %.0f %% floor'
+                             % (best['share'] * 100.0,
+                                CONTOUR_MIN_POINT_SHARE * 100.0))
+        return outcome
+
+    if second is not None:
+        share_gap = best['share'] - second['share']
+        if share_gap <= CONTOUR_TIE_SHARE:
+            longest = max(best['length_inside_m'], second['length_inside_m'])
+            length_gap = (abs(best['length_inside_m']
+                              - second['length_inside_m']) / longest
+                          if longest > 0 else 0.0)
+            if length_gap <= CONTOUR_TIE_LENGTH:
+                outcome['status'] = CONTOUR_AMBIGUOUS
+                outcome['reason'] = (
+                    'two candidates are indistinguishable: the point shares '
+                    'differ by %.1f pp and the route length inside by %.1f %%; '
+                    'no contour is assigned and no clipped area is computed'
+                    % (share_gap * 100.0, length_gap * 100.0))
+                return outcome
+            if (best['length_inside_m'] < second['length_inside_m']
+                    and second['share'] >= CONTOUR_MIN_POINT_SHARE):
+                # Доли в пределах допуска -- решает длина внутри. Порог доли
+                # при этом обязан взять и ПОБЕДИТЕЛЬ: иначе вторичный признак
+                # протаскивал бы кандидата, которого первичный уже отверг.
+                best, second = second, best
+                outcome['share_inside'] = best['share']
+                outcome['runner_up_share_inside'] = second['share']
+
+    outcome['status'] = CONTOUR_MATCHED
+    outcome['uuid'] = best['uuid']
+    outcome['rings'] = best['rings']
+    outcome['area_ha'] = best['area_ha']
+    outcome['unambiguous'] = True
+    outcome['reason'] = ('the winning polygon holds %.1f %% of the route '
+                         'points and %.0f m of route inside it'
+                         % (best['share'] * 100.0, best['length_inside_m']))
+    return outcome
 
 
 def rings_from_geojson(document, plane):
@@ -1034,11 +1202,16 @@ def _f4(value):
     return None if value is None else round(float(value), 4)
 
 
-def analyse_group(basis, flights, contour, params=DEFAULT_PARAMS):
+def analyse_group(basis, flights, candidates, params=DEFAULT_PARAMS):
     """Одна логическая работа -> словарь измерений.
 
-    `contour` -- {'uuid', 'geojson', 'name', 'field_serial', 'total_area_mu'}
-    или None. `flights` -- приватные записи вылетов (см. `read_capture`).
+    `candidates` -- контуры-кандидаты этой работы, отобранные по рамке:
+    [{'uuid', 'geojson', 'name', 'field_serial', 'total_area_mu'}]. Какой из
+    них настоящий, решает `choose_contour` по полигону, а не по рамке и не по
+    порядку. При неоднозначности контур не назначается вовсе и площадь внутри
+    контура не считается.
+
+    `flights` -- приватные записи вылетов (см. `read_capture`).
     """
     all_points = []
     for flight in flights:
@@ -1047,12 +1220,17 @@ def analyse_group(basis, flights, contour, params=DEFAULT_PARAMS):
         raise AreaStudyError('the work group carries no route point')
     plane = plane_for(all_points)
 
-    rings = None
-    contour_ha_spherical = None
-    contour_rejected = []
-    if contour and contour.get('geojson'):
-        rings, contour_ha_spherical, contour_rejected = rings_from_geojson(
-            contour['geojson'], plane)
+    choice = choose_contour(plane, all_points, candidates, params)
+    rings = choice['rings']
+    contour_ha_spherical = choice['area_ha']
+    contour_rejected = sorted({reason for item in choice['scores']
+                               for reason in item['rejected_because']})
+    contour = None
+    if choice['uuid'] is not None:
+        for item in (candidates or ()):
+            if item.get('uuid') == choice['uuid']:
+                contour = item
+                break
 
     tracks = []
     per_flight = []
@@ -1091,10 +1269,12 @@ def analyse_group(basis, flights, contour, params=DEFAULT_PARAMS):
 
     return {
         'basis': basis,
+        'mission_state': mission_state(flights),
         'flights': per_flight,
         'plane': plane,
         'rings': rings,
         'contour': contour,
+        'contour_choice': choice,
         'contour_rejected_because': contour_rejected,
         'contour_ha_spherical': _f4(contour_ha_spherical),
         'fine': fine,
@@ -1169,31 +1349,45 @@ def derive_findings(groups):
                 if group['fine'].swath_all_ha is not None]
 
     # 1. Повтор площади внутри одной работы.
+    #
+    # [REASON]: здесь ДВА разных утверждения, и раньше они были склеены в одно.
+    # Первое -- «одинаковое значение действительно стоит в нескольких строках»
+    # -- наблюдается прямо в данных и потому может быть PROVEN. Второе -- «эти
+    # строки суть части одной работы» -- вывод из группировки, и выше него
+    # SUPPORTED статуса быть не может: группировка пространственная, а
+    # `mission_uuid`, который мог бы её подтвердить, сам не доказан как
+    # идентификатор задания. Общий статус вывода равен статусу СЛАБОГО из двух:
+    # иначе наблюдаемый факт вытягивал бы недоказанное утверждение за собой.
     multi = [group for group in groups if len(group['flights']) > 1]
     repeats_inside = [group for group in multi
                       if group['dji']['repeated_values'] > 0]
-    by_mission = [group for group in repeats_inside
-                  if group['basis'] == GROUP_BY_MISSION]
+    shared_mission = [group for group in repeats_inside
+                      if group['mission_state'] == MISSION_SHARED]
     all_values = [flight['flight'].get('work_area_m2')
                   for group in groups for flight in group['flights']]
     finite_values = [value for value in all_values if _finite(value)]
     repeats_anywhere = len(finite_values) - len(set(finite_values))
-    if by_mission:
-        status = PROVEN
-        note = ('%d работ(ы), собранных по общему mission_uuid, несут '
-                'одинаковое значение в нескольких строках' % len(by_mission))
-    elif repeats_inside:
+    rows_repeating = sum(group['dji']['repeated_values']
+                         for group in repeats_inside)
+
+    value_repeat_status = PROVEN if repeats_anywhere else DISPROVED
+    if repeats_inside:
         status = SUPPORTED
-        note = ('%d работ(ы) с повтором значения, но группировка опирается на '
-                'машину, день и перекрытие рамок, а не на доказанный '
-                'идентификатор задания' % len(repeats_inside))
+        note = ('ПОВТОР ЗНАЧЕНИЯ -- наблюдаемый факт: %d лишн(яя) строк(и) с '
+                'уже встреченным значением площади внутри %d работ(ы). СВЯЗЬ '
+                'СТРОК С ОДНОЙ РАБОТОЙ -- вывод, не факт: группы собраны по '
+                'машине, дню и перекрытию маршрутов. Совпадение mission_uuid '
+                'есть у %d из них, но семантика поля не доказана и статуса '
+                'не повышает'
+                % (rows_repeating, len(repeats_inside), len(shared_mission)))
     elif not multi:
         status = NOT_PROVEN
-        note = 'в выборке нет ни одной работы из нескольких вылетов'
+        note = ('в выборке нет ни одной работы из нескольких вылетов; повторов '
+                'значения по всей выборке %d' % repeats_anywhere)
     elif repeats_anywhere:
         status = NOT_PROVEN
         note = ('одинаковые значения в выборке есть (%d), но не внутри одной '
-                'работы' % repeats_anywhere)
+                'пространственной группы' % repeats_anywhere)
     else:
         status = DISPROVED
         note = 'в выборке нет ни одного повторяющегося значения площади'
@@ -1201,7 +1395,12 @@ def derive_findings(groups):
         F_REPEAT_WITHIN_WORK, status,
         {'multi_flight_works': len(multi),
          'works_with_repeats': len(repeats_inside),
-         'repeats_anywhere_in_sample': repeats_anywhere},
+         'repeated_rows_inside_works': rows_repeating,
+         'repeats_anywhere_in_sample': repeats_anywhere,
+         'value_repetition_is_observed_fact': value_repeat_status,
+         'one_work_link_is_inferred_not_observed': status,
+         'works_where_mission_uuid_is_shared': len(shared_mission),
+         'mission_uuid_semantics': NOT_PROVEN},
         note))
 
     # 2. Накопительная площадь.
@@ -1558,11 +1757,21 @@ def build_private(capture, groups, findings, status, reason,
     """Приватный разбор. Остаётся на машине владельца и никуда не уходит."""
     works = []
     for index, group in enumerate(groups, start=1):
+        choice = group['contour_choice']
         works.append({
             'work': 'WORK-%03d' % index,
             'basis': group['basis'],
+            'mission_state': group['mission_state'],
             'contour_uuid': (group['contour'] or {}).get('uuid'),
             'contour_name': (group['contour'] or {}).get('name'),
+            'contour_status': choice['status'],
+            'contour_reason': choice['reason'],
+            'contour_candidates': [
+                {'uuid': item['uuid'], 'share_inside': item['share'],
+                 'length_inside_m': item['length_inside_m'],
+                 'area_ha': item['area_ha'],
+                 'rejected_because': item['rejected_because']}
+                for item in choice['scores']],
             'dji': group['dji'],
             'fine': group['fine'].as_dict(),
             'coarse': group['coarse'].as_dict(),
@@ -1645,13 +1854,15 @@ def build_shareable(capture, groups, findings, status, reason,
                 'unknown_point_fields': unknown,
             })
         fine = group['fine']
+        choice = group['contour_choice']
         works.append({
             'work': 'WORK-%03d' % index,
             'grouping_basis': group['basis'],
+            'mission_identifier_state': group['mission_state'],
+            'mission_identifier_semantics': NOT_PROVEN,
             'flights': [row['flight'] for row in rows],
             'flight_count': len(rows),
             'distinct_dji_flight_ids': group['dji']['distinct_flight_ids'],
-            'mission_identifier_present': group['dji']['mission_uuid_present'],
             'dji_row_area_sum_ha': group['dji']['sum_ha'],
             'dji_row_area_max_ha': group['dji']['max_ha'],
             'dji_row_area_last_ha': group['dji']['last_ha'],
@@ -1667,6 +1878,13 @@ def build_shareable(capture, groups, findings, status, reason,
             'contour_area_ha_raster': fine.contour_ha,
             'contour_area_ha_spherical': group['contour_ha_spherical'],
             'contour_rejected_because': group['contour_rejected_because'],
+            'contour_status': choice['status'],
+            'contour_reason': choice['reason'],
+            'contour_candidates_offered': choice['candidates_offered'],
+            'contour_candidates_usable': choice['candidates_usable'],
+            'contour_point_share_inside': choice['share_inside'],
+            'contour_runner_up_share_inside': choice['runner_up_share_inside'],
+            'contour_choice_unambiguous': choice['unambiguous'],
             'contour_matched': bool(group['rings']),
             'flights_without_width': group['flights_without_width'],
             'grid_cell_m': fine.cell_m,
@@ -1694,6 +1912,11 @@ def build_shareable(capture, groups, findings, status, reason,
         'segment_reasons': list(SEGMENT_REASONS),
         'flights_total': counter,
         'works_total': len(works),
+        'flights_rejected_wrong_day': capture.get('flights_rejected_wrong_day'),
+        'study_day_requested': capture.get('study_day_requested'),
+        'live_run_confirmed': (capture.get('live_run') or {}).get('confirmed'),
+        'live_run_not_confirmed_because':
+            list((capture.get('live_run') or {}).get('reasons') or ()),
         'findings': findings,
         'final_status': status,
         'final_status_reason': reason,
@@ -1735,6 +1958,22 @@ def render_markdown(document):
     add('')
     add('Признак распыления: **%s**.' % document.get('spray_state_proof'))
     add('')
+    confirmed = document.get('live_run_confirmed')
+    if confirmed is None:
+        add('Живой прогон: пересчёт с диска, приговор прогона в снимке не '
+            'записан.')
+    elif confirmed:
+        add('Живой прогон: **подтверждён** по всем обязательным признакам.')
+    else:
+        add('Живой прогон: **НЕ подтверждён**. Числа ниже читать как '
+            'предварительные.')
+        for reason in document.get('live_run_not_confirmed_because') or ():
+            add('- %s' % reason)
+    add('')
+    add('Запрошенный день: **%s**. Вылетов другого дня отброшено: **%s**.'
+        % (document.get('study_day_requested') or '-',
+           _cell(document.get('flights_rejected_wrong_day'))))
+    add('')
     add('## Метод')
     add('')
     add('```')
@@ -1775,6 +2014,30 @@ def render_markdown(document):
             _cell(work['work_pass_union_clipped_to_contour_ha']),
             _cell(work['contour_area_ha_raster']),
             _cell(uncertainty)))
+    add('')
+    add('## Контур и идентификатор задания')
+    add('')
+    add('Контур выбирается по доле точек маршрута внутри НАСТОЯЩЕГО полигона, '
+        'а не по прямоугольной рамке. При неоднозначности площадь внутри '
+        'контура не считается вовсе.')
+    add('')
+    add('| Работа | Основание группы | mission_uuid | Кандидатов | Годных | '
+        'Доля внутри | У второго | Однозначно | Статус |')
+    add('|---|---|---|---|---|---|---|---|---|')
+    for work in document.get('works') or ():
+        add('| %s | `%s` | `%s` | %s | %s | %s | %s | %s | `%s` |' % (
+            work['work'], work['grouping_basis'],
+            work.get('mission_identifier_state'),
+            _cell(work.get('contour_candidates_offered')),
+            _cell(work.get('contour_candidates_usable')),
+            _cell(work.get('contour_point_share_inside')),
+            _cell(work.get('contour_runner_up_share_inside')),
+            _cell(work.get('contour_choice_unambiguous')),
+            work.get('contour_status')))
+    add('')
+    add('Семантика `mission_uuid` остаётся `NOT_PROVEN`: поле не доказано как '
+        'идентификатор задания, в группировке не участвует и ни на одну '
+        'площадь не влияет.')
     add('')
     add('## Вылеты')
     add('')
@@ -1830,6 +2093,100 @@ def render_markdown(document):
         'отправлялось. Таблиц не создавалось, миграций не применялось, '
         'начисления и подтверждённые гектары не менялись.')
     return '\n'.join(lines) + '\n'
+
+
+# ─── Приговор живому прогону ─────────────────────────────────────────────────
+
+# Коды выхода исследования. Совпадают с кодами `main.py` намеренно, и на это
+# совпадение стоит тест: два места, называющие один исход разными числами, --
+# это ровно тот дефект, который приводит к ложному PASS.
+EXIT_STUDY_OK = 0
+EXIT_STUDY_EMPTY = 6
+EXIT_STUDY_UNCONFIRMED = 13
+
+
+def live_run_verdict(operator_answered, drain_completed, observations,
+                     confirmed, skipped_over_cap, observation_errors,
+                     capture_errors, pending_route_requests,
+                     route_requests_failed, id_sets_matched,
+                     flights_of_study_day, flights_rejected_wrong_day=0,
+                     study_day=None):
+    """Подтверждён ли живой прогон. Ровно одна функция, ровно одно решение.
+
+    [REASON]: раньше достаточно было ОДНОГО декодированного маршрута -- и
+    прогон возвращал 0, а PowerShell печатал `AREA48H=PASS`, даже если
+    оператор не подтвердил карту, drain истёк по таймауту, слушатель спотыкался
+    на ответах, часть ответов осталась неподтверждённой или в выборку попал
+    чужой день. Успешный прогон и наполовину состоявшийся давали ОДИН и тот же
+    признак, а признак, одинаковый в двух разных случаях, признаком не
+    является. Здесь перечислено всё, что обязано выполниться ОДНОВРЕМЕННО.
+
+    Причины возвращаются безопасными строками: ни одного идентификатора, ни
+    одной координаты, только счётчики и имена условий.
+    """
+    reasons = []
+    if not operator_answered:
+        reasons.append('the operator never confirmed the map view')
+    if not drain_completed:
+        reasons.append('route traffic had not settled when the browser closed')
+    if observation_errors:
+        reasons.append('%d response(s) could not be read by the listener'
+                       % observation_errors)
+    if capture_errors:
+        reasons.append('%d observed response(s) could not be captured'
+                       % capture_errors)
+    if pending_route_requests:
+        reasons.append('%d route request(s) were still unfinished'
+                       % pending_route_requests)
+    if route_requests_failed:
+        reasons.append('%d route request(s) failed before their body arrived'
+                       % route_requests_failed)
+    if skipped_over_cap:
+        reasons.append('%d observation(s) were dropped by the cap'
+                       % skipped_over_cap)
+    if confirmed < 1:
+        reasons.append('not one route POST was confirmed')
+    elif confirmed != observations:
+        reasons.append('%d of %d route response(s) are not confirmed'
+                       % (observations - confirmed, observations))
+    if not id_sets_matched:
+        reasons.append('the requested and returned flight-id sets did not '
+                       'match on every response')
+    if flights_of_study_day < 1:
+        reasons.append('not one route of %s was captured'
+                       % (study_day or 'the requested day'))
+    return {
+        'confirmed': not reasons,
+        'reasons': reasons,
+        'day_requested': study_day,
+        'flights_of_study_day': flights_of_study_day,
+        'flights_rejected_wrong_day': flights_rejected_wrong_day,
+    }
+
+
+def study_exit_code(any_route_captured, verdict):
+    """Код выхода исследовательского прогона.
+
+    0 -- только когда захвачено хоть что-то И приговор подтверждён.
+    6 -- не захвачено вообще ничего.
+    13 -- захвачено, но прогон не подтверждён; приватный снимок сохранён, и
+    пересчитать его можно через `--replay`, не идя в кабинет второй раз.
+    """
+    if not any_route_captured:
+        return EXIT_STUDY_EMPTY
+    return EXIT_STUDY_OK if verdict['confirmed'] else EXIT_STUDY_UNCONFIRMED
+
+
+def split_by_day(flights, study_day):
+    """(вылеты нужного дня, сколько отброшено). Дни не смешиваются.
+
+    [REASON]: маршрут другого дня -- это чужая работа на, возможно, чужом поле.
+    Попав в ту же группу, он растянул бы рамку, притянул бы чужой контур и
+    добавил бы площадь, которой в спорном дне нет. Отброшенные считаются
+    числом: счётчик безопасен, идентификаторы наружу не идут.
+    """
+    kept = [flight for flight in flights if flight.get('day') == study_day]
+    return kept, len(flights) - len(kept)
 
 
 # ─── Приватный снимок ────────────────────────────────────────────────────────
@@ -1931,18 +2288,28 @@ def run_study(capture, params=DEFAULT_PARAMS, notes=None,
                 for contour in (capture.get('contours') or ())}
     groups = []
     problems = list(notes or ())
+    if capture.get('live_run') and not capture['live_run'].get('confirmed'):
+        # [REASON]: неподтверждённый живой прогон не перестаёт быть
+        # неподтверждённым оттого, что его пересчитали. Оговорка едет вместе с
+        # числами, иначе отчёт из `--replay` читался бы как результат чистого
+        # прогона.
+        problems.append('LIVE RUN NOT CONFIRMED: '
+                        + '; '.join(capture['live_run'].get('reasons') or ()))
+    if capture.get('flights_rejected_wrong_day'):
+        problems.append('%d flight(s) of another day were left out of the '
+                        'sample' % capture['flights_rejected_wrong_day'])
     for basis, members in group_flights(flights):
-        chosen = None
-        votes = {}
+        # Кандидаты собираются со ВСЕХ вылетов работы: рамка отбирала их
+        # повылетно, а решать надо по маршруту всей работы сразу.
+        wanted = []
+        seen = set()
         for flight in members:
-            uuid = flight.get('contour_uuid')
-            if uuid:
-                votes[uuid] = votes.get(uuid, 0) + 1
-        if votes:
-            best = sorted(votes.items(), key=lambda item: (-item[1], item[0]))
-            chosen = contours.get(best[0][0])
+            for uuid in (flight.get('contour_candidates') or ()):
+                if uuid in contours and uuid not in seen:
+                    seen.add(uuid)
+                    wanted.append(contours[uuid])
         try:
-            groups.append(analyse_group(basis, members, chosen, params))
+            groups.append(analyse_group(basis, members, wanted, params))
         except AreaStudyError as exc:
             problems.append('одна работа не посчитана: %s' % exc)
     groups.sort(key=lambda group: (-(group['dji']['sum_ha'] or 0.0),

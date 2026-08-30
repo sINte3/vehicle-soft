@@ -142,7 +142,8 @@ ROUTE_PROBE_SUMMARY_KEYS = (
 AREA_SUMMARY_KEYS = (
     'mode', 'region', 'probe_route_responses', 'probe_observations',
     'probe_confirmed', 'probe_errors', 'probe_operator_answered',
-    'probe_drained', 'area_flights_captured', 'area_directory_pages',
+    'probe_drained', 'area_live_confirmed', 'area_flights_captured',
+    'area_flights_wrong_day', 'area_directory_pages',
     'area_directory_contours', 'area_contours_downloaded', 'area_works',
     'area_status', 'exit',
 )
@@ -968,7 +969,9 @@ def _run_area_48h(args, cfg, log, state):
     try:
         from drone_collector.area_study import (AreaCapture, PROMPT_LINES,
                                                 STUDY_DAY, ShareableLeak,
-                                                archive_existing, run_study,
+                                                archive_existing,
+                                                live_run_verdict, run_study,
+                                                split_by_day, study_exit_code,
                                                 write_capture, write_reports)
         from drone_collector.route_ui_probe import (monotonic_ms,
                                                     ProbeTimingError,
@@ -1050,48 +1053,77 @@ def _run_area_48h(args, cfg, log, state):
     except errors as exc:
         return _exit_code_for(exc, log)
 
-    flights = capture_probe.captured_flights()
+    captured = capture_probe.captured_flights()
+    flights, rejected_wrong_day = split_by_day(captured, STUDY_DAY)
+    observations = capture_probe.observations
+    id_sets_matched = bool(observations) and all(
+        (item.comparison or {}).get('requested_and_returned_match') is True
+        for item in observations)
+    verdict = live_run_verdict(
+        operator_answered=operator_answered,
+        drain_completed=drain_completed,
+        observations=len(observations),
+        confirmed=len(capture_probe.confirmed_observations),
+        skipped_over_cap=capture_probe.skipped_over_cap,
+        observation_errors=capture_probe.observation_errors,
+        capture_errors=capture_probe.capture_errors,
+        pending_route_requests=capture_probe.pending_route_requests,
+        route_requests_failed=capture_probe.route_requests_failed,
+        id_sets_matched=id_sets_matched,
+        flights_of_study_day=len(flights),
+        flights_rejected_wrong_day=rejected_wrong_day,
+        study_day=STUDY_DAY)
+
     state['probe_route_responses'] = capture_probe.route_responses
-    state['probe_observations'] = len(capture_probe.observations)
+    state['probe_observations'] = len(observations)
     state['probe_confirmed'] = len(capture_probe.confirmed_observations)
     state['probe_errors'] = capture_probe.observation_errors
     state['probe_operator_answered'] = operator_answered
     state['probe_drained'] = drain_completed
     state['area_flights_captured'] = len(flights)
+    state['area_flights_wrong_day'] = rejected_wrong_day
+    state['area_live_confirmed'] = verdict['confirmed']
 
-    if not flights:
+    code = study_exit_code(bool(captured), verdict)
+    if code == EXIT_EMPTY:
         log.error('No route was captured. The cabinet may not have been '
                   'driven into the map view of %s, or every body refused to '
                   'decode. Nothing was collected and nothing was sent.',
                   STUDY_DAY)
         print('No route was captured; nothing was written.')
-        return EXIT_EMPTY
-
-    notes = []
-    if not operator_answered:
-        notes.append('the operator never confirmed the map view')
-    if not drain_completed:
-        notes.append('route traffic had not settled when the browser closed')
-    if capture_probe.observation_errors:
-        notes.append('%d response(s) could not be read by the listener'
-                     % capture_probe.observation_errors)
-    if capture_probe.capture_errors:
-        notes.append('%d observed response(s) could not be captured for the '
-                     'study' % capture_probe.capture_errors)
+        return code
 
     capture = {
         'study_day_requested': STUDY_DAY,
-        'day': flights[0].get('day'),
+        'day': STUDY_DAY,
         'decoder_version': _decoder_version(),
         'flights': flights,
+        'flights_rejected_wrong_day': rejected_wrong_day,
+        'live_run': verdict,
         'contours': [],
     }
     # [REASON]: снимок на диск ДО контуров. Ошибка на справочнике не имеет
     # права стоить владельцу второго похода в кабинет.
     target = write_capture(cfg.out_dir, capture)
-    log.info('Private capture written: %s (%d flight(s))', target,
-             len(flights))
+    log.info('Private capture written: %s (%d flight(s) of %s, %d of another '
+             'day left out)', target, len(flights), STUDY_DAY,
+             rejected_wrong_day)
     print('Private capture (never share): %s' % target)
+
+    if code != EXIT_OK:
+        # [REASON]: безопасный отчёт НЕ пишется. Неподтверждённый прогон,
+        # оформленный отчётом, читается как результат -- а он им не является.
+        # Приватный снимок при этом сохранён: если владелец решит, что данных
+        # достаточно, их пересчитает `--replay`, и оговорка о неподтверждённом
+        # прогоне поедет в отчёт вместе с числами. Второй поход в кабинет не
+        # нужен.
+        for reason in verdict['reasons']:
+            log.error('The live run is NOT confirmed: %s', reason)
+        print('LIVE RUN NOT CONFIRMED: %s' % '; '.join(verdict['reasons']))
+        print('No shareable report was written. The private capture above is '
+              'intact; recompute from it with: python tools/dji_area_48h.py '
+              '--replay %s' % target)
+        return code
 
     if args.area_48h_no_contours:
         notes.append('the directory walk was skipped by --area-48h-no-'
@@ -1178,13 +1210,19 @@ def _attach_contours(capture, cfg, log, state):
                  len(result.lands), result.complete)
         by_uuid = {node.get('uuid'): node for node in result.lands
                    if isinstance(node, dict)}
+        # [REASON]: качаются ВСЕ кандидаты короткого списка, а не первый.
+        # Рамки соседних полей пересекаются постоянно, и «первый по доле точек
+        # в рамке» -- это запросто соседнее или объемлющее поле. Какой полигон
+        # настоящий, решает `choose_contour` уже по геометрии; чтобы ему было
+        # из чего выбирать, полигоны должны быть на руках. Список ограничен
+        # восемью на вылет, весь справочник по-прежнему не качается.
         for flight in capture['flights']:
             chosen = candidate_contours(result.lands, flight.get('points')
                                         or [])
-            if chosen:
-                flight['contour_uuid'] = chosen[0][0]
-                flight['contour_candidates'] = chosen
-                wanted[chosen[0][0]] = by_uuid.get(chosen[0][0])
+            flight['contour_candidates'] = [uuid for uuid, _share in chosen]
+            flight['contour_bbox_shares'] = chosen
+            for uuid, _share in chosen:
+                wanted.setdefault(uuid, by_uuid.get(uuid))
 
         download = ContextGeometryDownloader(collector.context, log)
         for uuid in sorted(key for key in wanted if key):

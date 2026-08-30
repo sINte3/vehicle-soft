@@ -25,15 +25,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
 
 from drone_collector.area_study import (  # noqa: E402
     DATA_UNAVAILABLE, DISPROVED, F_LARGER_WORK, F_NO_WIDTH, F_OVERLAP,
-    F_REPEAT_WITHIN_WORK, GROUP_BY_MISSION, GROUP_BY_PROXIMITY, Grid,
-    LocalPlane, PATTERN_CONSTANT, PATTERN_SWITCHING, SEG_GAP, SEG_OUTSIDE,
-    SEG_WORK, SOURCE_INSUFFICIENT, ShareableLeak, StudyParams,
+    CONTOUR_AMBIGUOUS, CONTOUR_MATCHED, CONTOUR_NOT_MATCHED,
+    CONTOUR_NOT_OFFERED, EXIT_STUDY_EMPTY, EXIT_STUDY_OK,
+    EXIT_STUDY_UNCONFIRMED, F_REPEAT_WITHIN_WORK, GROUP_SINGLE, GROUP_SPATIAL,
+    Grid, LocalPlane, MISSION_ABSENT, MISSION_SHARED, NOT_PROVEN, PROVEN,
+    PATTERN_CONSTANT, PATTERN_SWITCHING, SEG_GAP, SEG_OUTSIDE,
+    SEG_WORK, SOURCE_INSUFFICIENT, ShareableLeak, StudyParams, SUPPORTED,
     USE_IN_CONTOUR_WORK_PASS_UNION, USE_SPRAY_STATE_CLIPPED_UNION,
-    WIDTH_OK, assert_shareable, candidate_contours, classify_segments,
-    choose_status, coverage_once, coverage_with_uncertainty, day_of,
-    describe_series, group_flights, plane_for, private_strings,
-    render_markdown, rings_from_geojson, run_study, segment_totals,
-    unknown_point_values, write_reports)
+    WIDTH_OK, assert_shareable, candidate_contours, choose_contour,
+    classify_segments, choose_status, coverage_once, coverage_with_uncertainty,
+    day_of, describe_series, group_flights, live_run_verdict, mission_state,
+    plane_for, private_strings, render_markdown, rings_from_geojson, run_study,
+    segment_totals, split_by_day, study_exit_code, unknown_point_values,
+    write_reports)
 
 # Синтетика: координаты выдуманы и лежат в районе работ только затем, чтобы
 # перевод в метры шёл на настоящей широте.
@@ -79,12 +83,13 @@ def geojson_square(plane, x0, y0, side):
 
 def flight(flight_id, points, width=10.0, area_m2=1000.0, mission=None,
            nickname='9 Fixture', day='2026-06-05', start_ms=1780670376000,
-           contour_uuid=None, unknown=None):
+           candidates=None, unknown=None):
     return {'flight_id': flight_id, 'points': [list(p) for p in points],
             'spray_width_m': width, 'work_area_m2': area_m2,
             'mission_uuid': mission, 'nickname': nickname, 'day': day,
             'start_ms': start_ms, 'end_ms': start_ms + 500000,
-            'contour_uuid': contour_uuid, 'unknown_values': unknown or {}}
+            'contour_candidates': list(candidates or ()),
+            'unknown_values': unknown or {}}
 
 
 # ─── Геометрия ───────────────────────────────────────────────────────────────
@@ -294,13 +299,28 @@ class TestMissingWidth(unittest.TestCase):
 
 class TestGrouping(unittest.TestCase):
 
-    def test_a_shared_mission_uuid_joins_the_parts(self):
+    def test_a_shared_mission_uuid_does_not_join_distant_fields(self):
+        # Блокер 3. Раньше `mission_uuid` был самым сильным правилом, и два
+        # маршрута в разных концах района складывались в одну полезную
+        # площадь, которой не существует.
+        plane = LocalPlane(LAT0, LNG0)
+        parts = [flight(1, latlon_line(plane, 0, 0, 200, 0), mission='M-1'),
+                 flight(2, latlon_line(plane, 20000, 20000, 20200, 20000),
+                        mission='M-1')]
+        groups = group_flights(parts)
+        self.assertEqual(len(groups), 2)
+        for basis, _members in groups:
+            self.assertEqual(basis, GROUP_SINGLE)
+
+    def test_a_shared_mission_uuid_on_overlapping_routes_is_only_an_attribute(self):
         plane = LocalPlane(LAT0, LNG0)
         parts = [flight(1, latlon_line(plane, 0, 0, 200, 0), mission='M-1'),
                  flight(2, latlon_line(plane, 0, 8, 200, 8), mission='M-1')]
         groups = group_flights(parts)
         self.assertEqual(len(groups), 1)
-        self.assertEqual(groups[0][0], GROUP_BY_MISSION)
+        # Основание группы -- пространственное, а не идентификатор задания.
+        self.assertEqual(groups[0][0], GROUP_SPATIAL)
+        self.assertEqual(mission_state(groups[0][1]), MISSION_SHARED)
 
     def test_same_machine_day_and_overlapping_routes_join(self):
         plane = LocalPlane(LAT0, LNG0)
@@ -308,7 +328,8 @@ class TestGrouping(unittest.TestCase):
                  flight(2, latlon_line(plane, 0, 8, 200, 8))]
         groups = group_flights(parts)
         self.assertEqual(len(groups), 1)
-        self.assertEqual(groups[0][0], GROUP_BY_PROXIMITY)
+        self.assertEqual(groups[0][0], GROUP_SPATIAL)
+        self.assertEqual(mission_state(groups[0][1]), MISSION_ABSENT)
 
     def test_distant_routes_stay_apart(self):
         plane = LocalPlane(LAT0, LNG0)
@@ -516,17 +537,29 @@ class TestFindingsAndStatus(unittest.TestCase):
             flights.append(flight(
                 index + 1, latlon_line(plane, 0, index * 8.0, 240, index * 8.0),
                 width=10.0, area_m2=4000.0, mission='M-1',
-                contour_uuid='C-1', start_ms=1780670376000 + index * 600000))
+                candidates=['C-1'],
+                start_ms=1780670376000 + index * 600000))
         return {'day': '2026-06-05', 'flights': flights,
                 'contours': [{'uuid': 'C-1', 'name': 'Fixture field',
                               'geojson': contour}]}
 
-    def test_repeated_values_inside_one_work_are_reported(self):
+    def test_a_repeated_value_is_a_fact_but_the_task_link_is_not_proven(self):
+        # Блокер 3. Повтор значения наблюдается и потому PROVEN; утверждение
+        # «это части одного задания» выводится из группировки и выше
+        # SUPPORTED подняться не может.
         _private, shareable = run_study(self._capture(), FINE)
         found = {item['id']: item for item in shareable['findings']}
-        self.assertEqual(found[F_REPEAT_WITHIN_WORK]['status'], 'PROVEN')
+        finding = found[F_REPEAT_WITHIN_WORK]
+        self.assertEqual(finding['status'], SUPPORTED)
+        self.assertEqual(finding['evidence']['value_repetition_is_observed_fact'],
+                         PROVEN)
+        self.assertEqual(finding['evidence']['mission_uuid_semantics'],
+                         NOT_PROVEN)
+        self.assertEqual(finding['evidence']['repeated_rows_inside_works'], 2)
         self.assertEqual(shareable['works'][0]['dji_row_area_repeated_values'],
                          2)
+        self.assertEqual(shareable['works'][0]['mission_identifier_semantics'],
+                         NOT_PROVEN)
 
     def test_the_overlap_of_swaths_is_measured_not_assumed(self):
         _private, shareable = run_study(self._capture(), FINE)
@@ -556,7 +589,7 @@ class TestFindingsAndStatus(unittest.TestCase):
         capture = self._capture()
         capture['contours'] = []
         for item in capture['flights']:
-            item['contour_uuid'] = None
+            item['contour_candidates'] = []
         _private, shareable = run_study(capture, FINE)
         self.assertEqual(shareable['final_status'], SOURCE_INSUFFICIENT)
 
@@ -588,6 +621,336 @@ class TestFindingsAndStatus(unittest.TestCase):
 
 
 # ─── Мелочи, которые уже кусали трек ─────────────────────────────────────────
+
+class TestPrivateDirectoryIsIgnoredByGit(unittest.TestCase):
+    """Блокер 1. Приватный каталог обязан быть невидим для Git.
+
+    [REASON]: отчёт УТВЕРЖДАЛ, что каталог исключён, и это было верно -- но
+    держалось на одном правиле в `drone_collector/.gitignore`, то есть на
+    файле, который лежит ВНУТРИ защищаемого каталога и исчезает вместе с ним.
+    А `git status --untracked-files=no`, которым проверялось дерево, к тому же
+    объявил бы дерево чистым при настоящих координатах в рабочей копии. Здесь
+    проверяется сам факт, а не намерение.
+    """
+
+    def _root(self):
+        return os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))
+
+    def _ignored(self, path, cwd):
+        import subprocess
+        return subprocess.run(['git', 'check-ignore', '-q', path], cwd=cwd,
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL).returncode == 0
+
+    def test_both_layers_of_the_study_output_are_ignored(self):
+        root = self._root()
+        for path in ('drone_collector/out/area_48h/private/capture.json',
+                     'drone_collector/out/area_48h/private/analysis.json',
+                     'drone_collector/out/area_48h/DJI_AREA_48H_SHAREABLE.json',
+                     'drone_collector/out/area_48h/DJI_AREA_48H_SHAREABLE.md'):
+            self.assertTrue(self._ignored(path, root),
+                            '%s is NOT ignored by git' % path)
+
+    def test_source_files_are_not_ignored(self):
+        # Отрицательный контроль: без него проверка выше прошла бы и на
+        # `.gitignore`, исключающем вообще всё.
+        root = self._root()
+        for path in ('drone_collector/area_study.py',
+                     'tools/dji_area_48h.py'):
+            self.assertFalse(self._ignored(path, root),
+                             '%s must stay visible to git' % path)
+
+    def test_the_repository_root_rule_alone_is_enough(self):
+        """Корневое правило работает БЕЗ вложенного `.gitignore`.
+
+        Проверяется на отдельном пустом репозитории, куда кладётся только
+        корневой файл исключений: если правило держится лишь на вложенном
+        файле, здесь это видно сразу.
+        """
+        import subprocess
+        import tempfile
+        root = self._root()
+        with open(os.path.join(root, '.gitignore'), encoding='utf-8') as handle:
+            rules = handle.read()
+        self.assertIn('/drone_collector/out/area_48h/', rules)
+        with tempfile.TemporaryDirectory() as folder:
+            subprocess.run(['git', 'init', '-q'], cwd=folder, check=True)
+            with open(os.path.join(folder, '.gitignore'), 'w',
+                      encoding='utf-8') as handle:
+                handle.write(rules)
+            self.assertTrue(
+                self._ignored('drone_collector/out/area_48h/private/x.json',
+                              folder))
+            self.assertTrue(
+                self._ignored(
+                    'drone_collector/out/area_48h/DJI_AREA_48H_SHAREABLE.md',
+                    folder))
+            self.assertFalse(
+                self._ignored('drone_collector/area_study.py', folder))
+
+
+class TestContourIsChosenByThePolygonNotTheBox(unittest.TestCase):
+    """Блокер 2. Рамка отбирает кандидатов, полигон принимает решение."""
+
+    def setUp(self):
+        self.plane = LocalPlane(LAT0, LNG0)
+        # Маршрут целиком лежит в квадрате 0..200 по обеим осям.
+        self.points = []
+        for offset in range(0, 200, 20):
+            self.points.extend(latlon_line(self.plane, 10, offset + 10,
+                                           190, offset + 10))
+
+    def _candidate(self, uuid, x0, y0, side):
+        return {'uuid': uuid,
+                'geojson': geojson_square(self.plane, x0, y0, side)}
+
+    def _l_shaped(self, uuid):
+        """Полигон, чья РАМКА накрывает весь маршрут, а сам он -- ничего.
+
+        Тонкий угол вдоль двух сторон квадрата 0..200: bbox тот же, что у
+        настоящего поля, а внутри полигона нет ни одной точки маршрута.
+        """
+        corners = [(0.0, 0.0), (200.0, 0.0), (200.0, 5.0), (5.0, 5.0),
+                   (5.0, 200.0), (0.0, 200.0)]
+        ring = [self.plane.latlon(x, y) for x, y in corners]
+        ring.append(ring[0])
+        return {'uuid': uuid,
+                'geojson': {'type': 'Polygon',
+                            'coordinates': [[[lon, lat]
+                                             for lat, lon in ring]]}}
+
+    def _node(self, uuid, x0, y0, x1, y1):
+        low = self.plane.latlon(x0, y0)
+        high = self.plane.latlon(x1, y1)
+        return {'uuid': uuid,
+                'bbox': {'downLeft': {'lat': low[0], 'lng': low[1]},
+                         'upperRight': {'lat': high[0], 'lng': high[1]}}}
+
+    def test_the_first_uuid_loses_when_its_polygon_is_the_wrong_field(self):
+        # Отрицательный контроль на сам дефект. У обоих кандидатов ОДНА И ТА ЖЕ
+        # рамка, поэтому отбор по рамке их не различает и прежнее правило
+        # «первый из списка» брало кандидата, чей полигон маршрута не содержит
+        # вовсе. Площадь считалась бы по чужому полю -- уверенно и неверно.
+        wrong = self._l_shaped('aaaa-first')
+        right = self._candidate('bbbb-second', 0.0, 0.0, 200.0)
+
+        nodes = [self._node('aaaa-first', 0.0, 0.0, 200.0, 200.0),
+                 self._node('bbbb-second', 0.0, 0.0, 200.0, 200.0)]
+        by_box = candidate_contours(nodes, self.points)
+        self.assertEqual([uuid for uuid, _share in by_box],
+                         ['aaaa-first', 'bbbb-second'])
+        self.assertEqual(by_box[0][1], by_box[1][1])
+
+        choice = choose_contour(self.plane, self.points, [wrong, right])
+        self.assertEqual(choice['status'], CONTOUR_MATCHED)
+        self.assertEqual(choice['uuid'], 'bbbb-second')
+        self.assertTrue(choice['unambiguous'])
+        scores = {item['uuid']: item['share'] for item in choice['scores']}
+        self.assertEqual(scores['aaaa-first'], 0.0)
+        self.assertEqual(scores['bbbb-second'], 1.0)
+
+    def test_the_length_tiebreak_cannot_promote_a_candidate_below_the_floor(self):
+        # Вторичный признак не имеет права протащить кандидата, которого
+        # первичный уже отверг.
+        from drone_collector.area_study import CONTOUR_MIN_POINT_SHARE
+        self.assertGreater(CONTOUR_MIN_POINT_SHARE, 0.0)
+        outside = self._candidate('aaaa-outside', 400.0, 400.0, 200.0)
+        choice = choose_contour(self.plane, self.points, [outside])
+        self.assertEqual(choice['status'], CONTOUR_NOT_MATCHED)
+
+    def test_two_equally_fitting_polygons_are_ambiguous(self):
+        first = self._candidate('aaaa-one', -5.0, -5.0, 215.0)
+        second = self._candidate('bbbb-two', -6.0, -6.0, 217.0)
+        choice = choose_contour(self.plane, self.points, [first, second])
+        self.assertEqual(choice['status'], CONTOUR_AMBIGUOUS)
+        self.assertIsNone(choice['uuid'])
+        self.assertIsNone(choice['rings'])
+        self.assertFalse(choice['unambiguous'])
+
+    def test_a_box_that_fits_but_a_polygon_that_does_not_matches_nothing(self):
+        # Полигон рядом с маршрутом: рамка накрыла бы, геометрия -- нет.
+        near = self._candidate('aaaa-near', 400.0, 400.0, 200.0)
+        choice = choose_contour(self.plane, self.points, [near])
+        self.assertEqual(choice['status'], CONTOUR_NOT_MATCHED)
+        self.assertIsNone(choice['uuid'])
+
+    def test_a_broken_candidate_does_not_stop_the_next_one(self):
+        ring = [self.plane.latlon(0, 0), self.plane.latlon(200, 200),
+                self.plane.latlon(200, 0), self.plane.latlon(0, 120)]
+        ring.append(ring[0])
+        broken = {'uuid': 'aaaa-broken',
+                  'geojson': {'type': 'Polygon',
+                              'coordinates': [[[lon, lat]
+                                               for lat, lon in ring]]}}
+        good = self._candidate('bbbb-good', -5.0, -5.0, 215.0)
+        choice = choose_contour(self.plane, self.points, [broken, good])
+        self.assertEqual(choice['status'], CONTOUR_MATCHED)
+        self.assertEqual(choice['uuid'], 'bbbb-good')
+        self.assertEqual(choice['candidates_offered'], 2)
+        self.assertEqual(choice['candidates_usable'], 1)
+
+    def test_no_candidate_at_all_is_its_own_answer(self):
+        choice = choose_contour(self.plane, self.points, [])
+        self.assertEqual(choice['status'], CONTOUR_NOT_OFFERED)
+
+    def test_an_ambiguous_contour_leaves_the_clipped_area_uncomputed(self):
+        first = self._candidate('aaaa-one', -5.0, -5.0, 215.0)
+        second = self._candidate('bbbb-two', -6.0, -6.0, 217.0)
+        capture = {'day': '2026-06-05', 'flights': [
+            flight(1, self.points, candidates=['aaaa-one', 'bbbb-two'])],
+            'contours': [first, second]}
+        _private, shareable = run_study(capture, FINE)
+        work = shareable['works'][0]
+        self.assertEqual(work['contour_status'], CONTOUR_AMBIGUOUS)
+        self.assertIsNone(work['work_pass_union_clipped_to_contour_ha'])
+        self.assertIsNone(work['contour_area_ha_raster'])
+        self.assertGreater(work['whole_route_swath_union_ha'], 0.0)
+
+    def test_no_uuid_or_coordinate_reaches_the_shareable_report(self):
+        first = self._candidate('11111111-2222-3333-4444-555555555555',
+                                -5.0, -5.0, 215.0)
+        capture = {'day': '2026-06-05', 'flights': [
+            flight(574320663, self.points,
+                   candidates=['11111111-2222-3333-4444-555555555555'])],
+            'contours': [first]}
+        private, shareable = run_study(capture, FINE)
+        self.assertTrue(assert_shareable(shareable, private_strings(capture)))
+        text = json.dumps(shareable, ensure_ascii=False)
+        self.assertNotIn('11111111-2222', text)
+        self.assertNotIn('574320663', text)
+        self.assertIn('contour_point_share_inside', text)
+        # Приватный слой, наоборот, обязан помнить и кандидатов, и основание.
+        self.assertIn('11111111-2222',
+                      json.dumps(private, ensure_ascii=False))
+
+
+class TestLiveRunVerdict(unittest.TestCase):
+    """Блокер 4. Неполный живой захват не имеет права дать код 0."""
+
+    CLEAN = dict(operator_answered=True, drain_completed=True, observations=2,
+                 confirmed=2, skipped_over_cap=0, observation_errors=0,
+                 capture_errors=0, pending_route_requests=0,
+                 route_requests_failed=0, id_sets_matched=True,
+                 flights_of_study_day=9, flights_rejected_wrong_day=0,
+                 study_day='2026-06-05')
+
+    def _verdict(self, **overrides):
+        return live_run_verdict(**dict(self.CLEAN, **overrides))
+
+    def test_a_fully_clean_run_is_confirmed_and_exits_zero(self):
+        verdict = self._verdict()
+        self.assertTrue(verdict['confirmed'])
+        self.assertEqual(verdict['reasons'], [])
+        self.assertEqual(study_exit_code(True, verdict), EXIT_STUDY_OK)
+
+    def test_a_drain_timeout_is_not_a_pass(self):
+        verdict = self._verdict(drain_completed=False)
+        self.assertFalse(verdict['confirmed'])
+        self.assertEqual(study_exit_code(True, verdict),
+                         EXIT_STUDY_UNCONFIRMED)
+
+    def test_a_listener_error_is_not_a_pass(self):
+        verdict = self._verdict(observation_errors=1)
+        self.assertEqual(study_exit_code(True, verdict),
+                         EXIT_STUDY_UNCONFIRMED)
+
+    def test_one_unconfirmed_response_beside_a_confirmed_one_is_not_a_pass(self):
+        verdict = self._verdict(observations=2, confirmed=1)
+        self.assertFalse(verdict['confirmed'])
+        self.assertEqual(study_exit_code(True, verdict),
+                         EXIT_STUDY_UNCONFIRMED)
+
+    def test_every_single_guard_can_fail_the_run_on_its_own(self):
+        # Отрицательный контроль на набор целиком: если какое-то условие
+        # перестанет проверяться, эта проверка упадёт именно на нём.
+        for override in (dict(operator_answered=False),
+                         dict(drain_completed=False),
+                         dict(observation_errors=1),
+                         dict(capture_errors=1),
+                         dict(pending_route_requests=1),
+                         dict(route_requests_failed=1),
+                         dict(skipped_over_cap=1),
+                         dict(confirmed=0),
+                         dict(id_sets_matched=False),
+                         dict(flights_of_study_day=0)):
+            verdict = self._verdict(**override)
+            self.assertFalse(verdict['confirmed'], repr(override))
+            self.assertTrue(verdict['reasons'], repr(override))
+
+    def test_nothing_captured_at_all_is_its_own_code(self):
+        verdict = self._verdict(flights_of_study_day=0)
+        self.assertEqual(study_exit_code(False, verdict), EXIT_STUDY_EMPTY)
+
+    def test_the_reasons_carry_no_identifier(self):
+        verdict = self._verdict(operator_answered=False, observation_errors=3,
+                                flights_of_study_day=0)
+        text = ' '.join(verdict['reasons'])
+        self.assertNotIn('574320663', text)
+        self.assertIn('2026-06-05', text)
+
+    def test_the_exit_codes_agree_with_the_cli(self):
+        from drone_collector.main import (EXIT_EMPTY, EXIT_OK,
+                                          EXIT_ROUTE_PROBE_UNCONFIRMED)
+        self.assertEqual(EXIT_STUDY_OK, EXIT_OK)
+        self.assertEqual(EXIT_STUDY_EMPTY, EXIT_EMPTY)
+        self.assertEqual(EXIT_STUDY_UNCONFIRMED, EXIT_ROUTE_PROBE_UNCONFIRMED)
+
+
+class TestOnlyTheStudyDayIsAnalysed(unittest.TestCase):
+    """Блокер 4. Дни не смешиваются."""
+
+    def _flights(self):
+        plane = LocalPlane(LAT0, LNG0)
+        return [flight(1, latlon_line(plane, 0, 0, 200, 0), day='2026-06-05'),
+                flight(2, latlon_line(plane, 0, 8, 200, 8), day='2026-06-05'),
+                flight(3, latlon_line(plane, 0, 16, 200, 16),
+                       day='2026-06-04')]
+
+    def test_routes_of_another_day_are_left_out_and_counted(self):
+        kept, rejected = split_by_day(self._flights(), '2026-06-05')
+        self.assertEqual(len(kept), 2)
+        self.assertEqual(rejected, 1)
+
+    def test_only_the_wrong_day_leaves_nothing_to_analyse(self):
+        wrong = [item for item in self._flights()
+                 if item['day'] != '2026-06-05']
+        kept, rejected = split_by_day(wrong, '2026-06-05')
+        self.assertEqual(kept, [])
+        self.assertEqual(rejected, 1)
+        verdict = live_run_verdict(
+            operator_answered=True, drain_completed=True, observations=1,
+            confirmed=1, skipped_over_cap=0, observation_errors=0,
+            capture_errors=0, pending_route_requests=0,
+            route_requests_failed=0, id_sets_matched=True,
+            flights_of_study_day=0, flights_rejected_wrong_day=rejected,
+            study_day='2026-06-05')
+        self.assertEqual(study_exit_code(True, verdict),
+                         EXIT_STUDY_UNCONFIRMED)
+
+    def test_a_mixed_capture_analyses_only_the_study_day(self):
+        kept, rejected = split_by_day(self._flights(), '2026-06-05')
+        capture = {'day': '2026-06-05', 'study_day_requested': '2026-06-05',
+                   'flights': kept, 'flights_rejected_wrong_day': rejected,
+                   'contours': []}
+        _private, shareable = run_study(capture, FINE)
+        self.assertEqual(shareable['flights_total'], 2)
+        self.assertEqual(shareable['flights_rejected_wrong_day'], 1)
+        self.assertTrue(any('another day' in note
+                            for note in shareable['notes']))
+
+    def test_an_unconfirmed_run_carries_its_caveat_into_the_report(self):
+        kept, _rejected = split_by_day(self._flights(), '2026-06-05')
+        capture = {'day': '2026-06-05', 'flights': kept, 'contours': [],
+                   'live_run': {'confirmed': False,
+                                'reasons': ['the operator never confirmed '
+                                            'the map view']}}
+        _private, shareable = run_study(capture, FINE)
+        self.assertFalse(shareable['live_run_confirmed'])
+        self.assertTrue(any('LIVE RUN NOT CONFIRMED' in note
+                            for note in shareable['notes']))
+        self.assertIn('НЕ подтверждён', render_markdown(shareable))
+
 
 class TestCandidateContours(unittest.TestCase):
 
