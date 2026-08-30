@@ -657,6 +657,18 @@ class TestCommandLineWiring(unittest.TestCase):
             with self.assertRaises(UsageError, msg=' '.join(argv)):
                 check_usage(self._args(argv))
 
+    def test_the_study_run_gets_its_own_summary_keys(self):
+        # [REASON]: отрицательный контроль к дефекту, который иначе не видно.
+        # Без своего набора сводка печаталась бы ключами сбора вылетов, и
+        # успешный разбор выглядел бы как прогон, не собравший ничего.
+        from drone_collector.main import (AREA_SUMMARY_KEYS,
+                                          FLIGHT_SUMMARY_KEYS, MODE_AREA_48H)
+        self.assertNotEqual(AREA_SUMMARY_KEYS, FLIGHT_SUMMARY_KEYS)
+        for key in ('area_flights_captured', 'area_works', 'area_status',
+                    'mode', 'exit'):
+            self.assertIn(key, AREA_SUMMARY_KEYS)
+        self.assertEqual(MODE_AREA_48H, 'area-48h')
+
     def test_the_contour_switch_needs_the_study(self):
         from drone_collector.main import UsageError, check_usage
         with self.assertRaises(UsageError):

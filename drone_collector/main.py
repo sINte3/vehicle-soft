@@ -135,6 +135,18 @@ ROUTE_PROBE_SUMMARY_KEYS = (
     'probe_report', 'exit',
 )
 
+# [REASON]: у режима свой набор ключей, а не общий с вылетами. Без него
+# `--area-48h` печатал бы сводку сбора вылетов, где ВСЕ значения `-`, и строка
+# успешного исследования выглядела бы точно как строка прогона, не собравшего
+# ничего. Признак, одинаковый в двух разных случаях, признаком не является.
+AREA_SUMMARY_KEYS = (
+    'mode', 'region', 'probe_route_responses', 'probe_observations',
+    'probe_confirmed', 'probe_errors', 'probe_operator_answered',
+    'probe_drained', 'area_flights_captured', 'area_directory_pages',
+    'area_directory_contours', 'area_contours_downloaded', 'area_works',
+    'area_status', 'exit',
+)
+
 LAND_SUMMARY_KEYS = (
     'mode', 'dry_run', 'pages', 'total_count', 'lands_captured',
     'lands_deduped', 'self_duplicates', 'rejected_responses', 'complete',
@@ -352,6 +364,7 @@ def main(argv=None):
             # look like failures. Two templates, chosen by what actually ran.
             keys = {MODE_LANDS: LAND_SUMMARY_KEYS,
                     MODE_ROUTES: ROUTE_SUMMARY_KEYS,
+                    MODE_AREA_48H: AREA_SUMMARY_KEYS,
                     MODE_ROUTE_PROBE: ROUTE_PROBE_SUMMARY_KEYS}.get(
                         state.get('mode'), FLIGHT_SUMMARY_KEYS)
             log.info(format_run_summary([(key, state.get(key))
@@ -955,8 +968,8 @@ def _run_area_48h(args, cfg, log, state):
     try:
         from drone_collector.area_study import (AreaCapture, PROMPT_LINES,
                                                 STUDY_DAY, ShareableLeak,
-                                                run_study, write_capture,
-                                                write_reports)
+                                                archive_existing, run_study,
+                                                write_capture, write_reports)
         from drone_collector.route_ui_probe import (monotonic_ms,
                                                     ProbeTimingError,
                                                     pump_until,
@@ -1096,6 +1109,12 @@ def _run_area_48h(args, cfg, log, state):
         write_capture(cfg.out_dir, capture)
 
     private, shareable = run_study(capture, notes=notes)
+    # [REASON]: прошлый отчёт отодвигается, а не перезаписывается, и делается
+    # это ПЕРЕД самой записью, а не в начале прогона. Отчёт прошлого раза --
+    # свидетельство: сравнить «было / стало» больше будет нечем. Но и остаться
+    # с одними `.bak` после упавшего прогона владелец не должен.
+    for moved in archive_existing(cfg.out_dir):
+        log.info('Previous shareable report archived: %s', moved)
     try:
         written = write_reports(cfg.out_dir, capture, private, shareable)
     except ShareableLeak as exc:
