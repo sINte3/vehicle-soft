@@ -1,0 +1,702 @@
+# -*- coding: utf-8 -*-
+"""Тесты drone_collector/area_study.py -- DJI-AREA-48H.
+
+Ни сети, ни браузера, ни базы. Проверок намеренно немного и каждая отвечает
+на один вопрос задания; главный результат спринта -- живой разбор, а не число
+тестов.
+
+**У каждого ключевого правила есть отрицательный контроль.** Проверка,
+дающая одинаковый ответ при верном и неверном коде, проверкой не является, и
+поэтому здесь рядом с «полоса 100 x 10 даёт 0.1 га» стоит «круглые торцы дали
+бы 0.1079, и метод их не рисует», а рядом с «в отчёте нет приватного» --
+«подложенный настоящий ID отчёт заворачивает».
+"""
+
+import json
+import math
+import os
+import struct
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))))
+
+from drone_collector.area_study import (  # noqa: E402
+    DATA_UNAVAILABLE, DISPROVED, F_LARGER_WORK, F_NO_WIDTH, F_OVERLAP,
+    F_REPEAT_WITHIN_WORK, GROUP_BY_MISSION, GROUP_BY_PROXIMITY, Grid,
+    LocalPlane, PATTERN_CONSTANT, PATTERN_SWITCHING, SEG_GAP, SEG_OUTSIDE,
+    SEG_WORK, SOURCE_INSUFFICIENT, ShareableLeak, StudyParams,
+    USE_IN_CONTOUR_WORK_PASS_UNION, USE_SPRAY_STATE_CLIPPED_UNION,
+    WIDTH_OK, assert_shareable, candidate_contours, classify_segments,
+    choose_status, coverage_once, coverage_with_uncertainty, day_of,
+    describe_series, group_flights, plane_for, private_strings,
+    render_markdown, rings_from_geojson, run_study, segment_totals,
+    unknown_point_values, write_reports)
+
+# Синтетика: координаты выдуманы и лежат в районе работ только затем, чтобы
+# перевод в метры шёл на настоящей широте.
+LAT0 = 40.0800
+LNG0 = 64.6300
+FAKE_FLIGHT_ID = 900000001
+FINE = StudyParams(cell_m=0.1, min_pass_m=10.0)
+
+
+# ─── Помощники ───────────────────────────────────────────────────────────────
+
+def line(x0, y0, x1, y1, step=10.0):
+    """Ломаная из точек в метрах, шаг `step`."""
+    count = max(1, int(round(math.hypot(x1 - x0, y1 - y0) / step)))
+    return [(x0 + (x1 - x0) * index / count,
+             y0 + (y1 - y0) * index / count) for index in range(count + 1)]
+
+
+def square(x0, y0, side):
+    return [(x0, y0), (x0 + side, y0), (x0 + side, y0 + side), (x0, y0 + side)]
+
+
+def swath_ha(tracks, rings=None, params=FINE):
+    return coverage_once(tracks, rings, params, params.cell_m).swath_all_ha
+
+
+def segs(points, params=FINE, rings=None):
+    return classify_segments(points, params, rings)
+
+
+def latlon_line(plane, x0, y0, x1, y1, step=10.0):
+    return [plane.latlon(x, y) for x, y in line(x0, y0, x1, y1, step)]
+
+
+def geojson_square(plane, x0, y0, side):
+    ring = [plane.latlon(x, y) for x, y in square(x0, y0, side)]
+    ring.append(ring[0])
+    return {'type': 'FeatureCollection', 'features': [{
+        'type': 'Feature', 'properties': {'funcType': 'PlantZone'},
+        'geometry': {'type': 'Polygon',
+                     'coordinates': [[[lon, lat] for lat, lon in ring]]}}]}
+
+
+def flight(flight_id, points, width=10.0, area_m2=1000.0, mission=None,
+           nickname='9 Fixture', day='2026-06-05', start_ms=1780670376000,
+           contour_uuid=None, unknown=None):
+    return {'flight_id': flight_id, 'points': [list(p) for p in points],
+            'spray_width_m': width, 'work_area_m2': area_m2,
+            'mission_uuid': mission, 'nickname': nickname, 'day': day,
+            'start_ms': start_ms, 'end_ms': start_ms + 500000,
+            'contour_uuid': contour_uuid, 'unknown_values': unknown or {}}
+
+
+# ─── Геометрия ───────────────────────────────────────────────────────────────
+
+class TestStraightSwath(unittest.TestCase):
+    """Прямая 100 м при ширине 10 м -- ровно 0.1 га, и ни метром больше."""
+
+    def test_hundred_by_ten_is_a_tenth_of_a_hectare(self):
+        self.assertEqual(swath_ha([(segs(line(0, 0, 100, 0)), 5.0)]), 0.1)
+
+    def test_round_caps_would_have_added_area_and_do_not(self):
+        # Отрицательный контроль на плоские торцы. Круглые дорисовали бы два
+        # полукруга радиусом 5 м -- 78.54 м2, то есть 0.1079 га. Если метод
+        # когда-нибудь вернётся к капсулам, эта проверка упадёт.
+        round_caps = (1000.0 + math.pi * 25.0) / 10000.0
+        self.assertAlmostEqual(round_caps, 0.1079, places=4)
+        self.assertNotAlmostEqual(swath_ha([(segs(line(0, 0, 100, 0)), 5.0)]),
+                                  round_caps, places=3)
+
+    def test_area_is_not_computed_in_degrees(self):
+        # Отрицательный контроль на проекцию: та же полоса, заданная в
+        # градусах, дала бы число, отличающееся на четыре порядка.
+        plane = LocalPlane(LAT0, LNG0)
+        metres = plane.xy(LAT0, LNG0 + 0.001)[0]
+        self.assertGreater(metres, 50.0)
+        self.assertLess(metres, 120.0)
+
+
+class TestUnionNotSum(unittest.TestCase):
+
+    def test_two_identical_passes_do_not_double_the_area(self):
+        track = (segs(line(0, 0, 100, 0)), 5.0)
+        self.assertEqual(swath_ha([track]), 0.1)
+        self.assertEqual(swath_ha([track, track]), 0.1)
+
+    def test_partly_overlapping_passes_are_united_geometrically(self):
+        first = (segs(line(0, 0, 100, 0)), 5.0)
+        second = (segs(line(0, 5, 100, 5)), 5.0)
+        # Полосы по 10 м с шагом 5 м: объединение это лента 15 м, а не 20.
+        self.assertEqual(swath_ha([first, second]), 0.15)
+        self.assertNotEqual(swath_ha([first, second]), 0.2)
+
+
+class TestContourClipping(unittest.TestCase):
+
+    def setUp(self):
+        self.field = [square(0.0, -20.0, 40.0)]
+
+    def test_a_pass_outside_the_field_is_excluded(self):
+        outside = (segs(line(200, 200, 300, 200)), 5.0)
+        result = coverage_once([outside], self.field, FINE, FINE.cell_m)
+        self.assertEqual(result.clipped_all_ha, 0.0)
+
+    def test_entering_and_leaving_the_field_is_clipped(self):
+        crossing = (segs(line(-50, 0, 150, 0)), 5.0)
+        result = coverage_once([crossing], self.field, FINE, FINE.cell_m)
+        self.assertEqual(result.swath_all_ha, 0.2)     # 200 м x 10 м
+        self.assertEqual(result.clipped_all_ha, 0.04)  # 40 м x 10 м
+
+    def test_a_purely_ferry_flight_yields_zero_useful_area(self):
+        ferry = segs(line(500, 500, 900, 500), FINE, self.field)
+        result = coverage_once([(ferry, 5.0)], self.field, FINE, FINE.cell_m)
+        self.assertEqual(result.clipped_work_ha, 0.0)
+        self.assertTrue(all(segment.reason == SEG_OUTSIDE
+                            for segment in ferry))
+
+    def test_a_broken_polygon_is_not_used_silently(self):
+        plane = LocalPlane(LAT0, LNG0)
+        # Несимметричная восьмёрка: площадь по формуле положительна и неверна.
+        ring = [plane.latlon(0, 0), plane.latlon(100, 100),
+                plane.latlon(100, 0), plane.latlon(0, 60)]
+        ring.append(ring[0])
+        document = {'type': 'Polygon',
+                    'coordinates': [[[lon, lat] for lat, lon in ring]]}
+        rings, area, reasons = rings_from_geojson(document, plane)
+        self.assertIsNone(rings)
+        self.assertIsNone(area)
+        self.assertTrue(reasons)
+
+
+class TestRasterAgreesWithTheProjectSphericalFormula(unittest.TestCase):
+    """Растр против `geometry.ring_area_m2` -- независимый контроль.
+
+    [REASON]: это самая сильная проверка во всём наборе, потому что две
+    величины считаются РАЗНЫМ кодом, написанным для разных задач и разными
+    людьми: сферическая формула по избытку на сфере, живущая в приёмнике
+    контуров, и растровая заливка в местной касательной плоскости, написанная
+    здесь. Ошибка в проекции, в порядке широты и долготы, в радиусе Земли, в
+    заливке многоугольника или в размере клетки сдвинула бы одну из них и не
+    сдвинула бы другую. Совпадение до сотых долей процента ошибкой быть не
+    может, а расхождение сразу показывает, какая из двух неверна.
+    """
+
+    def test_the_two_areas_agree_to_a_hundredth_of_a_percent(self):
+        plane = LocalPlane(LAT0, LNG0)
+        document = geojson_square(plane, -20.0, -20.0, 440.0)
+        rings, spherical_ha, reasons = rings_from_geojson(document, plane)
+        self.assertEqual(reasons, [])
+        raster = coverage_once([], rings, FINE, FINE.cell_m).contour_ha
+        self.assertAlmostEqual(raster, spherical_ha, places=2)
+        self.assertLess(abs(raster - spherical_ha) / spherical_ha * 100.0, 0.01)
+
+    def test_a_wrong_earth_radius_would_have_shown_up(self):
+        # Отрицательный контроль: если бы плоскость считала метры по другому
+        # радиусу, согласия бы не было. Проверяется тем, что расхождение
+        # ЧУВСТВИТЕЛЬНО -- сдвиг радиуса на процент сдвигает площадь заметно.
+        plane = LocalPlane(LAT0, LNG0)
+        document = geojson_square(plane, -20.0, -20.0, 440.0)
+        rings, spherical_ha, _reasons = rings_from_geojson(document, plane)
+        stretched = [[(x * 1.01, y * 1.01) for x, y in ring] for ring in rings]
+        wrong = coverage_once([], stretched, FINE, FINE.cell_m).contour_ha
+        self.assertGreater(abs(wrong - spherical_ha) / spherical_ha * 100.0,
+                           1.0)
+
+
+class TestSegmentRules(unittest.TestCase):
+
+    def test_a_recording_gap_never_becomes_a_swath(self):
+        points = [(0.0, 0.0), (500.0, 0.0)]
+        segments = segs(points)
+        self.assertEqual([segment.reason for segment in segments], [SEG_GAP])
+        self.assertEqual(swath_ha([(segments, 5.0)]), 0.0)
+
+    def test_a_short_connector_is_not_a_work_pass(self):
+        params = StudyParams(cell_m=0.2, min_pass_m=50.0)
+        segments = classify_segments(line(0, 0, 30, 0), params)
+        self.assertTrue(all(not segment.is_work for segment in segments))
+
+    def test_turns_break_a_run_and_the_totals_add_up(self):
+        points = line(0, 0, 100, 0) + line(100, 0, 100, 100, 10.0)[1:]
+        segments = segs(points)
+        totals = segment_totals(segments)
+        self.assertEqual(sum(bucket['segments'] for bucket in totals.values()),
+                         len(segments))
+        self.assertGreater(totals[SEG_WORK]['length_m'], 150.0)
+
+
+class TestCoordinateOrder(unittest.TestCase):
+
+    def test_latitude_and_longitude_are_not_swapped(self):
+        plane = LocalPlane(LAT0, LNG0)
+        east = plane.xy(LAT0, LNG0 + 0.01)
+        north = plane.xy(LAT0 + 0.01, LNG0)
+        self.assertGreater(east[0], 0.0)
+        self.assertAlmostEqual(east[1], 0.0, places=6)
+        self.assertGreater(north[1], 0.0)
+        self.assertAlmostEqual(north[0], 0.0, places=6)
+        # На широте Бухары градус долготы КОРОЧЕ градуса широты; перестановка
+        # даёт другую фигуру, и это видно числом, а не на глаз.
+        self.assertLess(east[0], north[1])
+
+    def test_a_swapped_route_gives_a_different_area(self):
+        plane = LocalPlane(LAT0, LNG0)
+        straight = latlon_line(plane, 0, 0, 300, 0)
+        swapped = [(lon, lat) for lat, lon in straight]
+        honest = swath_ha([(segs(plane.project(straight)), 5.0)])
+        wrong = swath_ha([(segs(plane.project(swapped)), 5.0)])
+        self.assertNotAlmostEqual(honest, wrong, places=3)
+
+
+class TestUncertaintyIsPublished(unittest.TestCase):
+
+    def test_the_two_grids_agree_within_a_percent_on_a_healthy_shape(self):
+        track = (segs(line(0, 0, 400, 0)), 3.5)
+        _fine, _coarse, uncertainty = coverage_with_uncertainty(
+            [track], None, StudyParams(cell_m=0.25))
+        self.assertLess(uncertainty['swath_all_ha'], 1.0)
+
+
+# ─── Ширина ──────────────────────────────────────────────────────────────────
+
+class TestMissingWidth(unittest.TestCase):
+
+    def _group(self, width):
+        plane = LocalPlane(LAT0, LNG0)
+        flights = [flight(FAKE_FLIGHT_ID, latlon_line(plane, 0, 0, 200, 0),
+                          width=width)]
+        _private, shareable = run_study({'flights': flights}, FINE)
+        return shareable['works'][0]['rows'][0]
+
+    def test_absent_width_is_reported_and_never_substituted(self):
+        for width in (None, -1.0, 0.0, float('nan'), float('inf')):
+            row = self._group(width)
+            self.assertEqual(row['width_status'], DATA_UNAVAILABLE,
+                             'width %r must not be replaced' % (width,))
+            self.assertIsNone(row['spray_width_m'])
+            self.assertIsNone(row['own_route_swath_ha'])
+
+    def test_a_usable_width_is_used(self):
+        row = self._group(10.0)
+        self.assertEqual(row['width_status'], WIDTH_OK)
+        self.assertEqual(row['spray_width_m'], 10.0)
+        self.assertGreater(row['own_route_swath_ha'], 0.0)
+
+    def test_a_neighbour_width_is_not_borrowed(self):
+        plane = LocalPlane(LAT0, LNG0)
+        first = flight(1, latlon_line(plane, 0, 0, 200, 0), width=10.0)
+        second = flight(2, latlon_line(plane, 0, 50, 200, 50), width=None)
+        _private, shareable = run_study({'flights': [first, second]}, FINE)
+        rows = {row['flight']: row for work in shareable['works']
+                for row in work['rows']}
+        statuses = sorted(row['width_status'] for row in rows.values())
+        self.assertEqual(statuses, [DATA_UNAVAILABLE, WIDTH_OK])
+
+
+# ─── Группировка ─────────────────────────────────────────────────────────────
+
+class TestGrouping(unittest.TestCase):
+
+    def test_a_shared_mission_uuid_joins_the_parts(self):
+        plane = LocalPlane(LAT0, LNG0)
+        parts = [flight(1, latlon_line(plane, 0, 0, 200, 0), mission='M-1'),
+                 flight(2, latlon_line(plane, 0, 8, 200, 8), mission='M-1')]
+        groups = group_flights(parts)
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0][0], GROUP_BY_MISSION)
+
+    def test_same_machine_day_and_overlapping_routes_join(self):
+        plane = LocalPlane(LAT0, LNG0)
+        parts = [flight(1, latlon_line(plane, 0, 0, 200, 0)),
+                 flight(2, latlon_line(plane, 0, 8, 200, 8))]
+        groups = group_flights(parts)
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0][0], GROUP_BY_PROXIMITY)
+
+    def test_distant_routes_stay_apart(self):
+        plane = LocalPlane(LAT0, LNG0)
+        parts = [flight(1, latlon_line(plane, 0, 0, 200, 0)),
+                 flight(2, latlon_line(plane, 20000, 20000, 20200, 20000))]
+        self.assertEqual(len(group_flights(parts)), 2)
+
+    def test_the_parts_of_one_work_are_measured_once_not_added_up(self):
+        plane = LocalPlane(LAT0, LNG0)
+        # Две одинаковые половины одной работы: сумма полос была бы вдвое
+        # больше объединения.
+        path = latlon_line(plane, 0, 0, 200, 0)
+        parts = [flight(1, path, mission='M-1', area_m2=2000.0),
+                 flight(2, path, mission='M-1', area_m2=2000.0)]
+        _private, shareable = run_study({'flights': parts}, FINE)
+        work = shareable['works'][0]
+        self.assertEqual(work['flight_count'], 2)
+        self.assertEqual(work['whole_route_swath_union_ha'], 0.2)
+        self.assertEqual(work['sum_of_independent_flight_swaths_ha'], 0.4)
+        self.assertEqual(work['dji_row_area_sum_ha'], 0.4)
+
+
+# ─── Неизвестные поля ────────────────────────────────────────────────────────
+
+def _varint(value):
+    out = bytearray()
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        if value:
+            out.append(byte | 0x80)
+        else:
+            out.append(byte)
+            return bytes(out)
+
+
+def _tag(number, wire):
+    return _varint((number << 3) | wire)
+
+
+def _bytes_field(number, raw):
+    return _tag(number, 2) + _varint(len(raw)) + raw
+
+
+def _point(lat, lng, third=None):
+    body = (_tag(1, 1) + struct.pack('<d', lat)
+            + _tag(2, 1) + struct.pack('<d', lng))
+    if third is not None:
+        body += _tag(3, 0) + _varint(third)
+    return _bytes_field(1, body)
+
+
+def _body(points, flight_id=FAKE_FLIGHT_ID):
+    record = b''.join(_point(*item) for item in points)
+    record += _tag(2, 0) + _varint(flight_id)
+    payload = _bytes_field(1, record)
+    return (_tag(1, 0) + _varint(200)
+            + _bytes_field(2, b'Success.')
+            + _bytes_field(3, payload))
+
+
+class TestUnknownPointField(unittest.TestCase):
+
+    def test_the_values_are_read_but_only_into_the_private_layer(self):
+        body = _body([(LAT0, LNG0, 1), (LAT0, LNG0 + 0.001, 1),
+                      (LAT0, LNG0 + 0.002, 0)])
+        values = unknown_point_values(body)
+        self.assertEqual(values[FAKE_FLIGHT_ID]['3:0'], [1, 1, 0])
+
+    def test_the_shape_of_the_series_is_described_without_its_values(self):
+        described = describe_series([1, 1, 1, 1])
+        self.assertEqual(described['pattern'], PATTERN_CONSTANT)
+        self.assertFalse(described['changes'])
+        described = describe_series([0, 1, 0, 1, 0, 1])
+        self.assertEqual(described['pattern'], PATTERN_SWITCHING)
+        self.assertEqual(described['distinct'], 2)
+        self.assertNotIn('values', described)
+        self.assertNotIn('min', described)
+
+    def test_an_unknown_field_does_not_change_the_area(self):
+        plane = LocalPlane(LAT0, LNG0)
+        path = latlon_line(plane, 0, 0, 200, 0)
+        plain = flight(1, path)
+        marked = flight(1, path, unknown={'3:0': [1] * len(path)})
+        first = run_study({'flights': [plain]}, FINE)[1]
+        second = run_study({'flights': [marked]}, FINE)[1]
+        self.assertEqual(first['works'][0]['whole_route_swath_union_ha'],
+                         second['works'][0]['whole_route_swath_union_ha'])
+
+    def test_the_semantics_stay_unknown(self):
+        plane = LocalPlane(LAT0, LNG0)
+        path = latlon_line(plane, 0, 0, 200, 0)
+        marked = flight(1, path, unknown={'3:0': [1] * len(path)})
+        _private, shareable = run_study({'flights': [marked]}, FINE)
+        field = shareable['works'][0]['rows'][0]['unknown_point_fields']
+        self.assertEqual(field['field_3_wire_0']['semantics'],
+                         'UNKNOWN_SEMANTICS')
+        self.assertEqual(shareable['spray_state_proof'], 'NOT_ESTABLISHED')
+
+
+# ─── Уровни файлов ───────────────────────────────────────────────────────────
+
+class TestShareableCarriesNothingPrivate(unittest.TestCase):
+
+    def setUp(self):
+        plane = LocalPlane(LAT0, LNG0)
+        self.capture = {
+            'day': '2026-06-05',
+            'decoder_version': 'route-decode-2',
+            'flights': [flight(574320663, latlon_line(plane, 0, 0, 200, 0),
+                               mission='11111111-2222-3333-4444-555555555555',
+                               nickname='8 GardenU',
+                               unknown={'3:0': [1] * 21})],
+            'contours': [],
+        }
+        self.private, self.shareable = run_study(self.capture, FINE)
+
+    def test_the_report_passes_its_own_leak_guard(self):
+        self.assertTrue(assert_shareable(self.shareable,
+                                         private_strings(self.capture)))
+
+    def test_no_real_flight_id_uuid_or_coordinate_is_present(self):
+        text = json.dumps(self.shareable, ensure_ascii=False)
+        self.assertNotIn('574320663', text)
+        self.assertNotIn('11111111-2222', text)
+        self.assertNotIn('8 GardenU', text)
+        self.assertNotIn('40.08', text)
+        self.assertNotIn('64.63', text)
+        self.assertIn('FLIGHT-001', text)
+
+    def test_a_planted_real_identifier_is_rejected(self):
+        # Отрицательный контроль: без него проверка выше проходила бы и на
+        # отчёте, который течёт.
+        leaking = dict(self.shareable)
+        leaking['works'] = [dict(self.shareable['works'][0],
+                                 note='flight 574320663')]
+        with self.assertRaises(ShareableLeak):
+            assert_shareable(leaking, private_strings(self.capture))
+
+    def test_a_planted_coordinate_is_rejected(self):
+        leaking = dict(self.shareable, note='took off at 40.080000')
+        with self.assertRaises(ShareableLeak):
+            assert_shareable(leaking, private_strings(self.capture))
+
+    def test_a_secret_marker_is_rejected(self):
+        for poison in ({'link': 'https://x.invalid/a?signature=abc'},
+                       {'header': 'Authorization: Bearer x'},
+                       {'file': 'storage_state'},
+                       {'cookie': 'Set-Cookie: a=b'}):
+            with self.assertRaises(ShareableLeak):
+                assert_shareable(dict(self.shareable, **poison), ())
+
+    def test_an_identifier_sized_integer_is_rejected(self):
+        with self.assertRaises(ShareableLeak):
+            assert_shareable(dict(self.shareable, seen=1780670376000), ())
+
+    def test_the_markdown_carries_the_same_numbers_and_no_private_value(self):
+        text = render_markdown(self.shareable)
+        self.assertIn('FLIGHT-001', text)
+        self.assertIn(self.shareable['final_status'], text)
+        for secret in private_strings(self.capture):
+            self.assertNotIn(secret, text)
+
+    def test_the_private_document_keeps_what_the_report_may_not(self):
+        text = json.dumps(self.private, ensure_ascii=False)
+        self.assertIn('574320663', text)
+        self.assertTrue(self.private['never_share_this_file'])
+
+
+class TestDeterminism(unittest.TestCase):
+
+    def test_a_second_run_gives_the_same_result(self):
+        plane = LocalPlane(LAT0, LNG0)
+        capture = {'day': '2026-06-05', 'flights': [
+            flight(1, latlon_line(plane, 0, 0, 200, 0), mission='M-1'),
+            flight(2, latlon_line(plane, 0, 8, 200, 8), mission='M-1'),
+            flight(3, latlon_line(plane, 900, 900, 1100, 900))]}
+        first = run_study(capture, FINE)[1]
+        second = run_study(capture, FINE)[1]
+        self.assertEqual(json.dumps(first, sort_keys=True, ensure_ascii=False),
+                         json.dumps(second, sort_keys=True, ensure_ascii=False))
+        self.assertEqual(render_markdown(first), render_markdown(second))
+
+    def test_writing_the_reports_produces_both_files(self):
+        plane = LocalPlane(LAT0, LNG0)
+        capture = {'day': '2026-06-05',
+                   'flights': [flight(1, latlon_line(plane, 0, 0, 200, 0))]}
+        private, shareable = run_study(capture, FINE)
+        with tempfile.TemporaryDirectory() as folder:
+            written = write_reports(folder, capture, private, shareable)
+            for key in ('private', 'json', 'md'):
+                self.assertTrue(os.path.exists(written[key]))
+            self.assertIn('private', written['private'])
+
+
+# ─── Итоговый статус и выводы ────────────────────────────────────────────────
+
+class TestFindingsAndStatus(unittest.TestCase):
+
+    def _capture(self):
+        plane = LocalPlane(LAT0, LNG0)
+        contour = geojson_square(plane, -10.0, -30.0, 260.0)
+        flights = []
+        for index in range(3):
+            flights.append(flight(
+                index + 1, latlon_line(plane, 0, index * 8.0, 240, index * 8.0),
+                width=10.0, area_m2=4000.0, mission='M-1',
+                contour_uuid='C-1', start_ms=1780670376000 + index * 600000))
+        return {'day': '2026-06-05', 'flights': flights,
+                'contours': [{'uuid': 'C-1', 'name': 'Fixture field',
+                              'geojson': contour}]}
+
+    def test_repeated_values_inside_one_work_are_reported(self):
+        _private, shareable = run_study(self._capture(), FINE)
+        found = {item['id']: item for item in shareable['findings']}
+        self.assertEqual(found[F_REPEAT_WITHIN_WORK]['status'], 'PROVEN')
+        self.assertEqual(shareable['works'][0]['dji_row_area_repeated_values'],
+                         2)
+
+    def test_the_overlap_of_swaths_is_measured_not_assumed(self):
+        _private, shareable = run_study(self._capture(), FINE)
+        work = shareable['works'][0]
+        # Три полосы по 10 м с шагом 8 м: объединение это лента 26 м.
+        self.assertEqual(work['whole_route_swath_union_ha'], 0.624)
+        self.assertEqual(work['sum_of_independent_flight_swaths_ha'], 0.72)
+        found = {item['id']: item for item in shareable['findings']}
+        self.assertIn(found[F_OVERLAP]['status'],
+                      ('SUPPORTED', 'NOT_PROVEN', 'DISPROVED'))
+
+    def test_the_status_is_the_estimate_when_width_and_contour_are_present(self):
+        _private, shareable = run_study(self._capture(), FINE)
+        self.assertEqual(shareable['final_status'],
+                         USE_IN_CONTOUR_WORK_PASS_UNION)
+
+    def test_without_width_the_source_is_declared_insufficient(self):
+        capture = self._capture()
+        for item in capture['flights']:
+            item['spray_width_m'] = None
+        _private, shareable = run_study(capture, FINE)
+        self.assertEqual(shareable['final_status'], SOURCE_INSUFFICIENT)
+        found = {item['id']: item for item in shareable['findings']}
+        self.assertEqual(found[F_NO_WIDTH]['status'], 'SUPPORTED')
+
+    def test_without_a_contour_the_source_is_declared_insufficient(self):
+        capture = self._capture()
+        capture['contours'] = []
+        for item in capture['flights']:
+            item['contour_uuid'] = None
+        _private, shareable = run_study(capture, FINE)
+        self.assertEqual(shareable['final_status'], SOURCE_INSUFFICIENT)
+
+    def test_the_spray_status_is_never_chosen_by_the_tool_alone(self):
+        capture = self._capture()
+        groups_status = run_study(capture, FINE)[1]['final_status']
+        self.assertNotEqual(groups_status, USE_SPRAY_STATE_CLIPPED_UNION)
+        # И выбирается только при ЯВНО переданном доказательстве.
+        self.assertEqual(
+            choose_status([], [], spray_state_proved=True)[0],
+            USE_SPRAY_STATE_CLIPPED_UNION)
+
+    def test_a_row_area_above_its_own_route_is_flagged(self):
+        capture = self._capture()
+        for item in capture['flights']:
+            item['work_area_m2'] = 90000.0
+        _private, shareable = run_study(capture, FINE)
+        found = {item['id']: item for item in shareable['findings']}
+        self.assertEqual(found[F_LARGER_WORK]['status'], 'PROVEN')
+
+    def test_a_row_area_matching_its_own_route_is_not_flagged(self):
+        # Отрицательный контроль к предыдущей проверке.
+        capture = self._capture()
+        for item in capture['flights']:
+            item['work_area_m2'] = 2400.0
+        _private, shareable = run_study(capture, FINE)
+        found = {item['id']: item for item in shareable['findings']}
+        self.assertEqual(found[F_LARGER_WORK]['status'], DISPROVED)
+
+
+# ─── Мелочи, которые уже кусали трек ─────────────────────────────────────────
+
+class TestCandidateContours(unittest.TestCase):
+
+    def test_only_boxes_that_cover_the_route_are_candidates(self):
+        nodes = [
+            {'uuid': 'near', 'bbox': {'upperRight': {'lat': LAT0 + 0.01,
+                                                     'lng': LNG0 + 0.01},
+                                      'downLeft': {'lat': LAT0 - 0.01,
+                                                   'lng': LNG0 - 0.01}}},
+            {'uuid': 'far', 'bbox': {'upperRight': {'lat': LAT0 + 5.0,
+                                                    'lng': LNG0 + 5.0},
+                                     'downLeft': {'lat': LAT0 + 4.0,
+                                                  'lng': LNG0 + 4.0}}},
+        ]
+        chosen = candidate_contours(nodes, [(LAT0, LNG0), (LAT0, LNG0 + 0.001)])
+        self.assertEqual([uuid for uuid, _share in chosen], ['near'])
+
+    def test_a_node_without_a_box_is_skipped_not_guessed(self):
+        self.assertEqual(candidate_contours([{'uuid': 'x'}], [(LAT0, LNG0)]),
+                         [])
+
+
+class TestLocalDay(unittest.TestCase):
+
+    def test_an_evening_flight_keeps_its_local_day(self):
+        # 2026-06-05 21:30 по Бухаре -- это 16:30 UTC того же дня.
+        self.assertEqual(day_of(1780673400000), '2026-06-05')
+
+    def test_a_missing_timestamp_is_not_invented(self):
+        self.assertIsNone(day_of(None))
+
+
+class TestGridGuards(unittest.TestCase):
+
+    def test_grids_of_different_extents_refuse_to_be_intersected(self):
+        first = Grid(0, 0, 10, 10, 1.0)
+        second = Grid(0, 0, 20, 20, 1.0)
+        with self.assertRaises(Exception):
+            first.intersected(second)
+
+    def test_an_empty_point_set_has_no_projection(self):
+        with self.assertRaises(Exception):
+            plane_for([])
+
+
+class TestCommandLineWiring(unittest.TestCase):
+    """--area-48h должен быть подключён так, чтобы им нельзя было случайно
+    отправить что-нибудь в Vehicle Soft."""
+
+    def _args(self, argv):
+        from drone_collector.main import build_parser
+        return build_parser().parse_args(argv)
+
+    def test_the_study_run_needs_no_ingest_credentials(self):
+        from drone_collector.main import needs_no_ingest
+        self.assertTrue(needs_no_ingest(self._args(['--area-48h'])))
+        # Отрицательный контроль: обычный сбор вылетов их требует.
+        self.assertFalse(needs_no_ingest(self._args([])))
+
+    def test_the_study_refuses_to_share_a_run_with_another_walk(self):
+        from drone_collector.main import UsageError, check_usage
+        for argv in (['--area-48h', '--lands'],
+                     ['--area-48h', '--routes'],
+                     ['--area-48h', '--route-ui-probe'],
+                     ['--area-48h', '--from', '2026-06-05',
+                      '--to', '2026-06-05']):
+            with self.assertRaises(UsageError, msg=' '.join(argv)):
+                check_usage(self._args(argv))
+
+    def test_the_contour_switch_needs_the_study(self):
+        from drone_collector.main import UsageError, check_usage
+        with self.assertRaises(UsageError):
+            check_usage(self._args(['--area-48h-no-contours']))
+        check_usage(self._args(['--area-48h', '--area-48h-no-contours']))
+
+
+def _load_tool():
+    """tools/dji_area_48h.py как модуль. Это скрипт, а не пакет."""
+    import importlib.util
+    root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    path = os.path.join(root, 'tools', 'dji_area_48h.py')
+    spec = importlib.util.spec_from_file_location('dji_area_48h_tool', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestPreflightRefusesAnIngestCapableEnvironment(unittest.TestCase):
+
+    def test_a_leftover_ingest_variable_stops_the_run(self):
+        tool = _load_tool()
+        saved = {name: os.environ.get(name) for name in tool.INGEST_VARIABLES}
+        try:
+            os.environ['DRONE_API_TOKEN'] = 'x' * 8
+            self.assertEqual(tool._preflight(), tool.EXIT_PREFLIGHT)
+        finally:
+            for name, value in saved.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+    def test_exactly_one_mode_is_accepted(self):
+        tool = _load_tool()
+        self.assertEqual(tool.main(['--preflight', '--verify', 'x.json']),
+                         tool.EXIT_USAGE)
+        self.assertEqual(tool.main([]), tool.EXIT_USAGE)
+
+
+if __name__ == '__main__':
+    unittest.main()

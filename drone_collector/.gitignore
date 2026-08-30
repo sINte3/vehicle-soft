@@ -6,8 +6,17 @@
 # Saved browser session: cookies and local storage of a live DJI account.
 data/
 
-# Dry-run dumps of collected flights.
+# Dry-run dumps of collected flights, and the whole DJI-AREA-48H study output.
+#
+# [REASON]: `out/area_48h/private/` держит НАСТОЯЩИЕ координаты маршрутов,
+# идентификаторы вылетов и значения ещё не понятых полей. Правило названо
+# отдельной строкой намеренно: `out/` выше и так его накрывает, но однажды
+# кто-нибудь сузит `out/` до `out/*.json`, и приватный каталог станет
+# коммитабельным молча -- ни одна проверка репозитория этого не заметит.
+# Безопасные отчёты (`out/area_48h/DJI_AREA_48H_SHAREABLE.*`) тоже НЕ
+# коммитятся: они артефакт конкретного прогона, а не исходный код.
 out/
+out/area_48h/
 
 # Rotating logs.
 logs/

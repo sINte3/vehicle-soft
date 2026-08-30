@@ -11,6 +11,7 @@
     python -m drone_collector.main --lands --with-geometry --geometry-id UUID
     python -m drone_collector.main --routes --from 2026-06-01 --to 2026-06-30
     python -m drone_collector.main --routes --ids-file ids.txt --dry-run
+    python -m drone_collector.main --area-48h           (DJI-AREA-48H study)
 
 Without --from/--to the collector uses the rolling window from DJI_WINDOW_DAYS
 and sends it as kind=incremental; with them it sends kind=backfill, unless
@@ -32,6 +33,8 @@ Exit codes (see drone_collector/README.md):
        disproved on the live cabinet and no valid UI transport exists yet
    13  --route-ui-probe saw route traffic, but none of it was a confirmed
        route POST (wrong host, method, status, payload or id sets)
+   14  --area-48h could not write a shareable report because it would have
+       carried something private; nothing was written
 
     8 and 9 are deliberately skipped: they belong to the other entry point of
     this package, `python -m drone_collector.devices`.
@@ -93,12 +96,20 @@ EXIT_ROUTE_PROBE_UNCONFIRMED = 13
 
 KIND_INCREMENTAL = 'incremental'
 KIND_BACKFILL = 'backfill'
+# DJI-AREA-48H: безопасный отчёт не написан, потому что он унёс бы приватное.
+#
+# [REASON]: отдельный код, а не общий отказ. Утечка -- единственный исход, при
+# котором прогон обязан НИЧЕГО не записать, и владелец должен отличать её от
+# «кабинет не ответил» с одного взгляда на код возврата.
+EXIT_AREA_LEAK = 14
+
 KINDS = ('backfill', 'incremental', 'replay')
 
 MODE_FLIGHTS = 'flights'
 MODE_LANDS = 'lands'
 MODE_ROUTES = 'routes'
 MODE_ROUTE_PROBE = 'route-ui-probe'
+MODE_AREA_48H = 'area-48h'
 
 FLIGHT_SUMMARY_KEYS = (
     'mode', 'kind', 'dry_run', 'period_from', 'period_to',
@@ -197,6 +208,20 @@ def build_parser():
                              'route POST. Queues nothing, sends nothing to '
                              'Vehicle Soft. Records shapes and lengths, never '
                              'a header value.')
+    parser.add_argument('--area-48h', dest='area_48h', action='store_true',
+                        help='DJI-AREA-48H: watch the cabinet make its own '
+                             'route request, keep the decoded routes '
+                             'PRIVATELY on disk, match the field contours the '
+                             'routes actually fall into, and write one '
+                             'shareable report of areas and reasons. Creates '
+                             'no table, applies no migration, sends nothing '
+                             'to Vehicle Soft and changes no money.')
+    parser.add_argument('--area-48h-no-contours', dest='area_48h_no_contours',
+                        action='store_true',
+                        help='with --area-48h: skip the directory walk and '
+                             'measure without any field polygon. The useful '
+                             'area then cannot be clipped and the report says '
+                             'so.')
     parser.add_argument('--geometry-id', dest='geometry_ids', metavar='UUID',
                         action='append',
                         help='with --lands --with-geometry: download the '
@@ -221,7 +246,7 @@ def needs_no_ingest(args):
     so a test can hold it.
     """
     return bool(args.save_session or args.dry_run or args.routes
-                or args.route_ui_probe
+                or args.route_ui_probe or args.area_48h
                 or (args.lands and args.with_geometry))
 
 
@@ -252,6 +277,14 @@ def check_usage(args):
                                 or args.ids_file):
         raise UsageError('--route-ui-probe watches one request made by hand; '
                          'it takes no period, no ids file and no other walk')
+    if args.area_48h and (args.lands or args.routes or args.route_ui_probe
+                          or args.date_from or args.date_to or args.kind
+                          or args.ids_file or args.with_geometry):
+        raise UsageError('--area-48h is a study of one day driven by hand; it '
+                         'takes no period, no ids file and no other walk')
+    if args.area_48h_no_contours and not args.area_48h:
+        raise UsageError('--area-48h-no-contours only makes sense together '
+                         'with --area-48h')
     if args.geometry_ids and not (args.lands and args.with_geometry):
         raise UsageError('--geometry-id names which polygon to download and '
                          'only makes sense together with --lands '
@@ -359,6 +392,9 @@ def _run(argv, log, state):
 
     if args.lands:
         return _run_lands(args, cfg, log, state)
+
+    if args.area_48h:
+        return _run_area_48h(args, cfg, log, state)
 
     if args.route_ui_probe:
         return _run_route_ui_probe(args, cfg, log, state)
@@ -890,6 +926,286 @@ def _run_route_ui_probe(args, cfg, log, state):
           'Report: %s' % (probe.route_responses, len(probe.observations),
                           len(confirmed), target))
     return code
+
+
+def _run_area_48h(args, cfg, log, state):
+    """--area-48h: DJI-AREA-48H, один живой прогон и один разбор.
+
+    Три шага, и порядок между ними важен:
+
+    1. наблюдение за ШТАТНЫМ запросом маршрутов -- ровно тот же жизненный цикл,
+       что у `--route-ui-probe`, потому что он уже оплачен двумя живыми
+       прогонами и повторять его второй реализацией нельзя;
+    2. приватный снимок на диск СРАЗУ, до всего остального. Живой прогон
+       делается один раз, и разбор, упавший на контурах, не имеет права унести
+       с собой маршруты, ради которых владелец сидел у браузера;
+    3. контуры и разбор.
+
+    Прогон не создаёт таблиц, не применяет миграций, не открывает эндпоинтов,
+    не обращается к Vehicle Soft и не меняет ни одного начисления.
+    """
+    state['mode'] = MODE_AREA_48H
+
+    try:
+        require_session(cfg.storage_state)
+    except SessionMissing as exc:
+        log.error('%s', exc)
+        return EXIT_SESSION
+
+    try:
+        from drone_collector.area_study import (AreaCapture, PROMPT_LINES,
+                                                STUDY_DAY, ShareableLeak,
+                                                run_study, write_capture,
+                                                write_reports)
+        from drone_collector.route_ui_probe import (monotonic_ms,
+                                                    ProbeTimingError,
+                                                    pump_until,
+                                                    start_operator_prompt,
+                                                    validate_probe_timings)
+    except ImportError as exc:  # pragma: no cover -- our own modules
+        log.error('The area study could not be imported (%s)', exc)
+        return EXIT_CONFIG
+
+    try:
+        from drone_collector.browser import (BrowserError, FlightCollector,
+                                             PeriodVerificationFailed,
+                                             RegionMismatch, SessionExpired)
+    except ImportError as exc:
+        log.error('Playwright is not available in this environment (%s). '
+                  'Install the collector dependencies: pip install -r '
+                  'drone_collector/requirements.txt && python -m playwright '
+                  'install chromium', exc)
+        return EXIT_CONFIG
+
+    try:
+        validate_probe_timings(poll_ms=cfg.route_probe_poll_ms,
+                               wait_ms=cfg.route_probe_wait_ms,
+                               drain_ms=cfg.route_probe_drain_ms,
+                               quiet_ms=cfg.route_probe_quiet_ms)
+    except ProbeTimingError as exc:
+        log.error('The probe timings are contradictory: %s', exc)
+        return EXIT_CONFIG
+
+    capture_probe = AreaCapture(logger=log,
+                                expected_origin=cfg.route_api_origin)
+    errors = (BrowserError, PeriodVerificationFailed, RegionMismatch,
+              SessionExpired, SessionMissing)
+    operator_answered = drain_completed = False
+    try:
+        with FlightCollector(cfg, log) as collector:
+            page = collector.page
+            page.on('request', capture_probe.note_request)
+            page.on('response', capture_probe.note_response)
+            page.on('requestfinished', capture_probe.note_request_finished)
+            page.on('requestfailed', capture_probe.note_request_failed)
+
+            collector.open_records()
+            state['region'] = collector.check_region(cfg.expected_region)
+
+            for line in PROMPT_LINES:
+                print(line)
+
+            prompt = start_operator_prompt(
+                'Press Enter once the routes are drawn on the map: ')
+            pump = page.wait_for_timeout
+            waited = pump_until(pump, prompt.done.is_set, monotonic_ms,
+                                cfg.route_probe_wait_ms,
+                                cfg.route_probe_poll_ms)
+            operator_answered = bool(waited and prompt.answered)
+            if waited and prompt.failed:
+                log.error('The operator prompt could not be read (%s); the '
+                          'run is not confirmed.', prompt.error_type)
+            elif not waited:
+                log.error('The operator did not answer within %d ms; the run '
+                          'drains what it already saw.',
+                          cfg.route_probe_wait_ms)
+
+            capture_probe.begin_drain(monotonic_ms())
+            drain_completed = pump_until(
+                pump,
+                lambda: capture_probe.is_quiet(monotonic_ms(),
+                                               cfg.route_probe_quiet_ms),
+                monotonic_ms, cfg.route_probe_drain_ms,
+                cfg.route_probe_poll_ms, min_pumps=1)
+            if not drain_completed:
+                log.error('Route traffic had not settled %d ms after the '
+                          'operator signalled (%d request(s) still pending).',
+                          cfg.route_probe_drain_ms,
+                          capture_probe.pending_route_requests)
+            print('Drained pending route responses: %s'
+                  % ('yes' if drain_completed else 'TIMED OUT'))
+    except errors as exc:
+        return _exit_code_for(exc, log)
+
+    flights = capture_probe.captured_flights()
+    state['probe_route_responses'] = capture_probe.route_responses
+    state['probe_observations'] = len(capture_probe.observations)
+    state['probe_confirmed'] = len(capture_probe.confirmed_observations)
+    state['probe_errors'] = capture_probe.observation_errors
+    state['probe_operator_answered'] = operator_answered
+    state['probe_drained'] = drain_completed
+    state['area_flights_captured'] = len(flights)
+
+    if not flights:
+        log.error('No route was captured. The cabinet may not have been '
+                  'driven into the map view of %s, or every body refused to '
+                  'decode. Nothing was collected and nothing was sent.',
+                  STUDY_DAY)
+        print('No route was captured; nothing was written.')
+        return EXIT_EMPTY
+
+    notes = []
+    if not operator_answered:
+        notes.append('the operator never confirmed the map view')
+    if not drain_completed:
+        notes.append('route traffic had not settled when the browser closed')
+    if capture_probe.observation_errors:
+        notes.append('%d response(s) could not be read by the listener'
+                     % capture_probe.observation_errors)
+    if capture_probe.capture_errors:
+        notes.append('%d observed response(s) could not be captured for the '
+                     'study' % capture_probe.capture_errors)
+
+    capture = {
+        'study_day_requested': STUDY_DAY,
+        'day': flights[0].get('day'),
+        'decoder_version': _decoder_version(),
+        'flights': flights,
+        'contours': [],
+    }
+    # [REASON]: снимок на диск ДО контуров. Ошибка на справочнике не имеет
+    # права стоить владельцу второго похода в кабинет.
+    target = write_capture(cfg.out_dir, capture)
+    log.info('Private capture written: %s (%d flight(s))', target,
+             len(flights))
+    print('Private capture (never share): %s' % target)
+
+    if args.area_48h_no_contours:
+        notes.append('the directory walk was skipped by --area-48h-no-'
+                     'contours, so no area is clipped to a field polygon')
+    else:
+        try:
+            _attach_contours(capture, cfg, log, state)
+        except Exception as exc:
+            # Тип исключения, не текст: сообщение приходит из чужой библиотеки.
+            notes.append('the field contours could not be collected (%s); the '
+                         'areas are reported unclipped'
+                         % type(exc).__name__)
+            log.warning('The contour phase failed (%s); the study continues '
+                        'without polygons.', type(exc).__name__)
+        write_capture(cfg.out_dir, capture)
+
+    private, shareable = run_study(capture, notes=notes)
+    try:
+        written = write_reports(cfg.out_dir, capture, private, shareable)
+    except ShareableLeak as exc:
+        log.error('The shareable report would have carried something private '
+                  '(%s); NOTHING was written. The private capture stays on '
+                  'disk, so nobody has to go back to the cabinet: fix the '
+                  'cause and recompute with tools/dji_area_48h.py --replay '
+                  '%s', exc, target)
+        print('LEAK: the shareable report was not written. Recompute from the '
+              'private capture with: python tools/dji_area_48h.py --replay %s'
+              % target)
+        return EXIT_AREA_LEAK
+
+    state['area_status'] = shareable['final_status']
+    state['area_works'] = shareable['works_total']
+    log.info('DJI-AREA-48H: %d flight(s), %d work(s), status %s',
+             shareable['flights_total'], shareable['works_total'],
+             shareable['final_status'])
+    print('Flights: %d   Works: %d   Status: %s'
+          % (shareable['flights_total'], shareable['works_total'],
+             shareable['final_status']))
+    print('Shareable JSON: %s' % written['json'])
+    print('Shareable MD:   %s' % written['md'])
+    print('Send the OWNER only the two shareable files above. The private '
+          'directory never leaves this machine.')
+    return EXIT_OK
+
+
+def _decoder_version():
+    try:
+        from drone_collector.route_decode import DECODER_VERSION
+        return DECODER_VERSION
+    except ImportError:  # pragma: no cover -- our own module
+        return None
+
+
+def _attach_contours(capture, cfg, log, state):
+    """Дописать в снимок ТОЛЬКО те контуры, в которые попали маршруты.
+
+    Справочник обходится списком (это метаданные, которые кабинет отдаёт сам),
+    а полигон качается лишь у кандидатов -- у тех, чья рамка накрывает точки
+    маршрута. Пять с половиной тысяч подписанных ссылок не берутся: отбор
+    делает `candidate_contours` по СЫРЫМ узлам, до построения `ContourSource`,
+    поэтому ссылка невыбранного контура не оказывается даже в памяти.
+    """
+    import hashlib
+    import json as _json
+
+    from drone_collector.area_study import candidate_contours
+    from drone_collector.geometry import (ContextGeometryDownloader,
+                                          GeometryError, contour_from_node,
+                                          scrub)
+    from drone_collector.lands import LandCollector
+
+    wanted = {}
+    with LandCollector(cfg, log) as collector:
+        result = collector.collect()
+        state['area_directory_pages'] = result.pages_captured
+        state['area_directory_contours'] = len(result.lands)
+        log.info('Directory walk for the study: %d contour(s), complete=%s',
+                 len(result.lands), result.complete)
+        by_uuid = {node.get('uuid'): node for node in result.lands
+                   if isinstance(node, dict)}
+        for flight in capture['flights']:
+            chosen = candidate_contours(result.lands, flight.get('points')
+                                        or [])
+            if chosen:
+                flight['contour_uuid'] = chosen[0][0]
+                flight['contour_candidates'] = chosen
+                wanted[chosen[0][0]] = by_uuid.get(chosen[0][0])
+
+        download = ContextGeometryDownloader(collector.context, log)
+        for uuid in sorted(key for key in wanted if key):
+            node = wanted[uuid]
+            source = contour_from_node(node) if node else None
+            if source is None or not source.has_link or not source.content_md5:
+                log.warning('Contour %s carries no geometry in the directory',
+                            uuid)
+                continue
+            link = source.take_link()
+            try:
+                blob = download(link)
+            except GeometryError as exc:
+                log.warning('Contour %s did not download: %s', uuid,
+                            scrub(exc))
+                continue
+            finally:
+                link = None
+            if hashlib.md5(blob).hexdigest().lower() != \
+                    str(source.content_md5).lower():
+                # [REASON]: расхождение md5 -- это чужой или обрезанный объект,
+                # а полигон чужого поля даст уверенную неверную площадь.
+                log.warning('Contour %s: DJI named a different content md5; '
+                            'it is not used.', uuid)
+                continue
+            try:
+                document = _json.loads(blob.decode('utf-8'))
+            except (UnicodeDecodeError, ValueError) as exc:
+                log.warning('Contour %s did not parse (%s)', uuid,
+                            type(exc).__name__)
+                continue
+            capture['contours'].append({
+                'uuid': uuid,
+                'field_serial': source.field_serial,
+                'name': source.name,
+                'total_area_mu': source.total_area_mu,
+                'geojson': document,
+            })
+    state['area_contours_downloaded'] = len(capture['contours'])
+    log.info('Contours attached to the study: %d', len(capture['contours']))
 
 
 def _run_routes_engine(args, cfg, log, state):
