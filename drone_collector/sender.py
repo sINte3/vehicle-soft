@@ -28,7 +28,7 @@ import time
 
 from pathlib import Path
 
-from drone_collector.config import MAX_BATCH_SIZE
+from drone_collector.config import MAX_BATCH_SIZE, MAX_ROUTE_BATCH_SIZE
 from drone_collector.window import format_date
 
 log = logging.getLogger(__name__)
@@ -352,6 +352,135 @@ def send_lands(lands, cfg, logger=None, post_fn=None, sleep_fn=None):
              result.new, result.updated, result.unchanged, result.errors)
     return result
 
+
+# ─── DRONE-USEFUL-AREA-001: маршруты ────────────────────────────────────────
+#
+# Contract, read out of drones.py:
+#
+#     POST {VEHICLE_SOFT_BASE_URL}/drones/api/route_sync
+#     {"token": "...", "routes": [ ...route_body objects... ]}
+#
+# Six counters come back, and every seen route lands in exactly one of them:
+#
+#     seen = new + updated + unchanged + errors + unlinked
+#
+# `unlinked` is NOT an error: it counts routes whose flight has not been
+# synced yet. The flights must go first; the routes are then re-sent and land.
+
+
+class RouteSendResult(object):
+    """The six counters summed over every batch of one route run."""
+
+    __slots__ = ('batches', 'seen', 'new', 'updated', 'unchanged', 'errors',
+                 'unlinked')
+
+    def __init__(self):
+        self.batches = 0
+        self.seen = 0
+        self.new = 0
+        self.updated = 0
+        self.unchanged = 0
+        self.errors = 0
+        self.unlinked = 0
+
+    def add(self, body):
+        self.batches += 1
+        self.seen += _int(body.get('seen'))
+        self.new += _int(body.get('new'))
+        self.updated += _int(body.get('updated'))
+        self.unchanged += _int(body.get('unchanged'))
+        self.errors += _int(body.get('errors'))
+        self.unlinked += _int(body.get('unlinked'))
+        return self
+
+    @property
+    def counters_agree(self):
+        """seen == new + updated + unchanged + errors + unlinked.
+
+        [REASON]: checked on OUR side too, not only asserted in the endpoint's
+        docstring. A server that starts double-counting a bucket would
+        otherwise be discovered by someone adding numbers off a screen.
+        """
+        return self.seen == (self.new + self.updated + self.unchanged
+                             + self.errors + self.unlinked)
+
+    def as_dict(self):
+        return {'batches': self.batches, 'seen': self.seen, 'new': self.new,
+                'updated': self.updated, 'unchanged': self.unchanged,
+                'errors': self.errors, 'unlinked': self.unlinked}
+
+    def __repr__(self):
+        return 'RouteSendResult(%s)' % self.as_dict()
+
+
+def build_route_payload(token, routes):
+    """The request body. Never log the result -- it carries the token."""
+    return {'token': token, 'routes': routes}
+
+
+def chunk_routes(routes, batch_size=None):
+    """Split into batches, none of which exceeds the endpoint's cap of 500."""
+    size = min(int(batch_size or MAX_ROUTE_BATCH_SIZE), MAX_ROUTE_BATCH_SIZE)
+    if size < 1:
+        size = 1
+    return [routes[i:i + size] for i in range(0, len(routes), size)]
+
+
+def send_routes(routes, cfg, logger=None, post_fn=None, sleep_fn=None):
+    """Chunk and POST the routes. Returns a RouteSendResult."""
+    out = logger or log
+    post = post_fn or _requests_post
+    sleep = sleep_fn or time.sleep
+
+    result = RouteSendResult()
+    if not routes:
+        out.info('Nothing to send: 0 routes')
+        return result
+
+    batches = chunk_routes(routes, getattr(cfg, 'route_batch_size', None))
+    out.info('Sending %d route(s) in %d batch(es) of at most %d to %s',
+             len(routes), len(batches), MAX_ROUTE_BATCH_SIZE,
+             cfg.route_sync_url)
+
+    for index, batch in enumerate(batches, start=1):
+        payload = build_route_payload(cfg.api_token, batch)
+        body = _post_with_retries(post, sleep, cfg.route_sync_url, payload,
+                                  index, len(batches), out)
+        result.add(body)
+        out.info('Batch %d/%d accepted: seen=%s new=%s updated=%s '
+                 'unchanged=%s errors=%s unlinked=%s', index, len(batches),
+                 body.get('seen'), body.get('new'), body.get('updated'),
+                 body.get('unchanged'), body.get('errors'),
+                 body.get('unlinked'))
+
+    out.info('Route totals: batches=%d seen=%d new=%d updated=%d unchanged=%d '
+             'errors=%d unlinked=%d', result.batches, result.seen, result.new,
+             result.updated, result.unchanged, result.errors, result.unlinked)
+    if not result.counters_agree:
+        out.error('The endpoint returned counters that do not add up: '
+                  'seen=%d but new+updated+unchanged+errors+unlinked=%d',
+                  result.seen, result.new + result.updated + result.unchanged
+                  + result.errors + result.unlinked)
+    return result
+
+
+def route_dry_run_path(out_dir):
+    return Path(out_dir) / 'routes_snapshot.json'
+
+
+def write_routes_dry_run(routes, out_dir):
+    """Write what would have been sent, minus the token, and return the path.
+
+    [REASON]: the dry-run file carries route COORDINATES, so it lands in the
+    run's own output directory beside the private capture -- never in the
+    repository, never in a log. Same rule as the area study's private snapshot.
+    """
+    target = route_dry_run_path(out_dir)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    document = {'count': len(routes), 'routes': routes}
+    with target.open('w', encoding='utf-8') as handle:
+        json.dump(document, handle, ensure_ascii=False, indent=2)
+    return target
 
 def land_dry_run_path(out_dir):
     return Path(out_dir) / 'lands_snapshot.json'

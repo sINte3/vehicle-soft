@@ -51,6 +51,17 @@ FLIGHT_SYNC_PATH = '/drones/api/flight_sync'
 # drones.py: blueprint prefix /drones + route /api/land_sync.
 LAND_SYNC_PATH = '/drones/api/land_sync'
 
+# Endpoint path for the route geometry (DRONE-USEFUL-AREA-001). Fixed by
+# drones.py: blueprint prefix /drones + route /api/route_sync.
+ROUTE_SYNC_PATH = '/drones/api/route_sync'
+
+# [REASON]: drones.py answers 413 above 500 routes per request
+# (DRONE_ROUTE_SYNC_MAX_BATCH). A route carries hundreds of points where a
+# flight carries a few dozen scalars, so its cap is half the flight cap and
+# has its own constant -- reusing MAX_BATCH_SIZE would send batches the
+# endpoint refuses.
+MAX_ROUTE_BATCH_SIZE = 500
+
 # [REASON]: drones.py answers 413 above 1000 flights per request
 # (DRONE_SYNC_MAX_BATCH). The operator may set DRONE_BATCH_SIZE to anything;
 # the clamp here is what keeps a mistyped 5000 from turning into a rejected
@@ -244,6 +255,12 @@ class CollectorConfig(object):
         if not self.base_url:
             return None
         return self.base_url.rstrip('/') + LAND_SYNC_PATH
+
+    @property
+    def route_sync_url(self):
+        if not self.base_url:
+            return None
+        return self.base_url.rstrip('/') + ROUTE_SYNC_PATH
 
     @property
     def log_dir(self):
