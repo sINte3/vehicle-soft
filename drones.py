@@ -11,6 +11,12 @@ Route map:
                                    payloads (DRONE-002). Token-authenticated
                                    via DRONE_API_TOKEN (deny-by-default),
                                    CSRF-exempt in app.py:is_csrf_exempt().
+  POST /drones/api/route_sync   -- ingest endpoint for decoded DJI route
+                                   geometry (DRONE-USEFUL-AREA-001). Same
+                                   token, same deny-by-default, same exact
+                                   CSRF exemption.
+  GET  /drones/coverage         -- read-only calculated useful area per work,
+                                   kept separate from the DJI area.
 
 Browser routes are decorated with @module_required('drones'): the admin-UI
 permission toggles are enforced at the route, not only at the sidebar link.
@@ -21,6 +27,7 @@ Out of scope here: the Playwright collector (DRONE-003), reporting screens
 and Excel (DRONE-004).
 """
 
+import hashlib
 import io
 import json
 import os
@@ -35,6 +42,7 @@ from sqlalchemy import and_, case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased, joinedload
 
+import drone_useful_area as ua
 import drone_works_upload as works_upload
 from ingest_common import verify_api_token, extract_token
 from models import (
@@ -60,6 +68,8 @@ from models import (
     DroneBattery,
     DroneCustomer,
     DroneCustomerAlias,
+    DroneCoverageWork,
+    DroneFlightRoute,
     DroneOperator,
     DroneOperatorAssignment,
     DroneUnit,
@@ -993,6 +1003,352 @@ def api_land_sync():
 
     return jsonify(status='ok', seen=len(lands), new=new, updated=updated,
                    unchanged=unchanged, errors=errors)
+
+
+# ─── DRONE-USEFUL-AREA-001: приём геометрии маршрутов ────────────────────────
+#
+# Третий машинный endpoint модуля, построенный по тому же контракту, что
+# /drones/api/flight_sync и /drones/api/land_sync: токен в ТЕЛЕ запроса, а не
+# в заголовке; deny-by-default при незаданном DRONE_API_TOKEN; точечное
+# исключение CSRF в app.py:is_csrf_exempt().
+#
+# Что этот приёмник НИКОГДА не делает: не создаёт вылет, не изменяет
+# drone_flights (в том числе area_ha), не пишет в drone_sync_logs -- та
+# таблица несёт инвариант приёма ВЫЛЕТОВ, и посторонняя строка в ней сломала
+# бы каждую проверку, написанную против него.
+
+DRONE_ROUTE_SYNC_MAX_BATCH = 500
+
+# Потолок ОДНОГО маршрута. T40 пишет сотни точек на вылет; двадцать тысяч
+# покрывают самый длинный мыслимый маршрут с запасом в два порядка.
+#
+# [REASON]: предел стоит на ВХОДЕ, а не на надежде, что источник добрый. Без
+# него один ответ-переросток кладёт в SQLite мегабайты, а память приёмника
+# расходуется до того, как хоть одна проверка успела отказать.
+DRONE_ROUTE_MAX_POINTS = 20000
+
+# Потолок сериализованных точек одного маршрута.
+DRONE_ROUTE_MAX_JSON_BYTES = 4 * 1024 * 1024
+
+# Округление координат -- то же, что у сборщика (routes.COORDINATE_DECIMALS).
+# Число записано здесь константой, а не импортом: приложение и сборщик -- два
+# процесса со своими venv, и приложение не имеет права зависеть от модуля
+# сборщика ради одной цифры.
+DRONE_ROUTE_COORDINATE_DECIMALS = 7
+
+DRONE_ROUTE_MAX_ERRORS_LOGGED = 50
+
+DRONE_ROUTE_SOURCE = 'dji-ui-capture'
+
+
+def _drone_route_points(raw):
+    """Точки маршрута, проверенные до единой. Отказ -- ValueError.
+
+    [REASON]: проверяется КАЖДАЯ точка, а не первая и длина списка. Строка
+    вместо числа, NaN, широта 91 и вложенный список пролезли бы в базу и
+    упали бы потом внутри расчёта -- то есть на пересчёте чужого дня, далеко
+    от причины. Здесь отказ стоит одного маршрута из пакета.
+    """
+    if not isinstance(raw, list):
+        raise ValueError('points must be a list')
+    if len(raw) > DRONE_ROUTE_MAX_POINTS:
+        raise ValueError('route carries %d points, the cap is %d'
+                         % (len(raw), DRONE_ROUTE_MAX_POINTS))
+    if len(raw) < 2:
+        raise ValueError('a route needs at least 2 points, got %d' % len(raw))
+
+    points = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            raise ValueError('point #%d is not a [lat, lng] pair' % index)
+        lat, lng = item[0], item[1]
+        for value in (lat, lng):
+            # bool is an int in Python; True as a latitude must not pass.
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError('point #%d carries a non-numeric coordinate'
+                                 % index)
+            if value != value or value in (float('inf'), float('-inf')):
+                raise ValueError('point #%d carries a non-finite coordinate'
+                                 % index)
+        if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lng <= 180.0):
+            raise ValueError('point #%d is outside the WGS84 range' % index)
+        points.append([round(float(lat), DRONE_ROUTE_COORDINATE_DECIMALS),
+                       round(float(lng), DRONE_ROUTE_COORDINATE_DECIMALS)])
+    return points
+
+
+def _drone_route_width(raw, recorded):
+    """(ширина или None, записана ли она).
+
+    [REASON]: подстановка ширины запрещена решением владельца 2026-08-25.
+    Ноль и отрицательное значение отбрасываются наравне с отсутствием: нулевой
+    радиус буфера даёт уверенные 0.00 га вместо честного «ширина неизвестна»,
+    и это ровно тот случай, когда неверное число выглядит измеренным.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None, False
+    if raw != raw or raw <= 0:
+        return None, False
+    # `spray_width_recorded` сборщика уважается, но подтвердить отсутствие он
+    # может, а придумать наличие -- нет.
+    if recorded is False:
+        return None, False
+    return float(raw), True
+
+
+def _drone_route_content_hash(points, width, takeoff, data_type,
+                              decoder_version):
+    """Хеш НОРМАЛИЗОВАННОГО содержимого маршрута.
+
+    [REASON]: считается по тому, что легло в базу, а не по присланному телу.
+    Тело несёт `received_at`, порядок ключей и служебные поля сборщика --
+    они меняются от прогона к прогону, и хеш по ним объявлял бы «изменилось»
+    на каждой повторной отправке того же маршрута. Хеш по нормализованному
+    содержимому отвечает на единственный вопрос, который тут задают: то же
+    самое приехало или другое.
+    """
+    payload = json.dumps({'points': points, 'spray_width_m': width,
+                          'takeoff': takeoff, 'data_type': data_type,
+                          'decoder_version': decoder_version},
+                         ensure_ascii=False, sort_keys=True,
+                         separators=(',', ':'))
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+
+def _drone_route_existing(flight_ids):
+    """{dji_flight_id: DroneFlightRoute} для уже сохранённых маршрутов.
+
+    Читается порциями: SQLite ограничивает число связанных параметров в одном
+    операторе, а полный пакет -- 500 маршрутов.
+    """
+    found = {}
+    ids = [value for value in flight_ids if value is not None]
+    for start in range(0, len(ids), 500):
+        rows = (DroneFlightRoute.query
+                .filter(DroneFlightRoute.dji_flight_id
+                        .in_(ids[start:start + 500])).all())
+        for row in rows:
+            found[row.dji_flight_id] = row
+    return found
+
+
+def _drone_route_flights(flight_ids):
+    """{dji_flight_id: DroneFlight} -- вылеты, к которым можно прикрепиться."""
+    found = {}
+    ids = [value for value in flight_ids if value is not None]
+    for start in range(0, len(ids), 500):
+        rows = (DroneFlight.query
+                .filter(DroneFlight.dji_flight_id
+                        .in_(ids[start:start + 500])).all())
+        for row in rows:
+            found[row.dji_flight_id] = row
+    return found
+
+
+def _drone_route_flight_id(raw):
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError('dji_flight_id must be an integer')
+    return raw
+
+
+@drones_bp.route('/api/route_sync', methods=['POST'])
+def api_route_sync():
+    """Ingest a batch of decoded DJI flight ROUTES.
+
+    Body, same convention as the two ingests beside it (token in the BODY,
+    not a header):
+
+        {"token": "...", "routes": [ ...route_body objects... ]}
+
+    Counter semantics -- every seen route lands in exactly one bucket:
+
+        seen = new + updated + unchanged + errors + unlinked
+
+    `unlinked` is its own bucket, not an error: a route whose dji_flight_id
+    has no drone_flights row is not a malformed record, it is a route that
+    arrived before its flight. It is REJECTED (nothing is written) and
+    counted, so the operator sees that flights must be synced first and can
+    simply re-send the routes afterwards. Attaching it by guess -- to the
+    nearest flight, or by nickname and time -- would put geometry against a
+    flight nobody proved it belongs to.
+
+    Update rule, documented because it is a choice and not a law: a route
+    whose CONTENT hash differs from the stored one REPLACES it, and
+    `ingest_count` records how many bodies have arrived for that flight. DJI
+    re-serves the same day's routes on every map view, so identical bodies
+    are the norm (`unchanged`) and a differing body means the cabinet changed
+    what it reports. Keeping the first and dropping the rest would freeze a
+    known-stale geometry; keeping both would need a rule for which one the
+    area is computed from, and no such rule is proven.
+
+    What this endpoint never does: it never creates a flight, never modifies
+    drone_flights (area_ha above all), and never writes to drone_sync_logs.
+    """
+    payload = request.get_json(force=True, silent=True)
+    token = extract_token(payload)
+    # [REASON]: a missing DRONE_API_TOKEN must DENY, never accept --
+    # verify_api_token already implements that contract; no fallback here.
+    if not verify_api_token(token, current_app.config.get('DRONE_API_TOKEN')):
+        return jsonify(error='unauthorized'), 401
+
+    routes = payload.get('routes')
+    if not isinstance(routes, list):
+        return jsonify(error='routes must be a list'), 400
+    if len(routes) > DRONE_ROUTE_SYNC_MAX_BATCH:
+        return jsonify(error='batch too large: %d routes, the cap is %d per '
+                             'request -- send chunks'
+                             % (len(routes), DRONE_ROUTE_SYNC_MAX_BATCH)), 413
+
+    new = updated = unchanged = errors = unlinked = 0
+    error_lines = []
+    now = datetime.utcnow()
+
+    try:
+        wanted = []
+        for route in routes:
+            if isinstance(route, dict):
+                value = route.get('dji_flight_id')
+                if isinstance(value, int) and not isinstance(value, bool):
+                    wanted.append(value)
+        existing = _drone_route_existing(wanted)
+        flights = _drone_route_flights(wanted)
+
+        for position, route in enumerate(routes):
+            try:
+                if not isinstance(route, dict):
+                    raise ValueError('route #%d is not an object' % position)
+                flight_id = _drone_route_flight_id(route.get('dji_flight_id'))
+
+                flight = flights.get(flight_id)
+                if flight is None:
+                    # [REASON]: counted, not stored, and NOT an error. The
+                    # route is well-formed; its flight simply has not been
+                    # synced yet. A row with drone_flight_id NULL would be an
+                    # orphan nothing ever reattaches, because the only thing
+                    # that could reattach it is the very id that is missing.
+                    unlinked += 1
+                    continue
+
+                points = _drone_route_points(route.get('points'))
+                points_json = json.dumps(points, ensure_ascii=False,
+                                         separators=(',', ':'))
+                if len(points_json.encode('utf-8')) > DRONE_ROUTE_MAX_JSON_BYTES:
+                    raise ValueError('serialised route exceeds %d bytes'
+                                     % DRONE_ROUTE_MAX_JSON_BYTES)
+
+                width, recorded = _drone_route_width(
+                    route.get('spray_width_m'),
+                    route.get('spray_width_recorded'))
+
+                takeoff = route.get('takeoff')
+                if takeoff is not None:
+                    pair = _drone_route_points([takeoff, takeoff])
+                    takeoff = pair[0]
+                takeoff_json = (json.dumps(takeoff, separators=(',', ':'))
+                                if takeoff is not None else None)
+
+                data_type = _drone_text(route.get('data_type'), 40)
+                decoder_version = _drone_text(route.get('decoder_version'), 40)
+                content = _drone_route_content_hash(points, width, takeoff,
+                                                    data_type,
+                                                    decoder_version)
+
+                census = route.get('point_shape_census')
+                census_json = (json.dumps(census, ensure_ascii=False,
+                                          sort_keys=True)
+                               if isinstance(census, dict) else None)
+
+                row = existing.get(flight_id)
+                if row is not None and row.content_sha256 == content:
+                    # Идентичное содержимое: не новая строка и не изменение.
+                    row.ingest_count = (row.ingest_count or 0) + 1
+                    row.updated_at = now
+                    unchanged += 1
+                    continue
+
+                is_new = row is None
+                if is_new:
+                    row = DroneFlightRoute(dji_flight_id=flight_id,
+                                           received_at=now)
+                row.drone_flight_id = flight.id
+                row.point_count = len(points)
+                row.points_json = points_json
+                row.takeoff_json = takeoff_json
+                row.spray_width_m = width
+                row.spray_width_recorded = recorded
+                row.dji_area_m2 = (route.get('dji_area_m2')
+                                   if isinstance(route.get('dji_area_m2'),
+                                                 (int, float))
+                                   and not isinstance(route.get('dji_area_m2'),
+                                                      bool)
+                                   else None)
+                row.data_type = data_type
+                row.decoder_version = decoder_version
+                row.collector_version = _drone_text(
+                    route.get('collector_version'), 40)
+                row.point_shape_census_json = census_json
+                row.content_sha256 = content
+                row.mission_uuid = _drone_text(route.get('mission_uuid'), 100)
+                row.source = DRONE_ROUTE_SOURCE
+                row.updated_at = now
+
+                if is_new:
+                    row.ingest_count = 1
+                    try:
+                        # [REASON]: flushed inside a savepoint so that a
+                        # dji_flight_id inserted by an OVERLAPPING run
+                        # surfaces here as one rejected route instead of an
+                        # IntegrityError at commit that rolls the whole batch
+                        # back. Same rule as the contour ingest beside it.
+                        with db.session.begin_nested():
+                            db.session.add(row)
+                    except IntegrityError:
+                        db.session.expunge(row)
+                        errors += 1
+                        if len(error_lines) < DRONE_ROUTE_MAX_ERRORS_LOGGED:
+                            error_lines.append(
+                                'route of flight %d was inserted by a '
+                                'concurrent run' % flight_id)
+                        continue
+                    # The row must be visible to the next iteration: one batch
+                    # can legitimately carry the same flight twice.
+                    existing[flight_id] = row
+                    new += 1
+                else:
+                    row.ingest_count = (row.ingest_count or 0) + 1
+                    updated += 1
+            except Exception as exc:
+                # [REASON]: one unusable route increments errors and is
+                # recorded; the rest of the chunk must still land. Same rule
+                # as the flight and contour ingests.
+                errors += 1
+                if len(error_lines) < DRONE_ROUTE_MAX_ERRORS_LOGGED:
+                    error_lines.append(str(exc))
+
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception('DRONE ROUTE INGEST: batch rolled back')
+        return jsonify(status='error', seen=len(routes), new=0, updated=0,
+                       unchanged=0, errors=len(routes), unlinked=0,
+                       error=str(exc)), 500
+
+    if error_lines:
+        # [REASON]: the messages carry indexes, ids and limits -- never a
+        # coordinate, never a route body and never the token. A rejected
+        # route is diagnosed by its position and its rule, not by its
+        # geometry.
+        current_app.logger.warning(
+            'DRONE ROUTE INGEST: %d route(s) of %d rejected. First reasons: %s',
+            errors, len(routes), ' | '.join(error_lines[:5]))
+    if unlinked:
+        current_app.logger.warning(
+            'DRONE ROUTE INGEST: %d route(s) of %d name a flight that is not '
+            'in drone_flights -- sync the flights first, then re-send the '
+            'routes.', unlinked, len(routes))
+
+    return jsonify(status='ok', seen=len(routes), new=new, updated=updated,
+                   unchanged=unchanged, errors=errors, unlinked=unlinked)
 
 
 @drones_bp.route('/units')
@@ -2601,6 +2957,187 @@ def summary():
         region_labels=_drone_region_label_map(regions),
     )
 
+
+# ─── DRONE-USEFUL-AREA-001: расчётная полезная площадь ───────────────────────
+
+# Окно периода по умолчанию, в днях назад от сегодняшнего локального дня.
+#
+# [REASON]: ограниченное окно, а не «за всё время». Таблица растёт на работу в
+# день на машину, и страница без границы по умолчанию однажды тихо станет
+# страницей на несколько тысяч строк. Границу видно в полях формы, и «за всё
+# время» достижимо ссылкой -- как на сводке.
+DRONE_COVERAGE_DEFAULT_DAYS = 30
+
+# Сколько работ показывается на странице. Больше -- это уже выгрузка.
+DRONE_COVERAGE_MAX_ROWS = 500
+
+# Подписи статусов качества. Оба языка объявлены явно; узбекский -- только
+# кириллицей.
+DRONE_COVERAGE_STATUS_LABELS = {
+    ua.READY_ESTIMATE: ('Расчёт готов', 'Ҳисоб тайёр'),
+    ua.PARTIAL_DATA: ('Неполные данные', 'Тўлиқ бўлмаган маълумот'),
+    ua.DATA_UNAVAILABLE: ('Маршрут не получен', 'Маршрут олинмаган'),
+    ua.CONTOUR_AMBIGUOUS: ('Контур неоднозначен', 'Контур аниқ эмас'),
+    ua.CONTOUR_NOT_MATCHED: ('Контур не найден', 'Контур топилмади'),
+    ua.ROUTE_INVALID: ('Маршрут непригоден', 'Маршрут яроқсиз'),
+}
+
+# Пояснение к причине -- почему числа нет. Машинно-читаемый код остаётся в
+# базе; человеку показывается предложение.
+DRONE_COVERAGE_REASON_LABELS = {
+    ua.REASON_OK: ('Все входные данные на месте',
+                   'Барча кириш маълумотлари мавжуд'),
+    ua.REASON_NO_ROUTE: ('Ни по одному вылету маршрут не получен',
+                         'Бирорта парвоз бўйича маршрут олинмаган'),
+    ua.REASON_SOME_FLIGHTS_WITHOUT_ROUTE: (
+        'У части вылетов маршрута нет',
+        'Парвозларнинг бир қисмида маршрут йўқ'),
+    ua.REASON_WIDTH_MISSING_ON_WORK_PASS: (
+        'DJI не записал ширину захвата на рабочем проходе',
+        'DJI иш ўтишида қамров кенглигини ёзмаган'),
+    ua.REASON_CONTOUR_AMBIGUOUS: (
+        'Два контура подходят одинаково — площадь не считается',
+        'Иккита контур бир хил тўғри келади — майдон ҳисобланмайди'),
+    ua.REASON_CONTOUR_NOT_MATCHED: (
+        'Ни один контур не совпал с маршрутом',
+        'Ҳеч бир контур маршрутга мос келмади'),
+    ua.REASON_CONTOUR_NOT_OFFERED: (
+        'Подходящих контуров в справочнике нет',
+        'Маълумотномада мос контур йўқ'),
+    ua.REASON_ROUTE_UNUSABLE: (
+        'В сохранённом маршруте нет пригодной геометрии',
+        'Сақланган маршрутда яроқли геометрия йўқ'),
+}
+
+
+def _drone_coverage_filters(args):
+    """Период, машина и статус качества. Период ограничен по умолчанию."""
+    today = _drone_today_local()
+    raw_from = args.get('date_from')
+    raw_to = args.get('date_to')
+    # [REASON]: отсутствие параметра и ПУСТОЙ параметр -- разные вещи. Нет
+    # параметра вовсе -- показываем окно по умолчанию; пустая строка --
+    # оператор осознанно снял границу ссылкой «за всё время».
+    if raw_from is None and raw_to is None:
+        date_from = today - timedelta(days=DRONE_COVERAGE_DEFAULT_DAYS)
+        date_to = today
+    else:
+        date_from = _drone_parse_date((raw_from or '').strip())
+        date_to = _drone_parse_date((raw_to or '').strip())
+
+    status = (args.get('status') or '').strip()
+    if status not in ua.QUALITY_STATUSES:
+        status = ''
+    return {
+        'date_from': date_from,
+        'date_to': date_to,
+        'date_from_s': date_from.isoformat() if date_from else '',
+        'date_to_s': date_to.isoformat() if date_to else '',
+        'unit_id': args.get('unit_id', type=int),
+        'status': status,
+    }
+
+
+@drones_bp.route('/coverage')
+@module_required('drones')
+def coverage():
+    """Расчётная полезная площадь по работам. Только чтение.
+
+    Отдельный маршрут, а не колонка на существующей сводке: `/drones/`,
+    `/drones/summary` и выгрузки Excel продолжают показывать площадь DJI, и
+    смысл их чисел этой страницей не меняется.
+
+    [REASON]: НИ ОДНА координата, ни одно кольцо полигона и ни один
+    идентификатор вылета DJI на эту страницу не выходят. Показываются
+    площади, счётчики и статусы; геометрия читается только пересчётом,
+    который живёт вне веб-процесса. Держится тестом, который ищет в HTML
+    координаты поля из фикстуры.
+    """
+    filters = _drone_coverage_filters(request.args)
+
+    q = DroneCoverageWork.query.options(
+        joinedload(DroneCoverageWork.drone_unit),
+        joinedload(DroneCoverageWork.field_contour))
+    if filters['date_from']:
+        q = q.filter(DroneCoverageWork.work_date >= filters['date_from'])
+    if filters['date_to']:
+        q = q.filter(DroneCoverageWork.work_date <= filters['date_to'])
+    if filters['unit_id']:
+        q = q.filter(DroneCoverageWork.drone_unit_id == filters['unit_id'])
+    if filters['status']:
+        q = q.filter(DroneCoverageWork.quality_status == filters['status'])
+
+    rows = (q.order_by(DroneCoverageWork.work_date.desc(),
+                       DroneCoverageWork.unit_key,
+                       DroneCoverageWork.group_index)
+            .limit(DRONE_COVERAGE_MAX_ROWS + 1).all())
+    truncated = len(rows) > DRONE_COVERAGE_MAX_ROWS
+    rows = rows[:DRONE_COVERAGE_MAX_ROWS]
+
+    # [REASON]: итоги считаются по ВЫБОРКЕ ФИЛЬТРА, а не по показанной
+    # странице, и суммируют ТОЛЬКО READY_ESTIMATE. Сумма, в которую попала бы
+    # частичная оценка, читалась бы как измеренный итог -- ровно то, что
+    # задание запрещает. Ноль отдельно от «нет данных»: `func.sum` по пустой
+    # выборке отдаёт NULL, и это не то же самое, что 0.00 га.
+    totals_q = db.session.query(
+        func.count(DroneCoverageWork.id),
+        func.sum(case((DroneCoverageWork.quality_status == ua.READY_ESTIMATE,
+                       DroneCoverageWork.estimated_useful_area_ha),
+                      else_=None)),
+        func.sum(case((DroneCoverageWork.quality_status == ua.READY_ESTIMATE,
+                       1), else_=0)),
+        func.sum(DroneCoverageWork.dji_area_ha),
+    )
+    if filters['date_from']:
+        totals_q = totals_q.filter(
+            DroneCoverageWork.work_date >= filters['date_from'])
+    if filters['date_to']:
+        totals_q = totals_q.filter(
+            DroneCoverageWork.work_date <= filters['date_to'])
+    if filters['unit_id']:
+        totals_q = totals_q.filter(
+            DroneCoverageWork.drone_unit_id == filters['unit_id'])
+    if filters['status']:
+        totals_q = totals_q.filter(
+            DroneCoverageWork.quality_status == filters['status'])
+    works_total, useful_ha, ready_works, dji_ha = totals_q.one()
+
+    is_ru = (g.get('lang') or 'ru') == 'ru'
+    table = []
+    for row in rows:
+        status_labels = DRONE_COVERAGE_STATUS_LABELS.get(
+            row.quality_status, (row.quality_status, row.quality_status))
+        reason_labels = DRONE_COVERAGE_REASON_LABELS.get(
+            row.quality_reason, (row.quality_reason, row.quality_reason))
+        table.append({
+            'row': row,
+            'status_label': status_labels[0] if is_ru else status_labels[1],
+            'reason_label': reason_labels[0] if is_ru else reason_labels[1],
+            'is_ready': row.quality_status == ua.READY_ESTIMATE,
+            # Название контура -- это подпись поля, которую набрал оператор.
+            # Ни полигона, ни рамки, ни подписанной ссылки рядом с ней нет.
+            'contour_name': (row.field_contour.name
+                             if row.field_contour is not None else None),
+        })
+
+    return render_template(
+        'drones/coverage.html',
+        rows=table,
+        filters=filters,
+        truncated=truncated,
+        max_rows=DRONE_COVERAGE_MAX_ROWS,
+        units=DroneUnit.query.order_by(DroneUnit.number).all(),
+        statuses=[(code, DRONE_COVERAGE_STATUS_LABELS[code][0 if is_ru else 1])
+                  for code in ua.QUALITY_STATUSES],
+        totals={
+            'works': works_total or 0,
+            'ready_works': int(ready_works or 0),
+            'not_ready_works': (works_total or 0) - int(ready_works or 0),
+            'useful_ha': useful_ha,
+            'dji_ha': dji_ha,
+        },
+        algorithm_version=ua.ALGORITHM_VERSION,
+    )
 
 @drones_bp.route('/sources')
 @module_required('drones')
