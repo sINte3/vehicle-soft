@@ -52,6 +52,12 @@ CONTOUR_SOURCE = 'dji'
 STATUS_ORDER = (ua.READY_ESTIMATE, ua.PARTIAL_DATA, ua.DATA_UNAVAILABLE,
                 ua.CONTOUR_AMBIGUOUS, ua.CONTOUR_NOT_MATCHED, ua.ROUTE_INVALID)
 
+# Состояние маршрута ОДНОГО вылета. Три значения, а не два: «не привозили»
+# и «привезли негодное» -- разные факты и разные действия.
+ROUTE_PRESENT = 'PRESENT'
+ROUTE_ABSENT = 'ABSENT'
+ROUTE_INVALID = 'INVALID'
+
 
 class RecalcError(Exception):
     """Пересчёт невозможен. Никогда не поднимается ради «странного» числа."""
@@ -138,15 +144,28 @@ def flights_of_day(con, day):
     flights = []
     for row in rows:
         started = _parse_dt(row['started_at'])
+        # Три состояния маршрута, а не два.
+        #
+        # [REASON]: «маршрута нет» и «маршрут есть, но негодный» -- разные
+        # факты, и второй маскировался под первый. Нечитаемый JSON давал
+        # пустой список, пустой список отправлял вылет в корзину «без
+        # маршрута», и битая геометрия молча превращалась в DATA_UNAVAILABLE
+        # вместо ROUTE_INVALID. Разница существенная: в первом случае сборщик
+        # ещё не привозил маршрут, во втором он привёз то, что не читается, и
+        # это повод смотреть на приём, а не ждать следующего сбора.
         points = None
-        if row['points_json']:
+        state = ROUTE_ABSENT
+        if row['points_json'] is not None:
+            state = ROUTE_INVALID
             try:
-                points = json.loads(row['points_json'])
+                parsed = json.loads(row['points_json'])
             except ValueError:
-                # Нечитаемый JSON -- это НЕ «маршрута нет». Пустой список
-                # доводит работу до ROUTE_INVALID, а не до тихого пропуска.
-                points = []
+                parsed = None
+            if isinstance(parsed, list) and len(parsed) >= 2:
+                points = parsed
+                state = ROUTE_PRESENT
         flights.append({
+            'route_state': state,
             'flight_row_id': row['id'],
             'flight_id': row['dji_flight_id'],
             'drone_unit_id': row['drone_unit_id'],
@@ -233,38 +252,67 @@ def compute_day(con, day, params=None):
         return []
 
     # Группировка -- пространственная и только по вылетам, У КОТОРЫХ ЕСТЬ
-    # маршрут: рамку вылета без геометрии построить не из чего.
-    routed = [item for item in flights if item['points']]
+    # годный маршрут: рамку вылета без геометрии построить не из чего.
+    routed = [item for item in flights
+              if item['route_state'] == ROUTE_PRESENT]
+    absent = {}
+    invalid = {}
+    for item in flights:
+        if item['route_state'] == ROUTE_ABSENT:
+            absent.setdefault(item['unit_key'], []).append(item)
+        elif item['route_state'] == ROUTE_INVALID:
+            invalid.setdefault(item['unit_key'], []).append(item)
+
     groups = ua.group_routes(routed)
 
-    # Вылеты без маршрута всё равно принадлежат работе: они делают её вход
-    # неполным, и это обязано быть видно. Приписываются к работе своей машины
-    # и своего дня; если работ у машины в этот день несколько, попадают в
-    # первую -- число вылетов без маршрута от этого не меняется.
-    unrouted = {}
-    for item in flights:
-        if not item['points']:
-            unrouted.setdefault(item['unit_key'], []).append(item)
+    # Сколько РАБОТ вышло у каждой машины за этот день. От этого зависит,
+    # можно ли отнести вылет без маршрута к одной определённой работе.
+    works_per_unit = {}
+    for unit_key, _day, _index, _members in groups:
+        works_per_unit[unit_key] = works_per_unit.get(unit_key, 0) + 1
 
     results = []
-    seen_units = set()
+    used_indexes = {}
     for unit_key, group_day, index, members in groups:
         candidates = contour_candidates(
             con, [point for member in members for point in member['points']])
+
+        used_indexes[(unit_key, group_day)] = max(
+            used_indexes.get((unit_key, group_day), -1), index)
+
+        # Вылеты без маршрута приписываются работе ТОЛЬКО когда работа у
+        # машины в этот день одна: тогда другой кандидатуры нет и приписка
+        # ничего не выдумывает.
+        #
+        # [REASON]: при двух и более работах приписка к первой была
+        # произвольной. Она оставляла ОСТАЛЬНЫЕ работы в READY_ESTIMATE и
+        # объявляла их полными -- при том, что недостающий вылет мог
+        # принадлежать любой из них. Теперь ни одна не считается полной, а
+        # сам вылет считается ровно один раз, своей отдельной строкой: класть
+        # его в `flights_total` каждой работы значило бы удвоить и счётчик
+        # вылетов, и площадь DJI.
+        single_work = (works_per_unit.get(unit_key, 0) == 1
+                       and not invalid.get(unit_key))
         extra = []
-        if index == 0 and unit_key not in seen_units:
-            extra = unrouted.pop(unit_key, [])
-            seen_units.add(unit_key)
+        unassigned = 0
+        if single_work:
+            extra = absent.pop(unit_key, [])
+        else:
+            unassigned = (len(absent.get(unit_key) or ())
+                          + len(invalid.get(unit_key) or ()))
 
         coverage = ua.compute_work(
             members, candidates, params=params,
             flights_total=len(members) + len(extra),
+            unassigned_flights=unassigned,
             mission_state=_mission_state(members))
 
         contour_row_id = None
+        contour_geometry = None
         for candidate in candidates:
             if candidate['uuid'] == coverage.contour_uuid:
                 contour_row_id = candidate['contour_row_id']
+                contour_geometry = candidate['geojson']
                 break
 
         head = members[0]
@@ -279,26 +327,56 @@ def compute_day(con, day, params=None):
                 [(m['flight_id'], m['content_sha256']) for m in members]),
             'inputs_fingerprint': ua.inputs_fingerprint(
                 [(m['flight_id'], m['content_sha256']) for m in members],
-                params=params, contour_key=coverage.contour_uuid),
+                params=params, contour_key=coverage.contour_uuid,
+                contour_geometry=contour_geometry),
             'dji_area_ha': _sum_area(members + extra),
         })
 
-    # Машина, у которой в этот день НИ ОДНОГО маршрута нет вовсе: работа
-    # существует, число назвать нельзя. Строка со статусом DATA_UNAVAILABLE --
-    # это не шум, а единственное место, где видно, что маршруты не доехали.
-    for unit_key, members in sorted(unrouted.items()):
+    def _next_index(unit_key, day):
+        key = (unit_key, day)
+        used_indexes[key] = used_indexes.get(key, -1) + 1
+        return used_indexes[key]
+
+    # Вылеты, чей сохранённый маршрут негоден. Своя строка со своим статусом:
+    # ROUTE_INVALID, а не DATA_UNAVAILABLE -- маршрут привезли, он не читается.
+    for unit_key, members in sorted(invalid.items()):
+        day_iso = members[0]['day']
+        coverage = ua.compute_work(
+            [{'points': [], 'spray_width_m': None} for _ in members],
+            [], params=params, flights_total=len(members))
+        results.append({
+            'unit_key': unit_key,
+            'drone_unit_id': members[0]['drone_unit_id'],
+            'work_date': day_iso,
+            'group_index': _next_index(unit_key, day_iso),
+            'coverage': coverage,
+            'contour_row_id': None,
+            'route_fingerprint': ua.route_fingerprint(
+                [(m['flight_id'], m['content_sha256']) for m in members]),
+            'inputs_fingerprint': ua.inputs_fingerprint(
+                [(m['flight_id'], m['content_sha256']) for m in members],
+                params=params, contour_key=None, contour_geometry=None),
+            'dji_area_ha': _sum_area(members),
+        })
+
+    # Машина, у которой вылеты остались без маршрута вовсе. Строка со статусом
+    # DATA_UNAVAILABLE -- это не шум, а единственное место, где видно, что
+    # маршруты не доехали. При нескольких работах машины сюда же попадают
+    # вылеты, которые не удалось отнести ни к одной из них.
+    for unit_key, members in sorted(absent.items()):
+        day_iso = members[0]['day']
         coverage = ua.compute_work([], [], params=params,
                                    flights_total=len(members))
         results.append({
             'unit_key': unit_key,
             'drone_unit_id': members[0]['drone_unit_id'],
-            'work_date': members[0]['day'],
-            'group_index': 0,
+            'work_date': day_iso,
+            'group_index': _next_index(unit_key, day_iso),
             'coverage': coverage,
             'contour_row_id': None,
             'route_fingerprint': ua.route_fingerprint([]),
-            'inputs_fingerprint': ua.inputs_fingerprint([], params=params,
-                                                        contour_key=None),
+            'inputs_fingerprint': ua.inputs_fingerprint(
+                [], params=params, contour_key=None, contour_geometry=None),
             'dji_area_ha': _sum_area(members),
         })
     return results
@@ -390,14 +468,18 @@ def recalculate(db_path, date_from, date_to, apply=False, params=None,
         _require_tables(con)
         summary = {status: 0 for status in STATUS_ORDER}
         summary.update({'days': 0, 'works': 0, 'inserted': 0, 'updated': 0,
-                        'unchanged': 0, 'flights': 0, 'routes': 0,
-                        'ready_area_ha': 0.0,
+                        'unchanged': 0, 'deleted': 0, 'flights': 0,
+                        'routes': 0, 'ready_area_ha': 0.0,
                         'algorithm_version': ua.ALGORITHM_VERSION,
                         'params': ua.algorithm_params(params),
                         'applied': bool(apply)})
 
         if apply:
             con.execute('BEGIN')
+
+        # Полный набор работ, который даёт ЭТОТ пересчёт за период. По нему
+        # ниже вычищаются строки, которых новый набор больше не содержит.
+        produced = set()
 
         for day in days_with_flights(con, date_from, date_to):
             summary['days'] += 1
@@ -410,6 +492,9 @@ def recalculate(db_path, date_from, date_to, apply=False, params=None,
                 summary['routes'] += coverage.routes_total
                 if coverage.is_summable:
                     summary['ready_area_ha'] += coverage.estimated_useful_area_ha
+
+                produced.add((item['unit_key'], item['work_date'],
+                              item['group_index']))
 
                 existing = con.execute(
                     'SELECT id, inputs_fingerprint FROM drone_coverage_works '
@@ -442,6 +527,36 @@ def recalculate(db_path, date_from, date_to, apply=False, params=None,
                     # ничего и не двигает `computed_at`.
                     summary['unchanged'] += 1
 
+        # ── Снятие устаревших строк ─────────────────────────────────────
+        #
+        # [REASON]: пересчёт -- это СНИМОК периода, а не только вставка и
+        # обновление. Если вчера у машины было две работы, а после исправления
+        # маршрутов они слились в одну, вторая строка никуда не девалась и
+        # продолжала попадать в сумму на /drones/coverage -- итог завышался, и
+        # ни одна строка при этом не выглядела неправильной. То же самое с
+        # днём, у которого вылеты удалили или перенесли: день выпадает из
+        # `days_with_flights`, его работы не пересчитываются, а прежние
+        # результаты остаются.
+        #
+        # Поэтому подметается ВЕСЬ период, а не только дни, в которых сегодня
+        # нашлись вылеты. Границы -- ровно запрошенные: строка за пределами
+        # периода этим прогоном не проверялась, и удалять её было бы удалением
+        # данных, о которых прогон ничего не знает.
+        stale = [row['id'] for row in con.execute(
+            'SELECT id, unit_key, work_date, group_index '
+            '  FROM drone_coverage_works '
+            ' WHERE work_date >= ? AND work_date <= ?',
+            (date_from.isoformat(), date_to.isoformat())).fetchall()
+            if (row['unit_key'], row['work_date'], row['group_index'])
+            not in produced]
+        summary['deleted'] = len(stale)
+        if apply and stale:
+            for start in range(0, len(stale), 500):
+                chunk = stale[start:start + 500]
+                con.execute(
+                    'DELETE FROM drone_coverage_works WHERE id IN (%s)'
+                    % ','.join('?' * len(chunk)), chunk)
+
         if apply:
             con.commit()
         else:
@@ -468,6 +583,7 @@ def format_summary(summary):
         'rows inserted       : %d' % summary['inserted'],
         'rows updated        : %d' % summary['updated'],
         'rows unchanged      : %d' % summary['unchanged'],
+        'rows deleted (stale): %d' % summary['deleted'],
         '',
         'READY               : %d' % summary[ua.READY_ESTIMATE],
         'PARTIAL             : %d' % summary[ua.PARTIAL_DATA],
