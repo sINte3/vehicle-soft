@@ -337,6 +337,79 @@ class TestGrouping(unittest.TestCase):
                  flight(2, latlon_line(plane, 20000, 20000, 20200, 20000))]
         self.assertEqual(len(group_flights(parts)), 2)
 
+    # ── Работа -- связная компонента, а не «первый подошедший кластер» ──────
+
+    def _bridge_parts(self):
+        """A внизу, B вверху, между собой НЕ пересекаются; C накрывает обоих."""
+        plane = LocalPlane(LAT0, LNG0)
+        return {
+            'A': flight(1, latlon_line(plane, 0, 0, 200, 0)),
+            'B': flight(2, latlon_line(plane, 2000, 0, 2200, 0)),
+            'C': flight(3, latlon_line(plane, 100, 0, 2100, 0)),
+        }
+
+    def _ids(self, groups):
+        return sorted(sorted(member['flight_id'] for member in members)
+                      for _basis, members in groups)
+
+    def test_a_and_b_alone_are_two_works(self):
+        """Предпосылка моста. Без неё следующая проверка ничего не значит."""
+        parts = self._bridge_parts()
+        self.assertEqual(self._ids(group_flights([parts['A'], parts['B']])),
+                         [[1], [2]])
+
+    def test_a_bridging_route_merges_two_existing_clusters(self):
+        """C пересекает и A, и B -- значит это ОДНА работа A+B+C.
+
+        [REASON]: прежний алгоритм клал маршрут в ПЕРВЫЙ пересечённый кластер
+        и останавливался, поэтому два уже заведённых кластера не сливались
+        никогда: ответом было [[1, 3], [2]]. Перекрытие A и C при этом
+        считалось дважды -- ровно та ошибка, ради которой группировка и
+        делается.
+        """
+        parts = self._bridge_parts()
+        groups = group_flights([parts['A'], parts['B'], parts['C']])
+        self.assertEqual(self._ids(groups), [[1, 2, 3]])
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0][0], GROUP_SPATIAL)
+
+    def test_the_grouping_does_not_depend_on_the_input_order(self):
+        import itertools
+        parts = self._bridge_parts()
+        seen = set()
+        for order in itertools.permutations(['A', 'B', 'C']):
+            groups = group_flights([parts[name] for name in order])
+            seen.add(repr(self._ids(groups)))
+        self.assertEqual(len(seen), 1,
+                         'the grouping changed with the input order: %s'
+                         % sorted(seen))
+        self.assertEqual(seen.pop(), repr([[1, 2, 3]]))
+
+    def test_a_bridge_does_not_join_genuinely_distant_routes(self):
+        """Отрицательный контроль: связная компонента не значит «все вместе».
+
+        Без неё проверка моста прошла бы и на коде, складывающем в одну работу
+        вообще всё, что случилось в один день.
+        """
+        plane = LocalPlane(LAT0, LNG0)
+        parts = self._bridge_parts()
+        far = flight(4, latlon_line(plane, 40000, 40000, 40200, 40000))
+        groups = group_flights([parts['A'], parts['B'], parts['C'], far])
+        self.assertEqual(self._ids(groups), [[1, 2, 3], [4]])
+
+    def test_mission_uuid_still_takes_no_part_in_the_grouping(self):
+        """Мост не протаскивает `mission_uuid` обратно в правило."""
+        plane = LocalPlane(LAT0, LNG0)
+        # Один и тот же mission_uuid на двух разнесённых маршрутах.
+        parts = [flight(1, latlon_line(plane, 0, 0, 200, 0), mission='M-1'),
+                 flight(2, latlon_line(plane, 40000, 40000, 40200, 40000),
+                        mission='M-1')]
+        self.assertEqual(self._ids(group_flights(parts)), [[1], [2]])
+        # И наоборот: разные mission_uuid не разрывают одну работу.
+        joined = [flight(1, latlon_line(plane, 0, 0, 200, 0), mission='M-1'),
+                  flight(2, latlon_line(plane, 0, 8, 200, 8), mission='M-2')]
+        self.assertEqual(self._ids(group_flights(joined)), [[1, 2]])
+
     def test_the_parts_of_one_work_are_measured_once_not_added_up(self):
         plane = LocalPlane(LAT0, LNG0)
         # Две одинаковые половины одной работы: сумма полос была бы вдвое

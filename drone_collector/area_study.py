@@ -943,6 +943,20 @@ def group_flights(flights, margin_deg=0.0015):
     [REASON]: группировка сделана ДО измерения площади, а не после. Сложить
     площади частей одной работы -- это ровно та ошибка, которую задание просит
     объяснить: перекрытие двух частей посчиталось бы дважды.
+
+    [REASON]: работа -- это СВЯЗНАЯ КОМПОНЕНТА графа пересечений, а не
+    «первый подошедший кластер». Прежняя редакция клала маршрут в первый
+    пересечённый кластер и на этом останавливалась, из-за чего два уже
+    заведённых кластера не сливались никогда:
+
+        A образует первую работу, B -- вторую, а пришедший позже C
+        пересекается и с A, и с B. Ответ обязан быть одной работой A+B+C;
+        прежний код оставлял две, и площадь перекрытия A и C считалась
+        дважды -- ровно та ошибка, ради которой группировка и делается.
+
+    Результат детерминирован и от порядка входных строк не зависит: рёбра
+    строятся по всем парам, компоненты обходятся от наименьшего номера, а
+    сами компоненты упорядочиваются по своему первому участнику.
     """
     buckets = {}
     for flight in flights:
@@ -954,28 +968,41 @@ def group_flights(flights, margin_deg=0.0015):
         members = sorted(buckets[key],
                          key=lambda item: (item.get('start_ms') or 0,
                                            item.get('flight_id') or 0))
-        clusters = []
-        for flight in members:
-            points = flight.get('points') or []
-            box = _bbox(points) if points else None
-            placed = False
-            for cluster in clusters:
-                if box is None or cluster['box'] is None:
+        boxes = [_bbox(flight.get('points') or []) if flight.get('points')
+                 else None for flight in members]
+
+        # Рёбра по ВСЕМ парам: маршрут, пересёкший двоих, связывает и их между
+        # собой. Маршрут без точек рамки не имеет и ни с кем не соединяется --
+        # он остаётся сам по себе, как и раньше.
+        neighbours = {index: set() for index in range(len(members))}
+        for first in range(len(members)):
+            if boxes[first] is None:
+                continue
+            for second in range(first + 1, len(members)):
+                if boxes[second] is None:
                     continue
-                if _bbox_overlap(box, cluster['box'], margin_deg):
-                    cluster['members'].append(flight)
-                    cluster['box'] = (min(box[0], cluster['box'][0]),
-                                      min(box[1], cluster['box'][1]),
-                                      max(box[2], cluster['box'][2]),
-                                      max(box[3], cluster['box'][3]))
-                    placed = True
-                    break
-            if not placed:
-                clusters.append({'box': box, 'members': [flight]})
-        for cluster in clusters:
-            basis = (GROUP_SPATIAL if len(cluster['members']) > 1
-                     else GROUP_SINGLE)
-            groups.append((basis, cluster['members']))
+                if _bbox_overlap(boxes[first], boxes[second], margin_deg):
+                    neighbours[first].add(second)
+                    neighbours[second].add(first)
+
+        seen = set()
+        for start in range(len(members)):
+            if start in seen:
+                continue
+            component = []
+            stack = [start]
+            seen.add(start)
+            while stack:
+                index = stack.pop()
+                component.append(index)
+                for peer in sorted(neighbours[index]):
+                    if peer not in seen:
+                        seen.add(peer)
+                        stack.append(peer)
+            component.sort()
+            cluster = [members[index] for index in component]
+            basis = GROUP_SPATIAL if len(cluster) > 1 else GROUP_SINGLE
+            groups.append((basis, cluster))
     return groups
 
 
