@@ -2497,6 +2497,171 @@ class DroneWorkImport(db.Model):
     )
 
 
+# ─── DRONE-USEFUL-AREA-001: геометрия маршрутов и расчёт полезной площади ────
+#
+# Две РАЗНЫЕ сущности, и разделены они намеренно. `DroneFlightRoute` -- это
+# принятые данные: геометрия одного вылета, как её прислал сборщик. Она
+# существует независимо от того, посчитано по ней что-нибудь или нет.
+# `DroneCoverageWork` -- это ВЫВОД по группе вылетов, сделанный по правилам
+# версии `useful-area-v1`. Смена версии правил обязана переписать вывод и не
+# имеет права тронуть принятые данные.
+#
+# [REASON]: `drone_flights.area_ha` (площадь DJI из `new_work_area`) не
+# трогается ни одной строкой здесь. Это отдельный, ранее согласованный
+# показатель, по которому выставлялись счета; новый показатель живёт рядом,
+# а не вместо. Переименование, перезапись или молчаливая подмена запрещены
+# решением владельца.
+
+class DroneFlightRoute(db.Model):
+    """Геометрия маршрута ОДНОГО вылета DJI.
+
+    Приходит через POST /drones/api/route_sync из очереди сборщика. Ключ --
+    `dji_flight_id`, тот же, что у `drone_flights`, и связь обязательна:
+    маршрут неизвестного вылета сиротой не становится и догадкой ни к чему не
+    прикрепляется (endpoint отвечает `unlinked`, строки не создаёт).
+
+    ХРАНЕНИЕ. Точки лежат одним компактным JSON `[[lat, lng], ...]` с
+    округлением до семи знаков -- ровно тем, что делает сборщик
+    (`routes.COORDINATE_DECIMALS`). Отдельная таблица точек дала бы на 22 855
+    вылетов десятки миллионов строк ради данных, которые всегда читаются
+    целиком и никогда не выбираются поштучно; SQLite платил бы за это
+    индексом размером с саму таблицу. Верхний предел размера входа держит
+    приёмник (`DRONE_ROUTE_MAX_POINTS`, `DRONE_ROUTE_MAX_JSON_BYTES`), а не
+    надежда на добрый источник.
+
+    [REASON]: `points_json` НИКОГДА не отдаётся ни в один HTML и ни в один
+    JSON-ответ. Координаты полей заказчика -- приватные данные; страница
+    /drones/coverage показывает только площади и статусы, а колонка читается
+    единственным потребителем -- пересчётом.
+    """
+    __tablename__ = 'drone_flight_routes'
+    id            = db.Column(db.Integer, primary_key=True)
+    # Естественный ключ маршрута. UNIQUE: один вылет -- один маршрут, повтор
+    # обновляет строку, а не заводит вторую.
+    dji_flight_id = db.Column(db.BigInteger, nullable=False, unique=True)
+    # NOT NULL: маршрут без вылета не хранится вовсе.
+    drone_flight_id = db.Column(db.Integer,
+                                db.ForeignKey('drone_flights.id'),
+                                nullable=False, index=True)
+    point_count   = db.Column(db.Integer, nullable=False, default=0)
+    points_json   = db.Column(db.Text, nullable=False)
+    takeoff_json  = db.Column(db.Text, nullable=True)
+    # [REASON]: NULL значит «DJI ширину не записал», и подстановка запрещена
+    # решением владельца 2026-08-25 -- ни медианой, ни паспортом машины, ни
+    # соседним вылетом того же дня. Ноль сюда тоже не кладётся: нулевой радиус
+    # буфера даёт уверенные 0.00 га вместо честного «ширина неизвестна».
+    spray_width_m = db.Column(db.Float, nullable=True)
+    spray_width_recorded = db.Column(db.Boolean, nullable=False, default=False)
+    # Площадь DJI из тела маршрута (float32). Только для сверки личности
+    # записи; в отчёты идёт drone_flights.area_ha, не это.
+    dji_area_m2   = db.Column(db.Float, nullable=True)
+    data_type     = db.Column(db.String(40), nullable=True)
+    decoder_version   = db.Column(db.String(40), nullable=True)
+    collector_version = db.Column(db.String(40), nullable=True)
+    # Структурная перепись форм точек: номера полей protobuf, wire types и
+    # счётчики. Значений неизвестных полей здесь нет и быть не может --
+    # семантика поля №3 остаётся UNKNOWN_SEMANTICS.
+    point_shape_census_json = db.Column(db.Text, nullable=True)
+    # Хеш нормализованного содержимого. На нём стоит идемпотентность приёма:
+    # то же тело -- `unchanged`, другое тело -- `updated`.
+    content_sha256 = db.Column(db.String(64), nullable=False, index=True)
+    # [REASON]: хранится как НЕДОКАЗАННЫЙ вспомогательный признак и в
+    # группировку работ не входит ни одним битом. Общая работа определяется
+    # пространственно.
+    mission_uuid  = db.Column(db.String(100), nullable=True)
+    source        = db.Column(db.String(40), nullable=False,
+                              default='dji-ui-capture')
+    received_at   = db.Column(db.DateTime, nullable=False,
+                              default=datetime.utcnow)
+    updated_at    = db.Column(db.DateTime, nullable=False,
+                              default=datetime.utcnow,
+                              onupdate=datetime.utcnow)
+    # Сколько раз это тело приезжало. Аудит идемпотентности: повтор
+    # идентичного содержимого двигает только этот счётчик и `updated_at`.
+    ingest_count  = db.Column(db.Integer, nullable=False, default=1)
+
+    drone_flight = db.relationship(
+        'DroneFlight', backref=db.backref('route', uselist=False))
+
+
+class DroneCoverageWork(db.Model):
+    """Результат расчёта полезной площади по ОДНОЙ работе.
+
+    Работа -- это не вылет: одна машина, один локальный день (UTC+5) и
+    пересекающиеся маршруты. `mission_uuid` в определении работы не участвует.
+
+    Идентичность строки -- (`unit_key`, `work_date`, `group_index`).
+    `unit_key` не NULL нарочно: у неопознанной машины `drone_unit_id` пуст, а
+    SQLite считает NULL в UNIQUE различными, и повторный пересчёт заводил бы
+    вторую строку той же работы каждым прогоном.
+
+    [REASON]: `estimated_useful_area_ha` NULL там, где число назвать нельзя, и
+    это НЕ ноль. Ноль читается как измеренное «дрон ничего не обработал»;
+    неоднозначный контур, ненайденный контур и отсутствующая ширина -- это
+    незнание, а не пустая работа. Правило держат тесты.
+    """
+    __tablename__ = 'drone_coverage_works'
+    id            = db.Column(db.Integer, primary_key=True)
+    unit_key      = db.Column(db.String(120), nullable=False)
+    drone_unit_id = db.Column(db.Integer, db.ForeignKey('drone_units.id'),
+                              nullable=True)
+    work_date     = db.Column(db.Date, nullable=False, index=True)
+    group_index   = db.Column(db.Integer, nullable=False, default=0)
+    # Отпечаток ВСЕГО, от чего зависит число: множество маршрутов, параметры,
+    # версия алгоритма и выбранный контур. Изменение любого из четырёх даёт
+    # новый расчёт, а не молча устаревшее число.
+    inputs_fingerprint = db.Column(db.String(64), nullable=False)
+    route_fingerprint  = db.Column(db.String(64), nullable=False)
+    field_contour_id = db.Column(db.Integer,
+                                 db.ForeignKey('field_contours.id'),
+                                 nullable=True)
+    contour_status = db.Column(db.String(40), nullable=True)
+    # ── Показатель ──────────────────────────────────────────────────────────
+    estimated_useful_area_ha = db.Column(db.Float, nullable=True)
+    # Частичная диагностическая оценка: считается по неполному входу, в
+    # итоговые суммы НЕ входит и на странице помечена своим статусом.
+    partial_estimate_ha = db.Column(db.Float, nullable=True)
+    # ── Объяснимость: три числа, которые показывают, откуда взялась разница ─
+    sum_independent_swaths_ha = db.Column(db.Float, nullable=True)
+    swath_union_ha = db.Column(db.Float, nullable=True)
+    clipped_all_ha = db.Column(db.Float, nullable=True)
+    contour_area_ha = db.Column(db.Float, nullable=True)
+    # Собственная погрешность метода: расхождение расчёта на шаге сетки и на
+    # вдвое более грубом, в процентах.
+    uncertainty_percent = db.Column(db.Float, nullable=True)
+    # ── Правила, по которым число получено ──────────────────────────────────
+    algorithm_version = db.Column(db.String(40), nullable=False)
+    params_json   = db.Column(db.Text, nullable=False)
+    # ── Полнота входа ───────────────────────────────────────────────────────
+    flights_total = db.Column(db.Integer, nullable=False, default=0)
+    routes_total  = db.Column(db.Integer, nullable=False, default=0)
+    flights_without_route = db.Column(db.Integer, nullable=False, default=0)
+    flights_without_width = db.Column(db.Integer, nullable=False, default=0)
+    flights_without_width_on_work = db.Column(db.Integer, nullable=False,
+                                              default=0)
+    work_segments = db.Column(db.Integer, nullable=False, default=0)
+    route_points  = db.Column(db.Integer, nullable=False, default=0)
+    # ── Качество ────────────────────────────────────────────────────────────
+    quality_status = db.Column(db.String(40), nullable=False, index=True)
+    quality_reason = db.Column(db.String(80), nullable=False)
+    # Площадь DJI той же работы -- сумма drone_flights.area_ha её вылетов.
+    # Скопирована для показа рядом; источник остаётся единственным.
+    dji_area_ha   = db.Column(db.Float, nullable=True)
+    # Недоказанный вспомогательный признак: SHARED / MIXED / ABSENT.
+    mission_state = db.Column(db.String(20), nullable=True)
+    computed_at   = db.Column(db.DateTime, nullable=False,
+                              default=datetime.utcnow)
+
+    drone_unit    = db.relationship('DroneUnit')
+    field_contour = db.relationship('FieldContour')
+
+    __table_args__ = (
+        db.UniqueConstraint('unit_key', 'work_date', 'group_index',
+                            name='uq_drone_coverage_works_identity'),
+        db.Index('ix_drone_coverage_works_date_status', 'work_date',
+                 'quality_status'),
+    )
+
 # ─── GPS-2/GPS-3: результат суточного расчёта по треку ───────────────────────
 
 GPS_LABEL_WORK = 'работа'
