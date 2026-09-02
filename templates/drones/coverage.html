@@ -1,0 +1,147 @@
+{% extends g.base_template %}
+{% set is_ru = (lang == 'ru') %}
+{% block title %}{{ 'Дроны — полезная площадь' if is_ru else 'Дронлар — фойдали майдон' }}{% endblock %}
+{% block content %}
+{% include 'drones/_drones_nav.html' %}
+
+{% set t_no_data = 'Нет данных' if is_ru else 'Маълумот йўқ' %}
+
+<div class="vs-hero vs-mb">
+  <div>
+    <div class="vs-hero-title">{{ 'Расчётная полезная площадь' if is_ru else 'Ҳисобий фойдали майдон' }}</div>
+    <div class="vs-hero-sub">{{ 'Полезная площадь рабочих проходов внутри контура поля, посчитанная по геометрии маршрута. Показана отдельно от исходной площади DJI: та не изменялась и остаётся доступна на «Вылетах» и в «Сводке».' if is_ru else 'Контур ичидаги иш ўтишларининг фойдали майдони, маршрут геометрияси бўйича ҳисобланган. DJI манба майдонидан алоҳида кўрсатилган: у ўзгармаган ва «Парвозлар» ҳамда «Жамланма»да мавжуд.' }}</div>
+  </div>
+</div>
+
+{# [REASON]: предупреждение стоит ВЫШЕ чисел, а не сноской под таблицей.
+   Показатель геометрический: признак включённого насоса в данных DJI не
+   доказан, и число, прочитанное как «фактически опрыскано», станет
+   основанием для счёта. Место предупреждения — это не оформление. #}
+{# [REASON]: всё содержимое обёрнуто в ОДИН <div>. `.vs-alert` — это
+   flex-контейнер (DRONE-UI-FIX-003), и четыре ребёнка — <strong>, текст,
+   <code> и точка — браузер разложил бы в строку колонок с промежутками,
+   разорвав предложение. Обёртка делает их одним элементом раскладки. #}
+<div class="vs-alert is-warning vs-mb">
+  <div>
+    <strong>{{ 'Это расчёт, а не измерение опрыскивания.' if is_ru else 'Бу ҳисоб, пуркашни ўлчаш эмас.' }}</strong>
+    {{ 'Показатель построен по геометрии маршрута: рабочие проходы внутри контура поля, перекрытие учтено один раз. Признак включённого насоса в данных DJI не доказан, поэтому число не подтверждает факт распыления. Алгоритм' if is_ru else 'Кўрсаткич маршрут геометрияси бўйича тузилган: контур ичидаги иш ўтишлари, устма-устлик бир марта ҳисобланган. DJI маълумотларида насос ёқилганлик белгиси исботланмаган, шунинг учун рақам пуркаш фактини тасдиқламайди. Алгоритм' }}
+    <code>{{ algorithm_version }}</code>.
+  </div>
+</div>
+
+<div class="vs-card vs-mb">
+  <div class="vs-card-body">
+    <form method="get" action="{{ url_for('drones.coverage') }}" class="vs-form-row">
+      <div class="vs-field" style="width:160px;">
+        <label class="vs-label" for="covDateFrom">{{ 'Дата с' if is_ru else 'Сана дан' }}</label>
+        <input type="date" name="date_from" id="covDateFrom" class="vs-input" value="{{ filters.date_from_s }}">
+      </div>
+      <div class="vs-field" style="width:160px;">
+        <label class="vs-label" for="covDateTo">{{ 'Дата по' if is_ru else 'Сана гача' }}</label>
+        <input type="date" name="date_to" id="covDateTo" class="vs-input" value="{{ filters.date_to_s }}">
+      </div>
+      <div class="vs-field" style="min-width:180px;">
+        <label class="vs-label" for="covUnitFilter">{{ 'Машина' if is_ru else 'Машина' }}</label>
+        <select name="unit_id" id="covUnitFilter" class="vs-select">
+          <option value="">{{ '— все машины —' if is_ru else '— барча машиналар —' }}</option>
+          {% for u in units %}
+          <option value="{{ u.id }}" {% if filters.unit_id == u.id %}selected{% endif %}>№ {{ u.number }}{% if u.model %} — {{ u.model }}{% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="min-width:200px;">
+        <label class="vs-label" for="covStatusFilter">{{ 'Статус качества' if is_ru else 'Сифат ҳолати' }}</label>
+        <select name="status" id="covStatusFilter" class="vs-select">
+          <option value="">{{ '— все статусы —' if is_ru else '— барча ҳолатлар —' }}</option>
+          {% for code, label in statuses %}
+          <option value="{{ code }}" {% if filters.status == code %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="vs-field" style="flex:none;">
+        <label class="vs-label">&nbsp;</label>
+        <button type="submit" class="vs-btn">{{ 'Показать' if is_ru else 'Кўрсатиш' }}</button>
+        {# Пустые параметры дат — осознанное «за всё время»; отсутствие
+           параметров даёт окно по умолчанию. Разница разбирается на сервере. #}
+        <a class="vs-btn vs-btn-ghost" href="{{ url_for('drones.coverage', date_from='', date_to='', unit_id=filters.unit_id or None, status=filters.status or None) }}">{{ 'За всё время' if is_ru else 'Барча вақт' }}</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="vs-stat-grid vs-mb">
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Исходная площадь DJI, га' if is_ru else 'DJI манба майдони, га' }}</div>
+    <div class="vs-stat-value is-num">{% if totals.dji_ha is not none %}{{ '%.2f'|format(totals.dji_ha)|vs_num }}{% else %}{{ t_no_data }}{% endif %}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Расчётная полезная площадь, га' if is_ru else 'Ҳисобий фойдали майдон, га' }}</div>
+    {# [REASON]: суммируется ТОЛЬКО READY_ESTIMATE, и это же сказано подписью.
+       NULL показывается как «Нет данных», а не 0.00: ноль читался бы как
+       измеренный ноль, то есть как утверждение, что ничего не обработано. #}
+    <div class="vs-stat-value is-num">{% if totals.useful_ha is not none %}{{ '%.2f'|format(totals.useful_ha)|vs_num }}{% else %}{{ t_no_data }}{% endif %}</div>
+    <div class="vs-muted">{{ 'только готовые расчёты' if is_ru else 'фақат тайёр ҳисоблар' }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Работ с готовым расчётом' if is_ru else 'Ҳисоби тайёр ишлар' }}</div>
+    <div class="vs-stat-value is-num">{{ totals.ready_works|vs_num }}</div>
+  </div>
+  <div class="vs-stat">
+    <div class="vs-stat-label">{{ 'Неполных и неопределённых' if is_ru else 'Тўлиқ эмас ва аниқланмаган' }}</div>
+    <div class="vs-stat-value is-num">{{ totals.not_ready_works|vs_num }}</div>
+  </div>
+</div>
+
+<div class="vs-table-wrap vs-mb">
+  <div class="vs-card-header">
+    <span class="vs-card-title">{{ 'Работы' if is_ru else 'Ишлар' }}</span>
+    <span class="vs-muted">{{ 'работ: ' if is_ru else 'ишлар: ' }}{{ totals.works|vs_num }}</span>
+  </div>
+  <table class="vs-table">
+    <thead>
+      <tr>
+        <th>{{ 'Дата' if is_ru else 'Сана' }}</th>
+        <th>{{ 'Машина' if is_ru else 'Машина' }}</th>
+        <th>{{ 'Контур' if is_ru else 'Контур' }}</th>
+        <th class="is-num">{{ 'Вылетов' if is_ru else 'Парвозлар' }}</th>
+        <th class="is-num">{{ 'Площадь DJI, га' if is_ru else 'DJI майдони, га' }}</th>
+        <th class="is-num">{{ 'Расчётная полезная, га' if is_ru else 'Ҳисобий фойдали, га' }}</th>
+        <th class="is-num">{{ 'Погрешность, %' if is_ru else 'Хатолик, %' }}</th>
+        <th>{{ 'Статус' if is_ru else 'Ҳолат' }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in rows %}
+      <tr>
+        <td>{{ item.row.work_date.strftime('%d.%m.%Y') }}</td>
+        <td>{% if item.row.drone_unit %}№ {{ item.row.drone_unit.number }}{% else %}{{ 'Машина не определена' if is_ru else 'Машина аниқланмаган' }}{% endif %}</td>
+        <td>{% if item.contour_name %}{{ item.contour_name }}{% else %}{{ t_no_data }}{% endif %}</td>
+        <td class="is-num">{{ item.row.flights_total|vs_num }}{% if item.row.flights_without_route %} <span class="vs-muted">({{ '−%d без маршрута'|format(item.row.flights_without_route) if is_ru else '−%d маршрутсиз'|format(item.row.flights_without_route) }})</span>{% endif %}</td>
+        <td class="is-num">{% if item.row.dji_area_ha is not none %}{{ '%.2f'|format(item.row.dji_area_ha)|vs_num }}{% else %}{{ t_no_data }}{% endif %}</td>
+        {# Расчётная полезная площадь показывается ТОЛЬКО у готового расчёта.
+           У частичной оценки колонка говорит «Нет данных»: её число хранится,
+           но итогом не является и рядом с готовыми стоять не должно. #}
+        <td class="is-num">{% if item.is_ready and item.row.estimated_useful_area_ha is not none %}{{ '%.2f'|format(item.row.estimated_useful_area_ha)|vs_num }}{% else %}{{ t_no_data }}{% endif %}</td>
+        {# Процент разрядами НЕ группируется: он никогда не бывает тысячным,
+           и фильтр группировки на нём — тот же класс правки, что «Доля, %»
+           на сводке. Комментарий стоит ОТДЕЛЬНОЙ строкой: проверка ищет имя
+           фильтра и слово percent в одной строке. #}
+        <td class="is-num">{% if item.is_ready and item.row.uncertainty_percent is not none %}{{ '%.2f'|format(item.row.uncertainty_percent) }}{% else %}{{ t_no_data }}{% endif %}</td>
+        <td>
+          <span class="vs-badge {{ 'vs-badge-success' if item.is_ready else 'vs-badge-warning' }}">{{ item.status_label }}</span>
+          <div class="vs-muted">{{ item.reason_label }}</div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="vs-empty">{{ 'За период расчётов нет. Маршруты принимаются через route_sync, расчёт выполняет tools/recalculate_drone_useful_area.py.' if is_ru else 'Давр учун ҳисоблар йўқ. Маршрутлар route_sync орқали қабул қилинади, ҳисобни tools/recalculate_drone_useful_area.py бажаради.' }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if truncated %}
+<div class="vs-alert is-info vs-mb">
+  {{ 'Показаны первые' if is_ru else 'Биринчи' }} {{ max_rows|vs_num }} {{ 'работ. Сузьте период или выберите машину.' if is_ru else 'та иш кўрсатилди. Даврни торайтиринг ёки машинани танланг.' }}
+</div>
+{% endif %}
+{% endblock %}

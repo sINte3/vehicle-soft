@@ -81,6 +81,11 @@ DRONES_PLAIN_NUM_TEMPLATES = (
     # означает ровно шесть карточек, и test_a2_six_cards_per_screen их
     # пересчитывает.
     'templates/drones/operator_cash.html',
+    # DRONE-USEFUL-AREA-001: четыре карточки полезной площади. Числа --
+    # гектары и счётчики работ, а не суммы, поэтому `.vs-stat-grid.is-money`
+    # здесь нет: та тройка означает ровно шесть денежных карточек. Опт-аут
+    # `is-num` картам нужен -- гектары группируются как числа.
+    'templates/drones/coverage.html',
 )
 
 # [REASON]: this line is the rule the fix opts OUT of, and it must survive the
