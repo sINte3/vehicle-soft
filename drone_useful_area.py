@@ -187,26 +187,110 @@ def geometry_fingerprint(document):
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
-def inputs_fingerprint(routes, params=None, algorithm_version=None,
-                       contour_key=None, contour_geometry=None):
-    """Отпечаток ВСЕГО, от чего зависит число.
+def _stable_number(value):
+    """Число в устойчивой текстовой форме. `None` -> 'NULL'.
 
-    Маршруты, параметры, версия алгоритма, выбранный контур И ЕГО ГЕОМЕТРИЯ.
-    Изменение любого из пяти обязано давать новый расчёт, а не молча
-    устаревшее число.
+    [REASON]: `repr(float)` в Python 3 обратим и детерминирован, но 2 и 2.0
+    дают разный текст при равном значении. Приведение к float делает форму
+    одной, иначе отпечаток менялся бы от того, как СУБД вернула значение --
+    целым или дробным, -- а не от того, что оно изменилось.
+    """
+    if value is None or isinstance(value, bool):
+        return 'NULL'
+    if isinstance(value, (int, float)):
+        return repr(float(value))
+    return 'NULL'
 
-    [REASON]: геометрия попадает сюда отдельно от `uuid`, потому что uuid не
-    меняется, когда полигон исправляют. Прежняя редакция брала только uuid, и
-    у исправленного контура под тем же идентификатором строка признавалась
-    `unchanged`: площадь, посчитанная по СТАРОМУ полигону, оставалась в базе и
-    продолжала попадать в сумму, а причины сомневаться в ней не было ни одной.
+
+def flight_input(flight_id, route_state, content_sha256=None, area_ha=None,
+                 mission_uuid=None):
+    """Нормализованное описание ОДНОГО вылета для отпечатка.
+
+    Ровно те поля, любое из которых способно изменить сохранённую строку:
+
+    * идентичность вылета -- появление или исчезновение вылета меняет
+      `flights_total` и состав работы;
+    * состояние маршрута (PRESENT / ABSENT / INVALID) -- от него зависит и
+      статус качества, и то, в какую строку вылет попадёт;
+    * хеш содержимого маршрута -- геометрия;
+    * `area_ha` -- из неё складывается сохраняемая `dji_area_ha`;
+    * `mission_uuid` -- из него выводится сохраняемый `mission_state`.
+
+    [REASON]: значения наружу не выходят -- ни `mission_uuid`, ни
+    идентификатор. Это слагаемое отпечатка, и дальше от него остаётся только
+    SHA-256.
+    """
+    return '%s|%s|%s|%s|%s' % (flight_id, route_state or 'ABSENT',
+                               content_sha256 or 'NO-CONTENT',
+                               _stable_number(area_ha),
+                               mission_uuid or 'NO-MISSION')
+
+
+def flights_fingerprint(entries):
+    """Устойчивый отпечаток МНОЖЕСТВА описаний вылетов.
+
+    Порядок на вход не влияет: строки сортируются. Добавленный, убранный или
+    изменившийся вылет отпечаток меняет.
+    """
+    digest = hashlib.sha256('|'.join(sorted(entries or ())).encode('utf-8'))
+    return digest.hexdigest()
+
+
+def contour_inputs_fingerprint(candidates):
+    """Отпечаток ВСЕГО короткого списка контуров, а не только выбранного.
+
+    `candidates` -- [(uuid, geojson)] в любом порядке.
+
+    [REASON]: `contour_status` и `quality_reason` определяются набором
+    кандидатов, а не победителем. Когда победителя нет, `uuid` равен `None` и
+    в обоих состояниях -- CONTOUR_NOT_OFFERED («кандидатов не предложено») и
+    CONTOUR_NOT_MATCHED («ни один не подошёл») -- он одинаков. Переход между
+    ними, как и переход в CONTOUR_AMBIGUOUS, виден ТОЛЬКО по входу: сколько
+    контуров попало в короткий список и какая у них геометрия. Отпечаток по
+    одному победителю такие переходы пропускал, и в базе оставался прежний
+    статус с прежней причиной.
+    """
+    parts = sorted('%s|%s' % (uuid or 'NO-UUID', geometry_fingerprint(geojson)
+                              or 'NO-GEOMETRY')
+                   for uuid, geojson in (candidates or ()))
+    digest = hashlib.sha256('|'.join(parts).encode('utf-8'))
+    return digest.hexdigest()
+
+
+def inputs_fingerprint(flight_entries, params=None, algorithm_version=None,
+                       contour_key=None, contour_geometry=None,
+                       contour_candidates=None):
+    """Отпечаток ВСЕГО, от чего зависит СОХРАНЁННАЯ СТРОКА.
+
+    Не «от чего зависит площадь», а от чего зависит любая сохраняемая колонка
+    `drone_coverage_works`. Это разные множества, и разница уже стоила
+    неверного числа.
+
+    Слагаемые:
+
+    * описания всех вылетов, влияющих на эту строку (`flight_input`) -- в том
+      числе тех, у кого маршрута нет или он негоден;
+    * параметры алгоритма и его версия;
+    * выбранный контур и его геометрия;
+    * ВЕСЬ короткий список контуров-кандидатов с их геометриями.
+
+    [REASON]: прежняя редакция брала только маршруты выбранной группы,
+    параметры, версию и победивший контур. Из-за этого целый класс изменений
+    не менял отпечаток вовсе, и `recalculate()` объявлял строку `unchanged`,
+    оставляя в базе прежние `quality_status`, `flights_total` и
+    `dji_area_ha`. Самый дорогой случай: у машины появлялся второй вылет БЕЗ
+    маршрута, `compute_work()` честно отдавал PARTIAL_DATA -- а в базе
+    оставался READY_ESTIMATE, и неполная работа продолжала попадать в
+    итоговую полезную площадь. Маршрут первого вылета при этом не менялся, и
+    отпечаток по маршрутам оставался прежним.
     """
     payload = {
-        'routes': route_fingerprint(routes),
+        'flights': flights_fingerprint(flight_entries),
         'params': algorithm_params(params),
         'algorithm_version': algorithm_version or ALGORITHM_VERSION,
         'contour': contour_key,
         'contour_geometry': geometry_fingerprint(contour_geometry),
+        'contour_candidates': contour_inputs_fingerprint(contour_candidates),
     }
     text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(text.encode('utf-8')).hexdigest()

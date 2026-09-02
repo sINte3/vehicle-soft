@@ -294,12 +294,14 @@ def compute_day(con, day, params=None):
         single_work = (works_per_unit.get(unit_key, 0) == 1
                        and not invalid.get(unit_key))
         extra = []
+        indeterminate = []
         unassigned = 0
         if single_work:
             extra = absent.pop(unit_key, [])
         else:
-            unassigned = (len(absent.get(unit_key) or ())
-                          + len(invalid.get(unit_key) or ()))
+            indeterminate = (list(absent.get(unit_key) or ())
+                             + list(invalid.get(unit_key) or ()))
+            unassigned = len(indeterminate)
 
         coverage = ua.compute_work(
             members, candidates, params=params,
@@ -325,10 +327,18 @@ def compute_day(con, day, params=None):
             'contour_row_id': contour_row_id,
             'route_fingerprint': ua.route_fingerprint(
                 [(m['flight_id'], m['content_sha256']) for m in members]),
+            # [REASON]: в отпечаток входят не только маршруты этой работы, но
+            # и вылеты, делающие её полноту неопределённой -- приписанные к
+            # ней (`extra`) и, при нескольких работах машины, все безмаршрутные
+            # и негодные вылеты дня (`indeterminate`). Именно их появление
+            # переводит работу из READY_ESTIMATE в PARTIAL_DATA, ничего не
+            # меняя в самих маршрутах: отпечаток по одним маршрутам такой
+            # переход не замечал, и в базе оставался READY_ESTIMATE.
             'inputs_fingerprint': ua.inputs_fingerprint(
-                [(m['flight_id'], m['content_sha256']) for m in members],
+                _flight_inputs(members + extra + indeterminate),
                 params=params, contour_key=coverage.contour_uuid,
-                contour_geometry=contour_geometry),
+                contour_geometry=contour_geometry,
+                contour_candidates=_candidate_inputs(candidates)),
             'dji_area_ha': _sum_area(members + extra),
         })
 
@@ -354,8 +364,8 @@ def compute_day(con, day, params=None):
             'route_fingerprint': ua.route_fingerprint(
                 [(m['flight_id'], m['content_sha256']) for m in members]),
             'inputs_fingerprint': ua.inputs_fingerprint(
-                [(m['flight_id'], m['content_sha256']) for m in members],
-                params=params, contour_key=None, contour_geometry=None),
+                _flight_inputs(members), params=params, contour_key=None,
+                contour_geometry=None, contour_candidates=[]),
             'dji_area_ha': _sum_area(members),
         })
 
@@ -376,10 +386,26 @@ def compute_day(con, day, params=None):
             'contour_row_id': None,
             'route_fingerprint': ua.route_fingerprint([]),
             'inputs_fingerprint': ua.inputs_fingerprint(
-                [], params=params, contour_key=None, contour_geometry=None),
+                _flight_inputs(members), params=params, contour_key=None,
+                contour_geometry=None, contour_candidates=[]),
             'dji_area_ha': _sum_area(members),
         })
     return results
+
+
+def _flight_inputs(members):
+    """Описания вылетов для отпечатка. Значения наружу не выходят."""
+    return [ua.flight_input(item['flight_id'], item['route_state'],
+                            content_sha256=item['content_sha256'],
+                            area_ha=item['area_ha'],
+                            mission_uuid=item['mission_uuid'])
+            for item in members]
+
+
+def _candidate_inputs(candidates):
+    """[(uuid, geojson)] всего короткого списка -- не только победителя."""
+    return [(candidate['uuid'], candidate['geojson'])
+            for candidate in (candidates or ())]
 
 
 def _mission_state(members):
@@ -412,6 +438,48 @@ WRITE_COLUMNS = (
     'flights_without_width', 'flights_without_width_on_work', 'work_segments',
     'route_points', 'quality_status', 'quality_reason', 'dji_area_ha',
     'mission_state', 'computed_at')
+
+
+# Колонки, которые сравниваются при решении «строка не изменилась».
+#
+# [REASON]: `computed_at` намеренно ИСКЛЮЧЁН. Он меняется каждым прогоном по
+# построению, и сравнение с ним объявляло бы изменившейся любую строку --
+# `unchanged` перестал бы что-либо значить.
+COMPARED_COLUMNS = tuple(name for name in WRITE_COLUMNS
+                         if name != 'computed_at')
+
+
+def _same_stored_values(existing, values):
+    """True, когда сохранённая строка совпадает с только что посчитанной.
+
+    Вторая сеть под отпечатком, а не замена ему. Отпечаток обязан меняться
+    при изменении значимого входа -- это его работа, и она проверяется
+    отдельно. Но отпечаток строится по входам, а сравнение смотрит на выход:
+    если в отпечаток однажды забудут внести новый вход, эта проверка поймает
+    расхождение на первом же прогоне, а не тогда, когда кто-нибудь заметит
+    неверное число на странице.
+
+    [REASON]: числа сравниваются как float с допуском. SQLite возвращает
+    REAL, и `2.0 != 2` в Python-сравнении кортежей дало бы вечное `updated`
+    на строках, где ничего не менялось.
+    """
+    for name in COMPARED_COLUMNS:
+        stored = existing[name]
+        fresh = values[name]
+        if stored is None or fresh is None:
+            if stored is not fresh:
+                return False
+            continue
+        if isinstance(fresh, float) or isinstance(stored, float):
+            try:
+                if abs(float(stored) - float(fresh)) > 1e-9:
+                    return False
+                continue
+            except (TypeError, ValueError):
+                return False
+        if stored != fresh:
+            return False
+    return True
 
 
 def _row_values(item, now):
@@ -497,33 +565,35 @@ def recalculate(db_path, date_from, date_to, apply=False, params=None,
                               item['group_index']))
 
                 existing = con.execute(
-                    'SELECT id, inputs_fingerprint FROM drone_coverage_works '
+                    'SELECT * FROM drone_coverage_works '
                     ' WHERE unit_key = ? AND work_date = ? AND group_index = ?',
                     (item['unit_key'], item['work_date'],
                      item['group_index'])).fetchone()
+                values = _row_values(item, stamp)
 
                 if existing is None:
                     summary['inserted'] += 1
                     if apply:
-                        values = _row_values(item, stamp)
                         con.execute(
                             'INSERT INTO drone_coverage_works (%s) VALUES (%s)'
                             % (', '.join(WRITE_COLUMNS),
                                ', '.join(':%s' % name
                                          for name in WRITE_COLUMNS)), values)
-                elif existing['inputs_fingerprint'] != item['inputs_fingerprint']:
-                    # Вход изменился -- маршрут, контур, параметр или версия.
-                    # Молча устаревшее число тут недопустимо.
+                elif (existing['inputs_fingerprint']
+                      != item['inputs_fingerprint']
+                      or not _same_stored_values(existing, values)):
+                    # Вход изменился -- вылет, маршрут, контур, параметр или
+                    # версия, -- ЛИБО сохранённая строка разошлась со свежим
+                    # расчётом. Молча устаревшая строка тут недопустима.
                     summary['updated'] += 1
                     if apply:
-                        values = _row_values(item, stamp)
                         values['id'] = existing['id']
                         con.execute(
                             'UPDATE drone_coverage_works SET %s WHERE id = :id'
                             % ', '.join('%s = :%s' % (name, name)
                                         for name in WRITE_COLUMNS), values)
                 else:
-                    # Тот же вход -- та же строка. Повторный --apply не пишет
+                    # Тот же вход И та же строка. Повторный --apply не пишет
                     # ничего и не двигает `computed_at`.
                     summary['unchanged'] += 1
 

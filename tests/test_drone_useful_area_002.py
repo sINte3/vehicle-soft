@@ -470,16 +470,18 @@ class ContourGeometryInTheFingerprint(Base):
 
     def test_a_different_uuid_still_changes_the_fingerprint(self):
         """Прежнее правило не потеряно."""
-        first = ua.inputs_fingerprint([(1, 'sha')], contour_key='A',
+        entries = [ua.flight_input(900001, 'PRESENT', content_sha256='sha')]
+        first = ua.inputs_fingerprint(entries, contour_key='A',
                                       contour_geometry=square(100.0))
-        second = ua.inputs_fingerprint([(1, 'sha')], contour_key='B',
+        second = ua.inputs_fingerprint(entries, contour_key='B',
                                        contour_geometry=square(100.0))
         self.assertNotEqual(first, second)
 
     def test_the_parameters_still_change_the_fingerprint(self):
-        first = ua.inputs_fingerprint([(1, 'sha')], contour_key='A',
+        entries = [ua.flight_input(900001, 'PRESENT', content_sha256='sha')]
+        first = ua.inputs_fingerprint(entries, contour_key='A',
                                       contour_geometry=square(100.0))
-        second = ua.inputs_fingerprint([(1, 'sha')], contour_key='A',
+        second = ua.inputs_fingerprint(entries, contour_key='A',
                                        contour_geometry=square(100.0),
                                        params=ua.StudyParams(min_pass_m=99.0))
         self.assertNotEqual(first, second)
