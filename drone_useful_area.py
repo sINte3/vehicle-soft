@@ -103,13 +103,22 @@ REASON_CONTOUR_AMBIGUOUS = 'TWO_CONTOURS_FIT_EQUALLY_WELL'
 REASON_CONTOUR_NOT_MATCHED = 'NO_CONTOUR_MATCHED_THE_ROUTE'
 REASON_CONTOUR_NOT_OFFERED = 'NO_CONTOUR_CANDIDATE_WAS_OFFERED'
 REASON_ROUTE_UNUSABLE = 'STORED_ROUTE_CARRIES_NO_USABLE_GEOMETRY'
+# [REASON]: у машины за день несколько пространственно РАЗНЫХ работ, и есть
+# вылет, маршрута которого нет. К какой из работ он относится, неизвестно, и
+# узнать это неоткуда: рамки у него нет. Приписать его первой работе значило
+# бы оставить остальные в READY_ESTIMATE и посчитать их полными -- при том,
+# что любая из них могла недосчитаться этого вылета. Поэтому полной не
+# считается ни одна.
+REASON_UNROUTED_FLIGHT_NOT_ASSIGNABLE = (
+    'UNROUTED_FLIGHT_CANNOT_BE_ASSIGNED_TO_ONE_WORK_OF_THE_DAY')
 
 # Причины, по которым площадь остаётся `None`. Ноль вместо `None` читался бы
 # как измеренный ноль -- то есть как утверждение «дрон ничего не обработал».
 NULL_AREA_REASONS = (REASON_NO_ROUTE, REASON_WIDTH_MISSING_ON_WORK_PASS,
                      REASON_CONTOUR_AMBIGUOUS, REASON_CONTOUR_NOT_MATCHED,
                      REASON_CONTOUR_NOT_OFFERED, REASON_ROUTE_UNUSABLE,
-                     REASON_SOME_FLIGHTS_WITHOUT_ROUTE)
+                     REASON_SOME_FLIGHTS_WITHOUT_ROUTE,
+                     REASON_UNROUTED_FLIGHT_NOT_ASSIGNABLE)
 
 
 def algorithm_params(params=None):
@@ -156,19 +165,48 @@ def route_fingerprint(routes):
     return digest.hexdigest()
 
 
+def geometry_fingerprint(document):
+    """Устойчивый SHA-256 НОРМАЛИЗОВАННОЙ геометрии контура.
+
+    Нормализация -- сортировка ключей и фиксированные разделители. Отсюда два
+    свойства, ради которых отпечаток и нужен:
+
+    * переформатирование одного и того же полигона (порядок ключей, отступы,
+      пробелы) отпечаток НЕ меняет -- иначе каждый повторный снимок
+      справочника объявлял бы все работы изменившимися;
+    * исправление координат или колец меняет его обязательно.
+
+    [REASON]: значения координат отсюда никуда не выходят -- ни в лог, ни в
+    отчёт, ни в сообщение об ошибке. Наружу идёт только хеш, по которому
+    полигон не восстановить.
+    """
+    if document is None:
+        return None
+    text = json.dumps(document, ensure_ascii=False, sort_keys=True,
+                      separators=(',', ':'))
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+
 def inputs_fingerprint(routes, params=None, algorithm_version=None,
-                       contour_key=None):
+                       contour_key=None, contour_geometry=None):
     """Отпечаток ВСЕГО, от чего зависит число.
 
-    Маршруты, параметры, версия алгоритма и выбранный контур. Изменение
-    любого из четырёх обязано давать новый расчёт, а не молча устаревшее
-    число, -- это требование задания, и держится оно здесь.
+    Маршруты, параметры, версия алгоритма, выбранный контур И ЕГО ГЕОМЕТРИЯ.
+    Изменение любого из пяти обязано давать новый расчёт, а не молча
+    устаревшее число.
+
+    [REASON]: геометрия попадает сюда отдельно от `uuid`, потому что uuid не
+    меняется, когда полигон исправляют. Прежняя редакция брала только uuid, и
+    у исправленного контура под тем же идентификатором строка признавалась
+    `unchanged`: площадь, посчитанная по СТАРОМУ полигону, оставалась в базе и
+    продолжала попадать в сумму, а причины сомневаться в ней не было ни одной.
     """
     payload = {
         'routes': route_fingerprint(routes),
         'params': algorithm_params(params),
         'algorithm_version': algorithm_version or ALGORITHM_VERSION,
         'contour': contour_key,
+        'contour_geometry': geometry_fingerprint(contour_geometry),
     }
     text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
@@ -229,7 +267,7 @@ def _usable_points(points):
 
 
 def compute_work(routes, candidates, params=None, flights_total=None,
-                 mission_state=None):
+                 mission_state=None, unassigned_flights=0):
     """Полезная площадь ОДНОЙ работы.
 
     `routes` -- маршруты работы: словари с `points` ([[lat, lng], ...]),
@@ -237,6 +275,11 @@ def compute_work(routes, candidates, params=None, flights_total=None,
     `candidates` -- контуры-кандидаты: [{'uuid', 'geojson'}].
     `flights_total` -- сколько вылетов НАСЧИТАЛА работа всего, включая те, у
     которых маршрута нет. Меньше числа маршрутов быть не может.
+    `unassigned_flights` -- сколько вылетов дня этой машины остались без
+    маршрута ПРИ НЕСКОЛЬКИХ работах, то есть могли принадлежать этой работе, а
+    могли и соседней. Такая работа полной не считается никогда, но и вылеты
+    эти в её `flights_total` не входят: их считает своя строка, иначе один
+    вылет попал бы в счётчики двух работ сразу.
 
     Порядок решений намеренно такой:
 
@@ -252,6 +295,7 @@ def compute_work(routes, candidates, params=None, flights_total=None,
                      else max(int(flights_total), len(routes)))
     flights_without_route = flights_total - len(routes)
 
+    unassigned_flights = int(unassigned_flights or 0)
     base = {
         'algorithm_version': ALGORITHM_VERSION,
         'params': algorithm_params(params),
@@ -367,6 +411,15 @@ def compute_work(routes, candidates, params=None, flights_total=None,
     measured = fine.clipped_work_ha
     if measured is None:
         measured = 0.0 if work_segments == 0 else None
+
+    if unassigned_flights:
+        # Площадь посчитана и хранится как частичная оценка: геометрия
+        # известных маршрутов верна. Итоговым числом она не становится --
+        # работе мог принадлежать ещё один вылет, и какой именно, неизвестно.
+        base['partial_estimate_ha'] = measured
+        return WorkCoverage(
+            quality_status=PARTIAL_DATA,
+            quality_reason=REASON_UNROUTED_FLIGHT_NOT_ASSIGNABLE, **base)
 
     if without_width_on_work or flights_without_route:
         # Частичная диагностическая оценка хранится ОТДЕЛЬНО и в итоговые
