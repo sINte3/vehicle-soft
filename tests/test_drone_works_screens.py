@@ -986,11 +986,15 @@ class DroneNavStripTests(unittest.TestCase):
         strip = strip[:strip.find('</nav>')]
         return re.findall(r'<a href="([^"]+)"[^>]*>([^<]+)</a>', strip)
 
-    def test_the_strip_is_the_seven_tabs_in_order(self):
+    def test_the_strip_is_the_eight_tabs_in_order(self):
+        # DRONE-USEFUL-AREA-001 добавил восьмую вкладку «Полезная площадь»
+        # ПОСЛЕ «Работ»: показатель считается по вылетам, а не по ведомостям,
+        # и стоять он должен рядом с производственной, а не денежной частью.
+        # Прежние семь не тронуты ни порядком, ни написанием.
         self.assertEqual(
             [label.strip() for _href, label in self._strip()],
             ['Сводка', 'Вылеты', 'Машины', 'Операторы', 'Работы',
-             'Заказчики', 'Отчёты'])
+             'Полезная площадь', 'Заказчики', 'Отчёты'])
 
     def test_istochniki_left_the_strip_but_not_the_application(self):
         hrefs = [href for href, _label in self._strip()]
@@ -1942,7 +1946,8 @@ class DroneNumberFormatTests(unittest.TestCase):
 class DroneNumberPlacementTests(unittest.TestCase):
     """WHERE the filter is applied -- the half a unit test usually misses."""
 
-    TEMPLATES = ('_drones_nav.html', '_money_cell.html', 'customers.html',
+    TEMPLATES = ('_drones_nav.html', '_money_cell.html', 'coverage.html',
+                 'customers.html',
                  'flight_calendar.html', 'health.html', 'list.html',
                  'operator_card.html', 'operator_cash.html',
                  'operators.html', 'reattach.html', 'reports.html',
@@ -2120,8 +2125,14 @@ class DroneNumberPlacementTests(unittest.TestCase):
         #   costs, handed in, balance, declared, and the same six figures per
         #   payment channel plus their footer. Operator NAMES carry nothing,
         #   because a name is not a number.
+        #   DRONE-USEFUL-AREA-001 brought coverage.html 9: four cards
+        #   (DJI area, calculated useful area, ready works, not-ready works),
+        #   the works counter beside the table title, and per row the flight
+        #   count, the flights-without-route note, the DJI area and the
+        #   calculated one. The UNCERTAINTY column carries none: a percentage
+        #   is never grouped in thousands, same rule as «Доля, %».
         expected = {
-            '_money_cell.html': 1,
+            '_money_cell.html': 1, 'coverage.html': 9,
             'customers.html': 2, 'flight_calendar.html': 9,
             'health.html': 11, 'list.html': 3,
             'operator_cash.html': 19,
@@ -2136,7 +2147,7 @@ class DroneNumberPlacementTests(unittest.TestCase):
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 266)
+        self.assertEqual(sum(actual.values()), 275)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):

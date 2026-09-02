@@ -103,6 +103,27 @@ KIND_BACKFILL = 'backfill'
 # «кабинет не ответил» с одного взгляда на код возврата.
 EXIT_AREA_LEAK = 14
 
+# [REASON]: свой код, не EXIT_EMPTY и не EXIT_ROUTE_PROBE_UNCONFIRMED. Сбор,
+# закончившийся ничем, и сбор, чей живой прогон не подтверждён, -- это два
+# разных ответа оператору: в первом случае кабинет не довели до карты, во
+# втором трафик пришёл, но доверять ему нельзя. Планировщик обязан их
+# различать.
+EXIT_COLLECT_UNCONFIRMED = 15
+
+# Маршруты собраны, но декодер отказался разобрать хотя бы одно тело, или
+# множества идентификаторов не совпали. Собранное при этом в очередь не
+# уходит: неполный набор -- не набор.
+EXIT_COLLECT_INCOMPLETE = 16
+
+# [REASON]: свой код, не EXIT_INGEST. Пятый означает «приёмник ОТКАЗАЛ» --
+# контрактную ошибку, после которой повторять нечего. Этот означает
+# «приёмник ответил, но принял не всё»: часть записей отвергнута схемой,
+# часть назвала вылет, которого у Vehicle Soft нет, или счётчики не сошлись.
+# Пакет при этом ЦЕЛИКОМ остался в очереди и уедет следующим прогоном, а
+# оператору надо сперва синхронизировать вылеты. Планировщик обязан отличать
+# «чинить конфигурацию» от «повторить после синхронизации вылетов».
+EXIT_ROUTE_NOT_ACCEPTED = 17
+
 KINDS = ('backfill', 'incremental', 'replay')
 
 MODE_FLIGHTS = 'flights'
@@ -110,6 +131,7 @@ MODE_LANDS = 'lands'
 MODE_ROUTES = 'routes'
 MODE_ROUTE_PROBE = 'route-ui-probe'
 MODE_AREA_48H = 'area-48h'
+MODE_ROUTE_COLLECT = 'route-ui-collect'
 
 FLIGHT_SUMMARY_KEYS = (
     'mode', 'kind', 'dry_run', 'period_from', 'period_to',
@@ -146,6 +168,25 @@ AREA_SUMMARY_KEYS = (
     'area_flights_wrong_day', 'area_directory_pages',
     'area_directory_contours', 'area_contours_downloaded', 'area_works',
     'area_status', 'exit',
+)
+
+# [REASON]: свой набор ключей, а не общий с `--routes`. Тот режим считает
+# запрошенные id и ответы на НАШИ пакеты; этот не делает ни одного запроса и
+# считает наблюдения, поставленное в очередь и отправленное. Общая строка
+# печатала бы половину ключей прочерками, и успешный сбор было бы не отличить
+# от прогона, не собравшего ничего.
+COLLECT_SUMMARY_KEYS = (
+    'mode', 'dry_run', 'region', 'probe_route_responses',
+    'probe_observations', 'probe_confirmed', 'probe_errors',
+    'probe_skipped_over_cap', 'probe_operator_answered',
+    'probe_drained', 'collect_live_confirmed',
+    'collect_bodies_captured', 'collect_decode_failures',
+    'collect_capture_errors', 'collect_routes_captured',
+    'collect_routes_queued', 'collect_routes_duplicate',
+    'collect_send_enabled', 'collect_envelopes_sent',
+    'collect_batch_accepted', 'collect_left_pending',
+    'collect_seen', 'collect_new', 'collect_updated', 'collect_unchanged',
+    'collect_errors', 'collect_unlinked', 'exit',
 )
 
 LAND_SUMMARY_KEYS = (
@@ -235,6 +276,24 @@ def build_parser():
                              'measure without any field polygon. The useful '
                              'area then cannot be clipped and the report says '
                              'so.')
+    parser.add_argument('--route-ui-collect', dest='route_ui_collect',
+                        action='store_true',
+                        help='DRONE-USEFUL-AREA-001: open the cabinet with '
+                             'the saved session, ask the operator to drive '
+                             'Task History into the map view of a day by '
+                             'hand, WATCH the request the cabinet makes for '
+                             'itself, decode the routes and queue them in the '
+                             'on-disk outbox. Initiates no route POST of its '
+                             'own. Sends nothing to Vehicle Soft unless '
+                             '--send-routes is given as well.')
+    parser.add_argument('--send-routes', dest='send_routes',
+                        action='store_true',
+                        help='with --route-ui-collect: after queueing, POST '
+                             'the pending route envelopes to '
+                             '/drones/api/route_sync. Needs '
+                             'VEHICLE_SOFT_BASE_URL and DRONE_API_TOKEN. '
+                             'Without this flag nothing leaves the machine, '
+                             'even when both are set.')
     parser.add_argument('--geometry-id', dest='geometry_ids', metavar='UUID',
                         action='append',
                         help='with --lands --with-geometry: download the '
@@ -258,8 +317,13 @@ def needs_no_ingest(args):
     touch. The rule now lives in one named place instead of inline in `_run()`,
     so a test can hold it.
     """
+    # [REASON]: `--route-ui-collect` без `--send-routes` не обращается к
+    # Vehicle Soft вовсе, и требовать от него URL с токеном значило бы не
+    # пускать оператора собирать маршруты на машине, где их нет. С
+    # `--send-routes` он ingest-прогон и проверки конфигурации проходит.
     return bool(args.save_session or args.dry_run or args.routes
                 or args.route_ui_probe or args.area_48h
+                or (args.route_ui_collect and not args.send_routes)
                 or (args.lands and args.with_geometry))
 
 
@@ -298,6 +362,24 @@ def check_usage(args):
     if args.area_48h_no_contours and not args.area_48h:
         raise UsageError('--area-48h-no-contours only makes sense together '
                          'with --area-48h')
+    if args.route_ui_collect and (args.lands or args.routes
+                                  or args.route_ui_probe or args.area_48h
+                                  or args.date_from or args.date_to
+                                  or args.kind or args.ids_file
+                                  or args.with_geometry):
+        raise UsageError('--route-ui-collect watches one request made by '
+                         'hand; it takes no period, no ids file and no other '
+                         'walk')
+    if args.send_routes and not args.route_ui_collect:
+        raise UsageError('--send-routes posts what --route-ui-collect '
+                         'queued and only makes sense together with it')
+    if args.send_routes and args.dry_run:
+        # [REASON]: не «молча выигрывает один из флагов». Сухой прогон,
+        # который отправил, и отправка, которая ничего не сделала, -- обе
+        # хуже отказа: оператор узнает о случившемся из базы.
+        raise UsageError('--dry-run and --send-routes contradict each other: '
+                         'a dry run queues nothing, so there is nothing to '
+                         'send')
     if args.geometry_ids and not (args.lands and args.with_geometry):
         raise UsageError('--geometry-id names which polygon to download and '
                          'only makes sense together with --lands '
@@ -366,6 +448,7 @@ def main(argv=None):
             keys = {MODE_LANDS: LAND_SUMMARY_KEYS,
                     MODE_ROUTES: ROUTE_SUMMARY_KEYS,
                     MODE_AREA_48H: AREA_SUMMARY_KEYS,
+                    MODE_ROUTE_COLLECT: COLLECT_SUMMARY_KEYS,
                     MODE_ROUTE_PROBE: ROUTE_PROBE_SUMMARY_KEYS}.get(
                         state.get('mode'), FLIGHT_SUMMARY_KEYS)
             log.info(format_run_summary([(key, state.get(key))
@@ -409,6 +492,9 @@ def _run(argv, log, state):
 
     if args.area_48h:
         return _run_area_48h(args, cfg, log, state)
+
+    if args.route_ui_collect:
+        return _run_route_ui_collect(args, cfg, log, state)
 
     if args.route_ui_probe:
         return _run_route_ui_probe(args, cfg, log, state)
@@ -941,6 +1027,371 @@ def _run_route_ui_probe(args, cfg, log, state):
                           len(confirmed), target))
     return code
 
+
+# Что оператор делает руками. Только ASCII: строки печатаются в консоль
+# PowerShell, где кодовая страница -- не наша забота и не наша гарантия.
+COLLECT_PROMPT_LINES = (
+    '',
+    '=== DRONE-USEFUL-AREA-001: route collection, driven by hand ===',
+    '',
+    'In the browser window that just opened:',
+    '  1. open Task History (flight records);',
+    '  2. choose the DAY whose routes you want to collect;',
+    '  3. switch to the MAP view;',
+    '  4. wait until the routes are actually drawn on the map;',
+    '  5. come back here and press Enter.',
+    '',
+    'The cabinet signs its own request. This tool only listens: it does not',
+    'initiate the route POST and does not reproduce the signature.',
+    '',
+)
+
+
+def collect_verdict(operator_answered, drain_completed, observations,
+                    confirmed, observation_errors, capture_errors,
+                    pending_route_requests, route_requests_failed,
+                    id_sets_matched, decode_failures, routes_captured,
+                    skipped_over_cap=0):
+    """Можно ли доверять тому, что собрано. Список причин, а не одно «нет».
+
+    Половину решения -- ту, что про НАБЛЮДЕНИЕ, -- принимает
+    `probe_exit_code`, уже доказанное правило `--route-ui-probe`, а не третья
+    похожая проверка рядом с ним.
+
+    [REASON]: прежняя редакция отказывала только при `confirmed == 0` и про
+    `skipped_over_cap` не спрашивала вовсе. Один подтверждённый POST рядом с
+    неподтверждённым ответом объявлялся успехом -- то есть сбор был СЛАБЕЕ
+    наблюдения, хотя кладёт данные в очередь, а наблюдение не кладёт ничего.
+    Смешанный ответ означает, что кабинет отвечал по-разному, и данные из
+    неподтверждённого ответа не имеют права попасть в базу оттого, что рядом
+    оказался подтверждённый. Наблюдение, выпавшее по лимиту размера, -- то же
+    самое: про него не известно ничего, а «не известно» не равно
+    «подтверждено».
+
+    [REASON]: каждая причина названа отдельно. Один общий отказ «прогон не
+    подтверждён» заставляет оператора гадать, что чинить: не довёл кабинет до
+    карты, оборвалась сеть или декодер не понял тело. Это три разных действия.
+    """
+    from drone_collector.route_ui_probe import PROBE_EXIT_OK, probe_exit_code
+
+    observations = int(observations or 0)
+    confirmed = int(confirmed or 0)
+    skipped_over_cap = int(skipped_over_cap or 0)
+
+    probe_code = probe_exit_code(observations=observations,
+                                 confirmed=confirmed,
+                                 skipped_over_cap=skipped_over_cap,
+                                 observation_errors=observation_errors,
+                                 drain_timed_out=not drain_completed,
+                                 operator_answered=operator_answered)
+
+    reasons = []
+    if not operator_answered:
+        reasons.append('the operator never confirmed that the routes were '
+                       'drawn')
+    if not drain_completed:
+        reasons.append('route traffic had not settled when the run ended')
+    if not observations:
+        reasons.append('not one route request was observed')
+    elif confirmed != observations:
+        reasons.append('%d of %d observation(s) were not confirmed'
+                       % (observations - confirmed, observations))
+    if skipped_over_cap:
+        reasons.append('%d observation(s) were skipped over the size cap'
+                       % skipped_over_cap)
+    if observation_errors:
+        reasons.append('%d observation error(s)' % observation_errors)
+    if capture_errors:
+        reasons.append('%d capture error(s)' % capture_errors)
+    if pending_route_requests:
+        reasons.append('%d route request(s) still pending'
+                       % pending_route_requests)
+    if route_requests_failed:
+        reasons.append('%d route request(s) failed' % route_requests_failed)
+    if not id_sets_matched:
+        reasons.append('the requested and returned id sets did not match')
+    if decode_failures:
+        reasons.append('%d response body/bodies did not decode'
+                       % decode_failures)
+    if not routes_captured:
+        reasons.append('no route was captured')
+
+    # [REASON]: страховка от расхождения. Если `probe_exit_code` отказал, а
+    # список причин пуст, значит правило наблюдения ужесточили, а этот разбор
+    # не заметил. Молчаливое расхождение здесь означало бы, что сбор снова
+    # слабее наблюдения -- ровно тот дефект, который эта правка и закрывает.
+    if probe_code != PROBE_EXIT_OK and not reasons:
+        reasons.append('the observation checks did not pass (probe exit %d)'
+                       % probe_code)
+
+    return {'confirmed': not reasons, 'reasons': reasons,
+            'probe_exit': probe_code}
+
+
+def collect_exit_code(verdict, decode_failures, id_sets_matched,
+                      routes_captured):
+    """Код возврата режима сбора.
+
+    Порядок проверок -- от «ничего не пришло» к «пришло, но неполно»:
+
+    * ничего не собрано -- EXIT_EMPTY: кабинет не довели до карты;
+    * тело не разобралось или множества id разошлись -- EXIT_COLLECT_INCOMPLETE:
+      трафик был, но набор неполон, и класть неполный набор в очередь нельзя;
+    * прогон не подтверждён по другой причине -- EXIT_COLLECT_UNCONFIRMED.
+    """
+    if not routes_captured:
+        return EXIT_EMPTY
+    if decode_failures or not id_sets_matched:
+        return EXIT_COLLECT_INCOMPLETE
+    if not verdict['confirmed']:
+        return EXIT_COLLECT_UNCONFIRMED
+    return EXIT_OK
+
+
+def _run_route_ui_collect(args, cfg, log, state):
+    """--route-ui-collect: собрать маршруты дня и положить их в очередь.
+
+    Четыре шага, и порядок между ними важен:
+
+    1. наблюдение за ШТАТНЫМ запросом кабинета -- тот же жизненный цикл, что
+       у `--route-ui-probe` и `--area-48h`, потому что он уже оплачен двумя
+       живыми прогонами и третьей реализации не будет;
+    2. вердикт о доверии: неполный набор в очередь не кладётся вовсе;
+    3. постановка в очередь -- атомарная и идемпотентная, свойства очереди;
+    4. отправка -- ТОЛЬКО по отдельному явному флагу.
+
+    Прогон не создаёт таблиц, не применяет миграций и без `--send-routes` не
+    обращается к Vehicle Soft ни одним запросом.
+    """
+    state['mode'] = MODE_ROUTE_COLLECT
+    state['collect_send_enabled'] = bool(args.send_routes)
+
+    try:
+        require_session(cfg.storage_state)
+    except SessionMissing as exc:
+        log.error('%s', exc)
+        return EXIT_SESSION
+
+    try:
+        from drone_collector.route_ui_collect import (RouteQueueCapture,
+                                                      drain_route_outbox,
+                                                      enqueue_routes,
+                                                      route_bodies,
+                                                      COLLECT_MODE_VERSION)
+        from drone_collector.route_ui_probe import (monotonic_ms,
+                                                    ProbeTimingError,
+                                                    pump_until,
+                                                    start_operator_prompt,
+                                                    validate_probe_timings)
+    except ImportError as exc:  # pragma: no cover -- our own modules
+        log.error('The route collector could not be imported (%s)', exc)
+        return EXIT_CONFIG
+
+    try:
+        from drone_collector.browser import (BrowserError, FlightCollector,
+                                             PeriodVerificationFailed,
+                                             RegionMismatch, SessionExpired)
+    except ImportError as exc:
+        log.error('Playwright is not available in this environment (%s). '
+                  'Install the collector dependencies: pip install -r '
+                  'drone_collector/requirements.txt && python -m playwright '
+                  'install chromium', exc)
+        return EXIT_CONFIG
+
+    try:
+        validate_probe_timings(poll_ms=cfg.route_probe_poll_ms,
+                               wait_ms=cfg.route_probe_wait_ms,
+                               drain_ms=cfg.route_probe_drain_ms,
+                               quiet_ms=cfg.route_probe_quiet_ms)
+    except ProbeTimingError as exc:
+        log.error('The probe timings are contradictory: %s', exc)
+        return EXIT_CONFIG
+
+    capture = RouteQueueCapture(logger=log,
+                                expected_origin=cfg.route_api_origin)
+    errors = (BrowserError, PeriodVerificationFailed, RegionMismatch,
+              SessionExpired, SessionMissing)
+    operator_answered = drain_completed = False
+    try:
+        with FlightCollector(cfg, log) as collector:
+            page = collector.page
+            page.on('request', capture.note_request)
+            page.on('response', capture.note_response)
+            page.on('requestfinished', capture.note_request_finished)
+            page.on('requestfailed', capture.note_request_failed)
+
+            collector.open_records()
+            state['region'] = collector.check_region(cfg.expected_region)
+
+            for line in COLLECT_PROMPT_LINES:
+                print(line)
+
+            prompt = start_operator_prompt(
+                'Press Enter once the routes are drawn on the map: ')
+            pump = page.wait_for_timeout
+            waited = pump_until(pump, prompt.done.is_set, monotonic_ms,
+                                cfg.route_probe_wait_ms,
+                                cfg.route_probe_poll_ms)
+            operator_answered = bool(waited and prompt.answered)
+            if waited and prompt.failed:
+                log.error('The operator prompt could not be read (%s); the '
+                          'run is not confirmed.', prompt.error_type)
+            elif not waited:
+                log.error('The operator did not answer within %d ms; the run '
+                          'drains what it already saw.',
+                          cfg.route_probe_wait_ms)
+
+            # [REASON]: события Playwright прокачиваются ВСЁ время ожидания, а
+            # не опрашиваются в конце. Живой прогон 2026-08-27 потерял все
+            # пять ответов на `TargetClosedError` ровно потому, что цикл
+            # ожидания не качал очередь событий страницы.
+            capture.begin_drain(monotonic_ms())
+            drain_completed = pump_until(
+                pump,
+                lambda: capture.is_quiet(monotonic_ms(),
+                                         cfg.route_probe_quiet_ms),
+                monotonic_ms, cfg.route_probe_drain_ms,
+                cfg.route_probe_poll_ms, min_pumps=1)
+            if not drain_completed:
+                log.error('Route traffic had not settled %d ms after the '
+                          'operator signalled (%d request(s) still pending).',
+                          cfg.route_probe_drain_ms,
+                          capture.pending_route_requests)
+            print('Drained pending route responses: %s'
+                  % ('yes' if drain_completed else 'TIMED OUT'))
+    except errors as exc:
+        return _exit_code_for(exc, log)
+
+    records = capture.captured_records()
+    observations = capture.observations
+    id_sets_matched = bool(observations) and all(
+        (item.comparison or {}).get('requested_and_returned_match') is True
+        for item in observations)
+
+    verdict = collect_verdict(
+        operator_answered=operator_answered,
+        drain_completed=drain_completed,
+        observations=len(observations),
+        confirmed=len(capture.confirmed_observations),
+        skipped_over_cap=capture.skipped_over_cap,
+        observation_errors=capture.observation_errors,
+        capture_errors=capture.capture_errors,
+        pending_route_requests=capture.pending_route_requests,
+        route_requests_failed=capture.route_requests_failed,
+        id_sets_matched=id_sets_matched,
+        decode_failures=capture.decode_failures,
+        routes_captured=len(records))
+
+    state['probe_route_responses'] = capture.route_responses
+    state['probe_observations'] = len(observations)
+    state['probe_confirmed'] = len(capture.confirmed_observations)
+    state['probe_errors'] = capture.observation_errors
+    state['probe_skipped_over_cap'] = capture.skipped_over_cap
+    state['probe_operator_answered'] = operator_answered
+    state['probe_drained'] = drain_completed
+    state['collect_live_confirmed'] = verdict['confirmed']
+    state['collect_bodies_captured'] = capture.bodies_captured
+    state['collect_decode_failures'] = capture.decode_failures
+    state['collect_capture_errors'] = capture.capture_errors
+    state['collect_routes_captured'] = len(records)
+
+    code = collect_exit_code(verdict, capture.decode_failures, id_sets_matched,
+                             len(records))
+    if code != EXIT_OK:
+        # [REASON]: НИЧЕГО не кладётся в очередь. Частично собранный день,
+        # попавший в базу, неотличим от полного: работа получит меньше
+        # маршрутов, чем было, и посчитает по ним полезную площадь как по
+        # полному входу. Отказ дешевле неверного числа.
+        for reason in verdict['reasons']:
+            log.error('The collection run is NOT confirmed: %s', reason)
+        print('COLLECTION NOT CONFIRMED: %s' % '; '.join(verdict['reasons']))
+        print('Nothing was queued and nothing was sent.')
+        return code
+
+    bodies = route_bodies(records, _collect_data_type(observations),
+                          _decoder_version())
+
+    if args.dry_run:
+        # [REASON]: тела несут координаты, поэтому сухой прогон пишет их в
+        # выходной каталог прогона, а не в журнал и не в репозиторий.
+        from drone_collector.sender import write_routes_dry_run
+        target = write_routes_dry_run(bodies, cfg.out_dir)
+        state['collect_routes_queued'] = 0
+        state['collect_routes_duplicate'] = 0
+        log.info('Dry run: %d route(s) written to %s; the queue was not '
+                 'touched and nothing was sent.', len(bodies), target)
+        print('Dry run: %d route(s) written to %s' % (len(bodies), target))
+        print('Nothing was queued and nothing was sent.')
+        return EXIT_OK
+
+    outbox = _open_outbox(cfg, log)
+    queued, duplicates = enqueue_routes(
+        outbox, bodies, source='dji-ui-capture',
+        diagnostics={'mode_version': COLLECT_MODE_VERSION,
+                     'decoder_version': _decoder_version()})
+    state['collect_routes_queued'] = queued
+    state['collect_routes_duplicate'] = duplicates
+    log.info('Queued %d route(s); %d were already in the queue.', queued,
+             duplicates)
+    print('Queued: %d   Already queued: %d' % (queued, duplicates))
+
+    if not args.send_routes:
+        print('Nothing was sent: --send-routes was not given.')
+        return EXIT_OK
+
+    try:
+        result = drain_route_outbox(outbox, cfg, log)
+    except IngestRejected as exc:
+        log.error('The route endpoint rejected the batch: %s', exc)
+        print('Route ingest REJECTED the batch; the queue keeps the '
+              'envelopes for a later run.')
+        return EXIT_INGEST
+
+    state['collect_envelopes_sent'] = result.sent
+    state['collect_batch_accepted'] = result.accepted
+    state['collect_left_pending'] = result.left_pending
+    counters = result.counters
+    if counters is not None:
+        state['collect_seen'] = counters.seen
+        state['collect_new'] = counters.new
+        state['collect_updated'] = counters.updated
+        state['collect_unchanged'] = counters.unchanged
+        state['collect_errors'] = counters.errors
+        state['collect_unlinked'] = counters.unlinked
+        print('Sent: seen=%d new=%d updated=%d unchanged=%d errors=%d '
+              'unlinked=%d' % (counters.seen, counters.new, counters.updated,
+                               counters.unchanged, counters.errors,
+                               counters.unlinked))
+
+    if not result.accepted:
+        # [REASON]: ненулевой код и честное сообщение. Прежняя редакция
+        # печатала совет «синхронизировать вылеты и повторить» и заканчивалась
+        # нулём -- при том, что конверты уже уехали в `sent/` и повторять было
+        # нечего. Теперь совет выполним: пакет целиком лежит в `pending/`.
+        for reason in result.refusal_reasons:
+            print('NOT FULLY ACCEPTED: %s' % reason)
+        if counters is not None and counters.unlinked:
+            print('Sync the flights first, then run --send-routes again.')
+        print('All %d envelope(s) are kept in the queue for a repeat run; '
+              'the route ingest is idempotent, so re-sending the whole batch '
+              'is safe.' % result.left_pending)
+        return EXIT_ROUTE_NOT_ACCEPTED
+
+    return EXIT_OK
+
+
+def _collect_data_type(observations):
+    """`data_type`, объявленный кабинетом. None, если он не назван.
+
+    [REASON]: берётся из НАБЛЮДЕНИЯ, а не подставляется константой. Кабинет
+    объявляет форму ответа сам (`simplified`), и подставленное значение
+    однажды разошлось бы с настоящим молча.
+    """
+    for item in observations or ():
+        value = getattr(item, 'data_type', None)
+        if value:
+            return value
+    return None
 
 def _run_area_48h(args, cfg, log, state):
     """--area-48h: DJI-AREA-48H, один живой прогон и один разбор.

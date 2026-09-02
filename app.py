@@ -150,6 +150,16 @@ def create_app():
         # DRONE_API_TOKEN in the request body, same deny-by-default.
         if request.path == '/drones/api/land_sync':
             return True
+        # DRONE-USEFUL-AREA-001: the route-geometry ingest, same
+        # DRONE_API_TOKEN in the request body, same deny-by-default.
+        #
+        # [REASON]: an EXACT path, never a '/drones/api/' prefix. A prefix
+        # would silently exempt every future endpoint under it -- including
+        # one that turns out to need a browser session -- and nothing would
+        # report the widening. Three exact lines are cheap; a prefix is a
+        # standing invitation.
+        if request.path == '/drones/api/route_sync':
+            return True
         # BOT001: Bot API endpoints use Bearer token auth, not browser sessions.
         if request.path.startswith('/api/bot/'):
             return True

@@ -212,6 +212,9 @@ command line.
 | 11 | `--geometry-id` named a contour the **directory does not hold**. | The uuids that matched nothing are listed. Nothing was queued for them. If the directory walk was also incomplete, the contour may simply be on a page that was never fetched. |
 | 12 | `--routes`: route collection is **disabled**. | The native fetch transport was disproved on the live cabinet on 2026-08-27. Nothing was attempted: the run stops before the browser. Observe the cabinet's own request with `--route-ui-probe` instead. |
 | 13 | `--route-ui-probe` saw route traffic, but **none of it was a confirmed route POST**. | The report names why for each observation — wrong host, method, status, payload kind, a body that did not decode, or id sets that do not match. A finding, not a breakage. |
+| 15 | `--route-ui-collect`: the run is **not confirmed**. | Nothing was queued and nothing was sent. The log names every reason separately — the operator never confirmed, traffic had not settled, a request failed, an observation errored. One reason per line, because each is a different thing to fix. |
+| 16 | `--route-ui-collect`: traffic arrived but the set is **incomplete**. | Nothing was queued. Either a response body did not decode, or the requested and returned id sets differ. A partially collected day stored in the database is indistinguishable from a complete one: the work would get fewer routes than existed and compute its useful area as if the input were whole. |
+| 17 | `--send-routes`: the endpoint answered, but did **not accept the whole batch**. | The queue is intact — every envelope stayed in `pending/` and the next run sends them again. The message names which of the four conditions failed: a rejected route, a route naming a flight Vehicle Soft does not have, counters that do not add up, or a `seen` below the number sent. For `unlinked`, sync the flights first and run `--send-routes` again. |
 
 Codes **8** and **9** are deliberately absent from this table: they belong to
 the other entry point of this package, `python -m drone_collector.devices`
@@ -754,6 +757,94 @@ consistency of `new_work_area` with the route. Observations only: it names no
 verdict, and it prints identifier values nowhere.
 
 ---
+
+## Collect routes for the useful-area figure (DRONE-USEFUL-AREA-001)
+
+`--route-ui-collect` is the source of the **Расчётная полезная площадь**
+figure (`estimated_useful_area_ha`) that Vehicle Soft shows on
+`/drones/coverage`. It watches the request the cabinet makes **for itself**,
+decodes the routes and queues them; sending is a separate explicit flag.
+
+### Why watching and not asking
+
+The collector's own route transport was **disproved on the live cabinet on
+2026-08-27**: all nineteen of our batches came back "invalid request time"
+while the page's own requests brought back 168 flights. The signature covers
+the whole query string and cannot be reproduced. So the route source is the
+already-proven UI response capture, and this mode looks for nothing new.
+
+### What it does
+
+1. opens the cabinet with the saved session;
+2. asks the operator to pick the day by hand and drive Task History into the
+   map view;
+3. pumps Playwright events for the whole wait — the live run of 2026-08-27
+   lost all five responses to `TargetClosedError` because the waiting loop did
+   not pump the page's event queue;
+4. accepts only fully confirmed route POSTs whose requested and returned id
+   sets match;
+5. decodes with the same `route-decode-2` as everything else;
+6. queues normalised `route_body` envelopes in the existing outbox.
+
+It never stores a raw body, a header, a cookie or a signed link.
+
+### Running it
+
+```
+python -m drone_collector.main --route-ui-collect
+```
+
+Queues the routes and stops. Reaches no Vehicle Soft endpoint at all, so it
+needs neither `VEHICLE_SOFT_BASE_URL` nor `DRONE_API_TOKEN`.
+
+```
+python -m drone_collector.main --route-ui-collect --dry-run
+```
+
+Writes what *would* have been queued into the run's own output directory and
+touches neither the queue nor the network. The file carries coordinates, so it
+stays beside the private capture and never goes near the repository.
+
+```
+python -m drone_collector.main --route-ui-collect --send-routes
+```
+
+Queues, then POSTs the pending route envelopes to `/drones/api/route_sync`.
+**Sending happens only with this flag**, even when the URL and the token are
+both set. `--dry-run` and `--send-routes` together are refused rather than one
+silently winning.
+
+### Sync the flights first
+
+The route endpoint answers `unlinked` for a route whose `dji_flight_id` has no
+`drone_flights` row, stores nothing, and counts it. That is not an error — the
+route simply arrived before its flight. Run the ordinary flight collection
+first, then the routes:
+
+```
+python -m drone_collector.main --from 2026-06-05 --to 2026-06-05
+python -m drone_collector.main --route-ui-collect --send-routes
+```
+
+An envelope is moved to `sent/` only after the endpoint accepted the batch
+**in full** — no rejected route, no `unlinked` route, counters that add up, and
+a `seen` equal to the number sent. Anything less and the whole batch stays in
+`pending/`, the run exits 17, and the next run sends it again; re-sending is
+safe because the ingest is idempotent, so routes that did land come back as
+`unchanged`. A network or server failure leaves the batch pending in the same
+way. The queue is on disk exactly so that neither a dropped connection nor a
+half-accepted batch costs the operator a second trip to the cabinet.
+
+### What the figure means, and what it does not
+
+The number is **geometric**. It is the union of the work passes' swaths,
+clipped to the field polygon: overlap counted once, ferry flight and movement
+outside the contour excluded. The pump-state signal is **not proven** to exist
+in DJI's data (`docs/DJI_AREA_48H_DECISION.md`), so the figure does not prove
+that anything was actually sprayed. Vehicle Soft calls it «расчётная»
+everywhere it is shown, and the original DJI area is kept separately and
+unchanged.
+
 
 ## Capture flights per device (DRONE-BODYCODE-001)
 

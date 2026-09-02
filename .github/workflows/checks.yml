@@ -133,3 +133,56 @@ jobs:
       # without Playwright -- and both times a person caught it, not a check.
       - name: Stage B runbook (venv python, real path, one named contour)
         run: python tools/test_drone_stage_b_runbook.py
+
+      # DRONE-USEFUL-AREA-001. The collector half is stdlib-only and builds
+      # its fixtures in memory: no network, no browser, no database. It holds
+      # the three properties that are cheap to break and expensive to notice
+      # -- that a body which fails to decode is COUNTED rather than swallowed,
+      # that an incomplete capture queues nothing at all, and that an envelope
+      # is marked sent only AFTER the endpoint accepted it.
+      - name: Route collection (capture, queue, drain, exit codes)
+        run: python -m unittest drone_collector.tests.test_route_ui_collect
+
+      # The useful-area formula and the spatial grouping it stands on. A work
+      # is a CONNECTED COMPONENT of route intersections: a later route that
+      # crosses two earlier ones merges them into one work, and the result
+      # does not depend on the order the rows arrive in. Getting that wrong
+      # counts the overlap of two parts of one work twice, which is the exact
+      # error the whole measurement exists to avoid.
+      - name: Area study (coverage arithmetic, contour choice, grouping)
+        run: python -m unittest drone_collector.tests.test_area_study
+
+      # The migration's four paths, its identity constraints, and the rule the
+      # owner cares about most -- that drone_flights.area_ha is byte-identical
+      # before and after. Stdlib sqlite3 only: it never imports the app, so it
+      # fits this workflow's dependency contract unchanged.
+      - name: Useful area migration (four paths, identity, area untouched)
+        run: python -m unittest tests.test_drone_useful_area_migration_001
+
+      # The recomputation itself, on a temporary SQLite database built with
+      # the migration's own DDL. Stdlib only: drone_coverage_recalc.py and
+      # drone_useful_area.py are deliberately free of Flask, and this suite
+      # uses that.
+      #
+      # [REASON]: it exists because the vertical suite below cannot run here,
+      # and without it a green CI proved nothing about the rules whose breach
+      # produces a WRONG NUMBER rather than a failure -- stale rows left in
+      # the total, an unrouted flight assigned by guess, a fingerprint too
+      # narrow to notice that a stored row went out of date. Every check is a
+      # TRANSITION: one --apply, a changed input, a second --apply. A single
+      # run catches none of them.
+      - name: Coverage recalculation (transitions, fingerprint, stale sweep)
+        run: python tools/test_drone_coverage_recalc.py
+
+      # [REASON]: tests/test_drone_useful_area_001.py and _002.py -- the whole
+      # vertical from route_sync through the recompute to /drones/coverage --
+      # are NOT listed here, and that is deliberate. They need Flask,
+      # flask-sqlalchemy and flask-login, and no step of this workflow
+      # installs or imports the application: every check above is stdlib plus
+      # jinja2 and openpyxl. Adding the application's dependencies to CI would
+      # change that contract for all four tracks, which is not this
+      # increment's to decide. What those suites cover about the recompute is
+      # held here by the stdlib suite above; what only they can cover -- the
+      # endpoint and the page -- runs locally and on the server with:
+      #
+      #   python -m unittest discover -s tests
