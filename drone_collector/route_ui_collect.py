@@ -144,7 +144,8 @@ def enqueue_routes(outbox, bodies, source=None, diagnostics=None):
 class DrainResult(object):
     """Что стало с очередью маршрутов за один прогон отправки."""
 
-    __slots__ = ('envelopes', 'sent', 'left_pending', 'corrupt', 'counters')
+    __slots__ = ('envelopes', 'sent', 'left_pending', 'corrupt', 'counters',
+                 'accepted', 'refusal_reasons')
 
     def __init__(self):
         self.envelopes = 0
@@ -152,13 +153,59 @@ class DrainResult(object):
         self.left_pending = 0
         self.corrupt = 0
         self.counters = None
+        # Пакет принят ПОЛНОСТЬЮ. Пока конвертов не было вовсе, принимать
+        # нечего, и это не отказ.
+        self.accepted = True
+        self.refusal_reasons = []
 
     def as_dict(self):
         base = {'envelopes': self.envelopes, 'sent': self.sent,
-                'left_pending': self.left_pending, 'corrupt': self.corrupt}
+                'left_pending': self.left_pending, 'corrupt': self.corrupt,
+                'accepted': self.accepted}
         if self.counters is not None:
             base.update(self.counters.as_dict())
         return base
+
+
+def batch_refusal_reasons(counters, expected):
+    """Почему пакет НЕ принят полностью. Пустой список -- принят.
+
+    Полное принятие -- это четыре условия сразу, и ни одно из них не следует
+    из HTTP 200:
+
+    * счётчики сходятся: seen = new + updated + unchanged + errors + unlinked;
+    * `errors == 0` -- ни одна запись не отвергнута схемой;
+    * `unlinked == 0` -- ни одна запись не назвала вылет, которого у Vehicle
+      Soft нет;
+    * `seen` равен числу ОТПРАВЛЕННЫХ маршрутов -- иначе часть пакета до
+      приёмника не доехала, и какая именно, отсюда не видно.
+
+    [REASON]: прежняя редакция переносила конверты в `sent/` при любом HTTP
+    200. Совет «синхронизировать вылеты и повторно отправить маршруты»
+    становился невыполнимым: к моменту, когда оператор его читал, конвертов в
+    `pending/` уже не было, и единственным способом вернуть маршруты был
+    второй поход в кабинет. Ровно та потеря, ради предотвращения которой
+    очередь и лежит на диске.
+    """
+    reasons = []
+    if counters is None:
+        return ['the endpoint returned no counters at all']
+    if not counters.counters_agree:
+        reasons.append(
+            'the counters do not add up: seen=%d but '
+            'new+updated+unchanged+errors+unlinked=%d'
+            % (counters.seen, counters.new + counters.updated
+               + counters.unchanged + counters.errors + counters.unlinked))
+    if counters.errors:
+        reasons.append('%d route(s) were rejected by the endpoint'
+                       % counters.errors)
+    if counters.unlinked:
+        reasons.append('%d route(s) name a flight Vehicle Soft does not have'
+                       % counters.unlinked)
+    if counters.seen != expected:
+        reasons.append('the endpoint saw %d route(s) of the %d that were sent'
+                       % (counters.seen, expected))
+    return reasons
 
 
 def drain_route_outbox(outbox, cfg, logger, send_fn=None):
@@ -166,8 +213,12 @@ def drain_route_outbox(outbox, cfg, logger, send_fn=None):
 
     Правило судьбы записи -- ровно одно и оно важно:
 
-    * пакет ПРИНЯТ -- каждая его запись переезжает в `sent/` и больше не
-      отправляется;
+    * пакет принят ПОЛНОСТЬЮ (`batch_refusal_reasons` пуст) -- каждая его
+      запись переезжает в `sent/` и больше не отправляется;
+    * принят ЧАСТИЧНО -- отвергнутые записи, записи без вылета, несходящиеся
+      счётчики или недосчитанный `seen` -- ни одна запись не переезжает:
+      приёмник отвечает счётчиками, а не списком, и какие именно доехали,
+      отсюда не видно;
     * ошибка сети или сервера -- записи ОСТАЮТСЯ в `pending/` и уедут
       следующим прогоном. Очередь для того и файловая, чтобы обрыв связи не
       стоил повторного похода оператора в кабинет;
@@ -204,6 +255,23 @@ def drain_route_outbox(outbox, cfg, logger, send_fn=None):
     bodies = [envelope['body'] for _path, envelope in readable]
     counters = send(bodies, cfg, logger=logger)
     result.counters = counters
+
+    refusals = batch_refusal_reasons(counters, len(bodies))
+    if refusals:
+        # [REASON]: НИ ОДИН конверт не переносится. Частичное принятие не даёт
+        # сказать, КАКИЕ записи доехали: приёмник отвечает счётчиками, а не
+        # списком. Перенести весь пакет значило бы потерять неизвестное
+        # подмножество; перенести часть -- угадать, какую. Пакет остаётся в
+        # `pending/` целиком, и повторная отправка безопасна, потому что
+        # приёмник идемпотентен: уже принятые записи вернутся как `unchanged`.
+        result.accepted = False
+        result.refusal_reasons = refusals
+        result.left_pending = len(outbox.pending())
+        for reason in refusals:
+            logger.error('The route batch was NOT fully accepted: %s', reason)
+        logger.error('All %d envelope(s) stay in pending/ and will be sent '
+                     'again by the next run; nothing was lost.', len(readable))
+        return result
 
     for path, _envelope in readable:
         outbox.mark_sent(path)

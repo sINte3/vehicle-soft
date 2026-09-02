@@ -115,6 +115,15 @@ EXIT_COLLECT_UNCONFIRMED = 15
 # уходит: неполный набор -- не набор.
 EXIT_COLLECT_INCOMPLETE = 16
 
+# [REASON]: свой код, не EXIT_INGEST. Пятый означает «приёмник ОТКАЗАЛ» --
+# контрактную ошибку, после которой повторять нечего. Этот означает
+# «приёмник ответил, но принял не всё»: часть записей отвергнута схемой,
+# часть назвала вылет, которого у Vehicle Soft нет, или счётчики не сошлись.
+# Пакет при этом ЦЕЛИКОМ остался в очереди и уедет следующим прогоном, а
+# оператору надо сперва синхронизировать вылеты. Планировщик обязан отличать
+# «чинить конфигурацию» от «повторить после синхронизации вылетов».
+EXIT_ROUTE_NOT_ACCEPTED = 17
+
 KINDS = ('backfill', 'incremental', 'replay')
 
 MODE_FLIGHTS = 'flights'
@@ -169,11 +178,13 @@ AREA_SUMMARY_KEYS = (
 COLLECT_SUMMARY_KEYS = (
     'mode', 'dry_run', 'region', 'probe_route_responses',
     'probe_observations', 'probe_confirmed', 'probe_errors',
-    'probe_operator_answered', 'probe_drained', 'collect_live_confirmed',
+    'probe_skipped_over_cap', 'probe_operator_answered',
+    'probe_drained', 'collect_live_confirmed',
     'collect_bodies_captured', 'collect_decode_failures',
     'collect_capture_errors', 'collect_routes_captured',
     'collect_routes_queued', 'collect_routes_duplicate',
     'collect_send_enabled', 'collect_envelopes_sent',
+    'collect_batch_accepted', 'collect_left_pending',
     'collect_seen', 'collect_new', 'collect_updated', 'collect_unchanged',
     'collect_errors', 'collect_unlinked', 'exit',
 )
@@ -1039,13 +1050,41 @@ COLLECT_PROMPT_LINES = (
 def collect_verdict(operator_answered, drain_completed, observations,
                     confirmed, observation_errors, capture_errors,
                     pending_route_requests, route_requests_failed,
-                    id_sets_matched, decode_failures, routes_captured):
+                    id_sets_matched, decode_failures, routes_captured,
+                    skipped_over_cap=0):
     """Можно ли доверять тому, что собрано. Список причин, а не одно «нет».
+
+    Половину решения -- ту, что про НАБЛЮДЕНИЕ, -- принимает
+    `probe_exit_code`, уже доказанное правило `--route-ui-probe`, а не третья
+    похожая проверка рядом с ним.
+
+    [REASON]: прежняя редакция отказывала только при `confirmed == 0` и про
+    `skipped_over_cap` не спрашивала вовсе. Один подтверждённый POST рядом с
+    неподтверждённым ответом объявлялся успехом -- то есть сбор был СЛАБЕЕ
+    наблюдения, хотя кладёт данные в очередь, а наблюдение не кладёт ничего.
+    Смешанный ответ означает, что кабинет отвечал по-разному, и данные из
+    неподтверждённого ответа не имеют права попасть в базу оттого, что рядом
+    оказался подтверждённый. Наблюдение, выпавшее по лимиту размера, -- то же
+    самое: про него не известно ничего, а «не известно» не равно
+    «подтверждено».
 
     [REASON]: каждая причина названа отдельно. Один общий отказ «прогон не
     подтверждён» заставляет оператора гадать, что чинить: не довёл кабинет до
     карты, оборвалась сеть или декодер не понял тело. Это три разных действия.
     """
+    from drone_collector.route_ui_probe import PROBE_EXIT_OK, probe_exit_code
+
+    observations = int(observations or 0)
+    confirmed = int(confirmed or 0)
+    skipped_over_cap = int(skipped_over_cap or 0)
+
+    probe_code = probe_exit_code(observations=observations,
+                                 confirmed=confirmed,
+                                 skipped_over_cap=skipped_over_cap,
+                                 observation_errors=observation_errors,
+                                 drain_timed_out=not drain_completed,
+                                 operator_answered=operator_answered)
+
     reasons = []
     if not operator_answered:
         reasons.append('the operator never confirmed that the routes were '
@@ -1054,8 +1093,12 @@ def collect_verdict(operator_answered, drain_completed, observations,
         reasons.append('route traffic had not settled when the run ended')
     if not observations:
         reasons.append('not one route request was observed')
-    if observations and not confirmed:
-        reasons.append('no observed request passed the confirmation checks')
+    elif confirmed != observations:
+        reasons.append('%d of %d observation(s) were not confirmed'
+                       % (observations - confirmed, observations))
+    if skipped_over_cap:
+        reasons.append('%d observation(s) were skipped over the size cap'
+                       % skipped_over_cap)
     if observation_errors:
         reasons.append('%d observation error(s)' % observation_errors)
     if capture_errors:
@@ -1072,7 +1115,17 @@ def collect_verdict(operator_answered, drain_completed, observations,
                        % decode_failures)
     if not routes_captured:
         reasons.append('no route was captured')
-    return {'confirmed': not reasons, 'reasons': reasons}
+
+    # [REASON]: страховка от расхождения. Если `probe_exit_code` отказал, а
+    # список причин пуст, значит правило наблюдения ужесточили, а этот разбор
+    # не заметил. Молчаливое расхождение здесь означало бы, что сбор снова
+    # слабее наблюдения -- ровно тот дефект, который эта правка и закрывает.
+    if probe_code != PROBE_EXIT_OK and not reasons:
+        reasons.append('the observation checks did not pass (probe exit %d)'
+                       % probe_code)
+
+    return {'confirmed': not reasons, 'reasons': reasons,
+            'probe_exit': probe_code}
 
 
 def collect_exit_code(verdict, decode_failures, id_sets_matched,
@@ -1220,6 +1273,7 @@ def _run_route_ui_collect(args, cfg, log, state):
         drain_completed=drain_completed,
         observations=len(observations),
         confirmed=len(capture.confirmed_observations),
+        skipped_over_cap=capture.skipped_over_cap,
         observation_errors=capture.observation_errors,
         capture_errors=capture.capture_errors,
         pending_route_requests=capture.pending_route_requests,
@@ -1232,6 +1286,7 @@ def _run_route_ui_collect(args, cfg, log, state):
     state['probe_observations'] = len(observations)
     state['probe_confirmed'] = len(capture.confirmed_observations)
     state['probe_errors'] = capture.observation_errors
+    state['probe_skipped_over_cap'] = capture.skipped_over_cap
     state['probe_operator_answered'] = operator_answered
     state['probe_drained'] = drain_completed
     state['collect_live_confirmed'] = verdict['confirmed']
@@ -1293,6 +1348,8 @@ def _run_route_ui_collect(args, cfg, log, state):
         return EXIT_INGEST
 
     state['collect_envelopes_sent'] = result.sent
+    state['collect_batch_accepted'] = result.accepted
+    state['collect_left_pending'] = result.left_pending
     counters = result.counters
     if counters is not None:
         state['collect_seen'] = counters.seen
@@ -1305,10 +1362,21 @@ def _run_route_ui_collect(args, cfg, log, state):
               'unlinked=%d' % (counters.seen, counters.new, counters.updated,
                                counters.unchanged, counters.errors,
                                counters.unlinked))
-        if counters.unlinked:
-            print('%d route(s) name a flight Vehicle Soft does not have. '
-                  'Sync the flights first, then re-send the routes.'
-                  % counters.unlinked)
+
+    if not result.accepted:
+        # [REASON]: ненулевой код и честное сообщение. Прежняя редакция
+        # печатала совет «синхронизировать вылеты и повторить» и заканчивалась
+        # нулём -- при том, что конверты уже уехали в `sent/` и повторять было
+        # нечего. Теперь совет выполним: пакет целиком лежит в `pending/`.
+        for reason in result.refusal_reasons:
+            print('NOT FULLY ACCEPTED: %s' % reason)
+        if counters is not None and counters.unlinked:
+            print('Sync the flights first, then run --send-routes again.')
+        print('All %d envelope(s) are kept in the queue for a repeat run; '
+              'the route ingest is idempotent, so re-sending the whole batch '
+              'is safe.' % result.left_pending)
+        return EXIT_ROUTE_NOT_ACCEPTED
+
     return EXIT_OK
 
 

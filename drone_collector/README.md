@@ -214,6 +214,7 @@ command line.
 | 13 | `--route-ui-probe` saw route traffic, but **none of it was a confirmed route POST**. | The report names why for each observation — wrong host, method, status, payload kind, a body that did not decode, or id sets that do not match. A finding, not a breakage. |
 | 15 | `--route-ui-collect`: the run is **not confirmed**. | Nothing was queued and nothing was sent. The log names every reason separately — the operator never confirmed, traffic had not settled, a request failed, an observation errored. One reason per line, because each is a different thing to fix. |
 | 16 | `--route-ui-collect`: traffic arrived but the set is **incomplete**. | Nothing was queued. Either a response body did not decode, or the requested and returned id sets differ. A partially collected day stored in the database is indistinguishable from a complete one: the work would get fewer routes than existed and compute its useful area as if the input were whole. |
+| 17 | `--send-routes`: the endpoint answered, but did **not accept the whole batch**. | The queue is intact — every envelope stayed in `pending/` and the next run sends them again. The message names which of the four conditions failed: a rejected route, a route naming a flight Vehicle Soft does not have, counters that do not add up, or a `seen` below the number sent. For `unlinked`, sync the flights first and run `--send-routes` again. |
 
 Codes **8** and **9** are deliberately absent from this table: they belong to
 the other entry point of this package, `python -m drone_collector.devices`
@@ -825,10 +826,14 @@ python -m drone_collector.main --from 2026-06-05 --to 2026-06-05
 python -m drone_collector.main --route-ui-collect --send-routes
 ```
 
-An envelope is moved to `sent/` only **after** the endpoint accepted it. A
-network or server failure leaves it in `pending/` for the next run: the queue
-is on disk exactly so that a dropped connection does not cost the operator a
-second trip to the cabinet.
+An envelope is moved to `sent/` only after the endpoint accepted the batch
+**in full** — no rejected route, no `unlinked` route, counters that add up, and
+a `seen` equal to the number sent. Anything less and the whole batch stays in
+`pending/`, the run exits 17, and the next run sends it again; re-sending is
+safe because the ingest is idempotent, so routes that did land come back as
+`unchanged`. A network or server failure leaves the batch pending in the same
+way. The queue is on disk exactly so that neither a dropped connection nor a
+half-accepted batch costs the operator a second trip to the cabinet.
 
 ### What the figure means, and what it does not
 
