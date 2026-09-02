@@ -289,6 +289,62 @@ class SchemaProperties(MigrationPaths):
         finally:
             con.close()
 
+    def test_the_registry_row_lands_on_the_same_commit_as_the_tables(self):
+        """Одна транзакция на всё: таблицы, индексы и строка реестра.
+
+        [REASON]: раньше таблицы коммитились, соединение закрывалось, и только
+        потом `record_migration()` открывал СВОЁ соединение -- то есть реестр
+        писался второй, отдельной транзакцией, при том что докстринг обещал
+        «single transaction». Обрыв между двумя коммитами оставлял базу, на
+        которой миграция и «уже применена», и «ещё не применена» одновременно.
+        """
+        _make_db(self.db, ALL_PRECONDITIONS)
+        self.assertTrue(self.run_migration()[0])
+        # Реестр и таблицы существуют вместе.
+        self.assertEqual(_registry_rows(self.db, self.MID), 1)
+        self.assertIn('drone_flight_routes', _tables(self.db))
+
+    def test_a_failing_registry_write_rolls_back_tables_and_indexes(self):
+        """Отрицательный контроль к одной транзакции.
+
+        Запись реестра принудительно отказывает. Если бы commit таблиц уже
+        случился к этому моменту, они пережили бы отказ -- и тест это увидит.
+        """
+        _make_db(self.db, ALL_PRECONDITIONS)
+        before = _tables(self.db)
+
+        original = mig._record_in_transaction
+
+        def refuse(*_args, **_kwargs):
+            raise RuntimeError('SYNTHETIC registry failure')
+
+        mig._record_in_transaction = refuse
+        try:
+            ok, code = self.run_migration()
+        finally:
+            mig._record_in_transaction = original
+
+        self.assertFalse(ok)
+        self.assertEqual(code, 1)
+        self.assertNotIn('drone_flight_routes', _tables(self.db),
+                         'the tables must roll back with the registry write')
+        self.assertNotIn('drone_coverage_works', _tables(self.db))
+        for name, _statement in mig.INDEXES:
+            self.assertNotIn(name, _indexes(self.db),
+                             'index %s survived a rolled-back migration' % name)
+        self.assertEqual(_registry_rows(self.db, self.MID), 0)
+        housekeeping = {'schema_migrations', 'sqlite_sequence'}
+        self.assertEqual(_tables(self.db) - housekeeping, before)
+
+        # Отрицательный контроль к отрицательному контролю: без подмены та же
+        # база проходит. Иначе проверка была бы зелёной и у миграции, которая
+        # не создаёт таблиц вовсе.
+        ok, code = self.run_migration()
+        self.assertTrue(ok)
+        self.assertEqual(code, 0)
+        self.assertIn('drone_flight_routes', _tables(self.db))
+        self.assertEqual(_registry_rows(self.db, self.MID), 1)
+
     def test_dji_area_ha_is_untouched_by_the_migration(self):
         """`drone_flights.area_ha` до и после -- то же значение и тот же тип."""
         _make_db(self.db, ALL_PRECONDITIONS)

@@ -41,7 +41,13 @@ Safe / idempotent (same contract as migrate_drones_reattach_001.py):
     tables is a no-op even if the registry row were lost;
   - registered through migration_utils, skips itself on a re-run and prints
     'Already applied. Nothing to do.';
-  - single transaction; postconditions verified BEFORE recording anything;
+  - ONE transaction for everything: both tables, all five indexes, the
+    postconditions and the schema_migrations row land on a single commit.
+    The registry INSERT runs on the migration's own connection, not through
+    record_migration(), which would open a second one and make the registry
+    a separate transaction. Postconditions are verified BEFORE the registry
+    row is written, and a failure at any point leaves no table, no index and
+    no registry row;
   - no Flask app context, stdlib sqlite3 only (never `from app import app`:
     create_app() calls db.create_all() at import time and turns a reader
     into a writer);
@@ -75,10 +81,11 @@ import os
 import sqlite3
 import sys
 
+from datetime import datetime
+
 from migration_utils import (
     ensure_schema_migrations_table,
     is_migration_applied,
-    record_migration,
     migration_checksum,
 )
 
@@ -212,6 +219,24 @@ def _column_names(cur, table):
     return [row[1] for row in cur.fetchall()]
 
 
+def _record_in_transaction(cur, name, description, checksum):
+    """Строка реестра -- НА ТОЙ ЖЕ транзакции, что и таблицы.
+
+    [REASON]: `migration_utils.record_migration()` открывает СВОЁ соединение,
+    и вызов его после `con.commit()` делал запись реестра второй, отдельной
+    транзакцией. Заявление докстринга «single transaction» было при этом
+    неверным, и не на словах: обрыв между двумя коммитами оставлял таблицы
+    без строки реестра, то есть базу, на которой миграция и «уже применена»,
+    и «ещё не применена» одновременно. Отдельной функцией это сделано затем,
+    чтобы отрицательный тест мог заставить запись отказать и проверить, что
+    таблицы и индексы откатились вместе с ней.
+    """
+    cur.execute(
+        'INSERT INTO schema_migrations (name, applied_at, checksum, '
+        'description) VALUES (?, ?, ?, ?)',
+        (name, datetime.utcnow().isoformat(), checksum, description))
+
+
 def run():
     if not os.path.exists(DB_PATH):
         # [REASON]: sqlite3.connect(path) would CREATE an empty database when
@@ -259,6 +284,12 @@ def run():
                 raise RuntimeError('postcondition failed: index %s missing'
                                    % name)
 
+        # Реестр -- ВНУТРИ той же транзакции, последним шагом и после
+        # постусловий. Один commit на всё: таблицы, индексы и запись о том,
+        # что миграция применена, появляются вместе или не появляются вовсе.
+        _record_in_transaction(cur, MIGRATION_ID, DESCRIPTION,
+                               migration_checksum(__file__))
+
         con.commit()
     except Exception as exc:
         con.rollback()
@@ -267,8 +298,6 @@ def run():
     finally:
         con.close()
 
-    record_migration(MIGRATION_ID, description=DESCRIPTION,
-                     checksum=migration_checksum(__file__))
     print('Done. Tables drone_flight_routes (%d columns) and '
           'drone_coverage_works (%d columns) with %d indexes are in place.'
           % (len(ROUTE_COLUMNS), len(WORK_COLUMNS), len(INDEXES)))
