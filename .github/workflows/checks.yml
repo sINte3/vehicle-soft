@@ -133,3 +133,30 @@ jobs:
       # without Playwright -- and both times a person caught it, not a check.
       - name: Stage B runbook (venv python, real path, one named contour)
         run: python tools/test_drone_stage_b_runbook.py
+
+      # DRONE-USEFUL-AREA-001. The collector half is stdlib-only and builds
+      # its fixtures in memory: no network, no browser, no database. It holds
+      # the three properties that are cheap to break and expensive to notice
+      # -- that a body which fails to decode is COUNTED rather than swallowed,
+      # that an incomplete capture queues nothing at all, and that an envelope
+      # is marked sent only AFTER the endpoint accepted it.
+      - name: Route collection (capture, queue, drain, exit codes)
+        run: python -m unittest drone_collector.tests.test_route_ui_collect
+
+      # The migration's four paths, its identity constraints, and the rule the
+      # owner cares about most -- that drone_flights.area_ha is byte-identical
+      # before and after. Stdlib sqlite3 only: it never imports the app, so it
+      # fits this workflow's dependency contract unchanged.
+      - name: Useful area migration (four paths, identity, area untouched)
+        run: python -m unittest tests.test_drone_useful_area_migration_001
+
+      # [REASON]: tests/test_drone_useful_area_001.py -- the whole vertical
+      # from route_sync through the recompute to /drones/coverage -- is NOT
+      # listed here, and that is deliberate. It needs Flask, flask-sqlalchemy
+      # and flask-login, and no step of this workflow installs or imports the
+      # application: every check above is stdlib plus jinja2 and openpyxl.
+      # Adding the application's dependencies to CI would change that contract
+      # for all four tracks, which is not this increment's to decide. The
+      # suite runs locally and on the server with:
+      #
+      #   python -m unittest discover -s tests
