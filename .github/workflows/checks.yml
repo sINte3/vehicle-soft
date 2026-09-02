@@ -143,6 +143,15 @@ jobs:
       - name: Route collection (capture, queue, drain, exit codes)
         run: python -m unittest drone_collector.tests.test_route_ui_collect
 
+      # The useful-area formula and the spatial grouping it stands on. A work
+      # is a CONNECTED COMPONENT of route intersections: a later route that
+      # crosses two earlier ones merges them into one work, and the result
+      # does not depend on the order the rows arrive in. Getting that wrong
+      # counts the overlap of two parts of one work twice, which is the exact
+      # error the whole measurement exists to avoid.
+      - name: Area study (coverage arithmetic, contour choice, grouping)
+        run: python -m unittest drone_collector.tests.test_area_study
+
       # The migration's four paths, its identity constraints, and the rule the
       # owner cares about most -- that drone_flights.area_ha is byte-identical
       # before and after. Stdlib sqlite3 only: it never imports the app, so it
