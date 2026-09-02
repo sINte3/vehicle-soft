@@ -996,6 +996,230 @@ class TestGridGuards(unittest.TestCase):
             plane_for([])
 
 
+class _FakePage(object):
+    """Страница Playwright ровно в том объёме, в каком её трогает прогон."""
+
+    def __init__(self):
+        self.handlers = {}
+
+    def on(self, event, handler):
+        self.handlers[event] = handler
+
+    def wait_for_timeout(self, _ms):
+        return None
+
+
+class _FakeCollector(object):
+    """FlightCollector без браузера. Сети не касается."""
+
+    def __init__(self, _cfg, _log):
+        self.page = _FakePage()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def open_records(self):
+        return None
+
+    def check_region(self, _expected):
+        return 'UZ'
+
+
+class _FakeObservation(object):
+    """Наблюдение probe: сверка ID сошлась."""
+
+    comparison = {'requested_and_returned_match': True}
+
+
+class _FakePrompt(object):
+    answered = True
+    failed = False
+    error_type = ''
+
+    class done(object):
+        @staticmethod
+        def is_set():
+            return True
+
+
+class _FakeCapture(object):
+    """AreaCapture с уже захваченными маршрутами. Ничего не слушает."""
+
+    def __init__(self, flights):
+        self._flights = flights
+        self.observations = [_FakeObservation(), _FakeObservation()]
+        self.route_responses = 2
+        self.observation_errors = 0
+        self.capture_errors = 0
+        self.pending_route_requests = 0
+        self.route_requests_failed = 0
+        self.skipped_over_cap = 0
+
+    @property
+    def confirmed_observations(self):
+        return list(self.observations)
+
+    def captured_flights(self):
+        return list(self._flights)
+
+    def begin_drain(self, _now):
+        return None
+
+    def is_quiet(self, _now, _quiet):
+        return True
+
+    def note_request(self, _item):
+        return None
+
+    note_response = note_request
+    note_request_finished = note_request
+    note_request_failed = note_request
+
+
+class _Args(object):
+    def __init__(self, no_contours=False):
+        self.area_48h_no_contours = no_contours
+
+
+class _Config(object):
+    """Настройки в объёме, который читает прогон исследования."""
+
+    def __init__(self, out_dir):
+        self.out_dir = out_dir
+        self.storage_state = 'unused-in-this-test'
+        self.route_api_origin = 'https://kr-ag2-api.dji.com'
+        self.expected_region = None
+        self.route_probe_poll_ms = 200
+        self.route_probe_wait_ms = 1800000
+        self.route_probe_drain_ms = 15000
+        self.route_probe_quiet_ms = 2000
+
+
+class TestRunAreaStudyReachesTheReport(unittest.TestCase):
+    """Регрессия: успешный живой прогон обязан ДОЙТИ до отчёта.
+
+    [REASON]: живой прогон 2026-08-30 собрал 168 маршрутов и 116 контуров и
+    упал на `NameError: name 'notes' is not defined` в `run_study`. Список
+    оговорок использовался в трёх местах и не заводился ни в одном. Ни один
+    прежний тест этого не ловил: все они звали `run_study` напрямую, минуя
+    `_run_area_48h`, а сам `_run_area_48h` не проверялся вовсе -- он открывает
+    браузер. Отсюда и проверка: не «считает ли формула», а «проходит ли путь
+    от захваченных маршрутов до записанного отчёта».
+
+    Браузера, сети и кабинета DJI здесь нет: подменены `FlightCollector`,
+    `AreaCapture`, ожидание оператора и сбор контуров.
+    """
+
+    def setUp(self):
+        import tempfile
+
+        from drone_collector import area_study, browser, main, route_ui_probe
+
+        self.main = main
+        self.area_study = area_study
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+
+        plane = LocalPlane(LAT0, LNG0)
+        self.contour = {'uuid': 'aaaa-field', 'field_serial': 'P00000000',
+                        'name': 'Fixture field', 'total_area_mu': 100.0,
+                        'geojson': geojson_square(plane, -20.0, -20.0, 260.0)}
+        self.flights = [
+            flight(1, latlon_line(plane, 0, 0, 220, 0),
+                   candidates=['aaaa-field']),
+            flight(2, latlon_line(plane, 0, 8, 220, 8),
+                   candidates=['aaaa-field'], start_ms=1780670876000)]
+
+        self.saved = {}
+        self._swap(main, 'require_session', lambda _path: _path)
+        self._swap(browser, 'FlightCollector', _FakeCollector)
+        self._swap(route_ui_probe, 'start_operator_prompt',
+                   lambda _text: _FakePrompt())
+        self._swap(route_ui_probe, 'pump_until',
+                   lambda *_args, **_kwargs: True)
+        self._swap(area_study, 'AreaCapture',
+                   lambda **_kwargs: _FakeCapture(self.flights))
+
+        self.run_study_calls = []
+        real_run_study = area_study.run_study
+
+        def spy(capture, params=None, notes=None, spray_state_proved=False):
+            self.run_study_calls.append({'notes': notes})
+            if params is None:
+                return real_run_study(capture, notes=notes,
+                                      spray_state_proved=spray_state_proved)
+            return real_run_study(capture, params, notes,
+                                  spray_state_proved)
+
+        self._swap(area_study, 'run_study', spy)
+
+        self.write_reports_calls = []
+        real_write_reports = area_study.write_reports
+
+        def report_spy(out_dir, capture, private, shareable):
+            self.write_reports_calls.append(out_dir)
+            return real_write_reports(out_dir, capture, private, shareable)
+
+        self._swap(area_study, 'write_reports', report_spy)
+
+    def _swap(self, module, name, value):
+        saved = getattr(module, name)
+        setattr(module, name, value)
+        self.addCleanup(setattr, module, name, saved)
+
+    def _attach_ok(self, capture, _cfg, _log, _state):
+        capture['contours'].append(self.contour)
+
+    def _attach_boom(self, _capture, _cfg, _log, _state):
+        raise RuntimeError('the directory walk failed')
+
+    def _run(self, no_contours=False, attach=None):
+        self._swap(self.main, '_attach_contours',
+                   attach or self._attach_ok)
+        import logging
+        state = {}
+        code = self.main._run_area_48h(
+            _Args(no_contours), _Config(self.directory.name),
+            logging.getLogger('test-area-48h'), state)
+        return code, state
+
+    def test_the_success_path_reaches_the_report_and_exits_zero(self):
+        code, state = self._run()
+        self.assertEqual(code, 0)
+        self.assertTrue(state['area_live_confirmed'])
+        self.assertEqual(state['area_flights_captured'], 2)
+        # Именно то, чего не хватало: список оговорок существует и доезжает
+        # до `run_study` пустым.
+        self.assertEqual(len(self.run_study_calls), 1)
+        self.assertEqual(self.run_study_calls[0]['notes'], [])
+        # И отчёт действительно записан, а не только посчитан.
+        self.assertEqual(len(self.write_reports_calls), 1)
+        study = os.path.join(self.directory.name, 'area_48h')
+        for name in ('DJI_AREA_48H_SHAREABLE.json',
+                     'DJI_AREA_48H_SHAREABLE.md'):
+            self.assertTrue(os.path.exists(os.path.join(study, name)), name)
+        self.assertTrue(os.path.exists(
+            os.path.join(study, 'private', 'capture.json')))
+
+    def test_the_contour_switch_adds_its_caveat_without_a_name_error(self):
+        code, _state = self._run(no_contours=True)
+        self.assertEqual(code, 0)
+        notes = self.run_study_calls[0]['notes']
+        self.assertEqual(len(notes), 1)
+        self.assertIn('area-48h-no-', notes[0])
+
+    def test_a_failed_contour_walk_adds_its_caveat_without_a_name_error(self):
+        code, _state = self._run(attach=self._attach_boom)
+        self.assertEqual(code, 0)
+        notes = self.run_study_calls[0]['notes']
+        self.assertEqual(len(notes), 1)
+        self.assertIn('RuntimeError', notes[0])
+        self.assertIn('unclipped', notes[0])
+
+
 class TestCommandLineWiring(unittest.TestCase):
     """--area-48h должен быть подключён так, чтобы им нельзя было случайно
     отправить что-нибудь в Vehicle Soft."""

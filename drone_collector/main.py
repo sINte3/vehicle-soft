@@ -1125,6 +1125,14 @@ def _run_area_48h(args, cfg, log, state):
               '--replay %s' % target)
         return code
 
+    # [REASON]: список заводится ЗДЕСЬ, до первого `append` и до `run_study`.
+    # Его отсутствие обошлось владельцу целым живым прогоном: 168 маршрутов и
+    # 116 контуров были собраны успешно, а отчёт упал на `NameError`, потому
+    # что оговорки некуда было складывать. Приватный снимок к тому моменту уже
+    # лежал на диске -- ровно затем он и пишется до контуров, -- поэтому
+    # второй поход в кабинет не понадобился.
+    notes = []
+
     if args.area_48h_no_contours:
         notes.append('the directory walk was skipped by --area-48h-no-'
                      'contours, so no area is clipped to a field polygon')
