@@ -174,6 +174,24 @@ jobs:
       - name: Coverage recalculation (transitions, fingerprint, stale sweep)
         run: python tools/test_drone_coverage_recalc.py
 
+      # DRONE-USEFUL-AREA-PILOT-001. The operator kit that carries out the
+      # controlled staging pilot: six PowerShell scripts and the probes they
+      # lean on. It is stdlib-only and builds its own SQLite fixture through
+      # the REAL migration, so it fits this workflow's dependency contract.
+      #
+      # [REASON]: the kit decides whether a live pilot may be trusted, and it
+      # is pasted into a console verbatim. Three properties are cheap to break
+      # and expensive to notice: that C:\transport-report-staging is NOT
+      # inside C:\transport-report (a substring guard says it is), that the
+      # drone_flights.area_ha fingerprint sees a change the SUM would miss,
+      # and that GO is unreachable while any one mandatory condition fails.
+      # Each is held by a test with a negative control beside it. The
+      # PowerShell scripts are parsed by PowerShell itself and the module's
+      # pure guards are EXECUTED when pwsh is present, which it is on this
+      # runner; without it those three tests skip and say so.
+      - name: Pilot kit (path guards, area fingerprint, verdict, PowerShell)
+        run: python tools/test_pilot_useful_area_001.py
+
       # [REASON]: tests/test_drone_useful_area_001.py and _002.py -- the whole
       # vertical from route_sync through the recompute to /drones/coverage --
       # are NOT listed here, and that is deliberate. They need Flask,
