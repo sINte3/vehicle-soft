@@ -39,8 +39,27 @@ import pilot_common as common  # noqa: E402
 ROLES = ('product', 'kit', 'collector')
 
 
-def verify(repo, expect_sha, role, require_clean=True, manifest=None):
-    """Ревизия, чистота и blob-хеши исполняемых файлов этого чекаута."""
+def verify(repo, expect_sha, role, require_clean=True, manifest=None,
+           ancestor_of=None, blob_rev=None):
+    """Ревизия, чистота и blob-хеши исполняемых файлов этого чекаута.
+
+    Два РАЗНЫХ режима, и путать их нельзя:
+
+    * `expect_sha` -- HEAD обязан РАВНЯТЬСЯ этой ревизии. Это состояние ПОСЛЕ
+      обновления;
+    * `ancestor_of` -- HEAD обязан быть предком этой ревизии (или равен ей),
+      то есть обновление до неё возможно ОДНИМ fast-forward. Это состояние
+      ДО обновления.
+
+    [REASON]: первая редакция знала только `expect_sha`, и предполётная
+    проверка требовала от площадки уже стоять на проверенной ревизии --
+    хотя перевести её туда должен был следующий шаг. Первый шаг делал второй
+    недостижимым, и заметить это можно было только на сервере.
+
+    `blob_rev` -- ревизия, из которой берутся ожидаемые blob-и. По умолчанию
+    HEAD; предполётная проверка передаёт сюда PRODUCT_SHA, потому что
+    исполняться будут байты ИМЕННО ЕЁ, а не текущего состояния площадки.
+    """
     manifest = manifest or common.load_product_blobs()
     head = common.head_sha(repo)
     clean = common.worktree_is_clean(repo)
@@ -50,6 +69,17 @@ def verify(repo, expect_sha, role, require_clean=True, manifest=None):
         problems.append('HEAD_IS_NOT_THE_EXPECTED_REVISION')
     if require_clean and not clean:
         problems.append('WORKTREE_IS_DIRTY')
+
+    forward = None
+    if ancestor_of:
+        if not common.commit_exists(repo, ancestor_of):
+            problems.append('TARGET_REVISION_IS_NOT_IN_THIS_CHECKOUT')
+        else:
+            forward = common.fast_forward_state(repo, head, ancestor_of)
+            if forward == 'ahead':
+                problems.append('CHECKOUT_IS_AHEAD_OF_THE_TARGET_REVISION')
+            elif forward == 'diverged':
+                problems.append('CHECKOUT_HAS_DIVERGED_FROM_THE_TARGET_REVISION')
 
     # Какие файлы обязаны совпасть, зависит от роли чекаута.
     #
@@ -61,26 +91,50 @@ def verify(repo, expect_sha, role, require_clean=True, manifest=None):
     checked = {}
     identical = manifest['identical_on_both_revisions']
     differs = manifest['kit_differs_on_purpose']
+    own = manifest.get('kit_own_files', {})
+    # Байты берутся из НАЗВАННОЙ ревизии. На предполёте это PRODUCT_SHA, а не
+    # текущее состояние площадки: исполняться будут именно её файлы.
+    revision = blob_rev or head
+    # [REASON]: blob на диске сверяется только тогда, когда чекаут СТОИТ на
+    # той ревизии, из которой берутся ожидания. Площадка, отстающая на
+    # несколько коммитов, законно держит на диске другие байты -- их приведёт
+    # fast-forward следующего шага.
+    on_disk = (revision == head)
 
     if role in ('product', 'kit'):
         for path, entry in sorted(identical.items()):
-            expected = entry['product_blob']
-            checked[path] = _compare_blob(repo, head, path, expected, problems)
+            checked[path] = _compare_blob(repo, revision, path,
+                                          entry['product_blob'], problems,
+                                          check_disk=on_disk)
     if role in ('kit', 'collector'):
         for path, entry in sorted(differs.items()):
-            checked[path] = _compare_blob(repo, head, path, entry['kit_blob'],
-                                          problems)
+            checked[path] = _compare_blob(repo, revision, path,
+                                          entry['kit_blob'], problems,
+                                          check_disk=on_disk)
     if role == 'collector':
         for path, entry in sorted(identical.items()):
-            checked[path] = _compare_blob(repo, head, path,
-                                          entry['product_blob'], problems)
+            checked[path] = _compare_blob(repo, revision, path,
+                                          entry['product_blob'], problems,
+                                          check_disk=on_disk)
+    if role in ('kit', 'collector'):
+        # [REASON]: сами скрипты комплекта и его приборы -- тоже исполняемое.
+        # Первая редакция манифеста их не покрывала вовсе: комплект доказывал
+        # происхождение чужого кода и молчал о своём.
+        for path, blob in sorted(own.items()):
+            checked[path] = _compare_blob(repo, revision, path, blob, problems,
+                                          check_disk=on_disk)
 
     return {
         'repo_role': role,
         'head_sha': head,
         'expected_sha': expect_sha,
         'head_is_expected': bool(expect_sha) and head == expect_sha,
+        'ancestor_of': ancestor_of,
+        'fast_forward_state': forward,
+        'update_is_fast_forward': forward in ('at-target', 'behind'),
         'worktree_clean': clean,
+        'blob_revision': revision,
+        'blobs_compared_on_disk': on_disk,
         'blobs_checked': checked,
         'blobs_all_match': all(item['matches'] for item in checked.values()),
         'problems': problems,
@@ -88,7 +142,7 @@ def verify(repo, expect_sha, role, require_clean=True, manifest=None):
     }
 
 
-def _compare_blob(repo, rev, path, expected, problems):
+def _compare_blob(repo, rev, path, expected, problems, check_disk=True):
     """Сверить blob и в ИСТОРИИ, и НА ДИСКЕ.
 
     [REASON]: два разных вопроса. `git rev-parse <rev>:<path>` отвечает, что
@@ -107,19 +161,20 @@ def _compare_blob(repo, rev, path, expected, problems):
         entry['error'] = str(exc)[:120]
         return entry
 
-    full = os.path.join(str(repo), path.replace('/', os.sep))
-    if os.path.exists(full):
-        # Хеш ГЛАЗАМИ GIT, а не сырых байтов: на Windows рабочая копия лежит
-        # с CRLF, и сырой хеш не совпал бы с блобом ни разу.
-        entry['on_disk'] = common.worktree_blob_sha(repo, path)
-    else:
-        problems.append('FILE_ABSENT:%s' % path)
+    if check_disk:
+        full = os.path.join(str(repo), path.replace('/', os.sep))
+        if os.path.exists(full):
+            # Хеш ГЛАЗАМИ GIT, а не сырых байтов: на Windows рабочая копия
+            # лежит с CRLF, и сырой хеш не совпал бы с блобом ни разу.
+            entry['on_disk'] = common.worktree_blob_sha(repo, path)
+        else:
+            problems.append('FILE_ABSENT:%s' % path)
 
     entry['matches'] = (entry['in_history'] == expected
-                        and entry['on_disk'] == expected)
+                        and (not check_disk or entry['on_disk'] == expected))
     if entry['in_history'] != expected:
         problems.append('BLOB_MISMATCH_IN_HISTORY:%s' % path)
-    elif entry['on_disk'] != expected:
+    elif check_disk and entry['on_disk'] != expected:
         problems.append('BLOB_MISMATCH_ON_DISK:%s' % path)
     return entry
 
@@ -160,7 +215,16 @@ def build_parser():
                     'checkout is at and materialize executables from it.')
     parser.add_argument('command', choices=('verify', 'materialize'))
     parser.add_argument('--repo', required=True, metavar='PATH')
-    parser.add_argument('--expect-sha', metavar='SHA')
+    parser.add_argument('--expect-sha', metavar='SHA',
+                        help='HEAD must EQUAL this revision (the state AFTER '
+                             'an update)')
+    parser.add_argument('--ancestor-of', metavar='SHA',
+                        help='HEAD must be an ancestor of this revision, so '
+                             'that the update to it is a fast-forward (the '
+                             'state BEFORE an update)')
+    parser.add_argument('--blob-rev', metavar='SHA',
+                        help='take the expected blobs from this revision '
+                             'instead of HEAD')
     parser.add_argument('--role', choices=ROLES, default='product')
     parser.add_argument('--allow-dirty', action='store_true',
                         help='verify: do not fail on a dirty working tree')
@@ -182,7 +246,9 @@ def main(argv=None):
     try:
         if args.command == 'verify':
             payload = verify(args.repo, args.expect_sha, args.role,
-                             require_clean=not args.allow_dirty)
+                             require_clean=not args.allow_dirty,
+                             ancestor_of=args.ancestor_of,
+                             blob_rev=args.blob_rev)
             kind = 'repo:verify:%s' % args.role
         else:
             if not (args.rev and args.into and args.files):

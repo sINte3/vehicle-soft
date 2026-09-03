@@ -93,6 +93,28 @@ SMOKE_PATH = '/login'
 SMOKE_ALLOWED_STATUS = (200,)
 SMOKE_REDIRECT_STATUS = (301, 302, 303, 307, 308)
 
+# [REASON]: 200 сам по себе не значит «приложение поднялось». Страница
+# обслуживания, заглушка обратного прокси и чужой сервер на том же порту
+# отвечают двумястами так же охотно. Признак -- класс формы входа из
+# templates/login.html: он есть на странице приложения и его нет ни у одной
+# generic-страницы. Это разметка нашего же шаблона, не секрет и не данные.
+SMOKE_PAGE_MARKER = 'vs-login-form'
+SMOKE_PAGE_MARKER_ALT = 'vsLoginField'
+
+# Коды возврата сборщика отчёта. Вердикт -- ЧАСТЬ КОНТРАКТА, а не текст в
+# файле: скрипт, печатающий PASS при REJECT, врал ровно тем, кто читает
+# только последнюю строку.
+EXIT_VERDICT_GO = 0
+EXIT_VERDICT_TECHNICAL_GO = 10
+EXIT_VERDICT_ADJUST = 11
+EXIT_VERDICT_REJECT = 12
+VERDICT_EXIT_CODES = {
+    'GO': EXIT_VERDICT_GO,
+    'TECHNICAL_GO': EXIT_VERDICT_TECHNICAL_GO,
+    'ADJUST': EXIT_VERDICT_ADJUST,
+    'REJECT': EXIT_VERDICT_REJECT,
+}
+
 # Таблицы и индексы, которые обязана создать миграция.
 EXPECTED_TABLES = ('drone_flight_routes', 'drone_coverage_works')
 EXPECTED_INDEXES = ('ix_drone_flight_routes_drone_flight_id',
@@ -144,6 +166,53 @@ def run_directory(runs_root, run_id):
     return os.path.join(str(runs_root), str(run_id))
 
 
+# ─── Числа, которым можно верить ─────────────────────────────────────────────
+
+def finite_number(value):
+    """Конечное число или None.
+
+    [REASON]: `float('nan')` и `float('inf')` проходят разбор командной строки
+    молча, а дальше ведут себя как угодно: `nan > threshold` ложно ВСЕГДА,
+    поэтому порог с NaN пропускает любую долю, а `inf` секунд выглядит как
+    измеренное время. Оба обязаны быть отвергнуты там, где число входит в
+    решение.
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    if not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if number != number:            # NaN
+        return None
+    if number in (float('inf'), float('-inf')):
+        return None
+    return number
+
+
+def owner_share_threshold(value):
+    """Порог доли работ без числа: конечное число в [0, 1] или отказ."""
+    number = finite_number(value)
+    if number is None:
+        raise ProbeError('the owner share threshold must be a finite number, '
+                         'got %r' % (value,))
+    if not (0.0 <= number <= 1.0):
+        raise ProbeError('the owner share threshold is a SHARE and must lie '
+                         'in [0, 1], got %r' % (value,))
+    return number
+
+
+def owner_delta_percent(value):
+    """Допустимое отклонение от площади DJI: конечное число >= 0 или отказ."""
+    number = finite_number(value)
+    if number is None:
+        raise ProbeError('the owner DJI delta must be a finite number, '
+                         'got %r' % (value,))
+    if number < 0.0:
+        raise ProbeError('the owner DJI delta is a magnitude and cannot be '
+                         'negative, got %r' % (value,))
+    return number
+
+
 # ─── Git: ревизии и blob-и ───────────────────────────────────────────────────
 
 def git(repo, *arguments):
@@ -167,6 +236,50 @@ def head_sha(repo):
 
 def worktree_is_clean(repo):
     return git_text(repo, 'status', '--porcelain') == ''
+
+
+def commit_exists(repo, rev):
+    try:
+        git(repo, 'cat-file', '-e', '%s^{commit}' % rev)
+        return True
+    except ProbeError:
+        return False
+
+
+def is_ancestor(repo, candidate, descendant):
+    """`candidate` -- предок `descendant` (или равен ему)?"""
+    result = subprocess.run(
+        ('git', '-C', str(repo), 'merge-base', '--is-ancestor',
+         str(candidate), str(descendant)),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    raise ProbeError('git merge-base --is-ancestor failed in %s: %s'
+                     % (repo, result.stderr.decode('utf-8', 'replace').strip()))
+
+
+def fast_forward_state(repo, head, target):
+    """Можно ли перевести `head` в `target` одним fast-forward.
+
+    Возвращает одно из: 'at-target', 'behind', 'ahead', 'diverged'.
+
+    [REASON]: предполётная проверка НЕ ИМЕЕТ ПРАВА требовать, чтобы площадка
+    уже стояла на проверенной ревизии: перевести её туда -- работа второго
+    шага, и требование первого делало второй недостижимым. Правильный вопрос
+    первого шага другой: возможно ли это обновление вообще и будет ли оно
+    fast-forward. «Опережает» и «разошлась» -- отказ до любых изменений: в
+    первом случае на площадке есть неизвестные коммиты, во втором она уже не
+    на этой линии истории.
+    """
+    if head == target:
+        return 'at-target'
+    if is_ancestor(repo, head, target):
+        return 'behind'
+    if is_ancestor(repo, target, head):
+        return 'ahead'
+    return 'diverged'
 
 
 def blob_sha_of_bytes(payload):
