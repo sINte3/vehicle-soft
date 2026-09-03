@@ -57,6 +57,16 @@ PRODUCT_FILES = (
 # Файл, который у комплекта СВОЙ и отличается от продукта осознанно.
 KIT_ONLY_FILES = ('drone_collector/main.py',)
 
+# Сам комплект. Его скрипты и приборы -- тоже исполняемое, и происхождение у
+# них должно быть доказано ровно так же.
+#
+# [REASON]: первая редакция манифеста покрывала чужой код и молчала о своём.
+# Комплект доказывал, что миграция взята из проверенной ревизии, и при этом
+# ничего не говорил о том, из какой ревизии взят он сам.
+KIT_OWN_DIR = 'ops/pilot_useful_area_001'
+KIT_OWN_SUFFIXES = ('.ps1', '.psm1', '.py')
+KIT_OWN_EXCLUDED = ('PRODUCT_BLOBS.json',)
+
 
 def build(repo=REPO_ROOT, product_sha=None):
     """Собрать манифест: blob продукта из ИСТОРИИ, blob комплекта -- с ДИСКА.
@@ -84,12 +94,22 @@ def build(repo=REPO_ROOT, product_sha=None):
             'product_blob': common.blob_sha_at(repo, product_sha, path),
             'kit_blob': kit_blob(path),
         }
+
+    own = {}
+    for name in sorted(os.listdir(os.path.join(repo, KIT_OWN_DIR))):
+        if name in KIT_OWN_EXCLUDED:
+            continue
+        if not name.endswith(KIT_OWN_SUFFIXES):
+            continue
+        path = '%s/%s' % (KIT_OWN_DIR, name)
+        own[path] = kit_blob(path)
     return {
         'kit': common.KIT_ID,
         'kit_version': common.KIT_VERSION,
         'product_sha': product_sha,
         'identical_on_both_revisions': files,
         'kit_differs_on_purpose': differs,
+        'kit_own_files': own,
     }
 
 
@@ -110,6 +130,24 @@ def check_against_worktree(manifest, repo=REPO_ROOT):
             continue
         if common.worktree_blob_sha(repo, path) != entry['kit_blob']:
             problems.append('WORKTREE_DIFFERS:%s' % path)
+    for path, blob in sorted(manifest.get('kit_own_files', {}).items()):
+        full = os.path.join(repo, path.replace('/', os.sep))
+        if not os.path.exists(full):
+            problems.append('MISSING:%s' % path)
+            continue
+        if common.worktree_blob_sha(repo, path) != blob:
+            problems.append('WORKTREE_DIFFERS:%s' % path)
+    expected_own = set()
+    for name in sorted(os.listdir(os.path.join(repo, KIT_OWN_DIR))):
+        if name in KIT_OWN_EXCLUDED or not name.endswith(KIT_OWN_SUFFIXES):
+            continue
+        expected_own.add('%s/%s' % (KIT_OWN_DIR, name))
+    # [REASON]: новый файл комплекта, не попавший в манифест, исполнялся бы
+    # без единого доказательства происхождения. Манифест обязан покрывать
+    # ВЕСЬ комплект, а не тот его состав, который был на момент записи.
+    for path in sorted(expected_own - set(manifest.get('kit_own_files', {}))):
+        problems.append('NOT_IN_MANIFEST:%s' % path)
+
     for path, entry in sorted(manifest['kit_differs_on_purpose'].items()):
         if entry['product_blob'] == entry['kit_blob']:
             problems.append('DECLARED_DIFFERENT_BUT_IDENTICAL:%s' % path)
@@ -141,9 +179,11 @@ def main(argv=None):
         sys.stderr.write('BLOB MANIFEST: %s\n' % problem)
     if problems:
         return common.EXIT_ERROR
-    print('BLOB_MANIFEST=OK (%d identical, %d deliberately different)'
+    print('BLOB_MANIFEST=OK (%d identical, %d deliberately different, '
+          '%d kit files)'
           % (len(manifest['identical_on_both_revisions']),
-             len(manifest['kit_differs_on_purpose'])))
+             len(manifest['kit_differs_on_purpose']),
+             len(manifest.get('kit_own_files', {}))))
     return common.EXIT_OK
 
 

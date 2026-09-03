@@ -74,6 +74,7 @@ ALLOWED_FIELDS = (
     'smoke_test_ok', 'smoke_test_status', 'smoke_test_path',
     'owner_share_threshold', 'owner_dji_delta_percent',
     'production_rollout_authorised', 'business_decision_required',
+    'release_gate_action_required', 'smoke_page_marker_seen',
     'coverage_fingerprint_sha256', 'dry_run_wrote_nothing',
     'probe_request_failures', 'probe_pending_requests',
     'staging_url', 'evidence_present', 'evidence_missing',
@@ -181,7 +182,7 @@ def build_conditions(preflight, deploy, collect, recalc_runs, staging):
     apply2 = _run_by_label(recalc_runs, 'apply-2')
 
     fingerprints = collect_fingerprints(preflight, deploy, staging)
-    area_unchanged = len(set(fingerprints.values())) <= 1 and bool(fingerprints)
+    area_unchanged = area_ha_unchanged(fingerprints)
 
     works = _number(coverage.get('works'), 0)
 
@@ -196,11 +197,20 @@ def build_conditions(preflight, deploy, collect, recalc_runs, staging):
          'BEFORE anything changed'),
         ('STAGING_SERVICE_STARTED', _flag(dep.get('service_started')),
          'the staging service came back up after the migration'),
-        ('SMOKE_TEST_OK', _flag(dep.get('smoke_test_ok')),
-         'the staging smoke test hit %s and got exactly one of %s, following '
-         'redirects only inside the staging authority'
+        ('SMOKE_TEST_OK',
+         _flag(dep.get('smoke_test_ok'))
+         and _number(dep.get('smoke_test_status')) in common.SMOKE_ALLOWED_STATUS
+         and dep.get('smoke_test_path') == common.SMOKE_PATH
+         and _flag(dep.get('smoke_page_marker_seen')),
+         'the staging smoke test hit %s, got %s, and the body carried the '
+         'application login form -- all four together, because a lone boolean '
+         'and a lone 200 are each satisfied by a maintenance page'
          % (common.SMOKE_PATH,
             ', '.join(str(code) for code in common.SMOKE_ALLOWED_STATUS))),
+        ('RECALCULATION_WAS_TIMED',
+         recalculation_seconds(recalc_runs) is not None,
+         'the applying recalculation reported a finite, non-negative duration '
+         'in its own evidence'),
         ('DRY_RUN_WROTE_NOTHING', _flag(_dry_run_wrote_nothing(recalc_runs)),
          'the coverage table was byte-identical before and after the dry run, '
          'compared over every row and every column'),
@@ -213,7 +223,9 @@ def build_conditions(preflight, deploy, collect, recalc_runs, staging):
          _flag((snap.get('integrity') or {}).get('integrity_ok')),
          'PRAGMA integrity_check on the staging database returned ok'),
         ('AREA_HA_UNCHANGED', area_unchanged,
-         'every recorded drone_flights.area_ha fingerprint is the same value'),
+         'ALL FIVE drone_flights.area_ha fingerprints are present and equal: '
+         'the production copy before and after, staging before and after the '
+         'migration, and staging after the recalculation'),
         ('LIVE_ROUTE_DECODE_OK',
          _number(counters.get('collect_decode_failures'), 1) == 0
          and _number(counters.get('collect_routes_captured'), 0) > 0
@@ -324,26 +336,67 @@ def _totals_agree(coverage, apply1):
     return abs(float(stored) - float(reported)) <= 1e-4
 
 
+# Пять отпечатков, и требуются ВСЕ ПЯТЬ.
+REQUIRED_FINGERPRINTS = ('production_copy_before_migration',
+                         'production_copy_after_migration',
+                         'staging_before_migration',
+                         'staging_after_migration',
+                         'staging_after_recalculation')
+
+
 def collect_fingerprints(preflight, deploy, staging):
-    """Все записанные отпечатки area_ha под понятными именами."""
-    found = {}
+    """Все ожидаемые отпечатки area_ha. Отсутствующий -- None, а не пропуск.
+
+    [REASON]: первая редакция просто не клала в словарь то, чего не нашла, и
+    `len(set(values)) <= 1` на одном уцелевшем отпечатке давало «площадь не
+    менялась». Доказательство, которое СИЛЬНЕЕ при меньшем числе улик, --
+    не доказательство. Отсутствующее значение теперь остаётся в словаре
+    пустым и обрушивает условие.
+    """
     pre = payload_of(preflight)
     dep = payload_of(deploy)
     snap = payload_of(staging)
-    for name, value in (
-            ('production_copy_before_migration',
-             (pre.get('area_ha_before') or {}).get('sha256')),
-            ('production_copy_after_migration',
-             (pre.get('area_ha_after') or {}).get('sha256')),
-            ('staging_before_migration',
-             (dep.get('area_ha_before') or {}).get('sha256')),
-            ('staging_after_migration',
-             (dep.get('area_ha_after') or {}).get('sha256')),
-            ('staging_after_recalculation',
-             (snap.get('area_ha') or {}).get('sha256'))):
-        if value:
-            found[name] = value
-    return found
+    return {
+        'production_copy_before_migration':
+            (pre.get('area_ha_before') or {}).get('sha256'),
+        'production_copy_after_migration':
+            (pre.get('area_ha_after') or {}).get('sha256'),
+        'staging_before_migration':
+            (dep.get('area_ha_before') or {}).get('sha256'),
+        'staging_after_migration':
+            (dep.get('area_ha_after') or {}).get('sha256'),
+        'staging_after_recalculation':
+            (snap.get('area_ha') or {}).get('sha256'),
+    }
+
+
+def area_ha_unchanged(fingerprints):
+    """Все пять на месте, и все пять -- одно значение. Иначе ложь."""
+    values = []
+    for name in REQUIRED_FINGERPRINTS:
+        value = fingerprints.get(name)
+        if not value:
+            return False
+        values.append(value)
+    return len(set(values)) == 1
+
+
+def recalculation_seconds(recalc_runs):
+    """Измеренное время применяющего пересчёта, из улики apply-1.
+
+    [REASON]: отчёт брал время из параметра командной строки, а скрипт
+    пересчёта его не передавал -- в отчёт уезжал null. Число живёт в улике
+    того шага, который его измерил, и берётся оттуда. NaN и Infinity здесь
+    так же непригодны, как отсутствие: они проходят разбор float и выглядят
+    как измерение.
+    """
+    apply1 = _run_by_label(recalc_runs, 'apply-1')
+    if not apply1:
+        return None
+    number = common.finite_number(apply1.get('seconds'))
+    if number is None or number < 0:
+        return None
+    return number
 
 
 # ─── Вердикт ────────────────────────────────────────────────────────────────
@@ -535,7 +588,7 @@ def validate_evidence_set(documents, run_id, kit_sha):
 # ─── Сборка отчёта ──────────────────────────────────────────────────────────
 
 def build_report(preflight, deploy, collect, recalc_runs, staging,
-                 recalculation_seconds, owner_threshold, dji_delta_limit,
+                 owner_threshold, dji_delta_limit,
                  missing_evidence, run_id=None, kit_sha=None):
     """Плоский отчёт: только объявленные поля, только счётчики и площади."""
     snap = payload_of(staging)
@@ -586,6 +639,7 @@ def build_report(preflight, deploy, collect, recalc_runs, staging,
         'smoke_test_ok': _flag(dep.get('smoke_test_ok')),
         'smoke_test_status': _number(dep.get('smoke_test_status')),
         'smoke_test_path': dep.get('smoke_test_path'),
+        'smoke_page_marker_seen': _flag(dep.get('smoke_page_marker_seen')),
         'dry_run_wrote_nothing': _flag((dry or {}).get('wrote_nothing')),
         'coverage_fingerprint_sha256':
             (snap.get('coverage_fingerprint') or {}).get('sha256'),
@@ -640,7 +694,8 @@ def build_report(preflight, deploy, collect, recalc_runs, staging,
         'works_without_number_share':
             _number(coverage.get('works_without_number_share')),
 
-        'recalculation_seconds': _number(recalculation_seconds),
+        # Измеренное время берётся из улики шага, который его измерил.
+        'recalculation_seconds': recalculation_seconds(recalc_runs),
 
         'owner_share_threshold': owner_threshold,
         'owner_dji_delta_percent': dji_delta_limit,
@@ -681,7 +736,13 @@ def build_report(preflight, deploy, collect, recalc_runs, staging,
                               envelope_problems)
     report['verdict'] = verdict
     report['verdict_reasons'] = reasons
-    report['production_rollout_authorised'] = (verdict == 'GO')
+    # [REASON]: ЭТОТ КОМПЛЕКТ НИКОГДА НЕ РАЗРЕШАЕТ PRODUCTION. Он прогоняет
+    # пилот на площадке; снятие строки гейта релиза и решение о боевом
+    # развёртывании -- отдельное действие владельца ПОСЛЕ отчёта. Поле
+    # оставалось истинным при вердикте GO, то есть два числа в командной
+    # строке превращались в разрешение выкатываться.
+    report['production_rollout_authorised'] = False
+    report['release_gate_action_required'] = True
     report['business_decision_required'] = (verdict != 'GO')
 
     markdown = render_markdown(report)
@@ -691,7 +752,6 @@ def build_report(preflight, deploy, collect, recalc_runs, staging,
     if violations and report['verdict'] != 'REJECT':
         report['verdict'] = 'REJECT'
         report['verdict_reasons'] = ['REPORT_CONTAINS_PRIVATE_VALUES']
-        report['production_rollout_authorised'] = False
         report['business_decision_required'] = True
     markdown = render_markdown(report)
     return report, markdown
@@ -891,9 +951,6 @@ def build_parser():
                         metavar='PATH',
                         help='recalculation evidence; give it three times: '
                              'dry-run, apply-1, apply-2')
-    parser.add_argument('--recalc-seconds', type=float, default=None,
-                        metavar='N',
-                        help='how long the applying recalculation took')
     parser.add_argument('--run-id', required=True, metavar='ID',
                         help='the one run identifier every evidence file must '
                              'carry')
@@ -946,10 +1003,24 @@ def main(argv=None):
         if not _run_by_label(runs, label):
             missing.append('recalc:%s' % label)
 
+    # Пороги владельца принимаются только конечными числами в своих
+    # диапазонах: NaN и Infinity проходят разбор float молча, а `nan > x`
+    # ложно ВСЕГДА -- порог с NaN пропустил бы любую долю.
+    try:
+        owner_threshold = (None if args.owner_share_threshold is None
+                           else common.owner_share_threshold(
+                               args.owner_share_threshold))
+        dji_limit = (None if args.owner_dji_delta_percent is None
+                     else common.owner_delta_percent(
+                         args.owner_dji_delta_percent))
+    except common.ProbeError as exc:
+        sys.stderr.write('ERROR: %s\n' % exc)
+        return common.EXIT_ERROR
+
     report, markdown = build_report(
         documents['preflight'], documents['deploy'], documents['collect'],
-        runs, documents['staging_snapshot'], args.recalc_seconds,
-        args.owner_share_threshold, args.owner_dji_delta_percent, missing,
+        runs, documents['staging_snapshot'],
+        owner_threshold, dji_limit, missing,
         run_id=args.run_id, kit_sha=args.kit_sha)
 
     common.write_evidence(args.out_json, report)
@@ -959,11 +1030,12 @@ def main(argv=None):
     with open(args.out_md, 'w', encoding='utf-8', newline='\n') as handle:
         handle.write(markdown)
 
-    print('VERDICT=%s' % report['verdict'])
+    print('REPORT_GENERATED=yes')
+    print('PILOT_VERDICT=%s' % report['verdict'])
     for code in report['verdict_reasons']:
         print('REASON=%s' % code)
-    print('PRODUCTION_ROLLOUT_AUTHORISED=%s'
-          % ('yes' if report['production_rollout_authorised'] else 'no'))
+    print('PRODUCTION_ROLLOUT_AUTHORISED=no')
+    print('RELEASE_GATE_ACTION_REQUIRED=yes')
     for problem in report['envelope_problems']:
         print('ENVELOPE=%s' % problem)
     print('PRIVACY_SCAN=%s' % ('PASS' if report['privacy_scan_passed']
@@ -975,8 +1047,13 @@ def main(argv=None):
         for item in report['privacy_violations']:
             sys.stderr.write('PRIVACY VIOLATION: %s at %s\n'
                              % (item['code'], item['where']))
-        return common.EXIT_CHECK_FAILED
-    return common.EXIT_OK
+
+    # [REASON]: код возврата НЕСЁТ ВЕРДИКТ, а не «файл записался». Прежняя
+    # редакция возвращала ноль при REJECT, и вызывающий скрипт спокойно
+    # печатал после этого PASS. Разделение однозначное: 1 -- отчёт собрать не
+    # удалось; 0/10/11/12 -- отчёт собран, и это его вердикт.
+    return common.VERDICT_EXIT_CODES.get(report['verdict'],
+                                         common.EXIT_VERDICT_REJECT)
 
 
 if __name__ == '__main__':
