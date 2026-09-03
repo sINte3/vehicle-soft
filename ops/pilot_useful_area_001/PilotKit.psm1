@@ -70,6 +70,14 @@ $script:SmokeAllowedStatus = @(200)
 # templates/login.html.
 $script:SmokePageMarker = 'vs-login-form'
 
+# Точный набор полей run.json. Объявлен здесь, а не подразумевается по коду:
+# «почти проверено» у файла, из которого берутся ПУТИ для записи и решения об
+# остановке службы, значит «не проверено».
+$script:RunManifestRequiredFields = @(
+    'kit', 'kit_version', 'run_id', 'approved_kit_sha', 'measured_kit_sha',
+    'product_sha', 'target_day', 'created_utc', 'machine', 'kit_checkout',
+    'run_root', 'steps')
+
 function Get-PilotConstants {
     [CmdletBinding()]
     param()
@@ -633,6 +641,25 @@ function Invoke-PilotProbe {
 
 # --- The one run manifest -----------------------------------------------------
 
+function Get-PilotRunDirectory {
+    <#
+        The one place that turns a runs root and a run id into a directory.
+
+        [REASON]: NOT Join-Path. Join-Path resolves against PowerShell drives,
+        and on a non-Windows host `Join-Path 'D:\runs' $id` fails with "cannot
+        find drive D" and yields $null. Two nulls then compare equal, so a
+        validator built on Join-Path would have passed a manifest whose
+        run_root was anything at all -- and it did, silently, wherever the path
+        could not be resolved. Plain concatenation says what is meant and is
+        the same string on every host.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$RunsRoot,
+          [Parameter(Mandatory)][string]$RunId)
+
+    return ($RunsRoot.TrimEnd('\', '/') + '\' + $RunId)
+}
+
 function Test-PilotRunManifest {
     <#
         A run manifest is not a note to ourselves: deploy, recalculate and
@@ -649,12 +676,11 @@ function Test-PilotRunManifest {
     param([Parameter(Mandatory)]$Manifest,
           [Parameter(Mandatory)][string]$RunsRoot,
           [Parameter(Mandatory)][string]$RunId,
-          [string]$ApprovedKitSha)
+          [string]$ApprovedKitSha,
+          [string]$ExpectedMachine)
 
     $problems = @()
-    foreach ($field in 'kit', 'kit_version', 'run_id', 'approved_kit_sha',
-                       'measured_kit_sha', 'product_sha', 'target_day',
-                       'machine', 'kit_checkout', 'run_root', 'steps') {
+    foreach ($field in $script:RunManifestRequiredFields) {
         if (-not ($Manifest.PSObject.Properties.Name -contains $field)) {
             $problems += "MISSING_FIELD:$field"
         }
@@ -670,13 +696,30 @@ function Test-PilotRunManifest {
     if ([string]$Manifest.measured_kit_sha -notmatch '^[0-9a-f]{40}$') { $problems += 'MALFORMED_MEASURED_KIT_SHA' }
     if ($Manifest.approved_kit_sha -ne $Manifest.measured_kit_sha) { $problems += 'APPROVED_AND_MEASURED_KIT_SHA_DIFFER' }
     if ($ApprovedKitSha -and $Manifest.approved_kit_sha -ne $ApprovedKitSha) { $problems += 'APPROVED_KIT_SHA_MISMATCH' }
-    if ([string]::IsNullOrWhiteSpace([string]$Manifest.machine)) { $problems += 'MACHINE_ABSENT' }
+    if ([string]::IsNullOrWhiteSpace([string]$Manifest.machine)) {
+        $problems += 'MACHINE_ABSENT'
+    } else {
+        # [REASON]: не «непустая строка», а ЭТА машина. Манифест, написанный на
+        # другом сервере, называет чужие пути и чужую службу, и принять его --
+        # значит выполнить их.
+        $expected = if ($ExpectedMachine) { $ExpectedMachine } else { $env:COMPUTERNAME }
+        if ($expected -and
+            ([string]$Manifest.machine).Trim().ToLowerInvariant() -ne $expected.Trim().ToLowerInvariant()) {
+            $problems += 'MACHINE_MISMATCH'
+        }
+    }
+    # created_utc пишется при создании запуска, поэтому и требуется, и
+    # проверяется по форме: поле, которое никто не читает, однажды окажется
+    # чем угодно.
+    if ([string]$Manifest.created_utc -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$') {
+        $problems += 'MALFORMED_CREATED_UTC'
+    }
     if (-not (Test-PilotPathEquals -Left ([string]$Manifest.kit_checkout) -Right $script:KitRoot)) {
         $problems += 'KIT_CHECKOUT_IS_NOT_THE_KIT_ROOT'
     }
 
     # run_root must be EXACTLY the directory this run id implies.
-    $expected = Join-Path $RunsRoot $RunId
+    $expected = Get-PilotRunDirectory -RunsRoot $RunsRoot -RunId $RunId
     if (-not (Test-PilotPathEquals -Left ([string]$Manifest.run_root) -Right $expected)) {
         $problems += 'RUN_ROOT_IS_NOT_THE_RUN_DIRECTORY'
     }
@@ -686,7 +729,13 @@ function Test-PilotRunManifest {
             $problems += 'RUN_ROOT_IS_INSIDE_A_CHECKOUT'
         }
     }
-    if ($null -eq $Manifest.steps) { $problems += 'STEPS_ABSENT' }
+    if ($null -eq $Manifest.steps) {
+        $problems += 'STEPS_ABSENT'
+    } elseif (-not ($Manifest.steps -is [System.Management.Automation.PSCustomObject] -or
+                    $Manifest.steps -is [System.Collections.IDictionary])) {
+        # Строка или число здесь означают, что манифест писал не этот комплект.
+        $problems += 'STEPS_IS_NOT_AN_OBJECT'
+    }
     return $problems
 }
 
@@ -695,10 +744,12 @@ function Assert-PilotRunManifest {
     param([Parameter(Mandatory)]$Manifest,
           [Parameter(Mandatory)][string]$RunsRoot,
           [Parameter(Mandatory)][string]$RunId,
-          [string]$ApprovedKitSha)
+          [string]$ApprovedKitSha,
+          [string]$ExpectedMachine)
 
     $problems = @(Test-PilotRunManifest -Manifest $Manifest -RunsRoot $RunsRoot `
-                                        -RunId $RunId -ApprovedKitSha $ApprovedKitSha)
+                                        -RunId $RunId -ApprovedKitSha $ApprovedKitSha `
+                                        -ExpectedMachine $ExpectedMachine)
     if ($problems.Count -gt 0) {
         throw "REFUSED: the run manifest of $RunId is not usable: $($problems -join ', '). Nothing was created, written or stopped."
     }
@@ -726,7 +777,7 @@ function New-PilotRun {
     $tail = -join ((1..8) | ForEach-Object { '{0:x}' -f (Get-Random -Minimum 0 -Maximum 16) })
     $runId = "$stamp-$tail"
 
-    $directory = Join-Path $RunsRoot $runId
+    $directory = Get-PilotRunDirectory -RunsRoot $RunsRoot -RunId $runId
     # [REASON]: the run directory is created ATOMICALLY and a collision is a
     # refusal. `-Force` would have quietly adopted an existing directory --
     # another run's, with another run's evidence already in it.
@@ -753,7 +804,8 @@ function New-PilotRun {
         steps            = [ordered]@{}
     }
     Assert-PilotRunManifest -Manifest ([pscustomobject]$manifest) -RunsRoot $RunsRoot `
-                            -RunId $runId -ApprovedKitSha $ApprovedKitSha
+                            -RunId $runId -ApprovedKitSha $ApprovedKitSha `
+                            -ExpectedMachine $env:COMPUTERNAME
     Write-PilotJson -Path (Join-Path $directory 'run.json') -Value $manifest | Out-Null
     return $manifest
 }
@@ -767,14 +819,17 @@ function Get-PilotRun {
     if ($RunId -notmatch '^\d{8}T\d{6}Z-[0-9a-f]{8}$') {
         throw "REFUSED: '$RunId' is not a run identifier of this kit."
     }
-    $directory = Join-Path $RunsRoot $RunId
+    $directory = Get-PilotRunDirectory -RunsRoot $RunsRoot -RunId $RunId
     $manifestPath = Join-Path $directory 'run.json'
     if (-not (Test-Path -LiteralPath $manifestPath)) {
         throw "REFUSED: no run manifest at $manifestPath. Start with PREFLIGHT_AND_COPY_TEST.ps1, which creates the run."
     }
     $manifest = Read-PilotJson -Path $manifestPath
+    # [REASON]: и машина тоже. Манифест, написанный на другом сервере, называет
+    # чужие пути и чужую службу; принять его -- значит выполнить их здесь.
     Assert-PilotRunManifest -Manifest $manifest -RunsRoot $RunsRoot `
-                            -RunId $RunId -ApprovedKitSha $ApprovedKitSha
+                            -RunId $RunId -ApprovedKitSha $ApprovedKitSha `
+                            -ExpectedMachine $env:COMPUTERNAME
     return $manifest
 }
 
@@ -789,12 +844,13 @@ function Set-PilotRunStep {
           [Parameter(Mandatory)][string]$Step,
           [Parameter(Mandatory)]$Value)
 
-    $directory = Join-Path $RunsRoot $RunId
+    $directory = Get-PilotRunDirectory -RunsRoot $RunsRoot -RunId $RunId
     $manifestPath = Join-Path $directory 'run.json'
     $manifest = Read-PilotJson -Path $manifestPath
     # The same full check before writing: a manifest that redirects writes is
     # dangerous precisely at the moment something is about to be written.
-    Assert-PilotRunManifest -Manifest $manifest -RunsRoot $RunsRoot -RunId $RunId
+    Assert-PilotRunManifest -Manifest $manifest -RunsRoot $RunsRoot -RunId $RunId `
+                            -ExpectedMachine $env:COMPUTERNAME
 
     $steps = [ordered]@{}
     if ($manifest.PSObject.Properties.Name -contains 'steps' -and $manifest.steps) {
@@ -829,7 +885,7 @@ function Get-PilotEvidencePath {
               'repo_kit', 'repo_collector', 'materialize', 'report_json',
               'report_md')][string]$Name)
 
-    $directory = Join-Path $RunsRoot $RunId
+    $directory = Get-PilotRunDirectory -RunsRoot $RunsRoot -RunId $RunId
     switch ($Name) {
         'report_json' { return (Join-Path $directory 'report\PILOT_REPORT.json') }
         'report_md'   { return (Join-Path $directory 'report\PILOT_REPORT.md') }
@@ -1063,7 +1119,8 @@ Export-ModuleMember -Function Get-PilotConstants, Get-PilotPathSegments,
     Resolve-PilotStagingService, Assert-PilotServiceIsNotProduction,
     Invoke-PilotGit, Assert-PilotWorktreeClean, Get-PilotHeadSha,
     Get-PilotKitSha, Assert-PilotApprovedKitSha, Assert-PilotProductSha,
-    Test-PilotRunManifest, Assert-PilotRunManifest, Get-PilotFileSha256,
+    Test-PilotRunManifest, Assert-PilotRunManifest, Get-PilotRunDirectory,
+    Get-PilotFileSha256,
     Write-PilotJson, Read-PilotJson, Invoke-PilotPython, Invoke-PilotProbe,
     New-PilotRun, Get-PilotRun, Set-PilotRunStep, Get-PilotEvidencePath,
     New-PilotRunBackup,

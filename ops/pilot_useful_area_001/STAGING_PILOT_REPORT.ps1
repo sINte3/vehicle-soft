@@ -29,6 +29,12 @@
     -OwnerShareThreshold and -OwnerDjiDeltaPercent. This kit prints no example
     values for them: a number printed here reads as a recommendation, and the
     decision has not been made.
+
+    A value that is passed is always forwarded, whatever it is. There is no
+    "looks wrong, so probably means unset": the share must be a finite number
+    in [0, 1] and the deviation a finite number >= 0, and python refuses
+    anything else as an input error instead of quietly continuing without the
+    rule.
 #>
 
 [CmdletBinding()]
@@ -38,8 +44,8 @@ param(
     [string]$ExpectedHost = 'srv-yoqsh',
     [string]$RunsRoot = 'D:\transport-report-backups\pilot\DRONE-USEFUL-AREA-001\runs',
     [string]$Python = 'C:\Program Files\Python314\python.exe',
-    [double]$OwnerShareThreshold = -1,
-    [double]$OwnerDjiDeltaPercent = -1
+    [double]$OwnerShareThreshold,
+    [double]$OwnerDjiDeltaPercent
 )
 
 Set-StrictMode -Version Latest
@@ -97,14 +103,23 @@ $arguments = @(
     '--out-md', $outMd
 )
 
-# [REASON]: a NEGATIVE value means "the owner has not named this rule". There
-# is no default, and there must not be one: a threshold chosen by the kit and
-# passed silently becomes a decision the owner never made.
-if ($OwnerShareThreshold -ge 0) {
-    $arguments += @('--owner-share-threshold', ([string]$OwnerShareThreshold))
+# [REASON]: PRESENCE decides, not sign. A negative number used to mean "the
+# owner has not named this rule", so an explicitly passed -0.01, -1 or NaN was
+# not rejected as wrong -- it silently vanished and became "no rule given",
+# turning an input error into TECHNICAL_GO. Whatever the operator typed now
+# reaches python, which holds the ONE range-and-finiteness check.
+#
+# [REASON]: InvariantCulture. `[string]$double` formats with the current
+# culture; on a ru-RU server that is "0,5", and python would refuse a number
+# the operator typed correctly.
+$invariant = [System.Globalization.CultureInfo]::InvariantCulture
+if ($PSBoundParameters.ContainsKey('OwnerShareThreshold')) {
+    $arguments += @('--owner-share-threshold',
+                    $OwnerShareThreshold.ToString($invariant))
 }
-if ($OwnerDjiDeltaPercent -ge 0) {
-    $arguments += @('--owner-dji-delta-percent', ([string]$OwnerDjiDeltaPercent))
+if ($PSBoundParameters.ContainsKey('OwnerDjiDeltaPercent')) {
+    $arguments += @('--owner-dji-delta-percent',
+                    $OwnerDjiDeltaPercent.ToString($invariant))
 }
 
 # [REASON]: the exit code of the report tool CARRIES THE VERDICT. 1 means the
