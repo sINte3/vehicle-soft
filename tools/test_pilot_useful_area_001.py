@@ -41,6 +41,7 @@
 вылеты пронумерованы с 900001. Ни одной настоящей координаты.
 """
 
+import contextlib
 import copy
 import json
 import os
@@ -50,7 +51,10 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from datetime import datetime, timedelta
 
@@ -85,6 +89,9 @@ RUN_STEP_SCRIPTS = ('STAGING_DEPLOY_AND_MIGRATE.ps1', 'STAGING_ROLLBACK.ps1',
                     'BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1',
                     'STAGING_RECALCULATE_AND_VERIFY.ps1',
                     'STAGING_PILOT_REPORT.ps1')
+
+# Every script takes the reviewer-approved kit revision, step 1 included.
+APPROVED_SHA_SCRIPTS = PS_SCRIPTS
 
 # SYNTHETIC / NOT-REAL.
 LAT0 = 39.70
@@ -192,6 +199,53 @@ def healthy_collect(run_id, when=None, **overrides):
         'counters': counters, 'passed': True, 'reasons': [],
         'ingest_counters_balance': True,
         'no_unfinished_route_requests': True}, run_id, when=when)
+
+
+_SHARED = {}
+
+
+def shared_evidence():
+    """Один набор здоровых улик на весь модуль, собранный по требованию.
+
+    [REASON]: три класса брали улики из `Verdict.setUpClass`. Это работало
+    только потому, что unittest идёт по алфавиту и Verdict оказывался раньше;
+    запуск одного класса отдельно падал на AttributeError. Тест, зависящий от
+    порядка запуска, проверяет порядок запуска.
+    """
+    if _SHARED:
+        return _SHARED
+    site = SyntheticSite()
+    paths = site.recalc_evidence(run_id=site.run_id)
+    runs = [common.read_evidence(paths[label])
+            for label in ('dry-run', 'apply-1', 'apply-2')]
+    _result, snapshot = site.snapshot(run_id=site.run_id)
+    area = snapshot['payload']['area_ha']
+    _SHARED.update({
+        'site': site,
+        'run_id': site.run_id,
+        'runs': runs,
+        'snapshot': snapshot,
+        'preflight': envelope('preflight', {
+            'migration_on_copy_ok': True,
+            'area_ha_before': area, 'area_ha_after': area},
+            site.run_id, when=stamp(-300)),
+        'deploy': envelope('deploy', {
+            'phase': 'done',
+            'migration_on_staging_ok': True,
+            'area_ha_before': area, 'area_ha_after': area,
+            'backup_path': 'D:\\runs\\x\\backup\\transport_x.db',
+            'backup_sha256': 'c' * 64,
+            'backup_verified': True,
+            'service_started': True,
+            'smoke_test_ok': True,
+            'smoke_test_status': 200,
+            'smoke_test_path': '/login',
+            'smoke_page_marker_seen': True,
+            'sha_before': 'aa11b9f000000000000000000000000000000abc',
+            'sha_after': common.PRODUCT_SHA}, site.run_id, when=stamp(-240)),
+        'collect': healthy_collect(site.run_id, when=stamp(-180)),
+    })
+    return _SHARED
 
 
 class SyntheticSite(object):
@@ -336,6 +390,8 @@ class SyntheticSite(object):
                          '--out', out]
             if label == 'dry-run':
                 arguments.append('--wrote-nothing')
+            if label == 'apply-1':
+                arguments += ['--seconds', '1.234']
             if previous:
                 arguments += ['--compare-with', previous]
             result = run_python(*arguments)
@@ -404,8 +460,9 @@ class TwoRevisions(unittest.TestCase):
             self.assertIn('$KitCheckout = Split-Path -Parent (Split-Path '
                           '-Parent $PSScriptRoot)', code_text(name), name)
         collector = code_text('BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1')
-        self.assertIn('[Parameter(Mandatory)][string]$KitSha', collector)
-        self.assertIn("$KitSha -notmatch '^[0-9a-f]{40}$'", collector)
+        self.assertIn('[Parameter(Mandatory)][string]$ApprovedKitSha',
+                      collector)
+        self.assertIn("$ApprovedKitSha -notmatch '^[0-9a-f]{40}$'", collector)
 
     def test_no_script_demands_the_product_sha_of_the_kit_checkout(self):
         for name in PS_SCRIPTS:
@@ -425,11 +482,16 @@ class TwoRevisions(unittest.TestCase):
     def test_the_readme_starts_from_a_reproducible_state(self):
         with open(os.path.join(KIT_DIR, 'README.md'), encoding='utf-8') as handle:
             text = handle.read()
-        self.assertIn('git clone', text)
         self.assertIn(common.KIT_ROOT, text)
-        self.assertIn('git checkout --detach', text)
         self.assertIn('git status --porcelain', text)
-        self.assertIn('RUN_ID_FROM_STEP_1', text)
+        # The bootstrap block itself is published by the reviewer WITH the
+        # approved revision already substituted: a command carrying a
+        # placeholder is pasted into a console placeholder and all.
+        self.assertIn('ApprovedKitSha', text)
+        self.assertIn('NEXT_COMMAND_STEP2', text)
+        self.assertIsNone(re.search(r'<[^>\n]{1,40}>', text),
+                          'a placeholder in an owner instruction is pasted '
+                          'literally')
 
 
 # ═══ 2. Исполняемые байты привязаны к ревизии ════════════════════════════════
@@ -1150,38 +1212,14 @@ class Verdict(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.site = SyntheticSite()
-        cls.run_id = cls.site.run_id
-        paths = cls.site.recalc_evidence(run_id=cls.run_id)
-        cls.runs = []
-        for label in ('dry-run', 'apply-1', 'apply-2'):
-            cls.runs.append(common.read_evidence(paths[label]))
-        _result, snapshot = cls.site.snapshot(run_id=cls.run_id)
-        cls.snapshot = snapshot
-        area = snapshot['payload']['area_ha']
-        early = stamp(-300)
-        cls.preflight = envelope('preflight', {
-            'migration_on_copy_ok': True,
-            'area_ha_before': area, 'area_ha_after': area},
-            cls.run_id, when=early)
-        cls.deploy = envelope('deploy', {
-            'phase': 'done',
-            'migration_on_staging_ok': True,
-            'area_ha_before': area, 'area_ha_after': area,
-            'backup_path': 'D:\\backups\\staging\\transport_x.db',
-            'backup_sha256': 'c' * 64,
-            'backup_verified': True,
-            'service_started': True,
-            'smoke_test_ok': True,
-            'smoke_test_status': 200,
-            'smoke_test_path': '/login',
-            'sha_before': 'aa11b9f000000000000000000000000000000abc',
-            'sha_after': common.PRODUCT_SHA}, cls.run_id, when=stamp(-240))
-        cls.collect = healthy_collect(cls.run_id, when=stamp(-180))
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.site.close()
+        shared = shared_evidence()
+        cls.site = shared['site']
+        cls.run_id = shared['run_id']
+        cls.runs = shared['runs']
+        cls.snapshot = shared['snapshot']
+        cls.preflight = shared['preflight']
+        cls.deploy = shared['deploy']
+        cls.collect = shared['collect']
 
     def build(self, preflight=None, deploy=None, collect=None, runs=None,
               snapshot=None, owner_threshold=None, dji_limit=None,
@@ -1192,7 +1230,7 @@ class Verdict(unittest.TestCase):
             collect or copy.deepcopy(self.collect),
             runs if runs is not None else copy.deepcopy(self.runs),
             snapshot or copy.deepcopy(self.snapshot),
-            1.5, owner_threshold, dji_limit, [],
+            owner_threshold, dji_limit, [],
             run_id=run_id or self.run_id, kit_sha=KIT_SHA_FIXTURE)
 
     def test_healthy_evidence_without_owner_rules_is_technical_go(self):
@@ -1215,7 +1253,10 @@ class Verdict(unittest.TestCase):
                       report['verdict_reasons'])
         report, _markdown = self.build(owner_threshold=0.9, dji_limit=999.0)
         self.assertEqual(report['verdict'], 'GO')
-        self.assertTrue(report['production_rollout_authorised'])
+        # Even GO does not authorise production: this kit runs a staging
+        # pilot, and lifting the release gate is the owner's separate act.
+        self.assertFalse(report['production_rollout_authorised'])
+        self.assertTrue(report['release_gate_action_required'])
 
     def test_the_kit_carries_no_default_threshold(self):
         with open(os.path.join(KIT_DIR, 'pilot_report.py'),
@@ -1642,8 +1683,10 @@ class RollbackUsesTheRunEvidence(unittest.TestCase):
 
     def test_the_rollback_refuses_evidence_of_another_run(self):
         text = code_text('STAGING_ROLLBACK.ps1')
-        self.assertIn('if ($deploy.run_id -ne $RunId) {', text)
-        self.assertIn('if ($deploy.kit_sha -ne $run.kit_sha) {', text)
+        self.assertIn("if ($deploy.run_id -ne $RunId) { $refusals += "
+                      "'DEPLOY_ENVELOPE_RUN_ID_MISMATCH' }", text)
+        self.assertIn("if ($deploy.kit_sha -ne $ApprovedKitSha) { $refusals "
+                      "+= 'DEPLOY_KIT_SHA_IS_NOT_APPROVED' }", text)
 
     def test_the_rollback_verifies_the_backup_before_stopping_anything(self):
         text = code_text('STAGING_ROLLBACK.ps1')
@@ -2286,8 +2329,8 @@ class ConstantsAgreeAcrossLanguages(unittest.TestCase):
                           'PilotKit.psm1 does not carry %r' % value)
 
     def test_the_kit_version_agrees(self):
-        self.assertIn("kit_version  = '%s'" % common.KIT_VERSION,
-                      script_text('PilotKit.psm1'))
+        self.assertRegex(script_text('PilotKit.psm1'),
+                         r"kit_version\s+= '%s'" % common.KIT_VERSION)
 
     def test_the_staging_service_name_comes_from_the_repository(self):
         runbook = os.path.join(REPO_ROOT, 'docs',
@@ -2303,6 +2346,728 @@ class ConstantsAgreeAcrossLanguages(unittest.TestCase):
             text = code_text(name)
             if 'Stop-Service' in text or 'Start-Service' in text:
                 self.assertIn('Resolve-PilotStagingService', text, name)
+
+
+
+# ═══ Р1. Предполёт и деплой больше не противоречат друг другу ════════════════
+
+class PreflightDoesNotDemandTheEndState(unittest.TestCase):
+    """Первый шаг обязан ПУСКАТЬ ко второму, а не требовать его результата.
+
+    [REASON]: предполёт требовал от площадки уже стоять на PRODUCT_SHA, а
+    перевести её туда -- работа второго шага. Первый делал второй
+    недостижимым, и заметить это можно было только на сервере.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='pilot_ff_')
+        self.repo = os.path.join(self.tmp, 'repo')
+        os.makedirs(self.repo)
+        self.git('init', '-q')
+        self.git('config', 'user.email', 'test@example.invalid')
+        self.git('config', 'user.name', 'test')
+        self.write('a.txt', 'one\n')
+        self.git('add', 'a.txt')
+        self.git('commit', '-qm', 'first')
+        self.base = common.head_sha(self.repo)
+        self.write('a.txt', 'two\n')
+        self.git('add', 'a.txt')
+        self.git('commit', '-qm', 'second')
+        self.target = common.head_sha(self.repo)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def git(self, *arguments):
+        subprocess.run(('git',) + arguments, cwd=self.repo, check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def write(self, name, text):
+        with open(os.path.join(self.repo, name), 'w', newline='\n') as handle:
+            handle.write(text)
+
+    def state(self, head):
+        return common.fast_forward_state(self.repo, head, self.target)
+
+    def test_an_ancestor_can_still_fast_forward(self):
+        self.assertEqual(self.state(self.base), 'behind')
+
+    def test_the_target_itself_is_accepted(self):
+        self.assertEqual(self.state(self.target), 'at-target')
+
+    def test_a_checkout_that_is_ahead_is_refused(self):
+        self.git('checkout', '-q', self.target)
+        self.write('a.txt', 'three\n')
+        self.git('add', 'a.txt')
+        self.git('commit', '-qm', 'third')
+        self.assertEqual(self.state(common.head_sha(self.repo)), 'ahead')
+
+    def test_a_diverged_checkout_is_refused(self):
+        self.git('checkout', '-q', '-b', 'side', self.base)
+        self.write('b.txt', 'other\n')
+        self.git('add', 'b.txt')
+        self.git('commit', '-qm', 'side')
+        self.assertEqual(self.state(common.head_sha(self.repo)), 'diverged')
+
+    def test_verify_accepts_a_behind_checkout_and_names_the_state(self):
+        self.git('checkout', '-q', self.base)
+        payload = repo_check.verify(self.repo, None, 'product',
+                                    ancestor_of=self.target,
+                                    blob_rev=self.target,
+                                    manifest=self._empty_manifest())
+        self.assertTrue(payload['passed'], payload['problems'])
+        self.assertEqual(payload['fast_forward_state'], 'behind')
+        self.assertTrue(payload['update_is_fast_forward'])
+
+    def test_verify_refuses_a_diverged_checkout(self):
+        self.git('checkout', '-q', '-b', 'side', self.base)
+        self.write('b.txt', 'other\n')
+        self.git('add', 'b.txt')
+        self.git('commit', '-qm', 'side')
+        payload = repo_check.verify(self.repo, None, 'product',
+                                    ancestor_of=self.target,
+                                    manifest=self._empty_manifest())
+        self.assertFalse(payload['passed'])
+        self.assertIn('CHECKOUT_HAS_DIVERGED_FROM_THE_TARGET_REVISION',
+                      payload['problems'])
+
+    def test_verify_refuses_a_dirty_worktree(self):
+        self.write('a.txt', 'dirty\n')
+        payload = repo_check.verify(self.repo, None, 'product',
+                                    ancestor_of=self.target,
+                                    manifest=self._empty_manifest())
+        self.assertFalse(payload['passed'])
+        self.assertIn('WORKTREE_IS_DIRTY', payload['problems'])
+
+    def test_none_of_these_checks_change_the_checkout(self):
+        """Отрицательный контроль: предполёт ничего не двигает."""
+        self.git('checkout', '-q', self.base)
+        before = common.head_sha(self.repo)
+        listing = sorted(os.listdir(self.repo))
+        for _attempt in range(3):
+            repo_check.verify(self.repo, None, 'product',
+                              ancestor_of=self.target, blob_rev=self.target,
+                              manifest=self._empty_manifest())
+        self.assertEqual(common.head_sha(self.repo), before)
+        self.assertEqual(sorted(os.listdir(self.repo)), listing)
+        self.assertTrue(common.worktree_is_clean(self.repo))
+
+    def _empty_manifest(self):
+        return {'product_sha': common.PRODUCT_SHA,
+                'identical_on_both_revisions': {},
+                'kit_differs_on_purpose': {}, 'kit_own_files': {}}
+
+    def test_the_preflight_asks_for_an_ancestor_not_for_the_end_state(self):
+        text = code_text('PREFLIGHT_AND_COPY_TEST.ps1')
+        self.assertIn("'--ancestor-of', $K.ProductSha", text)
+        self.assertIn("'--blob-rev', $K.ProductSha", text)
+        self.assertNotIn("'verify', '--repo', $K.StagingRoot, '--expect-sha'",
+                         text)
+        self.assertIn('STAGING_CANNOT_FAST_FORWARD_TO_PRODUCT_SHA', text)
+
+    def test_only_the_deploy_demands_the_end_state(self):
+        deploy = code_text('STAGING_DEPLOY_AND_MIGRATE.ps1')
+        self.assertIn('Assert-PilotProductSha -Repo $K.StagingRoot', deploy)
+        self.assertLess(deploy.index("'merge', '--ff-only', $K.ProductSha"),
+                        deploy.index('Assert-PilotProductSha'))
+
+
+# ═══ Р2. Измеренная ревизия -- не одобренная ═════════════════════════════════
+
+class ApprovedKitRevision(unittest.TestCase):
+
+    def test_every_script_takes_the_approved_revision(self):
+        for name in APPROVED_SHA_SCRIPTS:
+            self.assertIn('[Parameter(Mandatory)][string]$ApprovedKitSha',
+                          code_text(name), name)
+
+    def test_the_module_separates_measuring_from_approving(self):
+        text = code_text('PilotKit.psm1')
+        self.assertIn('function Assert-PilotApprovedKitSha', text)
+        self.assertIn('$measured -ne $ApprovedKitSha', text)
+
+    def test_the_run_is_opened_only_after_the_revision_is_approved(self):
+        text = code_text('PREFLIGHT_AND_COPY_TEST.ps1')
+        self.assertLess(text.index('Assert-PilotApprovedKitSha'),
+                        text.index('New-PilotRun'))
+
+    def test_the_run_records_both_revisions_and_they_must_agree(self):
+        text = code_text('PilotKit.psm1')
+        self.assertIn('approved_kit_sha = $ApprovedKitSha', text)
+        self.assertIn('measured_kit_sha = $kitSha', text)
+        self.assertIn("$problems += 'APPROVED_AND_MEASURED_KIT_SHA_DIFFER'",
+                      text)
+
+    def test_every_later_step_rechecks_against_the_approved_revision(self):
+        for name in RUN_STEP_SCRIPTS:
+            text = code_text(name)
+            if name == 'BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1':
+                self.assertIn('$KitSha = $ApprovedKitSha', text, name)
+                continue
+            self.assertIn('Assert-PilotApprovedKitSha -KitCheckout '
+                          '$KitCheckout -ApprovedKitSha $ApprovedKitSha',
+                          text, name)
+            self.assertIn('$run.approved_kit_sha', text, name)
+
+    def test_the_manifest_covers_the_kits_own_files(self):
+        manifest = common.load_product_blobs()
+        own = manifest.get('kit_own_files', {})
+        for name in PS_FILES:
+            self.assertIn('ops/pilot_useful_area_001/%s' % name, own, name)
+        for name in ('pilot_common.py', 'pilot_report.py',
+                     'pilot_repo_check.py', 'pilot_collect_gate.py'):
+            self.assertIn('ops/pilot_useful_area_001/%s' % name, own, name)
+
+    def test_regenerating_the_manifest_still_covers_the_kit(self):
+        """Отрицательный контроль СБОРКИ манифеста, а не хранимого файла.
+
+        [REASON]: `check_against_worktree` читает записанный JSON, поэтому
+        поломка в `build()` им не ловится вовсе -- ловится лишь тем, что файл
+        на диске изменился. Здесь манифест собирается заново.
+        """
+        rebuilt = blobs.build(REPO_ROOT)
+        self.assertTrue(rebuilt['kit_own_files'],
+                        'a rebuilt manifest with no kit files would let the '
+                        'kit execute its own code unpinned')
+        for name in PS_FILES:
+            self.assertIn('ops/pilot_useful_area_001/%s' % name,
+                          rebuilt['kit_own_files'], name)
+        self.assertEqual(rebuilt['kit_own_files'],
+                         common.load_product_blobs()['kit_own_files'],
+                         'the stored manifest is stale')
+
+    def test_a_new_kit_file_outside_the_manifest_is_caught(self):
+        """Отрицательный контроль: файл комплекта без записи в манифесте."""
+        manifest = copy.deepcopy(common.load_product_blobs())
+        removed = manifest['kit_own_files'].pop(
+            'ops/pilot_useful_area_001/pilot_common.py')
+        self.assertTrue(removed)
+        problems = blobs.check_against_worktree(manifest, REPO_ROOT)
+        self.assertIn('NOT_IN_MANIFEST:ops/pilot_useful_area_001/'
+                      'pilot_common.py', problems)
+
+
+# ═══ Р3. run.json проверяется и не может перенаправить запись ════════════════
+
+class RunManifestIsValidated(unittest.TestCase):
+
+    def test_the_module_validates_every_field(self):
+        text = code_text('PilotKit.psm1')
+        self.assertIn('function Test-PilotRunManifest', text)
+        for code in ('WRONG_KIT', 'WRONG_KIT_VERSION', 'RUN_ID_MISMATCH',
+                     'PRODUCT_SHA_MISMATCH', 'TARGET_DAY_MISMATCH',
+                     'MALFORMED_APPROVED_KIT_SHA', 'MACHINE_ABSENT',
+                     'KIT_CHECKOUT_IS_NOT_THE_KIT_ROOT',
+                     'RUN_ROOT_IS_NOT_THE_RUN_DIRECTORY',
+                     'RUN_ROOT_IS_INSIDE_A_CHECKOUT', 'STEPS_ABSENT'):
+            self.assertIn("'%s'" % code, text, code)
+
+    def test_the_run_directory_is_created_atomically(self):
+        text = code_text('PilotKit.psm1')
+        self.assertIn('[System.IO.Directory]::CreateDirectory($directory)',
+                      text)
+        self.assertIn('already exists', text)
+        self.assertNotIn('New-Item -ItemType Directory -Path $target -Force',
+                         text)
+
+    def test_recording_a_step_validates_first(self):
+        text = code_text('PilotKit.psm1')
+        step = text.index('function Set-PilotRunStep')
+        body = text[step:step + 2000]
+        self.assertIn('Assert-PilotRunManifest', body)
+        self.assertLess(body.index('Assert-PilotRunManifest'),
+                        body.index('Write-PilotJson'))
+
+    def test_reading_a_run_validates_it(self):
+        text = code_text('PilotKit.psm1')
+        get = text.index('function Get-PilotRun')
+        body = text[get:get + 1500]
+        self.assertIn('Assert-PilotRunManifest', body)
+
+
+# ═══ Р4. Резервная копия -- каталог этого запуска ════════════════════════════
+
+class BackupBelongsToTheRun(unittest.TestCase):
+
+    def test_the_deploy_backs_up_into_the_run_directory(self):
+        text = code_text('STAGING_DEPLOY_AND_MIGRATE.ps1')
+        self.assertIn("$BackupDir = Join-Path $runRoot 'backup'", text)
+        self.assertIn('New-PilotRunBackup', text)
+
+    def test_the_shared_daily_directory_is_no_longer_used(self):
+        """Отрицательный контроль: общий каталог -- источник чужого файла."""
+        text = code_text('STAGING_DEPLOY_AND_MIGRATE.ps1')
+        self.assertNotIn('transport-report-backups\\staging\\daily', text)
+        self.assertNotIn('$before -notcontains', text)
+        self.assertNotIn('Sort-Object LastWriteTime -Descending', text)
+
+    def test_the_helper_refuses_a_directory_that_is_not_empty(self):
+        text = code_text('PilotKit.psm1')
+        self.assertIn('if ($existing.Count -ne 0) {', text)
+        self.assertIn('It belongs to this run alone', text)
+
+    def test_the_helper_accepts_exactly_one_produced_file(self):
+        text = code_text('PilotKit.psm1')
+        self.assertIn('if ($produced.Count -ne 1) {', text)
+
+    def test_the_rollback_accepts_only_this_runs_backup(self):
+        text = code_text('STAGING_ROLLBACK.ps1')
+        self.assertIn("$runBackupDir = Join-Path $run.run_root 'backup'", text)
+        self.assertIn('BACKUP_IS_NOT_IN_THIS_RUNS_BACKUP_DIRECTORY', text)
+
+
+# ═══ Р5. Откат проверяет весь конверт и точные цели ══════════════════════════
+
+class RollbackChecksEverythingFirst(unittest.TestCase):
+
+    def setUp(self):
+        self.text = code_text('STAGING_ROLLBACK.ps1')
+
+    def test_every_named_refusal_exists(self):
+        for code in ('DEPLOY_ENVELOPE_WRONG_KIT',
+                     'DEPLOY_ENVELOPE_WRONG_KIT_VERSION',
+                     'DEPLOY_ENVELOPE_WRONG_EVIDENCE_KIND',
+                     'DEPLOY_ENVELOPE_RUN_ID_MISMATCH',
+                     'DEPLOY_ENVELOPE_PRODUCT_SHA_MISMATCH',
+                     'DEPLOY_ENVELOPE_TARGET_DAY_MISMATCH',
+                     'DEPLOY_ENVELOPE_MALFORMED_TIMESTAMP',
+                     'KIT_CHECKOUT_IS_NOT_APPROVED',
+                     'RUN_KIT_SHA_IS_NOT_APPROVED',
+                     'DEPLOY_KIT_SHA_IS_NOT_APPROVED',
+                     'RECORDED_STAGING_ROOT_IS_NOT_THE_STAGING_ROOT',
+                     'RECORDED_STAGING_DB_IS_NOT_THE_STAGING_DATABASE',
+                     'BACKUP_IS_NOT_IN_THIS_RUNS_BACKUP_DIRECTORY',
+                     'RECORDED_SHA_BEFORE_IS_NOT_A_REVISION',
+                     'RECORDED_SHA_BEFORE_IS_NOT_IN_THE_CHECKOUT',
+                     'SHA_BEFORE_DISAGREES_WITH_THE_PREFLIGHT_RECORD',
+                     'STAGING_WORKTREE_IS_DIRTY'):
+            self.assertIn(code, self.text, code)
+
+    def test_the_targets_are_compared_by_equality_not_containment(self):
+        """Отрицательный контроль: «внутри staging» -- это не «и есть staging»."""
+        self.assertIn('Test-PilotPathEquals -Left ([string]$payload.staging_root)',
+                      self.text)
+        self.assertIn('Test-PilotPathEquals -Left ([string]$payload.staging_db)',
+                      self.text)
+        self.assertNotIn('Assert-PilotStagingPath -Path $payload.staging_db',
+                         self.text)
+
+    def test_the_allowed_deploy_phases_are_named(self):
+        self.assertIn('$rollbackablePhases = @(', self.text)
+        self.assertIn('DEPLOY_PHASE_IS_NOT_ROLLBACKABLE', self.text)
+
+    def test_everything_is_refused_before_the_service_is_touched(self):
+        self.assertLess(self.text.index('ROLLBACK_PRECONDITIONS=PASS'),
+                        self.text.index('Stop-Service'))
+        self.assertLess(self.text.index('$refusals.Count -gt 0'),
+                        self.text.index('Stop-Service'))
+        self.assertLess(self.text.index('$sha -ne $payload.backup_sha256'),
+                        self.text.index('Stop-Service'))
+        self.assertLess(self.text.index('Move-Item'),
+                        self.text.index('Copy-Item'))
+
+
+# ═══ Р6. Время пересчёта не теряется ════════════════════════════════════════
+
+class RecalculationIsTimed(unittest.TestCase):
+
+    def runs(self, seconds):
+        payload = {'label': 'apply-1', 'summary': {}, 'seconds': seconds}
+        return [envelope('recalc:apply-1', payload, common.new_run_id())]
+
+    def test_the_duration_comes_from_the_evidence(self):
+        self.assertEqual(report_mod.recalculation_seconds(self.runs(1.25)),
+                         1.25)
+
+    def test_a_missing_duration_is_not_a_duration(self):
+        self.assertIsNone(report_mod.recalculation_seconds(self.runs(None)))
+        self.assertIsNone(report_mod.recalculation_seconds([]))
+
+    def test_nan_and_infinity_are_not_durations(self):
+        for bad in (float('nan'), float('inf'), float('-inf'), -1.0):
+            self.assertIsNone(report_mod.recalculation_seconds(self.runs(bad)),
+                              repr(bad))
+
+    def test_the_report_carries_the_measured_duration(self):
+        """Не «поле существует», а «в нём измеренное число этого запуска»."""
+        report, markdown = VerdictContract._build(None, None)
+        self.assertEqual(report['recalculation_seconds'], 1.234)
+        self.assertIn('1.234', markdown)
+        for item in report['conditions']:
+            if item['code'] == 'RECALCULATION_WAS_TIMED':
+                self.assertTrue(item['passed'])
+                break
+        else:
+            raise AssertionError('RECALCULATION_WAS_TIMED is gone')
+
+    def test_a_report_without_a_duration_fails_the_condition(self):
+        shared = shared_evidence()
+        runs = copy.deepcopy(shared['runs'])
+        for run in runs:
+            if run['payload'].get('label') == 'apply-1':
+                run['payload']['seconds'] = None
+        report, _markdown = report_mod.build_report(
+            copy.deepcopy(shared['preflight']), copy.deepcopy(shared['deploy']),
+            copy.deepcopy(shared['collect']), runs,
+            copy.deepcopy(shared['snapshot']), None, None, [],
+            run_id=shared['run_id'], kit_sha=KIT_SHA_FIXTURE)
+        self.assertEqual(report['verdict'], 'REJECT')
+        self.assertIn('RECALCULATION_WAS_TIMED', report['verdict_reasons'])
+        self.assertIsNone(report['recalculation_seconds'])
+
+    def test_the_report_no_longer_takes_a_hand_typed_duration(self):
+        with open(os.path.join(KIT_DIR, 'pilot_report.py'),
+                  encoding='utf-8') as handle:
+            text = handle.read()
+        self.assertNotIn('--recalc-seconds', text)
+        self.assertNotIn('--recalc-seconds',
+                         code_text('STAGING_PILOT_REPORT.ps1'))
+
+    def test_the_recalculation_records_the_seconds_it_measured(self):
+        text = code_text('STAGING_RECALCULATE_AND_VERIFY.ps1')
+        self.assertIn("'--seconds', ([string]$applySeconds)", text)
+
+
+# ═══ Р7. Вердикт -- часть контракта ═════════════════════════════════════════
+
+class VerdictContract(unittest.TestCase):
+
+    def test_the_exit_codes_are_distinct_and_named(self):
+        codes = common.VERDICT_EXIT_CODES
+        self.assertEqual(sorted(codes.values()), [0, 10, 11, 12])
+        self.assertEqual(len(set(codes.values())), 4)
+        self.assertNotIn(common.EXIT_ERROR, codes.values())
+
+    def test_the_tool_exits_with_the_verdict_it_reports(self):
+        """Настоящий вызов инструмента, а не чтение его исходника."""
+        directory = tempfile.mkdtemp(prefix='pilot_exit_')
+        try:
+            shared = shared_evidence()
+            run_id = shared['run_id']
+            paths = {}
+            for name, document in (
+                    ('preflight', shared['preflight']),
+                    ('deploy', shared['deploy']),
+                    ('collect', shared['collect']),
+                    ('snapshot', shared['snapshot'])):
+                paths[name] = os.path.join(directory, '%s.json' % name)
+                common.write_evidence(paths[name], document)
+            recalc_paths = []
+            for index, run in enumerate(shared['runs']):
+                path = os.path.join(directory, 'recalc_%d.json' % index)
+                common.write_evidence(path, run)
+                recalc_paths.append(path)
+
+            def call(*extra):
+                arguments = [os.path.join(KIT_DIR, 'pilot_report.py'),
+                             '--preflight', paths['preflight'],
+                             '--deploy', paths['deploy'],
+                             '--collect', paths['collect'],
+                             '--staging-snapshot', paths['snapshot'],
+                             '--run-id', run_id, '--kit-sha', KIT_SHA_FIXTURE,
+                             '--out-json', os.path.join(directory, 'r.json'),
+                             '--out-md', os.path.join(directory, 'r.md')]
+                for path in recalc_paths:
+                    arguments += ['--recalc', path]
+                result = run_python(*(arguments + list(extra)))
+                verdict = ''
+                for line in result.stdout.splitlines():
+                    if line.startswith('PILOT_VERDICT='):
+                        verdict = line.split('=', 1)[1]
+                return result.returncode, verdict
+
+            code, verdict = call()
+            self.assertEqual(verdict, 'TECHNICAL_GO')
+            self.assertEqual(code, common.EXIT_VERDICT_TECHNICAL_GO)
+
+            code, verdict = call('--owner-share-threshold', '0.9',
+                                 '--owner-dji-delta-percent', '999')
+            self.assertEqual(verdict, 'GO')
+            self.assertEqual(code, common.EXIT_VERDICT_GO)
+
+            code, verdict = call('--owner-share-threshold', '0.0',
+                                 '--owner-dji-delta-percent', '0')
+            self.assertEqual(verdict, 'ADJUST')
+            self.assertEqual(code, common.EXIT_VERDICT_ADJUST)
+
+            broken = copy.deepcopy(shared['deploy'])
+            broken['payload']['phase'] = 'smoke-test-failed'
+            common.write_evidence(paths['deploy'], broken)
+            code, verdict = call()
+            self.assertEqual(verdict, 'REJECT')
+            self.assertEqual(code, common.EXIT_VERDICT_REJECT,
+                             'a REJECT that exits 0 is what let the caller '
+                             'print PASS after it')
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+
+    def test_the_script_never_prints_pass_for_a_rejected_pilot(self):
+        text = code_text('STAGING_PILOT_REPORT.ps1')
+        self.assertNotIn('STAGING_PILOT_REPORT=PASS', text)
+        self.assertIn('REPORT_GENERATED=yes', text)
+        self.assertIn('PILOT_VERDICT=', text)
+        self.assertIn("if ([string]$report.verdict -eq 'REJECT') {", text)
+
+    def test_the_script_checks_the_exit_code_against_the_verdict(self):
+        text = code_text('STAGING_PILOT_REPORT.ps1')
+        self.assertIn("@{ 'GO' = 0; 'TECHNICAL_GO' = 10; 'ADJUST' = 11; "
+                      "'REJECT' = 12 }", text)
+        self.assertIn('if ($reportCode -ne $expectedCode) {', text)
+
+    def test_production_is_never_authorised_by_this_kit(self):
+        for threshold, limit in ((None, None), (0.9, 999.0), (0.0, 0.0)):
+            report, _markdown = VerdictContract._build(threshold, limit)
+            self.assertFalse(report['production_rollout_authorised'],
+                             '%s/%s' % (threshold, limit))
+            self.assertTrue(report['release_gate_action_required'])
+
+    def test_the_owner_thresholds_reject_nan_and_out_of_range(self):
+        for bad in (float('nan'), float('inf'), -0.01, 1.01):
+            with self.assertRaises(common.ProbeError):
+                common.owner_share_threshold(bad)
+        for bad in (float('nan'), float('inf'), -1.0):
+            with self.assertRaises(common.ProbeError):
+                common.owner_delta_percent(bad)
+        self.assertEqual(common.owner_share_threshold(0.0), 0.0)
+        self.assertEqual(common.owner_share_threshold(1.0), 1.0)
+        self.assertEqual(common.owner_delta_percent(0.0), 0.0)
+
+    def test_a_nan_threshold_would_have_passed_every_share(self):
+        """Отрицательный контроль: почему NaN опасен, а не просто странен."""
+        self.assertFalse(0.99 > float('nan'),
+                         'a NaN threshold lets every share through, which is '
+                         'why it must be refused at the boundary')
+
+    def test_the_readme_prints_no_example_threshold(self):
+        with open(os.path.join(KIT_DIR, 'README.md'), encoding='utf-8') as handle:
+            text = handle.read()
+        self.assertNotIn('-OwnerShareThreshold 0', text)
+        self.assertNotIn('-OwnerDjiDeltaPercent 9', text)
+
+    @staticmethod
+    def _build(threshold, limit):
+        shared = shared_evidence()
+        return report_mod.build_report(
+            copy.deepcopy(shared['preflight']), copy.deepcopy(shared['deploy']),
+            copy.deepcopy(shared['collect']), copy.deepcopy(shared['runs']),
+            copy.deepcopy(shared['snapshot']), threshold, limit, [],
+            run_id=shared['run_id'], kit_sha=KIT_SHA_FIXTURE)
+
+
+# ═══ Р8. Доказательства в отчёте fail-closed ════════════════════════════════
+
+class EvidenceIsFailClosed(unittest.TestCase):
+
+    def full(self):
+        return {name: 'a' * 64 for name in report_mod.REQUIRED_FINGERPRINTS}
+
+    def test_all_five_fingerprints_are_required(self):
+        self.assertEqual(len(report_mod.REQUIRED_FINGERPRINTS), 5)
+        self.assertTrue(report_mod.area_ha_unchanged(self.full()))
+
+    def test_a_single_missing_fingerprint_breaks_the_claim(self):
+        """Отрицательный контроль: меньше улик -- не сильнее доказательство."""
+        for name in report_mod.REQUIRED_FINGERPRINTS:
+            broken = self.full()
+            broken[name] = None
+            self.assertFalse(report_mod.area_ha_unchanged(broken), name)
+
+    def test_one_surviving_fingerprint_is_not_a_proof(self):
+        lonely = {name: None for name in report_mod.REQUIRED_FINGERPRINTS}
+        lonely['staging_after_recalculation'] = 'a' * 64
+        self.assertFalse(report_mod.area_ha_unchanged(lonely))
+        # The rule the first edition used would have said "unchanged" here.
+        present = [value for value in lonely.values() if value]
+        self.assertTrue(len(set(present)) <= 1 and bool(present),
+                        'the old rule must still say yes, else this test '
+                        'proves nothing about the change')
+
+    def test_one_differing_fingerprint_breaks_the_claim(self):
+        broken = self.full()
+        broken['staging_after_migration'] = 'b' * 64
+        self.assertFalse(report_mod.area_ha_unchanged(broken))
+
+    def test_the_smoke_condition_needs_all_four_facts(self):
+        base = {'smoke_test_ok': True, 'smoke_test_status': 200,
+                'smoke_test_path': '/login', 'smoke_page_marker_seen': True}
+        for field, wrong in (('smoke_test_ok', False),
+                             ('smoke_test_status', 404),
+                             ('smoke_test_path', '/'),
+                             ('smoke_page_marker_seen', False)):
+            broken = dict(base)
+            broken[field] = wrong
+            self.assertFalse(self._smoke(broken), field)
+        self.assertTrue(self._smoke(base))
+
+    def _smoke(self, deploy_payload):
+        deploy = envelope('deploy', deploy_payload, common.new_run_id())
+        conditions = report_mod.build_conditions(
+            envelope('preflight', {}, common.new_run_id()), deploy,
+            envelope('collect:summary', {}, common.new_run_id()), [],
+            envelope('db-probe:snapshot', {}, common.new_run_id()))
+        for item in conditions:
+            if item['code'] == 'SMOKE_TEST_OK':
+                return item['passed']
+        raise AssertionError('SMOKE_TEST_OK is gone from the conditions')
+
+    def test_a_lone_200_is_not_the_application(self):
+        self.assertEqual(common.SMOKE_PAGE_MARKER, 'vs-login-form')
+        with open(os.path.join(REPO_ROOT, 'templates', 'login.html'),
+                  encoding='utf-8') as handle:
+            template = handle.read()
+        self.assertIn(common.SMOKE_PAGE_MARKER, template,
+                      'the marker must exist in the real login template, '
+                      'else the smoke test asserts a string nobody serves')
+
+    def test_the_module_reads_the_body_and_looks_for_the_marker(self):
+        text = code_text('PilotKit.psm1')
+        self.assertIn('$script:SmokePageMarker', text)
+        self.assertIn('PAGE_IS_NOT_THE_APPLICATION_LOGIN_FORM', text)
+        self.assertIn('$result.Body', text)
+
+    def test_the_deploy_records_the_marker(self):
+        text = code_text('STAGING_DEPLOY_AND_MIGRATE.ps1')
+        self.assertIn('$payload.smoke_page_marker_seen = [bool]$smoke.marker_seen',
+                      text)
+
+# ═══ Р8b. Живой smoke-тест против настоящего HTTP-сервера ═══════════════════
+
+LOGIN_BODY = ('<html><body><form class="vs-login-form" method="post">'
+              '<input id="vsLoginField" name="username"></form></body></html>')
+GENERIC_BODY = ('<html><body><h1>Service temporarily unavailable</h1>'
+                '<p>Maintenance in progress.</p></body></html>')
+
+
+class _SmokeFixtureHandler(BaseHTTPRequestHandler):
+    """Пять ответов, которые smoke-тест обязан различать."""
+
+    def do_GET(self):                                    # noqa: N802
+        if self.path == '/login':
+            self._send(200, LOGIN_BODY)
+        elif self.path == '/generic':
+            # 200 без признака приложения: страница обслуживания.
+            self._send(200, GENERIC_BODY)
+        elif self.path == '/redirect-internal':
+            self._redirect('/login')
+        elif self.path == '/redirect-external':
+            self._redirect(common.PRODUCTION_URL + '/login')
+        else:
+            self._send(404, '<html><body>not found</body></html>')
+
+    def _send(self, status, body):
+        payload = body.encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Content-Length', str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _redirect(self, location):
+        self.send_response(302)
+        self.send_header('Location', location)
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    def log_message(self, *_args):
+        return
+
+
+@contextlib.contextmanager
+def smoke_fixture_server():
+    server = HTTPServer(('127.0.0.1', 0), _SmokeFixtureHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield 'http://127.0.0.1:%d' % server.server_address[1]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+LIVE_SMOKE_SCRIPT = r'''
+param([string]$Module, [string]$BaseUrl)
+Import-Module $Module -Force
+$marker = 'vs-login-form'
+$results = [ordered]@{}
+function Probe([string]$path) {
+    $r = Invoke-PilotSmokeEndpoint -BaseUrl $BaseUrl -Path $path -Authority $BaseUrl `
+                                   -Marker $marker -TimeoutSec 10 -Attempts 2 -DelaySeconds 1
+    return [ordered]@{ ok = [bool]$r.ok; status = $r.status; reason = [string]$r.reason
+                       marker = [bool]$r.marker_seen; followed = [bool]$r.followed_redirect }
+}
+$results['correct_200']      = Probe '/login'
+$results['wrong_200']        = Probe '/generic'
+$results['not_found']        = Probe '/missing'
+$results['redirect_internal']= Probe '/redirect-internal'
+$results['redirect_external']= Probe '/redirect-external'
+$results | ConvertTo-Json -Depth 5 -Compress
+'''
+
+
+@unittest.skipIf(PWSH is None, 'no PowerShell in this environment')
+class LiveSmokeTestAgainstARealServer(unittest.TestCase):
+    """Не «код выглядит правильно», а настоящий запрос и настоящий ответ."""
+
+    def run_live(self):
+        directory = tempfile.mkdtemp(prefix='pilot_live_')
+        try:
+            path = os.path.join(directory, 'live.ps1')
+            with open(path, 'w', encoding='utf-8', newline='\n') as handle:
+                handle.write(LIVE_SMOKE_SCRIPT)
+            with smoke_fixture_server() as base:
+                result = subprocess.run(
+                    [PWSH, '-NoProfile', '-File', path,
+                     '-Module', os.path.join(KIT_DIR, 'PilotKit.psm1'),
+                     '-BaseUrl', base],
+                    capture_output=True, text=True, cwd=REPO_ROOT)
+            self.assertEqual(result.returncode, 0,
+                             '%s\n%s' % (result.stdout, result.stderr))
+            line = [row for row in result.stdout.splitlines()
+                    if row.strip().startswith('{')][-1]
+            return json.loads(line)
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+
+    def test_the_five_cases_are_told_apart(self):
+        state = self.run_live()
+
+        # The application's login page: 200 AND the marker.
+        self.assertTrue(state['correct_200']['ok'], state['correct_200'])
+        self.assertEqual(state['correct_200']['status'], 200)
+        self.assertTrue(state['correct_200']['marker'])
+
+        # A maintenance page also answers 200 -- and must not pass.
+        self.assertFalse(state['wrong_200']['ok'], state['wrong_200'])
+        self.assertEqual(state['wrong_200']['status'], 200)
+        self.assertFalse(state['wrong_200']['marker'])
+        self.assertEqual(state['wrong_200']['reason'],
+                         'PAGE_IS_NOT_THE_APPLICATION_LOGIN_FORM')
+
+        # 404 is a failure, not "the server answered".
+        self.assertFalse(state['not_found']['ok'])
+        self.assertEqual(state['not_found']['status'], 404)
+
+        # A redirect inside the site is followed, and the landing page is
+        # then held to the same two conditions.
+        self.assertTrue(state['redirect_internal']['ok'],
+                        state['redirect_internal'])
+        self.assertTrue(state['redirect_internal']['followed'])
+        self.assertEqual(state['redirect_internal']['status'], 200)
+
+        # A redirect off the site is refused before it is followed.
+        self.assertFalse(state['redirect_external']['ok'])
+        self.assertEqual(state['redirect_external']['reason'],
+                         'REDIRECT_LEAVES_STAGING')
+        self.assertFalse(state['redirect_external']['followed'])
+
+    def test_the_staging_guard_still_wraps_the_endpoint(self):
+        """Разделение не ослабило гвардию: адрес по-прежнему обязан быть площадкой."""
+        text = code_text('PilotKit.psm1')
+        body = text[text.index('function Invoke-PilotSmokeTest'):]
+        body = body[:body.index('function Invoke-PilotSmokeEndpoint')]
+        self.assertIn('Assert-PilotStagingUrl -Url $BaseUrl', body)
+        self.assertIn('-Authority $script:StagingUrl', body)
+        self.assertIn('-Marker $script:SmokePageMarker', body)
 
 
 if __name__ == '__main__':

@@ -192,7 +192,7 @@ jobs:
       # The PowerShell here is 7; the Windows job below runs the same suite
       # on Windows PowerShell 5.1, which is what the server console actually
       # is.
-      - name: Pilot kit (guards, fingerprints, run identity, verdict)
+      - name: Pilot kit (guards, fingerprints, run identity, verdict, smoke)
         run: python tools/test_pilot_useful_area_001.py
 
       # The blob manifest is a contract about WHICH BYTES the kit is allowed
@@ -242,7 +242,13 @@ jobs:
             throw "this job must run on Windows PowerShell 5.1, got $($PSVersionTable.PSVersion)"
           }
 
-      - name: Pilot kit on Windows PowerShell 5.1 (parse, guards, JSON, probe)
+      # The suite includes LiveSmokeTestAgainstARealServer, which starts a
+      # local HTTP server and drives the REAL smoke logic against it: the
+      # application login page, a maintenance page that also answers 200, a
+      # 404, a redirect inside the site and a redirect off it. On this job
+      # that runs on Windows PowerShell 5.1, which is the console the server
+      # actually has.
+      - name: Pilot kit on Windows PowerShell 5.1 (parse, guards, JSON, probe, live smoke)
         shell: powershell
         env:
           PILOT_POWERSHELL: powershell
