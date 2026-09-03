@@ -174,6 +174,13 @@ def build_parser():
                         help='the period both bounds must equal')
     parser.add_argument('--compare-with', metavar='PATH',
                         help='an earlier evidence JSON to compare against')
+    parser.add_argument('--wrote-nothing', action='store_true',
+                        help='record that the database was proven unchanged '
+                             'after this run (dry run only)')
+    parser.add_argument('--seconds', type=float, default=None, metavar='N',
+                        help='how long this run took, measured by the caller')
+    parser.add_argument('--run-id', required=True, metavar='ID')
+    parser.add_argument('--kit-sha', required=True, metavar='SHA')
     parser.add_argument('--out', metavar='PATH',
                         help='write the evidence JSON here')
     return parser
@@ -200,6 +207,8 @@ def main(argv=None):
     payload = {
         'label': args.label,
         'summary': summary,
+        'wrote_nothing': bool(args.wrote_nothing),
+        'seconds': args.seconds,
         'period_is_the_target_day': (
             summary.get('period_from') == args.expect_day
             and summary.get('period_to') == args.expect_day),
@@ -210,16 +219,24 @@ def main(argv=None):
             sys.stderr.write('ERROR: comparison evidence not found at %s\n'
                              % args.compare_with)
             return common.EXIT_ERROR
-        with open(args.compare_with, encoding='ascii') as handle:
-            other = json.load(handle)
+        other = common.read_evidence(args.compare_with)
+        # [REASON]: сравнивать можно только улику ТОГО ЖЕ запуска. Иначе сухой
+        # прогон одного дня спокойно «сойдётся» с применением другого, и
+        # расхождение, которое эта проверка и ищет, останется незамеченным.
+        mismatch = common.validate_envelope(other, None, run_id=args.run_id,
+                                            kit_sha=args.kit_sha)
+        if mismatch:
+            sys.stderr.write('ERROR: %s belongs to another run: %s\n'
+                             % (args.compare_with, ', '.join(mismatch)))
+            return common.EXIT_ERROR
         other_summary = other.get('payload', {}).get('summary', {})
         differences = compare(other_summary, summary)
         payload['compared_with'] = other.get('payload', {}).get('label')
         payload['differences'] = differences
         payload['outputs_agree'] = not differences
 
-    common.emit(common.evidence_envelope('recalc:%s' % args.label, payload),
-                args.out)
+    common.emit(common.evidence_envelope('recalc:%s' % args.label, payload,
+                                         args.run_id, args.kit_sha), args.out)
     return common.EXIT_OK
 
 

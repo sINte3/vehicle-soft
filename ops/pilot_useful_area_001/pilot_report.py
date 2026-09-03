@@ -15,6 +15,19 @@ Markdown, выносит машинный вердикт GO / ADJUST / REJECT с
 контуров, названий полей заказчика, cookies, токенов, подписей, `request_id`
 и содержимого приватного capture.
 
+КАЖДЫЙ КОНВЕРТ УЛИКИ ПРОВЕРЯЕТСЯ. Улики приезжают с трёх машин и пишутся
+пятью скриптами. Конверт сверяется по всем полям сразу: `kit`, версия,
+`evidence_kind`, `run_id`, `target_day`, ИЗМЕРЕННЫЙ `kit_sha`, `product_sha` и
+метка времени, а метки ещё и по порядку между собой. Расхождение любого поля
+-- REJECT: улики разных запусков, сложенные вместе, дают отчёт, который
+выглядит безупречно и описывает прогон, которого не было.
+
+ВЕРДИКТ `GO` НЕ ВЫДАЁТСЯ БЕЗ РЕШЕНИЯ ВЛАДЕЛЬЦА. Порог доли работ без числа и
+допустимое отклонение от площади DJI -- бизнес-правила, а выдумывать их
+устав запрещает. Пока владелец не назвал оба, верхний возможный вердикт --
+`TECHNICAL_GO`: тракт исправен, разрешения на production он не даёт и
+сопровождается кодом `BUSINESS_DECISION_REQUIRED`.
+
 ТРИ ПОКАЗАТЕЛЯ ЗАДАНИЯ НЕ ВЫЧИСЛЯЮТСЯ, И ЭТО НАЗВАНО ПРЯМО. Схема
 `DRONES_USEFUL_AREA_001` хранит `work_segments` (рабочие отрезки) на работу,
 но НЕ хранит ни числа отрезков холостого перелёта, ни признака «вылет целиком
@@ -39,6 +52,8 @@ import os
 import re
 import sys
 
+from datetime import datetime
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
@@ -52,7 +67,15 @@ NOT_RECORDED = 'NOT_RECORDED_BY_SCHEMA'
 # Плоские имена: отчёт намеренно плоский, чтобы этот список читался целиком
 # одним взглядом и чтобы проверка не зависела от глубины вложенности.
 ALLOWED_FIELDS = (
-    'kit', 'kit_version', 'generated_utc', 'verified_sha', 'target_day',
+    'kit', 'kit_version', 'generated_utc', 'target_day',
+    'run_id', 'kit_sha', 'product_sha',
+    'envelope_problems', 'evidence_order_problems',
+    'deploy_phase', 'backup_verified', 'service_started',
+    'smoke_test_ok', 'smoke_test_status', 'smoke_test_path',
+    'owner_share_threshold', 'owner_dji_delta_percent',
+    'production_rollout_authorised', 'business_decision_required',
+    'coverage_fingerprint_sha256', 'dry_run_wrote_nothing',
+    'probe_request_failures', 'probe_pending_requests',
     'staging_url', 'evidence_present', 'evidence_missing',
     'flights_received', 'routes_received', 'works_formed',
     'ready_estimate', 'partial_data', 'data_unavailable',
@@ -66,7 +89,6 @@ ALLOWED_FIELDS = (
     'works_without_number', 'works_without_number_share',
     'recalculation_seconds',
     'verdict', 'verdict_reasons', 'verdict_notes', 'conditions',
-    'adjust_share_threshold', 'dji_delta_adjust_percent',
     'privacy_scan_passed', 'privacy_violations',
     'area_ha_fingerprints', 'area_ha_unchanged',
     'integrity_ok', 'migration_on_copy_ok', 'migration_on_staging_ok',
@@ -75,8 +97,9 @@ ALLOWED_FIELDS = (
 )
 
 # Ключи, которым РАЗРЕШЕНО нести длинную шестнадцатеричную строку.
-HEX_ALLOWED_KEYS = ('verified_sha', 'staging_sha_before', 'staging_sha_after',
-                    'area_ha_fingerprints', 'sha256', 'backup_sha256')
+HEX_ALLOWED_KEYS = ('kit_sha', 'product_sha', 'staging_sha_before',
+                    'staging_sha_after', 'area_ha_fingerprints', 'sha256',
+                    'backup_sha256', 'coverage_fingerprint_sha256')
 
 UUID_RE = re.compile(r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
                      r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b')
@@ -97,13 +120,10 @@ class ReportError(Exception):
 # ─── Чтение улик ────────────────────────────────────────────────────────────
 
 def load_evidence(path):
-    if not os.path.exists(path):
-        raise ReportError('evidence file not found: %s' % path)
-    with open(path, encoding='utf-8-sig') as handle:
-        try:
-            document = json.load(handle)
-        except ValueError as exc:
-            raise ReportError('%s is not readable JSON: %s' % (path, exc))
+    try:
+        document = common.read_evidence(path)
+    except common.ProbeError as exc:
+        raise ReportError(str(exc))
     if not isinstance(document, dict):
         raise ReportError('%s does not hold a JSON object' % path)
     return document
@@ -135,6 +155,10 @@ def _flag(value):
     return value is True
 
 
+def counters_of(collect):
+    return (payload_of(collect).get('counters') or {})
+
+
 # ─── Условия вердикта ───────────────────────────────────────────────────────
 #
 # Каждое условие -- (код, значение, что оно означает). Код стабилен: он
@@ -162,6 +186,24 @@ def build_conditions(preflight, deploy, collect, recalc_runs, staging):
     works = _number(coverage.get('works'), 0)
 
     conditions = [
+        ('DEPLOY_MANIFEST_IS_DONE', dep.get('phase') == 'done',
+         'the deploy manifest reached phase "done"; any other phase means the '
+         'deploy stopped somewhere and the pilot is not on a deployed staging'),
+        ('BACKUP_CREATED_AND_VERIFIED',
+         bool(dep.get('backup_path')) and bool(dep.get('backup_sha256'))
+         and _flag(dep.get('backup_verified')),
+         'a staging backup was written, hashed and its integrity checked '
+         'BEFORE anything changed'),
+        ('STAGING_SERVICE_STARTED', _flag(dep.get('service_started')),
+         'the staging service came back up after the migration'),
+        ('SMOKE_TEST_OK', _flag(dep.get('smoke_test_ok')),
+         'the staging smoke test hit %s and got exactly one of %s, following '
+         'redirects only inside the staging authority'
+         % (common.SMOKE_PATH,
+            ', '.join(str(code) for code in common.SMOKE_ALLOWED_STATUS))),
+        ('DRY_RUN_WROTE_NOTHING', _flag(_dry_run_wrote_nothing(recalc_runs)),
+         'the coverage table was byte-identical before and after the dry run, '
+         'compared over every row and every column'),
         ('MIGRATION_ON_COPY_OK', _flag(pre.get('migration_on_copy_ok')),
          'the migration applied cleanly to an isolated copy of production, '
          'twice, with both tables, five indexes and a registry row'),
@@ -241,6 +283,18 @@ def build_conditions(preflight, deploy, collect, recalc_runs, staging):
             for code, value, means in conditions]
 
 
+def _dry_run_wrote_nothing(runs):
+    """Улика сухого прогона несёт полный отпечаток до и после.
+
+    [REASON]: раньше это условие держалось числом строк. Число строк не
+    меняется, когда строку переписали, -- а переписанная строка и есть запись.
+    """
+    dry = _run_by_label(runs, 'dry-run')
+    if not dry:
+        return False
+    return _flag(dry.get('wrote_nothing'))
+
+
 def _run_by_label(runs, label):
     for run in runs:
         if payload_of(run).get('label') == label:
@@ -294,30 +348,52 @@ def collect_fingerprints(preflight, deploy, staging):
 
 # ─── Вердикт ────────────────────────────────────────────────────────────────
 
-def decide(conditions, coverage, threshold, dji_delta_percent,
-           dji_delta_limit, privacy_ok):
-    """GO / ADJUST / REJECT и стабильные коды причин.
+def decide(conditions, coverage, owner_threshold, dji_delta_percent,
+           dji_delta_limit, privacy_ok, envelope_problems=()):
+    """GO / TECHNICAL_GO / ADJUST / REJECT и стабильные коды причин.
 
-    Порядок жёсткий: сначала обязательные условия, потом доля работ без числа.
-    Ни один порог не решает раньше, чем сработали технические проверки.
+    Порядок жёсткий: сначала конверты улик, потом обязательные условия, и
+    только потом -- бизнес-пороги.
+
+    [REASON]: `GO` -- это разрешение катить дальше, и выдать его на пороге,
+    который выбрала сессия, значит выдать решение владельца за своё. Устав
+    запрещает выдумывать бизнес-правила прямо. Поэтому, пока владелец не
+    назвал ОБА правила -- долю работ без числа и допустимое отклонение от
+    площади DJI, -- верхний возможный вердикт `TECHNICAL_GO`: тракт исправен,
+    решение не принято, production не разрешён.
     """
     failed = [item['code'] for item in conditions if not item['passed']]
+    if envelope_problems:
+        failed = ['EVIDENCE_DOES_NOT_BELONG_TO_ONE_RUN'] + failed
     if not privacy_ok:
         failed = failed + ['REPORT_CONTAINS_PRIVATE_VALUES']
     if failed:
         return 'REJECT', failed
 
-    reasons = []
     share = _number(coverage.get('works_without_number_share'))
-    if share is not None and share > threshold:
-        reasons.append('WORKS_WITHOUT_NUMBER_SHARE_ABOVE_THRESHOLD')
+    missing_rules = []
+    if owner_threshold is None:
+        missing_rules.append('OWNER_SHARE_THRESHOLD_NOT_SET')
+    if dji_delta_limit is None:
+        missing_rules.append('OWNER_DJI_DELTA_RULE_NOT_SET')
+
+    breaches = []
+    if (owner_threshold is not None and share is not None
+            and share > owner_threshold):
+        breaches.append('WORKS_WITHOUT_NUMBER_SHARE_ABOVE_OWNER_THRESHOLD')
     if (dji_delta_limit is not None and dji_delta_percent is not None
             and abs(dji_delta_percent) > dji_delta_limit):
-        reasons.append('DJI_DELTA_ABOVE_THRESHOLD')
+        breaches.append('DJI_DELTA_ABOVE_OWNER_LIMIT')
+    if breaches:
+        return 'ADJUST', breaches
 
-    if reasons:
-        return 'ADJUST', reasons
-    return 'GO', ['ALL_MANDATORY_CONDITIONS_HELD']
+    if missing_rules:
+        return 'TECHNICAL_GO', (['ALL_MANDATORY_CONDITIONS_HELD',
+                                 'BUSINESS_DECISION_REQUIRED',
+                                 'PRODUCTION_ROLLOUT_NOT_AUTHORISED']
+                                + missing_rules)
+    return 'GO', ['ALL_MANDATORY_CONDITIONS_HELD',
+                  'OWNER_RULES_SATISFIED']
 
 
 # ─── Проверка отчёта на приватные значения ──────────────────────────────────
@@ -417,11 +493,50 @@ def _numbers_of(value):
                 yield found
 
 
+# ─── Конверты: все улики одного запуска, или ни одной ───────────────────────
+
+EXPECTED_KINDS = (
+    ('preflight', 'preflight'),
+    ('deploy', 'deploy'),
+    ('collect', 'collect:summary'),
+    ('recalc:dry-run', 'recalc:dry-run'),
+    ('recalc:apply-1', 'recalc:apply-1'),
+    ('recalc:apply-2', 'recalc:apply-2'),
+    ('staging_snapshot', 'db-probe:snapshot'),
+)
+
+
+def validate_evidence_set(documents, run_id, kit_sha):
+    """Каждый конверт -- свой, и все они про один запуск.
+
+    Возвращает список кодов. Пустой -- набор согласован.
+
+    [REASON]: без этой проверки отчёт складывал улики, ни разу не спросив, от
+    одного ли они прогона. Два прогона одного дня -- и предполёт первого лёг
+    бы рядом с пересчётом второго; каждая строка отчёта была бы верной, а
+    отчёт в целом -- про прогон, которого не было.
+    """
+    problems = []
+    for name, kind in EXPECTED_KINDS:
+        document = documents.get(name)
+        if document is None:
+            problems.append('EVIDENCE_ABSENT:%s' % name)
+            continue
+        for issue in common.validate_envelope(document, kind, run_id=run_id,
+                                              kit_sha=kit_sha):
+            problems.append('%s:%s' % (issue, name))
+
+    ordered = [(name, documents.get(name)) for name, _kind in EXPECTED_KINDS
+               if documents.get(name) is not None]
+    problems.extend(common.check_time_order(ordered))
+    return problems
+
+
 # ─── Сборка отчёта ──────────────────────────────────────────────────────────
 
 def build_report(preflight, deploy, collect, recalc_runs, staging,
-                 recalculation_seconds, threshold, dji_delta_limit,
-                 missing_evidence):
+                 recalculation_seconds, owner_threshold, dji_delta_limit,
+                 missing_evidence, run_id=None, kit_sha=None):
     """Плоский отчёт: только объявленные поля, только счётчики и площади."""
     snap = payload_of(staging)
     coverage = snap.get('coverage', {}) or {}
@@ -441,11 +556,43 @@ def build_report(preflight, deploy, collect, recalc_runs, staging,
     conditions = build_conditions(preflight, deploy, collect, recalc_runs,
                                   staging)
 
+    documents = {'preflight': preflight, 'deploy': deploy, 'collect': collect,
+                 'staging_snapshot': staging}
+    for label in ('dry-run', 'apply-1', 'apply-2'):
+        for run in recalc_runs:
+            if payload_of(run).get('label') == label:
+                documents['recalc:%s' % label] = run
+    measured_run_id = run_id or (deploy or {}).get('run_id')
+    measured_kit_sha = kit_sha or (deploy or {}).get('kit_sha')
+    envelope_problems = validate_evidence_set(documents, measured_run_id,
+                                              measured_kit_sha)
+
+    dry = _run_by_label(recalc_runs, 'dry-run')
     report = {
         'kit': common.KIT_ID,
         'kit_version': common.KIT_VERSION,
-        'generated_utc': common.evidence_envelope('x', {})['generated_utc'],
-        'verified_sha': common.VERIFIED_MERGE_SHA,
+        'generated_utc': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+        # ИЗМЕРЕННЫЕ ревизии, а не зашитые константы. Отчёт, печатающий
+        # константу, доказывает лишь то, что константа записана в файле.
+        'run_id': measured_run_id,
+        'kit_sha': measured_kit_sha,
+        'product_sha': (deploy or {}).get('product_sha'),
+        'envelope_problems': envelope_problems,
+        'evidence_order_problems': [item for item in envelope_problems
+                                    if item.startswith('OUT_OF_ORDER')],
+        'deploy_phase': dep.get('phase'),
+        'backup_verified': _flag(dep.get('backup_verified')),
+        'service_started': _flag(dep.get('service_started')),
+        'smoke_test_ok': _flag(dep.get('smoke_test_ok')),
+        'smoke_test_status': _number(dep.get('smoke_test_status')),
+        'smoke_test_path': dep.get('smoke_test_path'),
+        'dry_run_wrote_nothing': _flag((dry or {}).get('wrote_nothing')),
+        'coverage_fingerprint_sha256':
+            (snap.get('coverage_fingerprint') or {}).get('sha256'),
+        'probe_request_failures':
+            _number(counters_of(collect).get('probe_request_failures')),
+        'probe_pending_requests':
+            _number(counters_of(collect).get('probe_pending_requests')),
         'target_day': common.TARGET_DAY,
         'staging_url': common.STAGING_URL,
 
@@ -495,8 +642,8 @@ def build_report(preflight, deploy, collect, recalc_runs, staging,
 
         'recalculation_seconds': _number(recalculation_seconds),
 
-        'adjust_share_threshold': threshold,
-        'dji_delta_adjust_percent': dji_delta_limit,
+        'owner_share_threshold': owner_threshold,
+        'owner_dji_delta_percent': dji_delta_limit,
 
         'area_ha_fingerprints': fingerprints,
         'area_ha_unchanged': len(set(fingerprints.values())) <= 1
@@ -529,10 +676,13 @@ def build_report(preflight, deploy, collect, recalc_runs, staging,
     report['privacy_violations'] = violations
     report['verdict_notes'] = _notes(report, dji_delta_limit)
 
-    verdict, reasons = decide(conditions, coverage, threshold, delta_percent,
-                              dji_delta_limit, not violations)
+    verdict, reasons = decide(conditions, coverage, owner_threshold,
+                              delta_percent, dji_delta_limit, not violations,
+                              envelope_problems)
     report['verdict'] = verdict
     report['verdict_reasons'] = reasons
+    report['production_rollout_authorised'] = (verdict == 'GO')
+    report['business_decision_required'] = (verdict != 'GO')
 
     markdown = render_markdown(report)
     violations = scan_for_private_values(report, markdown)
@@ -541,6 +691,8 @@ def build_report(preflight, deploy, collect, recalc_runs, staging,
     if violations and report['verdict'] != 'REJECT':
         report['verdict'] = 'REJECT'
         report['verdict_reasons'] = ['REPORT_CONTAINS_PRIVATE_VALUES']
+        report['production_rollout_authorised'] = False
+        report['business_decision_required'] = True
     markdown = render_markdown(report)
     return report, markdown
 
@@ -552,6 +704,8 @@ def _notes(report, dji_delta_limit):
              'MIXED_FLIGHTS_PER_FLIGHT_NOT_RECORDED']
     if dji_delta_limit is None:
         notes.append('DJI_DELTA_NOT_AUTOJUDGED')
+    if report.get('owner_share_threshold') is None:
+        notes.append('OWNER_SHARE_THRESHOLD_NOT_SET')
     if report.get('evidence_missing'):
         notes.append('EVIDENCE_INCOMPLETE')
     return notes
@@ -574,7 +728,9 @@ def render_markdown(report):
         '',
         '| Поле | Значение |',
         '|---|---|',
-        '| Проверенный SHA | `%s` |' % report['verified_sha'],
+        '| Идентификатор запуска | `%s` |' % _cell(report['run_id']),
+        '| Ревизия комплекта (измерена) | `%s` |' % _cell(report['kit_sha']),
+        '| Ревизия продукта | `%s` |' % _cell(report['product_sha']),
         '| Целевой день | %s |' % report['target_day'],
         '| Площадка | %s |' % report['staging_url'],
         '| Отчёт собран (UTC) | %s |' % report['generated_utc'],
@@ -634,6 +790,18 @@ def render_markdown(report):
         '| Проверка | Значение |',
         '|---|---|',
         '| PRAGMA integrity_check | %s |' % _cell(report['integrity_ok']),
+        '| Фаза манифеста деплоя | %s |' % _cell(report['deploy_phase']),
+        '| Резервная копия проверена | %s |' % _cell(report['backup_verified']),
+        '| Служба площадки поднялась | %s |' % _cell(report['service_started']),
+        '| Smoke-тест %s | %s (статус %s) |'
+        % (_cell(report['smoke_test_path']), _cell(report['smoke_test_ok']),
+           _cell(report['smoke_test_status'])),
+        '| Сухой прогон ничего не записал | %s |'
+        % _cell(report['dry_run_wrote_nothing']),
+        '| Оборванных запросов маршрута | %s |'
+        % _cell(report['probe_request_failures']),
+        '| Незавершённых запросов маршрута | %s |'
+        % _cell(report['probe_pending_requests']),
         '| Миграция на изолированной копии | %s |'
         % _cell(report['migration_on_copy_ok']),
         '| Миграция на площадке | %s |'
@@ -667,9 +835,27 @@ def render_markdown(report):
         lines.append('- `%s`' % code)
     lines += [
         '',
-        'Порог доли работ без числа: `%s`. Это ПАРАМЕТР ОТЧЁТА, выбранный '
-        'сессией, а не бизнес-правило: правильную границу называет владелец.'
-        % report['adjust_share_threshold'],
+        '| Правило владельца | Значение |',
+        '|---|---|',
+        '| Порог доли работ без числа | %s |'
+        % _cell(report['owner_share_threshold']),
+        '| Допустимое отклонение от площади DJI, %% | %s |'
+        % _cell(report['owner_dji_delta_percent']),
+        '| Production rollout разрешён этим отчётом | %s |'
+        % _cell(report['production_rollout_authorised']),
+        '',
+        ('**Оба правила -- бизнес-решения владельца, и комплект их не '
+         'выдумывает.** Пока хотя бы одно не названо, верхний возможный '
+         'вердикт -- `TECHNICAL_GO`: тракт исправен, решение не принято, '
+         'production этим отчётом НЕ разрешён.'),
+        '',
+        '## Согласованность улик',
+        '',
+        '| Проверка | Значение |',
+        '|---|---|',
+        '| Все улики одного запуска | %s |'
+        % _cell(not report['envelope_problems']),
+        '| Нарушений конвертов | %d |' % len(report['envelope_problems']),
         '',
         '## Проверка отчёта на приватные значения',
         '',
@@ -708,16 +894,24 @@ def build_parser():
     parser.add_argument('--recalc-seconds', type=float, default=None,
                         metavar='N',
                         help='how long the applying recalculation took')
-    parser.add_argument('--adjust-share-threshold', type=float, default=0.20,
+    parser.add_argument('--run-id', required=True, metavar='ID',
+                        help='the one run identifier every evidence file must '
+                             'carry')
+    parser.add_argument('--kit-sha', required=True, metavar='SHA',
+                        help='the MEASURED revision of the kit checkout')
+    # [REASON]: НЕТ значения по умолчанию, и это главное в этих двух флагах.
+    # Порог, выбранный сессией и подставленный молча, превращается в решение
+    # владельца, которого он не принимал. Без них вердикт останавливается на
+    # TECHNICAL_GO и говорит, чего не хватает.
+    parser.add_argument('--owner-share-threshold', type=float, default=None,
                         metavar='SHARE',
-                        help='ADJUST when this share of works gets no number. '
-                             'A REPORTING parameter chosen by the session, '
-                             'not a business rule (default: 0.20)')
-    parser.add_argument('--dji-delta-adjust-percent', type=float,
-                        default=None, metavar='PERCENT',
-                        help='ADJUST when the useful-area-to-DJI difference '
-                             'exceeds this percentage. Left unset on purpose: '
-                             'no such rule is proven, and the report says so')
+                        help='the share of works without a number the OWNER '
+                             'accepts. No default: unset means the business '
+                             'decision has not been made')
+    parser.add_argument('--owner-dji-delta-percent', type=float, default=None,
+                        metavar='PERCENT',
+                        help='the deviation from the DJI area the OWNER '
+                             'accepts. No default, for the same reason')
     parser.add_argument('--out-json', required=True, metavar='PATH')
     parser.add_argument('--out-md', required=True, metavar='PATH')
     return parser
@@ -755,7 +949,8 @@ def main(argv=None):
     report, markdown = build_report(
         documents['preflight'], documents['deploy'], documents['collect'],
         runs, documents['staging_snapshot'], args.recalc_seconds,
-        args.adjust_share_threshold, args.dji_delta_adjust_percent, missing)
+        args.owner_share_threshold, args.owner_dji_delta_percent, missing,
+        run_id=args.run_id, kit_sha=args.kit_sha)
 
     common.write_evidence(args.out_json, report)
     directory = os.path.dirname(os.path.abspath(args.out_md))
@@ -767,6 +962,10 @@ def main(argv=None):
     print('VERDICT=%s' % report['verdict'])
     for code in report['verdict_reasons']:
         print('REASON=%s' % code)
+    print('PRODUCTION_ROLLOUT_AUTHORISED=%s'
+          % ('yes' if report['production_rollout_authorised'] else 'no'))
+    for problem in report['envelope_problems']:
+        print('ENVELOPE=%s' % problem)
     print('PRIVACY_SCAN=%s' % ('PASS' if report['privacy_scan_passed']
                                else 'FAIL'))
     print('JSON=%s' % os.path.abspath(args.out_json))

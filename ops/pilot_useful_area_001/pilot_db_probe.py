@@ -304,6 +304,10 @@ def snapshot(db_path, day):
             'area_ha': common.area_ha_fingerprint(con),
             'routes': routes_of_day(con, day),
             'coverage': coverage_of_day(con, day),
+            # [REASON]: полный отпечаток ВСЕХ строк и ВСЕХ колонок. Число
+            # строк не меняется, когда строку переписали, -- а «сухой прогон
+            # ничего не записал» доказывалось именно числом строк.
+            'coverage_fingerprint': common.coverage_fingerprint(con),
             'coverage_rows_outside_target_day': rows_outside_target_day(con, day),
         }
     finally:
@@ -314,7 +318,7 @@ def snapshot(db_path, day):
 # ─── Командная строка ───────────────────────────────────────────────────────
 
 SUBCOMMANDS = ('snapshot', 'integrity', 'schema', 'area-fingerprint',
-               'routes', 'coverage')
+               'coverage-fingerprint', 'routes', 'coverage')
 
 
 def build_parser():
@@ -331,6 +335,11 @@ def build_parser():
     parser.add_argument('--day', default=common.TARGET_DAY,
                         metavar='YYYY-MM-DD',
                         help='local (UTC+5) day the pilot targets')
+    parser.add_argument('--run-id', required=True, metavar='ID',
+                        help='the one run identifier every step of this pilot '
+                             'shares')
+    parser.add_argument('--kit-sha', required=True, metavar='SHA',
+                        help='the MEASURED revision of the kit checkout')
     parser.add_argument('--out', metavar='PATH',
                         help='also write the evidence JSON to this file')
     parser.add_argument('--require', action='append', default=[],
@@ -338,8 +347,8 @@ def build_parser():
                         help='fail with exit 3 unless the named check holds. '
                              'May be given more than once. Checks: '
                              'integrity, schema, no-off-day-routes, '
-                             'only-ready-summed, '
-                             'area-sha256=<hex>')
+                             'only-ready-summed, area-sha256=<hex>, '
+                             'coverage-sha256=<hex>')
     return parser
 
 
@@ -367,6 +376,11 @@ def evaluate_requirements(payload, requirements):
         if name.startswith('area-sha256='):
             expected = name.split('=', 1)[1].strip().lower()
             actual = payload.get('area_ha', {}).get('sha256')
+            results.append((name, bool(actual) and actual == expected))
+            continue
+        if name.startswith('coverage-sha256='):
+            expected = name.split('=', 1)[1].strip().lower()
+            actual = payload.get('coverage_fingerprint', {}).get('sha256')
             results.append((name, bool(actual) and actual == expected))
             continue
         value = _lookup_check(payload, name)
@@ -398,6 +412,10 @@ def main(argv=None):
                 elif args.command == 'area-fingerprint':
                     payload = {'open_mode': mode,
                                'area_ha': common.area_ha_fingerprint(con)}
+                elif args.command == 'coverage-fingerprint':
+                    payload = {'open_mode': mode,
+                               'coverage_fingerprint':
+                                   common.coverage_fingerprint(con)}
                 elif args.command == 'routes':
                     payload = {'open_mode': mode,
                                'routes': routes_of_day(con, args.day)}
@@ -418,7 +436,8 @@ def main(argv=None):
                                for name, ok in checks]
     payload['requirements_all_passed'] = all(ok for _name, ok in checks)
 
-    document = common.evidence_envelope('db-probe:%s' % args.command, payload)
+    document = common.evidence_envelope('db-probe:%s' % args.command, payload,
+                                        args.run_id, args.kit_sha)
     # [REASON]: улика сама называет, куда смотрел прибор. Скрипт, доказывающий
     # «продакшен не тронут», обязан опираться на запись прибора, а не на то,
     # что оператор передал правильный --db.

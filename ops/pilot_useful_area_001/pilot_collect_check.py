@@ -46,7 +46,8 @@ import pilot_common as common  # noqa: E402
 COLLECT_KEYS = (
     'mode', 'dry_run', 'region', 'probe_route_responses',
     'probe_observations', 'probe_confirmed', 'probe_errors',
-    'probe_skipped_over_cap', 'probe_operator_answered', 'probe_drained',
+    'probe_skipped_over_cap', 'probe_request_failures',
+    'probe_pending_requests', 'probe_operator_answered', 'probe_drained',
     'collect_live_confirmed', 'collect_bodies_captured',
     'collect_decode_failures', 'collect_capture_errors',
     'collect_routes_captured', 'collect_routes_queued',
@@ -146,6 +147,13 @@ def collect_verdict(counters):
         reasons.append('NOT_EVERY_OBSERVATION_CONFIRMED')
     if number('probe_skipped_over_cap', 1) != 0:
         reasons.append('RESPONSE_DROPPED_BY_THE_SIZE_CAP')
+    # [REASON]: оборванный и незавершённый запросы -- СВОИ ЧИСЛА, а не вывод
+    # из равенства observations и confirmed. Запрос, оборвавшийся ДО тела, в
+    # observations не попадает вовсе: равенство держится, а маршрут потерян.
+    if number('probe_request_failures', 1) != 0:
+        reasons.append('ROUTE_REQUESTS_FAILED')
+    if number('probe_pending_requests', 1) != 0:
+        reasons.append('ROUTE_REQUESTS_STILL_PENDING')
     if number('probe_errors', 1) != 0:
         reasons.append('OBSERVATION_ERRORS')
     if number('collect_capture_errors', 1) != 0:
@@ -182,10 +190,12 @@ def collect_verdict(counters):
         'passed': not reasons,
         'reasons': reasons,
         'ingest_counters_balance': balanced,
+        # Теперь это ФАКТ из сводки, а не вывод из соседних счётчиков.
         'no_unfinished_route_requests':
-            number('probe_observations', 0) > 0
-            and number('probe_confirmed', -1) == number('probe_observations', 0)
-            and number('probe_skipped_over_cap', 1) == 0,
+            number('probe_request_failures', 1) == 0
+            and number('probe_pending_requests', 1) == 0,
+        'probe_request_failures': number('probe_request_failures'),
+        'probe_pending_requests': number('probe_pending_requests'),
     }
 
 
@@ -281,6 +291,8 @@ def build_parser():
     parser.add_argument('--expect-url', default=common.STAGING_URL,
                         metavar='URL',
                         help='the only ingest base URL this pilot allows')
+    parser.add_argument('--run-id', required=True, metavar='ID')
+    parser.add_argument('--kit-sha', required=True, metavar='SHA')
     parser.add_argument('--out', metavar='PATH')
     return parser
 
@@ -327,7 +339,8 @@ def main(argv=None):
         }
         kind = 'collect:summary'
 
-    common.emit(common.evidence_envelope(kind, payload), args.out)
+    common.emit(common.evidence_envelope(kind, payload, args.run_id,
+                                         args.kit_sha), args.out)
     if not payload.get('passed'):
         for reason in payload.get('reasons', ()):
             sys.stderr.write('CHECK FAILED: %s\n' % reason)
