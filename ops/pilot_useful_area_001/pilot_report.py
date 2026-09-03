@@ -41,9 +41,17 @@ Markdown, выносит машинный вердикт GO / ADJUST / REJECT с
 
   & "C:\\Program Files\\Python314\\python.exe" ops\\pilot_useful_area_001\\pilot_report.py --preflight ... --deploy ... --collect ... --recalc ... --staging-snapshot ... --out-json ... --out-md ...
 
-Коды возврата: 0 -- отчёт собран; 1 -- ошибка ввода; 3 -- отчёт не прошёл
-проверку на приватные данные (файлы всё равно записаны -- их надо увидеть,
-чтобы починить, -- но вердикт принудительно REJECT).
+Коды возврата НЕСУТ ВЕРДИКТ, а не факт записи файла:
+
+  1  -- отчёт собрать не удалось (ошибка ввода);
+  0  -- отчёт собран, вердикт GO;
+  10 -- отчёт собран, вердикт TECHNICAL_GO;
+  11 -- отчёт собран, вердикт ADJUST;
+  12 -- отчёт собран, вердикт REJECT.
+
+Файлы отчёта пишутся в любом случае, кроме ошибки ввода: отказ надо увидеть,
+чтобы починить. Но код возврата при отказе не ноль, и вызывающий скрипт не
+может напечатать после него PASS.
 """
 
 import argparse
@@ -94,8 +102,65 @@ ALLOWED_FIELDS = (
     'area_ha_fingerprints', 'area_ha_unchanged',
     'integrity_ok', 'migration_on_copy_ok', 'migration_on_staging_ok',
     'staging_backup_recorded', 'staging_sha_before', 'staging_sha_after',
-    'recalc_runs', 'collect_counters',
+    'recalc_runs', 'collect_counters', 'undeclared_nested_fields',
 )
+
+# ─── Белые списки ВЛОЖЕННЫХ полей ────────────────────────────────────────────
+#
+# [REASON]: белый список верхнего уровня не защищал ничего в двух местах, где
+# данные приезжают снаружи: `collect_counters` и `summary` каждого пересчёта
+# копировались целиком. Необъявленное поле с обычной строкой -- не uuid, не
+# координата, не слово-секрет -- проходило все три сети и попадало в JSON.
+# Здесь эти структуры собираются ПО СПИСКУ, а не фильтруются от известного
+# плохого.
+
+# Ровно то, что печатает сводка сборщика (drone_collector/main.py,
+# COLLECT_SUMMARY_KEYS). Список повторён намеренно: отчёт не спрашивает у
+# проверяемого, что тому можно показывать.
+ALLOWED_COUNTER_FIELDS = (
+    'mode', 'dry_run', 'region', 'probe_route_responses',
+    'probe_observations', 'probe_confirmed', 'probe_errors',
+    'probe_skipped_over_cap', 'probe_request_failures',
+    'probe_pending_requests', 'probe_operator_answered', 'probe_drained',
+    'collect_live_confirmed', 'collect_bodies_captured',
+    'collect_decode_failures', 'collect_capture_errors',
+    'collect_routes_captured', 'collect_routes_queued',
+    'collect_routes_duplicate', 'collect_send_enabled',
+    'collect_envelopes_sent', 'collect_batch_accepted', 'collect_left_pending',
+    'collect_seen', 'collect_new', 'collect_updated', 'collect_unchanged',
+    'collect_errors', 'collect_unlinked', 'exit',
+)
+
+# Ровно то, что даёт разбор сводки пересчёта (pilot_recalc_parse.parse_summary).
+ALLOWED_SUMMARY_FIELDS = (
+    'mode', 'algorithm_version', 'applied', 'dry_run', 'days', 'works',
+    'flights', 'routes', 'inserted', 'updated', 'unchanged', 'deleted',
+    'READY_ESTIMATE', 'PARTIAL_DATA', 'DATA_UNAVAILABLE',
+    'CONTOUR_AMBIGUOUS', 'CONTOUR_NOT_MATCHED', 'ROUTE_INVALID',
+    'ready_area_ha', 'period_from', 'period_to', 'status_total',
+    'status_total_matches_works', 'nothing_written',
+)
+
+
+def take_declared(source, allowed):
+    """Собрать структуру ПО СПИСКУ и сосчитать необъявленное.
+
+    Возвращает (что взяли, сколько чужого встретили). Имя и значение чужого
+    поля НАРУЖУ НЕ ИДУТ: счётчик говорит, что оно было, и этого достаточно,
+    чтобы отказать. Назвать его в отчёте значило бы напечатать ровно то, чего
+    отчёт не должен содержать.
+    """
+    if not isinstance(source, dict):
+        return {}, 0
+    taken = {}
+    undeclared = 0
+    for key in sorted(source):
+        if key in allowed:
+            taken[key] = source[key]
+        else:
+            undeclared += 1
+    return taken, undeclared
+
 
 # Ключи, которым РАЗРЕШЕНО нести длинную шестнадцатеричную строку.
 HEX_ALLOWED_KEYS = ('kit_sha', 'product_sha', 'staging_sha_before',
@@ -402,7 +467,8 @@ def recalculation_seconds(recalc_runs):
 # ─── Вердикт ────────────────────────────────────────────────────────────────
 
 def decide(conditions, coverage, owner_threshold, dji_delta_percent,
-           dji_delta_limit, privacy_ok, envelope_problems=()):
+           dji_delta_limit, privacy_ok, envelope_problems=(),
+           undeclared_nested=0):
     """GO / TECHNICAL_GO / ADJUST / REJECT и стабильные коды причин.
 
     Порядок жёсткий: сначала конверты улик, потом обязательные условия, и
@@ -418,7 +484,9 @@ def decide(conditions, coverage, owner_threshold, dji_delta_percent,
     failed = [item['code'] for item in conditions if not item['passed']]
     if envelope_problems:
         failed = ['EVIDENCE_DOES_NOT_BELONG_TO_ONE_RUN'] + failed
-    if not privacy_ok:
+    if undeclared_nested:
+        failed = failed + ['REPORT_CONTAINS_UNDECLARED_NESTED_FIELDS']
+    if not privacy_ok and not undeclared_nested:
         failed = failed + ['REPORT_CONTAINS_PRIVATE_VALUES']
     if failed:
         return 'REJECT', failed
@@ -621,6 +689,23 @@ def build_report(preflight, deploy, collect, recalc_runs, staging,
                                               measured_kit_sha)
 
     dry = _run_by_label(recalc_runs, 'dry-run')
+
+    declared_counters, undeclared_total = take_declared(
+        col.get('counters'), ALLOWED_COUNTER_FIELDS)
+    declared_runs = []
+    for run in recalc_runs:
+        run_payload = payload_of(run)
+        summary, undeclared = take_declared(run_payload.get('summary'),
+                                            ALLOWED_SUMMARY_FIELDS)
+        undeclared_total += undeclared
+        declared_runs.append({
+            'label': run_payload.get('label'),
+            'summary': summary,
+            'outputs_agree': run_payload.get('outputs_agree'),
+            'period_is_the_target_day':
+                run_payload.get('period_is_the_target_day'),
+        })
+
     report = {
         'kit': common.KIT_ID,
         'kit_version': common.KIT_VERSION,
@@ -701,8 +786,12 @@ def build_report(preflight, deploy, collect, recalc_runs, staging,
         'owner_dji_delta_percent': dji_delta_limit,
 
         'area_ha_fingerprints': fingerprints,
-        'area_ha_unchanged': len(set(fingerprints.values())) <= 1
-                             and bool(fingerprints),
+        # [REASON]: ТА ЖЕ функция, что и у условия. Прежнее выражение считало
+        # по словарю, в котором всегда пять ключей: пять отсутствующих улик
+        # давали множество {None}, то есть «площадь не менялась» ровно при
+        # ПОЛНОМ отсутствии доказательств. Отчёт при этом печатал «да» и
+        # REJECT одновременно.
+        'area_ha_unchanged': area_ha_unchanged(fingerprints),
         'integrity_ok': _flag((snap.get('integrity') or {}).get('integrity_ok')),
         'migration_on_copy_ok': _flag(pre.get('migration_on_copy_ok')),
         'migration_on_staging_ok': _flag(dep.get('migration_on_staging_ok')),
@@ -710,13 +799,9 @@ def build_report(preflight, deploy, collect, recalc_runs, staging,
         'staging_sha_before': dep.get('sha_before'),
         'staging_sha_after': dep.get('sha_after'),
 
-        'recalc_runs': [{'label': payload_of(run).get('label'),
-                         'summary': payload_of(run).get('summary', {}),
-                         'outputs_agree': payload_of(run).get('outputs_agree'),
-                         'period_is_the_target_day':
-                             payload_of(run).get('period_is_the_target_day')}
-                        for run in recalc_runs],
-        'collect_counters': col.get('counters', {}),
+        'recalc_runs': declared_runs,
+        'collect_counters': declared_counters,
+        'undeclared_nested_fields': undeclared_total,
         'conditions': conditions,
     }
 
@@ -727,13 +812,17 @@ def build_report(preflight, deploy, collect, recalc_runs, staging,
     #   4. проверить ещё раз, теперь и текст. Приватное значение, приехавшее
     #      вместе с вердиктом, обязано поймать этот второй проход.
     violations = scan_for_private_values(report, '')
+    if undeclared_total:
+        violations = violations + [
+            {'code': 'UNDECLARED_NESTED_FIELD', 'where': 'nested'}]
     report['privacy_scan_passed'] = not violations
     report['privacy_violations'] = violations
     report['verdict_notes'] = _notes(report, dji_delta_limit)
 
     verdict, reasons = decide(conditions, coverage, owner_threshold,
                               delta_percent, dji_delta_limit, not violations,
-                              envelope_problems)
+                              envelope_problems,
+                              undeclared_nested=undeclared_total)
     report['verdict'] = verdict
     report['verdict_reasons'] = reasons
     # [REASON]: ЭТОТ КОМПЛЕКТ НИКОГДА НЕ РАЗРЕШАЕТ PRODUCTION. Он прогоняет
@@ -747,9 +836,16 @@ def build_report(preflight, deploy, collect, recalc_runs, staging,
 
     markdown = render_markdown(report)
     violations = scan_for_private_values(report, markdown)
+    if undeclared_total:
+        violations = violations + [
+            {'code': 'UNDECLARED_NESTED_FIELD', 'where': 'nested'}]
     report['privacy_scan_passed'] = not violations
     report['privacy_violations'] = violations
-    if violations and report['verdict'] != 'REJECT':
+    if undeclared_total and report['verdict'] != 'REJECT':
+        report['verdict'] = 'REJECT'
+        report['verdict_reasons'] = [
+            'REPORT_CONTAINS_UNDECLARED_NESTED_FIELDS']
+    elif violations and report['verdict'] != 'REJECT':
         report['verdict'] = 'REJECT'
         report['verdict_reasons'] = ['REPORT_CONTAINS_PRIVATE_VALUES']
         report['business_decision_required'] = True
