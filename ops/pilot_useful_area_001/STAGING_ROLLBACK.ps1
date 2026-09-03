@@ -3,13 +3,14 @@
     DRONE-USEFUL-AREA-PILOT-001, the way back.
 
     WHAT THIS DOES
-      Reads the manifest STAGING_DEPLOY_AND_MIGRATE.ps1 wrote, verifies the
-      backup it names (sha256 and PRAGMA integrity_check), stops ONLY the
-      staging service, restores the staging database, returns the staging
-      checkout to the sha it had before the deploy, starts the staging service
-      and smoke-tests it.
+      Reads the deploy evidence of ONE NAMED RUN, verifies the backup it names
+      (sha256 and PRAGMA integrity_check), stops ONLY the staging service,
+      restores the staging database, returns the staging checkout to the sha
+      it had before the deploy, starts the staging service and smoke-tests it.
 
-      NO FILE NAME IS TYPED BY HAND. The backup comes from the manifest.
+      NO FILE NAME IS TYPED BY HAND, and nothing is searched for: the run id
+      names the directory, the directory names the evidence, the evidence
+      names the backup.
 
     WHAT THIS NEVER DOES
       * touches C:\transport-report or the TransportReport service;
@@ -17,12 +18,16 @@
         rollback. The checkout returns to the recorded sha with a DETACHED
         checkout, which restores exactly that tree while moving no branch ref
         and rewriting no history. Going forward again is `git checkout <branch>`
-        and the manifest names the branch;
+        and the evidence names the branch;
       * deletes a backup, or any production data.
 
-    RUN (on the server):
-      Set-Location C:\transport-report-staging
-      .\ops\pilot_useful_area_001\STAGING_ROLLBACK.ps1 -Force
+    IT RUNS FROM THE KIT CHECKOUT, which is a different repository from the
+    one being rolled back. That is the point: rolling staging back cannot take
+    the rollback script away with it.
+
+    RUN (on the server, from the KIT checkout):
+      Set-Location C:\vehicle-soft-pilot-kit
+      .\ops\pilot_useful_area_001\STAGING_ROLLBACK.ps1 -RunId <the id step 1 printed> -Force
 
     Without -Force it asks for a typed confirmation: this overwrites the
     staging database.
@@ -30,8 +35,9 @@
 
 [CmdletBinding()]
 param(
+    [Parameter(Mandatory)][string]$RunId,
     [string]$ExpectedHost = 'srv-yoqsh',
-    [string]$ManifestPath = 'D:\transport-report-backups\pilot\DRONE-USEFUL-AREA-001\manifests\latest.json',
+    [string]$RunsRoot = 'D:\transport-report-backups\pilot\DRONE-USEFUL-AREA-001\runs',
     [string]$Python = 'C:\Program Files\Python314\python.exe',
     [int]$ServiceTimeoutSeconds = 90,
     [switch]$Force
@@ -42,28 +48,40 @@ $ErrorActionPreference = 'Stop'
 
 Import-Module (Join-Path $PSScriptRoot 'PilotKit.psm1') -Force
 $K = Get-PilotConstants
+$KitCheckout = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 Write-Output "=== DRONE-USEFUL-AREA-PILOT-001 / STAGING ROLLBACK ==="
 
 Assert-PilotHost -Expected $ExpectedHost
-Assert-PilotNotProduction -Path $ManifestPath -What 'manifest path'
+Assert-PilotOutsideCheckouts -Path $RunsRoot -What 'runs root'
 
-$manifest = Read-PilotJson -Path $ManifestPath
-$payload = $manifest.payload
-Write-Output "MANIFEST=$ManifestPath"
-Write-Output "MANIFEST_PHASE=$($manifest.phase)"
+$run = Get-PilotRun -RunsRoot $RunsRoot -RunId $RunId
+$KitSha = Get-PilotKitSha -KitCheckout $KitCheckout
+$deployPath = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'deploy'
+$deploy = Read-PilotJson -Path $deployPath
+$payload = $deploy.payload
 
-# --- 1. The manifest must describe STAGING and nothing else -----------------
-Assert-PilotStagingPath -Path $payload.staging_root -What 'manifest staging root'
-Assert-PilotStagingPath -Path $payload.staging_db -What 'manifest staging database'
+Write-Output "RUN_ID=$RunId"
+Write-Output "DEPLOY_EVIDENCE=$deployPath"
+Write-Output "DEPLOY_PHASE=$($payload.phase)"
+
+# --- 1. The evidence must be this run's, and describe STAGING ---------------
+if ($deploy.run_id -ne $RunId) {
+    throw "REFUSED: the deploy evidence belongs to run $($deploy.run_id), not $RunId."
+}
+if ($deploy.kit_sha -ne $run.kit_sha) {
+    throw "REFUSED: the deploy evidence was written by kit revision $($deploy.kit_sha); this run was opened with $($run.kit_sha)."
+}
+Assert-PilotStagingPath -Path $payload.staging_root -What 'recorded staging root'
+Assert-PilotStagingPath -Path $payload.staging_db -What 'recorded staging database'
 Assert-PilotServiceIsNotProduction -Name $payload.staging_service
-Assert-PilotNotProduction -Path $payload.backup_path -What 'manifest backup path'
+Assert-PilotNotProduction -Path $payload.backup_path -What 'recorded backup path'
 
 $stagingService = [string]$payload.staging_service
-$runbook = Join-Path $K.StagingRoot 'docs\ORG_WINDOWS_SERVER_STAGING_RUNBOOK.md'
+$runbook = Join-Path $KitCheckout 'docs\ORG_WINDOWS_SERVER_STAGING_RUNBOOK.md'
 $resolved = Resolve-PilotStagingService -RunbookPath $runbook
 if ($resolved -ne $stagingService) {
-    throw "REFUSED: the manifest names service '$stagingService' but this machine resolves staging to '$resolved'. Nothing was stopped."
+    throw "REFUSED: the evidence names service '$stagingService' but this machine resolves staging to '$resolved'. Nothing was stopped."
 }
 Write-Output "STAGING_SERVICE=$stagingService"
 Write-Output "SHA_TO_RESTORE=$($payload.sha_before)"
@@ -71,19 +89,20 @@ Write-Output "BACKUP_TO_RESTORE=$($payload.backup_path)"
 
 # --- 2. Verify the backup BEFORE stopping anything --------------------------
 if (-not (Test-Path -LiteralPath $payload.backup_path)) {
-    throw "REFUSED: the backup named by the manifest is gone: $($payload.backup_path)"
+    throw "REFUSED: the backup named by the evidence is gone: $($payload.backup_path)"
 }
 $sha = Get-PilotFileSha256 -Path $payload.backup_path
 if ($sha -ne $payload.backup_sha256) {
-    throw "REFUSED: the backup file changed since it was taken. Manifest sha256 $($payload.backup_sha256), file now $sha. Nothing was restored."
+    throw "REFUSED: the backup file changed since it was taken. Evidence sha256 $($payload.backup_sha256), file now $sha. Nothing was restored."
 }
 Write-Output "BACKUP_SHA256_MATCHES=True"
 
 $probe = Join-Path $PSScriptRoot 'pilot_db_probe.py'
-$check = Join-Path ([System.IO.Path]::GetTempPath()) ("pilot_rollback_backup_{0}.json" -f (Get-Date).ToString('yyyyMMddHHmmss'))
-Invoke-PilotPython -Python $Python -StdoutPath $check -Arguments @(
-    $probe, 'integrity', '--db', $payload.backup_path, '--require', 'integrity') | Out-Null
-$backupState = Read-PilotJson -Path $check
+$backupState = (Invoke-PilotProbe -Python $Python -Script $probe -RunId $RunId -KitSha $KitSha `
+    -OutFile (Join-Path $run.run_root 'evidence\rollback_backup_integrity.json') `
+    -AllowedExitCodes @(0, 3) `
+    -Arguments @('integrity', '--db', $payload.backup_path,
+                 '--require', 'integrity')).Evidence
 if (-not $backupState.payload.integrity.integrity_ok) {
     throw "REFUSED: PRAGMA integrity_check on the backup did not return ok. Nothing was restored."
 }
@@ -157,24 +176,10 @@ if ((Get-Service -Name $stagingService).Status -ne 'Running') {
     throw "REFUSED: $stagingService did not start after the rollback."
 }
 
-Assert-PilotStagingUrl -Url $K.StagingUrl
-$smokeStatus = $null
-for ($attempt = 1; $attempt -le 10; $attempt++) {
-    try {
-        $response = Invoke-WebRequest -Uri $K.StagingUrl -UseBasicParsing -TimeoutSec 15
-        $smokeStatus = [int]$response.StatusCode
-        break
-    } catch {
-        if ($_.Exception.PSObject.Properties.Name -contains 'Response' -and $_.Exception.Response) {
-            $smokeStatus = [int]$_.Exception.Response.StatusCode
-            break
-        }
-        Start-Sleep -Seconds 3
-    }
-}
-Write-Output "SMOKE_TEST_STATUS=$smokeStatus"
-if ($null -eq $smokeStatus -or $smokeStatus -ge 500) {
-    throw "REFUSED: $($K.StagingUrl) did not answer after the rollback (status '$smokeStatus')."
+$smoke = Invoke-PilotSmokeTest -BaseUrl $K.StagingUrl
+Write-Output "SMOKE_TEST $($smoke.path) status=$($smoke.status) ok=$($smoke.ok) reason=$($smoke.reason)"
+if (-not $smoke.ok) {
+    throw "REFUSED: the staging smoke test did not pass after the rollback ($($smoke.reason))."
 }
 
 $productionStatus = (Get-Service -Name $K.ProductionService -ErrorAction SilentlyContinue)
@@ -182,6 +187,11 @@ if ($productionStatus) {
     Write-Output "PRODUCTION_SERVICE_STATUS=$($productionStatus.Status) (untouched)"
 }
 
+Set-PilotRunStep -RunsRoot $RunsRoot -RunId $RunId -Step 'rollback' -Value ([ordered]@{
+    completed_utc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    restored_from = $payload.backup_path
+    sha_now       = $nowSha
+}) | Out-Null
+
 Write-Output ""
 Write-Output "STAGING_ROLLBACK=PASS"
-Write-Output "Return to the owner: this console output."

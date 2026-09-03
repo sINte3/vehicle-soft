@@ -5,36 +5,38 @@
     WHAT THIS DOES
       Drives the existing collector mode --route-ui-collect --send-routes on
       the pilot checkout, with every guard the pilot needs around it: the right
-      machine, the right repository at the VERIFIED commit, a clean working
-      tree, the collector venv, a structurally usable DJI session, probe
-      timings checked BEFORE the browser opens, and an ingest target that is
-      the STAGING url and can never be the production one.
+      machine, the right repository at the KIT revision, a clean working tree
+      CHECKED BEFORE ANY FILE IS CREATED, the collector venv, a structurally
+      usable DJI session, probe timings checked BEFORE the browser opens, and
+      an ingest target that is the STAGING url and can never be the production
+      one.
 
-      The operator drives the DJI cabinet by hand. The tool only listens: it
-      never initiates the route POST and never reproduces the signature.
+    WHICH REVISION, AND WHY IT IS THE KIT'S
+      The collector runs at KIT_SHA, not at PRODUCT_SHA. The kit revision adds
+      two numbers to the collector's run summary -- probe_request_failures and
+      probe_pending_requests -- and without them the completeness of the live
+      capture had to be inferred from observations == confirmed. That
+      inference is wrong: a request that dies BEFORE its body never becomes an
+      observation, so the equality holds while a route is lost. Staging stays
+      on PRODUCT_SHA; only this machine, which deploys nothing, runs the kit
+      revision. PRODUCT_BLOBS.json records exactly which file differs.
 
-    THE DAY IS CHOSEN BY THE OPERATOR IN THE BROWSER.
-      --route-ui-collect takes no --from/--to: the day is whichever day the
-      operator opens in Task History. This script prints the target day in the
-      prompt, and step 5 (STAGING_RECALCULATE_AND_VERIFY.ps1) REFUSES to
-      recalculate if any accepted route belongs to another day. That check on
-      staging, not a flag here, is what actually holds the day to 2026-06-05.
+    THE WORK DIRECTORY IS OUTSIDE THE CHECKOUT
+      C:\vehicle-soft-pilot-runs, never inside C:\VehicleSoft_DJI_StageB_Pilot.
+      Evidence written inside the checkout would appear in `git status` and
+      make the clean-tree check fail on the run's own artefacts.
 
     WHAT THIS NEVER DOES
       * runs on any machine but BAK-TEX11;
-      * works outside C:\VehicleSoft_DJI_StageB_Pilot;
       * sends to http://10.103.25.14:5050 -- the effective configured base url
         is checked and a production target is a refusal, not a warning;
       * prints a token, a cookie, a signature, a request_id, a flight id or a
-        coordinate. The evidence carries the collector's own RUN SUMMARY
-        counters, filtered through a whitelist of key names;
-      * counts a partially accepted batch as success. Exit 17 leaves every
-        envelope in the queue for a repeat, and this script reports that as a
-        failure with the pending count.
+        coordinate;
+      * counts a partially accepted batch as success.
 
-    RUN (on BAK-TEX11):
+    RUN (on BAK-TEX11, from the collector checkout):
       Set-Location C:\VehicleSoft_DJI_StageB_Pilot
-      .\ops\pilot_useful_area_001\BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1
+      .\ops\pilot_useful_area_001\BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1 -RunId <the id step 1 printed> -KitSha <the kit sha step 1 printed>
 
     Secrets come from the environment or drone_collector\.env that is already
     configured on this machine. This script neither reads nor writes them.
@@ -42,8 +44,10 @@
 
 [CmdletBinding()]
 param(
+    [Parameter(Mandatory)][string]$RunId,
+    [Parameter(Mandatory)][string]$KitSha,
     [string]$ExpectedHost = 'BAK-TEX11',
-    [string]$WorkRoot = 'C:\VehicleSoft_DJI_StageB_Pilot\pilot_evidence',
+    [string]$RunsRoot = 'C:\vehicle-soft-pilot-runs',
     [switch]$SkipCodeUpdate
 )
 
@@ -53,15 +57,16 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'PilotKit.psm1') -Force
 $K = Get-PilotConstants
 
-$stamp    = (Get-Date).ToString('yyyyMMdd_HHmmss')
-$runRoot  = Join-Path $WorkRoot ("collect_{0}" -f $stamp)
-$transcript = Join-Path $runRoot 'collector_output.txt'
-$evidencePath = Join-Path $runRoot 'collect.json'
-$preflightPath = Join-Path $runRoot 'collect_preflight.json'
-
 Write-Output "=== DRONE-USEFUL-AREA-PILOT-001 / DJI COLLECT TO STAGING ==="
-Write-Output "STAMP=$stamp"
+Write-Output "RUN_ID=$RunId"
 Write-Output "TARGET_DAY=$($K.TargetDay)"
+
+if ($RunId -notmatch '^\d{8}T\d{6}Z-[0-9a-f]{8}$') {
+    throw "REFUSED: '$RunId' is not a run identifier of this kit. Take it from the line RUN_ID= that step 1 printed."
+}
+if ($KitSha -notmatch '^[0-9a-f]{40}$') {
+    throw "REFUSED: '$KitSha' is not a revision. Take it from the line KIT_SHA= that step 1 printed."
+}
 
 # --- 1. The right machine and the right repository --------------------------
 Assert-PilotHost -Expected $ExpectedHost
@@ -73,35 +78,58 @@ $here = (Get-Location).Path
 if (-not (Test-PilotPathWithin -Path $here -Root $K.CollectorRepo)) {
     throw "REFUSED: run this from $($K.CollectorRepo). The current directory is '$here'."
 }
-# [REASON]: this machine is not the server, but the guard costs nothing and
-# the day someone copies this kit onto the server it is the only thing
-# standing between a pilot and the production checkout.
 Assert-PilotNotProduction -Path $K.CollectorRepo -What 'collector repository'
-Assert-PilotNotProduction -Path $WorkRoot -What 'work root'
-New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 
-# --- 2. Clean tree, verified commit -----------------------------------------
+# --- 2. Clean tree FIRST, before a single file of ours exists ---------------
+# [REASON]: the order matters and it used to be wrong. The first edition
+# created its work directory inside the checkout and only then asked whether
+# the tree was clean -- so the run's own evidence was what made it dirty.
+# Nothing of ours is written until this passes, and the work root is outside
+# the checkout anyway.
 Assert-PilotWorktreeClean -Repo $K.CollectorRepo
+Assert-PilotOutsideCheckouts -Path $RunsRoot -What 'runs root'
+
 if (-not $SkipCodeUpdate) {
-    Invoke-PilotGit -Repo $K.CollectorRepo -Arguments @('fetch', 'origin', 'main') | Out-Null
+    Invoke-PilotGit -Repo $K.CollectorRepo -Arguments @('fetch', 'origin') | Out-Null
     $hasCommit = Invoke-PilotGit -Repo $K.CollectorRepo -AllowFailure `
-        -Arguments @('cat-file', '-e', ($K.VerifiedSha + '^{commit}'))
+        -Arguments @('cat-file', '-e', ($KitSha + '^{commit}'))
     if ($hasCommit.ExitCode -ne 0) {
-        throw "REFUSED: the verified commit $($K.VerifiedSha) is not in this checkout after fetching origin/main."
+        throw "REFUSED: the kit revision $KitSha is not in this checkout after fetching origin."
     }
     $head = Get-PilotHeadSha -Repo $K.CollectorRepo
-    if ($head -ne $K.VerifiedSha) {
-        # ff-only to the NAMED commit, never to the current tip of main.
-        Invoke-PilotGit -Repo $K.CollectorRepo -Arguments @('merge', '--ff-only', $K.VerifiedSha) | Out-Null
+    if ($head -ne $KitSha) {
+        # ff-only to the NAMED commit, never to the current tip of a branch.
+        Invoke-PilotGit -Repo $K.CollectorRepo -Arguments @('merge', '--ff-only', $KitSha) | Out-Null
     }
 }
-Assert-PilotHeadIsVerified -Repo $K.CollectorRepo
+$head = Get-PilotHeadSha -Repo $K.CollectorRepo
+if ($head -ne $KitSha) {
+    throw "REFUSED: $($K.CollectorRepo) is at $head, not at the kit revision $KitSha."
+}
 Assert-PilotWorktreeClean -Repo $K.CollectorRepo
+Write-Output "COLLECTOR_HEAD=$head"
 
-# --- 3. Interpreter: the collector venv, never the system python ------------
+# --- 3. Now, and only now, the run directory (outside the checkout) ---------
+$runRoot = Join-Path $RunsRoot $RunId
+New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
+$transcript = Join-Path $runRoot 'collector_run_log.txt'
+$evidencePath = Join-Path $runRoot 'collect.json'
+$preflightPath = Join-Path $runRoot 'collect_preflight.json'
+Write-Output "RUN_ROOT=$runRoot"
+
+# --- 4. The executables this machine runs are the kit revision's ------------
+$repoTool = Join-Path $PSScriptRoot 'pilot_repo_check.py'
+$checker = Join-Path $PSScriptRoot 'pilot_collect_check.py'
+
 if (-not (Test-Path -LiteralPath $K.CollectorPython)) {
     throw "REFUSED: the collector venv python $($K.CollectorPython) was not found. Playwright and Chromium live there; the system python does not see them."
 }
+Invoke-PilotProbe -Python $K.CollectorPython -Script $repoTool -RunId $RunId -KitSha $KitSha `
+    -OutFile (Join-Path $runRoot 'repo_collector.json') `
+    -Arguments @('verify', '--repo', $K.CollectorRepo, '--expect-sha', $KitSha,
+                 '--role', 'collector') | Out-Null
+Write-Output "COLLECTOR_BLOBS=VERIFIED"
+
 & $K.CollectorPython --version
 if ($LASTEXITCODE -ne 0) { throw "REFUSED: the venv python did not run." }
 
@@ -114,14 +142,14 @@ if ($LASTEXITCODE -ne 0) {
 if ($LASTEXITCODE -ne 0) { throw "REFUSED: the collector CLI did not start." }
 Write-Output "PREFLIGHT_INTERPRETER=PASS"
 
-# --- 4. Session, timings and ingest target, BEFORE the browser --------------
+# --- 5. Session, timings and ingest target, BEFORE the browser --------------
 if (-not (Test-Path -LiteralPath $K.CollectorSession)) {
     throw "REFUSED: no saved DJI session at $($K.CollectorSession). Run --save-session and sign in once by hand."
 }
-$checker = Join-Path $PSScriptRoot 'pilot_collect_check.py'
-& $K.CollectorPython $checker 'preflight' '--expect-url' $K.StagingUrl '--out' $preflightPath > (Join-Path $runRoot 'preflight_stdout.json')
-$preflightCode = $LASTEXITCODE
-$preflight = Read-PilotJson -Path $preflightPath
+$preflightRun = Invoke-PilotProbe -Python $K.CollectorPython -Script $checker `
+    -RunId $RunId -KitSha $KitSha -OutFile $preflightPath -AllowedExitCodes @(0, 1, 3) `
+    -Arguments @('preflight', '--expect-url', $K.StagingUrl)
+$preflight = $preflightRun.Evidence
 
 Write-Output "INGEST_BASE_URL=$($preflight.payload.base_url)"
 Write-Output "INGEST_TARGET_IS_STAGING=$($preflight.payload.target_is_staging)"
@@ -134,12 +162,12 @@ if ($preflight.payload.target_is_production) {
     throw "REFUSED: the collector is configured to send to PRODUCTION. This pilot sends to staging only. Nothing was collected."
 }
 Assert-PilotStagingUrl -Url $preflight.payload.base_url
-if ($preflightCode -ne 0) {
+if ($preflightRun.ExitCode -ne 0) {
     throw "REFUSED: the collector preflight failed: $($preflight.payload.reasons -join ', '). The browser was never opened."
 }
 Write-Output "PREFLIGHT_COLLECTOR=PASS"
 
-# --- 5. The live run --------------------------------------------------------
+# --- 6. The live run --------------------------------------------------------
 Write-Output ""
 Write-Output "=============================================================="
 Write-Output " A browser will open. In it:"
@@ -156,8 +184,7 @@ Write-Output ""
 # asks the operator a question and waits for Enter; a pipeline buffers, and a
 # prompt the operator never sees is a run that fails on a timeout with the
 # person sitting right there. The console stays direct, and the RUN SUMMARY is
-# read afterwards from the collector's own rotating log -- which is where it
-# durably lives anyway (drone_collector/logging_setup.py).
+# read afterwards from the collector's own rotating log.
 $collectorLog = Join-Path $K.CollectorRepo 'drone_collector\logs\collector.log'
 $logBytesBefore = 0
 if (Test-Path -LiteralPath $collectorLog) {
@@ -184,22 +211,26 @@ $stream = [System.IO.File]::Open($collectorLog, 'Open', 'Read', 'ReadWrite')
 try {
     $null = $stream.Seek($offset, 'Begin')
     $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8)
-    Set-Content -LiteralPath $transcript -Value $reader.ReadToEnd() -Encoding utf8NoBOM
+    $slice = $reader.ReadToEnd()
 } finally {
     $stream.Dispose()
 }
+[System.IO.File]::WriteAllText($transcript, $slice, (New-Object System.Text.UTF8Encoding($false)))
 Write-Output "RUN_LOG_SLICE=$transcript"
 
-# --- 6. Safe evidence from the collector's own RUN SUMMARY -------------------
-& $K.CollectorPython $checker 'summary' '--input' $transcript '--out' $evidencePath > (Join-Path $runRoot 'summary_stdout.json')
-$summaryCode = $LASTEXITCODE
-$summary = Read-PilotJson -Path $evidencePath
+# --- 7. Safe evidence from the collector's own RUN SUMMARY -------------------
+$summaryRun = Invoke-PilotProbe -Python $K.CollectorPython -Script $checker `
+    -RunId $RunId -KitSha $KitSha -OutFile $evidencePath -AllowedExitCodes @(0, 1, 3) `
+    -Arguments @('summary', '--input', $transcript)
+$summary = $summaryRun.Evidence
 $counters = $summary.payload.counters
 
 Write-Output ""
 Write-Output "--- collector counters (no identifier, no coordinate) ---"
 Write-Output "observed/confirmed : $($counters.probe_observations) / $($counters.probe_confirmed)"
 Write-Output "over the size cap  : $($counters.probe_skipped_over_cap)"
+Write-Output "requests failed    : $($counters.probe_request_failures)"
+Write-Output "requests pending   : $($counters.probe_pending_requests)"
 Write-Output "operator answered  : $($counters.probe_operator_answered)"
 Write-Output "drained            : $($counters.probe_drained)"
 Write-Output "bodies captured    : $($counters.collect_bodies_captured)"
@@ -212,14 +243,17 @@ Write-Output "left pending       : $($counters.collect_left_pending)"
 Write-Output "seen/new/upd/unch  : $($counters.collect_seen) / $($counters.collect_new) / $($counters.collect_updated) / $($counters.collect_unchanged)"
 Write-Output "errors / unlinked  : $($counters.collect_errors) / $($counters.collect_unlinked)"
 
-# --- 7. Working tree after the run ------------------------------------------
+# --- 8. Working tree after the run ------------------------------------------
 Assert-PilotWorktreeClean -Repo $K.CollectorRepo
-Assert-PilotHeadIsVerified -Repo $K.CollectorRepo
+$headAfter = Get-PilotHeadSha -Repo $K.CollectorRepo
+if ($headAfter -ne $KitSha) {
+    throw "REFUSED: the checkout moved during the run: $headAfter."
+}
 
-# --- 8. Verdict --------------------------------------------------------------
+# --- 9. Verdict --------------------------------------------------------------
 $failures = @()
 if ($collectCode -ne 0) { $failures += "COLLECTOR_EXIT_$collectCode" }
-if ($summaryCode -ne 0) { $failures += 'SUMMARY_CHECKS_FAILED' }
+if ($summaryRun.ExitCode -ne 0) { $failures += 'SUMMARY_CHECKS_FAILED' }
 foreach ($reason in $summary.payload.reasons) { $failures += $reason }
 
 if ($failures.Count -gt 0) {
@@ -239,7 +273,9 @@ if ($failures.Count -gt 0) {
 Write-Output ""
 Write-Output "EVIDENCE=$evidencePath"
 Write-Output "BAK_TEX11_DJI_COLLECT_TO_STAGING=PASS"
-Write-Output "Return to the owner: this console output and the file $evidencePath."
-Write-Output "Copy that ONE json file to the server for the final report. The"
-Write-Output "transcript $transcript stays on this machine: it is the run log,"
+Write-Output "RUN_ID=$RunId"
+Write-Output ""
+Write-Output "Copy that ONE file to the server, to exactly this path:"
+Write-Output "  D:\transport-report-backups\pilot\DRONE-USEFUL-AREA-001\runs\$RunId\evidence\collect.json"
+Write-Output "The run log $transcript stays on this machine: it is the run log,"
 Write-Output "not evidence, and it is not part of the safe report."

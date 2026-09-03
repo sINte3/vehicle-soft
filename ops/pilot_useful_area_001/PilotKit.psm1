@@ -7,11 +7,26 @@
     itself in one of the six -- and that will be the one holding the
     production path.
 
+    WINDOWS POWERSHELL 5.1 IS A SUPPORTED TARGET.
+      The server runs Windows and the operator pastes into whatever console
+      is open, which on Windows Server is powershell.exe 5.1, not pwsh 7.
+      Two things about 5.1 broke the first edition of this kit and are fixed
+      here:
+
+        * `Set-Content -Encoding utf8NoBOM` does not exist in 5.1, and plain
+          `-Encoding UTF8` writes a BOM. A BOM in front of a JSON document
+          makes json.load() in the probes fail with a message about column 1;
+        * native redirection `>` in 5.1 writes UTF-16LE. A probe's ASCII JSON
+          captured that way came back as a file that looks right in an editor
+          and is not readable by anything expecting UTF-8.
+
+      So: every evidence file is written by PYTHON, which controls its own
+      encoding, and PowerShell only reads it back through .NET with an
+      explicit encoding. Nothing in this kit redirects a JSON document with
+      `>`.
+
     Output is ASCII only: it is read in a PowerShell console and in an NSSM
     log, where the code page is not our guarantee.
-
-    Nothing in this module contacts Vehicle Soft, production or staging. It
-    inspects paths, services, git and files.
 #>
 
 Set-StrictMode -Version Latest
@@ -26,38 +41,55 @@ $script:StagingRoot = 'C:\transport-report-staging'
 $script:StagingDb   = 'C:\transport-report-staging\instance\transport.db'
 $script:StagingUrl  = 'http://10.103.25.14:5051'
 
+# The kit lives in its OWN checkout, so that checking out or rolling back a
+# target repository cannot take the running scripts away with it.
+$script:KitRoot = 'C:\vehicle-soft-pilot-kit'
+
+$script:ServerRunsRoot    = 'D:\transport-report-backups\pilot\DRONE-USEFUL-AREA-001\runs'
+$script:CollectorRunsRoot = 'C:\vehicle-soft-pilot-runs'
+
 $script:CollectorRepo = 'C:\VehicleSoft_DJI_StageB_Pilot'
 $script:CollectorPython = 'C:\VehicleSoft_DJI_StageB_Pilot\drone_collector\.venv\Scripts\python.exe'
 $script:CollectorSession = 'C:\VehicleSoft_DJI_StageB_Pilot\drone_collector\data\storage_state.json'
 
 $script:SystemPython = 'C:\Program Files\Python314\python.exe'
 
-$script:VerifiedSha = 'c3e6a12ab95117710eeea5e05133f5cd548b698e'
+# The verified revision of the PRODUCT. The revision of the KIT is measured,
+# never declared: it cannot be known before the commit that creates it.
+$script:ProductSha = 'c3e6a12ab95117710eeea5e05133f5cd548b698e'
 $script:TargetDay   = '2026-06-05'
 $script:MigrationId = 'DRONES_USEFUL_AREA_001'
 $script:StagingHost = 'srv-yoqsh'
 $script:CollectorHost = 'BAK-TEX11'
 
+$script:SmokePath = '/login'
+$script:SmokeAllowedStatus = @(200)
+
 function Get-PilotConstants {
     [CmdletBinding()]
     param()
     return [ordered]@{
-        ProductionRoot    = $script:ProductionRoot
-        ProductionDb      = $script:ProductionDb
-        ProductionUrl     = $script:ProductionUrl
-        ProductionService = $script:ProductionService
-        StagingRoot       = $script:StagingRoot
-        StagingDb         = $script:StagingDb
-        StagingUrl        = $script:StagingUrl
-        CollectorRepo     = $script:CollectorRepo
-        CollectorPython   = $script:CollectorPython
-        CollectorSession  = $script:CollectorSession
-        SystemPython      = $script:SystemPython
-        VerifiedSha       = $script:VerifiedSha
-        TargetDay         = $script:TargetDay
-        MigrationId       = $script:MigrationId
-        StagingHost       = $script:StagingHost
-        CollectorHost     = $script:CollectorHost
+        ProductionRoot     = $script:ProductionRoot
+        ProductionDb       = $script:ProductionDb
+        ProductionUrl      = $script:ProductionUrl
+        ProductionService  = $script:ProductionService
+        StagingRoot        = $script:StagingRoot
+        StagingDb          = $script:StagingDb
+        StagingUrl         = $script:StagingUrl
+        KitRoot            = $script:KitRoot
+        ServerRunsRoot     = $script:ServerRunsRoot
+        CollectorRunsRoot  = $script:CollectorRunsRoot
+        CollectorRepo      = $script:CollectorRepo
+        CollectorPython    = $script:CollectorPython
+        CollectorSession   = $script:CollectorSession
+        SystemPython       = $script:SystemPython
+        ProductSha         = $script:ProductSha
+        TargetDay          = $script:TargetDay
+        MigrationId        = $script:MigrationId
+        StagingHost        = $script:StagingHost
+        CollectorHost      = $script:CollectorHost
+        SmokePath          = $script:SmokePath
+        SmokeAllowedStatus = $script:SmokeAllowedStatus
     }
 }
 
@@ -103,8 +135,6 @@ function Test-PilotPathWithin {
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Path,
           [Parameter(Mandatory)][AllowEmptyString()][string]$Root)
 
-    # [REASON]: same unrolling trap as in Test-PilotPathEquals. A service
-    # ImagePath with no backslash is exactly the single-segment case.
     [string[]]$child  = @(Get-PilotPathSegments -Path $Path)
     [string[]]$parent = @(Get-PilotPathSegments -Path $Root)
     if ($parent.Count -eq 0) { return $false }
@@ -122,10 +152,6 @@ function Test-PilotTouchesProduction {
 }
 
 function Assert-PilotNotProduction {
-    <#
-        Refuse any path that leads into the production checkout.
-        Called by every script before it writes a single byte.
-    #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Path,
           [string]$What = 'path')
@@ -146,6 +172,27 @@ function Assert-PilotStagingPath {
     }
 }
 
+function Assert-PilotOutsideCheckouts {
+    <#
+        A working directory must live outside EVERY checkout.
+
+        [REASON]: the first edition put the collector's run directory inside
+        C:\VehicleSoft_DJI_StageB_Pilot. Its own artefacts then showed up in
+        `git status`, and the clean-worktree check that the run depends on
+        would have failed because of the run itself.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Path,
+          [string]$What = 'work root')
+
+    Assert-PilotNotProduction -Path $Path -What $What
+    foreach ($root in @($script:StagingRoot, $script:CollectorRepo, $script:KitRoot)) {
+        if (Test-PilotPathWithin -Path $Path -Root $root) {
+            throw "REFUSED: the $What '$Path' is inside the checkout $root. Its files would show up in git status and make the clean-worktree check fail on the run's own artefacts."
+        }
+    }
+}
+
 # --- URLs --------------------------------------------------------------------
 
 function Get-PilotUrlAuthority {
@@ -154,6 +201,7 @@ function Get-PilotUrlAuthority {
 
     $text = $Url.Trim().TrimEnd('/').ToLowerInvariant()
     if ($text.Contains('://')) { $text = $text.Substring($text.IndexOf('://') + 3) }
+    if ($text.Contains('@')) { $text = $text.Substring($text.IndexOf('@') + 1) }
     $slash = $text.IndexOf('/')
     if ($slash -ge 0) { $text = $text.Substring(0, $slash) }
     return $text
@@ -183,14 +231,39 @@ function Assert-PilotStagingUrl {
     }
 }
 
+function Test-PilotRedirectStaysInStaging {
+    <#
+        A redirect may move the page; it may not move the SITE.
+        A relative Location stays inside by construction; an absolute one is
+        compared by authority. A redirect to production or to a foreign host
+        is not "the page moved", it is the wrong site answering.
+    #>
+    [CmdletBinding()]
+    param([AllowEmptyString()][AllowNull()][string]$Location)
+
+    if ([string]::IsNullOrWhiteSpace($Location)) { return $false }
+    $text = $Location.Trim()
+    if ($text.StartsWith('/')) { return $true }
+    if (-not $text.Contains('://')) { return $true }
+    return ((Get-PilotUrlAuthority -Url $text) -eq (Get-PilotUrlAuthority -Url $script:StagingUrl))
+}
+
+function Test-PilotSmokeStatus {
+    <#
+        Which statuses count as "the staging application is up".
+
+        [REASON]: the first edition accepted anything under 500. A 404 from a
+        wrong path and a 401 from an application that never finished starting
+        both passed it. A check a broken service passes is not a check.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][int]$Status)
+    return ($script:SmokeAllowedStatus -contains $Status)
+}
+
 # --- Machine -----------------------------------------------------------------
 
 function Assert-PilotHost {
-    <#
-        Refuse to run anywhere but the machine this script is written for.
-        The found name is always printed: a refusal that does not say what it
-        found sends the operator guessing.
-    #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Expected)
 
@@ -207,13 +280,6 @@ function Assert-PilotHost {
 # --- Services ----------------------------------------------------------------
 
 function Get-PilotServiceImagePath {
-    <#
-        Where a Windows service actually runs from.
-
-        Two places are read, in this order: the NSSM AppDirectory (the project
-        installs its services through NSSM) and the service ImagePath. Either
-        one is enough to tell staging from production.
-    #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Name)
 
@@ -284,7 +350,6 @@ function Select-PilotStagingService {
         $insideProduction = $false
         foreach ($value in $where) {
             $clean = $value.Trim('"')
-            # An ImagePath is a command line: take the part that names a path.
             if ($clean.Contains($script:StagingRoot)) { $insideStaging = $true }
             if (Test-PilotPathWithin -Path $clean -Root $script:StagingRoot) { $insideStaging = $true }
             if (Test-PilotPathWithin -Path $clean -Root $script:ProductionRoot) { $insideProduction = $true }
@@ -308,14 +373,9 @@ function Select-PilotStagingService {
 function Resolve-PilotStagingService {
     <#
         The staging service name, taken from the REPOSITORY and then proven
-        against this machine.
-
-        Candidate names come from docs/ORG_WINDOWS_SERVER_STAGING_RUNBOOK.md
-        (the "Service name" row) plus any service whose name starts with the
-        production service name -- that is how the project names them. Each
-        candidate is then checked against the registry: the one that actually
-        runs from C:\transport-report-staging wins. A name that only appears
-        in a document proves nothing.
+        against this machine. A name that only appears in a document proves
+        nothing; the winner is the service that actually runs from
+        C:\transport-report-staging.
     #>
     [CmdletBinding()]
     param([string]$RunbookPath)
@@ -359,10 +419,6 @@ function Assert-PilotServiceIsNotProduction {
 # --- Git ---------------------------------------------------------------------
 
 function Invoke-PilotGit {
-    <#
-        git, with the exit code checked. `git` prints to stderr on perfectly
-        normal operations, so stderr alone is not a failure -- the code is.
-    #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Repo,
           [Parameter(Mandatory)][string[]]$Arguments,
@@ -393,19 +449,42 @@ function Get-PilotHeadSha {
     return (Invoke-PilotGit -Repo $Repo -Arguments @('rev-parse', 'HEAD')).Output
 }
 
-function Assert-PilotHeadIsVerified {
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Repo,
-          [string]$Expected = $script:VerifiedSha)
+function Get-PilotKitSha {
+    <#
+        The kit's own revision, MEASURED at the kit checkout.
 
-    $head = Get-PilotHeadSha -Repo $Repo
-    if ($head -ne $Expected) {
-        throw "REFUSED: $Repo is at $head, not at the verified commit $Expected."
+        [REASON]: it cannot be a constant. The kit lives in the commit that
+        creates it, so a script demanding `HEAD -eq <kit sha>` would be
+        demanding its own absence. What CAN be demanded is that the checkout
+        the scripts run from is clean -- otherwise the running bytes are not
+        the recorded commit's bytes, and the sha in the evidence is a lie.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$KitCheckout)
+
+    if (-not (Test-Path -LiteralPath (Join-Path $KitCheckout '.git'))) {
+        throw "REFUSED: '$KitCheckout' is not a git checkout, so the kit revision cannot be measured."
     }
-    Write-Output "HEAD=$head"
+    Assert-PilotWorktreeClean -Repo $KitCheckout | Out-Null
+    $sha = Get-PilotHeadSha -Repo $KitCheckout
+    if ($sha -notmatch '^[0-9a-f]{40}$') {
+        throw "REFUSED: the kit checkout reported '$sha' as its HEAD."
+    }
+    return $sha
 }
 
-# --- Files and evidence -------------------------------------------------------
+function Assert-PilotProductSha {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Repo)
+
+    $head = Get-PilotHeadSha -Repo $Repo
+    if ($head -ne $script:ProductSha) {
+        throw "REFUSED: $Repo is at $head, not at the verified product revision $($script:ProductSha)."
+    }
+    Write-Output "PRODUCT_HEAD=$head"
+}
+
+# --- Files, JSON and evidence -------------------------------------------------
 
 function Get-PilotFileSha256 {
     [CmdletBinding()]
@@ -414,6 +493,14 @@ function Get-PilotFileSha256 {
 }
 
 function Write-PilotJson {
+    <#
+        UTF-8 WITHOUT a BOM, through .NET, on both 5.1 and 7.
+
+        [REASON]: `Set-Content -Encoding utf8NoBOM` is PowerShell 6+ only and
+        is a parameter-binding error on 5.1; plain `-Encoding UTF8` on 5.1
+        writes a BOM, and a BOM in front of a JSON document makes json.load()
+        in the probes fail. UTF8Encoding($false) is the same on every version.
+    #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path,
           [Parameter(Mandatory)]$Value)
@@ -423,54 +510,326 @@ function Write-PilotJson {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
     }
     $json = $Value | ConvertTo-Json -Depth 12
-    Set-Content -LiteralPath $Path -Value $json -Encoding utf8NoBOM
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $json, $encoding)
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
 function Read-PilotJson {
+    <#
+        Read JSON through .NET with an explicit encoding.
+
+        [REASON]: `Get-Content -Encoding UTF8` on 5.1 and on 7 disagree about
+        a BOM-less file, and the kit reads files written by Python. .NET's
+        ReadAllText detects a BOM when there is one and decodes UTF-8 when
+        there is not, identically on both.
+    #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
 
     if (-not (Test-Path -LiteralPath $Path)) {
         throw "REFUSED: evidence file not found: $Path"
     }
-    return (Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json)
+    $full = (Resolve-Path -LiteralPath $Path).Path
+    $text = [System.IO.File]::ReadAllText($full, [System.Text.Encoding]::UTF8)
+    return ($text | ConvertFrom-Json)
 }
 
 function Invoke-PilotPython {
     <#
-        Run a python script, capture stdout to a file, and check the exit code.
-        stdout of the kit's probes is ONE JSON document, so it is captured
-        whole rather than piped through a formatter.
+        Run a python tool and check its exit code.
+
+        NOTHING is redirected with `>`. When a tool must produce a JSON file
+        it is given its own --out and writes the file itself; PowerShell reads
+        it back with Read-PilotJson. On 5.1 `>` writes UTF-16LE, so a JSON
+        document captured that way is unreadable by every reader that expects
+        UTF-8 -- including the next step of this very kit.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Python,
           [Parameter(Mandatory)][string[]]$Arguments,
-          [string]$StdoutPath,
-          [int[]]$AllowedExitCodes = @(0))
+          [int[]]$AllowedExitCodes = @(0),
+          [switch]$PassThruExitCode)
 
-    if ($StdoutPath) {
-        $directory = Split-Path -Parent $StdoutPath
-        if ($directory -and -not (Test-Path -LiteralPath $directory)) {
-            New-Item -ItemType Directory -Path $directory -Force | Out-Null
-        }
-        & $Python @Arguments > $StdoutPath
-    } else {
-        & $Python @Arguments
-    }
+    & $Python @Arguments | Out-Null
     $code = $LASTEXITCODE
+    if ($PassThruExitCode) { return $code }
     if ($AllowedExitCodes -notcontains $code) {
         throw "REFUSED: $Python $($Arguments -join ' ') exited $code (allowed: $($AllowedExitCodes -join ', '))."
     }
     return $code
 }
 
+function Invoke-PilotProbe {
+    <#
+        Run one of the kit's probes with the run identity attached, and return
+        the evidence it wrote. The probe writes the file; this never captures
+        stdout into a file.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Python,
+          [Parameter(Mandatory)][string]$Script,
+          [Parameter(Mandatory)][string[]]$Arguments,
+          [Parameter(Mandatory)][string]$RunId,
+          [Parameter(Mandatory)][string]$KitSha,
+          [Parameter(Mandatory)][string]$OutFile,
+          [int[]]$AllowedExitCodes = @(0))
+
+    $full = @($Script) + $Arguments + @('--run-id', $RunId, '--kit-sha', $KitSha,
+                                        '--out', $OutFile)
+    $code = Invoke-PilotPython -Python $Python -Arguments $full -PassThruExitCode
+    if ($AllowedExitCodes -notcontains $code) {
+        throw "REFUSED: $(Split-Path -Leaf $Script) exited $code (allowed: $($AllowedExitCodes -join ', ')). Evidence: $OutFile"
+    }
+    return [ordered]@{ ExitCode = $code; Evidence = (Read-PilotJson -Path $OutFile) }
+}
+
+# --- The one run manifest -----------------------------------------------------
+
+function New-PilotRun {
+    <#
+        Create the run: one identifier, one directory, one manifest.
+
+        [REASON]: without this every step looked for the "newest" file of its
+        kind on its own. Two runs on one day and the report would happily pair
+        the preflight of one with the recalculation of the other, and every
+        line of it would be true.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$RunsRoot,
+          [Parameter(Mandatory)][string]$Python,
+          [Parameter(Mandatory)][string]$KitScriptRoot,
+          [Parameter(Mandatory)][string]$KitCheckout)
+
+    Assert-PilotOutsideCheckouts -Path $RunsRoot -What 'runs root'
+    $kitSha = Get-PilotKitSha -KitCheckout $KitCheckout
+
+    $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+    $tail = -join ((1..8) | ForEach-Object { '{0:x}' -f (Get-Random -Minimum 0 -Maximum 16) })
+    $runId = "$stamp-$tail"
+
+    $directory = Join-Path $RunsRoot $runId
+    foreach ($leaf in @('', 'evidence', 'log', 'copy', 'sandbox', 'report')) {
+        $target = if ($leaf) { Join-Path $directory $leaf } else { $directory }
+        New-Item -ItemType Directory -Path $target -Force | Out-Null
+    }
+
+    $manifest = [ordered]@{
+        kit          = 'DRONE-USEFUL-AREA-PILOT-001'
+        kit_version  = '2'
+        run_id       = $runId
+        kit_sha      = $kitSha
+        product_sha  = $script:ProductSha
+        target_day   = $script:TargetDay
+        created_utc  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        machine      = $env:COMPUTERNAME
+        kit_checkout = $KitCheckout
+        run_root     = $directory
+        steps        = [ordered]@{}
+    }
+    Write-PilotJson -Path (Join-Path $directory 'run.json') -Value $manifest | Out-Null
+    return $manifest
+}
+
+function Get-PilotRun {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$RunsRoot,
+          [Parameter(Mandatory)][string]$RunId)
+
+    if ($RunId -notmatch '^\d{8}T\d{6}Z-[0-9a-f]{8}$') {
+        throw "REFUSED: '$RunId' is not a run identifier of this kit."
+    }
+    $directory = Join-Path $RunsRoot $RunId
+    $manifestPath = Join-Path $directory 'run.json'
+    if (-not (Test-Path -LiteralPath $manifestPath)) {
+        throw "REFUSED: no run manifest at $manifestPath. Start with PREFLIGHT_AND_COPY_TEST.ps1, which creates the run."
+    }
+    $manifest = Read-PilotJson -Path $manifestPath
+    if ($manifest.run_id -ne $RunId) {
+        throw "REFUSED: the manifest at $manifestPath calls itself $($manifest.run_id)."
+    }
+    return $manifest
+}
+
+function Set-PilotRunStep {
+    <#
+        Record one step in the single manifest. The manifest is the only index
+        of a run; no step ever searches for the newest anything.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$RunsRoot,
+          [Parameter(Mandatory)][string]$RunId,
+          [Parameter(Mandatory)][string]$Step,
+          [Parameter(Mandatory)]$Value)
+
+    $directory = Join-Path $RunsRoot $RunId
+    $manifestPath = Join-Path $directory 'run.json'
+    $manifest = Read-PilotJson -Path $manifestPath
+
+    $steps = [ordered]@{}
+    if ($manifest.PSObject.Properties.Name -contains 'steps' -and $manifest.steps) {
+        foreach ($property in $manifest.steps.PSObject.Properties) {
+            $steps[$property.Name] = $property.Value
+        }
+    }
+    $steps[$Step] = $Value
+
+    $updated = [ordered]@{}
+    foreach ($property in $manifest.PSObject.Properties) {
+        if ($property.Name -eq 'steps') { continue }
+        $updated[$property.Name] = $property.Value
+    }
+    $updated['steps'] = $steps
+    Write-PilotJson -Path $manifestPath -Value $updated | Out-Null
+    return $manifestPath
+}
+
+function Get-PilotEvidencePath {
+    <#
+        Fixed names inside the run directory. There is no search, so there is
+        nothing to search wrongly.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$RunsRoot,
+          [Parameter(Mandatory)][string]$RunId,
+          [Parameter(Mandatory)][ValidateSet('preflight', 'deploy', 'collect',
+              'recalc_dry', 'recalc_apply_1', 'recalc_apply_2',
+              'staging_snapshot', 'staging_before', 'staging_after',
+              'staging_input', 'staging_after_dry', 'repo_staging',
+              'repo_kit', 'repo_collector', 'materialize', 'report_json',
+              'report_md')][string]$Name)
+
+    $directory = Join-Path $RunsRoot $RunId
+    switch ($Name) {
+        'report_json' { return (Join-Path $directory 'report\PILOT_REPORT.json') }
+        'report_md'   { return (Join-Path $directory 'report\PILOT_REPORT.md') }
+        default       { return (Join-Path $directory ("evidence\{0}.json" -f $Name)) }
+    }
+}
+
+# --- Smoke test ---------------------------------------------------------------
+
+function Invoke-PilotSmokeTest {
+    <#
+        Ask the staging application one question with a known answer.
+
+        GET /login unauthenticated renders the sign-in page: 200 and nothing
+        else. A 3xx is followed at most once and ONLY when its Location stays
+        inside the staging authority; a redirect to production or elsewhere is
+        a failure, not a redirect. 401, 403 and 404 are failures outright.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$BaseUrl,
+          [string]$Path = $script:SmokePath,
+          [int]$TimeoutSec = 15,
+          [int]$Attempts = 10,
+          [int]$DelaySeconds = 3)
+
+    Assert-PilotStagingUrl -Url $BaseUrl
+    $url = ($BaseUrl.TrimEnd('/')) + $Path
+
+    $status = $null
+    $location = $null
+    $followed = $false
+    # [REASON]: NOT $error -- that is PowerShell's automatic error stack.
+    $failureText = ''
+
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        $result = Get-PilotHttpStatus -Url $url -TimeoutSec $TimeoutSec
+        $status = $result.Status
+        $location = $result.Location
+        $failureText = $result.Error
+        if ($null -ne $status) { break }
+        if ($attempt -lt $Attempts) { Start-Sleep -Seconds $DelaySeconds }
+    }
+
+    if ($null -eq $status) {
+        return [ordered]@{ ok = $false; status = $null; path = $Path
+                           followed_redirect = $false
+                           reason = "NO_ANSWER: $failureText" }
+    }
+
+    if (@(301, 302, 303, 307, 308) -contains $status) {
+        if (-not (Test-PilotRedirectStaysInStaging -Location $location)) {
+            return [ordered]@{ ok = $false; status = $status; path = $Path
+                               followed_redirect = $false
+                               reason = 'REDIRECT_LEAVES_STAGING' }
+        }
+        $next = $location
+        if ($next.StartsWith('/')) { $next = ($BaseUrl.TrimEnd('/')) + $next }
+        $result = Get-PilotHttpStatus -Url $next -TimeoutSec $TimeoutSec
+        $status = $result.Status
+        $followed = $true
+    }
+
+    if ($null -eq $status) {
+        return [ordered]@{ ok = $false; status = $null; path = $Path
+                           followed_redirect = $followed
+                           reason = 'NO_ANSWER_AFTER_REDIRECT' }
+    }
+    if (-not (Test-PilotSmokeStatus -Status $status)) {
+        return [ordered]@{ ok = $false; status = $status; path = $Path
+                           followed_redirect = $followed
+                           reason = "STATUS_NOT_ALLOWED_$status" }
+    }
+    return [ordered]@{ ok = $true; status = $status; path = $Path
+                       followed_redirect = $followed; reason = 'OK' }
+}
+
+function Get-PilotHttpStatus {
+    <#
+        One request, no redirect following, status and Location back.
+
+        [REASON]: PowerShell 5.1 raises a WebException carrying an
+        HttpWebResponse; 7 raises an HttpResponseException carrying an
+        HttpResponseMessage. Both shapes are read here so the caller sees a
+        number either way, on either console.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Url,
+          [int]$TimeoutSec = 15)
+
+    try {
+        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing `
+            -MaximumRedirection 0 -TimeoutSec $TimeoutSec -ErrorAction Stop
+        $location = $null
+        if ($response.Headers -and $response.Headers['Location']) {
+            $location = [string]$response.Headers['Location']
+        }
+        return [ordered]@{ Status = [int]$response.StatusCode
+                           Location = $location; Error = '' }
+    } catch {
+        $exception = $_.Exception
+        $status = $null
+        $location = $null
+        if ($exception.PSObject.Properties.Name -contains 'Response' -and $exception.Response) {
+            $raw = $exception.Response
+            try { $status = [int]$raw.StatusCode } catch { $status = $null }
+            try {
+                if ($raw.Headers) {
+                    if ($raw.Headers -is [System.Net.WebHeaderCollection]) {
+                        $location = [string]$raw.Headers['Location']
+                    } elseif ($raw.Headers.Location) {
+                        $location = [string]$raw.Headers.Location
+                    }
+                }
+            } catch { $location = $null }
+        }
+        return [ordered]@{ Status = $status; Location = $location
+                           Error = $exception.Message }
+    }
+}
+
 Export-ModuleMember -Function Get-PilotConstants, Get-PilotPathSegments,
     Test-PilotPathEquals, Test-PilotPathWithin, Test-PilotTouchesProduction,
-    Assert-PilotNotProduction, Assert-PilotStagingPath, Get-PilotUrlAuthority,
+    Assert-PilotNotProduction, Assert-PilotStagingPath,
+    Assert-PilotOutsideCheckouts, Get-PilotUrlAuthority,
     Test-PilotUrlIsProduction, Test-PilotUrlIsStaging, Assert-PilotStagingUrl,
+    Test-PilotRedirectStaysInStaging, Test-PilotSmokeStatus,
     Assert-PilotHost, Get-PilotServiceImagePath, Select-PilotStagingService,
     Resolve-PilotStagingService, Assert-PilotServiceIsNotProduction,
     Invoke-PilotGit, Assert-PilotWorktreeClean, Get-PilotHeadSha,
-    Assert-PilotHeadIsVerified, Get-PilotFileSha256, Write-PilotJson,
-    Read-PilotJson, Invoke-PilotPython
+    Get-PilotKitSha, Assert-PilotProductSha, Get-PilotFileSha256,
+    Write-PilotJson, Read-PilotJson, Invoke-PilotPython, Invoke-PilotProbe,
+    New-PilotRun, Get-PilotRun, Set-PilotRunStep, Get-PilotEvidencePath,
+    Invoke-PilotSmokeTest, Get-PilotHttpStatus

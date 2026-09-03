@@ -3,34 +3,39 @@
     DRONE-USEFUL-AREA-PILOT-001, step 5 of 6.
 
     WHAT THIS DOES
-      Collects the evidence the four earlier steps left behind, hands it to
-      pilot_report.py, and produces ONE json and ONE markdown report with a
-      machine verdict GO / ADJUST / REJECT and stable reason codes.
+      Takes the evidence of ONE NAMED RUN from its fixed paths, hands it to
+      pilot_report.py, and produces one JSON and one Markdown report with a
+      machine verdict and stable reason codes.
 
-      The evidence files are found by convention under the work root: the
-      newest preflight, the deploy manifest, the newest recalculation set.
-      Only the collector evidence has to be named, because it is carried over
-      from BAK-TEX11 by hand.
+      NOTHING IS SEARCHED FOR. Every file is at a fixed name inside the run
+      directory, and every envelope is checked to belong to this run, this
+      kit revision, this product revision and this day. Evidence from two
+      runs cannot be mixed, because mixing it is what this refuses.
 
     WHAT THIS DOES NOT DO
-      It does not decide the business question. The threshold that turns GO
-      into ADJUST is a REPORTING parameter chosen by this kit, not a rule of
-      the holding, and the report says so on its face. Both the raw share and
-      the threshold are printed so the verdict can be recomputed by eye.
+      It does not make the business decision, and it will not pretend to.
+      The share of works allowed to go without a number and the deviation from
+      the DJI area that counts as acceptable are the owner's rules. Until BOTH
+      are given on the command line, the best verdict available is
+      TECHNICAL_GO: the pipeline works, the decision has not been made, and
+      production is NOT authorised by this report.
 
-    RUN (on the server):
-      Set-Location C:\transport-report-staging
-      .\ops\pilot_useful_area_001\STAGING_PILOT_REPORT.ps1 -CollectEvidence D:\pilot-in\collect.json
+    RUN (on the server, from the KIT checkout):
+      Set-Location C:\vehicle-soft-pilot-kit
+      .\ops\pilot_useful_area_001\STAGING_PILOT_REPORT.ps1 -RunId <the id step 1 printed>
+
+    With the owner's rules, once he has named them:
+      .\ops\pilot_useful_area_001\STAGING_PILOT_REPORT.ps1 -RunId <id> -OwnerShareThreshold <number> -OwnerDjiDeltaPercent <number>
 #>
 
 [CmdletBinding()]
 param(
+    [Parameter(Mandatory)][string]$RunId,
     [string]$ExpectedHost = 'srv-yoqsh',
-    [string]$WorkRoot = 'D:\transport-report-backups\pilot\DRONE-USEFUL-AREA-001',
-    [Parameter(Mandatory)][string]$CollectEvidence,
+    [string]$RunsRoot = 'D:\transport-report-backups\pilot\DRONE-USEFUL-AREA-001\runs',
     [string]$Python = 'C:\Program Files\Python314\python.exe',
-    [double]$AdjustShareThreshold = 0.20,
-    [double]$DjiDeltaAdjustPercent = -1
+    [double]$OwnerShareThreshold = -1,
+    [double]$OwnerDjiDeltaPercent = -1
 )
 
 Set-StrictMode -Version Latest
@@ -38,87 +43,85 @@ $ErrorActionPreference = 'Stop'
 
 Import-Module (Join-Path $PSScriptRoot 'PilotKit.psm1') -Force
 $K = Get-PilotConstants
+$KitCheckout = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 Write-Output "=== DRONE-USEFUL-AREA-PILOT-001 / PILOT REPORT ==="
+Write-Output "RUN_ID=$RunId"
 
 Assert-PilotHost -Expected $ExpectedHost
-Assert-PilotNotProduction -Path $WorkRoot -What 'work root'
+Assert-PilotOutsideCheckouts -Path $RunsRoot -What 'runs root'
 
-function Find-Newest([string]$pattern, [string]$leaf) {
-    $candidates = @(Get-ChildItem -LiteralPath $WorkRoot -Directory -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Name -like $pattern } |
-                    Sort-Object Name -Descending)
-    foreach ($candidate in $candidates) {
-        $path = Join-Path $candidate.FullName $leaf
-        if (Test-Path -LiteralPath $path) { return $path }
+$run = Get-PilotRun -RunsRoot $RunsRoot -RunId $RunId
+$KitSha = Get-PilotKitSha -KitCheckout $KitCheckout
+if ($KitSha -ne $run.kit_sha) {
+    throw "REFUSED: this kit checkout is at $KitSha, the run was opened with $($run.kit_sha)."
+}
+
+# Fixed paths. No Get-ChildItem, no "newest", nothing to pick wrongly.
+$paths = [ordered]@{
+    preflight        = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'preflight'
+    deploy           = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'deploy'
+    collect          = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'collect'
+    recalc_dry       = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'recalc_dry'
+    recalc_apply_1   = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'recalc_apply_1'
+    recalc_apply_2   = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'recalc_apply_2'
+    staging_snapshot = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'staging_snapshot'
+}
+foreach ($entry in $paths.GetEnumerator()) {
+    if (-not (Test-Path -LiteralPath $entry.Value)) {
+        throw "REFUSED: the $($entry.Key) evidence of run $RunId is missing:`n  $($entry.Value)`nRun the earlier steps of THIS run first."
     }
-    return $null
+    Write-Output "EVIDENCE_$($entry.Key.ToUpperInvariant())=$($entry.Value)"
 }
 
-$preflight = Find-Newest 'preflight_*' 'evidence\preflight.json'
-$manifest  = Join-Path $WorkRoot 'manifests\latest.json'
-$dry       = Find-Newest 'recalc_*' 'evidence\recalc_dry.json'
-$apply1    = Find-Newest 'recalc_*' 'evidence\recalc_apply_1.json'
-$apply2    = Find-Newest 'recalc_*' 'evidence\recalc_apply_2.json'
-$snapshot  = Find-Newest 'recalc_*' 'evidence\staging_snapshot.json'
-$timing    = Find-Newest 'recalc_*' 'evidence\recalc_timing.json'
-
-foreach ($pair in @(@('preflight', $preflight), @('deploy manifest', $manifest),
-                    @('dry run', $dry), @('apply 1', $apply1),
-                    @('apply 2', $apply2), @('staging snapshot', $snapshot))) {
-    if (-not $pair[1] -or -not (Test-Path -LiteralPath $pair[1])) {
-        throw "REFUSED: the $($pair[0]) evidence was not found under $WorkRoot. Run the earlier steps first."
-    }
-    Write-Output "EVIDENCE_$($pair[0].ToUpperInvariant().Replace(' ','_'))=$($pair[1])"
-}
-if (-not (Test-Path -LiteralPath $CollectEvidence)) {
-    throw "REFUSED: the collector evidence $CollectEvidence was not found. Copy it over from BAK-TEX11."
-}
-Write-Output "EVIDENCE_COLLECT=$CollectEvidence"
-
-$applySeconds = $null
-if ($timing -and (Test-Path -LiteralPath $timing)) {
-    $applySeconds = (Read-PilotJson -Path $timing).payload.apply_seconds
-}
-
-$stamp   = (Get-Date).ToString('yyyyMMdd_HHmmss')
-$outDir  = Join-Path $WorkRoot ("report_{0}" -f $stamp)
-New-Item -ItemType Directory -Path $outDir -Force | Out-Null
-$outJson = Join-Path $outDir 'PILOT_REPORT.json'
-$outMd   = Join-Path $outDir 'PILOT_REPORT.md'
+$outJson = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'report_json'
+$outMd   = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'report_md'
 
 $arguments = @(
     (Join-Path $PSScriptRoot 'pilot_report.py'),
-    '--preflight', $preflight,
-    '--deploy', $manifest,
-    '--collect', $CollectEvidence,
-    '--staging-snapshot', $snapshot,
-    '--recalc', $dry, '--recalc', $apply1, '--recalc', $apply2,
-    '--adjust-share-threshold', ([string]$AdjustShareThreshold),
+    '--preflight', $paths.preflight,
+    '--deploy', $paths.deploy,
+    '--collect', $paths.collect,
+    '--staging-snapshot', $paths.staging_snapshot,
+    '--recalc', $paths.recalc_dry,
+    '--recalc', $paths.recalc_apply_1,
+    '--recalc', $paths.recalc_apply_2,
+    '--run-id', $RunId,
+    '--kit-sha', $KitSha,
     '--out-json', $outJson,
     '--out-md', $outMd
 )
-if ($null -ne $applySeconds) {
-    $arguments += @('--recalc-seconds', ([string]$applySeconds))
+
+# [REASON]: a NEGATIVE value means "the owner has not named this rule". There
+# is no default, and there must not be one: a threshold chosen by the kit and
+# passed silently becomes a decision the owner never made.
+if ($OwnerShareThreshold -ge 0) {
+    $arguments += @('--owner-share-threshold', ([string]$OwnerShareThreshold))
 }
-# [REASON]: a NEGATIVE default means "the owner has not named a rule". No
-# deviation between the useful area and the DJI figure is proven to be
-# systematic, and inventing a percentage here would be inventing a business
-# rule -- which the charter forbids outright.
-if ($DjiDeltaAdjustPercent -ge 0) {
-    $arguments += @('--dji-delta-adjust-percent', ([string]$DjiDeltaAdjustPercent))
+if ($OwnerDjiDeltaPercent -ge 0) {
+    $arguments += @('--owner-dji-delta-percent', ([string]$OwnerDjiDeltaPercent))
 }
 
-& $Python @arguments
-$reportCode = $LASTEXITCODE
+$reportCode = Invoke-PilotPython -Python $Python -Arguments $arguments -PassThruExitCode
+$report = Read-PilotJson -Path $outJson
 
 Write-Output ""
+Write-Output "VERDICT=$($report.verdict)"
+foreach ($reason in $report.verdict_reasons) { Write-Output "REASON=$reason" }
+Write-Output "PRODUCTION_ROLLOUT_AUTHORISED=$($report.production_rollout_authorised)"
+Write-Output "PRIVACY_SCAN=$(if ($report.privacy_scan_passed) { 'PASS' } else { 'FAIL' })"
 Write-Output "REPORT_JSON=$outJson"
 Write-Output "REPORT_MD=$outMd"
 
+Set-PilotRunStep -RunsRoot $RunsRoot -RunId $RunId -Step 'report' -Value ([ordered]@{
+    completed_utc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    verdict       = $report.verdict
+    json          = $outJson
+    markdown      = $outMd
+}) | Out-Null
+
 if ($reportCode -ne 0) {
-    throw "STAGING_PILOT_REPORT=FAIL: the report did not pass its own privacy scan (exit $reportCode). Read the PRIVACY VIOLATION lines above. Do NOT send the report anywhere until it is clean."
+    throw "STAGING_PILOT_REPORT=FAIL: the report did not pass its own privacy scan (exit $reportCode). Do NOT send the report anywhere until it is clean."
 }
 
 Write-Output "STAGING_PILOT_REPORT=PASS"
-Write-Output "Return to the owner: BOTH files above. They are the safe report."
