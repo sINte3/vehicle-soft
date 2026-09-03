@@ -1,0 +1,41 @@
+{
+  "identical_on_both_revisions": {
+    "backup_transport_db.py": {
+      "kit_blob": "25b81e03a8659d327b0679c73ad9b516d8743fd2",
+      "product_blob": "25b81e03a8659d327b0679c73ad9b516d8743fd2"
+    },
+    "drone_collector/area_study.py": {
+      "kit_blob": "c2b5fe9aa36fd61fd318144d635068ad555256f0",
+      "product_blob": "c2b5fe9aa36fd61fd318144d635068ad555256f0"
+    },
+    "drone_coverage_recalc.py": {
+      "kit_blob": "29a3036022c9586767c646a7feecf599e6c7ca90",
+      "product_blob": "29a3036022c9586767c646a7feecf599e6c7ca90"
+    },
+    "drone_useful_area.py": {
+      "kit_blob": "da070b5347764ce39b30e0e728410028e1e08d46",
+      "product_blob": "da070b5347764ce39b30e0e728410028e1e08d46"
+    },
+    "migrate_drones_useful_area_001.py": {
+      "kit_blob": "d8b6f24e8b45658ebf91813e6396f4f4149c3a8e",
+      "product_blob": "d8b6f24e8b45658ebf91813e6396f4f4149c3a8e"
+    },
+    "migration_utils.py": {
+      "kit_blob": "c080bcae2206a58410f90e5d80a76fb1b0b944bf",
+      "product_blob": "c080bcae2206a58410f90e5d80a76fb1b0b944bf"
+    },
+    "tools/recalculate_drone_useful_area.py": {
+      "kit_blob": "0ad473a71204cd8a30604893512f2e2e4ba19a0d",
+      "product_blob": "0ad473a71204cd8a30604893512f2e2e4ba19a0d"
+    }
+  },
+  "kit": "DRONE-USEFUL-AREA-PILOT-001",
+  "kit_differs_on_purpose": {
+    "drone_collector/main.py": {
+      "kit_blob": "95a6a610865f4d8e8bfbcde16fb320dd10f69671",
+      "product_blob": "ecaa663797e7e212a7b27fa230509cb4f6ea5e68"
+    }
+  },
+  "kit_version": "2",
+  "product_sha": "c3e6a12ab95117710eeea5e05133f5cd548b698e"
+}
