@@ -27,15 +27,16 @@
 
     RUN (on the server, from the KIT checkout):
       Set-Location C:\vehicle-soft-pilot-kit
-      .\ops\pilot_useful_area_001\STAGING_DEPLOY_AND_MIGRATE.ps1 -RunId <the id step 1 printed>
+      .\ops\pilot_useful_area_001\STAGING_DEPLOY_AND_MIGRATE.ps1 -RunId ... -ApprovedKitSha ...
+      (step 1 prints the exact command as NEXT_COMMAND_STEP2)
 #>
 
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$RunId,
+    [Parameter(Mandatory)][string]$ApprovedKitSha,
     [string]$ExpectedHost = 'srv-yoqsh',
     [string]$RunsRoot = 'D:\transport-report-backups\pilot\DRONE-USEFUL-AREA-001\runs',
-    [string]$BackupDir = 'D:\transport-report-backups\staging\daily',
     [string]$Python = 'C:\Program Files\Python314\python.exe',
     [int]$ServiceTimeoutSeconds = 90
 )
@@ -52,15 +53,15 @@ Write-Output "=== DRONE-USEFUL-AREA-PILOT-001 / STAGING DEPLOY AND MIGRATE ==="
 # --- 1. Machine, run, service ----------------------------------------------
 Assert-PilotHost -Expected $ExpectedHost
 Assert-PilotOutsideCheckouts -Path $RunsRoot -What 'runs root'
-Assert-PilotNotProduction -Path $BackupDir -What 'backup directory'
 
-$run = Get-PilotRun -RunsRoot $RunsRoot -RunId $RunId
-$KitSha = Get-PilotKitSha -KitCheckout $KitCheckout
-if ($KitSha -ne $run.kit_sha) {
-    throw "REFUSED: this kit checkout is at $KitSha, the run was opened with $($run.kit_sha). One run, one kit revision."
+$run = Get-PilotRun -RunsRoot $RunsRoot -RunId $RunId -ApprovedKitSha $ApprovedKitSha
+$KitSha = Assert-PilotApprovedKitSha -KitCheckout $KitCheckout -ApprovedKitSha $ApprovedKitSha
+if ($KitSha -ne $run.approved_kit_sha) {
+    throw "REFUSED: this kit checkout is at $KitSha, the run was opened with $($run.approved_kit_sha). One run, one approved kit revision."
 }
 Write-Output "RUN_ID=$RunId"
 Write-Output "KIT_SHA=$KitSha"
+Write-Output "APPROVED_KIT_SHA=$ApprovedKitSha"
 Write-Output "PRODUCT_SHA=$($K.ProductSha)"
 
 if (-not (Test-Path -LiteralPath $K.StagingRoot)) {
@@ -109,20 +110,19 @@ Invoke-PilotProbe -Python $Python -Script $repoTool -RunId $RunId -KitSha $KitSh
 $backupTool = Join-Path $sandbox 'backup_transport_db.py'
 $migration = Join-Path $sandbox 'migrate_drones_useful_area_001.py'
 
+# [REASON]: the backup lands in a directory that belongs to THIS RUN. The
+# first edition wrote into the shared staging backup directory and then took
+# the newest file that had not been there before -- so a run overlapping the
+# nightly scheduled backup could adopt somebody else's file as its rollback
+# point, and the rollback would have restored a database nobody chose.
+$BackupDir = Join-Path $runRoot 'backup'
+Assert-PilotOutsideCheckouts -Path $BackupDir -What 'run backup directory'
 Write-Output "--- backing up the staging database (SQLite online backup API) ---"
-$before = @(Get-ChildItem -LiteralPath $BackupDir -Filter '*.db' -ErrorAction SilentlyContinue |
-            Select-Object -ExpandProperty FullName)
-Invoke-PilotPython -Python $Python -Arguments @(
-    $backupTool, '--source', $K.StagingDb, '--dest-dir', $BackupDir,
-    '--suffix', 'pilot_before_useful_area') | Out-Null
-$fresh = @(Get-ChildItem -LiteralPath $BackupDir -Filter '*.db' |
-           Where-Object { $before -notcontains $_.FullName } |
-           Sort-Object LastWriteTime -Descending)
-if ($fresh.Count -lt 1) {
-    throw "REFUSED: the backup reported success but no new file appeared in $BackupDir."
-}
-$backupPath = $fresh[0].FullName
-$backupSha  = Get-PilotFileSha256 -Path $backupPath
+$backup = New-PilotRunBackup -Python $Python -BackupTool $backupTool `
+                             -SourceDb $K.StagingDb -RunBackupDir $BackupDir
+$backupPath = $backup.Path
+$backupSha  = $backup.Sha256
+Write-Output "BACKUP_DIR=$($backup.Directory)"
 Write-Output "BACKUP=$backupPath"
 Write-Output "BACKUP_SHA256=$backupSha"
 
@@ -161,9 +161,11 @@ $payload = [ordered]@{
     branch_before           = $branchBefore
     sha_before              = $shaBefore
     sha_after               = $null
+    approved_kit_sha        = $ApprovedKitSha
+    backup_dir              = $backup.Directory
     backup_path             = $backupPath
     backup_sha256           = $backupSha
-    backup_bytes            = $fresh[0].Length
+    backup_bytes            = $backup.Bytes
     backup_verified         = $backupVerified
     area_ha_before          = $snapBefore.payload.area_ha
     area_ha_after           = $null
@@ -173,6 +175,8 @@ $payload = [ordered]@{
     smoke_test_ok           = $false
     smoke_test_status       = $null
     smoke_test_path         = $K.SmokePath
+    smoke_page_marker_seen  = $false
+    smoke_test_reason       = $null
     failures                = @()
 }
 
@@ -302,7 +306,7 @@ REFUSED: the migration exited $migrationCode. The staging service is STILL STOPP
 Manual recovery point:
   1. read $migrationLog
   2. roll staging back with the run manifest:
-     .\ops\pilot_useful_area_001\STAGING_ROLLBACK.ps1 -RunId $RunId
+     .\ops\pilot_useful_area_001\STAGING_ROLLBACK.ps1 -RunId $RunId -ApprovedKitSha $ApprovedKitSha
   Backup: $backupPath
 "@
 }
@@ -338,7 +342,7 @@ REFUSED after the migration: $($failures -join ', ').
 The staging service is STILL STOPPED on purpose.
 
 Manual recovery point:
-  .\ops\pilot_useful_area_001\STAGING_ROLLBACK.ps1 -RunId $RunId
+  .\ops\pilot_useful_area_001\STAGING_ROLLBACK.ps1 -RunId $RunId -ApprovedKitSha $ApprovedKitSha
   Backup: $backupPath
 "@
 }
@@ -362,7 +366,10 @@ $payload.service_started = $true
 $smoke = Invoke-PilotSmokeTest -BaseUrl $K.StagingUrl
 $payload.smoke_test_ok = [bool]$smoke.ok
 $payload.smoke_test_status = $smoke.status
-Write-Output "SMOKE_TEST $($smoke.path) status=$($smoke.status) ok=$($smoke.ok) reason=$($smoke.reason)"
+$payload.smoke_test_path = $smoke.path
+$payload.smoke_page_marker_seen = [bool]$smoke.marker_seen
+$payload.smoke_test_reason = [string]$smoke.reason
+Write-Output "SMOKE_TEST $($smoke.path) status=$($smoke.status) marker=$($smoke.marker_seen) ok=$($smoke.ok) reason=$($smoke.reason)"
 if (-not $smoke.ok) {
     $payload.failures = @("SMOKE_TEST_FAILED_$($smoke.reason)")
     Save-Deploy 'smoke-test-failed'

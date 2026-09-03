@@ -64,6 +64,11 @@ $script:CollectorHost = 'BAK-TEX11'
 
 $script:SmokePath = '/login'
 $script:SmokeAllowedStatus = @(200)
+# [REASON]: 200 сам по себе не значит «приложение поднялось». Страница
+# обслуживания, заглушка обратного прокси и чужой сервер на том же порту
+# отвечают двумястами так же охотно. Признак -- класс формы входа из
+# templates/login.html.
+$script:SmokePageMarker = 'vs-login-form'
 
 function Get-PilotConstants {
     [CmdletBinding()]
@@ -90,6 +95,7 @@ function Get-PilotConstants {
         CollectorHost      = $script:CollectorHost
         SmokePath          = $script:SmokePath
         SmokeAllowedStatus = $script:SmokeAllowedStatus
+        SmokePageMarker    = $script:SmokePageMarker
     }
 }
 
@@ -231,21 +237,32 @@ function Assert-PilotStagingUrl {
     }
 }
 
-function Test-PilotRedirectStaysInStaging {
+function Test-PilotRedirectStaysInAuthority {
     <#
         A redirect may move the page; it may not move the SITE.
         A relative Location stays inside by construction; an absolute one is
         compared by authority. A redirect to production or to a foreign host
         is not "the page moved", it is the wrong site answering.
+
+        The authority is a parameter so the rule can be exercised against a
+        local server in CI. The rule is the same either way; only the site it
+        is asked about differs.
     #>
     [CmdletBinding()]
-    param([AllowEmptyString()][AllowNull()][string]$Location)
+    param([AllowEmptyString()][AllowNull()][string]$Location,
+          [Parameter(Mandatory)][string]$Authority)
 
     if ([string]::IsNullOrWhiteSpace($Location)) { return $false }
     $text = $Location.Trim()
     if ($text.StartsWith('/')) { return $true }
     if (-not $text.Contains('://')) { return $true }
-    return ((Get-PilotUrlAuthority -Url $text) -eq (Get-PilotUrlAuthority -Url $script:StagingUrl))
+    return ((Get-PilotUrlAuthority -Url $text) -eq (Get-PilotUrlAuthority -Url $Authority))
+}
+
+function Test-PilotRedirectStaysInStaging {
+    [CmdletBinding()]
+    param([AllowEmptyString()][AllowNull()][string]$Location)
+    return (Test-PilotRedirectStaysInAuthority -Location $Location -Authority $script:StagingUrl)
 }
 
 function Test-PilotSmokeStatus {
@@ -453,11 +470,14 @@ function Get-PilotKitSha {
     <#
         The kit's own revision, MEASURED at the kit checkout.
 
-        [REASON]: it cannot be a constant. The kit lives in the commit that
-        creates it, so a script demanding `HEAD -eq <kit sha>` would be
-        demanding its own absence. What CAN be demanded is that the checkout
-        the scripts run from is clean -- otherwise the running bytes are not
-        the recorded commit's bytes, and the sha in the evidence is a lie.
+        [REASON]: it cannot be a constant in the source. The kit lives in the
+        commit that creates it, so a script demanding `HEAD -eq <kit sha>`
+        from its own file would be demanding its own absence.
+
+        But MEASURED is not the same as APPROVED, and the first edition
+        confused the two: any clean HEAD became trusted simply because its sha
+        had been read. Measuring is what this function does; approving is what
+        Assert-PilotApprovedKitSha does, with a sha the reviewer names.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$KitCheckout)
@@ -471,6 +491,33 @@ function Get-PilotKitSha {
         throw "REFUSED: the kit checkout reported '$sha' as its HEAD."
     }
     return $sha
+}
+
+function Assert-PilotApprovedKitSha {
+    <#
+        The kit checkout must be at the revision an independent reviewer
+        APPROVED -- not merely at some clean revision.
+
+        [REASON]: without this, a newer commit, a stray branch or an unrelated
+        clean checkout was "trusted" the moment its sha was measured. The whole
+        chain of evidence then said nothing: it recorded which bytes ran, and
+        nobody had said those bytes were the ones to run.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$KitCheckout,
+          [Parameter(Mandatory)][string]$ApprovedKitSha)
+
+    if ($ApprovedKitSha -notmatch '^[0-9a-f]{40}$') {
+        throw "REFUSED: '$ApprovedKitSha' is not a full 40-character revision. The approved kit revision is named by the reviewer, in full."
+    }
+    $measured = Get-PilotKitSha -KitCheckout $KitCheckout
+    if ($measured -ne $ApprovedKitSha) {
+        throw "REFUSED: the kit checkout $KitCheckout is at $measured, which is not the APPROVED kit revision $ApprovedKitSha. Measuring a revision is not the same as it having been approved."
+    }
+    # [REASON]: returns the sha and prints nothing. A function that both
+    # writes to the output stream and returns a value hands its caller two
+    # objects, and the caller then has to guess which one is the sha.
+    return $measured
 }
 
 function Assert-PilotProductSha {
@@ -586,6 +633,77 @@ function Invoke-PilotProbe {
 
 # --- The one run manifest -----------------------------------------------------
 
+function Test-PilotRunManifest {
+    <#
+        A run manifest is not a note to ourselves: deploy, recalculate and
+        rollback take PATHS out of it and write files there.
+
+        [REASON]: the first edition checked run_id and nothing else. A
+        manifest whose run_root pointed at the staging checkout, at production
+        or at a neighbouring run would have been obeyed -- New-Item, evidence
+        files and, further down, a service stop, all aimed wherever the file
+        said. Every field is checked, and run_root must EQUAL the path this
+        run id implies, not merely resemble it.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Manifest,
+          [Parameter(Mandatory)][string]$RunsRoot,
+          [Parameter(Mandatory)][string]$RunId,
+          [string]$ApprovedKitSha)
+
+    $problems = @()
+    foreach ($field in 'kit', 'kit_version', 'run_id', 'approved_kit_sha',
+                       'measured_kit_sha', 'product_sha', 'target_day',
+                       'machine', 'kit_checkout', 'run_root', 'steps') {
+        if (-not ($Manifest.PSObject.Properties.Name -contains $field)) {
+            $problems += "MISSING_FIELD:$field"
+        }
+    }
+    if ($problems.Count -gt 0) { return $problems }
+
+    if ($Manifest.kit -ne 'DRONE-USEFUL-AREA-PILOT-001') { $problems += 'WRONG_KIT' }
+    if ([string]$Manifest.kit_version -ne '2') { $problems += 'WRONG_KIT_VERSION' }
+    if ($Manifest.run_id -ne $RunId) { $problems += 'RUN_ID_MISMATCH' }
+    if ($Manifest.product_sha -ne $script:ProductSha) { $problems += 'PRODUCT_SHA_MISMATCH' }
+    if ($Manifest.target_day -ne $script:TargetDay) { $problems += 'TARGET_DAY_MISMATCH' }
+    if ([string]$Manifest.approved_kit_sha -notmatch '^[0-9a-f]{40}$') { $problems += 'MALFORMED_APPROVED_KIT_SHA' }
+    if ([string]$Manifest.measured_kit_sha -notmatch '^[0-9a-f]{40}$') { $problems += 'MALFORMED_MEASURED_KIT_SHA' }
+    if ($Manifest.approved_kit_sha -ne $Manifest.measured_kit_sha) { $problems += 'APPROVED_AND_MEASURED_KIT_SHA_DIFFER' }
+    if ($ApprovedKitSha -and $Manifest.approved_kit_sha -ne $ApprovedKitSha) { $problems += 'APPROVED_KIT_SHA_MISMATCH' }
+    if ([string]::IsNullOrWhiteSpace([string]$Manifest.machine)) { $problems += 'MACHINE_ABSENT' }
+    if (-not (Test-PilotPathEquals -Left ([string]$Manifest.kit_checkout) -Right $script:KitRoot)) {
+        $problems += 'KIT_CHECKOUT_IS_NOT_THE_KIT_ROOT'
+    }
+
+    # run_root must be EXACTLY the directory this run id implies.
+    $expected = Join-Path $RunsRoot $RunId
+    if (-not (Test-PilotPathEquals -Left ([string]$Manifest.run_root) -Right $expected)) {
+        $problems += 'RUN_ROOT_IS_NOT_THE_RUN_DIRECTORY'
+    }
+    foreach ($root in @($script:ProductionRoot, $script:StagingRoot,
+                        $script:CollectorRepo, $script:KitRoot)) {
+        if (Test-PilotPathWithin -Path ([string]$Manifest.run_root) -Root $root) {
+            $problems += 'RUN_ROOT_IS_INSIDE_A_CHECKOUT'
+        }
+    }
+    if ($null -eq $Manifest.steps) { $problems += 'STEPS_ABSENT' }
+    return $problems
+}
+
+function Assert-PilotRunManifest {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Manifest,
+          [Parameter(Mandatory)][string]$RunsRoot,
+          [Parameter(Mandatory)][string]$RunId,
+          [string]$ApprovedKitSha)
+
+    $problems = @(Test-PilotRunManifest -Manifest $Manifest -RunsRoot $RunsRoot `
+                                        -RunId $RunId -ApprovedKitSha $ApprovedKitSha)
+    if ($problems.Count -gt 0) {
+        throw "REFUSED: the run manifest of $RunId is not usable: $($problems -join ', '). Nothing was created, written or stopped."
+    }
+}
+
 function New-PilotRun {
     <#
         Create the run: one identifier, one directory, one manifest.
@@ -597,36 +715,45 @@ function New-PilotRun {
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$RunsRoot,
-          [Parameter(Mandatory)][string]$Python,
-          [Parameter(Mandatory)][string]$KitScriptRoot,
-          [Parameter(Mandatory)][string]$KitCheckout)
+          [Parameter(Mandatory)][string]$KitCheckout,
+          [Parameter(Mandatory)][string]$ApprovedKitSha)
 
     Assert-PilotOutsideCheckouts -Path $RunsRoot -What 'runs root'
-    $kitSha = Get-PilotKitSha -KitCheckout $KitCheckout
+    $kitSha = Assert-PilotApprovedKitSha -KitCheckout $KitCheckout `
+                                         -ApprovedKitSha $ApprovedKitSha
 
     $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
     $tail = -join ((1..8) | ForEach-Object { '{0:x}' -f (Get-Random -Minimum 0 -Maximum 16) })
     $runId = "$stamp-$tail"
 
     $directory = Join-Path $RunsRoot $runId
-    foreach ($leaf in @('', 'evidence', 'log', 'copy', 'sandbox', 'report')) {
-        $target = if ($leaf) { Join-Path $directory $leaf } else { $directory }
-        New-Item -ItemType Directory -Path $target -Force | Out-Null
+    # [REASON]: the run directory is created ATOMICALLY and a collision is a
+    # refusal. `-Force` would have quietly adopted an existing directory --
+    # another run's, with another run's evidence already in it.
+    if (Test-Path -LiteralPath $directory) {
+        throw "REFUSED: the run directory $directory already exists. This kit never adopts a directory it did not create."
+    }
+    [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+    foreach ($leaf in @('evidence', 'log', 'copy', 'sandbox', 'report', 'backup')) {
+        [System.IO.Directory]::CreateDirectory((Join-Path $directory $leaf)) | Out-Null
     }
 
     $manifest = [ordered]@{
-        kit          = 'DRONE-USEFUL-AREA-PILOT-001'
-        kit_version  = '2'
-        run_id       = $runId
-        kit_sha      = $kitSha
-        product_sha  = $script:ProductSha
-        target_day   = $script:TargetDay
-        created_utc  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-        machine      = $env:COMPUTERNAME
-        kit_checkout = $KitCheckout
-        run_root     = $directory
-        steps        = [ordered]@{}
+        kit              = 'DRONE-USEFUL-AREA-PILOT-001'
+        kit_version      = '2'
+        run_id           = $runId
+        approved_kit_sha = $ApprovedKitSha
+        measured_kit_sha = $kitSha
+        product_sha      = $script:ProductSha
+        target_day       = $script:TargetDay
+        created_utc      = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        machine          = $env:COMPUTERNAME
+        kit_checkout     = $KitCheckout
+        run_root         = $directory
+        steps            = [ordered]@{}
     }
+    Assert-PilotRunManifest -Manifest ([pscustomobject]$manifest) -RunsRoot $RunsRoot `
+                            -RunId $runId -ApprovedKitSha $ApprovedKitSha
     Write-PilotJson -Path (Join-Path $directory 'run.json') -Value $manifest | Out-Null
     return $manifest
 }
@@ -634,7 +761,8 @@ function New-PilotRun {
 function Get-PilotRun {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$RunsRoot,
-          [Parameter(Mandatory)][string]$RunId)
+          [Parameter(Mandatory)][string]$RunId,
+          [string]$ApprovedKitSha)
 
     if ($RunId -notmatch '^\d{8}T\d{6}Z-[0-9a-f]{8}$') {
         throw "REFUSED: '$RunId' is not a run identifier of this kit."
@@ -645,9 +773,8 @@ function Get-PilotRun {
         throw "REFUSED: no run manifest at $manifestPath. Start with PREFLIGHT_AND_COPY_TEST.ps1, which creates the run."
     }
     $manifest = Read-PilotJson -Path $manifestPath
-    if ($manifest.run_id -ne $RunId) {
-        throw "REFUSED: the manifest at $manifestPath calls itself $($manifest.run_id)."
-    }
+    Assert-PilotRunManifest -Manifest $manifest -RunsRoot $RunsRoot `
+                            -RunId $RunId -ApprovedKitSha $ApprovedKitSha
     return $manifest
 }
 
@@ -665,6 +792,9 @@ function Set-PilotRunStep {
     $directory = Join-Path $RunsRoot $RunId
     $manifestPath = Join-Path $directory 'run.json'
     $manifest = Read-PilotJson -Path $manifestPath
+    # The same full check before writing: a manifest that redirects writes is
+    # dangerous precisely at the moment something is about to be written.
+    Assert-PilotRunManifest -Manifest $manifest -RunsRoot $RunsRoot -RunId $RunId
 
     $steps = [ordered]@{}
     if ($manifest.PSObject.Properties.Name -contains 'steps' -and $manifest.steps) {
@@ -707,6 +837,49 @@ function Get-PilotEvidencePath {
     }
 }
 
+function New-PilotRunBackup {
+    <#
+        Back the staging database up into a directory that belongs to THIS RUN
+        and nothing else, and accept exactly the one file this call produced.
+
+        [REASON]: the first edition listed a shared backup directory before and
+        after, then took the newest new file. The scheduled nightly backup
+        writes into that same directory; a run that overlapped it would have
+        adopted somebody else's file as its own rollback point -- and the
+        rollback would have restored a database nobody chose.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Python,
+          [Parameter(Mandatory)][string]$BackupTool,
+          [Parameter(Mandatory)][string]$SourceDb,
+          [Parameter(Mandatory)][string]$RunBackupDir,
+          [string]$Suffix = 'pilot_before_useful_area')
+
+    Assert-PilotNotProduction -Path $RunBackupDir -What 'run backup directory'
+    if (-not (Test-Path -LiteralPath $RunBackupDir)) {
+        [System.IO.Directory]::CreateDirectory($RunBackupDir) | Out-Null
+    }
+    $existing = @(Get-ChildItem -LiteralPath $RunBackupDir -File -ErrorAction SilentlyContinue)
+    if ($existing.Count -ne 0) {
+        throw "REFUSED: the run backup directory $RunBackupDir is not empty ($($existing.Count) file(s)). It belongs to this run alone."
+    }
+
+    Invoke-PilotPython -Python $Python -Arguments @(
+        $BackupTool, '--source', $SourceDb, '--dest-dir', $RunBackupDir,
+        '--suffix', $Suffix) | Out-Null
+
+    $produced = @(Get-ChildItem -LiteralPath $RunBackupDir -File -Filter '*.db')
+    if ($produced.Count -ne 1) {
+        throw "REFUSED: the backup call produced $($produced.Count) file(s) in $RunBackupDir; exactly one was expected."
+    }
+    return [ordered]@{
+        Directory = (Resolve-Path -LiteralPath $RunBackupDir).Path
+        Path      = $produced[0].FullName
+        Bytes     = $produced[0].Length
+        Sha256    = (Get-PilotFileSha256 -Path $produced[0].FullName)
+    }
+}
+
 # --- Smoke test ---------------------------------------------------------------
 
 function Invoke-PilotSmokeTest {
@@ -725,7 +898,33 @@ function Invoke-PilotSmokeTest {
           [int]$Attempts = 10,
           [int]$DelaySeconds = 3)
 
+    # The guard first: this kit asks the staging site and no other. Then the
+    # same HTTP rules everyone else gets, aimed at the staging authority.
     Assert-PilotStagingUrl -Url $BaseUrl
+    return (Invoke-PilotSmokeEndpoint -BaseUrl $BaseUrl -Path $Path `
+                                      -Authority $script:StagingUrl `
+                                      -Marker $script:SmokePageMarker `
+                                      -TimeoutSec $TimeoutSec `
+                                      -Attempts $Attempts `
+                                      -DelaySeconds $DelaySeconds)
+}
+
+function Invoke-PilotSmokeEndpoint {
+    <#
+        The HTTP half of the smoke test, with the site it is asked about and
+        the page marker as parameters. Separated so that CI can run the REAL
+        logic -- status, marker, redirect following, redirect authority --
+        against a local server, instead of asserting that the code looks right.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$BaseUrl,
+          [Parameter(Mandatory)][string]$Path,
+          [Parameter(Mandatory)][string]$Authority,
+          [Parameter(Mandatory)][string]$Marker,
+          [int]$TimeoutSec = 15,
+          [int]$Attempts = 10,
+          [int]$DelaySeconds = 3)
+
     $url = ($BaseUrl.TrimEnd('/')) + $Path
 
     $status = $null
@@ -745,14 +944,14 @@ function Invoke-PilotSmokeTest {
 
     if ($null -eq $status) {
         return [ordered]@{ ok = $false; status = $null; path = $Path
-                           followed_redirect = $false
+                           followed_redirect = $false; marker_seen = $false
                            reason = "NO_ANSWER: $failureText" }
     }
 
     if (@(301, 302, 303, 307, 308) -contains $status) {
-        if (-not (Test-PilotRedirectStaysInStaging -Location $location)) {
+        if (-not (Test-PilotRedirectStaysInAuthority -Location $location -Authority $Authority)) {
             return [ordered]@{ ok = $false; status = $status; path = $Path
-                               followed_redirect = $false
+                               followed_redirect = $false; marker_seen = $false
                                reason = 'REDIRECT_LEAVES_STAGING' }
         }
         $next = $location
@@ -764,16 +963,30 @@ function Invoke-PilotSmokeTest {
 
     if ($null -eq $status) {
         return [ordered]@{ ok = $false; status = $null; path = $Path
-                           followed_redirect = $followed
+                           followed_redirect = $followed; marker_seen = $false
                            reason = 'NO_ANSWER_AFTER_REDIRECT' }
     }
     if (-not (Test-PilotSmokeStatus -Status $status)) {
         return [ordered]@{ ok = $false; status = $status; path = $Path
-                           followed_redirect = $followed
+                           followed_redirect = $followed; marker_seen = $false
                            reason = "STATUS_NOT_ALLOWED_$status" }
     }
+    # [REASON]: 200 is not "the application is up". A maintenance page, a
+    # reverse-proxy placeholder and somebody else's server on the same port
+    # all answer 200 just as happily. The body must carry the application's
+    # own login form.
+    $markerSeen = $false
+    if ($null -ne $result -and $result.Body) {
+        $markerSeen = ([string]$result.Body).Contains($Marker)
+    }
+    if (-not $markerSeen) {
+        return [ordered]@{ ok = $false; status = $status; path = $Path
+                           followed_redirect = $followed; marker_seen = $false
+                           reason = 'PAGE_IS_NOT_THE_APPLICATION_LOGIN_FORM' }
+    }
     return [ordered]@{ ok = $true; status = $status; path = $Path
-                       followed_redirect = $followed; reason = 'OK' }
+                       followed_redirect = $followed; marker_seen = $true
+                       reason = 'OK' }
 }
 
 function Get-PilotHttpStatus {
@@ -796,8 +1009,10 @@ function Get-PilotHttpStatus {
         if ($response.Headers -and $response.Headers['Location']) {
             $location = [string]$response.Headers['Location']
         }
+        $body = ''
+        try { if ($response.Content) { $body = [string]$response.Content } } catch { $body = '' }
         return [ordered]@{ Status = [int]$response.StatusCode
-                           Location = $location; Error = '' }
+                           Location = $location; Body = $body; Error = '' }
     } catch {
         $exception = $_.Exception
         $status = $null
@@ -815,7 +1030,7 @@ function Get-PilotHttpStatus {
                 }
             } catch { $location = $null }
         }
-        return [ordered]@{ Status = $status; Location = $location
+        return [ordered]@{ Status = $status; Location = $location; Body = ''
                            Error = $exception.Message }
     }
 }
@@ -825,11 +1040,14 @@ Export-ModuleMember -Function Get-PilotConstants, Get-PilotPathSegments,
     Assert-PilotNotProduction, Assert-PilotStagingPath,
     Assert-PilotOutsideCheckouts, Get-PilotUrlAuthority,
     Test-PilotUrlIsProduction, Test-PilotUrlIsStaging, Assert-PilotStagingUrl,
-    Test-PilotRedirectStaysInStaging, Test-PilotSmokeStatus,
+    Test-PilotRedirectStaysInStaging, Test-PilotRedirectStaysInAuthority,
+    Test-PilotSmokeStatus,
     Assert-PilotHost, Get-PilotServiceImagePath, Select-PilotStagingService,
     Resolve-PilotStagingService, Assert-PilotServiceIsNotProduction,
     Invoke-PilotGit, Assert-PilotWorktreeClean, Get-PilotHeadSha,
-    Get-PilotKitSha, Assert-PilotProductSha, Get-PilotFileSha256,
+    Get-PilotKitSha, Assert-PilotApprovedKitSha, Assert-PilotProductSha,
+    Test-PilotRunManifest, Assert-PilotRunManifest, Get-PilotFileSha256,
     Write-PilotJson, Read-PilotJson, Invoke-PilotPython, Invoke-PilotProbe,
     New-PilotRun, Get-PilotRun, Set-PilotRunStep, Get-PilotEvidencePath,
-    Invoke-PilotSmokeTest, Get-PilotHttpStatus
+    New-PilotRunBackup,
+    Invoke-PilotSmokeTest, Invoke-PilotSmokeEndpoint, Get-PilotHttpStatus

@@ -30,12 +30,14 @@
 
     RUN (on the server, from the KIT checkout):
       Set-Location C:\vehicle-soft-pilot-kit
-      .\ops\pilot_useful_area_001\STAGING_RECALCULATE_AND_VERIFY.ps1 -RunId <the id step 1 printed>
+      .\ops\pilot_useful_area_001\STAGING_RECALCULATE_AND_VERIFY.ps1 -RunId ... -ApprovedKitSha ...
+      (step 1 prints the exact command as NEXT_COMMAND_STEP4)
 #>
 
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$RunId,
+    [Parameter(Mandatory)][string]$ApprovedKitSha,
     [string]$ExpectedHost = 'srv-yoqsh',
     [string]$RunsRoot = 'D:\transport-report-backups\pilot\DRONE-USEFUL-AREA-001\runs',
     [string]$Python = 'C:\Program Files\Python314\python.exe',
@@ -62,11 +64,12 @@ if (-not (Test-Path -LiteralPath $K.StagingDb)) {
     throw "REFUSED: the staging database $($K.StagingDb) was not found."
 }
 
-$run = Get-PilotRun -RunsRoot $RunsRoot -RunId $RunId
-$KitSha = Get-PilotKitSha -KitCheckout $KitCheckout
-if ($KitSha -ne $run.kit_sha) {
-    throw "REFUSED: this kit checkout is at $KitSha, the run was opened with $($run.kit_sha)."
+$run = Get-PilotRun -RunsRoot $RunsRoot -RunId $RunId -ApprovedKitSha $ApprovedKitSha
+$KitSha = Assert-PilotApprovedKitSha -KitCheckout $KitCheckout -ApprovedKitSha $ApprovedKitSha
+if ($KitSha -ne $run.approved_kit_sha) {
+    throw "REFUSED: this kit checkout is at $KitSha, the run was opened with $($run.approved_kit_sha)."
 }
+Write-Output "KIT_SHA=$KitSha"
 $runRoot = $run.run_root
 $logDir = Join-Path $runRoot 'log'
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null

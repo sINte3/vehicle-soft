@@ -36,7 +36,8 @@
 
     RUN (on BAK-TEX11, from the collector checkout):
       Set-Location C:\VehicleSoft_DJI_StageB_Pilot
-      .\ops\pilot_useful_area_001\BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1 -RunId <the id step 1 printed> -KitSha <the kit sha step 1 printed>
+      .\ops\pilot_useful_area_001\BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1 -RunId ... -ApprovedKitSha ...
+      (step 1 prints the exact command as NEXT_COMMAND_STEP3_ON_BAK_TEX11)
 
     Secrets come from the environment or drone_collector\.env that is already
     configured on this machine. This script neither reads nor writes them.
@@ -45,7 +46,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$RunId,
-    [Parameter(Mandatory)][string]$KitSha,
+    [Parameter(Mandatory)][string]$ApprovedKitSha,
     [string]$ExpectedHost = 'BAK-TEX11',
     [string]$RunsRoot = 'C:\vehicle-soft-pilot-runs',
     [switch]$SkipCodeUpdate
@@ -64,9 +65,13 @@ Write-Output "TARGET_DAY=$($K.TargetDay)"
 if ($RunId -notmatch '^\d{8}T\d{6}Z-[0-9a-f]{8}$') {
     throw "REFUSED: '$RunId' is not a run identifier of this kit. Take it from the line RUN_ID= that step 1 printed."
 }
-if ($KitSha -notmatch '^[0-9a-f]{40}$') {
-    throw "REFUSED: '$KitSha' is not a revision. Take it from the line KIT_SHA= that step 1 printed."
+if ($ApprovedKitSha -notmatch '^[0-9a-f]{40}$') {
+    throw "REFUSED: '$ApprovedKitSha' is not a revision. Take it from the NEXT_COMMAND_STEP3_ON_BAK_TEX11 line that step 1 printed."
 }
+# The collector checkout runs AT the approved kit revision -- this machine
+# deploys nothing, and the kit revision is what carries the two route-request
+# counters the recalculation gate needs.
+$KitSha = $ApprovedKitSha
 
 # --- 1. The right machine and the right repository --------------------------
 Assert-PilotHost -Expected $ExpectedHost
