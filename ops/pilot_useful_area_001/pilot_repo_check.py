@@ -109,7 +109,9 @@ def _compare_blob(repo, rev, path, expected, problems):
 
     full = os.path.join(str(repo), path.replace('/', os.sep))
     if os.path.exists(full):
-        entry['on_disk'] = common.file_blob_sha(full)
+        # Хеш ГЛАЗАМИ GIT, а не сырых байтов: на Windows рабочая копия лежит
+        # с CRLF, и сырой хеш не совпал бы с блобом ни разу.
+        entry['on_disk'] = common.worktree_blob_sha(repo, path)
     else:
         problems.append('FILE_ABSENT:%s' % path)
 

@@ -505,6 +505,54 @@ class ExecutablesComeFromARevision(unittest.TestCase):
         finally:
             shutil.rmtree(directory, ignore_errors=True)
 
+    def test_a_crlf_checkout_still_matches_its_blob(self):
+        """Windows разворачивает переводы строк -- блоб от этого не меняется.
+
+        [REASON]: это поймала Windows-задача CI, а не рассуждение. На
+        `windows-latest` рабочая копия приезжает с CRLF (`core.autocrlf`), а
+        блобы в git лежат с LF. Сырой хеш файла на диске не совпал с блобом ни
+        разу -- восемь файлов из восьми, -- то есть проверка «исполняемое
+        взято из ревизии» падала на той самой платформе, ради которой она
+        написана. Отрицательный контроль ниже показывает разницу: сырой хеш
+        РАСХОДИТСЯ, хеш глазами git -- совпадает.
+        """
+        directory = tempfile.mkdtemp(prefix='pilot_crlf_')
+        try:
+            def run(*arguments):
+                subprocess.run(('git',) + arguments, cwd=directory,
+                               check=True, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+            run('init', '-q')
+            run('config', 'user.email', 'test@example.invalid')
+            run('config', 'user.name', 'test')
+            target = os.path.join(directory, 'sample.py')
+            with open(target, 'wb') as handle:
+                handle.write(b'one\ntwo\nthree\n')
+            run('add', 'sample.py')
+            run('commit', '-qm', 'lf')
+            recorded = common.blob_sha_at(directory, 'HEAD', 'sample.py')
+
+            # Как выглядит эта же рабочая копия на Windows.
+            run('config', 'core.autocrlf', 'true')
+            with open(target, 'wb') as handle:
+                handle.write(b'one\r\ntwo\r\nthree\r\n')
+
+            raw = common.file_blob_sha(target)
+            through_git = common.worktree_blob_sha(directory, 'sample.py')
+            self.assertNotEqual(raw, recorded,
+                                'the CRLF trap must exist, else this test '
+                                'proves nothing')
+            self.assertEqual(through_git, recorded)
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+
+    def test_the_worktree_hash_is_taken_through_git_everywhere(self):
+        for name in ('pilot_repo_check.py', 'pilot_blob_manifest.py'):
+            with open(os.path.join(KIT_DIR, name), encoding='utf-8') as handle:
+                text = handle.read()
+            self.assertIn('worktree_blob_sha', text, name)
+            self.assertNotIn('common.file_blob_sha(full)', text, name)
+
     def test_verify_checks_both_the_history_and_the_disk(self):
         """Отрицательный контроль: подменённый на диске файл обязан всплыть."""
         manifest = copy.deepcopy(common.load_product_blobs())

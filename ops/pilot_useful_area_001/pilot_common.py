@@ -217,8 +217,31 @@ def materialize_blob(repo, rev, path, destination, expected_blob=None):
 
 
 def file_blob_sha(path):
+    """Хеш СЫРЫХ байтов файла. Для того, что мы записали сами.
+
+    Годится ровно для материализованных файлов: их пишет
+    `materialize_blob` побайтово, без единого фильтра, поэтому сырые байты и
+    есть байты коммита.
+    """
     with open(path, 'rb') as handle:
         return blob_sha_of_bytes(handle.read())
+
+
+def worktree_blob_sha(repo, path):
+    """Хеш файла рабочего дерева ГЛАЗАМИ GIT.
+
+    [REASON]: на Windows рабочая копия лежит с CRLF -- `core.autocrlf`
+    разворачивает переводы строк при checkout, а блобы в git хранятся с LF
+    (устав, раздел «Переводы строк и BOM»). Сырой хеш такого файла НИКОГДА не
+    совпадёт с блобом, и проверка «исполняемое взято из ревизии» падала бы на
+    каждом файле на той самой платформе, ради которой она написана. Это и
+    поймала Windows-задача CI: восемь файлов из восьми.
+
+    `git hash-object` применяет те же фильтры, что применил бы коммит, и
+    отвечает на нужный вопрос: соответствует ли файл на диске блобу ревизии,
+    как это понимает сам git.
+    """
+    return git_text(repo, 'hash-object', '--', path)
 
 
 PRODUCT_BLOBS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),

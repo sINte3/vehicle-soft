@@ -69,8 +69,8 @@ def build(repo=REPO_ROOT, product_sha=None):
     product_sha = product_sha or common.PRODUCT_SHA
 
     def kit_blob(path):
-        return common.file_blob_sha(os.path.join(repo,
-                                                 path.replace('/', os.sep)))
+        # Глазами git: на Windows рабочая копия лежит с CRLF.
+        return common.worktree_blob_sha(repo, path)
 
     files = {}
     for path in PRODUCT_FILES:
@@ -108,16 +108,14 @@ def check_against_worktree(manifest, repo=REPO_ROOT):
         if not os.path.exists(full):
             problems.append('MISSING:%s' % path)
             continue
-        actual = common.file_blob_sha(full)
-        if actual != entry['kit_blob']:
+        if common.worktree_blob_sha(repo, path) != entry['kit_blob']:
             problems.append('WORKTREE_DIFFERS:%s' % path)
     for path, entry in sorted(manifest['kit_differs_on_purpose'].items()):
         if entry['product_blob'] == entry['kit_blob']:
             problems.append('DECLARED_DIFFERENT_BUT_IDENTICAL:%s' % path)
         full = os.path.join(repo, path.replace('/', os.sep))
         if os.path.exists(full):
-            actual = common.file_blob_sha(full)
-            if actual != entry['kit_blob']:
+            if common.worktree_blob_sha(repo, path) != entry['kit_blob']:
                 problems.append('WORKTREE_DIFFERS:%s' % path)
     return problems
 
