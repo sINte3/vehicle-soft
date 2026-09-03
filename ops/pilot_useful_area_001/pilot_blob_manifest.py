@@ -68,6 +68,25 @@ KIT_OWN_SUFFIXES = ('.ps1', '.psm1', '.py')
 KIT_OWN_EXCLUDED = ('PRODUCT_BLOBS.json',)
 
 
+def build_kit_own_files(repo=REPO_ROOT):
+    """Файлы самого комплекта и их хеши глазами git.
+
+    [REASON]: отдельной функцией, потому что истории здесь не нужно вовсе --
+    хешируется рабочее дерево. `build()` без истории не работает (в мелком
+    клоне CI `PRODUCT_SHA` недостижим), и тест сборки манифеста падал именно
+    на этом, хотя проверял он совсем другое.
+    """
+    own = {}
+    for name in sorted(os.listdir(os.path.join(repo, KIT_OWN_DIR))):
+        if name in KIT_OWN_EXCLUDED:
+            continue
+        if not name.endswith(KIT_OWN_SUFFIXES):
+            continue
+        path = '%s/%s' % (KIT_OWN_DIR, name)
+        own[path] = common.worktree_blob_sha(repo, path)
+    return own
+
+
 def build(repo=REPO_ROOT, product_sha=None):
     """Собрать манифест: blob продукта из ИСТОРИИ, blob комплекта -- с ДИСКА.
 
@@ -95,14 +114,7 @@ def build(repo=REPO_ROOT, product_sha=None):
             'kit_blob': kit_blob(path),
         }
 
-    own = {}
-    for name in sorted(os.listdir(os.path.join(repo, KIT_OWN_DIR))):
-        if name in KIT_OWN_EXCLUDED:
-            continue
-        if not name.endswith(KIT_OWN_SUFFIXES):
-            continue
-        path = '%s/%s' % (KIT_OWN_DIR, name)
-        own[path] = kit_blob(path)
+    own = build_kit_own_files(repo)
     return {
         'kit': common.KIT_ID,
         'kit_version': common.KIT_VERSION,

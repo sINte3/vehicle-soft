@@ -991,47 +991,64 @@ function Invoke-PilotSmokeEndpoint {
 
 function Get-PilotHttpStatus {
     <#
-        One request, no redirect following, status and Location back.
+        One request, no redirect following, status + Location + body back.
 
-        [REASON]: PowerShell 5.1 raises a WebException carrying an
-        HttpWebResponse; 7 raises an HttpResponseException carrying an
-        HttpResponseMessage. Both shapes are read here so the caller sees a
-        number either way, on either console.
+        [REASON]: NOT Invoke-WebRequest. On Windows PowerShell 5.1,
+        `-MaximumRedirection 0` against a 3xx throws an InvalidOperationException
+        that carries NO response object, so the status is simply lost and every
+        redirect reads as "no answer" -- which is exactly what the Windows CI
+        job caught. HttpWebRequest with AllowAutoRedirect disabled RETURNS the
+        3xx response instead of throwing, and behaves the same on 5.1 and 7.
+        4xx and 5xx still arrive as a WebException, and that one does carry
+        its response.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Url,
           [int]$TimeoutSec = 15)
 
+    $response = $null
     try {
-        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing `
-            -MaximumRedirection 0 -TimeoutSec $TimeoutSec -ErrorAction Stop
-        $location = $null
-        if ($response.Headers -and $response.Headers['Location']) {
-            $location = [string]$response.Headers['Location']
+        $request = [System.Net.HttpWebRequest]::Create($Url)
+        $request.Method = 'GET'
+        $request.AllowAutoRedirect = $false
+        $request.Timeout = [int]($TimeoutSec * 1000)
+        $request.ReadWriteTimeout = [int]($TimeoutSec * 1000)
+        try {
+            $response = $request.GetResponse()
+        } catch [System.Net.WebException] {
+            # 4xx and 5xx land here and DO carry the response.
+            $response = $_.Exception.Response
+            if ($null -eq $response) {
+                return [ordered]@{ Status = $null; Location = $null; Body = ''
+                                   Error = $_.Exception.Message }
+            }
         }
+
+        $status = [int]$response.StatusCode
+        $location = $null
+        try {
+            $header = $response.Headers['Location']
+            if ($header) { $location = [string]$header }
+        } catch { $location = $null }
+
         $body = ''
-        try { if ($response.Content) { $body = [string]$response.Content } } catch { $body = '' }
-        return [ordered]@{ Status = [int]$response.StatusCode
-                           Location = $location; Body = $body; Error = '' }
+        try {
+            $stream = $response.GetResponseStream()
+            if ($stream) {
+                $reader = New-Object System.IO.StreamReader($stream)
+                try { $body = $reader.ReadToEnd() } finally { $reader.Dispose() }
+            }
+        } catch { $body = '' }
+
+        return [ordered]@{ Status = $status; Location = $location
+                           Body = $body; Error = '' }
     } catch {
-        $exception = $_.Exception
-        $status = $null
-        $location = $null
-        if ($exception.PSObject.Properties.Name -contains 'Response' -and $exception.Response) {
-            $raw = $exception.Response
-            try { $status = [int]$raw.StatusCode } catch { $status = $null }
-            try {
-                if ($raw.Headers) {
-                    if ($raw.Headers -is [System.Net.WebHeaderCollection]) {
-                        $location = [string]$raw.Headers['Location']
-                    } elseif ($raw.Headers.Location) {
-                        $location = [string]$raw.Headers.Location
-                    }
-                }
-            } catch { $location = $null }
+        return [ordered]@{ Status = $null; Location = $null; Body = ''
+                           Error = $_.Exception.Message }
+    } finally {
+        if ($null -ne $response) {
+            try { $response.Close() } catch { }
         }
-        return [ordered]@{ Status = $status; Location = $location; Body = ''
-                           Error = $exception.Message }
     }
 }
 

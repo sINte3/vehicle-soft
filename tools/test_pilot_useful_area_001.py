@@ -1474,7 +1474,12 @@ class SmokeTestSemantics(unittest.TestCase):
         self.assertIn('function Test-PilotRedirectStaysInStaging', text)
         self.assertIn('function Test-PilotSmokeStatus', text)
         self.assertIn('$script:SmokeAllowedStatus = @(200)', text)
-        self.assertIn('-MaximumRedirection 0', text)
+        # Redirects are NOT followed automatically. Not via
+        # `-MaximumRedirection 0`, which on Windows PowerShell 5.1 throws an
+        # exception carrying no response and loses the status entirely -- the
+        # Windows CI job caught exactly that.
+        self.assertIn('$request.AllowAutoRedirect = $false', text)
+        self.assertNotIn('-MaximumRedirection', text)
 
     def test_the_deploy_records_the_smoke_result_in_its_evidence(self):
         text = code_text('STAGING_DEPLOY_AND_MIGRATE.ps1')
@@ -2525,14 +2530,15 @@ class ApprovedKitRevision(unittest.TestCase):
         поломка в `build()` им не ловится вовсе -- ловится лишь тем, что файл
         на диске изменился. Здесь манифест собирается заново.
         """
-        rebuilt = blobs.build(REPO_ROOT)
-        self.assertTrue(rebuilt['kit_own_files'],
+        # Собирается заново ТОЛЬКО часть про комплект: истории для неё не
+        # нужно, поэтому проверка работает и в мелком клоне CI.
+        rebuilt = blobs.build_kit_own_files(REPO_ROOT)
+        self.assertTrue(rebuilt,
                         'a rebuilt manifest with no kit files would let the '
                         'kit execute its own code unpinned')
         for name in PS_FILES:
-            self.assertIn('ops/pilot_useful_area_001/%s' % name,
-                          rebuilt['kit_own_files'], name)
-        self.assertEqual(rebuilt['kit_own_files'],
+            self.assertIn('ops/pilot_useful_area_001/%s' % name, rebuilt, name)
+        self.assertEqual(rebuilt,
                          common.load_product_blobs()['kit_own_files'],
                          'the stored manifest is stale')
 
