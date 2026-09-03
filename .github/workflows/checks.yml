@@ -180,17 +180,25 @@ jobs:
       # the REAL migration, so it fits this workflow's dependency contract.
       #
       # [REASON]: the kit decides whether a live pilot may be trusted, and it
-      # is pasted into a console verbatim. Three properties are cheap to break
-      # and expensive to notice: that C:\transport-report-staging is NOT
+      # is pasted into a console verbatim. The properties that are cheap to
+      # break and expensive to notice: that C:\transport-report-staging is NOT
       # inside C:\transport-report (a substring guard says it is), that the
       # drone_flights.area_ha fingerprint sees a change the SUM would miss,
-      # and that GO is unreachable while any one mandatory condition fails.
-      # Each is held by a test with a negative control beside it. The
-      # PowerShell scripts are parsed by PowerShell itself and the module's
-      # pure guards are EXECUTED when pwsh is present, which it is on this
-      # runner; without it those three tests skip and say so.
-      - name: Pilot kit (path guards, area fingerprint, verdict, PowerShell)
+      # that a REWRITTEN coverage row is caught at an unchanged row count,
+      # that a recalculation cannot start over an incomplete capture, that
+      # evidence of two runs cannot be mixed, and that GO is unreachable
+      # while any one mandatory condition fails or the owner has not named
+      # his rules. Each is held by a test with a negative control beside it.
+      # The PowerShell here is 7; the Windows job below runs the same suite
+      # on Windows PowerShell 5.1, which is what the server console actually
+      # is.
+      - name: Pilot kit (guards, fingerprints, run identity, verdict)
         run: python tools/test_pilot_useful_area_001.py
+
+      # The blob manifest is a contract about WHICH BYTES the kit is allowed
+      # to execute. It goes stale silently if nobody re-checks it.
+      - name: Pilot kit blob manifest matches the worktree
+        run: python ops/pilot_useful_area_001/pilot_blob_manifest.py --check
 
       # [REASON]: tests/test_drone_useful_area_001.py and _002.py -- the whole
       # vertical from route_sync through the recompute to /drones/coverage --
@@ -204,3 +212,43 @@ jobs:
       # endpoint and the page -- runs locally and on the server with:
       #
       #   python -m unittest discover -s tests
+
+  # DRONE-USEFUL-AREA-PILOT-001. The operator console on the server is
+  # WINDOWS POWERSHELL 5.1, not pwsh 7, and the two differ exactly where this
+  # kit writes files: 5.1 has no `utf8NoBOM`, and its native `>` redirection
+  # writes UTF-16LE. A kit validated only on 7 would be validated on the
+  # platform nobody runs it on.
+  #
+  # This job does not merely parse the scripts. It EXECUTES the module's pure
+  # guards, writes and reads back a JSON document through Write-PilotJson and
+  # Read-PilotJson, and drives a real probe through Invoke-PilotProbe -- the
+  # three places where 5.1 and 7 could disagree. PILOT_POWERSHELL_MAJOR makes
+  # the suite assert which interpreter actually ran, so a job that silently
+  # picked pwsh 7 fails instead of passing.
+  windows-powershell-51:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Which PowerShell is this
+        shell: powershell
+        run: |
+          $PSVersionTable | Format-List
+          if ($PSVersionTable.PSVersion.Major -ne 5) {
+            throw "this job must run on Windows PowerShell 5.1, got $($PSVersionTable.PSVersion)"
+          }
+
+      - name: Pilot kit on Windows PowerShell 5.1 (parse, guards, JSON, probe)
+        shell: powershell
+        env:
+          PILOT_POWERSHELL: powershell
+          PILOT_POWERSHELL_MAJOR: '5'
+        run: python tools/test_pilot_useful_area_001.py
+
+      - name: Pilot kit blob manifest matches the worktree
+        shell: powershell
+        run: python ops/pilot_useful_area_001/pilot_blob_manifest.py --check
