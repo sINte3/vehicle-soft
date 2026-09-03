@@ -11,6 +11,13 @@
       an ingest target that is the STAGING url and can never be the production
       one.
 
+    IT DOES NOT UPDATE ITSELF
+      The checkout must ALREADY be at the approved kit revision when this
+      starts; the script verifies that and refuses otherwise. It cannot move
+      the checkout, because PowerShell loads a module and a script file once:
+      anything after a merge would still be running the old bytes, and the
+      HEAD check after it would prove nothing about the guards that ran.
+
     WHICH REVISION, AND WHY IT IS THE KIT'S
       The collector runs at KIT_SHA, not at PRODUCT_SHA. The kit revision adds
       two numbers to the collector's run summary -- probe_request_failures and
@@ -48,8 +55,7 @@ param(
     [Parameter(Mandatory)][string]$RunId,
     [Parameter(Mandatory)][string]$ApprovedKitSha,
     [string]$ExpectedHost = 'BAK-TEX11',
-    [string]$RunsRoot = 'C:\vehicle-soft-pilot-runs',
-    [switch]$SkipCodeUpdate
+    [string]$RunsRoot = 'C:\vehicle-soft-pilot-runs'
 )
 
 Set-StrictMode -Version Latest
@@ -94,24 +100,30 @@ Assert-PilotNotProduction -Path $K.CollectorRepo -What 'collector repository'
 Assert-PilotWorktreeClean -Repo $K.CollectorRepo
 Assert-PilotOutsideCheckouts -Path $RunsRoot -What 'runs root'
 
-if (-not $SkipCodeUpdate) {
-    Invoke-PilotGit -Repo $K.CollectorRepo -Arguments @('fetch', 'origin') | Out-Null
-    $hasCommit = Invoke-PilotGit -Repo $K.CollectorRepo -AllowFailure `
-        -Arguments @('cat-file', '-e', ($KitSha + '^{commit}'))
-    if ($hasCommit.ExitCode -ne 0) {
-        throw "REFUSED: the kit revision $KitSha is not in this checkout after fetching origin."
-    }
-    $head = Get-PilotHeadSha -Repo $K.CollectorRepo
-    if ($head -ne $KitSha) {
-        # ff-only to the NAMED commit, never to the current tip of a branch.
-        Invoke-PilotGit -Repo $K.CollectorRepo -Arguments @('merge', '--ff-only', $KitSha) | Out-Null
-    }
-}
+# [REASON]: THIS SCRIPT NEVER UPDATES THE CHECKOUT IT RUNS FROM.
+#
+# The previous edition imported PilotKit, then fetched and merged, then
+# checked HEAD. The check passed -- and proved nothing: PowerShell reads a
+# module and a script file ONCE, when it loads them, so everything after the
+# merge still executed the OLD module and the OLD script text. "HEAD equals
+# the approved revision" therefore did not mean "the guards that just ran came
+# from the approved revision". And a script that does not yet exist in the old
+# checkout cannot be started in order to fetch itself.
+#
+# Moving the checkout is the bootstrap's job, before this script starts. All
+# this script does is REFUSE to run unless the checkout is already exactly
+# right -- and it does that before creating a single file of its own.
 $head = Get-PilotHeadSha -Repo $K.CollectorRepo
-if ($head -ne $KitSha) {
-    throw "REFUSED: $($K.CollectorRepo) is at $head, not at the kit revision $KitSha."
+if ($head -ne $ApprovedKitSha) {
+    throw @"
+REFUSED: $($K.CollectorRepo) is at $head, not at the approved kit revision
+$ApprovedKitSha.
+
+This script does not move the checkout: updating the code that is already
+running cannot be proven to have taken effect. Bring the checkout to the
+approved revision first, from outside this script, then run it again.
+"@
 }
-Assert-PilotWorktreeClean -Repo $K.CollectorRepo
 Write-Output "COLLECTOR_HEAD=$head"
 
 # --- 3. Now, and only now, the run directory (outside the checkout) ---------
