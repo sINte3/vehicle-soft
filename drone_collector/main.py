@@ -178,7 +178,8 @@ AREA_SUMMARY_KEYS = (
 COLLECT_SUMMARY_KEYS = (
     'mode', 'dry_run', 'region', 'probe_route_responses',
     'probe_observations', 'probe_confirmed', 'probe_errors',
-    'probe_skipped_over_cap', 'probe_operator_answered',
+    'probe_skipped_over_cap', 'probe_request_failures',
+    'probe_pending_requests', 'probe_operator_answered',
     'probe_drained', 'collect_live_confirmed',
     'collect_bodies_captured', 'collect_decode_failures',
     'collect_capture_errors', 'collect_routes_captured',
@@ -1287,6 +1288,15 @@ def _run_route_ui_collect(args, cfg, log, state):
     state['probe_confirmed'] = len(capture.confirmed_observations)
     state['probe_errors'] = capture.observation_errors
     state['probe_skipped_over_cap'] = capture.skipped_over_cap
+    # [REASON]: оборванный и незавершённый запросы маршрута -- ЧИСЛА, и они
+    # обязаны быть в сводке своими значениями. Режим `--route-ui-probe` печатал
+    # их с самого начала (`ROUTE_PROBE_SUMMARY_KEYS`), а сбор -- нет, и
+    # читателю сводки приходилось выводить их из равенства observations и
+    # confirmed. Вывод неверен: наблюдение, оборвавшееся ДО тела, в
+    # `observations` не попадает вовсе, поэтому равенство держится и при
+    # потерянном запросе. Два разных случая давали один признак.
+    state['probe_request_failures'] = capture.route_requests_failed
+    state['probe_pending_requests'] = capture.pending_route_requests
     state['probe_operator_answered'] = operator_answered
     state['probe_drained'] = drain_completed
     state['collect_live_confirmed'] = verdict['confirmed']
