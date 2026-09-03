@@ -474,10 +474,16 @@ class TwoRevisions(unittest.TestCase):
                                   % (name, line.strip()))
 
     def test_the_collector_runs_at_the_kit_revision(self):
+        """Сборщик работает НА ревизии комплекта -- и не переводит себя на неё.
+
+        [REASON]: раньше здесь требовался `merge --ff-only`. Он и был дефектом:
+        обновить код, который уже исполняется, нельзя, а проверка HEAD после
+        merge ничего не доказывала о защитах, которые уже отработали.
+        """
         text = code_text('BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1')
-        self.assertIn("'merge', '--ff-only', $KitSha", text)
-        self.assertIn('$head -ne $KitSha', text)
-        self.assertNotIn("'--ff-only', $K.ProductSha", text)
+        self.assertIn('$head -ne $ApprovedKitSha', text)
+        self.assertNotIn("'--ff-only'", text)
+        self.assertNotIn("'merge'", text)
 
     def test_the_readme_starts_from_a_reproducible_state(self):
         with open(os.path.join(KIT_DIR, 'README.md'), encoding='utf-8') as handle:
@@ -1270,8 +1276,12 @@ class Verdict(unittest.TestCase):
                 re.DOTALL)
             self.assertIsNotNone(found, '%s must have no default' % flag)
         script = code_text('STAGING_PILOT_REPORT.ps1')
-        self.assertIn('$OwnerShareThreshold = -1', script)
-        self.assertIn('if ($OwnerShareThreshold -ge 0) {', script)
+        # Никакого значения-признака: решает ПРИСУТСТВИЕ параметра. Иначе
+        # явно переданный -0.01 молча превращался в «правило не задано».
+        self.assertIn('[double]$OwnerShareThreshold,', script)
+        self.assertNotIn('$OwnerShareThreshold = -1', script)
+        self.assertIn("$PSBoundParameters.ContainsKey('OwnerShareThreshold')",
+                      script)
 
     def assert_rejected(self, code, **kwargs):
         report, _markdown = self.build(**kwargs)
@@ -2586,7 +2596,7 @@ class RunManifestIsValidated(unittest.TestCase):
 
     def test_reading_a_run_validates_it(self):
         text = code_text('PilotKit.psm1')
-        get = text.index('function Get-PilotRun')
+        get = text.index('function Get-PilotRun {')
         body = text[get:get + 1500]
         self.assertIn('Assert-PilotRunManifest', body)
 
@@ -3074,6 +3084,603 @@ class LiveSmokeTestAgainstARealServer(unittest.TestCase):
         self.assertIn('Assert-PilotStagingUrl -Url $BaseUrl', body)
         self.assertIn('-Authority $script:StagingUrl', body)
         self.assertIn('-Marker $script:SmokePageMarker', body)
+
+
+# ═══ Д1. Загруженный модуль остаётся старым ═════════════════════════════════
+
+MODULE_STALENESS_SCRIPT = r'''
+param([string]$ModulePath)
+# Загружаем модуль, меняем ЕГО ФАЙЛ на диске и зовём функцию снова.
+Import-Module $ModulePath -Force
+$before = Get-PilotStalenessProbe
+$text = [System.IO.File]::ReadAllText($ModulePath)
+$text = $text.Replace("'ORIGINAL'", "'REPLACED'")
+[System.IO.File]::WriteAllText($ModulePath, $text)
+$after = Get-PilotStalenessProbe
+[ordered]@{ before = $before; after = $after
+            on_disk = ([System.IO.File]::ReadAllText($ModulePath).Contains("'REPLACED'")) } |
+    ConvertTo-Json -Compress
+'''
+
+
+@unittest.skipIf(PWSH is None, 'no PowerShell in this environment')
+class ARunningScriptCannotUpdateItself(unittest.TestCase):
+    """Обновить с диска код, который уже исполняется, нельзя.
+
+    [REASON]: скрипт BAK-TEX11 импортировал PilotKit, затем делал fetch/merge и
+    после этого проверял HEAD. Проверка проходила, но выполнялся при этом СТАРЫЙ
+    модуль и старый текст скрипта: PowerShell читает файл один раз, при импорте.
+    То есть «HEAD равен одобренной ревизии» не доказывало, что защитные проверки
+    исполнялись из одобренной ревизии. Проверка порядка строк это не поймала бы:
+    порядок как раз был «сначала обновить, потом проверить».
+    """
+
+    def test_a_loaded_module_keeps_its_old_definition(self):
+        directory = tempfile.mkdtemp(prefix='pilot_stale_')
+        try:
+            module = os.path.join(directory, 'Staleness.psm1')
+            with open(module, 'w', encoding='utf-8', newline='\n') as handle:
+                handle.write("function Get-PilotStalenessProbe { return "
+                             "'ORIGINAL' }\n"
+                             "Export-ModuleMember -Function "
+                             "Get-PilotStalenessProbe\n")
+            script = os.path.join(directory, 'probe.ps1')
+            with open(script, 'w', encoding='utf-8', newline='\n') as handle:
+                handle.write(MODULE_STALENESS_SCRIPT)
+            result = subprocess.run(
+                [PWSH, '-NoProfile', '-File', script, '-ModulePath', module],
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0,
+                             '%s\n%s' % (result.stdout, result.stderr))
+            line = [row for row in result.stdout.splitlines()
+                    if row.strip().startswith('{')][-1]
+            state = json.loads(line)
+
+            self.assertTrue(state['on_disk'],
+                            'the file on disk must really have changed, else '
+                            'this test proves nothing')
+            self.assertEqual(state['before'], 'ORIGINAL')
+            self.assertEqual(
+                state['after'], 'ORIGINAL',
+                'the RUNNING session kept the old definition even though the '
+                'file changed -- which is exactly why a script must not '
+                'update the checkout it is executing from')
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+
+    def test_the_collector_script_never_updates_its_own_checkout(self):
+        text = code_text('BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1')
+        for forbidden in ("'fetch'", "'merge'", "'--ff-only'",
+                          'SkipCodeUpdate'):
+            self.assertNotIn(forbidden, text,
+                             'the script must not update the checkout it '
+                             'runs from: %s' % forbidden)
+
+    def test_the_collector_script_only_verifies(self):
+        text = code_text('BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1')
+        self.assertIn('Assert-PilotWorktreeClean -Repo $K.CollectorRepo', text)
+        self.assertIn('$head -ne $ApprovedKitSha', text)
+        self.assertIn("'--role', 'collector'", text)
+        # Everything above happens before the first file of ours exists.
+        self.assertLess(text.index('$head -ne $ApprovedKitSha'),
+                        text.index('New-Item -ItemType Directory'))
+
+    def test_the_readme_no_longer_claims_the_step_updates_itself(self):
+        with open(os.path.join(KIT_DIR, 'README.md'), encoding='utf-8') as handle:
+            text = handle.read()
+        self.assertNotIn('в нужную ревизию его переведёт сам скрипт', text)
+
+
+# ═══ Д2. Поле area_ha_unchanged считается той же функцией ═══════════════════
+
+class AreaFieldMatchesTheCondition(unittest.TestCase):
+    """Отчёт не может одновременно говорить «не менялась» и REJECT."""
+
+    def build(self, mutate=None):
+        shared = shared_evidence()
+        preflight = copy.deepcopy(shared['preflight'])
+        deploy = copy.deepcopy(shared['deploy'])
+        snapshot = copy.deepcopy(shared['snapshot'])
+        if mutate:
+            mutate(preflight, deploy, snapshot)
+        return report_mod.build_report(
+            preflight, deploy, copy.deepcopy(shared['collect']),
+            copy.deepcopy(shared['runs']), snapshot, None, None, [],
+            run_id=shared['run_id'], kit_sha=KIT_SHA_FIXTURE)
+
+    def condition(self, report):
+        for item in report['conditions']:
+            if item['code'] == 'AREA_HA_UNCHANGED':
+                return item['passed']
+        raise AssertionError('AREA_HA_UNCHANGED is gone from the conditions')
+
+    def test_all_five_present_and_equal_gives_true(self):
+        report, markdown = self.build()
+        self.assertTrue(report['area_ha_unchanged'])
+        self.assertTrue(self.condition(report))
+        self.assertIn('drone_flights.area_ha не менялась | да', markdown)
+
+    def test_any_one_missing_gives_false_and_reject(self):
+        cases = {
+            'production_copy_before_migration':
+                lambda p, d, s: p['payload'].pop('area_ha_before'),
+            'production_copy_after_migration':
+                lambda p, d, s: p['payload'].pop('area_ha_after'),
+            'staging_before_migration':
+                lambda p, d, s: d['payload'].pop('area_ha_before'),
+            'staging_after_migration':
+                lambda p, d, s: d['payload'].pop('area_ha_after'),
+            'staging_after_recalculation':
+                lambda p, d, s: s['payload'].pop('area_ha'),
+        }
+        for name, mutate in cases.items():
+            report, markdown = self.build(mutate)
+            self.assertFalse(report['area_ha_unchanged'], name)
+            self.assertFalse(self.condition(report), name)
+            self.assertEqual(report['verdict'], 'REJECT', name)
+            self.assertIn('AREA_HA_UNCHANGED', report['verdict_reasons'], name)
+            self.assertIn('drone_flights.area_ha не менялась | НЕТ', markdown,
+                          name)
+
+    def test_all_five_missing_gives_false_and_reject(self):
+        def drop_everything(preflight, deploy, snapshot):
+            preflight['payload'].pop('area_ha_before')
+            preflight['payload'].pop('area_ha_after')
+            deploy['payload'].pop('area_ha_before')
+            deploy['payload'].pop('area_ha_after')
+            snapshot['payload'].pop('area_ha')
+
+        report, markdown = self.build(drop_everything)
+        # Пять None давали множество из одного элемента, и старое выражение
+        # объявляло площадь неизменной именно при ПОЛНОМ отсутствии улик.
+        self.assertFalse(report['area_ha_unchanged'])
+        self.assertFalse(self.condition(report))
+        self.assertEqual(report['verdict'], 'REJECT')
+        self.assertIn('drone_flights.area_ha не менялась | НЕТ', markdown)
+
+    def test_one_differing_gives_false_and_reject(self):
+        def change_one(preflight, deploy, snapshot):
+            deploy['payload']['area_ha_after'] = dict(
+                deploy['payload']['area_ha_after'])
+            deploy['payload']['area_ha_after']['sha256'] = 'f' * 64
+
+        report, markdown = self.build(change_one)
+        self.assertFalse(report['area_ha_unchanged'])
+        self.assertFalse(self.condition(report))
+        self.assertEqual(report['verdict'], 'REJECT')
+        self.assertIn('drone_flights.area_ha не менялась | НЕТ', markdown)
+
+    def test_the_field_and_the_condition_never_disagree(self):
+        for mutate in (None,
+                       lambda p, d, s: d['payload'].pop('area_ha_after'),
+                       lambda p, d, s: s['payload'].pop('area_ha')):
+            report, _markdown = self.build(mutate)
+            self.assertEqual(report['area_ha_unchanged'],
+                             self.condition(report))
+
+
+
+# ═══ Д3. Переданный неверный порог не исчезает ══════════════════════════════
+
+THRESHOLD_SCRIPT = r'''
+param([string]$Module, [double]$Share, [double]$Delta, [string]$Which)
+Import-Module $Module -Force
+# Повторяет ровно тот способ, которым скрипт отчёта решает, передавать ли
+# параметр дальше.
+function Build-Arguments {
+    [CmdletBinding()]
+    param([double]$OwnerShareThreshold, [double]$OwnerDjiDeltaPercent)
+    $arguments = @()
+    if ($PSBoundParameters.ContainsKey('OwnerShareThreshold')) {
+        $arguments += @('--owner-share-threshold',
+                        $OwnerShareThreshold.ToString([System.Globalization.CultureInfo]::InvariantCulture))
+    }
+    if ($PSBoundParameters.ContainsKey('OwnerDjiDeltaPercent')) {
+        $arguments += @('--owner-dji-delta-percent',
+                        $OwnerDjiDeltaPercent.ToString([System.Globalization.CultureInfo]::InvariantCulture))
+    }
+    return ,$arguments
+}
+switch ($Which) {
+    'none'  { $result = Build-Arguments }
+    'share' { $result = Build-Arguments -OwnerShareThreshold $Share }
+    'delta' { $result = Build-Arguments -OwnerDjiDeltaPercent $Delta }
+    'both'  { $result = Build-Arguments -OwnerShareThreshold $Share -OwnerDjiDeltaPercent $Delta }
+}
+[ordered]@{ args = @($result) } | ConvertTo-Json -Compress
+'''
+
+
+@unittest.skipIf(PWSH is None, 'no PowerShell in this environment')
+class ExplicitThresholdsReachPython(unittest.TestCase):
+    """Переданное значение обязано дойти до единственной проверки, а не пропасть.
+
+    [REASON]: отрицательное число служило признаком «параметр не задан», и
+    условие `-ge 0` решало, передавать ли его дальше. Поэтому явные -0.01, -1
+    и NaN не отвергались как неверные -- они молча исчезали и превращались в
+    «правило владельца не названо», то есть в TECHNICAL_GO вместо ошибки ввода.
+    """
+
+    def bound(self, which, share=0.0, delta=0.0):
+        directory = tempfile.mkdtemp(prefix='pilot_thr_')
+        try:
+            path = os.path.join(directory, 'thr.ps1')
+            with open(path, 'w', encoding='utf-8', newline='\n') as handle:
+                handle.write(THRESHOLD_SCRIPT)
+            result = subprocess.run(
+                [PWSH, '-NoProfile', '-File', path,
+                 '-Module', os.path.join(KIT_DIR, 'PilotKit.psm1'),
+                 '-Share', str(share), '-Delta', str(delta), '-Which', which],
+                capture_output=True, text=True, cwd=REPO_ROOT)
+            self.assertEqual(result.returncode, 0,
+                             '%s\n%s' % (result.stdout, result.stderr))
+            line = [row for row in result.stdout.splitlines()
+                    if row.strip().startswith('{')][-1]
+            return json.loads(line)['args']
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+
+    def test_an_unbound_parameter_is_not_passed(self):
+        self.assertEqual(self.bound('none'), [])
+
+    def test_a_negative_share_is_passed_on_rather_than_dropped(self):
+        arguments = self.bound('share', share=-0.01)
+        self.assertIn('--owner-share-threshold', arguments)
+        self.assertIn('-0.01', arguments)
+
+    def test_a_negative_delta_is_passed_on_rather_than_dropped(self):
+        arguments = self.bound('delta', delta=-1)
+        self.assertIn('--owner-dji-delta-percent', arguments)
+        self.assertIn('-1', arguments)
+
+    def test_zero_is_passed_on(self):
+        """Ноль -- законное значение обоих правил, а не «не задано»."""
+        self.assertIn('--owner-share-threshold', self.bound('share', share=0))
+        self.assertIn('--owner-dji-delta-percent', self.bound('delta', delta=0))
+
+    def test_the_number_is_formatted_invariantly(self):
+        """Русская локаль сервера иначе прислала бы python «0,5»."""
+        arguments = self.bound('share', share=0.5)
+        self.assertIn('0.5', arguments)
+        self.assertNotIn('0,5', arguments)
+
+    def test_the_script_binds_by_presence_not_by_sign(self):
+        text = code_text('STAGING_PILOT_REPORT.ps1')
+        self.assertIn("$PSBoundParameters.ContainsKey('OwnerShareThreshold')",
+                      text)
+        self.assertIn("$PSBoundParameters.ContainsKey('OwnerDjiDeltaPercent')",
+                      text)
+        self.assertNotIn('$OwnerShareThreshold -ge 0', text)
+        self.assertNotIn('$OwnerDjiDeltaPercent -ge 0', text)
+        self.assertNotIn('$OwnerShareThreshold = -1', text)
+        # [REASON]: обе величины, а не «где-то в файле встречается слово
+        # InvariantCulture». Подмена одной из них на `[string]$x` вернула бы
+        # культурное форматирование: на ru-RU сервере python получил бы «0,5».
+        self.assertIn('$OwnerShareThreshold.ToString($invariant)', text)
+        self.assertIn('$OwnerDjiDeltaPercent.ToString($invariant)', text)
+        self.assertNotIn('([string]$OwnerShareThreshold)', text)
+        self.assertNotIn('([string]$OwnerDjiDeltaPercent)', text)
+
+    def test_python_refuses_every_bad_value_that_now_reaches_it(self):
+        """Единственная проверка диапазона -- в python, и она видит их все."""
+        for bad in ('-0.01', '1.01', 'NaN', 'Infinity', '-Infinity'):
+            with self.assertRaises(common.ProbeError, msg=bad):
+                common.owner_share_threshold(float(bad))
+        for bad in ('-1', 'NaN', 'Infinity', '-Infinity'):
+            with self.assertRaises(common.ProbeError, msg=bad):
+                common.owner_delta_percent(float(bad))
+        self.assertEqual(common.owner_share_threshold(0.0), 0.0)
+        self.assertEqual(common.owner_share_threshold(1.0), 1.0)
+        self.assertEqual(common.owner_delta_percent(0.0), 0.0)
+
+
+
+# ═══ Д4. run.json проверяется целиком, а не почти ═══════════════════════════
+
+MANIFEST_SCRIPT = r'''
+param([string]$Module, [string]$RunsRoot, [string]$RunId, [string]$Machine)
+Import-Module $Module -Force
+$kit = ('a' * 40)
+function New-Case([hashtable]$Override) {
+    $m = [ordered]@{
+        kit              = 'DRONE-USEFUL-AREA-PILOT-001'
+        kit_version      = '2'
+        run_id           = $RunId
+        approved_kit_sha = $kit
+        measured_kit_sha = $kit
+        product_sha      = 'c3e6a12ab95117710eeea5e05133f5cd548b698e'
+        target_day       = '2026-06-05'
+        created_utc      = '2026-09-03T10:00:00Z'
+        machine          = $Machine
+        kit_checkout     = 'C:\vehicle-soft-pilot-kit'
+        run_root         = (Get-PilotRunDirectory -RunsRoot $RunsRoot -RunId $RunId)
+        steps            = [ordered]@{}
+    }
+    foreach ($key in $Override.Keys) {
+        if ($null -eq $Override[$key] -and $Override[$key] -isnot [string]) {
+            $m.Remove($key)
+        } else {
+            $m[$key] = $Override[$key]
+        }
+    }
+    return ([pscustomobject]$m)
+}
+function Check([hashtable]$Override) {
+    $problems = @(Test-PilotRunManifest -Manifest (New-Case $Override) `
+                                        -RunsRoot $RunsRoot -RunId $RunId `
+                                        -ApprovedKitSha $kit `
+                                        -ExpectedMachine $Machine)
+    return ,$problems
+}
+$results = [ordered]@{}
+$results['healthy']              = Check @{}
+$results['run_root_value']       = (Get-PilotRunDirectory -RunsRoot $RunsRoot -RunId $RunId)
+$results['no_created_utc']       = Check @{ created_utc = $null }
+$results['bad_created_utc']      = Check @{ created_utc = 'yesterday' }
+$results['created_utc_no_zulu']  = Check @{ created_utc = '2026-09-03 10:00:00' }
+$results['other_machine']        = Check @{ machine = 'SOMEONE-ELSE' }
+$results['machine_other_case']   = Check @{ machine = $Machine.ToLower() }
+$results['steps_is_a_string']    = Check @{ steps = 'not-an-object' }
+$results['steps_is_a_number']    = Check @{ steps = 7 }
+$results['no_steps']             = Check @{ steps = $null }
+$results['run_root_elsewhere']   = Check @{ run_root = 'C:\transport-report\runs\x' }
+$results['run_root_in_staging']  = Check @{ run_root = 'C:\transport-report-staging\x' }
+$results['run_root_other_run']   = Check @{ run_root = (Get-PilotRunDirectory -RunsRoot $RunsRoot -RunId '20260101T000000Z-deadbeef') }
+$results['wrong_product']        = Check @{ product_sha = ('f' * 40) }
+$results['wrong_day']            = Check @{ target_day = '2026-06-06' }
+$results['sha_disagree']         = Check @{ measured_kit_sha = ('b' * 40) }
+$results | ConvertTo-Json -Depth 5 -Compress
+'''
+
+
+@unittest.skipIf(PWSH is None, 'no PowerShell in this environment')
+class RunManifestIsFullyValidated(unittest.TestCase):
+    """Поведенческие проверки, а не поиск строк в исходнике.
+
+    [REASON]: `New-PilotRun` пишет `created_utc`, а проверка его не требовала
+    и формата не смотрела; `machine` проверялась лишь на непустоту, то есть
+    манифест другой машины принимался; `steps` могло быть строкой. Всё это --
+    поля, из которых берутся пути и решения, и «почти проверено» здесь значит
+    «не проверено».
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.runs_root = 'D:\\pilot-runs'
+        cls.run_id = '20260903T100000Z-abcdef01'
+        cls.machine = 'SRV-YOQSH'
+        cls.state = cls._run()
+
+    @classmethod
+    def _run(cls):
+        directory = tempfile.mkdtemp(prefix='pilot_man_')
+        try:
+            path = os.path.join(directory, 'manifest.ps1')
+            with open(path, 'w', encoding='utf-8', newline='\n') as handle:
+                handle.write(MANIFEST_SCRIPT)
+            result = subprocess.run(
+                [PWSH, '-NoProfile', '-File', path,
+                 '-Module', os.path.join(KIT_DIR, 'PilotKit.psm1'),
+                 '-RunsRoot', cls.runs_root, '-RunId', cls.run_id,
+                 '-Machine', cls.machine],
+                capture_output=True, text=True, cwd=REPO_ROOT)
+            if result.returncode != 0:
+                raise AssertionError('%s\n%s' % (result.stdout, result.stderr))
+            line = [row for row in result.stdout.splitlines()
+                    if row.strip().startswith('{')][-1]
+            return json.loads(line)
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+
+    def problems(self, name):
+        value = self.state[name]
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        return list(value)
+
+    def test_a_healthy_manifest_has_no_problems(self):
+        self.assertEqual(self.problems('healthy'), [])
+        # [REASON]: и он не пустой по недоразумению. Join-Path на Linux не
+        # умеет `D:\...` и возвращал $null -- два null сравнивались равными,
+        # и «здоровый» манифест проходил, не имея run_root вовсе.
+        self.assertTrue(self.state['run_root_value'].endswith(self.run_id))
+        self.assertIn(self.runs_root.replace('\\\\', '\\'),
+                      self.state['run_root_value'])
+
+    def test_created_utc_is_required(self):
+        self.assertIn('MISSING_FIELD:created_utc',
+                      self.problems('no_created_utc'))
+
+    def test_created_utc_must_be_a_utc_timestamp(self):
+        self.assertIn('MALFORMED_CREATED_UTC',
+                      self.problems('bad_created_utc'))
+        self.assertIn('MALFORMED_CREATED_UTC',
+                      self.problems('created_utc_no_zulu'))
+
+    def test_the_machine_must_be_this_machine(self):
+        self.assertIn('MACHINE_MISMATCH', self.problems('other_machine'))
+
+    def test_the_machine_comparison_ignores_case(self):
+        self.assertEqual(self.problems('machine_other_case'), [])
+
+    def test_steps_must_be_an_object(self):
+        self.assertIn('STEPS_IS_NOT_AN_OBJECT',
+                      self.problems('steps_is_a_string'))
+        self.assertIn('STEPS_IS_NOT_AN_OBJECT',
+                      self.problems('steps_is_a_number'))
+        self.assertTrue(self.problems('no_steps'))
+
+    def test_the_run_root_must_be_this_runs_directory(self):
+        for name in ('run_root_elsewhere', 'run_root_in_staging',
+                     'run_root_other_run'):
+            self.assertIn('RUN_ROOT_IS_NOT_THE_RUN_DIRECTORY',
+                          self.problems(name), name)
+        self.assertIn('RUN_ROOT_IS_INSIDE_A_CHECKOUT',
+                      self.problems('run_root_elsewhere'))
+        self.assertIn('RUN_ROOT_IS_INSIDE_A_CHECKOUT',
+                      self.problems('run_root_in_staging'))
+
+    def test_the_revisions_and_the_day_are_checked(self):
+        self.assertIn('PRODUCT_SHA_MISMATCH', self.problems('wrong_product'))
+        self.assertIn('TARGET_DAY_MISMATCH', self.problems('wrong_day'))
+        self.assertIn('APPROVED_AND_MEASURED_KIT_SHA_DIFFER',
+                      self.problems('sha_disagree'))
+
+    def test_the_required_field_list_is_declared_and_complete(self):
+        text = code_text('PilotKit.psm1')
+        self.assertIn('$script:RunManifestRequiredFields', text)
+        for field in ('kit', 'kit_version', 'run_id', 'approved_kit_sha',
+                      'measured_kit_sha', 'product_sha', 'target_day',
+                      'created_utc', 'machine', 'kit_checkout', 'run_root',
+                      'steps'):
+            self.assertIn("'%s'" % field, text, field)
+
+    def test_every_caller_passes_the_expected_machine(self):
+        text = code_text('PilotKit.psm1')
+        # Имена якорятся точно: `function Get-PilotRun` -- префикс
+        # `function Get-PilotRunDirectory`, и без скобки поиск попадал бы в
+        # соседнюю функцию.
+        for caller in ('function New-PilotRun {', 'function Get-PilotRun {',
+                       'function Set-PilotRunStep {'):
+            body = text[text.index(caller):][:2600]
+            self.assertIn('Assert-PilotRunManifest', body, caller)
+            self.assertIn('-ExpectedMachine $env:COMPUTERNAME', body, caller)
+
+
+
+# ═══ Д5. Белый список действует и на вложенные поля ═════════════════════════
+
+PRIVATE_MARKER = 'SYNTHETIC-PRIVATE-NAME'
+PRIVATE_KEY = 'customer_field_name'
+
+
+class NestedFieldsObeyTheAllowlist(unittest.TestCase):
+    """Необъявленное вложенное поле не уезжает в отчёт.
+
+    [REASON]: `scan_for_private_values` сверяла с белым списком только КЛЮЧИ
+    ВЕРХНЕГО УРОВНЯ, а `build_report` целиком копировала `collect_counters` и
+    `summary` каждого пересчёта. Обычная строка, не похожая ни на uuid, ни на
+    координату, ни на слово-секрет, проходила насквозь -- то есть заявление
+    «отчёт строится по белому списку» было неверным ровно там, где данные
+    приезжают снаружи.
+    """
+
+    def build(self, mutate=None):
+        shared = shared_evidence()
+        collect = copy.deepcopy(shared['collect'])
+        runs = copy.deepcopy(shared['runs'])
+        if mutate:
+            mutate(collect, runs)
+        return report_mod.build_report(
+            copy.deepcopy(shared['preflight']), copy.deepcopy(shared['deploy']),
+            collect, runs, copy.deepcopy(shared['snapshot']), None, None, [],
+            run_id=shared['run_id'], kit_sha=KIT_SHA_FIXTURE)
+
+    def test_a_clean_report_is_not_rejected(self):
+        report, _markdown = self.build()
+        self.assertNotIn('REPORT_CONTAINS_UNDECLARED_NESTED_FIELDS',
+                         report['verdict_reasons'])
+        self.assertEqual(report['undeclared_nested_fields'], 0)
+
+    def test_an_unknown_counter_is_refused_and_never_printed(self):
+        def plant(collect, runs):
+            collect['payload']['counters'][PRIVATE_KEY] = PRIVATE_MARKER
+
+        report, markdown = self.build(plant)
+        document = json.dumps(report, ensure_ascii=True)
+
+        self.assertNotIn(PRIVATE_MARKER, document)
+        self.assertNotIn(PRIVATE_KEY, document)
+        self.assertNotIn(PRIVATE_MARKER, markdown)
+        self.assertNotIn(PRIVATE_KEY, markdown)
+        self.assertEqual(report['verdict'], 'REJECT')
+        self.assertIn('REPORT_CONTAINS_UNDECLARED_NESTED_FIELDS',
+                      report['verdict_reasons'])
+        self.assertGreaterEqual(report['undeclared_nested_fields'], 1)
+
+    def test_an_unknown_recalc_summary_field_is_refused_and_never_printed(self):
+        def plant(collect, runs):
+            for run in runs:
+                if run['payload'].get('label') == 'apply-1':
+                    run['payload']['summary'][PRIVATE_KEY] = PRIVATE_MARKER
+
+        report, markdown = self.build(plant)
+        document = json.dumps(report, ensure_ascii=True)
+
+        self.assertNotIn(PRIVATE_MARKER, document)
+        self.assertNotIn(PRIVATE_KEY, document)
+        self.assertNotIn(PRIVATE_MARKER, markdown)
+        self.assertNotIn(PRIVATE_KEY, markdown)
+        self.assertEqual(report['verdict'], 'REJECT')
+        self.assertIn('REPORT_CONTAINS_UNDECLARED_NESTED_FIELDS',
+                      report['verdict_reasons'])
+
+    def test_both_at_once_are_counted(self):
+        def plant(collect, runs):
+            collect['payload']['counters'][PRIVATE_KEY] = PRIVATE_MARKER
+            for run in runs:
+                run['payload']['summary'][PRIVATE_KEY] = PRIVATE_MARKER
+
+        report, _markdown = self.build(plant)
+        self.assertEqual(report['verdict'], 'REJECT')
+        self.assertGreaterEqual(report['undeclared_nested_fields'], 2)
+
+    def test_the_declared_counters_still_arrive(self):
+        report, _markdown = self.build()
+        counters = report['collect_counters']
+        for name in ('probe_observations', 'probe_confirmed',
+                     'probe_request_failures', 'probe_pending_requests',
+                     'collect_batch_accepted', 'exit'):
+            self.assertIn(name, counters, name)
+
+    def test_the_declared_summary_fields_still_arrive(self):
+        report, _markdown = self.build()
+        summaries = [run['summary'] for run in report['recalc_runs']]
+        self.assertTrue(summaries)
+        for summary in summaries:
+            for name in ('works', 'inserted', 'updated', 'unchanged',
+                         'deleted', 'READY_ESTIMATE', 'ready_area_ha'):
+                self.assertIn(name, summary, name)
+
+    def test_decide_rejects_an_undeclared_nested_field_on_its_own(self):
+        """Само правило, а не только сборка отчёта поверх него."""
+        healthy = [{'code': 'X', 'passed': True, 'means': ''}]
+        coverage = {'works_without_number_share': 0.0}
+        verdict, reasons = report_mod.decide(
+            healthy, coverage, 0.9, -1.0, 999.0, True, (),
+            undeclared_nested=1)
+        self.assertEqual(verdict, 'REJECT')
+        self.assertIn('REPORT_CONTAINS_UNDECLARED_NESTED_FIELDS', reasons)
+
+        # Положительный контроль: без чужого поля тот же вход даёт GO.
+        verdict, _reasons = report_mod.decide(
+            healthy, coverage, 0.9, -1.0, 999.0, True, (),
+            undeclared_nested=0)
+        self.assertEqual(verdict, 'GO')
+
+    def test_the_allowlists_are_declared_not_inferred(self):
+        self.assertTrue(report_mod.ALLOWED_COUNTER_FIELDS)
+        self.assertTrue(report_mod.ALLOWED_SUMMARY_FIELDS)
+        self.assertNotIn(PRIVATE_KEY, report_mod.ALLOWED_COUNTER_FIELDS)
+        self.assertNotIn(PRIVATE_KEY, report_mod.ALLOWED_SUMMARY_FIELDS)
+
+    def test_the_counter_allowlist_matches_the_collector(self):
+        from drone_collector.main import COLLECT_SUMMARY_KEYS
+        self.assertEqual(tuple(report_mod.ALLOWED_COUNTER_FIELDS),
+                         tuple(COLLECT_SUMMARY_KEYS))
+
+    def test_the_docstring_describes_the_real_exit_codes(self):
+        with open(os.path.join(KIT_DIR, 'pilot_report.py'),
+                  encoding='utf-8') as handle:
+            head = handle.read().split('"""')[1]
+        self.assertIn('0', head)
+        self.assertIn('10', head)
+        self.assertIn('11', head)
+        self.assertIn('12', head)
+        self.assertNotIn('3 -- отчёт не прошёл', head)
+
 
 
 if __name__ == '__main__':

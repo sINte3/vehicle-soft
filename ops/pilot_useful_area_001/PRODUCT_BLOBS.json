@@ -37,11 +37,11 @@
     }
   },
   "kit_own_files": {
-    "ops/pilot_useful_area_001/BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1": "9359f9a36ed54c111b1560e1600cd1dcc4332dc6",
+    "ops/pilot_useful_area_001/BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1": "30d0d0dacfd78153458ad0352be652e8d3452c90",
     "ops/pilot_useful_area_001/PREFLIGHT_AND_COPY_TEST.ps1": "95ce5b4a1a2e6efe269256628b7bfb7e0ae7c19e",
-    "ops/pilot_useful_area_001/PilotKit.psm1": "5895f93ebd320a711cec7a2f5edc32ded934c772",
+    "ops/pilot_useful_area_001/PilotKit.psm1": "3ca1936783bb703f167dc3201e7b22f1696feadd",
     "ops/pilot_useful_area_001/STAGING_DEPLOY_AND_MIGRATE.ps1": "7d12c64b425ac583c6ae0be35c21ad891ee05299",
-    "ops/pilot_useful_area_001/STAGING_PILOT_REPORT.ps1": "c2793be8ca05ad47737749d5090363bfc85088c6",
+    "ops/pilot_useful_area_001/STAGING_PILOT_REPORT.ps1": "49a144054eec9ac77c74b959ed8ec9af817d5e0b",
     "ops/pilot_useful_area_001/STAGING_RECALCULATE_AND_VERIFY.ps1": "0b765d90e79e2c4c5b32ff04084f7cb9c005ddf3",
     "ops/pilot_useful_area_001/STAGING_ROLLBACK.ps1": "5e18ad0a1a66133a27b478a114dc1c9dd8ca601f",
     "ops/pilot_useful_area_001/pilot_blob_manifest.py": "dc3e79fbc4ef99c5d69a83f864273d3616934af6",
@@ -51,7 +51,7 @@
     "ops/pilot_useful_area_001/pilot_db_probe.py": "fbf42b1fc0c3281b5f37e0ae66d1936c3eca0f41",
     "ops/pilot_useful_area_001/pilot_recalc_parse.py": "0fe74e7e4ab3b9b8b77dddcad3bf8e413a9f38c0",
     "ops/pilot_useful_area_001/pilot_repo_check.py": "83b9dc0433795fffa918cd9823562a3ee7b5ac5e",
-    "ops/pilot_useful_area_001/pilot_report.py": "0ea0cdecc70c599f4cdd66c515af553697557339"
+    "ops/pilot_useful_area_001/pilot_report.py": "58d803c3113fbee5afe4874dcb834824ba62e27f"
   },
   "kit_version": "2",
   "product_sha": "c3e6a12ab95117710eeea5e05133f5cd548b698e"
