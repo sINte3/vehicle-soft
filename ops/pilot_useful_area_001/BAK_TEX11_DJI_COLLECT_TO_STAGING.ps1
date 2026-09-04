@@ -150,10 +150,21 @@ Write-Output "COLLECTOR_BLOBS=VERIFIED"
 & $K.CollectorPython --version
 if ($LASTEXITCODE -ne 0) { throw "REFUSED: the venv python did not run." }
 
-& $K.CollectorPython -c 'import playwright; print("PLAYWRIGHT_IMPORT=PASS")'
+# [REASON]: NO nested quotes inside a native argument. Windows PowerShell 5.1
+# does not escape the double quotes it finds inside an argument when it rebuilds
+# the command line for a native process, so
+# `-c 'import playwright; print("PLAYWRIGHT_IMPORT=PASS")'` arrived at python as
+# `import playwright; print(PLAYWRIGHT_IMPORT=PASS)`. On BAK-TEX11 that died
+# with `NameError: name 'PASS' is not defined` -- AFTER `import playwright` had
+# already succeeded. The import is the question this step asks; printing the
+# answer is PowerShell's job, not python's. PowerShell 7.3 fixed the quoting
+# with $PSNativeCommandArgumentPassing, which is exactly why no 7-based check
+# ever saw this.
+& $K.CollectorPython -c "import playwright"
 if ($LASTEXITCODE -ne 0) {
     throw "REFUSED: playwright is not importable in the collector venv. Fix the environment separately -- this run installs nothing."
 }
+Write-Output "PLAYWRIGHT_IMPORT=PASS"
 
 & $K.CollectorPython -m drone_collector.main --help | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "REFUSED: the collector CLI did not start." }

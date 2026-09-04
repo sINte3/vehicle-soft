@@ -37,7 +37,7 @@
     }
   },
   "kit_own_files": {
-    "ops/pilot_useful_area_001/BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1": "30d0d0dacfd78153458ad0352be652e8d3452c90",
+    "ops/pilot_useful_area_001/BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1": "2677772fe6a254b44e1358499328eefadcbd691a",
     "ops/pilot_useful_area_001/PREFLIGHT_AND_COPY_TEST.ps1": "4c7d737aaddbfdf164f6fbf507fc0dba5d01b914",
     "ops/pilot_useful_area_001/PilotKit.psm1": "4cd629c2c89a46f9d73843f506113364d693594b",
     "ops/pilot_useful_area_001/STAGING_DEPLOY_AND_MIGRATE.ps1": "8c22858ea4cc6c98f709e68f7930b350bbd65248",
