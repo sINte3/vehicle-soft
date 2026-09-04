@@ -4077,26 +4077,6 @@ $results['raw_capture_threw'] = $rawThrew
 $results['raw_capture_error_id'] = $rawId
 $results['raw_capture_yields_error_record'] = $rawHasErrorRecord
 
-# Порядок доставки, который PowerShell даёт САМ. Наблюдается под 'Continue',
-# потому что под 'Stop' на 5.1 наблюдать нечего -- захват там бросает.
-# [REASON]: порядок различается по платформам. Python при перенаправлении
-# буферизует stdout блоками, а stderr не буферизует, поэтому на Windows
-# предупреждение приходит РАНЬШЕ вывода. Утверждать конкретный порядок значит
-# закреплять особенность одной платформы; проверять надо, что помощник ничего
-# не переупорядочивает.
-$rawOrder = ''
-$rawEap = $ErrorActionPreference
-try {
-    $ErrorActionPreference = 'Continue'
-    $rawAll = & $Py $Warn 2>&1
-    $rawText = (($rawAll | ForEach-Object { $_.ToString() }) -join "`n")
-    if ($rawText.IndexOf('MIGRATION_ID') -lt $rawText.IndexOf('DeprecationWarning')) {
-        $rawOrder = 'stdout-first'
-    } else {
-        $rawOrder = 'stderr-first'
-    }
-} finally { $ErrorActionPreference = $rawEap }
-$results['raw_delivery_order'] = $rawOrder
 
 # --- 1. Успешный процесс, написавший предупреждение в stderr ----------------
 $okThrew = $false
@@ -4114,10 +4094,17 @@ if (-not $okThrew) {
     $results['ok_stderr_kept'] = ($ok.Stderr -match 'DeprecationWarning')
     $results['ok_stderr_not_in_stdout'] = -not ($ok.Stdout -match 'DeprecationWarning')
     $results['ok_text_has_both'] = (($ok.Text -match 'MIGRATION_ID') -and ($ok.Text -match 'DeprecationWarning'))
-    # Помощник отдаёт строки в том же порядке, в каком их отдал сам PowerShell.
-    $helperOrder = if ($ok.Text.IndexOf('MIGRATION_ID') -lt $ok.Text.IndexOf('DeprecationWarning')) { 'stdout-first' } else { 'stderr-first' }
-    $results['helper_delivery_order'] = $helperOrder
-    $results['ok_text_keeps_order'] = ($helperOrder -eq $rawOrder)
+    # [REASON]: проверяется порядок ВНУТРИ потока, а не между потоками.
+    # Межпотоковый порядок недетерминирован: python при перенаправлении
+    # буферизует stdout блоками, а stderr не буферизует, и какая строка придёт
+    # раньше -- зависит от момента сброса буфера. Прежняя редакция этой
+    # проверки сравнивала межпотоковый порядок двух РАЗНЫХ запусков и падала на
+    # CI через раз. Порядок внутри потока воспроизводим, и именно он делает
+    # журнал читаемым.
+    $results['ok_stdout_keeps_order'] = ($ok.Stdout.IndexOf('MIGRATION_ID') -ge 0) -and
+        ($ok.Stdout.IndexOf('MIGRATION_ID') -lt $ok.Stdout.IndexOf('Already applied'))
+    $results['ok_text_keeps_order'] = ($ok.Text.IndexOf('MIGRATION_ID') -ge 0) -and
+        ($ok.Text.IndexOf('MIGRATION_ID') -lt $ok.Text.IndexOf('Already applied'))
     $results['ok_no_error_record'] = -not (($ok.Stdout -is [System.Management.Automation.ErrorRecord]) -or
                                            ($ok.Text -is [System.Management.Automation.ErrorRecord]))
 }
@@ -4409,12 +4396,16 @@ class NativeStderrDoesNotKillTheStep(unittest.TestCase):
                         'строка stderr обязана сохраниться, а не быть '
                         'выброшенной')
         self.assertTrue(state['ok_text_has_both'])
-        self.assertTrue(
-            state['ok_text_keeps_order'],
-            'помощник обязан отдавать строки в том же порядке, в каком их '
-            'отдал сам PowerShell (%s), иначе формат журналов изменился бы; '
-            'он отдал %s'
-            % (state['raw_delivery_order'], state['helper_delivery_order']))
+        # [REASON]: порядок строк ВНУТРИ потока -- то, что делает журнал
+        # читаемым, и он воспроизводим. Межпотоковый порядок здесь НЕ
+        # утверждается: он зависит от момента сброса буфера python и на разных
+        # платформах разный. Прежняя редакция утверждала именно его и падала
+        # на CI через раз.
+        self.assertTrue(state['ok_stdout_keeps_order'],
+                        'строки stdout обязаны сохранить свой порядок')
+        self.assertTrue(state['ok_text_keeps_order'],
+                        'объединённый текст обязан сохранить порядок строк '
+                        'одного потока')
         self.assertTrue(state['ok_stderr_not_in_stdout'],
                         'stdout остаётся данными: предупреждение в него не '
                         'подмешивается')
