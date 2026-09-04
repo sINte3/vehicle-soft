@@ -4657,9 +4657,17 @@ $results['mode'] = if ($hasSwitch) { [string]$PSNativeCommandArgumentPassing } e
 $env:PYTHONPATH = $FakeRoot
 
 # --- ЛОВУШКА. Историческая строка комплекта, слово в слово. -----------------
-$old = & $Py -c 'import playwright; print("PLAYWRIGHT_IMPORT=PASS")' 2>&1
-$results['old_form_exit'] = $LASTEXITCODE
-$results['old_form_text'] = (($old | ForEach-Object { $_.ToString() }) -join ' | ')
+# [REASON]: через Invoke-PilotNative, а НЕ прямым захватом `2>&1`. На настоящем
+# 5.1 python пишет traceback в stderr, и прямой захват под 'Stop' превращает
+# его в терминирующий NativeCommandError -- ровно тот дефект, что закрыт в
+# PR #116. Первая редакция этой проверки написала прямой захват и умерла на
+# нём: скрипт падал целиком, а все проверки читались как сломанные, хотя
+# сломано было только измерение. Массив аргументов ловушку не портит: 5.1
+# коверкает кавычки при сборке командной строки, откуда бы аргумент ни пришёл.
+$oldRun = Invoke-PilotNative -FilePath $Py -Arguments @(
+    '-c', 'import playwright; print("PLAYWRIGHT_IMPORT=PASS")')
+$results['old_form_exit'] = $oldRun.ExitCode
+$results['old_form_text'] = ($oldRun.Text -replace "\r?\n", ' | ')
 
 # --- Настоящий блок ИЗ ФАЙЛА, при импортируемом playwright ------------------
 $K = [pscustomobject]@{ CollectorPython = $Py }
