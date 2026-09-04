@@ -331,12 +331,59 @@ function Get-PilotServiceImagePath {
             }
         }
     }
-    return [ordered]@{
+    # [REASON]: [pscustomobject] here, not a bare [ordered] hashtable. An
+    # OrderedDictionary does not surface its KEYS in PSObject.Properties -- that
+    # collection holds the dictionary's own members (Count, Keys, Values,
+    # IsReadOnly, IsFixedSize, SyncRoot, IsSynchronized). Any caller that asks
+    # "does this candidate have an AppDirectory?" the way PowerShell asks it of
+    # an object is told NO about a candidate that plainly has one. That is not
+    # hypothetical: on SRV-YOQSH it made this kit refuse the real staging
+    # service and stop the pilot dead.
+    return [pscustomobject][ordered]@{
         Name         = $Name
         ImagePath    = $imagePath
         AppDirectory = $appDirectory
         Application  = $appPath
     }
+}
+
+function Get-PilotCandidateField {
+    <#
+        Read one field of a service candidate, whichever of the two admissible
+        shapes it arrives in: a PSCustomObject, or an IDictionary (a hashtable
+        or an OrderedDictionary).
+
+        [REASON]: the caller must not care. Get-PilotServiceImagePath used to
+        return [ordered]@{...} while the selector probed candidates with
+        PSObject.Properties.Name, which never lists dictionary keys; the fields
+        were present and read as absent. Fixing only the producer would leave
+        the selector just as brittle for the next caller, so the reader is made
+        total over both shapes here.
+
+        [REASON]: dictionaries are read through Contains plus the indexer, not
+        through dot access. Dot access finds a key when the key is there, but
+        when it is ABSENT it falls back to the dictionary's own members, so an
+        absent field can come back as a value instead of $null: on
+        [ordered]@{ Name='...'; AppDirectory='...' } the expression
+        $candidate.Count is 2, the size of the dictionary. Contains is the only
+        reading that can tell "this candidate has no such field" from "this
+        candidate has one".
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowNull()]$Candidate,
+          [Parameter(Mandatory)][string]$Field)
+
+    if ($null -eq $Candidate) { return $null }
+
+    if ($Candidate -is [System.Collections.IDictionary]) {
+        if ($Candidate.Contains($Field)) { return [string]$Candidate[$Field] }
+        return $null
+    }
+
+    if ($Candidate.PSObject.Properties.Name -contains $Field) {
+        return [string]$Candidate.$Field
+    }
+    return $null
 }
 
 function Select-PilotStagingService {
@@ -358,15 +405,12 @@ function Select-PilotStagingService {
 
     $resolved = @()
     foreach ($candidate in $Candidates) {
-        $name = [string]$candidate.Name
+        $name = [string](Get-PilotCandidateField -Candidate $candidate -Field 'Name')
         if ($name.Trim().ToLowerInvariant() -eq $script:ProductionService.ToLowerInvariant()) { continue }
 
         $where = @()
         foreach ($field in 'AppDirectory', 'Application', 'ImagePath') {
-            $value = $null
-            if ($candidate.PSObject.Properties.Name -contains $field) {
-                $value = [string]$candidate.$field
-            }
+            $value = Get-PilotCandidateField -Candidate $candidate -Field $field
             if (-not [string]::IsNullOrWhiteSpace($value)) { $where += $value }
         }
         if ($where.Count -eq 0) { continue }
@@ -389,7 +433,9 @@ function Select-PilotStagingService {
         throw "REFUSED: no service could be resolved to the staging checkout $($script:StagingRoot). Nothing was stopped."
     }
     if ($resolved.Count -gt 1) {
-        $names = ($resolved | ForEach-Object { $_.Name }) -join ', '
+        $names = ($resolved | ForEach-Object {
+            Get-PilotCandidateField -Candidate $_ -Field 'Name'
+        }) -join ', '
         throw "REFUSED: $($resolved.Count) services resolve to the staging checkout ($names). This kit never guesses which one to stop."
     }
     return $resolved[0]
@@ -1115,7 +1161,8 @@ Export-ModuleMember -Function Get-PilotConstants, Get-PilotPathSegments,
     Test-PilotUrlIsProduction, Test-PilotUrlIsStaging, Assert-PilotStagingUrl,
     Test-PilotRedirectStaysInStaging, Test-PilotRedirectStaysInAuthority,
     Test-PilotSmokeStatus,
-    Assert-PilotHost, Get-PilotServiceImagePath, Select-PilotStagingService,
+    Assert-PilotHost, Get-PilotServiceImagePath, Get-PilotCandidateField,
+    Select-PilotStagingService,
     Resolve-PilotStagingService, Assert-PilotServiceIsNotProduction,
     Invoke-PilotGit, Assert-PilotWorktreeClean, Get-PilotHeadSha,
     Get-PilotKitSha, Assert-PilotApprovedKitSha, Assert-PilotProductSha,
