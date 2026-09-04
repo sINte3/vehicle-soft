@@ -4645,6 +4645,337 @@ class NoUnsafeNativeCaptureRemains(unittest.TestCase):
             'Export-ModuleMember -Function')[1]
         self.assertIn('Invoke-PilotNative', export)
 
+# ═══ С3. Кавычки в аргументе native-процесса на PowerShell 5.1 ══════════════
+
+NATIVE_QUOTING_SCRIPT = r"""
+param([string]$Module, [string]$Py, [string]$Block, [string]$FakeRoot, [string]$Mode)
+Import-Module $Module -Force
+$ErrorActionPreference = 'Stop'
+$results = [ordered]@{}
+$results['ps_major'] = $PSVersionTable.PSVersion.Major
+$results['ps_edition'] = if ($PSVersionTable.PSEdition) { [string]$PSVersionTable.PSEdition } else { 'Desktop' }
+
+# 5.1 не знает этой переменной, и её семантика передачи аргументов И ЕСТЬ
+# Legacy. На 7 режим выставляется явно, чтобы дефект воспроизводился там же.
+$hasSwitch = [bool](Get-Variable PSNativeCommandArgumentPassing -ErrorAction SilentlyContinue)
+if ($hasSwitch) { $PSNativeCommandArgumentPassing = $Mode }
+$results['has_argument_passing_switch'] = $hasSwitch
+$results['mode'] = if ($hasSwitch) { [string]$PSNativeCommandArgumentPassing } else { 'legacy-by-version' }
+
+# Подставной пакет playwright: настоящий python, настоящий успешный импорт.
+$env:PYTHONPATH = $FakeRoot
+
+# --- ЛОВУШКА. Историческая строка комплекта, слово в слово. -----------------
+$old = & $Py -c 'import playwright; print("PLAYWRIGHT_IMPORT=PASS")' 2>&1
+$results['old_form_exit'] = $LASTEXITCODE
+$results['old_form_text'] = (($old | ForEach-Object { $_.ToString() }) -join ' | ')
+
+# --- Настоящий блок ИЗ ФАЙЛА, при импортируемом playwright ------------------
+$K = [pscustomobject]@{ CollectorPython = $Py }
+$blockThrew = $false
+$printed = @()
+try {
+    $printed = @(Invoke-Expression $Block)
+} catch {
+    $blockThrew = $true
+    $results['block_error'] = [string]$_.Exception.Message
+}
+$results['block_threw_with_playwright'] = $blockThrew
+$results['block_printed'] = ($printed -join ' | ')
+
+# --- Тот же блок, когда playwright ДЕЙСТВИТЕЛЬНО не импортируется -----------
+$env:PYTHONPATH = ''
+$refusedThrew = $false
+$refusedPrinted = @()
+try {
+    $refusedPrinted = @(Invoke-Expression $Block)
+} catch {
+    $refusedThrew = $true
+    $results['refusal_message'] = [string]$_.Exception.Message
+}
+$results['block_threw_without_playwright'] = $refusedThrew
+$results['block_printed_without_playwright'] = ($refusedPrinted -join ' | ')
+
+$results | ConvertTo-Json -Compress
+"""
+
+
+def extract_playwright_block(text):
+    """Вынуть из файла блок проверки playwright целиком.
+
+    [REASON]: тест обязан исполнять КОД ИЗ ФАЙЛА. Извлечение построено так,
+    чтобы находить обе формы -- и прежнюю (python сам печатал ответ), и
+    нынешнюю (печатает PowerShell). Иначе на прежней форме тест промолчал бы
+    «блок не найден» вместо того, чтобы упасть по настоящей причине.
+    """
+    lines = text.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith('& $K.CollectorPython -c ') and not stripped.startswith('#'):
+            start = index
+            break
+    if start is None:
+        return None
+    # [REASON]: подтверждение могло уехать и ВВЕРХ, до проверки кода возврата.
+    # Окно, начинающееся строго с вызова, такую перестановку не увидело бы --
+    # мутация «напечатать PASS раньше проверки» прошла мимо первой редакции
+    # этого извлечения.
+    while (start > 0
+           and lines[start - 1].strip().startswith('Write-Output "PLAYWRIGHT_IMPORT=')):
+        start -= 1
+    collected = []
+    depth = 0
+    end = start
+    for offset in range(start, len(lines)):
+        line = lines[offset]
+        collected.append(line)
+        depth += line.count('{') - line.count('}')
+        end = offset
+        if offset > start and depth <= 0:
+            break
+    # Печать ответа могла переехать из python в PowerShell -- забрать и её.
+    for offset in range(end + 1, min(end + 4, len(lines))):
+        candidate = lines[offset].strip()
+        if candidate == '':
+            continue
+        if candidate.startswith('Write-Output "PLAYWRIGHT_IMPORT='):
+            collected.append(lines[offset])
+        break
+    return '\n'.join(collected)
+
+
+@unittest.skipIf(PWSH is None, 'no PowerShell in this environment')
+class NativeArgumentQuotingSurvivesPowerShell51(unittest.TestCase):
+    """Аргумент native-процесса не должен нести в себе кавычек.
+
+    [REASON]: на BAK-TEX11 шаг 3 дошёл до проверки Playwright и упал с
+    `NameError: name 'PASS' is not defined`. Windows PowerShell 5.1 не
+    экранирует двойные кавычки, найденные ВНУТРИ аргумента, когда собирает
+    командную строку для native-процесса, поэтому
+    `-c 'import playwright; print("PLAYWRIGHT_IMPORT=PASS")'` доехал до python
+    как `import playwright; print(PLAYWRIGHT_IMPORT=PASS)`. Это ключевое слово
+    функции, а `PASS` -- имя, которого нет. То есть `import playwright` УЖЕ
+    отработал успешно, и отказ был ложным.
+
+    [REASON]: почему это не поймала ни одна проверка. PowerShell 7.3 исправил
+    передачу аргументов через $PSNativeCommandArgumentPassing, и в режиме
+    'Standard' та же строка работает. Windows-задача CI гоняет НАБОР ТЕСТОВ на
+    5.1, а не этот скрипт, а на семёрке дефекта попросту нет. Поэтому проверка
+    ниже выставляет режим 'Legacy' там, где переменная есть, и полагается на
+    саму версию там, где её нет.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='pilot_quoting_')
+        # Подставной пакет: настоящий python, настоящий успешный импорт.
+        package = os.path.join(cls.tmp, 'playwright')
+        os.makedirs(package)
+        with open(os.path.join(package, '__init__.py'), 'w',
+                  encoding='utf-8', newline='\n') as handle:
+            handle.write('# stand-in for the real package; import must succeed\n')
+        cls._state = {}
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def state(self, mode='Legacy'):
+        if mode in type(self)._state:
+            return type(self)._state[mode]
+        with open(os.path.join(KIT_DIR, 'BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1'),
+                  encoding='utf-8') as handle:
+            block = extract_playwright_block(handle.read())
+        self.assertIsNotNone(block, 'блок проверки playwright не найден в файле')
+        directory = tempfile.mkdtemp(prefix='pilot_quoting_ps_')
+        try:
+            path = os.path.join(directory, 'quoting.ps1')
+            with open(path, 'w', encoding='utf-8', newline='\n') as handle:
+                handle.write(NATIVE_QUOTING_SCRIPT)
+            result = subprocess.run(
+                [PWSH, '-NoProfile', '-File', path,
+                 '-Module', os.path.join(KIT_DIR, 'PilotKit.psm1'),
+                 '-Py', sys.executable,
+                 '-Block', block,
+                 '-FakeRoot', self.tmp,
+                 '-Mode', mode],
+                capture_output=True, text=True, cwd=REPO_ROOT)
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+        self.assertEqual(result.returncode, 0,
+                         '%s\n%s' % (result.stdout, result.stderr))
+        line = [row for row in result.stdout.splitlines()
+                if row.strip().startswith('{')][-1]
+        type(self)._state[mode] = json.loads(line)
+        return type(self)._state[mode]
+
+    def test_the_trap_is_really_there(self):
+        """Ловушка проверяется первой, иначе всё ниже доказывало бы не то."""
+        state = self.state('Legacy')
+        expected = os.environ.get('PILOT_POWERSHELL_MAJOR')
+        if expected:
+            self.assertEqual(int(state['ps_major']), int(expected),
+                             'задача просила PowerShell %s, а регрессия '
+                             'отработала на %s'
+                             % (expected, state['ps_major']))
+        if int(state['ps_major']) == 5:
+            self.assertFalse(state['has_argument_passing_switch'],
+                             '5.1 не знает $PSNativeCommandArgumentPassing; '
+                             'если знает -- это не 5.1')
+        self.assertNotEqual(
+            state['old_form_exit'], 0,
+            'историческая строка обязана падать под семантикой 5.1. Она '
+            'вернула %s и вывела %r -- значит эта консоль дефект не '
+            'воспроизводит, и проверка ниже ничего не доказывает'
+            % (state['old_form_exit'], state['old_form_text']))
+        self.assertIn(
+            "name 'PASS' is not defined", state['old_form_text'],
+            'ошибка обязана быть ТОЙ ЖЕ, что пришла с BAK-TEX11, а не любой '
+            'другой. Получено: %r' % state['old_form_text'])
+
+    def test_the_block_from_the_file_passes_when_playwright_imports(self):
+        """Тот самый случай, на котором комплект встал на BAK-TEX11.
+
+        playwright импортируется по-настоящему: рядом лежит подставной пакет,
+        и python его действительно находит. Значит шаг обязан сказать PASS, а
+        не отказать.
+        """
+        state = self.state('Legacy')
+        self.assertFalse(
+            state['block_threw_with_playwright'],
+            'playwright импортируется, а шаг отказал: %s'
+            % state.get('block_error'))
+        self.assertIn(
+            'PLAYWRIGHT_IMPORT=PASS', state['block_printed'],
+            'шаг обязан подтвердить импорт. Выведено: %r'
+            % state['block_printed'])
+
+    def test_the_block_still_refuses_when_playwright_is_missing(self):
+        """Fail-closed не ослаблен: без playwright шаг по-прежнему отказывает.
+
+        [REASON]: без этой проверки предыдущую можно было бы «починить»,
+        убрав проверку кода возврата вовсе.
+        """
+        state = self.state('Legacy')
+        self.assertTrue(state['block_threw_without_playwright'],
+                        'отсутствие playwright обязано остановить шаг')
+        self.assertIn('REFUSED', state.get('refusal_message', ''))
+        self.assertIn('installs nothing', state.get('refusal_message', ''))
+        self.assertNotIn(
+            'PLAYWRIGHT_IMPORT=PASS',
+            state['block_printed_without_playwright'],
+            'PASS не должен печататься раньше проверки кода возврата')
+
+    def test_powershell_7_does_not_reproduce_it(self):
+        """Отрицательный контроль: объяснение слепого пятна CI.
+
+        [REASON]: на 7 в режиме 'Standard' историческая строка РАБОТАЕТ. Это и
+        есть причина, по которой дефект дожил до живого запуска: ни одна
+        проверка на семёрке его увидеть не могла. Проверка идёт только там,
+        где режим вообще существует.
+        """
+        legacy = self.state('Legacy')
+        if not legacy['has_argument_passing_switch']:
+            self.skipTest('на 5.1 режима передачи аргументов нет')
+        standard = self.state('Standard')
+        self.assertEqual(standard['old_form_exit'], 0,
+                         'в режиме Standard историческая строка обязана '
+                         'работать, иначе объяснение слепого пятна неверно')
+        self.assertIn('PLAYWRIGHT_IMPORT=PASS', standard['old_form_text'])
+
+
+class NoNativeArgumentCarriesQuotes(unittest.TestCase):
+    """Статическое правило, выведенное из измерения выше.
+
+    [REASON]: работает и там, где PowerShell не установлен, и ловит возврат
+    дефекта в ЛЮБОЙ новой строке комплекта, которой исполняемые проверки ещё
+    не знают.
+    """
+
+    def setUp(self):
+        self.files = {}
+        for name in PS_FILES:
+            with open(os.path.join(KIT_DIR, name), encoding='utf-8') as handle:
+                self.files[name] = handle.read()
+
+    def native_lines(self):
+        """Строки, запускающие native-процесс, без комментариев."""
+        for name, text in self.files.items():
+            for number, stripped in powershell_code_lines(text):
+                if re.search(r'&\s+\$[A-Za-z_]', stripped):
+                    yield name, number, stripped
+
+    def test_no_native_argument_literal_contains_a_double_quote(self):
+        """[REASON]: именно эти кавычки 5.1 съедает, собирая командную строку."""
+        offenders = []
+        for name, number, line in self.native_lines():
+            for literal in re.findall(r"'([^']*)'", line):
+                if '"' in literal:
+                    offenders.append('%s:%d %s' % (name, number, line))
+        self.assertEqual(
+            offenders, [],
+            'аргумент native-процесса несёт в себе двойные кавычки. Windows '
+            'PowerShell 5.1 их не экранирует, и python получит не то, что '
+            'написано. Ровно так шаг 3 упал на BAK-TEX11:\n%s'
+            % '\n'.join(offenders))
+
+    def test_no_python_c_argument_carries_any_quote(self):
+        """`python -c` -- самый опасный случай: аргумент и есть программа."""
+        offenders = []
+        for name, number, line in self.native_lines():
+            match = re.search(r"-c\s+(['\"])(.*?)\1", line)
+            if not match:
+                continue
+            code = match.group(2)
+            if '"' in code or "'" in code:
+                offenders.append('%s:%d %s' % (name, number, line))
+        self.assertEqual(
+            offenders, [],
+            'аргумент `python -c` не должен содержать кавычек вовсе: то, что '
+            'внутри, -- программа, и её нельзя доверять пересборке командной '
+            'строки на 5.1.\n%s' % '\n'.join(offenders))
+
+    def test_the_step_prints_the_answer_from_powershell(self):
+        """[REASON]: печатать ответ должен PowerShell, а не python.
+
+        Пока подтверждение печатает сам python, оно снова окажется внутри
+        аргумента -- в кавычках, которые 5.1 съест.
+        """
+        text = self.files['BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1']
+        self.assertIn('Write-Output "PLAYWRIGHT_IMPORT=PASS"', text)
+        for _, _, line in self.native_lines():
+            self.assertNotIn('PLAYWRIGHT_IMPORT=PASS', line,
+                             'подтверждение снова уехало внутрь аргумента '
+                             'native-процесса: %s' % line)
+
+    def test_the_answer_is_printed_only_after_the_check(self):
+        """Порядок: запуск -> проверка кода возврата -> подтверждение.
+
+        [REASON]: подтверждение, напечатанное раньше проверки, врёт ровно в том
+        случае, ради которого проверка существует. Мутация с перестановкой
+        прошла мимо исполняемого теста, потому что уехала за границу
+        извлекаемого блока; здесь она видна прямо.
+        """
+        text = self.files['BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1']
+        self.assertEqual(
+            text.count('Write-Output "PLAYWRIGHT_IMPORT=PASS"'), 1,
+            'подтверждение должно печататься ровно один раз')
+        run = text.index('& $K.CollectorPython -c "import playwright"')
+        guard = text.index('REFUSED: playwright is not importable')
+        answer = text.index('Write-Output "PLAYWRIGHT_IMPORT=PASS"')
+        self.assertLess(run, guard, 'проверка кода возврата идёт после запуска')
+        self.assertLess(guard, answer,
+                        'подтверждение печатается ПОСЛЕ проверки кода '
+                        'возврата, а не до неё')
+
+    def test_the_run_still_installs_nothing(self):
+        """Правка не должна была превратиться в установку окружения."""
+        text = self.files['BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1']
+        self.assertNotIn('pip install', text)
+        self.assertNotIn('playwright install', text)
+        self.assertNotIn('ensurepip', text)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
