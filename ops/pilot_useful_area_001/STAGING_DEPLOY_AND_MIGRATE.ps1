@@ -288,12 +288,17 @@ $migrationLog = Join-Path $logDir 'migration.txt'
 Write-Output "--- applying $($K.MigrationId) to staging ---"
 Push-Location $K.StagingRoot
 try {
-    $migrationOutput = & $Python $migrationInPlace 2>&1
+    # [REASON]: Invoke-PilotNative, never a bare `2>&1`. This exact line killed
+    # the pilot on SRV-YOQSH: the migration wrote one DeprecationWarning to
+    # stderr, Windows PowerShell 5.1 turned it into a terminating
+    # NativeCommandError under 'Stop', and the exit code below was never read.
+    # The migration's transaction did not commit.
+    $migrationRun = Invoke-PilotNative -FilePath $Python -Arguments @($migrationInPlace)
 } finally {
     Pop-Location
 }
-$migrationCode = $LASTEXITCODE
-$migrationText = ($migrationOutput | Out-String)
+$migrationCode = $migrationRun.ExitCode
+$migrationText = $migrationRun.Text
 [System.IO.File]::WriteAllText($migrationLog, $migrationText, (New-Object System.Text.UTF8Encoding($false)))
 Write-Output ("  " + $migrationText.Trim())
 

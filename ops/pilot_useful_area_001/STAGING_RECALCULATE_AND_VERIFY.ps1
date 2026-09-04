@@ -144,12 +144,15 @@ Write-Output "--- dry run (writes nothing) ---"
 $dryLog = Join-Path $logDir 'recalc_dry.txt'
 Push-Location $K.StagingRoot
 try {
-    $dryOutput = & $Python $tool '--from' $Day '--to' $Day '--dry-run' '--db' $K.StagingDb 2>&1
-    $dryCode = $LASTEXITCODE
+    # [REASON]: Invoke-PilotNative, never a bare `2>&1` -- see the module. A
+    # warning on stderr must not end the step before its exit code is read.
+    $dryRun = Invoke-PilotNative -FilePath $Python -Arguments @(
+        $tool, '--from', $Day, '--to', $Day, '--dry-run', '--db', $K.StagingDb)
+    $dryCode = $dryRun.ExitCode
 } finally {
     Pop-Location
 }
-$dryText = ($dryOutput | Out-String)
+$dryText = $dryRun.Text
 [System.IO.File]::WriteAllText($dryLog, $dryText, (New-Object System.Text.UTF8Encoding($false)))
 Write-Output $dryText.TrimEnd()
 if ($dryCode -ne 0) {
@@ -200,14 +203,15 @@ $applyLog = Join-Path $logDir 'recalc_apply_1.txt'
 $watch = [System.Diagnostics.Stopwatch]::StartNew()
 Push-Location $K.StagingRoot
 try {
-    $applyOutput = & $Python $tool '--from' $Day '--to' $Day '--apply' '--db' $K.StagingDb 2>&1
-    $applyCode = $LASTEXITCODE
+    $applyRun = Invoke-PilotNative -FilePath $Python -Arguments @(
+        $tool, '--from', $Day, '--to', $Day, '--apply', '--db', $K.StagingDb)
+    $applyCode = $applyRun.ExitCode
 } finally {
     Pop-Location
 }
 $watch.Stop()
 $applySeconds = [math]::Round($watch.Elapsed.TotalSeconds, 3)
-$applyText = ($applyOutput | Out-String)
+$applyText = $applyRun.Text
 [System.IO.File]::WriteAllText($applyLog, $applyText, (New-Object System.Text.UTF8Encoding($false)))
 Write-Output $applyText.TrimEnd()
 Write-Output "APPLY_SECONDS=$applySeconds"
@@ -231,12 +235,13 @@ Write-Output "--- apply again (idempotence) ---"
 $apply2Log = Join-Path $logDir 'recalc_apply_2.txt'
 Push-Location $K.StagingRoot
 try {
-    $apply2Output = & $Python $tool '--from' $Day '--to' $Day '--apply' '--db' $K.StagingDb 2>&1
-    $apply2Code = $LASTEXITCODE
+    $apply2Run = Invoke-PilotNative -FilePath $Python -Arguments @(
+        $tool, '--from', $Day, '--to', $Day, '--apply', '--db', $K.StagingDb)
+    $apply2Code = $apply2Run.ExitCode
 } finally {
     Pop-Location
 }
-$apply2Text = ($apply2Output | Out-String)
+$apply2Text = $apply2Run.Text
 [System.IO.File]::WriteAllText($apply2Log, $apply2Text, (New-Object System.Text.UTF8Encoding($false)))
 Write-Output $apply2Text.TrimEnd()
 if ($apply2Code -ne 0) {

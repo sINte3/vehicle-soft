@@ -1744,10 +1744,18 @@ class DeployRefusesAnUnverifiedCommit(unittest.TestCase):
                         text.index('$migrationInPlace'))
 
     def test_the_migration_runs_only_from_verified_bytes(self):
+        # [REASON]: якорь -- запуск миграции, а не способ его написать. Раньше
+        # это была строка `& $Python $migrationInPlace`; теперь запуск идёт
+        # через Invoke-PilotNative, потому что прямой захват через 2>&1 убивал
+        # шаг на предупреждении в stderr. Проверяемое свойство прежнее: байты
+        # миграции сверены ДО того, как она запущена.
         text = code_text('STAGING_DEPLOY_AND_MIGRATE.ps1')
         self.assertIn('if (-not $migrationVerify.payload.passed) {', text)
+        self.assertIn('Invoke-PilotNative -FilePath $Python '
+                      '-Arguments @($migrationInPlace)', text)
         self.assertLess(text.index('if (-not $migrationVerify.payload.passed) {'),
-                        text.index('& $Python $migrationInPlace'))
+                        text.index('Invoke-PilotNative -FilePath $Python '
+                                   '-Arguments @($migrationInPlace)'))
 
     def test_a_failed_migration_stops_before_the_service_is_started(self):
         text = code_text('STAGING_DEPLOY_AND_MIGRATE.ps1')
@@ -4009,6 +4017,633 @@ class TheSelectorReadsFieldsShapeBlind(unittest.TestCase):
     def test_the_reader_is_exported(self):
         export = self.text.split('Export-ModuleMember -Function')[1]
         self.assertIn('Get-PilotCandidateField', export)
+
+# ═══ С2. stderr успешного процесса не убивает шаг ═══════════════════════════
+
+# Дочерний процесс, повторяющий живой сбой: строка в stdout, DeprecationWarning
+# в stderr, выход 0. Ровно так вела себя миграция на SRV-YOQSH.
+WARNING_CHILD = (
+    "import sys\n"
+    "sys.stdout.write('MIGRATION_ID=DRONES_USEFUL_AREA_001\\n')\n"
+    "sys.stdout.write('Already applied. Nothing to do.\\n')\n"
+    "sys.stderr.write('DeprecationWarning: datetime.datetime.utcnow() is "
+    "deprecated\\n')\n"
+    "sys.exit(0)\n")
+
+# Тот же процесс, но с настоящим отказом: stderr И ненулевой код.
+FAILING_CHILD = (
+    "import sys\n"
+    "sys.stdout.write('partial output\\n')\n"
+    "sys.stderr.write('Traceback (most recent call last): boom\\n')\n"
+    "sys.exit(2)\n")
+
+# Заглушка инструмента пересчёта: принимает настоящие флаги, пишет сводку в
+# stdout и предупреждение в stderr, выходит 0.
+RECALC_CHILD = (
+    "import sys\n"
+    "sys.stdout.write('mode : DRY RUN\\n')\n"
+    "sys.stdout.write('algorithm : useful-area-v1\\n')\n"
+    "sys.stderr.write('DeprecationWarning: utcnow() is deprecated\\n')\n"
+    "sys.exit(0)\n")
+
+
+NATIVE_HELPER_SCRIPT = r"""
+param([string]$Module, [string]$Py, [string]$Warn, [string]$Fail)
+Import-Module $Module -Force
+$ErrorActionPreference = 'Stop'
+$results = [ordered]@{}
+$results['ps_major'] = $PSVersionTable.PSVersion.Major
+$results['ps_edition'] = if ($PSVersionTable.PSEdition) { [string]$PSVersionTable.PSEdition } else { 'Desktop' }
+$results['eap_before'] = [string]$ErrorActionPreference
+
+# --- ЛОВУШКА. Сначала доказать, что она на этой консоли есть. ---------------
+# Прямой захват через 2>&1 отдаёт stderr ОБЪЕКТОМ ErrorRecord. Именно его 5.1
+# под 'Stop' превращает в терминирующий NativeCommandError. Если здесь окажется
+# обычная строка, эта версия PowerShell дефект не воспроизводит и всё, что
+# ниже, ничего не доказывает.
+$rawThrew = $false
+$rawHasErrorRecord = $false
+$rawId = ''
+try {
+    $raw = & $Py $Warn 2>&1
+    foreach ($item in @($raw)) {
+        if ($item -is [System.Management.Automation.ErrorRecord]) { $rawHasErrorRecord = $true }
+    }
+} catch {
+    $rawThrew = $true
+    $rawId = [string]$_.FullyQualifiedErrorId
+}
+$results['raw_capture_threw'] = $rawThrew
+$results['raw_capture_error_id'] = $rawId
+$results['raw_capture_yields_error_record'] = $rawHasErrorRecord
+
+# Порядок доставки, который PowerShell даёт САМ. Наблюдается под 'Continue',
+# потому что под 'Stop' на 5.1 наблюдать нечего -- захват там бросает.
+# [REASON]: порядок различается по платформам. Python при перенаправлении
+# буферизует stdout блоками, а stderr не буферизует, поэтому на Windows
+# предупреждение приходит РАНЬШЕ вывода. Утверждать конкретный порядок значит
+# закреплять особенность одной платформы; проверять надо, что помощник ничего
+# не переупорядочивает.
+$rawOrder = ''
+$rawEap = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    $rawAll = & $Py $Warn 2>&1
+    $rawText = (($rawAll | ForEach-Object { $_.ToString() }) -join "`n")
+    if ($rawText.IndexOf('MIGRATION_ID') -lt $rawText.IndexOf('DeprecationWarning')) {
+        $rawOrder = 'stdout-first'
+    } else {
+        $rawOrder = 'stderr-first'
+    }
+} finally { $ErrorActionPreference = $rawEap }
+$results['raw_delivery_order'] = $rawOrder
+
+# --- 1. Успешный процесс, написавший предупреждение в stderr ----------------
+$okThrew = $false
+try {
+    $ok = Invoke-PilotNative -FilePath $Py -Arguments @($Warn)
+} catch {
+    $okThrew = $true
+    $results['ok_error_id'] = [string]$_.FullyQualifiedErrorId
+}
+$results['ok_threw'] = $okThrew
+if (-not $okThrew) {
+    $results['ok_exit'] = $ok.ExitCode
+    $results['ok_stdout_has_line'] = ($ok.Stdout -match 'MIGRATION_ID=DRONES_USEFUL_AREA_001')
+    $results['ok_stdout_has_idempotence_line'] = ($ok.Stdout -match 'Already applied')
+    $results['ok_stderr_kept'] = ($ok.Stderr -match 'DeprecationWarning')
+    $results['ok_stderr_not_in_stdout'] = -not ($ok.Stdout -match 'DeprecationWarning')
+    $results['ok_text_has_both'] = (($ok.Text -match 'MIGRATION_ID') -and ($ok.Text -match 'DeprecationWarning'))
+    # Помощник отдаёт строки в том же порядке, в каком их отдал сам PowerShell.
+    $helperOrder = if ($ok.Text.IndexOf('MIGRATION_ID') -lt $ok.Text.IndexOf('DeprecationWarning')) { 'stdout-first' } else { 'stderr-first' }
+    $results['helper_delivery_order'] = $helperOrder
+    $results['ok_text_keeps_order'] = ($helperOrder -eq $rawOrder)
+    $results['ok_no_error_record'] = -not (($ok.Stdout -is [System.Management.Automation.ErrorRecord]) -or
+                                           ($ok.Text -is [System.Management.Automation.ErrorRecord]))
+}
+$results['eap_after_ok'] = [string]$ErrorActionPreference
+
+# --- 2. Настоящий отказ: stderr И ненулевой код ----------------------------
+$badThrew = $false
+try {
+    $bad = Invoke-PilotNative -FilePath $Py -Arguments @($Fail)
+} catch {
+    $badThrew = $true
+}
+$results['bad_threw'] = $badThrew
+if (-not $badThrew) {
+    $results['bad_exit'] = $bad.ExitCode
+    $results['bad_stderr_kept'] = ($bad.Stderr -match 'Traceback')
+    $results['bad_stdout_kept'] = ($bad.Stdout -match 'partial output')
+}
+$results['eap_after_bad'] = [string]$ErrorActionPreference
+
+# --- 3. Запуск, который вообще не состоялся, обязан отказать громко --------
+$missingThrew = $false
+try {
+    Invoke-PilotNative -FilePath 'pilot-no-such-binary-xyz' -Arguments @() | Out-Null
+} catch {
+    $missingThrew = $true
+}
+$results['missing_binary_threw'] = $missingThrew
+$results['eap_after_missing'] = [string]$ErrorActionPreference
+
+# --- 4. Invoke-PilotGit: диагностика в stderr не должна пачкать данные -----
+$repo = Join-Path ([System.IO.Path]::GetTempPath()) ("pilotgit_{0}" -f (Get-Random))
+New-Item -ItemType Directory -Path $repo | Out-Null
+Invoke-PilotNative -FilePath 'git' -Arguments @('-C', $repo, 'init', '--quiet') | Out-Null
+Invoke-PilotNative -FilePath 'git' -Arguments @('-C', $repo, 'config', 'user.email', 'pilot@example.invalid') | Out-Null
+Invoke-PilotNative -FilePath 'git' -Arguments @('-C', $repo, 'config', 'user.name', 'Pilot') | Out-Null
+Set-Content -LiteralPath (Join-Path $repo 'a.txt') -Value 'x'
+Invoke-PilotNative -FilePath 'git' -Arguments @('-C', $repo, 'add', 'a.txt') | Out-Null
+# `git commit` пишет подсказки в stderr; ровно та диагностика, что склеивалась
+# с данными при 2>&1.
+Invoke-PilotNative -FilePath 'git' -Arguments @('-C', $repo, 'commit', '-m', 'x', '--quiet') | Out-Null
+
+$head = Get-PilotHeadSha -Repo $repo
+$results['git_head_is_a_bare_sha'] = ($head -match '^[0-9a-f]{40}$')
+$results['git_head_value'] = $head
+
+# Отрицательный контроль: git с диагностикой в stderr и нулевым кодом.
+$noisy = Invoke-PilotGit -Repo $repo -Arguments @('checkout', '--detach', 'HEAD')
+$results['git_noisy_exit'] = $noisy.ExitCode
+$results['git_noisy_stderr_present'] = ($noisy.Stderr.Trim().Length -gt 0)
+$results['git_noisy_stdout_clean'] = -not ($noisy.Output -match 'HEAD is now at')
+$results['git_noisy_stderr_kept'] = ($noisy.Text.Trim().Length -gt 0)
+
+# Ненулевой код обязан дойти до вызывающего, а не потеряться.
+$failGit = Invoke-PilotGit -Repo $repo -Arguments @('rev-parse', 'refs/heads/definitely-absent') -AllowFailure
+$results['git_failure_exit_is_nonzero'] = ($failGit.ExitCode -ne 0)
+$results['git_failure_stderr_kept'] = ($failGit.Stderr.Trim().Length -gt 0)
+$gitRefused = $false
+try {
+    Invoke-PilotGit -Repo $repo -Arguments @('rev-parse', 'refs/heads/definitely-absent') | Out-Null
+} catch {
+    $gitRefused = $true
+}
+$results['git_refuses_without_allowfailure'] = $gitRefused
+
+# `status --porcelain` в чистом дереве обязан быть ПУСТЫМ, а не нести stderr.
+$results['git_clean_status_is_empty'] = ((Invoke-PilotGit -Repo $repo -Arguments @('status', '--porcelain')).Output -eq '')
+
+Remove-Item -LiteralPath $repo -Recurse -Force -ErrorAction SilentlyContinue
+
+$results['eap_at_end'] = [string]$ErrorActionPreference
+$results | ConvertTo-Json -Compress
+"""
+
+
+# Один и тот же шаблон запуска, вынутый ИЗ НАСТОЯЩЕГО ФАЙЛА и исполненный.
+SCRIPT_STATEMENT_SCRIPT = r"""
+param([string]$Module, [string]$Statement, [string]$VariableName,
+      [string]$Py, [string]$Tool, [string]$Db)
+Import-Module $Module -Force
+$ErrorActionPreference = 'Stop'
+$results = [ordered]@{}
+$results['ps_major'] = $PSVersionTable.PSVersion.Major
+
+# Имена, которыми пользуются настоящие строки комплекта.
+$Python = $Py
+$migrationInPlace = $Tool
+$migration = $Tool
+$tool = $Tool
+$Day = '2026-06-05'
+$K = [pscustomobject]@{ StagingDb = $Db }
+
+$threw = $false
+$errorId = ''
+try {
+    Invoke-Expression $Statement
+} catch {
+    $threw = $true
+    $errorId = [string]$_.FullyQualifiedErrorId
+}
+$results['threw'] = $threw
+$results['error_id'] = $errorId
+
+$hasErrorRecord = $false
+if (-not $threw) {
+    $value = (Get-Variable -Name $VariableName -ValueOnly -ErrorAction SilentlyContinue)
+    foreach ($item in @($value)) {
+        if ($item -is [System.Management.Automation.ErrorRecord]) { $hasErrorRecord = $true }
+    }
+}
+$results['reaches_caller_as_error_record'] = $hasErrorRecord
+$results['eap_after'] = [string]$ErrorActionPreference
+$results | ConvertTo-Json -Compress
+"""
+
+
+ASSIGNMENT = re.compile(r"^\s*\$(\w+)\s*=")
+
+
+def powershell_code_lines(text):
+    """Строки PowerShell без комментариев -- строчных и блочных.
+
+    [REASON]: `<# ... #>` не начинается с решётки, и сканер, который её не
+    знает, считает объяснение дефекта самим дефектом. Первая версия этой
+    проверки так и сделала.
+    """
+    result = []
+    in_block = False
+    for number, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        if in_block:
+            if '#>' in stripped:
+                in_block = False
+            continue
+        if stripped.startswith('<#'):
+            if '#>' not in stripped:
+                in_block = True
+            continue
+        if stripped.startswith('#'):
+            continue
+        result.append((number, stripped))
+    return result
+
+
+def find_native_capture_statements(text):
+    """Все операторы файла, которые запускают native-процесс с захватом.
+
+    Возвращает список (номер строки, текст оператора, имя переменной).
+
+    [REASON]: НЕ поиск по якорю. Якорь пришлось бы писать под одну из двух
+    форм -- прямой захват `& $Python ... 2>&1` или вызов помощника, -- и на
+    другой форме тест молчал бы «оператор не найден» вместо того, чтобы
+    исполнить его и упасть по настоящей причине. Первая версия этой проверки
+    именно так и промолчала на базовом коммите.
+
+    [REASON]: оператор бывает многострочным (аргументы помощника перенесены),
+    поэтому границей служит баланс скобок, а не перевод строки.
+    """
+    lines = text.splitlines()
+    found = []
+    index = 0
+    while index < len(lines):
+        match = ASSIGNMENT.match(lines[index])
+        if not match:
+            index += 1
+            continue
+        collected = []
+        depth = 0
+        last = index
+        for offset in range(index, len(lines)):
+            line = lines[offset]
+            collected.append(line.strip())
+            depth += line.count('(') - line.count(')')
+            last = offset
+            if depth <= 0:
+                break
+        statement = '\n'.join(collected)
+        if '2>&1' in statement or 'Invoke-PilotNative' in statement:
+            found.append((index + 1, statement, match.group(1)))
+        index = last + 1
+    return found
+
+
+# Скрипты, в которых комплект запускает native-процессы с захватом вывода.
+# На базовом коммите их пять: миграция staging, повторная миграция копии и три
+# запуска пересчёта.
+NATIVE_CAPTURE_FILES = ('STAGING_DEPLOY_AND_MIGRATE.ps1',
+                        'PREFLIGHT_AND_COPY_TEST.ps1',
+                        'STAGING_RECALCULATE_AND_VERIFY.ps1')
+NATIVE_CAPTURE_EXPECTED = 5
+
+
+@unittest.skipIf(PWSH is None, 'no PowerShell in this environment')
+class NativeStderrDoesNotKillTheStep(unittest.TestCase):
+    """Предупреждение в stderr успешного процесса не должно останавливать шаг.
+
+    [REASON]: на SRV-YOQSH шаг 2 дошёл до backup, обновления кода, тестов,
+    остановки staging-службы и проверки блоба миграции, а затем умер на строке
+    `$migrationOutput = & $Python $migrationInPlace 2>&1`, потому что миграция
+    написала в stderr обычный DeprecationWarning. Windows PowerShell 5.1 под
+    $ErrorActionPreference = 'Stop' превращает КАЖДУЮ строку stderr,
+    объединённую через 2>&1, в терминирующий NativeCommandError. Настоящий exit
+    code при этом не читается вовсе, и транзакция миграции не фиксируется.
+
+    [REASON]: терминирующей ошибку делает ПРЕДПОЧТЕНИЕ, а не перенаправление.
+    Поэтому дефект воспроизводится и на pwsh 7 в наблюдаемой части: stderr там
+    тоже приходит объектом ErrorRecord, просто под 'Stop' семёрка его не делает
+    фатальным. Проверка ловушки ниже сначала доказывает, что ErrorRecord на
+    этой консоли действительно появляется, и только потом что-то утверждает.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='pilot_native_')
+        cls.warn = os.path.join(cls.tmp, 'warn_child.py')
+        cls.fail = os.path.join(cls.tmp, 'fail_child.py')
+        cls.recalc = os.path.join(cls.tmp, 'recalc_child.py')
+        for path, content in ((cls.warn, WARNING_CHILD),
+                              (cls.fail, FAILING_CHILD),
+                              (cls.recalc, RECALC_CHILD)):
+            with open(path, 'w', encoding='utf-8', newline='\n') as handle:
+                handle.write(content)
+        cls._state = None
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def state(self):
+        if type(self)._state is not None:
+            return type(self)._state
+        directory = tempfile.mkdtemp(prefix='pilot_native_ps_')
+        try:
+            path = os.path.join(directory, 'native.ps1')
+            with open(path, 'w', encoding='utf-8', newline='\n') as handle:
+                handle.write(NATIVE_HELPER_SCRIPT)
+            result = subprocess.run(
+                [PWSH, '-NoProfile', '-File', path,
+                 '-Module', os.path.join(KIT_DIR, 'PilotKit.psm1'),
+                 '-Py', sys.executable,
+                 '-Warn', self.warn,
+                 '-Fail', self.fail],
+                capture_output=True, text=True, cwd=REPO_ROOT)
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+        self.assertEqual(result.returncode, 0,
+                         '%s\n%s' % (result.stdout, result.stderr))
+        line = [row for row in result.stdout.splitlines()
+                if row.strip().startswith('{')][-1]
+        type(self)._state = json.loads(line)
+        return type(self)._state
+
+    def test_the_trap_is_really_there(self):
+        """Ловушка проверяется первой, иначе всё ниже доказывало бы не то."""
+        state = self.state()
+        expected = os.environ.get('PILOT_POWERSHELL_MAJOR')
+        if expected:
+            self.assertEqual(int(state['ps_major']), int(expected),
+                             'задача просила PowerShell %s, а регрессия '
+                             'отработала на %s'
+                             % (expected, state['ps_major']))
+        self.assertEqual(state['eap_before'], 'Stop',
+                         'вся проверка идёт под тем же предпочтением, что и '
+                         'настоящие скрипты')
+        self.assertTrue(
+            state['raw_capture_yields_error_record'] or state['raw_capture_threw'],
+            'прямой захват через 2>&1 обязан отдать stderr объектом '
+            'ErrorRecord (7) или сразу бросить NativeCommandError (5.1). Если '
+            'здесь пришла обычная строка, эта версия PowerShell дефект не '
+            'воспроизводит и регрессия ниже ничего не доказывает')
+        if int(state['ps_major']) == 5:
+            # [REASON]: платформа живого сбоя. На ней прямой захват обязан
+            # именно БРОСИТЬ, иначе воспроизведение неполно.
+            self.assertTrue(state['raw_capture_threw'],
+                            'на Windows PowerShell 5.1 прямой захват обязан '
+                            'бросать; он бросил на сервере')
+            self.assertIn('NativeCommandError', state['raw_capture_error_id'])
+
+    def test_a_warning_on_stderr_does_not_end_a_successful_run(self):
+        """Случай 1: stdout, DeprecationWarning в stderr, выход 0."""
+        state = self.state()
+        self.assertFalse(state['ok_threw'],
+                         'успешный процесс, написавший предупреждение, не '
+                         'должен останавливать шаг: %s'
+                         % state.get('ok_error_id'))
+        self.assertEqual(state['ok_exit'], 0)
+        self.assertTrue(state['ok_stdout_has_line'])
+        self.assertTrue(state['ok_stderr_kept'],
+                        'строка stderr обязана сохраниться, а не быть '
+                        'выброшенной')
+        self.assertTrue(state['ok_text_has_both'])
+        self.assertTrue(
+            state['ok_text_keeps_order'],
+            'помощник обязан отдавать строки в том же порядке, в каком их '
+            'отдал сам PowerShell (%s), иначе формат журналов изменился бы; '
+            'он отдал %s'
+            % (state['raw_delivery_order'], state['helper_delivery_order']))
+        self.assertTrue(state['ok_stderr_not_in_stdout'],
+                        'stdout остаётся данными: предупреждение в него не '
+                        'подмешивается')
+
+    def test_a_real_failure_still_returns_its_exit_code(self):
+        """Случай 2: stderr и ненулевой код. Код обязан дойти целым."""
+        state = self.state()
+        self.assertFalse(state['bad_threw'])
+        self.assertEqual(state['bad_exit'], 2,
+                         'настоящий код процесса, а не потерянный в '
+                         'NativeCommandError')
+        self.assertTrue(state['bad_stderr_kept'])
+        self.assertTrue(state['bad_stdout_kept'])
+
+    def test_the_preference_is_restored_after_success_and_after_failure(self):
+        """Случай 3: предпочтение вызывающего не остаётся ослабленным."""
+        state = self.state()
+        for key in ('eap_after_ok', 'eap_after_bad', 'eap_after_missing',
+                    'eap_at_end'):
+            self.assertEqual(state[key], 'Stop',
+                             '%s: помощник обязан вернуть предпочтение '
+                             'вызывающего' % key)
+
+    def test_a_process_that_cannot_start_still_refuses(self):
+        """[REASON]: 'Continue' на время вызова не должен глушить настоящее.
+
+        Отсутствующий бинарник -- не диагностическая строка, а несостоявшийся
+        запуск. Помощник обязан отказать, а не вернуть чужой $LASTEXITCODE.
+        """
+        state = self.state()
+        self.assertTrue(state['missing_binary_threw'])
+
+    def test_git_data_is_not_polluted_by_git_diagnostics(self):
+        """Случай 6: Invoke-PilotGit при диагностике в stderr."""
+        state = self.state()
+        self.assertTrue(
+            state['git_head_is_a_bare_sha'],
+            'HEAD обязан вернуться голым SHA. Получено: %r. При склейке через '
+            '2>&1 к нему прилипала бы любая строка, которую git пишет в stderr, '
+            'и каждая сверка ревизий в комплекте ломалась бы'
+            % state['git_head_value'])
+        self.assertEqual(state['git_noisy_exit'], 0)
+        self.assertTrue(state['git_noisy_stderr_present'],
+                        'отрицательный контроль: git действительно написал в '
+                        'stderr, иначе проверка ниже не различает два случая')
+        self.assertTrue(state['git_noisy_stdout_clean'],
+                        'диагностика git не попадает в поле данных')
+        self.assertTrue(state['git_noisy_stderr_kept'],
+                        'и при этом не выброшена')
+        self.assertTrue(state['git_clean_status_is_empty'],
+                        'чистое дерево обязано читаться чистым')
+
+    def test_a_failing_git_still_reports_its_exit_code(self):
+        state = self.state()
+        self.assertTrue(state['git_failure_exit_is_nonzero'])
+        self.assertTrue(state['git_failure_stderr_kept'])
+        self.assertTrue(state['git_refuses_without_allowfailure'],
+                        'ненулевой код не скрывается')
+
+
+@unittest.skipIf(PWSH is None, 'no PowerShell in this environment')
+class TheRealScriptStatementsAreSafe(unittest.TestCase):
+    """Настоящие строки запуска из настоящих файлов, исполненные как есть.
+
+    [REASON]: проверять помощник в отрыве от скриптов мало. Живой сбой пришёл
+    не из модуля, а из строки в STAGING_DEPLOY_AND_MIGRATE.ps1, и следующая
+    такая строка остановила бы шаг 4. Поэтому оператор вынимается ИЗ ФАЙЛА и
+    исполняется: если он снова станет прямым захватом через 2>&1, stderr
+    придёт вызывающему объектом ErrorRecord, и проверка это увидит на любой
+    версии PowerShell -- а на 5.1 ещё и бросит.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='pilot_stmt_')
+        cls.child = os.path.join(cls.tmp, 'child.py')
+        with open(cls.child, 'w', encoding='utf-8', newline='\n') as handle:
+            handle.write(RECALC_CHILD)
+        cls.db = os.path.join(cls.tmp, 'throwaway.db')
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def run_statement(self, statement, name):
+        directory = tempfile.mkdtemp(prefix='pilot_stmt_ps_')
+        try:
+            path = os.path.join(directory, 'stmt.ps1')
+            with open(path, 'w', encoding='utf-8', newline='\n') as handle:
+                handle.write(SCRIPT_STATEMENT_SCRIPT)
+            result = subprocess.run(
+                [PWSH, '-NoProfile', '-File', path,
+                 '-Module', os.path.join(KIT_DIR, 'PilotKit.psm1'),
+                 '-Statement', statement,
+                 '-VariableName', name,
+                 '-Py', sys.executable,
+                 '-Tool', self.child,
+                 '-Db', self.db],
+                capture_output=True, text=True, cwd=REPO_ROOT)
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+        self.assertEqual(result.returncode, 0,
+                         '%s\n%s' % (result.stdout, result.stderr))
+        line = [row for row in result.stdout.splitlines()
+                if row.strip().startswith('{')][-1]
+        return json.loads(line)
+
+    def test_every_native_capture_in_the_scripts_is_safe(self):
+        """Случаи 4 и 5: миграция staging, повторная миграция, три пересчёта."""
+        checked = []
+        for name in NATIVE_CAPTURE_FILES:
+            with open(os.path.join(KIT_DIR, name), encoding='utf-8') as handle:
+                text = handle.read()
+            for number, statement, variable in find_native_capture_statements(
+                    text):
+                state = self.run_statement(statement, variable)
+                self.assertFalse(
+                    state['threw'],
+                    '%s:%d -- строка комплекта остановила шаг на предупреждении '
+                    'в stderr (%s):\n%s'
+                    % (name, number, state['error_id'], statement))
+                self.assertFalse(
+                    state['reaches_caller_as_error_record'],
+                    '%s:%d -- stderr дошёл до вызывающего объектом ErrorRecord. '
+                    "На Windows PowerShell 5.1 под $ErrorActionPreference = "
+                    "'Stop' это терминирующий NativeCommandError: процесс "
+                    'обрывается, и его настоящий exit code не читается вовсе. '
+                    'Ровно так шаг 2 умер на SRV-YOQSH.\n%s'
+                    % (name, number, statement))
+                self.assertEqual(
+                    state['eap_after'], 'Stop',
+                    '%s:%d -- предпочтение вызывающего не восстановлено'
+                    % (name, number))
+                checked.append('%s:%d:%s' % (name, number, variable))
+
+        # [REASON]: без этой проверки пустой список операторов прошёл бы как
+        # успех, и переименование любой из пяти строк тихо сняло бы её с
+        # контроля.
+        self.assertEqual(
+            len(checked), NATIVE_CAPTURE_EXPECTED,
+            'комплект обязан запускать native-процессы ровно в пяти местах, а '
+            'исполнено %d: %s' % (len(checked), checked))
+        self.assertEqual(len(set(checked)), len(checked),
+                         'каждое место -- отдельный оператор: %s' % checked)
+
+
+class NoUnsafeNativeCaptureRemains(unittest.TestCase):
+    """Случай 7: прямых захватов через 2>&1 вне помощника не осталось.
+
+    [REASON]: эта проверка работает и там, где PowerShell не установлен, и
+    падает на базовом коммите по настоящей причине -- в нём шесть таких мест.
+    Она же ловит возврат дефекта в любой НОВОЙ строке комплекта, которую
+    исполняемые проверки выше ещё не знают.
+    """
+
+    def setUp(self):
+        self.files = {}
+        for name in PS_FILES:
+            with open(os.path.join(KIT_DIR, name), encoding='utf-8') as handle:
+                self.files[name] = handle.read()
+
+    def unsafe_lines(self):
+        found = []
+        for name, text in self.files.items():
+            for number, stripped in powershell_code_lines(text):
+                if '2>&1' not in stripped:
+                    continue
+                # Единственное законное место -- строка захвата внутри
+                # Invoke-PilotNative.
+                if (name == 'PilotKit.psm1'
+                        and stripped == '$captured = & $FilePath @Arguments 2>&1'):
+                    continue
+                found.append('%s:%d %s' % (name, number, stripped))
+        return found
+
+    def test_no_script_captures_a_native_process_with_a_bare_redirect(self):
+        remaining = self.unsafe_lines()
+        self.assertEqual(
+            remaining, [],
+            'прямой захват native-процесса через 2>&1 под '
+            "$ErrorActionPreference = 'Stop' -- это тот самый дефект, который "
+            'остановил шаг 2 на SRV-YOQSH. Оставшиеся места:\n%s'
+            % '\n'.join(remaining))
+
+    def test_the_one_legal_capture_lives_in_the_helper(self):
+        """Отрицательный контроль: исключение выше не пустое и не всеядное."""
+        module = self.files['PilotKit.psm1']
+        self.assertIn('$captured = & $FilePath @Arguments 2>&1', module,
+                      'единственный законный захват должен существовать, '
+                      'иначе проверка выше проходит вакуумно')
+        helper = module.split('function Invoke-PilotNative {')[1]
+        helper = helper.split('\nfunction ')[0]
+        self.assertIn('$captured = & $FilePath @Arguments 2>&1', helper,
+                      'и он должен лежать ВНУТРИ помощника')
+
+    def test_the_helper_lowers_the_preference_only_around_the_call(self):
+        module = self.files['PilotKit.psm1']
+        helper = module.split('function Invoke-PilotNative {')[1]
+        helper = helper.split('\nfunction ')[0]
+        self.assertIn("$previous = $ErrorActionPreference", helper)
+        self.assertIn("$ErrorActionPreference = 'Continue'", helper)
+        self.assertIn('$ErrorActionPreference = $previous', helper)
+        self.assertIn('} finally {', helper,
+                      'восстановление обязано быть в finally, иначе исключение '
+                      'оставит предпочтение ослабленным')
+
+    def test_no_script_silences_python_warnings_instead_of_fixing_this(self):
+        """[REASON]: глушение предупреждения лечит симптом и прячет причину.
+
+        Следующий DeprecationWarning придёт из другого места и снова остановит
+        шаг. Кроме того, PYTHONWARNINGS изменил бы поведение самого продукта на
+        площадке, а комплект обязан наблюдать, а не менять.
+        """
+        for name, text in self.files.items():
+            self.assertNotIn('PYTHONWARNINGS', text, name)
+            self.assertNotIn('-W ignore', text, name)
+
+    def test_no_script_lowers_the_preference_for_its_whole_body(self):
+        for name in PS_SCRIPTS:
+            text = self.files[name]
+            self.assertIn("$ErrorActionPreference = 'Stop'", text, name)
+            self.assertNotIn("$ErrorActionPreference = 'Continue'", text,
+                             '%s: предпочтение ослабляется только внутри '
+                             'помощника, не в теле скрипта' % name)
+
+    def test_the_helper_is_exported(self):
+        export = self.files['PilotKit.psm1'].split(
+            'Export-ModuleMember -Function')[1]
+        self.assertIn('Invoke-PilotNative', export)
 
 
 if __name__ == '__main__':
