@@ -487,6 +487,75 @@ function Assert-PilotServiceIsNotProduction {
     }
 }
 
+# --- Native processes ---------------------------------------------------------
+
+function Invoke-PilotNative {
+    <#
+        Run a native process and bring back its exit code, its stdout and its
+        stderr. THE ONLY place in this kit that captures a native process.
+
+        [REASON]: on Windows PowerShell 5.1 `& $exe ... 2>&1` under
+        $ErrorActionPreference = 'Stop' does not merely merge the streams --
+        every stderr line arrives as an ErrorRecord, and under 'Stop' the
+        FIRST one is a terminating NativeCommandError. The process is killed
+        off mid-flight and its real exit code is never read. That is not a
+        hypothesis: on SRV-YOQSH step 2 died on a plain DeprecationWarning
+        from a migration that was about to succeed, and the transaction never
+        committed. What makes the record terminating is the PREFERENCE, not
+        the redirection, so the preference is lowered here for the duration of
+        the call and restored afterwards -- the script around it keeps 'Stop'.
+
+        [REASON]: stderr is separated from stdout by the TYPE PowerShell gives
+        it (ErrorRecord versus String), which both 5.1 and 7 supply. Nothing
+        is discarded: Stdout, Stderr and the interleaved Text all come back,
+        and Text preserves arrival order exactly as the old `2>&1` capture did,
+        so the log files this kit writes keep their format.
+
+        [REASON]: a process that cannot be STARTED at all still throws
+        (CommandNotFoundException is terminating even under 'Continue'), and
+        that is deliberate -- a missing binary must refuse loudly instead of
+        returning whatever $LASTEXITCODE happened to hold.
+
+        The exit code is REPORTED, never judged: deciding what a non-zero code
+        means, and whether a zero code is enough, belongs to the caller.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$FilePath,
+          [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Arguments)
+
+    $previous = $ErrorActionPreference
+    $out = New-Object System.Text.StringBuilder
+    $err = New-Object System.Text.StringBuilder
+    $all = New-Object System.Text.StringBuilder
+    $code = $null
+    try {
+        $ErrorActionPreference = 'Continue'
+        $captured = & $FilePath @Arguments 2>&1
+        $code = $LASTEXITCODE
+        foreach ($item in @($captured)) {
+            if ($item -is [System.Management.Automation.ErrorRecord]) {
+                $line = $item.ToString()
+                [void]$err.AppendLine($line)
+            } else {
+                $line = [string]$item
+                [void]$out.AppendLine($line)
+            }
+            [void]$all.AppendLine($line)
+        }
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+
+    return [pscustomobject][ordered]@{
+        FilePath = $FilePath
+        Arguments = $Arguments
+        ExitCode = $code
+        Stdout = $out.ToString()
+        Stderr = $err.ToString()
+        Text = $all.ToString()
+    }
+}
+
 # --- Git ---------------------------------------------------------------------
 
 function Invoke-PilotGit {
@@ -495,12 +564,23 @@ function Invoke-PilotGit {
           [Parameter(Mandatory)][string[]]$Arguments,
           [switch]$AllowFailure)
 
-    $output = & git -C $Repo @Arguments 2>&1
-    $code = $LASTEXITCODE
+    $run = Invoke-PilotNative -FilePath 'git' -Arguments (@('-C', $Repo) + $Arguments)
+    $code = $run.ExitCode
     if ($code -ne 0 -and -not $AllowFailure) {
-        throw "REFUSED: git $($Arguments -join ' ') failed with exit $code in $Repo`n$output"
+        throw "REFUSED: git $($Arguments -join ' ') failed with exit $code in $Repo`n$($run.Text)"
     }
-    return [ordered]@{ ExitCode = $code; Output = ($output | Out-String).Trim() }
+    # [REASON]: Output is git's STDOUT alone. Callers read it as data -- a SHA,
+    # a branch name, `status --porcelain` compared against the empty string --
+    # and git writes advice and warnings to stderr. Gluing the two together (as
+    # the old `2>&1` capture did) turns a harmless "warning: ..." into a SHA
+    # that matches nothing and into a worktree that reads as dirty. The stderr
+    # text is kept beside it, not dropped.
+    return [ordered]@{
+        ExitCode = $code
+        Output = $run.Stdout.Trim()
+        Stderr = $run.Stderr.Trim()
+        Text = $run.Text.Trim()
+    }
 }
 
 function Assert-PilotWorktreeClean {
@@ -1164,7 +1244,8 @@ Export-ModuleMember -Function Get-PilotConstants, Get-PilotPathSegments,
     Assert-PilotHost, Get-PilotServiceImagePath, Get-PilotCandidateField,
     Select-PilotStagingService,
     Resolve-PilotStagingService, Assert-PilotServiceIsNotProduction,
-    Invoke-PilotGit, Assert-PilotWorktreeClean, Get-PilotHeadSha,
+    Invoke-PilotNative, Invoke-PilotGit, Assert-PilotWorktreeClean,
+    Get-PilotHeadSha,
     Get-PilotKitSha, Assert-PilotApprovedKitSha, Assert-PilotProductSha,
     Test-PilotRunManifest, Assert-PilotRunManifest, Get-PilotRunDirectory,
     Get-PilotFileSha256,

@@ -200,9 +200,13 @@ if ($firstCode -ne 0) {
 }
 
 Write-Output "--- applying it a second time (idempotence) ---"
-$secondOutput = & $Python $migration 2>&1
-$secondCode = $LASTEXITCODE
-$secondText = ($secondOutput | Out-String)
+$secondRun = Invoke-PilotNative -FilePath $Python -Arguments @($migration)
+$secondCode = $secondRun.ExitCode
+# [REASON]: the whole capture, stderr included, is what the idempotence check
+# below reads. A warning on stderr must not hide 'Already applied', and must
+# not be mistaken for one either -- the exit code decides failure, the text
+# decides idempotence, and neither decides the other.
+$secondText = $secondRun.Text
 [System.IO.File]::WriteAllText($secondLog, $secondText, (New-Object System.Text.UTF8Encoding($false)))
 Write-Output ("  " + $secondText.Trim())
 if ($secondCode -ne 0) {
