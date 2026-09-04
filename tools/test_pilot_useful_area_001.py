@@ -3682,6 +3682,334 @@ class NestedFieldsObeyTheAllowlist(unittest.TestCase):
         self.assertNotIn('3 -- отчёт не прошёл', head)
 
 
+# ═══ С1. Настоящая форма кандидата на службу ════════════════════════════════
+
+SERVICE_SHAPE_SCRIPT = r"""
+param([string]$Module)
+Import-Module $Module -Force
+$results = [ordered]@{}
+function Throws([scriptblock]$b) { try { & $b | Out-Null; return $false } catch { return $true } }
+
+# Ровно то, что Get-PilotServiceImagePath вернула на SRV-YOQSH: значения из
+# реестра верные, тип -- OrderedDictionary.
+$orderedStaging = [ordered]@{
+    Name = 'TransportReportStaging'
+    AppDirectory = 'C:\transport-report-staging'
+    Application = 'C:\Program Files\Python314\python.exe'
+    ImagePath = 'C:\transport-report-staging\nssm.exe'
+}
+$orderedProduction = [ordered]@{
+    Name = 'TransportReport'
+    AppDirectory = 'C:\transport-report'
+    Application = 'C:\Program Files\Python314\python.exe'
+    ImagePath = 'C:\transport-report\nssm.exe'
+}
+# Имя staging-овое, но привязка к каталогу ничем не доказана.
+$orderedNamedOnly = [ordered]@{
+    Name = 'TransportReportStaging'
+    AppDirectory = ''
+    Application = ''
+    ImagePath = ''
+}
+# Указывает на оба контура сразу.
+$orderedBothRoots = [ordered]@{
+    Name = 'TransportReportAmbiguous'
+    AppDirectory = 'C:\transport-report-staging'
+    Application = 'C:\transport-report\python.exe'
+    ImagePath = ''
+}
+$orderedSecondStaging = [ordered]@{
+    Name = 'TransportReportOther'
+    AppDirectory = 'C:\transport-report-staging'
+    Application = ''
+    ImagePath = ''
+}
+# Имя production, но ВСЕ пути указывают на staging. Единственный случай, в
+# котором правило «TransportReport не выбирается никогда» работает само, а не
+# заодно с проверкой каталогов.
+$orderedProductionNameAtStagingPath = [ordered]@{
+    Name = 'TransportReport'
+    AppDirectory = 'C:\transport-report-staging'
+    Application = 'C:\transport-report-staging\python.exe'
+    ImagePath = 'C:\transport-report-staging\nssm.exe'
+}
+$objectStaging = [pscustomobject]@{
+    Name = 'TransportReportStaging'
+    AppDirectory = 'C:\transport-report-staging'
+    Application = 'C:\Program Files\Python314\python.exe'
+    ImagePath = 'C:\transport-report-staging\nssm.exe'
+}
+$objectProduction = [pscustomobject]@{
+    Name = 'TransportReport'
+    AppDirectory = 'C:\transport-report'
+    Application = ''
+    ImagePath = 'C:\transport-report\nssm.exe'
+}
+$hashStaging = @{
+    Name = 'TransportReportStaging'
+    AppDirectory = 'C:\transport-report-staging'
+    Application = ''
+    ImagePath = ''
+}
+
+$results['ps_major'] = $PSVersionTable.PSVersion.Major
+$results['ps_edition'] = if ($PSVersionTable.PSEdition) { [string]$PSVersionTable.PSEdition } else { 'Desktop' }
+
+# Ловушка, ради которой тест вообще существует: ключи словаря НЕ появляются
+# среди свойств объекта, и старая проверка наличия поля отвечала на другой
+# вопрос.
+$results['candidate_type'] = $orderedStaging.GetType().FullName
+$results['keys_are_not_properties'] = ($orderedStaging.PSObject.Properties.Name -contains 'AppDirectory')
+$results['dot_access_does_work'] = [string]$orderedStaging.AppDirectory
+
+# Живой отказ SRV-YOQSH.
+$results['ordered_picks_staging'] = ((Select-PilotStagingService -Candidates @($orderedStaging)).Name)
+$results['ordered_picks_staging_beside_production'] = ((Select-PilotStagingService -Candidates @($orderedProduction, $orderedStaging)).Name)
+
+# Fail-closed правила на том же типе.
+$results['ordered_refuses_production_only'] = (Throws { Select-PilotStagingService -Candidates @($orderedProduction) })
+$results['ordered_refuses_name_only'] = (Throws { Select-PilotStagingService -Candidates @($orderedNamedOnly) })
+$results['ordered_refuses_both_roots'] = (Throws { Select-PilotStagingService -Candidates @($orderedBothRoots) })
+$results['ordered_refuses_two_staging'] = (Throws { Select-PilotStagingService -Candidates @($orderedStaging, $orderedSecondStaging) })
+$results['ordered_refuses_empty'] = (Throws { Select-PilotStagingService -Candidates @() })
+$results['ordered_refuses_production_name_at_staging_path'] = (Throws { Select-PilotStagingService -Candidates @($orderedProductionNameAtStagingPath) })
+$results['ordered_refuses_production_name_beside_staging'] = ((Select-PilotStagingService -Candidates @($orderedProductionNameAtStagingPath, $orderedStaging)).Name)
+
+# Прежняя форма не сломана.
+$results['object_picks_staging'] = ((Select-PilotStagingService -Candidates @($objectProduction, $objectStaging)).Name)
+$results['object_refuses_production_only'] = (Throws { Select-PilotStagingService -Candidates @($objectProduction) })
+$results['hashtable_picks_staging'] = ((Select-PilotStagingService -Candidates @($hashStaging)).Name)
+
+# Смешанный список: словарь и объект в одном вызове.
+$results['mixed_refuses_two_staging'] = (Throws { Select-PilotStagingService -Candidates @($orderedStaging, $objectStaging) })
+
+# Функция возвращает ИМЕННО переданный объект, а не его копию.
+$chosen = Select-PilotStagingService -Candidates @($orderedProduction, $orderedStaging)
+$results['returns_the_input_object'] = [object]::ReferenceEquals($chosen, $orderedStaging)
+
+# Что производит сама Get-PilotServiceImagePath. Реестра на этой машине может
+# не быть -- значения будут пустыми, но ТИП от машины не зависит.
+$produced = Get-PilotServiceImagePath -Name 'TransportReportStaging' 2>$null
+$results['produced_type'] = $produced.GetType().FullName
+$results['produced_is_dictionary'] = ($produced -is [System.Collections.IDictionary])
+$results['produced_fields'] = (($produced.PSObject.Properties.Name) -join ',')
+
+# Помощник читает обе формы и различает отсутствующее поле.
+$results['field_from_ordered'] = (Get-PilotCandidateField -Candidate $orderedStaging -Field 'AppDirectory')
+$results['field_from_object'] = (Get-PilotCandidateField -Candidate $objectStaging -Field 'AppDirectory')
+$results['field_case_insensitive'] = (Get-PilotCandidateField -Candidate $orderedStaging -Field 'appdirectory')
+$results['field_missing_is_null'] = ($null -eq (Get-PilotCandidateField -Candidate $orderedStaging -Field 'Nonexistent'))
+$results['field_of_null_is_null'] = ($null -eq (Get-PilotCandidateField -Candidate $null -Field 'Name'))
+
+# Отрицательный контроль: точечное обращение к ОТСУТСТВУЮЩЕМУ полю словаря
+# подставляет член самого словаря, а помощник -- нет.
+$short = [ordered]@{ Name = 'TransportReportStaging'; AppDirectory = 'C:\transport-report-staging' }
+$results['dot_access_invents_count'] = [string]$short.Count
+$results['helper_reports_count_absent'] = ($null -eq (Get-PilotCandidateField -Candidate $short -Field 'Count'))
+
+$results | ConvertTo-Json -Compress
+"""
+
+
+@unittest.skipIf(PWSH is None, 'no PowerShell in this environment')
+class TheRealServiceShapeIsSelected(unittest.TestCase):
+    """Кандидат приходит тем типом, каким его делает Get-PilotServiceImagePath.
+
+    [REASON]: комплект отказал на SRV-YOQSH сообщением «no service could be
+    resolved to the staging checkout C:\\transport-report-staging», хотя служба
+    TransportReportStaging была запущена и её AppDirectory в реестре указывал
+    ровно на этот каталог. Причина -- не правило выбора, а чтение полей:
+    Get-PilotServiceImagePath возвращала `[ordered]@{...}`, а
+    Select-PilotStagingService спрашивала о наличии поля через
+    `PSObject.Properties.Name -contains`. У словаря там лежат его собственные
+    члены (Count, Keys, Values, IsReadOnly, IsFixedSize, SyncRoot,
+    IsSynchronized), а не ключи, поэтому все три поля читались как
+    отсутствующие и настоящая staging-служба отбрасывалась.
+
+    [REASON]: старые проверки этого не ловили, потому что строили кандидатов
+    как `[pscustomobject]@{...}` -- тип, которого настоящая функция никогда не
+    возвращала. Проверка шла по форме, которой на сервере не бывает, и давала
+    одинаковый ответ при верном и неверном коде. Поэтому здесь кандидаты
+    создаются ИМЕННО как `[ordered]@{...}`.
+    """
+
+    def state(self):
+        directory = tempfile.mkdtemp(prefix='pilot_shape_')
+        try:
+            path = os.path.join(directory, 'shape.ps1')
+            with open(path, 'w', encoding='utf-8', newline='\n') as handle:
+                handle.write(SERVICE_SHAPE_SCRIPT)
+            result = subprocess.run(
+                [PWSH, '-NoProfile', '-File', path,
+                 '-Module', os.path.join(KIT_DIR, 'PilotKit.psm1')],
+                capture_output=True, text=True, cwd=REPO_ROOT)
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+        self.assertEqual(result.returncode, 0,
+                         '%s\n%s' % (result.stdout, result.stderr))
+        line = [row for row in result.stdout.splitlines()
+                if row.strip().startswith('{')][-1]
+        return json.loads(line)
+
+    def test_the_trap_is_really_there(self):
+        """Ловушка проверяется первой, иначе тест ниже доказывал бы не то."""
+        state = self.state()
+        # [REASON]: сбой пришёл с Windows PowerShell 5.1, и регрессия обязана
+        # быть доказана на той же консоли. Класс сам называет версию, на
+        # которой отработал, чтобы это было видно из него, а не только из
+        # соседнего теста.
+        expected = os.environ.get('PILOT_POWERSHELL_MAJOR')
+        if expected:
+            self.assertEqual(int(state['ps_major']), int(expected),
+                             'задача просила PowerShell %s, а регрессия '
+                             'отработала на %s'
+                             % (expected, state['ps_major']))
+        self.assertEqual(state['candidate_type'],
+                         'System.Collections.Specialized.OrderedDictionary')
+        self.assertFalse(
+            state['keys_are_not_properties'],
+            'ключ словаря не должен значиться среди свойств объекта -- если он '
+            'там есть, эта версия PowerShell не воспроизводит дефект и '
+            'регрессия ниже ничего не доказывает')
+        self.assertEqual(state['dot_access_does_work'],
+                         'C:\\transport-report-staging',
+                         'значения в кандидате есть; отброшен он был не из-за '
+                         'них')
+
+    def test_the_real_staging_service_is_selected(self):
+        """Тот самый случай, на котором комплект встал на сервере."""
+        state = self.state()
+        self.assertEqual(state['ordered_picks_staging'],
+                         'TransportReportStaging')
+        self.assertEqual(state['ordered_picks_staging_beside_production'],
+                         'TransportReportStaging')
+
+    def test_the_fail_closed_rules_survive_the_new_shape(self):
+        state = self.state()
+        self.assertTrue(state['ordered_refuses_production_only'],
+                        'production никогда не может быть выбрана')
+        self.assertTrue(state['ordered_refuses_name_only'],
+                        'выбор только по имени запрещён')
+        self.assertTrue(state['ordered_refuses_both_roots'],
+                        'кандидат на оба контура сразу отклоняется')
+        self.assertTrue(state['ordered_refuses_two_staging'],
+                        'два кандидата -- отказ, а не догадка')
+        self.assertTrue(state['ordered_refuses_empty'],
+                        'ноль кандидатов -- отказ')
+        self.assertTrue(state['mixed_refuses_two_staging'],
+                        'смешанный список не обходит правило двух кандидатов')
+        # [REASON]: остальные случаи отклоняют production по КАТАЛОГАМ, и
+        # проверка имени в них не нужна -- убери её, и они всё равно пройдут.
+        # Здесь пути указывают на staging, поэтому отказать может только
+        # правило имени. Без этого случая самое опасное правило комплекта
+        # ничем не доказано.
+        self.assertTrue(state['ordered_refuses_production_name_at_staging_path'],
+                        'служба с именем TransportReport не может быть выбрана '
+                        'ни при каких путях')
+        self.assertEqual(state['ordered_refuses_production_name_beside_staging'],
+                         'TransportReportStaging',
+                         'рядом с настоящей staging-службой кандидат с именем '
+                         'production обязан быть отброшен, а не создать спор '
+                         'двух кандидатов')
+
+    def test_the_previous_shape_still_works(self):
+        state = self.state()
+        self.assertEqual(state['object_picks_staging'],
+                         'TransportReportStaging')
+        self.assertTrue(state['object_refuses_production_only'])
+        self.assertEqual(state['hashtable_picks_staging'],
+                         'TransportReportStaging')
+
+    def test_the_selector_returns_the_object_it_was_given(self):
+        """[REASON]: нормализация не должна подменять выбранный объект копией.
+
+        Вызывающий код читает у результата не только Name, и получить обратно
+        не тот объект, что передал, -- отдельный способ ошибиться.
+        """
+        state = self.state()
+        self.assertTrue(state['returns_the_input_object'])
+
+    def test_the_producer_returns_a_real_object(self):
+        state = self.state()
+        self.assertEqual(state['produced_type'],
+                         'System.Management.Automation.PSCustomObject')
+        self.assertFalse(state['produced_is_dictionary'])
+        for field in ('Name', 'ImagePath', 'AppDirectory', 'Application'):
+            self.assertIn(field, state['produced_fields'].split(','),
+                          'поле %s обязано быть видно как свойство' % field)
+
+    def test_the_field_reader_is_total_over_both_shapes(self):
+        state = self.state()
+        self.assertEqual(state['field_from_ordered'],
+                         'C:\\transport-report-staging')
+        self.assertEqual(state['field_from_object'],
+                         'C:\\transport-report-staging')
+        self.assertEqual(state['field_case_insensitive'],
+                         'C:\\transport-report-staging')
+        self.assertTrue(state['field_missing_is_null'])
+        self.assertTrue(state['field_of_null_is_null'])
+
+    def test_the_reader_does_not_fall_back_to_dictionary_members(self):
+        """Отрицательный контроль: почему не годится точечное обращение.
+
+        [REASON]: у словаря БЕЗ ключа 'Count' выражение `$candidate.Count`
+        возвращает размер словаря, а не $null. Читатель, упростивший помощника
+        до точечного обращения, начнёт принимать отсутствующее поле за
+        заполненное. Проверка сначала доказывает, что подмена действительно
+        происходит, и только потом -- что помощник ей не поддался.
+        """
+        state = self.state()
+        self.assertEqual(state['dot_access_invents_count'], '2',
+                         'без этой подмены контроль ниже не различает два '
+                         'случая')
+        self.assertTrue(state['helper_reports_count_absent'])
+
+    def test_the_candidates_in_this_file_use_the_real_type(self):
+        """[REASON]: тест обязан остаться отличимым от прежнего.
+
+        Если кандидаты снова станут `[pscustomobject]@{...}`, проверка вернётся
+        к форме, которой на сервере не бывает, и снова начнёт давать
+        одинаковый ответ при верном и неверном коде.
+        """
+        self.assertIn("$orderedStaging = [ordered]@{", SERVICE_SHAPE_SCRIPT)
+        self.assertIn("Name = 'TransportReportStaging'", SERVICE_SHAPE_SCRIPT)
+        self.assertIn("AppDirectory = 'C:\\transport-report-staging'",
+                      SERVICE_SHAPE_SCRIPT)
+        self.assertIn("ImagePath = 'C:\\transport-report-staging\\nssm.exe'",
+                      SERVICE_SHAPE_SCRIPT)
+
+
+class TheSelectorReadsFieldsShapeBlind(unittest.TestCase):
+    """Проверки текста модуля -- работают и там, где PowerShell не установлен."""
+
+    def setUp(self):
+        with open(os.path.join(KIT_DIR, 'PilotKit.psm1'),
+                  encoding='utf-8') as handle:
+            self.text = handle.read()
+
+    def test_the_producer_no_longer_returns_a_bare_dictionary(self):
+        self.assertIn('return [pscustomobject][ordered]@{', self.text)
+        self.assertNotIn('    return [ordered]@{\n        Name         = $Name',
+                         self.text)
+
+    def test_the_selector_no_longer_probes_psobject_properties(self):
+        """[REASON]: это и есть строка, отбросившая настоящую службу."""
+        self.assertNotIn(
+            "if ($candidate.PSObject.Properties.Name -contains $field) {",
+            self.text)
+        self.assertIn(
+            "$value = Get-PilotCandidateField -Candidate $candidate "
+            "-Field $field", self.text)
+
+    def test_the_reader_handles_dictionaries(self):
+        self.assertIn('if ($Candidate -is [System.Collections.IDictionary]) {',
+                      self.text)
+        self.assertIn('if ($Candidate.Contains($Field)) {', self.text)
+
+    def test_the_reader_is_exported(self):
+        export = self.text.split('Export-ModuleMember -Function')[1]
+        self.assertIn('Get-PilotCandidateField', export)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

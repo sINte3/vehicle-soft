@@ -39,7 +39,7 @@
   "kit_own_files": {
     "ops/pilot_useful_area_001/BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1": "30d0d0dacfd78153458ad0352be652e8d3452c90",
     "ops/pilot_useful_area_001/PREFLIGHT_AND_COPY_TEST.ps1": "95ce5b4a1a2e6efe269256628b7bfb7e0ae7c19e",
-    "ops/pilot_useful_area_001/PilotKit.psm1": "3ca1936783bb703f167dc3201e7b22f1696feadd",
+    "ops/pilot_useful_area_001/PilotKit.psm1": "f0dfe441d24635eb5e132725954f984d353717ff",
     "ops/pilot_useful_area_001/STAGING_DEPLOY_AND_MIGRATE.ps1": "7d12c64b425ac583c6ae0be35c21ad891ee05299",
     "ops/pilot_useful_area_001/STAGING_PILOT_REPORT.ps1": "49a144054eec9ac77c74b959ed8ec9af817d5e0b",
     "ops/pilot_useful_area_001/STAGING_RECALCULATE_AND_VERIFY.ps1": "0b765d90e79e2c4c5b32ff04084f7cb9c005ddf3",
