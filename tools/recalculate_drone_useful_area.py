@@ -33,6 +33,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 import drone_coverage_recalc as recalc  # noqa: E402
+import drone_useful_area as ua  # noqa: E402
 
 DEFAULT_DB = os.path.join(ROOT, 'instance', 'transport.db')
 
@@ -45,7 +46,9 @@ def build_parser():
     parser = argparse.ArgumentParser(
         prog='recalculate_drone_useful_area.py',
         description='Recalculate the estimated useful area of drone works '
-                    '(useful-area-v1) over an explicit period.')
+                    'over an explicit period. The production rule is %s; '
+                    'an older version can be replayed with --dry-run only.'
+                    % ua.ALGORITHM_VERSION)
     parser.add_argument('--from', dest='date_from', required=True,
                         metavar='YYYY-MM-DD',
                         help='first local (UTC+5) day of the period')
@@ -59,6 +62,18 @@ def build_parser():
     parser.add_argument('--db', dest='db_path', default=DEFAULT_DB,
                         metavar='PATH',
                         help='database file (default: instance/transport.db)')
+    parser.add_argument('--algorithm-version', dest='algorithm_version',
+                        choices=ua.ALGORITHM_VERSIONS,
+                        default=ua.ALGORITHM_VERSION, metavar='VERSION',
+                        help='rules to compute by (default: %s). Any other '
+                             'version is a read-only regression replay and '
+                             'is accepted with --dry-run only'
+                             % ua.ALGORITHM_VERSION)
+    parser.add_argument('--show-works', action='store_true',
+                        help='print the decomposition of every work: swaths, '
+                             'union, clipping, contour, uncertainty, status, '
+                             'segment lengths by reason, implied speed. No '
+                             'coordinates, no flight identifiers')
     return parser
 
 
@@ -71,6 +86,14 @@ def check_usage(args):
         raise recalc.RecalcError(
             'choose a mode explicitly: --dry-run writes nothing, --apply '
             'writes in one transaction')
+    # [REASON]: старая версия правил -- регрессионный повтор, а не выбор.
+    # Записать её значило бы положить в базу число, посчитанное по правилам,
+    # которые действующими уже не являются, под честной старой меткой.
+    if args.apply and args.algorithm_version != ua.ALGORITHM_VERSION:
+        raise recalc.RecalcError(
+            '--apply writes only the production rule %s; %s can be replayed '
+            'with --dry-run only' % (ua.ALGORITHM_VERSION,
+                                     args.algorithm_version))
 
 
 def main(argv=None):
@@ -95,14 +118,18 @@ def main(argv=None):
         return EXIT_NO_DATABASE
 
     try:
-        summary = recalc.recalculate(args.db_path, date_from, date_to,
-                                     apply=args.apply)
+        summary = recalc.recalculate(
+            args.db_path, date_from, date_to, apply=args.apply,
+            params=ua.params_for_version(args.algorithm_version),
+            collect_works=args.show_works)
     except recalc.RecalcError as exc:
         print('ERROR: %s' % exc)
         return EXIT_USAGE
 
     print('Period: %s .. %s (local UTC+5)' % (date_from, date_to))
     print(recalc.format_summary(summary))
+    if args.show_works:
+        print(recalc.format_works(summary))
     if not args.apply:
         print('')
         print('Nothing was written. Re-run with --apply to store the result.')

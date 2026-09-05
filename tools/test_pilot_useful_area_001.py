@@ -282,7 +282,7 @@ class SyntheticSite(object):
                 'CREATE TABLE drone_flights ('
                 ' id INTEGER PRIMARY KEY AUTOINCREMENT, dji_flight_id BIGINT,'
                 ' drone_unit_id INTEGER, nickname_raw TEXT,'
-                ' started_at DATETIME, area_ha FLOAT);'
+                ' started_at DATETIME, area_ha FLOAT, work_seconds INTEGER);'
                 'CREATE TABLE field_contours ('
                 ' id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT,'
                 ' external_id TEXT, name TEXT, geometry_geojson TEXT,'

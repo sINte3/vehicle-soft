@@ -32,6 +32,7 @@ import json
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -111,7 +112,8 @@ class RecalcCase(unittest.TestCase):
                 'CREATE TABLE drone_flights ('
                 ' id INTEGER PRIMARY KEY AUTOINCREMENT,'
                 ' dji_flight_id BIGINT, drone_unit_id INTEGER,'
-                ' nickname_raw TEXT, started_at DATETIME, area_ha FLOAT);'
+                ' nickname_raw TEXT, started_at DATETIME, area_ha FLOAT,'
+                ' work_seconds INTEGER);'
                 'CREATE TABLE field_contours ('
                 ' id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT,'
                 ' external_id TEXT, name TEXT, geometry_geojson TEXT,'
@@ -133,13 +135,15 @@ class RecalcCase(unittest.TestCase):
 
     # ── Ввод ────────────────────────────────────────────────────────────────
 
-    def add_flight(self, flight_id, area_ha=2.0, minute=0, mission=None):
+    def add_flight(self, flight_id, area_ha=2.0, minute=0, mission=None,
+                   work_seconds=None):
         self.execute(
             'INSERT INTO drone_flights (dji_flight_id, drone_unit_id, '
-            ' nickname_raw, started_at, area_ha) VALUES (?, ?, ?, ?, ?)',
+            ' nickname_raw, started_at, area_ha, work_seconds) '
+            'VALUES (?, ?, ?, ?, ?, ?)',
             (flight_id, SYNTHETIC_UNIT_ID, 'SYNTHETIC-NICK',
              datetime(2026, 6, 5, 3, minute).strftime('%Y-%m-%d %H:%M:%S'),
-             area_ha))
+             area_ha, work_seconds))
         if mission is not None:
             self.mission = mission
         return flight_id
@@ -186,8 +190,10 @@ class RecalcCase(unittest.TestCase):
         finally:
             con.close()
 
-    def recalc(self, apply=True):
-        return recalc.recalculate(self.db, WORK_DAY, WORK_DAY, apply=apply)
+    def recalc(self, apply=True, version=None, collect_works=False):
+        params = ua.params_for_version(version) if version else None
+        return recalc.recalculate(self.db, WORK_DAY, WORK_DAY, apply=apply,
+                                  params=params, collect_works=collect_works)
 
     def works(self):
         con = sqlite3.connect(self.db)
@@ -509,6 +515,172 @@ class FingerprintInputs(unittest.TestCase):
         for fragment in ('SYNTHETIC', '900001', str(LAT0), str(LON0),
                          '39.7', '64.4'):
             self.assertNotIn(fragment, digest)
+
+
+# ─── Две версии правил: v1 воспроизводима, v2 действующая ────────────────────
+
+# Снимок параметров, который писала первая редакция (useful-area-v1). Литерал,
+# а не `json.dumps(DEFAULT_PARAMS.as_dict())`: сверка «код с самим собой»
+# не заметила бы, что снимок изменился вместе с кодом.
+V1_PARAMS_JSON = ('{"cell_m": 0.5, "contour_margin_m": 25.0, "gap_m": 60.0, '
+                  '"inside_share_min": 0.5, "max_grid_cells": 24000000, '
+                  '"min_pass_m": 20.0, "min_step_m": 0.05, "turn_deg": 25.0}')
+
+TOOL = os.path.join(ROOT, 'tools', 'recalculate_drone_useful_area.py')
+
+
+class AlgorithmVersions(RecalcCase):
+    """Проход в 160 м, записанный ДВУМЯ точками, в квадрате 200 x 200 м.
+
+    v1 читает его как разрыв записи (0.0 га, READY), v2 -- как проход:
+    160 x 8 = 0.128 га. Буквы -- пункты приёмки DRONE-USEFUL-AREA-PILOT-001.
+    """
+
+    two_point_pass = [at(0.0, -80.0), at(0.0, 80.0)]
+
+    def setUp(self):
+        RecalcCase.setUp(self)
+        self.add_contour('SYNTHETIC-CONTOUR-A', square(100.0))
+        self.add_flight(900001, area_ha=2.0, work_seconds=32)
+        self.add_route(900001, self.two_point_pass)
+
+    def test_a_v1_writes_its_old_number_and_its_old_snapshot(self):
+        self.recalc(version=ua.ALGORITHM_VERSION_V1)
+        work = self.only_work()
+        self.assertEqual(work['algorithm_version'], 'useful-area-v1')
+        self.assertEqual(work['quality_status'], ua.READY_ESTIMATE)
+        self.assertEqual(work['work_segments'], 0)
+        self.assertEqual(work['estimated_useful_area_ha'], 0.0)
+        self.assertEqual(work['params_json'], V1_PARAMS_JSON)
+
+    def test_a2_the_v1_replay_reproduces_the_stored_v1_row(self):
+        """Сухой прогон v1 над строкой v1: unchanged, ни одной updated."""
+        self.recalc(version=ua.ALGORITHM_VERSION_V1)
+        replay = self.recalc(apply=False, version=ua.ALGORITHM_VERSION_V1)
+        self.assertEqual(replay['algorithm_version'], 'useful-area-v1')
+        self.assertEqual((replay['unchanged'], replay['updated'],
+                          replay['inserted']), (1, 0, 0))
+        # Отрицательный контроль: сравнение способно заметить разницу --
+        # v2 над той же строкой говорит updated.
+        other = self.recalc(apply=False)
+        self.assertEqual((other['unchanged'], other['updated']), (0, 1))
+
+    def test_b_v2_is_the_default_and_counts_the_pass(self):
+        summary = self.recalc()
+        self.assertEqual(summary['algorithm_version'], 'useful-area-v2')
+        work = self.only_work()
+        self.assertEqual(work['algorithm_version'], ua.ALGORITHM_VERSION)
+        self.assertEqual(work['work_segments'], 1)
+        self.assertAlmostEqual(work['estimated_useful_area_ha'], 0.128,
+                               places=3)
+        self.assertEqual(json.loads(work['params_json'])['route_policy'],
+                         'polyline')
+
+    def test_k_the_version_bump_forces_the_rewrite(self):
+        self.recalc(version=ua.ALGORITHM_VERSION_V1)
+        legacy = self.only_work()
+        summary = self.recalc()
+        self.assertEqual((summary['updated'], summary['inserted'],
+                          summary['deleted']), (1, 0, 0))
+        current = self.only_work()
+        self.assertEqual(current['id'], legacy['id'])
+        self.assertNotEqual(current['inputs_fingerprint'],
+                            legacy['inputs_fingerprint'])
+        self.assertEqual(current['algorithm_version'], 'useful-area-v2')
+        self.assertEqual(legacy['algorithm_version'], 'useful-area-v1')
+        # И дальше v2 стабильна.
+        again = self.recalc()
+        self.assertEqual((again['unchanged'], again['updated']), (1, 0))
+
+    def test_k2_the_fingerprints_of_the_two_versions_differ_by_version(self):
+        entries = [ua.flight_input(900001, 'PRESENT',
+                                   content_sha256='SYNTHETIC', area_ha=2.0,
+                                   mission_uuid=None)]
+        v1 = ua.inputs_fingerprint(entries, params=ua.params_for_version(
+            ua.ALGORITHM_VERSION_V1))
+        v2 = ua.inputs_fingerprint(entries, params=ua.params_for_version(
+            ua.ALGORITHM_VERSION_V2))
+        self.assertNotEqual(v1, v2)
+        self.assertEqual(ua.inputs_fingerprint(entries), v2)
+        # Явно названная версия обязана сходиться с параметрами.
+        self.assertEqual(ua.inputs_fingerprint(
+            entries, params=ua.params_for_version(ua.ALGORITHM_VERSION_V1),
+            algorithm_version='useful-area-v1'), v1)
+        with self.assertRaises(ua.AreaStudyError):
+            ua.inputs_fingerprint(entries, params=ua.params_for_version(
+                ua.ALGORITHM_VERSION_V2), algorithm_version='useful-area-v1')
+        with self.assertRaises(ua.AreaStudyError):
+            ua.inputs_fingerprint(entries, params=ua.params_for_version(
+                ua.ALGORITHM_VERSION_V1), algorithm_version='useful-area-v2')
+
+    def test_snapshots_of_both_versions_read_back_into_their_rules(self):
+        v1 = ua.params_from_snapshot(json.loads(V1_PARAMS_JSON))
+        self.assertEqual(ua.version_of_params(v1), 'useful-area-v1')
+        self.assertEqual(v1.as_dict(), json.loads(V1_PARAMS_JSON))
+        v2 = ua.params_from_snapshot(ua.algorithm_params())
+        self.assertEqual(ua.version_of_params(v2), 'useful-area-v2')
+        with self.assertRaises(ua.AreaStudyError):
+            ua.params_from_snapshot({'cell_m': 0.5, 'vmax_mps': 15.0})
+        with self.assertRaises(ua.AreaStudyError):
+            ua.params_for_version('useful-area-v3')
+
+    def test_l_the_dry_run_detail_reports_speed_but_stores_nothing_of_it(self):
+        summary = self.recalc(apply=False, collect_works=True)
+        detail = summary['works_detail'][0]
+        self.assertEqual(detail['quality_status'], ua.READY_ESTIMATE)
+        self.assertEqual(detail['algorithm_version'], 'useful-area-v2')
+        self.assertAlmostEqual(detail['sum_independent_swaths_ha'], 0.128,
+                               places=3)
+        diag = detail['diagnostics']
+        self.assertAlmostEqual(diag['route_length_m'], 160.0, places=0)
+        self.assertEqual(diag['flights_with_duration'], 1)
+        self.assertAlmostEqual(diag['implied_speed_min_mps'], 5.0, places=1)
+        self.assertEqual(diag['length_by_reason_m'].get('WORK'),
+                         diag['route_length_m'])
+        # Ничего из наблюдаемого в базу не попадает.
+        self.assertEqual(self.works(), [])
+        self.recalc()
+        columns = [row[1] for row in self.query(
+            'PRAGMA table_info(drone_coverage_works)')]
+        self.assertNotIn('diagnostics', columns)
+        self.assertNotIn('implied_speed_min_mps', columns)
+        for name in ua.WorkCoverage.NOT_STORED:
+            self.assertNotIn(name, recalc.WRITE_COLUMNS)
+
+    def _run_tool(self, *arguments):
+        completed = subprocess.run(
+            [sys.executable, TOOL, '--from', '2026-06-05', '--to',
+             '2026-06-05', '--db', self.db] + list(arguments),
+            capture_output=True, text=True, cwd=ROOT)
+        return completed.returncode, completed.stdout
+
+    def test_the_tool_replays_v1_read_only_and_refuses_to_write_it(self):
+        code, output = self._run_tool('--apply', '--algorithm-version',
+                                      'useful-area-v1')
+        self.assertEqual(code, 1, output)
+        self.assertIn('--dry-run only', output)
+        self.assertEqual(self.works(), [], 'the refusal must write nothing')
+
+        code, output = self._run_tool('--dry-run', '--algorithm-version',
+                                      'useful-area-v1', '--show-works')
+        self.assertEqual(code, 0, output)
+        self.assertIn('algorithm           : useful-area-v1', output)
+        self.assertIn('per-work decomposition (1 works, useful-area-v1)',
+                      output)
+        self.assertIn('useful=0.0000', output)
+        self.assertIn('GAP=', output)
+        self.assertIn('implied speed (observable, not a rule)', output)
+        self.assertEqual(self.works(), [])
+        # Ни координат, ни идентификатора вылета в выводе.
+        self.assertNotIn('900001', output)
+        self.assertNotIn('39.70', output)
+        self.assertNotIn('64.40', output)
+
+        code, output = self._run_tool('--dry-run', '--show-works')
+        self.assertEqual(code, 0, output)
+        self.assertIn('algorithm           : useful-area-v2', output)
+        self.assertIn('useful=0.1280', output)
+        self.assertNotIn('GAP=', output)
 
 
 if __name__ == '__main__':
