@@ -131,7 +131,7 @@ def flights_of_day(con, day):
     end_utc = start_utc + timedelta(days=1)
     rows = con.execute(
         'SELECT f.id, f.dji_flight_id, f.drone_unit_id, f.nickname_raw, '
-        '       f.started_at, f.area_ha, '
+        '       f.started_at, f.area_ha, f.work_seconds, '
         '       r.points_json, r.spray_width_m, r.content_sha256, '
         '       r.mission_uuid '
         '  FROM drone_flights f '
@@ -176,6 +176,9 @@ def flights_of_day(con, day):
             'area_ha': row['area_ha'],
             'points': points,
             'spray_width_m': row['spray_width_m'],
+            # Только для наблюдаемой скорости сухого прогона; в отпечаток и
+            # в строку не входит (`WorkCoverage.NOT_STORED`).
+            'work_seconds': row['work_seconds'],
             'content_sha256': row['content_sha256'],
             'mission_uuid': row['mission_uuid'],
             'has_route': row['points_json'] is not None,
@@ -519,11 +522,17 @@ def _row_values(item, now):
 
 
 def recalculate(db_path, date_from, date_to, apply=False, params=None,
-                now=None):
+                now=None, collect_works=False):
     """Пересчёт периода. Возвращает сводку без координат и без настоящих ID.
 
     `apply=False` -- сухой прогон: ни одной записи, соединение закрывается
     откатом. Это единственный режим, безопасный на живой базе.
+
+    `params` -- параметры версии (`ua.params_for_version`); версия в сводке и
+    в каждой строке выводится ИЗ НИХ. `collect_works=True` кладёт в сводку
+    `works_detail` -- разложение каждой работы (полосы, объединение, обрезка,
+    контур, погрешность, статус, длины отрезков по причинам, наблюдаемая
+    скорость) без координат и без идентификаторов вылетов.
     """
     if date_from > date_to:
         raise RecalcError('--from %s is after --to %s' % (date_from, date_to))
@@ -538,9 +547,11 @@ def recalculate(db_path, date_from, date_to, apply=False, params=None,
         summary.update({'days': 0, 'works': 0, 'inserted': 0, 'updated': 0,
                         'unchanged': 0, 'deleted': 0, 'flights': 0,
                         'routes': 0, 'ready_area_ha': 0.0,
-                        'algorithm_version': ua.ALGORITHM_VERSION,
+                        'algorithm_version': ua.version_of_params(params),
                         'params': ua.algorithm_params(params),
                         'applied': bool(apply)})
+        if collect_works:
+            summary['works_detail'] = []
 
         if apply:
             con.execute('BEGIN')
@@ -554,6 +565,8 @@ def recalculate(db_path, date_from, date_to, apply=False, params=None,
             for item in compute_day(con, day, params=params):
                 coverage = item['coverage']
                 summary['works'] += 1
+                if collect_works:
+                    summary['works_detail'].append(work_detail(item))
                 summary[coverage.quality_status] = (
                     summary.get(coverage.quality_status, 0) + 1)
                 summary['flights'] += coverage.flights_total
@@ -640,6 +653,79 @@ def recalculate(db_path, date_from, date_to, apply=False, params=None,
         con.close()
 
 
+# Колонки разложения одной работы: ровно те, что хранит строка, плюс
+# наблюдаемые величины сухого прогона. Ни координат, ни идентификаторов
+# вылетов: `unit_key` -- тот же ключ машины, что стоит в строке и на странице.
+WORK_DETAIL_FIELDS = (
+    'work_date', 'unit_key', 'group_index', 'quality_status',
+    'quality_reason', 'contour_status', 'estimated_useful_area_ha',
+    'partial_estimate_ha', 'sum_independent_swaths_ha', 'swath_union_ha',
+    'clipped_all_ha', 'contour_area_ha', 'uncertainty_percent',
+    'dji_area_ha', 'flights_total', 'routes_total', 'work_segments',
+    'route_points', 'algorithm_version')
+
+
+def work_detail(item):
+    """Разложение одной работы для сухого прогона. Ничего приватного."""
+    coverage = item['coverage']
+    detail = {}
+    for name in WORK_DETAIL_FIELDS:
+        if name in ('work_date', 'unit_key', 'group_index', 'dji_area_ha'):
+            detail[name] = item[name]
+        else:
+            detail[name] = getattr(coverage, name)
+    detail['diagnostics'] = dict(coverage.diagnostics or {})
+    return detail
+
+
+def format_works(summary):
+    """Разложение по работам для консоли. ASCII; печатается по запросу."""
+    details = summary.get('works_detail')
+    if details is None:
+        return ''
+    lines = ['', 'per-work decomposition (%d works, %s):'
+             % (len(details), summary['algorithm_version'])]
+    for detail in sorted(details, key=lambda d: (d['work_date'],
+                                                 d['unit_key'],
+                                                 d['group_index'])):
+        diag = detail.get('diagnostics') or {}
+        lengths = diag.get('length_by_reason_m') or {}
+        lines.append('  %s %s #%d  %s (%s)  contour=%s'
+                     % (detail['work_date'], detail['unit_key'],
+                        detail['group_index'], detail['quality_status'],
+                        detail['quality_reason'], detail['contour_status']))
+        lines.append('    useful=%s partial=%s independent=%s union=%s '
+                     'clipped_all=%s contour_ha=%s uncertainty=%s%% dji=%s'
+                     % tuple(_num(detail[name]) for name in (
+                         'estimated_useful_area_ha', 'partial_estimate_ha',
+                         'sum_independent_swaths_ha', 'swath_union_ha',
+                         'clipped_all_ha', 'contour_area_ha',
+                         'uncertainty_percent', 'dji_area_ha')))
+        lines.append('    flights=%d routes=%d work_segments=%d points=%d '
+                     'route_length_m=%s'
+                     % (detail['flights_total'], detail['routes_total'],
+                        detail['work_segments'], detail['route_points'],
+                        _num(diag.get('route_length_m'))))
+        if lengths:
+            lines.append('    length_by_reason_m: '
+                         + ' '.join('%s=%s' % (reason, _num(lengths[reason]))
+                                    for reason in sorted(lengths)))
+        lines.append('    implied speed (observable, not a rule): '
+                     'flights_with_duration=%s min=%s max=%s m/s'
+                     % (diag.get('flights_with_duration', 0),
+                        _num(diag.get('implied_speed_min_mps')),
+                        _num(diag.get('implied_speed_max_mps'))))
+    return '\n'.join(lines)
+
+
+def _num(value):
+    if value is None:
+        return 'NULL'
+    if isinstance(value, float):
+        return '%.4f' % value
+    return str(value)
+
+
 def format_summary(summary):
     """Сводка для консоли. ASCII, без координат и без настоящих ID."""
     lines = [
@@ -676,4 +762,5 @@ def parse_day(text):
 
 
 __all__ = ['RecalcError', 'recalculate', 'compute_day', 'format_summary',
-           'parse_day', 'local_day', 'unit_key_of', 'connect']
+           'format_works', 'work_detail', 'parse_day', 'local_day',
+           'unit_key_of', 'connect']

@@ -5,16 +5,20 @@
       "product_blob": "25b81e03a8659d327b0679c73ad9b516d8743fd2"
     },
     "drone_collector/area_study.py": {
-      "kit_blob": "c2b5fe9aa36fd61fd318144d635068ad555256f0",
-      "product_blob": "c2b5fe9aa36fd61fd318144d635068ad555256f0"
+      "kit_blob": "2453f1cc46aaae13fef0f21770fb7d2f1b0234d4",
+      "product_blob": "2453f1cc46aaae13fef0f21770fb7d2f1b0234d4"
+    },
+    "drone_collector/main.py": {
+      "kit_blob": "95a6a610865f4d8e8bfbcde16fb320dd10f69671",
+      "product_blob": "95a6a610865f4d8e8bfbcde16fb320dd10f69671"
     },
     "drone_coverage_recalc.py": {
-      "kit_blob": "29a3036022c9586767c646a7feecf599e6c7ca90",
-      "product_blob": "29a3036022c9586767c646a7feecf599e6c7ca90"
+      "kit_blob": "906d9e87c36246ee7dab46cdfcfa36d58fa619fe",
+      "product_blob": "906d9e87c36246ee7dab46cdfcfa36d58fa619fe"
     },
     "drone_useful_area.py": {
-      "kit_blob": "da070b5347764ce39b30e0e728410028e1e08d46",
-      "product_blob": "da070b5347764ce39b30e0e728410028e1e08d46"
+      "kit_blob": "c5a6188d38d1394ef5f0fe519d6d2c5f58689f39",
+      "product_blob": "c5a6188d38d1394ef5f0fe519d6d2c5f58689f39"
     },
     "migrate_drones_useful_area_001.py": {
       "kit_blob": "d8b6f24e8b45658ebf91813e6396f4f4149c3a8e",
@@ -25,34 +29,29 @@
       "product_blob": "c080bcae2206a58410f90e5d80a76fb1b0b944bf"
     },
     "tools/recalculate_drone_useful_area.py": {
-      "kit_blob": "0ad473a71204cd8a30604893512f2e2e4ba19a0d",
-      "product_blob": "0ad473a71204cd8a30604893512f2e2e4ba19a0d"
+      "kit_blob": "08f83fb5f3bbe5d906fd48745ba8c0f9934aa4e7",
+      "product_blob": "08f83fb5f3bbe5d906fd48745ba8c0f9934aa4e7"
     }
   },
   "kit": "DRONE-USEFUL-AREA-PILOT-001",
-  "kit_differs_on_purpose": {
-    "drone_collector/main.py": {
-      "kit_blob": "95a6a610865f4d8e8bfbcde16fb320dd10f69671",
-      "product_blob": "ecaa663797e7e212a7b27fa230509cb4f6ea5e68"
-    }
-  },
+  "kit_differs_on_purpose": {},
   "kit_own_files": {
     "ops/pilot_useful_area_001/BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1": "2677772fe6a254b44e1358499328eefadcbd691a",
     "ops/pilot_useful_area_001/PREFLIGHT_AND_COPY_TEST.ps1": "4c7d737aaddbfdf164f6fbf507fc0dba5d01b914",
-    "ops/pilot_useful_area_001/PilotKit.psm1": "4cd629c2c89a46f9d73843f506113364d693594b",
+    "ops/pilot_useful_area_001/PilotKit.psm1": "312ac8b52f18e67fa04c967716aef65ba48e3dd1",
     "ops/pilot_useful_area_001/STAGING_DEPLOY_AND_MIGRATE.ps1": "8c22858ea4cc6c98f709e68f7930b350bbd65248",
-    "ops/pilot_useful_area_001/STAGING_PILOT_REPORT.ps1": "49a144054eec9ac77c74b959ed8ec9af817d5e0b",
-    "ops/pilot_useful_area_001/STAGING_RECALCULATE_AND_VERIFY.ps1": "3a8afecaa477cb1b244be75e71124842b785bc5d",
+    "ops/pilot_useful_area_001/STAGING_PILOT_REPORT.ps1": "d8fcfd09e5c06542aed80e442da4867a85c285ba",
+    "ops/pilot_useful_area_001/STAGING_RECALCULATE_AND_VERIFY.ps1": "fa0c97c1213e15d0d17a2142d447797383994a33",
     "ops/pilot_useful_area_001/STAGING_ROLLBACK.ps1": "5e18ad0a1a66133a27b478a114dc1c9dd8ca601f",
-    "ops/pilot_useful_area_001/pilot_blob_manifest.py": "dc3e79fbc4ef99c5d69a83f864273d3616934af6",
+    "ops/pilot_useful_area_001/pilot_blob_manifest.py": "e0ac58d0af4d7ed03eb3160e239ef3cd7ff2a537",
     "ops/pilot_useful_area_001/pilot_collect_check.py": "82a98b96f4457573efb2de844c58fe3d0cc388db",
     "ops/pilot_useful_area_001/pilot_collect_gate.py": "a10b16003722fdd3de2ce83d327757a077f71f77",
-    "ops/pilot_useful_area_001/pilot_common.py": "434a6b2383b6d0c8a6103808b9cf3f6ca5be72ec",
+    "ops/pilot_useful_area_001/pilot_common.py": "46023ab309a245c019c6b6c45dc966ba7df46b16",
     "ops/pilot_useful_area_001/pilot_db_probe.py": "fbf42b1fc0c3281b5f37e0ae66d1936c3eca0f41",
     "ops/pilot_useful_area_001/pilot_recalc_parse.py": "0fe74e7e4ab3b9b8b77dddcad3bf8e413a9f38c0",
     "ops/pilot_useful_area_001/pilot_repo_check.py": "83b9dc0433795fffa918cd9823562a3ee7b5ac5e",
-    "ops/pilot_useful_area_001/pilot_report.py": "58d803c3113fbee5afe4874dcb834824ba62e27f"
+    "ops/pilot_useful_area_001/pilot_report.py": "6acce29357c5cb342e55964c0e7a569b69debe7e"
   },
   "kit_version": "2",
-  "product_sha": "c3e6a12ab95117710eeea5e05133f5cd548b698e"
+  "product_sha": "a5dc4e66ac43b44ab9741e2062b130d51bfc4c37"
 }

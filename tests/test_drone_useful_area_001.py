@@ -81,13 +81,41 @@ def pass_line(east_m, north_from, north_to, step_m=5.0):
 
 
 def ferry_line():
-    """Перелёт: шаги по 90 м, то есть длиннее gap_m (60 м).
+    """Три точки по прямой внутри контура, шаги по 90 м.
 
-    [REASON]: разрыв записи НИКОГДА не становится полосой. Между двумя
-    точками в девяноста метрах друг от друга дрон, возможно, и работал, но МЫ
-    этого не знаем.
+    Под `useful-area-v1` (политика телеметрии) это «перелёт»: шаг длиннее
+    gap_m = 60 м, и оба отрезка -- разрыв записи, полосой не становятся.
+    Под `useful-area-v2` (политика ломаной) те же точки -- прямой проход в
+    180 м, записанный вершинами упрощённой ломаной. Живой пилот 2026-09-04
+    показал, что DJI отдаёт именно такие маршруты, и v1 на них вырезала
+    69.8 % длины. Набор `PolicyVersions` держит ОБА прочтения: v1 обязана
+    давать своё старое число, v2 -- полосу.
     """
     return [at(-90.0, -90.0), at(-90.0, 0.0), at(-90.0, 90.0)]
+
+
+def idle_maneuvers():
+    """Холостой маршрут ПРИ ОБЕИХ политиках: зигзаг с шагом 5 м и поворотами
+    на 90 град внутри контура. Каждый отрезок -- свой проход в 5 м, короче
+    min_pass_m = 20, то есть соединение, а не работа. Разрыва по расстоянию
+    здесь нет (5 м < 60), поэтому v1 и v2 читают его одинаково."""
+    points = []
+    for row in range(6):
+        north = 5.0 * row
+        east_pair = (0.0, 5.0) if row % 2 == 0 else (5.0, 0.0)
+        points.append(at(east_pair[0], north))
+        points.append(at(east_pair[1], north))
+    return points
+
+
+def notched_square(half_m, notch_half_width_m):
+    """Квадрат с вырезом от северной кромки до нуля: контур вогнутый."""
+    corners = [at(-half_m, -half_m), at(half_m, -half_m), at(half_m, half_m),
+               at(notch_half_width_m, half_m), at(notch_half_width_m, 0.0),
+               at(-notch_half_width_m, 0.0), at(-notch_half_width_m, half_m),
+               at(-half_m, half_m), at(-half_m, -half_m)]
+    return {'type': 'Polygon',
+            'coordinates': [[[point[1], point[0]] for point in corners]]}
 
 
 def route_body(flight_id, points, width=8.0, recorded=True):
@@ -126,13 +154,15 @@ class Base(unittest.TestCase):
             db.session.commit()
         self.flight_ids = []
 
-    def add_flight(self, flight_id, area_ha=2.0, minute=0, unit=True):
+    def add_flight(self, flight_id, area_ha=2.0, minute=0, unit=True,
+                   work_seconds=None):
         with app.app_context():
             db.session.add(DroneFlight(
                 dji_flight_id=flight_id,
                 drone_unit_id=self.unit_id if unit else None,
                 nickname_raw='SYNTHETIC-NICK',
                 started_at=datetime(2026, 6, 5, 3, minute),
+                work_seconds=work_seconds,
                 area_ha=area_ha, raw_json='{}'))
             db.session.commit()
         self.flight_ids.append(flight_id)
@@ -157,9 +187,12 @@ class Base(unittest.TestCase):
             payload['token'] = token
         return self.client.post('/drones/api/route_sync', json=payload)
 
-    def recalc(self, apply=True):
+    def recalc(self, apply=True, version=None, collect_works=False):
+        """Без `version` -- действующие правила (`ua.ALGORITHM_VERSION`)."""
+        params = ua.params_for_version(version) if version else None
         return recalc.recalculate(TEST_DB_PATH, WORK_DAY, WORK_DAY,
-                                  apply=apply)
+                                  apply=apply, params=params,
+                                  collect_works=collect_works)
 
     def works(self):
         with app.app_context():
@@ -271,26 +304,36 @@ class Geometry(Base):
     def test_03_mixed_flight_counts_only_the_work_pass(self):
         """Один вылет несёт и рабочий проход, и перелёт.
 
-        Перелёт -- шаги по 400 и 500 м, длиннее gap_m. В площадь входит
-        только проход: 160 м * 8 м = 0.128 га.
+        Перелёт -- шаги по 400 и 500 м к точкам ВНЕ контура. В площадь входит
+        только проход: 160 м * 8 м = 0.128 га. Под v1 перелёт отброшен как
+        разрыв записи (длиннее gap_m), под v2 -- как отрезок, покидающий
+        контур; число у обеих версий одно, и это проверяется у обеих.
         """
         self.add_flight(900001)
         points = pass_line(0.0, -80.0, 80.0) + [at(400.0, 400.0),
                                                 at(900.0, 900.0)]
         self.post_routes([route_body(900001, points)])
-        self.recalc()
-        work = self.only_work()
-
-        self.assertEqual(work.quality_status, ua.READY_ESTIMATE)
-        self.assertAlmostEqual(work.estimated_useful_area_ha, 0.128, places=3)
+        for version in ua.ALGORITHM_VERSIONS:
+            self.recalc(version=version)
+            work = self.only_work()
+            self.assertEqual(work.algorithm_version, version)
+            self.assertEqual(work.quality_status, ua.READY_ESTIMATE)
+            self.assertAlmostEqual(work.estimated_useful_area_ha, 0.128,
+                                   places=3, msg=version)
 
     def test_04_fully_idle_flight_makes_no_positive_area(self):
-        """Полностью холостой вылет не создаёт положительной площади."""
+        """Полностью холостой вылет не создаёт положительной площади.
+
+        Маршрут -- `idle_maneuvers()`, холостой при обеих политиках. Прежний
+        `ferry_line()` холост только под v1: под v2 это проход, и он живёт в
+        `PolicyVersions`.
+        """
         self.add_flight(900001)
-        self.post_routes([route_body(900001, ferry_line())])
+        self.post_routes([route_body(900001, idle_maneuvers())])
         self.recalc()
         work = self.only_work()
 
+        self.assertEqual(work.algorithm_version, ua.ALGORITHM_VERSION_V2)
         self.assertEqual(work.work_segments, 0)
         self.assertEqual(work.estimated_useful_area_ha, 0.0)
         self.assertFalse(work.estimated_useful_area_ha > 0,
@@ -306,7 +349,7 @@ class Geometry(Base):
         права выдумать площадь.
         """
         self.add_flight(900001)
-        self.post_routes([route_body(900001, ferry_line(), width=None,
+        self.post_routes([route_body(900001, idle_maneuvers(), width=None,
                                      recorded=False)])
         self.recalc()
         work = self.only_work()
@@ -790,6 +833,240 @@ class EndToEnd(Base):
         self.assertIn('0.19', html)      # расчётная полезная площадь
         self.assertIn('4.00', html)      # исходная площадь DJI, рядом и цела
         self.assertIn('Расчёт готов', html)
+        # Версия на странице -- та, по которой посчитана строка, и
+        # предупреждение о расчёте не исчезло вместе со сменой версии.
+        self.assertIn('useful-area-v2', html)
+        self.assertNotIn('useful-area-v1', html)
+        self.assertIn('Это расчёт, а не измерение опрыскивания.', html)
+        self.assertIn('Расчётная полезная', html)
+
+
+# ─── useful-area-v2: две версии правил, обе считаются ────────────────────────
+
+V1_PARAMS_JSON = ('{"cell_m": 0.5, "contour_margin_m": 25.0, "gap_m": 60.0, '
+                  '"inside_share_min": 0.5, "max_grid_cells": 24000000, '
+                  '"min_pass_m": 20.0, "min_step_m": 0.05, "turn_deg": 25.0}')
+
+
+class PolicyVersions(Base):
+    """Буквы -- пункты приёмки DRONE-USEFUL-AREA-PILOT-001 / v2.
+
+    `ferry_line()` -- три точки по прямой внутри контура с шагом 90 м: под v1
+    разрыв записи (0.0 га), под v2 проход в 180 м (180 x 8 = 0.144 га).
+    """
+
+    def setUp(self):
+        Base.setUp(self)
+        self.add_contour('SYNTHETIC-CONTOUR-A', square(100.0))
+
+    def test_a_v1_legacy_keeps_the_gap_and_its_old_number(self):
+        self.add_flight(900001)
+        self.post_routes([route_body(900001, ferry_line())])
+        self.recalc(version=ua.ALGORITHM_VERSION_V1)
+        work = self.only_work()
+
+        self.assertEqual(work.algorithm_version, 'useful-area-v1')
+        self.assertEqual(work.quality_status, ua.READY_ESTIMATE)
+        self.assertEqual(work.work_segments, 0)
+        self.assertEqual(work.estimated_useful_area_ha, 0.0)
+        # Снимок параметров -- байт в байт тот, что писала первая редакция.
+        self.assertEqual(work.params_json, V1_PARAMS_JSON)
+
+    def test_b_v2_makes_the_same_points_a_work_pass(self):
+        self.add_flight(900001)
+        self.post_routes([route_body(900001, ferry_line())])
+        self.recalc()
+        work = self.only_work()
+
+        self.assertEqual(work.algorithm_version, 'useful-area-v2')
+        self.assertEqual(work.quality_status, ua.READY_ESTIMATE)
+        self.assertEqual(work.work_segments, 2)
+        self.assertAlmostEqual(work.estimated_useful_area_ha, 0.144, places=3)
+        snapshot = json.loads(work.params_json)
+        self.assertEqual(snapshot['route_policy'], 'polyline')
+        self.assertNotIn('gap_m', snapshot)
+
+    def test_c_v2_a_long_segment_to_a_point_outside_is_not_work(self):
+        self.add_flight(900001)
+        points = ferry_line() + [at(600.0, 90.0)]
+        self.post_routes([route_body(900001, points)])
+        self.recalc()
+        work = self.only_work()
+
+        self.assertEqual(work.quality_status, ua.READY_ESTIMATE)
+        self.assertEqual(work.work_segments, 2)
+        self.assertAlmostEqual(work.estimated_useful_area_ha, 0.144, places=3)
+        # Отрицательный контроль: без контура, режущего отрезок, тот же
+        # маршрут в поле побольше дал бы больше -- значит, исключает контур.
+        self.assertLess(work.estimated_useful_area_ha, 0.2)
+
+    def test_d_v2_a_segment_crossing_a_concave_boundary_is_not_work(self):
+        """Оба конца внутри вогнутого контура, середина -- в вырезе."""
+        with app.app_context():
+            FieldContour.query.delete()
+            db.session.commit()
+        self.add_contour('SYNTHETIC-NOTCHED', notched_square(100.0, 10.0))
+        self.add_flight(900001)
+        # Отрезок на север от выреза (north 50): от east -80 до +80.
+        crossing = [at(-80.0, 50.0), at(80.0, 50.0)]
+        self.post_routes([route_body(900001, crossing)])
+        self.recalc()
+        work = self.only_work()
+
+        self.assertEqual(work.contour_status, 'CONTOUR_MATCHED')
+        self.assertEqual(work.work_segments, 0)
+        self.assertEqual(work.estimated_useful_area_ha, 0.0)
+        # Отрицательный контроль: южнее выреза тот же отрезок -- проход.
+        below = route_body(900001, [at(-80.0, -50.0), at(80.0, -50.0)])
+        self.post_routes([below])
+        self.recalc()
+        work = self.only_work()
+        self.assertEqual(work.work_segments, 1)
+        self.assertAlmostEqual(work.estimated_useful_area_ha, 0.128, places=3)
+
+    def snake(self):
+        """Четыре прохода по 160 м через 8 м (ширина 8), соединения по 8 м."""
+        points = []
+        for index, east in enumerate((-12.0, -4.0, 4.0, 12.0)):
+            low, high = (-80.0, 80.0) if index % 2 == 0 else (80.0, -80.0)
+            points.append(at(east, low))
+            points.append(at(east, high))
+        return points
+
+    def test_e_v2_snake_passes_count_and_the_turns_do_not(self):
+        self.add_flight(900001)
+        self.post_routes([route_body(900001, self.snake())])
+        self.recalc()
+        work = self.only_work()
+
+        self.assertEqual(work.quality_status, ua.READY_ESTIMATE)
+        self.assertEqual(work.work_segments, 4)
+        # 4 x 160 м x 8 м = 0.512 га, соединения в площадь не входят.
+        self.assertAlmostEqual(work.estimated_useful_area_ha, 0.512, places=3)
+        self.assertGreater(work.swath_union_ha, work.estimated_useful_area_ha,
+                           'the connectors are painted among ALL bands, '
+                           'never among the work bands')
+
+    def test_f_v2_repeated_passes_are_unioned_once(self):
+        self.add_flight(900001, minute=0)
+        self.add_flight(900002, minute=1)
+        self.post_routes([route_body(900001, ferry_line()),
+                          route_body(900002, ferry_line())])
+        self.recalc()
+        work = self.only_work()
+
+        self.assertEqual(work.routes_total, 2)
+        self.assertAlmostEqual(work.estimated_useful_area_ha, 0.144, places=3)
+        self.assertAlmostEqual(work.sum_independent_swaths_ha, 0.288,
+                               places=3)
+
+    def test_g_v2_a_pass_without_width_is_partial_and_null(self):
+        self.add_flight(900001)
+        self.post_routes([route_body(900001, ferry_line(), width=None,
+                                     recorded=False)])
+        self.recalc()
+        work = self.only_work()
+
+        self.assertEqual(work.quality_status, ua.PARTIAL_DATA)
+        self.assertEqual(work.quality_reason,
+                         ua.REASON_WIDTH_MISSING_ON_WORK_PASS)
+        self.assertIsNone(work.estimated_useful_area_ha)
+        self.assertIsNone(work.swath_union_ha)
+        # Под v1 та же строка была READY 0.0: там прохода не было вовсе.
+        self.recalc(version=ua.ALGORITHM_VERSION_V1)
+        legacy = self.only_work()
+        self.assertEqual(legacy.quality_status, ua.READY_ESTIMATE)
+        self.assertEqual(legacy.estimated_useful_area_ha, 0.0)
+
+    def test_h_contour_semantics_are_the_same_under_both_versions(self):
+        self.add_contour('SYNTHETIC-CONTOUR-B', square(100.0))   # двойник
+        self.add_flight(900001)
+        self.post_routes([route_body(900001, ferry_line())])
+        for version in ua.ALGORITHM_VERSIONS:
+            self.recalc(version=version)
+            work = self.only_work()
+            self.assertEqual(work.quality_status, ua.CONTOUR_AMBIGUOUS,
+                             version)
+            self.assertIsNone(work.estimated_useful_area_ha, version)
+
+        with app.app_context():
+            FieldContour.query.delete()
+            db.session.commit()
+        self.add_contour('SYNTHETIC-FAR', square(50.0, east_m=2000.0))
+        for version in ua.ALGORITHM_VERSIONS:
+            self.recalc(version=version)
+            work = self.only_work()
+            self.assertEqual(work.quality_status, ua.CONTOUR_NOT_MATCHED,
+                             version)
+            self.assertIsNone(work.estimated_useful_area_ha, version)
+
+    def test_i_v2_keeps_the_raster_uncertainty(self):
+        self.add_flight(900001)
+        self.post_routes([route_body(900001, self.snake())])
+        self.recalc()
+        work = self.only_work()
+        self.assertIsNotNone(work.uncertainty_percent)
+        self.assertGreaterEqual(work.uncertainty_percent, 0.0)
+
+    def test_j_applying_v2_twice_changes_nothing(self):
+        self.add_flight(900001)
+        self.post_routes([route_body(900001, self.snake())])
+        self.recalc()
+        before = self.raw('SELECT * FROM drone_coverage_works')
+        summary = self.recalc()
+        self.assertEqual((summary['unchanged'], summary['updated'],
+                          summary['inserted'], summary['deleted']),
+                         (1, 0, 0, 0))
+        self.assertEqual(self.raw('SELECT * FROM drone_coverage_works'),
+                         before)
+
+    def test_k_the_version_bump_rewrites_the_row_and_v1_replays_itself(self):
+        self.add_flight(900001)
+        self.post_routes([route_body(900001, ferry_line())])
+        self.recalc(version=ua.ALGORITHM_VERSION_V1)
+        legacy = self.only_work()
+        self.assertEqual(legacy.algorithm_version, 'useful-area-v1')
+        # Сухой повтор v1 воспроизводит строку целиком: unchanged, не updated.
+        replay = self.recalc(apply=False, version=ua.ALGORITHM_VERSION_V1)
+        self.assertEqual((replay['unchanged'], replay['updated']), (1, 0))
+
+        summary = self.recalc()
+        self.assertEqual(summary['updated'], 1)
+        current = self.only_work()
+        self.assertEqual(current.algorithm_version, 'useful-area-v2')
+        self.assertNotEqual(current.inputs_fingerprint,
+                            legacy.inputs_fingerprint)
+        self.assertNotEqual(current.params_json, legacy.params_json)
+        self.assertNotEqual(current.estimated_useful_area_ha,
+                            legacy.estimated_useful_area_ha)
+        self.assertEqual(len(self.works()), 1)
+
+    def test_l_speed_is_an_observable_and_never_decides_a_status(self):
+        """Доказанной границы скорости в evidence нет -- правила по ней нет.
+
+        Наблюдаемая скорость печатается в разложении сухого прогона; статус
+        от неё не зависит. Это зафиксированный остаточный риск, а не
+        недосмотр: порог, взятый «из общих соображений», был бы придуманным
+        бизнес-правилом.
+        """
+        self.add_flight(900001, minute=0, work_seconds=36)     # 180 м / 36 с
+        self.add_flight(900002, minute=1, work_seconds=1)      # 180 м / 1 с
+        self.post_routes([route_body(900001, ferry_line()),
+                          route_body(900002, ferry_line())])
+        summary = self.recalc(apply=False, collect_works=True)
+        detail = summary['works_detail'][0]
+        diag = detail['diagnostics']
+        self.assertEqual(diag['flights_with_duration'], 2)
+        self.assertAlmostEqual(diag['implied_speed_min_mps'], 5.0, places=2)
+        self.assertAlmostEqual(diag['implied_speed_max_mps'], 180.0, places=1)
+        self.assertEqual(detail['quality_status'], ua.READY_ESTIMATE)
+        # Наблюдаемое в строку не ложится и отпечаток не меняет.
+        self.recalc()
+        stored = self.only_work()
+        self.assertEqual(stored.quality_status, ua.READY_ESTIMATE)
+        self.assertNotIn('implied_speed', stored.params_json)
+        for column in ('implied_speed_min_mps', 'diagnostics'):
+            self.assertFalse(hasattr(stored, column))
 
 
 class Bilingual(Base):

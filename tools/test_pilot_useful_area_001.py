@@ -220,11 +220,17 @@ def shared_evidence():
             for label in ('dry-run', 'apply-1', 'apply-2')]
     _result, snapshot = site.snapshot(run_id=site.run_id)
     area = snapshot['payload']['area_ha']
+    # Улика шага 4 «площадка ПЕРЕД сухим прогоном»: тот же прибор, тот же
+    # отпечаток area_ha (пересчёт площадь не трогает), метка -- между сбором
+    # и сухим прогоном.
+    staging_input = copy.deepcopy(snapshot)
+    staging_input['generated_utc'] = stamp(-120)
     _SHARED.update({
         'site': site,
         'run_id': site.run_id,
         'runs': runs,
         'snapshot': snapshot,
+        'staging_input': staging_input,
         'preflight': envelope('preflight', {
             'migration_on_copy_ok': True,
             'area_ha_before': area, 'area_ha_after': area},
@@ -282,7 +288,7 @@ class SyntheticSite(object):
                 'CREATE TABLE drone_flights ('
                 ' id INTEGER PRIMARY KEY AUTOINCREMENT, dji_flight_id BIGINT,'
                 ' drone_unit_id INTEGER, nickname_raw TEXT,'
-                ' started_at DATETIME, area_ha FLOAT);'
+                ' started_at DATETIME, area_ha FLOAT, work_seconds INTEGER);'
                 'CREATE TABLE field_contours ('
                 ' id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT,'
                 ' external_id TEXT, name TEXT, geometry_geojson TEXT,'
@@ -424,7 +430,7 @@ class TwoRevisions(unittest.TestCase):
 
     def test_the_kit_declares_a_product_sha_and_never_a_single_verified_sha(self):
         self.assertEqual(common.PRODUCT_SHA,
-                         'c3e6a12ab95117710eeea5e05133f5cd548b698e')
+                         'a5dc4e66ac43b44ab9741e2062b130d51bfc4c37')
         self.assertFalse(hasattr(common, 'VERIFIED_MERGE_SHA'),
                          'a single verified sha is exactly the circular '
                          'dependency this split removes')
@@ -525,12 +531,26 @@ class ExecutablesComeFromARevision(unittest.TestCase):
                      'tools/recalculate_drone_useful_area.py'):
             self.assertIn(path, manifest['identical_on_both_revisions'], path)
 
-    def test_the_collector_difference_is_declared_not_hidden(self):
+    def test_the_collector_is_identical_and_no_stale_difference_is_declared(self):
+        """С ревизии продукта v2 сборщик одинаков на обеих ревизиях.
+
+        Пока площадка стояла на `c3e6a12`, `drone_collector/main.py`
+        различался намеренно и это было записано. Теперь различий нет, и
+        манифест обязан говорить именно это, а не нести устаревшую запись.
+        """
         manifest = common.load_product_blobs()
-        entry = manifest['kit_differs_on_purpose']['drone_collector/main.py']
-        self.assertNotEqual(entry['product_blob'], entry['kit_blob'],
-                            'the kit claims to change the collector; if the '
-                            'blobs are equal the claim is stale')
+        self.assertIn('drone_collector/main.py',
+                      manifest['identical_on_both_revisions'])
+        self.assertEqual(manifest['kit_differs_on_purpose'], {})
+        entry = manifest['identical_on_both_revisions']['drone_collector/main.py']
+        self.assertEqual(entry['product_blob'], entry['kit_blob'])
+        # Отрицательный контроль: устаревшую запись «отличается намеренно»
+        # при равных blob-ах проверка называет по имени.
+        stale = copy.deepcopy(manifest)
+        stale['kit_differs_on_purpose']['drone_collector/main.py'] = dict(entry)
+        problems = blobs.check_against_worktree(stale, REPO_ROOT)
+        self.assertIn('DECLARED_DIFFERENT_BUT_IDENTICAL:drone_collector/main.py',
+                      problems)
 
     def test_a_file_outside_the_manifest_is_never_materialized(self):
         directory = tempfile.mkdtemp(prefix='pilot_mat_')
@@ -1226,10 +1246,11 @@ class Verdict(unittest.TestCase):
         cls.preflight = shared['preflight']
         cls.deploy = shared['deploy']
         cls.collect = shared['collect']
+        cls.staging_input = shared['staging_input']
 
     def build(self, preflight=None, deploy=None, collect=None, runs=None,
               snapshot=None, owner_threshold=None, dji_limit=None,
-              run_id=None):
+              run_id=None, staging_input=None):
         return report_mod.build_report(
             preflight or copy.deepcopy(self.preflight),
             deploy or copy.deepcopy(self.deploy),
@@ -1237,7 +1258,8 @@ class Verdict(unittest.TestCase):
             runs if runs is not None else copy.deepcopy(self.runs),
             snapshot or copy.deepcopy(self.snapshot),
             owner_threshold, dji_limit, [],
-            run_id=run_id or self.run_id, kit_sha=KIT_SHA_FIXTURE)
+            run_id=run_id or self.run_id, kit_sha=KIT_SHA_FIXTURE,
+            staging_input=staging_input or copy.deepcopy(self.staging_input))
 
     def test_healthy_evidence_without_owner_rules_is_technical_go(self):
         report, _markdown = self.build()
@@ -1990,7 +2012,7 @@ class RecalcSummaryParsing(unittest.TestCase):
 
     def test_the_parser_reads_the_real_format_summary(self):
         parsed = recalc_parse.parse_summary(recalc.format_summary({
-            'applied': True, 'algorithm_version': 'useful-area-v1',
+            'applied': True, 'algorithm_version': 'useful-area-v2',
             'days': 1, 'works': 3, 'flights': 7, 'routes': 6,
             'inserted': 3, 'updated': 0, 'unchanged': 0, 'deleted': 0,
             'READY_ESTIMATE': 2, 'PARTIAL_DATA': 1, 'DATA_UNAVAILABLE': 0,
@@ -2003,7 +2025,7 @@ class RecalcSummaryParsing(unittest.TestCase):
 
     def test_a_missing_field_is_refused_rather_than_defaulted_to_zero(self):
         text = recalc.format_summary({
-            'applied': False, 'algorithm_version': 'useful-area-v1',
+            'applied': False, 'algorithm_version': 'useful-area-v2',
             'days': 1, 'works': 1, 'flights': 1, 'routes': 1, 'inserted': 1,
             'updated': 0, 'unchanged': 0, 'deleted': 0, 'READY_ESTIMATE': 1,
             'PARTIAL_DATA': 0, 'DATA_UNAVAILABLE': 0, 'CONTOUR_AMBIGUOUS': 0,
@@ -2734,7 +2756,8 @@ class RecalculationIsTimed(unittest.TestCase):
             copy.deepcopy(shared['preflight']), copy.deepcopy(shared['deploy']),
             copy.deepcopy(shared['collect']), runs,
             copy.deepcopy(shared['snapshot']), None, None, [],
-            run_id=shared['run_id'], kit_sha=KIT_SHA_FIXTURE)
+            run_id=shared['run_id'], kit_sha=KIT_SHA_FIXTURE,
+            staging_input=copy.deepcopy(shared['staging_input']))
         self.assertEqual(report['verdict'], 'REJECT')
         self.assertIn('RECALCULATION_WAS_TIMED', report['verdict_reasons'])
         self.assertIsNone(report['recalculation_seconds'])
@@ -2773,6 +2796,7 @@ class VerdictContract(unittest.TestCase):
                     ('preflight', shared['preflight']),
                     ('deploy', shared['deploy']),
                     ('collect', shared['collect']),
+                    ('staging_input', shared['staging_input']),
                     ('snapshot', shared['snapshot'])):
                 paths[name] = os.path.join(directory, '%s.json' % name)
                 common.write_evidence(paths[name], document)
@@ -2788,6 +2812,7 @@ class VerdictContract(unittest.TestCase):
                              '--deploy', paths['deploy'],
                              '--collect', paths['collect'],
                              '--staging-snapshot', paths['snapshot'],
+                             '--staging-input', paths['staging_input'],
                              '--run-id', run_id, '--kit-sha', KIT_SHA_FIXTURE,
                              '--out-json', os.path.join(directory, 'r.json'),
                              '--out-md', os.path.join(directory, 'r.md')]
@@ -2875,7 +2900,8 @@ class VerdictContract(unittest.TestCase):
             copy.deepcopy(shared['preflight']), copy.deepcopy(shared['deploy']),
             copy.deepcopy(shared['collect']), copy.deepcopy(shared['runs']),
             copy.deepcopy(shared['snapshot']), threshold, limit, [],
-            run_id=shared['run_id'], kit_sha=KIT_SHA_FIXTURE)
+            run_id=shared['run_id'], kit_sha=KIT_SHA_FIXTURE,
+            staging_input=copy.deepcopy(shared['staging_input']))
 
 
 # ═══ Р8. Доказательства в отчёте fail-closed ════════════════════════════════
@@ -2885,9 +2911,45 @@ class EvidenceIsFailClosed(unittest.TestCase):
     def full(self):
         return {name: 'a' * 64 for name in report_mod.REQUIRED_FINGERPRINTS}
 
-    def test_all_five_fingerprints_are_required(self):
-        self.assertEqual(len(report_mod.REQUIRED_FINGERPRINTS), 5)
+    def test_all_six_fingerprints_are_required(self):
+        self.assertEqual(len(report_mod.REQUIRED_FINGERPRINTS), 6)
+        self.assertEqual(len(report_mod.FINGERPRINT_PAIRS), 3)
         self.assertTrue(report_mod.area_ha_unchanged(self.full()))
+
+    def test_the_pairs_are_independent_of_each_other(self):
+        """Копия production, площадка после миграции и площадка после сбора
+        -- три РАЗНЫХ состояния таблицы вылетов, и это законно."""
+        staged = {
+            'production_copy_before_migration': 'a' * 64,
+            'production_copy_after_migration': 'a' * 64,
+            'staging_before_migration': 'b' * 64,
+            'staging_after_migration': 'b' * 64,
+            'staging_before_recalculation': 'c' * 64,
+            'staging_after_recalculation': 'c' * 64,
+        }
+        self.assertTrue(report_mod.area_ha_unchanged(staged))
+        self.assertEqual(report_mod.area_ha_pairs(staged),
+                         {'production_copy_migration': True,
+                          'staging_migration': True,
+                          'staging_recalculation': True})
+        self.assertTrue(report_mod.area_ha_changed_by_collection(staged))
+        # Отрицательный контроль: старое правило «все равны» здесь говорило
+        # НЕТ -- ровно тот ложный REJECT, который дал живой пилот.
+        self.assertGreater(len(set(staged.values())), 1)
+        # И каждая пара ловит СВОЁ изменение.
+        for before, after, pair in (
+                ('production_copy_before_migration',
+                 'production_copy_after_migration',
+                 'production_copy_migration'),
+                ('staging_before_migration', 'staging_after_migration',
+                 'staging_migration'),
+                ('staging_before_recalculation',
+                 'staging_after_recalculation', 'staging_recalculation')):
+            broken = dict(staged)
+            broken[after] = 'f' * 64
+            self.assertFalse(report_mod.area_ha_unchanged(broken), pair)
+            self.assertFalse(report_mod.area_ha_pairs(broken)[pair], pair)
+            self.assertEqual(broken[before], staged[before])
 
     def test_a_single_missing_fingerprint_breaks_the_claim(self):
         """Отрицательный контроль: меньше улик -- не сильнее доказательство."""
@@ -3189,12 +3251,14 @@ class AreaFieldMatchesTheCondition(unittest.TestCase):
         preflight = copy.deepcopy(shared['preflight'])
         deploy = copy.deepcopy(shared['deploy'])
         snapshot = copy.deepcopy(shared['snapshot'])
+        staging_input = copy.deepcopy(shared['staging_input'])
         if mutate:
-            mutate(preflight, deploy, snapshot)
+            mutate(preflight, deploy, snapshot, staging_input)
         return report_mod.build_report(
             preflight, deploy, copy.deepcopy(shared['collect']),
             copy.deepcopy(shared['runs']), snapshot, None, None, [],
-            run_id=shared['run_id'], kit_sha=KIT_SHA_FIXTURE)
+            run_id=shared['run_id'], kit_sha=KIT_SHA_FIXTURE,
+            staging_input=staging_input)
 
     def condition(self, report):
         for item in report['conditions']:
@@ -3202,24 +3266,27 @@ class AreaFieldMatchesTheCondition(unittest.TestCase):
                 return item['passed']
         raise AssertionError('AREA_HA_UNCHANGED is gone from the conditions')
 
-    def test_all_five_present_and_equal_gives_true(self):
+    def test_all_six_present_and_paired_gives_true(self):
         report, markdown = self.build()
         self.assertTrue(report['area_ha_unchanged'])
         self.assertTrue(self.condition(report))
         self.assertIn('drone_flights.area_ha не менялась | да', markdown)
+        self.assertIn('непосредственно до/после пересчёта | да', markdown)
 
     def test_any_one_missing_gives_false_and_reject(self):
         cases = {
             'production_copy_before_migration':
-                lambda p, d, s: p['payload'].pop('area_ha_before'),
+                lambda p, d, s, i: p['payload'].pop('area_ha_before'),
             'production_copy_after_migration':
-                lambda p, d, s: p['payload'].pop('area_ha_after'),
+                lambda p, d, s, i: p['payload'].pop('area_ha_after'),
             'staging_before_migration':
-                lambda p, d, s: d['payload'].pop('area_ha_before'),
+                lambda p, d, s, i: d['payload'].pop('area_ha_before'),
             'staging_after_migration':
-                lambda p, d, s: d['payload'].pop('area_ha_after'),
+                lambda p, d, s, i: d['payload'].pop('area_ha_after'),
+            'staging_before_recalculation':
+                lambda p, d, s, i: i['payload'].pop('area_ha'),
             'staging_after_recalculation':
-                lambda p, d, s: s['payload'].pop('area_ha'),
+                lambda p, d, s, i: s['payload'].pop('area_ha'),
         }
         for name, mutate in cases.items():
             report, markdown = self.build(mutate)
@@ -3230,12 +3297,13 @@ class AreaFieldMatchesTheCondition(unittest.TestCase):
             self.assertIn('drone_flights.area_ha не менялась | НЕТ', markdown,
                           name)
 
-    def test_all_five_missing_gives_false_and_reject(self):
-        def drop_everything(preflight, deploy, snapshot):
+    def test_all_six_missing_gives_false_and_reject(self):
+        def drop_everything(preflight, deploy, snapshot, staging_input):
             preflight['payload'].pop('area_ha_before')
             preflight['payload'].pop('area_ha_after')
             deploy['payload'].pop('area_ha_before')
             deploy['payload'].pop('area_ha_after')
+            staging_input['payload'].pop('area_ha')
             snapshot['payload'].pop('area_ha')
 
         report, markdown = self.build(drop_everything)
@@ -3247,7 +3315,7 @@ class AreaFieldMatchesTheCondition(unittest.TestCase):
         self.assertIn('drone_flights.area_ha не менялась | НЕТ', markdown)
 
     def test_one_differing_gives_false_and_reject(self):
-        def change_one(preflight, deploy, snapshot):
+        def change_one(preflight, deploy, snapshot, staging_input):
             deploy['payload']['area_ha_after'] = dict(
                 deploy['payload']['area_ha_after'])
             deploy['payload']['area_ha_after']['sha256'] = 'f' * 64
@@ -3260,8 +3328,9 @@ class AreaFieldMatchesTheCondition(unittest.TestCase):
 
     def test_the_field_and_the_condition_never_disagree(self):
         for mutate in (None,
-                       lambda p, d, s: d['payload'].pop('area_ha_after'),
-                       lambda p, d, s: s['payload'].pop('area_ha')):
+                       lambda p, d, s, i: d['payload'].pop('area_ha_after'),
+                       lambda p, d, s, i: s['payload'].pop('area_ha'),
+                       lambda p, d, s, i: i['payload'].pop('area_ha')):
             report, _markdown = self.build(mutate)
             self.assertEqual(report['area_ha_unchanged'],
                              self.condition(report))
@@ -3396,7 +3465,7 @@ function New-Case([hashtable]$Override) {
         run_id           = $RunId
         approved_kit_sha = $kit
         measured_kit_sha = $kit
-        product_sha      = 'c3e6a12ab95117710eeea5e05133f5cd548b698e'
+        product_sha      = 'a5dc4e66ac43b44ab9741e2062b130d51bfc4c37'
         target_day       = '2026-06-05'
         created_utc      = '2026-09-03T10:00:00Z'
         machine          = $Machine
@@ -3584,7 +3653,8 @@ class NestedFieldsObeyTheAllowlist(unittest.TestCase):
         return report_mod.build_report(
             copy.deepcopy(shared['preflight']), copy.deepcopy(shared['deploy']),
             collect, runs, copy.deepcopy(shared['snapshot']), None, None, [],
-            run_id=shared['run_id'], kit_sha=KIT_SHA_FIXTURE)
+            run_id=shared['run_id'], kit_sha=KIT_SHA_FIXTURE,
+            staging_input=copy.deepcopy(shared['staging_input']))
 
     def test_a_clean_report_is_not_rejected(self):
         report, _markdown = self.build()
@@ -4042,7 +4112,7 @@ FAILING_CHILD = (
 RECALC_CHILD = (
     "import sys\n"
     "sys.stdout.write('mode : DRY RUN\\n')\n"
-    "sys.stdout.write('algorithm : useful-area-v1\\n')\n"
+    "sys.stdout.write('algorithm : useful-area-v2\\n')\n"
     "sys.stderr.write('DeprecationWarning: utcnow() is deprecated\\n')\n"
     "sys.exit(0)\n")
 
@@ -4974,6 +5044,255 @@ class NoNativeArgumentCarriesQuotes(unittest.TestCase):
         self.assertNotIn('pip install', text)
         self.assertNotIn('playwright install', text)
         self.assertNotIn('ensurepip', text)
+
+
+
+# ═══ Д4. Гейт area_ha попарный: backfill законен, изменение площади -- нет ═══
+
+class AreaGateIsPairwise(unittest.TestCase):
+    """Живой пилот 2026-09-04: REJECT по AREA_HA_CHANGED при нетронутой
+    площади. Отпечаток снимается со всей таблицы, сбор шага 3 добавляет
+    вылеты дня -- и «все пять равны» рвалось на законном backfill.
+
+    Отпечатки здесь НАСТОЯЩИЕ: та же функция, что у прибора, над временной
+    базой; стадии пилота разыгрываются вставками и обновлениями в неё.
+    """
+
+    def setUp(self):
+        shared = shared_evidence()
+        self.shared = shared
+        self.tmp = tempfile.mkdtemp(prefix='pilot_gate_')
+        self.db = os.path.join(self.tmp, 'flights.db')
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute('CREATE TABLE drone_flights (id INTEGER PRIMARY KEY '
+                        'AUTOINCREMENT, dji_flight_id BIGINT, area_ha FLOAT)')
+            con.executemany('INSERT INTO drone_flights (dji_flight_id, '
+                            'area_ha) VALUES (?, ?)',
+                            [(900001, 2.0), (900002, 3.5)])
+            con.commit()
+        finally:
+            con.close()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def fingerprint(self):
+        con = sqlite3.connect(self.db)
+        con.row_factory = sqlite3.Row
+        try:
+            return common.area_ha_fingerprint(con)
+        finally:
+            con.close()
+
+    def backfill(self, flight_id):
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute('INSERT INTO drone_flights (dji_flight_id, area_ha) '
+                        'VALUES (?, ?)', (flight_id, 1.25))
+            con.commit()
+        finally:
+            con.close()
+
+    def change_existing_area(self):
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute('UPDATE drone_flights SET area_ha = area_ha + 0.01 '
+                        ' WHERE dji_flight_id = 900001')
+            con.commit()
+        finally:
+            con.close()
+
+    def report(self, copy_before, copy_after, staging_before, staging_after,
+               before_recalc, after_recalc):
+        shared = self.shared
+        preflight = copy.deepcopy(shared['preflight'])
+        preflight['payload']['area_ha_before'] = copy_before
+        preflight['payload']['area_ha_after'] = copy_after
+        deploy = copy.deepcopy(shared['deploy'])
+        deploy['payload']['area_ha_before'] = staging_before
+        deploy['payload']['area_ha_after'] = staging_after
+        staging_input = copy.deepcopy(shared['staging_input'])
+        staging_input['payload']['area_ha'] = before_recalc
+        snapshot = copy.deepcopy(shared['snapshot'])
+        snapshot['payload']['area_ha'] = after_recalc
+        return report_mod.build_report(
+            preflight, deploy, copy.deepcopy(shared['collect']),
+            copy.deepcopy(shared['runs']), snapshot, None, None, [],
+            run_id=shared['run_id'], kit_sha=KIT_SHA_FIXTURE,
+            staging_input=staging_input)
+
+    def test_a_legitimate_backfill_between_steps_2_and_4_is_not_a_change(self):
+        # Шаг 1: копия production; миграция площадь не трогает.
+        copy_before = copy_after = self.fingerprint()
+        # Площадка -- ДРУГАЯ база: в ней на один вылет больше уже до пилота.
+        self.backfill(900003)
+        staging_before = staging_after = self.fingerprint()
+        # Шаг 3: живой сбор добавил вылет дня.
+        self.backfill(900004)
+        before_recalc = self.fingerprint()
+        # Шаг 4: пересчёт площадь не трогает.
+        after_recalc = self.fingerprint()
+
+        self.assertNotEqual(copy_before['sha256'], staging_before['sha256'])
+        self.assertNotEqual(staging_after['sha256'], before_recalc['sha256'])
+        report, markdown = self.report(copy_before, copy_after,
+                                       staging_before, staging_after,
+                                       before_recalc, after_recalc)
+        self.assertTrue(report['area_ha_unchanged'])
+        self.assertNotIn('AREA_HA_UNCHANGED', report['verdict_reasons'])
+        self.assertNotEqual(report['verdict'], 'REJECT', report['verdict_reasons'])
+        self.assertTrue(report['area_ha_changed_by_collection'])
+        self.assertEqual(report['area_ha_pairs'],
+                         {'production_copy_migration': True,
+                          'staging_migration': True,
+                          'staging_recalculation': True})
+        self.assertIn('drone_flights.area_ha не менялась | да', markdown)
+        self.assertIn('изменена сбором между шагами 2 и 4 (наблюдение, не '
+                      'условие) | да', markdown)
+        # Отрицательный контроль: правило первой редакции на этих же уликах
+        # говорило НЕТ -- иначе тест ничего не доказывает про исправление.
+        values = [copy_before, copy_after, staging_before, staging_after,
+                  before_recalc, after_recalc]
+        self.assertGreater(len(set(item['sha256'] for item in values)), 1)
+
+    def test_a_changed_area_during_the_recalculation_is_still_rejected(self):
+        copy_before = copy_after = self.fingerprint()
+        self.backfill(900003)
+        staging_before = staging_after = self.fingerprint()
+        self.backfill(900004)
+        before_recalc = self.fingerprint()
+        self.change_existing_area()                      # пересчёт «тронул»
+        after_recalc = self.fingerprint()
+
+        report, markdown = self.report(copy_before, copy_after,
+                                       staging_before, staging_after,
+                                       before_recalc, after_recalc)
+        self.assertFalse(report['area_ha_unchanged'])
+        self.assertEqual(report['verdict'], 'REJECT')
+        self.assertIn('AREA_HA_UNCHANGED', report['verdict_reasons'])
+        self.assertEqual(report['area_ha_pairs']['staging_recalculation'],
+                         False)
+        self.assertEqual(report['area_ha_pairs']['staging_migration'], True)
+        self.assertIn('непосредственно до/после пересчёта | НЕТ', markdown)
+
+    def test_a_changed_area_during_either_migration_is_still_rejected(self):
+        copy_before = self.fingerprint()
+        self.change_existing_area()                      # миграция на копии
+        copy_after = self.fingerprint()
+        staging_before = staging_after = self.fingerprint()
+        before_recalc = after_recalc = self.fingerprint()
+        report, _markdown = self.report(copy_before, copy_after,
+                                        staging_before, staging_after,
+                                        before_recalc, after_recalc)
+        self.assertEqual(report['verdict'], 'REJECT')
+        self.assertEqual(report['area_ha_pairs']['production_copy_migration'],
+                         False)
+
+        copy_before = copy_after = self.fingerprint()
+        staging_before = self.fingerprint()
+        self.change_existing_area()                      # миграция площадки
+        staging_after = self.fingerprint()
+        before_recalc = after_recalc = self.fingerprint()
+        report, _markdown = self.report(copy_before, copy_after,
+                                        staging_before, staging_after,
+                                        before_recalc, after_recalc)
+        self.assertEqual(report['verdict'], 'REJECT')
+        self.assertEqual(report['area_ha_pairs']['staging_migration'], False)
+
+    def test_the_sixth_evidence_is_required_by_the_set_and_by_the_gate(self):
+        shared = self.shared
+        report, _markdown = report_mod.build_report(
+            copy.deepcopy(shared['preflight']), copy.deepcopy(shared['deploy']),
+            copy.deepcopy(shared['collect']), copy.deepcopy(shared['runs']),
+            copy.deepcopy(shared['snapshot']), None, None, [],
+            run_id=shared['run_id'], kit_sha=KIT_SHA_FIXTURE)
+        self.assertEqual(report['verdict'], 'REJECT')
+        self.assertFalse(report['area_ha_unchanged'])
+        self.assertIn('EVIDENCE_ABSENT:staging_input',
+                      report['envelope_problems'])
+        self.assertIsNone(report['area_ha_pairs']['staging_recalculation'])
+        self.assertIsNone(report['area_ha_changed_by_collection'])
+        self.assertNotIn('staging_input', report['evidence_present'])
+
+    def test_the_sixth_evidence_must_sit_between_collection_and_the_dry_run(self):
+        shared = self.shared
+        late = copy.deepcopy(shared['staging_input'])
+        late['generated_utc'] = stamp(+3600)
+        report, _markdown = report_mod.build_report(
+            copy.deepcopy(shared['preflight']), copy.deepcopy(shared['deploy']),
+            copy.deepcopy(shared['collect']), copy.deepcopy(shared['runs']),
+            copy.deepcopy(shared['snapshot']), None, None, [],
+            run_id=shared['run_id'], kit_sha=KIT_SHA_FIXTURE,
+            staging_input=late)
+        self.assertEqual(report['verdict'], 'REJECT')
+        self.assertTrue(any(problem.startswith('OUT_OF_ORDER')
+                            and 'staging_input' in problem
+                            for problem in report['evidence_order_problems']),
+                        report['evidence_order_problems'])
+
+    def test_the_report_script_and_the_cli_carry_the_sixth_evidence(self):
+        script = code_text('STAGING_PILOT_REPORT.ps1')
+        self.assertIn("staging_input    = Get-PilotEvidencePath -RunsRoot "
+                      "$RunsRoot -RunId $RunId -Name 'staging_input'", script)
+        self.assertIn("'--staging-input', $paths.staging_input,", script)
+        self.assertIn("'--staging-input'", code_text('pilot_report.py'))
+        # И шаг 4 пишет именно эту улику под этим именем.
+        self.assertIn("-Name 'staging_input'",
+                      code_text('STAGING_RECALCULATE_AND_VERIFY.ps1'))
+
+    def test_the_cli_rejects_a_run_without_the_sixth_evidence(self):
+        shared = self.shared
+        paths = {}
+        for name in ('preflight', 'deploy', 'collect', 'snapshot',
+                     'staging_input'):
+            paths[name] = os.path.join(self.tmp, '%s.json' % name)
+            common.write_evidence(paths[name], shared[name])
+        runs = []
+        for index, run in enumerate(shared['runs']):
+            path = os.path.join(self.tmp, 'run_%d.json' % index)
+            common.write_evidence(path, run)
+            runs += ['--recalc', path]
+        base = [os.path.join(KIT_DIR, 'pilot_report.py'),
+                '--preflight', paths['preflight'], '--deploy', paths['deploy'],
+                '--collect', paths['collect'],
+                '--staging-snapshot', paths['snapshot']] + runs + [
+                '--run-id', shared['run_id'], '--kit-sha', KIT_SHA_FIXTURE,
+                '--out-json', os.path.join(self.tmp, 'r.json'),
+                '--out-md', os.path.join(self.tmp, 'r.md')]
+
+        without = run_python(*base)
+        self.assertIn('PILOT_VERDICT=REJECT', without.stdout)
+        self.assertIn('EVIDENCE_ABSENT:staging_input', without.stdout)
+
+        with_input = run_python(*(base + ['--staging-input',
+                                          paths['staging_input']]))
+        self.assertNotIn('PILOT_VERDICT=REJECT', with_input.stdout)
+        self.assertNotIn('EVIDENCE_ABSENT', with_input.stdout)
+        with open(os.path.join(self.tmp, 'r.json'), encoding='utf-8') as handle:
+            report = json.load(handle)
+        self.assertTrue(report['payload']['area_ha_unchanged']
+                        if 'payload' in report else report['area_ha_unchanged'])
+
+
+# ═══ Д5. Комплект проверяет действующую версию правил, не прошлую ════════════
+
+class KitFollowsTheProductVersion(unittest.TestCase):
+
+    def test_the_step_4_blocker_names_the_current_algorithm_version(self):
+        import drone_useful_area as ua
+        text = code_text('STAGING_RECALCULATE_AND_VERIFY.ps1')
+        self.assertEqual(ua.ALGORITHM_VERSION, 'useful-area-v2')
+        self.assertIn("if ($dry.payload.summary.algorithm_version -ne "
+                      "'%s') { $blockers += 'UNEXPECTED_ALGORITHM_VERSION' }"
+                      % ua.ALGORITHM_VERSION, text)
+        self.assertNotIn("-ne 'useful-area-v1'", text)
+
+    def test_the_synthetic_site_was_recalculated_by_the_current_version(self):
+        shared = shared_evidence()
+        for run in shared['runs']:
+            self.assertEqual(run['payload']['summary']['algorithm_version'],
+                             'useful-area-v2', run['payload'].get('label'))
 
 
 if __name__ == '__main__':

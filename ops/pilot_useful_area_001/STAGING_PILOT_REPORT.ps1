@@ -73,6 +73,7 @@ $paths = [ordered]@{
     preflight        = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'preflight'
     deploy           = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'deploy'
     collect          = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'collect'
+    staging_input    = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'staging_input'
     recalc_dry       = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'recalc_dry'
     recalc_apply_1   = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'recalc_apply_1'
     recalc_apply_2   = Get-PilotEvidencePath -RunsRoot $RunsRoot -RunId $RunId -Name 'recalc_apply_2'
@@ -94,6 +95,7 @@ $arguments = @(
     '--deploy', $paths.deploy,
     '--collect', $paths.collect,
     '--staging-snapshot', $paths.staging_snapshot,
+    '--staging-input', $paths.staging_input,
     '--recalc', $paths.recalc_dry,
     '--recalc', $paths.recalc_apply_1,
     '--recalc', $paths.recalc_apply_2,

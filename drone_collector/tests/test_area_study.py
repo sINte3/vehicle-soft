@@ -24,6 +24,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
 from drone_collector.area_study import (  # noqa: E402
+    AreaStudyError, DEFAULT_PARAMS, ROUTE_POLICY_POLYLINE,
+    ROUTE_POLICY_TELEMETRY, SEG_SHORT_RUN, SIMPLIFIED_ROUTE_PARAMS,
+    segment_within_rings,
     DATA_UNAVAILABLE, DISPROVED, F_LARGER_WORK, F_NO_WIDTH, F_OVERLAP,
     CONTOUR_AMBIGUOUS, CONTOUR_MATCHED, CONTOUR_NOT_MATCHED,
     CONTOUR_NOT_OFFERED, EXIT_STUDY_EMPTY, EXIT_STUDY_OK,
@@ -45,6 +48,12 @@ LAT0 = 40.0800
 LNG0 = 64.6300
 FAKE_FLIGHT_ID = 900000001
 FINE = StudyParams(cell_m=0.1, min_pass_m=10.0)
+# Те же пороги под политикой ломаной (useful-area-v2).
+FINE_V2 = StudyParams(cell_m=0.1, min_pass_m=10.0,
+                      route_policy=ROUTE_POLICY_POLYLINE)
+# Production-пороги v2 на сетке 0.25 м: `min_pass_m = 20` нужен там, где
+# соединение между полосами в 10 м обязано остаться НЕ проходом.
+PROD_V2 = StudyParams(cell_m=0.25, route_policy=ROUTE_POLICY_POLYLINE)
 
 
 # ─── Помощники ───────────────────────────────────────────────────────────────
@@ -1372,3 +1381,221 @@ class TestPreflightRefusesAnIngestCapableEnvironment(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+# ─── useful-area-v2: точки маршрута -- вершины ломаной ───────────────────────
+
+class TestRoutePolicy(unittest.TestCase):
+    """Политика точек маршрута -- явный параметр, и от неё зависит смысл.
+
+    Буквы в именах -- пункты приёмки DRONE-USEFUL-AREA-PILOT-001 / v2.
+    Поле здесь -- квадрат 400 x 400 м с углом в начале координат.
+    """
+
+    field = [square(0.0, 0.0, 400.0)]
+    # Прямой проход в 300 м, записанный ДВУМЯ точками, целиком внутри поля.
+    long_pass = [(50.0, 200.0), (350.0, 200.0)]
+
+    def test_a_v1_still_calls_the_two_point_pass_a_recording_gap(self):
+        """v1 воспроизводима: старое правило даёт старое число (0.0 га)."""
+        self.assertEqual(DEFAULT_PARAMS.route_policy, ROUTE_POLICY_TELEMETRY)
+        segments = classify_segments(self.long_pass, FINE, self.field)
+        self.assertEqual([segment.reason for segment in segments], [SEG_GAP])
+        self.assertEqual(swath_ha([(segments, 5.0)], self.field), 0.0)
+
+    def test_b_v2_makes_the_same_two_points_a_work_pass(self):
+        segments = classify_segments(self.long_pass, FINE_V2, self.field)
+        self.assertEqual([segment.reason for segment in segments], [SEG_WORK])
+        # 300 м x 10 м = 0.3 га, без торцов -- школьная формула.
+        self.assertAlmostEqual(swath_ha([(segments, 5.0)], self.field), 0.3,
+                               places=3)
+
+    def test_v2_has_no_distance_threshold_at_all(self):
+        """Ни 60, ни 300, ни 3000 м: длина сама по себе не делает разрыва."""
+        huge = [square(0.0, 0.0, 6000.0)]
+        for length in (60.0, 61.0, 300.0, 3000.0, 5000.0):
+            segments = classify_segments([(100.0, 100.0),
+                                          (100.0 + length, 100.0)],
+                                         FINE_V2, huge)
+            self.assertEqual([segment.reason for segment in segments],
+                             [SEG_WORK], 'length %g' % length)
+        # Отрицательный контроль: v1 на тех же точках ставит разрыв.
+        segments = classify_segments([(100.0, 100.0), (161.0, 100.0)], FINE,
+                                     huge)
+        self.assertEqual([segment.reason for segment in segments], [SEG_GAP])
+        # И снимок v2 не несёт никакого порога расстояния.
+        self.assertNotIn('gap_m', FINE_V2.as_dict())
+
+    def test_c_v2_a_long_segment_to_a_point_outside_is_not_work(self):
+        points = self.long_pass + [(900.0, 200.0)]
+        segments = classify_segments(points, FINE_V2, self.field)
+        self.assertEqual([segment.reason for segment in segments],
+                         [SEG_WORK, SEG_OUTSIDE])
+        result = coverage_once([(segments, 5.0)], self.field, FINE_V2,
+                               FINE_V2.cell_m)
+        # Закрашен только проход: 0.3 га, а не 0.3 + 0.55.
+        self.assertAlmostEqual(result.clipped_work_ha, 0.3, places=3)
+        self.assertAlmostEqual(result.swath_work_ha, 0.3, places=3)
+
+    def _notched_field(self, notch_from, notch_to):
+        """Квадрат 400 x 400 с вырезом от верхней кромки до y = 100."""
+        return [[(0.0, 0.0), (400.0, 0.0), (400.0, 400.0),
+                 (notch_to, 400.0), (notch_to, 100.0), (notch_from, 100.0),
+                 (notch_from, 400.0), (0.0, 400.0)]]
+
+    def test_d_v2_a_segment_crossing_a_concave_boundary_is_not_work(self):
+        """Оба конца внутри, середина -- в выемке: отрезок не работа."""
+        field = self._notched_field(180.0, 220.0)
+        crossing = [(50.0, 300.0), (350.0, 300.0)]
+        segments = classify_segments(crossing, FINE_V2, field)
+        self.assertEqual([segment.reason for segment in segments],
+                         [SEG_OUTSIDE])
+        self.assertEqual(coverage_once([(segments, 5.0)], field, FINE_V2,
+                                       FINE_V2.cell_m).clipped_work_ha, 0.0)
+        # Отрицательный контроль: проверка ТОЛЬКО концов (шаг больше длины
+        # отрезка) назвала бы его работой -- решает именно проверка изнутри.
+        endpoints_only = StudyParams(cell_m=0.1, min_pass_m=10.0,
+                                     route_policy=ROUTE_POLICY_POLYLINE,
+                                     inside_step_m=1000.0)
+        segments = classify_segments(crossing, endpoints_only, field)
+        self.assertEqual([segment.reason for segment in segments], [SEG_WORK])
+        # А ниже выемки тот же отрезок -- обычный проход.
+        segments = classify_segments([(50.0, 50.0), (350.0, 50.0)], FINE_V2,
+                                     field)
+        self.assertEqual([segment.reason for segment in segments], [SEG_WORK])
+
+    def test_the_interior_step_is_explicit_because_it_changes_the_answer(self):
+        """Выемка уже шага выборки проскакивает между точками проверки."""
+        field = self._notched_field(160.0, 175.0)      # 15 м шириной
+        crossing = [(50.0, 300.0), (350.0, 300.0)]
+        fine_step = StudyParams(route_policy=ROUTE_POLICY_POLYLINE,
+                                inside_step_m=5.0)
+        coarse_step = StudyParams(route_policy=ROUTE_POLICY_POLYLINE,
+                                  inside_step_m=50.0)
+        self.assertEqual(
+            [segment.reason for segment in
+             classify_segments(crossing, fine_step, field)], [SEG_OUTSIDE])
+        self.assertEqual(
+            [segment.reason for segment in
+             classify_segments(crossing, coarse_step, field)], [SEG_WORK])
+        # Поэтому шаг лежит в снимке параметров: число без него необъяснимо.
+        self.assertEqual(fine_step.as_dict()['inside_step_m'], 5.0)
+        self.assertEqual(coarse_step.as_dict()['inside_step_m'], 50.0)
+        self.assertNotEqual(fine_step.as_dict(), coarse_step.as_dict())
+
+    def test_segment_within_rings_checks_both_ends_and_the_interior(self):
+        field = self._notched_field(180.0, 220.0)
+
+        class Straight(object):
+            def __init__(self, ax, ay, bx, by):
+                self.ax, self.ay, self.bx, self.by = ax, ay, bx, by
+                self.length = math.hypot(bx - ax, by - ay)
+
+        self.assertTrue(segment_within_rings(Straight(50, 50, 350, 50),
+                                             field, 5.0))
+        self.assertFalse(segment_within_rings(Straight(50, 300, 350, 300),
+                                              field, 5.0))
+        self.assertFalse(segment_within_rings(Straight(50, 300, 500, 300),
+                                              field, 5.0))
+        self.assertFalse(segment_within_rings(Straight(-50, 300, 50, 300),
+                                              field, 5.0))
+        # Точка длиной ноль внутри поля -- внутри.
+        self.assertTrue(segment_within_rings(Straight(50, 50, 50, 50),
+                                             field, 5.0))
+
+    def test_e_v2_snake_passes_count_and_the_connectors_do_not(self):
+        """Змейка: четыре прохода по 360 м, соединения по 10 м под 90 град."""
+        points = []
+        for index, x in enumerate((50.0, 60.0, 70.0, 80.0)):
+            low, high = (20.0, 380.0) if index % 2 == 0 else (380.0, 20.0)
+            points.append((x, low))
+            points.append((x, high))
+        segments = classify_segments(points, PROD_V2, self.field)
+        self.assertEqual([segment.reason for segment in segments],
+                         [SEG_WORK, SEG_SHORT_RUN, SEG_WORK, SEG_SHORT_RUN,
+                          SEG_WORK, SEG_SHORT_RUN, SEG_WORK])
+        result = coverage_once([(segments, 5.0)], self.field, PROD_V2,
+                               PROD_V2.cell_m)
+        # 4 x 360 м x 10 м = 1.44 га; полосы смежные, перекрытия нет.
+        self.assertAlmostEqual(result.clipped_work_ha, 1.44, places=3)
+        # Соединения закрашены в «все полосы», но не в «рабочие».
+        self.assertGreater(result.swath_all_ha, result.swath_work_ha)
+
+    def test_e2_v2_turns_outside_the_field_are_outside_not_work(self):
+        """Разворот за кромкой поля -- вне контура, каким бы коротким ни был."""
+        points = [(50.0, 20.0), (50.0, 380.0), (52.0, 410.0), (56.0, 414.0),
+                  (60.0, 410.0), (60.0, 380.0), (60.0, 20.0)]
+        segments = classify_segments(points, PROD_V2, self.field)
+        self.assertEqual([segment.reason for segment in segments],
+                         [SEG_WORK, SEG_OUTSIDE, SEG_OUTSIDE, SEG_OUTSIDE,
+                          SEG_OUTSIDE, SEG_WORK])
+        result = coverage_once([(segments, 5.0)], self.field, PROD_V2,
+                               PROD_V2.cell_m)
+        self.assertAlmostEqual(result.clipped_work_ha, 0.72, places=3)
+
+    def test_f_v2_repeated_coverage_is_counted_once(self):
+        """Тот же проход дважды -- в одном вылете и в двух -- 0.3 га, не 0.6."""
+        back_and_forth = self.long_pass + [self.long_pass[0]]
+        segments = classify_segments(back_and_forth, FINE_V2, self.field)
+        self.assertEqual([segment.reason for segment in segments],
+                         [SEG_WORK, SEG_WORK])
+        # Обратный проход растр кладёт с точностью до крайнего ряда ячеек
+        # (0.3039 на шаге 0.1 м) -- это свойство растра, а не второй проход:
+        # удвоение дало бы 0.6.
+        there_and_back = swath_ha([(segments, 5.0)], self.field)
+        self.assertGreater(there_and_back, 0.29)
+        self.assertLess(there_and_back, 0.31)
+        one = classify_segments(self.long_pass, FINE_V2, self.field)
+        two = classify_segments(self.long_pass, FINE_V2, self.field)
+        self.assertAlmostEqual(swath_ha([(one, 5.0), (two, 5.0)], self.field),
+                               0.3, places=3)
+        # Отрицательный контроль: сложенные по отдельности дают 0.6.
+        separately = (swath_ha([(one, 5.0)], self.field)
+                      + swath_ha([(two, 5.0)], self.field))
+        self.assertAlmostEqual(separately, 0.6, places=3)
+
+    def test_g_v2_a_pass_without_width_paints_nothing(self):
+        segments = classify_segments(self.long_pass, FINE_V2, self.field)
+        self.assertEqual([segment.reason for segment in segments], [SEG_WORK])
+        result = coverage_once([(segments, None)], self.field, FINE_V2,
+                               FINE_V2.cell_m)
+        self.assertIsNone(result.swath_all_ha)
+        self.assertIsNone(result.clipped_work_ha)
+
+    def test_i_v2_keeps_the_raster_uncertainty(self):
+        segments = classify_segments(self.long_pass, FINE_V2, self.field)
+        _fine, _coarse, uncertainty = coverage_with_uncertainty(
+            [(segments, 5.0)], self.field, FINE_V2)
+        self.assertIsNotNone(uncertainty.get('clipped_work_ha'))
+        self.assertGreaterEqual(uncertainty['clipped_work_ha'], 0.0)
+
+    def test_k_the_two_snapshots_are_distinguishable_and_v1_is_unchanged(self):
+        """Снимок v1 -- ровно прежние восемь ключей; снимок v2 называет политику."""
+        v1 = DEFAULT_PARAMS.as_dict()
+        self.assertEqual(set(v1), {'cell_m', 'max_grid_cells', 'gap_m',
+                                   'min_step_m', 'turn_deg', 'min_pass_m',
+                                   'contour_margin_m', 'inside_share_min'})
+        self.assertEqual(v1['gap_m'], 60.0)
+        v2 = SIMPLIFIED_ROUTE_PARAMS.as_dict()
+        self.assertNotIn('gap_m', v2)
+        self.assertEqual(v2['route_policy'], ROUTE_POLICY_POLYLINE)
+        self.assertEqual(v2['inside_step_m'], 5.0)
+        self.assertNotEqual(v1, v2)
+        # Всё, что не политика и не шаг, у версий одинаково.
+        for key in ('cell_m', 'max_grid_cells', 'min_step_m', 'turn_deg',
+                    'min_pass_m', 'contour_margin_m', 'inside_share_min'):
+            self.assertEqual(v1[key], v2[key], key)
+        # Снимок любой версии читается обратно в те же правила.
+        self.assertEqual(StudyParams(**v1).as_dict(), v1)
+        self.assertEqual(StudyParams(**v2).as_dict(), v2)
+        self.assertTrue(StudyParams(**v2).is_polyline)
+        self.assertFalse(StudyParams(**v1).is_polyline)
+
+    def test_an_unknown_policy_or_a_useless_step_is_refused(self):
+        with self.assertRaises(AreaStudyError):
+            StudyParams(route_policy='guess')
+        with self.assertRaises(AreaStudyError):
+            StudyParams(route_policy=ROUTE_POLICY_POLYLINE, inside_step_m=0)
+        with self.assertRaises(AreaStudyError):
+            StudyParams(route_policy=ROUTE_POLICY_POLYLINE,
+                        inside_step_m=-5.0)

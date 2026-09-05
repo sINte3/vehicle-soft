@@ -2,12 +2,29 @@
 """drone_useful_area.py -- DRONE-USEFUL-AREA-001: расчёт полезной площади.
 
 Здесь живёт ОДИН production-расчёт показателя
-`Расчётная полезная площадь, га` (`estimated_useful_area_ha`), версия
-`useful-area-v1`:
+`Расчётная полезная площадь, га` (`estimated_useful_area_ha`). Действующая
+версия правил -- `useful-area-v2`; формула у обеих версий одна:
 
     estimated_useful_area_ha =
         area(union(buffer(work_segments, spray_width / 2))
              intersect field_polygon) / 10000
+
+ДВЕ ВЕРСИИ, И ОБЕ СЧИТАЮТСЯ
+
+`useful-area-v1` считала точки маршрута выборкой телеметрии и отбрасывала
+отрезок длиннее `gap_m = 60 м` как разрыв записи. Живой пилот 2026-09-04
+показал, что DJI отдаёт `data_type=simplified` -- вершины упрощённой ломаной,
+где прямой проход записан двумя точками, -- и правило разрыва вырезало 69.8 %
+длины маршрута. `useful-area-v2` разрыва по расстоянию не имеет: точки --
+вершины ломаной, а «не работа» решают контур (проверенный изнутри отрезка) и
+курс. Всё остальное -- ширина, объединение, обрезка, растровая погрешность,
+статусы -- общее.
+
+Версия не переключатель, а СВОЙСТВО ПАРАМЕТРОВ: `version_of_params()` выводит
+её из политики точек маршрута, и число под версией v1 считается только по
+правилам v1. Старая строка под старой версией воспроизводится байт в байт --
+это держат регрессионные тесты и сухой прогон `--algorithm-version
+useful-area-v1` инструмента пересчёта, который ничего не пишет.
 
 ЧЕГО ЗДЕСЬ НЕТ
 
@@ -46,7 +63,10 @@ import json
 
 from drone_collector.area_study import (
     DEFAULT_PARAMS,
+    ROUTE_POLICY_POLYLINE,
+    ROUTE_POLICY_TELEMETRY,
     SEG_WORK,
+    SIMPLIFIED_ROUTE_PARAMS,
     StudyParams,
     AreaStudyError,
     CONTOUR_AMBIGUOUS as _AREA_CONTOUR_AMBIGUOUS,
@@ -61,15 +81,53 @@ from drone_collector.area_study import (
     plane_for,
 )
 
-# Версия правил расчёта. Меняется вместе со СМЫСЛОМ числа, а не при правке
-# опечатки. Хранится рядом с каждым результатом: число без объяснимой версии
-# правил хранить нельзя.
-ALGORITHM_VERSION = 'useful-area-v1'
+# Версии правил расчёта. Версия меняется вместе со СМЫСЛОМ числа, а не при
+# правке опечатки. Хранится рядом с каждым результатом: число без объяснимой
+# версии правил хранить нельзя.
+ALGORITHM_VERSION_V1 = 'useful-area-v1'
+ALGORITHM_VERSION_V2 = 'useful-area-v2'
+ALGORITHM_VERSIONS = (ALGORITHM_VERSION_V1, ALGORITHM_VERSION_V2)
 
-# Параметры версии. Совпадают с проверенными в исследовании DJI-AREA-48H и
-# берутся из `DEFAULT_PARAMS`, а не переписываются числами: расхождение между
-# «параметрами исследования» и «параметрами production» было бы невидимым.
-PARAMS = DEFAULT_PARAMS
+# Действующая версия. Всё, что считается без явно названной версии, считается
+# по ней; смена этой константы меняет отпечаток входа каждой строки и потому
+# ЗАСТАВЛЯЕТ пересчёт переписать все строки -- старое число под новой версией
+# остаться не может.
+ALGORITHM_VERSION = ALGORITHM_VERSION_V2
+
+# Параметры каждой версии берутся из `area_study`, а не переписываются
+# числами: расхождение между «параметрами исследования» и «параметрами
+# production» было бы невидимым. v1 -- проверенные в DJI-AREA-48H
+# (политика телеметрии, `gap_m = 60`); v2 -- политика ломаной.
+PARAMS_BY_VERSION = {
+    ALGORITHM_VERSION_V1: DEFAULT_PARAMS,
+    ALGORITHM_VERSION_V2: SIMPLIFIED_ROUTE_PARAMS,
+}
+_VERSION_BY_POLICY = {
+    ROUTE_POLICY_TELEMETRY: ALGORITHM_VERSION_V1,
+    ROUTE_POLICY_POLYLINE: ALGORITHM_VERSION_V2,
+}
+PARAMS = PARAMS_BY_VERSION[ALGORITHM_VERSION]
+
+
+def params_for_version(version):
+    """Параметры названной версии. Незнакомая версия -- отказ, не догадка."""
+    try:
+        return PARAMS_BY_VERSION[version]
+    except KeyError:
+        raise AreaStudyError('unknown algorithm version: %r; known: %s'
+                             % (version, ', '.join(ALGORITHM_VERSIONS)))
+
+
+def version_of_params(params=None):
+    """Версия правил, которой соответствуют параметры.
+
+    [REASON]: версия выводится из политики точек маршрута, а не передаётся
+    рядом с параметрами отдельным аргументом. Два аргумента можно передать
+    несогласованно -- «useful-area-v1» при правилах v2, -- и тогда под старой
+    версией лежало бы новое число. Один источник истины такой пары не
+    допускает.
+    """
+    return _VERSION_BY_POLICY[(params or PARAMS).route_policy]
 
 # ─── Статусы качества ────────────────────────────────────────────────────────
 #
@@ -133,7 +191,10 @@ def params_from_snapshot(snapshot):
     пересчитан по НОВЫМ правилам под старой версией. Отказ заставляет поднять
     версию алгоритма, а не притвориться, что ничего не изменилось.
     """
-    known = set(PARAMS.as_dict())
+    # [REASON]: «знакомые» ключи -- объединение по ВСЕМ версиям, а не ключи
+    # действующей: снимок строки v1 несёт `gap_m`, которого у v2 нет, и
+    # сверка с ключами v2 отвергла бы каждую строку v1 как незнакомую.
+    known = StudyParams.KNOWN_KEYS
     unknown = sorted(set(snapshot or {}) - known)
     if unknown:
         raise AreaStudyError('unknown algorithm parameter(s): %s'
@@ -284,10 +345,18 @@ def inputs_fingerprint(flight_entries, params=None, algorithm_version=None,
     итоговую полезную площадь. Маршрут первого вылета при этом не менялся, и
     отпечаток по маршрутам оставался прежним.
     """
+    # [REASON]: версия выводится из параметров, и явно названная обязана с
+    # ними сходиться. Отпечаток «v1» над правилами v2 сделал бы строку v1
+    # неотличимой от пересчитанной по-новому.
+    derived = version_of_params(params)
+    if algorithm_version is not None and algorithm_version != derived:
+        raise AreaStudyError(
+            'algorithm version %r does not match the parameters, which '
+            'belong to %r' % (algorithm_version, derived))
     payload = {
         'flights': flights_fingerprint(flight_entries),
         'params': algorithm_params(params),
-        'algorithm_version': algorithm_version or ALGORITHM_VERSION,
+        'algorithm_version': derived,
         'contour': contour_key,
         'contour_geometry': geometry_fingerprint(contour_geometry),
         'contour_candidates': contour_inputs_fingerprint(contour_candidates),
@@ -313,11 +382,22 @@ class WorkCoverage(object):
                  'algorithm_version', 'params', 'flights_total',
                  'routes_total', 'flights_without_route',
                  'flights_without_width', 'flights_without_width_on_work',
-                 'work_segments', 'route_points', 'mission_state')
+                 'work_segments', 'route_points', 'mission_state',
+                 'diagnostics')
+
+    # Поля, которые в строку НЕ ложатся и в отпечаток НЕ входят.
+    #
+    # [REASON]: `diagnostics` -- наблюдаемые величины сухого прогона: длина
+    # маршрута по причинам отрезков и подразумеваемая скорость. Они объясняют
+    # число, но не являются его частью: правила по ним ничего не решают, и
+    # хранить их рядом с числом значило бы выдать наблюдение за критерий.
+    NOT_STORED = ('diagnostics',)
 
     def __init__(self, **kwargs):
         for name in self.__slots__:
             setattr(self, name, kwargs.get(name))
+        if self.diagnostics is None:
+            self.diagnostics = {}
 
     @property
     def is_summable(self):
@@ -327,6 +407,31 @@ class WorkCoverage(object):
 
     def as_dict(self):
         return {name: getattr(self, name) for name in self.__slots__}
+
+
+def implied_speed_mps(path_length_m, work_seconds):
+    """Средняя скорость по длине ломаной и длительности вылета, м/с.
+
+    НАБЛЮДАЕМАЯ ВЕЛИЧИНА, НЕ ПРАВИЛО. Ни один статус от неё не зависит.
+
+    [REASON]: в evidence проекта нет доказанной физической верхней границы
+    скорости DJI T40 (ни в документах, ни в тестах, ни в захваченных
+    записях -- только имя поля `work_speed`). Порог, взятый из общих
+    соображений, стал бы бизнес-правилом, придуманным сессией: устав это
+    запрещает. Поэтому скорость печатается в сухом прогоне рядом с числом и
+    остаётся зафиксированным остаточным риском: маршрут, невозможный
+    физически, v2 сам по себе не отвергнет. Границу, если она появится,
+    вводить через `ROUTE_INVALID` с новой машинно-читаемой причиной.
+    Длительность -- `drone_flights.work_seconds` (DJI, у вылета целиком);
+    ноль, отсутствие или не-число дают `None`, а не бесконечность.
+    """
+    if isinstance(work_seconds, bool):
+        return None
+    if not isinstance(work_seconds, (int, float)) or work_seconds <= 0:
+        return None
+    if not isinstance(path_length_m, (int, float)) or path_length_m < 0:
+        return None
+    return path_length_m / float(work_seconds)
 
 
 def _usable_points(points):
@@ -381,7 +486,8 @@ def compute_work(routes, candidates, params=None, flights_total=None,
 
     unassigned_flights = int(unassigned_flights or 0)
     base = {
-        'algorithm_version': ALGORITHM_VERSION,
+        # Версия -- свойство параметров: под v1 считается только по правилам v1.
+        'algorithm_version': version_of_params(params),
         'params': algorithm_params(params),
         'flights_total': flights_total,
         'routes_total': len(routes),
@@ -432,8 +538,17 @@ def compute_work(routes, candidates, params=None, flights_total=None,
     without_width = 0
     without_width_on_work = 0
     work_segments = 0
+    length_by_reason = {}
+    speeds = []
     for route, points in prepared:
         segments = classify_segments(plane.project(points), params, rings)
+        for segment in segments:
+            length_by_reason[segment.reason] = (
+                length_by_reason.get(segment.reason, 0.0) + segment.length)
+        speed = implied_speed_mps(sum(s.length for s in segments),
+                                  route.get('work_seconds'))
+        if speed is not None:
+            speeds.append(speed)
         width = route.get('spray_width_m')
         usable_width = (not isinstance(width, bool)
                         and isinstance(width, (int, float))
@@ -455,6 +570,14 @@ def compute_work(routes, candidates, params=None, flights_total=None,
     base['flights_without_width'] = without_width
     base['flights_without_width_on_work'] = without_width_on_work
     base['work_segments'] = work_segments
+    base['diagnostics'] = {
+        'length_by_reason_m': {reason: round(length, 1) for reason, length
+                               in sorted(length_by_reason.items())},
+        'route_length_m': round(sum(length_by_reason.values()), 1),
+        'flights_with_duration': len(speeds),
+        'implied_speed_min_mps': (round(min(speeds), 2) if speeds else None),
+        'implied_speed_max_mps': (round(max(speeds), 2) if speeds else None),
+    }
 
     fine, _coarse, uncertainty = coverage_with_uncertainty(tracks, rings,
                                                            params)

@@ -28,6 +28,15 @@
 площадь. Результат обрезается контуром: движение вне поля полезной площадью не
 становится. Маршруты нескольких вылетов одной работы объединяются ДО измерения.
 
+ЧЕМ ЯВЛЯЮТСЯ ТОЧКИ МАРШРУТА -- ЯВНЫЙ ПАРАМЕТР
+
+`StudyParams.route_policy`: `telemetry` (правила исследования и
+`useful-area-v1`: отрезок длиннее `gap_m` -- разрыв записи) или `polyline`
+(`useful-area-v2`: точки -- вершины упрощённой ломаной DJI `simplified`,
+разрыва по расстоянию нет, принадлежность контуру проверяется изнутри
+отрезка). Подробно -- у объявления политик ниже и в
+docs/DJI_AREA_48H_DECISION.md § 10.
+
 ПОЧЕМУ РАСТР, А НЕ ВЕКТОРНАЯ БУЛЕВА ГЕОМЕТРИЯ
 
 `shapely` в проекте нет, а тащить её сюда нельзя дважды: устав запрещает
@@ -111,6 +120,25 @@ class AreaStudyError(Exception):
     только там, где иначе пришлось бы выдумать число."""
 
 
+# ─── Политика точек маршрута ────────────────────────────────────────────────
+#
+# [REASON]: у правил классификации есть скрытое допущение о том, ЧТО такое
+# точка маршрута, и от него зависит смысл числа. Первая редакция
+# (`useful-area-v1`) считала точки ВЫБОРКОЙ ТЕЛЕМЕТРИИ: между двумя далёкими
+# точками дрон «пропал из записи», и отрезок длиннее `gap_m` отбрасывался как
+# разрыв. Живой пилот 2026-09-04 показал, что DJI отдаёт маршрут с
+# `data_type=simplified` -- ВЕРШИНЫ УПРОЩЁННОЙ ЛОМАНОЙ, где прямой проход в
+# триста метров записан двумя точками. Правило разрыва вырезало из трёх
+# READY-работ 17.48 км маршрута из 25.0 (69.8 %), и работы дали 2.86 га.
+# Диагностика по той же базе: 103 из 103 длинных отрезков внутри контура --
+# прямое продолжение соседних проходов, 21 из 21 отрезка, выходящего за
+# контур, -- перелёт. Политика поэтому -- ЯВНЫЙ параметр расчёта, а не
+# правка порога: v1 остаётся воспроизводимой, v2 считает по ломаной.
+ROUTE_POLICY_TELEMETRY = 'telemetry'
+ROUTE_POLICY_POLYLINE = 'polyline'
+ROUTE_POLICIES = (ROUTE_POLICY_TELEMETRY, ROUTE_POLICY_POLYLINE)
+
+
 # ─── Настройки расчёта ───────────────────────────────────────────────────────
 
 class StudyParams(object):
@@ -119,15 +147,24 @@ class StudyParams(object):
     [REASON]: порог, которого нет в отчёте, -- это скрытое допущение. Через
     месяц никто не вспомнит, что «рабочим проходом» считался отрезок от 20 м,
     и число будет прочитано как измеренное, а не как посчитанное по правилу.
+
+    `route_policy` выбирает, чем являются точки маршрута (см. выше).
+    `inside_step_m` -- шаг, с которым при политике ломаной отрезок
+    проверяется на принадлежность контуру ИЗНУТРИ, а не только концами; при
+    политике телеметрии он не используется и в снимок параметров не попадает.
     """
 
     __slots__ = ('cell_m', 'max_grid_cells', 'gap_m', 'min_step_m',
                  'turn_deg', 'min_pass_m', 'contour_margin_m',
-                 'inside_share_min')
+                 'inside_share_min', 'route_policy', 'inside_step_m')
+
+    # Все ключи, которые снимок параметров ЛЮБОЙ версии может нести.
+    KNOWN_KEYS = frozenset(__slots__)
 
     def __init__(self, cell_m=0.5, max_grid_cells=24000000, gap_m=60.0,
                  min_step_m=0.05, turn_deg=25.0, min_pass_m=20.0,
-                 contour_margin_m=25.0, inside_share_min=0.5):
+                 contour_margin_m=25.0, inside_share_min=0.5,
+                 route_policy=ROUTE_POLICY_TELEMETRY, inside_step_m=5.0):
         self.cell_m = float(cell_m)
         self.max_grid_cells = int(max_grid_cells)
         self.gap_m = float(gap_m)
@@ -136,21 +173,51 @@ class StudyParams(object):
         self.min_pass_m = float(min_pass_m)
         self.contour_margin_m = float(contour_margin_m)
         self.inside_share_min = float(inside_share_min)
+        if route_policy not in ROUTE_POLICIES:
+            raise AreaStudyError('unknown route policy: %r' % (route_policy,))
+        self.route_policy = route_policy
+        self.inside_step_m = float(inside_step_m)
+        if not self.inside_step_m > 0:
+            raise AreaStudyError('inside_step_m must be positive, got %r'
+                                 % (inside_step_m,))
+
+    @property
+    def is_polyline(self):
+        return self.route_policy == ROUTE_POLICY_POLYLINE
 
     def as_dict(self):
-        return {
+        # [REASON]: снимок политики телеметрии -- ровно те восемь ключей, что
+        # уже лежат в `params_json` каждой строки `useful-area-v1`. Добавь
+        # сюда девятый -- и старая строка перестанет совпадать с пересчётом
+        # по СВОИМ ЖЕ правилам: «воспроизводимость v1» кончилась бы на
+        # первом же прогоне. Снимок ломаной, наоборот, `gap_m` не несёт:
+        # порога, который не применяется, в отчёте быть не должно.
+        snapshot = {
             'cell_m': self.cell_m,
             'max_grid_cells': self.max_grid_cells,
-            'gap_m': self.gap_m,
             'min_step_m': self.min_step_m,
             'turn_deg': self.turn_deg,
             'min_pass_m': self.min_pass_m,
             'contour_margin_m': self.contour_margin_m,
             'inside_share_min': self.inside_share_min,
         }
+        if self.is_polyline:
+            snapshot['route_policy'] = self.route_policy
+            snapshot['inside_step_m'] = self.inside_step_m
+        else:
+            snapshot['gap_m'] = self.gap_m
+        return snapshot
 
 
+# Параметры политики телеметрии -- `useful-area-v1`, как проверены в
+# исследовании DJI-AREA-48H. Не менять: строки v1 обязаны воспроизводиться.
 DEFAULT_PARAMS = StudyParams()
+
+# Параметры политики ломаной -- `useful-area-v2`. Отличие от v1 РОВНО одно:
+# точки маршрута -- вершины упрощённой ломаной, и длина отрезка сама по себе
+# не повод объявить разрыв. Ширина, объединение, обрезка контуром, курс,
+# минимальный проход и растровая погрешность -- те же.
+SIMPLIFIED_ROUTE_PARAMS = StudyParams(route_policy=ROUTE_POLICY_POLYLINE)
 
 
 # ─── Проекция ────────────────────────────────────────────────────────────────
@@ -544,23 +611,57 @@ def point_in_rings(x, y, rings):
     return inside
 
 
+def segment_within_rings(segment, rings, step_m):
+    """True, когда ВЕСЬ отрезок лежит внутри контура.
+
+    Проверяются оба конца и внутренние точки с шагом не больше `step_m`.
+    Проверка только концов пропускала бы отрезок, который выходит из контура
+    и возвращается в него -- у вогнутой границы это обычный случай.
+
+    Растр всё равно обрезает полосу контуром, поэтому пропущенная выемка уже
+    сам по себе `step_m` в площадь не добавит: шаг решает лишь, будет ли
+    отрезок целиком объявлен НЕ работой. Он -- явный параметр, и поэтому
+    лежит в снимке параметров.
+    """
+    count = max(2, int(math.ceil(segment.length / step_m)) + 1)
+    for index in range(count):
+        share = index / float(count - 1)
+        x = segment.ax + (segment.bx - segment.ax) * share
+        y = segment.ay + (segment.by - segment.ay) * share
+        if not point_in_rings(x, y, rings):
+            return False
+    return True
+
+
 def classify_segments(points_xy, params=DEFAULT_PARAMS, rings=None):
     """[(x, y)] -> [Segment] с проставленной причиной.
 
-    Порядок правил -- от жёсткого к мягкому, и он важен:
+    Порядок правил -- от жёсткого к мягкому, и он важен. Первое правило
+    зависит от политики точек маршрута (`params.route_policy`):
 
-    1. разрыв записи (`GAP`) -- никогда не работа. Между двумя точками в
-       трёхстах метрах друг от друга дрон, возможно, и работал, но МЫ этого не
-       знаем, и полоса шириной семь метров на триста метров была бы
-       выдуманной площадью;
+    1. **телеметрия** (`useful-area-v1`): разрыв записи (`GAP`) -- никогда не
+       работа. Между двумя точками в трёхстах метрах друг от друга дрон,
+       возможно, и работал, но МЫ этого не знаем, и полоса шириной семь
+       метров на триста метров была бы выдуманной площадью;
+
+       **ломаная** (`useful-area-v2`): точки -- вершины упрощённой ломаной, и
+       отрезок в триста метров -- это прямой проход, записанный двумя
+       точками. Разрыва по расстоянию нет ВОВСЕ: никакой другой порог
+       длины его не заменяет. Что отрезок не работа, решает только контур
+       (правило 3, проверенное изнутри) и курс (правило 4);
     2. стояние на месте -- курса нет, полоса вырождается;
-    3. вне контура -- подход, возврат, перелёт между полями;
+    3. вне контура -- подход, возврат, перелёт между полями. При телеметрии
+       проверяются концы отрезка; при ломаной -- и его внутренние точки с
+       шагом `inside_step_m`: длинный отрезок, вышедший за контур и
+       вернувшийся, работой не считается целиком;
     4. остальное собирается в ПРОХОДЫ по согласованности курса, и проход
        короче `min_pass_m` рабочим не считается: так отсеиваются развороты и
        короткие соединения между полосами.
 
     Признака работы насоса в источнике нет, поэтому «рабочий» здесь -- это
     вывод геометрии, а не наблюдение. Отчёт обязан называть его расчётным.
+    Ни одна политика не подтверждает, что дрон опрыскивал: перелёт ВНУТРИ
+    контура, записанный одним прямым отрезком, от прохода не отличим ничем.
     """
     segments = []
     for index in range(len(points_xy) - 1):
@@ -568,12 +669,18 @@ def classify_segments(points_xy, params=DEFAULT_PARAMS, rings=None):
         bx, by = points_xy[index + 1]
         segments.append(Segment(index, ax, ay, bx, by))
 
+    polyline = params.is_polyline
     for segment in segments:
         if rings is not None:
-            segment.inside = (point_in_rings(segment.ax, segment.ay, rings)
-                              and point_in_rings(segment.bx, segment.by,
-                                                 rings))
-        if segment.length > params.gap_m:
+            if polyline:
+                segment.inside = segment_within_rings(segment, rings,
+                                                      params.inside_step_m)
+            else:
+                segment.inside = (point_in_rings(segment.ax, segment.ay,
+                                                 rings)
+                                  and point_in_rings(segment.bx, segment.by,
+                                                     rings))
+        if not polyline and segment.length > params.gap_m:
             segment.reason = SEG_GAP
         elif segment.length < params.min_step_m:
             segment.reason = SEG_STANDSTILL
@@ -658,7 +765,9 @@ def coverage_once(tracks, rings, params, cell):
     полосу не превращается вовсе -- ни своей, ни соседской.
     """
     # Разрыв записи и стояние на месте полосой не становятся: в первом случае
-    # мы не знаем, где дрон был, во втором он никуда не двигался.
+    # мы не знаем, где дрон был, во втором он никуда не двигался. Разрыв
+    # существует только при политике телеметрии (v1); при политике ломаной
+    # (v2) `classify_segments` его не ставит, и здесь нечего исключать.
     painted = [([segment for segment in segments
                  if segment.reason not in (SEG_STANDSTILL, SEG_GAP)], half)
                for segments, half in tracks]

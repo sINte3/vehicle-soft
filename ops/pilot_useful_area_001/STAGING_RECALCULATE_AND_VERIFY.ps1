@@ -190,7 +190,11 @@ if (-not $dry.payload.period_is_the_target_day) { $blockers += 'PERIOD_IS_NOT_TH
 if (-not $dry.payload.summary.status_total_matches_works) { $blockers += 'STATUS_COUNTS_DO_NOT_MATCH_WORKS' }
 if ($dry.payload.summary.ROUTE_INVALID -ne 0) { $blockers += 'ROUTE_INVALID_PRESENT' }
 if ($dry.payload.summary.works -le 0) { $blockers += 'NO_WORK_WAS_PRODUCED' }
-if ($dry.payload.summary.algorithm_version -ne 'useful-area-v1') { $blockers += 'UNEXPECTED_ALGORITHM_VERSION' }
+# The rule the pilot validates. useful-area-v1 treated the simplified DJI polyline as
+# telemetry sampling and dropped 69.8 % of the route as recording gaps (live pilot
+# 2026-09-04); a dry run still reporting it means the staging checkout is not on the
+# v2 product revision.
+if ($dry.payload.summary.algorithm_version -ne 'useful-area-v2') { $blockers += 'UNEXPECTED_ALGORITHM_VERSION' }
 
 if ($blockers.Count -gt 0) {
     throw "REFUSED before --apply: $($blockers -join ', '). The dry run is the gate, and it did not open. Nothing was written."
