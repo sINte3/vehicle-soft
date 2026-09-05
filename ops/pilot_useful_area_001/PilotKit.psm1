@@ -56,7 +56,7 @@ $script:SystemPython = 'C:\Program Files\Python314\python.exe'
 
 # The verified revision of the PRODUCT. The revision of the KIT is measured,
 # never declared: it cannot be known before the commit that creates it.
-$script:ProductSha = 'c3e6a12ab95117710eeea5e05133f5cd548b698e'
+$script:ProductSha = 'a5dc4e66ac43b44ab9741e2062b130d51bfc4c37'
 $script:TargetDay   = '2026-06-05'
 $script:MigrationId = 'DRONES_USEFUL_AREA_001'
 $script:StagingHost = 'srv-yoqsh'

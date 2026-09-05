@@ -99,7 +99,8 @@ ALLOWED_FIELDS = (
     'recalculation_seconds',
     'verdict', 'verdict_reasons', 'verdict_notes', 'conditions',
     'privacy_scan_passed', 'privacy_violations',
-    'area_ha_fingerprints', 'area_ha_unchanged',
+    'area_ha_fingerprints', 'area_ha_unchanged', 'area_ha_pairs',
+    'area_ha_changed_by_collection',
     'integrity_ok', 'migration_on_copy_ok', 'migration_on_staging_ok',
     'staging_backup_recorded', 'staging_sha_before', 'staging_sha_after',
     'recalc_runs', 'collect_counters', 'undeclared_nested_fields',
@@ -231,7 +232,8 @@ def counters_of(collect):
 # уезжает в отчёт и по нему разговаривают. Формулировку менять можно, код --
 # нет.
 
-def build_conditions(preflight, deploy, collect, recalc_runs, staging):
+def build_conditions(preflight, deploy, collect, recalc_runs, staging,
+                     staging_input=None):
     """Обязательные условия. Любое нарушенное делает вердикт REJECT."""
     pre = payload_of(preflight)
     dep = payload_of(deploy)
@@ -246,7 +248,8 @@ def build_conditions(preflight, deploy, collect, recalc_runs, staging):
     apply1 = _run_by_label(recalc_runs, 'apply-1')
     apply2 = _run_by_label(recalc_runs, 'apply-2')
 
-    fingerprints = collect_fingerprints(preflight, deploy, staging)
+    fingerprints = collect_fingerprints(preflight, deploy, staging,
+                                        staging_input)
     area_unchanged = area_ha_unchanged(fingerprints)
 
     works = _number(coverage.get('works'), 0)
@@ -288,9 +291,10 @@ def build_conditions(preflight, deploy, collect, recalc_runs, staging):
          _flag((snap.get('integrity') or {}).get('integrity_ok')),
          'PRAGMA integrity_check on the staging database returned ok'),
         ('AREA_HA_UNCHANGED', area_unchanged,
-         'ALL FIVE drone_flights.area_ha fingerprints are present and equal: '
-         'the production copy before and after, staging before and after the '
-         'migration, and staging after the recalculation'),
+         'ALL SIX drone_flights.area_ha fingerprints are present and each of '
+         'the THREE pairs is equal within itself: the production copy before '
+         'and after its migration, staging before and after its migration, '
+         'staging immediately before and immediately after the recalculation'),
         ('LIVE_ROUTE_DECODE_OK',
          _number(counters.get('collect_decode_failures'), 1) == 0
          and _number(counters.get('collect_routes_captured'), 0) > 0
@@ -401,15 +405,34 @@ def _totals_agree(coverage, apply1):
     return abs(float(stored) - float(reported)) <= 1e-4
 
 
-# Пять отпечатков, и требуются ВСЕ ПЯТЬ.
-REQUIRED_FINGERPRINTS = ('production_copy_before_migration',
-                         'production_copy_after_migration',
-                         'staging_before_migration',
-                         'staging_after_migration',
-                         'staging_after_recalculation')
+# Шесть отпечатков `drone_flights.area_ha`, и требуются ВСЕ ШЕСТЬ. Сравниваются
+# они ТРЕМЯ независимыми парами, каждая -- одна база до и после ОДНОГО шага.
+#
+# [REASON]: первая редакция требовала равенства всех пяти отпечатков между
+# собой, а отпечаток снимается со ВСЕЙ таблицы `drone_flights` (id, тип и
+# значение каждой строки). Между шагом 2 (площадка после миграции) и шагом 4
+# (площадка перед пересчётом) стоит шаг 3 -- живой сбор, который ДОБАВЛЯЕТ
+# вылеты дня в `drone_flights`; копия production (шаг 1) и площадка -- вообще
+# две разные базы. Законный backfill поэтому давал `AREA_HA_CHANGED` и REJECT
+# при том, что ни миграция, ни пересчёт ни одной площади не тронули (живой
+# пилот 2026-09-04). Утверждение гейта -- «ни один шаг комплекта не изменил
+# area_ha», и доказывается оно попарно: каждый шаг -- своей парой на своей
+# базе. Это не ослабление: изменение существующей площади любым из трёх
+# шагов по-прежнему рвёт свою пару, а отсутствие любого из шести отпечатков
+# по-прежнему рушит условие целиком.
+FINGERPRINT_PAIRS = (
+    ('production_copy_migration',
+     'production_copy_before_migration', 'production_copy_after_migration'),
+    ('staging_migration',
+     'staging_before_migration', 'staging_after_migration'),
+    ('staging_recalculation',
+     'staging_before_recalculation', 'staging_after_recalculation'),
+)
+REQUIRED_FINGERPRINTS = tuple(name for _pair, before, after in FINGERPRINT_PAIRS
+                              for name in (before, after))
 
 
-def collect_fingerprints(preflight, deploy, staging):
+def collect_fingerprints(preflight, deploy, staging, staging_input=None):
     """Все ожидаемые отпечатки area_ha. Отсутствующий -- None, а не пропуск.
 
     [REASON]: первая редакция просто не клала в словарь то, чего не нашла, и
@@ -417,10 +440,14 @@ def collect_fingerprints(preflight, deploy, staging):
     менялась». Доказательство, которое СИЛЬНЕЕ при меньшем числе улик, --
     не доказательство. Отсутствующее значение теперь остаётся в словаре
     пустым и обрушивает условие.
+
+    `staging_input` -- улика шага 4, снятая с площадки ПЕРЕД сухим прогоном:
+    в ней лежит отпечаток «непосредственно до пересчёта».
     """
     pre = payload_of(preflight)
     dep = payload_of(deploy)
     snap = payload_of(staging)
+    before = payload_of(staging_input)
     return {
         'production_copy_before_migration':
             (pre.get('area_ha_before') or {}).get('sha256'),
@@ -430,20 +457,47 @@ def collect_fingerprints(preflight, deploy, staging):
             (dep.get('area_ha_before') or {}).get('sha256'),
         'staging_after_migration':
             (dep.get('area_ha_after') or {}).get('sha256'),
+        'staging_before_recalculation':
+            (before.get('area_ha') or {}).get('sha256'),
         'staging_after_recalculation':
             (snap.get('area_ha') or {}).get('sha256'),
     }
 
 
+def area_ha_pairs(fingerprints):
+    """{имя пары: True | False | None}. None -- в паре не хватает улики."""
+    result = {}
+    for pair, before, after in FINGERPRINT_PAIRS:
+        first = fingerprints.get(before)
+        second = fingerprints.get(after)
+        if not first or not second:
+            result[pair] = None
+        else:
+            result[pair] = first == second
+    return result
+
+
 def area_ha_unchanged(fingerprints):
-    """Все пять на месте, и все пять -- одно значение. Иначе ложь."""
-    values = []
+    """Все шесть на месте, и каждая пара равна ВНУТРИ СЕБЯ. Иначе ложь."""
     for name in REQUIRED_FINGERPRINTS:
-        value = fingerprints.get(name)
-        if not value:
+        if not fingerprints.get(name):
             return False
-        values.append(value)
-    return len(set(values)) == 1
+    return all(area_ha_pairs(fingerprints).values())
+
+
+def area_ha_changed_by_collection(fingerprints):
+    """Отличается ли площадка после миграции от площадки перед пересчётом.
+
+    НАБЛЮДЕНИЕ, а не условие: между этими снимками стоит живой сбор, который
+    добавляет вылеты дня, и отпечаток всей таблицы меняется законно. Печатается
+    в отчёте, чтобы разница была названа, а не молча проглочена. None -- не
+    хватает улики.
+    """
+    first = fingerprints.get('staging_after_migration')
+    second = fingerprints.get('staging_before_recalculation')
+    if not first or not second:
+        return None
+    return first != second
 
 
 def recalculation_seconds(recalc_runs):
@@ -620,6 +674,7 @@ EXPECTED_KINDS = (
     ('preflight', 'preflight'),
     ('deploy', 'deploy'),
     ('collect', 'collect:summary'),
+    ('staging_input', 'db-probe:snapshot'),
     ('recalc:dry-run', 'recalc:dry-run'),
     ('recalc:apply-1', 'recalc:apply-1'),
     ('recalc:apply-2', 'recalc:apply-2'),
@@ -657,7 +712,8 @@ def validate_evidence_set(documents, run_id, kit_sha):
 
 def build_report(preflight, deploy, collect, recalc_runs, staging,
                  owner_threshold, dji_delta_limit,
-                 missing_evidence, run_id=None, kit_sha=None):
+                 missing_evidence, run_id=None, kit_sha=None,
+                 staging_input=None):
     """Плоский отчёт: только объявленные поля, только счётчики и площади."""
     snap = payload_of(staging)
     coverage = snap.get('coverage', {}) or {}
@@ -673,12 +729,13 @@ def build_report(preflight, deploy, collect, recalc_runs, staging,
     delta_percent = (round(delta * 100.0 / float(dji), 2)
                      if dji else None)
 
-    fingerprints = collect_fingerprints(preflight, deploy, staging)
+    fingerprints = collect_fingerprints(preflight, deploy, staging,
+                                        staging_input)
     conditions = build_conditions(preflight, deploy, collect, recalc_runs,
-                                  staging)
+                                  staging, staging_input)
 
     documents = {'preflight': preflight, 'deploy': deploy, 'collect': collect,
-                 'staging_snapshot': staging}
+                 'staging_input': staging_input, 'staging_snapshot': staging}
     for label in ('dry-run', 'apply-1', 'apply-2'):
         for run in recalc_runs:
             if payload_of(run).get('label') == label:
@@ -737,7 +794,8 @@ def build_report(preflight, deploy, collect, recalc_runs, staging,
 
         'evidence_present': sorted(name for name, value in (
             ('preflight', preflight), ('deploy', deploy),
-            ('collect', collect), ('staging_snapshot', staging))
+            ('collect', collect), ('staging_input', staging_input),
+            ('staging_snapshot', staging))
             if value),
         'evidence_missing': sorted(missing_evidence),
 
@@ -792,6 +850,9 @@ def build_report(preflight, deploy, collect, recalc_runs, staging,
         # ПОЛНОМ отсутствии доказательств. Отчёт при этом печатал «да» и
         # REJECT одновременно.
         'area_ha_unchanged': area_ha_unchanged(fingerprints),
+        'area_ha_pairs': area_ha_pairs(fingerprints),
+        'area_ha_changed_by_collection':
+            area_ha_changed_by_collection(fingerprints),
         'integrity_ok': _flag((snap.get('integrity') or {}).get('integrity_ok')),
         'migration_on_copy_ok': _flag(pre.get('migration_on_copy_ok')),
         'migration_on_staging_ok': _flag(dep.get('migration_on_staging_ok')),
@@ -964,6 +1025,14 @@ def render_markdown(report):
         % _cell(report['migration_on_staging_ok']),
         '| drone_flights.area_ha не менялась | %s |'
         % _cell(report['area_ha_unchanged']),
+        '| — копия production до/после миграции | %s |'
+        % _cell(report['area_ha_pairs'].get('production_copy_migration')),
+        '| — площадка до/после миграции | %s |'
+        % _cell(report['area_ha_pairs'].get('staging_migration')),
+        '| — площадка непосредственно до/после пересчёта | %s |'
+        % _cell(report['area_ha_pairs'].get('staging_recalculation')),
+        '| — таблица вылетов изменена сбором между шагами 2 и 4 (наблюдение, не условие) | %s |'
+        % _cell(report['area_ha_changed_by_collection']),
         '| Резервная копия площадки записана | %s |'
         % _cell(report['staging_backup_recorded']),
         '',
@@ -1043,6 +1112,11 @@ def build_parser():
     parser.add_argument('--deploy', metavar='PATH')
     parser.add_argument('--collect', metavar='PATH')
     parser.add_argument('--staging-snapshot', dest='staging', metavar='PATH')
+    parser.add_argument('--staging-input', dest='staging_input',
+                        metavar='PATH',
+                        help='the step-4 snapshot of staging taken BEFORE the '
+                             'dry run: carries the area_ha fingerprint '
+                             'immediately before the recalculation')
     parser.add_argument('--recalc', action='append', default=[],
                         metavar='PATH',
                         help='recalculation evidence; give it three times: '
@@ -1077,6 +1151,7 @@ def main(argv=None):
     documents = {}
     for name, path in (('preflight', args.preflight), ('deploy', args.deploy),
                        ('collect', args.collect),
+                       ('staging_input', args.staging_input),
                        ('staging_snapshot', args.staging)):
         if not path:
             missing.append(name)
@@ -1117,7 +1192,8 @@ def main(argv=None):
         documents['preflight'], documents['deploy'], documents['collect'],
         runs, documents['staging_snapshot'],
         owner_threshold, dji_limit, missing,
-        run_id=args.run_id, kit_sha=args.kit_sha)
+        run_id=args.run_id, kit_sha=args.kit_sha,
+        staging_input=documents['staging_input'])
 
     common.write_evidence(args.out_json, report)
     directory = os.path.dirname(os.path.abspath(args.out_md))
