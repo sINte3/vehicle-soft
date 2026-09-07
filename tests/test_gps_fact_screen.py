@@ -143,6 +143,17 @@ class FactScreen(unittest.TestCase):
         self.assertIn('301.0', html)
         self.assertNotIn('<polygon', html)
 
+    def test_an_unfinished_collection_shows_the_reason_and_the_hint(self):
+        # GPS-11: коллектор не дошёл до конца суток -- причина словами,
+        # подсказка про --catch-up, и никаких гектаров и полигонов
+        with app.app_context():
+            db.session.add(_aggregate(reason='sbor_nepolnyy'))
+            db.session.commit()
+        html = self._get()
+        self.assertIn('Сбор точек за эти сутки не завершён', html)
+        self.assertIn('--catch-up', html)
+        self.assertNotIn('<polygon', html)
+
     def test_looked_and_found_nothing_differs_from_did_not_look(self):
         # строка есть, участков нет
         with app.app_context():

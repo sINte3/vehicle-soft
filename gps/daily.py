@@ -20,10 +20,21 @@ took 5.5 percent off the median work and up to 45 percent off small ones
 (roadmap 2.10). A quietly understated hectare on an invoice is worse than a
 hectare not issued.
 
+A DAY THE COLLECTOR HAS NOT FINISHED IS NOT A DAY (GPS-11)
+The collector's watermark moves only after the points are committed, and a
+truncated answer leaves it on the last message stored. So a watermark before
+the end of the day is proof that the day's tail has not been fetched yet. The
+first live run of 07.09.2026 hit exactly that: 104 objects truncated at 50 000
+messages over an 18-day backlog, and the day was computed on partial points
+and published as a fact. Now such a day gets the reason `sbor_nepolnyy`, its
+earlier polygons and the operator's answers on them stay untouched, and
+`--catch-up` recomputes it once the watermark has passed.
+
 Run (PowerShell, one command per line; needs the geo venv, see gps/README.md):
 
   cd C:\\transport-report
   & C:\\gps_venv\\Scripts\\python.exe -m gps.daily --date 2026-07-27
+  & C:\\gps_venv\\Scripts\\python.exe -m gps.daily --catch-up
 
 Console output is ASCII.
 """
@@ -79,6 +90,7 @@ SITE_GAP_CAP_S = 300.0
 REASON_NO_POINTS = "net_tochek"
 REASON_NO_MOTION = "net_dvizheniya"
 REASON_RARE = "redkaya_zapis"
+REASON_INCOMPLETE = "sbor_nepolnyy"
 
 # [REASON]: how much two polygons must share before a human answer given about
 # one is carried onto the other. Half of EACH area, in both directions: a small
@@ -387,13 +399,84 @@ def write_day(con, day, unit_id, result, computed_at=None):
     return len(carried), len(existing) - len(carried)
 
 
+# --- completeness of the collection (GPS-11) ---------------------------------
+
+def day_bounds(day):
+    """(start, finish) epoch seconds of one local day."""
+    start = int(datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=TZ).timestamp())
+    return start, start + 86400
+
+
+def collection_state(folder, unit_id, day):
+    """(complete, watermark) -- has the collector asked for the whole day?
+
+    [REASON]: the watermark is written only after the points are committed,
+    and a truncated answer leaves it on the last message stored
+    (gps_collector/main.py), so "watermark before the end of the day" proves
+    that the tail of the day has not been fetched. No watermark file, or no
+    row for the object, means the points did not come through the collector
+    -- a fixture, a hand import -- and there is nothing to compare against:
+    such a day is computed. The state file is only READ here; opening it
+    through storage.open_state would create it, and a reader must not.
+    """
+    if not os.path.exists(storage.state_path(folder)):
+        return True, None
+    watermark = storage.read_watermark(folder, unit_id)
+    if watermark is None:
+        return True, None
+    _, finish = day_bounds(day)
+    return watermark >= finish, watermark
+
+
+def _reason_only_aggregate(points_total, reason):
+    return {"points_total": points_total, "points_work": 0, "track_km": 0.0,
+            "interval_median_s": None, "sats_median": None, "motion_gaps": 0,
+            "lost_seconds": 0.0, "gps_jumps": 0, "reason": reason,
+            "method_version": METHOD_VERSION}
+
+
+def mark_incomplete(con, day, unit_id, points_total, computed_at=None):
+    """The aggregate row gets the reason; NOTHING else is touched.
+
+    [REASON]: the polygons of an earlier, partial computation stay in place on
+    purpose. An operator may already have answered on them, and write_day()
+    with zero sites would report every one of those answers as lost.
+    --catch-up recomputes the day once the watermark has passed it and carries
+    the answers by overlap, as any recomputation does. Until then the screen
+    shows the reason instead of a number -- which is the whole point.
+    """
+    computed_at = computed_at or datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
+    con.execute("BEGIN")
+    try:
+        con.execute(
+            "INSERT INTO gps_daily_aggregates (work_date, wialon_id, "
+            "points_total, points_work, track_km, interval_median_s, "
+            "sats_median, motion_gaps, lost_seconds, gps_jumps, reason, "
+            "method_version, computed_at) "
+            "VALUES (?, ?, ?, 0, 0, NULL, NULL, 0, 0, 0, ?, ?, ?) "
+            "ON CONFLICT(work_date, wialon_id) DO UPDATE SET "
+            "points_total = excluded.points_total, reason = excluded.reason, "
+            "computed_at = excluded.computed_at",
+            (day, int(unit_id), int(points_total), REASON_INCOMPLETE,
+             METHOD_VERSION, computed_at))
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+
+
 def run_day(day, unit_id, folder=None, db_path=None, contours=None, log=print):
     """Compute and store one object-day. Returns the DayResult."""
     folder = folder or points_dir()
     db_path = db_path or DB_PATH
     points = storage.read_day(folder, unit_id, day)
+    complete, _ = collection_state(folder, unit_id, day)
     con = sqlite3.connect(db_path, timeout=30)
     try:
+        if not complete:
+            mark_incomplete(con, day, unit_id, len(points))
+            return DayResult(_reason_only_aggregate(len(points),
+                                                    REASON_INCOMPLETE), [])
         if contours is None:
             contours = load_contours(con)
         result = compute_day(points, contours=contours or None)
@@ -409,8 +492,55 @@ def run_day(day, unit_id, folder=None, db_path=None, contours=None, log=print):
     return result
 
 
+def pending_days(con):
+    """(day, unit_id) of every aggregate still waiting for the collector."""
+    return [(row[0], int(row[1])) for row in con.execute(
+        "SELECT work_date, wialon_id FROM gps_daily_aggregates "
+        "WHERE reason = ? ORDER BY work_date, wialon_id", (REASON_INCOMPLETE,))]
+
+
+def catch_up(folder, db_path, log=print):
+    """Recompute the days marked incomplete whose collection has completed.
+
+    The nightly job runs this right after the day's computation, so a backlog
+    that took several runs to fetch is published the night it completes, not
+    never. Days whose watermark still stands short are left exactly as they
+    are and counted.
+    """
+    con = sqlite3.connect(db_path, timeout=30)
+    try:
+        pending = pending_days(con)
+        contours = load_contours(con) if pending else {}
+    finally:
+        con.close()
+    if not pending:
+        log("catch-up: nothing is waiting for the collector")
+        return 0
+    recomputed = waiting = 0
+    for day, unit_id in pending:
+        complete, _ = collection_state(folder, unit_id, day)
+        if not complete:
+            waiting += 1
+            continue
+        result = run_day(day, unit_id, folder=folder, db_path=db_path,
+                         contours=contours, log=log)
+        recomputed += 1
+        if result.reason:
+            log("  %s %-8s %s" % (day, unit_id, result.reason))
+        else:
+            log("  %s %-8s %d site(s), %.2f ha"
+                % (day, unit_id, len(result.sites),
+                   sum(s["area_ha"] for s in result.sites)))
+    log("catch-up: recomputed %d | still waiting for the collector: %d"
+        % (recomputed, waiting))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--catch-up", action="store_true",
+                        help="recompute the days marked sbor_nepolnyy whose "
+                             "collection has since completed; takes no --date")
     parser.add_argument("--date", default=None,
                         help="local day, YYYY-MM-DD. По умолчанию -- вчерашние "
                              "сутки по местному времени")
@@ -440,6 +570,15 @@ def main(argv=None):
         sys.stderr.write("ERROR: database not found at %s\n" % db_path)
         return 2
 
+    if args.catch_up:
+        if args.date or args.unit:
+            # [REASON]: --catch-up picks its own days from the database; a
+            # --date next to it would be silently ignored, and a silently
+            # ignored argument is how a day gets computed twice by mistake.
+            sys.stderr.write("ERROR: --catch-up takes no --date and no --unit\n")
+            return 2
+        return catch_up(folder, db_path)
+
     units = args.unit or storage.units_with_points(folder, day)
     if not units:
         print("no points for %s in %s" % (day, folder))
@@ -453,12 +592,13 @@ def main(argv=None):
     print("%s: %d object(s), %d contour(s) in the directory"
           % (day, len(units), len(contours)))
 
-    published = refused = sites_total = 0
+    published = refused = incomplete = sites_total = 0
     for unit_id in units:
         result = run_day(day, unit_id, folder=folder, db_path=db_path,
                          contours=contours)
         if result.reason:
             refused += 1
+            incomplete += result.reason == REASON_INCOMPLETE
             print("  %-8s %s" % (unit_id, result.reason))
         else:
             published += 1
@@ -468,6 +608,9 @@ def main(argv=None):
                      sum(s["area_ha"] for s in result.sites)))
     print("\npublished: %d | not computed: %d | sites: %d"
           % (published, refused, sites_total))
+    if incomplete:
+        print("waiting for the collector: %d -- run the collector again, then "
+              "gps.daily --catch-up" % incomplete)
     return 0
 
 

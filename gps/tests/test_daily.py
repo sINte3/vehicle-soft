@@ -382,6 +382,172 @@ class Recomputation(unittest.TestCase):
         self.assertEqual(self.rows("gps_work_polygons"), [])
 
 
+class CollectionCompleteness(unittest.TestCase):
+    """GPS-11: a day the collector has not finished is not published.
+
+    [REASON]: the first live run of 07.09.2026 truncated 104 objects at 50 000
+    messages over an 18-day backlog, and the day was computed on partial
+    points and shown as a fact. The collector's watermark is the proof of how
+    far the fetch got; the computation must read it.
+    """
+
+    DAY = "2026-07-27"
+    UNIT = 3464
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.db = os.path.join(self.folder, "transport.db")
+        con = sqlite3.connect(self.db)
+        con.execute(FIELD_CONTOURS_DDL)
+        con.commit()
+        con.close()
+        self._saved = (gps_mig.DB_PATH, migration_utils.DB_PATH)
+        gps_mig.DB_PATH = self.db
+        migration_utils.DB_PATH = self.db
+        gps_mig.run()
+        self.track = read_fixture_track()
+        storage.write_points(self.folder, [
+            (self.UNIT, t, lon, lat, speed, 90, sats)
+            for t, lon, lat, speed, sats in self.track])
+        self.start, self.finish = daily.day_bounds(self.DAY)
+
+    def tearDown(self):
+        gps_mig.DB_PATH, migration_utils.DB_PATH = self._saved
+
+    def rows(self, table):
+        con = sqlite3.connect(self.db)
+        try:
+            con.row_factory = sqlite3.Row
+            return [dict(r) for r in con.execute(
+                "SELECT * FROM %s ORDER BY id" % table)]
+        finally:
+            con.close()
+
+    def answer(self, label="проезд"):
+        con = sqlite3.connect(self.db)
+        try:
+            con.execute("UPDATE gps_work_polygons SET operator_label = ?, "
+                        "decided_at = '2026-08-19 10:00'", (label,))
+            con.commit()
+        finally:
+            con.close()
+
+    def run_main(self, *argv):
+        out, saved = io.StringIO(), sys.stdout
+        sys.stdout = out
+        try:
+            code = daily.main(["--dir", self.folder, "--db", self.db] + list(argv))
+        finally:
+            sys.stdout = saved
+        return code, out.getvalue()
+
+    def test_a_day_the_collector_has_not_finished_is_not_published(self):
+        storage.set_watermark(self.folder, self.UNIT, self.finish - 3600)
+        result = daily.run_day(self.DAY, self.UNIT, folder=self.folder,
+                               db_path=self.db, contours={})
+        self.assertEqual(result.reason, daily.REASON_INCOMPLETE)
+        self.assertEqual(result.sites, [])
+        aggregates = self.rows("gps_daily_aggregates")
+        self.assertEqual(len(aggregates), 1)
+        self.assertEqual(aggregates[0]["reason"], "sbor_nepolnyy")
+        # 1599 rows in the fixture, 1598 distinct seconds: the key swallows the
+        # duplicate, and points_total counts what is stored
+        self.assertEqual(aggregates[0]["points_total"],
+                         len(storage.read_day(self.folder, self.UNIT, self.DAY)))
+        self.assertEqual(self.rows("gps_work_polygons"), [])
+
+    def test_a_watermark_past_the_day_publishes_it(self):
+        storage.set_watermark(self.folder, self.UNIT, self.finish)
+        result = daily.run_day(self.DAY, self.UNIT, folder=self.folder,
+                               db_path=self.db, contours={})
+        self.assertIsNone(result.reason)
+        self.assertEqual(len(self.rows("gps_work_polygons")), len(result.sites))
+        self.assertGreater(len(result.sites), 0)
+
+    def test_no_watermark_at_all_means_the_day_is_computed(self):
+        # Points that did not come through the collector -- a fixture, a hand
+        # import -- have nothing to be compared against.
+        self.assertFalse(os.path.exists(storage.state_path(self.folder)))
+        result = daily.run_day(self.DAY, self.UNIT, folder=self.folder,
+                               db_path=self.db, contours={})
+        self.assertIsNone(result.reason)
+        # and the reader did not create the collector's state file
+        self.assertFalse(os.path.exists(storage.state_path(self.folder)))
+
+    def test_an_earlier_answer_survives_the_incomplete_mark(self):
+        storage.set_watermark(self.folder, self.UNIT, self.finish)
+        daily.run_day(self.DAY, self.UNIT, folder=self.folder,
+                      db_path=self.db, contours={})
+        self.answer("проезд")
+        before = self.rows("gps_work_polygons")
+        # the guard arrives after the day was computed on partial points
+        storage.set_watermark(self.folder, self.UNIT, self.finish - 3600)
+        result = daily.run_day(self.DAY, self.UNIT, folder=self.folder,
+                               db_path=self.db, contours={})
+        self.assertEqual(result.reason, daily.REASON_INCOMPLETE)
+        self.assertEqual(self.rows("gps_work_polygons"), before)
+        self.assertEqual(self.rows("gps_daily_aggregates")[0]["reason"],
+                         "sbor_nepolnyy")
+
+    def test_catch_up_recomputes_once_the_watermark_has_passed(self):
+        storage.set_watermark(self.folder, self.UNIT, self.finish)
+        daily.run_day(self.DAY, self.UNIT, folder=self.folder,
+                      db_path=self.db, contours={})
+        self.answer("проезд")
+        storage.set_watermark(self.folder, self.UNIT, self.finish - 3600)
+        daily.run_day(self.DAY, self.UNIT, folder=self.folder,
+                      db_path=self.db, contours={})
+        storage.set_watermark(self.folder, self.UNIT, self.finish + 1800)
+
+        code, log = self.run_main("--catch-up")
+        self.assertEqual(code, 0, log)
+        self.assertIn("catch-up: recomputed 1 | still waiting for the "
+                      "collector: 0", log)
+        aggregates = self.rows("gps_daily_aggregates")
+        self.assertEqual(len(aggregates), 1)
+        self.assertIsNone(aggregates[0]["reason"])
+        polygons = self.rows("gps_work_polygons")
+        self.assertGreater(len(polygons), 0)
+        # the answer given on the partial polygon came along by overlap
+        self.assertEqual([p["operator_label"] for p in polygons], ["проезд"])
+
+    def test_catch_up_leaves_a_still_incomplete_day_alone(self):
+        storage.set_watermark(self.folder, self.UNIT, self.finish - 3600)
+        daily.run_day(self.DAY, self.UNIT, folder=self.folder,
+                      db_path=self.db, contours={})
+        stamp = self.rows("gps_daily_aggregates")[0]["computed_at"]
+        code, log = self.run_main("--catch-up")
+        self.assertEqual(code, 0, log)
+        self.assertIn("recomputed 0 | still waiting for the collector: 1", log)
+        row = self.rows("gps_daily_aggregates")[0]
+        self.assertEqual(row["reason"], "sbor_nepolnyy")
+        self.assertEqual(row["computed_at"], stamp)
+
+    def test_catch_up_with_nothing_pending_says_so(self):
+        code, log = self.run_main("--catch-up")
+        self.assertEqual(code, 0, log)
+        self.assertIn("nothing is waiting", log)
+
+    def test_catch_up_refuses_a_date_next_to_it(self):
+        err, saved = io.StringIO(), sys.stderr
+        sys.stderr = err
+        try:
+            code, _ = self.run_main("--catch-up", "--date", self.DAY)
+        finally:
+            sys.stderr = saved
+        self.assertEqual(code, 2)
+        self.assertIn("--catch-up takes no --date", err.getvalue())
+
+    def test_the_console_names_the_reason_and_what_to_do(self):
+        storage.set_watermark(self.folder, self.UNIT, self.finish - 3600)
+        code, log = self.run_main("--date", self.DAY)
+        self.assertEqual(code, 0, log)
+        self.assertIn("sbor_nepolnyy", log)
+        self.assertIn("waiting for the collector: 1", log)
+        self.assertIn("--catch-up", log)
+        self.assertTrue(log.isascii(), log)
+
+
 class CommandLine(unittest.TestCase):
     """День по умолчанию считает сам расчёт, а не обёртка расписания.
 
