@@ -70,7 +70,7 @@ Wialon.
 | GPS-7 | Журнал приёма `gps_sync_log` + миграция + экран «Приём данных»: тождество seen = записано + дубли + без координат; 19 тестов | [#93](https://github.com/sINte3/vehicle-soft/pull/93) | `c2950b3` |
 | GPS-8 | Ретенция точек `tools/gps_retention.py` (сухой прогон по умолчанию) и ранбук выката `docs/GPS_ROLLOUT_RUNBOOK.md`; 13 тестов | [#95](https://github.com/sINte3/vehicle-soft/pull/95) | `e4e2e2c` |
 | GPS-9 | Сквозная проверка: настоящий трек через весь тракт до строки в базе, 8,772 га на том конце; 8 тестов, 5 мутаций на швах | [#95](https://github.com/sINte3/vehicle-soft/pull/95) | `e4e2e2c` |
-| GPS-10 | Связка `VialonMapping.wialon_id` с объектами Wialon: `tools/gps_link_mappings.py`, точное имя → id, сухой прогон по умолчанию, решения из CSV через `--set`/`--unset`; 30 тестов, 13 мутаций | [#119](https://github.com/sINte3/vehicle-soft/pull/119) | — |
+| GPS-10 | Связка `VialonMapping.wialon_id` с объектами Wialon: `tools/gps_link_mappings.py`, точное имя → id, сухой прогон по умолчанию, решения из CSV через `--set`/`--unset`; 30 тестов, 13 мутаций | [#119](https://github.com/sINte3/vehicle-soft/pull/119) | `12f3785` |
 
 До 2026-08-12 трек был исследовательским и намеренно не трогал репозиторий.
 Решением владельца от 2026-08-12 переведён в кодовый; первый инкремент —
@@ -212,12 +212,12 @@ Wialon.
 `docs/GPS_PLAN_FAKT_VISION_ROADMAP.md` разделы 2.8 (работа/проезд), 4.1.1
 (лимиты Wialon) и 9 (открытые вопросы). Ветка
 `claude/gps-work-volume-verification-xk7vji`; всё, что перечислено ниже, влито
-в `main` четырьмя PR — [#89](https://github.com/sINte3/vehicle-soft/pull/89),
+в `main` пятью PR — [#89](https://github.com/sINte3/vehicle-soft/pull/89),
 [#91](https://github.com/sINte3/vehicle-soft/pull/91),
 [#93](https://github.com/sINte3/vehicle-soft/pull/93),
-[#95](https://github.com/sINte3/vehicle-soft/pull/95); GPS-10 — в
-[#119](https://github.com/sINte3/vehicle-soft/pull/119) (мерж-коммиты в таблице
-раздела 3).
+[#95](https://github.com/sINte3/vehicle-soft/pull/95),
+[#119](https://github.com/sINte3/vehicle-soft/pull/119) — и несмерженного за
+треком не осталось (мерж-коммиты в таблице раздела 3).
 
 **Что сделано и живёт в репозитории:** движок площади `gps/` (41 тест,
 мутационно проверен), размеченный набор `gps/data/labelled_sites.json`,
