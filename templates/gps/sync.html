@@ -72,6 +72,7 @@
           <td class="right">{{ run.requests }}
             {% if run.abandoned %}<div class="vs-soft">{{ 'брошено: ' if is_ru else 'ташланди: ' }}{{ run.abandoned }}</div>{% endif %}
             {% if run.logins != 1 %}<div class="vs-soft">{{ 'входов: ' if is_ru else 'кириш: ' }}{{ run.logins }}</div>{% endif %}
+            {% if run.truncated %}<div class="vs-soft">{{ 'усечено: ' if is_ru else 'кесилди: ' }}{{ run.truncated }}</div>{% endif %}
           </td>
         </tr>
         {% endfor %}

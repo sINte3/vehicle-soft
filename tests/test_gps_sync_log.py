@@ -321,6 +321,15 @@ class Screen(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         return response.get_data(as_text=True)
 
+    def test_a_truncated_run_says_so_under_the_requests(self):
+        # GPS-11: прогон 07.09 усёк 104 объекта по 50 000 сообщений, и на
+        # экране это было не видно нигде. Теперь -- мелким под «Запросов».
+        self._add(truncated=104)
+        html = self._html()
+        self.assertIn('усечено: 104', html)
+        self._add(started_at=datetime(2026, 8, 11, 3, 0, 0), truncated=0)
+        self.assertEqual(self._html().count('усечено'), 1)
+
     def test_an_empty_journal_says_the_collector_never_ran(self):
         html = self._html()
         self.assertIn('Прогонов ещё не было', html)
