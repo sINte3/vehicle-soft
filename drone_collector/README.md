@@ -846,6 +846,150 @@ everywhere it is shown, and the original DJI area is kept separately and
 unchanged.
 
 
+## Collect the immutable DJI sources (DJI-AREA-EVIDENCE-001)
+
+```
+python -m drone_collector.main --sources --from 2026-08-01 --to 2026-08-31
+python -m drone_collector.main --sources --ids-file ids.txt --dry-run
+python -m drone_collector.main --sources --ids-file ids.txt --send-sources
+python -m drone_collector.main --land-snapshot --with-geometry --send-snapshot
+```
+
+Vehicle Soft keeps, per flight, the **bytes DJI served** — not a reading of
+them — so that every later figure can be re-derived from the source instead of
+being believed. `--sources` captures those bytes and queues them for
+`POST /drones/api/source_sync`; `--land-snapshot` queues an immutable revision
+of the Field Management directory for `POST /drones/api/land_snapshot_sync`.
+
+### What one record-page visit captures
+
+The collector navigates to `/record/<flight_id>` and **listens**. The SPA
+fetches four things for itself, and all four are kept:
+
+| Source | Request | What is stored |
+|---|---|---|
+| `card` | `GET .../api/web/v1/flight_records/<id>` | the JSON envelope, byte for byte |
+| `route` | `POST .../api/web/v2/flight_datas/flight_records` | the protobuf, byte for byte |
+| `airlines` | `GET .../api/web/v2/flight_datas/airlines/<id>` | **a derived record only** — see below |
+| `v4` | `GET <storage>/objects/airline_v4/<id>/…` | the protobuf, byte for byte, up to a megabyte |
+
+The airlines descriptor is the exception, and deliberately. Its whole payload
+is three pre-signed storage links, each a temporary credential. What survives
+is `code`, `status` and `host+path` of every link **with the query string
+removed** — and it is the *absence* of `file_v4_url` in that record that says
+"DJI holds no V4 for this flight" (`NO_V4_URL`), which is a finding in its own
+right, not a failure.
+
+The V4 body is read inside a `page.route` handler rather than from the
+`requestfinished` event. On the August 2026 forensic run, reading bodies of
+that size from the events lost about one in four under load: Chromium had
+already evicted the body when Playwright asked for it. This is still only
+listening — `route.fetch()` continues **the page's own** request with its URL,
+headers and signature untouched, and `route.fulfill()` hands the page exactly
+what the storage sent. What changed is who holds the buffer, not who asked.
+
+### What never enters the queue
+
+No signed link, no query string of a storage URL, no cookie, no header value.
+`request_context.path` is the URL path with the query cut off before the string
+is even built. Every body is checked for the markers of a signed link **before**
+it is queued, the queue checks the serialised envelope once more, and the
+`--dry-run` writer decodes each `body_b64` and checks it too — base64 hides a
+credential from a text search, and a dry run is exactly what an operator
+reaches for when something already looks wrong.
+
+### Resumable
+
+A flight whose card, route and airlines are already in the outbox — pending
+**or** sent — together with either its V4 or an airlines record saying there is
+none, is not visited again. A re-run therefore asks DJI only for what is still
+missing. The check reads file *names*, not envelopes: a month of flights is
+thirty thousand of them and a V4 envelope is a megabyte, so reading them to
+learn what is already there would take longer than the visits it saves.
+
+### Running it
+
+```
+python -m drone_collector.main --sources --ids-file ids.txt
+```
+
+Queues and stops. Reaches no Vehicle Soft endpoint at all, so it needs neither
+`VEHICLE_SOFT_BASE_URL` nor `DRONE_API_TOKEN`. `--sources` must know *which*
+flights: give `--from`/`--to`, and the read-only flight-list walk of that period
+names the ids, or give `--ids-file`.
+
+```
+python -m drone_collector.main --sources --ids-file ids.txt --send-sources
+```
+
+Queues, then POSTs the pending source envelopes in chunks of at most **50** to
+`/drones/api/source_sync`. Sending happens only with this flag. `--dry-run` and
+`--send-sources` together are refused rather than one silently winning.
+
+An envelope moves to `sent/` only after the endpoint accepted its chunk **in
+full** — `status == "ok"`, `seen` equal to the number sent, `errors == 0`, and
+counters that add up. Anything less and the whole chunk stays in `pending/`,
+together with everything after it: the receiver answers with counters, not with
+a list, so *which* item landed cannot be known. Re-sending is safe — a body
+already stored comes back as a duplicate, never as a second revision.
+
+```
+python -m drone_collector.main --land-snapshot --with-geometry --send-snapshot
+```
+
+Walks the same directory `--lands` walks; what differs is the fate of what it
+brings. `--lands` upserts the mutable `field_contours` the older screens read;
+`--land-snapshot` queues metadata **revisions** and, with `--with-geometry`, the
+polygon bytes, for a receiver that never rewrites a revision. Both may run;
+neither replaces the other. The snapshot takes no period and no ids file — the
+directory is a state, not a range.
+
+One snapshot spans several requests of at most **1000 lands** each, sharing a
+`capture_run_id`; the request carrying `final: true` closes it and is the only
+one carrying `complete` and `manifest_sha256`. Chunks are posted in order and a
+refused chunk stops the run with everything after it pending: half a snapshot is
+not a snapshot.
+
+A polygon is kept only when three things hold — the download arrived, its md5 is
+the one DJI named, and it carries no signed link. A body whose md5 differs is
+another object or a cut one, and a polygon of the wrong field stored under this
+md5 would be a confident wrong area later.
+
+### Exit codes added by this mode
+
+| Code | Meaning | What to do |
+|---|---|---|
+| 18 | `--sources`: some flights did **not** yield a full set. | What *was* captured is already queued. The page did not open, or the V4 did not arrive within `DJI_SOURCE_WAIT_MS`. Re-run the same period: only the missing flights are visited. |
+| 19 | `--send-sources`: the endpoint answered, but did **not accept the whole batch**. | The queue is intact — the chunk and everything after it stayed in `pending/`. The log names which of the four conditions failed. Fix the cause and run again; re-sending is idempotent. |
+| 20 | `--send-snapshot`: a snapshot chunk was **not accepted in full**. | The chunks stay in `pending/` whole. Half a snapshot read as a whole one would make an absent contour look like a deleted one. |
+
+Three codes and not one, because they need three different actions from the
+operator: collect again, sync the flights and send again, look at what the
+directory receiver refused. A shared code would make them one action — wrong in
+two cases out of three.
+
+### Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DJI_RECORD_URL_TEMPLATE` | `https://www.djiag.com/record/{id}` | The record page of one flight. Must start with `http://` or `https://` **and contain `{id}`** — without the placeholder every flight would open the same page and the run would file one flight's sources under a thousand ids. Both are refused as configuration errors, before the browser. |
+| `DJI_SOURCE_WAIT_MS` | `70000` | How long to wait, per flight, for either the V4 body or the airlines record that says there is none. 70 s was the ceiling that lost nothing on the August 2026 forensic run of 8 196 flights: the V4 file is up to a megabyte behind a signed storage link and arrives last. Below 1000 is refused. |
+| `DJI_SOURCE_PAUSE_MS` | `1500` | Pause between two flights. The pace at DJI is set by us. |
+| `DJI_SOURCE_BATCH_SIZE` | `50` | Source items per POST. Clamped to 50 whatever is set: the endpoint answers 413 above it. |
+
+### Where it lands
+
+Both modes use the existing outbox with two kinds of their own:
+
+| Kind | Identity | Sent to |
+|---|---|---|
+| `source` | `<flight_id>:<source_type>` | `/drones/api/source_sync` |
+| `land_snapshot` | `<capture_run_id>:<chunk>` | `/drones/api/land_snapshot_sync` |
+
+`records(kind)` and both senders select by the **kind prefix of the file name**,
+so no kind may be a prefix of another followed by `_`. A test holds that.
+
+
 ## Capture flights per device (DRONE-BODYCODE-001)
 
 A second entry point, `drone_collector.devices`. It **sends nothing** — it

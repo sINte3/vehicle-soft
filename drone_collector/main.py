@@ -124,6 +124,26 @@ EXIT_COLLECT_INCOMPLETE = 16
 # «чинить конфигурацию» от «повторить после синхронизации вылетов».
 EXIT_ROUTE_NOT_ACCEPTED = 17
 
+# DJI-AREA-EVIDENCE-001.
+#
+# [REASON]: три кода, а не один. «Кабинет отдал не всё, что мы просили» (18),
+# «приёмник источников принял не весь пакет» (19) и «приёмник снимка каталога
+# принял не весь пакет» (20) требуют от оператора трёх разных действий:
+# повторить сбор, синхронизировать вылеты и отправить снова, разобрать отказ
+# каталога. Общий код сделал бы их одним действием -- неверным в двух случаях
+# из трёх.
+#
+# 18: часть вылетов осталась без полного набора источников (страница не
+# открылась, V4 не пришёл за отведённое время). Собранное УЖЕ в очереди;
+# повторный прогон спросит у DJI только недостающее.
+EXIT_SOURCES_INCOMPLETE = 18
+# 19: /drones/api/source_sync ответил, но принял не всё (errors > 0 либо
+# счётчики не сошлись). Пакет ЦЕЛИКОМ остался в очереди.
+EXIT_SOURCES_NOT_ACCEPTED = 19
+# 20: /drones/api/land_snapshot_sync ответил, но принял не всё. Куски снимка
+# остаются в очереди целиком: половина снимка -- не снимок.
+EXIT_SNAPSHOT_NOT_ACCEPTED = 20
+
 KINDS = ('backfill', 'incremental', 'replay')
 
 MODE_FLIGHTS = 'flights'
@@ -132,6 +152,8 @@ MODE_ROUTES = 'routes'
 MODE_ROUTE_PROBE = 'route-ui-probe'
 MODE_AREA_48H = 'area-48h'
 MODE_ROUTE_COLLECT = 'route-ui-collect'
+MODE_SOURCES = 'sources'
+MODE_LAND_SNAPSHOT = 'land-snapshot'
 
 FLIGHT_SUMMARY_KEYS = (
     'mode', 'kind', 'dry_run', 'period_from', 'period_to',
@@ -188,6 +210,44 @@ COLLECT_SUMMARY_KEYS = (
     'collect_batch_accepted', 'collect_left_pending',
     'collect_seen', 'collect_new', 'collect_updated', 'collect_unchanged',
     'collect_errors', 'collect_unlinked', 'exit',
+)
+
+# [REASON]: свой набор ключей. Сбор источников считает НЕ вылеты и не
+# маршруты, а тела по типам и судьбу каждого посещения записи; общая строка
+# печатала бы почти всё прочерками, и прогон, не собравший ничего, выглядел
+# бы как успешный.
+#
+# [REASON]: `snapshot_run_id` -- это capture_run_id прогона, и он в наборе
+# ОБЯЗАТЕЛЕН. `_run_sources` его выставляет, а сводка без него печатала
+# строку, по которой нельзя связать очередь на диске с рядами
+# `dji_flight_sources.capture_run_id` у приёмника: ключ, отсутствующий в
+# наборе, не печатается вовсе, и его молчание неотличимо от нуля.
+SOURCES_SUMMARY_KEYS = (
+    'mode', 'dry_run', 'snapshot_run_id', 'period_from', 'period_to',
+    'region', 'flights_seen', 'sources_requested', 'sources_skipped_known',
+    'sources_visited', 'sources_full', 'sources_list', 'sources_card',
+    'sources_route', 'sources_airlines', 'sources_v4', 'sources_no_v4_url',
+    'sources_no_v4', 'sources_v4_failed', 'sources_page_errors',
+    'sources_route_identity_mismatch', 'sources_rejected',
+    'sources_listener_errors', 'sources_oversized', 'sources_queued',
+    'sources_duplicates', 'sources_queue_refused', 'send_enabled',
+    'sources_envelopes_sent', 'sources_left_pending', 'sources_batch_accepted',
+    'sources_seen', 'sources_new', 'sources_ingest_duplicates',
+    'sources_ingest_errors', 'sources_refreshed', 'exit',
+)
+
+# [REASON]: снимок каталога -- не тот прогон, что `--lands`: тот делает
+# mutable upsert `field_contours`, этот кладёт НЕИЗМЕНЯЕМУЮ ревизию. Общая
+# строка позволила бы прочитать один за другой.
+SNAPSHOT_SUMMARY_KEYS = (
+    'mode', 'dry_run', 'snapshot_run_id', 'pages', 'total_count',
+    'lands_captured', 'lands_deduped', 'complete', 'geometry_requested',
+    'geometry_downloaded', 'geometry_skipped', 'geometry_failed',
+    'geometry_bytes', 'snapshot_chunks', 'snapshot_queued',
+    'snapshot_duplicates', 'send_enabled', 'snapshot_chunks_sent',
+    'snapshot_left_pending', 'snapshot_batch_accepted', 'snapshot_lands_new',
+    'snapshot_lands_seen_before', 'snapshot_geometries_new',
+    'snapshot_geometries_unchanged', 'snapshot_errors', 'exit',
 )
 
 LAND_SUMMARY_KEYS = (
@@ -295,6 +355,38 @@ def build_parser():
                              'VEHICLE_SOFT_BASE_URL and DRONE_API_TOKEN. '
                              'Without this flag nothing leaves the machine, '
                              'even when both are set.')
+    parser.add_argument('--sources', action='store_true',
+                        help='DJI-AREA-EVIDENCE-001: visit the record page of '
+                             'every flight of the period and keep the '
+                             'IMMUTABLE bodies the cabinet fetches for '
+                             'itself -- card, route, airlines and the V4 '
+                             'telemetry -- in the on-disk outbox. Needs '
+                             '--from/--to or --ids-file. Sends nothing to '
+                             'Vehicle Soft unless --send-sources is given as '
+                             'well. Resumable: a flight already in the queue '
+                             'is not visited again.')
+    parser.add_argument('--send-sources', dest='send_sources',
+                        action='store_true',
+                        help='with --sources: after queueing, POST the '
+                             'pending source envelopes to '
+                             '/drones/api/source_sync. Needs '
+                             'VEHICLE_SOFT_BASE_URL and DRONE_API_TOKEN. '
+                             'Without this flag nothing leaves the machine, '
+                             'even when both are set.')
+    parser.add_argument('--land-snapshot', dest='land_snapshot',
+                        action='store_true',
+                        help='DJI-AREA-EVIDENCE-001: walk the Field '
+                             'Management directory and queue it as an '
+                             'IMMUTABLE snapshot (metadata revisions, and '
+                             'with --with-geometry the polygon bytes) for '
+                             '/drones/api/land_snapshot_sync. Unlike --lands '
+                             'it never upserts field_contours. Sends nothing '
+                             'unless --send-snapshot is given as well.')
+    parser.add_argument('--send-snapshot', dest='send_snapshot',
+                        action='store_true',
+                        help='with --land-snapshot: after queueing, POST the '
+                             'pending snapshot chunks in order to '
+                             '/drones/api/land_snapshot_sync.')
     parser.add_argument('--geometry-id', dest='geometry_ids', metavar='UUID',
                         action='append',
                         help='with --lands --with-geometry: download the '
@@ -322,9 +414,15 @@ def needs_no_ingest(args):
     # Vehicle Soft вовсе, и требовать от него URL с токеном значило бы не
     # пускать оператора собирать маршруты на машине, где их нет. С
     # `--send-routes` он ingest-прогон и проверки конфигурации проходит.
+    # [REASON]: `--sources` и `--land-snapshot` без своего флага отправки
+    # тоже не обращаются к Vehicle Soft ни одним запросом -- они только
+    # кладут в файловую очередь. Требовать от них URL с токеном значило бы
+    # запретить сбор на машине сборщика, где ни того, ни другого нет.
     return bool(args.save_session or args.dry_run or args.routes
                 or args.route_ui_probe or args.area_48h
                 or (args.route_ui_collect and not args.send_routes)
+                or (args.sources and not args.send_sources)
+                or (args.land_snapshot and not args.send_snapshot)
                 or (args.lands and args.with_geometry))
 
 
@@ -344,12 +442,10 @@ def check_usage(args):
         raise UsageError('--lands takes no period and no --kind. The Field '
                          'Management directory is a snapshot of the current '
                          'state; it has no date filter.')
-    if args.with_geometry and not args.lands:
-        raise UsageError('--with-geometry extends the directory walk and only '
-                         'makes sense together with --lands')
-    if args.ids_file and not args.routes:
-        raise UsageError('--ids-file names the flights whose routes to '
-                         'collect and only makes sense together with --routes')
+    if args.with_geometry and not (args.lands or args.land_snapshot):
+        raise UsageError('--with-geometry extends a directory walk and only '
+                         'makes sense together with --lands or '
+                         '--land-snapshot')
     if args.route_ui_probe and (args.lands or args.routes or args.date_from
                                 or args.date_to or args.kind
                                 or args.ids_file):
@@ -385,6 +481,43 @@ def check_usage(args):
         raise UsageError('--geometry-id names which polygon to download and '
                          'only makes sense together with --lands '
                          '--with-geometry')
+    if args.sources and (args.lands or args.routes or args.route_ui_probe
+                         or args.area_48h or args.route_ui_collect
+                         or args.land_snapshot or args.with_geometry
+                         or args.kind):
+        raise UsageError('--sources is a walk of its own; run it without '
+                         '--lands, --routes, --route-ui-probe, --area-48h, '
+                         '--route-ui-collect, --land-snapshot, '
+                         '--with-geometry and --kind')
+    if args.sources and not args.ids_file and not args.date_from:
+        raise UsageError('--sources needs to know WHICH flights: give '
+                         '--from/--to, and the flights of that period name '
+                         'the ids, or give --ids-file')
+    if args.send_sources and not args.sources:
+        raise UsageError('--send-sources posts what --sources queued and only '
+                         'makes sense together with it')
+    if args.send_sources and args.dry_run:
+        # [REASON]: не «молча выигрывает один из флагов» -- см. --send-routes.
+        raise UsageError('--dry-run and --send-sources contradict each other: '
+                         'a dry run queues nothing, so there is nothing to '
+                         'send')
+    if args.land_snapshot and (args.lands or args.routes or args.sources
+                               or args.route_ui_probe or args.area_48h
+                               or args.route_ui_collect or args.date_from
+                               or args.date_to or args.kind or args.ids_file):
+        raise UsageError('--land-snapshot is a snapshot of the current '
+                         'directory: it takes no period, no ids file and no '
+                         'other walk')
+    if args.send_snapshot and not args.land_snapshot:
+        raise UsageError('--send-snapshot posts what --land-snapshot queued '
+                         'and only makes sense together with it')
+    if args.send_snapshot and args.dry_run:
+        raise UsageError('--dry-run and --send-snapshot contradict each '
+                         'other: a dry run queues nothing, so there is '
+                         'nothing to send')
+    if args.ids_file and not (args.routes or args.sources):
+        raise UsageError('--ids-file names the flights to work on and only '
+                         'makes sense together with --routes or --sources')
     if args.routes and args.kind:
         raise UsageError('--routes sends nothing to Vehicle Soft, so --kind '
                          'has nothing to label')
@@ -450,6 +583,8 @@ def main(argv=None):
                     MODE_ROUTES: ROUTE_SUMMARY_KEYS,
                     MODE_AREA_48H: AREA_SUMMARY_KEYS,
                     MODE_ROUTE_COLLECT: COLLECT_SUMMARY_KEYS,
+                    MODE_SOURCES: SOURCES_SUMMARY_KEYS,
+                    MODE_LAND_SNAPSHOT: SNAPSHOT_SUMMARY_KEYS,
                     MODE_ROUTE_PROBE: ROUTE_PROBE_SUMMARY_KEYS}.get(
                         state.get('mode'), FLIGHT_SUMMARY_KEYS)
             log.info(format_run_summary([(key, state.get(key))
@@ -493,6 +628,12 @@ def _run(argv, log, state):
 
     if args.area_48h:
         return _run_area_48h(args, cfg, log, state)
+
+    if args.sources:
+        return _run_sources(args, cfg, log, state)
+
+    if args.land_snapshot:
+        return _run_land_snapshot(args, cfg, log, state)
 
     if args.route_ui_collect:
         return _run_route_ui_collect(args, cfg, log, state)
@@ -1402,6 +1543,331 @@ def _collect_data_type(observations):
         if value:
             return value
     return None
+
+def _run_sources(args, cfg, log, state):
+    """--sources: keep the immutable DJI bodies of every flight of a period.
+
+    Four steps, in this order:
+
+    1. WHICH flights -- from `--ids-file`, or from the read-only flight-list
+       walk of the period (the walk that has been in production since
+       2026-08-08; nothing is sent, so no `drone_sync_logs` row appears);
+    2. what is already in the queue -- a flight whose card, route, airlines
+       and V4 verdict are all there is not visited again;
+    3. the visit itself: open the record page, let the SPA fetch its own
+       card, route, airlines and signed V4 file, keep the bytes;
+    4. the queue -- atomic and idempotent; sending is a separate flag.
+
+    Without `--send-sources` the run reaches no Vehicle Soft endpoint at all.
+    """
+    state['mode'] = MODE_SOURCES
+    state['send_enabled'] = bool(args.send_sources)
+
+    try:
+        require_session(cfg.storage_state)
+    except SessionMissing as exc:
+        log.error('%s', exc)
+        return EXIT_SESSION
+
+    try:
+        from drone_collector.sources import (SOURCES_MODE_VERSION,
+                                             SourceCapture, SourceRun,
+                                             capture_run_id,
+                                             drain_source_outbox,
+                                             enqueue_sources,
+                                             flight_already_captured,
+                                             known_sources, source_items,
+                                             write_sources_dry_run)
+    except ImportError as exc:  # pragma: no cover -- our own module
+        log.error('The source collector could not be imported (%s)', exc)
+        return EXIT_CONFIG
+
+    try:
+        from drone_collector.browser import (BrowserError, FlightCollector,
+                                             PeriodVerificationFailed,
+                                             RegionMismatch, SessionExpired)
+    except ImportError as exc:
+        log.error('Playwright is not available in this environment (%s). '
+                  'Install the collector dependencies: pip install -r '
+                  'drone_collector/requirements.txt && python -m playwright '
+                  'install chromium', exc)
+        return EXIT_CONFIG
+
+    outbox = None if args.dry_run else _open_outbox(cfg, log)
+    known = known_sources(outbox) if outbox is not None else {}
+
+    run_id = capture_run_id(args.date_from, args.date_to)
+    state['snapshot_run_id'] = run_id
+    capture = SourceCapture(logger=log)
+    flights = []
+    items = []
+    queued = duplicates = refused = 0
+    errors = (BrowserError, PeriodVerificationFailed, RegionMismatch,
+              SessionExpired, SessionMissing)
+    walk_incomplete = False
+
+    try:
+        with FlightCollector(cfg, log) as collector:
+            if args.ids_file:
+                from drone_collector.routes import read_ids_file
+                ids = read_ids_file(args.ids_file)
+                log.info('Read %d flight id(s) from %s', len(ids),
+                         args.ids_file)
+            else:
+                collector.open_records()
+                state['region'] = collector.check_region(cfg.expected_region)
+                ids = _flight_ids_of_period(collector, args, cfg, log, state)
+            state['sources_requested'] = len(ids)
+
+            page = collector.page
+            capture.attach(page)
+            runner = SourceRun(page, capture, cfg, logger=log)
+
+            skipped = 0
+            for index, flight_id in enumerate(ids, start=1):
+                if outbox is not None and flight_already_captured(
+                        flight_id, known, outbox):
+                    skipped += 1
+                    continue
+                flight = runner.capture_flight(flight_id)
+                flights.append(flight)
+                flight_items = source_items(
+                    flight, run_id,
+                    exclude=set(known.get(int(flight_id), {})))
+                items.extend(flight_items)
+                if outbox is not None and flight_items:
+                    result = enqueue_sources(
+                        outbox, flight_items, flight=flight,
+                        diagnostics={'mode_version': SOURCES_MODE_VERSION},
+                        logger=log)
+                    queued += result.queued
+                    duplicates += result.duplicates
+                    refused += result.too_large + result.secret_refused
+                # [REASON]: the buffered bodies are released as soon as they
+                # are queued. A month of V4 files is gigabytes; holding them
+                # to the end of the run would make the collector the reason
+                # the run dies, and a re-run would ask DJI for everything
+                # again.
+                if outbox is not None:
+                    flight.release()
+                if runner.browser_looks_dead:
+                    log.error('Three record pages in a row did not open; the '
+                              'browser is not usable. Stopping after %d of '
+                              '%d flight(s).', index, len(ids))
+                    walk_incomplete = True
+                    break
+                if index < len(ids):
+                    runner.pause()
+            state['sources_skipped_known'] = skipped
+    except errors as exc:
+        log.error('%s', exc)
+        return _exit_code_for(exc, log)
+    except ImportError as exc:
+        log.error('Playwright is not available in this environment (%s)', exc)
+        return EXIT_CONFIG
+
+    _account_for_sources(flights, capture, state)
+    state['sources_queued'] = queued
+    state['sources_duplicates'] = duplicates
+    state['sources_queue_refused'] = refused
+
+    if args.dry_run:
+        path = write_sources_dry_run(items, flights, cfg.out_dir, run_id)
+        log.info('Dry run: %d item(s) of %d flight(s) written to %s; nothing '
+                 'was queued and nothing was sent.', len(items), len(flights),
+                 path)
+        return EXIT_OK
+
+    if refused:
+        # [REASON]: a refused envelope is a body the queue would not accept --
+        # a secret marker or an oversized payload. It is not a transport
+        # failure and re-running will refuse it again; the operator has to
+        # look.
+        log.error('%d source item(s) were refused by the queue.', refused)
+
+    if args.send_sources:
+        drain = drain_source_outbox(outbox, cfg, log)
+        state['sources_envelopes_sent'] = drain.sent
+        state['sources_left_pending'] = drain.left_pending
+        state['sources_batch_accepted'] = drain.accepted
+        counters = drain.counters.as_dict() if drain.counters else {}
+        state['sources_seen'] = counters.get('seen')
+        state['sources_new'] = counters.get('new')
+        state['sources_ingest_duplicates'] = counters.get('duplicates')
+        state['sources_ingest_errors'] = counters.get('errors')
+        state['sources_refreshed'] = counters.get('refreshed')
+        if not drain.accepted:
+            for reason in drain.refusal_reasons:
+                log.error('Source batch not accepted: %s', reason)
+            return EXIT_SOURCES_NOT_ACCEPTED
+
+    incomplete = walk_incomplete or any(
+        not flight.complete for flight in flights)
+    if incomplete:
+        log.warning('Some flights did not yield a full set of sources. What '
+                    'was captured IS queued; re-run the same period and only '
+                    'the missing flights will be visited.')
+        return EXIT_SOURCES_INCOMPLETE
+    return EXIT_OK
+
+
+def _account_for_sources(flights, capture, state):
+    """Per-source and per-outcome counters of one --sources run."""
+    from drone_collector.sources import (SOURCE_AIRLINES, SOURCE_CARD,
+                                         SOURCE_LIST, SOURCE_ROUTE, SOURCE_V4,
+                                         STATUS_NO_V4, STATUS_NO_V4_URL,
+                                         STATUS_PAGE_ERROR, STATUS_V4_FAILED)
+    state['sources_visited'] = len(flights)
+    state['sources_full'] = sum(1 for f in flights if f.complete)
+    for key, source_type in (('sources_list', SOURCE_LIST),
+                             ('sources_card', SOURCE_CARD),
+                             ('sources_route', SOURCE_ROUTE),
+                             ('sources_airlines', SOURCE_AIRLINES),
+                             ('sources_v4', SOURCE_V4)):
+        state[key] = sum(1 for f in flights if f.has(source_type))
+    for key, status in (('sources_no_v4_url', STATUS_NO_V4_URL),
+                        ('sources_no_v4', STATUS_NO_V4),
+                        ('sources_v4_failed', STATUS_V4_FAILED),
+                        ('sources_page_errors', STATUS_PAGE_ERROR)):
+        state[key] = sum(1 for f in flights if f.status == status)
+    state['sources_route_identity_mismatch'] = sum(
+        1 for f in flights if f.route_identity == 'MISMATCH')
+    counts = capture.counts()
+    state['sources_rejected'] = sum(counts.get('rejected', {}).values())
+    state['sources_listener_errors'] = counts.get('listener_errors')
+    state['sources_oversized'] = counts.get('oversized')
+
+
+def _run_land_snapshot(args, cfg, log, state):
+    """--land-snapshot: queue the directory as an IMMUTABLE snapshot.
+
+    The walk is the one `--lands` already uses; what differs is the fate of
+    what it brings. `--lands` upserts `field_contours`, the mutable directory
+    the older screens read. This queues metadata REVISIONS and, with
+    `--with-geometry`, the polygon bytes, for a receiver that never rewrites
+    a revision. Both may run; neither replaces the other.
+    """
+    state['mode'] = MODE_LAND_SNAPSHOT
+    state['send_enabled'] = bool(args.send_snapshot)
+
+    try:
+        require_session(cfg.storage_state)
+    except SessionMissing as exc:
+        log.error('%s', exc)
+        return EXIT_SESSION
+
+    try:
+        from drone_collector.sources import (SOURCES_MODE_VERSION,
+                                             download_snapshot_geometries,
+                                             drain_land_snapshot_outbox,
+                                             enqueue_snapshot_chunks,
+                                             snapshot_chunk_bodies,
+                                             snapshot_run_id, strip_signed_urls,
+                                             utc_stamp, write_snapshot_dry_run)
+        from drone_collector.config import MAX_LAND_SNAPSHOT_BATCH_SIZE
+        from drone_collector.lands import LandCollector, LandsError
+    except ImportError as exc:
+        log.error('Playwright is not available in this environment (%s). '
+                  'Install the collector dependencies: pip install -r '
+                  'drone_collector/requirements.txt && python -m playwright '
+                  'install chromium', exc)
+        return EXIT_CONFIG
+
+    run_id = snapshot_run_id()
+    state['snapshot_run_id'] = run_id
+    geometries = {}
+    try:
+        with LandCollector(cfg, log) as collector:
+            result = collector.collect()
+            if args.with_geometry and result.lands:
+                # [REASON]: inside the `with`, exactly as the polygon run
+                # does it -- the signed links live only in the response
+                # already in memory and expire six hours after DJI issued
+                # them.
+                from drone_collector.geometry import ContextGeometryDownloader
+                downloader = ContextGeometryDownloader(collector.context, log)
+                geometries, counters = download_snapshot_geometries(
+                    result.lands, downloader, logger=log,
+                    pause_s=cfg.geometry_pause_ms / 1000.0)
+                state['geometry_requested'] = counters.selected
+                state['geometry_downloaded'] = counters.downloaded
+                state['geometry_skipped'] = counters.no_geometry
+                state['geometry_failed'] = (counters.failed
+                                            + counters.md5_mismatch
+                                            + counters.too_large
+                                            + counters.secret_in_payload)
+                state['geometry_bytes'] = counters.bytes
+    except ImportError as exc:
+        log.error('Playwright is not available in this environment (%s)', exc)
+        return EXIT_CONFIG
+    except SessionMissing as exc:
+        log.error('%s', exc)
+        return EXIT_SESSION
+    except LandsError as exc:
+        log.error('Directory walk failed: %s', exc)
+        return EXIT_PAGINATION
+
+    state['pages'] = result.pages_captured
+    state['total_count'] = result.total_count
+    state['lands_captured'] = result.nodes_captured
+    state['lands_deduped'] = len(result.lands)
+    state['complete'] = result.complete
+
+    if not result.lands:
+        # [REASON]: the same guard the other walks have. A session switched
+        # to another region returns an empty directory with no error at all,
+        # and an empty snapshot would look like a directory that emptied.
+        log.error('The directory walk captured NO contour at all. Nothing was '
+                  'queued. Check the region of the saved session.')
+        return EXIT_EMPTY
+
+    nodes = [strip_signed_urls(node) for node in result.lands]
+    bodies = snapshot_chunk_bodies(
+        run_id, utc_stamp(), nodes, geometries=geometries,
+        expected_count=result.total_count,
+        scope={'walk': 'lands', 'pages': result.pages_captured},
+        complete=result.complete,
+        max_nodes=MAX_LAND_SNAPSHOT_BATCH_SIZE)
+    state['snapshot_chunks'] = len(bodies)
+
+    if args.dry_run:
+        path = write_snapshot_dry_run(bodies, cfg.out_dir, run_id)
+        log.info('Dry run: %d chunk(s) written to %s; nothing was queued and '
+                 'nothing was sent.', len(bodies), path)
+        return EXIT_OK
+
+    outbox = _open_outbox(cfg, log)
+    enqueued = enqueue_snapshot_chunks(
+        outbox, bodies, diagnostics={'mode_version': SOURCES_MODE_VERSION},
+        logger=log)
+    state['snapshot_queued'] = enqueued.queued
+    state['snapshot_duplicates'] = enqueued.duplicates
+
+    if args.send_snapshot:
+        drain = drain_land_snapshot_outbox(outbox, cfg, log)
+        state['snapshot_chunks_sent'] = drain.sent
+        state['snapshot_left_pending'] = drain.left_pending
+        state['snapshot_batch_accepted'] = drain.accepted
+        counters = drain.counters.as_dict() if drain.counters else {}
+        state['snapshot_lands_new'] = counters.get('lands_new')
+        state['snapshot_lands_seen_before'] = counters.get('lands_seen_before')
+        state['snapshot_geometries_new'] = counters.get('geometries_new')
+        state['snapshot_geometries_unchanged'] = counters.get(
+            'geometries_unchanged')
+        state['snapshot_errors'] = counters.get('errors')
+        if not drain.accepted:
+            for reason in drain.refusal_reasons:
+                log.error('Snapshot chunk not accepted: %s', reason)
+            return EXIT_SNAPSHOT_NOT_ACCEPTED
+
+    if not result.complete:
+        log.warning('The walk captured %d of %d contour(s). The snapshot is '
+                    'queued and marked INCOMPLETE: an absent contour must '
+                    'never be read as a deleted one.', len(result.lands),
+                    result.total_count)
+        return EXIT_PAGINATION
+    return EXIT_OK
+
 
 def _run_area_48h(args, cfg, log, state):
     """--area-48h: DJI-AREA-48H, один живой прогон и один разбор.

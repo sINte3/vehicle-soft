@@ -28,7 +28,10 @@ import time
 
 from pathlib import Path
 
-from drone_collector.config import MAX_BATCH_SIZE, MAX_ROUTE_BATCH_SIZE
+from drone_collector.config import (MAX_BATCH_SIZE,
+                                    MAX_LAND_SNAPSHOT_BATCH_SIZE,
+                                    MAX_ROUTE_BATCH_SIZE,
+                                    MAX_SOURCE_BATCH_SIZE)
 from drone_collector.window import format_date
 
 log = logging.getLogger(__name__)
@@ -498,3 +501,223 @@ def write_lands_dry_run(lands, out_dir, total_count=None):
     with target.open('w', encoding='utf-8') as handle:
         json.dump(document, handle, ensure_ascii=False, indent=2)
     return target
+
+
+# ─── DJI-AREA-EVIDENCE-001: immutable source bodies ──────────────────────────
+#
+# Contract, read out of drones.py:
+#
+#     POST {VEHICLE_SOFT_BASE_URL}/drones/api/source_sync
+#     {"token": "...", "sources": [ ...source items, at most 50... ]}
+#
+# Four counters come back, and every seen source lands in exactly one:
+#
+#     seen = new + duplicates + errors          (+ refreshed, informational)
+#
+# `duplicates` are identical bytes already stored; a differing body of the
+# same flight/type is a NEW revision, so a repeat send never overwrites.
+
+
+class SourceSendResult(object):
+    """The counters summed over every batch of one source run."""
+
+    __slots__ = ('batches', 'seen', 'new', 'duplicates', 'errors',
+                 'refreshed', 'status')
+
+    def __init__(self):
+        self.batches = 0
+        self.seen = 0
+        self.new = 0
+        self.duplicates = 0
+        self.errors = 0
+        self.refreshed = 0
+        self.status = None
+
+    def add(self, body):
+        self.batches += 1
+        self.seen += _int(body.get('seen'))
+        self.new += _int(body.get('new'))
+        self.duplicates += _int(body.get('duplicates'))
+        self.errors += _int(body.get('errors'))
+        self.refreshed += _int(body.get('refreshed'))
+        status = body.get('status')
+        # The first non-ok status wins: one refused batch is a refused run.
+        if self.status in (None, 'ok'):
+            self.status = status
+        return self
+
+    @property
+    def counters_agree(self):
+        """seen == new + duplicates + errors.
+
+        [REASON]: checked on OUR side too, not only asserted in the endpoint's
+        docstring. A server that starts double-counting a bucket would
+        otherwise be discovered by someone adding numbers off a screen.
+        """
+        return self.seen == self.new + self.duplicates + self.errors
+
+    def as_dict(self):
+        return {'batches': self.batches, 'seen': self.seen, 'new': self.new,
+                'duplicates': self.duplicates, 'errors': self.errors,
+                'refreshed': self.refreshed, 'status': self.status}
+
+    def __repr__(self):
+        return 'SourceSendResult(%s)' % self.as_dict()
+
+
+def build_source_payload(token, sources):
+    """The request body. Never log the result -- it carries the token."""
+    return {'token': token, 'sources': sources}
+
+
+def chunk_sources(sources, batch_size=None):
+    """Split into batches, none of which exceeds the endpoint's cap of 50."""
+    size = min(int(batch_size or MAX_SOURCE_BATCH_SIZE), MAX_SOURCE_BATCH_SIZE)
+    if size < 1:
+        size = 1
+    return [sources[i:i + size] for i in range(0, len(sources), size)]
+
+
+def send_sources(sources, cfg, logger=None, post_fn=None, sleep_fn=None):
+    """Chunk and POST the source items. Returns a SourceSendResult.
+
+    The items go through verbatim: `body_b64`, `sha256` and `size_bytes` were
+    computed at capture time from the very bytes DJI served, and the endpoint
+    re-checks the hash -- nothing here may touch them.
+    """
+    out = logger or log
+    post = post_fn or _requests_post
+    sleep = sleep_fn or time.sleep
+
+    result = SourceSendResult()
+    if not sources:
+        out.info('Nothing to send: 0 sources')
+        return result
+
+    batches = chunk_sources(sources, getattr(cfg, 'source_batch_size', None))
+    out.info('Sending %d source(s) in %d batch(es) of at most %d to %s',
+             len(sources), len(batches), MAX_SOURCE_BATCH_SIZE,
+             cfg.source_sync_url)
+
+    for index, batch in enumerate(batches, start=1):
+        payload = build_source_payload(cfg.api_token, batch)
+        body = _post_with_retries(post, sleep, cfg.source_sync_url, payload,
+                                  index, len(batches), out)
+        result.add(body)
+        out.info('Batch %d/%d answered: status=%s seen=%s new=%s '
+                 'duplicates=%s errors=%s refreshed=%s', index, len(batches),
+                 body.get('status'), body.get('seen'), body.get('new'),
+                 body.get('duplicates'), body.get('errors'),
+                 body.get('refreshed'))
+
+    out.info('Source totals: batches=%d seen=%d new=%d duplicates=%d '
+             'errors=%d refreshed=%d', result.batches, result.seen,
+             result.new, result.duplicates, result.errors, result.refreshed)
+    if not result.counters_agree:
+        out.error('The endpoint returned counters that do not add up: '
+                  'seen=%d but new+duplicates+errors=%d', result.seen,
+                  result.new + result.duplicates + result.errors)
+    return result
+
+
+# ─── DJI-AREA-EVIDENCE-001: catalog snapshot ─────────────────────────────────
+#
+# Contract, read out of drones.py:
+#
+#     POST {VEHICLE_SOFT_BASE_URL}/drones/api/land_snapshot_sync
+#     {"token": "...", "snapshot": {...}, "lands": [...], "geometries": [...]}
+#
+# One snapshot spans several requests sharing `snapshot.capture_run_id`; the
+# request carrying `final: true` closes it. Counters:
+#
+#     lands_seen = lands_new + lands_seen_before + errors
+#     geometries_seen = geometries_new + geometries_unchanged + geometries_errors
+
+
+class LandSnapshotSendResult(object):
+    """The counters summed over every chunk of one snapshot."""
+
+    __slots__ = ('batches', 'lands_seen', 'lands_new', 'lands_seen_before',
+                 'errors', 'geometries_seen', 'geometries_new',
+                 'geometries_unchanged', 'geometries_errors', 'status',
+                 'snapshot_id')
+
+    COUNTER_KEYS = ('lands_seen', 'lands_new', 'lands_seen_before', 'errors',
+                    'geometries_seen', 'geometries_new',
+                    'geometries_unchanged', 'geometries_errors')
+
+    def __init__(self):
+        self.batches = 0
+        for key in self.COUNTER_KEYS:
+            setattr(self, key, 0)
+        self.status = None
+        self.snapshot_id = None
+
+    def add(self, body):
+        self.batches += 1
+        for key in self.COUNTER_KEYS:
+            setattr(self, key, getattr(self, key) + _int(body.get(key)))
+        if self.status in (None, 'ok'):
+            self.status = body.get('status')
+        if body.get('snapshot_id') is not None:
+            self.snapshot_id = body.get('snapshot_id')
+        return self
+
+    @property
+    def counters_agree(self):
+        return (self.lands_seen == (self.lands_new + self.lands_seen_before
+                                    + self.errors)
+                and self.geometries_seen == (self.geometries_new
+                                             + self.geometries_unchanged
+                                             + self.geometries_errors))
+
+    def as_dict(self):
+        out = {'batches': self.batches, 'status': self.status,
+               'snapshot_id': self.snapshot_id}
+        for key in self.COUNTER_KEYS:
+            out[key] = getattr(self, key)
+        return out
+
+    def __repr__(self):
+        return 'LandSnapshotSendResult(%s)' % self.as_dict()
+
+
+def build_land_snapshot_payload(token, snapshot, lands, geometries):
+    """The request body. Never log the result -- it carries the token."""
+    return {'token': token, 'snapshot': snapshot, 'lands': lands,
+            'geometries': geometries}
+
+
+def send_land_snapshot_chunk(chunk, cfg, logger=None, post_fn=None,
+                             sleep_fn=None, index=1, total=1):
+    """POST ONE chunk of a snapshot. Returns a LandSnapshotSendResult.
+
+    A chunk is `{"snapshot": {...}, "lands": [...], "geometries": [...]}` --
+    the envelope body the collector queued. Chunks are not merged here: the
+    receiver reads `final` per request, so the order and the boundaries the
+    collector chose must reach it exactly.
+    """
+    out = logger or log
+    post = post_fn or _requests_post
+    sleep = sleep_fn or time.sleep
+
+    lands = chunk.get('lands') or []
+    if len(lands) > MAX_LAND_SNAPSHOT_BATCH_SIZE:
+        raise IngestRejected('snapshot chunk %d/%d holds %d lands, the cap is '
+                             '%d -- not sent' % (index, total, len(lands),
+                                                 MAX_LAND_SNAPSHOT_BATCH_SIZE))
+    payload = build_land_snapshot_payload(cfg.api_token, chunk.get('snapshot'),
+                                          lands, chunk.get('geometries') or [])
+    body = _post_with_retries(post, sleep, cfg.land_snapshot_sync_url, payload,
+                              index, total, out)
+    result = LandSnapshotSendResult().add(body)
+    out.info('Snapshot chunk %d/%d answered: status=%s snapshot_id=%s '
+             'lands_seen=%s lands_new=%s lands_seen_before=%s errors=%s '
+             'geometries_seen=%s geometries_new=%s geometries_unchanged=%s '
+             'geometries_errors=%s', index, total, body.get('status'),
+             body.get('snapshot_id'), body.get('lands_seen'),
+             body.get('lands_new'), body.get('lands_seen_before'),
+             body.get('errors'), body.get('geometries_seen'),
+             body.get('geometries_new'), body.get('geometries_unchanged'),
+             body.get('geometries_errors'))
+    return result
