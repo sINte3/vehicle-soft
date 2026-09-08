@@ -2875,6 +2875,436 @@ class GpsSyncLog(db.Model):
                                       + self.points_no_position)
 
 
+# ─── DJI-AREA-EVIDENCE-001: происхождение источников и учёт площади DJI ─────
+#
+# Модель `dji-area-evidence-2026-09-08-final-1`. Восемь аддитивных таблиц,
+# создаёт migrate_dji_area_evidence_001.py; ни одна существующая таблица не
+# меняется. `drone_flights.area_ha` не читается и не пишется ни одной строкой
+# этого блока: это прежний, согласованный показатель, по которому выставлялись
+# счета. Новый учёт живёт РЯДОМ, версионирован и append-only.
+#
+# [REASON]: `estimated_useful_area_ha` (drone_coverage_works) остаётся
+# geometry/coverage DIAGNOSTIC под своей версией `useful-area-v2` и новым
+# authoritative показателем НЕ является. Одного универсального поля площади
+# в этом блоке нет намеренно: RAW DJI, проверенная разность счётчика и
+# техническая оценка записи -- три разных числа с разной summability.
+#
+# Все расчётные таблицы -- append-only с `superseded_at`: новая версия
+# алгоритма или изменившийся вход добавляет строку и закрывает прежнюю, но не
+# переписывает её. Отсутствующее значение хранится как NULL и НИКОГДА не
+# заменяется нулём; измеренный технический ноль -- это 0.0 при статусе
+# COUNTER_FLAT_RAW_OVERSTATED / COUNTER_ZERO.
+
+class DjiSourceRevision(db.Model):
+    """Неизменяемое тело одного ответа DJI: bytes или ссылка на файл + SHA256.
+
+    Единица -- ревизия источника: (source_type, scope_key, sha256). Повторный
+    приём тех же байтов не заводит вторую строку (`ingest_count`, `last_seen_at`).
+    Позже полученная карточка с другими байтами -- НОВАЯ ревизия, прежняя
+    сохраняется. Расчёт ссылается на точную ревизию, не на «последнюю».
+
+    [REASON]: подписанные URL, куки, токены в тело не попадают: приёмник
+    отказывает ревизии с маркерами секретов, а `request_context_json` несёт
+    только путь/идентификаторы/окно запроса.
+    """
+    __tablename__ = 'dji_source_revisions'
+    id                  = db.Column(db.Integer, primary_key=True)
+    provider_account_id = db.Column(db.String(80), nullable=False)
+    # NULL для страниц каталога полей и байтов геометрии.
+    flight_id           = db.Column(db.BigInteger, nullable=True)
+    # str(flight_id) либо 'catalog' -- NOT NULL, чтобы UNIQUE работал и для
+    # ревизий без flight_id (SQLite считает NULL в UNIQUE различными).
+    scope_key           = db.Column(db.String(40), nullable=False)
+    # list / card / route / v4 / airlines / land_page / land_geometry
+    source_type         = db.Column(db.String(30), nullable=False)
+    sha256              = db.Column(db.String(64), nullable=False)
+    size_bytes          = db.Column(db.Integer, nullable=False)
+    captured_at_utc     = db.Column(db.DateTime, nullable=False)
+    parser_version      = db.Column(db.String(40), nullable=True)
+    schema_version      = db.Column(db.String(40), nullable=True)
+    api_status          = db.Column(db.Integer, nullable=True)
+    request_context_json = db.Column(db.Text, nullable=True)
+    capture_run_id      = db.Column(db.String(120), nullable=True)
+    # Импорт из форензик-архива (staging QA), не живой сбор.
+    is_evidence_import  = db.Column(db.Boolean, nullable=False, default=False)
+    # inline -> body_text; file -> body_path под instance/dji_sources.
+    storage_kind        = db.Column(db.String(20), nullable=False)
+    body_text           = db.Column(db.Text, nullable=True)
+    body_path           = db.Column(db.String(300), nullable=True)
+    body_encoding       = db.Column(db.String(20), nullable=True)
+    received_at         = db.Column(db.DateTime, nullable=False,
+                                    default=datetime.utcnow)
+    last_seen_at        = db.Column(db.DateTime, nullable=True)
+    ingest_count        = db.Column(db.Integer, nullable=False, default=1)
+
+    __table_args__ = (
+        db.UniqueConstraint('source_type', 'scope_key', 'sha256',
+                            name='uq_dji_source_revisions_identity'),
+        db.Index('ix_dji_source_revisions_flight_type', 'flight_id',
+                 'source_type'),
+        db.Index('ix_dji_source_revisions_type_captured', 'source_type',
+                 'captured_at_utc'),
+        db.Index('ix_dji_source_revisions_run', 'capture_run_id'),
+    )
+
+
+class DjiFlightEvidence(db.Model):
+    """Текущие указатели на ревизии источников одной записи вылета.
+
+    Одна строка на flight_id. Указатели обновляются при приёме новой ревизии;
+    сами ревизии не переписываются. Борт -- из карточки (`hardware_id`), при
+    её отсутствии из маршрута с проверенной идентичностью; ник борт НЕ
+    определяет (`hardware_id_source` называет откуда).
+
+    [REASON]: `route_identity_status` хранится здесь, а не выводится на лету:
+    маршрут с чужим embedded flight id (579 файлов августа 29.08–01.09)
+    обязан быть в карантине для ЛЮБОГО потребителя -- площади, применения,
+    геометрии поля.
+    """
+    __tablename__ = 'dji_flight_evidence'
+    id                  = db.Column(db.Integer, primary_key=True)
+    flight_id           = db.Column(db.BigInteger, nullable=False, unique=True)
+    provider_account_id = db.Column(db.String(80), nullable=False)
+    drone_flight_id     = db.Column(db.Integer,
+                                    db.ForeignKey('drone_flights.id'),
+                                    nullable=True)
+    hardware_id         = db.Column(db.String(50), nullable=True)
+    hardware_id_source  = db.Column(db.String(20), nullable=True)
+    list_revision_id    = db.Column(db.Integer, nullable=True)
+    card_revision_id    = db.Column(db.Integer, nullable=True)
+    route_revision_id   = db.Column(db.Integer, nullable=True)
+    v4_revision_id      = db.Column(db.Integer, nullable=True)
+    airlines_revision_id = db.Column(db.Integer, nullable=True)
+    list_raw_area_m2    = db.Column(db.Float, nullable=True)
+    card_raw_area_m2    = db.Column(db.Float, nullable=True)
+    route_area_m2       = db.Column(db.Float, nullable=True)
+    list_start_ts       = db.Column(db.Integer, nullable=True)
+    list_end_ts         = db.Column(db.Integer, nullable=True)
+    list_mode_name      = db.Column(db.Integer, nullable=True)
+    list_manual_mode    = db.Column(db.Boolean, nullable=True)
+    list_spray_width    = db.Column(db.Float, nullable=True)
+    list_nickname       = db.Column(db.String(100), nullable=True)
+    card_mode_name      = db.Column(db.Integer, nullable=True)
+    card_manual_mode    = db.Column(db.Boolean, nullable=True)
+    card_spray_width    = db.Column(db.Float, nullable=True)
+    card_geometry_md5   = db.Column(db.String(80), nullable=True)
+    card_start_ts       = db.Column(db.Integer, nullable=True)
+    card_end_ts         = db.Column(db.Integer, nullable=True)
+    card_app_version    = db.Column(db.String(20), nullable=True)
+    card_drone_type     = db.Column(db.String(20), nullable=True)
+    card_create_date    = db.Column(db.Integer, nullable=True)
+    route_embedded_flight_id = db.Column(db.BigInteger, nullable=True)
+    route_identity_status = db.Column(db.String(30), nullable=True)
+    route_hardware_id   = db.Column(db.String(50), nullable=True)
+    route_spray_width   = db.Column(db.Float, nullable=True)
+    route_point_count   = db.Column(db.Integer, nullable=True)
+    # Диагностика структуры: точки с полем №3 (UNKNOWN_SEMANTICS), не «работа».
+    route_points_with_field3 = db.Column(db.Integer, nullable=True)
+    route_mode_name     = db.Column(db.Integer, nullable=True)
+    route_start_ms      = db.Column(db.BigInteger, nullable=True)
+    route_end_ms        = db.Column(db.BigInteger, nullable=True)
+    route_session_no    = db.Column(db.String(100), nullable=True)
+    v4_identity_status  = db.Column(db.String(30), nullable=True)
+    v4_absent_reason    = db.Column(db.String(40), nullable=True)
+    updated_at          = db.Column(db.DateTime, nullable=False,
+                                    default=datetime.utcnow)
+
+    __table_args__ = (
+        db.Index('ix_dji_flight_evidence_hardware_start', 'hardware_id',
+                 'card_start_ts'),
+        db.Index('ix_dji_flight_evidence_drone_flight', 'drone_flight_id'),
+    )
+
+
+class DjiV4Summary(db.Model):
+    """Сводка одной ревизии V4: присутствие каналов, окно, счётчик, применение.
+
+    Считается при приёме/пересчёте, не на запросе страницы. `*_encoded_*` --
+    первые/последние ПРИСУТСТВУЮЩИЕ значения поля 9; `counter_zero_default_*`
+    -- диагностика с подстановкой нуля, никогда не production-источник.
+    """
+    __tablename__ = 'dji_v4_summaries'
+    id                  = db.Column(db.Integer, primary_key=True)
+    flight_id           = db.Column(db.BigInteger, nullable=False)
+    source_revision_id  = db.Column(db.Integer, nullable=False, unique=True)
+    parser_version      = db.Column(db.String(40), nullable=False)
+    computed_at         = db.Column(db.DateTime, nullable=False,
+                                    default=datetime.utcnow)
+    frame_count         = db.Column(db.Integer, nullable=False)
+    top_count           = db.Column(db.Integer, nullable=True)
+    usage_type          = db.Column(db.Integer, nullable=True)
+    t_first_ms          = db.Column(db.BigInteger, nullable=True)
+    t_last_ms           = db.Column(db.BigInteger, nullable=True)
+    span_s              = db.Column(db.Float, nullable=True)
+    start_offset_s      = db.Column(db.Float, nullable=True)
+    end_offset_s        = db.Column(db.Float, nullable=True)
+    dt_min_s            = db.Column(db.Float, nullable=True)
+    dt_max_s            = db.Column(db.Float, nullable=True)
+    dt_median_s         = db.Column(db.Float, nullable=True)
+    nonpositive_dt_count = db.Column(db.Integer, nullable=True)
+    dt_over_limit_count = db.Column(db.Integer, nullable=True)
+    counter_present_frames = db.Column(db.Integer, nullable=False, default=0)
+    counter_first_encoded_native = db.Column(db.Float, nullable=True)
+    counter_first_encoded_bits = db.Column(db.String(8), nullable=True)
+    counter_last_encoded_native = db.Column(db.Float, nullable=True)
+    counter_last_encoded_bits = db.Column(db.String(8), nullable=True)
+    counter_first_encoded_at_ms = db.Column(db.BigInteger, nullable=True)
+    counter_last_encoded_at_ms = db.Column(db.BigInteger, nullable=True)
+    counter_leading_omitted_frames = db.Column(db.Integer, nullable=True)
+    counter_trailing_omitted_frames = db.Column(db.Integer, nullable=True)
+    counter_interior_omitted_frames = db.Column(db.Integer, nullable=True)
+    counter_negative_steps = db.Column(db.Integer, nullable=True)
+    counter_positive_steps = db.Column(db.Integer, nullable=True)
+    counter_max_jump_native = db.Column(db.Float, nullable=True)
+    counter_max_drop_native = db.Column(db.Float, nullable=True)
+    counter_observed_delta_native = db.Column(db.Float, nullable=True)
+    counter_observed_delta_m2 = db.Column(db.Float, nullable=True)
+    counter_zero_default_delta_native = db.Column(db.Float, nullable=True)
+    counter_zero_default_delta_m2 = db.Column(db.Float, nullable=True)
+    counter_quantization_max_error = db.Column(db.Float, nullable=True)
+    application_flag_frames = db.Column(db.Integer, nullable=True)
+    flow_positive_frames = db.Column(db.Integer, nullable=True)
+    application_frames  = db.Column(db.Integer, nullable=True)
+    quantity_first      = db.Column(db.Float, nullable=True)
+    quantity_last       = db.Column(db.Float, nullable=True)
+    quantity_delta      = db.Column(db.Float, nullable=True)
+    moving_application_frames = db.Column(db.Integer, nullable=True)
+    moving_application_distance_m = db.Column(db.Float, nullable=True)
+    gps_jump_over_100m  = db.Column(db.Integer, nullable=True)
+    frames_with_position = db.Column(db.Integer, nullable=True)
+    width_positive_frames = db.Column(db.Integer, nullable=True)
+    width_min           = db.Column(db.Float, nullable=True)
+    width_max           = db.Column(db.Float, nullable=True)
+    window_quality      = db.Column(db.String(30), nullable=True)
+    baseline_status     = db.Column(db.String(30), nullable=True)
+    window_reasons_json = db.Column(db.Text, nullable=True)
+    summary_json        = db.Column(db.Text, nullable=False)
+
+    __table_args__ = (
+        db.Index('ix_dji_v4_summaries_flight', 'flight_id'),
+    )
+
+
+class DjiAreaCalculation(db.Model):
+    """Результат резолвера площади для одной записи. Append-only, версионирован.
+
+    `raw_area_m2` -- то, что записал DJI (источник назван в
+    `raw_area_source`); `controller_delta_area_m2` -- проверенная разность
+    счётчика за полный интервал либо NULL; `corrected_recorded_area_m2` --
+    техническая оценка записи со статусом/методом/уверенностью либо NULL.
+    `billable_area_m2` и `customer_id` -- NULL до утверждённой бизнес-политики.
+    """
+    __tablename__ = 'dji_area_calculations'
+    id                  = db.Column(db.Integer, primary_key=True)
+    flight_id           = db.Column(db.BigInteger, nullable=False)
+    provider_account_id = db.Column(db.String(80), nullable=False)
+    drone_flight_id     = db.Column(db.Integer, nullable=True)
+    hardware_id         = db.Column(db.String(50), nullable=True)
+    hardware_id_source  = db.Column(db.String(20), nullable=True)
+    area_algorithm_version = db.Column(db.String(80), nullable=False)
+    calculation_input_hash = db.Column(db.String(64), nullable=False)
+    calculated_at       = db.Column(db.DateTime, nullable=False,
+                                    default=datetime.utcnow)
+    superseded_at       = db.Column(db.DateTime, nullable=True)
+    supersede_reason    = db.Column(db.String(80), nullable=True)
+    start_at_utc        = db.Column(db.DateTime, nullable=False)
+    end_at_utc          = db.Column(db.DateTime, nullable=True)
+    report_timezone     = db.Column(db.String(40), nullable=False)
+    report_start_date   = db.Column(db.Date, nullable=False)
+    raw_area_m2         = db.Column(db.Float, nullable=True)
+    raw_area_source     = db.Column(db.String(20), nullable=True)
+    card_area_m2        = db.Column(db.Float, nullable=True)
+    route_area_m2       = db.Column(db.Float, nullable=True)
+    counter_observed_delta_m2 = db.Column(db.Float, nullable=True)
+    counter_zero_default_delta_m2 = db.Column(db.Float, nullable=True)
+    controller_delta_area_m2 = db.Column(db.Float, nullable=True)
+    counter_baseline_status = db.Column(db.String(30), nullable=True)
+    counter_window_quality = db.Column(db.String(30), nullable=True)
+    window_reasons_json = db.Column(db.Text, nullable=True)
+    corrected_recorded_area_m2 = db.Column(db.Float, nullable=True)
+    area_status         = db.Column(db.String(40), nullable=False)
+    evidence_status     = db.Column(db.String(40), nullable=True)
+    area_method         = db.Column(db.String(50), nullable=True)
+    area_confidence     = db.Column(db.String(10), nullable=True)
+    anomaly_flags_json  = db.Column(db.Text, nullable=True)
+    application_activity = db.Column(db.String(20), nullable=True)
+    application_channel_quality = db.Column(db.String(20), nullable=True)
+    application_evidence_kind = db.Column(db.String(20), nullable=True)
+    application_without_area = db.Column(db.Boolean, nullable=True)
+    structural_candidate = db.Column(db.Boolean, nullable=True)
+    structural_rule_version = db.Column(db.String(60), nullable=True)
+    candidate_base_flight_id = db.Column(db.BigInteger, nullable=True)
+    bridge_flight_ids_json = db.Column(db.Text, nullable=True)
+    boundary_gaps_json  = db.Column(db.Text, nullable=True)
+    scalar_source_check = db.Column(db.Boolean, nullable=True)
+    overlap_group_id    = db.Column(db.String(60), nullable=True)
+    aggregation_eligibility = db.Column(db.String(20), nullable=False)
+    v4_summary_id       = db.Column(db.Integer, nullable=True)
+    list_revision_id    = db.Column(db.Integer, nullable=True)
+    card_revision_id    = db.Column(db.Integer, nullable=True)
+    route_revision_id   = db.Column(db.Integer, nullable=True)
+    v4_revision_id      = db.Column(db.Integer, nullable=True)
+    unique_coverage_estimate_m2 = db.Column(db.Float, nullable=True)
+    coverage_domain_id  = db.Column(db.String(60), nullable=True)
+    coverage_method_version = db.Column(db.String(40), nullable=True)
+    customer_id         = db.Column(db.Integer, nullable=True)
+    customer_mapping_id = db.Column(db.Integer, nullable=True)
+    customer_mapping_version = db.Column(db.String(40), nullable=True)
+    billable_area_m2    = db.Column(db.Float, nullable=True)
+    billing_policy_version = db.Column(db.String(40), nullable=True)
+    billing_approval_id = db.Column(db.Integer, nullable=True)
+
+    __table_args__ = (
+        db.UniqueConstraint('flight_id', 'area_algorithm_version',
+                            'calculation_input_hash',
+                            name='uq_dji_area_calculations_identity'),
+        db.Index('ix_dji_area_calculations_report_date', 'report_start_date'),
+        db.Index('ix_dji_area_calculations_hw_date', 'hardware_id',
+                 'report_start_date'),
+        db.Index('ix_dji_area_calculations_status', 'area_status'),
+        db.Index('ix_dji_area_calculations_flight_current', 'flight_id',
+                 'superseded_at'),
+    )
+
+
+class DjiFieldAttribution(db.Model):
+    """Привязка записи к полю / историческому контуру. Append-only.
+
+    Tier независим от площади: низкий tier не меняет `dji_area_calculations`,
+    а корректная площадь с TIER5 остаётся видимой в корзине «не определено».
+    `linked_land_uuid` (composite-префикс) и `geometry_holder_land_uuid`
+    (держатель байтов нужной версии) -- разные записи каталога.
+    """
+    __tablename__ = 'dji_field_attributions'
+    id                  = db.Column(db.Integer, primary_key=True)
+    flight_id           = db.Column(db.BigInteger, nullable=False)
+    field_resolver_version = db.Column(db.String(60), nullable=False)
+    field_input_hash    = db.Column(db.String(64), nullable=False)
+    calculated_at       = db.Column(db.DateTime, nullable=False,
+                                    default=datetime.utcnow)
+    superseded_at       = db.Column(db.DateTime, nullable=True)
+    geometry_key_raw    = db.Column(db.String(80), nullable=True)
+    geometry_key_format = db.Column(db.String(20), nullable=True)
+    geometry_md5        = db.Column(db.String(32), nullable=True)
+    linked_land_uuid    = db.Column(db.String(40), nullable=True)
+    geometry_holder_land_uuid = db.Column(db.String(40), nullable=True)
+    geometry_object_id  = db.Column(db.Integer, nullable=True)
+    historical_geometry_available = db.Column(db.Boolean, nullable=False,
+                                              default=False)
+    historical_geometry_sha256 = db.Column(db.String(64), nullable=True)
+    field_attribution_tier = db.Column(db.String(20), nullable=False)
+    field_attribution_method = db.Column(db.String(70), nullable=True)
+    field_confidence    = db.Column(db.String(10), nullable=True)
+    field_land_uuid     = db.Column(db.String(40), nullable=True)
+    field_name_at_snapshot = db.Column(db.String(300), nullable=True)
+    field_serial_number = db.Column(db.String(50), nullable=True)
+    land_snapshot_id    = db.Column(db.Integer, nullable=True)
+    land_revision_id    = db.Column(db.Integer, nullable=True)
+    field_lineage_evidence_json = db.Column(db.Text, nullable=True)
+    holder_count        = db.Column(db.Integer, nullable=True)
+    candidate_count     = db.Column(db.Integer, nullable=True)
+    warnings_json       = db.Column(db.Text, nullable=True)
+    tier4_inside_share  = db.Column(db.Float, nullable=True)
+    tier4_heuristic_version = db.Column(db.String(60), nullable=True)
+
+    __table_args__ = (
+        db.UniqueConstraint('flight_id', 'field_resolver_version',
+                            'field_input_hash',
+                            name='uq_dji_field_attributions_identity'),
+        db.Index('ix_dji_field_attributions_tier', 'field_attribution_tier'),
+        db.Index('ix_dji_field_attributions_land', 'field_land_uuid'),
+        db.Index('ix_dji_field_attributions_md5', 'geometry_md5'),
+        db.Index('ix_dji_field_attributions_flight_current', 'flight_id',
+                 'superseded_at'),
+    )
+
+
+class DjiLandSnapshot(db.Model):
+    """Один захват каталога полей: когда, чем, сколько ожидалось/получено.
+
+    Неполный снимок не означает удаление отсутствующих полей; даже полный
+    доказывает отсутствие только в своём scope.
+    """
+    __tablename__ = 'dji_land_snapshots'
+    id                  = db.Column(db.Integer, primary_key=True)
+    captured_at_utc     = db.Column(db.DateTime, nullable=False)
+    capture_run_id      = db.Column(db.String(120), nullable=True)
+    scope_json          = db.Column(db.Text, nullable=True)
+    expected_count      = db.Column(db.Integer, nullable=True)
+    received_count      = db.Column(db.Integer, nullable=False, default=0)
+    complete            = db.Column(db.Boolean, nullable=True)
+    manifest_sha256     = db.Column(db.String(64), nullable=True)
+    is_evidence_import  = db.Column(db.Boolean, nullable=False, default=False)
+    created_at          = db.Column(db.DateTime, nullable=False,
+                                    default=datetime.utcnow)
+
+
+class DjiLandRevision(db.Model):
+    """Неизменяемая metadata-ревизия записи land: (land_uuid, raw_sha256).
+
+    Правка имени -- новая ревизия того же uuid; delete+create при
+    ресинке -- новый uuid с тем же externalId/contentMd5. Ни одна строка не
+    переписывается: `first/last_seen_snapshot_id` и `seen_count` только
+    двигаются вперёд. Площади хранятся в единицах DJI (му), поле `area_unit`.
+    """
+    __tablename__ = 'dji_land_revisions'
+    id                  = db.Column(db.Integer, primary_key=True)
+    land_uuid           = db.Column(db.String(40), nullable=False)
+    external_id         = db.Column(db.String(120), nullable=True)
+    serial_number       = db.Column(db.String(50), nullable=True)
+    # Как набрал оператор. Число в имени -- текст, не площадь.
+    name                = db.Column(db.String(300), nullable=True)
+    total_area_raw      = db.Column(db.Float, nullable=True)
+    work_area_raw       = db.Column(db.Float, nullable=True)
+    obstacle_area_raw   = db.Column(db.Float, nullable=True)
+    area_unit           = db.Column(db.String(10), nullable=False, default='mu')
+    geometry_md5        = db.Column(db.String(32), nullable=True)
+    geometry_storage_uuid = db.Column(db.String(40), nullable=True)
+    land_type           = db.Column(db.String(40), nullable=True)
+    created_at_source   = db.Column(db.DateTime, nullable=True)
+    updated_at_source   = db.Column(db.DateTime, nullable=True)
+    center_lat          = db.Column(db.Float, nullable=True)
+    center_lng          = db.Column(db.Float, nullable=True)
+    raw_json            = db.Column(db.Text, nullable=False)
+    raw_sha256          = db.Column(db.String(64), nullable=False)
+    first_seen_snapshot_id = db.Column(db.Integer, nullable=False)
+    last_seen_snapshot_id = db.Column(db.Integer, nullable=False)
+    seen_count          = db.Column(db.Integer, nullable=False, default=1)
+
+    __table_args__ = (
+        db.UniqueConstraint('land_uuid', 'raw_sha256',
+                            name='uq_dji_land_revisions_identity'),
+        db.Index('ix_dji_land_revisions_uuid', 'land_uuid'),
+        db.Index('ix_dji_land_revisions_md5', 'geometry_md5'),
+        db.Index('ix_dji_land_revisions_external', 'external_id'),
+    )
+
+
+class DjiLandGeometry(db.Model):
+    """Байты геометрии поля, content-addressed: DJI contentMd5 + SHA256.
+
+    Байты хранятся как есть (BLOB), без пересериализации: пробел меняет
+    md5. `md5_verified` -- md5(bytes) == contentMd5 держателя. Держатели
+    выводятся из `dji_land_revisions.geometry_md5`, не кэшируются.
+    """
+    __tablename__ = 'dji_land_geometries'
+    id                  = db.Column(db.Integer, primary_key=True)
+    content_md5         = db.Column(db.String(32), nullable=False, unique=True)
+    sha256              = db.Column(db.String(64), nullable=False)
+    size_bytes          = db.Column(db.Integer, nullable=False)
+    md5_verified        = db.Column(db.Boolean, nullable=False, default=False)
+    body_blob           = db.Column(db.LargeBinary, nullable=False)
+    parse_status        = db.Column(db.String(20), nullable=True)
+    ring_count          = db.Column(db.Integer, nullable=True)
+    source_revision_id  = db.Column(db.Integer, nullable=True)
+    first_seen_at       = db.Column(db.DateTime, nullable=False,
+                                    default=datetime.utcnow)
+
+    __table_args__ = (
+        db.Index('ix_dji_land_geometries_sha256', 'sha256'),
+    )
+
+
 # ─── Migration Registry ───────────────────────────────────────────────────────
 
 class SchemaMigration(db.Model):
