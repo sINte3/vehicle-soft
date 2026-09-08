@@ -77,6 +77,21 @@
    "url": "/drones/"
   },
   {
+   "endpoint": "drones.area_evidence",
+   "slug": "drones-area-evidence",
+   "url": "/drones/area-evidence"
+  },
+  {
+   "endpoint": "drones.area_evidence_xlsx",
+   "slug": "drones-area-evidence.xlsx",
+   "url": "/drones/area-evidence.xlsx"
+  },
+  {
+   "endpoint": "drones.coverage",
+   "slug": "drones-coverage",
+   "url": "/drones/coverage"
+  },
+  {
    "endpoint": "drones.customers",
    "slug": "drones-customers",
    "url": "/drones/customers"

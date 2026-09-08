@@ -1351,6 +1351,327 @@ def api_route_sync():
                    unchanged=unchanged, errors=errors, unlinked=unlinked)
 
 
+# ─── DJI-AREA-EVIDENCE-001: приём ревизий источников и снимков каталога ──────
+#
+# Четвёртый и пятый машинные endpoints модуля, тот же контракт: токен в ТЕЛЕ,
+# deny-by-default, точечное исключение CSRF в app.py:is_csrf_exempt().
+#
+# Пишут они через `dji_area.store` на stdlib sqlite3-соединении к той же базе
+# -- ровно как `works_import_apply` вызывает `import_drone_works.apply_rows`.
+# [REASON]: у таблиц `dji_*` ОДИН писатель. Инструменты импорта и пересчёта
+# работают на stdlib; второй писатель через ORM разошёлся бы с первым при
+# первой же правке. ORM-модели служат чтению страниц и db.create_all().
+#
+# Что эти приёмники НИКОГДА не делают: не создают вылет, не меняют
+# drone_flights (area_ha прежде всего), не пишут в drone_sync_logs, не
+# принимают тело с маркером подписанного URL/креденшела.
+
+DRONE_SOURCE_SYNC_MAX_BATCH = 50
+DRONE_SOURCE_MAX_BODY_BYTES = 8 * 1024 * 1024
+DRONE_LAND_SNAPSHOT_MAX_BATCH = 1000
+DRONE_SOURCE_MAX_ERRORS_LOGGED = 50
+
+
+def _drone_evidence_db_path():
+    return works_upload.db_path_from_uri(
+        current_app.config.get('SQLALCHEMY_DATABASE_URI', ''))
+
+
+def _drone_source_body(item):
+    """Байты тела из `body_b64` либо `body_text`. Отказ -- ValueError."""
+    import base64
+    b64 = item.get('body_b64')
+    text = item.get('body_text')
+    if isinstance(b64, str) and b64:
+        try:
+            body = base64.b64decode(b64, validate=True)
+        except (ValueError, TypeError):
+            raise ValueError('body_b64 is not valid base64')
+    elif isinstance(text, str) and text:
+        body = text.encode('utf-8')
+    else:
+        raise ValueError('source carries neither body_b64 nor body_text')
+    if len(body) > DRONE_SOURCE_MAX_BODY_BYTES:
+        raise ValueError('body of %d bytes exceeds the cap of %d'
+                         % (len(body), DRONE_SOURCE_MAX_BODY_BYTES))
+    declared = item.get('sha256')
+    if isinstance(declared, str) and declared:
+        actual = hashlib.sha256(body).hexdigest()
+        if declared.lower() != actual:
+            # [REASON]: тело, не совпавшее с заявленным SHA, -- не «почти
+            # источник», а неизвестно что; оно не сохраняется.
+            raise ValueError('declared sha256 does not match the body')
+    size = item.get('size_bytes')
+    if isinstance(size, int) and not isinstance(size, bool) and size != len(body):
+        raise ValueError('declared size_bytes %d does not match the body (%d)'
+                         % (size, len(body)))
+    return body
+
+
+def _drone_source_captured_at(value):
+    if not value:
+        return None
+    text = str(value).strip().replace('T', ' ')
+    if text.endswith('Z'):
+        text = text[:-1]
+    if '+' in text[10:]:
+        text = text[:text.index('+', 10)]
+    for fmt in ('%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M'):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+@drones_bp.route('/api/source_sync', methods=['POST'])
+def api_source_sync():
+    """Ingest immutable DJI source bodies (list/card/route/v4/airlines).
+
+    Body:
+
+        {"token": "...", "sources": [{"flight_id": 673501214,
+                                      "source_type": "card",
+                                      "captured_at_utc": "2026-09-08 04:12:00",
+                                      "body_b64": "...",   (or "body_text")
+                                      "sha256": "...", "size_bytes": 1522,
+                                      "request_context": {"path": "...",
+                                                          "association": "url_path"},
+                                      "capture_run_id": "...",
+                                      "parser_version": "...",
+                                      "api_status": 0}, ...]}
+
+    Counters -- every seen source lands in exactly one bucket:
+
+        seen = new + duplicates + errors
+
+    `duplicates` are identical bytes already stored (ingest_count moves);
+    a differing body of the same flight/type is a NEW revision, the old one
+    stays. After the batch `dji_flight_evidence` is rebuilt for every flight
+    that received a source (`refreshed`).
+    """
+    from dji_area import evidence as dji_evidence
+    from dji_area import store as dji_store
+
+    payload = request.get_json(force=True, silent=True)
+    token = extract_token(payload)
+    if not verify_api_token(token, current_app.config.get('DRONE_API_TOKEN')):
+        return jsonify(error='unauthorized'), 401
+
+    sources = payload.get('sources')
+    if not isinstance(sources, list):
+        return jsonify(error='sources must be a list'), 400
+    if len(sources) > DRONE_SOURCE_SYNC_MAX_BATCH:
+        return jsonify(error='batch too large: %d sources, the cap is %d per '
+                             'request -- send chunks'
+                             % (len(sources), DRONE_SOURCE_SYNC_MAX_BATCH)), 413
+
+    new = duplicates = errors = 0
+    error_lines = []
+    touched = set()
+    try:
+        db_path = _drone_evidence_db_path()
+        con = dji_store.connect(db_path)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify(status='error', seen=len(sources), new=0, duplicates=0,
+                       errors=len(sources), error=str(exc)), 500
+    root = dji_store.source_root(db_path)
+    try:
+        dji_store.require_tables(con)
+        dji_store.begin_immediate(con)
+        now = dji_store.utcnow()
+        for position, item in enumerate(sources):
+            try:
+                if not isinstance(item, dict):
+                    raise ValueError('source #%d is not an object' % position)
+                source_type = item.get('source_type')
+                if source_type not in dji_evidence.FLIGHT_SOURCE_TYPES:
+                    raise ValueError('source #%d has unknown source_type %r'
+                                     % (position, source_type))
+                flight_id = _drone_int(item.get('flight_id'))
+                if flight_id is None:
+                    raise ValueError('source #%d has no numeric flight_id'
+                                     % position)
+                body = _drone_source_body(item)
+                context = item.get('request_context')
+                if context is not None and not isinstance(context, dict):
+                    raise ValueError('request_context must be an object')
+                _rev_id, created = dji_store.upsert_source_revision(
+                    con, root, source_type, body, flight_id=flight_id,
+                    provider=_drone_text(item.get('provider_account_id'), 80)
+                    or dji_evidence.PROVIDER_ACCOUNT_DEFAULT,
+                    captured_at_utc=_drone_source_captured_at(
+                        item.get('captured_at_utc')) or now,
+                    request_context=context,
+                    capture_run_id=_drone_text(item.get('capture_run_id'), 120),
+                    parser_version=_drone_text(item.get('parser_version'), 40),
+                    schema_version=_drone_text(item.get('schema_version'), 40),
+                    api_status=_drone_int(item.get('api_status')),
+                    is_evidence_import=bool(item.get('is_evidence_import')),
+                    now=now)
+                touched.add(flight_id)
+                if created:
+                    new += 1
+                else:
+                    duplicates += 1
+            except (ValueError, dji_store.StoreError) as exc:
+                errors += 1
+                if len(error_lines) < DRONE_SOURCE_MAX_ERRORS_LOGGED:
+                    error_lines.append(str(exc))
+        for flight_id in sorted(touched):
+            dji_store.refresh_flight_evidence(con, root, flight_id, now=now)
+        con.execute('COMMIT')
+    except Exception as exc:  # noqa: BLE001
+        con.rollback()
+        con.close()
+        current_app.logger.exception('DRONE SOURCE INGEST: batch rolled back')
+        return jsonify(status='error', seen=len(sources), new=0, duplicates=0,
+                       errors=len(sources), refreshed=0, error=str(exc)), 500
+    con.close()
+    if error_lines:
+        current_app.logger.warning(
+            'DRONE SOURCE INGEST: %d source(s) of %d rejected. First reasons: %s',
+            errors, len(sources), ' | '.join(error_lines[:5]))
+    return jsonify(status='ok', seen=len(sources), new=new,
+                   duplicates=duplicates, errors=errors, refreshed=len(touched))
+
+
+@drones_bp.route('/api/land_snapshot_sync', methods=['POST'])
+def api_land_snapshot_sync():
+    """Ingest an IMMUTABLE catalog snapshot: land revisions and geometry bytes.
+
+    Body:
+
+        {"token": "...",
+         "snapshot": {"capture_run_id": "lands-2026-09-08T04:00Z",
+                      "captured_at_utc": "...", "expected_count": 5925,
+                      "scope": {...}, "final": false, "complete": null},
+         "lands": [ ...raw GraphQL node objects (signedURL stripped)... ],
+         "geometries": [{"content_md5": "...", "body_b64": "..."}, ...]}
+
+    One snapshot spans several requests: `capture_run_id` identifies it, the
+    request carrying `final: true` closes it with `received_count`/`complete`.
+    Counters: lands_seen = lands_new + lands_seen_before + errors;
+    geometries: new / unchanged / errors. Nothing here touches
+    field_contours (the mutable directory of DRONE-LANDS-001) or
+    drone_sync_logs.
+    """
+    from dji_area import evidence as dji_evidence
+    from dji_area import store as dji_store
+    import base64
+
+    payload = request.get_json(force=True, silent=True)
+    token = extract_token(payload)
+    if not verify_api_token(token, current_app.config.get('DRONE_API_TOKEN')):
+        return jsonify(error='unauthorized'), 401
+    snapshot = payload.get('snapshot')
+    if not isinstance(snapshot, dict):
+        return jsonify(error='snapshot must be an object'), 400
+    run_id = _drone_text(snapshot.get('capture_run_id'), 120)
+    if not run_id:
+        return jsonify(error='snapshot.capture_run_id is required'), 400
+    lands = payload.get('lands') or []
+    geometries = payload.get('geometries') or []
+    if not isinstance(lands, list) or not isinstance(geometries, list):
+        return jsonify(error='lands and geometries must be lists'), 400
+    if len(lands) > DRONE_LAND_SNAPSHOT_MAX_BATCH:
+        return jsonify(error='batch too large: %d lands, the cap is %d per '
+                             'request -- send chunks'
+                             % (len(lands), DRONE_LAND_SNAPSHOT_MAX_BATCH)), 413
+
+    counters = {'lands_seen': len(lands), 'lands_new': 0,
+                'lands_seen_before': 0, 'errors': 0,
+                'geometries_seen': len(geometries), 'geometries_new': 0,
+                'geometries_unchanged': 0, 'geometries_errors': 0}
+    error_lines = []
+    try:
+        db_path = _drone_evidence_db_path()
+        con = dji_store.connect(db_path)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify(status='error', error=str(exc), **counters), 500
+    try:
+        dji_store.require_tables(con)
+        dji_store.begin_immediate(con)
+        now = dji_store.utcnow()
+        row = con.execute('SELECT id FROM dji_land_snapshots WHERE '
+                          'capture_run_id=? ORDER BY id DESC LIMIT 1',
+                          (run_id,)).fetchone()
+        if row is None:
+            snapshot_id = dji_store.create_land_snapshot(
+                con, _drone_source_captured_at(snapshot.get('captured_at_utc'))
+                or now, capture_run_id=run_id,
+                scope=snapshot.get('scope') if isinstance(
+                    snapshot.get('scope'), dict) else None,
+                expected_count=_drone_int(snapshot.get('expected_count')),
+                is_evidence_import=bool(snapshot.get('is_evidence_import')),
+                now=now)
+        else:
+            snapshot_id = row['id']
+        for position, node in enumerate(lands):
+            try:
+                if not isinstance(node, dict):
+                    raise ValueError('land #%d is not an object' % position)
+                parsed = dji_evidence.parse_land_node(node)
+                if dji_evidence.contains_secret_marker(parsed['raw_json']):
+                    raise ValueError('land #%d carries a secret marker'
+                                     % position)
+                state, _rid = dji_store.upsert_land_revision(con, snapshot_id,
+                                                              parsed)
+                counters['lands_new' if state == 'new'
+                         else 'lands_seen_before'] += 1
+            except (ValueError, dji_store.StoreError) as exc:
+                counters['errors'] += 1
+                if len(error_lines) < DRONE_SOURCE_MAX_ERRORS_LOGGED:
+                    error_lines.append(str(exc))
+        for position, item in enumerate(geometries):
+            try:
+                if not isinstance(item, dict):
+                    raise ValueError('geometry #%d is not an object' % position)
+                b64 = item.get('body_b64')
+                if not isinstance(b64, str) or not b64:
+                    raise ValueError('geometry #%d has no body_b64' % position)
+                body = base64.b64decode(b64, validate=True)
+                if len(body) > DRONE_SOURCE_MAX_BODY_BYTES:
+                    raise ValueError('geometry #%d exceeds the size cap'
+                                     % position)
+                if dji_evidence.contains_secret_marker(body):
+                    raise ValueError('geometry #%d carries a secret marker'
+                                     % position)
+                expected = _drone_text(item.get('content_md5'), 32)
+                state, _gid = dji_store.upsert_land_geometry(
+                    con, body, expected_md5=expected, now=now)
+                counters['geometries_new' if state == 'new'
+                         else 'geometries_unchanged'] += 1
+            except (ValueError, TypeError, dji_store.StoreError) as exc:
+                counters['geometries_errors'] += 1
+                if len(error_lines) < DRONE_SOURCE_MAX_ERRORS_LOGGED:
+                    error_lines.append(str(exc))
+        if snapshot.get('final'):
+            received = con.execute(
+                'SELECT COUNT(*) FROM dji_land_revisions WHERE '
+                'first_seen_snapshot_id=? OR last_seen_snapshot_id=?',
+                (snapshot_id, snapshot_id)).fetchone()[0]
+            complete = snapshot.get('complete')
+            dji_store.finalize_land_snapshot(
+                con, snapshot_id, received,
+                None if complete is None else bool(complete),
+                _drone_text(snapshot.get('manifest_sha256'), 64))
+            dji_store.verify_geometry_holders(con)
+        con.execute('COMMIT')
+    except Exception as exc:  # noqa: BLE001
+        con.rollback()
+        con.close()
+        current_app.logger.exception('DRONE LAND SNAPSHOT INGEST: batch rolled back')
+        return jsonify(status='error', error=str(exc), **counters), 500
+    con.close()
+    if error_lines:
+        current_app.logger.warning(
+            'DRONE LAND SNAPSHOT INGEST: %d problem(s). First reasons: %s',
+            counters['errors'] + counters['geometries_errors'],
+            ' | '.join(error_lines[:5]))
+    return jsonify(status='ok', snapshot_id=snapshot_id, **counters)
+
+
 @drones_bp.route('/units')
 @module_required('drones')
 def units():
@@ -5180,6 +5501,21 @@ DRONE_REPORT_TILES = (
                        'ёки носоз ҳисобланган',
     },
     {
+        # DJI-AREA-REPORT-001. Reuses is-primary, the accent of the flight
+        # summary and the calendar: this is the same flight data read through
+        # the evidence model -- RAW DJI beside the checked estimate. A new
+        # accent would claim a new data source, and there is none.
+        'key': 'area-evidence',
+        'endpoint': 'drones.area_evidence',
+        'accent': 'is-primary',
+        'title_ru': 'Площадь DJI: техническая оценка',
+        'title_uz': 'DJI майдони: техник баҳолаш',
+        'subtitle_ru': 'Исходная площадь DJI, проверенная по телеметрии '
+                       'оценка и надёжность привязки к полю — теневой режим',
+        'subtitle_uz': 'DJI манба майдони, телеметрия бўйича текширилган '
+                       'баҳо ва далага боғланиш ишончлилиги — соя режими',
+    },
+    {
         # DRONE-ANALYTICS-001/3. Reuses is-info, the accent of the works
         # report: this compares that report's hectares against the flights.
         'key': 'reconcile',
@@ -7628,3 +7964,704 @@ def operator_cash():
         filters=filters,
         link_args=_drone_works_link_args(filters),
         **context)
+
+
+# ─── DJI-AREA-REPORT-001: отчёт «Площадь DJI: техническая оценка» ──────────
+#
+# Теневой режим модели `dji-area-evidence-2026-09-08-final-1`. Страница и
+# выгрузка ТОЛЬКО ЧИТАЮТ `dji_area_calculations` / `dji_field_attributions`
+# и ничего не пишут. Ни одно число отсюда не является счётом: RAW DJI,
+# проверенный подытог и предварительная оценка отдаются раздельно, а
+# «полный итог» не вычисляется намеренно -- нерешённые записи остаются
+# экспозицией, а не слагаемым.
+#
+# [REASON]: суммы считает `dji_area.aggregate`, а не SQL. Право записи на
+# агрегирование (certified / provisional / unresolved / overlap) -- это
+# правило модели, и оно должно жить в одном месте: пересчёт, тесты пакета и
+# эта страница обязаны давать одинаковые корзины на одних строках.
+#
+# [REASON]: НИ ОДНА координата, тело источника, токен или подписанный URL на
+# страницу не выходят. Идентификатор вылета DJI в детализации показывается
+# намеренно: это ключ аудита, по которому владелец открывает запись в
+# SmartFarm. Держится тестом tests/test_dji_area_report_001.py.
+
+import dji_area
+from dji_area import aggregate as dji_aggregate
+from dji_area import field as dji_field
+from dji_area import resolver as dji_resolver
+from models import DjiAreaCalculation, DjiFieldAttribution
+
+# Окно по умолчанию -- как у полезной площади: ограниченное, «за всё время»
+# достижимо ссылкой с пустыми параметрами дат.
+DRONE_AREA_DEFAULT_DAYS = DRONE_COVERAGE_DEFAULT_DAYS
+
+# Детализация по записям показывается не длиннее этого; дальше -- Excel.
+DRONE_AREA_MAX_DETAIL_ROWS = 500
+
+# Подписи статусов: (ru, uz). Узбекский -- только кириллицей.
+DRONE_AREA_STATUS_LABELS = {
+    dji_resolver.RAW_CORROBORATED: ('Проверено', 'Текширилган'),
+    dji_resolver.RAW_CORROBORATED_QUALIFIED: (
+        'Проверено частично', 'Қисман текширилган'),
+    dji_resolver.COUNTER_FLAT_RAW_OVERSTATED: (
+        'Повторная/перенесённая запись', 'Такрорий/кўчирилган ёзув'),
+    dji_resolver.PARTIAL_RECORDED_OVERSTATEMENT: (
+        'Частичная новая работа', 'Қисман янги иш'),
+    dji_resolver.RAW_UNVERIFIED: ('Предварительно', 'Дастлабки'),
+    dji_resolver.UNKNOWN_SUSPECT: (
+        'Недостаточно данных (подозрение)', 'Маълумот етарли эмас (шубҳа)'),
+    dji_resolver.APPLICATION_WITHOUT_MEASURED_AREA: (
+        'Площадь не измерена', 'Майдон ўлчанмаган'),
+    dji_resolver.COUNTER_ZERO: ('Ноль по счётчику', 'Ҳисоблагич бўйича нол'),
+    dji_resolver.ZERO_RECORDED_UNVERIFIED: (
+        'Ноль без проверки', 'Текширилмаган нол'),
+    dji_resolver.CHANNEL_MISSING: ('Канал недоступен', 'Канал мавжуд эмас'),
+    dji_resolver.BASELINE_UNKNOWN: (
+        'Начало не измерено', 'Бошланиши ўлчанмаган'),
+    dji_resolver.COUNTER_RELATIONSHIP_OUTLIER: (
+        'Требует проверки', 'Текшириш талаб қилинади'),
+    dji_resolver.COUNTER_NONMONOTONE_REVIEW: (
+        'Сброс счётчика', 'Ҳисоблагич қайта тикланган'),
+    dji_resolver.OVERLAP_REVIEW: ('Пересечение записей', 'Ёзувлар кесишуви'),
+}
+
+# Цвет бейджа статуса. Проверенные -- success, предварительные -- warning,
+# «применение без площади» -- info, подозрительные -- danger; статусы,
+# где данных просто нет (канал, ноль без проверки, начало не измерено), --
+# нейтральный `vs-badge` без модификатора: отсутствие evidence -- не тревога.
+DRONE_AREA_STATUS_BADGES = {
+    dji_resolver.RAW_CORROBORATED: 'vs-badge-success',
+    dji_resolver.COUNTER_FLAT_RAW_OVERSTATED: 'vs-badge-success',
+    dji_resolver.PARTIAL_RECORDED_OVERSTATEMENT: 'vs-badge-success',
+    dji_resolver.COUNTER_ZERO: 'vs-badge-success',
+    dji_resolver.RAW_CORROBORATED_QUALIFIED: 'vs-badge-warning',
+    dji_resolver.RAW_UNVERIFIED: 'vs-badge-warning',
+    dji_resolver.APPLICATION_WITHOUT_MEASURED_AREA: 'vs-badge-info',
+    dji_resolver.UNKNOWN_SUSPECT: 'vs-badge-danger',
+    dji_resolver.COUNTER_RELATIONSHIP_OUTLIER: 'vs-badge-danger',
+    dji_resolver.COUNTER_NONMONOTONE_REVIEW: 'vs-badge-danger',
+    dji_resolver.OVERLAP_REVIEW: 'vs-badge-danger',
+    dji_resolver.CHANNEL_MISSING: '',
+    dji_resolver.ZERO_RECORDED_UNVERIFIED: '',
+    dji_resolver.BASELINE_UNKNOWN: '',
+}
+
+DRONE_AREA_METHOD_LABELS = {
+    dji_resolver.M_RAW_WITH_VALIDATED_COUNTER: (
+        'RAW подтверждён счётчиком', 'RAW ҳисоблагич билан тасдиқланган'),
+    dji_resolver.M_RAW_WITH_SUBWINDOW_CORROBORATION: (
+        'RAW подтверждён частично, окно неполное',
+        'RAW қисман тасдиқланган, ойна тўлиқ эмас'),
+    dji_resolver.M_VALIDATED_COUNTER_DELTA: (
+        'разность проверенного счётчика', 'текширилган ҳисоблагич фарқи'),
+    dji_resolver.M_RAW_FALLBACK: (
+        'RAW без проверки счётчиком', 'RAW ҳисоблагич текширувисиз'),
+    dji_resolver.M_NO_SAFE_CORRECTION: (
+        'безопасной поправки нет', 'хавфсиз тузатиш йўқ'),
+    dji_resolver.M_ACTIVITY_FLAG_ONLY: (
+        'только признак применения', 'фақат қўллаш белгиси'),
+    dji_resolver.M_RAW_ONLY: ('только RAW', 'фақат RAW'),
+    dji_resolver.M_NO_COUNTER_MEASUREMENT: (
+        'счётчик не измерен', 'ҳисоблагич ўлчанмаган'),
+    dji_resolver.M_NO_SAFE_INTERVAL_DELTA: (
+        'разность интервала не проверена', 'интервал фарқи текширилмаган'),
+    dji_resolver.M_REVIEW_REQUIRED: (
+        'требует ручной проверки', 'қўлда текшириш талаб қилинади'),
+    dji_resolver.M_UNRESOLVED_INTERVAL_OWNERSHIP: (
+        'принадлежность интервала не определена',
+        'интервал тегишлилиги аниқланмаган'),
+}
+
+DRONE_AREA_CONFIDENCE_LABELS = {
+    dji_resolver.C_HIGH: ('уверенность высокая', 'ишонч юқори'),
+    dji_resolver.C_MEDIUM: ('уверенность средняя', 'ишонч ўртача'),
+    dji_resolver.C_LOW: ('уверенность низкая', 'ишонч паст'),
+    dji_resolver.C_UNKNOWN: ('уверенность не определена', 'ишонч аниқланмаган'),
+}
+
+# Флаги аномалий словами. Неизвестный флаг показывается своим кодом: он
+# ASCII и информативнее пустоты, а прятать его значило бы прятать аномалию.
+DRONE_AREA_FLAG_LABELS = {
+    'V4_MISSING': ('V4 нет', 'V4 йўқ'),
+    'V4_IDENTITY_ERROR': ('V4 другого вылета', 'V4 бошқа парвозники'),
+    'V4_WINDOW_INCOMPLETE': ('окно V4 неполное', 'V4 ойнаси тўлиқ эмас'),
+    'ROUTE_IDENTITY_ERROR': (
+        'маршрут другого вылета', 'маршрут бошқа парвозники'),
+    'AREA_CHANNEL_ABSENT': ('канал недоступен', 'канал мавжуд эмас'),
+    'OVERLAP_INTERVAL': ('пересечение записей', 'ёзувлар кесишуви'),
+    'COUNTER_NONMONOTONE': ('сброс счётчика', 'ҳисоблагич қайта тикланган'),
+    'RAW_MISSING': ('RAW отсутствует', 'RAW йўқ'),
+    'STRUCTURAL_RETAINED_CANDIDATE': (
+        'признак повторной записи', 'такрорий ёзув белгиси'),
+    'RETAINED_SCALAR_SOURCE_MATCH': (
+        'скаляры совпали с базовой записью',
+        'скалярлар асосий ёзув билан мос'),
+    'APPLICATION_WITH_FLAT_COUNTER': (
+        'применение при неподвижном счётчике',
+        'ҳисоблагич ўзгармаганда қўллаш'),
+    'SMALL_POSITIVE_INCREMENT_RETAINED': (
+        'малый прирост сохранён', 'кичик ўсиш сақланган'),
+    'RAW_COUNTER_MAGNITUDE_MISMATCH': (
+        'RAW и счётчик расходятся', 'RAW ва ҳисоблагич мос эмас'),
+    'RAW_ZERO_COUNTER_POSITIVE': (
+        'RAW ноль при положительном счётчике',
+        'ҳисоблагич мусбат, RAW нол'),
+    'COUNTER_LEADING_OMISSION': (
+        'начало счётчика пропущено', 'ҳисоблагич бошланиши йўқ'),
+    'COUNTER_TRAILING_OMISSION': (
+        'конец счётчика пропущен', 'ҳисоблагич охири йўқ'),
+    'COUNTER_SUBWINDOW_FLAT': (
+        'счётчик неподвижен в окне', 'ойнада ҳисоблагич ўзгармаган'),
+    'ZERO_DEFAULT_DELTA_IS_DIAGNOSTIC_ONLY': (
+        'ноль по умолчанию только диагностика',
+        'сукут бўйича нол фақат диагностика'),
+    'QUANTITY_INCREASE_WITHOUT_AREA': ('расход без площади', 'майдонсиз сарф'),
+    'QUANTITY_ONLY_INCREASE': ('только рост расхода', 'фақат сарф ўсиши'),
+    'APPLICATION_CHANNEL_UNRELIABLE': (
+        'канал применения ненадёжен', 'қўллаш канали ишончсиз'),
+    'APPLICATION_CHANNEL_UNKNOWN': (
+        'канал применения неизвестен', 'қўллаш канали номаълум'),
+}
+# Информативный канал -- не аномалия; такой флаг словами не показывается.
+DRONE_AREA_FLAGS_SILENT = frozenset({'APPLICATION_CHANNEL_INFORMATIVE'})
+
+DRONE_AREA_ACTIVITY_LABELS = {
+    dji_resolver.ACT_PRESENT: ('Есть', 'Бор'),
+    dji_resolver.ACT_NOT_OBSERVED: ('Не наблюдалось', 'Кузатилмаган'),
+    dji_resolver.ACT_UNKNOWN: ('Неизвестно', 'Номаълум'),
+}
+
+# Надёжность привязки к полю: (ru, uz, бейдж). TIER1/2 -- подтверждено,
+# TIER3/4 -- предположительно, TIER5 -- не определено.
+DRONE_AREA_TIER_LABELS = {
+    dji_field.TIER1_EXACT: (
+        'Поле подтверждено', 'Дала тасдиқланган', 'vs-badge-success'),
+    dji_field.TIER2_STRONG: (
+        'Поле подтверждено', 'Дала тасдиқланган', 'vs-badge-success'),
+    dji_field.TIER3_SUPPORTED: (
+        'Поле предположительно', 'Дала тахминий', 'vs-badge-warning'),
+    dji_field.TIER4_GEOMETRIC: (
+        'Поле предположительно', 'Дала тахминий', 'vs-badge-warning'),
+    dji_field.TIER5_UNKNOWN: (
+        'Поле не определено', 'Дала аниқланмаган', ''),
+}
+DRONE_AREA_TIER_FILTER_LABELS = {
+    dji_field.TIER1_EXACT: ('Поле подтверждено (точно)', 'Дала тасдиқланган (аниқ)'),
+    dji_field.TIER2_STRONG: ('Поле подтверждено (сильно)', 'Дала тасдиқланган (кучли)'),
+    dji_field.TIER3_SUPPORTED: ('Поле предположительно (поддержано)', 'Дала тахминий (қўллаб-қувватланган)'),
+    dji_field.TIER4_GEOMETRIC: ('Поле предположительно (геометрия)', 'Дала тахминий (геометрия)'),
+    dji_field.TIER5_UNKNOWN: ('Поле не определено', 'Дала аниқланмаган'),
+}
+DRONE_AREA_CONFIRMED_TIERS = (dji_field.TIER1_EXACT, dji_field.TIER2_STRONG)
+
+# Колонки расчёта, которые уходят в строку-словарь для dji_area.aggregate и
+# в детализацию. Ни `window_reasons_json`, ни `bridge_flight_ids_json`, ни
+# идентификаторы ревизий источников на страницу не выходят.
+_DRONE_AREA_CALC_COLUMNS = (
+    'flight_id', 'drone_flight_id', 'hardware_id', 'hardware_id_source',
+    'area_algorithm_version', 'calculation_input_hash', 'start_at_utc',
+    'end_at_utc', 'report_start_date', 'raw_area_m2', 'raw_area_source',
+    'controller_delta_area_m2', 'corrected_recorded_area_m2', 'area_status',
+    'area_method', 'area_confidence', 'anomaly_flags_json',
+    'application_activity', 'application_channel_quality',
+    'application_evidence_kind', 'application_without_area',
+    'aggregation_eligibility', 'overlap_group_id',
+)
+
+
+def _drone_area_pick(table, code, fallback=None):
+    """Подпись (ru, uz) по коду на языке пользователя; без подписи -- код."""
+    pair = table.get(code)
+    if pair is None:
+        return fallback if fallback is not None else (code or '')
+    return pair[0] if _drone_lang() == 'ru' else pair[1]
+
+
+def _drone_area_ha(value_m2):
+    return None if value_m2 is None else float(value_m2) / 10000.0
+
+
+def _drone_area_filters(args):
+    """Период, машина, статус и tier. Та же семантика дат, что у coverage:
+    отсутствие параметра -- окно по умолчанию, пустой параметр -- «за всё
+    время»."""
+    today = _drone_today_local()
+    raw_from = args.get('date_from')
+    raw_to = args.get('date_to')
+    if raw_from is None and raw_to is None:
+        date_from = today - timedelta(days=DRONE_AREA_DEFAULT_DAYS)
+        date_to = today
+    else:
+        date_from = _drone_parse_date((raw_from or '').strip())
+        date_to = _drone_parse_date((raw_to or '').strip())
+
+    status = (args.get('status') or '').strip()
+    if status not in dji_resolver.AREA_STATUSES:
+        status = ''
+    tier = (args.get('tier') or '').strip()
+    if tier not in dji_field.TIERS:
+        tier = ''
+    return {
+        'date_from': date_from,
+        'date_to': date_to,
+        'date_from_s': date_from.isoformat() if date_from else '',
+        'date_to_s': date_to.isoformat() if date_to else '',
+        'unit_id': args.get('unit_id', type=int),
+        'status': status,
+        'tier': tier,
+        'detail': (args.get('detail') or '').strip() == '1',
+    }
+
+
+def _drone_area_link_args(filters, **extra):
+    """Параметры ссылок страницы. Пустые даты передаются ПУСТЫМИ, а не
+    опускаются: опущенный параметр вернул бы окно по умолчанию."""
+    out = {'date_from': filters['date_from_s'],
+           'date_to': filters['date_to_s']}
+    if filters['unit_id']:
+        out['unit_id'] = filters['unit_id']
+    if filters['status']:
+        out['status'] = filters['status']
+    if filters['tier']:
+        out['tier'] = filters['tier']
+    out.update(extra)
+    return out
+
+
+def _drone_area_machine(unit, hardware_id):
+    """(ключ сортировки, подпись) машины одной записи.
+
+    [REASON]: борт известен двумя путями. Первый -- вылет в drone_flights и
+    его машина, определённая по нику (правило модуля: машина -- только из
+    строки ника). Второй -- `hardware_id` карточки DJI, сопоставленный с
+    `drone_units.hardware_id`; он нужен записям, у которых вылета в
+    drone_flights ещё нет или ник не распознан. Без обоих запись остаётся
+    видимой как «Борт …» по хвосту hardware_id или «Машина не определена»
+    -- строка никогда не выпадает из таблицы.
+    """
+    if unit is not None:
+        return (0, unit.number, ''), '№ %s' % unit.number
+    if hardware_id:
+        tail = hardware_id[-6:]
+        return (1, 0, tail), 'Борт %s' % tail
+    return (2, 0, ''), _drone_t('Машина аниқланмаган', 'Машина не определена')
+
+
+def _drone_area_flags(row):
+    try:
+        flags = json.loads(row.get('anomaly_flags_json') or '[]')
+    except (TypeError, ValueError):
+        flags = []
+    return [str(flag) for flag in flags if flag]
+
+
+def _drone_area_limitation(row):
+    """Метод, уверенность и флаги аномалий одним предложением словами."""
+    parts = []
+    method = row.get('area_method')
+    if method:
+        parts.append(_drone_area_pick(DRONE_AREA_METHOD_LABELS, method))
+    confidence = row.get('area_confidence')
+    if confidence:
+        parts.append(_drone_area_pick(DRONE_AREA_CONFIDENCE_LABELS,
+                                      confidence))
+    for flag in _drone_area_flags(row):
+        if flag in DRONE_AREA_FLAGS_SILENT:
+            continue
+        parts.append(_drone_area_pick(DRONE_AREA_FLAG_LABELS, flag))
+    return '; '.join(parts)
+
+
+def _drone_area_current_rows(filters):
+    """Текущие строки расчёта под фильтром, обогащённые полем и машиной.
+
+    Текущая строка -- `superseded_at IS NULL` под текущей версией алгоритма;
+    привязка к полю -- то же под версией резолвера полей. Отсутствующая
+    привязка считается TIER5 -- так же, как в dji_area.aggregate.
+    """
+    calc = DjiAreaCalculation
+    q = (db.session.query(calc, DroneFlight)
+         .outerjoin(DroneFlight, DroneFlight.id == calc.drone_flight_id)
+         .filter(calc.superseded_at.is_(None),
+                 calc.area_algorithm_version
+                 == dji_area.AREA_ALGORITHM_VERSION))
+    if filters['date_from']:
+        q = q.filter(calc.report_start_date >= filters['date_from'])
+    if filters['date_to']:
+        q = q.filter(calc.report_start_date <= filters['date_to'])
+    if filters['status']:
+        q = q.filter(calc.area_status == filters['status'])
+
+    units = DroneUnit.query.order_by(DroneUnit.number).all()
+    units_by_id = {u.id: u for u in units}
+    units_by_hardware = {u.hardware_id: u for u in units if u.hardware_id}
+
+    if filters['unit_id']:
+        unit = units_by_id.get(filters['unit_id'])
+        conds = [DroneFlight.drone_unit_id == filters['unit_id']]
+        if unit is not None and unit.hardware_id:
+            conds.append(calc.hardware_id == unit.hardware_id)
+        q = q.filter(or_(*conds))
+
+    pairs = q.order_by(calc.report_start_date.desc(), calc.start_at_utc,
+                       calc.flight_id).all()
+
+    flight_ids = [c.flight_id for c, _f in pairs]
+    attributions = {}
+    for start in range(0, len(flight_ids), 400):
+        chunk = flight_ids[start:start + 400]
+        for attr in (DjiFieldAttribution.query
+                     .filter(DjiFieldAttribution.superseded_at.is_(None),
+                             DjiFieldAttribution.field_resolver_version
+                             == dji_area.FIELD_RESOLVER_VERSION,
+                             DjiFieldAttribution.flight_id.in_(chunk))
+                     .all()):
+            attributions[attr.flight_id] = attr
+
+    rows = []
+    for c, flight in pairs:
+        unit = None
+        if flight is not None and flight.drone_unit_id is not None:
+            unit = units_by_id.get(flight.drone_unit_id)
+        if unit is None and c.hardware_id:
+            unit = units_by_hardware.get(c.hardware_id)
+        # Фильтр по машине сверяется с ТЕМ ЖЕ правилом, по которому машина
+        # показывается: SQL-условие шире (OR по двум путям), и запись, чей
+        # вылет отнесён к другой машине, здесь отбрасывается.
+        if filters['unit_id'] and (unit is None
+                                   or unit.id != filters['unit_id']):
+            continue
+        attr = attributions.get(c.flight_id)
+        tier = (attr.field_attribution_tier if attr is not None
+                else dji_field.TIER5_UNKNOWN)
+        if tier not in dji_field.TIERS:
+            tier = dji_field.TIER5_UNKNOWN
+        if filters['tier'] and tier != filters['tier']:
+            continue
+        row = {col: getattr(c, col) for col in _DRONE_AREA_CALC_COLUMNS}
+        row['field_attribution_tier'] = tier
+        row['field_attribution_method'] = (
+            attr.field_attribution_method if attr is not None else None)
+        row['field_name_at_snapshot'] = (
+            attr.field_name_at_snapshot if attr is not None else None)
+        row['field_resolver_version'] = (
+            attr.field_resolver_version if attr is not None else None)
+        row['unit'] = unit
+        row['machine_key'], row['machine_label'] = _drone_area_machine(
+            unit, c.hardware_id)
+        rows.append(row)
+    return rows
+
+
+def _drone_area_bucket_view(bucket):
+    """Числа корзины в гектарах и счётчиках, как их показывает страница."""
+    status_counts = bucket['status_counts']
+    tier_counts = bucket['tier_counts']
+    records = bucket['records']
+    confirmed = sum(tier_counts.get(t, 0) for t in DRONE_AREA_CONFIRMED_TIERS)
+    return {
+        'records': records,
+        'raw_ha': _drone_area_ha(bucket['raw_sum_m2']),
+        'raw_missing_records': bucket['raw_missing_records'],
+        'certified_ha': _drone_area_ha(bucket['certified_sum_m2']),
+        'certified_records': bucket['certified_records'],
+        'provisional_ha': _drone_area_ha(bucket['provisional_sum_m2']),
+        'provisional_records': bucket['provisional_records'],
+        'known_ha': _drone_area_ha(bucket['known_subtotal_m2']),
+        'unresolved_records': bucket['unresolved_records'],
+        'unresolved_raw_ha': _drone_area_ha(
+            bucket['unresolved_raw_exposure_m2']),
+        'overlap_records': bucket['overlap_records'],
+        'overlap_raw_ha': _drone_area_ha(bucket['overlap_raw_exposure_m2']),
+        'repeated_records': status_counts.get(
+            dji_resolver.COUNTER_FLAT_RAW_OVERSTATED, 0),
+        'partial_records': status_counts.get(
+            dji_resolver.PARTIAL_RECORDED_OVERSTATEMENT, 0),
+        'application_without_area_records':
+            bucket['application_without_area_records'],
+        'unreliable_channel_records': bucket['unreliable_channel_records'],
+        'unassigned_records': bucket['unassigned_records'],
+        'unassigned_raw_ha': _drone_area_ha(bucket['unassigned_raw_m2']),
+        'field_confirmed_records': confirmed,
+        # Доля записей с подтверждённым полем; None на пустой корзине.
+        'field_confirmed_pct': (100.0 * confirmed / records
+                                if records else None),
+        'is_complete': bucket['is_complete'],
+        'status_counts': status_counts,
+        'tier_counts': tier_counts,
+    }
+
+
+def _drone_area_record_view(row):
+    """Строка детализации: подписи на языке пользователя, без геометрии."""
+    tier = row['field_attribution_tier']
+    tier_ru, tier_uz, tier_badge = DRONE_AREA_TIER_LABELS[tier]
+    activity = row.get('application_activity') or dji_resolver.ACT_UNKNOWN
+    return {
+        'flight_id': row['flight_id'],
+        'start_local': (row['start_at_utc'] + DRONE_DISPLAY_UTC_OFFSET
+                        ).strftime('%d.%m %H:%M'),
+        'report_start_date': row['report_start_date'],
+        'machine_label': row['machine_label'],
+        'raw_ha': _drone_area_ha(row['raw_area_m2']),
+        'corrected_ha': _drone_area_ha(row['corrected_recorded_area_m2']),
+        'status': row['area_status'],
+        'status_label': _drone_area_pick(DRONE_AREA_STATUS_LABELS,
+                                         row['area_status']),
+        'status_badge': DRONE_AREA_STATUS_BADGES.get(row['area_status'],
+                                                     'vs-badge-danger'),
+        'limitation': _drone_area_limitation(row),
+        'activity_label': _drone_area_pick(DRONE_AREA_ACTIVITY_LABELS,
+                                           activity),
+        'field_name': row.get('field_name_at_snapshot') or None,
+        'tier': tier,
+        'tier_label': tier_ru if _drone_lang() == 'ru' else tier_uz,
+        'tier_badge': tier_badge,
+    }
+
+
+def _drone_area_report_data(filters):
+    """Всё, что показывают страница и выгрузка, из одной выборки."""
+    rows = _drone_area_current_rows(filters)
+    buckets = dji_aggregate.aggregate(
+        rows, lambda r: (r['report_start_date'], r['machine_key']))
+    total = buckets.pop('__total__')
+
+    labels = {}
+    for r in rows:
+        labels.setdefault((r['report_start_date'], r['machine_key']),
+                          r['machine_label'])
+    day_rows = []
+    # Дата по убыванию, внутри дня -- машины по возрастанию ключа.
+    for key in sorted(buckets, key=lambda k: (-k[0].toordinal(), k[1])):
+        view = _drone_area_bucket_view(buckets[key])
+        view['date'] = key[0]
+        view['machine_label'] = labels[key]
+        day_rows.append(view)
+
+    return {
+        'rows': rows,
+        'total': _drone_area_bucket_view(total),
+        'day_rows': day_rows,
+        'records': [_drone_area_record_view(r) for r in rows],
+    }
+
+
+@drones_bp.route('/area-evidence')
+@module_required('drones')
+def area_evidence():
+    """Площадь DJI: техническая оценка. Теневой режим, только чтение."""
+    filters = _drone_area_filters(request.args)
+    data = _drone_area_report_data(filters)
+    records = data['records']
+    total_records = len(records)
+    # Детализация раскрывается по запросу либо сама, когда фильтр сужен до
+    # одной машины и строк немного; иначе -- ссылка «Показать записи».
+    show_detail = filters['detail'] or (
+        bool(filters['unit_id'])
+        and total_records <= DRONE_AREA_MAX_DETAIL_ROWS)
+    truncated = show_detail and total_records > DRONE_AREA_MAX_DETAIL_ROWS
+    if show_detail:
+        records = records[:DRONE_AREA_MAX_DETAIL_ROWS]
+    else:
+        records = []
+
+    is_ru = _drone_lang() == 'ru'
+    return render_template(
+        'drones/area_evidence.html',
+        filters=filters,
+        link_args=_drone_area_link_args(filters),
+        detail_args=_drone_area_link_args(filters, detail='1'),
+        total=data['total'],
+        day_rows=data['day_rows'],
+        records=records,
+        show_detail=show_detail,
+        truncated=truncated,
+        total_records=total_records,
+        max_rows=DRONE_AREA_MAX_DETAIL_ROWS,
+        units=DroneUnit.query.order_by(DroneUnit.number).all(),
+        statuses=[(code, DRONE_AREA_STATUS_LABELS[code][0 if is_ru else 1])
+                  for code in dji_resolver.AREA_STATUSES],
+        tiers=[(code, DRONE_AREA_TIER_FILTER_LABELS[code][0 if is_ru else 1])
+               for code in dji_field.TIERS],
+        model_version=dji_area.MODEL_VERSION,
+    )
+
+
+@drones_bp.route('/area-evidence.xlsx')
+@module_required('drones')
+def area_evidence_xlsx():
+    """Три листа: сводка, по дням и машинам, записи. Те же фильтры.
+
+    [REASON]: NULL -- ПУСТАЯ ячейка, никогда не 0. Книга -- та копия,
+    которой верят и которую суммируют; ноль в колонке технической оценки
+    читался бы как измеренный ноль. Колонка `billable_area_m2` есть и
+    всегда пуста: бизнес-политики счёта нет, и книга это показывает, а не
+    подразумевает.
+    """
+    from openpyxl import Workbook
+
+    filters = _drone_area_filters(request.args)
+    data = _drone_area_report_data(filters)
+    total = data['total']
+    st = _drone_xlsx_styler()
+    unbounded = _drone_t('чекланмаган', 'не ограничен')
+    is_ru = _drone_lang() == 'ru'
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = _drone_t('Жамланма', 'Сводка')
+    ws.append([_drone_t('Кўрсаткич', 'Показатель'),
+               _drone_t('Қиймат', 'Значение')])
+    summary = [
+        (_drone_t('Режим', 'Режим'),
+         _drone_t('Соя режими: техник баҳо DJI майдонини алмаштирмайди '
+                  'ва ҳисоб эмас',
+                  'Теневой режим: техническая оценка не заменяет площадь '
+                  'DJI и не является счётом')),
+        (_drone_t('Давр: бошланиши', 'Период: с'),
+         filters['date_from_s'] or unbounded),
+        (_drone_t('Давр: тугаши', 'Период: по'),
+         filters['date_to_s'] or unbounded),
+        (_drone_t('Модел версияси', 'Версия модели'), dji_area.MODEL_VERSION),
+        (_drone_t('Майдон алгоритми', 'Алгоритм площади'),
+         dji_area.AREA_ALGORITHM_VERSION),
+        (_drone_t('Дала резолвери', 'Резолвер поля'),
+         dji_area.FIELD_RESOLVER_VERSION),
+        (_drone_t('Ёзувлар', 'Записей'), total['records']),
+        (_drone_t('DJI RAW, га', 'DJI RAW, га'), total['raw_ha']),
+        (_drone_t('RAW йўқ ёзувлар', 'Записей без RAW'),
+         total['raw_missing_records']),
+        (_drone_t('Текширилган, га', 'Проверено, га'), total['certified_ha']),
+        (_drone_t('Текширилган ёзувлар', 'Проверено, записей'),
+         total['certified_records']),
+        (_drone_t('Дастлабки, га', 'Предварительно, га'),
+         total['provisional_ha']),
+        (_drone_t('Дастлабки ёзувлар', 'Предварительно, записей'),
+         total['provisional_records']),
+        (_drone_t('Маълум қисм (текширилган + дастлабки), га',
+                  'Известная часть (проверено + предварительно), га'),
+         total['known_ha']),
+        (_drone_t('Маълумот етарли эмас, ёзувлар',
+                  'Недостаточно данных, записей'),
+         total['unresolved_records']),
+        (_drone_t('Маълумот етарли эмас, RAW га',
+                  'Недостаточно данных, RAW га'),
+         total['unresolved_raw_ha']),
+        (_drone_t('Ёзувлар кесишуви, ёзувлар', 'Пересечение записей, записей'),
+         total['overlap_records']),
+        (_drone_t('Ёзувлар кесишуви, RAW га', 'Пересечение записей, RAW га'),
+         total['overlap_raw_ha']),
+        (_drone_t('Такрорий/кўчирилган ёзувлар',
+                  'Повторные/перенесённые записи'),
+         total['repeated_records']),
+        (_drone_t('Қисман янги иш', 'Частичная новая работа'),
+         total['partial_records']),
+        (_drone_t('Фаолликда майдон ўлчанмаган',
+                  'Площадь не измерена при активности'),
+         total['application_without_area_records']),
+        (_drone_t('Дала аниқланмаган, ёзувлар', 'Поле не определено, записей'),
+         total['unassigned_records']),
+        (_drone_t('Дала аниқланмаган, RAW га', 'Поле не определено, RAW га'),
+         total['unassigned_raw_ha']),
+    ]
+    for label, value in summary:
+        ws.append([label, _drone_xlsx_safe(value)])
+    for code in dji_resolver.AREA_STATUSES:
+        label = DRONE_AREA_STATUS_LABELS[code][0 if is_ru else 1]
+        ws.append([_drone_t('Ҳолат: ', 'Статус: ') + code + ' (' + label + ')',
+                   total['status_counts'].get(code, 0)])
+    for code in dji_field.TIERS:
+        label = DRONE_AREA_TIER_FILTER_LABELS[code][0 if is_ru else 1]
+        ws.append([_drone_t('Дала даражаси: ', 'Уровень поля: ') + code
+                   + ' (' + label + ')',
+                   total['tier_counts'].get(code, 0)])
+    st.style_table(ws, num_formats={2: '0.00'})
+
+    ws = wb.create_sheet(_drone_t('Кунлар ва машиналар', 'По дням и машинам'))
+    ws.append([
+        _drone_t('Сана', 'Дата'),
+        _drone_t('Машина', 'Машина'),
+        _drone_t('Ёзувлар', 'Записей'),
+        _drone_t('DJI RAW, га', 'DJI RAW, га'),
+        _drone_t('Текширилган, га', 'Проверено, га'),
+        _drone_t('Дастлабки, га', 'Предварительно, га'),
+        _drone_t('Маълумот етарли эмас', 'Недостаточно данных'),
+        _drone_t('Такрорий/кўчирилган', 'Повторные/перенесённые'),
+        _drone_t('Дала тасдиқланган, %', 'Поле подтверждено, %'),
+        _drone_t('Дала аниқланмаган', 'Поле не определено'),
+    ])
+    for r in data['day_rows']:
+        ws.append([
+            r['date'].isoformat(),
+            _drone_xlsx_safe(r['machine_label']),
+            r['records'],
+            r['raw_ha'],
+            r['certified_ha'],
+            r['provisional_ha'],
+            r['unresolved_records'],
+            r['repeated_records'] + r['partial_records'],
+            r['field_confirmed_pct'],
+            r['unassigned_records'],
+        ])
+    st.style_table(ws, num_formats={4: '0.00', 5: '0.00', 6: '0.00',
+                                    9: '0.0'})
+
+    ws = wb.create_sheet(_drone_t('Ёзувлар', 'Записи'))
+    ws.append([
+        'flight_id',
+        _drone_t('Сана', 'Дата'),
+        _drone_t('Вақт', 'Время'),
+        _drone_t('Машина', 'Машина'),
+        'hardware_id',
+        _drone_t('DJI RAW, м²', 'DJI RAW, м²'),
+        _drone_t('DJI RAW, га', 'DJI RAW, га'),
+        _drone_t('Техник баҳо, м²', 'Техническая оценка, м²'),
+        _drone_t('Техник баҳо, га', 'Техническая оценка, га'),
+        _drone_t('Ҳисоблагич фарқи, м²', 'Разность счётчика, м²'),
+        _drone_t('Ҳолат коди', 'Код статуса'),
+        _drone_t('Ҳолат', 'Статус'),
+        _drone_t('Усул', 'Метод'),
+        _drone_t('Ишонч', 'Уверенность'),
+        _drone_t('Аномалия белгилари', 'Флаги аномалий'),
+        _drone_t('Қўллаш', 'Применение'),
+        _drone_t('Қўллаш далили', 'Признак применения'),
+        _drone_t('Дала', 'Поле'),
+        _drone_t('Дала даражаси', 'Уровень поля'),
+        _drone_t('Дала усули', 'Метод поля'),
+        'area_algorithm_version',
+        'field_resolver_version',
+        'calculation_input_hash',
+        'billable_area_m2',
+    ])
+    for row in data['rows']:
+        view = _drone_area_record_view(row)
+        ws.append([
+            row['flight_id'],
+            row['report_start_date'].isoformat(),
+            view['start_local'][6:],
+            _drone_xlsx_safe(row['machine_label']),
+            _drone_xlsx_safe(row['hardware_id']),
+            row['raw_area_m2'],
+            view['raw_ha'],
+            row['corrected_recorded_area_m2'],
+            view['corrected_ha'],
+            row['controller_delta_area_m2'],
+            row['area_status'],
+            view['status_label'],
+            row['area_method'],
+            row['area_confidence'],
+            _drone_xlsx_safe(';'.join(_drone_area_flags(row))),
+            row['application_activity'],
+            row['application_evidence_kind'],
+            _drone_xlsx_safe(row['field_name_at_snapshot']),
+            row['field_attribution_tier'],
+            _drone_xlsx_safe(row['field_attribution_method']),
+            row['area_algorithm_version'],
+            row['field_resolver_version'],
+            row['calculation_input_hash'],
+            None,
+        ])
+    st.style_table(ws, num_formats={6: '0', 7: '0.00', 8: '0', 9: '0.00',
+                                    10: '0'})
+    return _drone_xlsx_response(wb, 'drone_area_evidence', filters)

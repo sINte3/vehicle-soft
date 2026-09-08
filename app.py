@@ -160,6 +160,13 @@ def create_app():
         # standing invitation.
         if request.path == '/drones/api/route_sync':
             return True
+        # DJI-AREA-EVIDENCE-001: immutable source revisions and catalog
+        # snapshots, same DRONE_API_TOKEN in the body, same deny-by-default.
+        # Two exact paths, not a prefix (see the [REASON] above).
+        if request.path == '/drones/api/source_sync':
+            return True
+        if request.path == '/drones/api/land_snapshot_sync':
+            return True
         # BOT001: Bot API endpoints use Bearer token auth, not browser sessions.
         if request.path.startswith('/api/bot/'):
             return True

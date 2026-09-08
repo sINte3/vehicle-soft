@@ -879,7 +879,7 @@ class DroneReportsLauncherTests(unittest.TestCase):
         self.client = app.test_client()
         login(self.client, self.admin)
 
-    def test_the_launcher_opens_with_twelve_tiles_in_order(self):
+    def test_the_launcher_opens_with_thirteen_tiles_in_order(self):
         import re
         response = self.client.get('/drones/reports')
         self.assertEqual(response.status_code, 200)
@@ -897,6 +897,10 @@ class DroneReportsLauncherTests(unittest.TestCase):
             ('is-warning', '/drones/works/debts'),
             ('is-success', '/drones/works/assignment-hints'),
             ('is-primary', '/drones/reports/calendar'),
+            # DJI-AREA-REPORT-001 reuses is-primary, the accent the flight
+            # summary and the calendar carry, and stands beside them: it is
+            # the same flight data read through the evidence model.
+            ('is-primary', '/drones/area-evidence'),
             ('is-info', '/drones/reports/reconcile'),
             ('is-warning', '/drones/works/debts/aging'),
             ('is-purple', '/drones/reports/spray'),
@@ -939,7 +943,8 @@ class DroneReportsLauncherTests(unittest.TestCase):
         # One inline <svg> per tile, ten tiles. This is also X-6: a tile key
         # with no icon branch renders an EMPTY icon box and nothing fails, so
         # the count is the only thing that catches it.
-        self.assertEqual(tiles.count('<svg'), 10)
+        # DJI-AREA-REPORT-001 brought the eleventh icon branch.
+        self.assertEqual(tiles.count('<svg'), 11)
         for marker in ('http://', 'https://', '<img', '@font-face', 'url('):
             self.assertNotIn(marker, tiles, marker)
 
@@ -1946,8 +1951,8 @@ class DroneNumberFormatTests(unittest.TestCase):
 class DroneNumberPlacementTests(unittest.TestCase):
     """WHERE the filter is applied -- the half a unit test usually misses."""
 
-    TEMPLATES = ('_drones_nav.html', '_money_cell.html', 'coverage.html',
-                 'customers.html',
+    TEMPLATES = ('_drones_nav.html', '_money_cell.html', 'area_evidence.html',
+                 'coverage.html', 'customers.html',
                  'flight_calendar.html', 'health.html', 'list.html',
                  'operator_card.html', 'operator_cash.html',
                  'operators.html', 'reattach.html', 'reports.html',
@@ -2131,8 +2136,14 @@ class DroneNumberPlacementTests(unittest.TestCase):
         #   count, the flights-without-route note, the DJI area and the
         #   calculated one. The UNCERTAINTY column carries none: a percentage
         #   is never grouped in thousands, same rule as «Доля, %».
+        #   DJI-AREA-REPORT-001 brought area_evidence.html 28: hectares and
+        #   record counts in the cards, the day-by-machine rows, the record
+        #   rows and the row counters beside the table titles. The «field
+        #   confirmed %» column carries none (a percentage is never grouped)
+        #   and neither does the DJI flight id (an identifier).
         expected = {
-            '_money_cell.html': 1, 'coverage.html': 9,
+            '_money_cell.html': 1, 'area_evidence.html': 28,
+            'coverage.html': 9,
             'customers.html': 2, 'flight_calendar.html': 9,
             'health.html': 11, 'list.html': 3,
             'operator_cash.html': 19,
@@ -2147,7 +2158,7 @@ class DroneNumberPlacementTests(unittest.TestCase):
                   for name in self.TEMPLATES
                   if '|vs_num' in self.source(name)}
         self.assertEqual(actual, expected)
-        self.assertEqual(sum(actual.values()), 275)
+        self.assertEqual(sum(actual.values()), 303)
 
 
 class DroneUiFixUzbekTests(unittest.TestCase):
@@ -2324,8 +2335,10 @@ class DroneExcelUntouchedTests(unittest.TestCase):
         # DRONE-ANALYTICS-001 added two exports; both are covered by the
         # assertions in the loop above, and the roster is updated so a third
         # one cannot appear without passing through this check.
+        # DJI-AREA-REPORT-001 added the eighth.
         self.assertEqual(sorted(names),
-                         ['flights_xlsx', 'spray_usage_xlsx', 'summary_xlsx',
+                         ['area_evidence_xlsx', 'flights_xlsx',
+                          'spray_usage_xlsx', 'summary_xlsx',
                           'works_debt_xlsx', 'works_debts_aging_xlsx',
                           'works_reports_xlsx', 'works_xlsx'])
 
