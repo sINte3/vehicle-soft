@@ -8,10 +8,6 @@
       "kit_blob": "2453f1cc46aaae13fef0f21770fb7d2f1b0234d4",
       "product_blob": "2453f1cc46aaae13fef0f21770fb7d2f1b0234d4"
     },
-    "drone_collector/main.py": {
-      "kit_blob": "95a6a610865f4d8e8bfbcde16fb320dd10f69671",
-      "product_blob": "95a6a610865f4d8e8bfbcde16fb320dd10f69671"
-    },
     "drone_coverage_recalc.py": {
       "kit_blob": "906d9e87c36246ee7dab46cdfcfa36d58fa619fe",
       "product_blob": "906d9e87c36246ee7dab46cdfcfa36d58fa619fe"
@@ -34,7 +30,12 @@
     }
   },
   "kit": "DRONE-USEFUL-AREA-PILOT-001",
-  "kit_differs_on_purpose": {},
+  "kit_differs_on_purpose": {
+    "drone_collector/main.py": {
+      "kit_blob": "7a98429f6eeadfbf79ff540b45a408cf7b69203b",
+      "product_blob": "95a6a610865f4d8e8bfbcde16fb320dd10f69671"
+    }
+  },
   "kit_own_files": {
     "ops/pilot_useful_area_001/BAK_TEX11_DJI_COLLECT_TO_STAGING.ps1": "2677772fe6a254b44e1358499328eefadcbd691a",
     "ops/pilot_useful_area_001/PREFLIGHT_AND_COPY_TEST.ps1": "4c7d737aaddbfdf164f6fbf507fc0dba5d01b914",
@@ -43,7 +44,7 @@
     "ops/pilot_useful_area_001/STAGING_PILOT_REPORT.ps1": "d8fcfd09e5c06542aed80e442da4867a85c285ba",
     "ops/pilot_useful_area_001/STAGING_RECALCULATE_AND_VERIFY.ps1": "fa0c97c1213e15d0d17a2142d447797383994a33",
     "ops/pilot_useful_area_001/STAGING_ROLLBACK.ps1": "5e18ad0a1a66133a27b478a114dc1c9dd8ca601f",
-    "ops/pilot_useful_area_001/pilot_blob_manifest.py": "e0ac58d0af4d7ed03eb3160e239ef3cd7ff2a537",
+    "ops/pilot_useful_area_001/pilot_blob_manifest.py": "3d22e094025d381a1ea2195c9d7231f99a94bb24",
     "ops/pilot_useful_area_001/pilot_collect_check.py": "82a98b96f4457573efb2de844c58fe3d0cc388db",
     "ops/pilot_useful_area_001/pilot_collect_gate.py": "a10b16003722fdd3de2ce83d327757a077f71f77",
     "ops/pilot_useful_area_001/pilot_common.py": "46023ab309a245c019c6b6c45dc966ba7df46b16",
