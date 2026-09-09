@@ -370,8 +370,23 @@ def refresh_flight_evidence(con, root, flight_id,
             try:
                 text = read_body(root, revs['airlines']).decode('utf-8')
                 compact = text.replace(' ', '')
-                if '"file_v4_url":null' in compact or '"file_v4_url":""' in compact:
-                    row['v4_absent_reason'] = 'NO_V4_URL_AT_SOURCE'
+                # [REASON]: ключ здесь -- `file_v4_url_path`, а НЕ
+                # `file_v4_url`. Сырое тело airlines не хранится никогда: оба
+                # производителя -- живой `drone_collector.sources`
+                # (`airlines_document`) и офлайновый импорт
+                # (`tools/dji_area_import_sources.airlines_paths`) -- кладут
+                # производный документ, где ссылка урезана до host+path и
+                # ключ получил суффикс `_path`. Проверка на `"file_v4_url"`
+                # не совпадала ни с одним телом, какое когда-либо писалось,
+                # и `NO_V4_URL_AT_SOURCE` не выставлялся никогда: «у DJI нет
+                # V4» молча становилось `NOT_CAPTURED`, то есть «не
+                # захватили». Старое написание оставлено рядом: если тело
+                # такой формы где-то лежит, смысл у него тот же.
+                for key in ('"file_v4_url_path"', '"file_v4_url"'):
+                    if (key + ':null' in compact
+                            or key + ':""' in compact):
+                        row['v4_absent_reason'] = 'NO_V4_URL_AT_SOURCE'
+                        break
             except (StoreError, UnicodeDecodeError):
                 pass
 

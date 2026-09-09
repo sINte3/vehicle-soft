@@ -870,8 +870,20 @@ fetches four things for itself, and all four are kept:
 |---|---|---|
 | `card` | `GET .../api/web/v1/flight_records/<id>` | the JSON envelope, byte for byte |
 | `route` | `POST .../api/web/v2/flight_datas/flight_records` | the protobuf, byte for byte |
-| `airlines` | `GET .../api/web/v2/flight_datas/airlines/<id>` | **a derived record only** — see below |
-| `v4` | `GET <storage>/objects/airline_v4/<id>/…` | the protobuf, byte for byte, up to a megabyte |
+| `airlines` | `GET .../api/web/v2/airlines/<id>` | **a derived record only** — see below |
+| `v4` | `GET .../objects/airline_v4/<id>/…` | the protobuf, byte for byte, up to a megabyte |
+
+The airlines path has **no** `flight_datas/` segment, unlike the route above
+it. That asymmetry is DJI's, and assuming it away is expensive: the run of
+2026-09-09 over the day 2026-08-18 matched
+`/api/web/v2/flight_datas/airlines/<id>`, which DJI has never served, and so
+kept 198 cards, 198 routes and 197 V4 bodies while
+classifying **zero** airlines — and, because a visit is only settled once the
+airlines record has arrived, waited the full `DJI_SOURCE_WAIT_MS` on every one
+of 201 flights: four hours for what takes ten minutes. The path is now
+anchored on both ends, and any *other* path naming `airlines` is counted into
+`sources_airlines_unmatched` and named once in the log, so that the same
+mistake is loud instead of silent.
 
 The airlines descriptor is the exception, and deliberately. Its whole payload
 is three pre-signed storage links, each a temporary credential. What survives
@@ -879,6 +891,15 @@ is `code`, `status` and `host+path` of every link **with the query string
 removed** — and it is the *absence* of `file_v4_url` in that record that says
 "DJI holds no V4 for this flight" (`NO_V4_URL`), which is a finding in its own
 right, not a failure.
+
+Because that absence is read as DJI's own word, a descriptor is kept only when
+DJI actually answered one: a non-2xx status, or an in-body `code` other than
+`0`, is refused and counted, exactly as it is for the card. This endpoint
+answers refusals and 5xx with JSON too, and that JSON has no
+`airline.file_v4_url` — kept, it would become a record asserting there is no
+V4, the visit would count as complete, and the resumable skip (which reads
+precisely that word) would retire the flight for good. A transient error would
+be frozen into the evidence as a finding that no re-run could undo.
 
 The V4 body is read inside a `page.route` handler rather than from the
 `requestfinished` event. On the August 2026 forensic run, reading bodies of

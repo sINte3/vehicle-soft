@@ -106,7 +106,24 @@ CARD_URL = '%s/api/web/v1/flight_records/%d' % (API_HOST, FLIGHT_ID)
 LIST_URL = '%s/api/web/v1/flight_records?page=1&page_size=30' % API_HOST
 IDS_URL = '%s/api/web/v1/flight_records/only_all_ids' % API_HOST
 ROUTE_URL = '%s/api/web/v2/flight_datas/flight_records' % API_HOST
-AIRLINES_URL = '%s/api/web/v2/flight_datas/airlines/%d' % (API_HOST, FLIGHT_ID)
+# The airlines descriptor, spelled as DJI serves it. The path shape is not
+# invented: `services/protoRequest.ts` of the SPA reads
+# `mixApi(`/api/web/v2/airlines/${id}`)`, and a captured record-page trace of
+# a real flight shows `GET /api/web/v2/airlines/<id>` on the API host. Only
+# the host here is fictional.
+AIRLINES_URL = '%s/api/web/v2/airlines/%d' % (API_HOST, FLIGHT_ID)
+# The path the collector matched until 2026-09-09, invented by analogy with
+# the route above. DJI has never served it. It is kept here as a fixture of
+# what must NOT be recognised -- see the rejection tests.
+AIRLINES_URL_NEVER_SERVED = ('%s/api/web/v2/flight_datas/airlines/%d'
+                             % (API_HOST, FLIGHT_ID))
+# The V4 object as the live trace shows it: the same API host, under
+# `flight_datas/objects/`, with the signature in the query.
+LIVE_V4_URL = ('%s/api/web/v2/flight_datas/objects/airline_v4/%d/'
+               'dji_service_0_4891_NOT_REAL' % (API_HOST, FLIGHT_ID))
+# Its sibling, the std_detail object. Same directory, NOT the V4 file.
+LIVE_DETAIL_URL = ('%s/api/web/v2/flight_datas/objects/airline/%d/'
+                   'dji_service_0_4891_NOT_REAL' % (API_HOST, FLIGHT_ID))
 
 # The query string IS the credential; the collector must keep the path only.
 V4_QUERY = ('Expires=1790000000&OSSAccessKeyId=NOTREALKEYID0000'
@@ -340,9 +357,10 @@ def card_request(flight_id=FLIGHT_ID, code=0, **kwargs):
                         body=card_body(flight_id, code=code), **kwargs)
 
 
-def airlines_request(flight_id=FLIGHT_ID, v4_url=V4_URL, **kwargs):
-    return _FakeRequest('%s/api/web/v2/flight_datas/airlines/%d'
-                        % (API_HOST, flight_id),
+def airlines_request(flight_id=FLIGHT_ID, v4_url=V4_URL, url=None, **kwargs):
+    """The airlines descriptor as DJI serves it, unless `url` overrides it."""
+    return _FakeRequest(url or ('%s/api/web/v2/airlines/%d'
+                                % (API_HOST, flight_id)),
                         body=airlines_raw(flight_id, v4_url=v4_url), **kwargs)
 
 
@@ -380,8 +398,66 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(classify_source_url(AIRLINES_URL),
                          (SOURCE_AIRLINES, FLIGHT_ID))
 
+    def test_the_live_airlines_path_has_no_flight_datas_segment(self):
+        """THE LIVE FAILURE OF 2026-09-09, as a test.
+
+        The collector matched `/api/web/v2/flight_datas/airlines/<id>` --
+        the route's prefix, glued onto the airlines name. DJI serves the
+        descriptor at `/api/web/v2/airlines/<id>` and has never served the
+        other form, so the run classified zero airlines over 201 flights.
+        Spelled out here literally rather than through the constant, so that
+        editing the constant cannot make this pass by agreeing with itself.
+        """
+        self.assertEqual(
+            classify_source_url('%s/api/web/v2/airlines/%d'
+                                % (API_HOST, FLIGHT_ID)),
+            (SOURCE_AIRLINES, FLIGHT_ID))
+        self.assertEqual(classify_source_url(AIRLINES_URL_NEVER_SERVED),
+                         (None, None),
+                         'a path DJI has never served must not be an airlines'
+                         ' descriptor')
+
+    def test_a_lookalike_of_the_airlines_path_is_not_the_descriptor(self):
+        """NEGATIVE CONTROL: the pattern is anchored, not a search for the
+        word. Every URL here really occurs on, or plausibly near, a record
+        page; none of them is the descriptor."""
+        for url in (
+                # No flight named at all.
+                '%s/api/web/v2/airlines' % API_HOST,
+                '%s/api/web/v2/airlines/' % API_HOST,
+                # Named, but not by digits.
+                '%s/api/web/v2/airlines/abc' % API_HOST,
+                '%s/api/web/v2/airlines/%d-copy' % (API_HOST, FLIGHT_ID),
+                # Something below the descriptor is not the descriptor.
+                '%s/api/web/v2/airlines/%d/frames' % (API_HOST, FLIGHT_ID),
+                # Another API version is another endpoint.
+                '%s/api/web/v3/airlines/%d' % (API_HOST, FLIGHT_ID),
+                '%s/api/web/v1/airlines/%d' % (API_HOST, FLIGHT_ID),
+                # A plural list, not one flight's descriptor.
+                '%s/api/web/v2/flight_datas/airlines' % API_HOST,
+                # The V4 object's own sibling, std_detail.
+                LIVE_DETAIL_URL):
+            with self.subTest(url):
+                self.assertEqual(classify_source_url(url), (None, None))
+
+    def test_the_airlines_descriptor_is_a_get_and_only_a_get(self):
+        """NEGATIVE CONTROL to the recognition test above."""
+        self.assertEqual(classify_source_url(AIRLINES_URL, 'POST'),
+                         (None, None))
+        self.assertEqual(classify_source_url(AIRLINES_URL, 'DELETE'),
+                         (None, None))
+
     def test_the_signed_v4_url_is_a_v4_and_names_the_flight(self):
         self.assertEqual(classify_source_url(V4_URL), (SOURCE_V4, FLIGHT_ID))
+
+    def test_the_live_v4_object_path_is_a_v4_and_names_the_flight(self):
+        """The V4 object lives under the API host in life, not on a separate
+        storage host; the pattern must not depend on where it sits."""
+        self.assertEqual(classify_source_url(LIVE_V4_URL),
+                         (SOURCE_V4, FLIGHT_ID))
+        self.assertEqual(
+            classify_source_url('%s?%s' % (LIVE_V4_URL, V4_QUERY)),
+            (SOURCE_V4, FLIGHT_ID))
 
     def test_a_get_on_the_route_path_is_not_a_route_post(self):
         """The route is a POST. A GET on the same path is something else."""
@@ -412,6 +488,14 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(api_version_of(url_path(ROUTE_URL)), 'v2')
         self.assertEqual(api_version_of(V4_PATH_ONLY), 'storage-object')
         self.assertIsNone(api_version_of('/record/1'))
+
+    def test_the_live_paths_report_the_version_they_really_carry(self):
+        """`storage-object` is the fallback for a V4 URL on a bare storage
+        host. In life the object answers on the API host under
+        `/api/web/v2/`, so the live V4 path reports `v2` -- recorded here so
+        that the fallback above is not mistaken for what production sees."""
+        self.assertEqual(api_version_of(url_path(AIRLINES_URL)), 'v2')
+        self.assertEqual(api_version_of(url_path(LIVE_V4_URL)), 'v2')
 
     def test_the_path_never_carries_the_query(self):
         self.assertEqual(url_path(V4_URL), V4_PATH_ONLY)
@@ -493,6 +577,47 @@ class AirlinesDocumentTests(unittest.TestCase):
         document = airlines_document(raw)
         self.assertEqual(document['code'], 101)
         self.assertIsNone(document['file_v4_url_path'])
+
+    def test_the_body_dji_actually_serves_is_reduced_to_paths(self):
+        """The envelope DJI really sends, not the one this file invents.
+
+        [REASON]: every case above reads `airlines_raw`, which this file also
+        wrote -- a fixture agreeing with itself proves nothing about DJI. The
+        shape below is the one a captured record-page trace shows: `message`
+        and `request_id` beside `data`, no `id` inside `airline`, and a
+        `std_summary_url` that is null rather than absent. Only the host and
+        the credentials are fictional.
+        """
+        raw = json.dumps({
+            'status': 200,
+            'data': {'airline': {
+                'std_detail_url': '%s?%s' % (LIVE_DETAIL_URL, V4_QUERY),
+                'file_v4_url': '%s?%s' % (LIVE_V4_URL, V4_QUERY),
+                'std_summary_url': None}},
+            'code': 0, 'message': 'OK',
+            'request_id': '0fe96abf-NOT-REAL',
+        }, ensure_ascii=False).encode('utf-8')
+        self.assertNotEqual(body_secret_markers(raw), [],
+                            'NEGATIVE CONTROL: the live body does carry the '
+                            'credentials the record must not keep')
+        document = airlines_document(raw)
+        self.assertEqual(sorted(document),
+                         ['code', 'file_v4_url_path', 'status',
+                          'std_detail_url_path', 'std_summary_url_path'])
+        self.assertEqual(document['code'], 0)
+        self.assertEqual(document['status'], 200)
+        self.assertIsNone(document['std_summary_url_path'])
+        self.assertEqual(
+            document['file_v4_url_path'],
+            'kr-ag2-api.example.invalid/api/web/v2/flight_datas/objects/'
+            'airline_v4/%d/dji_service_0_4891_NOT_REAL' % FLIGHT_ID)
+        self.assertTrue(v4_url_present(document))
+        stored = airlines_bytes(document).decode('utf-8')
+        for marker in ('Signature', 'OSSAccessKeyId', 'Expires', '?', '&',
+                       'request_id', 'NOT-REAL'):
+            self.assertNotIn(marker, stored,
+                             'the airlines record kept %r' % marker)
+        self.assertEqual(body_secret_markers(airlines_bytes(document)), [])
 
     def test_host_and_path_drops_the_query_and_the_fragment(self):
         self.assertEqual(host_and_path(V4_URL),
@@ -684,6 +809,190 @@ class CaptureLifecycleTests(unittest.TestCase):
         self.assertTrue(flight.settled)
         self.assertEqual(flight.status, STATUS_V4)
         self.assertTrue(flight.v4_url_present)
+
+    def test_a_visit_with_a_v4_does_not_wait_out_the_ceiling(self):
+        """THE COST OF THE 2026-09-09 FAILURE, as a test.
+
+        All four bodies arrive within the first few pumps, so the visit must
+        end within a few pumps. It did not: with the airlines descriptor
+        unclassified, `settled` could never become true, and every one of
+        201 flights burned the whole 70 s ceiling after its last body had
+        already arrived -- four hours instead of ten minutes.
+
+        The ceiling here is the live one, and the assertion is on the number
+        of pumps rather than on a duration: at 250 ms a pump, waiting the
+        ceiling out is 280 of them.
+        """
+        cfg = source_config(source_wait_ms=70000)
+        flight = self.run_visit(script=full_visit_script(), cfg=cfg)
+        self.assertTrue(flight.settled)
+        self.assertEqual(flight.status, STATUS_V4)
+        ceiling_pumps = cfg.source_wait_ms // 250
+        self.assertLessEqual(
+            len(self.page.waits), 8,
+            'the visit settled only after %d of the %d pumps the ceiling '
+            'allows' % (len(self.page.waits), ceiling_pumps))
+
+    def test_the_airlines_descriptor_alone_decides_the_visit_is_settled(self):
+        """The other three are not enough: it is the airlines record that
+        says whether a V4 is even expected. NEGATIVE CONTROL to the case
+        above -- the same script minus the descriptor waits the ceiling."""
+        script = [step_finished(card_request()),
+                  step_finished(route_request()),
+                  step_route(_FakeRoute(url='%s%s?%s' % (STORAGE_HOST,
+                                                         V4_PATH_ONLY,
+                                                         V4_QUERY)))]
+        cfg = source_config(source_wait_ms=70000)
+        flight = self.run_visit(script=script, cfg=cfg)
+        self.assertTrue(flight.has(SOURCE_V4))
+        self.assertFalse(flight.has(SOURCE_AIRLINES))
+        self.assertFalse(flight.settled)
+        self.assertFalse(flight.complete)
+        # The ceiling really is burned to the end -- 70 s of pumps for a
+        # visit whose last body arrived on the third. This is the shape of
+        # the 2026-09-09 run, and the case above is the same script cured.
+        self.assertGreater(len(self.page.waits), cfg.source_wait_ms // 250 - 2)
+
+    def test_the_descriptor_dji_never_served_is_not_captured_or_counted(self):
+        """A visit in which the descriptor arrives at the path the collector
+        used to expect: nothing is captured from it, the visit is incomplete,
+        and the run says what it saw instead of leaving a silent zero."""
+        script = [step_finished(card_request()),
+                  step_finished(route_request()),
+                  step_finished(airlines_request(
+                      url=AIRLINES_URL_NEVER_SERVED)),
+                  step_route(_FakeRoute(url='%s%s?%s' % (STORAGE_HOST,
+                                                         V4_PATH_ONLY,
+                                                         V4_QUERY)))]
+        flight = self.run_visit(script=script,
+                                cfg=source_config(source_wait_ms=2000))
+        self.assertFalse(flight.has(SOURCE_AIRLINES))
+        self.assertIsNone(flight.v4_url_present)
+        self.assertFalse(flight.complete)
+        counts = self.capture.counts()
+        self.assertEqual(counts['airlines_unmatched'], 1)
+        self.assertEqual(counts['airlines_unmatched_paths'],
+                         ['/api/web/v2/flight_datas/airlines/<id>'])
+        self.assertIn('names airlines but', self.log.text())
+        # [REASON]: the standing guard. `AIRLINES_LIKE_PATH` is the one
+        # loose pattern in this module, and the only thing that keeps it a
+        # diagnostic is that nothing downstream of the counter can store.
+        # If a later edit ever wires it into capture, this fails.
+        self.assertEqual(sorted(flight.items),
+                         [SOURCE_CARD, SOURCE_ROUTE, SOURCE_V4])
+        self.assertEqual(
+            [item['source_type'] for item in source_items(flight, RUN_ID)],
+            [SOURCE_CARD, SOURCE_ROUTE, SOURCE_V4],
+            'a counted lookalike must never reach the queue')
+
+    def test_a_refused_airlines_answer_is_not_dji_saying_there_is_no_v4(self):
+        """A transient error must not freeze into the evidence as a finding.
+
+        [REASON]: this endpoint answers a refusal and a 5xx with JSON too,
+        and that JSON has no `airline.file_v4_url`. Kept, it would become a
+        record asserting DJI'S OWN WORD that the flight has no V4 -- and
+        because `flight_already_captured` reads exactly that word, the
+        flight would be retired for good and no re-run could undo it. The
+        case was unreachable while the collector listened at a path DJI does
+        not serve; fixing the path made it live on every flight.
+        """
+        for label, body, status in (
+                ('a 5xx with a JSON error body',
+                 b'{"code":50000,"status":500,"message":"internal error"}',
+                 500),
+                ('a 200 carrying a refusal code',
+                 b'{"code":101,"status":200,"message":"no permission"}', 200),
+                ('a 403 with the descriptor shape but no link',
+                 b'{"code":0,"status":403,"data":{"airline":{}}}', 403)):
+            with self.subTest(label):
+                log = _QuietLog()
+                capture = SourceCapture(logger=log)
+                page = _FakePage()
+                capture.attach(page)
+                capture.begin_flight(FLIGHT_ID)
+                page.deliver_finished(_FakeRequest(AIRLINES_URL, body=body,
+                                                   status=status))
+                flight = capture.flight(FLIGHT_ID)
+                self.assertFalse(flight.has(SOURCE_AIRLINES),
+                                 'an error body was stored as a descriptor')
+                self.assertIsNone(flight.v4_url_present,
+                                  'an error body answered the V4 question')
+                self.assertFalse(flight.settled)
+                self.assertFalse(flight.complete)
+
+    def test_the_descriptor_dji_does_send_is_still_accepted(self):
+        """NEGATIVE CONTROL: the guards refuse errors, not the answer."""
+        log = _QuietLog()
+        capture = SourceCapture(logger=log)
+        page = _FakePage()
+        capture.attach(page)
+        capture.begin_flight(FLIGHT_ID)
+        page.deliver_finished(airlines_request())
+        flight = capture.flight(FLIGHT_ID)
+        self.assertTrue(flight.has(SOURCE_AIRLINES))
+        self.assertTrue(flight.v4_url_present)
+        self.assertEqual(capture.counts()['rejected'], {})
+
+    def test_a_flight_whose_descriptor_failed_stays_open_for_a_re_run(self):
+        """The consequence, stated as the thing that actually matters: an
+        error must leave the flight to be visited again, not queue a record
+        that says it is finished."""
+        script = [step_finished(card_request()),
+                  step_finished(route_request()),
+                  step_finished(_FakeRequest(
+                      AIRLINES_URL, body=b'{"code":50000,"status":500}',
+                      status=500)),
+                  step_route(_FakeRoute(url='%s%s?%s' % (STORAGE_HOST,
+                                                         V4_PATH_ONLY,
+                                                         V4_QUERY)))]
+        flight = self.run_visit(script=script,
+                                cfg=source_config(source_wait_ms=2000))
+        self.assertEqual(sorted(flight.items),
+                         [SOURCE_CARD, SOURCE_ROUTE, SOURCE_V4])
+        self.assertFalse(flight.complete,
+                         'a flight without a real descriptor is not done')
+        self.assertEqual(
+            self.capture.counts()['rejected'].get('airlines:http-500'), 1)
+
+    def test_a_visit_at_the_live_path_leaves_the_lookalike_count_at_zero(self):
+        """NEGATIVE CONTROL: the counter must not fire on a healthy visit."""
+        flight = self.run_visit(script=full_visit_script())
+        self.assertTrue(flight.has(SOURCE_AIRLINES))
+        self.assertEqual(self.capture.counts()['airlines_unmatched'], 0)
+        self.assertEqual(self.capture.counts()['airlines_unmatched_paths'], [])
+        self.assertNotIn('names airlines but', self.log.text())
+
+    def test_the_lookalike_warning_is_said_once_per_path_not_per_flight(self):
+        """A wrong path is wrong on every flight; saying so 226 times would
+        bury the run's own log."""
+        log = _QuietLog()
+        capture = SourceCapture(logger=log)
+        for flight_id in (FLIGHT_ID, FLIGHT_ID + 1, FLIGHT_ID + 2):
+            capture.begin_flight(flight_id)
+            # A DIFFERENT url per flight, as it would really be: the id is
+            # in the path, so without folding this would be three entries
+            # and three warnings.
+            capture.note_request_finished(airlines_request(
+                flight_id,
+                url='%s/api/web/v2/flight_datas/airlines/%d' % (API_HOST,
+                                                               flight_id)))
+        counts = capture.counts()
+        self.assertEqual(counts['airlines_unmatched'], 3)
+        self.assertEqual(counts['airlines_unmatched_paths'],
+                         ['/api/web/v2/flight_datas/airlines/<id>'])
+        self.assertEqual(log.text().count('names airlines but'), 1)
+
+    def test_the_api_version_is_not_folded_away_with_the_flight_id(self):
+        """NEGATIVE CONTROL to the folding: a path nobody can look up would
+        be a worse report than no report. Only whole digit segments go."""
+        log = _QuietLog()
+        capture = SourceCapture(logger=log)
+        capture.begin_flight(FLIGHT_ID)
+        capture.note_request_finished(_FakeRequest(
+            '%s/api/web/v3/airlines/%d' % (API_HOST, FLIGHT_ID),
+            body=airlines_raw()))
+        self.assertEqual(capture.counts()['airlines_unmatched_paths'],
+                         ['/api/web/v3/airlines/<id>'])
 
     def test_the_record_page_of_the_flight_is_the_one_opened(self):
         self.run_visit(script=full_visit_script())
@@ -1002,6 +1311,59 @@ class ResumeTests(OutboxTestCase):
                                                 self.outbox),
                         'NO_V4_URL must count as a complete capture')
 
+    def test_a_queue_left_by_the_run_of_2026_09_09_is_resumed_not_redone(self):
+        """THE STATE ON DISK AFTER THE FAILED RUN, as a test.
+
+        That run queued 198 cards, 198 routes and 197 V4 bodies and NO
+        airlines, because it was listening at a path DJI does not serve.
+        A re-run with the path fixed must revisit those flights, queue the
+        one thing that is missing, and leave the hundred megabytes already
+        on disk exactly as they are -- not re-queue them, not rewrite them,
+        not make a second revision of them.
+        """
+        self.queue(self.visited(), exclude={SOURCE_AIRLINES})
+        before = {path.name: path.read_bytes()
+                  for path in self.outbox.pending()}
+        self.assertEqual(sorted(name.split('_')[2] for name in before),
+                         [SOURCE_CARD, SOURCE_ROUTE, SOURCE_V4])
+
+        known = known_sources(self.outbox)
+        self.assertNotIn(SOURCE_AIRLINES, known[FLIGHT_ID])
+        self.assertFalse(flight_already_captured(FLIGHT_ID, known,
+                                                 self.outbox),
+                         'a flight without its airlines record is not done')
+
+        # The re-visit: the page serves all four again, as it always does.
+        result, items = self.queue(self.visited(),
+                                   exclude=set(known[FLIGHT_ID]))
+        self.assertEqual([item['source_type'] for item in items],
+                         [SOURCE_AIRLINES])
+        self.assertEqual(result.queued, 1)
+        self.assertEqual(result.duplicates, 0)
+
+        after = {path.name: path.read_bytes()
+                 for path in self.outbox.pending()}
+        self.assertEqual(len(after), 4)
+        for name, body in before.items():
+            self.assertIn(name, after, '%s was renamed or removed' % name)
+            self.assertEqual(after[name], body, '%s was rewritten' % name)
+
+        known = known_sources(self.outbox)
+        self.assertTrue(flight_already_captured(FLIGHT_ID, known,
+                                                self.outbox),
+                        'the second run must leave the flight finished')
+
+    def test_a_second_resume_of_a_finished_flight_queues_nothing(self):
+        """NEGATIVE CONTROL: the recovery converges instead of re-queuing."""
+        self.queue(self.visited(), exclude={SOURCE_AIRLINES})
+        known = known_sources(self.outbox)
+        self.queue(self.visited(), exclude=set(known[FLIGHT_ID]))
+        result, items = self.queue(
+            self.visited(), exclude=set(known_sources(self.outbox)[FLIGHT_ID]))
+        self.assertEqual(items, [])
+        self.assertEqual(result.queued, 0)
+        self.assertEqual(len(self.outbox.pending()), 4)
+
     def test_a_flight_with_only_a_card_is_visited_again(self):
         flight = self.visited()
         self.queue(flight, exclude={SOURCE_ROUTE, SOURCE_AIRLINES, SOURCE_V4})
@@ -1086,6 +1448,37 @@ class EnqueueSourcesTests(OutboxTestCase):
                     if SOURCE_AIRLINES in path.name][0]
         envelope = self.outbox.read(airlines)
         self.assertIs(envelope['diagnostics']['v4_url_present'], False)
+
+    def test_the_airlines_envelope_on_disk_carries_no_credential(self):
+        """End to end: a visit whose descriptor is nothing but three signed
+        links leaves a file on disk that has none of them.
+
+        The check is on the TEXT of the written envelope, decoded body and
+        all, because base64 hides a credential from a search and the queue
+        is what an operator would read."""
+        self.queue(self.visited())
+        airlines = [path for path in self.outbox.pending()
+                    if SOURCE_AIRLINES in path.name][0]
+        envelope = self.outbox.read(airlines)
+        body = envelope['body']
+        self.assertEqual(body['schema_version'], SCHEMA_AIRLINES_PATHS_ONLY)
+        self.assertEqual(body['request_context']['path'],
+                         '/api/web/v2/airlines/%d' % FLIGHT_ID)
+        decoded = base64.b64decode(body['body_b64']).decode('utf-8')
+        text = airlines.read_text(encoding='utf-8') + '\n' + decoded
+        for marker in ('Signature', 'OSSAccessKeyId', 'Expires',
+                       'NOT-REAL-SIGNATURE-V4', 'NOTREALKEYID0000'):
+            self.assertNotIn(marker, text,
+                             'the queued airlines envelope kept %r' % marker)
+        self.assertEqual(find_secret_markers(text), [])
+
+    def test_the_raw_descriptor_would_never_survive_that_check(self):
+        """NEGATIVE CONTROL: the raw body the page received does carry them,
+        so the assertions above can tell the two cases apart."""
+        text = airlines_raw().decode('utf-8')
+        for marker in ('Signature', 'OSSAccessKeyId', 'Expires'):
+            self.assertIn(marker, text)
+        self.assertNotEqual(find_secret_markers(text), [])
 
     def test_a_body_carrying_a_signed_link_is_refused_and_nothing_is_written(self):
         flight = self.visited()

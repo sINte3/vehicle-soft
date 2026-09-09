@@ -137,7 +137,74 @@ class Base(unittest.TestCase):
                               cwd=os.path.dirname(os.path.dirname(TOOL)))
 
 
+def airlines_derived(v4_path='kr-ag2-api.invalid/api/web/v2/flight_datas/'
+                              'objects/airline_v4/1/dji_service_NOT_REAL'):
+    """Производный документ airlines -- РОВНО в той форме, в какой его пишут
+    оба производителя.
+
+    [REASON]: ключ `file_v4_url_path`, а не `file_v4_url`. Форма взята из
+    `drone_collector.sources.airlines_bytes` и совпадает с
+    `tools/dji_area_import_sources.airlines_paths`; сырое тело DJI с
+    подписанными ссылками не хранится нигде и сюда попасть не может.
+    """
+    return json.dumps({'code': 0, 'status': 200,
+                       'file_v4_url_path': v4_path,
+                       'std_detail_url_path': None,
+                       'std_summary_url_path': None},
+                      ensure_ascii=False, sort_keys=True,
+                      separators=(',', ':')).encode('utf-8')
+
+
 class SourceIngest(Base):
+
+    def test_no_v4_at_dji_is_named_so_and_not_called_not_captured(self):
+        """Ревизия airlines без ссылки на V4 -- это НАЙДЕННОЕ отсутствие.
+
+        [REASON]: проверка искала `"file_v4_url":null`, а оба производителя
+        пишут `file_v4_url_path`. Совпадений не было никогда, и «у DJI нет
+        V4» записывалось как `NOT_CAPTURED` -- «не захватили», то есть вина
+        сборщика вместо факта об источнике. Живьём это не проявлялось
+        только потому, что ревизий airlines не существовало вовсе:
+        сборщик слушал не тот путь.
+        """
+        self.add_flight(FLIGHT_A)
+        resp = self.post_sources([source(
+            FLIGHT_A, 'airlines', airlines_derived(v4_path=None),
+            schema_version='airlines-paths-only')])
+        self.assertEqual(resp.get_json()['errors'], 0, resp.get_json())
+        row = self.raw('SELECT v4_absent_reason, airlines_revision_id '
+                       'FROM dji_flight_evidence WHERE flight_id=?',
+                       (FLIGHT_A,))[0]
+        self.assertIsNotNone(row[1], 'ревизия airlines не привязалась')
+        self.assertEqual(row[0], 'NO_V4_URL_AT_SOURCE')
+
+    def test_a_v4_url_at_dji_means_the_body_is_merely_not_captured(self):
+        """ОТРИЦАТЕЛЬНЫЙ КОНТРОЛЬ: не всякая ревизия airlines даёт этот
+        вердикт. Ссылка есть, тела нет -- это именно `NOT_CAPTURED`."""
+        self.add_flight(FLIGHT_A)
+        self.post_sources([source(FLIGHT_A, 'airlines', airlines_derived(),
+                                  schema_version='airlines-paths-only')])
+        row = self.raw('SELECT v4_absent_reason FROM dji_flight_evidence '
+                       'WHERE flight_id=?', (FLIGHT_A,))[0]
+        self.assertEqual(row[0], 'NOT_CAPTURED')
+
+    def test_the_derived_airlines_document_carries_no_credential(self):
+        """Приёмник не должен получить подписанную ссылку -- и не получает:
+        в очередь идёт только производный документ. Здесь проверяется, что
+        сырое тело он бы ОТВЕРГ, то есть защита работает в обе стороны."""
+        self.add_flight(FLIGHT_A)
+        raw_body = json.dumps({
+            'status': 200, 'code': 0,
+            'data': {'airline': {'file_v4_url':
+                                 'https://kr-ag2-api.invalid/x?Expires=1'
+                                 '&OSSAccessKeyId=NOT-REAL'
+                                 '&Signature=NOT-REAL'}}}).encode('utf-8')
+        resp = self.post_sources([source(FLIGHT_A, 'airlines', raw_body,
+                                         schema_version='airlines-paths-only')])
+        self.assertEqual(resp.get_json()['errors'], 1, resp.get_json())
+        self.assertEqual(
+            self.raw('SELECT COUNT(*) FROM dji_source_revisions '
+                     'WHERE source_type=?', ('airlines',))[0][0], 0)
 
     def test_wrong_token_is_401_then_right_token_200(self):
         self.add_flight(FLIGHT_A)

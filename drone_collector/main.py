@@ -222,13 +222,31 @@ COLLECT_SUMMARY_KEYS = (
 # строку, по которой нельзя связать очередь на диске с рядами
 # `dji_flight_sources.capture_run_id` у приёмника: ключ, отсутствующий в
 # наборе, не печатается вовсе, и его молчание неотличимо от нуля.
+#
+# [REASON]: `sources_list` стоял здесь и печатал НОЛЬ всегда. Ревизию `list`
+# посещение записи дать не может по построению (`VISIT_SOURCE_TYPES` её не
+# содержит), и ни один живой путь её не создаёт вовсе: единственный
+# производитель -- офлайновый импорт `tools/dji_area_import_sources.py`.
+# Живьём происхождение списка несёт `drone_flights.raw_json`, который кладёт
+# приёмник вылетов; `dji_area.store.refresh_flight_evidence` берёт его при
+# отсутствии ревизии, а отпечаток входа считает
+# `dji_area.pipeline._list_fallback_sha`.
+#
+# Это ПРОТИВОПОЛОЖНО правилу абзацем выше, и намеренно. Там ключ обязателен
+# потому, что у него есть настоящее значение и молчание скрыло бы его. Здесь
+# значения нет и быть не может, а печатался ноль -- то есть не молчание, а
+# УТВЕРЖДЕНИЕ «списка не захвачено», которое читается как потеря
+# происхождения. Из двух зол выбрано отсутствие: неизвестное лучше молчит,
+# чем врёт нулём. Тот же выбор, что сделан рядом для `airlines`, где ноль
+# означал две разные вещи и теперь различается счётчиком.
 SOURCES_SUMMARY_KEYS = (
     'mode', 'dry_run', 'snapshot_run_id', 'period_from', 'period_to',
     'region', 'flights_seen', 'sources_requested', 'sources_skipped_known',
-    'sources_visited', 'sources_full', 'sources_list', 'sources_card',
+    'sources_visited', 'sources_full', 'sources_card',
     'sources_route', 'sources_airlines', 'sources_v4', 'sources_no_v4_url',
     'sources_no_v4', 'sources_v4_failed', 'sources_page_errors',
     'sources_route_identity_mismatch', 'sources_rejected',
+    'sources_airlines_unmatched',
     'sources_listener_errors', 'sources_oversized', 'sources_queued',
     'sources_duplicates', 'sources_queue_refused', 'send_enabled',
     'sources_envelopes_sent', 'sources_left_pending', 'sources_batch_accepted',
@@ -1714,13 +1732,15 @@ def _run_sources(args, cfg, log, state):
 def _account_for_sources(flights, capture, state):
     """Per-source and per-outcome counters of one --sources run."""
     from drone_collector.sources import (SOURCE_AIRLINES, SOURCE_CARD,
-                                         SOURCE_LIST, SOURCE_ROUTE, SOURCE_V4,
+                                         SOURCE_ROUTE, SOURCE_V4,
                                          STATUS_NO_V4, STATUS_NO_V4_URL,
                                          STATUS_PAGE_ERROR, STATUS_V4_FAILED)
     state['sources_visited'] = len(flights)
     state['sources_full'] = sum(1 for f in flights if f.complete)
-    for key, source_type in (('sources_list', SOURCE_LIST),
-                             ('sources_card', SOURCE_CARD),
+    # [REASON]: `list` здесь не считается -- см. SOURCES_SUMMARY_KEYS. Одно
+    # посещение записи даёт ровно VISIT_SOURCE_TYPES, а ревизию списка
+    # живьём никто в эту очередь не кладёт.
+    for key, source_type in (('sources_card', SOURCE_CARD),
                              ('sources_route', SOURCE_ROUTE),
                              ('sources_airlines', SOURCE_AIRLINES),
                              ('sources_v4', SOURCE_V4)):
@@ -1736,6 +1756,11 @@ def _account_for_sources(flights, capture, state):
     state['sources_rejected'] = sum(counts.get('rejected', {}).values())
     state['sources_listener_errors'] = counts.get('listener_errors')
     state['sources_oversized'] = counts.get('oversized')
+    # [REASON]: `sources_airlines=0` означал две разные вещи, пока этого
+    # счётчика не было: «DJI не прислал дескриптор» и «сборщик слушал не тот
+    # путь» -- а прогон 2026-09-09 делал ровно второе четыре часа подряд.
+    # Ненулевое значение здесь называет второй случай.
+    state['sources_airlines_unmatched'] = counts.get('airlines_unmatched')
 
 
 def _run_land_snapshot(args, cfg, log, state):

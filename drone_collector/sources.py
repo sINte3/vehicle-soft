@@ -19,11 +19,17 @@ LISTENS. While the page loads, the SPA itself issues, in this order:
 
   card      GET  .../api/web/v1/flight_records/<id>          JSON envelope
   route     POST .../api/web/v2/flight_datas/flight_records  protobuf
-  airlines  GET  .../api/web/v2/flight_datas/airlines/<id>   JSON with
+  airlines  GET  .../api/web/v2/airlines/<id>                JSON with
                                                              SIGNED links
-  v4        GET  <storage>/objects/airline_v4/<id>/...?Expires=..&Signature=..
+  v4        GET  .../objects/airline_v4/<id>/...?Expires=..&Signature=..
                                                              protobuf, up to
                                                              a megabyte
+
+The airlines path has NO `flight_datas/` segment, unlike the route beside
+it. That is DJI's spelling, not a typo of ours: `services/protoRequest.ts`
+of the SPA reads `mixApi(`/api/web/v2/airlines/${id}`)`, and a captured
+record-page trace shows the same. Assuming the symmetry cost a whole run --
+see the [REASON] on `AIRLINES_PATH`.
 
 The card, the route and the V4 file are stored byte for byte. The airlines
 descriptor is NOT: its whole payload is three pre-signed storage links, each
@@ -53,10 +59,11 @@ difference from the event path is who holds the buffer, not who asked.
 WHAT NEVER ENTERS THE QUEUE
 
 No signed link, no query string of a storage URL, no cookie, no header
-value. `request_context.path` is the URL PATH -- `/objects/airline_v4/<id>/
-<file>` -- with the query cut off before the string is even built. Every
-body is checked for the markers of a signed link before it is queued, and
-the queue checks the serialised envelope once more.
+value. `request_context.path` is the URL PATH -- for the V4 object,
+`/api/web/v2/flight_datas/objects/airline_v4/<id>/<file>` -- with the query
+cut off before the string is even built. Every body is checked for the
+markers of a signed link before it is queued, and the queue checks the
+serialised envelope once more.
 
 RESUMABLE
 
@@ -122,8 +129,12 @@ ROUTE_IDENTITY_OK = 'OK'
 ROUTE_IDENTITY_MISMATCH = 'MISMATCH'
 ROUTE_IDENTITY_UNDECODABLE = 'UNDECODABLE'
 
-# Where the four sources live. Paths, never hosts: the API and the storage
-# sit on different hosts and the storage host is not ours to pin.
+# Where the four sources live. Paths, never hosts: the object store answers
+# on the API host today (`/api/web/v2/flight_datas/objects/airline_v4/...`)
+# and the host is not ours to pin in any case. Every pattern below is
+# matched against the PATH alone, and every one of them was checked against
+# a captured record-page trace rather than reasoned out from its neighbour
+# -- which is exactly how the airlines path went wrong.
 #
 # [REASON]: the card pattern is anchored on BOTH ends and demands digits.
 # `/flight_records?page=..` (the list), `/flight_records/only_all_ids` and
@@ -131,7 +142,32 @@ ROUTE_IDENTITY_UNDECODABLE = 'UNDECODABLE'
 # already been mistaken for a card once in this package's history.
 CARD_PATH = re.compile(r'^/api/web/v1/flight_records/(\d+)/?$')
 ROUTE_PATH = '/api/web/v2/flight_datas/flight_records'
-AIRLINES_PATH = re.compile(r'^/api/web/v2/flight_datas/airlines/(\d+)/?$')
+# [REASON]: the airlines descriptor is NOT under `flight_datas/`, although
+# its two API siblings on this page are. The SPA's own source says so --
+# `restRequest.get(mixApi(`/api/web/v2/airlines/${id}`))` in
+# `services/protoRequest.ts` -- and a captured record-page trace of flight
+# 622762394 shows exactly `GET /api/web/v2/airlines/622762394`.
+# `/api/web/v2/flight_datas/airlines/<id>` was written here once, by analogy
+# with the route path above, and it matched NOTHING: the run of 2026-09-09
+# over the day 2026-08-18 visited 201 flights, kept 198 cards, 198 routes
+# and 197 V4 bodies, and classified zero airlines. That form has never been
+# served by DJI; it is not a legacy spelling and is not accepted.
+AIRLINES_PATH = re.compile(r'^/api/web/v2/airlines/(\d+)/?$')
+# [REASON]: diagnostics only -- NEVER a capture pattern. The defect above was
+# silent: a wrong path leaves the same zero in the summary as a DJI that sent
+# no descriptor, and nothing else. A path that names `airlines` but does not
+# match AIRLINES_PATH is counted and named once, so that the next time the
+# endpoint moves the run says what it saw instead of waiting out the ceiling
+# on every flight for four hours.
+AIRLINES_LIKE_PATH = re.compile(r'/airlines(?:/|$)')
+# A WHOLE segment of digits in such a path is a flight id; folded away so
+# that one wrong path is one entry and one warning, not one per flight. The
+# segment must be whole: `v2` in `/api/web/v2/` is a version, not an id, and
+# folding it would report a path nobody can look up.
+_ID_SEGMENT = re.compile(r'(?<=/)\d+(?=/|$)')
+# How many DISTINCT shapes are worth naming. More than a few means the guess
+# is wrong, not that DJI serves a dozen airlines endpoints.
+MAX_AIRLINES_LOOKALIKES = 5
 V4_PATH = re.compile(r'/objects/airline_v4/(\d+)/')
 # The `page.route` pattern. Matched against the whole URL by Playwright.
 V4_URL_PATTERN = re.compile(r'/objects/airline_v4/')
@@ -479,6 +515,8 @@ class SourceCapture(object):
         self.unattributed = 0
         self.v4_handler_errors = 0
         self.requests_failed = 0
+        self.airlines_unmatched = 0
+        self.airlines_unmatched_paths = []
         self.rejected = {}
 
     # -- lifecycle ------------------------------------------------------------
@@ -530,7 +568,10 @@ class SourceCapture(object):
         url = getattr(request, 'url', '') or ''
         method = getattr(request, 'method', 'GET') or 'GET'
         source_type, path_flight_id = classify_source_url(url, method)
-        if source_type is None or source_type == SOURCE_V4:
+        if source_type is None:
+            self._note_airlines_lookalike(url_path(url))
+            return
+        if source_type == SOURCE_V4:
             # V4 is owned by the route handler; the event path must not
             # read the same body a second time.
             return
@@ -585,6 +626,25 @@ class SourceCapture(object):
     def _accept_airlines(self, flight_id, body, path, status, method):
         if flight_id is None:
             self.unattributed += 1
+            return
+        # [REASON]: the same two guards the card has, and for a harder
+        # reason. A refusal or a 5xx from this endpoint still answers with
+        # JSON, and that JSON has no `airline.file_v4_url` -- so without the
+        # guards the derived record says `file_v4_url_path: null`, which the
+        # whole chain reads as DJI'S OWN WORD that no V4 exists. The visit
+        # then counts as complete, the envelope carries
+        # `v4_url_present=False`, and `flight_already_captured` retires the
+        # flight for good: a transient error would be frozen into the
+        # evidence as a finding, and no re-run could ever undo it. An error
+        # body is not a descriptor and is not kept.
+        code = body_code(body)
+        if status is not None and not 200 <= int(status) < 300:
+            self.flight(flight_id).note_rejected('http-%s' % status)
+            self._note_rejected(SOURCE_AIRLINES, 'http-%s' % status)
+            return
+        if code != BODY_CODE_OK:
+            self.flight(flight_id).note_rejected('code-%s' % code)
+            self._note_rejected(SOURCE_AIRLINES, 'code-%s' % code)
             return
         document = airlines_document(body)
         if document is None:
@@ -720,12 +780,45 @@ class SourceCapture(object):
         key = '%s:%s' % (source_type, reason)
         self.rejected[key] = self.rejected.get(key, 0) + 1
 
+    def _note_airlines_lookalike(self, path):
+        """An airlines-shaped path the classifier did not take. Diagnostics.
+
+        [REASON]: see AIRLINES_LIKE_PATH. This counts, it never captures --
+        a path that reaches here is by definition NOT a source, and the only
+        thing it changes is that the summary can say what was seen instead
+        of leaving `sources_airlines=0` to mean two different things. The
+        path carries no query by construction (`url_path` cut it off), so
+        naming it in the log cannot print a credential.
+
+        [REASON]: the flight id is folded to `<id>` before the path is kept
+        or said. A wrong path is wrong the same way on every flight, and
+        without the folding the "distinct paths" list would grow one entry
+        per flight and the warning would be repeated two hundred times --
+        burying the run's own log under the very thing it is reporting.
+        """
+        if not path or not AIRLINES_LIKE_PATH.search(path):
+            return
+        self.airlines_unmatched += 1
+        shape = _ID_SEGMENT.sub('<id>', path)
+        if shape in self.airlines_unmatched_paths:
+            return
+        if len(self.airlines_unmatched_paths) >= MAX_AIRLINES_LOOKALIKES:
+            return
+        self.airlines_unmatched_paths.append(shape)
+        self.log.warning('The page asked for %s, which names airlines but is'
+                         ' not the airlines descriptor this collector knows'
+                         ' (%s). No airlines record will be kept for these'
+                         ' flights.', shape, AIRLINES_PATH.pattern)
+
     def counts(self):
         return {'listener_errors': self.listener_errors,
                 'oversized': self.oversized,
                 'unattributed': self.unattributed,
                 'v4_handler_errors': self.v4_handler_errors,
                 'requests_failed': self.requests_failed,
+                'airlines_unmatched': self.airlines_unmatched,
+                'airlines_unmatched_paths': list(
+                    self.airlines_unmatched_paths),
                 'rejected': dict(self.rejected)}
 
 
