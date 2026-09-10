@@ -7,6 +7,14 @@
 
   1. он НЕ ПИШЕТ. Не «мы так задумали», а sha256 файла базы до и после, плюс
      DELETE, который SQLite обязан отклонить сам;
+  1a. сводка V4 берётся ПО `v4_summary_id` расчёта, а не по `flight_id`. В
+     базе намеренно лежит вторая сводка того же вылета с другими числами:
+     связь через flight_id либо размножит строку, либо подставит чужую;
+  1b. историческая идентичность контура выгружается и называется словами:
+     если исторический полигон не доказан, вывод `UNKNOWN...`, а не молчаливое
+     использование сегодняшней ревизии;
+  1c. остаток `total - obstacle - work` выносится отдельно и НЕ называется
+     safety margin;
   2. на кейсе с намеренным стопроцентным перекрытием S = 2U, и кейс помечен
      различающим. Это единственная конфигурация, где сравнение S и U вообще
      способно отличить километражный интеграл от объединения; рядом стоит
@@ -43,6 +51,7 @@ T0 = 1785526013
 LAT0, LON0 = 39.9, 64.4
 M_PER_DEG = 6371000.0 * math.pi / 180.0
 PASS_M, PASS_FRAMES, WIDTH = 100.0, 21, 6.0
+DECOY_WIDTH = 99.0
 
 
 def _ddl():
@@ -61,7 +70,7 @@ def _pass_frames(start_ms):
     return out
 
 
-def build(db_path, passes):
+def build(db_path, passes, historical=1):
     """База с одним вылетом из `passes` одинаковых проходов по одной земле."""
     con = sqlite3.connect(db_path)
     for stmt in _ddl():
@@ -108,21 +117,35 @@ def build(db_path, passes):
         start_at_utc='2026-08-18T00:53:00', end_at_utc='2026-08-18T00:58:00',
         report_start_date='2026-08-18', raw_area_m2=PASS_M * WIDTH * passes,
         area_status='RAW_CORROBORATED_QUALIFIED', application_activity='PRESENT',
-        application_channel_quality='INFORMATIVE', superseded_at=None)
+        application_channel_quality='INFORMATIVE', superseded_at=None,
+        v4_summary_id=2)
     ins('dji_flight_evidence', flight_id=FLIGHT, hardware_id=HW,
         v4_revision_id=1, list_spray_width=WIDTH, list_start_ts=T0,
         list_end_ts=T0 + 300, updated_at='2026-09-09')
-    ins('dji_v4_summaries', flight_id=FLIGHT, source_revision_id=1,
+    # Ловушка: ПЕРВАЯ по id сводка того же вылета -- чужая, от другой
+    # ревизии V4. Связь через flight_id подцепила бы именно её.
+    ins('dji_v4_summaries', id=1, flight_id=FLIGHT, source_revision_id=999,
+        frame_count=1, span_s=1.0, moving_application_distance_m=0.0,
+        width_min=DECOY_WIDTH, width_max=DECOY_WIDTH, application_frames=0)
+    ins('dji_v4_summaries', id=2, flight_id=FLIGHT, source_revision_id=1,
         frame_count=len(frames), span_s=300.0,
         moving_application_distance_m=PASS_M * passes,
         width_min=WIDTH, width_max=WIDTH, application_frames=len(frames))
     ins('dji_field_attributions', flight_id=FLIGHT,
         field_attribution_tier='TIER2_STRONG', field_land_uuid='uuid-1',
-        field_name_at_snapshot='SYNTHETIC-FIELD', superseded_at=None)
-    ins('dji_land_revisions', land_uuid='uuid-1', name='SYNTHETIC-FIELD',
-        total_area_raw=30.0, work_area_raw=28.0, obstacle_area_raw=2.0,
+        field_name_at_snapshot='SYNTHETIC-FIELD', superseded_at=None,
+        land_snapshot_id=7, land_revision_id=1,
+        historical_geometry_available=historical)
+    # Ревизия, на которую ссылается атрибуция...
+    ins('dji_land_revisions', id=1, land_uuid='uuid-1', name='SYNTHETIC-FIELD',
+        total_area_raw=30.0, work_area_raw=25.0, obstacle_area_raw=2.0,
         area_unit='mu', raw_json='{}', raw_sha256='s1',
-        first_seen_snapshot_id=1, last_seen_snapshot_id=1)
+        first_seen_snapshot_id=7, last_seen_snapshot_id=7)
+    # ...и ДРУГАЯ ревизия того же участка, которую нельзя смешивать с первой.
+    ins('dji_land_revisions', id=2, land_uuid='uuid-1', name='SYNTHETIC-FIELD',
+        total_area_raw=44.0, work_area_raw=44.0, obstacle_area_raw=0.0,
+        area_unit='mu', raw_json='{}', raw_sha256='s2',
+        first_seen_snapshot_id=9, last_seen_snapshot_id=9)
     con.commit()
     con.close()
 
@@ -139,10 +162,20 @@ def sha_of(path):
         return hashlib.sha256(fh.read()).hexdigest()
 
 
-def coverage_row(out_dir):
+def load(out_dir, name):
     import json
-    with open(os.path.join(out_dir, 'coverage.json'), encoding='utf-8') as fh:
-        rows = json.load(fh)
+    with open(os.path.join(out_dir, name), encoding='utf-8') as fh:
+        return json.load(fh)
+
+
+def csv_rows(out_dir, name):
+    import csv as _csv
+    with open(os.path.join(out_dir, name), encoding='utf-8', newline='') as fh:
+        return list(_csv.DictReader(fh))
+
+
+def coverage_row(out_dir):
+    rows = load(out_dir, 'coverage.json')
     assert len(rows) == 1, 'expected one flight, got %d' % len(rows)
     return rows[0]
 
@@ -214,6 +247,153 @@ class ExitCodes(Base):
         res = run(self.db, self.out)
         self.assertEqual(res.returncode, 1)
         self.assertIn('migration is not applied', res.stdout)
+
+
+class TheRightV4SummaryIsUsed(unittest.TestCase):
+    """`dji_v4_summaries.flight_id` НЕ уникален. Связь -- через расчёт."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix='block1b-join-')
+        self.db = os.path.join(self.dir, 'transport.db')
+        self.out = os.path.join(self.dir, 'out')
+        build(self.db, passes=1)
+        self.assertEqual(run(self.db, self.out).returncode, 0)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_exactly_one_row_per_flight_no_duplication(self):
+        # Связь через flight_id вернула бы ДВЕ строки на один вылет.
+        self.assertEqual(len(load(self.out, 'coverage.json')), 1)
+        self.assertEqual(len(csv_rows(self.out, 'flights.csv')), 1)
+
+    def test_the_summary_taken_is_the_one_the_calculation_names(self):
+        row = csv_rows(self.out, 'flights.csv')[0]
+        self.assertEqual(row['v4_summary_id'], '2')
+        self.assertEqual(row['v4_summary_row_id'], '2')
+        self.assertEqual(float(row['width_max']), WIDTH)
+        # Ровно то значение, которое подцепила бы неверная связь.
+        self.assertNotEqual(float(row['width_max']), DECOY_WIDTH)
+
+
+class PolygonVintageIsNamedNotAssumed(unittest.TestCase):
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix='block1b-vintage-')
+        self.db = os.path.join(self.dir, 'transport.db')
+        self.out = os.path.join(self.dir, 'out')
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_without_proven_historical_geometry_the_verdict_is_unknown(self):
+        build(self.db, passes=1, historical=0)
+        self.assertEqual(run(self.db, self.out).returncode, 0)
+        row = csv_rows(self.out, 'polygon_vintage.csv')[0]
+        self.assertEqual(row['polygon_vintage'],
+                         'UNKNOWN_CURRENT_SNAPSHOT_ONLY')
+        self.assertEqual(load(self.out, 'manifest.json')['counts']
+                         ['flights_without_proven_historical_geometry'], 1)
+
+    def test_control_with_proven_geometry_the_verdict_changes(self):
+        build(self.db, passes=1, historical=1)
+        self.assertEqual(run(self.db, self.out).returncode, 0)
+        row = csv_rows(self.out, 'polygon_vintage.csv')[0]
+        self.assertEqual(row['polygon_vintage'], 'HISTORICAL_PROVEN')
+        self.assertEqual(row['land_revision_id'], '1')
+        self.assertEqual(row['land_snapshot_id'], '7')
+
+    def test_the_used_revision_is_marked_apart_from_the_other_one(self):
+        build(self.db, passes=1)
+        self.assertEqual(run(self.db, self.out).returncode, 0)
+        by_id = {r['id']: r for r in csv_rows(self.out, 'land_revisions.csv')}
+        self.assertEqual(by_id['1']['revision_role'], 'USED_BY_ATTRIBUTION')
+        self.assertEqual(by_id['2']['revision_role'],
+                         'OTHER_REVISION_SAME_UUID')
+
+
+class TheTaskAreaResidualIsNotCalledSafetyMargin(unittest.TestCase):
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix='block1b-area-')
+        self.db = os.path.join(self.dir, 'transport.db')
+        self.out = os.path.join(self.dir, 'out')
+        build(self.db, passes=1)
+        self.assertEqual(run(self.db, self.out).returncode, 0)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_the_unexplained_remainder_is_computed_and_nonzero(self):
+        # total 30 mu, obstacle 2 mu, work 25 mu -> остаток 3 mu = 0.2 ha.
+        used = [r for r in csv_rows(self.out, 'land_revisions.csv')
+                if r['revision_role'] == 'USED_BY_ATTRIBUTION'][0]
+        self.assertAlmostEqual(float(used['unexplained_exclusion_ha']),
+                               3.0 * (2000.0 / 3.0) / 10000.0, places=6)
+
+    def test_no_output_calls_the_remainder_a_safety_margin(self):
+        # Назвать остаток safety margin -- значит объявить формулу
+        # проверенной, не проверив третье слагаемое.
+        for name in ('land_revisions.csv', 'manifest.json'):
+            with open(os.path.join(self.out, name), encoding='utf-8') as fh:
+                self.assertNotIn('safety_margin', fh.read().lower())
+
+
+class TheBundleIsSelfContained(unittest.TestCase):
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix='block1b-blob-')
+        self.db = os.path.join(self.dir, 'transport.db')
+        self.out = os.path.join(self.dir, 'out')
+        build(self.db, passes=2)
+        self.assertEqual(run(self.db, self.out).returncode, 0)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_the_v4_body_travels_with_the_bundle_and_matches_its_digest(self):
+        blobs = load(self.out, 'manifest.json')['blobs']
+        v4s = [b for b in blobs if b['kind'] == 'v4']
+        self.assertEqual(len(v4s), 1)
+        self.assertTrue(v4s[0]['sha256_matches'])
+        path = os.path.join(self.out, v4s[0]['file'].replace('/', os.sep))
+        self.assertTrue(os.path.isfile(path))
+        self.assertEqual(sha_of(path), v4s[0]['sha256'])
+
+    def test_the_exported_body_decodes_to_the_same_coverage(self):
+        # Ровно то, ради чего bundle делается самодостаточным: расчёт
+        # воспроизводится из выгруженных байтов, без доступа к серверу.
+        from dji_area import coverage as _cov
+        from dji_area import v4 as _v4
+        blobs = load(self.out, 'manifest.json')['blobs']
+        path = os.path.join(self.out, [b for b in blobs
+                                       if b['kind'] == 'v4'][0]['file'])
+        with open(path, 'rb') as fh:
+            frames = _v4.decode_v4(fh.read()).frames
+        again = _cov.coverage_from_v4(frames, 'INFORMATIVE')
+        self.assertAlmostEqual(again['unique_application_ha'],
+                               coverage_row(self.out)['unique_application_ha'])
+
+    def test_the_manifest_pins_the_exporter_itself(self):
+        man = load(self.out, 'manifest.json')
+        self.assertEqual(man['exporter_sha256'], sha_of(TOOL))
+        self.assertEqual(man['coverage_module_sha256'],
+                         sha_of(os.path.join(ROOT, 'dji_area', 'coverage.py')))
+        self.assertTrue(man['not_billable'])
+
+
+class TheOutputDirectoryIsNeverSilentlyMixed(Base):
+
+    def test_a_non_empty_output_directory_stops_the_run(self):
+        build(self.db, passes=1)
+        self.assertEqual(run(self.db, self.out).returncode, 0)
+        second = run(self.db, self.out)
+        self.assertEqual(second.returncode, 1)
+        self.assertIn('exists and is not empty', second.stdout)
+
+    def test_control_a_fresh_directory_is_accepted(self):
+        build(self.db, passes=1)
+        self.assertEqual(run(self.db, self.out + '-2').returncode, 0)
 
 
 if __name__ == '__main__':
