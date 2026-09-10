@@ -40,6 +40,21 @@ def blocks(text):
     return re.findall(r'```powershell\n(.*?)```', text, re.S)
 
 
+def _finally_body(block):
+    """Текст между `} finally {` и ПАРНОЙ ему закрывающей скобкой."""
+    start = block.index('} finally {') + len('} finally {')
+    depth, i = 1, start
+    while i < len(block) and depth:
+        if block[i] == '{':
+            depth += 1
+        elif block[i] == '}':
+            depth -= 1
+            if not depth:
+                return block[start:i]
+        i += 1
+    raise AssertionError('unbalanced braces: the finally block never closes')
+
+
 class TheBlockIsPasteable(unittest.TestCase):
 
     def setUp(self):
@@ -103,10 +118,71 @@ class TheBlockIsPasteable(unittest.TestCase):
             self.assertNotRegex(block, r"'C:\\transport-report'")
             self.assertNotIn('SRV-YOQSH', block)
 
-    def test_it_never_starts_or_restarts_a_service(self):
-        for block in self.blocks:
-            for verb in ('Start-Service', 'Restart-Service', 'Stop-Service'):
-                self.assertNotIn(verb, block)
+    def test_a_stopped_service_is_always_restarted_in_a_finally(self):
+        # [REASON]: блок теперь ПИШЕТ в базу площадки и для этого
+        # останавливает её службу. Прежний запрет на любые действия со
+        # службой был верен для читающего блока; заменять его на «ничего не
+        # проверяем» нельзя. Свойство, которое обязано держаться: служба,
+        # остановленная блоком, поднимается ДАЖЕ если шаг между этим упал.
+        block = self.blocks[0]
+        if 'Stop-Service' not in block:
+            return
+        self.assertIn('try {', block)
+        self.assertIn('} finally {', block)
+        stop = block.index('Stop-Service')
+        try_at = block.index('try {')
+        finally_at = block.index('} finally {')
+        self.assertLess(try_at, stop, 'Stop-Service is outside the try block')
+        self.assertLess(stop, finally_at)
+        # [REASON]: порядка текста НЕДОСТАТОЧНО -- `Restart-Service`, стоящий
+        # ПОСЛЕ закрытой finally-скобки, тоже идёт «дальше по тексту», но при
+        # падении внутри try не выполнится, и служба площадки останется
+        # лежать. Проверяется вложенность: скобки считаются.
+        body = _finally_body(block)
+        self.assertIn('Restart-Service', body,
+                      'Restart-Service is not INSIDE the finally block')
+        # Restart, а не Start: Start-Service на работающей службе молча
+        # ничего не делает (правило проекта).
+        self.assertNotIn('Start-Service', block)
+
+    def test_only_the_staging_service_is_ever_named(self):
+        block = self.blocks[0]
+        self.assertIn("$service = 'TransportReportStaging'", block)
+        self.assertRegex(block, r"if \(\$service -ne 'TransportReportStaging'\)"
+                                r"\s*\{\s*throw")
+        # Имя службы прода не должно встречаться даже как подстрока-слово.
+        self.assertIsNone(re.search(r"'TransportReport'", block))
+
+    def test_no_write_happens_before_a_backup_is_taken_and_verified(self):
+        block = self.blocks[0]
+        if '--apply' not in block:
+            return
+        backup = block.index('Copy-Item -LiteralPath $db')
+        verify = block.index('backup was not created')
+        apply_at = block.index('--apply')
+        self.assertLess(backup, verify)
+        self.assertLess(verify, apply_at,
+                        'the backup is not verified before the first write')
+
+    def test_the_write_step_proves_idempotence_on_the_spot(self):
+        block = self.blocks[0]
+        if '--apply' not in block:
+            return
+        self.assertEqual(block.count('--apply'), 2,
+                         'a single apply cannot demonstrate idempotence')
+        self.assertIn('unchanged', block)
+
+    def test_the_read_only_hashes_bracket_the_bundle_not_the_recalc(self):
+        # Пересчёт ПИШЕТ, поэтому хеши до/после обязаны охватывать только
+        # шаг сбора bundle. Иначе проверка гарантированно провалится и её
+        # начнут игнорировать.
+        block = self.blocks[0]
+        before = block.index('DB SHA256 BEFORE')
+        bundle = block.index('dji_area_block1b.py --db')
+        apply_last = block.rindex('--apply')
+        self.assertLess(apply_last, before,
+                        'the hash is taken before the writes have finished')
+        self.assertLess(before, bundle)
 
     def test_git_is_paged_off(self):
         # Пейджер съедает следующие команды вставленного блока.
