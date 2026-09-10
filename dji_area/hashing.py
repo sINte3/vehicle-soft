@@ -14,7 +14,7 @@ import json
 
 from dji_area import (AREA_ALGORITHM_VERSION, CHANNEL_CAPABILITY_REVISION,
                       FIELD_RESOLVER_VERSION, REPORT_TIMEZONE,
-                      STRUCTURAL_RULE_VERSION)
+                      STRUCTURAL_RULE_VERSION, V4_PARSER_VERSION)
 from dji_area.resolver import (AGREEMENT_ABS_M2, AGREEMENT_REL,
                                KNOWN_UNRELIABLE_APPLICATION_HARDWARE,
                                PARTIAL_MAX_SHARE, PARTIAL_MIN_RAW_M2)
@@ -41,6 +41,12 @@ def resolver_config_snapshot():
         'area_algorithm_version': AREA_ALGORITHM_VERSION,
         'structural_rule_version': STRUCTURAL_RULE_VERSION,
         'channel_capability_revision': CHANNEL_CAPABILITY_REVISION,
+        # [REASON]: тело V4 неизменяемо, но СМЫСЛ, извлечённый из тех же байтов,
+        # задаёт парсер. Без версии парсера исправление карты полей protobuf не
+        # меняет ни SHA источников, ни конфигурацию -- отпечаток совпадает,
+        # store.upsert находит строку по (flight_id, версия, hash) и отвечает
+        # `unchanged`, оставляя в базе выводы старого парсера навсегда.
+        'v4_parser_version': V4_PARSER_VERSION,
         'report_timezone': REPORT_TIMEZONE,
         'agreement_abs_m2': AGREEMENT_ABS_M2,
         'agreement_rel': AGREEMENT_REL,

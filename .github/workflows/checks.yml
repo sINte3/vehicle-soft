@@ -180,6 +180,43 @@ jobs:
       - name: DJI area evidence migration (four paths, DDL columns)
         run: python -m unittest tests.test_dji_area_migration_001
 
+      # DRONE-AREA-1A. The provenance rule the evidence model exists for:
+      # list scalars come from the HASHED revision, never from the mutable
+      # drone_flights.raw_json. Every case is a DISAGREEMENT -- the two
+      # sources carry different numbers -- so the suite can tell a correct
+      # implementation from a broken one, with the fallback path held by a
+      # negative control beside it. Stdlib sqlite3, no Flask: it builds the
+      # evidence table from the migration's own DDL.
+      - name: DJI area provenance (hashed revision beats mutable raw_json)
+        run: python -m unittest tests.test_dji_area_provenance_1a
+
+      # DRONE-AREA-1A. Work is decided by the OBSERVED application state in
+      # the V4 frame, not by plausible geometry. The load-bearing case is the
+      # deliberate 100% overlap: it is the only one that can tell a swath
+      # integral (S) from a unique union (U), because on ordinary parallel
+      # passes the two are numerically identical. Beside it sit the controls
+      # that keep the test honest -- a single pass must NOT look like a
+      # repeat, and two adjacent passes must not either.
+      - name: DJI application coverage (spray state decides work, overlap once)
+        run: python -m unittest tests.test_dji_area_coverage_1a
+
+      # The block 1B tool reads the LIVE database and is pasted into the
+      # server console, so its self-test carries the read-only proof itself:
+      # sha256 of the file before and after, plus a DELETE that SQLite must
+      # refuse on that handle. It builds its own fixture in a temporary
+      # directory -- no network, no server, no real database.
+      - name: Block 1B bundle self-test (read-only proof, overlap discriminates)
+        run: python tools/test_dji_area_block1b.py
+
+      # The 1B block is pasted into the server console verbatim. This track
+      # has already shipped a runbook naming something that does not exist on
+      # the server -- twice, both caught by a person. Held here: no
+      # placeholders, no `&&`, the quoted python path, every throw guarded,
+      # the read-only hashes actually COMPARED rather than merely printed,
+      # and every tools/*.py the block runs existing in the worktree.
+      - name: Block 1B runbook (pasteable, guarded, names only real files)
+        run: python tools/test_dji_area_block1b_runbook.py
+
       # The recomputation itself, on a temporary SQLite database built with
       # the migration's own DDL. Stdlib only: drone_coverage_recalc.py and
       # drone_useful_area.py are deliberately free of Flask, and this suite
