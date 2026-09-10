@@ -37,7 +37,9 @@ Flask и не вызывает ``create_app()``.
   & "C:\\Program Files\\Python314\\python.exe" tools\\dji_area_block1b.py --db "C:\\transport-report-staging\\instance\\transport.db" --date 2026-08-18 --hardware 1581F574B2387001009R --hardware 1581F574B235W00100Q5 --out "C:\\VehicleSoft_Block1B\\out"
 
 КОДЫ ВОЗВРАТА
-  0  bundle собран
+  0  bundle собран. Отдельные вылеты при этом могут иметь
+     ``coverage_status = FAILED`` с текстом ошибки: сбой на ОДНОМ вылете не
+     роняет прогон, но объявляется строкой WARNING в сводке
   1  предусловие не выполнено (нет таблиц модели, либо каталог вывода занят)
   2  база не найдена (файл НЕ создаётся)
 
@@ -75,6 +77,11 @@ REQUIRED_TABLES = ('dji_area_calculations', 'dji_field_attributions',
 # скорость полёта 10 м/с. Порог физический, не подобранный.
 SPRAY_SPEED_MPS = 7.0
 MAX_FLIGHT_SPEED_MPS = 10.0
+
+# Вылет полезен для опыта S против U только если они заметно расходятся: на
+# обычных параллельных проходах обе гипотезы дают одно число. Порог
+# диагностический -- он ничего не исключает из выгрузки, только помечает.
+DISCRIMINATING_S_OVER_U = 1.15
 
 
 def log(msg):
@@ -514,16 +521,28 @@ def main():
                              'reason': exc.reason})
                 coverage_rows.append(base)
                 continue
+            except Exception as exc:             # noqa: BLE001 -- см. REASON
+                # [REASON]: bundle собирается один раз, руками владельца, на
+                # машине, до которой сессии не дотянуться. Нештатная ошибка
+                # на ОДНОМ вылете не имеет права стоить всей поездки на
+                # сервер: вылет помечается FAILED вместе с типом и текстом
+                # ошибки, остальные считаются. Молчать здесь нельзя -- в
+                # сводке появляется WARNING, а строка видна в coverage.csv.
+                base.update({'coverage_status': 'FAILED',
+                             'reason': '%s: %s' % (type(exc).__name__, exc)})
+                coverage_rows.append(base)
+                continue
             base.update({'coverage_status': res['status'],
                          'reason': res.get('reason')})
             for key in ('unique_application_ha',
                         'unique_application_inside_field_ha',
                         'application_outside_field_ha',
                         'swath_integral_ha', 's_minus_u_ha',
-                        'raster_bias_estimate_ha',
                         'repeated_application_ha', 's_over_u',
-                        'flown_swath_ha', 'contour_ha', 'contour_status',
-                        'cell_m'):
+                        'painted_swath_total_ha', 'flown_not_applied_ha',
+                        'repeated_share_of_unique',
+                        'contour_ha', 'contour_status',
+                        'cell_m', 'coarsened'):
                 base[key] = res.get(key)
             widths = res.get('widths_used_m') or []
             base['widths_used_m'] = ','.join(str(x) for x in widths)
@@ -532,8 +551,16 @@ def main():
             base['s_single_width'] = (len(widths) == 1)
             base['segment_length_m'] = json.dumps(
                 res.get('segment_length_m') or {}, sort_keys=True)
+            # [REASON]: движок МЕРИТ свою дискретизационную ошибку вторым
+            # прогоном на вдвое грубой сетке, и его же докстринг говорит, что
+            # число без погрешности читается как точное. Экспортёр её ронял.
+            base['uncertainty_percent'] = json.dumps(
+                res.get('uncertainty_percent') or {}, sort_keys=True)
+            base['thresholds'] = json.dumps(res.get('thresholds') or {},
+                                            sort_keys=True)
             base['discriminating'] = (res.get('s_over_u') is not None
-                                      and res['s_over_u'] > 1.15)
+                                      and res['s_over_u']
+                                      > DISCRIMINATING_S_OVER_U)
             coverage_rows.append(base)
             geo['features'].extend(geojson_features(res, r['flight_id']))
 
@@ -559,8 +586,14 @@ def main():
 
         done = [r for r in coverage_rows if r.get('coverage_status') == 'ESTIMATE']
         disc = [r for r in coverage_rows if r.get('discriminating')]
-        log('coverage computed: %d of %d ; discriminating (S/U > 1.15): %d'
-            % (len(done), len(coverage_rows), len(disc)))
+        log('coverage computed: %d of %d ; discriminating (S/U > %.2f): %d'
+            % (len(done), len(coverage_rows), DISCRIMINATING_S_OVER_U,
+               len(disc)))
+        failed = [r for r in coverage_rows
+                  if r.get('coverage_status') == 'FAILED']
+        if failed:
+            log('WARNING: %d flight(s) failed coverage and are named in '
+                'coverage.csv, the bundle is still complete' % len(failed))
         if done:
             log('  sum unique application: %.4f ha ; sum swath integral: %.4f ha'
                 % (sum(r.get('unique_application_ha') or 0 for r in done),
@@ -584,6 +617,14 @@ def main():
         'sqlite_version': sqlite3.sqlite_version,
         'python_version': sys.version.split()[0],
         'v4_parser_version': v4mod.V4_PARSER_VERSION,
+        # [REASON]: порог, которого нет в отчёте, -- скрытое допущение. Через
+        # месяц никто не вспомнит, что разрывом считался кадр через 3 с.
+        'coverage_thresholds': {
+            'max_frame_gap_s': cov.MAX_FRAME_GAP_S,
+            'max_ground_speed_mps': cov.MAX_GROUND_SPEED_MPS,
+            'discriminating_s_over_u': DISCRIMINATING_S_OVER_U,
+            'spray_speed_mps': SPRAY_SPEED_MPS,
+            'max_flight_speed_mps': MAX_FLIGHT_SPEED_MPS},
         'area_algorithm_version': AREA_ALGORITHM_VERSION,
         'field_resolver_version': FIELD_RESOLVER_VERSION,
         'metric_name': 'V4_APPLICATION_COVERAGE_ESTIMATE',

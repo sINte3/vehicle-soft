@@ -112,8 +112,11 @@ def _dt_seconds(a, b):
 def _is_gap(length_m, dt_s):
     """Разрыв записи: время между кадрами не подтверждает пройденный путь."""
     if dt_s is None:
-        # Без отметки времени скорость не проверить. Молча красить нельзя.
-        return length_m > MAX_GROUND_SPEED_MPS * MAX_FRAME_GAP_S
+        # [REASON]: прежний запас 20 x 3 = 60 м -- это ровно `gap_m` из v1,
+        # то есть то самое правило, от которого модуль и уходит. Без отметки
+        # времени скорость непроверяема, поэтому доверяется только шаг,
+        # физически достижимый за ОДИН кадр номинальной секундной частоты.
+        return length_m > MAX_GROUND_SPEED_MPS
     if dt_s <= 0:
         return True
     if dt_s > MAX_FRAME_GAP_S:
@@ -201,15 +204,19 @@ def swath_integral_m2(segments):
     return total
 
 
-def _raster_bias_m2(work_segments, params):
-    """Насколько растр может разойтись с аналитической суммой.
-
-    Порядок величины: периметр закрашенной полосы, умноженный на половину
-    шага сетки. Не точная граница, а честная оценка того шума, ниже которого
-    разность S и U ничего не значит.
-    """
-    length = sum(s.length for s in work_segments)
-    return length * 2.0 * (params.cell_m / 2.0)
+# [REASON]: порога здесь нет НАМЕРЕННО, и это третья редакция этого места.
+# Первая объявляла повтором любую положительную разность -- на поле без
+# перекрытия она уходила в минус, и «повторное покрытие» получалось
+# отрицательным. Вторая ввела оценку шума `длина x шаг сетки`; оппонент
+# измерил, что она в десятки раз больше настоящей ошибки растра и ГЛУШИТ
+# реальное перекрытие -- 0.23 га двойной обработки отдавались как `None`, --
+# а сама формула тождественно равна подобранному правилу `S/U > 1 + cell/w`.
+# Третья редакция признаёт причину: S считается аналитически (сумма
+# длина x ширина), U -- по растру. Это РАЗНЫЕ методы, и их разность несёт
+# методическую составляющую, величину которой мы честно не знаем. Поэтому
+# отдаются обе величины, их разность и её доля от U, а решение «это
+# перекрытие или это шум» принимает читатель, глядя на масштаб. Ради
+# дискриминирующего опыта 1B это и нужно: там разница между 0.2 % и 100 %.
 
 
 def _contour_status(rings, reasons):
@@ -267,10 +274,17 @@ def coverage_from_v4(frames, channel_quality, rings=None,
     if not work:
         # Не ошибка: вылет мог быть целиком холостым. Но и не «0 га
         # обработано» без оговорки -- причина названа.
+        # [REASON]: причина обязана следовать из того, что произошло. Жёстко
+        # написанное `NO_APPLICATION_FRAMES` врало, когда распыление шло на
+        # каждом кадре, а полоса не строилась из-за отсутствующей ширины или
+        # разрывов записи: forensic-разбор получал ложный след.
+        lengths = _reason_lengths(segments)
         reason = (SEG_APPLICATION_UNKNOWN
-                  if channel_quality != CH_INFORMATIVE else 'NO_APPLICATION_FRAMES')
+                  if channel_quality != CH_INFORMATIVE
+                  else max(lengths, key=lengths.get) if lengths
+                  else 'NO_SEGMENTS')
         return {'status': 'NO_CONFIRMED_APPLICATION', 'reason': reason,
-                'segment_length_m': _reason_lengths(segments),
+                'segment_length_m': lengths,
                 'contour_status': _contour_status(rings, contour_reasons),
                 'plane': plane}
 
@@ -288,8 +302,13 @@ def coverage_from_v4(frames, channel_quality, rings=None,
     # раздельно, разность здесь не считается.
     flown = coverage_once(tracks, rings, params, params.cell_m)
 
-    unique_total_m2 = (fine.swath_work_ha or 0.0) * 10000.0
+    # [REASON]: `or 0.0` превратил бы «не измерено» в «ноль». Если полоса не
+    # посчитана, S/U и повтор не считаются вовсе.
+    unique_total_m2 = (None if fine.swath_work_ha is None
+                       else fine.swath_work_ha * 10000.0)
     integral_m2 = swath_integral_m2(segments)
+    excess_m2 = (None if unique_total_m2 is None
+                 else integral_m2 - unique_total_m2)
     # [REASON]: без контура «внутри» и «снаружи» не существует как величин.
     # Показать их нулями значило бы заявить, что весь вынос за поле равен
     # нулю, тогда как он просто не измерен.
@@ -304,37 +323,55 @@ def coverage_from_v4(frames, channel_quality, rings=None,
         'unique_application_ha': fine.swath_work_ha,
         'unique_application_inside_field_ha': inside,
         'application_outside_field_ha': outside,
-        # S - U: сколько гектаров пришлось на повторный проход. При
-        # междурядье, равном учётной ширине, эта величина близка к нулю;
-        # заметная величина -- признак перекрытия или возобновления.
+        # S: аналитическая сумма длина x ширина по подтверждённым сегментам.
         'swath_integral_ha': round(integral_m2 / 10000.0, 4),
-        # [REASON]: S считается аналитически (сумма длина x ширина), U -- по
-        # растру, поэтому их разность несёт дискретизационную ошибку и на
-        # поле БЕЗ перекрытия уходит в минус (измерено: -80 м2 на 12
-        # проходах, -285 м2 на 94). Отрицательное «повторное покрытие» --
-        # бессмыслица, которую нельзя показывать как величину. Разность
-        # отдаётся как есть под честным именем, а «повторным покрытием»
-        # называется только положительная часть, и только когда она выходит
-        # за оценку дискретизации.
-        's_minus_u_ha': round((integral_m2 - unique_total_m2) / 10000.0, 4),
-        'raster_bias_estimate_ha': round(
-            _raster_bias_m2(work, params) / 10000.0, 4),
+        # [REASON]: разность S и U на поле БЕЗ перекрытия уходит в минус
+        # (измерено: -80 м2 на 12 проходах, -285 м2 на 94) -- методы разные.
+        # Отрицательное «повторное покрытие» -- бессмыслица, показывать её
+        # как величину нельзя. Поэтому разность отдаётся как есть под своим
+        # именем, а «повторным покрытием» называется только её положительная
+        # часть. Порога между шумом и перекрытием здесь НЕТ намеренно: см.
+        # блок перед `_contour_status` о том, почему прежняя оценка
+        # дискретизации была снята.
+        's_minus_u_ha': (None if excess_m2 is None
+                         else round(excess_m2 / 10000.0, 4)),
+        # Положительная часть S - U. Ниже -- её доля от U: именно она
+        # отличает методический шум (доли процента) от настоящего повторного
+        # прохода (десятки процентов), и именно она читается, а не гектары.
         'repeated_application_ha': (
-            round((integral_m2 - unique_total_m2) / 10000.0, 4)
-            if (integral_m2 - unique_total_m2) > _raster_bias_m2(work, params)
-            else None),
+            None if excess_m2 is None or excess_m2 <= 0
+            else round(excess_m2 / 10000.0, 4)),
+        'repeated_share_of_unique': (
+            None if not unique_total_m2 or excess_m2 is None
+            else round(excess_m2 / unique_total_m2, 4)),
+        'method_note': ('S is an analytic sum(width x length); U is a raster '
+                        'union. Their difference carries a method component '
+                        'of unknown size and is not gated here.'),
         's_over_u': (round(integral_m2 / unique_total_m2, 4)
-                     if unique_total_m2 > 0 else None),
-        # Пролетели, но не вносили: подлёт, возврат, перелёт между полями.
-        'flown_swath_ha': flown.swath_all_ha,
+                     if unique_total_m2 else None),
+        # [REASON]: это объединение ВСЕГО закрашенного, работа включена, а
+        # не «холостой пролёт». Прежняя подпись врала владельцу: на сплошь
+        # обработанном проходе обе величины совпадают, и читатель заключил
+        # бы, что холостого хода было столько же, сколько работы. Холостая
+        # часть -- отдельным полем и только как разность на ОДНОЙ сетке.
+        'painted_swath_total_ha': flown.swath_all_ha,
+        'flown_not_applied_ha': (
+            None if (flown.swath_all_ha is None or fine.swath_work_ha is None
+                     or flown.cell_m != fine.cell_m)
+            else round(flown.swath_all_ha - fine.swath_work_ha, 4)),
         'contour_ha': fine.contour_ha,
         'contour_area_ha_declared': contour_area_ha,
         'contour_status': _contour_status(rings, contour_reasons),
         'segment_length_m': _reason_lengths(segments),
-        'uncertainty_percent': uncertainty,
         'cell_m': fine.cell_m,
         'coarsened': fine.coarsened,
         'coarse': coarse.as_dict(),
+        'thresholds': {'max_frame_gap_s': MAX_FRAME_GAP_S,
+                       'max_ground_speed_mps': MAX_GROUND_SPEED_MPS,
+                       'cell_m': params.cell_m,
+                       'width_rule': 'min_of_two_endpoints',
+                       'work_rule': 'application_on_both_endpoints'},
+        'uncertainty_percent': uncertainty,
         'widths_used_m': sorted({round(getattr(s, 'width_m'), 3)
                                  for s in work
                                  if getattr(s, 'width_m', None)}),

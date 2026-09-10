@@ -60,7 +60,8 @@ def _evidence_ddl():
     return found.group(0)
 
 
-def build_db(with_list_revision, revision_without_values=False):
+def build_db(with_list_revision, revision_without_values=False,
+             partial=False):
     """База в памяти с одной записью. Ревизия списка есть или её нет."""
     con = sqlite3.connect(':memory:')
     con.row_factory = sqlite3.Row
@@ -93,6 +94,19 @@ def build_db(with_list_revision, revision_without_values=False):
             'hardware_id, hardware_id_source, list_revision_id, updated_at) '
             'VALUES (?, ?, ?, ?, ?, ?)',
             (FLIGHT, 'acct', HW, 'card', 77, '2026-09-09 00:00:00'))
+        con.commit()
+        return con
+    if partial:
+        # [REASON]: ревизия дала ЧАСТЬ скаляров. `all(...)` отправил бы такую
+        # строку на изменяемый raw_json, потеряв те значения, которые от
+        # захешированного источника всё-таки пришли.
+        con.execute(
+            'INSERT INTO dji_flight_evidence (flight_id, provider_account_id, '
+            'hardware_id, hardware_id_source, list_revision_id, '
+            'list_raw_area_m2, list_spray_width, updated_at) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            (FLIGHT, 'acct', HW, 'card', 77, EVIDENCE_AREA, EVIDENCE_WIDTH,
+             '2026-09-09 00:00:00'))
         con.commit()
         return con
     con.execute(
@@ -134,6 +148,17 @@ class ListScalarsComeFromTheHashedRevision(unittest.TestCase):
                 ('list_end_ts', EVIDENCE_END, RAW_JSON_END)):
             self.assertEqual(item[key], from_revision, key)
             self.assertNotEqual(item[key], from_raw_json, key)
+
+    def test_a_partially_parsed_revision_still_beats_raw_json(self):
+        item = only_item(build_db(with_list_revision=True, partial=True))
+        self.assertEqual(item['list_value_source'], pl.LIST_FROM_REVISION)
+        # То, что ревизия дала, побеждает.
+        self.assertEqual(item['raw_area_m2'], EVIDENCE_AREA)
+        self.assertEqual(item['spray_width'], EVIDENCE_WIDTH)
+        self.assertNotEqual(item['raw_area_m2'], RAW_JSON_AREA)
+        # Чего не дала -- остаётся NULL, а не подставляется из raw_json.
+        self.assertIsNone(item['mode_name'])
+        self.assertIsNone(item['list_start_ts'])
 
     def test_a_named_revision_without_values_is_its_own_state(self):
         # НЕ «есть ревизия» и НЕ «нет ревизии». Иначе строка, у которой тело

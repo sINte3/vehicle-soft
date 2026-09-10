@@ -93,7 +93,8 @@ class OverlapIsNotCountedTwice(unittest.TestCase):
         # выходит за дискретизационный шум растра.
         self.assertIsNotNone(r['repeated_application_ha'])
         self.assertGreater(r['repeated_application_ha'], 0.04)
-        self.assertGreater(r['s_minus_u_ha'], r['raster_bias_estimate_ha'])
+        # Доля -- то, что отличает повтор от методического шума.
+        self.assertGreater(r['repeated_share_of_unique'], 0.7)
 
     def test_control_a_single_pass_has_no_repeated_coverage(self):
         # Без этого контроля проверка выше прошла бы и у кода, который просто
@@ -103,8 +104,8 @@ class OverlapIsNotCountedTwice(unittest.TestCase):
         # различающие вылеты: контроль обязан быть строже решения, иначе он
         # пропускает ровно те значения, на которых решение меняется.
         self.assertLess(abs(r['s_over_u'] - 1.0), 0.14)
-        # Разность в пределах растрового шума -- это НЕ повтор.
-        self.assertIsNone(r['repeated_application_ha'])
+        # Разность методическая: доли процента от полосы, а не десятки.
+        self.assertLess(r['repeated_share_of_unique'], 0.01)
 
     def test_control_two_parallel_passes_do_not_look_like_a_repeat(self):
         # Соседние проходы на расстоянии ровно ширины: перекрытия нет,
@@ -114,7 +115,7 @@ class OverlapIsNotCountedTwice(unittest.TestCase):
         r = cov.coverage_from_v4(frames, CH)
         self.assertAlmostEqual(r['unique_application_ha'], 0.12, delta=0.012)
         self.assertLess(abs(r['s_over_u'] - 1.0), 0.14)
-        self.assertIsNone(r['repeated_application_ha'])
+        self.assertLess(r['repeated_share_of_unique'], 0.01)
 
 
 class FerryIsSeparatedFromApplication(unittest.TestCase):
@@ -126,9 +127,24 @@ class FerryIsSeparatedFromApplication(unittest.TestCase):
         r = cov.coverage_from_v4(frames, CH)
         self.assertEqual(r['status'], 'ESTIMATE')
         self.assertAlmostEqual(r['unique_application_ha'], 0.06, delta=0.006)
-        # Пролетели заметно больше, чем внесли.
-        self.assertGreater(r['flown_swath_ha'], r['unique_application_ha'])
+        # Закрашено (работа + холостое) заметно больше, чем внесено.
+        self.assertGreater(r['painted_swath_total_ha'],
+                           r['unique_application_ha'])
+        # И холостая часть названа отдельным числом, а не подписью на общей
+        # величине: подпись «холостой пролёт» на объединении ВСЕГО
+        # закрашенного врала -- на сплошь обработанном проходе обе величины
+        # совпадают, и читатель заключил бы, что холостого хода было столько
+        # же, сколько работы.
+        self.assertIsNotNone(r['flown_not_applied_ha'])
+        self.assertGreater(r['flown_not_applied_ha'], 0.01)
         self.assertGreater(r['segment_length_m'][cov.SEG_NO_APPLICATION], 90.0)
+
+    def test_control_a_fully_sprayed_pass_has_no_idle_swath(self):
+        # Именно этот случай ловил прежнюю подпись: работа = всё закрашенное.
+        r = cov.coverage_from_v4(north_run(100.0, 21), CH)
+        self.assertAlmostEqual(r['painted_swath_total_ha'],
+                               r['unique_application_ha'], delta=0.002)
+        self.assertLess(abs(r['flown_not_applied_ha']), 0.002)
 
     def test_switching_spray_on_mid_pass_lands_in_the_edge_bucket(self):
         frames = north_run(100.0, 21, spray=False)
@@ -224,6 +240,81 @@ class ThresholdsAreLoadBearingAndTested(unittest.TestCase):
         segs = cov.build_segments(frames, cov.plane_for(
             [(f['lat'], f['lng']) for f in frames]), CH)
         self.assertEqual([s.reason for s in segs], [cov.SEG_GAP])
+
+
+class TheApplicationRuleIsPinned(unittest.TestCase):
+    """Мутанты, пережившие прежний набор."""
+
+    def _one(self, **extra):
+        base = {'t': 0, 'lat': LAT0, 'lng': LON0, 'width': WIDTH}
+        second = dict(base, t=1000, lat=LAT0 + 5.0 / M_PER_DEG_LAT)
+        base.update(extra)
+        second.update(extra)
+        segs = cov.build_segments([base, second], cov.plane_for(
+            [(base['lat'], base['lng']), (second['lat'], second['lng'])]), CH)
+        return segs[0].reason
+
+    def test_flow_alone_without_a_spray_flag_is_application(self):
+        # [REASON]: `spray_flag or flow`, не `and`. v4.py считает flag_frames
+        # и flow_frames РАЗДЕЛЬНО именно потому, что на боевом корпусе они
+        # расходятся. С `and` кадр с расходом и без флага перестал бы быть
+        # работой, и площадь молча упала бы.
+        self.assertEqual(self._one(flow=100), cov.SEG_WORK)
+
+    def test_a_spray_flag_alone_without_flow_is_application(self):
+        self.assertEqual(self._one(spray_flag=1), cov.SEG_WORK)
+
+    def test_control_neither_flag_nor_flow_is_not_application(self):
+        self.assertEqual(self._one(), cov.SEG_NO_APPLICATION)
+
+    def test_a_zero_or_negative_or_nan_width_paints_nothing(self):
+        for bad in (0.0, -6.0, float('nan'), float('inf'), True):
+            self.assertEqual(self._one(spray_flag=1, width=bad),
+                             cov.SEG_NO_WIDTH, 'width=%r' % (bad,))
+
+    def test_two_frames_sharing_a_timestamp_are_a_gap_not_a_crash(self):
+        # dt = 0: деление на ноль обязано не случиться, а отрезок -- стать
+        # разрывом записи.
+        a = {'t': 5000, 'lat': LAT0, 'lng': LON0, 'width': WIDTH,
+             'spray_flag': 1}
+        b = dict(a, lat=LAT0 + 5.0 / M_PER_DEG_LAT)
+        segs = cov.build_segments([a, b], cov.plane_for(
+            [(a['lat'], a['lng']), (b['lat'], b['lng'])]), CH)
+        self.assertEqual([s.reason for s in segs], [cov.SEG_GAP])
+
+    def test_a_backwards_timestamp_is_a_gap(self):
+        a = {'t': 9000, 'lat': LAT0, 'lng': LON0, 'width': WIDTH,
+             'spray_flag': 1}
+        b = dict(a, t=1000, lat=LAT0 + 5.0 / M_PER_DEG_LAT)
+        segs = cov.build_segments([a, b], cov.plane_for(
+            [(a['lat'], a['lng']), (b['lat'], b['lng'])]), CH)
+        self.assertEqual([s.reason for s in segs], [cov.SEG_GAP])
+
+    def test_the_untimed_fallback_no_longer_trusts_the_v1_gap_distance(self):
+        # Прежний запас 20 x 3 = 60 м -- это ровно `gap_m` из v1.
+        a = {'lat': LAT0, 'lng': LON0, 'width': WIDTH, 'spray_flag': 1}
+        for metres, expected in ((19.0, cov.SEG_WORK), (55.0, cov.SEG_GAP)):
+            b = dict(a, lat=LAT0 + metres / M_PER_DEG_LAT)
+            segs = cov.build_segments([a, b], cov.plane_for(
+                [(a['lat'], a['lng']), (b['lat'], b['lng'])]), CH)
+            self.assertEqual([s.reason for s in segs], [expected],
+                             '%.0f m without a timestamp' % metres)
+
+    def test_the_reason_names_what_actually_happened(self):
+        # Жёсткое NO_APPLICATION_FRAMES врало, когда распыление шло на каждом
+        # кадре, а полоса не строилась из-за отсутствующей ширины.
+        frames = north_run(100.0, 21, width=None)
+        r = cov.coverage_from_v4(frames, CH)
+        self.assertEqual(r['status'], 'NO_CONFIRMED_APPLICATION')
+        self.assertEqual(r['reason'], cov.SEG_NO_WIDTH)
+
+    def test_the_thresholds_travel_with_the_numbers(self):
+        r = cov.coverage_from_v4(north_run(100.0, 21), CH)
+        self.assertEqual(r['thresholds']['max_frame_gap_s'],
+                         cov.MAX_FRAME_GAP_S)
+        self.assertEqual(r['thresholds']['max_ground_speed_mps'],
+                         cov.MAX_GROUND_SPEED_MPS)
+        self.assertIn('swath_work_ha', r['uncertainty_percent'])
 
 
 if __name__ == '__main__':

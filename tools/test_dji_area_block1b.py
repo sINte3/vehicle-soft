@@ -65,17 +65,19 @@ def _ddl():
     return re.findall(r'CREATE TABLE IF NOT EXISTS \w+ \(.*?\n    \)', text, re.S)
 
 
-def _pass_frames(start_ms):
+def _pass_frames(start_ms, offset_m=0.0):
     out = []
+    dlon = offset_m / (M_PER_DEG * math.cos(math.radians(LAT0)))
     for i in range(PASS_FRAMES):
         out.append(frame(start_ms + i * 1000, area=10.0 + i * 0.05, width=WIDTH,
                          spray_flag=1, flow=100,
                          lat=LAT0 + (PASS_M / M_PER_DEG) * i / (PASS_FRAMES - 1),
-                         lng=LON0))
+                         lng=LON0 + dlon))
     return out
 
 
-def build(db_path, passes, historical=1, with_geometry=True):
+def build(db_path, passes, historical=1, with_geometry=True,
+          offset_m=0.0):
     """База с одним вылетом из `passes` одинаковых проходов по одной земле."""
     con = sqlite3.connect(db_path)
     for stmt in _ddl():
@@ -100,8 +102,8 @@ def build(db_path, passes, historical=1, with_geometry=True):
                     [row[k] for k in keys])
 
     frames, t = [], T0 * 1000
-    for _ in range(passes):
-        frames.extend(_pass_frames(t))
+    for k in range(passes):
+        frames.extend(_pass_frames(t, offset_m * k))
         # Пауза между проходами: связующий отрезок обязан стать разрывом
         # записи, а не полосой длиной в сто метров.
         t += PASS_FRAMES * 1000 + 120000
@@ -152,6 +154,15 @@ def build(db_path, passes, historical=1, with_geometry=True):
         land_snapshot_id=7, land_revision_id=1,
         historical_geometry_available=historical,
         field_resolver_version=FIELD_RESOLVER_VERSION)
+    # [REASON]: ловушка на версию РЕЗОЛВЕРА ПОЛЯ. Без неё снятие фильтра
+    # `f.field_resolver_version = ?` проходило все тесты: живая атрибуция
+    # прежней версии подмешала бы чужой контур и чужой tier.
+    ins('dji_field_attributions', flight_id=FLIGHT,
+        field_attribution_tier='TIER5_UNKNOWN', field_land_uuid='uuid-STALE',
+        field_name_at_snapshot='STALE-RESOLVER-FIELD', superseded_at=None,
+        land_snapshot_id=99, land_revision_id=2,
+        historical_geometry_available=0,
+        field_resolver_version=FIELD_RESOLVER_VERSION + '-OLD')
     # Ревизия, на которую ссылается атрибуция...
     # Контур, накрывающий ЮЖНУЮ половину прохода: полоса обязана разделиться
     # на «внутри поля» и «снаружи поля», а не остаться одним числом.
@@ -171,8 +182,11 @@ def build(db_path, passes, historical=1, with_geometry=True):
             sha256=hashlib.sha256(body).hexdigest(), size_bytes=len(body),
             md5_verified=1, body_blob=body, parse_status='OK', ring_count=1,
             first_seen_at='2026-09-09')
+    # [REASON]: 30/25/2 делали остаток t-o-w симметричным по o и w, и
+    # перестановка колонок проходила тест. Числа подобраны так, чтобы каждая
+    # из трёх площадей отличалась от двух других и от их перестановок.
     ins('dji_land_revisions', id=1, land_uuid='uuid-1', name='SYNTHETIC-FIELD',
-        total_area_raw=30.0, work_area_raw=25.0, obstacle_area_raw=2.0,
+        total_area_raw=30.0, work_area_raw=24.0, obstacle_area_raw=3.0,
         area_unit='mu', raw_json='{}', raw_sha256='s1', geometry_md5=geom_md5,
         first_seen_snapshot_id=7, last_seen_snapshot_id=7)
     # ...и ДРУГАЯ ревизия того же участка, которую нельзя смешивать с первой.
@@ -337,6 +351,15 @@ class PolygonVintageIsNamedNotAssumed(unittest.TestCase):
         self.assertEqual(row['land_revision_id'], '1')
         self.assertEqual(row['land_snapshot_id'], '7')
 
+    def test_a_stale_field_resolver_attribution_is_not_picked_up(self):
+        build(self.db, passes=1)
+        self.assertEqual(run(self.db, self.out).returncode, 0)
+        rows_ = csv_rows(self.out, 'flights.csv')
+        self.assertEqual(len(rows_), 1)
+        self.assertEqual(rows_[0]['field_land_uuid'], 'uuid-1')
+        self.assertNotEqual(rows_[0]['field_land_uuid'], 'uuid-STALE')
+        self.assertEqual(rows_[0]['field_attribution_tier'], 'TIER2_STRONG')
+
     def test_the_used_revision_is_marked_apart_from_the_other_one(self):
         build(self.db, passes=1)
         self.assertEqual(run(self.db, self.out).returncode, 0)
@@ -359,11 +382,20 @@ class TheTaskAreaResidualIsNotCalledSafetyMargin(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def test_the_unexplained_remainder_is_computed_and_nonzero(self):
-        # total 30 mu, obstacle 2 mu, work 25 mu -> остаток 3 mu = 0.2 ha.
+        # total 30 mu, obstacle 3 mu, work 24 mu -> остаток 3 mu = 0.2 ha.
         used = [r for r in csv_rows(self.out, 'land_revisions.csv')
                 if r['revision_role'] == 'USED_BY_ATTRIBUTION'][0]
+        mu = 2000.0 / 3.0
         self.assertAlmostEqual(float(used['unexplained_exclusion_ha']),
-                               3.0 * (2000.0 / 3.0) / 10000.0, places=6)
+                               3.0 * mu / 10000.0, places=6)
+        # Каждая площадь проверяется отдельно: остаток симметричен по
+        # obstacle и work, и на нём одном перестановка колонок незаметна.
+        self.assertAlmostEqual(float(used['total_area_ha']), 30.0 * mu / 10000.0,
+                               places=6)
+        self.assertAlmostEqual(float(used['work_area_ha']), 24.0 * mu / 10000.0,
+                               places=6)
+        self.assertAlmostEqual(float(used['obstacle_area_ha']),
+                               3.0 * mu / 10000.0, places=6)
 
     def test_no_output_calls_the_remainder_a_safety_margin(self):
         # Назвать остаток safety margin -- значит объявить формулу
@@ -414,6 +446,108 @@ class TheBundleIsSelfContained(unittest.TestCase):
         self.assertEqual(man['coverage_module_sha256'],
                          sha_of(os.path.join(ROOT, 'dji_area', 'coverage.py')))
         self.assertTrue(man['not_billable'])
+
+
+class TheDiscriminatingFlagIsPinnedNearItsBoundary(unittest.TestCase):
+    """Порог, проверенный только на 1.0 и 2.0, можно ставить куда угодно.
+
+    Две фикстуры ниже зажимают DISCRIMINATING_S_OVER_U в окно
+    [1.111, 1.335]: за его пределами тесты падают. Точнее не пинуем
+    намеренно -- 1.15 это инженерное суждение о том, с какого перекрытия
+    случай начинает различать две гипотезы счётчика, а не выведенная
+    величина; тест на 1.149 против 1.151 подгонял бы проверку под
+    константу и запрещал бы её осмысленную правку.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix='block1b-thr-')
+        self.db = os.path.join(self.dir, 'transport.db')
+        self.out = os.path.join(self.dir, 'out')
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_a_half_width_offset_repass_is_already_discriminating(self):
+        # Смещение на полширины -> перекрытие половины полосы -> S/U около
+        # 1.33: выше порога 1.15, но НИЖЕ 1.5. Прежние фикстуры давали 1.00 и
+        # 2.00, поэтому порог можно было двигать в этом промежутке свободно.
+        build(self.db, passes=2, offset_m=WIDTH / 2.0)
+        self.assertEqual(run(self.db, self.out).returncode, 0)
+        row = coverage_row(self.out)
+        self.assertGreater(row['s_over_u'], 1.15)
+        self.assertLess(row['s_over_u'], 1.5)
+        self.assertTrue(row['discriminating'],
+                        's_over_u=%r was not flagged' % row['s_over_u'])
+
+    def test_a_narrow_overlap_repass_is_not_discriminating(self):
+        # Парный отрицательный контроль. Смещение 0.8 ширины -> S/U около
+        # 1.11, НИЖЕ порога: перекрытие такого размера объясняется одной лишь
+        # погрешностью растра и различать две гипотезы счётчика не может.
+        # Без этого случая порог можно было опустить до 1.02 незамеченным.
+        build(self.db, passes=2, offset_m=WIDTH * 0.8)
+        self.assertEqual(run(self.db, self.out).returncode, 0)
+        row = coverage_row(self.out)
+        self.assertGreater(row['s_over_u'], 1.0)
+        self.assertLess(row['s_over_u'], 1.15)
+        self.assertFalse(row['discriminating'],
+                         's_over_u=%r was flagged' % row['s_over_u'])
+
+
+class OneBadFlightDoesNotCostTheTripToTheServer(unittest.TestCase):
+    """Bundle собирается один раз, руками владельца, на недостижимой машине.
+
+    Нештатное исключение на одном вылете раньше роняло весь прогон. Проверка
+    подменяет `coverage_from_v4` через `sitecustomize`, а не правит код
+    инструмента: подмена живёт только в дочернем процессе теста.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix='block1b-boom-')
+        self.db = os.path.join(self.dir, 'transport.db')
+        self.out = os.path.join(self.dir, 'out')
+        self.inject = os.path.join(self.dir, 'inject')
+        os.makedirs(self.inject)
+        with open(os.path.join(self.inject, 'sitecustomize.py'), 'w',
+                  encoding='utf-8') as fh:
+            fh.write(
+                'import sys\n'
+                'sys.path.insert(0, %r)\n'
+                'import dji_area.coverage as c\n'
+                'def boom(*a, **k):\n'
+                '    raise ZeroDivisionError("injected")\n'
+                'c.coverage_from_v4 = boom\n' % ROOT)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def run_injected(self):
+        env = dict(os.environ)
+        env['PYTHONPATH'] = (self.inject + os.pathsep
+                             + env.get('PYTHONPATH', ''))
+        return subprocess.run(
+            [sys.executable, TOOL, '--db', self.db, '--date', '2026-08-18',
+             '--hardware', HW, '--out', self.out],
+            capture_output=True, text=True, env=env)
+
+    def test_the_bundle_completes_and_names_the_failure(self):
+        build(self.db, passes=2)
+        res = self.run_injected()
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        row = coverage_row(self.out)
+        self.assertEqual(row['coverage_status'], 'FAILED')
+        self.assertIn('ZeroDivisionError', row['reason'])
+        # Молчаливый FAILED хуже падения: его не заметят в CSV на 226 строк.
+        self.assertIn('WARNING', res.stdout)
+        # Bundle остаётся полным: манифест и тела источников на месте.
+        self.assertTrue(os.path.isfile(os.path.join(self.out, 'manifest.json')))
+        self.assertTrue(os.path.isfile(os.path.join(self.out, 'flights.csv')))
+
+    def test_control_without_the_injection_the_same_fixture_succeeds(self):
+        # Иначе тест выше проходил бы и на вылете, который сломан сам по
+        # себе, ничего не говоря о перехвате исключения.
+        build(self.db, passes=2)
+        self.assertEqual(run(self.db, self.out).returncode, 0)
+        self.assertEqual(coverage_row(self.out)['coverage_status'], 'ESTIMATE')
 
 
 class TheHistoricalContourReachesTheCalculation(unittest.TestCase):
