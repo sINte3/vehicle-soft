@@ -217,6 +217,15 @@ jobs:
       - name: Block 1B runbook (pasteable, guarded, names only real files)
         run: python tools/test_dji_area_block1b_runbook.py
 
+      # The second --apply must write nothing. Until now that was a line of
+      # console text a person had to notice; a notice nobody reads is not a
+      # check. The gate turns it into an exit code, and this suite proves the
+      # gate can FAIL: a `new` row, a `reactivated` row, an empty writes
+      # section and a zero `unchanged` each stop the run, while an empty
+      # period legitimately passes.
+      - name: Idempotence gate (a second apply that writes anything stops the run)
+        run: python tools/test_dji_area_idempotence_gate.py
+
       # The recomputation itself, on a temporary SQLite database built with
       # the migration's own DDL. Stdlib only: drone_coverage_recalc.py and
       # drone_useful_area.py are deliberately free of Flask, and this suite

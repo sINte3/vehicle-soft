@@ -40,6 +40,21 @@ def blocks(text):
     return re.findall(r'```powershell\n(.*?)```', text, re.S)
 
 
+def _try_body(block):
+    """Текст между `try {` и парным ему `}` (то есть до `} finally {`)."""
+    start = block.index('try {') + len('try {')
+    depth, i = 1, start
+    while i < len(block) and depth:
+        if block[i] == '{':
+            depth += 1
+        elif block[i] == '}':
+            depth -= 1
+            if not depth:
+                return block[start:i]
+        i += 1
+    raise AssertionError('unbalanced braces: the try block never closes')
+
+
 def _finally_body(block):
     """Текст между `} finally {` и ПАРНОЙ ему закрывающей скобкой."""
     start = block.index('} finally {') + len('} finally {')
@@ -94,7 +109,8 @@ class TheBlockIsPasteable(unittest.TestCase):
                     continue
                 guarded = ('if (' in line and (
                     '$LASTEXITCODE' in line or 'Test-Path' in line
-                    or '-ne' in line or '-notlike' in line or '-not ' in line))
+                    or '-ne' in line or '-notlike' in line or '-not ' in line
+                    or '-gt' in line or '-lt' in line))
                 self.assertTrue(guarded, 'unguarded throw: %r' % line)
 
     def test_the_read_only_proof_is_actually_compared(self):
@@ -164,13 +180,78 @@ class TheBlockIsPasteable(unittest.TestCase):
         self.assertLess(verify, apply_at,
                         'the backup is not verified before the first write')
 
-    def test_the_write_step_proves_idempotence_on_the_spot(self):
+    def test_the_write_step_proves_idempotence_by_machine_not_by_eye(self):
+        # [REASON]: надпись «MUST REPORT unchanged» проверкой не является --
+        # её можно не заметить, а вывод пролистать. Идемпотентность обязана
+        # быть воротами с кодом возврата.
         block = self.blocks[0]
         if '--apply' not in block:
             return
         self.assertEqual(block.count('--apply'), 2,
                          'a single apply cannot demonstrate idempotence')
-        self.assertIn('unchanged', block)
+        self.assertIn('dji_area_idempotence_gate.py --summary', block)
+        gate = block.index('dji_area_idempotence_gate.py --summary')
+        tail = block[gate:]
+        guard = tail.index('$LASTEXITCODE')
+        self.assertLess(guard, tail.index('DB SHA256 BEFORE'),
+                        'the gate result is never checked before the bundle')
+        self.assertIn('idempotence gate refused', block)
+
+    def test_the_second_apply_is_written_to_its_own_summary_file(self):
+        block = self.blocks[0]
+        self.assertIn("apply2.json", block)
+        self.assertIn("(Join-Path $recalc 'apply2.json')", block)
+        # Ворота обязаны читать сводку ВТОРОГО прогона, не первого.
+        gate_line = [l for l in block.splitlines()
+                     if 'dji_area_idempotence_gate.py --summary' in l][0]
+        self.assertIn('apply2.json', gate_line)
+        self.assertNotIn('apply1.json', gate_line)
+
+
+class TheEvidenceRunHappensWithTheServiceStopped(unittest.TestCase):
+    """Работающее приложение может само изменить базу между хешами."""
+
+    def setUp(self):
+        self.text = read()
+        self.blocks = blocks(self.text)
+        self.block = self.blocks[0]
+
+    def test_the_bundle_runs_inside_the_stopped_service_scope(self):
+        body = _try_body(self.block)
+        self.assertIn('dji_area_block1b.py --db', body,
+                      'the bundle runs outside the stopped-service scope')
+
+    def test_both_hashes_are_taken_inside_the_stopped_service_scope(self):
+        body = _try_body(self.block)
+        self.assertIn('DB SHA256 BEFORE', body)
+        self.assertIn('DB SHA256 AFTER', body)
+        self.assertIn('the database changed during a read-only run', body)
+
+    def test_the_service_is_not_restarted_before_the_bundle(self):
+        body = _try_body(self.block)
+        for verb in ('Restart-Service', 'Start-Service'):
+            self.assertNotIn(verb, body,
+                             'the service comes back up before the evidence '
+                             'run has finished')
+
+    def test_the_recalc_also_runs_with_the_service_stopped(self):
+        body = _try_body(self.block)
+        self.assertIn('dji_area_recalc.py', body)
+        self.assertIn('dji_area_idempotence_gate.py', body)
+
+    def test_stopped_and_running_are_both_waited_for_by_state_not_by_sleep(self):
+        # Start-Sleep без проверки состояния -- это надежда, а не проверка.
+        self.assertIn("(Get-Service -Name $service).Status -ne 'Stopped'",
+                      self.block)
+        self.assertIn("(Get-Service -Name $service).Status -ne 'Running'",
+                      self.block)
+        self.assertIn('did not reach Stopped', self.block)
+        self.assertIn('did not reach Running', self.block)
+
+    def test_the_gate_self_test_runs_before_the_live_database_is_touched(self):
+        self_test = self.block.index('test_dji_area_idempotence_gate.py')
+        stop = self.block.index('Stop-Service')
+        self.assertLess(self_test, stop)
 
     def test_the_read_only_hashes_bracket_the_bundle_not_the_recalc(self):
         # Пересчёт ПИШЕТ, поэтому хеши до/после обязаны охватывать только

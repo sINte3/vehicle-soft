@@ -14,9 +14,18 @@
 перезапускается в `finally` — то есть даже если шаг упадёт, служба будет
 поднята.
 
-**Идемпотентность доказывается на месте:** пересчёт применяется дважды,
-второй прогон обязан отчитаться `unchanged`. Если он отчитается иначе —
-это находка, и её надо прислать.
+**Идемпотентность — машинные ворота, а не глаза.** Пересчёт применяется
+дважды, и сводку второго прогона разбирает
+`tools/dji_area_idempotence_gate.py`: любое ненулевое состояние, кроме
+`unchanged`, в `calc_writes` или `field_writes` — и прогон останавливается.
+Отсутствие `unchanged` при непустом периоде тоже останавливает: это не
+идемпотентность, а отсутствие проверки.
+
+**Служба площадки остановлена всю доказательную часть** — от резервной
+копии через пересчёт, ворота идемпотентности, оба хеша и весь сбор bundle.
+Иначе приложение могло бы само изменить базу или хранилище источников между
+BEFORE и AFTER, и прогон перестал бы быть воспроизводимым. Служба
+поднимается в едином `finally` и машинно проверяется на `Running`.
 
 **Чтение доказывается хешем:** вокруг шага сбора bundle печатается sha256
 базы до и после; если они разошлись, блок останавливается сам.
@@ -57,12 +66,19 @@ if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: git clone exit $LASTEXITCODE" }
 Set-Location $work
 & $py tools\test_dji_area_block1b.py
 if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: tool self-test exit $LASTEXITCODE" }
+& $py tools\test_dji_area_idempotence_gate.py
+if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: idempotence gate self-test exit $LASTEXITCODE" }
 $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 New-Item -ItemType Directory -Force -Path $backup | Out-Null
 New-Item -ItemType Directory -Force -Path $recalc | Out-Null
 try {
   Stop-Service -Name $service
-  Start-Sleep -Seconds 3
+  $deadline = (Get-Date).AddSeconds(90)
+  while ((Get-Service -Name $service).Status -ne 'Stopped') {
+    if ((Get-Date) -gt $deadline) { throw "STEP FAILED: service did not reach Stopped within 90s" }
+    Start-Sleep -Seconds 2
+  }
+  Write-Host ("SERVICE STOPPED: " + (Get-Service -Name $service).Status)
   $dest = Join-Path $backup ("transport.db.pre_impl3_" + $stamp + ".bak")
   Copy-Item -LiteralPath $db -Destination $dest -Force
   foreach ($sfx in @('-wal','-shm')) { if (Test-Path -LiteralPath ($db + $sfx)) { Copy-Item -LiteralPath ($db + $sfx) -Destination ($dest + $sfx) -Force } }
@@ -72,23 +88,28 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: recalc dry-run exit $LASTEXITCODE" }
   & $py tools\dji_area_recalc.py --db $db --from 2026-08-18 --to 2026-08-18 --apply --json (Join-Path $recalc 'apply1.json')
   if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: recalc apply exit $LASTEXITCODE" }
-  Write-Host 'SECOND APPLY MUST REPORT unchanged:'
   & $py tools\dji_area_recalc.py --db $db --from 2026-08-18 --to 2026-08-18 --apply --json (Join-Path $recalc 'apply2.json')
   if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: recalc second apply exit $LASTEXITCODE" }
+  & $py tools\dji_area_idempotence_gate.py --summary (Join-Path $recalc 'apply2.json')
+  if ($LASTEXITCODE -ne 0) { throw "STEP FAILED: idempotence gate refused the second apply, exit $LASTEXITCODE" }
+  $before = (Get-FileHash -LiteralPath $db -Algorithm SHA256).Hash
+  Write-Host "DB SHA256 BEFORE: $before"
+  & $py tools\dji_area_block1b.py --db $db --date 2026-08-18 --hardware 1581F574B2387001009R --hardware 1581F574B235W00100Q5 --out $out
+  $rc = $LASTEXITCODE
+  Write-Host "BUNDLE EXIT CODE: $rc"
+  $after = (Get-FileHash -LiteralPath $db -Algorithm SHA256).Hash
+  Write-Host "DB SHA256 AFTER : $after"
+  if ($before -ne $after) { throw "STOP: the database changed during a read-only run" }
+  Write-Host "READ-ONLY CONFIRMED: database bytes identical"
 } finally {
   Restart-Service -Name $service
-  Start-Sleep -Seconds 5
-  Get-Service -Name $service | Select-Object Name, Status | Format-Table -AutoSize
+  $deadline2 = (Get-Date).AddSeconds(90)
+  while ((Get-Service -Name $service).Status -ne 'Running') {
+    if ((Get-Date) -gt $deadline2) { throw "STEP FAILED: service did not reach Running within 90s -- START IT BY HAND" }
+    Start-Sleep -Seconds 2
+  }
+  Write-Host ("SERVICE RUNNING: " + (Get-Service -Name $service).Status)
 }
-$before = (Get-FileHash -LiteralPath $db -Algorithm SHA256).Hash
-Write-Host "DB SHA256 BEFORE: $before"
-& $py tools\dji_area_block1b.py --db $db --date 2026-08-18 --hardware 1581F574B2387001009R --hardware 1581F574B235W00100Q5 --out $out
-$rc = $LASTEXITCODE
-Write-Host "BUNDLE EXIT CODE: $rc"
-$after = (Get-FileHash -LiteralPath $db -Algorithm SHA256).Hash
-Write-Host "DB SHA256 AFTER : $after"
-if ($before -ne $after) { throw "STOP: the database changed during a read-only run" }
-Write-Host "READ-ONLY CONFIRMED: database bytes identical"
 Copy-Item -LiteralPath (Join-Path $recalc 'dryrun.json') -Destination $out -Force
 Copy-Item -LiteralPath (Join-Path $recalc 'apply1.json') -Destination $out -Force
 Copy-Item -LiteralPath (Join-Path $recalc 'apply2.json') -Destination $out -Force
@@ -106,6 +127,10 @@ Write-Host 'SEND BACK: C:\VehicleSoft_Block1B\block1b_out3.zip and the console t
 - `tool self-test exit ...` — окружение не проходит самотест инструмента;
   **база не трогалась**, резервная копия не делалась.
 - `backup was not created` — запись не начиналась.
+- `idempotence gate refused ...` — второй пересчёт написал новые строки.
+  Это находка: прислать `apply1.json`, `apply2.json` и вывод ворот.
+- `service did not reach Stopped/Running ...` — служба не сменила состояние
+  за 90 секунд. Во втором случае **поднять её вручную** и сообщить.
 - `recalc ... exit ...` — пересчёт упал. База осталась с резервной копией
   рядом; служба перезапущена блоком. Прислать вывод.
 - `exit 1` у bundle — на базе нет таблиц модели, либо каталог вывода занят.
