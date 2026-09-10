@@ -38,8 +38,14 @@ START_TS = 1785526013
 
 # Значения, различающиеся НАМЕРЕННО: слева -- то, что записано в изменяемой
 # колонке, справа -- то, что разобрано из захешированной ревизии.
+# ВСЕ шесть скаляров расходятся. Если совпадает хоть один, проверка по нему
+# проходит при любой реализации и создаёт ложное покрытие.
 RAW_JSON_AREA, EVIDENCE_AREA = 11111.0, 8386.0
 RAW_JSON_WIDTH, EVIDENCE_WIDTH = 9.99, 6.35
+RAW_JSON_MODE, EVIDENCE_MODE = 1, 4
+RAW_JSON_MANUAL, EVIDENCE_MANUAL = True, 0
+RAW_JSON_START, EVIDENCE_START = START_TS + 777, START_TS
+RAW_JSON_END, EVIDENCE_END = START_TS + 999, START_TS + 300
 
 
 def _evidence_ddl():
@@ -54,7 +60,7 @@ def _evidence_ddl():
     return found.group(0)
 
 
-def build_db(with_list_revision):
+def build_db(with_list_revision, revision_without_values=False):
     """База в памяти с одной записью. Ревизия списка есть или её нет."""
     con = sqlite3.connect(':memory:')
     con.row_factory = sqlite3.Row
@@ -72,11 +78,23 @@ def build_db(with_list_revision):
         (FLIGHT, '2026-08-18 00:53:00', '2026-08-18 00:58:00',
          json.dumps({'id': FLIGHT, 'hardware_id': HW,
                      'new_work_area': RAW_JSON_AREA,
-                     'spray_width': RAW_JSON_WIDTH, 'mode_name': 4,
-                     'manual_mode': False, 'start_timestamp': START_TS,
-                     'end_timestamp': START_TS + 300,
+                     'spray_width': RAW_JSON_WIDTH,
+                     'mode_name': RAW_JSON_MODE,
+                     'manual_mode': RAW_JSON_MANUAL,
+                     'start_timestamp': RAW_JSON_START,
+                     'end_timestamp': RAW_JSON_END,
                      'nickname': 'SYNTHETIC-NICK'}),
          'SYNTHETIC-NICK'))
+    if revision_without_values:
+        # Ревизия названа, но тело не прочиталось: store.py:297-303 оставляет
+        # id и не заполняет ни один скаляр.
+        con.execute(
+            'INSERT INTO dji_flight_evidence (flight_id, provider_account_id, '
+            'hardware_id, hardware_id_source, list_revision_id, updated_at) '
+            'VALUES (?, ?, ?, ?, ?, ?)',
+            (FLIGHT, 'acct', HW, 'card', 77, '2026-09-09 00:00:00'))
+        con.commit()
+        return con
     con.execute(
         'INSERT INTO dji_flight_evidence (flight_id, provider_account_id, '
         'hardware_id, hardware_id_source, list_revision_id, list_raw_area_m2, '
@@ -84,7 +102,12 @@ def build_db(with_list_revision):
         'list_spray_width, updated_at) '
         'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         (FLIGHT, 'acct', HW, 'card', 77 if with_list_revision else None,
-         EVIDENCE_AREA, START_TS, START_TS + 300, 4, 0, EVIDENCE_WIDTH,
+         EVIDENCE_AREA if with_list_revision else None,
+         EVIDENCE_START if with_list_revision else None,
+         EVIDENCE_END if with_list_revision else None,
+         EVIDENCE_MODE if with_list_revision else None,
+         EVIDENCE_MANUAL if with_list_revision else None,
+         EVIDENCE_WIDTH if with_list_revision else None,
          '2026-09-09 00:00:00'))
     con.commit()
     return con
@@ -99,14 +122,28 @@ def only_item(con):
 
 class ListScalarsComeFromTheHashedRevision(unittest.TestCase):
 
-    def test_evidence_wins_over_mutable_raw_json(self):
+    def test_evidence_wins_over_mutable_raw_json_for_every_scalar(self):
         item = only_item(build_db(with_list_revision=True))
-        self.assertEqual(item['raw_area_m2'], EVIDENCE_AREA)
-        self.assertEqual(item['spray_width'], EVIDENCE_WIDTH)
         self.assertEqual(item['list_value_source'], pl.LIST_FROM_REVISION)
-        # Ровно то значение, которое НЕ должно было победить.
-        self.assertNotEqual(item['raw_area_m2'], RAW_JSON_AREA)
-        self.assertNotEqual(item['spray_width'], RAW_JSON_WIDTH)
+        for key, from_revision, from_raw_json in (
+                ('raw_area_m2', EVIDENCE_AREA, RAW_JSON_AREA),
+                ('spray_width', EVIDENCE_WIDTH, RAW_JSON_WIDTH),
+                ('mode_name', EVIDENCE_MODE, RAW_JSON_MODE),
+                ('manual_mode', EVIDENCE_MANUAL, RAW_JSON_MANUAL),
+                ('list_start_ts', EVIDENCE_START, RAW_JSON_START),
+                ('list_end_ts', EVIDENCE_END, RAW_JSON_END)):
+            self.assertEqual(item[key], from_revision, key)
+            self.assertNotEqual(item[key], from_raw_json, key)
+
+    def test_a_named_revision_without_values_is_its_own_state(self):
+        # НЕ «есть ревизия» и НЕ «нет ревизии». Иначе строка, у которой тело
+        # не прочиталось, была бы помечена как посчитанная от захешированного
+        # источника, не получив от него ни одного значения.
+        item = only_item(build_db(with_list_revision=True,
+                                  revision_without_values=True))
+        self.assertEqual(item['list_value_source'], pl.LIST_REVISION_UNPARSED)
+        self.assertIsNone(item['raw_area_m2'])
+        self.assertIsNone(item['spray_width'])
 
     def test_control_without_a_revision_the_fallback_is_used_and_declared(self):
         # Отрицательный контроль: правка не имеет права выключить запасной

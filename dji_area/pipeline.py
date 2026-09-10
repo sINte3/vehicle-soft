@@ -35,6 +35,9 @@ BOUNDARY_DAYS = 1
 # Различие несёт доказательную силу и обязано входить в отпечаток входа.
 LIST_FROM_REVISION = 'revision'
 LIST_FROM_MUTABLE_RAW_JSON = 'drone_flights_raw_json'
+# Ревизия списка названа, но ни одного значения из неё не пришло: тело не
+# прочиталось или не разобралось. Не молчаливый ноль и не «источник надёжен».
+LIST_REVISION_UNPARSED = 'revision_named_but_unparsed'
 
 
 class PipelineError(RuntimeError):
@@ -111,7 +114,18 @@ def load_flights(con, date_from, date_to, flight_ids=None):
         # лежат в `dji_flight_evidence` (store.build_evidence_row), поэтому
         # берём их оттуда. Разбор raw_json остаётся ТОЛЬКО как объявленный
         # запасной путь для записей без list-ревизии, и он помечается.
-        if r['list_revision_id']:
+        # [REASON]: наличия `list_revision_id` НЕДОСТАТОЧНО. store.py:297-303
+        # ставит его ДО разбора и оставляет, когда тело ревизии не читается
+        # (StoreError на пропавшем файле или несовпавшем SHA) или не
+        # разбирается (ValueError): скаляры при этом остаются NULL. Ветка «по
+        # одному только id» пометила бы такую строку как посчитанную от
+        # захешированного источника, хотя от него не пришло ни одного
+        # значения, и NULL молча стал бы отсутствующей площадью.
+        have_revision_values = bool(r['list_revision_id']) and any(
+            r[col] is not None for col in
+            ('list_raw_area_m2', 'list_start_ts', 'list_end_ts',
+             'list_mode_name', 'list_manual_mode', 'list_spray_width'))
+        if have_revision_values:
             lst = {'mode_name': r['list_mode_name'],
                    'manual_mode': r['list_manual_mode'],
                    'spray_width': r['list_spray_width'],
@@ -119,6 +133,12 @@ def load_flights(con, date_from, date_to, flight_ids=None):
                    'start_ts': r['list_start_ts'],
                    'end_ts': r['list_end_ts']}
             list_value_source = LIST_FROM_REVISION
+        elif r['list_revision_id']:
+            # Ревизия названа, но значений из неё нет. Это НЕ «нет ревизии» и
+            # НЕ «есть ревизия»: третье состояние, и оно обязано отличаться в
+            # отпечатке, иначе деградированная строка останется навсегда.
+            lst = None
+            list_value_source = LIST_REVISION_UNPARSED
         else:
             try:
                 raw = json.loads(r['raw_json']) if r['raw_json'] else {}
@@ -436,6 +456,8 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
             decision.anomaly_flags.append('HARDWARE_FROM_NICKNAME')
         if item.get('list_value_source') == LIST_FROM_MUTABLE_RAW_JSON:
             decision.anomaly_flags.append('LIST_FROM_MUTABLE_RAW_JSON')
+        elif item.get('list_value_source') == LIST_REVISION_UNPARSED:
+            decision.anomaly_flags.append('LIST_REVISION_UNPARSED')
         if item['v4_absent_reason'] == 'NO_V4_URL_AT_SOURCE' and summ is None:
             decision.anomaly_flags.append('NO_V4_AT_SOURCE')
 
@@ -453,12 +475,13 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
                    item['hardware_id_source'],
                    'route_identity': item.get('route_identity_status'),
                    'v4_identity': item.get('v4_identity_status'),
-                   # [REASON]: строка, посчитанная от захешированной ревизии, и
-                   # строка, посчитанная от изменяемого raw_json, -- РАЗНЫЕ
-                   # доказательства при одном наборе SHA. Без этого поля они
-                   # дают один отпечаток, и после появления ревизии пересчёт
-                   # отвечает `unchanged`, навсегда оставляя вывод, сделанный
-                   # от неподтверждённого источника.
+                   # [REASON]: различить ревизию и raw_json отпечаток умел и
+                   # без этого поля -- у них разный `sources['list']`. Поле
+                   # нужно для ТРЕТЬЕГО состояния: ревизия названа, но её
+                   # значения не пришли. Там `sources['list']` совпадает со
+                   # здоровым случаем, и без явной пометки деградированная
+                   # строка и здоровая дали бы один отпечаток, а пересчёт
+                   # после починки тела ответил бы `unchanged`.
                    'list_value_source': item.get('list_value_source'),
                    # [REASON]: без этого «тело V4 не прочиталось» и «тела V4
                    # нет» дают ОДИН отпечаток, и после возврата файлового

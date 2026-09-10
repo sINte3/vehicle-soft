@@ -89,14 +89,22 @@ class OverlapIsNotCountedTwice(unittest.TestCase):
         # Километражный интеграл видит обе.
         self.assertAlmostEqual(r['swath_integral_ha'], 0.12, delta=0.006)
         self.assertGreater(r['s_over_u'], 1.7)
+        # Повторное покрытие называется только тогда, когда разность S и U
+        # выходит за дискретизационный шум растра.
+        self.assertIsNotNone(r['repeated_application_ha'])
         self.assertGreater(r['repeated_application_ha'], 0.04)
+        self.assertGreater(r['s_minus_u_ha'], r['raster_bias_estimate_ha'])
 
     def test_control_a_single_pass_has_no_repeated_coverage(self):
         # Без этого контроля проверка выше прошла бы и у кода, который просто
         # всегда объявляет половину площади повторной.
         r = cov.coverage_from_v4(north_run(100.0, 21), CH)
-        self.assertLess(abs(r['s_over_u'] - 1.0), 0.25)
-        self.assertLess(abs(r['repeated_application_ha']), 0.015)
+        # Полоса УЖЕ порога решения 1.15, которым инструмент 1B помечает
+        # различающие вылеты: контроль обязан быть строже решения, иначе он
+        # пропускает ровно те значения, на которых решение меняется.
+        self.assertLess(abs(r['s_over_u'] - 1.0), 0.14)
+        # Разность в пределах растрового шума -- это НЕ повтор.
+        self.assertIsNone(r['repeated_application_ha'])
 
     def test_control_two_parallel_passes_do_not_look_like_a_repeat(self):
         # Соседние проходы на расстоянии ровно ширины: перекрытия нет,
@@ -105,7 +113,8 @@ class OverlapIsNotCountedTwice(unittest.TestCase):
                   + north_run(100.0, 21, lon_offset_m=WIDTH, t0=30000))
         r = cov.coverage_from_v4(frames, CH)
         self.assertAlmostEqual(r['unique_application_ha'], 0.12, delta=0.012)
-        self.assertLess(abs(r['s_over_u'] - 1.0), 0.25)
+        self.assertLess(abs(r['s_over_u'] - 1.0), 0.14)
+        self.assertIsNone(r['repeated_application_ha'])
 
 
 class FerryIsSeparatedFromApplication(unittest.TestCase):
@@ -155,6 +164,66 @@ class RecordingGapsArePaintedByNobody(unittest.TestCase):
             f['t'] += 60000          # минута без записи
         r = cov.coverage_from_v4(frames, CH)
         self.assertIn(cov.SEG_GAP, r['segment_length_m'])
+
+
+class ThresholdsAreLoadBearingAndTested(unittest.TestCase):
+    """Пороги, которые не проверены, можно менять как угодно."""
+
+    def test_width_is_the_lesser_of_the_two_endpoints_not_the_greater(self):
+        # Ширина падает на середине прохода. min даёт узкую полосу, max --
+        # широкую; без этой проверки обе реализации проходят одинаково.
+        # Ширина чередуется КАЖДЫЙ кадр, поэтому у каждого отрезка концы
+        # разные и выбор min/max меняет ВСЕ отрезки, а не один.
+        frames = north_run(100.0, 21)
+        for i, f in enumerate(frames):
+            f['width'] = WIDTH if i % 2 == 0 else WIDTH / 3.0
+        r = cov.coverage_from_v4(frames, CH)
+        # min -> 2 м на всех отрезках -> 100 x 2 = 200 м2 = 0.02 га.
+        # max -> 6 м -> 600 м2 = 0.06 га. Полосы не пересекаются.
+        self.assertEqual(r['widths_used_m'], [WIDTH / 3.0])
+        self.assertAlmostEqual(r['swath_integral_ha'], 0.02, delta=0.004)
+
+    def test_a_step_just_over_the_speed_gate_is_a_gap(self):
+        # 21 м за секунду -- выше 20 м/с. Порог обязан сработать.
+        frames = [{'t': 0, 'lat': LAT0, 'lng': LON0, 'width': WIDTH,
+                   'spray_flag': 1, 'flow': 100},
+                  {'t': 1000, 'lat': LAT0 + 21.0 / M_PER_DEG_LAT, 'lng': LON0,
+                   'width': WIDTH, 'spray_flag': 1, 'flow': 100}]
+        segs = cov.build_segments(frames, cov.plane_for(
+            [(f['lat'], f['lng']) for f in frames]), CH)
+        self.assertEqual([s.reason for s in segs], [cov.SEG_GAP])
+
+    def test_control_a_step_just_under_the_speed_gate_is_work(self):
+        frames = [{'t': 0, 'lat': LAT0, 'lng': LON0, 'width': WIDTH,
+                   'spray_flag': 1, 'flow': 100},
+                  {'t': 1000, 'lat': LAT0 + 19.0 / M_PER_DEG_LAT, 'lng': LON0,
+                   'width': WIDTH, 'spray_flag': 1, 'flow': 100}]
+        segs = cov.build_segments(frames, cov.plane_for(
+            [(f['lat'], f['lng']) for f in frames]), CH)
+        self.assertEqual([s.reason for s in segs], [cov.SEG_WORK])
+
+    def test_a_hole_just_over_the_time_gate_is_a_gap(self):
+        for dt_ms, expected in ((3100, cov.SEG_GAP), (2900, cov.SEG_WORK)):
+            frames = [{'t': 0, 'lat': LAT0, 'lng': LON0, 'width': WIDTH,
+                       'spray_flag': 1, 'flow': 100},
+                      {'t': dt_ms, 'lat': LAT0 + 5.0 / M_PER_DEG_LAT,
+                       'lng': LON0, 'width': WIDTH, 'spray_flag': 1,
+                       'flow': 100}]
+            segs = cov.build_segments(frames, cov.plane_for(
+                [(f['lat'], f['lng']) for f in frames]), CH)
+            self.assertEqual([s.reason for s in segs], [expected],
+                             'dt=%d ms' % dt_ms)
+
+    def test_a_frame_without_a_timestamp_cannot_be_painted_on_trust(self):
+        # `t` кладётся только когда поле присутствует в protobuf. Без него
+        # скорость не проверить, и длинный отрезок красить нельзя.
+        frames = [{'lat': LAT0, 'lng': LON0, 'width': WIDTH,
+                   'spray_flag': 1, 'flow': 100},
+                  {'lat': LAT0 + 90.0 / M_PER_DEG_LAT, 'lng': LON0,
+                   'width': WIDTH, 'spray_flag': 1, 'flow': 100}]
+        segs = cov.build_segments(frames, cov.plane_for(
+            [(f['lat'], f['lng']) for f in frames]), CH)
+        self.assertEqual([s.reason for s in segs], [cov.SEG_GAP])
 
 
 if __name__ == '__main__':

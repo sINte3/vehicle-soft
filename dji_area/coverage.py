@@ -201,6 +201,17 @@ def swath_integral_m2(segments):
     return total
 
 
+def _raster_bias_m2(work_segments, params):
+    """Насколько растр может разойтись с аналитической суммой.
+
+    Порядок величины: периметр закрашенной полосы, умноженный на половину
+    шага сетки. Не точная граница, а честная оценка того шума, ниже которого
+    разность S и U ничего не значит.
+    """
+    length = sum(s.length for s in work_segments)
+    return length * 2.0 * (params.cell_m / 2.0)
+
+
 def _reason_lengths(segments):
     out = {}
     for seg in segments:
@@ -243,8 +254,11 @@ def coverage_from_v4(frames, channel_quality, rings=None,
 
     fine, coarse, uncertainty = coverage_with_uncertainty(
         work_tracks, rings, params)
-    # Всё, что пролетели: работа плюс холостое, на ОДНОЙ сетке -- чтобы
-    # разность «пролетел минус внёс» не зависела от двух разных рамок.
+    # [REASON]: `coverage_once` строит рамку по тому, что закрашивает,
+    # поэтому у `flown` она ШИРЕ, чем у `fine`, и шаг может быть огрублён
+    # независимо. Значит «пролетел минус внёс» -- разность двух РАЗНЫХ
+    # растров, и вычитать их напрямую нельзя. Обе величины отдаются
+    # раздельно, разность здесь не считается.
     flown = coverage_once(tracks, rings, params, params.cell_m)
 
     unique_total_m2 = (fine.swath_work_ha or 0.0) * 10000.0
@@ -264,8 +278,21 @@ def coverage_from_v4(frames, channel_quality, rings=None,
         # междурядье, равном учётной ширине, эта величина близка к нулю;
         # заметная величина -- признак перекрытия или возобновления.
         'swath_integral_ha': round(integral_m2 / 10000.0, 4),
-        'repeated_application_ha': round(
-            (integral_m2 - unique_total_m2) / 10000.0, 4),
+        # [REASON]: S считается аналитически (сумма длина x ширина), U -- по
+        # растру, поэтому их разность несёт дискретизационную ошибку и на
+        # поле БЕЗ перекрытия уходит в минус (измерено: -80 м2 на 12
+        # проходах, -285 м2 на 94). Отрицательное «повторное покрытие» --
+        # бессмыслица, которую нельзя показывать как величину. Разность
+        # отдаётся как есть под честным именем, а «повторным покрытием»
+        # называется только положительная часть, и только когда она выходит
+        # за оценку дискретизации.
+        's_minus_u_ha': round((integral_m2 - unique_total_m2) / 10000.0, 4),
+        'raster_bias_estimate_ha': round(
+            _raster_bias_m2(work, params) / 10000.0, 4),
+        'repeated_application_ha': (
+            round((integral_m2 - unique_total_m2) / 10000.0, 4)
+            if (integral_m2 - unique_total_m2) > _raster_bias_m2(work, params)
+            else None),
         's_over_u': (round(integral_m2 / unique_total_m2, 4)
                      if unique_total_m2 > 0 else None),
         # Пролетели, но не вносили: подлёт, возврат, перелёт между полями.

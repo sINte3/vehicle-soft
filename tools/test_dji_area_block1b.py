@@ -19,6 +19,9 @@
      различающим. Это единственная конфигурация, где сравнение S и U вообще
      способно отличить километражный интеграл от объединения; рядом стоит
      отрицательный контроль -- одиночный проход, где S = U и метка снята;
+  1d. выборка фильтруется по версии алгоритма и версии резолвера поля. В
+     базе намеренно лежит ЖИВАЯ строка предыдущей версии того же вылета с
+     площадью 999999: без фильтра bundle вернул бы её вместе с текущей;
   3. коды возврата: нет базы -> 2 и файл НЕ создан; база без миграции -> 1.
 
 Фикстуру строит сам, в отдельном временном каталоге: ни сети, ни сервера, ни
@@ -40,6 +43,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from dji_area import AREA_ALGORITHM_VERSION, FIELD_RESOLVER_VERSION  # noqa: E402
 from dji_area import store  # noqa: E402
 from tests.test_dji_area_core import frame, v4_bytes  # noqa: E402
 
@@ -118,7 +122,17 @@ def build(db_path, passes, historical=1):
         report_start_date='2026-08-18', raw_area_m2=PASS_M * WIDTH * passes,
         area_status='RAW_CORROBORATED_QUALIFIED', application_activity='PRESENT',
         application_channel_quality='INFORMATIVE', superseded_at=None,
-        v4_summary_id=2)
+        v4_summary_id=2, area_algorithm_version=AREA_ALGORITHM_VERSION)
+    # [REASON]: строка ПРЕДЫДУЩЕЙ версии алгоритма остаётся живой -- store
+    # закрывает только строки своей версии. Без фильтра по версии выборка
+    # вернула бы обе, и bundle посчитал бы вылет дважды.
+    ins('dji_area_calculations', flight_id=FLIGHT, hardware_id=HW,
+        start_at_utc='2026-08-18T00:53:00', end_at_utc='2026-08-18T00:58:00',
+        report_start_date='2026-08-18', raw_area_m2=999999.0,
+        area_status='RAW_CORROBORATED_QUALIFIED', application_activity='PRESENT',
+        application_channel_quality='INFORMATIVE', superseded_at=None,
+        v4_summary_id=1,
+        area_algorithm_version=AREA_ALGORITHM_VERSION + '-OLD')
     ins('dji_flight_evidence', flight_id=FLIGHT, hardware_id=HW,
         v4_revision_id=1, list_spray_width=WIDTH, list_start_ts=T0,
         list_end_ts=T0 + 300, updated_at='2026-09-09')
@@ -135,7 +149,8 @@ def build(db_path, passes, historical=1):
         field_attribution_tier='TIER2_STRONG', field_land_uuid='uuid-1',
         field_name_at_snapshot='SYNTHETIC-FIELD', superseded_at=None,
         land_snapshot_id=7, land_revision_id=1,
-        historical_geometry_available=historical)
+        historical_geometry_available=historical,
+        field_resolver_version=FIELD_RESOLVER_VERSION)
     # Ревизия, на которую ссылается атрибуция...
     ins('dji_land_revisions', id=1, land_uuid='uuid-1', name='SYNTHETIC-FIELD',
         total_area_raw=30.0, work_area_raw=25.0, obstacle_area_raw=2.0,

@@ -115,6 +115,13 @@ def rows(con, sql, params=()):
     return [dict(r) for r in con.execute(sql, params).fetchall()]
 
 
+# [REASON]: `superseded_at IS NULL` НЕ выделяет одну строку. store.insert_calculation
+# закрывает прежнюю строку только В ПРЕДЕЛАХ СВОЕЙ версии алгоритма, поэтому после
+# подъёма impl-2 -> impl-3 в базе одновременно живут ДВЕ текущие строки одного
+# вылета, и выборка без фильтра версии вернула бы обе. Соседний потребитель
+# (tools/dji_area_validation_pack.py:127) фильтрует; здесь этого не было.
+# То же для атрибуции поля и её собственной версии резолвера.
+#
 # [REASON]: `dji_v4_summaries.flight_id` НЕ уникален -- уникален
 # `source_revision_id`, а у вылета может быть несколько ревизий V4. Связь
 # через flight_id либо размножила бы строки, либо подмешала сводку ЧУЖОЙ
@@ -144,9 +151,11 @@ SELECT c.flight_id, c.hardware_id, c.start_at_utc, c.end_at_utc,
 FROM dji_area_calculations AS c
 LEFT JOIN dji_field_attributions AS f
        ON f.flight_id = c.flight_id AND f.superseded_at IS NULL
+      AND f.field_resolver_version = ?
 LEFT JOIN dji_flight_evidence AS e ON e.flight_id = c.flight_id
 LEFT JOIN dji_v4_summaries AS v ON v.id = c.v4_summary_id
 WHERE c.superseded_at IS NULL AND c.report_start_date = ?
+  AND c.area_algorithm_version = ?
 ORDER BY c.hardware_id, c.start_at_utc
 """
 
@@ -251,6 +260,10 @@ def main():
     ap.add_argument('--out', required=True)
     ap.add_argument('--allow-existing-out', action='store_true',
                     help='reuse a non-empty output directory (off by default)')
+    ap.add_argument('--algorithm-version', default=AREA_ALGORITHM_VERSION,
+                    help='area_algorithm_version to read (default: current)')
+    ap.add_argument('--field-resolver-version', default=FIELD_RESOLVER_VERSION,
+                    help='field_resolver_version to read (default: current)')
     args = ap.parse_args()
 
     started = datetime.utcnow().replace(microsecond=0).isoformat() + 'Z'
@@ -280,14 +293,30 @@ def main():
     con.execute('BEGIN')
     try:
         wanted = set(args.hardware)
-        flights = [r for r in rows(con, FLIGHTS_SQL, (args.date,))
+        flights = [r for r in rows(con, FLIGHTS_SQL,
+                                   (args.field_resolver_version, args.date,
+                                    args.algorithm_version))
                    if r['hardware_id'] in wanted]
-        log('flights: %d' % len(flights))
+        log('flights: %d  (algorithm %s)' % (len(flights),
+                                             args.algorithm_version))
+        seen_ids = [r['flight_id'] for r in flights]
+        if len(set(seen_ids)) != len(seen_ids):
+            log('ERROR: duplicate flight rows returned -- the version filter '
+                'did not isolate one calculation per flight.')
+            sys.exit(1)
+        if not flights:
+            log('NOTE: no rows for this algorithm version. Either the day was '
+                'never recalculated with it, or --algorithm-version is wrong.')
         for hw in sorted(wanted):
             sel = [r for r in flights if r['hardware_id'] == hw]
-            total = sum(r['raw_area_m2'] or 0 for r in sel)
-            log('  %s : n=%d RAW=%.0f m2 = %.4f ha'
-                % (hw, len(sel), total, total / 10000.0))
+            # [REASON]: NULL здесь никогда не ноль (dji_area/__init__.py).
+            # Сложив NULL как 0, дневной итог машины стал бы меньше правды и
+            # прочитался бы как измеренный.
+            known = [r['raw_area_m2'] for r in sel
+                     if r['raw_area_m2'] is not None]
+            total = sum(known)
+            log('  %s : n=%d RAW=%.0f m2 = %.4f ha  (records without RAW: %d)'
+                % (hw, len(sel), total, total / 10000.0, len(sel) - len(known)))
 
         # ── 1. ТОЧНЫЕ ревизии контуров, на которые ссылается атрибуция ────
         rev_ids = sorted({r['land_revision_id'] for r in flights
