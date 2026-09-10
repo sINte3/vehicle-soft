@@ -29,6 +29,7 @@
 """
 
 import hashlib
+import json
 import math
 import os
 import re
@@ -74,7 +75,7 @@ def _pass_frames(start_ms):
     return out
 
 
-def build(db_path, passes, historical=1):
+def build(db_path, passes, historical=1, with_geometry=True):
     """База с одним вылетом из `passes` одинаковых проходов по одной земле."""
     con = sqlite3.connect(db_path)
     for stmt in _ddl():
@@ -152,9 +153,27 @@ def build(db_path, passes, historical=1):
         historical_geometry_available=historical,
         field_resolver_version=FIELD_RESOLVER_VERSION)
     # Ревизия, на которую ссылается атрибуция...
+    # Контур, накрывающий ЮЖНУЮ половину прохода: полоса обязана разделиться
+    # на «внутри поля» и «снаружи поля», а не остаться одним числом.
+    geom_md5 = None
+    if with_geometry:
+        half = PASS_M / 2.0 / M_PER_DEG
+        wide = 40.0 / (M_PER_DEG * math.cos(math.radians(LAT0)))
+        doc = {'type': 'FeatureCollection', 'features': [{
+            'type': 'Feature', 'properties': {'funcType': 'PlantZone'},
+            'geometry': {'type': 'Polygon', 'coordinates': [[
+                [LON0 - wide, LAT0 - half], [LON0 + wide, LAT0 - half],
+                [LON0 + wide, LAT0 + half], [LON0 - wide, LAT0 + half],
+                [LON0 - wide, LAT0 - half]]]}}]}
+        body = json.dumps(doc, ensure_ascii=False).encode('utf-8')
+        geom_md5 = hashlib.md5(body).hexdigest()
+        ins('dji_land_geometries', content_md5=geom_md5,
+            sha256=hashlib.sha256(body).hexdigest(), size_bytes=len(body),
+            md5_verified=1, body_blob=body, parse_status='OK', ring_count=1,
+            first_seen_at='2026-09-09')
     ins('dji_land_revisions', id=1, land_uuid='uuid-1', name='SYNTHETIC-FIELD',
         total_area_raw=30.0, work_area_raw=25.0, obstacle_area_raw=2.0,
-        area_unit='mu', raw_json='{}', raw_sha256='s1',
+        area_unit='mu', raw_json='{}', raw_sha256='s1', geometry_md5=geom_md5,
         first_seen_snapshot_id=7, last_seen_snapshot_id=7)
     # ...и ДРУГАЯ ревизия того же участка, которую нельзя смешивать с первой.
     ins('dji_land_revisions', id=2, land_uuid='uuid-1', name='SYNTHETIC-FIELD',
@@ -395,6 +414,54 @@ class TheBundleIsSelfContained(unittest.TestCase):
         self.assertEqual(man['coverage_module_sha256'],
                          sha_of(os.path.join(ROOT, 'dji_area', 'coverage.py')))
         self.assertTrue(man['not_billable'])
+
+
+class TheHistoricalContourReachesTheCalculation(unittest.TestCase):
+    """Без контура «внутри» и «снаружи» не существуют как величины."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix='block1b-rings-')
+        self.db = os.path.join(self.dir, 'transport.db')
+        self.out = os.path.join(self.dir, 'out')
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_the_swath_is_split_into_inside_and_outside_the_field(self):
+        build(self.db, passes=1, historical=1, with_geometry=True)
+        self.assertEqual(run(self.db, self.out).returncode, 0)
+        row = coverage_row(self.out)
+        self.assertEqual(row['contour_status'], 'CONTOUR_APPLIED')
+        self.assertIsNotNone(row['unique_application_inside_field_ha'])
+        self.assertIsNotNone(row['application_outside_field_ha'])
+        # Контур накрывает половину прохода: обе доли заметно больше нуля и
+        # вместе дают всю полосу.
+        inside = row['unique_application_inside_field_ha']
+        outside = row['application_outside_field_ha']
+        self.assertGreater(inside, 0.01)
+        self.assertGreater(outside, 0.01)
+        self.assertAlmostEqual(inside + outside, row['unique_application_ha'],
+                               delta=0.002)
+
+    def test_control_unproven_historical_geometry_yields_no_inside_outside(self):
+        # Сентябрьский контур не имеет права стать геометрией августа.
+        build(self.db, passes=1, historical=0, with_geometry=True)
+        self.assertEqual(run(self.db, self.out).returncode, 0)
+        row = coverage_row(self.out)
+        self.assertEqual(row['contour_reason'],
+                         'HISTORICAL_GEOMETRY_NOT_PROVEN')
+        self.assertEqual(row['contour_status'], 'CONTOUR_ABSENT')
+        self.assertIsNone(row['unique_application_inside_field_ha'])
+        self.assertIsNone(row['application_outside_field_ha'])
+        # Полоса при этом посчитана -- отсутствует именно разбиение.
+        self.assertIsNotNone(row['unique_application_ha'])
+
+    def test_control_a_missing_geometry_body_is_named_not_guessed(self):
+        build(self.db, passes=1, historical=1, with_geometry=False)
+        self.assertEqual(run(self.db, self.out).returncode, 0)
+        row = coverage_row(self.out)
+        self.assertEqual(row['contour_reason'], 'NO_GEOMETRY_MD5')
+        self.assertIsNone(row['unique_application_inside_field_ha'])
 
 
 class TheOutputDirectoryIsNeverSilentlyMixed(Base):

@@ -83,6 +83,17 @@ def log(msg):
     sys.stdout.flush()
 
 
+def _git_commit():
+    """Коммит рабочей копии инструмента. Без него bundle не привязан к коду."""
+    try:
+        import subprocess
+        out = subprocess.run(['git', '-C', ROOT, 'rev-parse', 'HEAD'],
+                             capture_output=True, text=True, timeout=20)
+        return out.stdout.strip() or None
+    except Exception:                             # noqa: BLE001 -- best effort
+        return None
+
+
 def sha256_file(path):
     h = hashlib.sha256()
     with open(path, 'rb') as fh:
@@ -425,6 +436,30 @@ def main():
         log('forensic candidates (flat / exact repeat / above rated speed): %d'
             % len(forensic))
 
+        # ── 3a. исторические геометрии контуров, до расчёта покрытия ─────
+        # [REASON]: контур нужен САМОМУ расчёту, а не только отчёту: без него
+        # «внутри поля» и «снаружи поля» не существуют как величины. Поэтому
+        # геометрия читается ДО покрытия и берётся по той ревизии, на которую
+        # ссылается атрибуция ЭТОГО вылета, а не по последней для участка.
+        geometry_by_revision = {}
+        for L in lands:
+            md5 = L.get('geometry_md5')
+            if not md5:
+                geometry_by_revision[L['id']] = (None, 'NO_GEOMETRY_MD5')
+                continue
+            row = con.execute('SELECT * FROM dji_land_geometries '
+                              'WHERE content_md5=?', (md5,)).fetchone()
+            if row is None:
+                geometry_by_revision[L['id']] = (None, 'GEOMETRY_NOT_CAPTURED')
+                continue
+            try:
+                doc = json.loads(bytes(row['body_blob']).decode('utf-8'))
+            except (ValueError, UnicodeDecodeError) as exc:
+                geometry_by_revision[L['id']] = (
+                    None, 'GEOMETRY_UNPARSED:%s' % type(exc).__name__)
+                continue
+            geometry_by_revision[L['id']] = (doc, None)
+
         # ── 4. покрытие + выгрузка неизменяемых тел ──────────────────────
         manifest_blobs, coverage_rows = [], []
         geo = {'type': 'FeatureCollection', 'features': []}
@@ -463,8 +498,17 @@ def main():
                 continue
 
             quality = r['application_channel_quality'] or 'UNKNOWN'
+            doc, geo_why = geometry_by_revision.get(
+                r['land_revision_id'], (None, 'NO_ATTRIBUTED_REVISION'))
+            # Историческая геометрия не доказана -> контур не подставляется
+            # вовсе. Сентябрьская версия полигона не имеет права стать
+            # геометрией августовской работы.
+            if not r['historical_geometry_available']:
+                doc, geo_why = None, 'HISTORICAL_GEOMETRY_NOT_PROVEN'
+            base['contour_reason'] = geo_why
             try:
-                res = cov.coverage_from_v4(frames, quality)
+                res = cov.coverage_from_v4(frames, quality,
+                                           land_geometry_document=doc)
             except cov.CoverageUnavailable as exc:
                 base.update({'coverage_status': 'UNAVAILABLE',
                              'reason': exc.reason})
@@ -472,9 +516,14 @@ def main():
                 continue
             base.update({'coverage_status': res['status'],
                          'reason': res.get('reason')})
-            for key in ('unique_application_ha', 'swath_integral_ha',
+            for key in ('unique_application_ha',
+                        'unique_application_inside_field_ha',
+                        'application_outside_field_ha',
+                        'swath_integral_ha', 's_minus_u_ha',
+                        'raster_bias_estimate_ha',
                         'repeated_application_ha', 's_over_u',
-                        'flown_swath_ha', 'cell_m'):
+                        'flown_swath_ha', 'contour_ha', 'contour_status',
+                        'cell_m'):
                 base[key] = res.get(key)
             widths = res.get('widths_used_m') or []
             base['widths_used_m'] = ','.join(str(x) for x in widths)
@@ -529,6 +578,7 @@ def main():
         'report_date': args.date, 'hardware': sorted(wanted),
         'db_path': args.db, 'source_root': root,
         'exporter_sha256': sha256_file(os.path.abspath(__file__)),
+        'repo_commit': _git_commit(),
         'coverage_module_sha256': sha256_file(
             os.path.join(ROOT, 'dji_area', 'coverage.py')),
         'sqlite_version': sqlite3.sqlite_version,
@@ -539,6 +589,8 @@ def main():
         'metric_name': 'V4_APPLICATION_COVERAGE_ESTIMATE',
         'not_billable': True,
         'blobs': manifest_blobs,
+        'source_revision_ids': sorted(seen_blob),
+        'land_revision_ids_used': sorted(L['id'] for L in lands),
         'counts': {'flights': len(flights),
                    'land_revisions_used': len(lands),
                    'land_revisions_other': len(other),

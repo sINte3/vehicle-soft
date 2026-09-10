@@ -12,7 +12,7 @@
 
 ## Что нужно прислать обратно
 
-Каталог `C:\VehicleSoft_Block1B\out` целиком (несколько МБ: JSON, CSV,
+Каталог `C:\VehicleSoft_Block1B\out3` целиком (несколько МБ: JSON, CSV,
 GeoJSON) и **полный текст вывода консоли**, включая обе строки sha256.
 
 ## Блок
@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Continue'
 $staging = 'C:\transport-report-staging'
 $db      = 'C:\transport-report-staging\instance\transport.db'
 $work    = 'C:\VehicleSoft_Block1B'
-$out     = 'C:\VehicleSoft_Block1B\out'
+$out     = 'C:\VehicleSoft_Block1B\out3'
 $py      = 'C:\Program Files\Python314\python.exe'
 $branch  = 'claude/dji-agras-area-review-7sw9c1'
 if (-not (Test-Path -LiteralPath $db)) { throw "STEP FAILED: database not found: $db" }
@@ -50,8 +50,8 @@ Write-Host "DB SHA256 AFTER : $after"
 if ($before -ne $after) { throw "STOP: the database changed during a read-only run" }
 Write-Host "READ-ONLY CONFIRMED: database bytes identical"
 Get-ChildItem -LiteralPath $out | Select-Object Name, Length | Format-Table -AutoSize
-Compress-Archive -Path "$out\*" -DestinationPath 'C:\VehicleSoft_Block1B\block1b_out.zip' -Force
-Write-Host 'SEND BACK: C:\VehicleSoft_Block1B\block1b_out.zip and the console text above'
+Compress-Archive -Path "$out\*" -DestinationPath 'C:\VehicleSoft_Block1B\block1b_out3.zip' -Force
+Write-Host 'SEND BACK: C:\VehicleSoft_Block1B\block1b_out3.zip and the console text above'
 ```
 
 ## Что делать, если блок остановился
@@ -67,6 +67,15 @@ Write-Host 'SEND BACK: C:\VehicleSoft_Block1B\block1b_out.zip and the console te
 - `STOP: the database changed` — остановиться и сообщить. Такого быть не
   должно: инструмент открывает базу через `mode=ro`.
 
+## Если строк за 18.08 нет
+
+Инструмент читает расчёты ТОЛЬКО текущей версии алгоритма. Если прогон на
+площадке был на прежней версии, он напечатает `NOTE: no rows for this
+algorithm version` и выйдет кодом 0 с пустой выгрузкой. Это честный отказ, а
+не ошибка. Тогда сообщите — блок будет выдан либо с
+`--algorithm-version <прежняя>`, либо после отдельного решения о пересчёте
+(пересчёт — это ЗАПИСЬ в базу, и он требует вашего согласия отдельно).
+
 ## Что дальше
 
 Bundle сам по себе числом площади к счёту **не является**. Он содержит
@@ -75,6 +84,12 @@ Bundle сам по себе числом площади к счёту **не я�
 выносом за контур, холостым пролётом и неизвестным. Соответствие записанной
 ширины реальной полосе осаждения проверяется только полевой калибровкой
 (этап 2, методика NY/T 3213—2023).
+
+Bundle содержит: уникальное покрытие, его долю внутри исторического контура
+и вынос за него, повторное покрытие, холостой пролёт, разложение длин по
+причинам, S против U, и неизменяемые тела V4/маршрутов/геометрии с проверкой
+SHA/MD5. Разбиение «внутри/снаружи» появляется ТОЛЬКО там, где историческая
+геометрия контура доказана; иначе выводится причина, а не число.
 
 После получения каталога работа продолжается в той же задаче: разбор кластеров
 по `land_uuid`, forensic плоских записей и сравнение S против U на

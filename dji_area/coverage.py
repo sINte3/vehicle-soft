@@ -212,6 +212,14 @@ def _raster_bias_m2(work_segments, params):
     return length * 2.0 * (params.cell_m / 2.0)
 
 
+def _contour_status(rings, reasons):
+    if rings:
+        return 'CONTOUR_APPLIED'
+    if reasons:
+        return 'CONTOUR_REJECTED:' + ';'.join(reasons)
+    return 'CONTOUR_ABSENT'
+
+
 def _reason_lengths(segments):
     out = {}
     for seg in segments:
@@ -219,8 +227,21 @@ def _reason_lengths(segments):
     return out
 
 
+def rings_for_plane(land_geometry_document, plane):
+    """Контур поля в метрах ТОЙ ЖЕ плоскости, что и кадры.
+
+    [REASON]: проекция строится по кадрам вылета, поэтому контур обязан
+    проецироваться в неё же. Своя плоскость у контура дала бы фигуру,
+    смещённую относительно полосы на десятки метров, и обрезка выдала бы
+    уверенное неверное число. Годность полигона проверяет тот же код, что и
+    приёмник контуров: самопересекающийся полигон молча не используется.
+    """
+    from drone_collector.area_study import rings_from_geojson
+    return rings_from_geojson(land_geometry_document, plane)
+
+
 def coverage_from_v4(frames, channel_quality, rings=None,
-                     params=DEFAULT_PARAMS):
+                     land_geometry_document=None, params=DEFAULT_PARAMS):
     """Оценка уникального покрытия по подтверждённому применению.
 
     ``frames`` -- кадры из ``v4.decode_v4(...).frames``.
@@ -235,6 +256,11 @@ def coverage_from_v4(frames, channel_quality, rings=None,
     if len(pts) < 2:
         raise CoverageUnavailable('FEWER_THAN_2_POSITIONED_FRAMES')
     plane = plane_for([(f['lat'], f['lng']) for f in pts])
+    contour_reasons = []
+    contour_area_ha = None
+    if rings is None and land_geometry_document is not None:
+        rings, contour_area_ha, contour_reasons = rings_for_plane(
+            land_geometry_document, plane)
     segments = build_segments(frames, plane, channel_quality)
 
     work = [s for s in segments if s.reason == SEG_WORK]
@@ -245,6 +271,7 @@ def coverage_from_v4(frames, channel_quality, rings=None,
                   if channel_quality != CH_INFORMATIVE else 'NO_APPLICATION_FRAMES')
         return {'status': 'NO_CONFIRMED_APPLICATION', 'reason': reason,
                 'segment_length_m': _reason_lengths(segments),
+                'contour_status': _contour_status(rings, contour_reasons),
                 'plane': plane}
 
     tracks = _tracks_by_width(segments)
@@ -263,6 +290,9 @@ def coverage_from_v4(frames, channel_quality, rings=None,
 
     unique_total_m2 = (fine.swath_work_ha or 0.0) * 10000.0
     integral_m2 = swath_integral_m2(segments)
+    # [REASON]: без контура «внутри» и «снаружи» не существует как величин.
+    # Показать их нулями значило бы заявить, что весь вынос за поле равен
+    # нулю, тогда как он просто не измерен.
     inside = fine.clipped_work_ha
     outside = (None if inside is None
                else round((fine.swath_work_ha or 0.0) - inside, 4))
@@ -298,6 +328,8 @@ def coverage_from_v4(frames, channel_quality, rings=None,
         # Пролетели, но не вносили: подлёт, возврат, перелёт между полями.
         'flown_swath_ha': flown.swath_all_ha,
         'contour_ha': fine.contour_ha,
+        'contour_area_ha_declared': contour_area_ha,
+        'contour_status': _contour_status(rings, contour_reasons),
         'segment_length_m': _reason_lengths(segments),
         'uncertainty_percent': uncertainty,
         'cell_m': fine.cell_m,
