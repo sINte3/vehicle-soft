@@ -1040,12 +1040,21 @@ POST /drones/api/land_geometry_manifest
 
 and then downloads only what came back unknown.
 
-**Why the receiver and not a local cache.** The outbox is cleaned after a
-successful send; a collector that trusted it would forget the 6171 polygons
-it had already delivered the first time someone cleared `sent/`. The
-receiver is the only place that knows what is durably stored. The request
-costs about 200 KB for the whole catalog, and the answer is limited to what
-was asked -- the endpoint never dumps the store.
+**Why the receiver and not a local cache.** Not because the outbox is
+cleaned -- it is not: `mark_sent` moves an envelope to `sent/` and keeps it,
+and the resumable skip of `--sources` depends on that. The reason is that
+the queue records what THIS host queued, which is a different question from
+what the receiver durably stores. A restored database, a chunk whose bodies
+were refused while its lands were accepted, a collector moved to another
+machine -- in each case the two disagree, and only the store is
+authoritative about its own contents. The request costs about 200 KB for the
+whole catalog, and the answer is limited to what was asked: the endpoint
+never dumps the store.
+
+**`sent/` is not dead weight.** Deleting it to reclaim disk makes every
+flight look uncaptured, and the next `--sources` run re-opens and
+re-downloads card, route, airlines and V4 for all of them, with no error
+saying why.
 
 **If the manifest cannot be reached**, the run says so and downloads
 everything. Slow is acceptable; a snapshot with silently missing polygons is

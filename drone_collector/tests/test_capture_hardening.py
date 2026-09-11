@@ -22,7 +22,9 @@ openpyxl и не ставит зависимости приложения -- р�
 import base64
 import hashlib
 import json
+import os
 import unittest
+from datetime import date
 
 from drone_collector import sources as src
 from drone_collector import sender as snd
@@ -568,16 +570,149 @@ class WindowCountersAccumulate(unittest.TestCase):
         _bump(state, 'list_pages_without_raw', 3)
         self.assertEqual(state['list_pages_without_raw'], 3)
 
-    def test_every_accumulating_list_counter_is_in_the_summary(self):
-        """Счётчик, которого нет в шаблоне сводки, не печатается вовсе."""
-        from drone_collector.main import FLIGHT_SUMMARY_KEYS
-        for key in ('list_pages_captured', 'list_pages_without_raw',
-                    'list_sources_built', 'list_sources_queued',
-                    'list_sources_duplicates', 'list_sources_refused',
-                    'list_sources_sent', 'list_sources_left_pending'):
-            self.assertIn(key, FLIGHT_SUMMARY_KEYS, key)
+    def test_every_counter_the_code_sets_is_in_the_summary(self):
+        """Счётчик, которого нет в шаблоне сводки, не печатается вовсе.
+
+        [REASON]: ключи ВЫЧИСЛЯЮТСЯ из исходника функции, а не перечислены
+        здесь списком. Первая редакция перечисляла -- я добавил
+        `list_sources_already_queued` и забыл про список, мутация «убрать
+        ключ из шаблона» выжила. Перечисление стареет молча; вывод из кода
+        не стареет.
+        """
+        import inspect
+        import re as _re
+        from drone_collector import main as m
+        source = inspect.getsource(m._send_list_evidence)
+        keys = set(_re.findall(r"_bump\(state, '([a-z_]+)'", source))
+        keys |= set(_re.findall(r"state\['([a-z_]+)'\] =", source))
+        self.assertTrue(keys, 'ключей не нашлось -- изменилась форма записи')
+        for key in sorted(keys):
+            self.assertIn(key, m.FLIGHT_SUMMARY_KEYS, key)
 
     def test_the_absent_body_alarm_is_in_the_snapshot_summary(self):
         from drone_collector.main import SNAPSHOT_SUMMARY_KEYS
         self.assertIn('snapshot_geometries_referenced_but_absent',
                       SNAPSHOT_SUMMARY_KEYS)
+
+
+class TheListQueueDoesNotGrowWithoutBound(unittest.TestCase):
+    """Находка объектива безопасности, измеренная в байтах.
+
+    Тело ревизии -- ЦЕЛАЯ страница, а конверт заводится на каждый вылет
+    этой страницы, поэтому 50 вылетов дают на диске в семьдесят с лишним
+    раз больше самой страницы. Скользящее окно по умолчанию 30 дней, и
+    границы страниц каждый день сдвигаются: байты меняются, дедупликация
+    по sha не срабатывает ни разу, а `sent/` не чистится никогда.
+    """
+
+    def setUp(self):
+        import tempfile
+        from drone_collector.outbox import Outbox
+        self.dir = tempfile.mkdtemp(prefix='capture-grow-')
+        self.outbox = Outbox(self.dir).prepare()
+        self.log = _Log()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def page_for(self, ids):
+        return list_page([list_row(i) for i in ids])
+
+    def items_for(self, ids, run='r1'):
+        items, _stats = src.list_source_items(
+            [_Page(self.page_for(ids))], run, '2026-09-11 00:00:00')
+        return items
+
+    def test_the_daily_repeat_does_not_deduplicate_by_itself(self):
+        """Именно поэтому нужен пропуск: sha меняется каждый день."""
+        day1 = self.items_for(range(1, 51), run='r1')
+        # Три новых вылета сдвигают границу -- байты страницы другие.
+        day2 = self.items_for(list(range(1, 48)) + [101, 102, 103], run='r2')
+        first = src.enqueue_sources(self.outbox, day1, logger=self.log)
+        second = src.enqueue_sources(self.outbox, day2, logger=self.log)
+        self.assertEqual(first.queued, 50)
+        self.assertEqual(second.queued, 50)
+        self.assertEqual(second.duplicates, 0,
+                         'дедупликация по sha сработала -- пропуск не нужен?')
+
+    def test_the_resumable_skip_covers_list_and_sees_sent(self):
+        src.enqueue_sources(self.outbox, self.items_for([1, 2, 3]),
+                            logger=self.log)
+        known = src.known_sources(self.outbox)
+        self.assertEqual(set(known), {1, 2, 3})
+        for fid in (1, 2, 3):
+            self.assertIn(src.SOURCE_LIST, known[fid])
+        # И переносится в `sent/` -- пропуск обязан видеть и его.
+        for path in list(self.outbox.pending()):
+            self.outbox.mark_sent(path)
+        self.assertEqual(self.outbox.pending(), [])
+        still = src.known_sources(self.outbox)
+        self.assertEqual(set(still), {1, 2, 3},
+                         'после отправки очередь забыла вылеты')
+
+    # -- НАСТОЯЩАЯ проводка, а не её повторение в тесте -------------------
+    #
+    # [REASON]: первая редакция этого теста сама фильтровала items по
+    # `known_sources` и проверяла результат своей же фильтрации. Мутация
+    # показала, что она проходит и с полностью снятым пропуском в
+    # `_send_list_evidence`: тест проверял механизм, а не то, что им
+    # пользуются. Теперь вызывается сама функция.
+
+    class _Cfg(object):
+        def __init__(self, outbox_dir):
+            self.outbox_dir = outbox_dir
+
+    class _Args(object):
+        dry_run = True          # до дренажа не доходим: очереди достаточно
+
+    class _Result(object):
+        def __init__(self, pages):
+            self.pages = pages
+            self.raw_unavailable = 0
+            self.date_from = date(2026, 8, 18)
+            self.date_to = date(2026, 8, 18)
+
+    def send_evidence(self, ids, state=None):
+        from drone_collector.main import _send_list_evidence
+        state = {} if state is None else state
+        _send_list_evidence(self._Result([_Page(self.page_for(ids))]),
+                            self._Args(), self._Cfg(self.dir), self.log,
+                            state)
+        return state
+
+    def test_the_real_run_skips_flights_already_in_the_queue(self):
+        first = self.send_evidence(range(1, 51))
+        self.assertEqual(first['list_sources_queued'], 50)
+        self.assertEqual(first.get('list_sources_already_queued') or 0, 0)
+        before = len(self.outbox.pending())
+
+        second = self.send_evidence(list(range(1, 48)) + [101, 102, 103])
+        self.assertEqual(second['list_sources_already_queued'], 47)
+        self.assertEqual(second['list_sources_queued'], 3)
+        self.assertEqual(len(self.outbox.pending()), before + 3)
+
+    def test_control_a_window_of_all_new_flights_pays_in_full(self):
+        # Контроль: пропуск не превратился в «никогда ничего не ставить».
+        self.send_evidence(range(1, 11))
+        state = self.send_evidence(range(200, 210))
+        self.assertEqual(state['list_sources_already_queued'], 0)
+        self.assertEqual(state['list_sources_queued'], 10)
+
+    def test_a_fully_known_window_queues_nothing_at_all(self):
+        self.send_evidence(range(1, 51))
+        before = len(self.outbox.pending())
+        state = self.send_evidence(range(1, 51))
+        self.assertEqual(state['list_sources_already_queued'], 50)
+        self.assertEqual(len(self.outbox.pending()), before)
+        self.assertIn('already in the queue', self.log.text)
+
+    def test_the_measured_amplification_is_why_this_matters(self):
+        raw = self.page_for(range(1, 51))
+        items = self.items_for(range(1, 51))
+        src.enqueue_sources(self.outbox, items, logger=self.log)
+        on_disk = sum(os.path.getsize(p) for p in self.outbox.pending())
+        # Не «примерно»: одна страница ложится на диск десятками копий.
+        self.assertGreater(on_disk, 40 * len(raw),
+                           'усиление пропало -- перечитать [REASON] в '
+                           '_send_list_evidence, пропуск мог стать лишним')

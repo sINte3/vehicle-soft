@@ -164,7 +164,8 @@ FLIGHT_SUMMARY_KEYS = (
     # A13: неизменяемый источник СПИСКА. `built` против `queued` показывает
     # дедупликацию очереди, `left_pending` -- что уйдёт следующим прогоном.
     'list_pages_captured', 'list_pages_without_raw', 'list_sources_built',
-    'list_sources_queued', 'list_sources_duplicates', 'list_sources_refused',
+    'list_sources_queued', 'list_sources_already_queued',
+    'list_sources_duplicates', 'list_sources_refused',
     'list_sources_sent', 'list_sources_left_pending',
     'exit',
 )
@@ -2589,10 +2590,10 @@ def _send_list_evidence(result, args, cfg, log, state):
     прежним происхождением (`LIST_FROM_MUTABLE_RAW_JSON`), честно
     помеченным, а не выданным за доказанное.
     """
-    from drone_collector.sources import (SOURCES_MODE_VERSION,
+    from drone_collector.sources import (SOURCE_LIST, SOURCES_MODE_VERSION,
                                          drain_source_outbox,
-                                         enqueue_sources, list_source_items,
-                                         utc_stamp)
+                                         enqueue_sources, known_sources,
+                                         list_source_items, utc_stamp)
 
     pages = getattr(result, 'pages', None) or []
     if not pages:
@@ -2621,8 +2622,32 @@ def _send_list_evidence(result, args, cfg, log, state):
         return
     try:
         outbox = _open_outbox(cfg, log)
+        # [REASON]: тот же возобновляемый пропуск, что и у `--sources`.
+        # Тело ревизии -- ЦЕЛАЯ страница, а конверт заводится на каждый
+        # вылет этой страницы: измерено, 50 вылетов дают на диске в 71 раз
+        # больше самой страницы. Скользящее окно по умолчанию -- 30 дней,
+        # и границы страниц каждый день сдвигаются, поэтому байты меняются
+        # и дедупликация по sha не срабатывает НИ РАЗУ: вчерашние вылеты
+        # заводятся заново каждый день. Очередь при этом не чистится --
+        # `mark_sent` переносит конверт в `sent/` и оставляет там навсегда.
+        # Без этого пропуска сборщик писал бы и переотправлял сотню с
+        # лишним мегабайт в сутки за байты, которые у приёмника уже есть.
+        #
+        # Цена пропуска названа прямо: побеждает ПЕРВЫЙ живой захват строки
+        # вылета. Если DJI позже правит запись ещё догружавшегося вылета,
+        # новая версия в очередь не попадёт. Это то же правило, по которому
+        # живут card/route/airlines/v4, и оно согласуется с A22.
+        known = known_sources(outbox)
+        fresh = [item for item in items
+                 if SOURCE_LIST not in (known.get(item['flight_id']) or {})]
+        _bump(state, 'list_sources_already_queued', len(items) - len(fresh))
+        if not fresh:
+            log.info('Immutable LIST source: all %d flight(s) of this window '
+                     'are already in the queue; nothing re-queued.',
+                     len(items))
+            return
         enqueued = enqueue_sources(
-            outbox, items, diagnostics={'mode_version': SOURCES_MODE_VERSION},
+            outbox, fresh, diagnostics={'mode_version': SOURCES_MODE_VERSION},
             logger=log)
     except Exception as exc:  # noqa: BLE001 -- см. REASON выше
         log.warning('The immutable LIST source could not be queued (%s). The '
@@ -2636,9 +2661,10 @@ def _send_list_evidence(result, args, cfg, log, state):
     if enqueued.secret_refused:
         log.error('%d LIST page(s) carried a secret marker and were NOT '
                   'queued.', enqueued.secret_refused)
-    log.info('Immutable LIST source: %d page(s), %d flight revision(s) built, '
-             '%d queued, %d already in the queue.', stats['pages'],
-             stats['flights'], enqueued.queued, enqueued.duplicates)
+    log.info('Immutable LIST source: %d page(s), %d revision(s) built, %d '
+             'skipped as already queued, %d queued, %d identical.',
+             stats['pages'], stats['flights'], len(items) - len(fresh),
+             enqueued.queued, enqueued.duplicates)
     if args.dry_run:
         return
     try:

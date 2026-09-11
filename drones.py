@@ -1567,10 +1567,20 @@ def api_land_geometry_manifest():
     not answer the collector's real question. Asking costs one request of
     about 200 KB for the whole 6171-contour catalog.
 
-    [REASON]: the local outbox cannot answer this instead. It is cleaned
-    after a successful send, and a cleaned outbox would make the collector
-    forget the 6171 polygons it already delivered -- the receiver is the only
-    place that knows what is durably stored.
+    [REASON]: the local outbox cannot answer this instead, and the reason is
+    NOT that it is cleaned -- it is not. `Outbox.mark_sent` moves an envelope
+    to `sent/` and keeps it there; nothing prunes it, and the resumable skip
+    of `--sources` depends on that. (An earlier version of this comment said
+    "cleaned after a successful send". That was false, and acting on it --
+    deleting `sent/` to reclaim disk -- would silently make every flight look
+    uncaptured and re-download them all.)
+
+    The real reason is that the outbox records what THIS host queued, which
+    is a different question from what the receiver durably stores. A restored
+    database, a chunk whose bodies were refused while its lands were
+    accepted, a collector moved to another machine, a wiped work directory --
+    in each case the queue and the store disagree, and only the store is
+    authoritative about its own contents.
     """
     from dji_area import store as dji_store
 
