@@ -474,6 +474,21 @@ def contour_from_node(node):
     )
 
 
+def node_content_md5s(nodes):
+    """contentMd5 всех узлов каталога, у которых полигон вообще есть.
+
+    [REASON]: отдельная функция, потому что спросить манифест надо ДО цикла
+    загрузки, а `contour_from_node` внутри цикла уже снимает подписанную
+    ссылку. Здесь ссылка не трогается вовсе -- читается только md5.
+    """
+    out = []
+    for node in nodes:
+        source = contour_from_node(node)
+        if source is not None and source.content_md5:
+            out.append(str(source.content_md5).lower())
+    return out
+
+
 def select_nodes(nodes, only_uuids=None):
     """(отобранные узлы, запрошенные uuid, ненайденные uuid).
 

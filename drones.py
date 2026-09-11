@@ -1366,9 +1366,14 @@ def api_route_sync():
 # drone_flights (area_ha прежде всего), не пишут в drone_sync_logs, не
 # принимают тело с маркером подписанного URL/креденшела.
 
+_MD5_HEX = re.compile(r'^[0-9a-fA-F]{32}$')
 DRONE_SOURCE_SYNC_MAX_BATCH = 50
 DRONE_SOURCE_MAX_BODY_BYTES = 8 * 1024 * 1024
 DRONE_LAND_SNAPSHOT_MAX_BATCH = 1000
+# [REASON]: манифест отвечает ТОЛЬКО про то, о чём спросили, поэтому предел
+# нужен запросу, а не ответу: иначе один POST со ста тысячами строк заставит
+# сервер собрать их все в память ради ответа «не знаю ни одной».
+DRONE_GEOMETRY_MANIFEST_MAX_ASK = 5000
 DRONE_SOURCE_MAX_ERRORS_LOGGED = 50
 
 
@@ -1508,6 +1513,14 @@ def api_source_sync():
                     schema_version=_drone_text(item.get('schema_version'), 40),
                     api_status=_drone_int(item.get('api_status')),
                     is_evidence_import=bool(item.get('is_evidence_import')),
+                    # [REASON]: одна страница списка -- источник для ВСЕХ
+                    # вылетов на ней, и каждый получает свою ревизию,
+                    # ссылающуюся на то же тело. На диске тело адресуется по
+                    # sha256 и лежит в одном экземпляре; inline-хранение
+                    # положило бы пятьдесят копий одного текста в базу.
+                    inline_max_bytes=(
+                        0 if source_type == dji_evidence.SOURCE_LIST
+                        else dji_store.INLINE_MAX_BYTES),
                     now=now)
                 touched.add(flight_id)
                 if created:
@@ -1534,6 +1547,85 @@ def api_source_sync():
             errors, len(sources), ' | '.join(error_lines[:5]))
     return jsonify(status='ok', seen=len(sources), new=new,
                    duplicates=duplicates, errors=errors, refreshed=len(touched))
+
+
+@drones_bp.route('/api/land_geometry_manifest', methods=['POST'])
+def api_land_geometry_manifest():
+    """Which of these contentMd5 does the immutable store ALREADY hold?
+
+    Body: {"token": "...", "content_md5": ["ab12...", ...]}
+    Answer: {"asked": N, "known": [...], "known_count": K}
+
+    READ ONLY -- not one statement here writes. It exists so that the daily
+    catalog snapshot downloads the polygons that are NEW instead of all 6171
+    only to have the receiver call them duplicates: a walk that took about
+    seventy minutes becomes one that downloads what actually changed.
+
+    [REASON]: the answer is limited to what was ASKED, never "everything we
+    have". A dump-the-store endpoint would grow with the database, hand an
+    attacker with a leaked token the shape of the whole catalog, and still
+    not answer the collector's real question. Asking costs one request of
+    about 200 KB for the whole 6171-contour catalog.
+
+    [REASON]: the local outbox cannot answer this instead, and the reason is
+    NOT that it is cleaned -- it is not. `Outbox.mark_sent` moves an envelope
+    to `sent/` and keeps it there; nothing prunes it, and the resumable skip
+    of `--sources` depends on that. (An earlier version of this comment said
+    "cleaned after a successful send". That was false, and acting on it --
+    deleting `sent/` to reclaim disk -- would silently make every flight look
+    uncaptured and re-download them all.)
+
+    The real reason is that the outbox records what THIS host queued, which
+    is a different question from what the receiver durably stores. A restored
+    database, a chunk whose bodies were refused while its lands were
+    accepted, a collector moved to another machine, a wiped work directory --
+    in each case the queue and the store disagree, and only the store is
+    authoritative about its own contents.
+    """
+    from dji_area import store as dji_store
+
+    payload = request.get_json(force=True, silent=True)
+    token = extract_token(payload)
+    if not verify_api_token(token, current_app.config.get('DRONE_API_TOKEN')):
+        return jsonify(error='unauthorized'), 401
+    asked = payload.get('content_md5')
+    if not isinstance(asked, list):
+        return jsonify(error='content_md5 must be a list'), 400
+    if len(asked) > DRONE_GEOMETRY_MANIFEST_MAX_ASK:
+        return jsonify(error='asked about %d md5, the cap is %d per request '
+                             '-- send batches'
+                             % (len(asked), DRONE_GEOMETRY_MANIFEST_MAX_ASK)), 413
+    # Нормализация тут же отбрасывает всё, что не похоже на md5: строка
+    # произвольной длины не должна доехать до SQL даже параметром.
+    wanted = sorted({item.lower() for item in asked
+                     if isinstance(item, str) and _MD5_HEX.match(item)})
+    # [REASON]: `considered` отделяет «спросили про мусор» от «спросили про
+    # неизвестное». Без него отказ фильтра выглядит снаружи точно так же,
+    # как честный ответ «не знаю ни одной», и проверить фильтр нечем.
+    if not wanted:
+        return jsonify(asked=len(asked), considered=0, known=[],
+                       known_count=0)
+    try:
+        con = dji_store.connect(_drone_evidence_db_path())
+    except Exception as exc:  # noqa: BLE001
+        return jsonify(status='error', error=str(exc)), 500
+    try:
+        dji_store.require_tables(con)
+        known = []
+        # Чанк по 500: SQLite ограничивает число параметров в одном выражении.
+        for start in range(0, len(wanted), 500):
+            part = wanted[start:start + 500]
+            rows = con.execute(
+                'SELECT content_md5 FROM dji_land_geometries WHERE '
+                'content_md5 IN (%s)' % ','.join('?' * len(part)),
+                part).fetchall()
+            known.extend(row[0] for row in rows)
+    except Exception as exc:  # noqa: BLE001
+        con.close()
+        return jsonify(status='error', error=str(exc)), 500
+    con.close()
+    return jsonify(asked=len(asked), considered=len(wanted),
+                   known=known, known_count=len(known))
 
 
 @drones_bp.route('/api/land_snapshot_sync', methods=['POST'])
@@ -1582,7 +1674,9 @@ def api_land_snapshot_sync():
     counters = {'lands_seen': len(lands), 'lands_new': 0,
                 'lands_seen_before': 0, 'errors': 0,
                 'geometries_seen': len(geometries), 'geometries_new': 0,
-                'geometries_unchanged': 0, 'geometries_errors': 0}
+                'geometries_unchanged': 0, 'geometries_errors': 0,
+                # Заполняется на финальном куске снимка; None до него.
+                'geometries_referenced_but_absent': None}
     error_lines = []
     try:
         db_path = _drone_evidence_db_path()
@@ -1657,6 +1751,13 @@ def api_land_snapshot_sync():
                 None if complete is None else bool(complete),
                 _drone_text(snapshot.get('manifest_sha256'), 64))
             dji_store.verify_geometry_holders(con)
+            # [REASON]: инкрементальный снимок присылает узел без тела,
+            # когда тело уже хранится. Тогда это число ноль. Ненулевое
+            # значение означает ССЫЛКУ БЕЗ ТЕЛА -- поле потеряет точную
+            # геометрию, а резолвер съедет на менее точный ярус, ничего не
+            # сказав. Пусть говорит приёмник, в тот же ответ.
+            counters['geometries_referenced_but_absent'] = (
+                dji_store.geometry_bodies_missing(con))
         con.execute('COMMIT')
     except Exception as exc:  # noqa: BLE001
         con.rollback()

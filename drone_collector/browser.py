@@ -329,13 +329,22 @@ def classify_response(url, body):
 
 
 class CapturedPage(object):
-    """One accepted flight-list response: the body plus the URL that asked."""
+    """One accepted flight-list response: the body plus the URL that asked.
 
-    __slots__ = ('url', 'body')
+    `raw` holds the bytes DJI actually sent, when they could be read. That is
+    what an immutable LIST source revision is hashed from -- re-serialising
+    the parsed body would hash OUR json.dumps, not DJI's answer, and a source
+    nobody can re-derive is not evidence (DRONE-AREA-CAPTURE-001 / A13).
+    `raw` is None when the bytes were unavailable; the flight walk itself
+    does not depend on them and must not fail over it.
+    """
 
-    def __init__(self, url, body):
+    __slots__ = ('url', 'body', 'raw')
+
+    def __init__(self, url, body, raw=None):
         self.url = url
         self.body = body
+        self.raw = raw
 
     @property
     def meta(self):
@@ -516,6 +525,7 @@ class FlightCollector(object):
         self._ignored_detail = 0
         self._version_warned = False
         self._page_size_probed = False
+        self._raw_unavailable = 0
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -601,7 +611,16 @@ class FlightCollector(object):
                              'API path than the expected %r: %s. Captured '
                              'anyway; update the constant in browser.py.',
                              FLIGHT_LIST_URL_MARKER, url)
-        page = CapturedPage(url, body)
+        # [REASON]: read AFTER the body was accepted, and never in a way
+        # that can abort the walk. `response.body()` can raise when the
+        # response is already discarded by the browser; a missing raw body
+        # costs us the LIST evidence for that page and nothing else.
+        try:
+            raw = response.body()
+        except Exception:  # noqa: BLE001 -- counted, not raised
+            raw = None
+            self._raw_unavailable += 1
+        page = CapturedPage(url, body, raw=raw)
         self._captured.append(page)
         self.log.info('Captured page %s/%s (%d flights)',
                       page.current_page, page.total_pages, len(page.flights))
@@ -635,6 +654,16 @@ class FlightCollector(object):
     @property
     def ignored_detail_responses(self):
         return self._ignored_detail
+
+    @property
+    def raw_unavailable(self):
+        """Accepted pages whose raw bytes could not be read.
+
+        Nonzero means that many pages have no immutable LIST source, and the
+        flights on them keep whatever provenance they had. It is reported,
+        never silently absorbed.
+        """
+        return self._raw_unavailable
 
     def _wait_for_capture(self, previous_count, timeout_ms):
         """Block until len(self._captured) exceeds previous_count.
@@ -1295,6 +1324,8 @@ class FlightCollector(object):
             page_size=page_size,
             date_from=date_from,
             date_to=date_to,
+            pages=list(self._captured),
+            raw_unavailable=self.raw_unavailable,
         )
         self.log.info('Collected %d flight(s) from %d page(s); the collector '
                       'itself removed %d duplicate(s)', len(unique),
@@ -1312,12 +1343,12 @@ class CollectResult(object):
     __slots__ = ('flights', 'pages_captured', 'total_pages', 'flights_captured',
                  'self_duplicates', 'unidentified', 'rejected',
                  'ignored_detail', 'clicks', 'complete', 'page_size',
-                 'date_from', 'date_to')
+                 'date_from', 'date_to', 'pages', 'raw_unavailable')
 
     def __init__(self, flights, pages_captured, total_pages, flights_captured,
                  self_duplicates, unidentified, rejected, ignored_detail,
                  clicks, complete, page_size=None, date_from=None,
-                 date_to=None):
+                 date_to=None, pages=(), raw_unavailable=0):
         self.flights = flights
         self.pages_captured = pages_captured
         self.total_pages = total_pages
@@ -1331,3 +1362,8 @@ class CollectResult(object):
         self.page_size = page_size
         self.date_from = date_from
         self.date_to = date_to
+        # Страницы этого окна КАК ОНИ ПРИШЛИ -- вместе с сырыми байтами.
+        # Из них строится неизменяемый источник списка (A13); сам обход
+        # вылетов ими не пользуется.
+        self.pages = list(pages)
+        self.raw_unavailable = raw_unavailable

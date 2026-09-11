@@ -639,12 +639,19 @@ class LandSnapshotSendResult(object):
 
     __slots__ = ('batches', 'lands_seen', 'lands_new', 'lands_seen_before',
                  'errors', 'geometries_seen', 'geometries_new',
-                 'geometries_unchanged', 'geometries_errors', 'status',
-                 'snapshot_id')
+                 'geometries_unchanged', 'geometries_errors',
+                 'geometries_referenced_but_absent', 'status', 'snapshot_id')
 
+    # [REASON]: `geometries_referenced_but_absent` стоит здесь не для
+    # симметрии. Инкрементальный снимок нарочно не шлёт уже известные
+    # полигоны, поэтому «пропущено» и «потеряно» отличает только этот
+    # счётчик -- а приёмник считал его и отдавал в JSON, пока сборщик
+    # молча выбрасывал. Тревога, которую никто не читает, тревогой не
+    # является.
     COUNTER_KEYS = ('lands_seen', 'lands_new', 'lands_seen_before', 'errors',
                     'geometries_seen', 'geometries_new',
-                    'geometries_unchanged', 'geometries_errors')
+                    'geometries_unchanged', 'geometries_errors',
+                    'geometries_referenced_but_absent')
 
     def __init__(self):
         self.batches = 0
@@ -714,10 +721,79 @@ def send_land_snapshot_chunk(chunk, cfg, logger=None, post_fn=None,
     out.info('Snapshot chunk %d/%d answered: status=%s snapshot_id=%s '
              'lands_seen=%s lands_new=%s lands_seen_before=%s errors=%s '
              'geometries_seen=%s geometries_new=%s geometries_unchanged=%s '
-             'geometries_errors=%s', index, total, body.get('status'),
+             'geometries_errors=%s referenced_but_absent=%s',
+             index, total, body.get('status'),
              body.get('snapshot_id'), body.get('lands_seen'),
              body.get('lands_new'), body.get('lands_seen_before'),
              body.get('errors'), body.get('geometries_seen'),
              body.get('geometries_new'), body.get('geometries_unchanged'),
-             body.get('geometries_errors'))
+             body.get('geometries_errors'),
+             body.get('geometries_referenced_but_absent'))
     return result
+
+
+# ─── DRONE-AREA-CAPTURE-001: какие полигоны у приёмника уже есть ─────────────
+#
+#     POST {VEHICLE_SOFT_BASE_URL}/drones/api/land_geometry_manifest
+#     {"token": "...", "content_md5": ["ab12...", ...]}
+#     -> {"asked": 6171, "known": ["ab12...", ...], "known_count": 6158}
+#
+# Только чтение. Ответ ограничен тем, о чём спросили, поэтому запрос не
+# выкачивает чужое хранилище целиком и растёт вместе с каталогом, а не с
+# базой.
+
+
+def build_geometry_manifest_payload(token, md5s):
+    return {'token': token, 'content_md5': list(md5s)}
+
+
+def known_geometry_md5(md5s, cfg, logger=None, post_fn=None, sleep_fn=None,
+                       batch_size=None):
+    """frozenset уже сохранённых contentMd5, либо None -- «выяснить не вышло».
+
+    [REASON]: None и пустое множество -- РАЗНЫЕ ответы, и путать их нельзя.
+    Пустое множество означает «приёмник не хранит ни одного из этих
+    полигонов» и ведёт к честной полной загрузке. None означает «мы не
+    знаем», и вызывающий обязан тоже скачать всё -- но сказать об этом в
+    лог. Вернуть пустое множество при недоступном манифесте значило бы
+    выдать незнание за знание.
+
+    Отказ манифеста НЕ роняет прогон: снимок без инкрементальности медленный,
+    снимок без полигонов -- испорченный.
+    """
+    from drone_collector.sources import MANIFEST_BATCH_SIZE
+
+    out = logger or log
+    url = cfg.land_geometry_manifest_url
+    if not url:
+        out.warning('No base URL is configured, so the geometry manifest was '
+                    'not asked for; every polygon will be downloaded.')
+        return None
+    wanted = sorted({str(m).lower() for m in md5s if m})
+    if not wanted:
+        return frozenset()
+    post = post_fn or _requests_post
+    sleep = sleep_fn or time.sleep
+    size = int(batch_size or MANIFEST_BATCH_SIZE)
+    batches = [wanted[i:i + size] for i in range(0, len(wanted), size)]
+    known = set()
+    for index, batch in enumerate(batches, start=1):
+        payload = build_geometry_manifest_payload(cfg.api_token, batch)
+        try:
+            body = _post_with_retries(post, sleep, url, payload, index,
+                                      len(batches), out)
+        except (TransportError, IngestRejected) as exc:
+            out.warning('The geometry manifest is unavailable (%s). Falling '
+                        'back to downloading every polygon -- slow, but the '
+                        'snapshot stays complete.', exc)
+            return None
+        answer = body.get('known') if isinstance(body, dict) else None
+        if not isinstance(answer, list):
+            out.warning('The geometry manifest answered without a "known" '
+                        'list. Falling back to downloading every polygon.')
+            return None
+        known.update(str(item).lower() for item in answer
+                     if isinstance(item, str))
+    out.info('Geometry manifest: asked about %d polygon(s), the receiver '
+             'already stores %d.', len(wanted), len(known))
+    return frozenset(known)

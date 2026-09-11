@@ -297,11 +297,21 @@ def refresh_flight_evidence(con, root, flight_id,
     if 'list' in revs:
         row['list_revision_id'] = revs['list']['id']
         try:
-            list_rec = ev.parse_list_record(
-                json.loads(read_body(root, revs['list']).decode('utf-8')))
+            # [REASON]: тело ревизии бывает двух форм -- одна запись от
+            # форензик-импорта и целая страница ответа DJI от живого
+            # захвата (A13). Выбор записи по id живёт в evidence.py и
+            # отказывает, если записи этого вылета в теле нет.
+            list_rec = ev.select_list_record(
+                json.loads(read_body(root, revs['list']).decode('utf-8')),
+                flight_id)
         except (ValueError, StoreError):
             list_rec = None
     elif flight is not None and flight['raw_json']:
+        # [REASON]: ИЗМЕНЯЕМЫЙ запасной путь. Колонку можно переписать позже,
+        # поэтому поля отсюда доказательством не считаются: pipeline.py
+        # помечает такую запись `LIST_FROM_MUTABLE_RAW_JSON`. Путь оставлен
+        # для исторических вылетов, у которых живого списка никогда не
+        # захватывали -- выдумывать им неизменяемый источник нельзя.
         try:
             list_rec = ev.parse_list_record(json.loads(flight['raw_json']))
         except ValueError:
@@ -718,6 +728,33 @@ def upsert_land_geometry(con, body, expected_md5=None, source_revision_id=None,
          parse_status, len(rings) if rings else None, source_revision_id,
          iso(now)))
     return 'new', con.execute('SELECT last_insert_rowid()').fetchone()[0]
+
+
+def geometry_bodies_missing(con):
+    """Сколько ревизий каталога ссылаются на md5, тела которого НЕТ.
+
+    [REASON]: инкрементальный снимок нарочно не присылает уже известные
+    полигоны, и «тело пропущено, оно уже в хранилище» снаружи выглядит ровно
+    как «тело потеряно». Разница видна только здесь: если ссылка есть, а
+    тела нет, резолвер поля молча съедет с TIER1_EXACT на TIER2_STRONG,
+    сохранив HIGH-уверенность, и никто этого не заметит. Число возвращается
+    приёмником в ответе, чтобы расхождение было громким в тот же день.
+    """
+    # [REASON]: считаются только ТЕКУЩИЕ ревизии -- по последней на каждую
+    # землю. Первая редакция брала все ревизии за всё время, и один
+    # невосстановимый пробел прижимал число выше нуля НАВСЕГДА: полигон,
+    # которого больше нет ни в одном узле каталога, заново не приедет
+    # никогда. Ежедневная тревога, которая горит всегда, тревогой быть
+    # перестаёт. Потеря тела исторической ревизии -- тоже потеря, но она не
+    # действие на сегодня и не должна глушить то, что им является.
+    row = con.execute(
+        'SELECT COUNT(DISTINCT r.geometry_md5) FROM dji_land_revisions AS r '
+        'JOIN (SELECT land_uuid, MAX(id) AS last_id FROM dji_land_revisions '
+        '      GROUP BY land_uuid) AS cur '
+        '  ON cur.last_id = r.id '
+        'LEFT JOIN dji_land_geometries AS g ON g.content_md5 = r.geometry_md5 '
+        'WHERE r.geometry_md5 IS NOT NULL AND g.id IS NULL').fetchone()
+    return int(row[0] or 0)
 
 
 def verify_geometry_holders(con):

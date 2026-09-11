@@ -61,6 +61,11 @@ ROUTE_SYNC_PATH = '/drones/api/route_sync'
 SOURCE_SYNC_PATH = '/drones/api/source_sync'
 LAND_SNAPSHOT_SYNC_PATH = '/drones/api/land_snapshot_sync'
 
+# DRONE-AREA-CAPTURE-001: «какие contentMd5 у тебя уже есть?». Только чтение,
+# ничего не пишет. Нужен, чтобы ежедневный снимок не скачивал заново все 6171
+# полигонов ради того, чтобы приёмник объявил их дубликатами.
+LAND_GEOMETRY_MANIFEST_PATH = '/drones/api/land_geometry_manifest'
+
 # [REASON]: drones.py answers 413 above 50 sources per request
 # (DRONE_SOURCE_SYNC_MAX_BATCH). A source item carries a whole HTTP body in
 # base64 -- a V4 body is up to a megabyte -- so the cap is twenty times
@@ -322,6 +327,12 @@ class CollectorConfig(object):
         return self.base_url.rstrip('/') + LAND_SNAPSHOT_SYNC_PATH
 
     @property
+    def land_geometry_manifest_url(self):
+        if not self.base_url:
+            return None
+        return self.base_url.rstrip('/') + LAND_GEOMETRY_MANIFEST_PATH
+
+    @property
     def log_dir(self):
         return PACKAGE_ROOT / 'logs'
 
@@ -368,6 +379,7 @@ class CollectorConfig(object):
             'source_batch_size': self.source_batch_size,
             'source_sync_url': self.source_sync_url,
             'land_snapshot_sync_url': self.land_snapshot_sync_url,
+            'land_geometry_manifest_url': self.land_geometry_manifest_url,
         }
 
 

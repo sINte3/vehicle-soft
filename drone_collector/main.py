@@ -143,6 +143,22 @@ EXIT_SOURCES_NOT_ACCEPTED = 19
 # 20: /drones/api/land_snapshot_sync ответил, но принял не всё. Куски снимка
 # остаются в очереди целиком: половина снимка -- не снимок.
 EXIT_SNAPSHOT_NOT_ACCEPTED = 20
+# 21: приёмник принял ВСЁ -- status=ok, счётчики сошлись, куски уехали в
+# `sent/` -- но сообщил, что на ссылку текущей ревизии НЕТ тела полигона.
+#
+# [REASON]: почему отдельный код, а не 20. Двадцатый означает «пакет не
+# принят, он целиком остался в очереди, отправьте снова»; здесь пакет принят
+# и повторять отправку нечего -- недостающее тело привезёт СЛЕДУЮЩИЙ обход
+# каталога. Действия оператора противоположны, поэтому и коды разные.
+#
+# [REASON]: почему вообще ненулевой. Инкрементальный снимок нарочно не шлёт
+# известные полигоны, и «пропущено, потому что уже есть» отличается от
+# «потеряно» ТОЛЬКО этим счётчиком. Пока он лишь писался в ERROR,
+# `DroneCollectorDaily` в unattended-режиме получал нулевой код возврата и
+# планировщик считал ночь удачной -- при том что резолвер поля уже съезжал с
+# TIER1_EXACT, сохраняя HIGH-уверенность. Тревога, не меняющая код возврата,
+# для планировщика не существует.
+EXIT_SNAPSHOT_GEOMETRY_ABSENT = 21
 
 KINDS = ('backfill', 'incremental', 'replay')
 
@@ -160,7 +176,13 @@ FLIGHT_SUMMARY_KEYS = (
     'windows', 'windows_completed', 'region', 'page_size',
     'pages', 'pages_expected', 'flights_captured', 'flights_deduped',
     'self_duplicates', 'rejected_responses',
-    'batches', 'seen', 'new', 'duplicates', 'unresolved', 'errors', 'exit',
+    'batches', 'seen', 'new', 'duplicates', 'unresolved', 'errors',
+    # A13: неизменяемый источник СПИСКА. `built` против `queued` показывает
+    # дедупликацию очереди, `left_pending` -- что уйдёт следующим прогоном.
+    'list_pages_captured', 'list_pages_without_raw', 'list_sources_built',
+    'list_sources_queued', 'list_sources_duplicates', 'list_sources_refused',
+    'list_sources_sent', 'list_sources_left_pending',
+    'exit',
 )
 
 ROUTE_SUMMARY_KEYS = (
@@ -259,13 +281,15 @@ SOURCES_SUMMARY_KEYS = (
 # строка позволила бы прочитать один за другой.
 SNAPSHOT_SUMMARY_KEYS = (
     'mode', 'dry_run', 'snapshot_run_id', 'pages', 'total_count',
-    'lands_captured', 'lands_deduped', 'complete', 'geometry_requested',
-    'geometry_downloaded', 'geometry_skipped', 'geometry_failed',
+    'lands_captured', 'lands_deduped', 'complete', 'geometry_manifest',
+    'geometry_requested', 'geometry_known_skipped', 'geometry_downloaded',
+    'geometry_duplicate_in_run', 'geometry_skipped', 'geometry_failed',
     'geometry_bytes', 'snapshot_chunks', 'snapshot_queued',
     'snapshot_duplicates', 'send_enabled', 'snapshot_chunks_sent',
     'snapshot_left_pending', 'snapshot_batch_accepted', 'snapshot_lands_new',
     'snapshot_lands_seen_before', 'snapshot_geometries_new',
-    'snapshot_geometries_unchanged', 'snapshot_errors', 'exit',
+    'snapshot_geometries_unchanged',
+    'snapshot_geometries_referenced_but_absent', 'snapshot_errors', 'exit',
 )
 
 LAND_SUMMARY_KEYS = (
@@ -1804,18 +1828,46 @@ def _run_land_snapshot(args, cfg, log, state):
     try:
         with LandCollector(cfg, log) as collector:
             result = collector.collect()
+            log.info('Catalog walk done: %d contour(s) captured of %s '
+                     'reported by DJI, over %d page(s).',
+                     len(result.lands), result.total_count, result.pages_captured)
             if args.with_geometry and result.lands:
                 # [REASON]: inside the `with`, exactly as the polygon run
                 # does it -- the signed links live only in the response
                 # already in memory and expire six hours after DJI issued
                 # them.
-                from drone_collector.geometry import ContextGeometryDownloader
+                from drone_collector.geometry import (ContextGeometryDownloader,
+                                                      node_content_md5s)
+                from drone_collector.sender import known_geometry_md5
+                # [REASON]: asked BEFORE the download loop, once. The md5 of
+                # every polygon is already in the catalog node, so the whole
+                # question "which of these do you have?" is answerable before
+                # a single byte is fetched. This is what turns a seventy
+                # minute daily run into one that fetches what changed.
+                # [REASON]: манифест спрашивается и на СУХОМ прогоне. Он
+                # ничего не меняет -- это чтение, -- а без него сухой прогон
+                # и качал бы все 6171 полигон, и показывал бы к отправке не
+                # то, что отправил бы настоящий запуск. Если базового URL
+                # нет (а `--land-snapshot` без `--send-snapshot` его не
+                # требует), клиент честно вернёт None и скажет об этом.
+                known = known_geometry_md5(node_content_md5s(result.lands),
+                                           cfg, logger=log)
+                state['geometry_manifest'] = ('unavailable' if known is None
+                                              else len(known))
+                if known is None:
+                    log.warning('The set of already stored polygons is UNKNOWN '
+                                'for this run; every polygon will be '
+                                'downloaded. The snapshot stays correct, only '
+                                'slow.')
                 downloader = ContextGeometryDownloader(collector.context, log)
                 geometries, counters = download_snapshot_geometries(
                     result.lands, downloader, logger=log,
-                    pause_s=cfg.geometry_pause_ms / 1000.0)
+                    pause_s=cfg.geometry_pause_ms / 1000.0,
+                    known_md5=known)
                 state['geometry_requested'] = counters.selected
                 state['geometry_downloaded'] = counters.downloaded
+                state['geometry_known_skipped'] = counters.known_skipped
+                state['geometry_duplicate_in_run'] = counters.duplicate_in_run
                 state['geometry_skipped'] = counters.no_geometry
                 state['geometry_failed'] = (counters.failed
                                             + counters.md5_mismatch
@@ -1880,10 +1932,30 @@ def _run_land_snapshot(args, cfg, log, state):
         state['snapshot_geometries_unchanged'] = counters.get(
             'geometries_unchanged')
         state['snapshot_errors'] = counters.get('errors')
+        # [REASON]: ноль -- норма инкрементального снимка (тела пропущены,
+        # потому что они уже есть). Ненулевое -- ссылка без тела: привязка
+        # поля тихо съедет с TIER1_EXACT, сохранив HIGH-уверенность.
+        absent = counters.get('geometries_referenced_but_absent')
+        state['snapshot_geometries_referenced_but_absent'] = absent
+        if absent:
+            log.error('%s polygon reference(s) have NO body in the store. A '
+                      'skipped polygon is normal; a MISSING one is not -- the '
+                      'field resolver will quietly drop from TIER1_EXACT '
+                      'while still reporting HIGH confidence.', absent)
         if not drain.accepted:
             for reason in drain.refusal_reasons:
                 log.error('Snapshot chunk not accepted: %s', reason)
             return EXIT_SNAPSHOT_NOT_ACCEPTED
+        # [REASON]: отказ считается ПОСЛЕ mark_sent, а не внутри
+        # `snapshot_refusal_reasons`. Причина отказа останавливает слив и
+        # оставляет кусок в `pending/`; куски сортируются по
+        # `<run_id>:<chunk>`, поэтому застрявший старый снимок встанет ПЕРЕД
+        # новым -- тем самым, который и привезёт недостающее тело. Пробел
+        # стал бы невосстановимым: слив упирался бы в него каждую ночь.
+        # Поэтому принятое остаётся принятым, а непустой счётчик меняет
+        # только код возврата команды.
+        if absent:
+            return EXIT_SNAPSHOT_GEOMETRY_ABSENT
 
     if not result.complete:
         log.warning('The walk captured %d of %d contour(s). The snapshot is '
@@ -2503,6 +2575,7 @@ def _account_for(result, args, kind, cfg, log, state):
         for key in ('batches', 'seen', 'new', 'duplicates', 'unresolved',
                     'errors'):
             state[key] = (state.get(key) or 0) + getattr(sent, key)
+        _send_list_evidence(result, args, cfg, log, state)
 
     if not result.complete:
         # [REASON]: the flights that WERE captured are real and have already
@@ -2515,6 +2588,108 @@ def _account_for(result, args, kind, cfg, log, state):
                   result.pages_captured, result.total_pages)
         return EXIT_PAGINATION
     return EXIT_OK
+
+
+def _bump(state, key, value):
+    """Накопить счётчик прогона по окнам, как это делает `_account_for`."""
+    state[key] = (state.get(key) or 0) + (value or 0)
+
+
+def _send_list_evidence(result, args, cfg, log, state):
+    """A13: страницы списка -- как НЕИЗМЕНЯЕМЫЙ источник, после отправки вылетов.
+
+    Порядок важен: сначала вылеты, потом их источник. Иначе ревизия списка
+    сослалась бы на вылеты, которых в базе ещё нет, и приёмник пересобрал бы
+    доказательства впустую.
+
+    [REASON]: через ОЧЕРЕДЬ, а не прямым POST. Первая редакция звала
+    `send_sources` напрямую -- и теряла ровно то, ради чего очередь
+    существует: атомарную запись, ключ дедупликации, коллекторный гейт
+    секретов в `enqueue_sources` и возможность дослать после обрыва. Все
+    остальные неизменяемые тела в этой системе идут через очередь; у этого
+    не было причин быть исключением.
+
+    [REASON]: неудача ОТПРАВКИ не роняет окно -- вылеты уже приняты, а тела
+    остаются в `pending/` и уйдут следующим прогоном. Неудача ЗАПИСИ в
+    очередь тоже не роняет: без ревизии списка поля вылета остаются с
+    прежним происхождением (`LIST_FROM_MUTABLE_RAW_JSON`), честно
+    помеченным, а не выданным за доказанное.
+    """
+    from drone_collector.sources import (SOURCES_MODE_VERSION,
+                                         drain_source_outbox,
+                                         enqueue_sources, list_source_items,
+                                         utc_stamp)
+
+    pages = getattr(result, 'pages', None) or []
+    if not pages:
+        return
+    if getattr(result, 'raw_unavailable', 0):
+        log.warning('%d flight-list page(s) arrived without readable raw '
+                    'bytes; those pages produce NO immutable LIST source and '
+                    'their flights keep their previous provenance.',
+                    result.raw_unavailable)
+    run_id = state.get('capture_run_id') or ('flights-%s' % utc_stamp())
+    items, stats = list_source_items(
+        pages, run_id, utc_stamp(),
+        window_from=format_date(result.date_from),
+        window_to=format_date(result.date_to))
+    # [REASON]: `_account_for` вызывается ПО ОКНУ, и все остальные счётчики
+    # прогона накапливаются. Первая редакция присваивала -- у периода,
+    # пересекающего границу года, сводка показывала только последнее окно,
+    # включая `list_pages_without_raw`: страницы без доказательства первого
+    # окна исчезали из отчёта совсем.
+    _bump(state, 'list_pages_captured', stats['pages'])
+    _bump(state, 'list_pages_without_raw', stats['pages_without_raw'])
+    _bump(state, 'list_sources_built', stats['flights'])
+    if not items:
+        log.warning('No immutable LIST source could be built for %s .. %s.',
+                    format_date(result.date_from), format_date(result.date_to))
+        return
+    try:
+        outbox = _open_outbox(cfg, log)
+        # [REASON]: пропуска «вылет уже в очереди» здесь НЕТ намеренно, и
+        # это вторая редакция места. Первая брала `known_sources` и
+        # пропускала вылет по одному лишь наличию конверта -- рост очереди она
+        # лечила, но ценой настоящего изменения: если DJI позже правит
+        # строку ещё догружавшегося вылета, новая версия в очередь уже не
+        # попадала. Дедупликация перенесена на уровень ключа очереди и
+        # считается по СТРОКЕ ВЫЛЕТА (`list_source_items`), поэтому
+        # неизменившийся вылет отсеивается как дубль, а изменившийся
+        # проходит. Лечится то же самое, не теряя ничего.
+        enqueued = enqueue_sources(
+            outbox, items, diagnostics={'mode_version': SOURCES_MODE_VERSION},
+            logger=log)
+    except Exception as exc:  # noqa: BLE001 -- см. REASON выше
+        # [REASON]: тип ошибки печатается отдельно. Этот except однажды уже
+        # молча съел NameError от собственной опечатки, и снаружи это
+        # выглядело как «приёмник недоступен».
+        log.warning('The immutable LIST source could not be queued (%s: %s). '
+                    'The flights are stored; their list fields keep the '
+                    'provenance they had.', type(exc).__name__, exc)
+        return
+    _bump(state, 'list_sources_queued', enqueued.queued)
+    _bump(state, 'list_sources_duplicates', enqueued.duplicates)
+    _bump(state, 'list_sources_refused',
+          enqueued.secret_refused + enqueued.too_large)
+    if enqueued.secret_refused:
+        log.error('%d LIST page(s) carried a secret marker and were NOT '
+                  'queued.', enqueued.secret_refused)
+    log.info('Immutable LIST source: %d page(s), %d revision(s) built, %d '
+             'queued, %d unchanged since last time.', stats['pages'],
+             stats['flights'], enqueued.queued, enqueued.duplicates)
+    if args.dry_run:
+        return
+    try:
+        drain = drain_source_outbox(outbox, cfg, log)
+    except Exception as exc:  # noqa: BLE001 -- см. REASON выше
+        log.warning('The immutable LIST source stays in the queue (%s); the '
+                    'next run will send it.', exc)
+        return
+    _bump(state, 'list_sources_sent', drain.sent)
+    # Осталось в очереди -- это СОСТОЯНИЕ очереди после последнего окна,
+    # а не сумма по окнам: складывать его значило бы считать одни и те же
+    # конверты несколько раз.
+    state['list_sources_left_pending'] = drain.left_pending
 
 
 def _accumulate(state, result):

@@ -181,6 +181,17 @@ API_VERSION_STORAGE = 'storage-object'
 # poisoning a batch that would then never be accepted.
 MAX_SOURCE_BODY_BYTES = 8 * 1024 * 1024
 
+# Каждые столько контуров печатается строка прогресса фазы геометрии. 6171
+# контуров -- это 13 строк: человек видит, что процесс жив и куда идёт, а
+# лог не превращается в тысячи строк.
+GEOMETRY_PROGRESS_EVERY = 500
+
+# Сколько md5 уходит в один запрос манифеста. 6171 x 33 байта -- около 200 КБ,
+# и дробить нечего; запас оставлен на рост каталога.
+MANIFEST_BATCH_SIZE = 2000
+MANIFEST_PATH = '/drones/api/land_geometry_manifest'
+
+
 # How often the wait loop yields to Playwright while a flight loads.
 SOURCE_POLL_MS = 250
 
@@ -973,9 +984,19 @@ def enqueue_sources(outbox, items, flight=None, diagnostics=None,
             extra['v4_url_present'] = bool(
                 v4_url_present(json.loads(raw.decode('utf-8'))))
         identity = source_identity(item['flight_id'], item['source_type'])
+        # [REASON]: служебный ключ НЕ уезжает в конверт -- он телу не
+        # принадлежит. Снимается КОПИЕЙ, а не `pop`: первая редакция
+        # мутировала элемент вызывающего, и повторная постановка того же
+        # списка считала уже другой ключ (первый раз -- по строке, второй
+        # -- по странице) и заводила дубль. Тест на повторную постановку
+        # это и поймал. По умолчанию ключ прежний, sha тела, поэтому
+        # остальные типы источников ведут себя ровно как раньше.
+        dedupe_sha = item.get('dedupe_sha256') or item['sha256']
+        body = {key: value for key, value in item.items()
+                if key != 'dedupe_sha256'}
         try:
             _path, duplicate = outbox.enqueue(
-                KIND_SOURCE, identity, item, item['sha256'],
+                KIND_SOURCE, identity, body, dedupe_sha,
                 source='dji-record-page', diagnostics=extra)
         except EnvelopeTooLarge:
             result.too_large += 1
@@ -1379,7 +1400,11 @@ def enqueue_snapshot_chunks(outbox, bodies, diagnostics=None, logger=None):
 
 class GeometryDownloadCounters(object):
     __slots__ = ('selected', 'downloaded', 'no_geometry', 'failed',
-                 'md5_mismatch', 'too_large', 'secret_in_payload', 'bytes')
+                 'md5_mismatch', 'too_large', 'secret_in_payload', 'bytes',
+                 # Уже лежит в неизменяемом хранилище приёмника -- пропущено
+                 # ДО скачивания. Отдельно от `no_geometry` (у контура вообще
+                 # нет полигона) и от внутрирунного дубля.
+                 'known_skipped', 'duplicate_in_run')
 
     def __init__(self):
         for key in self.__slots__:
@@ -1391,30 +1416,58 @@ class GeometryDownloadCounters(object):
 
 def download_snapshot_geometries(nodes, download_fn, logger=None,
                                  sleep_fn=None, pause_s=0.35,
-                                 max_bytes=MAX_SOURCE_BODY_BYTES):
+                                 max_bytes=MAX_SOURCE_BODY_BYTES,
+                                 known_md5=None,
+                                 progress_every=GEOMETRY_PROGRESS_EVERY):
     """{content_md5: body_b64} of the polygons of the given nodes.
 
     The bytes are kept VERBATIM -- the receiver stores them by md5 -- after
     the same three checks the polygon run makes: the download arrived, its
     md5 is the one DJI named, and it carries no signed link. The signed link
     is taken from the node once and cleared at once.
+
+    `known_md5` is the set of `contentMd5` the receiver ALREADY stores. A
+    contour whose md5 is in it is skipped BEFORE the download -- that is the
+    whole point of the incremental run, and the test asserts it by checking
+    that the link was never requested, not merely that the body was dropped.
+
+    [REASON]: the md5 comes from the CATALOG node (`geometry.storage.
+    contentMd5`), not from the downloaded bytes, so the decision is available
+    before a single byte is fetched. Were it otherwise no incremental run
+    would be possible at all.
+
+    [REASON]: `known_md5=None` means "we could not find out" and downloads
+    everything, exactly as before. An unreachable manifest must degrade to a
+    slow-but-correct run, never to a snapshot with silently missing polygons.
     """
     from drone_collector.geometry import contour_from_node, scrub
 
     out = logger or log
     sleep = sleep_fn or time.sleep
     counters = GeometryDownloadCounters()
+    known = frozenset(str(m).lower() for m in (known_md5 or ()))
     geometries = {}
     sources = [source for source in (contour_from_node(node) for node in nodes)
                if source is not None]
     counters.selected = len(sources)
     for index, source in enumerate(sources, start=1):
+        if progress_every and index % progress_every == 0:
+            out.info('Geometry %d/%d: known=%d new=%d failed=%d',
+                     index, len(sources), counters.known_skipped,
+                     counters.downloaded, _geometry_failures(counters))
         if not source.has_link or not source.content_md5:
             counters.no_geometry += 1
             continue
         md5 = str(source.content_md5).lower()
+        if md5 in known:
+            # Ссылка всё равно снимается: подписанный URL не должен пережить
+            # этот цикл ни в узле, ни в памяти.
+            source.take_link()
+            counters.known_skipped += 1
+            continue
         if md5 in geometries:
             source.take_link()
+            counters.duplicate_in_run += 1
             continue
         link = source.take_link()
         try:
@@ -1455,7 +1508,17 @@ def download_snapshot_geometries(nodes, download_fn, logger=None,
         geometries[md5] = base64.b64encode(blob).decode('ascii')
         if index < len(sources) and pause_s:
             sleep(pause_s)
+    out.info('Geometry %d/%d done: known=%d new=%d no-polygon=%d failed=%d',
+             len(sources), len(sources), counters.known_skipped,
+             counters.downloaded, counters.no_geometry,
+             _geometry_failures(counters))
     return geometries, counters
+
+
+def _geometry_failures(counters):
+    """Всё, что НЕ доехало: отказ, чужой md5, перебор размера, секрет."""
+    return (counters.failed + counters.md5_mismatch + counters.too_large
+            + counters.secret_in_payload)
 
 
 def snapshot_dry_run_path(out_dir, run_id):
@@ -1484,7 +1547,16 @@ class SnapshotDrainResult(SourceDrainResult):
 
 
 def snapshot_refusal_reasons(counters, expected_lands, expected_geometries):
-    """Why a snapshot chunk was NOT accepted in full. Empty -- accepted."""
+    """Why a snapshot chunk was NOT accepted in full. Empty -- accepted.
+
+    [REASON]: `geometries_referenced_but_absent` намеренно НЕ считается
+    причиной отказа, хотя и обязано валить команду. Причина отказа
+    останавливает слив и оставляет кусок в `pending/`, а куски сортируются
+    по `<run_id>:<chunk>` -- застрявший старый снимок встал бы ПЕРЕД новым,
+    тем самым, который привезёт недостающее тело, и пробел стал бы
+    невосстановимым. Приёмник кусок принял; ненулевой счётчик меняет код
+    возврата команды в `_run_land_snapshot`, а не судьбу куска.
+    """
     if counters is None:
         return ['the endpoint returned no counters at all']
     reasons = []
@@ -1555,3 +1627,113 @@ def drain_land_snapshot_outbox(outbox, cfg, logger, send_fn=None):
     result.counters = total
     result.left_pending = len(outbox.pending())
     return result
+
+
+# ─── DRONE-AREA-CAPTURE-001 / A13: неизменяемый источник СПИСКА ──────────────
+#
+# Долг A13: поля списка (площадь, ширина, режим, границы окна) приходили в
+# расчёт из ИЗМЕНЯЕМОЙ колонки `drone_flights.raw_json`. Её можно переписать
+# позже -- значит цепочка доказательств рвалась в первом же звене.
+#
+# Что кладётся в ревизию: БАЙТЫ СТРАНИЦЫ, как их прислал DJI, без
+# пересериализации. Одна страница даёт по одной ревизии на каждый вылет в
+# ней, и все они ссылаются на одно и то же тело.
+#
+# [REASON]: почему не одна ревизия на страницу. `dji_source_revisions`
+# адресуется парой (source_type, scope_key) со scope_key = flight_id, и
+# `latest_revisions(flight_id)` -- то, чем `dji_area/store.py` уже собирает
+# `dji_flight_evidence`. Ревизия с flight_id=NULL туда не попадёт, и
+# пришлось бы заводить таблицу связей, менять приёмник и менять резолвер
+# ради того же результата. Тело на диске адресуется по sha256 и НЕ
+# дублируется (`store.write_body_file`), так что цена схемы -- строки, а не
+# байты.
+#
+# [REASON]: почему не «вырезать запись одного вылета и сохранить её». Так
+# делает форензик-импорт (`schema_version='list-record-canonical-json'`), и
+# для архива это единственный доступный вариант. Но у живого захвата есть
+# настоящий ответ DJI, и хеш от нашего среза не проверить ничем: срез сделан
+# нами. Поэтому живой захват хранит страницу целиком, а нужную запись
+# выбирает читатель -- детерминированно и на виду.
+
+
+def list_scope_context(url, page_number, total_pages, window_from, window_to,
+                       flight_count, page_sha256):
+    """`request_context` ревизии списка. Только пути и счётчики, без query."""
+    return {
+        'path': url_path(url),
+        'association': 'list_page',
+        'api_version': api_version_of(url_path(url)),
+        'mode_version': SOURCES_MODE_VERSION,
+        'list_page': page_number,
+        'list_total_pages': total_pages,
+        'list_window_from': window_from,
+        'list_window_to': window_to,
+        'list_flight_count': flight_count,
+        # Тот же хеш, что и `sha256` ревизии: страница у всех её вылетов
+        # одна, и по этому полю видно, что они пришли из одного ответа.
+        'list_page_sha256': page_sha256,
+    }
+
+
+def list_source_items(pages, run_id, captured_at, window_from=None,
+                      window_to=None, parser_version=None):
+    """Элементы `sources` для /drones/api/source_sync из страниц списка.
+
+    `pages` -- последовательность объектов с `url`, `raw` (bytes или None) и
+    `body` (разобранный ответ). Страница без сырых байтов пропускается: без
+    них ревизия была бы хешем нашей сериализации, а не ответа DJI.
+
+    Возвращает (items, stats).
+    """
+    items = []
+    stats = {'pages': 0, 'pages_without_raw': 0, 'flights': 0,
+             'flights_without_id': 0}
+    for page in pages:
+        raw = getattr(page, 'raw', None)
+        if not raw:
+            stats['pages_without_raw'] += 1
+            continue
+        raw = bytes(raw)
+        stats['pages'] += 1
+        sha = hashlib.sha256(raw).hexdigest()
+        body = getattr(page, 'body', None) or {}
+        meta = body.get('meta_data') if isinstance(body, dict) else None
+        meta = meta if isinstance(meta, dict) else {}
+        rows = body.get('data') if isinstance(body, dict) else None
+        rows = [row for row in rows if isinstance(row, dict)] if rows else []
+        context = list_scope_context(
+            page.url, meta.get('current_page'), meta.get('total_pages'),
+            window_from, window_to, len(rows), sha)
+        for row in rows:
+            flight_id = row.get('id')
+            if not isinstance(flight_id, int):
+                stats['flights_without_id'] += 1
+                continue
+            item = source_item(
+                # [REASON]: `body_code` ждёт БАЙТЫ. Первая редакция давала
+                # ему разобранный dict: `bytes(dict)` бросает TypeError,
+                # который функция гасит, и `api_status` у КАЖДОЙ живой
+                # ревизии списка молча оставался NULL -- те же байты из
+                # форензик-импорта при этом получали 0, и одно и то же тело
+                # описывалось по-разному в зависимости от того, кто успел
+                # первым.
+                flight_id, SOURCE_LIST, raw, captured_at,
+                url_path(page.url), 'list_page', body_code(raw), run_id,
+                parser_version=parser_version,
+                schema_version=SCHEMA_RAW_HTTP_BODY,
+                extra_context=context)
+            # [REASON]: ключ дедупликации -- по СТРОКЕ ВЫЛЕТА, тело при этом
+            # остаётся страницей целиком. Ключ по странице делал новым
+            # каждый неизменившийся вылет: окно катится, границы страниц
+            # уезжают каждую ночь, байты страницы другие -- измерено, 50
+            # вылетов дают на диске в 71 раз больше самой страницы, и два
+            # прогона одного окна дают duplicates=0. Ключ по строке
+            # оставляет ровно то поведение, которое нужно: неизменившийся
+            # вылет не заводится повторно, а ИЗМЕНИВШИЙСЯ -- заводится, и
+            # его новая ревизия не теряется.
+            item['dedupe_sha256'] = hashlib.sha256(
+                json.dumps(row, ensure_ascii=False, sort_keys=True,
+                           separators=(',', ':')).encode('utf-8')).hexdigest()
+            items.append(item)
+            stats['flights'] += 1
+    return items, stats
