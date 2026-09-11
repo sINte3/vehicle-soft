@@ -152,12 +152,33 @@ jobs:
       - name: Area study (coverage arithmetic, contour choice, grouping)
         run: python -m unittest drone_collector.tests.test_area_study
 
+      # DJI-AREA-EVIDENCE-001. The immutable source capture: which URL is
+      # which body, that a signed storage link never survives into what is
+      # stored, that a route naming another flight is still queued but
+      # counted as a mismatch, that a flight already in the queue is not
+      # visited again, and that a partially accepted batch leaves the whole
+      # queue pending. Stdlib plus fake Playwright objects; no browser.
+      - name: DJI source capture (classification, secrets, resume, drain)
+        run: python -m unittest drone_collector.tests.test_sources
+
       # The migration's four paths, its identity constraints, and the rule the
       # owner cares about most -- that drone_flights.area_ha is byte-identical
       # before and after. Stdlib sqlite3 only: it never imports the app, so it
       # fits this workflow's dependency contract unchanged.
       - name: Useful area migration (four paths, identity, area untouched)
         run: python -m unittest tests.test_drone_useful_area_migration_001
+
+      # DJI-AREA-EVIDENCE-001. The acceptance matrix of the evidence model
+      # (V4 presence semantics, window gates, area resolver, structural
+      # screen, field tiers, aggregation) and the eight-table migration's
+      # four paths. Both stdlib only: dji_area/ imports nothing from Flask,
+      # and the ORM-parity test inside the migration suite skips itself when
+      # SQLAlchemy is not installed.
+      - name: DJI area evidence acceptance matrix (pure modules)
+        run: python -m unittest tests.test_dji_area_core
+
+      - name: DJI area evidence migration (four paths, DDL columns)
+        run: python -m unittest tests.test_dji_area_migration_001
 
       # The recomputation itself, on a temporary SQLite database built with
       # the migration's own DDL. Stdlib only: drone_coverage_recalc.py and

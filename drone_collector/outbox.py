@@ -62,7 +62,16 @@ ENVELOPE_VERSION = 1
 # получатели на стороне Vehicle Soft и разная судьба при ошибке.
 KIND_ROUTE = 'route'
 KIND_FIELD_GEOMETRY = 'field_geometry'
-KINDS = (KIND_ROUTE, KIND_FIELD_GEOMETRY)
+# DJI-AREA-EVIDENCE-001: one immutable DJI source body of one flight
+# (`<flight_id>:<source_type>`), and one chunk of a catalog snapshot
+# (`<capture_run_id>:<chunk index>`). Different receivers, different fates.
+#
+# [REASON]: `records(kind)` and the senders select by the KIND PREFIX of the
+# file name, so no kind may be a prefix of another followed by `_`:
+# `source_` and `land_snapshot_` collide with nothing above.
+KIND_SOURCE = 'source'
+KIND_LAND_SNAPSHOT = 'land_snapshot'
+KINDS = (KIND_ROUTE, KIND_FIELD_GEOMETRY, KIND_SOURCE, KIND_LAND_SNAPSHOT)
 
 # Потолок одной записи в байтах.
 #

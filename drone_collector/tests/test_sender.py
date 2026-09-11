@@ -14,15 +14,24 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from drone_collector.config import MAX_BATCH_SIZE, CollectorConfig
+from drone_collector.config import (MAX_BATCH_SIZE,
+                                    MAX_LAND_SNAPSHOT_BATCH_SIZE,
+                                    MAX_SOURCE_BATCH_SIZE, CollectorConfig)
 from drone_collector.sender import (
     IngestRejected,
+    LandSnapshotSendResult,
     SendResult,
+    SourceSendResult,
     TransportError,
+    build_land_snapshot_payload,
     build_payload,
+    build_source_payload,
     chunk,
+    chunk_sources,
     dry_run_path,
     send,
+    send_land_snapshot_chunk,
+    send_sources,
     write_dry_run,
 )
 
@@ -262,6 +271,306 @@ class DryRunTests(unittest.TestCase):
         target = write_dry_run([], 'incremental', PERIOD_FROM, PERIOD_TO,
                                self.tmp / 'out')
         self.assertTrue(target.exists())
+
+
+# ─── DJI-AREA-EVIDENCE-001: the two new senders ─────────────────────────────
+
+
+def source_items(count, flight_id=673501214):
+    """Source items of the /drones/api/source_sync contract, without a body."""
+    return [{'flight_id': flight_id + i, 'source_type': 'card',
+             'captured_at_utc': '2026-09-08 04:12:00',
+             'body_b64': 'eyJjb2RlIjogMH0=', 'sha256': '%064d' % i,
+             'size_bytes': 11,
+             'request_context': {'path': '/api/web/v1/flight_records/%d'
+                                         % (flight_id + i),
+                                 'association': 'url_path'},
+             'capture_run_id': 'sources:ids-file:20260908T041200Z',
+             'parser_version': None, 'schema_version': 'raw-http-body',
+             'api_status': 0}
+            for i in range(count)]
+
+
+def source_ok(seen, new=None, duplicates=0, errors=0, refreshed=0):
+    return {'status': 'ok', 'seen': seen,
+            'new': seen if new is None else new, 'duplicates': duplicates,
+            'errors': errors, 'refreshed': refreshed}
+
+
+def snapshot_ok(lands_seen, geometries_seen=0):
+    return {'status': 'ok', 'snapshot_id': 7, 'lands_seen': lands_seen,
+            'lands_new': lands_seen, 'lands_seen_before': 0, 'errors': 0,
+            'geometries_seen': geometries_seen,
+            'geometries_new': geometries_seen, 'geometries_unchanged': 0,
+            'geometries_errors': 0}
+
+
+class SourceRecorder(object):
+    """A fake transport for the source endpoint."""
+
+    def __init__(self, answers=None):
+        self.answers = list(answers or [])
+        self.calls = []
+
+    def __call__(self, url, payload, timeout_s):
+        self.calls.append({'url': url, 'payload': payload})
+        if self.answers:
+            answer = self.answers.pop(0)
+        else:
+            answer = source_ok(len(payload.get('sources')
+                                   if payload.get('sources') is not None
+                                   else payload.get('lands') or []))
+        if isinstance(answer, Exception):
+            raise answer
+        if isinstance(answer, tuple):
+            return answer
+        return 200, answer
+
+
+class ChunkSourcesTests(unittest.TestCase):
+
+    def test_fifty_one_items_become_two_requests_capped_at_fifty(self):
+        batches = chunk_sources(source_items(51))
+        self.assertEqual([len(batch) for batch in batches], [50, 1])
+        for batch in batches:
+            self.assertLessEqual(len(batch), MAX_SOURCE_BATCH_SIZE)
+
+    def test_the_counts_at_and_around_the_cap(self):
+        cases = {0: 0, 1: 1, 49: 1, 50: 1, 51: 2, 100: 2, 101: 3}
+        for count, expected in sorted(cases.items()):
+            with self.subTest(count):
+                batches = chunk_sources(source_items(count))
+                self.assertEqual(len(batches), expected)
+                self.assertEqual(sum(len(b) for b in batches), count)
+
+    def test_a_larger_batch_size_is_clamped_to_the_endpoint_cap(self):
+        """[REASON]: drones.py answers 413 above 50 -- not a suggestion."""
+        batches = chunk_sources(source_items(120), 5000)
+        self.assertEqual(len(batches), 3)
+        for batch in batches:
+            self.assertLessEqual(len(batch), MAX_SOURCE_BATCH_SIZE)
+
+    def test_a_smaller_batch_size_is_honoured(self):
+        """NEGATIVE CONTROL: the clamp does not overwrite every setting."""
+        self.assertEqual([len(b) for b in chunk_sources(source_items(5), 2)],
+                         [2, 2, 1])
+
+    def test_an_unset_batch_size_falls_back_to_the_endpoint_cap(self):
+        for unset in (None, 0):
+            with self.subTest(repr(unset)):
+                self.assertEqual(
+                    [len(b) for b in chunk_sources(source_items(51), unset)],
+                    [50, 1])
+
+    def test_a_negative_batch_size_does_not_loop_forever(self):
+        self.assertEqual(len(chunk_sources(source_items(3), -5)), 3)
+
+    def test_nothing_is_lost_or_reordered(self):
+        items = source_items(101)
+        rebuilt = [item for batch in chunk_sources(items) for item in batch]
+        self.assertEqual([i['flight_id'] for i in rebuilt],
+                         [i['flight_id'] for i in items])
+
+
+class SourcePayloadTests(unittest.TestCase):
+
+    def test_the_payload_is_the_token_and_the_sources(self):
+        payload = build_source_payload('tok', source_items(2))
+        self.assertEqual(sorted(payload), ['sources', 'token'])
+        self.assertEqual(payload['token'], 'tok')
+        self.assertEqual(len(payload['sources']), 2)
+
+    def test_the_items_go_through_verbatim(self):
+        """The endpoint re-hashes the body: nothing here may touch it."""
+        items = source_items(1)
+        payload = build_source_payload('tok', items)
+        self.assertEqual(payload['sources'][0], items[0])
+
+
+class SendSourcesTests(unittest.TestCase):
+
+    def test_nothing_to_send_makes_no_request(self):
+        post = SourceRecorder()
+        result = send_sources([], config(), post_fn=post,
+                              sleep_fn=lambda _s: None)
+        self.assertEqual(post.calls, [])
+        self.assertEqual(result.batches, 0)
+
+    def test_the_request_goes_to_the_source_endpoint_with_the_token(self):
+        post = SourceRecorder()
+        send_sources(source_items(1), config(token='secret'), post_fn=post,
+                     sleep_fn=lambda _s: None)
+        self.assertTrue(post.calls[0]['url'].endswith(
+            '/drones/api/source_sync'))
+        self.assertEqual(post.calls[0]['payload']['token'], 'secret')
+
+    def test_fifty_one_items_really_travel_in_two_requests(self):
+        post = SourceRecorder([source_ok(50), source_ok(1)])
+        result = send_sources(source_items(51), config(), post_fn=post,
+                              sleep_fn=lambda _s: None)
+        self.assertEqual(len(post.calls), 2)
+        self.assertEqual([len(call['payload']['sources'])
+                          for call in post.calls], [50, 1])
+        self.assertEqual(result.batches, 2)
+        self.assertEqual(result.seen, 51)
+
+    def test_the_counters_are_summed_over_batches(self):
+        post = SourceRecorder([source_ok(50, new=48, duplicates=2),
+                               source_ok(1, new=0, errors=1, refreshed=3)])
+        result = send_sources(source_items(51), config(), post_fn=post,
+                              sleep_fn=lambda _s: None)
+        self.assertEqual((result.seen, result.new, result.duplicates,
+                          result.errors, result.refreshed),
+                         (51, 48, 2, 1, 3))
+
+    def test_counters_that_add_up_are_reported_as_agreeing(self):
+        post = SourceRecorder([source_ok(4, new=3, duplicates=1)])
+        self.assertTrue(send_sources(source_items(4), config(), post_fn=post,
+                                     sleep_fn=lambda _s: None).counters_agree)
+
+    def test_counters_that_do_not_add_up_are_caught_on_our_side(self):
+        """NEGATIVE CONTROL: the invariant is checked, not assumed."""
+        post = SourceRecorder([source_ok(4, new=1)])
+        result = send_sources(source_items(4), config(), post_fn=post,
+                              sleep_fn=lambda _s: None)
+        self.assertFalse(result.counters_agree)
+
+    def test_the_first_non_ok_status_wins(self):
+        cfg = config()
+        cfg.source_batch_size = 1
+        post = SourceRecorder([source_ok(1), dict(source_ok(1),
+                                                  status='error')])
+        result = send_sources(source_items(2), cfg, post_fn=post,
+                              sleep_fn=lambda _s: None)
+        self.assertEqual(len(post.calls), 2)
+        self.assertEqual(result.status, 'error')
+
+    def test_an_all_ok_run_keeps_the_ok_status(self):
+        """NEGATIVE CONTROL: the status is not pessimistic by default."""
+        cfg = config()
+        cfg.source_batch_size = 1
+        post = SourceRecorder([source_ok(1), source_ok(1)])
+        result = send_sources(source_items(2), cfg, post_fn=post,
+                              sleep_fn=lambda _s: None)
+        self.assertEqual(result.status, 'ok')
+
+    def test_the_source_batch_size_of_the_config_is_the_one_used(self):
+        cfg = config()
+        cfg.source_batch_size = 10
+        post = SourceRecorder()
+        send_sources(source_items(25), cfg, post_fn=post,
+                     sleep_fn=lambda _s: None)
+        self.assertEqual([len(call['payload']['sources'])
+                          for call in post.calls], [10, 10, 5])
+
+    def test_413_is_not_retried(self):
+        post = SourceRecorder([(413, {'error': 'batch too large'})])
+        with self.assertRaises(IngestRejected):
+            send_sources(source_items(1), config(), post_fn=post,
+                         sleep_fn=lambda _s: None)
+        self.assertEqual(len(post.calls), 1)
+
+    def test_missing_counters_do_not_raise(self):
+        self.assertEqual(SourceSendResult().add({'status': 'ok'}).as_dict(),
+                         {'batches': 1, 'seen': 0, 'new': 0, 'duplicates': 0,
+                          'errors': 0, 'refreshed': 0, 'status': 'ok'})
+
+
+class SendLandSnapshotTests(unittest.TestCase):
+
+    def chunk_body(self, lands=2, geometries=0, index=1, total=1,
+                   final=True):
+        return {
+            'snapshot': {'capture_run_id': 'lands:20260908T041200Z',
+                         'captured_at_utc': '2026-09-08 04:12:00',
+                         'expected_count': lands, 'scope': {'walk': 'lands'},
+                         'chunk': index, 'chunks': total, 'final': final,
+                         'complete': True if final else None,
+                         'manifest_sha256': 'a' * 64 if final else None},
+            'lands': [{'uuid': 'u%d' % i} for i in range(lands)],
+            'geometries': [{'content_md5': '%032d' % i, 'body_b64': 'AAAA'}
+                           for i in range(geometries)],
+        }
+
+    def test_the_request_goes_to_the_snapshot_endpoint_with_the_token(self):
+        post = SourceRecorder([snapshot_ok(2)])
+        send_land_snapshot_chunk(self.chunk_body(), config(token='secret'),
+                                 post_fn=post, sleep_fn=lambda _s: None)
+        self.assertTrue(post.calls[0]['url'].endswith(
+            '/drones/api/land_snapshot_sync'))
+        self.assertEqual(post.calls[0]['payload']['token'], 'secret')
+
+    def test_the_payload_is_the_snapshot_the_lands_and_the_geometries(self):
+        post = SourceRecorder([snapshot_ok(2, geometries_seen=1)])
+        send_land_snapshot_chunk(self.chunk_body(geometries=1), config(),
+                                 post_fn=post, sleep_fn=lambda _s: None)
+        payload = post.calls[0]['payload']
+        self.assertEqual(sorted(payload),
+                         ['geometries', 'lands', 'snapshot', 'token'])
+        self.assertEqual(len(payload['lands']), 2)
+        self.assertEqual(len(payload['geometries']), 1)
+
+    def test_the_chunks_are_posted_in_order_and_only_the_last_is_final(self):
+        """[REASON]: the receiver reads `final` PER REQUEST, so the order and
+        the boundaries the collector chose must reach it exactly."""
+        post = SourceRecorder([snapshot_ok(2), snapshot_ok(2),
+                               snapshot_ok(1)])
+        bodies = [self.chunk_body(lands=2, index=1, total=3, final=False),
+                  self.chunk_body(lands=2, index=2, total=3, final=False),
+                  self.chunk_body(lands=1, index=3, total=3, final=True)]
+        for index, body in enumerate(bodies, start=1):
+            send_land_snapshot_chunk(body, config(), post_fn=post,
+                                     sleep_fn=lambda _s: None, index=index,
+                                     total=3)
+        sent = [call['payload']['snapshot'] for call in post.calls]
+        self.assertEqual([s['chunk'] for s in sent], [1, 2, 3])
+        self.assertEqual([s['final'] for s in sent], [False, False, True])
+        self.assertEqual([s['manifest_sha256'] for s in sent],
+                         [None, None, 'a' * 64])
+
+    def test_a_chunk_over_the_cap_is_not_sent_at_all(self):
+        post = SourceRecorder()
+        with self.assertRaises(IngestRejected):
+            send_land_snapshot_chunk(
+                self.chunk_body(lands=MAX_LAND_SNAPSHOT_BATCH_SIZE + 1),
+                config(), post_fn=post, sleep_fn=lambda _s: None)
+        self.assertEqual(post.calls, [],
+                         'a chunk the endpoint would 413 was still posted')
+
+    def test_a_chunk_at_the_cap_is_sent(self):
+        """NEGATIVE CONTROL: the cap is a cap, not an off-by-one refusal."""
+        post = SourceRecorder([snapshot_ok(MAX_LAND_SNAPSHOT_BATCH_SIZE)])
+        send_land_snapshot_chunk(
+            self.chunk_body(lands=MAX_LAND_SNAPSHOT_BATCH_SIZE), config(),
+            post_fn=post, sleep_fn=lambda _s: None)
+        self.assertEqual(len(post.calls), 1)
+
+    def test_the_counters_come_back_named(self):
+        post = SourceRecorder([snapshot_ok(2, geometries_seen=1)])
+        result = send_land_snapshot_chunk(self.chunk_body(geometries=1),
+                                          config(), post_fn=post,
+                                          sleep_fn=lambda _s: None)
+        self.assertEqual(result.lands_seen, 2)
+        self.assertEqual(result.geometries_seen, 1)
+        self.assertEqual(result.snapshot_id, 7)
+        self.assertTrue(result.counters_agree)
+
+    def test_counters_that_do_not_add_up_are_caught(self):
+        """NEGATIVE CONTROL to the agreement above."""
+        result = LandSnapshotSendResult().add(
+            dict(snapshot_ok(4), lands_new=1))
+        self.assertFalse(result.counters_agree)
+
+    def test_missing_counters_do_not_raise(self):
+        result = LandSnapshotSendResult().add({'status': 'ok'})
+        self.assertEqual(result.lands_seen, 0)
+        self.assertEqual(result.batches, 1)
+
+    def test_the_payload_builder_names_the_four_fields(self):
+        payload = build_land_snapshot_payload('tok', {'chunk': 1},
+                                              [{'uuid': 'u1'}], [])
+        self.assertEqual(sorted(payload),
+                         ['geometries', 'lands', 'snapshot', 'token'])
 
 
 if __name__ == '__main__':

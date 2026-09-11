@@ -531,26 +531,85 @@ class ExecutablesComeFromARevision(unittest.TestCase):
                      'tools/recalculate_drone_useful_area.py'):
             self.assertIn(path, manifest['identical_on_both_revisions'], path)
 
-    def test_the_collector_is_identical_and_no_stale_difference_is_declared(self):
-        """С ревизии продукта v2 сборщик одинаков на обеих ревизиях.
+    def test_the_collector_difference_after_the_pilot_is_declared_not_hidden(self):
+        """`drone_collector/main.py` разошёлся с одобренной ревизией пилота.
 
-        Пока площадка стояла на `c3e6a12`, `drone_collector/main.py`
-        различался намеренно и это было записано. Теперь различий нет, и
-        манифест обязан говорить именно это, а не нести устаревшую запись.
+        `DJI-AREA-EVIDENCE-001` добавил сборщику режимы захвата источников и
+        коды выхода 18/19/20; на `PRODUCT_SHA` их нет. Расхождение обязано
+        лежать в `kit_differs_on_purpose` -- в списке «одинаковы на обеих
+        ревизиях» ему не место, там оно было бы прямой неправдой.
         """
         manifest = common.load_product_blobs()
+        self.assertNotIn('drone_collector/main.py',
+                         manifest['identical_on_both_revisions'])
         self.assertIn('drone_collector/main.py',
-                      manifest['identical_on_both_revisions'])
-        self.assertEqual(manifest['kit_differs_on_purpose'], {})
-        entry = manifest['identical_on_both_revisions']['drone_collector/main.py']
-        self.assertEqual(entry['product_blob'], entry['kit_blob'])
-        # Отрицательный контроль: устаревшую запись «отличается намеренно»
-        # при равных blob-ах проверка называет по имени.
-        stale = copy.deepcopy(manifest)
-        stale['kit_differs_on_purpose']['drone_collector/main.py'] = dict(entry)
-        problems = blobs.check_against_worktree(stale, REPO_ROOT)
+                      manifest['kit_differs_on_purpose'])
+        entry = manifest['kit_differs_on_purpose']['drone_collector/main.py']
+        self.assertNotEqual(entry['product_blob'], entry['kit_blob'])
+        # Байты ОДОБРЕННОЙ ревизии пилота не переписаны на новые: старый
+        # пилот воспроизводится ровно на том же blob-е, что и до этого PR.
+        self.assertEqual(entry['product_blob'],
+                         '95a6a610865f4d8e8bfbcde16fb320dd10f69671')
+        # А `kit_blob` -- это то, что лежит на диске сейчас.
+        self.assertEqual(entry['kit_blob'],
+                         common.worktree_blob_sha(REPO_ROOT,
+                                                  'drone_collector/main.py'))
+        self.assertEqual(blobs.check_against_worktree(manifest, REPO_ROOT), [])
+
+    @unittest.skipUnless(PRODUCT_REACHABLE,
+                         'the product revision is not in this clone')
+    def test_the_declared_product_blob_is_really_the_approved_revisions(self):
+        """Записанный `product_blob` сверяется С ИСТОРИЕЙ, а не с самим собой.
+
+        [REASON]: без этого запись «одобренные байты» доказывала бы только то,
+        что кто-то её написал. Здесь она сверяется с `PRODUCT_SHA` в git.
+        """
+        entry = common.load_product_blobs()['kit_differs_on_purpose'][
+            'drone_collector/main.py']
+        self.assertEqual(entry['product_blob'],
+                         common.blob_sha_at(REPO_ROOT, common.PRODUCT_SHA,
+                                            'drone_collector/main.py'))
+        self.assertNotEqual(
+            entry['product_blob'],
+            common.blob_sha_at(REPO_ROOT, 'HEAD', 'drone_collector/main.py'),
+            'if these were equal the divergence would not exist and the '
+            'entry would belong in identical_on_both_revisions')
+
+    def test_a_declared_difference_still_catches_an_accidental_edit(self):
+        """Отрицательный контроль: объявленное расхождение НЕ отключает гейт.
+
+        [REASON]: перенос файла в «отличается намеренно» был бы поблажкой,
+        если бы после него любые байты годились. `kit_blob` приколот, и
+        случайная правка `main.py` по-прежнему называется по имени.
+        """
+        manifest = copy.deepcopy(common.load_product_blobs())
+        entry = manifest['kit_differs_on_purpose']['drone_collector/main.py']
+        entry['kit_blob'] = 'd' * 40
+        problems = blobs.check_against_worktree(manifest, REPO_ROOT)
+        self.assertIn('WORKTREE_DIFFERS:drone_collector/main.py', problems)
+
+    def test_a_declared_difference_that_is_no_difference_is_named(self):
+        """Отрицательный контроль: устаревшая запись при равных blob-ах."""
+        manifest = copy.deepcopy(common.load_product_blobs())
+        entry = manifest['kit_differs_on_purpose']['drone_collector/main.py']
+        entry['product_blob'] = entry['kit_blob']
+        problems = blobs.check_against_worktree(manifest, REPO_ROOT)
         self.assertIn('DECLARED_DIFFERENT_BUT_IDENTICAL:drone_collector/main.py',
                       problems)
+
+    def test_a_declared_difference_that_vanished_is_named_missing(self):
+        """Отрицательный контроль: исчезнувший файл -- пропажа, не молчание.
+
+        [REASON]: пока список намеренных различий был пуст, `if exists` в
+        проверке ничего не стоил. Теперь в нём файл, который сборщик на
+        BAK-TEX11 действительно исполняет, и молчание об его исчезновении
+        было бы дырой ровно там, где гейт нужен.
+        """
+        manifest = copy.deepcopy(common.load_product_blobs())
+        manifest['kit_differs_on_purpose']['drone_collector/gone_NOT_REAL.py'] = {
+            'product_blob': 'a' * 40, 'kit_blob': 'b' * 40}
+        problems = blobs.check_against_worktree(manifest, REPO_ROOT)
+        self.assertIn('MISSING:drone_collector/gone_NOT_REAL.py', problems)
 
     def test_a_file_outside_the_manifest_is_never_materialized(self):
         directory = tempfile.mkdtemp(prefix='pilot_mat_')

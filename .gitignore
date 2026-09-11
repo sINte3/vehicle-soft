@@ -162,3 +162,6 @@ docs/ux/5?-regression-*/after/
 # высока, чтобы полагаться на единственное правило. Путь абсолютный от корня
 # репозитория, поэтому одноимённый каталог в другом месте под него не попадёт.
 /drone_collector/out/area_48h/
+
+# DJI-AREA-EVIDENCE-001: content-addressed source bodies beside the database
+instance/dji_sources/

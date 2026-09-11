@@ -55,6 +55,23 @@ LAND_SYNC_PATH = '/drones/api/land_sync'
 # drones.py: blueprint prefix /drones + route /api/route_sync.
 ROUTE_SYNC_PATH = '/drones/api/route_sync'
 
+# DJI-AREA-EVIDENCE-001: immutable source bodies and catalog snapshots.
+# Fixed by drones.py: blueprint prefix /drones + routes /api/source_sync and
+# /api/land_snapshot_sync.
+SOURCE_SYNC_PATH = '/drones/api/source_sync'
+LAND_SNAPSHOT_SYNC_PATH = '/drones/api/land_snapshot_sync'
+
+# [REASON]: drones.py answers 413 above 50 sources per request
+# (DRONE_SOURCE_SYNC_MAX_BATCH). A source item carries a whole HTTP body in
+# base64 -- a V4 body is up to a megabyte -- so the cap is twenty times
+# smaller than the flight cap and has its own constant.
+MAX_SOURCE_BATCH_SIZE = 50
+
+# [REASON]: drones.py answers 413 above 1000 lands per request
+# (DRONE_LAND_SNAPSHOT_MAX_BATCH). Same number as the flight cap, but a
+# separate constant: the two endpoints are free to diverge.
+MAX_LAND_SNAPSHOT_BATCH_SIZE = 1000
+
 # [REASON]: drones.py answers 413 above 500 routes per request
 # (DRONE_ROUTE_SYNC_MAX_BATCH). A route carries hundreds of points where a
 # flight carries a few dozen scalars, so its cap is half the flight cap and
@@ -132,6 +149,28 @@ DEFAULT_ROUTE_PROBE_WAIT_MS = 30 * 60 * 1000
 DEFAULT_ROUTE_PROBE_DRAIN_MS = 15000
 # Сколько тишины считать признаком того, что ответов больше нет.
 DEFAULT_ROUTE_PROBE_QUIET_MS = 2000
+
+# ─── DJI-AREA-EVIDENCE-001: `--sources` ──────────────────────────────────────
+
+# The record page of one flight. `{id}` is substituted with the DJI flight id.
+# Navigating to it makes the SPA fetch the card, the route, the airlines
+# descriptor and the signed V4 file for itself -- the collector only listens.
+DEFAULT_RECORD_URL_TEMPLATE = 'https://www.djiag.com/record/{id}'
+
+# [REASON]: how long to wait, per flight, for either the V4 body or the
+# airlines descriptor that says there is none. 70 s was the ceiling that lost
+# nothing on the August 2026 forensic run (8 196 flights): the V4 file is up
+# to a megabyte behind a signed storage link and arrives last. A shorter wait
+# would turn a slow storage into a run full of NO_V4 timeouts that a re-run
+# then has to repeat flight by flight.
+DEFAULT_SOURCE_WAIT_MS = 70000
+
+# Pause between two flights, milliseconds. The pace at DJI is set by us.
+DEFAULT_SOURCE_PAUSE_MS = 1500
+
+# Source items per POST to /drones/api/source_sync. Clamped to
+# MAX_SOURCE_BATCH_SIZE regardless of what the operator sets.
+DEFAULT_SOURCE_BATCH_SIZE = 50
 
 
 class ConfigError(Exception):
@@ -218,7 +257,11 @@ class CollectorConfig(object):
                  route_probe_poll_ms=DEFAULT_ROUTE_PROBE_POLL_MS,
                  route_probe_wait_ms=DEFAULT_ROUTE_PROBE_WAIT_MS,
                  route_probe_drain_ms=DEFAULT_ROUTE_PROBE_DRAIN_MS,
-                 route_probe_quiet_ms=DEFAULT_ROUTE_PROBE_QUIET_MS):
+                 route_probe_quiet_ms=DEFAULT_ROUTE_PROBE_QUIET_MS,
+                 record_url_template=DEFAULT_RECORD_URL_TEMPLATE,
+                 source_wait_ms=DEFAULT_SOURCE_WAIT_MS,
+                 source_pause_ms=DEFAULT_SOURCE_PAUSE_MS,
+                 source_batch_size=DEFAULT_SOURCE_BATCH_SIZE):
         self.records_url = records_url
         self.fields_url = fields_url
         self.max_land_pages = max_land_pages
@@ -243,6 +286,10 @@ class CollectorConfig(object):
         self.route_probe_wait_ms = route_probe_wait_ms
         self.route_probe_drain_ms = route_probe_drain_ms
         self.route_probe_quiet_ms = route_probe_quiet_ms
+        self.record_url_template = record_url_template
+        self.source_wait_ms = source_wait_ms
+        self.source_pause_ms = source_pause_ms
+        self.source_batch_size = source_batch_size
 
     @property
     def flight_sync_url(self):
@@ -261,6 +308,18 @@ class CollectorConfig(object):
         if not self.base_url:
             return None
         return self.base_url.rstrip('/') + ROUTE_SYNC_PATH
+
+    @property
+    def source_sync_url(self):
+        if not self.base_url:
+            return None
+        return self.base_url.rstrip('/') + SOURCE_SYNC_PATH
+
+    @property
+    def land_snapshot_sync_url(self):
+        if not self.base_url:
+            return None
+        return self.base_url.rstrip('/') + LAND_SNAPSHOT_SYNC_PATH
 
     @property
     def log_dir(self):
@@ -303,6 +362,12 @@ class CollectorConfig(object):
             'route_probe_wait_ms': self.route_probe_wait_ms,
             'route_probe_drain_ms': self.route_probe_drain_ms,
             'route_probe_quiet_ms': self.route_probe_quiet_ms,
+            'record_url_template': self.record_url_template,
+            'source_wait_ms': self.source_wait_ms,
+            'source_pause_ms': self.source_pause_ms,
+            'source_batch_size': self.source_batch_size,
+            'source_sync_url': self.source_sync_url,
+            'land_snapshot_sync_url': self.land_snapshot_sync_url,
         }
 
 
@@ -352,6 +417,23 @@ def load_config(require_ingest=True, load_dotenv=True):
     if batch_size > MAX_BATCH_SIZE:
         batch_size = MAX_BATCH_SIZE
 
+    record_url_template = (_raw('DJI_RECORD_URL_TEMPLATE')
+                           or DEFAULT_RECORD_URL_TEMPLATE)
+    if not record_url_template.startswith(('http://', 'https://')):
+        raise ConfigError('DJI_RECORD_URL_TEMPLATE must start with http:// or '
+                          'https://, got %r' % record_url_template)
+    if '{id}' not in record_url_template:
+        # [REASON]: without the placeholder every flight would open the same
+        # page, and the run would capture one flight's sources under a
+        # thousand ids -- and the server would store them all.
+        raise ConfigError('DJI_RECORD_URL_TEMPLATE must contain {id}, got %r'
+                          % record_url_template)
+
+    source_batch_size = _as_int('DJI_SOURCE_BATCH_SIZE',
+                                DEFAULT_SOURCE_BATCH_SIZE, minimum=1)
+    if source_batch_size > MAX_SOURCE_BATCH_SIZE:
+        source_batch_size = MAX_SOURCE_BATCH_SIZE
+
     return CollectorConfig(
         records_url=records_url,
         storage_state=storage_state,
@@ -388,4 +470,11 @@ def load_config(require_ingest=True, load_dotenv=True):
                                      DEFAULT_ROUTE_PROBE_DRAIN_MS, minimum=0),
         route_probe_quiet_ms=_as_int('DJI_ROUTE_PROBE_QUIET_MS',
                                      DEFAULT_ROUTE_PROBE_QUIET_MS, minimum=0),
+        record_url_template=record_url_template,
+        # `minimum=1000`: below a second the wait cannot even see the card.
+        source_wait_ms=_as_int('DJI_SOURCE_WAIT_MS', DEFAULT_SOURCE_WAIT_MS,
+                               minimum=1000),
+        source_pause_ms=_as_int('DJI_SOURCE_PAUSE_MS',
+                                DEFAULT_SOURCE_PAUSE_MS, minimum=0),
+        source_batch_size=source_batch_size,
     )

@@ -59,7 +59,9 @@ COLLECTOR_VARS = ('DJI_RECORDS_URL', 'DJI_STORAGE_STATE', 'DJI_HEADLESS',
                   'DJI_FIELDS_URL', 'DJI_MAX_LAND_PAGES',
                   'DJI_EXPECTED_REGION', 'DJI_ALLOW_EMPTY_WINDOW',
                   'DJI_ROUTE_PROBE_POLL_MS', 'DJI_ROUTE_PROBE_WAIT_MS',
-                  'DJI_ROUTE_PROBE_DRAIN_MS', 'DJI_ROUTE_PROBE_QUIET_MS')
+                  'DJI_ROUTE_PROBE_DRAIN_MS', 'DJI_ROUTE_PROBE_QUIET_MS',
+                  'DJI_RECORD_URL_TEMPLATE', 'DJI_SOURCE_WAIT_MS',
+                  'DJI_SOURCE_PAUSE_MS', 'DJI_SOURCE_BATCH_SIZE')
 
 
 class CliTestCase(unittest.TestCase):
@@ -312,9 +314,56 @@ class StageBUsageTests(CliTestCase):
         """Прежняя проверка не потерялась при переносе в check_usage."""
         self.refuses(['--lands', '--from', '2026-07-01', '--to', '2026-07-31'])
 
+    def test_sources_without_a_period_or_an_ids_file_is_refused(self):
+        """--sources должен знать, ЧЬИ источники просить."""
+        self.refuses(['--sources'])
+
+    def test_sources_with_a_dry_run_and_a_send_is_refused(self):
+        """Не «молча выигрывает один из флагов»: сухой прогон не отправляет."""
+        self.refuses(['--sources', '--ids-file', 'x.txt', '--send-sources',
+                      '--dry-run'])
+
+    def test_send_sources_without_sources_is_refused(self):
+        self.refuses(['--send-sources'])
+        self.refuses(['--lands', '--send-sources'])
+
+    def test_sources_together_with_another_walk_is_refused(self):
+        for other in (['--lands'], ['--routes'], ['--route-ui-probe'],
+                      ['--area-48h'], ['--route-ui-collect'],
+                      ['--land-snapshot'], ['--with-geometry'],
+                      ['--kind', 'backfill']):
+            with self.subTest(' '.join(other)):
+                self.refuses(['--sources', '--ids-file', 'x.txt'] + other)
+
+    def test_land_snapshot_with_a_period_is_refused(self):
+        """Снимок каталога -- состояние на сейчас, у него нет даты."""
+        self.refuses(['--land-snapshot', '--from', '2026-07-01',
+                      '--to', '2026-07-31'])
+        self.refuses(['--land-snapshot', '--from', '2026-07-01'])
+
+    def test_land_snapshot_with_an_ids_file_or_a_kind_is_refused(self):
+        self.refuses(['--land-snapshot', '--ids-file', 'x.txt'])
+        self.refuses(['--land-snapshot', '--kind', 'backfill'])
+
+    def test_send_snapshot_without_land_snapshot_is_refused(self):
+        self.refuses(['--send-snapshot'])
+
+    def test_snapshot_with_a_dry_run_and_a_send_is_refused(self):
+        self.refuses(['--land-snapshot', '--send-snapshot', '--dry-run'])
+
     def test_the_valid_combinations_pass(self):
         """Отрицательный контроль: проверка не отвергает всё подряд."""
         for argv in (['--routes', '--from', '2026-06-01', '--to', '2026-06-30'],
+                     ['--sources', '--ids-file', 'x.txt'],
+                     ['--sources', '--ids-file', 'x.txt', '--dry-run'],
+                     ['--sources', '--ids-file', 'x.txt', '--send-sources'],
+                     ['--sources', '--from', '2026-08-01', '--to',
+                      '2026-08-31'],
+                     ['--land-snapshot'],
+                     ['--land-snapshot', '--dry-run'],
+                     ['--land-snapshot', '--with-geometry'],
+                     ['--land-snapshot', '--with-geometry',
+                      '--send-snapshot'],
                      ['--routes', '--ids-file', 'x.txt'],
                      ['--routes', '--ids-file', 'x.txt', '--dry-run'],
                      ['--lands'],
@@ -1353,6 +1402,295 @@ class StageBSummaryKeysTests(unittest.TestCase):
         for key in ('ids_requested', 'routes_new', 'routes_duplicates',
                     'routes_missing', 'routes_errors'):
             self.assertIn(key, main_module.ROUTE_SUMMARY_KEYS)
+
+
+# ─── DJI-AREA-EVIDENCE-001 ───────────────────────────────────────────────────
+
+
+class SourcesNeedNoIngestTokenTests(CliTestCase):
+    """`--sources` и `--land-snapshot` без своего флага отправки ничего не шлют.
+
+    [REASON]: они только кладут в файловую очередь. Требовать от них
+    VEHICLE_SOFT_BASE_URL и DRONE_API_TOKEN значило бы запретить сбор на
+    машине сборщика, где ни того, ни другого нет. Обратное -- прогон с
+    отправкой -- обязано требовать оба.
+    """
+
+    def parse(self, argv):
+        return build_parser().parse_args(argv)
+
+    def test_a_collecting_source_run_needs_no_ingest(self):
+        self.assertTrue(main_module.needs_no_ingest(
+            self.parse(['--sources', '--ids-file', 'x.txt'])))
+        self.assertTrue(main_module.needs_no_ingest(
+            self.parse(['--sources', '--ids-file', 'x.txt', '--dry-run'])))
+
+    def test_a_sending_source_run_is_an_ingest_run(self):
+        """Отрицательный контроль: правило не объявляет неотправляющим всё."""
+        self.assertFalse(main_module.needs_no_ingest(
+            self.parse(['--sources', '--ids-file', 'x.txt',
+                        '--send-sources'])))
+
+    def test_a_collecting_snapshot_run_needs_no_ingest(self):
+        self.assertTrue(main_module.needs_no_ingest(
+            self.parse(['--land-snapshot'])))
+        self.assertTrue(main_module.needs_no_ingest(
+            self.parse(['--land-snapshot', '--with-geometry'])))
+
+    def test_a_sending_snapshot_run_is_an_ingest_run(self):
+        self.assertFalse(main_module.needs_no_ingest(
+            self.parse(['--land-snapshot', '--send-snapshot'])))
+
+    def test_a_source_run_without_a_token_stops_on_the_session(self):
+        """Собирающий прогон доходит до сессии, а не падает на токене."""
+        os.environ['DJI_STORAGE_STATE'] = MISSING_STATE
+        self.assertEqual(main(['--sources', '--ids-file', MISSING_STATE]),
+                         EXIT_SESSION)
+
+    def test_a_snapshot_run_without_a_token_stops_on_the_session(self):
+        os.environ['DJI_STORAGE_STATE'] = MISSING_STATE
+        self.assertEqual(main(['--land-snapshot']), EXIT_SESSION)
+
+    def test_a_sending_source_run_without_a_token_fails_on_the_token(self):
+        """Отрицательный контроль: у отправляющих прогонов правило прежнее."""
+        os.environ['DJI_STORAGE_STATE'] = MISSING_STATE
+        self.assertEqual(
+            main(['--sources', '--ids-file', MISSING_STATE,
+                  '--send-sources']), EXIT_CONFIG)
+
+    def test_a_sending_snapshot_run_without_a_token_fails_on_the_token(self):
+        os.environ['DJI_STORAGE_STATE'] = MISSING_STATE
+        self.assertEqual(main(['--land-snapshot', '--send-snapshot']),
+                         EXIT_CONFIG)
+
+
+class SourcesConfigTests(CliTestCase):
+    """Что среда обязана отвергнуть до первого шага прогона."""
+
+    def load(self):
+        return config_module.load_config(require_ingest=False,
+                                         load_dotenv=False)
+
+    def test_the_defaults_are_readable_and_named(self):
+        cfg = self.load()
+        described = cfg.describe()
+        for key in ('record_url_template', 'source_wait_ms',
+                    'source_pause_ms', 'source_batch_size',
+                    'source_sync_url', 'land_snapshot_sync_url'):
+            self.assertIn(key, described, '%s не виден в describe()' % key)
+        self.assertIn('{id}', described['record_url_template'])
+
+    def test_the_endpoint_paths_are_the_ones_drones_py_serves(self):
+        os.environ['VEHICLE_SOFT_BASE_URL'] = 'http://vehicle.invalid:5050/'
+        cfg = self.load()
+        self.assertEqual(cfg.source_sync_url,
+                         'http://vehicle.invalid:5050/drones/api/source_sync')
+        self.assertEqual(
+            cfg.land_snapshot_sync_url,
+            'http://vehicle.invalid:5050/drones/api/land_snapshot_sync')
+
+    def test_without_a_base_url_there_is_no_endpoint_to_name(self):
+        self.assertIsNone(self.load().source_sync_url)
+        self.assertIsNone(self.load().land_snapshot_sync_url)
+
+    def test_a_record_template_without_the_placeholder_is_refused(self):
+        """[REASON]: без `{id}` каждый вылет открывал бы ОДНУ И ТУ ЖЕ
+        страницу, и прогон положил бы источники одного вылета под тысячей
+        идентификаторов -- а сервер сохранил бы их все."""
+        os.environ['DJI_RECORD_URL_TEMPLATE'] = 'https://www.djiag.invalid/record/'
+        with self.assertRaises(config_module.ConfigError) as caught:
+            self.load()
+        self.assertIn('DJI_RECORD_URL_TEMPLATE', str(caught.exception))
+
+    def test_a_record_template_without_a_scheme_is_refused(self):
+        os.environ['DJI_RECORD_URL_TEMPLATE'] = 'www.djiag.invalid/record/{id}'
+        with self.assertRaises(config_module.ConfigError) as caught:
+            self.load()
+        self.assertIn('DJI_RECORD_URL_TEMPLATE', str(caught.exception))
+
+    def test_a_valid_record_template_is_accepted(self):
+        """Отрицательный контроль: проверка не отвергает всё подряд."""
+        os.environ['DJI_RECORD_URL_TEMPLATE'] = \
+            'https://www.djiag.invalid/record/{id}'
+        cfg = self.load()
+        self.assertEqual(cfg.record_url_template.format(id=673501214),
+                         'https://www.djiag.invalid/record/673501214')
+
+    def test_the_source_batch_size_is_clamped_to_the_endpoint_cap(self):
+        os.environ['DJI_SOURCE_BATCH_SIZE'] = '5000'
+        self.assertEqual(self.load().source_batch_size,
+                         config_module.MAX_SOURCE_BATCH_SIZE)
+
+    def test_a_smaller_source_batch_size_is_honoured(self):
+        """Отрицательный контроль к зажиму."""
+        os.environ['DJI_SOURCE_BATCH_SIZE'] = '7'
+        self.assertEqual(self.load().source_batch_size, 7)
+
+    def test_a_source_batch_size_below_one_is_refused(self):
+        os.environ['DJI_SOURCE_BATCH_SIZE'] = '0'
+        with self.assertRaises(config_module.ConfigError):
+            self.load()
+
+    def test_a_wait_below_a_second_is_refused(self):
+        """Меньше секунды ожидание не успевает увидеть даже карточку."""
+        os.environ['DJI_SOURCE_WAIT_MS'] = '500'
+        with self.assertRaises(config_module.ConfigError):
+            self.load()
+
+    def test_the_wait_and_the_pause_are_read_from_the_environment(self):
+        os.environ['DJI_SOURCE_WAIT_MS'] = '30000'
+        os.environ['DJI_SOURCE_PAUSE_MS'] = '0'
+        cfg = self.load()
+        self.assertEqual(cfg.source_wait_ms, 30000)
+        self.assertEqual(cfg.source_pause_ms, 0)
+
+    def test_a_wait_that_is_not_a_number_is_refused(self):
+        os.environ['DJI_SOURCE_WAIT_MS'] = 'soon'
+        with self.assertRaises(config_module.ConfigError) as caught:
+            self.load()
+        self.assertIn('DJI_SOURCE_WAIT_MS', str(caught.exception))
+
+
+class SourcesExitCodeTests(unittest.TestCase):
+    """18, 19 и 20 -- три разных действия оператора, а не одно."""
+
+    def test_the_three_codes_are_the_documented_ones(self):
+        self.assertEqual((main_module.EXIT_SOURCES_INCOMPLETE,
+                          main_module.EXIT_SOURCES_NOT_ACCEPTED,
+                          main_module.EXIT_SNAPSHOT_NOT_ACCEPTED),
+                         (18, 19, 20))
+
+    def test_no_two_exit_codes_of_the_package_share_a_number(self):
+        """[REASON]: одно число с двумя смыслами внутри одного пакета -- это
+        код выхода, который оператор однажды прочтёт неверно, глядя в журнал
+        планировщика, а не в исходник."""
+        from drone_collector import devices as devices_module
+        codes = {}
+        for module in (main_module, devices_module):
+            for name in dir(module):
+                if not name.startswith('EXIT_'):
+                    continue
+                value = getattr(module, name)
+                if not isinstance(value, int):
+                    continue
+                previous = codes.get(value)
+                self.assertTrue(previous is None or previous == name,
+                                '%s и %s оба означают %d'
+                                % (previous, name, value))
+                codes[value] = name
+        for code in (18, 19, 20):
+            self.assertIn(code, codes.values() and codes)
+
+    def test_an_incomplete_visit_is_what_reaches_eighteen(self):
+        """Код 18 решается по `complete` посещённых вылетов."""
+        from drone_collector.sources import (SOURCE_AIRLINES, SOURCE_CARD,
+                                             SOURCE_ROUTE, SOURCE_V4,
+                                             FlightSources)
+        full = FlightSources(1)
+        for source_type in (SOURCE_CARD, SOURCE_ROUTE, SOURCE_AIRLINES,
+                            SOURCE_V4):
+            full.items[source_type] = object()
+        partial = FlightSources(2)
+        partial.items[SOURCE_CARD] = object()
+        self.assertFalse(any(not f.complete for f in [full]))
+        self.assertTrue(any(not f.complete for f in [full, partial]))
+
+    def test_a_refused_source_batch_is_what_reaches_nineteen(self):
+        from drone_collector.sender import SourceSendResult
+        from drone_collector.sources import source_refusal_reasons
+        good = SourceSendResult().add({'status': 'ok', 'seen': 2, 'new': 2,
+                                       'duplicates': 0, 'errors': 0})
+        bad = SourceSendResult().add({'status': 'ok', 'seen': 2, 'new': 1,
+                                      'duplicates': 0, 'errors': 1})
+        self.assertEqual(source_refusal_reasons(good, 2), [])
+        self.assertTrue(source_refusal_reasons(bad, 2))
+
+    def test_a_refused_snapshot_chunk_is_what_reaches_twenty(self):
+        from drone_collector.sender import LandSnapshotSendResult
+        from drone_collector.sources import snapshot_refusal_reasons
+        body = {'status': 'ok', 'lands_seen': 2, 'lands_new': 2,
+                'lands_seen_before': 0, 'errors': 0, 'geometries_seen': 0,
+                'geometries_new': 0, 'geometries_unchanged': 0,
+                'geometries_errors': 0}
+        good = LandSnapshotSendResult().add(body)
+        bad = LandSnapshotSendResult().add(dict(body, lands_new=1, errors=1))
+        self.assertEqual(snapshot_refusal_reasons(good, 2, 0), [])
+        self.assertTrue(snapshot_refusal_reasons(bad, 2, 0))
+
+
+class SourcesSummaryKeysTests(unittest.TestCase):
+    """Ключ, которого нет в шаблоне, невидим в RUN SUMMARY молча."""
+
+    @staticmethod
+    def keys_set_by(*functions):
+        """Имена state[...], которые эти функции действительно выставляют."""
+        import inspect
+        import re as _re
+        found = set()
+        for function in functions:
+            found |= set(_re.findall(r"state\['([a-z0-9_]+)'\]\s*=",
+                                     inspect.getsource(function)))
+        return found
+
+    def test_the_two_modes_have_their_own_templates(self):
+        for keys in (main_module.SOURCES_SUMMARY_KEYS,
+                     main_module.SNAPSHOT_SUMMARY_KEYS):
+            self.assertEqual(keys[0], 'mode')
+            self.assertEqual(keys[-1], 'exit')
+        self.assertNotEqual(main_module.SOURCES_SUMMARY_KEYS,
+                            main_module.SNAPSHOT_SUMMARY_KEYS)
+        for other in (main_module.FLIGHT_SUMMARY_KEYS,
+                      main_module.LAND_SUMMARY_KEYS,
+                      main_module.ROUTE_SUMMARY_KEYS,
+                      main_module.COLLECT_SUMMARY_KEYS):
+            self.assertNotEqual(main_module.SOURCES_SUMMARY_KEYS, other)
+            self.assertNotEqual(main_module.SNAPSHOT_SUMMARY_KEYS, other)
+
+    def test_each_mode_is_wired_to_its_own_template(self):
+        source = __import__('inspect').getsource(main_module.main)
+        self.assertIn('MODE_SOURCES: SOURCES_SUMMARY_KEYS', source)
+        self.assertIn('MODE_LAND_SNAPSHOT: SNAPSHOT_SUMMARY_KEYS', source)
+
+    def test_every_key_a_source_run_sets_is_in_its_template(self):
+        """[REASON]: счётчик, выставленный прогоном и отсутствующий в
+        шаблоне, не печатается вовсе -- и молчание невозможно отличить от
+        нуля."""
+        keys = self.keys_set_by(main_module._run_sources,
+                                main_module._account_for_sources,
+                                main_module._flight_ids_of_period)
+        self.assertTrue(keys, 'разбор исходника ничего не нашёл')
+        missing = keys - set(main_module.SOURCES_SUMMARY_KEYS)
+        self.assertEqual(missing, set(),
+                         'SOURCES_SUMMARY_KEYS не печатает %s'
+                         % ', '.join(sorted(missing)))
+
+    def test_every_key_a_snapshot_run_sets_is_in_its_template(self):
+        keys = self.keys_set_by(main_module._run_land_snapshot)
+        self.assertTrue(keys, 'разбор исходника ничего не нашёл')
+        missing = keys - set(main_module.SNAPSHOT_SUMMARY_KEYS)
+        self.assertEqual(missing, set(),
+                         'SNAPSHOT_SUMMARY_KEYS не печатает %s'
+                         % ', '.join(sorted(missing)))
+
+    def test_the_check_would_notice_a_key_that_is_missing(self):
+        """Отрицательный контроль: проверка выше умеет отличить два случая."""
+        keys = self.keys_set_by(main_module._run_sources)
+        self.assertNotEqual(
+            keys - set(main_module.SOURCES_SUMMARY_KEYS[:3]), set())
+
+    def test_the_source_summary_reports_every_outcome_of_a_visit(self):
+        for key in ('sources_card', 'sources_route', 'sources_airlines',
+                    'sources_v4', 'sources_no_v4_url', 'sources_no_v4',
+                    'sources_v4_failed', 'sources_page_errors',
+                    'sources_route_identity_mismatch', 'sources_queued',
+                    'sources_duplicates', 'sources_queue_refused'):
+            self.assertIn(key, main_module.SOURCES_SUMMARY_KEYS)
+
+    def test_the_snapshot_summary_reports_every_bucket_of_the_endpoint(self):
+        for key in ('snapshot_lands_new', 'snapshot_lands_seen_before',
+                    'snapshot_geometries_new', 'snapshot_geometries_unchanged',
+                    'snapshot_errors'):
+            self.assertIn(key, main_module.SNAPSHOT_SUMMARY_KEYS)
 
 
 

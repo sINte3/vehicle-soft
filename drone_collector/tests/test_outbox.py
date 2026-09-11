@@ -16,9 +16,9 @@ from pathlib import Path
 
 from drone_collector.outbox import (
     CorruptEnvelope, ENVELOPE_VERSION, EnvelopeTooLarge, KIND_FIELD_GEOMETRY,
-    KIND_ROUTE, MAX_ENVELOPE_BYTES, MAX_NAME_LENGTH, Outbox, OutboxError,
-    SecretInEnvelope, TEMP_SUFFIX, dedupe_key_for, find_secret_markers,
-    utc_now_iso)
+    KIND_LAND_SNAPSHOT, KIND_ROUTE, KIND_SOURCE, KINDS, MAX_ENVELOPE_BYTES,
+    MAX_NAME_LENGTH, Outbox, OutboxError, SecretInEnvelope, TEMP_SUFFIX,
+    dedupe_key_for, find_secret_markers, utc_now_iso)
 
 
 class OutboxTestCase(unittest.TestCase):
@@ -545,6 +545,151 @@ class TestEnqueueContract(OutboxTestCase):
     def test_the_queue_creates_its_own_directories(self):
         fresh = Outbox(self.root / 'nested' / 'deeper')
         path, _ = fresh.enqueue(KIND_ROUTE, '1', {}, 'x' * 64)
+        self.assertTrue(path.exists())
+
+
+# ─── DJI-AREA-EVIDENCE-001: два новых вида записи ───────────────────
+
+SOURCE_BODY = {'flight_id': 673501214, 'source_type': 'card',
+               'body_b64': 'eyJjb2RlIjogMH0=', 'size_bytes': 11,
+               'sha256': 'c' * 64, 'captured_at_utc': '2026-09-08 04:12:00',
+               'request_context': {'path': '/api/web/v1/flight_records/1',
+                                   'association': 'url_path'}}
+
+SNAPSHOT_BODY = {'snapshot': {'capture_run_id': 'lands:20260908T041200Z',
+                              'chunk': 1, 'final': True},
+                 'lands': [{'uuid': 'u1'}], 'geometries': []}
+
+
+class TestSourceKinds(OutboxTestCase):
+    """Источники вылета и куски снимка каталога живут в той же очереди.
+
+    [REASON]: вид записи -- не украшение: `records(kind)` и отправка
+    отбирают файлы ПО ПРЕФИКСУ имени. Если один вид окажется
+    префиксом другого, отправка одного тракта увезёт чужие записи.
+    """
+
+    def test_both_kinds_are_known_to_the_queue(self):
+        self.assertIn(KIND_SOURCE, KINDS)
+        self.assertIn(KIND_LAND_SNAPSHOT, KINDS)
+
+    def test_no_kind_is_a_prefix_of_another(self):
+        for kind in KINDS:
+            for other in KINDS:
+                if kind == other:
+                    continue
+                self.assertFalse(
+                    other.startswith(kind + '_'),
+                    '%r префикс для %r' % (kind, other))
+
+    def test_a_source_envelope_round_trips(self):
+        path, duplicate = self.outbox.enqueue(
+            KIND_SOURCE, '673501214:card', SOURCE_BODY, 'c' * 64,
+            source='dji-record-page',
+            diagnostics={'mode_version': 'sources-1'})
+        self.assertFalse(duplicate)
+        envelope = self.outbox.read(path)
+        self.assertEqual(envelope['kind'], KIND_SOURCE)
+        self.assertEqual(envelope['identity'], '673501214:card')
+        self.assertEqual(envelope['body'], SOURCE_BODY)
+        self.assertEqual(envelope['source'], 'dji-record-page')
+        self.assertEqual(envelope['diagnostics']['mode_version'], 'sources-1')
+
+    def test_a_snapshot_envelope_round_trips(self):
+        path, duplicate = self.outbox.enqueue(
+            KIND_LAND_SNAPSHOT, 'lands:20260908T041200Z:0001', SNAPSHOT_BODY,
+            'd' * 64, source='dji-field-management')
+        self.assertFalse(duplicate)
+        envelope = self.outbox.read(path)
+        self.assertEqual(envelope['kind'], KIND_LAND_SNAPSHOT)
+        self.assertEqual(envelope['body'], SNAPSHOT_BODY)
+
+    def test_the_same_flight_type_and_bytes_queue_once(self):
+        first, _ = self.outbox.enqueue(KIND_SOURCE, '673501214:card',
+                                       SOURCE_BODY, 'c' * 64)
+        again, duplicate = self.outbox.enqueue(KIND_SOURCE, '673501214:card',
+                                               SOURCE_BODY, 'c' * 64)
+        self.assertTrue(duplicate)
+        self.assertEqual(again, first)
+        self.assertEqual(len(self.outbox.pending()), 1)
+
+    def test_other_bytes_of_the_same_flight_and_type_are_a_new_revision(self):
+        """Отрицательный контроль: дедуп идёт по ХЕШУ тела."""
+        self.outbox.enqueue(KIND_SOURCE, '673501214:card', SOURCE_BODY,
+                            'c' * 64)
+        self.outbox.enqueue(KIND_SOURCE, '673501214:card', SOURCE_BODY,
+                            'e' * 64)
+        self.assertEqual(len(self.outbox.pending()), 2)
+
+    def test_two_source_types_of_one_flight_are_two_records(self):
+        self.outbox.enqueue(KIND_SOURCE, '673501214:card', SOURCE_BODY,
+                            'c' * 64)
+        self.outbox.enqueue(KIND_SOURCE, '673501214:v4', SOURCE_BODY,
+                            'c' * 64)
+        self.assertEqual(len(self.outbox.pending()), 2)
+
+    def test_the_file_name_names_the_flight_and_the_type(self):
+        path, _ = self.outbox.enqueue(KIND_SOURCE, '673501214:card',
+                                      SOURCE_BODY, 'c' * 64)
+        self.assertTrue(path.name.startswith('source_673501214_card_'))
+
+    def test_records_tells_the_two_new_kinds_apart(self):
+        source, _ = self.outbox.enqueue(KIND_SOURCE, '1:card', SOURCE_BODY,
+                                        'c' * 64)
+        snapshot, _ = self.outbox.enqueue(KIND_LAND_SNAPSHOT, 'lands:x:0001',
+                                          SNAPSHOT_BODY, 'd' * 64)
+        self.assertEqual(self.outbox.records(KIND_SOURCE), [source])
+        self.assertEqual(self.outbox.records(KIND_LAND_SNAPSHOT), [snapshot])
+
+    def test_a_source_body_carrying_a_signed_link_is_refused(self):
+        leaking = dict(SOURCE_BODY,
+                       request_context={'path': '/objects/airline_v4/1/x.pb',
+                                        'link': 'https://s.invalid/x'
+                                                '?Signature=NOT-REAL'})
+        with self.assertRaises(SecretInEnvelope):
+            self.outbox.enqueue(KIND_SOURCE, '1:v4', leaking, 'c' * 64)
+        self.assertEqual(self.outbox.pending(), [])
+        self.assertEqual(self.outbox.stale_temp_files(), [])
+
+    def test_a_snapshot_chunk_carrying_a_signed_url_is_refused(self):
+        leaking = {'snapshot': {'chunk': 1},
+                   'lands': [{'uuid': 'u1',
+                              'geometry': {'storage': {
+                                  'signedURL': 'https://s.invalid/u1'}}}],
+                   'geometries': []}
+        with self.assertRaises(SecretInEnvelope):
+            self.outbox.enqueue(KIND_LAND_SNAPSHOT, 'lands:x:0001', leaking,
+                                'd' * 64)
+        self.assertEqual(self.outbox.pending(), [])
+
+    def test_a_clean_body_of_either_kind_is_accepted(self):
+        """Отрицательный контроль: детектор отвергает не всё подряд."""
+        self.outbox.enqueue(KIND_SOURCE, '1:card', SOURCE_BODY, 'c' * 64)
+        self.outbox.enqueue(KIND_LAND_SNAPSHOT, 'lands:x:0001', SNAPSHOT_BODY,
+                            'd' * 64)
+        self.assertEqual(len(self.outbox.pending()), 2)
+
+    def test_an_oversized_source_envelope_writes_nothing(self):
+        body = dict(SOURCE_BODY, body_b64='A' * (MAX_ENVELOPE_BYTES + 1024))
+        with self.assertRaises(EnvelopeTooLarge):
+            self.outbox.enqueue(KIND_SOURCE, '1:v4', body, 'c' * 64)
+        self.assertEqual(self.outbox.pending(), [])
+        self.assertEqual(self.outbox.stale_temp_files(), [])
+
+    def test_an_oversized_snapshot_chunk_is_refused(self):
+        body = dict(SNAPSHOT_BODY,
+                    geometries=[{'content_md5': 'a' * 32,
+                                 'body_b64': 'A'
+                                             * (MAX_ENVELOPE_BYTES + 1024)}])
+        with self.assertRaises(EnvelopeTooLarge):
+            self.outbox.enqueue(KIND_LAND_SNAPSHOT, 'lands:x:0001', body,
+                                'd' * 64)
+        self.assertEqual(self.outbox.pending(), [])
+
+    def test_an_envelope_of_the_new_kind_under_the_cap_is_written(self):
+        """Отрицательный контроль к потолку."""
+        body = dict(SOURCE_BODY, body_b64='A' * (MAX_ENVELOPE_BYTES // 2))
+        path, _ = self.outbox.enqueue(KIND_SOURCE, '1:v4', body, 'c' * 64)
         self.assertTrue(path.exists())
 
 
