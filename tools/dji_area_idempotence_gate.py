@@ -12,7 +12,20 @@
     (`new`, `reactivated` -- значит вход изменился между прогонами);
   * то же в `field_writes`;
   * записи в периоде есть, а `unchanged` отсутствует или равен нулю
-    (значит не проверено ничего).
+    (значит не проверено ничего);
+  * поле `flights_in_period` отсутствует или не является целым
+    неотрицательным числом (значит это не сводка пересчёта).
+
+[REASON]: число обработанных записей берётся из `flights_in_period`, а НЕ из
+списка `flights`. Списка в настоящем файле нет: `dji_area_recalc.py:169`
+делает `summary.pop('flights', [])` ДО `json.dump(summary, ...)`, а
+`pipeline.py:537` наполняет его только при `collect_rows`, то есть лишь
+когда передан `--rows`. Пока ворота считали по `flights`, `n_flights` всегда
+выходил 0, и контроль «непустой период без `unchanged`» был мёртвым: сводка
+с пустыми `calc_writes` на 226 вылетах получала `IDEMPOTENCE CONFIRMED`.
+`flights_in_period` = `len(targets)` (`pipeline.py:345`), а цикл записи идёт
+ровно по `targets` без единого `continue`, поэтому это число целей записи.
+`flights_loaded` включает краевые сутки и для этой цели велико.
 
 [REASON]: гейт живёт отдельным файлом, а не строкой PowerShell в ранбуке, по
 двум причинам. Разбор JSON в PowerShell 5.1 идёт через
@@ -42,6 +55,7 @@ import sys
 GATE_ID = 'DJI_AREA_IDEMPOTENCE_GATE_001'
 ALLOWED_STATE = 'unchanged'
 WRITE_KEYS = ('calc_writes', 'field_writes')
+COUNT_KEY = 'flights_in_period'
 
 
 def log(msg):
@@ -62,11 +76,33 @@ def load(path):
         sys.exit(2)
 
 
+def flights_in_period(summary):
+    """-> (число целей, причина отказа). Ровно одно из двух непусто."""
+    if COUNT_KEY not in summary:
+        return None, ('%s is missing from the summary '
+                      '(not a recalc summary)' % COUNT_KEY)
+    value = summary[COUNT_KEY]
+    # [REASON]: `bool` -- подкласс `int`, и `True` прошёл бы как единица.
+    # Источник значения -- `len(targets)`, то есть всегда целое; всё
+    # остальное означает чужой или испорченный файл, а не пустой период.
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None, ('%s is %r, expected a whole number'
+                      % (COUNT_KEY, value))
+    if value < 0:
+        return None, '%s is %d, expected a non-negative number' % (COUNT_KEY,
+                                                                   value)
+    return value, None
+
+
 def check(summary):
     """-> список причин отказа. Пустой список означает идемпотентность."""
     reasons = []
-    flights = summary.get('flights')
-    n_flights = len(flights) if isinstance(flights, list) else 0
+    n_flights, count_reason = flights_in_period(summary)
+    if count_reason:
+        # [REASON]: без достоверного числа целей контроль «непустой период
+        # без unchanged» не выполним. Молча считать период пустым значило бы
+        # вернуть ровно тот мёртвый контроль, ради которого ворота и писались.
+        return [count_reason]
 
     for key in WRITE_KEYS:
         writes = summary.get(key)
@@ -98,9 +134,7 @@ def main():
     log(GATE_ID)
     log('summary: %s' % args.summary)
     summary = load(args.summary)
-    flights = summary.get('flights')
-    log('flights in summary: %d'
-        % (len(flights) if isinstance(flights, list) else 0))
+    log('%s: %r' % (COUNT_KEY, summary.get(COUNT_KEY)))
     for key in WRITE_KEYS:
         log('  %s: %s' % (key, json.dumps(summary.get(key), sort_keys=True)))
 
