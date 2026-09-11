@@ -32,7 +32,7 @@
   "kit": "DRONE-USEFUL-AREA-PILOT-001",
   "kit_differs_on_purpose": {
     "drone_collector/main.py": {
-      "kit_blob": "a235af109a551131060a2cbe1c128e9c43c524c0",
+      "kit_blob": "d814cf11444bff7a4dd193870714b8018a380f9c",
       "product_blob": "95a6a610865f4d8e8bfbcde16fb320dd10f69671"
     }
   },
