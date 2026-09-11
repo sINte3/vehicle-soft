@@ -161,6 +161,25 @@ jobs:
       - name: DJI source capture (classification, secrets, resume, drain)
         run: python -m unittest drone_collector.tests.test_sources
 
+      # DRONE-AREA-CAPTURE-001. The daily catalog snapshot used to re-download
+      # all 6171 polygons (~70 min) because the collector had no memory of
+      # what the receiver already stores. This proves the skip happens BEFORE
+      # the download -- by asserting the signed link was never requested, not
+      # merely that the body was dropped -- and carries the brief's benchmark:
+      # 6171 known plus 13 new must cost 13 downloads. It also pins that the
+      # manifest client tells "I do not know" (None) apart from "nothing is
+      # stored" (empty set), and that the immutable LIST source goes through
+      # the queue like every other body. Stdlib only; the receiver half needs
+      # Flask and runs in the full local/server suite.
+      - name: Incremental snapshot + LIST evidence (no Flask half)
+        run: python -m unittest drone_collector.tests.test_capture_hardening
+
+      # The catalog walk itself, which the incremental snapshot changes: an
+      # incomplete walk must stay INCOMPLETE and an absent contour must never
+      # read as a deleted one. It was not in this workflow before.
+      - name: Catalog walk (pagination, dedupe, incomplete is not deletion)
+        run: python -m unittest drone_collector.tests.test_lands
+
       # The migration's four paths, its identity constraints, and the rule the
       # owner cares about most -- that drone_flights.area_ha is byte-identical
       # before and after. Stdlib sqlite3 only: it never imports the app, so it

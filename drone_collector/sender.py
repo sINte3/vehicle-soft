@@ -721,3 +721,70 @@ def send_land_snapshot_chunk(chunk, cfg, logger=None, post_fn=None,
              body.get('geometries_new'), body.get('geometries_unchanged'),
              body.get('geometries_errors'))
     return result
+
+
+# ─── DRONE-AREA-CAPTURE-001: какие полигоны у приёмника уже есть ─────────────
+#
+#     POST {VEHICLE_SOFT_BASE_URL}/drones/api/land_geometry_manifest
+#     {"token": "...", "content_md5": ["ab12...", ...]}
+#     -> {"asked": 6171, "known": ["ab12...", ...], "known_count": 6158}
+#
+# Только чтение. Ответ ограничен тем, о чём спросили, поэтому запрос не
+# выкачивает чужое хранилище целиком и растёт вместе с каталогом, а не с
+# базой.
+
+
+def build_geometry_manifest_payload(token, md5s):
+    return {'token': token, 'content_md5': list(md5s)}
+
+
+def known_geometry_md5(md5s, cfg, logger=None, post_fn=None, sleep_fn=None,
+                       batch_size=None):
+    """frozenset уже сохранённых contentMd5, либо None -- «выяснить не вышло».
+
+    [REASON]: None и пустое множество -- РАЗНЫЕ ответы, и путать их нельзя.
+    Пустое множество означает «приёмник не хранит ни одного из этих
+    полигонов» и ведёт к честной полной загрузке. None означает «мы не
+    знаем», и вызывающий обязан тоже скачать всё -- но сказать об этом в
+    лог. Вернуть пустое множество при недоступном манифесте значило бы
+    выдать незнание за знание.
+
+    Отказ манифеста НЕ роняет прогон: снимок без инкрементальности медленный,
+    снимок без полигонов -- испорченный.
+    """
+    from drone_collector.sources import MANIFEST_BATCH_SIZE
+
+    out = logger or log
+    url = cfg.land_geometry_manifest_url
+    if not url:
+        out.warning('No base URL is configured, so the geometry manifest was '
+                    'not asked for; every polygon will be downloaded.')
+        return None
+    wanted = sorted({str(m).lower() for m in md5s if m})
+    if not wanted:
+        return frozenset()
+    post = post_fn or _requests_post
+    sleep = sleep_fn or time.sleep
+    size = int(batch_size or MANIFEST_BATCH_SIZE)
+    batches = [wanted[i:i + size] for i in range(0, len(wanted), size)]
+    known = set()
+    for index, batch in enumerate(batches, start=1):
+        payload = build_geometry_manifest_payload(cfg.api_token, batch)
+        try:
+            body = _post_with_retries(post, sleep, url, payload, index,
+                                      len(batches), out)
+        except (TransportError, IngestRejected) as exc:
+            out.warning('The geometry manifest is unavailable (%s). Falling '
+                        'back to downloading every polygon -- slow, but the '
+                        'snapshot stays complete.', exc)
+            return None
+        answer = body.get('known') if isinstance(body, dict) else None
+        if not isinstance(answer, list):
+            out.warning('The geometry manifest answered without a "known" '
+                        'list. Falling back to downloading every polygon.')
+            return None
+        known.update(str(item).lower() for item in answer
+                     if isinstance(item, str))
+    out.info('Geometry manifest: asked about %d polygon(s), the receiver '
+             'already stores %d.', len(wanted), len(known))
+    return frozenset(known)

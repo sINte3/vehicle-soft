@@ -167,6 +167,11 @@ def create_app():
             return True
         if request.path == '/drones/api/land_snapshot_sync':
             return True
+        # DRONE-AREA-CAPTURE-001: read-only manifest of the contentMd5 the
+        # receiver already stores. Same token in the body, same deny-by-default;
+        # it writes nothing at all.
+        if request.path == '/drones/api/land_geometry_manifest':
+            return True
         # BOT001: Bot API endpoints use Bearer token auth, not browser sessions.
         if request.path.startswith('/api/bot/'):
             return True

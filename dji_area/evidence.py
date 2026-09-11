@@ -154,6 +154,59 @@ def parse_list_record(record):
     }
 
 
+SCHEMA_LIST_RECORD_CANONICAL = 'list-record-canonical-json'
+SCHEMA_RAW_HTTP_BODY = 'raw-http-body'
+
+
+def select_list_record(document, flight_id):
+    """Запись вылета из тела list-ревизии. Понимает ОБЕ формы тела.
+
+    Форм две, и они появились в разное время:
+
+    * одна запись -- так кладёт форензик-импорт
+      (`schema_version='list-record-canonical-json'`): дневного ответа DJI
+      в архиве нет, есть только разобранные записи;
+    * целая страница ответа DJI (`{"code":0,"data":[...]}`) -- так кладёт
+      живой захват (`schema_version='raw-http-body'`), потому что у него
+      есть настоящие байты, и хешировать наш срез вместо них значило бы
+      подменить доказательство своей сериализацией.
+
+    [REASON]: выбор записи по `id`, а НЕ по позиции. Порядок строк в ответе
+    DJI ничем не закреплён, и позиционная выборка однажды молча отдала бы
+    поля чужого вылета -- ошибку, которую в площади уже не увидеть.
+
+    ValueError, если записи этого вылета в теле нет: молчаливый None здесь
+    стал бы «полей нет», а это другое утверждение.
+    """
+    if not isinstance(document, dict):
+        raise ValueError('list body is not an object')
+    wanted = _int(flight_id)
+    if wanted is None:
+        raise ValueError('flight_id is not numeric')
+    rows = document.get('data')
+    if isinstance(rows, list):
+        matches = [row for row in rows
+                   if isinstance(row, dict) and _int(row.get('id')) == wanted]
+        if not matches:
+            raise ValueError('list page carries no record for flight %d'
+                             % wanted)
+        first = parse_list_record(matches[0])
+        # [REASON]: два РАЗНЫХ описания одного вылета на одной странице --
+        # неоднозначность, а не данные. Взять первое значило бы выбрать
+        # площадь монеткой; правило проекта -- лучше UNKNOWN, чем
+        # правдоподобный вывод. Одинаковые дубли безвредны и проходят.
+        for extra in matches[1:]:
+            if parse_list_record(extra) != first:
+                raise ValueError('list page carries %d DIFFERING records for '
+                                 'flight %d' % (len(matches), wanted))
+        return first
+    record = parse_list_record(document)
+    if record['flight_id'] != wanted:
+        raise ValueError('list record is for flight %d, not %d'
+                         % (record['flight_id'], wanted))
+    return record
+
+
 # ─── Card ────────────────────────────────────────────────────────────────────
 
 def parse_card_body(body):

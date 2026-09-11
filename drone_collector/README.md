@@ -1011,6 +1011,148 @@ Both modes use the existing outbox with two kinds of their own:
 so no kind may be a prefix of another followed by `_`. A test holds that.
 
 
+## The daily evidence run (DRONE-AREA-CAPTURE-001)
+
+Two things this increment changed, both about *capturing evidence cheaply
+enough to do it every day*.
+
+### The catalog snapshot is now incremental
+
+`--land-snapshot --with-geometry --send-snapshot` used to walk all 6171
+contours **and re-download all 6171 polygons**, about seventy minutes, with
+no progress during the geometry phase. Nothing was wrong with the result --
+the receiver dutifully called every blob a duplicate -- but it is not a
+process anyone runs daily.
+
+The metadata walk is still full, and that is deliberate: only a full walk can
+tell "this contour is gone" from "this page failed". What changed is the
+polygons.
+
+DJI names the version of a polygon in the catalog node itself,
+`geometry.storage.contentMd5`, **before** the blob is fetched. So the run
+asks the receiver one question first:
+
+```
+POST /drones/api/land_geometry_manifest
+{"token": "...", "content_md5": ["ab12...", ...]}
+-> {"asked": 6171, "considered": 6171, "known": [...], "known_count": 6158}
+```
+
+and then downloads only what came back unknown.
+
+**Why the receiver and not a local cache.** The outbox is cleaned after a
+successful send; a collector that trusted it would forget the 6171 polygons
+it had already delivered the first time someone cleared `sent/`. The
+receiver is the only place that knows what is durably stored. The request
+costs about 200 KB for the whole catalog, and the answer is limited to what
+was asked -- the endpoint never dumps the store.
+
+**If the manifest cannot be reached**, the run says so and downloads
+everything. Slow is acceptable; a snapshot with silently missing polygons is
+not.
+
+### What the counters mean
+
+```
+Catalog 2000/6171: captured 100 contour(s) on this page; cursor=..., hasNext=True
+Geometry manifest: asked about 6171 polygon(s), the receiver already stores 6158.
+Geometry 2000/6171: known=1987 new=13 failed=0
+Geometry 6171/6171 done: known=6158 new=13 no-polygon=0 failed=0
+```
+
+| Counter | Meaning |
+|---|---|
+| `geometry_manifest` | how many polygons the receiver already had, or `unavailable` |
+| `geometry_requested` | contours considered (nodes that have a polygon at all) |
+| `geometry_known_skipped` | **not downloaded** -- the receiver already stores that md5 |
+| `geometry_downloaded` | actually fetched: new or changed polygons |
+| `geometry_duplicate_in_run` | two contours naming one md5 in the same walk |
+| `geometry_skipped` | the node carries no polygon |
+| `geometry_failed` | download error, wrong md5, oversized, or a secret marker |
+| `geometries_referenced_but_absent` | **from the receiver**: revisions naming an md5 whose body is nowhere. Must be 0. Nonzero means a polygon was skipped that the store does not actually have, and the field resolver will quietly drop from `TIER1_EXACT` to `TIER2_STRONG` while still reporting HIGH confidence. |
+
+### "This contour disappeared" is derived, not stored
+
+There is no table of disappearances and there does not need to be.
+`dji_land_revisions` carries `first_seen_snapshot_id`, `last_seen_snapshot_id`
+and `seen_count`, and every repeat moves the last two. So:
+
+```sql
+-- контуры, отсутствовавшие в последнем ПОЛНОМ обходе
+SELECT land_uuid FROM dji_land_revisions
+WHERE last_seen_snapshot_id <
+      (SELECT MAX(id) FROM dji_land_snapshots WHERE complete = 1);
+```
+
+The `complete = 1` is the whole point. Derived against the newest snapshot
+regardless of completeness, a walk that lost half its pages would report half
+the catalog as deleted. A test holds both halves: absent from a complete walk
+is derivably gone, absent from an INCOMPLETE walk is nothing at all.
+
+
+### The flight list is now an immutable source (closes A13)
+
+Until now the list fields -- recorded area, spray width, mode, window --
+reached the calculation from `drone_flights.raw_json`. That column is our
+own copy of a row, covered by no hash, writable by any SQL statement or
+migration. The chain of evidence broke at its first link.
+
+The collector already receives the real DJI response (`FlightCollector`
+listens on `/api/web/v1/flight_records`); it simply parsed it and threw the
+bytes away. Now it keeps them, and after the flights are accepted it queues
+the page as a `list` source.
+
+**One page, one body, one revision per flight.** Each flight on the page
+gets a `list` revision whose body is the *whole page as DJI sent it*. The
+bodies are content-addressed on disk by sha256, so fifty revisions of one
+page cost one file. The reader picks the right row **by `id`, never by
+position** (`evidence.select_list_record`), and understands both shapes: a
+whole page from live capture, and a single canonical record from the
+forensic import.
+
+**What is not done, deliberately.** A historical flight whose list was never
+captured live gets nothing invented for it. It keeps `list_revision_id NULL`
+and the calculation marks it `LIST_FROM_MUTABLE_RAW_JSON` -- an honest label,
+not a fabricated source. There is no backfill that turns a mutable row into
+a claimed primary DJI response.
+
+### The recommended daily command
+
+`DroneCollectorDaily` already exists and is not modified by this increment.
+After merge and deploy, this is the run it should make -- one scheduled task,
+two invocations, in this order:
+
+```powershell
+& $py -m drone_collector.main
+& $py -m drone_collector.main --land-snapshot --with-geometry --send-snapshot
+```
+
+The first collects the rolling window of flights and now also queues their
+LIST evidence. The second refreshes the catalog; after the 11.09.2026
+baseline it downloads only changed polygons.
+
+Order matters: flights first, then the catalog. A land revision captured
+before the flights that reference it is not wrong, only less useful on the
+same day.
+
+### Recovery and re-running
+
+Both are safe to repeat. The snapshot is idempotent by `capture_run_id` on
+the receiver and by dedupe key in the outbox; an interrupted send leaves its
+chunks in `pending/` and the next run delivers them, oldest snapshot first.
+
+Recovery is at the **chunk** level and it is worth being exact about that: a
+polygon downloaded inside an interrupted download loop never reached the
+queue and will be fetched again. After the baseline that is a dozen blobs,
+not six thousand, which is why this level of recovery is enough and a finer
+one was not built. Re-walking the catalog
+after an interruption produces a NEW snapshot, which is correct: it is a new
+observation, not a repair of the old one.
+
+A walk that ends short is marked `INCOMPLETE` and an absent contour is
+**never** read as deleted.
+
+
 ## Capture flights per device (DRONE-BODYCODE-001)
 
 A second entry point, `drone_collector.devices`. It **sends nothing** — it

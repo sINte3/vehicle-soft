@@ -160,7 +160,13 @@ FLIGHT_SUMMARY_KEYS = (
     'windows', 'windows_completed', 'region', 'page_size',
     'pages', 'pages_expected', 'flights_captured', 'flights_deduped',
     'self_duplicates', 'rejected_responses',
-    'batches', 'seen', 'new', 'duplicates', 'unresolved', 'errors', 'exit',
+    'batches', 'seen', 'new', 'duplicates', 'unresolved', 'errors',
+    # A13: неизменяемый источник СПИСКА. `built` против `queued` показывает
+    # дедупликацию очереди, `left_pending` -- что уйдёт следующим прогоном.
+    'list_pages_captured', 'list_pages_without_raw', 'list_sources_built',
+    'list_sources_queued', 'list_sources_duplicates', 'list_sources_refused',
+    'list_sources_sent', 'list_sources_left_pending',
+    'exit',
 )
 
 ROUTE_SUMMARY_KEYS = (
@@ -259,8 +265,9 @@ SOURCES_SUMMARY_KEYS = (
 # строка позволила бы прочитать один за другой.
 SNAPSHOT_SUMMARY_KEYS = (
     'mode', 'dry_run', 'snapshot_run_id', 'pages', 'total_count',
-    'lands_captured', 'lands_deduped', 'complete', 'geometry_requested',
-    'geometry_downloaded', 'geometry_skipped', 'geometry_failed',
+    'lands_captured', 'lands_deduped', 'complete', 'geometry_manifest',
+    'geometry_requested', 'geometry_known_skipped', 'geometry_downloaded',
+    'geometry_duplicate_in_run', 'geometry_skipped', 'geometry_failed',
     'geometry_bytes', 'snapshot_chunks', 'snapshot_queued',
     'snapshot_duplicates', 'send_enabled', 'snapshot_chunks_sent',
     'snapshot_left_pending', 'snapshot_batch_accepted', 'snapshot_lands_new',
@@ -1804,18 +1811,46 @@ def _run_land_snapshot(args, cfg, log, state):
     try:
         with LandCollector(cfg, log) as collector:
             result = collector.collect()
+            log.info('Catalog walk done: %d contour(s) captured of %s '
+                     'reported by DJI, over %d page(s).',
+                     len(result.lands), result.total_count, result.pages_captured)
             if args.with_geometry and result.lands:
                 # [REASON]: inside the `with`, exactly as the polygon run
                 # does it -- the signed links live only in the response
                 # already in memory and expire six hours after DJI issued
                 # them.
-                from drone_collector.geometry import ContextGeometryDownloader
+                from drone_collector.geometry import (ContextGeometryDownloader,
+                                                      node_content_md5s)
+                from drone_collector.sender import known_geometry_md5
+                # [REASON]: asked BEFORE the download loop, once. The md5 of
+                # every polygon is already in the catalog node, so the whole
+                # question "which of these do you have?" is answerable before
+                # a single byte is fetched. This is what turns a seventy
+                # minute daily run into one that fetches what changed.
+                # [REASON]: манифест спрашивается и на СУХОМ прогоне. Он
+                # ничего не меняет -- это чтение, -- а без него сухой прогон
+                # и качал бы все 6171 полигон, и показывал бы к отправке не
+                # то, что отправил бы настоящий запуск. Если базового URL
+                # нет (а `--land-snapshot` без `--send-snapshot` его не
+                # требует), клиент честно вернёт None и скажет об этом.
+                known = known_geometry_md5(node_content_md5s(result.lands),
+                                           cfg, logger=log)
+                state['geometry_manifest'] = ('unavailable' if known is None
+                                              else len(known))
+                if known is None:
+                    log.warning('The set of already stored polygons is UNKNOWN '
+                                'for this run; every polygon will be '
+                                'downloaded. The snapshot stays correct, only '
+                                'slow.')
                 downloader = ContextGeometryDownloader(collector.context, log)
                 geometries, counters = download_snapshot_geometries(
                     result.lands, downloader, logger=log,
-                    pause_s=cfg.geometry_pause_ms / 1000.0)
+                    pause_s=cfg.geometry_pause_ms / 1000.0,
+                    known_md5=known)
                 state['geometry_requested'] = counters.selected
                 state['geometry_downloaded'] = counters.downloaded
+                state['geometry_known_skipped'] = counters.known_skipped
+                state['geometry_duplicate_in_run'] = counters.duplicate_in_run
                 state['geometry_skipped'] = counters.no_geometry
                 state['geometry_failed'] = (counters.failed
                                             + counters.md5_mismatch
@@ -2503,6 +2538,7 @@ def _account_for(result, args, kind, cfg, log, state):
         for key in ('batches', 'seen', 'new', 'duplicates', 'unresolved',
                     'errors'):
             state[key] = (state.get(key) or 0) + getattr(sent, key)
+        _send_list_evidence(result, args, cfg, log, state)
 
     if not result.complete:
         # [REASON]: the flights that WERE captured are real and have already
@@ -2515,6 +2551,83 @@ def _account_for(result, args, kind, cfg, log, state):
                   result.pages_captured, result.total_pages)
         return EXIT_PAGINATION
     return EXIT_OK
+
+
+def _send_list_evidence(result, args, cfg, log, state):
+    """A13: страницы списка -- как НЕИЗМЕНЯЕМЫЙ источник, после отправки вылетов.
+
+    Порядок важен: сначала вылеты, потом их источник. Иначе ревизия списка
+    сослалась бы на вылеты, которых в базе ещё нет, и приёмник пересобрал бы
+    доказательства впустую.
+
+    [REASON]: через ОЧЕРЕДЬ, а не прямым POST. Первая редакция звала
+    `send_sources` напрямую -- и теряла ровно то, ради чего очередь
+    существует: атомарную запись, ключ дедупликации, коллекторный гейт
+    секретов в `enqueue_sources` и возможность дослать после обрыва. Все
+    остальные неизменяемые тела в этой системе идут через очередь; у этого
+    не было причин быть исключением.
+
+    [REASON]: неудача ОТПРАВКИ не роняет окно -- вылеты уже приняты, а тела
+    остаются в `pending/` и уйдут следующим прогоном. Неудача ЗАПИСИ в
+    очередь тоже не роняет: без ревизии списка поля вылета остаются с
+    прежним происхождением (`LIST_FROM_MUTABLE_RAW_JSON`), честно
+    помеченным, а не выданным за доказанное.
+    """
+    from drone_collector.sources import (SOURCES_MODE_VERSION,
+                                         drain_source_outbox,
+                                         enqueue_sources, list_source_items,
+                                         utc_stamp)
+
+    pages = getattr(result, 'pages', None) or []
+    if not pages:
+        return
+    if getattr(result, 'raw_unavailable', 0):
+        log.warning('%d flight-list page(s) arrived without readable raw '
+                    'bytes; those pages produce NO immutable LIST source and '
+                    'their flights keep their previous provenance.',
+                    result.raw_unavailable)
+    run_id = state.get('capture_run_id') or ('flights-%s' % utc_stamp())
+    items, stats = list_source_items(
+        pages, run_id, utc_stamp(),
+        window_from=format_date(result.date_from),
+        window_to=format_date(result.date_to))
+    state['list_pages_captured'] = stats['pages']
+    state['list_pages_without_raw'] = stats['pages_without_raw']
+    state['list_sources_built'] = stats['flights']
+    if not items:
+        log.warning('No immutable LIST source could be built for %s .. %s.',
+                    format_date(result.date_from), format_date(result.date_to))
+        return
+    try:
+        outbox = _open_outbox(cfg, log)
+        enqueued = enqueue_sources(
+            outbox, items, diagnostics={'mode_version': SOURCES_MODE_VERSION},
+            logger=log)
+    except Exception as exc:  # noqa: BLE001 -- см. REASON выше
+        log.warning('The immutable LIST source could not be queued (%s). The '
+                    'flights are stored; their list fields keep the '
+                    'provenance they had.', exc)
+        return
+    state['list_sources_queued'] = enqueued.queued
+    state['list_sources_duplicates'] = enqueued.duplicates
+    state['list_sources_refused'] = (enqueued.secret_refused
+                                     + enqueued.too_large)
+    if enqueued.secret_refused:
+        log.error('%d LIST page(s) carried a secret marker and were NOT '
+                  'queued.', enqueued.secret_refused)
+    log.info('Immutable LIST source: %d page(s), %d flight revision(s) built, '
+             '%d queued, %d already in the queue.', stats['pages'],
+             stats['flights'], enqueued.queued, enqueued.duplicates)
+    if args.dry_run:
+        return
+    try:
+        drain = drain_source_outbox(outbox, cfg, log)
+    except Exception as exc:  # noqa: BLE001 -- см. REASON выше
+        log.warning('The immutable LIST source stays in the queue (%s); the '
+                    'next run will send it.', exc)
+        return
+    state['list_sources_sent'] = drain.sent
+    state['list_sources_left_pending'] = drain.left_pending
 
 
 def _accumulate(state, result):

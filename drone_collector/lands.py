@@ -384,9 +384,15 @@ class LandCollector(object):
             return
         page = CapturedLands(url, body)
         self._captured.append(page)
-        self.log.info('Captured %d contour(s); cursor=%s, hasNext=%s, '
-                      'totalCount=%s', len(page.nodes), page.end_cursor,
-                      page.has_next_page, page.total_count)
+        # [REASON]: «сколько из скольких» -- единственное, что человек хочет
+        # знать у долгого обхода. Строка на страницу (по 50-100 контуров)
+        # редка сама по себе: 6171 контур -- это десятки строк, а не тысячи.
+        seen = sum(len(p.nodes) for p in self._captured)
+        self.log.info('Catalog %d/%s: captured %d contour(s) on this page; '
+                      'cursor=%s, hasNext=%s', seen,
+                      page.total_count if page.total_count is not None
+                      else '?', len(page.nodes), page.end_cursor,
+                      page.has_next_page)
 
     def _note_rejected(self, reason, url):
         self._rejected[reason] = self._rejected.get(reason, 0) + 1
