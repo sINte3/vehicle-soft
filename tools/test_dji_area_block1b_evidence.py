@@ -114,35 +114,132 @@ class TheHeadlineNumbersComeFromTheTables(unittest.TestCase):
         self.assertInDoc('83 из 83')
 
 
-class TheMethodBiasIsLargerThanTheRasterNoise(unittest.TestCase):
-    """A15: вывод документа держится на соотношении двух величин."""
+class TheSMinusUGapExceedsGridSensitivity(unittest.TestCase):
+    """A15: закрепляется НАБЛЮДЕНИЕ, а не объяснение.
+
+    [REASON]: доказано ровно одно -- разность S и U заметно больше
+    чувствительности к шагу сетки, поэтому прежний порог `длина x шаг сетки`
+    снят правильно. Причина разности и абсолютное смещение U относительно
+    земли остаются UNKNOWN: медиана -1.66 % это разность ДВУХ ОЦЕНОК, а не
+    ошибка одной из них, и земля как ground truth не измерялась. Поэтому
+    здесь НЕТ утверждения «U завышен на столько-то» и нет проверки
+    корректирующего коэффициента -- его не существует.
+    """
 
     def setUp(self):
         self.cov = table('coverage.csv')
 
-    def test_the_engines_own_uncertainty_is_an_order_smaller(self):
-        unc = []
+    def test_the_gap_is_an_order_larger_than_grid_sensitivity(self):
+        sensitivity = []
         for r in self.cov:
             v = json.loads(r.get('uncertainty_percent') or '{}').get(
                 'swath_work_ha')
             if isinstance(v, (int, float)):
-                unc.append(v)
+                sensitivity.append(v)
         share = [num(r.get('repeated_share_of_unique')) for r in self.cov]
         share = [s for s in share if s is not None]
-        self.assertTrue(unc and share)
-        noise = statistics.median(unc) / 100.0        # проценты -> доля
-        method = abs(statistics.median(share))
-        # Вывод документа: методическая составляющая на порядок больше шума.
-        self.assertGreater(method, noise * 10,
-                           'method=%.5f noise=%.5f' % (method, noise))
+        self.assertTrue(sensitivity and share)
+        grid = statistics.median(sensitivity) / 100.0   # проценты -> доля
+        gap = abs(statistics.median(share))
+        # Единственный вывод документа: разность НЕ объясняется шагом сетки.
+        self.assertGreater(gap, grid * 10,
+                           'gap=%.5f grid_sensitivity=%.5f' % (gap, grid))
 
     def test_s_minus_u_is_systematically_negative_not_scattered(self):
         vals = [num(r.get('s_minus_u_ha')) for r in self.cov]
         vals = [v for v in vals if v is not None]
         negative = sum(1 for v in vals if v < 0)
-        # Не «примерно поровну»: перекос на сторону U и есть находка.
+        # Не «примерно поровну»: систематичность знака и есть наблюдение.
         self.assertGreater(negative, 0.7 * len(vals),
                            '%d of %d negative' % (negative, len(vals)))
+
+    def test_the_document_does_not_claim_a_known_bias_or_a_correction(self):
+        # Отрицательный контроль на ФОРМУЛИРОВКУ: документ не имеет права
+        # объявить причину доказанной или ввести поправочный коэффициент,
+        # пока земля не измерена.
+        doc = doc_text()
+        for banned in ('смещён вверх', 'завышает U', 'корректирующий '
+                       'коэффициент вводится'):
+            self.assertNotIn(banned, doc, 'документ утверждает %r' % banned)
+        self.assertIn('UNKNOWN', doc)
+        self.assertIn('не вводится', doc)
+
+
+class TheAgreementIsBetweenTwoTechnicalMetrics(unittest.TestCase):
+    """A18: согласие двух метрик -- не точность по физической площади.
+
+    [REASON]: обе величины опираются на одну и ту же записанную бортом
+    ширину, а земля не измерялась. Назвать это точностью значило бы выдать
+    согласие за проверку, которой не было.
+    """
+
+    def test_the_two_deltas_in_the_document_are_recomputed_from_the_tables(self):
+        # [REASON]: проверять присутствие строки мало -- она стоит в
+        # нескольких местах, и удаление одной пройдёт незамеченным. Дельты
+        # пересчитываются из таблиц и ищутся в тексте ИМЕННО в том виде, в
+        # каком получились; заодно это ловит расхождение прозы с данными.
+        flights = table('flights.csv')
+        cov = {r['flight_id']: r for r in table('coverage.csv')}
+        doc = doc_text()
+        seen = {}
+        for hardware, label in ((N5, 'N5'), (N6, 'N6')):
+            pairs = []
+            for r in flights:
+                if r['hardware_id'] != hardware:
+                    continue
+                rec = num(r['corrected_recorded_area_m2'])
+                uniq = num(cov.get(r['flight_id'], {}).get(
+                    'unique_application_ha'))
+                if rec is not None and uniq is not None:
+                    pairs.append((rec / 10000.0, uniq))
+            self.assertTrue(pairs, label)
+            recorded = sum(a for a, _ in pairs)
+            unique = sum(b for _, b in pairs)
+            delta = 100.0 * (unique - recorded) / recorded
+            seen[label] = (recorded, unique, delta)
+
+        # 1. Строка таблицы обязана нести ОБЕ величины И дельту вместе.
+        #    Проверять дельту в отрыве бесполезно: она встречается и в
+        #    прозе, поэтому удаление её из таблицы прошло бы незамеченным.
+        for hw_label, (recorded, unique, delta) in (
+                ('№5', seen['N5']), ('№6', seen['N6'])):
+            wanted = ('%.4f' % recorded, '%.4f' % unique, '+%.2f %%' % delta)
+            rows = [l for l in doc.splitlines()
+                    if hw_label in l and all(w in l for w in wanted)]
+            self.assertEqual(len(rows), 1,
+                             '%s: нет строки с %s' % (hw_label, wanted))
+            # [REASON]: порядок столбцов несёт смысл. Переставленные местами
+            # «записано» и «V4» превращают +0.56 % в -0.56 %, а все три
+            # числа при этом остаются на строке и проверку присутствия
+            # проходят.
+            row = rows[0]
+            self.assertLess(row.index(wanted[0]), row.index(wanted[1]),
+                            '%s: записанное и V4 переставлены' % hw_label)
+
+        # 2. Проза не имеет права противоречить таблице. Построчно это не
+        #    проверить -- одна строка называет оба борта, -- поэтому процент
+        #    связывается с бортом по самой конструкции «... % у №N».
+        allowed = {'№5': '%+.2f' % seen['N5'][2],
+                   '№6': '%+.2f' % seen['N6'][2]}
+        pairs = re.findall(r'([+\u2212-]\d+\.\d+) % у (№\d)', doc)
+        self.assertTrue(pairs, 'в прозе нет ни одной дельты вида «% у №N»')
+        for found, hw_label in pairs:
+            self.assertEqual(found.replace('\u2212', '-'),
+                             allowed[hw_label],
+                             '%s: проза говорит %s, таблицы дают %s'
+                             % (hw_label, found, allowed[hw_label]))
+
+        # Обе дельты разные -- контроль, что их не перепутали местами.
+        self.assertNotAlmostEqual(seen['N5'][2], seen['N6'][2], places=2)
+
+    def test_the_document_refuses_to_call_it_accuracy(self):
+        doc = doc_text()
+        for banned in ('точностью 1–2', 'точность 1-2', 'точностью 1-2',
+                       'точность 1–2'):
+            self.assertNotIn(banned, doc, 'документ утверждает %r' % banned)
+        # И прямо называет, чего не измеряли.
+        self.assertIn('ground truth', doc)
+        self.assertIn('согласие двух технических метрик', doc)
 
 
 class TheProvenanceIsPinned(unittest.TestCase):
