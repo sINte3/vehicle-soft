@@ -1547,7 +1547,16 @@ class SnapshotDrainResult(SourceDrainResult):
 
 
 def snapshot_refusal_reasons(counters, expected_lands, expected_geometries):
-    """Why a snapshot chunk was NOT accepted in full. Empty -- accepted."""
+    """Why a snapshot chunk was NOT accepted in full. Empty -- accepted.
+
+    [REASON]: `geometries_referenced_but_absent` намеренно НЕ считается
+    причиной отказа, хотя и обязано валить команду. Причина отказа
+    останавливает слив и оставляет кусок в `pending/`, а куски сортируются
+    по `<run_id>:<chunk>` -- застрявший старый снимок встал бы ПЕРЕД новым,
+    тем самым, который привезёт недостающее тело, и пробел стал бы
+    невосстановимым. Приёмник кусок принял; ненулевой счётчик меняет код
+    возврата команды в `_run_land_snapshot`, а не судьбу куска.
+    """
     if counters is None:
         return ['the endpoint returned no counters at all']
     reasons = []

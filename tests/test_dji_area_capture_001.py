@@ -676,3 +676,59 @@ class TheAbsentBodyAlarmCanReturnToZero(ServerCase):
         res = self.post_snapshot([land_node('L2', missing, link='')],
                                  geometries=(), run_id='d2')
         self.assertEqual(res.get_json()['geometries_referenced_but_absent'], 1)
+
+
+class TheGapIsRecoverableByTheNextSnapshot(ServerCase):
+    """Ненулевая тревога обязана быть ЧИНИМОЙ следующим обходом.
+
+    Отказ команды имеет смысл только если у оператора есть, что сделать.
+    Здесь проверяется, что делать ничего и не нужно: недостающее тело
+    привезёт ближайший ночной обход сам.
+
+    [REASON]: это держится на одном инварианте, а не на доброй воле.
+    `geometry_bodies_missing` считает ревизии, чьего `geometry_md5` НЕТ в
+    `dji_land_geometries`; манифест отвечает «знаю» ровно по строкам
+    `dji_land_geometries`. Множества дополняют друг друга по одной и той
+    же таблице, поэтому md5, попавший в тревогу, физически не может
+    прийти в ответе манифеста как известный -- и пропуск скачивания его
+    не отсеет. Если кто-то разведёт эти два запроса по разным таблицам,
+    пробел станет вечным, а упадёт вот этот тест.
+    """
+
+    def test_a_missing_md5_is_never_reported_as_known(self):
+        md5 = md5_of(polygon_bytes('R-missing'))
+        res = self.post_snapshot([land_node('R1', md5, link='')],
+                                 geometries=(), run_id='r1')
+        self.assertEqual(res.get_json()['geometries_referenced_but_absent'], 1)
+        # Тот самый вопрос, который сборщик задаёт ПЕРЕД скачиванием.
+        answer = self.manifest([md5]).get_json()
+        self.assertEqual(answer['known'], [],
+                         'пропавший полигон назван известным -- следующий '
+                         'обход пропустит его, и пробел станет вечным')
+
+    def test_the_next_walk_closes_the_gap_and_the_alarm_falls_silent(self):
+        body = polygon_bytes('R-late')
+        md5 = md5_of(body)
+        first = self.post_snapshot([land_node('R2', md5, link='')],
+                                   geometries=(), run_id='r1')
+        self.assertEqual(
+            first.get_json()['geometries_referenced_but_absent'], 1)
+
+        # Следующий обход: манифест молчит про этот md5, значит сборщик его
+        # скачает и приложит. Ровно тот же узел, ровно тот же md5.
+        self.assertEqual(self.manifest([md5]).get_json()['known'], [])
+        second = self.post_snapshot([land_node('R2', md5, link='')],
+                                    [(md5, body)], run_id='r2')
+        self.assertEqual(
+            second.get_json()['geometries_referenced_but_absent'], 0)
+        # И теперь манифест знает его -- третий обход качать не станет.
+        self.assertEqual(self.manifest([md5]).get_json()['known'], [md5])
+
+    def test_control_a_stored_md5_is_reported_known(self):
+        # Контроль: без него тест выше прошёл бы у манифеста, который
+        # отвечает «не знаю» вообще на всё.
+        body = polygon_bytes('R-stored')
+        md5 = md5_of(body)
+        self.post_snapshot([land_node('R3', md5, link='')], [(md5, body)],
+                           run_id='r1')
+        self.assertEqual(self.manifest([md5]).get_json()['known'], [md5])

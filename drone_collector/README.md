@@ -1078,7 +1078,7 @@ Geometry 6171/6171 done: known=6158 new=13 no-polygon=0 failed=0
 | `geometry_duplicate_in_run` | two contours naming one md5 in the same walk |
 | `geometry_skipped` | the node carries no polygon |
 | `geometry_failed` | download error, wrong md5, oversized, or a secret marker |
-| `geometries_referenced_but_absent` | **from the receiver**, reported in the chunk log line and in the run summary. Counted over the CURRENT revision of each land, so a polygon the catalog has moved past stops holding the alarm up. Must be 0. Nonzero means a polygon was skipped that the store does not actually have, and the field resolver will quietly drop from `TIER1_EXACT` to `TIER2_STRONG` while still reporting HIGH confidence. |
+| `geometries_referenced_but_absent` | **from the receiver**, reported in the chunk log line and in the run summary. Counted over the CURRENT revision of each land, so a polygon the catalog has moved past stops holding the alarm up. Must be 0. Nonzero FAILS the command with exit code 21 -- an alarm that leaves the exit code at zero does not exist as far as an unattended scheduler is concerned. Nonzero means a polygon was skipped that the store does not actually have, and the field resolver will quietly drop from `TIER1_EXACT` to `TIER2_STRONG` while still reporting HIGH confidence. |
 
 ### "This contour disappeared" is derived, not stored
 

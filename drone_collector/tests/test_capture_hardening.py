@@ -752,3 +752,156 @@ class TheListQueueDoesNotGrowWithoutBound(unittest.TestCase):
         self.assertGreater(on_disk, 40 * len(raw),
                            'усиление пропало -- перечитать [REASON] в '
                            '_send_list_evidence, пропуск мог стать лишним')
+
+
+class TheMissingBodyAlarmFailsTheWholeCommand(unittest.TestCase):
+    """BLOCKER независимой проверки: тревога, не меняющая код возврата.
+
+    Приёмник считает `geometries_referenced_but_absent`, сборщик его
+    принимает и пишет в ERROR -- и на этом всё заканчивалось. Для
+    unattended `DroneCollectorDaily` этого мало: планировщик читает КОД
+    ВОЗВРАТА, а он оставался нулевым, и ночь с потерянным телом полигона
+    выглядела удачной.
+
+    Проверяется не счётчик в объекте, а ПРОВОДКА целиком: настоящий
+    `_run_land_snapshot` с настоящей очередью и настоящим дренажем, в
+    который подставлен только ответ приёмника.
+    """
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        from drone_collector import main as m
+        from drone_collector import lands as lands_mod
+        from drone_collector import sender as sender_mod
+        self.m = m
+        self.dir = tempfile.mkdtemp(prefix='capture-absent-')
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.log = _Log()
+        self.sent = []
+
+        # Сессия и браузер -- единственное, что подменяется в обходе.
+        self._restore = []
+        self._patch(m, 'require_session', lambda *a, **kw: None)
+        self._patch(lands_mod, 'LandCollector', self._collector())
+        self._patch(sender_mod, 'send_land_snapshot_chunk', self._send)
+        self.absent = 0
+
+    def _patch(self, module, name, value):
+        original = getattr(module, name)
+        setattr(module, name, value)
+        self.addCleanup(setattr, module, name, original)
+
+    def _collector(self):
+        nodes = [src.strip_signed_urls(
+            land_node('absent-land', md5_of(polygon_bytes('absent')),
+                      link=''))]
+
+        class _Result(object):
+            lands = nodes
+            total_count = 1
+            pages_captured = 1
+            nodes_captured = 1
+            complete = True
+
+        class _Collector(object):
+            def __init__(self, cfg, logger=None):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def collect(self):
+                return _Result()
+
+        return _Collector
+
+    def _send(self, chunk, cfg, logger=None, index=1, total=1, **kw):
+        """Ответ приёмника: ПОЛНОЕ принятие плюс заданное число пропаж."""
+        self.sent.append(chunk)
+        lands = len(chunk.get('lands') or [])
+        geoms = len(chunk.get('geometries') or [])
+        return snd.LandSnapshotSendResult().add(
+            {'status': 'ok', 'lands_seen': lands, 'lands_new': lands,
+             'lands_seen_before': 0, 'errors': 0,
+             'geometries_seen': geoms, 'geometries_new': geoms,
+             'geometries_unchanged': 0, 'geometries_errors': 0,
+             'geometries_referenced_but_absent': self.absent})
+
+    def run_snapshot(self, absent):
+        self.absent = absent
+
+        class _Cfg(object):
+            outbox_dir = os.path.join(self.dir, 'outbox')
+            out_dir = self.dir
+            storage_state = os.path.join(self.dir, 'state.json')
+            api_token = TOKEN
+            land_snapshot_sync_url = 'http://localhost/land_snapshot_sync'
+            geometry_pause_ms = 0
+
+        class _Args(object):
+            send_snapshot = True
+            dry_run = False
+            with_geometry = False
+
+        state = {}
+        code = self.m._run_land_snapshot(_Args(), _Cfg(), self.log, state)
+        return code, state
+
+    def test_one_missing_body_makes_the_command_fail(self):
+        code, state = self.run_snapshot(absent=1)
+        self.assertNotEqual(code, self.m.EXIT_OK,
+                            'планировщик снова считает такую ночь удачной')
+        self.assertEqual(code, self.m.EXIT_SNAPSHOT_GEOMETRY_ABSENT)
+        self.assertEqual(state['snapshot_geometries_referenced_but_absent'], 1)
+
+    def test_control_no_missing_body_is_still_a_success(self):
+        code, state = self.run_snapshot(absent=0)
+        self.assertEqual(code, self.m.EXIT_OK)
+        self.assertEqual(state['snapshot_geometries_referenced_but_absent'], 0)
+
+    def test_the_receiver_really_did_accept_everything(self):
+        """Отказ обязан срабатывать на ПРИНЯТОМ пакете, иначе он про другое."""
+        code, state = self.run_snapshot(absent=1)
+        self.assertNotEqual(code, self.m.EXIT_OK)
+        # status=ok, счётчики сошлись, отказа не было.
+        self.assertTrue(state['snapshot_batch_accepted'])
+        self.assertEqual(state['snapshot_errors'], 0)
+        self.assertEqual(state['snapshot_chunks_sent'], state['snapshot_chunks'])
+        self.assertEqual(len(self.sent), state['snapshot_chunks'])
+
+    def test_the_accepted_chunk_stays_accepted(self):
+        """Принятое НЕ возвращается в `pending/`: иначе пробел невосстановим.
+
+        [REASON]: соблазн был добавить счётчик в
+        `snapshot_refusal_reasons`. Это остановило бы слив и оставило кусок
+        в очереди, а куски сортируются по `<run_id>:<chunk>` -- застрявший
+        старый снимок встал бы ПЕРЕД новым, тем самым, который привезёт
+        недостающее тело. Отказ чинил бы себя вечно.
+        """
+        code, state = self.run_snapshot(absent=1)
+        self.assertNotEqual(code, self.m.EXIT_OK)
+        self.assertEqual(state['snapshot_left_pending'], 0)
+        from drone_collector.outbox import Outbox
+        outbox = Outbox(os.path.join(self.dir, 'outbox'))
+        self.assertEqual(len(outbox.pending()), 0)
+        self.assertTrue(os.listdir(os.path.join(self.dir, 'outbox', 'sent')),
+                        'принятый кусок обязан лежать в sent/')
+
+    def test_the_code_differs_from_a_refused_chunk(self):
+        """Два кода -- два разных действия оператора.
+
+        20: пакет НЕ принят, лежит в очереди, отправить снова.
+        21: пакет принят, повторять нечего, тело привезёт следующий обход.
+        """
+        self.assertNotEqual(self.m.EXIT_SNAPSHOT_GEOMETRY_ABSENT,
+                            self.m.EXIT_SNAPSHOT_NOT_ACCEPTED)
+        self.assertNotEqual(self.m.EXIT_SNAPSHOT_GEOMETRY_ABSENT,
+                            self.m.EXIT_OK)
+
+    def test_the_operator_is_told_why(self):
+        self.run_snapshot(absent=2)
+        self.assertIn('TIER1_EXACT', self.log.text)
