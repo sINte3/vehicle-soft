@@ -984,9 +984,19 @@ def enqueue_sources(outbox, items, flight=None, diagnostics=None,
             extra['v4_url_present'] = bool(
                 v4_url_present(json.loads(raw.decode('utf-8'))))
         identity = source_identity(item['flight_id'], item['source_type'])
+        # [REASON]: служебный ключ НЕ уезжает в конверт -- он телу не
+        # принадлежит. Снимается КОПИЕЙ, а не `pop`: первая редакция
+        # мутировала элемент вызывающего, и повторная постановка того же
+        # списка считала уже другой ключ (первый раз -- по строке, второй
+        # -- по странице) и заводила дубль. Тест на повторную постановку
+        # это и поймал. По умолчанию ключ прежний, sha тела, поэтому
+        # остальные типы источников ведут себя ровно как раньше.
+        dedupe_sha = item.get('dedupe_sha256') or item['sha256']
+        body = {key: value for key, value in item.items()
+                if key != 'dedupe_sha256'}
         try:
             _path, duplicate = outbox.enqueue(
-                KIND_SOURCE, identity, item, item['sha256'],
+                KIND_SOURCE, identity, body, dedupe_sha,
                 source='dji-record-page', diagnostics=extra)
         except EnvelopeTooLarge:
             result.too_large += 1
@@ -1690,7 +1700,7 @@ def list_source_items(pages, run_id, captured_at, window_from=None,
             if not isinstance(flight_id, int):
                 stats['flights_without_id'] += 1
                 continue
-            items.append(source_item(
+            item = source_item(
                 # [REASON]: `body_code` ждёт БАЙТЫ. Первая редакция давала
                 # ему разобранный dict: `bytes(dict)` бросает TypeError,
                 # который функция гасит, и `api_status` у КАЖДОЙ живой
@@ -1702,6 +1712,19 @@ def list_source_items(pages, run_id, captured_at, window_from=None,
                 url_path(page.url), 'list_page', body_code(raw), run_id,
                 parser_version=parser_version,
                 schema_version=SCHEMA_RAW_HTTP_BODY,
-                extra_context=context))
+                extra_context=context)
+            # [REASON]: ключ дедупликации -- по СТРОКЕ ВЫЛЕТА, тело при этом
+            # остаётся страницей целиком. Ключ по странице делал новым
+            # каждый неизменившийся вылет: окно катится, границы страниц
+            # уезжают каждую ночь, байты страницы другие -- измерено, 50
+            # вылетов дают на диске в 71 раз больше самой страницы, и два
+            # прогона одного окна дают duplicates=0. Ключ по строке
+            # оставляет ровно то поведение, которое нужно: неизменившийся
+            # вылет не заводится повторно, а ИЗМЕНИВШИЙСЯ -- заводится, и
+            # его новая ревизия не теряется.
+            item['dedupe_sha256'] = hashlib.sha256(
+                json.dumps(row, ensure_ascii=False, sort_keys=True,
+                           separators=(',', ':')).encode('utf-8')).hexdigest()
+            items.append(item)
             stats['flights'] += 1
     return items, stats

@@ -624,19 +624,32 @@ class TheListQueueDoesNotGrowWithoutBound(unittest.TestCase):
             [_Page(self.page_for(ids))], run, '2026-09-11 00:00:00')
         return items
 
-    def test_the_daily_repeat_does_not_deduplicate_by_itself(self):
-        """Именно поэтому нужен пропуск: sha меняется каждый день."""
-        day1 = self.items_for(range(1, 51), run='r1')
-        # Три новых вылета сдвигают границу -- байты страницы другие.
-        day2 = self.items_for(list(range(1, 48)) + [101, 102, 103], run='r2')
-        first = src.enqueue_sources(self.outbox, day1, logger=self.log)
-        second = src.enqueue_sources(self.outbox, day2, logger=self.log)
-        self.assertEqual(first.queued, 50)
-        self.assertEqual(second.queued, 50)
-        self.assertEqual(second.duplicates, 0,
-                         'дедупликация по sha сработала -- пропуск не нужен?')
+    def test_the_page_bytes_really_do_shift_every_day(self):
+        """Корень дефекта, зафиксированный отдельно от его лечения.
 
-    def test_the_resumable_skip_covers_list_and_sees_sent(self):
+        [REASON]: пока ключом очереди была sha СТРАНИЦЫ, неизменившийся
+        вылет считался новым каждую ночь -- окно катится, границы страниц
+        уезжают. Здесь проверяется именно это свойство данных; лечение
+        (ключ по строке вылета) проверяется тестами ниже. Если однажды
+        страницы перестанут сдвигаться, этот тест упадёт и скажет, что
+        обоснование ключа изменилось.
+        """
+        day1 = self.items_for(range(1, 51), run='r1')
+        day2 = self.items_for(list(range(1, 48)) + [101, 102, 103], run='r2')
+        by_flight_1 = {i['flight_id']: i['sha256'] for i in day1}
+        by_flight_2 = {i['flight_id']: i['sha256'] for i in day2}
+        repeated = sorted(set(by_flight_1) & set(by_flight_2))
+        self.assertEqual(len(repeated), 47)
+        # У ПОВТОРЯЮЩИХСЯ вылетов хеш ТЕЛА (страницы) другой...
+        for fid in repeated:
+            self.assertNotEqual(by_flight_1[fid], by_flight_2[fid])
+        # ...а ключ дедупликации, считаемый по строке вылета, тот же.
+        key1 = {i['flight_id']: i['dedupe_sha256'] for i in day1}
+        key2 = {i['flight_id']: i['dedupe_sha256'] for i in day2}
+        for fid in repeated:
+            self.assertEqual(key1[fid], key2[fid])
+
+    def test_the_queue_remembers_list_after_the_send(self):
         src.enqueue_sources(self.outbox, self.items_for([1, 2, 3]),
                             logger=self.log)
         known = src.known_sources(self.outbox)
@@ -653,11 +666,10 @@ class TheListQueueDoesNotGrowWithoutBound(unittest.TestCase):
 
     # -- НАСТОЯЩАЯ проводка, а не её повторение в тесте -------------------
     #
-    # [REASON]: первая редакция этого теста сама фильтровала items по
-    # `known_sources` и проверяла результат своей же фильтрации. Мутация
-    # показала, что она проходит и с полностью снятым пропуском в
-    # `_send_list_evidence`: тест проверял механизм, а не то, что им
-    # пользуются. Теперь вызывается сама функция.
+    # [REASON]: первая редакция этих тестов сама фильтровала items и
+    # проверяла результат своей же фильтрации. Мутация показала, что она
+    # проходит и с полностью снятым пропуском: тест проверял механизм, а
+    # не то, что им пользуются. Теперь вызывается сама функция.
 
     class _Cfg(object):
         def __init__(self, outbox_dir):
@@ -673,39 +685,63 @@ class TheListQueueDoesNotGrowWithoutBound(unittest.TestCase):
             self.date_from = date(2026, 8, 18)
             self.date_to = date(2026, 8, 18)
 
-    def send_evidence(self, ids, state=None):
+    def send_rows(self, rows, state=None):
         from drone_collector.main import _send_list_evidence
         state = {} if state is None else state
-        _send_list_evidence(self._Result([_Page(self.page_for(ids))]),
-                            self._Args(), self._Cfg(self.dir), self.log,
-                            state)
+        raw = list_page(rows)
+        _send_list_evidence(self._Result([_Page(raw)]), self._Args(),
+                            self._Cfg(self.dir), self.log, state)
         return state
 
-    def test_the_real_run_skips_flights_already_in_the_queue(self):
-        first = self.send_evidence(range(1, 51))
-        self.assertEqual(first['list_sources_queued'], 50)
-        self.assertEqual(first.get('list_sources_already_queued') or 0, 0)
-        before = len(self.outbox.pending())
+    def send_evidence(self, ids, state=None):
+        return self.send_rows([list_row(i) for i in ids], state)
 
-        second = self.send_evidence(list(range(1, 48)) + [101, 102, 103])
-        self.assertEqual(second['list_sources_already_queued'], 47)
-        self.assertEqual(second['list_sources_queued'], 3)
+    def test_a_flight_that_moved_to_another_page_is_not_requeued(self):
+        """Ключевой тест находки: окно катится, страница другая, вылет тот же.
+
+        [REASON]: именно здесь падала прежняя редакция, которая
+        дедуплицировала по странице -- вылет считался новым каждую ночь.
+        """
+        self.send_evidence(range(1, 51))
+        before = len(self.outbox.pending())
+        # Три новых вылета сдвигают границу: БАЙТЫ СТРАНИЦЫ другие.
+        state = self.send_evidence(list(range(1, 48)) + [101, 102, 103])
+        self.assertEqual(state['list_sources_duplicates'], 47)
+        self.assertEqual(state['list_sources_queued'], 3)
         self.assertEqual(len(self.outbox.pending()), before + 3)
 
-    def test_control_a_window_of_all_new_flights_pays_in_full(self):
-        # Контроль: пропуск не превратился в «никогда ничего не ставить».
-        self.send_evidence(range(1, 11))
-        state = self.send_evidence(range(200, 210))
-        self.assertEqual(state['list_sources_already_queued'], 0)
-        self.assertEqual(state['list_sources_queued'], 10)
+    def test_control_a_row_that_really_changed_IS_requeued(self):
+        """И это то, что теряла моя первая правка."""
+        self.send_evidence([7])
+        before = len(self.outbox.pending())
+        state = self.send_rows([list_row(7, area=99999.0)])
+        self.assertEqual(state['list_sources_queued'], 1,
+                         'изменившаяся строка вылета потеряна')
+        self.assertEqual(len(self.outbox.pending()), before + 1)
 
-    def test_a_fully_known_window_queues_nothing_at_all(self):
+    def test_a_fully_unchanged_window_queues_nothing(self):
         self.send_evidence(range(1, 51))
         before = len(self.outbox.pending())
         state = self.send_evidence(range(1, 51))
-        self.assertEqual(state['list_sources_already_queued'], 50)
+        self.assertEqual(state['list_sources_queued'], 0)
+        self.assertEqual(state['list_sources_duplicates'], 50)
         self.assertEqual(len(self.outbox.pending()), before)
-        self.assertIn('already in the queue', self.log.text)
+
+    def test_control_a_window_of_all_new_flights_pays_in_full(self):
+        self.send_evidence(range(1, 11))
+        state = self.send_evidence(range(200, 210))
+        self.assertEqual(state['list_sources_queued'], 10)
+        self.assertEqual(state['list_sources_duplicates'], 0)
+
+    def test_the_dedupe_key_never_reaches_the_envelope(self):
+        self.send_evidence([1])
+        envelope = self.outbox.read(self.outbox.pending()[0])
+        self.assertNotIn('dedupe_sha256', envelope['body'])
+        # А хеш тела в конверте по-прежнему хеш СТРАНИЦЫ: приёмник его
+        # пересчитывает и обязан сойтись.
+        raw = list_page([list_row(1)])
+        self.assertEqual(envelope['body']['sha256'],
+                         hashlib.sha256(raw).hexdigest())
 
     def test_the_measured_amplification_is_why_this_matters(self):
         raw = self.page_for(range(1, 51))
