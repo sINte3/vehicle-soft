@@ -272,7 +272,8 @@ SNAPSHOT_SUMMARY_KEYS = (
     'snapshot_duplicates', 'send_enabled', 'snapshot_chunks_sent',
     'snapshot_left_pending', 'snapshot_batch_accepted', 'snapshot_lands_new',
     'snapshot_lands_seen_before', 'snapshot_geometries_new',
-    'snapshot_geometries_unchanged', 'snapshot_errors', 'exit',
+    'snapshot_geometries_unchanged',
+    'snapshot_geometries_referenced_but_absent', 'snapshot_errors', 'exit',
 )
 
 LAND_SUMMARY_KEYS = (
@@ -1915,6 +1916,16 @@ def _run_land_snapshot(args, cfg, log, state):
         state['snapshot_geometries_unchanged'] = counters.get(
             'geometries_unchanged')
         state['snapshot_errors'] = counters.get('errors')
+        # [REASON]: ноль -- норма инкрементального снимка (тела пропущены,
+        # потому что они уже есть). Ненулевое -- ссылка без тела: привязка
+        # поля тихо съедет с TIER1_EXACT, сохранив HIGH-уверенность.
+        absent = counters.get('geometries_referenced_but_absent')
+        state['snapshot_geometries_referenced_but_absent'] = absent
+        if absent:
+            log.error('%s polygon reference(s) have NO body in the store. A '
+                      'skipped polygon is normal; a MISSING one is not -- the '
+                      'field resolver will quietly drop from TIER1_EXACT '
+                      'while still reporting HIGH confidence.', absent)
         if not drain.accepted:
             for reason in drain.refusal_reasons:
                 log.error('Snapshot chunk not accepted: %s', reason)
@@ -2553,6 +2564,11 @@ def _account_for(result, args, kind, cfg, log, state):
     return EXIT_OK
 
 
+def _bump(state, key, value):
+    """Накопить счётчик прогона по окнам, как это делает `_account_for`."""
+    state[key] = (state.get(key) or 0) + (value or 0)
+
+
 def _send_list_evidence(result, args, cfg, log, state):
     """A13: страницы списка -- как НЕИЗМЕНЯЕМЫЙ источник, после отправки вылетов.
 
@@ -2591,9 +2607,14 @@ def _send_list_evidence(result, args, cfg, log, state):
         pages, run_id, utc_stamp(),
         window_from=format_date(result.date_from),
         window_to=format_date(result.date_to))
-    state['list_pages_captured'] = stats['pages']
-    state['list_pages_without_raw'] = stats['pages_without_raw']
-    state['list_sources_built'] = stats['flights']
+    # [REASON]: `_account_for` вызывается ПО ОКНУ, и все остальные счётчики
+    # прогона накапливаются. Первая редакция присваивала -- у периода,
+    # пересекающего границу года, сводка показывала только последнее окно,
+    # включая `list_pages_without_raw`: страницы без доказательства первого
+    # окна исчезали из отчёта совсем.
+    _bump(state, 'list_pages_captured', stats['pages'])
+    _bump(state, 'list_pages_without_raw', stats['pages_without_raw'])
+    _bump(state, 'list_sources_built', stats['flights'])
     if not items:
         log.warning('No immutable LIST source could be built for %s .. %s.',
                     format_date(result.date_from), format_date(result.date_to))
@@ -2608,10 +2629,10 @@ def _send_list_evidence(result, args, cfg, log, state):
                     'flights are stored; their list fields keep the '
                     'provenance they had.', exc)
         return
-    state['list_sources_queued'] = enqueued.queued
-    state['list_sources_duplicates'] = enqueued.duplicates
-    state['list_sources_refused'] = (enqueued.secret_refused
-                                     + enqueued.too_large)
+    _bump(state, 'list_sources_queued', enqueued.queued)
+    _bump(state, 'list_sources_duplicates', enqueued.duplicates)
+    _bump(state, 'list_sources_refused',
+          enqueued.secret_refused + enqueued.too_large)
     if enqueued.secret_refused:
         log.error('%d LIST page(s) carried a secret marker and were NOT '
                   'queued.', enqueued.secret_refused)
@@ -2626,7 +2647,10 @@ def _send_list_evidence(result, args, cfg, log, state):
         log.warning('The immutable LIST source stays in the queue (%s); the '
                     'next run will send it.', exc)
         return
-    state['list_sources_sent'] = drain.sent
+    _bump(state, 'list_sources_sent', drain.sent)
+    # Осталось в очереди -- это СОСТОЯНИЕ очереди после последнего окна,
+    # а не сумма по окнам: складывать его значило бы считать одни и те же
+    # конверты несколько раз.
     state['list_sources_left_pending'] = drain.left_pending
 
 

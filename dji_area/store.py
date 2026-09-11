@@ -740,8 +740,18 @@ def geometry_bodies_missing(con):
     сохранив HIGH-уверенность, и никто этого не заметит. Число возвращается
     приёмником в ответе, чтобы расхождение было громким в тот же день.
     """
+    # [REASON]: считаются только ТЕКУЩИЕ ревизии -- по последней на каждую
+    # землю. Первая редакция брала все ревизии за всё время, и один
+    # невосстановимый пробел прижимал число выше нуля НАВСЕГДА: полигон,
+    # которого больше нет ни в одном узле каталога, заново не приедет
+    # никогда. Ежедневная тревога, которая горит всегда, тревогой быть
+    # перестаёт. Потеря тела исторической ревизии -- тоже потеря, но она не
+    # действие на сегодня и не должна глушить то, что им является.
     row = con.execute(
         'SELECT COUNT(DISTINCT r.geometry_md5) FROM dji_land_revisions AS r '
+        'JOIN (SELECT land_uuid, MAX(id) AS last_id FROM dji_land_revisions '
+        '      GROUP BY land_uuid) AS cur '
+        '  ON cur.last_id = r.id '
         'LEFT JOIN dji_land_geometries AS g ON g.content_md5 = r.geometry_md5 '
         'WHERE r.geometry_md5 IS NOT NULL AND g.id IS NULL').fetchone()
     return int(row[0] or 0)

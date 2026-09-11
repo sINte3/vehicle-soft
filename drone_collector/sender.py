@@ -639,12 +639,19 @@ class LandSnapshotSendResult(object):
 
     __slots__ = ('batches', 'lands_seen', 'lands_new', 'lands_seen_before',
                  'errors', 'geometries_seen', 'geometries_new',
-                 'geometries_unchanged', 'geometries_errors', 'status',
-                 'snapshot_id')
+                 'geometries_unchanged', 'geometries_errors',
+                 'geometries_referenced_but_absent', 'status', 'snapshot_id')
 
+    # [REASON]: `geometries_referenced_but_absent` стоит здесь не для
+    # симметрии. Инкрементальный снимок нарочно не шлёт уже известные
+    # полигоны, поэтому «пропущено» и «потеряно» отличает только этот
+    # счётчик -- а приёмник считал его и отдавал в JSON, пока сборщик
+    # молча выбрасывал. Тревога, которую никто не читает, тревогой не
+    # является.
     COUNTER_KEYS = ('lands_seen', 'lands_new', 'lands_seen_before', 'errors',
                     'geometries_seen', 'geometries_new',
-                    'geometries_unchanged', 'geometries_errors')
+                    'geometries_unchanged', 'geometries_errors',
+                    'geometries_referenced_but_absent')
 
     def __init__(self):
         self.batches = 0
@@ -714,12 +721,14 @@ def send_land_snapshot_chunk(chunk, cfg, logger=None, post_fn=None,
     out.info('Snapshot chunk %d/%d answered: status=%s snapshot_id=%s '
              'lands_seen=%s lands_new=%s lands_seen_before=%s errors=%s '
              'geometries_seen=%s geometries_new=%s geometries_unchanged=%s '
-             'geometries_errors=%s', index, total, body.get('status'),
+             'geometries_errors=%s referenced_but_absent=%s',
+             index, total, body.get('status'),
              body.get('snapshot_id'), body.get('lands_seen'),
              body.get('lands_new'), body.get('lands_seen_before'),
              body.get('errors'), body.get('geometries_seen'),
              body.get('geometries_new'), body.get('geometries_unchanged'),
-             body.get('geometries_errors'))
+             body.get('geometries_errors'),
+             body.get('geometries_referenced_but_absent'))
     return result
 
 

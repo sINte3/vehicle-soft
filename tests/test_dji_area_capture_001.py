@@ -636,3 +636,43 @@ class DisappearanceIsDerivedNotStored(ServerCase):
         gone = self.raw('SELECT land_uuid FROM dji_land_revisions WHERE '
                         'last_seen_snapshot_id < ?', (newest_complete,))
         self.assertEqual(gone, [], 'неполный обход объявил контур удалённым')
+
+
+class TheAbsentBodyAlarmCanReturnToZero(ServerCase):
+    """Тревога, которая горит всегда, тревогой быть перестаёт.
+
+    [REASON]: находка состязательного ревью. Первая редакция считала ВСЕ
+    ревизии за всё время; полигон, которого больше нет ни в одном узле
+    каталога, заново не приедет никогда, поэтому один невосстановимый
+    пробел прижимал счётчик выше нуля навсегда.
+    """
+
+    def test_a_gap_that_the_catalog_moved_past_stops_firing(self):
+        # День 1: тело не доехало -- ссылка без тела, тревога звучит.
+        lost = md5_of(polygon_bytes('L1-v1'))
+        first = self.post_snapshot([land_node('L1', lost, link='')],
+                                   geometries=(), run_id='d1')
+        self.assertEqual(
+            first.get_json()['geometries_referenced_but_absent'], 1)
+
+        # День 2: DJI изменил поле, каталог называет НОВУЮ версию, и она
+        # приехала. Старого md5 больше нет ни в одном узле -- он не
+        # вернётся никогда, и держать из-за него тревогу нельзя.
+        body = polygon_bytes('L1-v2')
+        new = md5_of(body)
+        second = self.post_snapshot([land_node('L1', new, link='')],
+                                    [(new, body)], run_id='d2')
+        self.assertEqual(
+            second.get_json()['geometries_referenced_but_absent'], 0)
+
+    def test_control_a_gap_in_the_CURRENT_revision_still_fires(self):
+        # Контроль: без него тест выше прошёл бы у кода, который просто
+        # всегда возвращает ноль.
+        body = polygon_bytes('L2-v1')
+        ok = md5_of(body)
+        self.post_snapshot([land_node('L2', ok, link='')], [(ok, body)],
+                           run_id='d1')
+        missing = md5_of(polygon_bytes('L2-v2'))
+        res = self.post_snapshot([land_node('L2', missing, link='')],
+                                 geometries=(), run_id='d2')
+        self.assertEqual(res.get_json()['geometries_referenced_but_absent'], 1)

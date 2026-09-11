@@ -480,3 +480,104 @@ class AnInterruptedSnapshotSendIsResumable(unittest.TestCase):
         src.drain_land_snapshot_outbox(self.outbox, Cfg(), self.log,
                                        send_fn=ok)
         self.assertEqual(seen, ['run-a', 'run-b'])
+
+
+class TheAlarmReachesTheOperator(unittest.TestCase):
+    """Находки состязательного ревью: тревога и счётчики.
+
+    [REASON]: приёмник считал `geometries_referenced_but_absent` и отдавал
+    его в JSON, а сборщик молча выбрасывал -- ключа не было ни в
+    `COUNTER_KEYS`, ни в строке лога, ни в сводке прогона. Тревога, которую
+    никто не читает, тревогой не является.
+    """
+
+    def test_the_counter_survives_the_trip_from_the_receiver(self):
+        result = snd.LandSnapshotSendResult().add({
+            'status': 'ok', 'lands_seen': 1, 'lands_new': 1,
+            'lands_seen_before': 0, 'errors': 0, 'geometries_seen': 0,
+            'geometries_new': 0, 'geometries_unchanged': 0,
+            'geometries_errors': 0, 'geometries_referenced_but_absent': 3})
+        self.assertEqual(result.geometries_referenced_but_absent, 3)
+
+    def test_it_sums_over_chunks_like_every_other_counter(self):
+        result = snd.LandSnapshotSendResult()
+        for value in (1, 0, 2):
+            result.add({'status': 'ok', 'lands_seen': 0, 'lands_new': 0,
+                        'lands_seen_before': 0, 'errors': 0,
+                        'geometries_seen': 0, 'geometries_new': 0,
+                        'geometries_unchanged': 0, 'geometries_errors': 0,
+                        'geometries_referenced_but_absent': value})
+        self.assertEqual(result.geometries_referenced_but_absent, 3)
+
+    def test_an_answer_without_the_key_is_zero_not_a_crash(self):
+        # Приёмник прежней версии просто не пришлёт это поле.
+        result = snd.LandSnapshotSendResult().add({'status': 'ok'})
+        self.assertEqual(result.geometries_referenced_but_absent, 0)
+
+
+class TheListApiStatusComesFromTheBytes(unittest.TestCase):
+    """`body_code` ждёт БАЙТЫ; разобранный dict давал молчаливый NULL.
+
+    [REASON]: `bytes(dict)` бросает TypeError, который `body_code` гасит и
+    возвращает None. В результате `api_status` у КАЖДОЙ живой ревизии
+    списка оставался NULL, а те же байты из форензик-импорта получали 0 --
+    одно и то же тело описывалось по-разному в зависимости от того, кто
+    записался первым.
+    """
+
+    def test_a_live_page_records_the_code_dji_answered(self):
+        items, _stats = src.list_source_items(
+            [_Page(list_page([list_row(1)]))], 'run', '2026-09-11 04:00:00')
+        self.assertEqual(items[0]['api_status'], 0)
+
+    def test_control_a_rejection_code_is_recorded_too(self):
+        raw = json.dumps({'code': 101, 'message': 'nope',
+                          'data': [list_row(1)]}).encode('utf-8')
+        items, _stats = src.list_source_items(
+            [_Page(raw)], 'run', '2026-09-11 04:00:00')
+        self.assertEqual(items[0]['api_status'], 101)
+
+    def test_the_parsed_dict_would_have_given_nothing(self):
+        # Прямое доказательство исходного дефекта.
+        raw = list_page([list_row(1)])
+        self.assertIsNone(src.body_code(json.loads(raw.decode('utf-8'))))
+        self.assertEqual(src.body_code(raw), 0)
+
+
+class WindowCountersAccumulate(unittest.TestCase):
+    """Период, пересекающий границу года, идёт двумя окнами.
+
+    [REASON]: `_account_for` вызывается по окну, и все остальные счётчики
+    прогона накапливаются. Первая редакция счётчиков списка присваивала --
+    сводка показывала только последнее окно, и страницы БЕЗ доказательства
+    из первого окна исчезали из отчёта совсем.
+    """
+
+    def test_bump_adds_instead_of_replacing(self):
+        from drone_collector.main import _bump
+        state = {}
+        _bump(state, 'list_sources_built', 700)
+        _bump(state, 'list_sources_built', 300)
+        self.assertEqual(state['list_sources_built'], 1000)
+
+    def test_bump_starts_from_nothing_and_tolerates_none(self):
+        from drone_collector.main import _bump
+        state = {}
+        _bump(state, 'list_pages_without_raw', None)
+        self.assertEqual(state['list_pages_without_raw'], 0)
+        _bump(state, 'list_pages_without_raw', 3)
+        self.assertEqual(state['list_pages_without_raw'], 3)
+
+    def test_every_accumulating_list_counter_is_in_the_summary(self):
+        """Счётчик, которого нет в шаблоне сводки, не печатается вовсе."""
+        from drone_collector.main import FLIGHT_SUMMARY_KEYS
+        for key in ('list_pages_captured', 'list_pages_without_raw',
+                    'list_sources_built', 'list_sources_queued',
+                    'list_sources_duplicates', 'list_sources_refused',
+                    'list_sources_sent', 'list_sources_left_pending'):
+            self.assertIn(key, FLIGHT_SUMMARY_KEYS, key)
+
+    def test_the_absent_body_alarm_is_in_the_snapshot_summary(self):
+        from drone_collector.main import SNAPSHOT_SUMMARY_KEYS
+        self.assertIn('snapshot_geometries_referenced_but_absent',
+                      SNAPSHOT_SUMMARY_KEYS)

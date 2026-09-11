@@ -1691,8 +1691,15 @@ def list_source_items(pages, run_id, captured_at, window_from=None,
                 stats['flights_without_id'] += 1
                 continue
             items.append(source_item(
+                # [REASON]: `body_code` ждёт БАЙТЫ. Первая редакция давала
+                # ему разобранный dict: `bytes(dict)` бросает TypeError,
+                # который функция гасит, и `api_status` у КАЖДОЙ живой
+                # ревизии списка молча оставался NULL -- те же байты из
+                # форензик-импорта при этом получали 0, и одно и то же тело
+                # описывалось по-разному в зависимости от того, кто успел
+                # первым.
                 flight_id, SOURCE_LIST, raw, captured_at,
-                url_path(page.url), 'list_page', body_code(body), run_id,
+                url_path(page.url), 'list_page', body_code(raw), run_id,
                 parser_version=parser_version,
                 schema_version=SCHEMA_RAW_HTTP_BODY,
                 extra_context=context))
