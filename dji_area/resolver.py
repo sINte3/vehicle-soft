@@ -484,6 +484,15 @@ def resolve_area(evidence):
         method = M_UNRESOLVED_INTERVAL_OWNERSHIP
         confidence = C_LOW
         eligibility = AGG_EXCLUDED_OVERLAP
+    elif 'APPLICATION_WITH_FLAT_COUNTER' in flags:
+        # [REASON]: жёсткий ноль здесь -- корректное утверждение о СЧЁТЧИКЕ
+        # DJI, но не о земле. Счётчик не вырос, а применение наблюдалось: либо
+        # площадь перенесена из прошлой записи, либо это повторный проход по
+        # уже учтённой поверхности. Отличить их нечем, пока не посчитан
+        # независимый footprint, поэтому запись не имеет права попасть в
+        # ПРОВЕРЕННЫЙ подытог наравне с доказанным нулём: она уходит в
+        # «недостаточно данных» вместе со своей RAW-экспозицией.
+        eligibility = AGG_UNRESOLVED
     elif status in CERTIFIED_STATUSES:
         eligibility = AGG_CERTIFIED
     elif corrected is not None:

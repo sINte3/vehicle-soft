@@ -31,6 +31,14 @@ from dji_area.hashing import calculation_input_hash, field_input_hash
 HW_SOURCE_UNIT_NICKNAME = 'unit_nickname'
 BOUNDARY_DAYS = 1
 
+# Откуда взяты скаляры списка (площадь, ширина, режим, границы интервала).
+# Различие несёт доказательную силу и обязано входить в отпечаток входа.
+LIST_FROM_REVISION = 'revision'
+LIST_FROM_MUTABLE_RAW_JSON = 'drone_flights_raw_json'
+# Ревизия списка названа, но ни одного значения из неё не пришло: тело не
+# прочиталось или не разобралось. Не молчаливый ноль и не «источник надёжен».
+LIST_REVISION_UNPARSED = 'revision_named_but_unparsed'
+
 
 class PipelineError(RuntimeError):
     pass
@@ -83,7 +91,8 @@ def load_flights(con, date_from, date_to, flight_ids=None):
         'e.v4_revision_id, e.card_raw_area_m2, e.route_area_m2, '
         'e.card_geometry_md5, e.card_manual_mode, e.route_identity_status, '
         'e.v4_identity_status, e.v4_absent_reason, e.card_start_ts, '
-        'e.card_end_ts '
+        'e.card_end_ts, e.list_raw_area_m2, e.list_start_ts, e.list_end_ts, '
+        'e.list_mode_name, e.list_manual_mode, e.list_spray_width '
         'FROM drone_flights f '
         'LEFT JOIN drone_units u ON u.id = f.drone_unit_id '
         'LEFT JOIN dji_flight_evidence e ON e.flight_id = f.dji_flight_id '
@@ -98,14 +107,48 @@ def load_flights(con, date_from, date_to, flight_ids=None):
         if started is None:
             continue
         day = report_day_of(started)
-        try:
-            raw = json.loads(r['raw_json']) if r['raw_json'] else {}
-        except ValueError:
-            raw = {}
-        try:
-            lst = ev.parse_list_record(raw) if raw else None
-        except ValueError:
+        # [REASON]: смысл всей модели -- считать от НЕИЗМЕНЯЕМОГО источника.
+        # `drone_flights.raw_json` -- изменяемая колонка приложения: её
+        # переписывает любой повторный приём списка, и она не покрыта ни одним
+        # SHA. Значения списка, разобранные из захешированной ревизии, уже
+        # лежат в `dji_flight_evidence` (store.build_evidence_row), поэтому
+        # берём их оттуда. Разбор raw_json остаётся ТОЛЬКО как объявленный
+        # запасной путь для записей без list-ревизии, и он помечается.
+        # [REASON]: наличия `list_revision_id` НЕДОСТАТОЧНО. store.py:297-303
+        # ставит его ДО разбора и оставляет, когда тело ревизии не читается
+        # (StoreError на пропавшем файле или несовпавшем SHA) или не
+        # разбирается (ValueError): скаляры при этом остаются NULL. Ветка «по
+        # одному только id» пометила бы такую строку как посчитанную от
+        # захешированного источника, хотя от него не пришло ни одного
+        # значения, и NULL молча стал бы отсутствующей площадью.
+        have_revision_values = bool(r['list_revision_id']) and any(
+            r[col] is not None for col in
+            ('list_raw_area_m2', 'list_start_ts', 'list_end_ts',
+             'list_mode_name', 'list_manual_mode', 'list_spray_width'))
+        if have_revision_values:
+            lst = {'mode_name': r['list_mode_name'],
+                   'manual_mode': r['list_manual_mode'],
+                   'spray_width': r['list_spray_width'],
+                   'raw_area_m2': r['list_raw_area_m2'],
+                   'start_ts': r['list_start_ts'],
+                   'end_ts': r['list_end_ts']}
+            list_value_source = LIST_FROM_REVISION
+        elif r['list_revision_id']:
+            # Ревизия названа, но значений из неё нет. Это НЕ «нет ревизии» и
+            # НЕ «есть ревизия»: третье состояние, и оно обязано отличаться в
+            # отпечатке, иначе деградированная строка останется навсегда.
             lst = None
+            list_value_source = LIST_REVISION_UNPARSED
+        else:
+            try:
+                raw = json.loads(r['raw_json']) if r['raw_json'] else {}
+            except ValueError:
+                raw = {}
+            try:
+                lst = ev.parse_list_record(raw) if raw else None
+            except ValueError:
+                lst = None
+            list_value_source = LIST_FROM_MUTABLE_RAW_JSON if lst else None
         hardware, hw_source = r['ev_hardware_id'], r['hardware_id_source']
         if not hardware and r['unit_hardware_id']:
             # [REASON]: у записей без карточки борт неизвестен из источника;
@@ -130,6 +173,7 @@ def load_flights(con, date_from, date_to, flight_ids=None):
             'raw_area_m2': lst['raw_area_m2'] if lst else None,
             'raw_area_source': 'list' if lst and lst['raw_area_m2'] is not None
             else None,
+            'list_value_source': list_value_source,
             'list_start_ts': lst['start_ts'] if lst else None,
             'list_end_ts': lst['end_ts'] if lst else None,
             'list_revision_id': r['list_revision_id'],
@@ -410,6 +454,10 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
             decision.anomaly_flags.append(v4_failure)
         if item['hardware_id_source'] == HW_SOURCE_UNIT_NICKNAME:
             decision.anomaly_flags.append('HARDWARE_FROM_NICKNAME')
+        if item.get('list_value_source') == LIST_FROM_MUTABLE_RAW_JSON:
+            decision.anomaly_flags.append('LIST_FROM_MUTABLE_RAW_JSON')
+        elif item.get('list_value_source') == LIST_REVISION_UNPARSED:
+            decision.anomaly_flags.append('LIST_REVISION_UNPARSED')
         if item['v4_absent_reason'] == 'NO_V4_URL_AT_SOURCE' and summ is None:
             decision.anomaly_flags.append('NO_V4_AT_SOURCE')
 
@@ -427,6 +475,14 @@ def _recalculate(con, root, date_from, date_to, apply, flight_ids,
                    item['hardware_id_source'],
                    'route_identity': item.get('route_identity_status'),
                    'v4_identity': item.get('v4_identity_status'),
+                   # [REASON]: различить ревизию и raw_json отпечаток умел и
+                   # без этого поля -- у них разный `sources['list']`. Поле
+                   # нужно для ТРЕТЬЕГО состояния: ревизия названа, но её
+                   # значения не пришли. Там `sources['list']` совпадает со
+                   # здоровым случаем, и без явной пометки деградированная
+                   # строка и здоровая дали бы один отпечаток, а пересчёт
+                   # после починки тела ответил бы `unchanged`.
+                   'list_value_source': item.get('list_value_source'),
                    # [REASON]: без этого «тело V4 не прочиталось» и «тела V4
                    # нет» дают ОДИН отпечаток, и после возврата файлового
                    # хранилища пересчёт отвечает `unchanged`, оставляя

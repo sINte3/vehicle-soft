@@ -10,6 +10,7 @@ built by the helpers at the top; the field numbers are the ones proved on
 the August corpus (dji_area/v4.py). Nothing here is a real flight.
 """
 
+import importlib
 import os
 import struct
 import sys
@@ -19,6 +20,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+import dji_area  # noqa: E402
 from dji_area import aggregate as agg  # noqa: E402
 from dji_area import field as fld  # noqa: E402
 from dji_area import hashing  # noqa: E402
@@ -904,6 +906,76 @@ class AdjudicatedFindings(unittest.TestCase):
         rings = fld.rings_from_geojson(doc)
         self.assertEqual(len(rings), 1)
         self.assertEqual(rings[0][0], (39.0, 64.0))
+
+
+# ─── DRONE-AREA-1A: provenance отпечатка (D2) ────────────────────────────────
+
+class FingerprintCarriesInterpreterVersion(unittest.TestCase):
+    """Те же байты, разобранные другим парсером, -- другое доказательство."""
+
+    ARGS = ({'list': 'a', 'card': 'b', 'route': 'c', 'v4': 'd'}, [], True)
+
+    def test_snapshot_declares_v4_parser_version(self):
+        snap = hashing.resolver_config_snapshot()
+        self.assertIn('v4_parser_version', snap)
+        self.assertEqual(snap['v4_parser_version'], dji_area.V4_PARSER_VERSION)
+
+    def test_changing_parser_version_changes_the_hash(self):
+        before = hashing.calculation_input_hash(*self.ARGS)
+        original = dji_area.V4_PARSER_VERSION
+        try:
+            dji_area.V4_PARSER_VERSION = original + '-changed'
+            importlib.reload(hashing)
+            after = hashing.calculation_input_hash(*self.ARGS)
+        finally:
+            dji_area.V4_PARSER_VERSION = original
+            importlib.reload(hashing)
+        self.assertNotEqual(before, after)
+
+    def test_control_same_inputs_still_give_the_same_hash(self):
+        # Отрицательный контроль: проверка выше обязана уметь показать и
+        # РАВЕНСТВО, иначе она сработала бы при любой реализации.
+        self.assertEqual(hashing.calculation_input_hash(*self.ARGS),
+                         hashing.calculation_input_hash(*self.ARGS))
+
+
+# ─── DRONE-AREA-1A: плоский счётчик при наблюдённом применении (D3) ──────────
+
+class FlatCounterWithApplicationIsNotCertified(unittest.TestCase):
+    """Жёсткий ноль описывает счётчик DJI, а не землю."""
+
+    FLAT = [14.43] * 6
+
+    def test_application_present_moves_the_record_out_of_certified(self):
+        d = rs.resolve_area(evidence(
+            8980.0, counter_series(self.FLAT, spray_flag=1, flow=5)))
+        self.assertEqual(d.area_status, rs.COUNTER_FLAT_RAW_OVERSTATED)
+        self.assertEqual(d.application_activity, rs.ACT_PRESENT)
+        self.assertIn('APPLICATION_WITH_FLAT_COUNTER', d.anomaly_flags)
+        self.assertEqual(d.aggregation_eligibility, rs.AGG_UNRESOLVED)
+
+    def test_control_flat_counter_without_application_stays_certified(self):
+        # Без этого контроля правка D3 могла бы просто выключить весь статус.
+        d = rs.resolve_area(evidence(8980.0, counter_series(self.FLAT)))
+        self.assertEqual(d.area_status, rs.COUNTER_FLAT_RAW_OVERSTATED)
+        self.assertNotEqual(d.application_activity, rs.ACT_PRESENT)
+        self.assertNotIn('APPLICATION_WITH_FLAT_COUNTER', d.anomaly_flags)
+        self.assertEqual(d.aggregation_eligibility, rs.AGG_CERTIFIED)
+
+    def test_unresolved_record_is_excluded_from_both_subtotals(self):
+        rows = [{'area_status': rs.COUNTER_FLAT_RAW_OVERSTATED,
+                 'aggregation_eligibility': rs.AGG_UNRESOLVED,
+                 'corrected_recorded_area_m2': 0.0, 'raw_area_m2': 8980.0,
+                 'controller_delta_area_m2': None,
+                 'field_attribution_tier': 'TIER5_UNKNOWN',
+                 'application_without_area': None,
+                 'structural_candidate': None}]
+        b = agg.aggregate(rows, lambda _r: 'k')['__total__']
+        self.assertEqual(b['certified_records'], 0)
+        self.assertEqual(b['certified_sum_m2'], 0.0)
+        self.assertEqual(b['provisional_records'], 0)
+        self.assertEqual(b['unresolved_records'], 1)
+        self.assertAlmostEqual(b['unresolved_raw_exposure_m2'], 8980.0)
 
 
 if __name__ == '__main__':

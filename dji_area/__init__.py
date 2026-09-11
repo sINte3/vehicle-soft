@@ -36,7 +36,17 @@ MODEL_VERSION = 'dji-area-evidence-2026-09-08-final-1'
 # месяцу и больше не зависит от дат в командной строке. Подъём суффикса -- то, чем
 # такие правки доходят до уже записанных строк: отпечаток входа несёт версию,
 # поэтому пересчёт перепишет их, а не ответит `unchanged`.
-AREA_ALGORITHM_VERSION = MODEL_VERSION + '-impl-2'
+#
+# impl-3 (DRONE-AREA-1A, provenance): скаляры списка -- площадь, ширина, режим,
+# границы интервала -- читаются из разобранной захешированной ревизии в
+# ``dji_flight_evidence``, а не из изменяемой колонки ``drone_flights.raw_json``;
+# путь через raw_json остаётся объявленным запасным и помечается флагом
+# ``LIST_FROM_MUTABLE_RAW_JSON``, а его использование входит в отпечаток.
+# Отпечаток входа теперь несёт ``v4_parser_version``: те же байты V4, разобранные
+# новым парсером, обязаны дать новый hash. Запись с наблюдённым применением при
+# плоском счётчике больше не попадает в ПРОВЕРЕННЫЙ подытог -- жёсткий ноль
+# описывает счётчик DJI, а не землю.
+AREA_ALGORITHM_VERSION = MODEL_VERSION + '-impl-3'
 FIELD_RESOLVER_VERSION = 'dji-field-tiers-2026-09-08-impl-1'
 STRUCTURAL_RULE_VERSION = 'structural-retained-screen-frozen-1'
 V4_PARSER_VERSION = 'v4-parse-1'
