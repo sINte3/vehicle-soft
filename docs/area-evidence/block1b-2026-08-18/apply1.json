@@ -1,0 +1,91 @@
+{
+ "flights_in_period": 226,
+ "flights_loaded": 226,
+ "status_counts": {
+  "APPLICATION_WITHOUT_MEASURED_AREA": 1,
+  "CHANNEL_MISSING": 1,
+  "COUNTER_FLAT_RAW_OVERSTATED": 9,
+  "COUNTER_RELATIONSHIP_OUTLIER": 1,
+  "COUNTER_ZERO": 2,
+  "RAW_CORROBORATED": 12,
+  "RAW_CORROBORATED_QUALIFIED": 195,
+  "RAW_UNVERIFIED": 5
+ },
+ "evidence_status_counts": {
+  "APPLICATION_WITHOUT_MEASURED_AREA": 1,
+  "CHANNEL_MISSING": 1,
+  "COUNTER_FLAT_RAW_OVERSTATED": 9,
+  "COUNTER_RELATIONSHIP_OUTLIER": 1,
+  "COUNTER_ZERO": 2,
+  "RAW_CORROBORATED": 12,
+  "RAW_CORROBORATED_QUALIFIED": 195,
+  "RAW_UNVERIFIED": 5
+ },
+ "v4_availability": {
+  "NOT_CAPTURED": 1,
+  "present": 225
+ },
+ "baseline_counts": {
+  "ENCODED_AT_BOUNDARY": 26,
+  "NONE": 1,
+  "UNKNOWN": 2,
+  "UNVERIFIED_OMISSION": 197
+ },
+ "window_quality_counts": {
+  "CHANNEL_MISSING": 2,
+  "GOOD": 219,
+  "INCOMPLETE": 4,
+  "NONE": 1
+ },
+ "tier_counts": {
+  "TIER2_STRONG": 116,
+  "TIER5_UNKNOWN": 110
+ },
+ "eligibility_counts": {
+  "CERTIFIED": 23,
+  "PROVISIONAL": 200,
+  "UNRESOLVED": 3
+ },
+ "hardware_source_counts": {
+  "card": 226
+ },
+ "route_identity_counts": {
+  "OK": 226
+ },
+ "application_activity_counts": {
+  "NOT_OBSERVED": 8,
+  "PRESENT": 180,
+  "UNKNOWN": 38
+ },
+ "unresolved_records": 3,
+ "unresolved_raw_exposure_m2": 20580.0,
+ "overlap_records": 0,
+ "application_without_area_records": 3,
+ "unreliable_channel_records": 37,
+ "structural_candidates": 9,
+ "structural_scalar_matches": 9,
+ "raw_sum_m2": 2557241.0,
+ "raw_missing_records": 0,
+ "certified_sum_m2": 35097.0,
+ "certified_records": 23,
+ "provisional_sum_m2": 2422873.0,
+ "provisional_records": 200,
+ "controller_delta_sum_m2": 35159.99905268351,
+ "calc_writes": {
+  "new": 226
+ },
+ "field_writes": {
+  "unchanged": 226
+ },
+ "v4_summaries_decoded": 225,
+ "by_status_raw_m2": {
+  "APPLICATION_WITHOUT_MEASURED_AREA": 0.0,
+  "CHANNEL_MISSING": 0.0,
+  "COUNTER_FLAT_RAW_OVERSTATED": 78691.0,
+  "COUNTER_RELATIONSHIP_OUTLIER": 20580.0,
+  "COUNTER_ZERO": 0.0,
+  "RAW_CORROBORATED": 35097.0,
+  "RAW_CORROBORATED_QUALIFIED": 2391254.0,
+  "RAW_UNVERIFIED": 31619.0
+ }
+}

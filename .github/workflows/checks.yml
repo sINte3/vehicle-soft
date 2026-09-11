@@ -226,6 +226,14 @@ jobs:
       - name: Idempotence gate (a second apply that writes anything stops the run)
         run: python tools/test_dji_area_idempotence_gate.py
 
+      # The Block 1B evidence document quotes numbers that live in the CSV
+      # tables next to it. A report is not proof -- the artifact is -- so the
+      # two are bound here: a typo in either the prose or the tables fails.
+      # The suite also refuses a document that drops the "not billable"
+      # caveat or the open question about physical swath width.
+      - name: Block 1B evidence (the document matches the tables it quotes)
+        run: python tools/test_dji_area_block1b_evidence.py
+
       # The recomputation itself, on a temporary SQLite database built with
       # the migration's own DDL. Stdlib only: drone_coverage_recalc.py and
       # drone_useful_area.py are deliberately free of Flask, and this suite
