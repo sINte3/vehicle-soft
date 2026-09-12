@@ -573,12 +573,39 @@ class TheOutput(Base):
         self.assertTrue(joined)
         joined.encode('ascii')          # бросит UnicodeEncodeError, если есть
 
-    def test_the_verdict_file_does_carry_the_explanation(self):
+    def test_the_verdict_says_what_the_audit_actually_proves(self):
+        """После A23 отчёт обязан говорить про структурную годность.
+
+        [REASON]: прежняя редакция теста держалась за подстроки
+        «ТОЧНОСТЬ КОНТУРА» и «оба числа приходят от». Обе пережили
+        переписывание вывода, поэтому тест одинаково проходил и со старым,
+        опровергнутым текстом, и с новым. Проверка, дающая одинаковый
+        результат при верном и неверном тексте, проверкой не является.
+        """
         self.build_one()
         text = '\n'.join(audit.verdict_lines(self.run_audit()[1]))
-        self.assertIn('ТОЧНОСТЬ КОНТУРА', text)
-        # Ограничение обязано быть названо, а не подразумеваться.
-        self.assertIn('оба числа приходят от', text)
+        for required in ('Структурную годность',
+                         'ОПРОВЕРГНУТА',
+                         'не является независимым физическим ground truth',
+                         'ДЕТЕКТОР ГРУБЫХ ОШИБОК',
+                         'полосу приёмки назначать'):
+            self.assertIn(required, text, required)
+
+    def test_the_verdict_no_longer_offers_an_acceptance_band(self):
+        """Регрессия на опровергнутое утверждение: оно не должно вернуться."""
+        self.build_one()
+        text = '\n'.join(audit.verdict_lines(self.run_audit()[1]))
+        for forbidden in ('НИЖНЯЯ граница',
+                          'closure вообще способен различить',
+                          'измерять линейку, а не'):
+            self.assertNotIn(forbidden, text, forbidden)
+
+    def test_the_docstring_frames_the_hypothesis_as_falsified(self):
+        """Верхний docstring -- тоже утверждение, и оно тоже устарело бы."""
+        text = audit.__doc__
+        self.assertIn('H0 ОПРОВЕРГНУТА', text)
+        self.assertNotIn('пригоден ли контур как эталон и с какой точностью',
+                         text)
 
     def test_the_run_writes_three_files_and_exits_zero(self):
         self.build_one()
