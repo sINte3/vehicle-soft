@@ -448,6 +448,84 @@ class ItReallyOnlyReads(Base):
         self.assertEqual(caught.exception.code, 2)
 
 
+# ─── 6b. Запуск из чужого каталога ───────────────────────────────────────────
+
+class ItRunsFromOutsideTheWorktree(Base):
+    """Аудит одноразовый, его естественно унести из рабочей копии прода.
+
+    [REASON]: `sys.path[0]` -- каталог СКРИПТА, а не рабочий каталог. Первая
+    редакция инструкции предлагала `Set-Location C:\transport-report` и
+    запуск копии из другого каталога; `import drone_collector` там падает,
+    хотя команда выглядит правильной. Поэтому корень ищется, а не
+    предполагается, и на это есть проверка.
+    """
+
+    def test_the_root_is_found_beside_the_script_by_default(self):
+        root = audit.repo_root(None)
+        self.assertTrue(os.path.isdir(os.path.join(root, 'drone_collector')),
+                        root)
+
+    def test_an_explicit_root_wins(self):
+        self.assertEqual(audit.repo_root(self.dir), os.path.abspath(self.dir))
+
+    def test_the_real_root_imports_the_validator(self):
+        root = audit.repo_root(None)
+        audit.ensure_validator(root)     # не должно бросить
+        from drone_collector.geometry import describe_geometry
+        self.assertTrue(callable(describe_geometry))
+
+    # [REASON]: следующие две проверки идут ПОДПРОЦЕССОМ, а не вызовом
+    # функции. В этом процессе `drone_collector` уже импортирован самим
+    # набором, поэтому `ensure_validator` находит его в `sys.modules` и
+    # честно не падает -- проверка в процессе доказывала бы обратное тому,
+    # что происходит на сервере. Первая редакция этих тестов была именно
+    # такой и упала, что и обнаружило подмену.
+
+    def copy_outside(self):
+        """Копия скрипта в каталоге БЕЗ drone_collector рядом."""
+        elsewhere = os.path.join(self.dir, 'elsewhere')
+        os.makedirs(elsewhere, exist_ok=True)
+        target = os.path.join(elsewhere, 'dji_polygon_audit_001.py')
+        shutil.copyfile(audit.__file__.replace('.pyc', '.py'), target)
+        return target
+
+    def run_script(self, script, extra):
+        import subprocess
+        return subprocess.run(
+            [sys.executable, script, '--db', self.db,
+             '--out-dir', os.path.join(self.dir, 'out')] + extra,
+            capture_output=True, text=True, cwd=self.dir)
+
+    def test_outside_the_repo_without_repo_it_refuses_and_says_what_to_pass(self):
+        done = self.run_script(self.copy_outside(), [])
+        self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+        self.assertIn('--repo', done.stdout)
+        self.assertIn('drone_collector', done.stdout)
+
+    def test_outside_the_repo_with_repo_it_works(self):
+        """Тот самый сценарий, который я собираюсь предложить владельцу."""
+        ring = square_ring(300.0)
+        area = abs(ring_area_m2(ring))
+        md5 = self.add_geometry(body_of(document(feature(ring))))
+        self.add_land(md5, total=self.mu(area))
+        done = self.run_script(self.copy_outside(),
+                               ['--repo', audit.repo_root(None)])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('POLYGON_AUDIT=PASS', done.stdout)
+        self.assertIn('best_match=', done.stdout)
+
+    def test_the_run_accepts_repo_and_still_produces_files(self):
+        ring = square_ring(300.0)
+        area = abs(ring_area_m2(ring))
+        md5 = self.add_geometry(body_of(document(feature(ring))))
+        self.add_land(md5, total=self.mu(area))
+        out = os.path.join(self.dir, 'out')
+        code = audit.main(['--db', self.db, '--out-dir', out,
+                           '--repo', audit.repo_root(None)])
+        self.assertEqual(code, 0)
+        self.assertTrue(os.listdir(out))
+
+
 # ─── 7. Вывод ────────────────────────────────────────────────────────────────
 
 class TheOutput(Base):

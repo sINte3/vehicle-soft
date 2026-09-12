@@ -81,6 +81,41 @@ OBSTACLE_FUNC_TYPES = ('ObstacleZone',)
 REQUIRED_TABLES = ('dji_land_geometries', 'dji_land_revisions')
 
 
+# ─── откуда импортировать валидатор ─────────────────────────────────────────
+
+def repo_root(explicit=None):
+    """Корень рабочей копии, из которой берётся `drone_collector.geometry`.
+
+    [REASON]: Python кладёт в `sys.path[0]` каталог СКРИПТА, а не рабочий
+    каталог. Пока файл лежит в `<repo>/tools/`, это одно и то же по сути --
+    корень на уровень выше. Но аудит делается ОДИН раз и его естественно
+    унести в отдельный каталог, чтобы не трогать рабочую копию прода: там
+    `import drone_collector` падает, хотя `Set-Location C:\transport-report`
+    и выглядит достаточным. Поэтому корень ищется явно, а не предполагается.
+    """
+    if explicit:
+        return os.path.abspath(explicit)
+    here = os.path.dirname(os.path.abspath(__file__))
+    beside = os.path.dirname(here)
+    if os.path.isdir(os.path.join(beside, 'drone_collector')):
+        return beside
+    return os.path.abspath(os.getcwd())
+
+
+def ensure_validator(root):
+    """Положить корень в sys.path и убедиться, что валидатор импортируется."""
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    try:
+        from drone_collector.geometry import describe_geometry     # noqa: F401
+    except ImportError as exc:
+        print('ERROR: cannot import drone_collector.geometry from %s (%s).'
+              % (root, exc))
+        print('Point --repo at the worktree that holds drone_collector, '
+              'for example: --repo C:\\transport-report')
+        sys.exit(2)
+
+
 # ─── чтение базы ─────────────────────────────────────────────────────────────
 
 def connect_read_only(path):
@@ -596,8 +631,12 @@ def main(argv=None):
                         help='path to transport.db (default: %s)' % DEFAULT_DB)
     parser.add_argument('--out-dir', dest='out_dir', default=DEFAULT_OUT,
                         help='where to put the run directory')
+    parser.add_argument('--repo', default=None,
+                        help='worktree that holds drone_collector; needed '
+                             'only when this script lives outside it')
     args = parser.parse_args(argv)
 
+    ensure_validator(repo_root(args.repo))
     con = connect_read_only(args.db)
     try:
         require_tables(con)
