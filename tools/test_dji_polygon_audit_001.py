@@ -300,6 +300,34 @@ class BrokenGeometryIsNamedNotSilentlyUsed(Base):
         self.assertLess(summary['agreement']['pct_vs_total']['median_abs_pct'],
                         0.01)
 
+    def test_reasons_count_bodies_and_rings_separately(self):
+        """Одно тело с тремя битыми зонами -- это 1 тело и 3 кольца.
+
+        [REASON]: живой прогон дал 786 отвергнутых тел и 2543 причины, и
+        первая редакция печатала второе число под подписью «сколько тел».
+        В отчёте рядом стояли два несовместимых числа про одно и то же.
+        """
+        bad = document(feature(bowtie_ring(300.0)),
+                       feature(bowtie_ring(200.0)),
+                       feature(bowtie_ring(150.0)))
+        md5 = self.add_geometry(body_of(bad))
+        self.add_land(md5, total=10.0)
+        summary = self.run_audit()[1]
+        key = 'outer ring: ring intersects itself'
+        self.assertEqual(summary['counters']['geometries_rejected_by_validator'],
+                         1)
+        self.assertEqual(summary['validator_reasons_bodies'][key], 1)
+        self.assertEqual(summary['validator_reasons_rings'][key], 3)
+
+    def test_the_report_never_prints_rings_as_bodies(self):
+        bad = document(feature(bowtie_ring(300.0)),
+                       feature(bowtie_ring(200.0)))
+        md5 = self.add_geometry(body_of(bad))
+        self.add_land(md5, total=10.0)
+        text = '\n'.join(audit.verdict_lines(self.run_audit()[1]))
+        self.assertIn('тел / колец', text)
+        self.assertNotIn('причина: сколько тел', text)
+
     def test_an_unclosed_ring_is_rejected(self):
         ring = square_ring(300.0)[:-1]          # без замыкающей точки
         md5 = self.add_geometry(body_of(document(feature(ring))))

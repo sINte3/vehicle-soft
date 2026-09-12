@@ -339,7 +339,13 @@ def audit(con):
         'md5_not_verified': 0,
         'no_plant_zone': 0,
     }
-    reason_counts = {}
+    # [REASON]: причины считаются ДВАЖДЫ и раздельно. Одно тело может нести
+    # несколько зон, и у каждой своё кольцо, поэтому число причин больше
+    # числа отвергнутых тел -- на живом каталоге 2543 кольца на 786 тел.
+    # Первая редакция печатала число причин под подписью «сколько тел», и в
+    # отчёте рядом стояли 786 и 2543 как будто про одно и то же.
+    reason_bodies = {}
+    reason_rings = {}
     read_errors = {}
     samples = {'pct_vs_total': [], 'pct_vs_work': [],
                'pct_vs_total_minus_obstacle': []}
@@ -364,7 +370,9 @@ def audit(con):
             plant, obstacle, other, types = split_areas(description)
             for reason in reasons:
                 key = _reason_key(reason)
-                reason_counts[key] = reason_counts.get(key, 0) + 1
+                reason_rings[key] = reason_rings.get(key, 0) + 1
+            for key in {_reason_key(reason) for reason in reasons}:
+                reason_bodies[key] = reason_bodies.get(key, 0) + 1
             if reasons:
                 counters['geometries_rejected_by_validator'] += 1
                 status = 'REJECTED'
@@ -400,8 +408,10 @@ def audit(con):
         'generated_at_utc': datetime.utcnow().isoformat(timespec='seconds'),
         'mu_m2': MU_M2,
         'counters': counters,
-        'validator_reasons': dict(sorted(reason_counts.items(),
-                                         key=lambda kv: -kv[1])),
+        'validator_reasons_bodies': dict(sorted(reason_bodies.items(),
+                                                key=lambda kv: -kv[1])),
+        'validator_reasons_rings': dict(sorted(reason_rings.items(),
+                                               key=lambda kv: -kv[1])),
         'read_errors': dict(sorted(read_errors.items(),
                                    key=lambda kv: -kv[1])),
         'agreement': {key: spread(values) for key, values in samples.items()},
@@ -531,11 +541,13 @@ def verdict_lines(summary):
         % counters['current_lands_without_geometry_md5'])
     add('  с телом полигона ........................... %d'
         % counters['current_lands_with_body'])
-    if summary['validator_reasons']:
+    if summary['validator_reasons_bodies']:
         add('')
-        add('ПОЧЕМУ ОТВЕРГНУТЫ (причина: сколько тел)')
-        for reason, count in summary['validator_reasons'].items():
-            add('  %-60s %d' % (reason[:60], count))
+        add('ПОЧЕМУ ОТВЕРГНУТЫ (тел / колец -- одно тело может нести')
+        add('несколько зон, и у каждой своё кольцо)')
+        for reason, bodies in summary['validator_reasons_bodies'].items():
+            rings = (summary['validator_reasons_rings'] or {}).get(reason, 0)
+            add('  %-52s %5d / %5d' % (reason[:52], bodies, rings))
     if summary['read_errors']:
         add('')
         add('ОШИБКИ ЧТЕНИЯ')
