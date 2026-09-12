@@ -283,6 +283,11 @@ jobs:
       # evidence of two runs cannot be mixed, and that GO is unreachable
       # while any one mandatory condition fails or the owner has not named
       # his rules. Each is held by a test with a negative control beside it.
+      # Stdlib only, so CI can actually run it: the audit imports nothing
+      # from the application and nothing from Playwright.
+      - name: Field contour audit (own ruler, self-intersection, mu, read-only)
+        run: python tools/test_dji_polygon_audit_001.py
+
       # The PowerShell here is 7; the Windows job below runs the same suite
       # on Windows PowerShell 5.1, which is what the server console actually
       # is.
