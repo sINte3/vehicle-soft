@@ -794,6 +794,30 @@ class TestContextPlumbing(unittest.TestCase):
                                 _FakePage([RECORDS], driver)])
         self.assertEqual(context_page_urls(context), [RECORDS])
 
+    def test_a_closed_tab_on_the_records_page_never_confirms_a_sign_in(self):
+        """Опасное направление: ложное подтверждение по устаревшей строке.
+
+        [REASON]: закрытая страница НЕ бросает при чтении `.url` -- она
+        возвращает последний известный адрес, потому что закрытие не чистит
+        `_url`. Значит мёртвая вкладка, успевшая побывать на странице
+        вылетов, подтвердила бы вход и сессия закрытого окна была бы
+        сохранена. Первая редакция комментария в `context_page_urls`
+        объясняла фильтр тем, что чтение бросает -- неверно, и этот тест
+        держит настоящий риск, а не выдуманный.
+        """
+        driver = _Driver()
+        context = _PagesContext([_FakePage([RECORDS], driver, closed=True)])
+        self.assertEqual(context_page_urls(context), [])
+        self.assertIsNone(authorized_url(context_page_urls(context), RECORDS))
+
+    def test_a_live_tab_beside_a_closed_one_still_confirms(self):
+        """Отрицательный контроль: фильтр не гасит настоящий вход."""
+        driver = _Driver()
+        context = _PagesContext([_FakePage([RECORDS], driver, closed=True),
+                                 _FakePage([APEX], driver)])
+        self.assertEqual(authorized_url(context_page_urls(context), RECORDS),
+                         APEX)
+
     def test_a_page_that_raises_on_url_is_skipped(self):
         driver = _Driver()
         context = _PagesContext([_FakePage([], driver, raises=True),
