@@ -44,6 +44,7 @@ localStorage value, never an origin. The whole file is one long credential.
 import json
 import logging
 import os
+import re
 import tempfile
 
 from pathlib import Path
@@ -214,8 +215,127 @@ def login_url(records_url):
 
 
 def expected_host(records_url):
-    """Host the browser must be on when the operator presses Enter."""
-    return urlsplit(records_url).netloc
+    """Host configured for the records page, cleaned. Public, not a secret."""
+    return clean_host(urlsplit(records_url).hostname)
+
+
+def clean_host(host):
+    """Lower-cased host without a trailing root dot. '' when there is none.
+
+    [REASON]: `urlsplit().hostname` already lower-cases, but it KEEPS the
+    trailing dot of a fully qualified name -- measured: the hostname of
+    `https://DJIAG.COM./records/list` is `djiag.com.`, which compares unequal
+    to `djiag.com` and would refuse a perfectly good page. Lower-casing is
+    repeated here anyway so the function does not depend on which parser fed
+    it.
+    """
+    if not host:
+        return ''
+    cleaned = host.strip().lower()
+    if cleaned.endswith('.'):
+        cleaned = cleaned[:-1]
+    return cleaned
+
+
+# Допустимая форма доменного имени: буквы, цифры, дефис, точка как разделитель
+# (LDH), метки 1..63, имя целиком не длиннее 253.
+HOST_FORM = re.compile(
+    r'^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?'
+    r'(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$')
+
+
+def host_problem(netloc, host):
+    """Почему это не годное ASCII-имя домена, либо '' если годное.
+
+    `netloc` нужен СЫРЫМ и проверяется первым.
+
+    [REASON]: порядок здесь не косметический, он измерен. `urlsplit().hostname`
+    сам приводит имя к нижнему регистру, и при этом U+212A KELVIN SIGN
+    превращается в обычную ASCII-букву `k`: у адреса
+    `https://www.dji<U+212A>g.com/` netloc НЕ ascii, а hostname -- уже ascii.
+    Проверка `hostname.isascii()` поэтому пропускает ровно тот случай, от
+    которого защищает, и спрашивать надо netloc, до нормализации.
+
+    [REASON]: punycode (`xn--...`) сознательно НЕ раскодируется. Гомоглиф
+    вроде `xn--djig-73d.com` должен отклоняться как чужая строка, а не
+    приводиться к виду конфигурационного хоста.
+    """
+    if netloc and not netloc.isascii():
+        return 'the address is not a plain ASCII domain name'
+    if netloc and '@' in netloc:
+        # [REASON]: отказ безусловный, даже если host после '@' допустим.
+        # Живой клик такого адреса не даёт, зато user-info -- это пароль, и
+        # опираться на то, что Chromium его вычистит из page.url, нечем:
+        # Playwright такой нормализации не обещает.
+        return 'the address carries a user-info part before the host'
+    if not host:
+        return 'no host'
+    if not HOST_FORM.match(host):
+        return 'the host is not a well-formed domain name'
+    return ''
+
+
+def canonical_hosts(records_url):
+    """The EXACTLY TWO hosts a signed-in records page may be served from.
+
+    DJI answers both `www.djiag.com` and the apex `djiag.com` and redirects
+    between them, so a check pinned to the configured spelling refuses a
+    browser that the cabinet itself moved. The pair is built by toggling the
+    `www.` label of the configured host and nothing else.
+
+    [REASON]: this is SET MEMBERSHIP, never a suffix test. Measured against
+    `urlsplit`, `hostname.endswith('djiag.com')` also accepts
+    `evil-djiag.com`, `login.djiag.com` and `evil.www.djiag.com` -- three
+    different hosts, none of them the cabinet. Two explicitly derived names
+    cannot grow into a wildcard.
+
+    [REASON]: the host is compared through `.hostname`, not `.netloc`. Again
+    measured: the hostname of `https://www.djiag.com@evil.example/...` is
+    `evil.example`, because the part before `@` is user-info, not a host. A
+    netloc comparison reasons about a string that is not the origin the
+    browser is actually on.
+
+    A configured host that is neither apex nor www -- a staging cabinet, say
+    -- keeps working: the pair is then {staging.djiag.com,
+    www.staging.djiag.com}, which is the same one-label toggle and not a
+    widening to anything unrelated.
+    """
+    host = clean_host(urlsplit(records_url).hostname)
+    if not host:
+        return frozenset()
+    if host.startswith('www.'):
+        bare = host[4:]
+        return frozenset([host, bare]) if bare else frozenset([host])
+    return frozenset([host, 'www.' + host])
+
+
+def sanitize_url(url):
+    """scheme://host/path for a log. Query and fragment are DROPPED.
+
+    [REASON]: the query is not safe to print. The cabinet hands back an
+    authorization code in it during the SSO redirect dance, and a diagnostic
+    line that echoed `?code=...` would write a live credential into the log
+    this module exists to keep clean. The path is kept because `/login` versus
+    `/records/list` is the whole diagnosis; the query never is.
+    """
+    if not url:
+        return '(no URL)'
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return '(unparsable URL)'
+    host = clean_host(parts.hostname)
+    scheme = parts.scheme or '(no scheme)'
+    if not host:
+        return '%s://(no host)%s' % (scheme, parts.path or '/')
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+        host += ':(bad port)'
+    if port and port not in (80, 443):
+        host = '%s:%d' % (host, port)
+    return '%s://%s%s' % (scheme, host, parts.path or '/')
 
 
 def landed_where_expected(current_url, records_url):
@@ -226,10 +346,16 @@ def landed_where_expected(current_url, records_url):
     this catches the populated context on the WRONG page -- `/login` sets its
     own cookies and localStorage, so a sign-in form left open would sail
     through the structural check and overwrite a working session.
+
+    Success requires all three: https, a host in `canonical_hosts`, and the
+    exact configured path.
     """
     if not current_url:
         return False, 'the browser reported no URL'
-    parts = urlsplit(current_url)
+    try:
+        parts = urlsplit(current_url)
+    except ValueError:
+        return False, 'the browser reported a URL this reader cannot parse'
     wanted = urlsplit(records_url)
 
     # [REASON]: the scheme is checked, and checked against the configured one.
@@ -242,11 +368,34 @@ def landed_where_expected(current_url, records_url):
                           wanted.scheme or '(no scheme)'))
     if parts.scheme != 'https':
         return False, 'the page is not served over https'
-    if parts.netloc != wanted.netloc:
+
+    allowed = canonical_hosts(records_url)
+    host = clean_host(parts.hostname)
+    problem = host_problem(parts.netloc, host)
+    if problem:
+        return False, 'the browser is somewhere this check refuses: %s' % problem
+    if host not in allowed:
         # The host is printed; it is a public address, not a credential.
         return False, ('the browser is on %s, not on %s'
-                       % (parts.netloc or '(no host)',
-                          wanted.netloc or '(no host)'))
+                       % (host or '(no host)',
+                          ' or '.join(sorted(allowed)) or '(no host)'))
+
+    # [REASON]: the port is checked separately from the host. `djiag.com:8443`
+    # has hostname `djiag.com` -- it passes the host set and is a different
+    # service. An explicitly configured port must match; otherwise only the
+    # https default is allowed.
+    # [REASON]: `443 if port is None else port`, а НЕ `port or 443`. Измерено:
+    # у `https://djiag.com:0/...` свойство `.port` равно 0, и `or` тихо
+    # подменял его на 443 -- адрес с портом 0 проходил проверку.
+    try:
+        port, wanted_port = parts.port, wanted.port
+    except ValueError:
+        return False, 'the browser reported a URL with an unreadable port'
+    effective = 443 if port is None else port
+    wanted_effective = 443 if wanted_port is None else wanted_port
+    if effective != wanted_effective:
+        return False, ('the browser is on port %s, the records page is on %s'
+                       % (effective, wanted_effective))
 
     # [REASON]: the PATH is checked too, not just "it is not /login". The
     # cabinet has other pages -- `/mission`, the root -- and each of them sets
@@ -259,6 +408,261 @@ def landed_where_expected(current_url, records_url):
         return False, ('the browser is on %s, not on the records page %s'
                        % (landed, expected))
     return True, ''
+
+
+# ─── ожидание подтверждённого входа ─────────────────────────────────────────
+#
+# [REASON]: почему это отдельный чистый слой, а не работа с Playwright на
+# месте. Playwright в среде разработки и в CI НЕ УСТАНОВЛЕН -- весь
+# drone_collector импортирует его лениво именно поэтому. Логика, вплетённая
+# в вызовы браузера, осталась бы непокрытой: ровно так и вышло с прежней
+# проверкой, у которой не было ни одного теста на то, ЧТО она читает.
+# Здесь политика (какой URL считается входом, сколько ждать) отделена от
+# водопровода (откуда взялся список URL), поэтому проверяется фейками.
+
+# Сколько ждать ручного входа. Человеку надо успеть ввести логин, пароль и
+# код из SMS, поэтому счёт идёт на минуты, а не на секунды.
+DEFAULT_LOGIN_WAIT_S = 600.0
+
+# Переменная окружения, которой таймаут можно сократить или продлить.
+LOGIN_WAIT_ENV = 'DJI_LOGIN_WAIT_S'
+
+
+def login_wait_seconds(default=DEFAULT_LOGIN_WAIT_S):
+    """Таймаут ожидания входа из окружения, иначе значение по умолчанию.
+
+    [REASON]: настройка живёт ЗДЕСЬ, а не в `CollectorConfig`. Она относится
+    к одной интерактивной команде, её незачем протаскивать через общую
+    конфигурацию прогона и печатать в сводке рядом с окном сбора. Плюс
+    практическая причина: без override десятиминутное ожидание пришлось бы
+    выжидать и в тестах.
+
+    [REASON]: мусор в переменной НЕ роняет команду и НЕ превращается в
+    мгновенный таймаут. Оператор, написавший `DJI_LOGIN_WAIT_S=abc`, иначе
+    получил бы отказ входа вместо отказа конфигурации, а причину искал бы в
+    браузере.
+    """
+    raw = (os.environ.get(LOGIN_WAIT_ENV) or '').strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        log.warning('%s is not a number (%r ignored); waiting %.0f s',
+                    LOGIN_WAIT_ENV, raw, default)
+        return default
+    if value <= 0:
+        log.warning('%s must be positive (%r ignored); waiting %.0f s',
+                    LOGIN_WAIT_ENV, raw, default)
+        return default
+    return value
+
+# Как часто спрашивать у контекста его страницы.
+LOGIN_POLL_S = 0.5
+
+
+class WaitOutcome(object):
+    """Чем закончилось ожидание входа. URL-ов целиком здесь нет."""
+
+    __slots__ = ('ok', 'url', 'reason', 'polls', 'pages_seen', 'seen')
+
+    def __init__(self, ok, url=None, reason='', polls=0, pages_seen=0,
+                 seen=()):
+        self.ok = ok
+        self.url = url
+        self.reason = reason
+        self.polls = polls
+        self.pages_seen = pages_seen
+        # Санитизированные адреса последнего опроса: scheme://host/path.
+        self.seen = tuple(seen)
+
+    def describe(self):
+        """Безопасная строка для лога: счётчики и только scheme/host/path."""
+        return ('pages=%d polls=%d seen=[%s]'
+                % (self.pages_seen, self.polls, ', '.join(self.seen)))
+
+    def __repr__(self):
+        return '<WaitOutcome ok=%s %s>' % (self.ok, self.describe())
+
+
+def authorized_url(urls, records_url):
+    """Первый адрес из `urls`, который является подтверждённой страницей вылетов.
+
+    [REASON]: перебираются ВСЕ адреса, а не только первый. Кабинет открывает
+    вход в отдельной вкладке того же контекста, и после успешного входа
+    страница вылетов живёт в НОВОЙ page, тогда как исходная так и остаётся на
+    `/login`. Прежняя проверка читала ровно ту исходную page -- поэтому
+    оператор видел `/records/list`, а программа сообщала про `/login`.
+    """
+    for url in urls or ():
+        ok, _why = landed_where_expected(url, records_url)
+        if ok:
+            return url
+    return None
+
+
+def wait_for_records_page(list_urls, records_url, pump,
+                          timeout_s=DEFAULT_LOGIN_WAIT_S,
+                          poll_s=LOGIN_POLL_S, clock=None):
+    """Опрашивать `list_urls()` пока одна из страниц не станет страницей вылетов.
+
+    `list_urls` -- вызываемое, возвращающее адреса ВСЕХ живых страниц
+    контекста. Оно же решает, что делать с закрытыми страницами.
+
+    `pump(seconds)` -- ОБЯЗАТЕЛЬНЫЙ параметр: пауза, которая одновременно
+    даёт диспетчеру Playwright вычитать события из трубы драйвера.
+
+    Возвращает WaitOutcome. Никогда не печатает и не возвращает query.
+
+    [REASON]: почему `pump` обязателен и почему это НЕ `time.sleep`. В
+    синхронном API `page.url` -- не запрос к браузеру, а чтение локального
+    кэша `Frame._url`. Кэш обновляется только когда петля событий,
+    живущая в greenlet-фибре того же потока, вычитает из трубы событие
+    `navigated`; управление она получает исключительно внутри вызовов,
+    обёрнутых `_sync()`. `time.sleep` таким вызовом НЕ является: он
+    блокирует главный greenlet, фибра не запускается, и опрос крутится на
+    замороженном снимке -- ровно то состояние, в котором прежний код
+    навсегда видел `/login`. Значение по умолчанию здесь было бы
+    ловушкой: код выглядел бы работающим и не работал, а тест с
+    подставной паузой прошёл бы и на неверной реализации. Поэтому
+    прокачку обязан передать вызывающий, и в production это
+    `page.wait_for_timeout`.
+
+    [REASON]: опрос, а не событие. `context.on('page')` сообщает о появлении
+    страницы, но не о том, что она доехала до нужного адреса, а
+    `page.wait_for_url` ждёт ОДНУ заранее известную страницу -- ту самую,
+    которая в этом дефекте остаётся на `/login`. Человек может открыть
+    вкладку когда угодно, поэтому опрашивается весь список.
+
+    [REASON]: пустой список страниц -- это закрытое окно, и ждать дальше
+    нечего. Без этого прогон висел бы до самого таймаута после того, как
+    оператор закрыл браузер.
+    """
+    import time
+
+    now = clock or time.monotonic
+    nap = pump
+    started = now()
+    polls = 0
+    seen = ()
+    pages = 0
+
+    while True:
+        polls += 1
+        # [REASON]: прокачка идёт ПЕРЕД первым чтением, а не только между
+        # опросами. К моменту входа в петлю кэш уже устарел на всё время
+        # ручного входа, и первое чтение без прокачки вернуло бы `/login`
+        # даже когда оператор давно на странице вылетов.
+        try:
+            nap(poll_s)
+        except Exception as exc:                               # noqa: BLE001
+            return WaitOutcome(False, reason=('the browser stopped '
+                                              'responding (%s)'
+                                              % type(exc).__name__),
+                               polls=polls, pages_seen=pages, seen=seen)
+        try:
+            urls = list(list_urls() or ())
+        except Exception as exc:                               # noqa: BLE001
+            return WaitOutcome(False, reason=('the browser could not be '
+                                              'asked for its pages (%s)'
+                                              % type(exc).__name__),
+                               polls=polls, pages_seen=pages, seen=seen)
+        pages = len(urls)
+        seen = tuple(sanitize_url(u) for u in urls)
+        found = authorized_url(urls, records_url)
+        if found is not None:
+            return WaitOutcome(True, url=found, polls=polls,
+                               pages_seen=pages, seen=seen)
+        if pages == 0:
+            return WaitOutcome(False, reason='the browser has no open page '
+                                             'left -- the window was closed',
+                               polls=polls, pages_seen=0, seen=seen)
+        if (now() - started) >= timeout_s:
+            return WaitOutcome(False,
+                               reason=('no page reached the records page '
+                                       'within %.0f s' % timeout_s),
+                               polls=polls, pages_seen=pages, seen=seen)
+
+
+def context_page_urls(context):
+    """Адреса живых страниц контекста. Закрытые пропускаются.
+
+    [REASON]: `page.url` у закрытой страницы бросает, а закрытая вкладка --
+    норма: кабинет закрывает попап входа сам. Одна закрытая страница не
+    должна обрывать ожидание, поэтому она просто выпадает из списка.
+    """
+    urls = []
+    for page in list(getattr(context, 'pages', None) or ()):
+        try:
+            if getattr(page, 'is_closed', None) and page.is_closed():
+                continue
+        except Exception:                                      # noqa: BLE001
+            continue
+        try:
+            url = page.url
+        except Exception:                                      # noqa: BLE001
+            continue
+        if url:
+            urls.append(url)
+    return urls
+
+
+def make_pump(context):
+    """Пауза, которая одновременно прокачивает диспетчер Playwright.
+
+    Возвращает `pump(seconds)`. Пауза берётся у ЖИВОЙ страницы контекста
+    через `page.wait_for_timeout`, потому что этот вызов обёрнут `_sync()` и
+    потому отдаёт управление петле событий -- в отличие от `time.sleep`,
+    который её не запускает вовсе.
+
+    [REASON]: страница выбирается заново на каждый вызов, а не запоминается.
+    Оператор вправе закрыть исходную вкладку и остаться во второй; вызов
+    `wait_for_timeout` на закрытой странице бросает, и один такой бросок
+    оборвал бы ожидание при живом и вошедшем браузере.
+
+    [REASON]: если живых страниц не осталось, прокачивать нечего и пауза
+    становится пустой -- петля на следующем же чтении увидит нулевой список
+    и завершится «окно закрыто», вместо того чтобы выжидать таймаут.
+    """
+    def pump(seconds):
+        for page in list(getattr(context, 'pages', None) or ()):
+            try:
+                if getattr(page, 'is_closed', None) and page.is_closed():
+                    continue
+                page.wait_for_timeout(max(0.0, float(seconds)) * 1000.0)
+                return
+            except Exception:                                  # noqa: BLE001
+                continue
+    return pump
+
+
+def context_carries_session(context):
+    """(usable, счётчики) -- есть ли в контексте пригодные cookie.
+
+    Ранний и дружелюбный отказ до любой записи на диск. Итоговым гейтом
+    остаётся `save_state_atomically`: он судит то, что Playwright реально
+    записал, и до замены файла.
+
+    [REASON]: спрашивается КОЛИЧЕСТВО, значения не читаются и не
+    возвращаются. `context.cookies()` отдаёт живые cookie целиком, и они не
+    должны попасть ни в лог, ни в объект, который кто-нибудь потом напечатает.
+    """
+    # [REASON]: сбой самого опроса НЕ отказывает. Эта проверка совещательная,
+    # а итоговый гейт -- файловый (`save_state_atomically`), и он безопасен по
+    # построению: прежняя сессия не гибнет ни в одной его ветке. Разовая
+    # ошибка Playwright здесь сожгла бы вход, который оператор только что
+    # делал руками, ради проверки, которая ничего не гарантирует сверх
+    # файловой. Поэтому при ошибке пропускаем дальше, к настоящему гейту.
+    try:
+        cookies = context.cookies()
+    except Exception as exc:                                   # noqa: BLE001
+        return True, ('cookies could not be counted (%s); deferring to the '
+                      'file gate' % type(exc).__name__)
+    count = len(list(cookies or ()))
+    if count:
+        return True, 'cookies=%d' % count
+    return False, ('the browser context holds no cookie at all -- the sign-in '
+                   'did not complete')
 
 
 def _remove_quietly(path):
@@ -321,24 +725,34 @@ def save_state_atomically(context, target, writer=None):
     return state
 
 
-def save_session_interactive(cfg, input_fn=None, print_fn=None):
+def save_session_interactive(cfg, print_fn=None, wait_s=None,
+                             wait_fn=None):
     """Open a real browser window, wait for a manual sign-in, save the session.
 
-    The operator signals completion by pressing Enter in the console. The
-    browser is always headful here regardless of DJI_HEADLESS: a human has to
-    see the page to sign in.
+    The program decides WHEN the sign-in finished by watching the browser, not
+    by asking the operator to press Enter at the right moment.
 
-    input_fn/print_fn are injectable so the flow can be exercised without a
-    console; the default is the real input()/print().
+    [REASON]: the Enter gate is gone, and that is the fix for the live defect
+    of 13.09.2026. It read `page.url` of the ONE page it had created, once,
+    at the instant Enter arrived. The cabinet finishes its sign-in in a new
+    tab, so that page was still on `/login` while the operator was looking at
+    `/records/list` -- exit code 2, no session saved, and nothing the operator
+    could do about it except guess a better moment. Now every live page of the
+    context is polled until one of them IS the records page.
+
+    `print_fn`, `wait_s` and `wait_fn` are injectable so the flow can be
+    exercised without a console and without a real clock.
     """
     from playwright.sync_api import sync_playwright  # lazy: see module docstring
 
-    ask = input_fn or input
     say = print_fn or print
+    wait = wait_fn or wait_for_records_page
+    timeout_s = login_wait_seconds() if wait_s is None else wait_s
 
     target = Path(cfg.storage_state)
     target.parent.mkdir(parents=True, exist_ok=True)
     url = login_url(cfg.records_url)
+    allowed = ' or '.join(sorted(canonical_hosts(cfg.records_url)))
 
     say('')
     say('A browser window is opening on %s' % url)
@@ -348,7 +762,13 @@ def save_session_interactive(cfg, input_fn=None, print_fn=None):
     say('  3. Check the region selector: an accidental click on "Other')
     say('     Regions" switches the account to an empty country and the')
     say('     collector then quietly returns zero flights.')
-    say('  4. Come back here and press Enter.')
+    say('')
+    say('You do NOT have to press anything. This program watches the browser')
+    say('and saves the session by itself once a tab is on %s%s'
+        % (allowed, urlsplit(cfg.records_url).path or '/'))
+    say('It waits up to %.0f seconds, and gives up early if you close the'
+        % timeout_s)
+    say('window. A new tab opened by the sign-in counts too.')
     say('')
     say('Nothing you type in the browser is read, stored or logged by this')
     say('program. Only the resulting session cookies are saved, to %s'
@@ -363,26 +783,41 @@ def save_session_interactive(cfg, input_fn=None, print_fn=None):
         page.goto(url, wait_until=NAVIGATION_WAIT_UNTIL,
                   timeout=cfg.page_timeout_ms)
 
-        ask('Press Enter once you are signed in and the records page is open: ')
+        outcome = wait(lambda: context_page_urls(context), cfg.records_url,
+                       make_pump(context), timeout_s=timeout_s)
 
-        landed = None
-        try:
-            landed = page.url
-        except Exception:  # pragma: no cover -- a closed page has no url
-            landed = None
-        ok, why = landed_where_expected(landed, cfg.records_url)
-        if not ok:
-            # [REASON]: this REFUSES, it no longer warns. A warning let the
-            # save go ahead, and /login is not an empty page: it sets its own
+        if not outcome.ok:
+            # [REASON]: this REFUSES, it does not warn. A warning let the save
+            # go ahead, and `/login` is not an empty page: it sets its own
             # cookies and localStorage, so the structural check would pass it
-            # and a sign-in form would overwrite a working session. Two
-            # guards, and both must hold before anything is written.
+            # and a sign-in form would overwrite a working session.
+            #
+            # [REASON]: the diagnostic carries COUNTS and sanitized
+            # scheme://host/path only -- `sanitize_url` drops the query, which
+            # is where the SSO hands back an authorization code.
             browser.close()
             raise SessionMissing(
-                'the browser is not where a signed-in session would be: %s. '
+                'the browser never reached a signed-in records page: %s (%s). '
                 'Nothing was saved and nothing was overwritten -- sign in, '
                 'wait for the records page, and run --save-session again.'
-                % why)
+                % (outcome.reason, outcome.describe()))
+
+        # [REASON]: the context is asked for cookies BEFORE anything is
+        # written. The authoritative gate is still `save_state_atomically`,
+        # which judges what Playwright actually produced and only then
+        # replaces the file; this one fails earlier and says why in a sentence
+        # an operator can act on.
+        carries, note = context_carries_session(context)
+        if not carries:
+            browser.close()
+            previous = inspect_session(target)
+            raise SessionMissing(
+                'the browser is on the records page but %s (%s). Nothing was '
+                'saved and nothing was overwritten; %s'
+                % (note, outcome.describe(),
+                   'the previous session at %s was left untouched (%s)'
+                   % (target, previous.describe()) if previous.usable
+                   else 'there is no previous usable session to fall back on'))
 
         # Saved from the context, not the page: cookies set on the SSO host
         # during the redirect dance belong to the context too.
@@ -391,8 +826,10 @@ def save_session_interactive(cfg, input_fn=None, print_fn=None):
         finally:
             browser.close()
 
-    log.info('Session saved to %s (%s)', target, state.describe())
+    log.info('Session saved to %s (%s; %s)', target, state.describe(),
+             outcome.describe())
     say('')
+    say('Signed in on %s' % sanitize_url(outcome.url))
     say('Session saved to %s' % target)
     say('  %s' % state.describe())
     say('Keep it out of the repository and out of tickets: it is a live login.')

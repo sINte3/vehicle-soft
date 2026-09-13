@@ -581,15 +581,55 @@ class GeometryRunReachesNoIngestTests(CliTestCase):
 
 
 class _FakePlaywrightModule(object):
-    """Ровно та часть playwright, которой пользуется save_session_interactive."""
+    """Ровно та часть playwright, которой пользуется save_session_interactive.
 
-    def __init__(self, state_text, landed_url):
+    Моделирует то, что у настоящего контекста есть НЕСКОЛЬКО страниц, что их
+    адреса меняются от опроса к опросу и что вкладка может появиться позже.
+    Без этого проверку «дождись страницы вылетов в любой из вкладок» было бы
+    не на чем прогнать.
+
+    `pages` -- список последовательностей адресов, по одной на страницу:
+    `[['.../login', '.../records/list']]` -- одна страница, которая переехала
+    на втором опросе. Элемент вида `(after, [urls...])` -- страница,
+    появляющаяся после `after` опросов списка страниц.
+
+    [REASON]: `cookies` задаётся ОТДЕЛЬНО от `state_text`. Ранний отказ по
+    отсутствию cookie и отказ по непригодному записанному состоянию -- два
+    разных рубежа, и если их связать, тест про `.partial` начнёт проходить,
+    ни разу не дойдя до записи.
+    """
+
+    def __init__(self, state_text, landed_url=None, pages=None, cookies=None):
         self.state_text = state_text
         self.landed_url = landed_url
         outer = self
 
+        if pages is None:
+            pages = [[landed_url]] if landed_url is not None else [[]]
+        if cookies is None:
+            try:
+                cookies = json.loads(state_text).get('cookies') or []
+            except Exception:                                  # noqa: BLE001
+                cookies = [{'name': 'sid'}]
+        self.cookie_rows = list(cookies)
+
+        # [REASON]: адрес двигается ТОЛЬКО в `wait_for_timeout`, а не при
+        # чтении `.url`. Так ведёт себя настоящий sync API: `.url` читает
+        # локальный кэш, который обновляется лишь когда диспетчер получает
+        # управление внутри прокачивающего вызова. Фейк, двигавший адрес от
+        # чтения, проходил бы и на реализации со `time.sleep` -- то есть на
+        # том самом дефекте, который здесь починен.
+        class _Tick(object):
+            def __init__(self):
+                self.value = 0
+
+        tick = _Tick()
+        self.tick = tick
+
         class _Page(object):
-            url = landed_url
+            def __init__(self, urls):
+                self._urls = list(urls)
+                self.closed = False
 
             def set_default_timeout(self, ms):
                 pass
@@ -597,7 +637,47 @@ class _FakePlaywrightModule(object):
             def goto(self, url, **kwargs):
                 pass
 
+            def is_closed(self):
+                return self.closed
+
+            def wait_for_timeout(self, ms):
+                tick.value += 1
+
+            @property
+            def url(self):
+                if not self._urls:
+                    return ''
+                return self._urls[min(tick.value, len(self._urls) - 1)]
+
         class _Context(object):
+            def __init__(self):
+                self._open = []
+                self._pending = []
+                for spec in pages:
+                    if isinstance(spec, tuple):
+                        after, urls = spec
+                        self._pending.append([after, urls])
+                    else:
+                        self._open.append(_Page(spec))
+
+            @property
+            def pages(self):
+                for entry in list(self._pending):
+                    if tick.value > entry[0]:
+                        self._open.append(_Page(entry[1]))
+                        self._pending.remove(entry)
+                return list(self._open)
+
+            def new_page(self, **kwargs):
+                if self._open:
+                    return self._open[0]
+                page = _Page([])
+                self._open.append(page)
+                return page
+
+            def cookies(self):
+                return list(outer.cookie_rows)
+
             def storage_state(self, path):
                 Path(path).write_text(outer.state_text, encoding='utf-8')
 
@@ -624,8 +704,6 @@ class _FakePlaywrightModule(object):
             def __exit__(self, *exc):
                 return False
 
-        _Browser.new_page = lambda self, **kw: _Page()
-        _Context.new_page = lambda self, **kw: _Page()
         self._playwright = _Playwright()
 
     def sync_playwright(self):
@@ -647,6 +725,9 @@ class SaveSessionExitCodeTests(CliTestCase):
         self.root = Path(self._directory.name)
         self.target = self.root / 'storage_state.json'
         os.environ['DJI_STORAGE_STATE'] = str(self.target)
+        # [REASON]: без короткого таймаута отказной прогон выжидал бы
+        # штатные десять минут -- набор просто вешался.
+        os.environ['DJI_LOGIN_WAIT_S'] = '0.01'
         self._saved_module = sys.modules.get('playwright.sync_api')
         self._saved_pkg = sys.modules.get('playwright')
 
@@ -660,22 +741,42 @@ class SaveSessionExitCodeTests(CliTestCase):
         CliTestCase.tearDown(self)
 
     def install_playwright(self, state_text,
-                           landed='https://www.djiag.com/records/list'):
-        fake = _FakePlaywrightModule(state_text, landed)
+                           landed='https://www.djiag.com/records/list',
+                           pages=None, cookies=None):
+        fake = _FakePlaywrightModule(state_text, landed, pages=pages,
+                                     cookies=cookies)
         sys.modules['playwright'] = types.ModuleType('playwright')
         sys.modules['playwright.sync_api'] = fake
         # save_session_interactive делает `from playwright.sync_api import
         # sync_playwright`, поэтому имя должно лежать атрибутом модуля.
         fake.sync_playwright = fake.sync_playwright
 
-    def run_save(self):
+    def run_save(self, wait_s=None):
+        """`wait_s` -- окно ожидания для тестов, которым нужно НЕСКОЛЬКО опросов.
+
+        [REASON]: по умолчанию в setUp стоит 0.01 с, чтобы отказные прогоны не
+        выжидали штатные десять минут. Но сценарий «вкладка доехала позже»
+        обязан пережить два-три опроса, иначе он проверяет мгновенное
+        совпадение, а не ожидание -- то есть ровно не то, что починено.
+        """
+        # [REASON]: `input` больше не является воротами -- поток сам ждёт
+        # браузера. Патч оставлен, чтобы случайный вызов input() в любом
+        # месте не повесил прогон на чтении stdin.
         import builtins
         real_input = builtins.input
         builtins.input = lambda prompt='': ''
+        saved = os.environ.get('DJI_LOGIN_WAIT_S')
+        if wait_s is not None:
+            os.environ['DJI_LOGIN_WAIT_S'] = str(wait_s)
         try:
             return main(['--save-session'])
         finally:
             builtins.input = real_input
+            if wait_s is not None:
+                if saved is None:
+                    os.environ.pop('DJI_LOGIN_WAIT_S', None)
+                else:
+                    os.environ['DJI_LOGIN_WAIT_S'] = saved
 
     def test_an_empty_state_exits_non_zero_and_writes_no_session(self):
         self.install_playwright('{"cookies": [], "origins": []}')
@@ -793,6 +894,124 @@ class SaveSessionExitCodeTests(CliTestCase):
         self.assertEqual(self.run_save(), EXIT_SESSION)
         self.assertEqual(self.target.read_bytes(), before)
         self.assertEqual(list(self.root.glob('*.partial')), [])
+
+    # --- DJI-SESSION-HOTFIX-001: сквозные сценарии живого дефекта ----------
+
+    LOGIN = 'https://www.djiag.com/login'
+    LIST = 'https://www.djiag.com/records/list'
+    APEX = 'https://djiag.com/records/list'
+
+    def test_the_same_page_moving_from_login_to_records_is_saved(self):
+        """Сценарий 1: та же вкладка доехала до страницы вылетов.
+
+        Прежняя проверка читала адрес ОДИН раз сразу после Enter, поэтому
+        вкладка, которая ещё не доехала, давала отказ. Теперь поток ждёт.
+        """
+        self.install_playwright(
+            self.POPULATED_STATE,
+            pages=[[self.LOGIN, self.LOGIN, self.LIST]])
+        self.assertEqual(self.run_save(wait_s=5), EXIT_OK)
+        self.assertTrue(self.target.is_file())
+
+    def test_a_new_tab_with_the_records_page_is_saved(self):
+        """Сценарий 2 -- ровно живой дефект 13.09.2026.
+
+        Исходная вкладка НАВСЕГДА остаётся на /login, а вход завершился во
+        второй. Прежний код сообщал «браузер всё ещё на /login» и возвращал
+        exit=2, хотя оператор смотрел на Task History.
+        """
+        self.install_playwright(
+            self.POPULATED_STATE,
+            pages=[[self.LOGIN], (1, [self.LIST])])
+        self.assertEqual(self.run_save(wait_s=5), EXIT_OK)
+        self.assertTrue(self.target.is_file())
+
+    def test_the_apex_host_is_saved_when_the_config_says_www(self):
+        """Сценарий 3: www -> djiag.com, как и было в адресной строке."""
+        self.install_playwright(self.POPULATED_STATE,
+                                landed=self.APEX)
+        self.assertEqual(self.run_save(), EXIT_OK)
+        self.assertTrue(self.target.is_file())
+
+    def test_the_www_host_is_saved_when_the_config_says_apex(self):
+        """Сценарий 4: обратное направление канонического редиректа."""
+        os.environ['DJI_RECORDS_URL'] = self.APEX
+        self.addCleanup(os.environ.pop, 'DJI_RECORDS_URL', None)
+        self.install_playwright(self.POPULATED_STATE, landed=self.LIST)
+        self.assertEqual(self.run_save(), EXIT_OK)
+        self.assertTrue(self.target.is_file())
+
+    def test_a_lookalike_host_is_refused_end_to_end(self):
+        """Сценарий 5: хост, который прошёл бы суффиксное правило."""
+        for host in ('evil-djiag.com', 'login.djiag.com',
+                     'evil.www.djiag.com'):
+            self.install_playwright(self.POPULATED_STATE,
+                                    landed='https://%s/records/list' % host)
+            self.assertEqual(self.run_save(), EXIT_SESSION, host)
+            self.assertFalse(self.target.exists(), host)
+
+    def test_a_timeout_without_a_login_refuses_and_saves_nothing(self):
+        """Сценарий 7: оператор так и не вошёл -- вкладка стоит на /login."""
+        self.install_playwright(self.POPULATED_STATE,
+                                pages=[[self.LOGIN]])
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertFalse(self.target.exists())
+
+    def test_a_closed_window_refuses_and_saves_nothing(self):
+        self.install_playwright(self.POPULATED_STATE, pages=[])
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertFalse(self.target.exists())
+
+    def test_a_context_without_cookies_refuses_before_writing_anything(self):
+        """Требование «убедиться, что контекст несёт usable cookies»."""
+        self.install_playwright(self.POPULATED_STATE, landed=self.LIST,
+                                cookies=[])
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertFalse(self.target.exists())
+        self.assertEqual(list(self.root.glob('*.partial')), [])
+
+    def test_an_empty_written_state_still_hits_the_partial_gate(self):
+        """Сценарий 8 -- и контроль, что ранний отказ не подменил поздний.
+
+        [REASON]: cookie в контексте ЕСТЬ, поэтому ранняя проверка проходит,
+        а Playwright всё равно записывает тридцать байт. Без этого теста
+        добавленный ранний отказ тихо сделал бы проверку `.partial`
+        недостижимой, и регрессия первого пилота осталась бы без охраны.
+        """
+        self.install_playwright('{"cookies": [], "origins": []}',
+                                landed=self.LIST,
+                                cookies=[{'name': 'sid'}])
+        self.assertEqual(self.run_save(), EXIT_SESSION)
+        self.assertFalse(self.target.exists())
+        self.assertEqual(list(self.root.glob('*.partial')), [])
+
+    def test_a_failed_save_leaves_a_usable_session_byte_for_byte(self):
+        """Сценарий 9: рабочая сессия не должна пострадать ни при одном отказе."""
+        good = ('{"cookies": [{"name": "sid", "value": '
+                '"SYNTHETIC-WORKING-SESSION"}], "origins": []}')
+        cases = (
+            ('таймаут без входа',
+             dict(state_text=self.POPULATED_STATE, pages=[[self.LOGIN]])),
+            ('чужой хост',
+             dict(state_text=self.POPULATED_STATE,
+                  landed='https://evil-djiag.com/records/list')),
+            ('верный хост, неверный путь',
+             dict(state_text=self.POPULATED_STATE,
+                  landed='https://djiag.com/mission')),
+            ('контекст без cookie',
+             dict(state_text=self.POPULATED_STATE, landed=self.LIST,
+                  cookies=[])),
+            ('записано пустое состояние',
+             dict(state_text='{"cookies": [], "origins": []}',
+                  landed=self.LIST, cookies=[{'name': 'sid'}])),
+        )
+        for name, kwargs in cases:
+            self.target.write_text(good, encoding='utf-8')
+            self.install_playwright(**kwargs)
+            self.assertEqual(self.run_save(), EXIT_SESSION, name)
+            self.assertEqual(self.target.read_text(encoding='utf-8'), good,
+                             name)
+            self.assertEqual(list(self.root.glob('*.partial')), [], name)
 
     def test_the_records_page_remains_the_successful_control(self):
         """Отрицательный контроль: правильная посадка по-прежнему сохраняет."""
